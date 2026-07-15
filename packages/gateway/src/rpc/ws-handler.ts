@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { WSContext, WSEvents } from "hono/ws";
-import type { JSONRPCServer, JSONRPCRequest } from "json-rpc-2.0";
+import {
+  createJSONRPCErrorResponse,
+  isJSONRPCID,
+  isJSONRPCRequest,
+  type JSONRPCErrorResponse,
+  type JSONRPCServer,
+  type JSONRPCRequest,
+} from "json-rpc-2.0";
 import type { RpcContext } from "./method-router.js";
 import { systemNowMs, systemSetTimeout, systemSetInterval, systemClearInterval } from "@comis/core";
 
@@ -216,6 +223,36 @@ function classifyCloseCode(code: number): string {
   return "protocol-error";
 }
 
+function createRateLimitError(payload: unknown): JSONRPCErrorResponse | null {
+  if (
+    payload !== null &&
+    typeof payload === "object" &&
+    !Array.isArray(payload) &&
+    isJSONRPCRequest(payload) &&
+    payload.id === undefined
+  ) {
+    return null;
+  }
+
+  let id = null;
+  if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+    const candidateId = (payload as { id?: unknown }).id;
+    if (isJSONRPCID(candidateId)) id = candidateId;
+  }
+  return createJSONRPCErrorResponse(id, -32000, "Message rate limit exceeded");
+}
+
+function createRateLimitResponse(
+  payload: unknown,
+): JSONRPCErrorResponse | JSONRPCErrorResponse[] | null {
+  if (!Array.isArray(payload)) return createRateLimitError(payload);
+
+  const responses = payload
+    .map(createRateLimitError)
+    .filter((response): response is JSONRPCErrorResponse => response !== null);
+  return responses.length > 0 ? responses : null;
+}
+
 /**
  * Unique connection ID counter.
  */
@@ -303,17 +340,10 @@ export function createWsHandler(deps: WsHandlerDeps, rpcContext: RpcContext): WS
       while (messageTimestamps.length > 0 && messageTimestamps[0]! <= now - windowMs) {
         messageTimestamps.shift();
       }
-      if (messageTimestamps.length >= maxMessages) {
-        ws.send(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            error: { code: -32000, message: "Message rate limit exceeded" },
-            id: null,
-          }),
-        );
-        return;
+      const rateLimited = messageTimestamps.length >= maxMessages;
+      if (!rateLimited) {
+        messageTimestamps.push(now);
       }
-      messageTimestamps.push(now);
 
       // Message size validation before JSON.parse
       if (raw.length > maxMessageBytes) {
@@ -356,6 +386,12 @@ export function createWsHandler(deps: WsHandlerDeps, rpcContext: RpcContext): WS
           );
           return;
         }
+      }
+
+      if (rateLimited) {
+        const response = createRateLimitResponse(parsed);
+        if (response !== null) ws.send(JSON.stringify(response));
+        return;
       }
 
       try {

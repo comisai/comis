@@ -10,9 +10,10 @@
  *   1. providers.entries.<provider>.apiKeyName → secretManager.has(...)
  *   2. KEYLESS_PROVIDER_TYPES.has(entry.type) — ollama / lm-studio without an
  *      explicit apiKeyName
- *   3. Comis OAuth profiles — agent.oauthProfiles[provider] resolved against an
- *      injected oauthProfileLoader (the OAuthCredentialStorePort handle held by
- *      the daemon, adapted to a synchronous has-check at the call site).
+ *   3. Comis OAuth profiles — an explicit agent.oauthProfiles[provider] is
+ *      resolved against an injected has-check. Without an explicit preference,
+ *      any persisted profile for the provider is accepted, matching the runtime
+ *      lastGood / first-available fallback.
  *   4. Secret-store static keys — for providers in PROVIDER_SECRET_KEYS,
  *      any configured alias is accepted. This mirrors the runtime:
  *      createAuthStorageAdapter hydrates the same map into AuthStorage, so a
@@ -22,29 +23,38 @@
  *      and AWS/ADC special-cases). Does NOT cover comis-managed OAuth profiles in
  *      the configured OAuth credential store (e.g. openai-codex).
  *
- * Note on synchronous loader facade: `OAuthCredentialStorePort.has`
- * is async (returns Promise<Result<boolean, Error>>). To avoid an async cascade
- * through every call site, this resolver remains SYNCHRONOUS and accepts a
- * sync facade (`oauthProfileLoader: { has(profileId: string): boolean }`).
- * The async port `has()` call MUST be performed at the daemon edge
- * (config-handlers / agent-handlers) and adapted into the closure. This keeps
- * the port-side validator I/O-free (Hexagonal: validator does no I/O).
+ * The pure resolver remains synchronous and accepts snapshots of OAuth-store
+ * availability. `resolveProviderCredentialWithStore` is the daemon-edge
+ * adapter that performs provider-filtered port lookups only when the pure
+ * resolution chain still needs OAuth-store evidence.
  *
  * @module
  */
 import { type KnownProvider } from "@earendil-works/pi-ai";
 import { getEnvApiKey, getProviders, getModels } from "@earendil-works/pi-ai/compat";
-import { KEYLESS_PROVIDER_TYPES, type ProviderEntry } from "@comis/core";
+import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import {
+  KEYLESS_PROVIDER_TYPES,
+  sanitizeLogString,
+  type OAuthCredentialStorePort,
+  type ProviderEntry,
+} from "@comis/core";
+import { err, ok, type Result } from "@comis/shared";
 import {
   getMissingProviderCredentialNames,
   getProviderSecretNames,
+  isValidOAuthEnvSeed,
+  oauthEnvSecretKey,
 } from "@comis/agent";
 
 export interface CredentialResolverDeps {
   /** Provider-entry map from comis config (providers.entries). */
   providerEntries?: Record<string, ProviderEntry>;
-  /** Secret manager backing process.env / ~/.comis/.env. */
-  secretManager?: { has(key: string): boolean };
+  /** Secret manager backing configured provider keys and OAuth env seeds. */
+  secretManager?: {
+    has(key: string): boolean;
+    get?(key: string): string | undefined;
+  };
   /**
    * Models config — used to resolve `provider: "default"` to the operator's
    * configured `models.defaultProvider`, mirroring runtime resolution in
@@ -61,11 +71,15 @@ export interface CredentialResolverDeps {
    */
   oauthProfiles?: Record<string, string>;
   /**
-   * Synchronous facade over OAuthCredentialStorePort.has. The async port
-   * call MUST be performed at the daemon edge (config-handlers /
-   * agent-handlers) and adapted to this sync shape — the resolver itself
-   * does no I/O (hexagonal: port-side validator). Pass a closure such as
-   * `{ has: () => storeHasResult.ok && storeHasResult.value }`.
+   * Provider ids with at least one persisted OAuth profile. Used only when
+   * the agent has no explicit oauthProfiles preference, matching the runtime
+   * resolver's fallback to the first available provider profile.
+   */
+  oauthProvidersWithProfiles?: ReadonlySet<string>;
+  /**
+   * Synchronous facade over OAuthCredentialStorePort.has. The resolver itself
+   * does no I/O; the daemon-edge adapter supplies this snapshot after awaiting
+   * the port.
    */
   oauthProfileLoader?: { has(profileId: string): boolean };
 }
@@ -75,9 +89,28 @@ export interface CredentialResolution {
   /** When ok=false: actionable error message ready to throw. */
   reason?: string;
   /** When ok=true: which source resolved. Useful for debug logs. */
-  source?: "keyless" | "providers_entry" | "env_canonical" | "oauth_profile" | "secret_store_canonical";
+  source?: "keyless" | "providers_entry" | "env_canonical" | "oauth_profile" | "oauth_env_seed" | "secret_store_canonical";
   /** When ok=true: the provider name actually checked (after "default" resolution). */
   resolvedProvider?: string;
+}
+
+function resolveEffectiveProvider(
+  targetProvider: string,
+  deps: CredentialResolverDeps,
+): string {
+  if (targetProvider.toLowerCase() !== "default") return targetProvider;
+
+  const explicitDefault = deps.providerEntries?.default;
+  if (explicitDefault) return targetProvider;
+
+  const defaultProvider = deps.modelsConfig?.defaultProvider;
+  if (defaultProvider && defaultProvider.length > 0) return defaultProvider;
+
+  const allProviders = getProviders();
+  if (allProviders.length === 0) return targetProvider;
+  return allProviders
+    .map((provider) => ({ provider, modelCount: getModels(provider as KnownProvider).length }))
+    .sort((a, b) => b.modelCount - a.modelCount)[0]!.provider;
 }
 
 export function resolveProviderCredential(
@@ -101,26 +134,11 @@ export function resolveProviderCredential(
   //      pi-ai catalog (same heuristic the runtime applies).
   // This keeps the credential check semantically aligned with the literal
   // provider the runtime will select.
-  let effectiveProvider = targetProvider;
-  if (targetProvider.toLowerCase() === "default") {
-    const explicitDefault = deps.providerEntries?.default;
-    if (!explicitDefault) {
-      const dp = deps.modelsConfig?.defaultProvider;
-      if (dp && dp.length > 0) {
-        effectiveProvider = dp;
-      } else {
-        const allProviders = getProviders();
-        if (allProviders.length > 0) {
-          effectiveProvider = allProviders
-            .map((p) => ({ p, n: getModels(p as KnownProvider).length }))
-            .sort((a, b) => b.n - a.n)[0]!.p;
-        }
-      }
-    }
-  }
+  const effectiveProvider = resolveEffectiveProvider(targetProvider, deps);
 
   // eslint-disable-next-line security/detect-object-injection -- typed Record<string, ProviderEntry> read; effectiveProvider validated above
   const entry = deps.providerEntries?.[effectiveProvider];
+  const oauthProviderSupported = Boolean(getOAuthProvider(effectiveProvider));
 
   // 1. Source A: providers.entries with an explicit apiKeyName. The configured
   // name is authoritative: if it is absent, reject instead of silently using a
@@ -140,14 +158,32 @@ export function resolveProviderCredential(
     return { ok: true, source: "keyless", resolvedProvider: effectiveProvider };
   }
 
-  // 3. Source C: comis OAuth profile (per-agent agents.<id>.oauthProfiles).
-  //    Covers OAuth-only providers like openai-codex whose tokens live in
-  //    the Comis OAuth credential store — pi-ai's getEnvApiKey does not see them.
-  //    Inserted before Source B so OAuth profiles win over env-canonical when
-  //    both would resolve (the operator explicitly configured the profile).
+  // 3. Source C: Comis OAuth profile. An explicit per-agent preference must
+  //    exist in the store. Without a preference, accept any stored profile for
+  //    the provider, matching OAuthTokenManager's lastGood / first-available
+  //    fallback. Covers OAuth-only providers like openai-codex whose tokens
+  //    pi-ai's getEnvApiKey cannot see.
   // eslint-disable-next-line security/detect-object-injection -- typed Record<string, string> read; effectiveProvider validated above
   const configuredProfileId = deps.oauthProfiles?.[effectiveProvider];
-  if (configuredProfileId && deps.oauthProfileLoader?.has(configuredProfileId)) {
+  if (
+    oauthProviderSupported
+    && configuredProfileId
+    && deps.oauthProfileLoader?.has(configuredProfileId)
+  ) {
+    return { ok: true, source: "oauth_profile", resolvedProvider: effectiveProvider };
+  }
+  if (configuredProfileId) {
+    return {
+      ok: false,
+      reason: buildRejectionMessage(effectiveProvider, entry, configuredProfileId),
+      resolvedProvider: effectiveProvider,
+    };
+  }
+  if (
+    oauthProviderSupported
+    && !configuredProfileId
+    && deps.oauthProvidersWithProfiles?.has(effectiveProvider)
+  ) {
     return { ok: true, source: "oauth_profile", resolvedProvider: effectiveProvider };
   }
 
@@ -174,7 +210,86 @@ export function resolveProviderCredential(
     return { ok: true, source: "env_canonical", resolvedProvider: effectiveProvider };
   }
 
-  return { ok: false, reason: buildRejectionMessage(effectiveProvider, entry, configuredProfileId) };
+  return {
+    ok: false,
+    reason: buildRejectionMessage(effectiveProvider, entry, configuredProfileId),
+    resolvedProvider: effectiveProvider,
+  };
+}
+
+/**
+ * Adapt the asynchronous OAuth store to the pure credential resolver.
+ * Explicit provider entries remain authoritative. For OAuth-capable providers,
+ * explicit profile pins use has() and never fall back; unpinned profiles are
+ * queried before lower-priority static or ambient credentials are accepted.
+ */
+export async function resolveProviderCredentialWithStore(
+  targetProvider: string,
+  deps: CredentialResolverDeps,
+  oauthCredentialStore?: OAuthCredentialStorePort,
+): Promise<Result<CredentialResolution, Error>> {
+  if (!targetProvider || typeof targetProvider !== "string") {
+    return ok(resolveProviderCredential(targetProvider, deps));
+  }
+
+  const effectiveProvider = resolveEffectiveProvider(targetProvider, deps);
+  // eslint-disable-next-line security/detect-object-injection -- effectiveProvider is validated by resolveProviderCredential
+  const entry = deps.providerEntries?.[effectiveProvider];
+  // eslint-disable-next-line security/detect-object-injection -- effectiveProvider is validated by resolveProviderCredential
+  const configuredProfileId = deps.oauthProfiles?.[effectiveProvider];
+  const initialResolution = resolveProviderCredential(targetProvider, deps);
+
+  if (
+    entry?.apiKeyName
+    || initialResolution.source === "keyless"
+    || initialResolution.source === "oauth_profile"
+  ) {
+    return ok(initialResolution);
+  }
+
+  if (!getOAuthProvider(effectiveProvider) || !oauthCredentialStore) {
+    return ok(initialResolution);
+  }
+
+  if (configuredProfileId) {
+    const hasResult = await oauthCredentialStore.has(configuredProfileId);
+    if (!hasResult.ok) {
+      return err(new Error(
+        `Failed to inspect OAuth credential store: ${sanitizeLogString(hasResult.error.message)}`,
+      ));
+    }
+    if (!hasResult.value) return ok(initialResolution);
+
+    return ok(resolveProviderCredential(targetProvider, {
+      ...deps,
+      oauthProfileLoader: {
+        has: (profileId) => profileId === configuredProfileId,
+      },
+    }));
+  }
+
+  const listResult = await oauthCredentialStore.list({ provider: effectiveProvider });
+  if (!listResult.ok) {
+    return err(new Error(
+      `Failed to inspect OAuth credential store: ${sanitizeLogString(listResult.error.message)}`,
+    ));
+  }
+  if (listResult.value.length === 0) {
+    const seed = deps.secretManager?.get?.(oauthEnvSecretKey(effectiveProvider));
+    if (isValidOAuthEnvSeed(seed)) {
+      return ok({
+        ok: true,
+        source: "oauth_env_seed",
+        resolvedProvider: effectiveProvider,
+      });
+    }
+    return ok(initialResolution);
+  }
+
+  return ok(resolveProviderCredential(targetProvider, {
+    ...deps,
+    oauthProvidersWithProfiles: new Set(listResult.value.map((profile) => profile.provider)),
+  }));
 }
 
 function buildIncompleteCredentialMessage(provider: string, missingNames: readonly string[]): string {
@@ -205,6 +320,15 @@ function buildRejectionMessage(
     );
     lines.push(`  Run \`comis auth list\` to see currently stored profiles.`);
     return lines.join("\n");
+  }
+
+  if (targetProvider === "openai-codex" && !entry?.apiKeyName) {
+    return [
+      `Cannot set agent provider to "${targetProvider}": no stored OAuth profile is available.`,
+      "Recovery:",
+      `  Run \`comis auth login --provider ${targetProvider}\` to authenticate, then retry this change.`,
+      `  Run \`comis auth list --provider ${targetProvider}\` to see currently stored profiles.`,
+    ].join("\n");
   }
 
   const lines: string[] = [];

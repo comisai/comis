@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { resolveProviderCredential } from "./credential-resolver.js";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  resolveProviderCredential,
+  resolveProviderCredentialWithStore,
+} from "./credential-resolver.js";
 import { KEYLESS_PROVIDER_TYPES } from "@comis/core";
-import type { ProviderEntry } from "@comis/core";
+import type { OAuthCredentialStorePort, ProviderEntry } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -32,6 +35,19 @@ function makeEntry(overrides: Partial<ProviderEntry> = {}): ProviderEntry {
     models: [],
     ...overrides,
   } as ProviderEntry;
+}
+
+function makeCredentialStore(
+  overrides: Record<string, unknown> = {},
+): OAuthCredentialStorePort {
+  return {
+    has: async () => ({ ok: true as const, value: false }),
+    get: async () => ({ ok: true as const, value: undefined }),
+    set: async () => ({ ok: true as const, value: undefined }),
+    delete: async () => ({ ok: true as const, value: false }),
+    list: async () => ({ ok: true as const, value: [] }),
+    ...overrides,
+  } as unknown as OAuthCredentialStorePort;
 }
 
 // ---------------------------------------------------------------------------
@@ -360,6 +376,37 @@ describe("resolveProviderCredential — Source C (oauth_profile)", () => {
     expect(r.resolvedProvider).toBe("openai-codex");
   });
 
+  it("passes via Source C when an unpinned provider has a stored fallback profile", () => {
+    const r = resolveProviderCredential("openai-codex", {
+      oauthProvidersWithProfiles: new Set(["openai-codex"]),
+    });
+    expect(r.ok).toBe(true);
+    expect(r.source).toBe("oauth_profile");
+    expect(r.resolvedProvider).toBe("openai-codex");
+  });
+
+  it("does not replace a missing explicit profile with an available provider fallback", () => {
+    const r = resolveProviderCredential("openai-codex", {
+      oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
+      oauthProfileLoader: { has: () => false },
+      oauthProvidersWithProfiles: new Set(["openai-codex"]),
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('OAuth profile "openai-codex:user_a@example.com" is configured but not found');
+  });
+
+  it("does not replace a missing explicit profile with ambient credentials", () => {
+    process.env.ANTHROPIC_OAUTH_TOKEN = "test-key";
+
+    const r = resolveProviderCredential("anthropic", {
+      oauthProfiles: { anthropic: "anthropic:user_a@example.com" },
+      oauthProfileLoader: { has: () => false },
+    });
+
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain('OAuth profile "anthropic:user_a@example.com" is configured but not found');
+  });
+
   it("rejects with OAuth-aware copy when oauthProfiles entry exists but loader.has returns false", () => {
     const r = resolveProviderCredential("openai-codex", {
       oauthProfiles: { "openai-codex": "openai-codex:user_a@example.com" },
@@ -420,6 +467,145 @@ describe("resolveProviderCredential — Source C (oauth_profile)", () => {
     expect(r.reason).toContain('Cannot set agent provider to "openai-codex"');
     expect(r.reason).toContain('OAuth profile "openai-codex:user_a@example.com" is configured but not found');
     expect(r.reason).toContain("comis auth login --provider openai-codex");
+  });
+});
+
+describe("resolveProviderCredentialWithStore", () => {
+  it("does not inspect an explicit OAuth pin after Source A resolves", async () => {
+    const has = vi.fn(async () => ({
+      ok: false as const,
+      error: new Error("OAuth store unavailable"),
+    }));
+    const store = makeCredentialStore({ has });
+
+    const result = await resolveProviderCredentialWithStore("openrouter", {
+      providerEntries: {
+        openrouter: makeEntry({ type: "openai", apiKeyName: "OPENROUTER_API_KEY" }),
+      },
+      secretManager: { has: (name) => name === "OPENROUTER_API_KEY" },
+      oauthProfiles: { openrouter: "openrouter:user_a@example.com" },
+    }, store);
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { ok: true, source: "providers_entry" },
+    });
+    expect(has).not.toHaveBeenCalled();
+  });
+
+  it("prefers a stored OAuth profile over static credentials for an OAuth provider", async () => {
+    const list = vi.fn(async () => ({
+      ok: true as const,
+      value: [{
+        provider: "anthropic",
+        profileId: "anthropic:user_a@example.com",
+        access: "test-key",
+        refresh: "test-key",
+        expires: 1_900_000_000_000,
+        version: 1 as const,
+      }],
+    }));
+
+    const result = await resolveProviderCredentialWithStore("anthropic", {
+      secretManager: { has: (name) => name === "ANTHROPIC_API_KEY" },
+    }, makeCredentialStore({ list }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { ok: true, source: "oauth_profile" },
+    });
+    expect(list).toHaveBeenCalledWith({ provider: "anthropic" });
+  });
+
+  it("does not hide an OAuth store failure behind static credentials", async () => {
+    const list = vi.fn(async () => ({
+      ok: false as const,
+      error: new Error("OAuth store unavailable"),
+    }));
+
+    const result = await resolveProviderCredentialWithStore("anthropic", {
+      secretManager: { has: (name) => name === "ANTHROPIC_API_KEY" },
+    }, makeCredentialStore({ list }));
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.objectContaining({
+        message: expect.stringMatching(/Failed to inspect OAuth credential store/),
+      }),
+    });
+    expect(list).toHaveBeenCalledWith({ provider: "anthropic" });
+  });
+
+  it("does not accept a stored profile for a provider without OAuth support", async () => {
+    const list = vi.fn(async () => ({
+      ok: true as const,
+      value: [{
+        provider: "custom-provider",
+        profileId: "custom-provider:user_a@example.com",
+        access: "test-key",
+        refresh: "test-key",
+        expires: 1_900_000_000_000,
+        version: 1 as const,
+      }],
+    }));
+
+    const result = await resolveProviderCredentialWithStore(
+      "custom-provider",
+      { secretManager: { has: () => false } },
+      makeCredentialStore({ list }),
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { ok: false },
+    });
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it("accepts a validated OAuth environment seed when the provider store is empty", async () => {
+    const list = vi.fn(async () => ({ ok: true as const, value: [] }));
+    const secretManager = {
+      has: (name: string) => name === "OAUTH_OPENAI_CODEX",
+      get: (name: string) => name === "OAUTH_OPENAI_CODEX"
+        ? JSON.stringify({
+            access: "test-key",
+            refresh: "test-key",
+            expires: 1_900_000_000_000,
+            accountId: "user_a",
+            email: "user_a@example.com",
+          })
+        : undefined,
+    };
+
+    const result = await resolveProviderCredentialWithStore(
+      "openai-codex",
+      { secretManager },
+      makeCredentialStore({ list }),
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { ok: true, source: "oauth_env_seed" },
+    });
+    expect(list).toHaveBeenCalledWith({ provider: "openai-codex" });
+  });
+
+  it("rejects a malformed OAuth environment seed when the provider store is empty", async () => {
+    const secretManager = {
+      has: () => true,
+      get: () => JSON.stringify({ access: "test-key" }),
+    };
+
+    const result = await resolveProviderCredentialWithStore(
+      "openai-codex",
+      { secretManager },
+      makeCredentialStore(),
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { ok: false },
+    });
   });
 });
 

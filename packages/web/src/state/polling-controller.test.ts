@@ -91,6 +91,19 @@ describe("PollingController", () => {
     expect(setIntervalSpy.mock.calls[0]![1]).toBe(5_000);
   });
 
+  it("does not duplicate polling when hostConnected is called twice", async () => {
+    const { host } = makeHost();
+    const onData = vi.fn();
+    const ctrl = new PollingController(host, makeRpc({}), onData);
+
+    ctrl.hostConnected();
+    ctrl.hostConnected();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+    expect(onData).toHaveBeenCalledTimes(1);
+  });
+
   it("performs an immediate poll on hostConnected before the first interval fires", async () => {
     const { host } = makeHost();
     const onData = vi.fn();

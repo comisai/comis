@@ -58,6 +58,7 @@ export class PollingController implements ReactiveController {
   }
 
   hostConnected(): void {
+    if (this._timer !== null) return;
     this._poll();
     this._timer = systemSetInterval(() => this._poll(), this._intervalMs);
   }

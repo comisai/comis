@@ -72,6 +72,16 @@ describe("createRpcClient", () => {
     expect(client.status).toBe("disconnected");
   });
 
+  it("reports a connection attempt before the WebSocket opens", () => {
+    const handler = vi.fn();
+    client.onStatusChange(handler);
+
+    client.connect(WS_URL, TOKEN);
+
+    expect(client.status).toBe("reconnecting");
+    expect(handler).toHaveBeenCalledWith("reconnecting");
+  });
+
   it("status becomes connected on WebSocket open", () => {
     client.connect(WS_URL, TOKEN);
     MockWebSocket.lastInstance!.onopen!();

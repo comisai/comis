@@ -4,6 +4,7 @@ import type { ApiClient } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { ConnectionStatus } from "../api/types/index.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
+import { IcToast } from "../components/feedback/ic-toast.js";
 import "./dashboard.js";
 import { IcDashboard, formatUptime, formatNumber, formatTokens } from "./dashboard.js";
 import { createMockRpcClient } from "../test-support/mock-rpc-client.js";
@@ -81,12 +82,16 @@ function priv(el: IcDashboard) {
     _costSparklineData: number[];
     _agentBilling: Map<string, { cost: number; tokens: number }>;
     _loadData(): Promise<void>;
+    _loadAgents(): Promise<void>;
     _loadRpcData(): Promise<void>;
     _loadSparklineData(): Promise<void>;
     _loadAgentBilling(): Promise<void>;
+    _changeAgentStatus(action: "suspend" | "resume", agentId: string): Promise<void>;
+    _confirmAgentDelete(): Promise<void>;
     _computeDelta(current: number, previous: number): { trend: string; trendValue: string };
     _navigate(route: string): void;
     _makeKeyHandler(route: string): (e: KeyboardEvent) => void;
+    _deleteTarget: DashboardTestAgent | null;
     _rpcRefreshInterval: ReturnType<typeof setInterval> | null;
     _sse: unknown;
     _initSse(): void;
@@ -96,11 +101,44 @@ function priv(el: IcDashboard) {
   };
 }
 
+interface DashboardTestAgent {
+  id: string;
+  name?: string;
+  provider: string;
+  model: string;
+  status: string;
+}
+
+async function renderDashboardAgentCard(
+  el: IcDashboard,
+  agent: DashboardTestAgent,
+  rpcClient: RpcClient | null = null,
+): Promise<HTMLElement & { updateComplete: Promise<boolean> }> {
+  priv(el)._agents = [agent];
+  priv(el)._loadState = "loaded";
+  priv(el).rpcClient = rpcClient;
+  document.body.appendChild(el);
+  await el.updateComplete;
+
+  const agentCard = el.shadowRoot?.querySelector("ic-agent-card") as
+    | (HTMLElement & { updateComplete: Promise<boolean> })
+    | null;
+  expect(agentCard).not.toBeNull();
+  await agentCard?.updateComplete;
+  expect(agentCard?.shadowRoot).not.toBeNull();
+  return agentCard!;
+}
+
 describe("IcDashboard", () => {
   let el: IcDashboard;
 
   beforeEach(() => {
     el = document.createElement("ic-dashboard") as IcDashboard;
+  });
+
+  afterEach(() => {
+    el.remove();
+    vi.restoreAllMocks();
   });
 
   // =========================================================================
@@ -268,6 +306,35 @@ describe("IcDashboard", () => {
       expect(priv(el)._loadState).toBe("loaded");
     });
 
+    it("does not let an older full load overwrite a newer lifecycle roster", async () => {
+      let resolveFullRoster!: (agents: DashboardTestAgent[]) => void;
+      let resolveLifecycleRoster!: (agents: DashboardTestAgent[]) => void;
+      const fullRoster = new Promise<DashboardTestAgent[]>((resolve) => {
+        resolveFullRoster = resolve;
+      });
+      const lifecycleRoster = new Promise<DashboardTestAgent[]>((resolve) => {
+        resolveLifecycleRoster = resolve;
+      });
+      priv(el).apiClient = createMockApiClient({
+        getAgents: vi.fn()
+          .mockReturnValueOnce(fullRoster)
+          .mockReturnValueOnce(lifecycleRoster),
+      });
+
+      const fullLoad = priv(el)._loadData();
+      const lifecycleLoad = priv(el)._loadAgents();
+      resolveLifecycleRoster([
+        { id: "agent-new", provider: "openai", model: "gpt-4", status: "active" },
+      ]);
+      await lifecycleLoad;
+      resolveFullRoster([
+        { id: "agent-stale", provider: "anthropic", model: "claude", status: "active" },
+      ]);
+      await fullLoad;
+
+      expect(priv(el)._agents.map((agent) => agent.id)).toEqual(["agent-new"]);
+    });
+
     it("resets to loading state and clears error at start of _loadData", async () => {
       const mockClient = createMockApiClient();
       priv(el).apiClient = mockClient;
@@ -287,6 +354,42 @@ describe("IcDashboard", () => {
   // =========================================================================
 
   describe("RPC data fetching", () => {
+    it("loads the initial dashboard RPC dataset once when both clients arrive together", async () => {
+      const agent = {
+        id: "agent-alpha",
+        name: "Agent Alpha",
+        provider: "anthropic",
+        model: "claude",
+        status: "active",
+      };
+      const mockApi = createMockApiClient({
+        getAgents: vi.fn().mockResolvedValue([agent]),
+      });
+      const mockRpc = createMockRpcClient();
+
+      priv(el).apiClient = mockApi;
+      priv(el).rpcClient = mockRpc;
+      document.body.appendChild(el);
+      await el.updateComplete;
+
+      await vi.waitFor(() => {
+        expect(priv(el)._loadState).toBe("loaded");
+        expect(
+          vi.mocked(mockRpc.call).mock.calls.filter(
+            ([method]) => method === "obs.billing.byAgent",
+          ),
+        ).not.toHaveLength(0);
+      });
+
+      const rpcCalls = vi.mocked(mockRpc.call).mock.calls;
+      expect(rpcCalls.filter(([method]) => method === "gateway.status")).toHaveLength(1);
+      expect(rpcCalls.filter(([method]) => method === "obs.billing.total")).toHaveLength(9);
+      expect(
+        rpcCalls.filter(([method]) => method === "obs.billing.byAgent"),
+      ).toEqual([["obs.billing.byAgent", { agentId: "agent-alpha" }]]);
+      expect(rpcCalls).toHaveLength(16);
+    });
+
     it("rpcClient.call invoked for gateway.status", async () => {
       const mockRpc = createMockRpcClient();
       priv(el).rpcClient = mockRpc;
@@ -508,6 +611,176 @@ describe("IcDashboard", () => {
       document.dispatchEvent(new CustomEvent("session:created"));
       expect(priv(el)._sessionCount).toBe(8);
     });
+
+    it("applies process metrics without scheduling a full dashboard reload", async () => {
+      const mockDispatcher = createMockEventDispatcher();
+      priv(el).eventDispatcher = mockDispatcher;
+      priv(el)._systemHealth = {
+        uptime: 10,
+        memoryUsage: 20,
+        eventLoopDelay: 30,
+        nodeVersion: "v-test",
+      };
+      document.body.appendChild(el);
+      priv(el)._initSse();
+      const loadDataSpy = vi.spyOn(priv(el), "_loadData");
+
+      document.dispatchEvent(new CustomEvent("observability:metrics", {
+        detail: {
+          rssBytes: 512,
+          heapUsedBytes: 256,
+          heapTotalBytes: 384,
+          externalBytes: 64,
+          eventLoopDelayMs: { min: 1, max: 9, mean: 3, p50: 2, p99: 8 },
+          activeHandles: 12,
+          uptimeSeconds: 42,
+          timestamp: 1_000,
+        },
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 550));
+
+      expect(loadDataSpy).not.toHaveBeenCalled();
+      expect(priv(el)._systemHealth).toEqual({
+        uptime: 42,
+        memoryUsage: 512,
+        eventLoopDelay: 8,
+        nodeVersion: "v-test",
+      });
+    });
+
+    it("refreshes only the agent roster for hot agent lifecycle events", async () => {
+      const mockDispatcher = createMockEventDispatcher();
+      const apiClient = createMockApiClient({
+        getAgents: vi.fn().mockResolvedValue([
+          { id: "a1", provider: "openai", model: "gpt-4", status: "active" },
+        ]),
+      });
+      const rpcClient = createMockRpcClient();
+      priv(el).apiClient = apiClient;
+      priv(el).rpcClient = rpcClient;
+      priv(el).eventDispatcher = mockDispatcher;
+      document.body.appendChild(el);
+
+      await vi.waitFor(() => {
+        expect(rpcClient.call).toHaveBeenCalledWith("gateway.status");
+      });
+
+      for (const eventType of ["agent:hot_added", "agent:hot_removed"]) {
+        vi.mocked(apiClient.getAgents).mockClear();
+        vi.mocked(apiClient.getChannels).mockClear();
+        vi.mocked(apiClient.getActivity).mockClear();
+        vi.mocked(rpcClient.call).mockClear();
+
+        document.dispatchEvent(new CustomEvent(eventType));
+        await new Promise((resolve) => setTimeout(resolve, 350));
+
+        expect(apiClient.getAgents).toHaveBeenCalledTimes(1);
+        expect(apiClient.getChannels).not.toHaveBeenCalled();
+        expect(apiClient.getActivity).not.toHaveBeenCalled();
+        expect(rpcClient.call).not.toHaveBeenCalled();
+      }
+    });
+
+    it("keeps the newest agent roster when lifecycle refreshes resolve out of order", async () => {
+      let resolveFirst!: (agents: DashboardTestAgent[]) => void;
+      let resolveSecond!: (agents: DashboardTestAgent[]) => void;
+      const first = new Promise<DashboardTestAgent[]>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const second = new Promise<DashboardTestAgent[]>((resolve) => {
+        resolveSecond = resolve;
+      });
+      const apiClient = createMockApiClient({
+        getAgents: vi.fn()
+          .mockReturnValueOnce(first)
+          .mockReturnValueOnce(second),
+      });
+      priv(el).apiClient = apiClient;
+
+      const firstLoad = priv(el)._loadAgents();
+      const secondLoad = priv(el)._loadAgents();
+      resolveSecond([
+        { id: "agent-new", provider: "openai", model: "gpt-4", status: "active" },
+      ]);
+      await secondLoad;
+      resolveFirst([
+        { id: "agent-stale", provider: "anthropic", model: "claude", status: "active" },
+      ]);
+      await firstLoad;
+
+      expect(priv(el)._agents.map((agent) => agent.id)).toEqual(["agent-new"]);
+    });
+
+    it("keeps a successful status mutation when an older roster refresh finishes later", async () => {
+      let resolveRoster!: (agents: DashboardTestAgent[]) => void;
+      const pendingRoster = new Promise<DashboardTestAgent[]>((resolve) => {
+        resolveRoster = resolve;
+      });
+      priv(el).apiClient = createMockApiClient({
+        getAgents: vi.fn().mockReturnValue(pendingRoster),
+      });
+      priv(el).rpcClient = createMockRpcClient();
+      priv(el)._agents = [
+        { id: "agent-alpha", provider: "anthropic", model: "claude", status: "active" },
+      ];
+
+      const rosterLoad = priv(el)._loadAgents();
+      await priv(el)._changeAgentStatus("suspend", "agent-alpha");
+      resolveRoster([
+        { id: "agent-alpha", provider: "anthropic", model: "claude", status: "active" },
+      ]);
+      await rosterLoad;
+
+      expect(priv(el)._agents[0]?.status).toBe("suspended");
+    });
+
+    it("keeps a successful deletion when an older roster refresh finishes later", async () => {
+      let resolveRoster!: (agents: DashboardTestAgent[]) => void;
+      const pendingRoster = new Promise<DashboardTestAgent[]>((resolve) => {
+        resolveRoster = resolve;
+      });
+      priv(el).apiClient = createMockApiClient({
+        getAgents: vi.fn().mockReturnValue(pendingRoster),
+      });
+      priv(el).rpcClient = createMockRpcClient();
+      priv(el)._agents = [
+        { id: "agent-alpha", provider: "anthropic", model: "claude", status: "active" },
+        { id: "agent-beta", provider: "openai", model: "gpt-4", status: "active" },
+      ];
+      priv(el)._deleteTarget = priv(el)._agents[0] ?? null;
+
+      const rosterLoad = priv(el)._loadAgents();
+      await priv(el)._confirmAgentDelete();
+      resolveRoster([
+        { id: "agent-alpha", provider: "anthropic", model: "claude", status: "active" },
+        { id: "agent-beta", provider: "openai", model: "gpt-4", status: "active" },
+      ]);
+      await rosterLoad;
+
+      expect(priv(el)._agents.map((agent) => agent.id)).toEqual(["agent-beta"]);
+    });
+
+    it("removes billing entries for agents missing from a lifecycle roster refresh", async () => {
+      priv(el).apiClient = createMockApiClient({
+        getAgents: vi.fn().mockResolvedValue([
+          { id: "agent-beta", provider: "openai", model: "gpt-4", status: "active" },
+        ]),
+      });
+      priv(el)._agents = [
+        { id: "agent-alpha", provider: "anthropic", model: "claude", status: "active" },
+        { id: "agent-beta", provider: "openai", model: "gpt-4", status: "active" },
+      ];
+      priv(el)._agentBilling = new Map([
+        ["agent-alpha", { cost: 1, tokens: 10 }],
+        ["agent-beta", { cost: 2, tokens: 20 }],
+      ]);
+
+      await priv(el)._loadAgents();
+
+      expect([...priv(el)._agentBilling.entries()]).toEqual([
+        ["agent-beta", { cost: 2, tokens: 20 }],
+      ]);
+    });
   });
 
   // =========================================================================
@@ -603,6 +876,411 @@ describe("IcDashboard", () => {
 
       expect(spy).not.toHaveBeenCalled();
     });
+
+    it("routes dashboard configure action to the selected agent editor", async () => {
+      const navigateSpy = vi.fn();
+      el.addEventListener("navigate", navigateSpy);
+      const agentCard = await renderDashboardAgentCard(el, {
+        id: "agent-alpha",
+        name: "Agent Alpha",
+        provider: "anthropic",
+        model: "claude",
+        status: "active",
+      });
+
+      const configureButton = agentCard.shadowRoot?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Configure Agent Alpha"]',
+      );
+      expect(configureButton).not.toBeNull();
+      configureButton?.click();
+
+      expect(navigateSpy).toHaveBeenCalledTimes(1);
+      expect((navigateSpy.mock.calls[0][0] as CustomEvent).detail).toBe(
+        "agents/agent-alpha/edit",
+      );
+    });
+
+    it("suspends an active agent from the dashboard card action", async () => {
+      const rpcClient = createMockRpcClient();
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        rpcClient,
+      );
+
+      const suspendButton = agentCard.shadowRoot?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Suspend Agent Alpha"]',
+      );
+      expect(suspendButton).not.toBeNull();
+      suspendButton?.click();
+
+      await vi.waitFor(() => {
+        expect(rpcClient.call).toHaveBeenCalledWith("agents.suspend", {
+          agentId: "agent-alpha",
+        });
+      });
+    });
+
+    it("refreshes the dashboard card after a successful suspend action", async () => {
+      const rpcClient = createMockRpcClient();
+      const toastSpy = vi.spyOn(IcToast, "show");
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        rpcClient,
+      );
+      priv(el).apiClient = createMockApiClient({
+        getAgents: vi.fn().mockResolvedValue([
+          {
+            id: "agent-alpha",
+            name: "Agent Alpha",
+            provider: "anthropic",
+            model: "claude",
+            status: "suspended",
+          },
+        ]),
+      });
+
+      agentCard.shadowRoot
+        ?.querySelector<HTMLButtonElement>('button[aria-label="Suspend Agent Alpha"]')
+        ?.click();
+
+      await vi.waitFor(() => {
+        expect(toastSpy).toHaveBeenCalledWith("Agent agent-alpha suspended", "success");
+        const refreshedCard = el.shadowRoot?.querySelector("ic-agent-card");
+        expect(
+          refreshedCard?.shadowRoot?.querySelector(
+            'button[aria-label="Resume Agent Alpha"]',
+          ),
+        ).not.toBeNull();
+      });
+    });
+
+    it("updates dashboard agent status without reloading unrelated datasets", async () => {
+      const rpcClient = createMockRpcClient();
+      const apiClient = createMockApiClient({
+        getAgents: vi.fn().mockResolvedValue([
+          {
+            id: "agent-alpha",
+            name: "Agent Alpha",
+            provider: "anthropic",
+            model: "claude",
+            status: "suspended",
+          },
+        ]),
+      });
+      priv(el).rpcClient = rpcClient;
+      priv(el).apiClient = apiClient;
+      priv(el)._agents = [
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+      ];
+
+      await priv(el)._changeAgentStatus("suspend", "agent-alpha");
+
+      expect(rpcClient.call).toHaveBeenCalledTimes(1);
+      expect(rpcClient.call).toHaveBeenCalledWith("agents.suspend", {
+        agentId: "agent-alpha",
+      });
+      expect(apiClient.getAgents).not.toHaveBeenCalled();
+      expect(apiClient.getChannels).not.toHaveBeenCalled();
+      expect(apiClient.getActivity).not.toHaveBeenCalled();
+      expect(priv(el)._agents[0]?.status).toBe("suspended");
+    });
+
+    it("resumes a suspended agent from the dashboard card action", async () => {
+      const rpcClient = createMockRpcClient();
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "suspended",
+        },
+        rpcClient,
+      );
+
+      const resumeButton = agentCard.shadowRoot?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Resume Agent Alpha"]',
+      );
+      expect(resumeButton).not.toBeNull();
+      resumeButton?.click();
+
+      await vi.waitFor(() => {
+        expect(rpcClient.call).toHaveBeenCalledWith("agents.resume", {
+          agentId: "agent-alpha",
+        });
+      });
+    });
+
+    it("confirms dashboard agent deletion before calling the delete RPC", async () => {
+      const rpcClient = createMockRpcClient();
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        rpcClient,
+      );
+
+      const deleteButton = agentCard.shadowRoot?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Delete Agent Alpha"]',
+      );
+      expect(deleteButton).not.toBeNull();
+      deleteButton?.click();
+      await el.updateComplete;
+
+      expect(rpcClient.call).not.toHaveBeenCalledWith("agents.delete", {
+        agentId: "agent-alpha",
+      });
+      const dialog = el.shadowRoot?.querySelector("ic-confirm-dialog");
+      expect(dialog).not.toBeNull();
+      dialog?.dispatchEvent(new CustomEvent("confirm"));
+
+      await vi.waitFor(() => {
+        expect(rpcClient.call).toHaveBeenCalledWith("agents.delete", {
+          agentId: "agent-alpha",
+        });
+      });
+    });
+
+    it("removes a deleted dashboard agent without reloading unrelated datasets", async () => {
+      const rpcClient = createMockRpcClient();
+      const apiClient = createMockApiClient({
+        getAgents: vi.fn().mockResolvedValue([
+          {
+            id: "agent-beta",
+            name: "Agent Beta",
+            provider: "openai",
+            model: "gpt-4",
+            status: "active",
+          },
+        ]),
+      });
+      priv(el).rpcClient = rpcClient;
+      priv(el).apiClient = apiClient;
+      priv(el)._agents = [
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        {
+          id: "agent-beta",
+          name: "Agent Beta",
+          provider: "openai",
+          model: "gpt-4",
+          status: "active",
+        },
+      ];
+      priv(el)._deleteTarget = priv(el)._agents[0] ?? null;
+
+      await priv(el)._confirmAgentDelete();
+
+      expect(rpcClient.call).toHaveBeenCalledTimes(1);
+      expect(rpcClient.call).toHaveBeenCalledWith("agents.delete", {
+        agentId: "agent-alpha",
+      });
+      expect(apiClient.getAgents).not.toHaveBeenCalled();
+      expect(apiClient.getChannels).not.toHaveBeenCalled();
+      expect(apiClient.getActivity).not.toHaveBeenCalled();
+      expect(priv(el)._agents.map((agent) => agent.id)).toEqual(["agent-beta"]);
+    });
+
+    it("locks dashboard agent actions while deletion is in flight", async () => {
+      let resolveDelete!: (value: unknown) => void;
+      const deletePromise = new Promise<unknown>((resolve) => {
+        resolveDelete = resolve;
+      });
+      const rpcClient = createMockRpcClient((method) =>
+        method === "agents.delete" ? deletePromise : Promise.resolve({}),
+      );
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        rpcClient,
+      );
+
+      agentCard.shadowRoot
+        ?.querySelector<HTMLButtonElement>('button[aria-label="Delete Agent Alpha"]')
+        ?.click();
+      await el.updateComplete;
+      el.shadowRoot
+        ?.querySelector("ic-confirm-dialog")
+        ?.dispatchEvent(new CustomEvent("confirm"));
+
+      await vi.waitFor(() => {
+        expect(rpcClient.call).toHaveBeenCalledWith("agents.delete", {
+          agentId: "agent-alpha",
+        });
+      });
+      await el.updateComplete;
+      await agentCard.updateComplete;
+
+      const actionButtons = agentCard.shadowRoot?.querySelectorAll<HTMLButtonElement>(
+        ".action-btn",
+      );
+      expect(Array.from(actionButtons ?? []).every((button) => button.disabled)).toBe(true);
+      agentCard.shadowRoot
+        ?.querySelector<HTMLButtonElement>('button[aria-label="Suspend Agent Alpha"]')
+        ?.click();
+      expect(rpcClient.call).not.toHaveBeenCalledWith("agents.suspend", {
+        agentId: "agent-alpha",
+      });
+
+      resolveDelete({});
+      await vi.waitFor(() => {
+        expect(el.shadowRoot?.querySelector("ic-agent-card")).toBeNull();
+      });
+    });
+
+    it("cancels dashboard agent deletion without calling the delete RPC", async () => {
+      const rpcClient = createMockRpcClient();
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        rpcClient,
+      );
+
+      const deleteButton = agentCard.shadowRoot?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Delete Agent Alpha"]',
+      );
+      expect(deleteButton).not.toBeNull();
+      deleteButton?.click();
+      await el.updateComplete;
+
+      const dialog = el.shadowRoot?.querySelector("ic-confirm-dialog");
+      expect(dialog).not.toBeNull();
+      dialog?.dispatchEvent(new CustomEvent("cancel"));
+      await el.updateComplete;
+
+      expect(el.shadowRoot?.querySelector("ic-confirm-dialog")).toBeNull();
+      expect(rpcClient.call).not.toHaveBeenCalledWith("agents.delete", {
+        agentId: "agent-alpha",
+      });
+    });
+
+    it("reports dashboard suspend failures and allows the action to be retried", async () => {
+      const rpcClient = createMockRpcClient(
+        (method) => {
+          if (method === "agents.suspend") {
+            return Promise.reject(new Error("suspend denied"));
+          }
+          return Promise.resolve({});
+        },
+        { status: "disconnected" as ConnectionStatus },
+      );
+      const toastSpy = vi.spyOn(IcToast, "show");
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        rpcClient,
+      );
+      const suspendButton = agentCard.shadowRoot?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Suspend Agent Alpha"]',
+      );
+      expect(suspendButton).not.toBeNull();
+
+      suspendButton?.click();
+      await vi.waitFor(() => {
+        expect(toastSpy).toHaveBeenCalledWith(
+          "Failed to suspend agent: suspend denied",
+          "error",
+        );
+      });
+      suspendButton?.click();
+
+      await vi.waitFor(() => {
+        const suspendCalls = vi.mocked(rpcClient.call).mock.calls.filter(
+          ([method]) => method === "agents.suspend",
+        );
+        expect(suspendCalls).toHaveLength(2);
+      });
+    });
+
+    it("reports dashboard delete failures after confirmation", async () => {
+      const rpcClient = createMockRpcClient(
+        (method) => {
+          if (method === "agents.delete") {
+            return Promise.reject(new Error("delete denied"));
+          }
+          return Promise.resolve({});
+        },
+        { status: "disconnected" as ConnectionStatus },
+      );
+      const toastSpy = vi.spyOn(IcToast, "show");
+      const agentCard = await renderDashboardAgentCard(
+        el,
+        {
+          id: "agent-alpha",
+          name: "Agent Alpha",
+          provider: "anthropic",
+          model: "claude",
+          status: "active",
+        },
+        rpcClient,
+      );
+      const deleteButton = agentCard.shadowRoot?.querySelector<HTMLButtonElement>(
+        'button[aria-label="Delete Agent Alpha"]',
+      );
+      expect(deleteButton).not.toBeNull();
+      deleteButton?.click();
+      await el.updateComplete;
+
+      el.shadowRoot
+        ?.querySelector("ic-confirm-dialog")
+        ?.dispatchEvent(new CustomEvent("confirm"));
+
+      await vi.waitFor(() => {
+        expect(toastSpy).toHaveBeenCalledWith(
+          "Failed to delete agent: delete denied",
+          "error",
+        );
+      });
+    });
   });
 
   // =========================================================================
@@ -649,6 +1327,69 @@ describe("IcDashboard", () => {
       expect(priv(el)._agentBilling.size).toBe(1);
       expect(priv(el)._agentBilling.has("a1")).toBe(true);
       expect(priv(el)._agentBilling.has("a2")).toBe(false);
+    });
+
+    it("attributes in-flight billing results to the roster that started each request", async () => {
+      let resolveA1!: (value: { totalCost: number; totalTokens: number }) => void;
+      let resolveA2!: (value: { totalCost: number; totalTokens: number }) => void;
+      const a1Result = new Promise<{ totalCost: number; totalTokens: number }>((resolve) => {
+        resolveA1 = resolve;
+      });
+      const a2Result = new Promise<{ totalCost: number; totalTokens: number }>((resolve) => {
+        resolveA2 = resolve;
+      });
+      const mockRpc = createMockRpcClient(undefined, {
+        call: vi.fn().mockImplementation((_method: string, params?: unknown) =>
+          (params as { agentId: string }).agentId === "a1" ? a1Result : a2Result,
+        ),
+      });
+      priv(el).rpcClient = mockRpc;
+      priv(el)._agents = [
+        { id: "a1", provider: "anthropic", model: "claude", status: "active" },
+        { id: "a2", provider: "openai", model: "gpt-4", status: "active" },
+      ];
+
+      const billingLoad = priv(el)._loadAgentBilling();
+      priv(el)._agents = [
+        { id: "a2", provider: "openai", model: "gpt-4", status: "active" },
+        { id: "a3", provider: "openai", model: "gpt-4", status: "active" },
+      ];
+      resolveA1({ totalCost: 1, totalTokens: 10 });
+      resolveA2({ totalCost: 2, totalTokens: 20 });
+      await billingLoad;
+
+      expect([...priv(el)._agentBilling.entries()]).toEqual([
+        ["a2", { cost: 2, tokens: 20 }],
+      ]);
+    });
+
+    it("keeps the newest billing refresh when overlapping requests resolve out of order", async () => {
+      let resolveFirst!: (value: { totalCost: number; totalTokens: number }) => void;
+      let resolveSecond!: (value: { totalCost: number; totalTokens: number }) => void;
+      const firstResult = new Promise<{ totalCost: number; totalTokens: number }>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const secondResult = new Promise<{ totalCost: number; totalTokens: number }>((resolve) => {
+        resolveSecond = resolve;
+      });
+      const mockRpc = createMockRpcClient(undefined, {
+        call: vi.fn()
+          .mockReturnValueOnce(firstResult)
+          .mockReturnValueOnce(secondResult),
+      });
+      priv(el).rpcClient = mockRpc;
+      priv(el)._agents = [
+        { id: "a1", provider: "anthropic", model: "claude", status: "active" },
+      ];
+
+      const firstLoad = priv(el)._loadAgentBilling();
+      const secondLoad = priv(el)._loadAgentBilling();
+      resolveSecond({ totalCost: 2, totalTokens: 20 });
+      await secondLoad;
+      resolveFirst({ totalCost: 1, totalTokens: 10 });
+      await firstLoad;
+
+      expect(priv(el)._agentBilling.get("a1")).toEqual({ cost: 2, tokens: 20 });
     });
 
     it("_loadAgentBilling does nothing when agents array is empty", async () => {

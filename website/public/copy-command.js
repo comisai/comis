@@ -12,7 +12,7 @@ if (copyButton && copyLabel && copyStatus && command) {
     try {
       await navigator.clipboard.writeText(commandText);
       copyLabel.textContent = "Copied";
-      copyStatus.textContent = "Installer download command copied.";
+      copyStatus.textContent = "One-line installer command copied.";
       copyButton.dataset.state = "success";
     } catch {
       const selection = window.getSelection();

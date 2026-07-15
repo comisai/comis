@@ -15,7 +15,7 @@
  * @module
  */
 
-import { AuthorizationError } from "./errors.js";
+import { AuthorizationError, PreconditionError } from "./errors.js";
 import {
   PerAgentConfigSchema,
   AgentsCreateContract,
@@ -28,6 +28,7 @@ import {
   stripInternalFields,
   systemGetEnv,
   findOperatorOnlyAgentPaths,
+  sanitizeLogString,
   systemNowMs,
 } from "@comis/core";
 import type {
@@ -60,7 +61,7 @@ import {
   type AgentInlineWorkspaceError,
 } from "./agent-inline-workspace.js";
 import { probeProviderAuth } from "./shared/probe-provider-auth.js";
-import { resolveProviderCredential } from "./shared/credential-resolver.js";
+import { resolveProviderCredentialWithStore } from "./shared/credential-resolver.js";
 
 import type { RpcHandler } from "./types.js";
 
@@ -200,28 +201,19 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       //
       // Also plumb agents.<id>.oauthProfiles + the daemon-level OAuth
       // credential store so OAuth-only providers (e.g. openai-codex) can
-      // resolve via Source C. Pre-resolve has() so the resolver itself stays
-      // synchronous (port-side validator does no I/O).
+      // resolve via Source C.
       {
         const targetProvider = parsedConfig.provider;
-        // eslint-disable-next-line security/detect-object-injection -- typed Record<string, string> read; targetProvider validated by schema parse
-        const configuredProfileId = parsedConfig.oauthProfiles?.[targetProvider];
-        let loaderHasProfile = false;
-        if (configuredProfileId && deps.oauthCredentialStore) {
-          const hasResult = await deps.oauthCredentialStore.has(configuredProfileId);
-          loaderHasProfile = hasResult.ok && hasResult.value === true;
-        }
-        const credCheck = resolveProviderCredential(targetProvider, {
+        const credResult = await resolveProviderCredentialWithStore(targetProvider, {
           providerEntries: deps.providerEntries ?? {},
           secretManager: deps.secretManager,
           modelsConfig: deps.modelsConfig,
           oauthProfiles: parsedConfig.oauthProfiles,
-          oauthProfileLoader: configuredProfileId
-            ? { has: (id) => id === configuredProfileId && loaderHasProfile }
-            : undefined,
-        });
+        }, deps.oauthCredentialStore);
+        if (!credResult.ok) throw credResult.error;
+        const credCheck = credResult.value;
         if (!credCheck.ok) {
-          throw new Error(credCheck.reason!);
+          throw new PreconditionError(credCheck.reason!);
         }
       }
 
@@ -442,8 +434,13 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       if (parsedConfig.oauthProfiles !== undefined && deps.oauthCredentialStore) {
         for (const [provider, profileId] of Object.entries(parsedConfig.oauthProfiles)) {
           const has = await deps.oauthCredentialStore.has(profileId);
-          if (!has.ok || !has.value) {
+          if (!has.ok) {
             throw new Error(
+              `Failed to inspect OAuth credential store: ${sanitizeLogString(has.error.message)}`,
+            );
+          }
+          if (!has.value) {
+            throw new PreconditionError(
               `profile ${profileId} not found in store. Run "comis auth list" to see available profiles.`,
             );
           }
@@ -474,27 +471,17 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       if (providerChanging) {
         const targetProvider = parsedConfig.provider;
 
-        // Pre-resolve has() at the daemon edge so the resolver stays sync.
-        // eslint-disable-next-line security/detect-object-injection -- typed Record<string, string> read; targetProvider validated by schema parse
-        const configuredProfileId = parsedConfig.oauthProfiles?.[targetProvider];
-        let loaderHasProfile = false;
-        if (configuredProfileId && deps.oauthCredentialStore) {
-          const hasResult = await deps.oauthCredentialStore.has(configuredProfileId);
-          loaderHasProfile = hasResult.ok && hasResult.value === true;
-        }
-
         // (a) GUARD — fail-loud if no credential source resolves
-        const resolution = resolveProviderCredential(targetProvider, {
+        const resolutionResult = await resolveProviderCredentialWithStore(targetProvider, {
           providerEntries: deps.providerEntries ?? {},
           secretManager: deps.secretManager,
           modelsConfig: deps.modelsConfig,
           oauthProfiles: parsedConfig.oauthProfiles,
-          oauthProfileLoader: configuredProfileId
-            ? { has: (id) => id === configuredProfileId && loaderHasProfile }
-            : undefined,
-        });
+        }, deps.oauthCredentialStore);
+        if (!resolutionResult.ok) throw resolutionResult.error;
+        const resolution = resolutionResult.value;
         if (!resolution.ok) {
-          throw new Error(resolution.reason!);
+          throw new PreconditionError(resolution.reason!);
         }
 
         // (b) PROBE — preexisting behavior, fires only when an explicit

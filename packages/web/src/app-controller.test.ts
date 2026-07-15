@@ -239,6 +239,22 @@ describe("AppController", () => {
     expect(host._pollingController).not.toBeNull();
   });
 
+  it("init: mirrors the pending RPC connection before the socket opens", async () => {
+    const host = makeHost();
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ agents: [] }),
+    });
+    const controller = createAppController(host);
+
+    controller.initWithToken("good-token");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(host._rpcClient?.status).toBe("reconnecting");
+    expect(host._globalState?.connectionStatus).toBe("reconnecting");
+    expect(host._connectionStatus).toBe("reconnecting");
+  });
+
   it("handleLogin: empty token sets _authError without calling fetch", () => {
     const host = makeHost();
     const controller = createAppController(host);

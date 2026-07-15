@@ -516,6 +516,20 @@ describe("PerAgentConfigSchema oauthProfiles", () => {
     }
   });
 
+  it("rejects a profile ID whose provider differs from its map key", () => {
+    const result = PerAgentConfigSchema.safeParse({
+      oauthProfiles: {
+        "openai-codex": "anthropic:user_a@example.com",
+      },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(JSON.stringify(result.error.issues)).toMatch(/must match map key/);
+      expect(result.error.issues.some((issue) => issue.path.includes("openai-codex"))).toBe(true);
+    }
+  });
+
   it("rejects an empty profile-ID value", () => {
     const result = PerAgentConfigSchema.safeParse({
       oauthProfiles: { "openai-codex": "" },

@@ -21,10 +21,13 @@ import "../components/data/ic-stat-card.js";
 import "../components/data/ic-sparkline.js";
 import "../components/data/ic-progress-bar.js";
 import "../components/data/ic-metric-gauge.js";
+import type { AgentCardActionDetail } from "../components/agent-card.js";
 import "../components/agent-card.js";
 import "../components/channel-badge.js";
 import "../components/activity-feed.js";
 import "../components/shell/ic-skeleton-view.js";
+import "../components/feedback/ic-confirm-dialog.js";
+import { IcToast } from "../components/feedback/ic-toast.js";
 
 type LoadState = "loading" | "loaded" | "error";
 
@@ -471,6 +474,8 @@ export class IcDashboard extends LitElement {
   @state() private _tokenSparklineData: number[] = [];
   @state() private _costSparklineData: number[] = [];
   @state() private _agentBilling: Map<string, { cost: number; tokens: number }> = new Map();
+  @state() private _deleteTarget: AgentInfo | null = null;
+  @state() private _agentActionPending = "";
   /** Mirrors rpcClient.status so render() can react to WS connect/disconnect. */
   @state() private _rpcStatus: "connected" | "reconnecting" | "disconnected" = "disconnected";
 
@@ -478,6 +483,14 @@ export class IcDashboard extends LitElement {
   private _rpcRefreshInterval: ReturnType<typeof setInterval> | null = null;
   private _reloadDebounce: ReturnType<typeof setTimeout> | null = null;
   private _rpcStatusUnsub: (() => void) | null = null;
+  private _agentRosterRequestRevision = 0;
+  private _agentBillingRequestRevision = 0;
+  private _agentMutationRevision = 0;
+  private readonly _agentStatusMutations = new Map<
+    string,
+    { revision: number; status: string }
+  >();
+  private readonly _agentDeletionMutations = new Map<string, number>();
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -499,13 +512,16 @@ export class IcDashboard extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>): void {
-    if (changed.has("apiClient") && this.apiClient) {
+    const loadsRpcAfterRest = changed.has("apiClient") && this.apiClient !== null;
+    if (loadsRpcAfterRest) {
       this._loadData();
     }
     if (changed.has("rpcClient")) {
       this._stopRpcRefresh();
       this._startRpcRefresh();
-      this._loadRpcData();
+      if (!loadsRpcAfterRest) {
+        this._loadRpcData();
+      }
       // Track RPC status so render() can show "---" placeholders when disconnected.
       this._rpcStatusUnsub?.();
       this._rpcStatusUnsub = null;
@@ -546,6 +562,88 @@ export class IcDashboard extends LitElement {
     };
   }
 
+  private _handleAgentAction(
+    e: CustomEvent<AgentCardActionDetail>,
+  ): void {
+    const { action, agentId } = e.detail;
+    switch (action) {
+      case "configure":
+        this._navigate(`agents/${agentId}/edit`);
+        return;
+      case "suspend":
+      case "resume":
+        void this._changeAgentStatus(action, agentId);
+        return;
+      case "delete":
+        if (this._agentActionPending) return;
+        this._deleteTarget = this._agents.find((agent) => agent.id === agentId) ?? null;
+        return;
+      default: {
+        const _exhaustive: never = action;
+        return _exhaustive;
+      }
+    }
+  }
+
+  private async _changeAgentStatus(
+    action: "suspend" | "resume",
+    agentId: string,
+  ): Promise<void> {
+    if (!this.rpcClient || this._agentActionPending) return;
+    this._agentActionPending = agentId;
+    try {
+      if (action === "resume") {
+        await this.rpcClient.call("agents.resume", { agentId });
+      } else {
+        await this.rpcClient.call("agents.suspend", { agentId });
+      }
+      // The successful mutation is authoritative for the only agent field this
+      // action changes. A full dashboard reload fans out into many unrelated
+      // metric calls and can exhaust the per-connection WebSocket budget.
+      const status = action === "resume" ? "active" : "suspended";
+      const revision = ++this._agentMutationRevision;
+      this._agentStatusMutations.set(agentId, { revision, status });
+      this._agents = this._agents.map((agent) =>
+        agent.id === agentId ? { ...agent, status } : agent,
+      );
+      IcToast.show(`Agent ${agentId} ${action === "resume" ? "resumed" : "suspended"}`, "success");
+    } catch (err) {
+      IcToast.show(
+        `Failed to ${action} agent: ${err instanceof Error ? err.message : "Unknown error"}`,
+        "error",
+      );
+    } finally {
+      this._agentActionPending = "";
+    }
+  }
+
+  private async _confirmAgentDelete(): Promise<void> {
+    if (!this.rpcClient || !this._deleteTarget || this._agentActionPending) return;
+    const agentId = this._deleteTarget.id;
+    this._deleteTarget = null;
+    this._agentActionPending = agentId;
+    try {
+      await this.rpcClient.call("agents.delete", { agentId });
+      // Deletion only changes the fleet cards and their cached billing entry;
+      // the remaining dashboard datasets do not need to be reloaded.
+      const revision = ++this._agentMutationRevision;
+      this._agentDeletionMutations.set(agentId, revision);
+      this._agentStatusMutations.delete(agentId);
+      this._agents = this._agents.filter((agent) => agent.id !== agentId);
+      const billing = new Map(this._agentBilling);
+      billing.delete(agentId);
+      this._agentBilling = billing;
+      IcToast.show(`Agent ${agentId} deleted`, "success");
+    } catch (err) {
+      IcToast.show(
+        `Failed to delete agent: ${err instanceof Error ? err.message : "Unknown error"}`,
+        "error",
+      );
+    } finally {
+      this._agentActionPending = "";
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // SSE subscription via SseController
   // ---------------------------------------------------------------------------
@@ -558,6 +656,36 @@ export class IcDashboard extends LitElement {
     }, delayMs);
   }
 
+  private _applyProcessMetrics(data: unknown): void {
+    if (data === null || typeof data !== "object") return;
+    const metrics = data as Record<string, unknown>;
+    const delay = metrics.eventLoopDelayMs;
+    if (delay === null || typeof delay !== "object") return;
+
+    const rssBytes = metrics.rssBytes;
+    const uptimeSeconds = metrics.uptimeSeconds;
+    const eventLoopP99Ms = (delay as Record<string, unknown>).p99;
+    if (
+      typeof rssBytes !== "number"
+      || !Number.isFinite(rssBytes)
+      || typeof uptimeSeconds !== "number"
+      || !Number.isFinite(uptimeSeconds)
+      || typeof eventLoopP99Ms !== "number"
+      || !Number.isFinite(eventLoopP99Ms)
+    ) {
+      return;
+    }
+
+    const current = this._systemHealth;
+    this._systemHealth = {
+      uptime: uptimeSeconds,
+      memoryUsage: rssBytes,
+      eventLoopDelay: eventLoopP99Ms,
+      nodeVersion: current?.nodeVersion ?? "---",
+      ...(current?.cpuUsage !== undefined ? { cpuUsage: current.cpuUsage } : {}),
+    };
+  }
+
   private _initSse(): void {
     if (!this.eventDispatcher || this._sse) return;
     this._sse = new SseController(this, this.eventDispatcher, {
@@ -568,12 +696,55 @@ export class IcDashboard extends LitElement {
       "observability:token_usage": () => { this._scheduleReload(); },
       "diagnostic:channel_health": () => { this._scheduleReload(500); },
       "diagnostic:billing_snapshot": () => { this._scheduleReload(); },
-      "agent:hot_added": () => { this._scheduleReload(); },
-      "agent:hot_removed": () => { this._scheduleReload(); },
+      "agent:hot_added": () => { void this._loadAgents(); },
+      "agent:hot_removed": () => { void this._loadAgents(); },
       "channel:registered": () => { this._scheduleReload(); },
       "channel:deregistered": () => { this._scheduleReload(); },
-      "observability:metrics": () => { this._scheduleReload(500); },
+      "observability:metrics": (data) => { this._applyProcessMetrics(data); },
     });
+  }
+
+  private async _loadAgents(): Promise<void> {
+    if (!this.apiClient) return;
+    const requestRevision = ++this._agentRosterRequestRevision;
+    const mutationRevision = this._agentMutationRevision;
+    // Keep the last known roster when the targeted refresh fails. A later
+    // lifecycle event or full dashboard refresh will retry the REST read.
+    const agents = await this.apiClient.getAgents().catch(() => null);
+    if (agents !== null && requestRevision === this._agentRosterRequestRevision) {
+      this._applyAgentRoster(agents, mutationRevision);
+    }
+  }
+
+  private _applyAgentRoster(agents: AgentInfo[], readMutationRevision: number): void {
+    const nextAgents = agents
+      .filter((agent) => {
+        const deletionRevision = this._agentDeletionMutations.get(agent.id);
+        return deletionRevision === undefined || deletionRevision <= readMutationRevision;
+      })
+      .map((agent) => {
+        const mutation = this._agentStatusMutations.get(agent.id);
+        return mutation !== undefined && mutation.revision > readMutationRevision
+          ? { ...agent, status: mutation.status }
+          : agent;
+      });
+
+    this._agents = nextAgents;
+    const agentIds = new Set(nextAgents.map((agent) => agent.id));
+    this._agentBilling = new Map(
+      [...this._agentBilling].filter(([agentId]) => agentIds.has(agentId)),
+    );
+
+    for (const [agentId, mutation] of this._agentStatusMutations) {
+      if (mutation.revision <= readMutationRevision) {
+        this._agentStatusMutations.delete(agentId);
+      }
+    }
+    for (const [agentId, revision] of this._agentDeletionMutations) {
+      if (revision <= readMutationRevision) {
+        this._agentDeletionMutations.delete(agentId);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -748,18 +919,27 @@ export class IcDashboard extends LitElement {
   // ---------------------------------------------------------------------------
 
   private async _loadAgentBilling(): Promise<void> {
-    if (!this.rpcClient || this._agents.length === 0) return;
+    if (!this.rpcClient) return;
+    const requestRevision = ++this._agentBillingRequestRevision;
+    const agentIds = this._agents.slice(0, 20).map((agent) => agent.id);
+    if (agentIds.length === 0) {
+      this._agentBilling = new Map();
+      return;
+    }
 
     const results = await Promise.allSettled(
-      this._agents.slice(0, 20).map((agent) =>
-        this.rpcClient!.call<BillingTotalResult>("obs.billing.byAgent", { agentId: agent.id }),
+      agentIds.map((agentId) =>
+        this.rpcClient!.call<BillingTotalResult>("obs.billing.byAgent", { agentId }),
       ),
     );
 
+    if (requestRevision !== this._agentBillingRequestRevision) return;
+    const currentAgentIds = new Set(this._agents.map((agent) => agent.id));
     const billing = new Map<string, { cost: number; tokens: number }>();
     results.forEach((result, i) => {
-      if (result.status === "fulfilled") {
-        billing.set(this._agents[i].id, {
+      const agentId = agentIds[i];
+      if (result.status === "fulfilled" && agentId !== undefined && currentAgentIds.has(agentId)) {
+        billing.set(agentId, {
           cost: result.value.totalCost ?? 0,
           tokens: result.value.totalTokens ?? 0,
         });
@@ -774,6 +954,8 @@ export class IcDashboard extends LitElement {
 
   private async _loadData(): Promise<void> {
     if (!this.apiClient) return;
+    const requestRevision = ++this._agentRosterRequestRevision;
+    const mutationRevision = this._agentMutationRevision;
 
     this._loadState = "loading";
     this._error = "";
@@ -785,7 +967,9 @@ export class IcDashboard extends LitElement {
         this.apiClient.getActivity(50).catch(() => [] as ActivityEntry[]),
       ]);
 
-      this._agents = agents;
+      if (requestRevision === this._agentRosterRequestRevision) {
+        this._applyAgentRoster(agents, mutationRevision);
+      }
       this._channels = channels;
       this._activity = activity;
       this._loadState = "loaded";
@@ -1131,9 +1315,13 @@ export class IcDashboard extends LitElement {
                         .provider=${agent.provider}
                         .model=${agent.model}
                         .status=${agent.status}
+                        .suspended=${agent.status === "suspended"}
+                        .actionsDisabled=${Boolean(this._agentActionPending)}
                         .agentId=${agent.id}
                         .messagesToday=${agent.messagesToday ?? 0}
                         .tokenUsageToday=${agent.tokenUsageToday ?? 0}
+                        @agent-action=${(e: CustomEvent<AgentCardActionDetail>) =>
+                          this._handleAgentAction(e)}
                       ></ic-agent-card>
                       ${billing ? html`<div class="agent-cost-badge">${costFormatter.format(billing.cost)}</div>` : nothing}
                     </div>
@@ -1174,6 +1362,19 @@ export class IcDashboard extends LitElement {
           ></ic-activity-feed>
         </div>
       </div>
+      ${this._deleteTarget
+        ? html`
+            <ic-confirm-dialog
+              open
+              variant="danger"
+              title="Delete Agent"
+              message=${`Are you sure you want to delete agent ${this._deleteTarget.id}? This cannot be undone.`}
+              confirmLabel="Delete"
+              @confirm=${() => void this._confirmAgentDelete()}
+              @cancel=${() => { this._deleteTarget = null; }}
+            ></ic-confirm-dialog>
+          `
+        : nothing}
     `;
   }
 }

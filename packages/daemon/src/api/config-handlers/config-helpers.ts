@@ -30,7 +30,8 @@ import {
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { createHash } from "node:crypto";
-import { resolveProviderCredential } from "../shared/credential-resolver.js";
+import { PreconditionError } from "../errors.js";
+import { resolveProviderCredentialWithStore } from "../shared/credential-resolver.js";
 
 // Single source of truth: ConfigApiDeps (shared with env-handlers).
 // ConfigHandlerDeps is a local alias of that cluster slice.
@@ -117,9 +118,8 @@ export function extractTargetProvider(
  * providerUnchanged` predicate. Provider-changing patches always run the
  * resolver.
  *
- * Hexagonal discipline: the oauth credential loader's `has()` is awaited
- * once here so the synchronous `resolveProviderCredential` port-side
- * validator stays I/O-free.
+ * Hexagonal discipline: the daemon-edge resolver adapter performs any OAuth
+ * store lookup and feeds a snapshot to the synchronous validator.
  */
 export async function runAgentCredentialGuard(
   deps: ConfigHandlerDeps,
@@ -142,8 +142,8 @@ export async function runAgentCredentialGuard(
   // extractTargetProvider's contract.
   const isModelOnlyPatch = key.endsWith(".model");
   const agentId = key.split(".")[0];
-  // eslint-disable-next-line security/detect-object-injection -- agentId from validated key; agents map is typed Record
   const currentProvider = agentId
+    // eslint-disable-next-line security/detect-object-injection -- agentId from validated key; agents map is typed Record
     ? deps.container.config.agents?.[agentId]?.provider
     : undefined;
   const providerUnchanged = currentProvider === targetProvider;
@@ -152,26 +152,22 @@ export async function runAgentCredentialGuard(
 
   // Provider is changing (or this is a `.provider` patch where
   // targetProvider is the new value) — run the credential guard.
-  // eslint-disable-next-line security/detect-object-injection -- agentId from validated key; agents map is typed Record
   const agentOauthProfiles = (agentId
+    // eslint-disable-next-line security/detect-object-injection -- agentId from validated key; agents map is typed Record
     ? deps.container.config.agents?.[agentId]?.oauthProfiles
     : undefined) as Record<string, string> | undefined;
-  // eslint-disable-next-line security/detect-object-injection -- typed Record<string, string> read; targetProvider validated above
-  const configuredProfileId = agentOauthProfiles?.[targetProvider];
-  let loaderHasProfile = false;
-  if (configuredProfileId && deps.oauthCredentialStore) {
-    const hasResult = await deps.oauthCredentialStore.has(configuredProfileId);
-    loaderHasProfile = hasResult.ok && hasResult.value === true;
-  }
-  const resolution = resolveProviderCredential(targetProvider, {
-    providerEntries: deps.container.config.providers?.entries ?? {},
-    secretManager: deps.container.secretManager,
-    modelsConfig: deps.container.config.models,
-    oauthProfiles: agentOauthProfiles,
-    oauthProfileLoader: configuredProfileId
-      ? { has: (id) => id === configuredProfileId && loaderHasProfile }
-      : undefined,
-  });
+  const resolutionResult = await resolveProviderCredentialWithStore(
+    targetProvider,
+    {
+      providerEntries: deps.container.config.providers?.entries ?? {},
+      secretManager: deps.container.secretManager,
+      modelsConfig: deps.container.config.models,
+      oauthProfiles: agentOauthProfiles,
+    },
+    deps.oauthCredentialStore,
+  );
+  if (!resolutionResult.ok) throw resolutionResult.error;
+  const resolution = resolutionResult.value;
   if (!resolution.ok) {
     deps.logger.warn(
       {
@@ -179,12 +175,12 @@ export async function runAgentCredentialGuard(
         section,
         key,
         targetProvider,
-        hint: "Provider credential not resolvable",
-        errorKind: "validation" as const,
+        hint: "Authenticate the provider or configure its credential before retrying the agent provider change",
+        errorKind: "precondition" as const,
       },
       "Config patch rejected: missing provider credential",
     );
-    throw new Error(resolution.reason!);
+    throw new PreconditionError(resolution.reason!);
   }
 }
 

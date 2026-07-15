@@ -353,7 +353,7 @@ describe("createWsHandler", () => {
     expect(sent.id).toBe(1);
   });
 
-  it("rejects messages exceeding rate limit with JSON-RPC error -32000", async () => {
+  it("correlates a rate-limit error to the rejected JSON-RPC request id", async () => {
     const deps = createHandlerDeps({ messageRateLimit: { maxMessages: 3, windowMs: 60_000 } });
     const events = createWsHandler(deps, TEST_CTX);
     const ws = createMockWs();
@@ -375,6 +375,62 @@ describe("createWsHandler", () => {
     const lastSent = JSON.parse(calls[calls.length - 1][0]);
     expect(lastSent.error.code).toBe(-32000);
     expect(lastSent.error.message).toBe("Message rate limit exceeded");
+    expect(lastSent.id).toBe(4);
+  });
+
+  it("correlates rate-limit errors for batch requests and omits notifications", async () => {
+    const deps = createHandlerDeps({ messageRateLimit: { maxMessages: 1, windowMs: 60_000 } });
+    const events = createWsHandler(deps, TEST_CTX);
+    const ws = createMockWs();
+
+    events.onOpen!(new Event("open"), ws);
+
+    await events.onMessage!(
+      new MessageEvent("message", {
+        data: JSON.stringify({ jsonrpc: "2.0", method: "agent.execute", params: {}, id: 1 }),
+      }),
+      ws,
+    );
+
+    const rejectedBatch = JSON.stringify([
+      { jsonrpc: "2.0", method: "agent.execute", params: {}, id: 21 },
+      { jsonrpc: "2.0", method: "agent.execute", params: {} },
+      { jsonrpc: "2.0", method: "memory.search", params: {}, id: 22 },
+    ]);
+    await events.onMessage!(new MessageEvent("message", { data: rejectedBatch }), ws);
+
+    const calls = (ws.send as ReturnType<typeof vi.fn>).mock.calls;
+    const rateLimitResponse = JSON.parse(calls[calls.length - 1][0]);
+    expect(rateLimitResponse).toEqual([
+      {
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Message rate limit exceeded" },
+        id: 21,
+      },
+      {
+        jsonrpc: "2.0",
+        error: { code: -32000, message: "Message rate limit exceeded" },
+        id: 22,
+      },
+    ]);
+  });
+
+  it("does not answer a rate-limited JSON-RPC notification", async () => {
+    const deps = createHandlerDeps({ messageRateLimit: { maxMessages: 1, windowMs: 60_000 } });
+    const events = createWsHandler(deps, TEST_CTX);
+    const ws = createMockWs();
+
+    events.onOpen!(new Event("open"), ws);
+
+    const notification = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "agent.execute",
+      params: {},
+    });
+    await events.onMessage!(new MessageEvent("message", { data: notification }), ws);
+    await events.onMessage!(new MessageEvent("message", { data: notification }), ws);
+
+    expect(ws.send).not.toHaveBeenCalled();
   });
 
   it("allows messages within rate limit", async () => {
