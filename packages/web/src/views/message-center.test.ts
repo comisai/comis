@@ -34,6 +34,7 @@ function state(el: IcMessageCenter) {
     _actionPending: boolean;
     _sendText: string;
     _deleteTargetId: string;
+    _selectedMessageId: string;
     _refetchMessages(): Promise<void>;
   };
 }
@@ -282,6 +283,55 @@ describe("IcMessageCenter", () => {
     await oldRequest;
 
     expect(current._messages).toEqual([]);
+  });
+
+  it("keeps stored session history read-only without platform message identifiers", async () => {
+    const call = vi.fn((method: string) => {
+      switch (method) {
+        case "session.list":
+          return Promise.resolve({
+            sessions: [{ sessionKey: "session-1", channelId: "chat-1", updatedAt: 1 }],
+          });
+        case "session.history":
+          return Promise.resolve({
+            messages: [{ role: "user", content: "stored message", timestamp: 1 }],
+            total: 1,
+          });
+        default:
+          return Promise.reject(new Error(`Unexpected RPC method: ${method}`));
+      }
+    });
+    const el = await createElement({ channelType: "telegram" });
+    const current = state(el);
+    Object.assign(current, {
+      _loadState: "loaded",
+      _channelIsRunning: true,
+      _capabilities: {
+        fetchHistory: false,
+        editMessages: true,
+        deleteMessages: true,
+        reactions: true,
+      },
+      _selectedChatId: "chat-1",
+      _hasLoaded: true,
+    });
+    el.rpcClient = createStatusRpcClient(call, "connected").client;
+    await el.updateComplete;
+    await current._refetchMessages();
+    await el.updateComplete;
+
+    const messageRow = el.shadowRoot?.querySelector<HTMLElement>(".msg-row");
+    expect(messageRow).not.toBeNull();
+    messageRow!.click();
+    await el.updateComplete;
+
+    expect(current._selectedMessageId).toBe("");
+    expect(el.shadowRoot?.querySelectorAll(".msg-action-btn")).toHaveLength(0);
+    const pinButton = Array.from(
+      el.shadowRoot?.querySelectorAll<HTMLButtonElement>(".platform-actions button") ?? [],
+    ).find((button) => button.textContent?.trim() === "Pin Message");
+    expect(pinButton).toBeDefined();
+    expect(pinButton!.disabled).toBe(true);
   });
 
   it("discards an action result after the route changes channel", async () => {
