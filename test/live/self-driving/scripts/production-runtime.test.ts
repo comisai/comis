@@ -39,17 +39,23 @@ afterEach(() => {
 });
 
 function makeRuntimeFixture(
-  daemonEntry = "daemon.js",
+  daemonEntry = "daemon-entrypoint.js",
   applicationEnvironment = "COMIS_MODE=standard",
+  decoyEntry?: string,
 ): { root: string; packageRoot: string; linkPath: string } {
   const root = mkdtempSync(join(tmpdir(), "comis-runtime-attestation-"));
   roots.push(root);
   const packageRoot = join(root, "custom-prefix", "node_modules", "comisai");
   const daemonPath = join(packageRoot, "node_modules", "@comis", "daemon", "dist", daemonEntry);
+  const decoyPath =
+    decoyEntry === undefined
+      ? undefined
+      : join(packageRoot, "node_modules", "@comis", "daemon", "dist", decoyEntry);
   mkdirSync(dirname(daemonPath), { recursive: true });
   mkdirSync(join(packageRoot, "dist"), { recursive: true });
   writeFileSync(join(packageRoot, "package.json"), '{"name":"comisai","version":"1.2.3"}\n');
   writeFileSync(daemonPath, "export {};\n");
+  if (decoyPath !== undefined) writeFileSync(decoyPath, "export {};\n");
   writeFileSync(join(packageRoot, "dist", "a.txt"), "same-content\n");
   writeFileSync(join(packageRoot, "dist", "b.txt"), "same-content\n");
   chmodSync(join(packageRoot, "dist", "a.txt"), 0o640);
@@ -63,7 +69,7 @@ function makeRuntimeFixture(
     systemctl,
     [
       "#!/bin/sh",
-      `exec_start='{ path=${process.execPath} ; argv[]=${process.execPath} --permission ${daemonPath} ; ignore_errors=no ; }'`,
+      `exec_start='{ path=${process.execPath} ; argv[]=${process.execPath} --permission ${decoyPath === undefined ? "" : `${decoyPath} `}${daemonPath} ; ignore_errors=no ; }'`,
       'case "$*" in',
       '  *"--property=ExecStart --value"*) printf \'%s\\n\' "$exec_start" ;;',
       `  *) printf 'ExecStart=%s\\nUser=comis\\nEnvironment=%s\\n' "$exec_start" '${applicationEnvironment}' ;;`,
@@ -76,13 +82,17 @@ function makeRuntimeFixture(
 }
 
 function runProbe(root: string): string {
-  const result = spawnSync("bash", ["-s", "--", "comis", "source"], {
+  const result = executeProbe(root);
+  expect(result.status, result.stderr).toBe(0);
+  return result.stdout;
+}
+
+function executeProbe(root: string): ReturnType<typeof spawnSync> {
+  return spawnSync("bash", ["-s", "--", "comis", "source"], {
     encoding: "utf8",
     env: { ...process.env, PATH: `${join(root, "bin")}:${process.env.PATH ?? ""}` },
     input: buildRuntimeArtifactProbeScript(),
   });
-  expect(result.status, result.stderr).toBe(0);
-  return result.stdout;
 }
 
 function parseFacts(raw: string): RuntimeArtifactAttestation {
@@ -236,28 +246,42 @@ describe("production runtime artifact attestation", () => {
   });
 
   it("resolves the package root from systemd ExecStart and returns content-free facts", () => {
-    for (const entry of ["daemon.js", "daemon-entrypoint.js"]) {
-      const fixture = makeRuntimeFixture(entry);
-      const output = runProbe(fixture.root);
-      const facts = parseFacts(output);
+    const fixture = makeRuntimeFixture();
+    const output = runProbe(fixture.root);
+    const facts = parseFacts(output);
 
-      expect(facts).toMatchObject({
-        packageRoot: realpathSync(fixture.packageRoot),
-        version: "1.2.3",
-        digestSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-        nodeVersion: process.versions.node,
-        nodeAbi: process.versions.modules,
-        timezone: expect.any(String),
-        tzdataSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-        launcherKind: "systemd",
-        applicationLauncherSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
-        confinementKind: "source",
-        confinementSha256: "none",
-      });
-      expect(facts.entryCount).toBeGreaterThan(0);
-      expect(facts.bytes).toBeGreaterThan(0);
-      expect(output).not.toContain("a.txt");
-      expect(output).not.toContain("same-content");
+    expect(facts).toMatchObject({
+      packageRoot: realpathSync(fixture.packageRoot),
+      version: "1.2.3",
+      digestSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      nodeVersion: process.versions.node,
+      nodeAbi: process.versions.modules,
+      timezone: expect.any(String),
+      tzdataSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      launcherKind: "systemd",
+      applicationLauncherSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      confinementKind: "source",
+      confinementSha256: "none",
+    });
+    expect(facts.entryCount).toBeGreaterThan(0);
+    expect(facts.bytes).toBeGreaterThan(0);
+    expect(output).not.toContain("a.txt");
+    expect(output).not.toContain("same-content");
+  });
+
+  it("accepts the production live daemon while rejecting launcher decoys", () => {
+    const live = parseFacts(runProbe(makeRuntimeFixture("daemon.js").root));
+    const trusted = parseFacts(runProbe(makeRuntimeFixture("daemon-entrypoint.js").root));
+
+    expect(live.applicationLauncherSha256).toBe(trusted.applicationLauncherSha256);
+
+    for (const fixture of [
+      makeRuntimeFixture("helper.js"),
+      makeRuntimeFixture("daemon-entrypoint.js", "COMIS_MODE=standard", "daemon.js"),
+    ]) {
+      const result = executeProbe(fixture.root);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toBe("");
     }
   });
 

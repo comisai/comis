@@ -165,6 +165,8 @@ case "$package_root" in /*/node_modules/comisai) ;; *) exit 73 ;; esac
 if [ "$(readlink -f -- "$package_root")" != "$package_root" ] || [ ! -d "$package_root" ]; then
   exit 74
 fi
+replay_entrypoint="$package_root/node_modules/@comis/daemon/dist/daemon-entrypoint.js"
+if [ -L "$replay_entrypoint" ] || [ ! -f "$replay_entrypoint" ]; then exit 77; fi
 if ! command -v zstd >/dev/null 2>&1; then exit 75; fi
 stage_root=/run/comis-self-driving
 stage_dir="$stage_root/runtime-$run_id"
@@ -192,6 +194,8 @@ case "$package_root" in /*/node_modules/comisai) ;; *) exit 73 ;; esac
 if [ "$(readlink -f -- "$package_root")" != "$package_root" ] || [ ! -d "$package_root" ]; then
   exit 74
 fi
+replay_entrypoint="$package_root/node_modules/@comis/daemon/dist/daemon-entrypoint.js"
+if [ -L "$replay_entrypoint" ] || [ ! -f "$replay_entrypoint" ]; then exit 76; fi
 package_parent="$(dirname -- "$package_root")"
 package_name="$(basename -- "$package_root")"
 if ! command -v zstd >/dev/null 2>&1; then exit 75; fi

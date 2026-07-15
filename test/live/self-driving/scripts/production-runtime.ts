@@ -622,7 +622,15 @@ if (confinementKind !== "source" && confinementKind !== "target_quarantine") {
 const daemonRelative = daemonPath.startsWith(packageRoot + "/")
   ? daemonPath.slice(packageRoot.length)
   : "";
-if (!/^\/node_modules\/@comis\/daemon\/dist\/[A-Za-z0-9._-]+\.js$/.test(daemonRelative)) {
+const sourceEntrypoints = new Set([
+  "/node_modules/@comis/daemon/dist/daemon.js",
+  "/node_modules/@comis/daemon/dist/daemon-entrypoint.js",
+]);
+const trustedEntrypoint = "/node_modules/@comis/daemon/dist/daemon-entrypoint.js";
+if (
+  (confinementKind === "source" && !sourceEntrypoints.has(daemonRelative)) ||
+  (confinementKind === "target_quarantine" && daemonRelative !== trustedEntrypoint)
+) {
   throw new Error("Invalid Comis daemon entrypoint");
 }
 
@@ -646,6 +654,8 @@ const normalizedFacts = rawFacts
   .split("\n")
   .map(stripReplayEnvironment)
   .join("\n")
+  .split(daemonPath)
+  .join("<COMIS_DAEMON_ENTRYPOINT>")
   .split(nodePath)
   .join("<NODE_EXECUTABLE>")
   .split(packageRoot)
@@ -655,7 +665,7 @@ const nodeSha256 = createHash("sha256").update(fs.readFileSync(nodeExecutable)).
 const material = [
   "comis-application-launcher",
   nodeSha256,
-  daemonRelative,
+  "role-normalized-daemon-entrypoint",
   normalizedFacts,
 ].join("\0");
 process.stdout.write(createHash("sha256").update(material, "utf8").digest("hex"));
@@ -818,6 +828,7 @@ function updateUint64(value) {
 export function buildRuntimeArtifactProbeScript(): string {
   return [
     "set -u",
+    "set -f",
     "LC_ALL=C",
     "export LC_ALL",
     'service="${1:?service name is required}"',
@@ -834,8 +845,14 @@ export function buildRuntimeArtifactProbeScript(): string {
     '    exec_start="$(systemctl show "$service" --property=ExecStart --value 2>/dev/null)"',
     '    [ -n "$exec_start" ] || { printf "%s\\n" "Comis service ExecStart is unavailable" >&2; exit 64; }',
     '    node_path="$(printf "%s\\n" "$exec_start" | sed -n "s/^[{ ]*path=\\([^ ;]*\\).*/\\1/p")"',
-    '    daemon_path="$(printf "%s\\n" "$exec_start" | grep -oE "/[^ ;{}]+/node_modules/@comis/daemon/dist/[A-Za-z0-9._-]+\\.js" | tail -1)"',
-    '    [ -n "$daemon_path" ] || { printf "%s\\n" "Comis daemon path is unavailable" >&2; exit 66; }',
+    '    launcher_argv="$(printf "%s\\n" "$exec_start" | sed -n "s/.*argv\\[\\]=\\([^;]*\\) ;.*/\\1/p")"',
+    '    [ -n "$launcher_argv" ] || { printf "%s\\n" "Comis daemon arguments are unavailable" >&2; exit 66; }',
+    '    set -- $launcher_argv',
+    '    [ "$#" -ge 2 ] && [ "$1" = "$node_path" ] || { printf "%s\\n" "Comis daemon executable arguments are invalid" >&2; exit 66; }',
+    '    shift',
+    '    while [ "$#" -gt 1 ]; do case "$1" in --*) ;; *) printf "%s\\n" "Comis daemon executable arguments are invalid" >&2; exit 66 ;; esac; shift; done',
+    '    daemon_path="$1"',
+    '    case "$confinement_declaration:$daemon_path" in source:*/node_modules/@comis/daemon/dist/daemon.js|source:*/node_modules/@comis/daemon/dist/daemon-entrypoint.js|target_quarantine:*/node_modules/@comis/daemon/dist/daemon-entrypoint.js) ;; *) printf "%s\\n" "Comis daemon entrypoint is invalid" >&2; exit 66 ;; esac',
     '    package_root="${daemon_path%%/node_modules/@comis/daemon/dist/*}"',
     '    application_launcher_facts="$(systemctl show "$service" --no-pager --property=ExecStart,ExecStartPre,ExecStartPost,ExecCondition,User,Group,WorkingDirectory,RootDirectory,Environment,EnvironmentFiles,PassEnvironment,UnsetEnvironment,Type,NotifyAccess,Restart,RestartUSec,TimeoutStartUSec,TimeoutStopUSec,KillMode,KillSignal,SuccessExitStatus 2>/dev/null)"',
     '    [ -n "$application_launcher_facts" ] || { printf "%s\\n" "Comis application launcher facts are unavailable" >&2; exit 68; }',

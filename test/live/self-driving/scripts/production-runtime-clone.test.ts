@@ -121,6 +121,15 @@ describe("production runtime clone transaction", () => {
     expect(plan.sourcePrepare.stdin).toContain("command -v zstd");
     expect(plan.sourcePrepare.stdin).toContain("--zstd");
     expect(plan.sourcePrepare.stdin).toContain("reader.pid");
+    expect(plan.sourcePrepare.stdin).toContain(
+      'replay_entrypoint="$package_root/node_modules/@comis/daemon/dist/daemon-entrypoint.js"',
+    );
+    expect(plan.sourcePrepare.stdin).toContain(
+      '[ ! -f "$replay_entrypoint" ]',
+    );
+    expect(plan.sourcePrepare.stdin.indexOf("replay_entrypoint=")).toBeLessThan(
+      plan.sourcePrepare.stdin.indexOf("stage_root=/run/comis-self-driving"),
+    );
     expect(plan.targetPrepare.stdin).toContain("command -v zstd");
     expect(plan.targetPrepare.stdin).toContain("--zstd");
     expect(plan.targetPrepare.stdin).toContain("receiver.pid");
@@ -290,6 +299,46 @@ describe("production runtime clone transaction", () => {
     expect(invocations).toContain("cleanup-runtime-source");
     expect(invocations.at(-1)).toBe("commit-runtime-target");
     expect(invocations).not.toContain("rollback-runtime-target");
+  });
+
+  it("refuses an artifact without the target-safe entrypoint before touching the target", async () => {
+    const invocations: string[] = [];
+    let transferred = false;
+    const executor: ProductionRemoteExecutor = {
+      run: async (invocation) => {
+        invocations.push(invocation.label);
+        if (invocation.label === "runtime-attest-source") {
+          return ok({ stdout: runtimeFacts(source), exitCode: 0 });
+        }
+        if (invocation.label === "runtime-attest-target") {
+          return ok({ stdout: runtimeFacts(target), exitCode: 0 });
+        }
+        if (invocation.label === "prepare-runtime-source") {
+          return ok({ stdout: "", exitCode: 77 });
+        }
+        return ok({ stdout: "", exitCode: 0 });
+      },
+    };
+
+    const result = await cloneProductionRuntime({
+      runId: "runtime-entrypoint-preflight-a1",
+      profile,
+      executor,
+      bridge: {
+        transfer: async () => {
+          transferred = true;
+          return ok({ bytesTransferred: 42 });
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "remote_failure", stage: "prepare-runtime-source" },
+    });
+    expect(invocations).not.toContain("prepare-runtime-target");
+    expect(invocations).not.toContain("promote-runtime-target");
+    expect(transferred).toBe(false);
   });
 
   it("rolls back an exact package clone whose replay entrypoint is absent from the target unit", async () => {
