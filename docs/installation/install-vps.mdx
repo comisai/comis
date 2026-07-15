@@ -255,13 +255,22 @@ resolved path in the confirmation and completion messages.
 
 <Warning>
 `--remove-user` implies `--purge`: it deletes the dedicated account and Comis
-data. Back up the data directory and encryption key, then inspect the displayed
-uninstall plan before confirming.
+data, the systemd units, Xvfb runtime files, the Comis sudoers rule, the
+installer-managed AppArmor profile, and the installer's ownership receipt. The
+account is removed only when that receipt, its root-owned identity marker, and
+the receipt-bound account identity prove the installer created the same
+account. The receipt records removal as a one-way state transition so a retry
+never deletes a recreated user or group. Back up the data directory and
+encryption key, then inspect the displayed uninstall plan before confirming.
 </Warning>
 
 ```bash
-bash comis-install.sh --uninstall --remove-user
+sudo bash comis-install.sh --uninstall --remove-user --yes
 ```
+
+Shared host dependencies are preserved because other software may use them.
+This includes Node.js, uv, Rust, browser/Xvfb packages, build tools, and package
+repositories. Run with `--dry-run` first to preview every Comis-specific path.
 
 ## Next steps
 

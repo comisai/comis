@@ -31,7 +31,9 @@ PLAYWRIGHT_CORE_NPM_VERSION="1.61.1"
 
 ORIGINAL_PATH="${PATH:-}"
 
-TMPFILES=()
+INSTALLER_TMPDIR="$(mktemp -d)"
+chmod 0700 "$INSTALLER_TMPDIR"
+TMPFILES=("$INSTALLER_TMPDIR")
 cleanup_tmpfiles() {
     local f
     for f in "${TMPFILES[@]:-}"; do
@@ -41,10 +43,7 @@ cleanup_tmpfiles() {
 trap cleanup_tmpfiles EXIT
 
 mktempfile() {
-    local f
-    f="$(mktemp)"
-    TMPFILES+=("$f")
-    echo "$f"
+    mktemp "${INSTALLER_TMPDIR}/file.XXXXXX"
 }
 
 resolve_brew_bin() {
@@ -406,6 +405,20 @@ ui_panel() {
     fi
 }
 
+planned_data_directory() {
+    local target_home="$HOME"
+    if should_create_dedicated_user; then
+        target_home=""
+        if command -v getent >/dev/null 2>&1; then
+            target_home="$(getent passwd "$COMIS_USER" 2>/dev/null | cut -d: -f6 || true)"
+        fi
+        if [[ -z "$target_home" ]]; then
+            target_home="/home/${COMIS_USER}"
+        fi
+    fi
+    printf '%s/.comis\n' "$target_home"
+}
+
 show_install_plan() {
     local detected_checkout="$1"
     local package_target=""
@@ -463,7 +476,7 @@ show_install_plan() {
         fi
     fi
     ui_kv "Egress logging" "$egress_logging"
-    ui_kv "Data directory" "${HOME}/.comis"
+    ui_kv "Data directory" "$(planned_data_directory)"
     ui_kv "Host changes" "CLI, dependencies, runtime, and selected service as needed"
     ui_kv "Downloads" "npm/GitHub and OS/runtime package sources as needed"
     if [[ "$NO_AUTOSTART" == "1" ]]; then
@@ -1074,6 +1087,22 @@ JSON
 #
 # Safe to call on non-AppArmor distros (RHEL/Fedora) — returns early when
 # AppArmor isn't active or the bwrap binary isn't present.
+apparmor_bwrap_profile_is_managed() {
+    local profile="$1"
+    [[ -f "$profile" && ! -L "$profile" ]] || return 1
+    [[ "$(sed -n '1p' "$profile")" == "# managed-by: comis-installer" ]] || return 1
+    local recorded body computed=""
+    recorded="$(sed -n '2s/^# checksum: //p' "$profile")"
+    [[ "$recorded" =~ ^[a-f0-9]{64}$ ]] || return 1
+    body="$(tail -n +3 "$profile")"
+    if command -v sha256sum >/dev/null 2>&1; then
+        computed="$(printf '%s' "$body" | sha256sum | cut -d' ' -f1)"
+    elif command -v shasum >/dev/null 2>&1; then
+        computed="$(printf '%s' "$body" | shasum -a 256 | cut -d' ' -f1)"
+    fi
+    [[ -n "$computed" && "$computed" == "$recorded" ]]
+}
+
 apply_apparmor_bwrap_profile() {
     if ! command -v bwrap >/dev/null 2>&1; then
         return 0
@@ -1089,14 +1118,22 @@ apply_apparmor_bwrap_profile() {
     fi
 
     local profile=/etc/apparmor.d/bwrap
-    local write_cmd="tee"
-    local reload_cmd="apparmor_parser"
-    if ! is_root; then
-        write_cmd="sudo tee"
-        reload_cmd="sudo apparmor_parser"
+    if [[ -e "$profile" || -L "$profile" ]] && ! apparmor_bwrap_profile_is_managed "$profile"; then
+        if grep -Fxq "# managed-by: comis-installer" "$profile" 2>/dev/null; then
+            ui_error "Installer-managed AppArmor profile at ${profile} was modified; refusing to overwrite it"
+            return 1
+        fi
+        ui_warn "Existing AppArmor profile at ${profile} is not installer-managed; leaving it untouched"
+        return 0
     fi
 
-    $write_cmd "$profile" >/dev/null <<'PROFILE'
+    local parser_cmd=(apparmor_parser)
+    if ! is_root; then
+        parser_cmd=(sudo apparmor_parser)
+    fi
+
+    local body
+    body="$(cat <<'PROFILE'
 abi <abi/4.0>,
 include <tunables/global>
 
@@ -1105,7 +1142,31 @@ profile bwrap /usr/bin/bwrap flags=(unconfined) {
   include if exists <local/bwrap>
 }
 PROFILE
-    run_quiet_step "Loading AppArmor profile for bubblewrap" $reload_cmd -r "$profile" \
+)"
+    local checksum=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        checksum="$(printf '%s' "$body" | sha256sum | cut -d' ' -f1)"
+    elif command -v shasum >/dev/null 2>&1; then
+        checksum="$(printf '%s' "$body" | shasum -a 256 | cut -d' ' -f1)"
+    fi
+    if [[ -z "$checksum" ]]; then
+        ui_warn "No SHA-256 utility available; leaving the AppArmor profile untouched"
+        return 0
+    fi
+    local tmp staged
+    tmp="$(mktempfile)"
+    {
+        printf '# managed-by: comis-installer\n# checksum: %s\n' "$checksum"
+        printf '%s\n' "$body"
+    } > "$tmp"
+    staged="${profile}.comis.$$"
+    if ! maybe_sudo install -m 0644 -o root -g root "$tmp" "$staged" \
+        || ! maybe_sudo mv -f "$staged" "$profile"; then
+        maybe_sudo rm -f "$staged" 2>/dev/null || true
+        ui_warn "Could not write the AppArmor profile atomically"
+        return 0
+    fi
+    run_quiet_step "Loading AppArmor profile for bubblewrap" "${parser_cmd[@]}" -r "$profile" \
         || ui_warn "apparmor_parser -r failed — exec sandbox may fail until bwrap profile is loaded"
 }
 
@@ -1309,8 +1370,10 @@ install_rust() {
             ;;
     esac
 
-    local rustup_bin rustup_url
-    rustup_bin="$(mktempfile)"
+    local rustup_tmpdir rustup_bin rustup_url
+    rustup_tmpdir="$(mktemp -d)"
+    TMPFILES+=("$rustup_tmpdir")
+    rustup_bin="${rustup_tmpdir}/rustup-init"
     rustup_url="https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${rustup_target}/rustup-init"
     if ! download_file "$rustup_url" "$rustup_bin"; then
         ui_warn "Could not download rustup ${RUSTUP_VERSION} — Rust-based tools will be unavailable"
@@ -1851,6 +1914,10 @@ ASSUME_YES=0
 UNINSTALL_TARGET_USER=""
 UNINSTALL_TARGET_HOME=""
 UNINSTALL_TARGET_IS_DEDICATED=0
+FULL_UNINSTALL_NOOP=0
+# Root-owned receipt that keeps the dedicated target and account provenance
+# available after the service, package, or data directory has been removed.
+INSTALL_RECEIPT_FILE="/var/lib/comis-installer/receipt"
 
 # Populated by resolve_service_template_vars
 COMIS_NODE_BIN=""
@@ -1940,7 +2007,8 @@ Network diagnostics (Linux systemd with a dedicated user):
 Uninstall:
   --uninstall                          Remove Comis (keeps data by default)
   --purge                              With --uninstall: also delete ~/.comis, /etc/comis, /var/log/comis, and the COMIS_EGRESS iptables chain
-  --remove-user                        Linux+root only: also delete the comis system user (implies --purge)
+  --remove-user                        Linux+root only: fully remove installer-owned Comis artifacts and the dedicated user (implies --purge)
+                                       Shared host runtimes and OS packages are preserved
   --yes                                Skip interactive confirmation prompts
 
 Environment variables:
@@ -1973,6 +2041,7 @@ Examples:
   bash comis-install.sh --no-init
   bash comis-install.sh --service none
   bash comis-install.sh --uninstall --purge --yes
+  sudo bash comis-install.sh --uninstall --remove-user --yes
 EOF
 }
 
@@ -2904,15 +2973,373 @@ comis_user_exists() {
     id "$COMIS_USER" &>/dev/null
 }
 
+install_receipt_raw_value() {
+    local key="$1"
+    awk -F= -v key="$key" '$1 == key { print substr($0, length(key) + 2); exit }' "$INSTALL_RECEIPT_FILE"
+}
+
+install_receipt_home_is_safe() {
+    local receipt_home="$1"
+    [[ "$receipt_home" =~ ^/[A-Za-z0-9._/-]+$ ]] || return 1
+    [[ "$receipt_home" != "/" && "$receipt_home" != *"//"* \
+        && "$receipt_home" != *"/../"* && "$receipt_home" != *"/./"* \
+        && "$receipt_home" != *"/.." && "$receipt_home" != *"/." ]]
+}
+
+install_identity_marker_path() {
+    local target_home="$1"
+    printf '%s/.comis-installer-identity\n' "$target_home"
+}
+
+install_identity_marker_is_valid() {
+    local target_home="$1"
+    local identity_token="$2"
+    local marker
+    marker="$(install_identity_marker_path "$target_home")"
+    [[ "$identity_token" =~ ^[a-f0-9]{64}$ ]] || return 1
+    [[ -d "$target_home" && ! -L "$target_home" ]] || return 1
+    [[ -f "$marker" && ! -L "$marker" ]] || return 1
+    [[ "$(tr -d '[:space:]' < "$marker" 2>/dev/null || true)" == "$identity_token" ]] || return 1
+    local marker_stat
+    marker_stat="$(stat -c '%u:%g:%a' "$marker" 2>/dev/null \
+        || stat -f '%u:%g:%Lp' "$marker" 2>/dev/null || true)"
+    [[ "$marker_stat" == "0:0:400" ]]
+}
+
+install_account_identity_comment() {
+    local identity_token="$1"
+    [[ "$identity_token" =~ ^[a-f0-9]{64}$ ]] || return 1
+    printf 'Comis AI agent platform [%s]\n' "$identity_token"
+}
+
+install_account_has_identity_comment() {
+    local target_user="$1"
+    local passwd_comment
+    passwd_comment="$(getent passwd "$target_user" 2>/dev/null | cut -d: -f5)"
+    [[ "$passwd_comment" =~ ^Comis\ AI\ agent\ platform\ \[[a-f0-9]{64}\]$ ]]
+}
+
+install_home_identity_is_valid() {
+    local target_home="$1"
+    local target_uid="$2"
+    local target_gid="$3"
+    local identity_token="$4"
+    install_identity_marker_is_valid "$target_home" "$identity_token" || return 1
+    local home_stat
+    home_stat="$(stat -c '%u:%g' "$target_home" 2>/dev/null \
+        || stat -f '%u:%g' "$target_home" 2>/dev/null || true)"
+    [[ "$home_stat" == "${target_uid}:${target_gid}" ]]
+}
+
+install_owned_account_is_current() {
+    local target_user="$1"
+    local target_home="$2"
+    local target_uid="$3"
+    local target_gid="$4"
+    local identity_token="$5"
+    local created_group="$6"
+    id "$target_user" >/dev/null 2>&1 || return 1
+    local passwd_home passwd_comment current_uid current_gid
+    passwd_home="$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)"
+    passwd_comment="$(getent passwd "$target_user" 2>/dev/null | cut -d: -f5)"
+    current_uid="$(id -u "$target_user" 2>/dev/null || true)"
+    current_gid="$(id -g "$target_user" 2>/dev/null || true)"
+    [[ "$passwd_home" == "$target_home" && "$current_uid" == "$target_uid" \
+        && "$current_gid" == "$target_gid" ]] || return 1
+    [[ "$passwd_comment" == "$(install_account_identity_comment "$identity_token")" ]] || return 1
+    install_home_identity_is_valid \
+        "$target_home" "$target_uid" "$target_gid" "$identity_token" || return 1
+    if [[ "$created_group" == "1" ]]; then
+        [[ "$(getent group "$target_user" 2>/dev/null | cut -d: -f3)" == "$target_gid" ]] || return 1
+    fi
+}
+
+generate_install_identity_token() {
+    local identity_token
+    identity_token="$(od -An -N32 -tx1 /dev/urandom 2>/dev/null | tr -d '[:space:]')"
+    [[ "$identity_token" =~ ^[a-f0-9]{64}$ ]] || return 1
+    printf '%s\n' "$identity_token"
+}
+
+write_install_identity_marker() {
+    local target_home="$1"
+    local identity_token="$2"
+    local marker
+    marker="$(install_identity_marker_path "$target_home")"
+    [[ -d "$target_home" && ! -L "$target_home" ]] || return 1
+    if [[ -e "$marker" || -L "$marker" ]]; then
+        install_identity_marker_is_valid "$target_home" "$identity_token"
+        return
+    fi
+    local tmp
+    tmp="$(mktempfile)"
+    printf '%s\n' "$identity_token" > "$tmp"
+    install -m 0400 -o root -g root "$tmp" "$marker"
+    install_identity_marker_is_valid "$target_home" "$identity_token"
+}
+
+install_receipt_is_valid() {
+    [[ -f "$INSTALL_RECEIPT_FILE" && ! -L "$INSTALL_RECEIPT_FILE" ]] || return 1
+    [[ "$(grep -Fxc "# managed-by: comis-installer" "$INSTALL_RECEIPT_FILE" 2>/dev/null || true)" == "1" ]] || return 1
+
+    local key
+    for key in target_user target_home target_uid target_gid created_user created_group decommission_state identity_token; do
+        [[ "$(grep -c "^${key}=" "$INSTALL_RECEIPT_FILE" 2>/dev/null || true)" == "1" ]] || return 1
+    done
+    awk '
+        /^# managed-by: comis-installer$/ { next }
+        /^(target_user|target_home|target_uid|target_gid|created_user|created_group|decommission_state|identity_token)=/ { next }
+        { exit 1 }
+    ' "$INSTALL_RECEIPT_FILE" || return 1
+
+    local receipt_user receipt_home receipt_uid receipt_gid created_user created_group decommission_state identity_token
+    receipt_user="$(install_receipt_raw_value target_user)"
+    receipt_home="$(install_receipt_raw_value target_home)"
+    receipt_uid="$(install_receipt_raw_value target_uid)"
+    receipt_gid="$(install_receipt_raw_value target_gid)"
+    created_user="$(install_receipt_raw_value created_user)"
+    created_group="$(install_receipt_raw_value created_group)"
+    decommission_state="$(install_receipt_raw_value decommission_state)"
+    identity_token="$(install_receipt_raw_value identity_token)"
+    [[ "$receipt_user" =~ ^[a-z_][a-z0-9_-]*$ ]] || return 1
+    install_receipt_home_is_safe "$receipt_home" || return 1
+    [[ "$receipt_uid" =~ ^[0-9]+$ && "$receipt_gid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$created_user" =~ ^[01]$ && "$created_group" =~ ^[01]$ ]] || return 1
+    [[ "$decommission_state" =~ ^(active|removing|removed)$ ]] || return 1
+    if [[ "$created_user" == "1" ]]; then
+        [[ "$identity_token" =~ ^[a-f0-9]{64}$ ]] || return 1
+    else
+        [[ "$identity_token" == "none" ]] || return 1
+    fi
+
+    if [[ "$decommission_state" == "active" ]]; then
+        id "$receipt_user" >/dev/null 2>&1 || return 1
+        if [[ "$created_user" == "1" ]]; then
+            install_owned_account_is_current "$receipt_user" "$receipt_home" \
+                "$receipt_uid" "$receipt_gid" "$identity_token" "$created_group" || return 1
+        else
+            local passwd_home current_uid current_gid
+            passwd_home="$(getent passwd "$receipt_user" 2>/dev/null | cut -d: -f6)"
+            current_uid="$(id -u "$receipt_user" 2>/dev/null || true)"
+            current_gid="$(id -g "$receipt_user" 2>/dev/null || true)"
+            [[ "$passwd_home" == "$receipt_home" && "$current_uid" == "$receipt_uid" \
+                && "$current_gid" == "$receipt_gid" ]] || return 1
+        fi
+    fi
+
+    if [[ "$INSTALL_RECEIPT_FILE" == "/var/lib/comis-installer/receipt" ]]; then
+        [[ "$(stat -c '%u:%g:%a' "$INSTALL_RECEIPT_FILE" 2>/dev/null || true)" == "0:0:600" ]] || return 1
+    fi
+}
+
+install_receipt_value() {
+    local key="$1"
+    install_receipt_is_valid || return 1
+    install_receipt_raw_value "$key"
+}
+
+install_receipt_matches_target() {
+    local target_user="$1"
+    local target_home="$2"
+    local receipt_user receipt_home
+    receipt_user="$(install_receipt_value target_user 2>/dev/null || true)"
+    receipt_home="$(install_receipt_value target_home 2>/dev/null || true)"
+    [[ -n "$receipt_user" && "$receipt_user" == "$target_user" ]] \
+        && [[ "$receipt_home" == /* && "$receipt_home" != "/" ]] \
+        && [[ "$receipt_home" == "$target_home" ]]
+}
+
+install_receipt_created_user() {
+    local target_user="$1"
+    local target_home="$2"
+    install_receipt_matches_target "$target_user" "$target_home" \
+        && [[ "$(install_receipt_value created_user 2>/dev/null || true)" == "1" ]]
+}
+
+install_receipt_created_group() {
+    local target_user="$1"
+    local target_home="$2"
+    install_receipt_matches_target "$target_user" "$target_home" \
+        && [[ "$(install_receipt_value created_group 2>/dev/null || true)" == "1" ]]
+}
+
+install_receipt_owned_artifacts_present() {
+    install_receipt_is_valid || return 0
+    local receipt_user receipt_home created_user created_group
+    receipt_user="$(install_receipt_raw_value target_user)"
+    receipt_home="$(install_receipt_raw_value target_home)"
+    created_user="$(install_receipt_raw_value created_user)"
+    created_group="$(install_receipt_raw_value created_group)"
+    if [[ "$created_user" == "1" ]]; then
+        id "$receipt_user" >/dev/null 2>&1 && return 0
+        [[ -e "$receipt_home" || -L "$receipt_home" ]] && return 0
+    fi
+    if [[ "$created_group" == "1" ]] \
+        && getent group "$receipt_user" >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+write_install_receipt_payload() {
+    local target_user="$1"
+    local target_home="$2"
+    local target_uid="$3"
+    local target_gid="$4"
+    local created_user="$5"
+    local created_group="$6"
+    local decommission_state="$7"
+    local identity_token="$8"
+    local receipt_dir
+    receipt_dir="$(dirname "$INSTALL_RECEIPT_FILE")"
+    if [[ -L "$receipt_dir" ]]; then
+        ui_error "Refusing to write installer receipt through symlink ${receipt_dir}"
+        return 1
+    fi
+    if [[ "$INSTALL_RECEIPT_FILE" == "/var/lib/comis-installer/receipt" ]]; then
+        install -d -m 0700 -o 0 -g 0 "$receipt_dir"
+    else
+        install -d -m 0700 "$receipt_dir"
+    fi
+
+    local tmp staged
+    tmp="$(mktempfile)"
+    staged="${INSTALL_RECEIPT_FILE}.comis.$$"
+    if [[ -e "$staged" || -L "$staged" ]]; then
+        ui_error "Refusing to replace unexpected staged receipt ${staged}"
+        return 1
+    fi
+    TMPFILES+=("$staged")
+    cat > "$tmp" <<RECEIPT
+# managed-by: comis-installer
+target_user=${target_user}
+target_home=${target_home}
+target_uid=${target_uid}
+target_gid=${target_gid}
+created_user=${created_user}
+created_group=${created_group}
+decommission_state=${decommission_state}
+identity_token=${identity_token}
+RECEIPT
+    local receipt_installed=0
+    if [[ "$INSTALL_RECEIPT_FILE" == "/var/lib/comis-installer/receipt" ]]; then
+        install -m 0600 -o 0 -g 0 "$tmp" "$staged" && receipt_installed=1
+    else
+        install -m 0600 "$tmp" "$staged" && receipt_installed=1
+    fi
+    if [[ "$receipt_installed" != "1" ]] \
+        || ! mv -f "$staged" "$INSTALL_RECEIPT_FILE"; then
+        rm -f "$staged" 2>/dev/null || true
+        ui_error "Could not write installer receipt atomically at ${INSTALL_RECEIPT_FILE}"
+        return 1
+    fi
+    install_receipt_is_valid
+}
+
+update_install_receipt_decommission_state() {
+    local expected_state="$1"
+    local next_state="$2"
+    install_receipt_is_valid || return 1
+    [[ "$(install_receipt_raw_value decommission_state)" == "$expected_state" ]] || return 1
+    case "${expected_state}:${next_state}" in
+        active:removing|removing:removed) ;;
+        *) return 1 ;;
+    esac
+    write_install_receipt_payload \
+        "$(install_receipt_raw_value target_user)" \
+        "$(install_receipt_raw_value target_home)" \
+        "$(install_receipt_raw_value target_uid)" \
+        "$(install_receipt_raw_value target_gid)" \
+        "$(install_receipt_raw_value created_user)" \
+        "$(install_receipt_raw_value created_group)" \
+        "$next_state" \
+        "$(install_receipt_raw_value identity_token)"
+}
+
+write_install_receipt() {
+    local target_user="$1"
+    local target_home="$2"
+    local created_user="$3"
+    local created_group="$4"
+    local requested_identity_token="${5:-}"
+    [[ "$OS" == "linux" ]] && is_root || return 0
+    [[ "$target_user" =~ ^[a-z_][a-z0-9_-]*$ ]] || return 1
+    install_receipt_home_is_safe "$target_home" || return 1
+    [[ "$created_user" =~ ^[01]$ && "$created_group" =~ ^[01]$ ]] || return 1
+    local target_uid target_gid
+    target_uid="$(id -u "$target_user" 2>/dev/null || true)"
+    target_gid="$(id -g "$target_user" 2>/dev/null || true)"
+    [[ "$target_uid" =~ ^[0-9]+$ && "$target_gid" =~ ^[0-9]+$ ]] || return 1
+
+    if [[ -e "$INSTALL_RECEIPT_FILE" || -L "$INSTALL_RECEIPT_FILE" ]]; then
+        if ! install_receipt_is_valid; then
+            ui_error "Refusing to overwrite invalid installer receipt at ${INSTALL_RECEIPT_FILE}"
+            return 1
+        fi
+        local receipt_user receipt_home
+        receipt_user="$(install_receipt_value target_user)"
+        receipt_home="$(install_receipt_value target_home)"
+        if [[ "$receipt_user" != "$target_user" || "$receipt_home" != "$target_home" ]]; then
+            ui_error "Installer receipt belongs to ${receipt_user} at ${receipt_home}; refusing to replace it"
+            return 1
+        fi
+        if [[ "$(install_receipt_value decommission_state)" != "active" ]]; then
+            ui_error "Installer receipt is already decommissioning; finish removal before reinstalling"
+            return 1
+        fi
+        # A matching active receipt already carries the original ownership
+        # decision. Rewriting it could race a concurrent active→removing
+        # transition and must never re-authorize a decommissioning account.
+        return 0
+    fi
+
+    local identity_token="none"
+    if install_receipt_created_user "$target_user" "$target_home"; then
+        created_user=1
+        [[ "$(install_receipt_value created_group 2>/dev/null || true)" == "1" ]] && created_group=1
+        identity_token="$(install_receipt_value identity_token)"
+    elif [[ "$created_user" == "1" ]]; then
+        identity_token="$requested_identity_token"
+        [[ "$identity_token" =~ ^[a-f0-9]{64}$ ]] || return 1
+    fi
+    if [[ "$created_user" == "1" ]] \
+        && ! write_install_identity_marker "$target_home" "$identity_token"; then
+        ui_error "Could not create the dedicated account identity marker"
+        return 1
+    fi
+
+    write_install_receipt_payload "$target_user" "$target_home" "$target_uid" "$target_gid" \
+        "$created_user" "$created_group" "active" "$identity_token"
+}
+
 create_comis_user() {
     if comis_user_exists; then
+        local existing_home
+        existing_home="$(getent passwd "$COMIS_USER" 2>/dev/null | cut -d: -f6)"
+        if [[ "$existing_home" == /* && "$existing_home" != "/" ]]; then
+            local existing_marker
+            existing_marker="$(install_identity_marker_path "$existing_home")"
+            if [[ ! -e "$INSTALL_RECEIPT_FILE" && ! -L "$INSTALL_RECEIPT_FILE" ]] \
+                && { install_account_has_identity_comment "$COMIS_USER" \
+                    || [[ -e "$existing_marker" || -L "$existing_marker" ]]; }; then
+                ui_error "Installer-created account evidence exists without an ownership receipt"
+                ui_info "Refusing to classify ${COMIS_USER} as a pre-existing account; restore the receipt or remove the orphaned account explicitly"
+                return 1
+            fi
+            write_install_receipt "$COMIS_USER" "$existing_home" 0 0 "none"
+        fi
         ui_success "User '$COMIS_USER' already exists"
         return 0
     fi
 
     ui_info "Creating dedicated system user '$COMIS_USER'"
+    local group_existed=0
+    getent group "$COMIS_USER" >/dev/null 2>&1 && group_existed=1
+    local identity_token account_comment
+    identity_token="$(generate_install_identity_token)" || return 1
+    account_comment="$(install_account_identity_comment "$identity_token")" || return 1
     useradd --system --create-home --shell /bin/bash \
-        --comment "Comis AI agent platform" "$COMIS_USER"
+        --comment "$account_comment" "$COMIS_USER"
 
     # Allow the comis user to read journalctl logs for `comis daemon logs`
     if getent group systemd-journal >/dev/null 2>&1; then
@@ -2922,6 +3349,22 @@ create_comis_user() {
     # Ensure the user has a .bashrc so PATH exports persist across logins
     local comis_home
     comis_home="$(eval echo "~$COMIS_USER")"
+    local created_group=0
+    if [[ "$group_existed" == "0" ]] && getent group "$COMIS_USER" >/dev/null 2>&1; then
+        created_group=1
+    fi
+    if ! write_install_receipt \
+        "$COMIS_USER" "$comis_home" 1 "$created_group" "$identity_token"; then
+        ui_error "Could not record ownership of the dedicated Comis account"
+        userdel -r "$COMIS_USER" 2>/dev/null || userdel "$COMIS_USER" 2>/dev/null || true
+        if [[ "$created_group" == "1" ]]; then
+            groupdel "$COMIS_USER" 2>/dev/null || true
+        fi
+        if id "$COMIS_USER" >/dev/null 2>&1; then
+            ui_error "Could not roll back the unrecorded dedicated account"
+        fi
+        return 1
+    fi
     if [[ ! -f "$comis_home/.bashrc" ]]; then
         touch "$comis_home/.bashrc"
         chown "$COMIS_USER:$COMIS_USER" "$comis_home/.bashrc"
@@ -3824,37 +4267,123 @@ downshift_xvfb_for_service_manager() {
 
 # Stop a direct-spawn daemon and remove its stale PID file before handing
 # ownership to a service manager.
+process_is_comis_daemon() {
+    local pid="$1"
+    local executable=""
+    local proc_dir="/proc/${pid}"
+    if [[ -r "${proc_dir}/cmdline" && -L "${proc_dir}/exe" ]]; then
+        executable="$(readlink -f "${proc_dir}/exe" 2>/dev/null || true)"
+        case "$(basename "$executable")" in
+            node|nodejs) ;;
+            *) return 1 ;;
+        esac
+        local arg
+        while IFS= read -r -d '' arg; do
+            case "$arg" in
+                */node_modules/@comis/daemon/dist/daemon-entrypoint.js|*/packages/daemon/dist/daemon-entrypoint.js)
+                    return 0
+                    ;;
+            esac
+        done < "${proc_dir}/cmdline"
+        return 1
+    fi
+
+    executable="$(ps -o comm= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
+    case "$(basename "$executable")" in
+        node|nodejs) ;;
+        *) return 1 ;;
+    esac
+    local process_command
+    process_command="$(ps -ww -o command= -p "$pid" 2>/dev/null || true)"
+    case "$process_command" in
+        *"/node_modules/@comis/daemon/dist/daemon-entrypoint.js"*|*"/packages/daemon/dist/daemon-entrypoint.js"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 cleanup_legacy_daemon_state() {
-    local pid_file
+    local pid_file target_user
     # Determine the correct home for the target user
     local target_home="${HOME:-}"
     if [[ -n "${COMIS_SVC_HOME:-}" ]]; then
         target_home="$COMIS_SVC_HOME"
+        target_user="${COMIS_SVC_USER:-$(id -un)}"
     elif [[ -n "${UNINSTALL_TARGET_HOME:-}" ]]; then
         target_home="$UNINSTALL_TARGET_HOME"
+        target_user="${UNINSTALL_TARGET_USER:-$(id -un)}"
+    else
+        target_user="$(id -un)"
     fi
     pid_file="${target_home}/.comis/daemon.pid"
 
-    [[ -f "$pid_file" ]] || return 0
+    [[ -e "$pid_file" || -L "$pid_file" ]] || return 0
+    if [[ -L "$pid_file" || ! -f "$pid_file" ]]; then
+        ui_error "Direct-daemon PID path is not a regular file; refusing to trust ${pid_file}"
+        return 1
+    fi
 
     local pid
     pid="$(tr -d '[:space:]' < "$pid_file" 2>/dev/null || true)"
-
-    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-        ui_info "Stopping direct-spawn daemon (PID ${pid}) before migrating to ${RESOLVED_SERVICE_MANAGER}"
-        kill -TERM "$pid" 2>/dev/null || true
-        local waited=0
-        while kill -0 "$pid" 2>/dev/null && [[ "$waited" -lt 10 ]]; do
-            sleep 1
-            waited=$((waited + 1))
-        done
-        if kill -0 "$pid" 2>/dev/null; then
-            ui_warn "Daemon did not stop gracefully; sending SIGKILL"
-            kill -KILL "$pid" 2>/dev/null || true
-        fi
+    if [[ ! "$pid" =~ ^[1-9][0-9]*$ ]]; then
+        rm -f "$pid_file"
+        ui_success "Removed invalid direct-daemon PID file"
+        return 0
     fi
 
-    rm -f "$pid_file" 2>/dev/null || true
+    if ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$pid_file"
+        ui_success "Removed stale direct-daemon PID file"
+        return 0
+    fi
+
+    local expected_uid actual_uid
+    expected_uid="$(id -u "$target_user" 2>/dev/null || true)"
+    actual_uid="$(ps -o uid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ -z "$expected_uid" || "$actual_uid" != "$expected_uid" ]]; then
+        ui_error "PID ${pid} is not owned by ${target_user}; refusing to signal it"
+        return 1
+    fi
+    if ! process_is_comis_daemon "$pid"; then
+        ui_error "PID ${pid} is not a recognized Comis daemon; refusing to signal it"
+        return 1
+    fi
+
+    ui_info "Stopping direct-spawn daemon (PID ${pid}) before migrating to ${RESOLVED_SERVICE_MANAGER:-the selected service mode}"
+    actual_uid="$(ps -o uid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)"
+    if [[ "$actual_uid" != "$expected_uid" ]] || ! process_is_comis_daemon "$pid"; then
+        ui_error "Direct-daemon PID ${pid} changed identity before it could be stopped"
+        return 1
+    fi
+    if [[ "$(id -u)" == "$expected_uid" ]]; then
+        kill -TERM "$pid" 2>/dev/null || {
+            ui_error "Could not stop direct-spawn daemon PID ${pid}"
+            return 1
+        }
+    elif ! su - "$target_user" -c "kill -TERM ${pid}" 2>/dev/null; then
+        ui_error "Could not stop direct-spawn daemon PID ${pid} as ${target_user}"
+        return 1
+    fi
+
+    local waited=0
+    while kill -0 "$pid" 2>/dev/null && [[ "$waited" -lt 10 ]]; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        ui_warn "Daemon did not stop gracefully; sending SIGKILL"
+        if [[ "$(id -u)" == "$expected_uid" ]]; then
+            kill -KILL "$pid" 2>/dev/null || true
+        else
+            su - "$target_user" -c "kill -KILL ${pid}" 2>/dev/null || true
+        fi
+    fi
+    if kill -0 "$pid" 2>/dev/null; then
+        ui_error "Direct-spawn daemon PID ${pid} is still running"
+        return 1
+    fi
+
+    rm -f "$pid_file"
+    [[ ! -e "$pid_file" && ! -L "$pid_file" ]] || return 1
     ui_success "Legacy daemon state cleared"
 }
 
@@ -3916,7 +4445,7 @@ resolve_service_template_vars() {
         if [[ -n "${final_git_dir:-}" ]]; then
             git_dir="$final_git_dir"
         fi
-        COMIS_DAEMON_JS="${git_dir}/packages/daemon/dist/daemon.js"
+        COMIS_DAEMON_JS="${git_dir}/packages/daemon/dist/daemon-entrypoint.js"
     else
         # npm install — probe known layouts under the global npm root.
         # The published `comisai` package bundles @comis/* under node_modules/;
@@ -3936,8 +4465,8 @@ resolve_service_template_vars() {
         )
 
         local -a candidate_entries=(
-            "node_modules/@comis/daemon/dist/daemon.js"
-            "packages/daemon/dist/daemon.js"
+            "node_modules/@comis/daemon/dist/daemon-entrypoint.js"
+            "packages/daemon/dist/daemon-entrypoint.js"
         )
 
         COMIS_DAEMON_JS=""
@@ -3956,7 +4485,7 @@ resolve_service_template_vars() {
             ui_error "Could not locate comisai daemon entry point."
             echo "  Searched under:"
             for root in "${candidate_roots[@]}"; do
-                echo "    ${root}/{node_modules/@comis/daemon,packages/daemon}/dist/daemon.js"
+                echo "    ${root}/{node_modules/@comis/daemon,packages/daemon}/dist/daemon-entrypoint.js"
             done
             return 1
         fi
@@ -3986,26 +4515,55 @@ render_xvfb_unit() {
         return 0
     fi
 
+    local target="/etc/systemd/system/comis-xvfb.service"
+    local tmpfiles_target="/etc/tmpfiles.d/comis-x11.conf"
+    if [[ -e "$target" || -L "$target" ]] && ! unit_is_managed "$target"; then
+        ui_warn "Existing unit at ${target} has been hand-edited; leaving untouched."
+        return 0
+    fi
+    if [[ -e "$tmpfiles_target" || -L "$tmpfiles_target" ]] \
+        && ! xvfb_tmpfiles_rule_is_managed "$tmpfiles_target"; then
+        WITH_XVFB=0
+        ui_error "Existing Xvfb tmpfiles rule at ${tmpfiles_target} is not an unmodified installer-managed file"
+        return 1
+    fi
+
     # Shared X-socket dir that both comis-xvfb.service (read-write) and
     # comis.service (read-only) bind onto their PrivateTmp /tmp/.X11-unix, so the
     # X99 socket Xvfb creates is reachable from the daemon. Create it now for the
     # immediate start AND via tmpfiles so it is recreated on reboot before the
-    # units mount it (BindPaths fails if the source is missing).
-    if ! install -d -m 0700 -o "${COMIS_SVC_USER}" -g "${COMIS_SVC_GROUP}" /run/comis-x11; then
+    # units mount it (BindPaths fails if the source is missing). Root ownership
+    # prevents Xvfb from widening the directory to 1777; the service group keeps
+    # the socket writable and traversable only by Comis.
+    if ! install -d -m 0770 -o root -g "${COMIS_SVC_GROUP}" /run/comis-x11; then
         WITH_XVFB=0
         ui_warn "Could not create the private Xvfb socket directory; using headless browser mode"
         return 1
     fi
-    if ! printf 'd /run/comis-x11 0700 %s %s -\n' "${COMIS_SVC_USER}" "${COMIS_SVC_GROUP}" > /etc/tmpfiles.d/comis-x11.conf; then
+    local tmpfiles_body tmpfiles_checksum="" tmpfiles_tmp tmpfiles_staged
+    tmpfiles_body="d /run/comis-x11 0770 root ${COMIS_SVC_GROUP} -"
+    if command -v sha256sum >/dev/null 2>&1; then
+        tmpfiles_checksum="$(printf '%s' "$tmpfiles_body" | sha256sum | cut -d' ' -f1)"
+    elif command -v shasum >/dev/null 2>&1; then
+        tmpfiles_checksum="$(printf '%s' "$tmpfiles_body" | shasum -a 256 | cut -d' ' -f1)"
+    fi
+    if [[ -z "$tmpfiles_checksum" ]]; then
+        WITH_XVFB=0
+        ui_warn "No SHA-256 utility available; using headless browser mode"
+        return 1
+    fi
+    tmpfiles_tmp="$(mktempfile)"
+    {
+        printf '# managed-by: comis-installer\n# checksum: %s\n' "$tmpfiles_checksum"
+        printf '%s\n' "$tmpfiles_body"
+    } > "$tmpfiles_tmp"
+    tmpfiles_staged="${tmpfiles_target}.comis.$$"
+    if ! install -m 0644 -o root -g root "$tmpfiles_tmp" "$tmpfiles_staged" \
+        || ! mv -f "$tmpfiles_staged" "$tmpfiles_target"; then
+        rm -f "$tmpfiles_staged" 2>/dev/null || true
         WITH_XVFB=0
         ui_warn "Could not register the Xvfb socket directory for reboot; using headless browser mode"
         return 1
-    fi
-
-    local target="/etc/systemd/system/comis-xvfb.service"
-    if [[ -f "$target" ]] && ! unit_is_managed "$target"; then
-        ui_warn "Existing unit at ${target} has been hand-edited; leaving untouched."
-        return 0
     fi
 
     ui_info "Writing Xvfb companion unit to ${target}"
@@ -4020,8 +4578,8 @@ Type=simple
 User=${COMIS_SVC_USER}
 Group=${COMIS_SVC_GROUP}
 # -ac disables X11 host-based access control. The server listens only on its
-# Unix-domain socket, which lives inside the mode-0700, service-owned
-# /run/comis-x11 directory shared with the daemon unit.
+# Unix-domain socket, which lives inside the root-owned, mode-0770
+# /run/comis-x11 directory shared with the Comis service group.
 ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp
 Restart=on-failure
 RestartSec=2s
@@ -4168,8 +4726,9 @@ render_systemd_unit() {
 BindReadOnlyPaths=/run/comis-x11:/tmp/.X11-unix"
     fi
 
-    local body
-    body="$(cat <<UNIT
+    local body body_tmp
+    body_tmp="$(mktempfile)"
+    cat > "$body_tmp" <<UNIT
 [Unit]
 Description=Comis AI Agent Daemon
 Documentation=https://docs.comis.ai/operations/systemd
@@ -4306,7 +4865,7 @@ LockPersonality=yes
 [Install]
 WantedBy=${scope}.target
 UNIT
-)"
+    body="$(cat "$body_tmp")"
     # user scope installs under default.target; system under multi-user.target
     if [[ "$scope" == "user" ]]; then
         body="${body//WantedBy=user.target/WantedBy=default.target}"
@@ -4352,17 +4911,20 @@ HDR
 # Returns 0 if safe to overwrite, 1 if the user has edited it.
 unit_is_managed() {
     local unit_path="$1"
-    [[ -f "$unit_path" ]] || return 0
-    grep -q "^# managed-by: comis-installer" "$unit_path" 2>/dev/null || return 1
-    # Extract recorded checksum
+    [[ -f "$unit_path" && ! -L "$unit_path" ]] || return 1
+    [[ "$(sed -n '1p' "$unit_path")" == "# managed-by: comis-installer" ]] || return 1
+    [[ "$(sed -n '2p' "$unit_path")" == "# template-version: 1" ]] || return 1
+    [[ "$(sed -n '4p' "$unit_path")" == "# Do not edit by hand — the installer will refuse to overwrite a modified unit." ]] || return 1
     local recorded
-    recorded="$(grep '^# checksum:' "$unit_path" | head -n1 | awk '{print $3}')"
-    [[ -z "$recorded" ]] && return 1
-    # Extract the body (everything from the first "[Section]" header onward — the
-    # rendered unit's body always starts with "[Unit]"; no literal "[" appears
-    # in our managed-by header lines).
+    recorded="$(sed -n '3s/^# checksum: //p' "$unit_path")"
+    [[ "$recorded" =~ ^[a-f0-9]{64}$ ]] || return 1
+    local body_start=5
+    if [[ "$(sed -n '5p' "$unit_path")" == "# To regenerate after an install.sh upgrade: re-run the installer." ]]; then
+        body_start=6
+    fi
+    [[ "$(sed -n "${body_start}p" "$unit_path")" == "[Unit]" ]] || return 1
     local body
-    body="$(sed -n '/^\[/,$p' "$unit_path")"
+    body="$(tail -n "+${body_start}" "$unit_path")"
     local computed=""
     if command -v sha256sum >/dev/null 2>&1; then
         computed="$(printf '%s' "$body" | sha256sum | cut -d' ' -f1)"
@@ -4370,6 +4932,39 @@ unit_is_managed() {
         computed="$(printf '%s' "$body" | shasum -a 256 | cut -d' ' -f1)"
     fi
     [[ "$computed" == "$recorded" ]]
+}
+
+sudoers_rule_is_managed() {
+    local sudoers_file="$1"
+    [[ -f "$sudoers_file" && ! -L "$sudoers_file" ]] || return 1
+    [[ "$(sed -n '1p' "$sudoers_file")" == "# managed-by: comis-installer" ]] || return 1
+    local recorded body computed=""
+    recorded="$(sed -n '2s/^# checksum: //p' "$sudoers_file")"
+    [[ "$recorded" =~ ^[a-f0-9]{64}$ ]] || return 1
+    body="$(tail -n +3 "$sudoers_file")"
+    if command -v sha256sum >/dev/null 2>&1; then
+        computed="$(printf '%s' "$body" | sha256sum | cut -d' ' -f1)"
+    elif command -v shasum >/dev/null 2>&1; then
+        computed="$(printf '%s' "$body" | shasum -a 256 | cut -d' ' -f1)"
+    fi
+    [[ -n "$computed" && "$computed" == "$recorded" ]] || return 1
+    [[ "$(stat -c '%u:%g:%a' "$sudoers_file" 2>/dev/null || true)" == "0:0:440" ]]
+}
+
+xvfb_tmpfiles_rule_is_managed() {
+    local tmpfiles_file="$1"
+    [[ -f "$tmpfiles_file" && ! -L "$tmpfiles_file" ]] || return 1
+    [[ "$(sed -n '1p' "$tmpfiles_file")" == "# managed-by: comis-installer" ]] || return 1
+    local recorded body computed=""
+    recorded="$(sed -n '2s/^# checksum: //p' "$tmpfiles_file")"
+    [[ "$recorded" =~ ^[a-f0-9]{64}$ ]] || return 1
+    body="$(tail -n +3 "$tmpfiles_file")"
+    if command -v sha256sum >/dev/null 2>&1; then
+        computed="$(printf '%s' "$body" | sha256sum | cut -d' ' -f1)"
+    elif command -v shasum >/dev/null 2>&1; then
+        computed="$(printf '%s' "$body" | shasum -a 256 | cut -d' ' -f1)"
+    fi
+    [[ -n "$computed" && "$computed" == "$recorded" ]]
 }
 
 # Write /etc/comis/env with a placeholder. Does not overwrite an existing file
@@ -4586,7 +5181,7 @@ register_service_systemd() {
     # Wants=/After=comis-xvfb.service dependency resolves on first boot.
     render_xvfb_unit || ui_warn "Xvfb companion unit setup encountered errors"
 
-    if [[ -f "$unit_path" ]] && ! unit_is_managed "$unit_path"; then
+    if [[ -e "$unit_path" || -L "$unit_path" ]] && ! unit_is_managed "$unit_path"; then
         ui_warn "Existing unit at ${unit_path} has been hand-edited; leaving untouched."
         ui_info "To regenerate, remove it first: sudo rm ${unit_path} && rerun the installer."
     else
@@ -4649,16 +5244,35 @@ register_service_systemd() {
     local sudoers_file="/etc/sudoers.d/comis"
     local systemctl_bin
     systemctl_bin="$(command -v systemctl)"
-    local sudoers_tmp
-    sudoers_tmp="$(mktempfile)"
-    cat > "$sudoers_tmp" <<SUDOERS
+    local sudoers_body sudoers_checksum="" sudoers_tmp
+    sudoers_body="$(cat <<SUDOERS
 # Allow the comis service user to manage the comis daemon
 ${COMIS_SVC_USER} ALL=(root) NOPASSWD: ${systemctl_bin} start comis, ${systemctl_bin} start comis.service, ${systemctl_bin} stop comis, ${systemctl_bin} stop comis.service, ${systemctl_bin} restart comis, ${systemctl_bin} restart comis.service, ${systemctl_bin} reload comis, ${systemctl_bin} reload comis.service
 SUDOERS
+)"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sudoers_checksum="$(printf '%s' "$sudoers_body" | sha256sum | cut -d' ' -f1)"
+    elif command -v shasum >/dev/null 2>&1; then
+        sudoers_checksum="$(printf '%s' "$sudoers_body" | shasum -a 256 | cut -d' ' -f1)"
+    fi
+    if [[ -z "$sudoers_checksum" ]]; then
+        ui_error "No SHA-256 utility available; refusing to write the sudoers rule"
+        return 1
+    fi
+    sudoers_tmp="$(mktempfile)"
+    cat > "$sudoers_tmp" <<SUDOERS
+# managed-by: comis-installer
+# checksum: ${sudoers_checksum}
+${sudoers_body}
+SUDOERS
     chmod 0440 "$sudoers_tmp"
-    if command -v visudo >/dev/null 2>&1 && ! visudo -cf "$sudoers_tmp" >/dev/null 2>&1; then
+    if [[ -e "$sudoers_file" || -L "$sudoers_file" ]] && ! sudoers_rule_is_managed "$sudoers_file"; then
+        ui_error "Existing sudoers rule at ${sudoers_file} is not installer-managed; refusing to overwrite it"
+        return 1
+    elif command -v visudo >/dev/null 2>&1 && ! visudo -cf "$sudoers_tmp" >/dev/null 2>&1; then
         ui_warn "Generated sudoers rule failed validation; leaving existing rule untouched"
-    elif [[ ! -f "$sudoers_file" ]] || ! cmp -s "$sudoers_tmp" "$sudoers_file"; then
+        return 1
+    elif [[ ! -f "$sudoers_file" || -L "$sudoers_file" ]] || ! cmp -s "$sudoers_tmp" "$sudoers_file"; then
         maybe_sudo install -m 0440 -o root -g root "$sudoers_tmp" "$sudoers_file"
         ui_success "Sudoers rule installed for '${COMIS_SVC_USER}'"
     fi
@@ -4736,7 +5350,7 @@ ENV
     local saved_env_file="$COMIS_ENV_FILE"
     COMIS_ENV_FILE="$user_env"
 
-    if [[ -f "$unit_path" ]] && ! unit_is_managed "$unit_path"; then
+    if [[ -e "$unit_path" || -L "$unit_path" ]] && ! unit_is_managed "$unit_path"; then
         ui_warn "Existing unit at ${unit_path} has been hand-edited; leaving untouched."
         ui_info "To regenerate, remove it first: rm ${unit_path} && rerun the installer."
     else
@@ -4910,8 +5524,83 @@ register_service_pm2() {
     fi
 }
 
+# Install the root trust anchor consumed before the daemon loads live adapters.
+# A pre-provisioned test role belongs to the replay controller and is preserved.
+provision_environment_role_marker() {
+    local role_dir="/etc/comis"
+    local role_marker="${role_dir}/environment-role"
+    local role=""
+    local marker_stat=""
+    local parent_stat=""
+    local parent_mode=""
+
+    if [[ -e "$role_marker" || -L "$role_marker" ]]; then
+        if [[ -L "$role_marker" || ! -f "$role_marker" ]]; then
+            ui_error "Machine role marker is not a trusted regular file"
+            return 1
+        fi
+        marker_stat="$(stat -c '%u:%g:%a' "$role_marker" 2>/dev/null \
+            || stat -f '%u:%g:%Lp' "$role_marker" 2>/dev/null || true)"
+        role="$(cat "$role_marker" 2>/dev/null || true)"
+        case "$role" in
+            "production"|"test") ;;
+            *)
+                ui_error "Machine role marker has invalid content"
+                return 1
+                ;;
+        esac
+        if [[ "$marker_stat" != "0:0:644" ]]; then
+            ui_error "Machine role marker must be owned by root with mode 0644"
+            return 1
+        fi
+        return 0
+    fi
+
+    if [[ -L "$role_dir" ]]; then
+        ui_error "Machine role directory must not be a symbolic link"
+        return 1
+    fi
+    if ! maybe_sudo install -d -m 0755 -o root -g root "$role_dir"; then
+        ui_error "Could not create the machine role directory"
+        return 1
+    fi
+    parent_stat="$(stat -c '%u:%g:%a' "$role_dir" 2>/dev/null \
+        || stat -f '%u:%g:%Lp' "$role_dir" 2>/dev/null || true)"
+    parent_mode="${parent_stat##*:}"
+    if [[ "$parent_stat" != 0:0:* || ! "$parent_mode" =~ ^[0-7]{3,4}$ ]] \
+        || (( (8#$parent_mode & 8#022) != 0 )); then
+        ui_error "Machine role directory is not root-controlled"
+        return 1
+    fi
+
+    local tmp staged
+    tmp="$(mktempfile)"
+    printf 'production\n' > "$tmp"
+    staged="${role_dir}/.environment-role.comis-${RANDOM}-$$"
+    if ! maybe_sudo install -m 0644 -o root -g root "$tmp" "$staged" \
+        || ! maybe_sudo mv -n "$staged" "$role_marker"; then
+        maybe_sudo rm -f "$staged" 2>/dev/null || true
+        ui_error "Could not install the machine role marker"
+        return 1
+    fi
+    maybe_sudo rm -f "$staged" 2>/dev/null || true
+
+    marker_stat="$(stat -c '%u:%g:%a' "$role_marker" 2>/dev/null \
+        || stat -f '%u:%g:%Lp' "$role_marker" 2>/dev/null || true)"
+    role="$(cat "$role_marker" 2>/dev/null || true)"
+    if [[ -L "$role_marker" || ! -f "$role_marker" || "$marker_stat" != "0:0:644" \
+        || "$role" != "production" ]]; then
+        ui_error "Machine role marker failed post-install verification"
+        return 1
+    fi
+    return 0
+}
+
 # Dispatch entry point — called from main() once the binary is in place.
 register_service() {
+    if ! provision_environment_role_marker; then
+        return 1
+    fi
     if [[ "$RESOLVED_SERVICE_MANAGER" == "none" ]]; then
         ui_info "Skipping service registration (--service none)"
         ui_info "Start manually with: comis daemon start"
@@ -5041,16 +5730,199 @@ dedicated_user_install_detected() {
         || [[ -e "${target_home}/.local/bin/comis" ]]
 }
 
+full_uninstall_artifacts_present() {
+    local default_home="/home/${COMIS_USER}"
+    local apparmor_profile="/etc/apparmor.d/bwrap"
+    local path
+    for path in \
+        /etc/systemd/system/comis.service \
+        /etc/systemd/system/comis-xvfb.service \
+        /etc/tmpfiles.d/comis-x11.conf \
+        /run/comis-x11 \
+        /etc/sudoers.d/comis \
+        /etc/comis \
+        /var/log/comis \
+        "${default_home}/.comis" \
+        "${default_home}/.npm-global/lib/node_modules/comisai" \
+        "${default_home}/.npm-global/bin/comis" \
+        "${default_home}/.local/bin/comis"; do
+        [[ -e "$path" || -L "$path" ]] && return 0
+    done
+    if [[ -L "$apparmor_profile" ]]; then
+        return 0
+    fi
+    if [[ -f "$apparmor_profile" ]] \
+        && grep -Fxq "# managed-by: comis-installer" "$apparmor_profile" 2>/dev/null; then
+        return 0
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl is-active --quiet comis.service 2>/dev/null && return 0
+        systemctl is-enabled --quiet comis.service 2>/dev/null && return 0
+        systemctl is-active --quiet comis-xvfb.service 2>/dev/null && return 0
+        systemctl is-enabled --quiet comis-xvfb.service 2>/dev/null && return 0
+    fi
+    if command -v iptables >/dev/null 2>&1 \
+        && iptables -L COMIS_EGRESS -n >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+reconcile_install_receipt_decommission_state() {
+    local state
+    state="$(install_receipt_value decommission_state)" || return 1
+    case "$state" in
+        active)
+            return 0
+            ;;
+        removing)
+            if install_receipt_owned_artifacts_present; then
+                ui_error "An interrupted account removal left ambiguous user, home, or group state"
+                ui_info "The installer will not delete identities recreated after removal began"
+                return 1
+            fi
+            if [[ "$DRY_RUN" == "1" ]]; then
+                ui_info "[dry-run] would: finalize the interrupted account-removal receipt"
+                return 0
+            fi
+            if ! update_install_receipt_decommission_state "removing" "removed"; then
+                ui_error "Could not finalize the interrupted account-removal receipt"
+                return 1
+            fi
+            ;;
+        removed)
+            if install_receipt_owned_artifacts_present; then
+                ui_error "A user, home, or group reappeared after installer-owned account removal"
+                ui_info "The replacement identity was left untouched"
+                return 1
+            fi
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+remove_empty_install_receipt_dir() {
+    local receipt_dir="$1"
+    local require_root_identity="$2"
+    [[ -e "$receipt_dir" || -L "$receipt_dir" ]] || return 0
+    if [[ -L "$receipt_dir" || ! -d "$receipt_dir" ]]; then
+        ui_error "Installer receipt directory ${receipt_dir} is not a real directory"
+        return 1
+    fi
+    if [[ "$require_root_identity" == "1" ]] \
+        && [[ "$(stat -c '%u:%g:%a' "$receipt_dir" 2>/dev/null || true)" != "0:0:700" ]]; then
+        ui_error "Installer receipt directory ${receipt_dir} has unexpected ownership or mode"
+        return 1
+    fi
+    local first_entry
+    if ! first_entry="$(find "$receipt_dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)"; then
+        ui_error "Could not inspect installer receipt directory ${receipt_dir}"
+        return 1
+    fi
+    if [[ -n "$first_entry" ]]; then
+        ui_error "Installer receipt directory ${receipt_dir} is not empty; preserving it"
+        return 1
+    fi
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[dry-run] would: rmdir ${receipt_dir}"
+        return 0
+    fi
+    if ! rmdir "$receipt_dir"; then
+        ui_error "Could not remove empty installer receipt directory ${receipt_dir}"
+        return 1
+    fi
+    if [[ -e "$receipt_dir" || -L "$receipt_dir" ]]; then
+        ui_error "Could not remove empty installer receipt directory ${receipt_dir}"
+        return 1
+    fi
+    ui_success "Removed installer receipt directory"
+}
+
+preflight_full_uninstall() {
+    FULL_UNINSTALL_NOOP=0
+    [[ "$REMOVE_USER_FLAG" == "1" ]] || return 0
+    if [[ "$OS" != "linux" ]]; then
+        ui_error "--remove-user is Linux-only"
+        return 1
+    fi
+    if ! is_root; then
+        ui_error "--remove-user requires root"
+        return 1
+    fi
+
+    if [[ -e "$INSTALL_RECEIPT_FILE" || -L "$INSTALL_RECEIPT_FILE" ]]; then
+        if ! install_receipt_is_valid; then
+            ui_error "Invalid installer ownership receipt at ${INSTALL_RECEIPT_FILE}; refusing full removal"
+            return 1
+        fi
+        local receipt_user receipt_home
+        receipt_user="$(install_receipt_value target_user)"
+        receipt_home="$(install_receipt_value target_home)"
+        if [[ "$receipt_user" != "$COMIS_USER" ]]; then
+            ui_error "Installer receipt belongs to ${receipt_user} at ${receipt_home}, not ${COMIS_USER}; refusing full removal"
+            return 1
+        fi
+        reconcile_install_receipt_decommission_state || return 1
+        return 0
+    fi
+
+    if id "$COMIS_USER" >/dev/null 2>&1 || full_uninstall_artifacts_present; then
+        ui_error "Comis dedicated-user artifacts exist without an ownership receipt; refusing full removal"
+        ui_info "Run without --remove-user to preserve the account, or restore the root-owned installer receipt"
+        return 1
+    fi
+
+    if [[ "$INSTALL_RECEIPT_FILE" == "/var/lib/comis-installer/receipt" ]] \
+        && { [[ -e "/var/lib/comis-installer" ]] || [[ -L "/var/lib/comis-installer" ]]; }; then
+        remove_empty_install_receipt_dir "/var/lib/comis-installer" 1 || return 1
+    fi
+
+    FULL_UNINSTALL_NOOP=1
+    ui_info "No installer-owned dedicated-user installation found; nothing to remove"
+    return 0
+}
+
 resolve_uninstall_target() {
     UNINSTALL_TARGET_USER="$(id -un)"
     UNINSTALL_TARGET_HOME="$HOME"
     UNINSTALL_TARGET_IS_DEDICATED=0
 
-    if [[ "$OS" != "linux" ]] || ! is_root || [[ "$NO_USER" == "1" ]] \
-        || ! id "$COMIS_USER" >/dev/null 2>&1; then
+    if [[ "$OS" != "linux" ]] || ! is_root; then
         return 0
     fi
 
+    if [[ -e "$INSTALL_RECEIPT_FILE" || -L "$INSTALL_RECEIPT_FILE" ]]; then
+        if ! install_receipt_is_valid; then
+            ui_error "Invalid installer ownership receipt at ${INSTALL_RECEIPT_FILE}; refusing to choose a destructive target"
+            return 1
+        fi
+        local receipt_user receipt_home receipt_state
+        receipt_user="$(install_receipt_value target_user)"
+        receipt_home="$(install_receipt_value target_home)"
+        receipt_state="$(install_receipt_value decommission_state)"
+        if [[ "$receipt_user" != "$COMIS_USER" ]]; then
+            ui_error "Installer receipt belongs to ${receipt_user} at ${receipt_home}, not ${COMIS_USER}"
+            return 1
+        fi
+        if [[ "$receipt_state" != "active" && "$REMOVE_USER_FLAG" != "1" ]]; then
+            ui_error "Installer receipt is in decommission state ${receipt_state}; refusing to target ${receipt_home}"
+            return 1
+        fi
+        UNINSTALL_TARGET_USER="$receipt_user"
+        UNINSTALL_TARGET_HOME="$receipt_home"
+        UNINSTALL_TARGET_IS_DEDICATED=1
+        return 0
+    fi
+
+    if [[ "$NO_USER" == "1" ]]; then
+        return 0
+    fi
+
+    if ! id "$COMIS_USER" >/dev/null 2>&1; then
+        return 0
+    fi
     local candidate_home=""
     candidate_home="$(getent passwd "$COMIS_USER" 2>/dev/null | cut -d: -f6)"
     if [[ "$candidate_home" != /* || "$candidate_home" == "/" ]]; then
@@ -5093,6 +5965,8 @@ confirm_uninstall() {
     fi
     if [[ "$REMOVE_USER_FLAG" == "1" ]]; then
         echo "  - The ${COMIS_USER} system user will be DELETED"
+        echo "  - Installer-managed Xvfb, sudoers, AppArmor, and ownership files will be DELETED"
+        echo "  - Shared host runtimes and OS packages will be PRESERVED"
     fi
     echo ""
     local ans
@@ -5103,6 +5977,34 @@ confirm_uninstall() {
             ui_info "Uninstall cancelled."
             exit 0
             ;;
+    esac
+}
+
+systemd_unit_is_stopped_and_disabled() {
+    local scope="$1"
+    local service_name="$2"
+    local unit_path="$3"
+    local active_state unit_file_state
+    if [[ "$scope" == "system" ]]; then
+        active_state="$(maybe_sudo systemctl show --property=ActiveState --value "$service_name" 2>/dev/null)" \
+            || return 1
+        unit_file_state="$(maybe_sudo systemctl show --property=UnitFileState --value "$service_name" 2>/dev/null)" \
+            || return 1
+    else
+        active_state="$(systemctl --user show --property=ActiveState --value "$service_name" 2>/dev/null)" \
+            || return 1
+        unit_file_state="$(systemctl --user show --property=UnitFileState --value "$service_name" 2>/dev/null)" \
+            || return 1
+    fi
+
+    case "$active_state" in
+        inactive|failed) ;;
+        *) return 1 ;;
+    esac
+    case "$unit_file_state" in
+        disabled|masked|static|indirect|generated|transient) return 0 ;;
+        "") [[ ! -e "$unit_path" && ! -L "$unit_path" ]] ;;
+        *) return 1 ;;
     esac
 }
 
@@ -5117,83 +6019,243 @@ uninstall_systemd_unit() {
         systemctl_scope=("--user")
     fi
 
-    if [[ ! -f "$unit_path" ]]; then
-        return 0
+    if [[ -L "$unit_path" ]]; then
+        ui_error "${unit_path} is a symlink; refusing to treat it as an installer-managed unit"
+        return 1
+    fi
+    # Check if user-edited — if so, don't delete
+    if [[ -f "$unit_path" ]] && ! unit_is_managed "$unit_path"; then
+        ui_error "${unit_path} is not an unmodified installer-managed unit; refusing to remove it"
+        return 1
     fi
 
-    # Check if user-edited — if so, don't delete
-    if ! unit_is_managed "$unit_path"; then
-        ui_warn "${unit_path} was hand-edited; leaving in place."
-        ui_info "Remove manually if desired: rm ${unit_path}"
+    local service_known=0
+    if command -v systemctl >/dev/null 2>&1; then
+        if [[ "$scope" == "system" ]] \
+            && { systemctl is-active --quiet comis.service 2>/dev/null \
+                || systemctl is-enabled --quiet comis.service 2>/dev/null; }; then
+            service_known=1
+        elif [[ "$scope" == "user" ]] \
+            && { systemctl --user is-active --quiet comis.service 2>/dev/null \
+                || systemctl --user is-enabled --quiet comis.service 2>/dev/null; }; then
+            service_known=1
+        fi
+    fi
+    if [[ ! -e "$unit_path" && ! -L "$unit_path" && "$service_known" == "0" ]]; then
         return 0
     fi
 
     if [[ "$scope" == "system" ]]; then
         if [[ "$DRY_RUN" == "1" ]]; then
             ui_info "[dry-run] would: systemctl disable --now comis.service"
-            ui_info "[dry-run] would: rm ${unit_path} && systemctl daemon-reload"
+            [[ -f "$unit_path" ]] \
+                && ui_info "[dry-run] would: rm ${unit_path} && systemctl daemon-reload"
             return 0
         fi
+        if ! command -v systemctl >/dev/null 2>&1; then
+            ui_error "systemctl is unavailable; refusing to remove a potentially loaded Comis service"
+            return 1
+        fi
         maybe_sudo systemctl disable --now comis.service 2>/dev/null || true
-        maybe_sudo rm -f "$unit_path"
-        maybe_sudo rm -f /etc/sudoers.d/comis
+        if ! systemd_unit_is_stopped_and_disabled "system" "comis.service" "$unit_path"; then
+            ui_error "Could not verify that comis.service is stopped and disabled; preserving its unit"
+            return 1
+        fi
+        [[ -f "$unit_path" ]] && maybe_sudo rm -f "$unit_path"
         maybe_sudo systemctl daemon-reload
         maybe_sudo systemctl reset-failed comis.service 2>/dev/null || true
     else
         if [[ "$DRY_RUN" == "1" ]]; then
             ui_info "[dry-run] would: systemctl --user disable --now comis.service"
-            ui_info "[dry-run] would: rm ${unit_path} && systemctl --user daemon-reload"
+            [[ -f "$unit_path" ]] \
+                && ui_info "[dry-run] would: rm ${unit_path} && systemctl --user daemon-reload"
             return 0
         fi
+        if ! command -v systemctl >/dev/null 2>&1; then
+            ui_error "systemctl is unavailable; refusing to remove a potentially loaded Comis user service"
+            return 1
+        fi
         systemctl "${systemctl_scope[@]}" disable --now comis.service 2>/dev/null || true
-        rm -f "$unit_path"
+        if ! systemd_unit_is_stopped_and_disabled "user" "comis.service" "$unit_path"; then
+            ui_error "Could not verify that the user comis.service is stopped and disabled; preserving its unit"
+            return 1
+        fi
+        [[ -f "$unit_path" ]] && rm -f "$unit_path"
         # daemon-reload can fail if the user bus isn't reachable (headless,
         # non-lingering user sessions). Removal of the file is what matters.
         systemctl "${systemctl_scope[@]}" daemon-reload 2>/dev/null || true
     fi
+    if [[ -e "$unit_path" || -L "$unit_path" ]]; then
+        ui_error "Could not remove installer-managed systemd unit ${unit_path}"
+        return 1
+    fi
     ui_success "Removed systemd unit (${scope} scope)"
+}
+
+uninstall_sudoers_rule() {
+    local sudoers_file="/etc/sudoers.d/comis"
+    [[ -e "$sudoers_file" || -L "$sudoers_file" ]] || return 0
+    if [[ -L "$sudoers_file" ]]; then
+        ui_error "${sudoers_file} is a symlink; refusing to treat it as installer-managed"
+        return 1
+    fi
+    if ! sudoers_rule_is_managed "$sudoers_file"; then
+        ui_error "${sudoers_file} is not an unmodified installer-managed rule; refusing to remove it"
+        return 1
+    fi
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[dry-run] would: rm ${sudoers_file}"
+        return 0
+    fi
+    maybe_sudo rm -f "$sudoers_file"
+    if [[ -e "$sudoers_file" || -L "$sudoers_file" ]]; then
+        ui_error "Could not remove installer-managed sudoers rule at ${sudoers_file}"
+        return 1
+    fi
+    ui_success "Removed installer-managed sudoers rule"
 }
 
 uninstall_xvfb_unit() {
     # Companion unit installed by --with-xvfb. System-scope only (the
     # render_xvfb_unit function refuses to write a user-scope unit).
     local unit_path="/etc/systemd/system/comis-xvfb.service"
-    [[ -f "$unit_path" ]] || return 0
+    local tmpfiles_path="/etc/tmpfiles.d/comis-x11.conf"
+    local runtime_path="/run/comis-x11"
+    local service_known=0
+    if command -v systemctl >/dev/null 2>&1 \
+        && { systemctl is-active --quiet comis-xvfb.service 2>/dev/null \
+            || systemctl is-enabled --quiet comis-xvfb.service 2>/dev/null; }; then
+        service_known=1
+    fi
 
-    if ! unit_is_managed "$unit_path"; then
-        ui_warn "${unit_path} was hand-edited; leaving in place."
-        ui_info "Remove manually if desired: rm ${unit_path}"
+    if [[ -L "$unit_path" ]]; then
+        ui_error "${unit_path} is a symlink; refusing Xvfb cleanup"
+        return 1
+    fi
+    if [[ -L "$tmpfiles_path" ]]; then
+        ui_error "${tmpfiles_path} is a symlink; refusing Xvfb cleanup"
+        return 1
+    fi
+    if [[ -f "$unit_path" ]] && ! unit_is_managed "$unit_path"; then
+        ui_error "${unit_path} is not an unmodified installer-managed unit; refusing Xvfb cleanup"
+        return 1
+    fi
+    if [[ -f "$tmpfiles_path" ]] && ! xvfb_tmpfiles_rule_is_managed "$tmpfiles_path"; then
+        ui_error "${tmpfiles_path} is not installer-managed; refusing Xvfb cleanup"
+        return 1
+    fi
+    if [[ ! -e "$unit_path" && ! -L "$unit_path" \
+        && ! -e "$tmpfiles_path" && ! -L "$tmpfiles_path" && ! -e "$runtime_path" \
+        && "$service_known" == "0" ]]; then
         return 0
     fi
 
     if [[ "$DRY_RUN" == "1" ]]; then
-        ui_info "[dry-run] would: systemctl disable --now comis-xvfb.service"
-        ui_info "[dry-run] would: rm ${unit_path} && systemctl daemon-reload"
+        if [[ -f "$unit_path" || "$service_known" == "1" ]]; then
+            ui_info "[dry-run] would: systemctl disable --now comis-xvfb.service"
+        fi
+        if [[ -f "$unit_path" ]]; then
+            ui_info "[dry-run] would: rm ${unit_path} && systemctl daemon-reload"
+        fi
+        ui_info "[dry-run] would: rm -f /etc/tmpfiles.d/comis-x11.conf"
+        ui_info "[dry-run] would: rm -rf /run/comis-x11"
         return 0
     fi
-    maybe_sudo systemctl disable --now comis-xvfb.service 2>/dev/null || true
-    maybe_sudo rm -f "$unit_path"
-    maybe_sudo systemctl daemon-reload
-    maybe_sudo systemctl reset-failed comis-xvfb.service 2>/dev/null || true
-    ui_success "Removed comis-xvfb.service"
+
+    if [[ -f "$unit_path" || "$service_known" == "1" ]]; then
+        if ! command -v systemctl >/dev/null 2>&1; then
+            ui_error "systemctl is unavailable; refusing to remove a potentially loaded Xvfb service"
+            return 1
+        fi
+        maybe_sudo systemctl disable --now comis-xvfb.service 2>/dev/null || true
+        if ! systemd_unit_is_stopped_and_disabled \
+            "system" "comis-xvfb.service" "$unit_path"; then
+            ui_error "Could not verify that comis-xvfb.service is stopped and disabled; preserving its files"
+            return 1
+        fi
+    fi
+    if [[ -f "$unit_path" ]]; then
+        maybe_sudo rm -f "$unit_path"
+        maybe_sudo systemctl daemon-reload
+        maybe_sudo systemctl reset-failed comis-xvfb.service 2>/dev/null || true
+    fi
+    maybe_sudo rm -f "$tmpfiles_path"
+    maybe_sudo rm -rf "$runtime_path"
+    if [[ -e "$unit_path" || -L "$unit_path" || -e "$tmpfiles_path" \
+        || -L "$tmpfiles_path" || -e "$runtime_path" || -L "$runtime_path" ]]; then
+        ui_error "Could not remove all installer-managed Xvfb artifacts"
+        return 1
+    fi
+    ui_success "Removed installer-managed Xvfb artifacts"
+}
+
+pm2_saved_comis_process_exists() {
+    local pm2_home="${PM2_HOME:-${HOME}/.pm2}"
+    local dump_file="${pm2_home}/dump.pm2"
+    [[ -f "$dump_file" && ! -L "$dump_file" ]] || return 1
+    grep -Eq '"name"[[:space:]]*:[[:space:]]*"comis"' "$dump_file" 2>/dev/null
+}
+
+pm2_daemon_is_running() {
+    local pm2_home="${PM2_HOME:-${HOME}/.pm2}"
+    local pid_file="${pm2_home}/pm2.pid"
+    [[ -f "$pid_file" && ! -L "$pid_file" ]] || return 1
+    local pid command_line
+    pid="$(tr -d '[:space:]' < "$pid_file" 2>/dev/null || true)"
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    command_line="$(ps -ww -o command= -p "$pid" 2>/dev/null || true)"
+    [[ "$command_line" == *"PM2"* || "$command_line" == *"pm2"* ]]
 }
 
 uninstall_pm2() {
-    if ! command -v pm2 >/dev/null 2>&1; then
-        return 0
-    fi
-    if ! pm2 jlist 2>/dev/null | grep -q '"name":"comis"'; then
-        return 0
-    fi
+    local saved_process=0 running_daemon=0
+    pm2_saved_comis_process_exists && saved_process=1
+    pm2_daemon_is_running && running_daemon=1
+
     if [[ "$DRY_RUN" == "1" ]]; then
-        ui_info "[dry-run] would: pm2 delete comis && pm2 save"
-        if [[ "$OS" == "macos" ]]; then
-            ui_info "[dry-run] would: sudo env PATH=\$PATH pm2 unstartup launchd"
+        if [[ "$saved_process" == "1" ]]; then
+            ui_info "[dry-run] would: pm2 delete comis && pm2 save"
+            if [[ "$OS" == "macos" ]]; then
+                ui_info "[dry-run] would: sudo env PATH=\$PATH pm2 unstartup launchd"
+            fi
+        elif [[ "$running_daemon" == "1" ]]; then
+            ui_info "[dry-run] would: inspect the active PM2 process list and remove comis if registered"
         fi
         return 0
     fi
-    pm2 delete comis 2>/dev/null || true
-    pm2 save 2>/dev/null || true
+
+    if [[ "$saved_process" == "0" && "$running_daemon" == "0" ]]; then
+        return 0
+    fi
+    if ! command -v pm2 >/dev/null 2>&1; then
+        ui_error "PM2 state exists but the pm2 command is unavailable; refusing to claim complete removal"
+        return 1
+    fi
+    local process_list
+    if ! process_list="$(pm2 jlist 2>/dev/null)"; then
+        ui_error "Could not inspect the PM2 process list"
+        return 1
+    fi
+    if ! grep -q '"name":"comis"' <<<"$process_list"; then
+        if [[ "$saved_process" == "1" ]]; then
+            ui_error "A saved Comis PM2 entry exists but is not loaded; remove it from ${PM2_HOME:-${HOME}/.pm2}/dump.pm2 before retrying"
+            return 1
+        fi
+        return 0
+    fi
+    if ! pm2 delete comis 2>/dev/null; then
+        ui_error "Could not delete the Comis PM2 process"
+        return 1
+    fi
+    if pm2 jlist 2>/dev/null | grep -q '"name":"comis"'; then
+        ui_error "PM2 still reports the Comis process after deletion"
+        return 1
+    fi
+    if ! pm2 save 2>/dev/null; then
+        ui_error "Could not persist the updated PM2 process list"
+        return 1
+    fi
     if [[ "$OS" == "macos" ]] && can_elevate; then
         # pm2 unstartup prints the sudo command and exits non-zero
         local out
@@ -5201,7 +6263,10 @@ uninstall_pm2() {
         local sudo_cmd
         sudo_cmd="$(echo "$out" | grep -oE 'sudo env PATH=[^\n]+pm2 unstartup[^\n]+' | head -n1 || true)"
         if [[ -n "$sudo_cmd" ]]; then
-            sh -c "$sudo_cmd" >/dev/null 2>&1 || ui_warn "Could not remove launchd plist (may already be gone)"
+            if ! sh -c "$sudo_cmd" >/dev/null 2>&1; then
+                ui_error "Could not remove the PM2 launchd startup entry"
+                return 1
+            fi
         fi
     fi
     ui_success "Removed from pm2"
@@ -5293,7 +6358,7 @@ uninstall_purge_data() {
         return 0
     fi
 
-    if [[ -d "$data_dir" ]]; then
+    if [[ -e "$data_dir" || -L "$data_dir" ]]; then
         local data_owner_uid=""
         data_owner_uid="$(stat -c %u "$data_dir" 2>/dev/null || stat -f %u "$data_dir" 2>/dev/null || echo "")"
         if [[ "$data_owner_uid" == "$(id -u)" ]]; then
@@ -5301,16 +6366,28 @@ uninstall_purge_data() {
         else
             maybe_sudo rm -rf "$data_dir"
         fi
+        if [[ -e "$data_dir" || -L "$data_dir" ]]; then
+            ui_error "Could not remove ${data_dir}"
+            return 1
+        fi
         ui_success "Removed ${data_dir}"
     fi
 
-    if [[ -d /etc/comis ]]; then
+    if [[ -e /etc/comis || -L /etc/comis ]]; then
         maybe_sudo rm -rf /etc/comis
+        if [[ -e /etc/comis || -L /etc/comis ]]; then
+            ui_error "Could not remove /etc/comis"
+            return 1
+        fi
         ui_success "Removed /etc/comis"
     fi
 
-    if [[ -d /var/log/comis ]]; then
+    if [[ -e /var/log/comis || -L /var/log/comis ]]; then
         maybe_sudo rm -rf /var/log/comis
+        if [[ -e /var/log/comis || -L /var/log/comis ]]; then
+            ui_error "Could not remove /var/log/comis"
+            return 1
+        fi
         ui_success "Removed /var/log/comis"
     fi
 
@@ -5366,9 +6443,62 @@ uninstall_egress_chain() {
     if $sudo_prefix iptables -X COMIS_EGRESS 2>/dev/null; then
         ui_success "Removed COMIS_EGRESS iptables chain"
     else
-        ui_warn "Could not delete COMIS_EGRESS chain — remove manually: iptables -X COMIS_EGRESS"
+        ui_error "Could not delete COMIS_EGRESS chain — remove manually: iptables -X COMIS_EGRESS"
+        return 1
     fi
     return 0
+}
+
+uninstall_managed_apparmor_profile() {
+    [[ "$REMOVE_USER_FLAG" == "1" ]] || return 0
+    [[ "$OS" == "linux" ]] || return 0
+    local profile="/etc/apparmor.d/bwrap"
+    [[ -e "$profile" || -L "$profile" ]] || return 0
+    if [[ -L "$profile" ]]; then
+        ui_error "${profile} is a symlink; refusing to treat it as installer-managed"
+        return 1
+    fi
+    if ! apparmor_bwrap_profile_is_managed "$profile"; then
+        if grep -Fxq "# managed-by: comis-installer" "$profile" 2>/dev/null; then
+            ui_error "Installer-managed AppArmor profile ${profile} was modified; refusing to remove it"
+            return 1
+        fi
+        ui_warn "${profile} is not installer-managed; leaving it untouched"
+        return 0
+    fi
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[dry-run] would: unload and remove ${profile}"
+        return 0
+    fi
+    local loaded_profiles="/sys/kernel/security/apparmor/profiles"
+    if [[ ! -f "$loaded_profiles" || -L "$loaded_profiles" || ! -r "$loaded_profiles" ]]; then
+        ui_error "Cannot verify loaded AppArmor profiles; preserving ${profile}"
+        return 1
+    fi
+    local profile_loaded=0
+    if grep -q '^bwrap ' "$loaded_profiles" 2>/dev/null; then
+        profile_loaded=1
+    fi
+    if [[ "$profile_loaded" == "1" ]]; then
+        if ! command -v apparmor_parser >/dev/null 2>&1; then
+            ui_error "The bwrap AppArmor profile is loaded but apparmor_parser is unavailable"
+            return 1
+        fi
+        if ! maybe_sudo apparmor_parser -R "$profile" >/dev/null 2>&1; then
+            ui_error "Could not unload installer-managed AppArmor profile ${profile}"
+            return 1
+        fi
+    fi
+    if grep -q '^bwrap ' "$loaded_profiles" 2>/dev/null; then
+        ui_error "AppArmor still reports the bwrap profile as loaded"
+        return 1
+    fi
+    maybe_sudo rm -f "$profile"
+    if [[ -e "$profile" || -L "$profile" ]]; then
+        ui_error "Could not remove installer-managed AppArmor profile at ${profile}"
+        return 1
+    fi
+    ui_success "Removed installer-managed AppArmor profile"
 }
 
 uninstall_remove_user() {
@@ -5378,35 +6508,183 @@ uninstall_remove_user() {
         return 0
     fi
     if ! is_root; then
-        ui_warn "--remove-user requires root; skipping"
-        return 0
+        ui_error "--remove-user requires root"
+        return 1
     fi
-    if ! id "$COMIS_USER" &>/dev/null; then
+    if ! install_receipt_is_valid; then
+        ui_error "Refusing to delete ${COMIS_USER}: the installer-created account receipt is missing or invalid"
+        return 1
+    fi
+    if ! install_receipt_matches_target "$COMIS_USER" "$UNINSTALL_TARGET_HOME"; then
+        ui_error "Refusing to delete ${COMIS_USER}: the installer receipt does not match ${UNINSTALL_TARGET_HOME}"
+        return 1
+    fi
+
+    local decommission_state created_user created_group receipt_uid receipt_gid identity_token
+    decommission_state="$(install_receipt_raw_value decommission_state)"
+    created_user="$(install_receipt_raw_value created_user)"
+    created_group="$(install_receipt_raw_value created_group)"
+    receipt_uid="$(install_receipt_raw_value target_uid)"
+    receipt_gid="$(install_receipt_raw_value target_gid)"
+    identity_token="$(install_receipt_raw_value identity_token)"
+
+    if [[ "$decommission_state" != "active" ]]; then
+        if install_receipt_owned_artifacts_present; then
+            ui_error "Refusing to retry account deletion: the decommission receipt is ${decommission_state} but an owned path or identity is present"
+            return 1
+        fi
+        if [[ "$DRY_RUN" == "1" ]]; then
+            [[ "$decommission_state" == "removing" ]] \
+                && ui_info "[dry-run] would: finalize the interrupted account-removal receipt"
+            return 0
+        fi
+        if [[ "$decommission_state" == "removing" ]] \
+            && ! update_install_receipt_decommission_state "removing" "removed"; then
+            ui_error "Could not finalize the interrupted account-removal receipt"
+            return 1
+        fi
         return 0
     fi
 
-    # Safety: refuse if other processes are running as this user
-    if pgrep -u "$COMIS_USER" -a 2>/dev/null | grep -v -E '(comis|node.*daemon)' | grep -q .; then
-        ui_error "Other processes are running as ${COMIS_USER}; refusing to delete the user"
-        ui_info "Processes:"
-        pgrep -u "$COMIS_USER" -a || true
+    if [[ "$created_user" != "1" ]]; then
+        ui_error "Refusing to delete ${COMIS_USER}: no installer-created user receipt matches ${UNINSTALL_TARGET_HOME}"
+        return 1
+    fi
+    local user_exists=0
+    id "$COMIS_USER" >/dev/null 2>&1 && user_exists=1
+    if [[ "$user_exists" != "1" ]]; then
+        ui_error "Refusing to delete stale account paths: the active receipt user no longer exists"
         return 1
     fi
 
     if [[ "$DRY_RUN" == "1" ]]; then
-        ui_info "[dry-run] would: userdel -r ${COMIS_USER}; groupdel ${COMIS_USER}"
+        ui_info "[dry-run] would: atomically mark the account-removal receipt as removing"
+        ui_info "[dry-run] would: userdel -r ${COMIS_USER}"
+        if [[ "$created_group" == "1" ]]; then
+            ui_info "[dry-run] would: groupdel ${COMIS_USER}"
+        fi
         return 0
     fi
 
-    userdel -r "$COMIS_USER" 2>/dev/null || userdel "$COMIS_USER" 2>/dev/null || true
-    groupdel "$COMIS_USER" 2>/dev/null || true
+    # Service cleanup runs first. Any remaining process means account deletion
+    # is unsafe, regardless of its command name.
+    if [[ "$user_exists" == "1" ]] && pgrep -u "$COMIS_USER" >/dev/null 2>&1; then
+        ui_error "Other processes are running as ${COMIS_USER}; refusing to delete the user"
+        return 1
+    fi
+
+    if ! update_install_receipt_decommission_state "active" "removing"; then
+        ui_error "Could not mark the installer-created account as removing"
+        return 1
+    fi
+
+    if ! userdel -r "$COMIS_USER" 2>/dev/null; then
+        userdel "$COMIS_USER" 2>/dev/null || true
+    fi
+    if id "$COMIS_USER" >/dev/null 2>&1; then
+        ui_error "Could not remove installer-created user ${COMIS_USER}"
+        return 1
+    fi
+
+    # `userdel` without `-r` is the fallback on platforms where home removal
+    # fails. Recheck both the root marker and numeric directory owner immediately
+    # before deleting the remaining home.
+    if [[ -e "$UNINSTALL_TARGET_HOME" || -L "$UNINSTALL_TARGET_HOME" ]]; then
+        if ! install_home_identity_is_valid "$UNINSTALL_TARGET_HOME" \
+            "$receipt_uid" "$receipt_gid" "$identity_token"; then
+            ui_error "Receipt-owned home ${UNINSTALL_TARGET_HOME} no longer matches its recorded identity"
+            return 1
+        fi
+        rm -rf "$UNINSTALL_TARGET_HOME"
+        if [[ -e "$UNINSTALL_TARGET_HOME" || -L "$UNINSTALL_TARGET_HOME" ]]; then
+            ui_error "Could not remove receipt-owned home ${UNINSTALL_TARGET_HOME}"
+            return 1
+        fi
+    fi
+
+    if [[ "$created_group" == "1" ]] && getent group "$COMIS_USER" >/dev/null 2>&1; then
+        local current_group_gid
+        current_group_gid="$(getent group "$COMIS_USER" 2>/dev/null | cut -d: -f3)"
+        if [[ "$current_group_gid" != "$receipt_gid" ]]; then
+            ui_error "Refusing to delete group ${COMIS_USER}: its GID no longer matches the installer receipt"
+            return 1
+        fi
+        groupdel "$COMIS_USER" 2>/dev/null || true
+        if getent group "$COMIS_USER" >/dev/null 2>&1; then
+            ui_error "Could not remove installer-created group ${COMIS_USER}"
+            return 1
+        fi
+    fi
+
+    if install_receipt_owned_artifacts_present; then
+        ui_error "Installer-owned account artifacts remain after deletion"
+        return 1
+    fi
+    if ! update_install_receipt_decommission_state "removing" "removed"; then
+        ui_error "Account removal completed, but its receipt state could not be finalized"
+        return 1
+    fi
     ui_success "Removed user ${COMIS_USER}"
+    return 0
+}
+
+uninstall_install_receipt() {
+    [[ "$REMOVE_USER_FLAG" == "1" ]] || return 0
+    [[ -e "$INSTALL_RECEIPT_FILE" || -L "$INSTALL_RECEIPT_FILE" ]] || return 0
+    if ! install_receipt_is_valid; then
+        ui_error "Refusing to remove invalid installer receipt at ${INSTALL_RECEIPT_FILE}"
+        return 1
+    fi
+    if ! install_receipt_matches_target "$COMIS_USER" "$UNINSTALL_TARGET_HOME"; then
+        ui_error "Installer receipt does not match ${COMIS_USER} at ${UNINSTALL_TARGET_HOME}; preserving it"
+        return 1
+    fi
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_info "[dry-run] would: rm ${INSTALL_RECEIPT_FILE}"
+        return 0
+    fi
+    local decommission_state
+    decommission_state="$(install_receipt_raw_value decommission_state)"
+    if install_receipt_owned_artifacts_present; then
+        ui_error "Installer-owned account artifacts still exist; preserving the decommission receipt"
+        return 1
+    fi
+    if [[ "$decommission_state" == "removing" ]]; then
+        if ! update_install_receipt_decommission_state "removing" "removed"; then
+            ui_error "Could not finalize the interrupted account-removal receipt"
+            return 1
+        fi
+        decommission_state="removed"
+    fi
+    if [[ "$decommission_state" != "removed" ]]; then
+        ui_error "Dedicated account removal is not finalized; preserving its installer receipt"
+        return 1
+    fi
+    maybe_sudo rm -f "$INSTALL_RECEIPT_FILE"
+    if [[ -e "$INSTALL_RECEIPT_FILE" || -L "$INSTALL_RECEIPT_FILE" ]]; then
+        ui_error "Could not remove installer receipt at ${INSTALL_RECEIPT_FILE}"
+        return 1
+    fi
+    if [[ "$INSTALL_RECEIPT_FILE" == "/var/lib/comis-installer/receipt" ]]; then
+        remove_empty_install_receipt_dir "/var/lib/comis-installer" 1 || return 1
+    fi
+    ui_success "Removed installer ownership receipt"
 }
 
 uninstall_main() {
     print_installer_banner
     detect_os_or_die
+    preflight_full_uninstall
+    if [[ "$FULL_UNINSTALL_NOOP" == "1" ]]; then
+        return 0
+    fi
     resolve_uninstall_target
+    if [[ "$REMOVE_USER_FLAG" == "1" ]] && id "$COMIS_USER" >/dev/null 2>&1 \
+        && ! install_receipt_created_user "$COMIS_USER" "$UNINSTALL_TARGET_HOME"; then
+        ui_error "Cannot remove ${COMIS_USER}: the installer has no ownership receipt for that account"
+        ui_info "Run without --remove-user to remove Comis while preserving the account"
+        return 1
+    fi
 
     ui_section "Uninstall plan"
     ui_kv "Mode" "uninstall"
@@ -5414,16 +6692,14 @@ uninstall_main() {
     ui_kv "Data directory" "${UNINSTALL_TARGET_HOME}/.comis"
     [[ "$PURGE" == "1" ]] && ui_kv "Purge data" "yes"
     [[ "$REMOVE_USER_FLAG" == "1" ]] && ui_kv "Remove user" "yes"
+    [[ "$REMOVE_USER_FLAG" == "1" ]] && ui_kv "Shared host dependencies" "preserved"
     [[ "$DRY_RUN" == "1" ]] && ui_kv "Dry run" "yes"
 
-    if [[ "$DRY_RUN" == "1" ]]; then
-        ui_success "Dry run complete (no changes made)"
-        return 0
+    if [[ "$DRY_RUN" != "1" ]]; then
+        confirm_uninstall
+        bootstrap_gum_temp || true
+        print_gum_status
     fi
-
-    confirm_uninstall
-    bootstrap_gum_temp || true
-    print_gum_status
 
     ui_stage "Stopping and unregistering services"
 
@@ -5431,6 +6707,7 @@ uninstall_main() {
     uninstall_systemd_unit "system"
     [[ "$OS" == "linux" ]] && [[ "${HOME}" != "/root" ]] && uninstall_systemd_unit "user"
     uninstall_xvfb_unit
+    uninstall_sudoers_rule
     uninstall_pm2
     uninstall_direct_daemon
 
@@ -5444,11 +6721,22 @@ uninstall_main() {
     fi
 
     if [[ "$REMOVE_USER_FLAG" == "1" ]]; then
+        uninstall_managed_apparmor_profile
         uninstall_remove_user
+        uninstall_install_receipt
+    fi
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        ui_success "Dry run complete (no changes made)"
+        return 0
     fi
 
     echo ""
     ui_celebrate "Comis uninstalled"
+
+    if [[ "$REMOVE_USER_FLAG" == "1" ]]; then
+        ui_info "Shared host runtimes and OS packages were preserved"
+    fi
 
     if [[ "$PURGE" != "1" ]]; then
         echo ""
@@ -5526,7 +6814,9 @@ main() {
 
     # Resolve which service manager we'll use (validates --service flag early)
     resolve_service_manager
-    downshift_xvfb_for_service_manager
+    if [[ "$COMIS_REEXEC" != "1" ]]; then
+        downshift_xvfb_for_service_manager
+    fi
 
     if [[ "$COMIS_REEXEC" != "1" ]]; then
         show_install_plan "$detected_checkout"
