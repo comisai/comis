@@ -36,11 +36,20 @@ function makeProfile(): ProductionReplayProfile {
 }
 
 function makeFacts(overrides: Partial<ProductionHostFacts> = {}): ProductionHostFacts {
-  return {
+  const facts: ProductionHostFacts = {
     machineIdSha256: SOURCE_MACHINE,
     osId: "ubuntu",
     osVersion: "24.04",
     arch: "x86_64",
+    kernelRelease: "6.8.0-71-generic",
+    libcKind: "glibc",
+    libcVersion: "2.39",
+    nodeVersion: "22.17.1",
+    nodeAbi: "127",
+    timezone: "Asia/Jerusalem",
+    tzdataSha256: "c".repeat(64),
+    launcherKind: "systemd",
+    launcherSha256: "d".repeat(64),
     sudoReady: true,
     systemdReady: true,
     freezeReady: true,
@@ -50,6 +59,12 @@ function makeFacts(overrides: Partial<ProductionHostFacts> = {}): ProductionHost
     curlReady: true,
     nodeReady: true,
     npmReady: true,
+    browserReady: true,
+    xvfbReady: true,
+    ffmpegReady: true,
+    ffprobeReady: true,
+    bwrapReady: true,
+    zstdReady: true,
     comisInstalled: true,
     comisVersion: "1.0.53",
     serviceState: "active",
@@ -59,6 +74,13 @@ function makeFacts(overrides: Partial<ProductionHostFacts> = {}): ProductionHost
     dataBytes: 305_000_000,
     diskFreeBytes: 90_000_000_000,
     ...overrides,
+  };
+  return {
+    ...facts,
+    ...(facts.serviceState === "missing"
+      ? { launcherKind: "unsupported" as const, launcherSha256: "none" }
+      : {}),
+    ...(!facts.nodeReady ? { nodeVersion: "unknown", nodeAbi: "unknown" } : {}),
   };
 }
 
@@ -76,6 +98,15 @@ function serializeFacts(facts: ProductionHostFacts): string {
     `osId=${facts.osId}`,
     `osVersion=${facts.osVersion}`,
     `arch=${facts.arch}`,
+    `kernelRelease=${facts.kernelRelease}`,
+    `libcKind=${facts.libcKind}`,
+    `libcVersion=${facts.libcVersion}`,
+    `nodeVersion=${facts.nodeVersion}`,
+    `nodeAbi=${facts.nodeAbi}`,
+    `timezone=${facts.timezone}`,
+    `tzdataSha256=${facts.tzdataSha256}`,
+    `launcherKind=${facts.launcherKind}`,
+    `launcherSha256=${facts.launcherSha256}`,
     `sudoReady=${facts.sudoReady}`,
     `systemdReady=${facts.systemdReady}`,
     `freezeReady=${facts.freezeReady}`,
@@ -85,6 +116,12 @@ function serializeFacts(facts: ProductionHostFacts): string {
     `curlReady=${facts.curlReady}`,
     `nodeReady=${facts.nodeReady}`,
     `npmReady=${facts.npmReady}`,
+    `browserReady=${facts.browserReady}`,
+    `xvfbReady=${facts.xvfbReady}`,
+    `ffmpegReady=${facts.ffmpegReady}`,
+    `ffprobeReady=${facts.ffprobeReady}`,
+    `bwrapReady=${facts.bwrapReady}`,
+    `zstdReady=${facts.zstdReady}`,
     `comisInstalled=${facts.comisInstalled}`,
     `comisVersion=${facts.comisVersion ?? ""}`,
     `serviceState=${facts.serviceState}`,
@@ -285,6 +322,17 @@ describe("production replay target bootstrap", () => {
 
     expect(script).toContain("IPAddressDeny=any");
     expect(script).toContain("RestrictAddressFamilies=AF_UNIX");
+    expect(script).toContain("PrivateNetwork=yes");
+    expect(script).toContain("NoNewPrivileges=yes");
+    expect(script).toContain("CapabilityBoundingSet=");
+    expect(script).toContain("PrivateDevices=yes");
+    expect(script).toContain("PrivateMounts=yes");
+    expect(script).toContain("ProtectSystem=strict");
+    expect(script).toContain("ProtectHome=read-only");
+    expect(script).toContain("ProtectProc=invisible");
+    expect(script).toContain("SocketBindDeny=any");
+    expect(script).toContain("InaccessiblePaths=-/run/docker.sock");
+    expect(script).toContain("ReadWritePaths=/run/comis-replay");
     expect(script).toContain("RuntimeDirectory=comis-replay");
     expect(script).toContain("RuntimeDirectoryMode=0700");
     expect(script).toContain("Environment=COMIS_REPLAY_RUNTIME_DIR=/run/comis-replay");

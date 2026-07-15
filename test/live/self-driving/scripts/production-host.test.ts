@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -40,6 +42,15 @@ const SOURCE_FACTS = [
   "osId=ubuntu",
   "osVersion=24.04",
   "arch=x86_64",
+  "kernelRelease=6.8.0-71-generic",
+  "libcKind=glibc",
+  "libcVersion=2.39",
+  "nodeVersion=22.17.1",
+  "nodeAbi=127",
+  "timezone=Asia/Jerusalem",
+  `tzdataSha256=${"c".repeat(64)}`,
+  "launcherKind=systemd",
+  `launcherSha256=${"d".repeat(64)}`,
   "sudoReady=true",
   "systemdReady=true",
   "freezeReady=true",
@@ -49,6 +60,12 @@ const SOURCE_FACTS = [
   "curlReady=true",
   "nodeReady=true",
   "npmReady=true",
+  "browserReady=true",
+  "xvfbReady=true",
+  "ffmpegReady=true",
+  "ffprobeReady=true",
+  "bwrapReady=true",
+  "zstdReady=true",
   "comisInstalled=true",
   "comisVersion=1.0.53",
   "serviceState=active",
@@ -63,9 +80,13 @@ const SOURCE_FACTS = [
 const TARGET_FACTS = SOURCE_FACTS
   .replace(SOURCE_MACHINE, TARGET_MACHINE)
   .replace("nodeReady=true", "nodeReady=false")
+  .replace("nodeVersion=22.17.1", "nodeVersion=unknown")
+  .replace("nodeAbi=127", "nodeAbi=unknown")
   .replace("npmReady=true", "npmReady=false")
   .replace("comisInstalled=true", "comisInstalled=false")
   .replace("comisVersion=1.0.53", "comisVersion=")
+  .replace("launcherKind=systemd", "launcherKind=unsupported")
+  .replace(`launcherSha256=${"d".repeat(64)}`, "launcherSha256=none")
   .replace("serviceState=active", "serviceState=missing")
   .replace("serviceEnabled=true", "serviceEnabled=false")
   .replace("dataExists=true", "dataExists=false")
@@ -81,11 +102,36 @@ describe("production replay host safety", () => {
     expect(result.value).toMatchObject({
       machineIdSha256: SOURCE_MACHINE,
       osId: "ubuntu",
+      kernelRelease: "6.8.0-71-generic",
+      libcKind: "glibc",
+      nodeVersion: "22.17.1",
+      nodeAbi: "127",
+      timezone: "Asia/Jerusalem",
+      launcherKind: "systemd",
+      browserReady: true,
+      ffmpegReady: true,
       comisInstalled: true,
       comisVersion: "1.0.53",
       serviceState: "active",
       dataBytes: 304734958,
     });
+  });
+
+  it("rejects duplicate, unknown, unbounded, and control-bearing host facts", () => {
+    expect(parseHostFacts(`${SOURCE_FACTS}osId=debian\n`).ok).toBe(false);
+    expect(parseHostFacts(SOURCE_FACTS.replace("osId=ubuntu\n", "mystery=value\n")).ok).toBe(
+      false,
+    );
+    expect(parseHostFacts(`${SOURCE_FACTS}${"x".repeat(9_000)}`).ok).toBe(false);
+    expect(parseHostFacts(SOURCE_FACTS.replace("timezone=Asia/Jerusalem", "timezone=Asia\0Jerusalem")).ok).toBe(
+      false,
+    );
+    expect(parseHostFacts(SOURCE_FACTS.replace("nodeReady=true", "nodeReady=false")).ok).toBe(
+      false,
+    );
+    expect(parseHostFacts(SOURCE_FACTS.replace("serviceState=active", "serviceState=missing")).ok).toBe(
+      false,
+    );
   });
 
   it("keeps the host probe strictly read-only", () => {
@@ -94,10 +140,17 @@ describe("production replay host safety", () => {
     expect(script).toContain("systemctl is-active");
     expect(script).toContain("LoadState");
     expect(script).toContain("sha256sum");
+    expect(script).toContain("process.versions.modules");
+    expect(script).toContain("/etc/localtime");
+    expect(script).toContain("DropInPaths");
+    expect(script).toContain("ffprobe");
+    expect(script).toContain("bwrap");
     expect(script).not.toMatch(/systemctl\s+(?:start|stop|restart|enable|disable)/u);
     expect(script).not.toMatch(/(?:^|\s)(?:rm|mv|cp|chown|chmod|tee|apt|dnf|npm\s+install)(?:\s|$)/mu);
     expect(script).not.toContain("secrets.db");
     expect(script).not.toContain("/.env");
+    expect(script).not.toContain("Environment=");
+    expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
   });
 
   it("attests the source only when its pinned identity matches and it is not marked test", () => {
@@ -121,6 +174,10 @@ describe("production replay host safety", () => {
     const snapshotReady = attestSourceSnapshotReady(profile, inactive);
     expect(snapshotReady.ok).toBe(false);
     if (!snapshotReady.ok) expect(snapshotReady.error.kind).toBe("unsupported_host");
+
+    const unknownAbi = attestSourceReadOnly(profile, { ...facts.value, nodeAbi: "unknown" });
+    expect(unknownAbi.ok).toBe(false);
+    if (!unknownAbi.ok) expect(unknownAbi.error.kind).toBe("unsupported_host");
   });
 
   it("allows bootstrap on a pinned fresh target but requires the test marker for restore", () => {
@@ -169,7 +226,13 @@ describe("production replay host safety", () => {
     if (!facts.ok) return;
 
     const unpinned = attestTargetMutation(
-      { ...profile, target: { ...profile.target, expectedMachineIdSha256: undefined } },
+      {
+        ...profile,
+        target: {
+          ...profile.target,
+          expectedMachineIdSha256: undefined as unknown as string,
+        },
+      },
       facts.value,
       "bootstrap",
     );

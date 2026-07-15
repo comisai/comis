@@ -209,6 +209,33 @@ RuntimeDirectory=comis-replay
 RuntimeDirectoryMode=0700
 RestrictAddressFamilies=AF_UNIX
 IPAddressDeny=any
+PrivateNetwork=yes
+PrivateIPC=yes
+PrivateDevices=yes
+PrivateTmp=yes
+PrivateMounts=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectProc=invisible
+ProcSubset=pid
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+SocketBindDeny=any
+SystemCallArchitectures=native
+UMask=0077
+ReadWritePaths=/run/comis-replay
+InaccessiblePaths=-/run/docker.sock -/run/containerd/containerd.sock -/run/podman/podman.sock -/run/dbus/system_bus_socket -/run/systemd/private -/run/user -/var/run/postgresql -/var/run/mysqld
 EOF
 install -o root -g root -m 0644 "$journal/quarantine.new" "$dropin"
 systemctl daemon-reload
