@@ -708,11 +708,12 @@ export class IcMessageCenter extends LitElement {
   }
 
   private _handleSendClick(): void {
-    if (!this._sendText.trim()) return;
+    if (this._actionPending || !this._sendText.trim()) return;
     this._showSendConfirm = true;
   }
 
   private async _handleSendConfirm(): Promise<void> {
+    if (this._actionPending) return;
     this._showSendConfirm = false;
     const context = this._captureActionContext();
     const text = this._sendText.trim();
@@ -753,6 +754,7 @@ export class IcMessageCenter extends LitElement {
   // ---- Reply ----
 
   private _handleReplyClick(messageId: string): void {
+    if (this._actionPending) return;
     this._replyToId = messageId;
     this._replyText = "";
     // Focus the reply input after render
@@ -763,17 +765,19 @@ export class IcMessageCenter extends LitElement {
   }
 
   private _handleReplyCancelClick(): void {
+    if (this._actionPending) return;
     this._replyToId = "";
     this._replyText = "";
     this._showReplyConfirm = false;
   }
 
   private _handleReplySendClick(): void {
-    if (!this._replyText.trim() || !this._replyToId) return;
+    if (this._actionPending || !this._replyText.trim() || !this._replyToId) return;
     this._showReplyConfirm = true;
   }
 
   private async _handleReplyConfirm(): Promise<void> {
+    if (this._actionPending) return;
     this._showReplyConfirm = false;
     const context = this._captureActionContext();
     const text = this._replyText.trim();
@@ -819,6 +823,7 @@ export class IcMessageCenter extends LitElement {
   // ---- Edit ----
 
   private _handleEditClick(msg: FetchedMessage): void {
+    if (this._actionPending) return;
     this._editingId = msg.id;
     this._editText = msg.text;
     // Focus the edit textarea after render
@@ -829,11 +834,13 @@ export class IcMessageCenter extends LitElement {
   }
 
   private _handleEditCancelClick(): void {
+    if (this._actionPending) return;
     this._editingId = "";
     this._editText = "";
   }
 
   private async _handleEditSave(): Promise<void> {
+    if (this._actionPending) return;
     const context = this._captureActionContext();
     const text = this._editText.trim();
     const messageId = this._editingId;
@@ -874,11 +881,13 @@ export class IcMessageCenter extends LitElement {
   // ---- Delete ----
 
   private _handleDeleteClick(messageId: string): void {
+    if (this._actionPending) return;
     this._deleteTargetId = messageId;
     this._showDeleteConfirm = true;
   }
 
   private async _handleDeleteConfirm(): Promise<void> {
+    if (this._actionPending) return;
     this._showDeleteConfirm = false;
     const context = this._captureActionContext();
     const messageId = this._deleteTargetId;
@@ -916,6 +925,7 @@ export class IcMessageCenter extends LitElement {
   // ---- React ----
 
   private _handleReactClick(messageId: string): void {
+    if (this._actionPending) return;
     if (this._reactTargetId === messageId && this._showEmojiPicker) {
       // Toggle off if clicking same message
       this._closeEmojiPicker();
@@ -928,6 +938,7 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleEmojiSelect(emoji: string): Promise<void> {
+    if (this._actionPending) return;
     const context = this._captureActionContext();
     const messageId = this._reactTargetId;
     if (!context || !messageId) return;
@@ -985,6 +996,7 @@ export class IcMessageCenter extends LitElement {
   // ---- Attachment ----
 
   private _toggleAttachForm(): void {
+    if (this._actionPending) return;
     this._showAttachForm = !this._showAttachForm;
     if (!this._showAttachForm) {
       this._attachUrl = "";
@@ -994,6 +1006,7 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handleAttachSend(): Promise<void> {
+    if (this._actionPending) return;
     const context = this._captureActionContext();
     const attachmentUrl = this._attachUrl.trim();
     const attachmentType = this._attachType;
@@ -1041,6 +1054,7 @@ export class IcMessageCenter extends LitElement {
   }
 
   private async _handlePlatformAction(platformAction: PlatformAction): Promise<void> {
+    if (this._platformActionPending) return;
     const context = this._captureActionContext();
     if (!context) return;
 
@@ -1243,16 +1257,16 @@ export class IcMessageCenter extends LitElement {
                 : html`<span class="msg-text">${msg.text}</span>`}
               <span class="msg-time"><ic-relative-time .timestamp=${msg.timestamp}></ic-relative-time></span>
               <span class="msg-actions">
-                <button class="msg-action-btn" title="Reply" @click=${() => this._handleReplyClick(msg.id)}>Reply</button>
+                <button class="msg-action-btn" title="Reply" @click=${() => this._handleReplyClick(msg.id)} ?disabled=${this._actionPending}>Reply</button>
                 ${canEdit ? html`
-                  <button class="msg-action-btn" title="Edit" @click=${() => this._handleEditClick(msg)}>Edit</button>
+                  <button class="msg-action-btn" title="Edit" @click=${() => this._handleEditClick(msg)} ?disabled=${this._actionPending}>Edit</button>
                 ` : nothing}
                 ${canDelete ? html`
-                  <button class="msg-action-btn msg-action-btn--danger" title="Delete" @click=${() => this._handleDeleteClick(msg.id)}>Delete</button>
+                  <button class="msg-action-btn msg-action-btn--danger" title="Delete" @click=${() => this._handleDeleteClick(msg.id)} ?disabled=${this._actionPending}>Delete</button>
                 ` : nothing}
                 ${canReact ? html`
                   <span class="emoji-picker-anchor">
-                    <button class="msg-action-btn" title="React" data-react-id=${msg.id} @click=${() => this._handleReactClick(msg.id)}>React</button>
+                    <button class="msg-action-btn" title="React" data-react-id=${msg.id} @click=${() => this._handleReactClick(msg.id)} ?disabled=${this._actionPending}>React</button>
                     ${this._showEmojiPicker && this._reactTargetId === msg.id ? this._renderEmojiPicker() : nothing}
                   </span>
                 ` : nothing}
@@ -1270,7 +1284,7 @@ export class IcMessageCenter extends LitElement {
       <div class="inline-form">
         <div class="inline-form-label">
           Replying to ${msg.senderId}
-          <button class="inline-form-cancel" title="Cancel reply" @click=${this._handleReplyCancelClick}>X</button>
+          <button class="inline-form-cancel" title="Cancel reply" @click=${this._handleReplyCancelClick} ?disabled=${this._actionPending}>X</button>
         </div>
         <div class="inline-form-row">
           <textarea
@@ -1325,7 +1339,7 @@ export class IcMessageCenter extends LitElement {
     return html`
       <div class="emoji-picker">
         ${REACTION_EMOJI.map((emoji) => html`
-          <button class="emoji-btn" title=${emoji} @click=${() => void this._handleEmojiSelect(emoji)}>${emoji}</button>
+          <button class="emoji-btn" title=${emoji} @click=${() => void this._handleEmojiSelect(emoji)} ?disabled=${this._actionPending}>${emoji}</button>
         `)}
       </div>
     `;
