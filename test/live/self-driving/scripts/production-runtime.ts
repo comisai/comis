@@ -14,18 +14,98 @@ export const RUNTIME_FACTS_END = "COMIS_RUNTIME_ATTESTATION_V1_END";
 
 const MAX_FACTS_BYTES = 4096;
 const SHA256_RE = /^[a-f0-9]{64}$/u;
-const FACT_FIELDS = ["digestSha256", "entryCount", "bytes", "packageRoot", "version"] as const;
+const FACT_FIELDS = [
+  "digestSha256",
+  "entryCount",
+  "bytes",
+  "packageRoot",
+  "version",
+  "osId",
+  "osVersion",
+  "architecture",
+  "kernelRelease",
+  "libcKind",
+  "libcVersion",
+  "nodeVersion",
+  "nodeAbi",
+  "timezone",
+  "tzdataSha256",
+  "launcherKind",
+  "launcherSha256",
+  "browserStatus",
+  "browserSha256",
+  "mediaStatus",
+  "mediaSha256",
+  "nativeToolsStatus",
+  "nativeToolsSha256",
+] as const;
 type RuntimeFactField = (typeof FACT_FIELDS)[number];
 type RuntimeIdentityField = Exclude<RuntimeFactField, "packageRoot">;
+
+export type RuntimeCapabilityRequirement = "required" | "declared_unsupported";
+export type RuntimeCapabilityStatus = "available" | "unavailable";
+export type RuntimeLauncherKind = "systemd" | "unsupported";
+
+export interface RuntimeParityRequirements {
+  readonly launcher: RuntimeCapabilityRequirement;
+  readonly browser: RuntimeCapabilityRequirement;
+  readonly media: RuntimeCapabilityRequirement;
+  readonly nativeTools: RuntimeCapabilityRequirement;
+}
+
+export const STRICT_RUNTIME_PARITY_REQUIREMENTS: RuntimeParityRequirements = {
+  launcher: "required",
+  browser: "required",
+  media: "required",
+  nativeTools: "required",
+};
+
+export type RuntimeLauncherDeclaration =
+  | { readonly kind: "systemd" }
+  | {
+      readonly kind: "declared_unsupported";
+      readonly nodePath: string;
+      readonly packageRoot: string;
+    };
+
+export interface RuntimeArtifactAttestationOptions {
+  readonly requirements: RuntimeParityRequirements;
+  readonly sourceLauncher: RuntimeLauncherDeclaration;
+  readonly targetLauncher: RuntimeLauncherDeclaration;
+}
+
+export const SYSTEMD_STRICT_RUNTIME_ATTESTATION: RuntimeArtifactAttestationOptions = {
+  requirements: STRICT_RUNTIME_PARITY_REQUIREMENTS,
+  sourceLauncher: { kind: "systemd" },
+  targetLauncher: { kind: "systemd" },
+};
 
 export interface RuntimeArtifactAttestation {
   readonly digestSha256: string;
   readonly entryCount: number;
   /** Sum of regular-file content bytes. Symlink target bytes are represented only in the digest. */
   readonly bytes: number;
-  /** Canonical package location discovered from systemd. */
+  /** Canonical package location discovered from the declared launcher authority. */
   readonly packageRoot: string;
   readonly version: string;
+  readonly osId: string;
+  readonly osVersion: string;
+  readonly architecture: string;
+  readonly kernelRelease: string;
+  readonly libcKind: "glibc" | "musl" | "darwin" | "other" | "unknown";
+  readonly libcVersion: string;
+  readonly nodeVersion: string;
+  readonly nodeAbi: string;
+  readonly timezone: string;
+  readonly tzdataSha256: string;
+  readonly launcherKind: RuntimeLauncherKind;
+  readonly launcherSha256: string;
+  readonly browserStatus: RuntimeCapabilityStatus;
+  readonly browserSha256: string;
+  readonly mediaStatus: RuntimeCapabilityStatus;
+  readonly mediaSha256: string;
+  readonly nativeToolsStatus: RuntimeCapabilityStatus;
+  readonly nativeToolsSha256: string;
 }
 
 export interface RuntimeArtifactMismatchError {
@@ -110,6 +190,25 @@ function isPinnedVersion(value: string): boolean {
   return true;
 }
 
+function isSafeFactToken(value: string, maximumLength = 256): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= maximumLength &&
+    /^[A-Za-z0-9._+:/@-]+$/u.test(value)
+  );
+}
+
+function validateDigestIdentity(
+  status: RuntimeCapabilityStatus | RuntimeLauncherKind,
+  digest: string,
+  field: "launcherSha256" | "browserSha256" | "mediaSha256" | "nativeToolsSha256",
+  availableValue: "available" | "systemd",
+): Result<string, ProductionRuntimeError> {
+  if (status === availableValue && SHA256_RE.test(digest)) return ok(digest);
+  if (status !== availableValue && digest === "none") return ok(digest);
+  return malformed(field, `${field} does not match its capability status`);
+}
+
 export function parseRuntimeArtifactFacts(
   raw: string,
 ): Result<RuntimeArtifactAttestation, ProductionRuntimeError> {
@@ -151,6 +250,24 @@ export function parseRuntimeArtifactFacts(
   const rawBytes = parsed.get("bytes") as string;
   const packageRoot = parsed.get("packageRoot") as string;
   const version = parsed.get("version") as string;
+  const osId = parsed.get("osId") as string;
+  const osVersion = parsed.get("osVersion") as string;
+  const architecture = parsed.get("architecture") as string;
+  const kernelRelease = parsed.get("kernelRelease") as string;
+  const libcKind = parsed.get("libcKind") as RuntimeArtifactAttestation["libcKind"];
+  const libcVersion = parsed.get("libcVersion") as string;
+  const nodeVersion = parsed.get("nodeVersion") as string;
+  const nodeAbi = parsed.get("nodeAbi") as string;
+  const timezone = parsed.get("timezone") as string;
+  const tzdataSha256 = parsed.get("tzdataSha256") as string;
+  const launcherKind = parsed.get("launcherKind") as RuntimeLauncherKind;
+  const launcherSha256 = parsed.get("launcherSha256") as string;
+  const browserStatus = parsed.get("browserStatus") as RuntimeCapabilityStatus;
+  const browserSha256 = parsed.get("browserSha256") as string;
+  const mediaStatus = parsed.get("mediaStatus") as RuntimeCapabilityStatus;
+  const mediaSha256 = parsed.get("mediaSha256") as string;
+  const nativeToolsStatus = parsed.get("nativeToolsStatus") as RuntimeCapabilityStatus;
+  const nativeToolsSha256 = parsed.get("nativeToolsSha256") as string;
 
   if (!SHA256_RE.test(digestSha256)) {
     return malformed("digestSha256", "digestSha256 must be a lowercase SHA-256 digest");
@@ -173,6 +290,45 @@ export function parseRuntimeArtifactFacts(
   if (!isPinnedVersion(version)) {
     return malformed("version", "version must be a pinned semantic version");
   }
+  for (const [field, value] of [
+    ["osId", osId],
+    ["osVersion", osVersion],
+    ["architecture", architecture],
+    ["kernelRelease", kernelRelease],
+    ["libcVersion", libcVersion],
+    ["nodeVersion", nodeVersion],
+    ["nodeAbi", nodeAbi],
+    ["timezone", timezone],
+  ] as const) {
+    if (!isSafeFactToken(value)) return malformed(field, `${field} is not a safe fact token`);
+  }
+  if (!["glibc", "musl", "darwin", "other", "unknown"].includes(libcKind)) {
+    return malformed("libcKind", "libcKind is not recognized");
+  }
+  if (!SHA256_RE.test(tzdataSha256)) {
+    return malformed("tzdataSha256", "tzdataSha256 must be a lowercase SHA-256 digest");
+  }
+  if (launcherKind !== "systemd" && launcherKind !== "unsupported") {
+    return malformed("launcherKind", "launcherKind is not recognized");
+  }
+  const launcherIdentity = validateDigestIdentity(
+    launcherKind,
+    launcherSha256,
+    "launcherSha256",
+    "systemd",
+  );
+  if (!launcherIdentity.ok) return launcherIdentity;
+  for (const [statusField, digestField, status, digest] of [
+    ["browserStatus", "browserSha256", browserStatus, browserSha256],
+    ["mediaStatus", "mediaSha256", mediaStatus, mediaSha256],
+    ["nativeToolsStatus", "nativeToolsSha256", nativeToolsStatus, nativeToolsSha256],
+  ] as const) {
+    if (status !== "available" && status !== "unavailable") {
+      return malformed(statusField, `${statusField} is not recognized`);
+    }
+    const identity = validateDigestIdentity(status, digest, digestField, "available");
+    if (!identity.ok) return identity;
+  }
 
   return ok({
     digestSha256,
@@ -180,24 +336,140 @@ export function parseRuntimeArtifactFacts(
     bytes: bytes.value,
     packageRoot,
     version,
+    osId,
+    osVersion,
+    architecture,
+    kernelRelease,
+    libcKind,
+    libcVersion,
+    nodeVersion,
+    nodeAbi,
+    timezone,
+    tzdataSha256,
+    launcherKind,
+    launcherSha256,
+    browserStatus,
+    browserSha256,
+    mediaStatus,
+    mediaSha256,
+    nativeToolsStatus,
+    nativeToolsSha256,
   });
+}
+
+function runtimeMismatch(field: RuntimeIdentityField): Result<void, RuntimeArtifactMismatchError> {
+  return err({
+    kind: "runtime_mismatch",
+    field,
+    message: `Target runtime ${field} does not match the production source`,
+  });
+}
+
+/** Compare only the package bytes that the runtime clone transaction can change. */
+export function compareRuntimePackageArtifacts(
+  source: RuntimeArtifactAttestation,
+  target: RuntimeArtifactAttestation,
+): Result<void, RuntimeArtifactMismatchError> {
+  if (
+    !SHA256_RE.test(source.digestSha256) ||
+    !SHA256_RE.test(target.digestSha256) ||
+    source.digestSha256 !== target.digestSha256
+  ) {
+    return runtimeMismatch("digestSha256");
+  }
+  if (
+    !Number.isSafeInteger(source.entryCount) ||
+    !Number.isSafeInteger(target.entryCount) ||
+    source.entryCount <= 0 ||
+    target.entryCount <= 0 ||
+    source.entryCount !== target.entryCount
+  ) {
+    return runtimeMismatch("entryCount");
+  }
+  if (
+    !Number.isSafeInteger(source.bytes) ||
+    !Number.isSafeInteger(target.bytes) ||
+    source.bytes <= 0 ||
+    target.bytes <= 0 ||
+    source.bytes !== target.bytes
+  ) {
+    return runtimeMismatch("bytes");
+  }
+  if (
+    !isPinnedVersion(source.version) ||
+    !isPinnedVersion(target.version) ||
+    source.version !== target.version
+  ) {
+    return runtimeMismatch("version");
+  }
+  return ok(undefined);
 }
 
 export function compareRuntimeArtifacts(
   source: RuntimeArtifactAttestation,
   target: RuntimeArtifactAttestation,
+  requirements: RuntimeParityRequirements = STRICT_RUNTIME_PARITY_REQUIREMENTS,
 ): Result<void, RuntimeArtifactMismatchError> {
-  function mismatch(field: RuntimeIdentityField): Result<void, RuntimeArtifactMismatchError> {
-    return err({
-      kind: "runtime_mismatch",
-      field,
-      message: `Target runtime ${field} does not match the production source`,
-    });
+  const packageComparison = compareRuntimePackageArtifacts(source, target);
+  if (!packageComparison.ok) return packageComparison;
+  for (const field of [
+    "osId",
+    "osVersion",
+    "architecture",
+    "kernelRelease",
+    "libcKind",
+    "libcVersion",
+    "nodeVersion",
+    "nodeAbi",
+    "timezone",
+    "tzdataSha256",
+  ] as const) {
+    if (source[field] === "unknown" || source[field] !== target[field]) {
+      return runtimeMismatch(field);
+    }
   }
-  if (source.digestSha256 !== target.digestSha256) return mismatch("digestSha256");
-  if (source.entryCount !== target.entryCount) return mismatch("entryCount");
-  if (source.bytes !== target.bytes) return mismatch("bytes");
-  if (source.version !== target.version) return mismatch("version");
+  if (!SHA256_RE.test(source.tzdataSha256) || !SHA256_RE.test(target.tzdataSha256)) {
+    return runtimeMismatch("tzdataSha256");
+  }
+  for (const [requirement, field] of [
+    [requirements.launcher, "launcherKind"],
+    [requirements.browser, "browserStatus"],
+    [requirements.media, "mediaStatus"],
+    [requirements.nativeTools, "nativeToolsStatus"],
+  ] as const) {
+    if (requirement !== "required" && requirement !== "declared_unsupported") {
+      return runtimeMismatch(field);
+    }
+  }
+  if (requirements.launcher === "required") {
+    if (source.launcherKind !== "systemd" || target.launcherKind !== "systemd") {
+      return runtimeMismatch("launcherKind");
+    }
+    if (
+      !SHA256_RE.test(source.launcherSha256) ||
+      !SHA256_RE.test(target.launcherSha256) ||
+      source.launcherSha256 !== target.launcherSha256
+    ) {
+      return runtimeMismatch("launcherSha256");
+    }
+  }
+  for (const [requirement, statusField, digestField] of [
+    [requirements.browser, "browserStatus", "browserSha256"],
+    [requirements.media, "mediaStatus", "mediaSha256"],
+    [requirements.nativeTools, "nativeToolsStatus", "nativeToolsSha256"],
+  ] as const) {
+    if (requirement === "declared_unsupported") continue;
+    if (source[statusField] !== "available" || target[statusField] !== "available") {
+      return runtimeMismatch(statusField);
+    }
+    if (
+      !SHA256_RE.test(source[digestField]) ||
+      !SHA256_RE.test(target[digestField]) ||
+      source[digestField] !== target[digestField]
+    ) {
+      return runtimeMismatch(digestField);
+    }
+  }
   return ok(undefined);
 }
 
@@ -205,23 +477,39 @@ function buildRuntimeProbeInvocation(
   host: ProductionHostProfile,
   stage: RuntimeArtifactAttestationStage,
   stdin: string,
+  launcher: RuntimeLauncherDeclaration,
 ): ProductionRemoteInvocation {
+  const launcherArgs =
+    launcher.kind === "systemd"
+      ? []
+      : ["declared_unsupported", launcher.nodePath, launcher.packageRoot];
   return {
     label: stage,
     host: host.ssh,
     ...(host.sshPort !== undefined ? { port: host.sshPort } : {}),
-    args: ["sudo", "bash", "-s", "--", host.service],
+    args: ["sudo", "bash", "-s", "--", host.service, ...launcherArgs],
     stdin,
   };
 }
 
 export function buildRuntimeArtifactAttestationPlan(
   profile: ProductionReplayProfile,
+  options: RuntimeArtifactAttestationOptions = SYSTEMD_STRICT_RUNTIME_ATTESTATION,
 ): RuntimeArtifactAttestationPlan {
   const stdin = buildRuntimeArtifactProbeScript();
   return {
-    source: buildRuntimeProbeInvocation(profile.source, "runtime-attest-source", stdin),
-    target: buildRuntimeProbeInvocation(profile.target, "runtime-attest-target", stdin),
+    source: buildRuntimeProbeInvocation(
+      profile.source,
+      "runtime-attest-source",
+      stdin,
+      options.sourceLauncher,
+    ),
+    target: buildRuntimeProbeInvocation(
+      profile.target,
+      "runtime-attest-target",
+      stdin,
+      options.targetLauncher,
+    ),
   };
 }
 
@@ -253,8 +541,9 @@ async function executeRuntimeProbe(
 export async function inspectRuntimeArtifactAttestations(
   profile: ProductionReplayProfile,
   executor: ProductionRemoteExecutor,
+  options: RuntimeArtifactAttestationOptions = SYSTEMD_STRICT_RUNTIME_ATTESTATION,
 ): Promise<Result<RuntimeArtifactAttestationReport, RuntimeArtifactAttestationError>> {
-  const plan = buildRuntimeArtifactAttestationPlan(profile);
+  const plan = buildRuntimeArtifactAttestationPlan(profile, options);
   const [source, target] = await Promise.all([
     executeRuntimeProbe(executor, plan.source, "runtime-attest-source"),
     executeRuntimeProbe(executor, plan.target, "runtime-attest-target"),
@@ -267,10 +556,15 @@ export async function inspectRuntimeArtifactAttestations(
 export async function executeRuntimeArtifactAttestation(
   profile: ProductionReplayProfile,
   executor: ProductionRemoteExecutor,
+  options: RuntimeArtifactAttestationOptions = SYSTEMD_STRICT_RUNTIME_ATTESTATION,
 ): Promise<Result<RuntimeArtifactAttestationReport, RuntimeArtifactAttestationError>> {
-  const report = await inspectRuntimeArtifactAttestations(profile, executor);
+  const report = await inspectRuntimeArtifactAttestations(profile, executor, options);
   if (!report.ok) return report;
-  const comparison = compareRuntimeArtifacts(report.value.source, report.value.target);
+  const comparison = compareRuntimeArtifacts(
+    report.value.source,
+    report.value.target,
+    options.requirements,
+  );
   if (!comparison.ok) return comparison;
   return report;
 }
@@ -283,6 +577,32 @@ const path = require("node:path");
 const root = process.argv[2];
 if (!root || root.includes("\n") || root.includes("\r") || root.includes("\0")) {
   throw new Error("Invalid package root");
+}
+const semanticFieldNames = [
+  "osId",
+  "osVersion",
+  "architecture",
+  "kernelRelease",
+  "libcKind",
+  "libcVersion",
+  "timezone",
+  "tzdataSha256",
+  "launcherKind",
+  "launcherSha256",
+  "browserStatus",
+  "browserSha256",
+  "mediaStatus",
+  "mediaSha256",
+  "nativeToolsStatus",
+  "nativeToolsSha256",
+];
+const semanticFacts = new Map();
+for (const [index, name] of semanticFieldNames.entries()) {
+  const value = process.argv[index + 3];
+  if (!value || value.includes("\n") || value.includes("\r") || value.includes("\0")) {
+    throw new Error("Invalid runtime semantic fact");
+  }
+  semanticFacts.set(name, value);
 }
 
 const entries = [];
@@ -360,6 +680,24 @@ function updateUint64(value) {
     "bytes=" + bytes.toString(),
     "packageRoot=" + root,
     "version=" + version,
+    "osId=" + semanticFacts.get("osId"),
+    "osVersion=" + semanticFacts.get("osVersion"),
+    "architecture=" + semanticFacts.get("architecture"),
+    "kernelRelease=" + semanticFacts.get("kernelRelease"),
+    "libcKind=" + semanticFacts.get("libcKind"),
+    "libcVersion=" + semanticFacts.get("libcVersion"),
+    "nodeVersion=" + process.versions.node,
+    "nodeAbi=" + (process.versions.modules || "unknown"),
+    "timezone=" + semanticFacts.get("timezone"),
+    "tzdataSha256=" + semanticFacts.get("tzdataSha256"),
+    "launcherKind=" + semanticFacts.get("launcherKind"),
+    "launcherSha256=" + semanticFacts.get("launcherSha256"),
+    "browserStatus=" + semanticFacts.get("browserStatus"),
+    "browserSha256=" + semanticFacts.get("browserSha256"),
+    "mediaStatus=" + semanticFacts.get("mediaStatus"),
+    "mediaSha256=" + semanticFacts.get("mediaSha256"),
+    "nativeToolsStatus=" + semanticFacts.get("nativeToolsStatus"),
+    "nativeToolsSha256=" + semanticFacts.get("nativeToolsSha256"),
     "COMIS_RUNTIME_ATTESTATION_V1_END",
     "",
   ].join("\n"));
@@ -373,25 +711,136 @@ function updateUint64(value) {
 /**
  * Build the read-only program sent to a host over SSH.
  *
- * The service name is argv[1]. Its systemd ExecStart is the authority for both
- * the Node executable and the installed `comisai` package root. The program
- * emits a bounded, content-free attestation envelope only after hashing every
- * regular file and symlink below that root.
+ * The service name is argv[1]. By default its systemd ExecStart is the authority
+ * for the Node executable and installed package root. A caller that explicitly
+ * declares the launcher unsupported must supply both absolute paths. The
+ * program emits a bounded, content-free attestation envelope only after hashing
+ * the package tree, effective launcher semantics, host runtime, and capability
+ * identities.
  */
 export function buildRuntimeArtifactProbeScript(): string {
   return [
     "set -u",
+    "LC_ALL=C",
+    "export LC_ALL",
     'service="${1:?service name is required}"',
-    'exec_start="$(systemctl show "$service" --property=ExecStart --value 2>/dev/null)"',
-    '[ -n "$exec_start" ] || { printf "%s\\n" "Comis service ExecStart is unavailable" >&2; exit 64; }',
-    'node_path="$(printf "%s\\n" "$exec_start" | sed -n "s/^[{ ]*path=\\([^ ;]*\\).*/\\1/p")"',
-    'daemon_path="$(printf "%s\\n" "$exec_start" | grep -oE "/[^ ;{}]+/node_modules/@comis/daemon/dist/[A-Za-z0-9._-]+\\.js" | tail -1)"',
+    'launcher_declaration="${2:-systemd}"',
+    "launcher_kind=unsupported",
+    "launcher_sha=none",
+    "node_path=",
+    "package_root=",
+    'case "$launcher_declaration" in',
+    "  systemd)",
+    '    exec_start="$(systemctl show "$service" --property=ExecStart --value 2>/dev/null)"',
+    '    [ -n "$exec_start" ] || { printf "%s\\n" "Comis service ExecStart is unavailable" >&2; exit 64; }',
+    '    node_path="$(printf "%s\\n" "$exec_start" | sed -n "s/^[{ ]*path=\\([^ ;]*\\).*/\\1/p")"',
+    '    daemon_path="$(printf "%s\\n" "$exec_start" | grep -oE "/[^ ;{}]+/node_modules/@comis/daemon/dist/[A-Za-z0-9._-]+\\.js" | tail -1)"',
+    '    [ -n "$daemon_path" ] || { printf "%s\\n" "Comis daemon path is unavailable" >&2; exit 66; }',
+    '    package_root="${daemon_path%%/node_modules/@comis/daemon/dist/*}"',
+    '    launcher_facts="$(systemctl show "$service" --no-pager --property=FragmentPath,DropInPaths,ExecStart,ExecStartPre,ExecStartPost,ExecCondition,User,Group,WorkingDirectory,RootDirectory,UMask,Environment,EnvironmentFiles,PassEnvironment,UnsetEnvironment,RuntimeDirectory,RestrictAddressFamilies,IPAddressDeny,NoNewPrivileges,ProtectSystem,ProtectHome,PrivateTmp,PrivateDevices,PrivateUsers,ProtectKernelTunables,ProtectControlGroups,ReadOnlyPaths,ReadWritePaths 2>/dev/null)"',
+    '    [ -n "$launcher_facts" ] || { printf "%s\\n" "Comis launcher facts are unavailable" >&2; exit 68; }',
+    '    launcher_sha="$(printf "%s" "$launcher_facts" | sha256sum | awk \'{print $1}\')"',
+    "    launcher_kind=systemd",
+    "    ;;",
+    "  declared_unsupported)",
+    '    node_path="${3:-}"',
+    '    package_root="${4:-}"',
+    '    case "$node_path" in /*) ;; *) printf "%s\\n" "Explicit Node path must be absolute" >&2; exit 65 ;; esac',
+    '    case "$package_root" in /*) ;; *) printf "%s\\n" "Explicit package root must be absolute" >&2; exit 67 ;; esac',
+    "    ;;",
+    "  *) printf '%s\\n' 'Runtime launcher declaration is not recognized' >&2; exit 64 ;;",
+    "esac",
     '[ -n "$node_path" ] && [ -x "$node_path" ] || { printf "%s\\n" "Comis Node executable is unavailable" >&2; exit 65; }',
-    '[ -n "$daemon_path" ] || { printf "%s\\n" "Comis daemon path is unavailable" >&2; exit 66; }',
-    'package_root="${daemon_path%%/node_modules/@comis/daemon/dist/*}"',
     'package_root="$(readlink -f "$package_root")"',
     '[ -d "$package_root" ] && [ -r "$package_root/package.json" ] || { printf "%s\\n" "Comis package root is unreadable" >&2; exit 67; }',
-    '"$node_path" - "$package_root" <<\'COMIS_RUNTIME_NODE\'',
+    "os_id=unknown",
+    "os_version=unknown",
+    "if [ -r /etc/os-release ]; then",
+    "  ID=",
+    "  VERSION_ID=",
+    "  . /etc/os-release",
+    '  if [ -n "$ID" ]; then os_id="$ID"; fi',
+    '  if [ -n "$VERSION_ID" ]; then os_version="$VERSION_ID"; fi',
+    'elif [ "$(uname -s 2>/dev/null || true)" = Darwin ]; then',
+    "  os_id=darwin",
+    '  os_version="$(sw_vers -productVersion 2>/dev/null || true)"',
+    "fi",
+    'architecture="$(uname -m 2>/dev/null || true)"',
+    'kernel_release="$(uname -r 2>/dev/null || true)"',
+    'if [ -z "$architecture" ]; then architecture=unknown; fi',
+    'if [ -z "$kernel_release" ]; then kernel_release=unknown; fi',
+    "libc_kind=unknown",
+    "libc_version=unknown",
+    'gnu_libc="$(getconf GNU_LIBC_VERSION 2>/dev/null || true)"',
+    'case "$gnu_libc" in',
+    "  'glibc '*) libc_kind=glibc; libc_version=\"${gnu_libc#glibc }\" ;;",
+    "  *)",
+    '    if [ "$(uname -s 2>/dev/null || true)" = Darwin ]; then',
+    "      libc_kind=darwin",
+    '      libc_version="$(sw_vers -productVersion 2>/dev/null || true)"',
+    "    else",
+    '      ldd_output="$(ldd --version 2>&1 | head -n 4 || true)"',
+    '      case "$ldd_output" in',
+    "        *musl*) libc_kind=musl; libc_version=\"$(printf '%s\\n' \"$ldd_output\" | sed -n 's/.*Version \\([0-9][0-9.]*\\).*/\\1/p' | head -n 1)\" ;;",
+    "        '') ;;",
+    "        *) libc_kind=other; libc_version=\"$(printf '%s' \"$ldd_output\" | sha256sum | awk '{print $1}')\" ;;",
+    "      esac",
+    "    fi",
+    "    ;;",
+    "esac",
+    'if [ -z "$libc_version" ]; then libc_version=unknown; fi',
+    'timezone="$(timedatectl show --property=Timezone --value 2>/dev/null || true)"',
+    'if [ -z "$timezone" ] && [ -r /etc/timezone ]; then timezone="$(head -n 1 /etc/timezone 2>/dev/null || true)"; fi',
+    'if [ -z "$timezone" ]; then',
+    '  localtime_target="$(readlink /etc/localtime 2>/dev/null || true)"',
+    '  case "$localtime_target" in */zoneinfo/*) timezone="${localtime_target##*/zoneinfo/}" ;; esac',
+    "fi",
+    'if [ -z "$timezone" ]; then timezone=unknown; fi',
+    "tzdata_path=/usr/share/zoneinfo/tzdata.zi",
+    'if [ ! -r "$tzdata_path" ]; then tzdata_path=/etc/localtime; fi',
+    'tzdata_sha="$(sha256sum "$tzdata_path" 2>/dev/null | awk \'{print $1}\')"',
+    'case "$tzdata_sha" in ""|*[!a-f0-9]*) printf "%s\\n" "Timezone identity is unavailable" >&2; exit 69 ;; esac',
+    "binary_identity() {",
+    '  identity_name="$1"',
+    '  identity_version_arg="${2:---version}"',
+    '  identity_path="$(command -v "$identity_name" 2>/dev/null || true)"',
+    '  [ -n "$identity_path" ] || return 1',
+    '  identity_path="$(readlink -f "$identity_path" 2>/dev/null || printf "%s" "$identity_path")"',
+    '  identity_sha="$(sha256sum "$identity_path" 2>/dev/null | awk \'{print $1}\')"',
+    '  case "$identity_sha" in ""|*[!a-f0-9]*) return 1 ;; esac',
+    "  identity_version=version-probe-unavailable",
+    '  if command -v timeout >/dev/null 2>&1; then identity_version="$(timeout 5 "$identity_path" "$identity_version_arg" 2>&1 | head -c 4096 || true)"; fi',
+    '  identity_version_sha="$(printf "%s" "$identity_version" | sha256sum | awk \'{print $1}\')"',
+    '  printf "%s:%s:%s\\n" "$identity_name" "$identity_sha" "$identity_version_sha"',
+    "}",
+    "browser_name=",
+    "for candidate in chromium chromium-browser google-chrome google-chrome-stable; do",
+    '  if command -v "$candidate" >/dev/null 2>&1; then browser_name="$candidate"; break; fi',
+    "done",
+    "browser_status=unavailable",
+    "browser_sha=none",
+    'if [ -n "$browser_name" ]; then',
+    '  browser_material="$(binary_identity "$browser_name" --version 2>/dev/null || true)"',
+    '  xvfb_material="$(binary_identity Xvfb -version 2>/dev/null || printf "%s" "Xvfb:none")"',
+    '  if [ -n "$browser_material" ]; then browser_status=available; browser_sha="$(printf "browser-v1\\n%s\\n%s\\n" "$browser_material" "$xvfb_material" | sha256sum | awk \'{print $1}\')"; fi',
+    "fi",
+    "media_status=unavailable",
+    "media_sha=none",
+    'ffmpeg_material="$(binary_identity ffmpeg -version 2>/dev/null || true)"',
+    'ffprobe_material="$(binary_identity ffprobe -version 2>/dev/null || true)"',
+    'if [ -n "$ffmpeg_material" ] && [ -n "$ffprobe_material" ]; then media_status=available; media_sha="$(printf "media-v1\\n%s\\n%s\\n" "$ffmpeg_material" "$ffprobe_material" | sha256sum | awk \'{print $1}\')"; fi',
+    "native_tools_status=available",
+    "native_tools_material=",
+    "for native_tool in bash tar rsync curl bwrap zstd tmux git; do",
+    "  native_version_arg=--version",
+    '  if [ "$native_tool" = tmux ]; then native_version_arg=-V; fi',
+    '  native_identity="$(binary_identity "$native_tool" "$native_version_arg" 2>/dev/null || true)"',
+    '  if [ -z "$native_identity" ]; then native_tools_status=unavailable; break; fi',
+    '  native_tools_material="${native_tools_material}${native_identity}\n"',
+    "done",
+    "native_tools_sha=none",
+    'if [ "$native_tools_status" = available ]; then native_tools_sha="$(printf "native-tools-v1\\n%s" "$native_tools_material" | sha256sum | awk \'{print $1}\')"; fi',
+    '"$node_path" - "$package_root" "$os_id" "$os_version" "$architecture" "$kernel_release" "$libc_kind" "$libc_version" "$timezone" "$tzdata_sha" "$launcher_kind" "$launcher_sha" "$browser_status" "$browser_sha" "$media_status" "$media_sha" "$native_tools_status" "$native_tools_sha" <<\'COMIS_RUNTIME_NODE\'',
     NODE_SCANNER.trimStart(),
     "COMIS_RUNTIME_NODE",
     "",

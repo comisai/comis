@@ -43,14 +43,36 @@ const source: RuntimeArtifactAttestation = {
   bytes: 3_269_438_185,
   packageRoot: "/opt/source/node_modules/comisai",
   version: "1.0.53",
+  osId: "ubuntu",
+  osVersion: "24.04",
+  architecture: "x86_64",
+  kernelRelease: "6.8.0-71-generic",
+  libcKind: "glibc",
+  libcVersion: "2.39",
+  nodeVersion: "22.17.1",
+  nodeAbi: "127",
+  timezone: "Asia/Jerusalem",
+  tzdataSha256: "1".repeat(64),
+  launcherKind: "systemd",
+  launcherSha256: "2".repeat(64),
+  browserStatus: "available",
+  browserSha256: "3".repeat(64),
+  mediaStatus: "available",
+  mediaSha256: "4".repeat(64),
+  nativeToolsStatus: "available",
+  nativeToolsSha256: "5".repeat(64),
 };
 
 const target: RuntimeArtifactAttestation = {
+  ...source,
   digestSha256: "d".repeat(64),
   entryCount: 84_131,
   bytes: 3_269_453_213,
   packageRoot: "/srv/target/node_modules/comisai",
-  version: "1.0.53",
+  kernelRelease: "6.8.0-72-generic",
+  nodeAbi: "128",
+  timezone: "Etc/UTC",
+  launcherSha256: "6".repeat(64),
 };
 
 describe("production runtime clone transaction", () => {
@@ -104,6 +126,8 @@ describe("production runtime clone transaction", () => {
     expect(plan.sourcePrepare.stdin).not.toContain("/opt/source/node_modules/comisai");
     expect(plan.targetPrepare.stdin).toContain("environment-role");
     expect(plan.targetPrepare.stdin).toContain("IPAddressDeny=any");
+    expect(plan.targetPrepare.stdin).toContain("PrivateNetwork=yes");
+    expect(plan.targetPrepare.stdin).toContain("ProtectSystem=strict");
     expect(plan.targetPrepare.stdin).toContain("systemctl is-active");
     expect(plan.targetPrepare.stdin).toContain("systemctl is-enabled");
     expect(plan.targetPrepare.stdin).toContain("trap cleanup_target_prepare EXIT HUP INT TERM");
@@ -127,6 +151,8 @@ describe("production runtime clone transaction", () => {
     expect(promote).toContain("chown -hR");
     expect(promote).toContain("environment-role");
     expect(promote).toContain("IPAddressDeny=any");
+    expect(promote).toContain("NoNewPrivileges=yes");
+    expect(promote).toContain("SocketBindDeny=any");
     expect(result.value.targetCommit.stdin).toContain('rm -rf -- "$rollback_root"');
     expect(result.value.targetRollback.stdin).toContain('mv -- "$rollback_root" "$package_root"');
     expect(result.value.targetBootGuard.stdin).toContain("daemon-entrypoint.js");
@@ -210,7 +236,7 @@ describe("production runtime clone transaction", () => {
     }
   });
 
-  it("streams promotes re-attests and commits an exact runtime clone", async () => {
+  it("commits a byte-exact package clone while retaining host semantic divergence", async () => {
     const invocations: string[] = [];
     let targetProbeCount = 0;
     const executor: ProductionRemoteExecutor = {
@@ -223,9 +249,7 @@ describe("production runtime clone transaction", () => {
           targetProbeCount += 1;
           return ok({
             stdout: runtimeFacts(
-              targetProbeCount === 1
-                ? target
-                : { ...source, packageRoot: target.packageRoot },
+              targetProbeCount === 1 ? target : clonedTargetFacts(),
             ),
             exitCode: 0,
           });
@@ -285,7 +309,7 @@ describe("production runtime clone transaction", () => {
 
   it("rejects an already matching runtime when its target replay gate is not bootable", async () => {
     const invocations: ProductionRemoteInvocation[] = [];
-    const matchingTarget = { ...source, packageRoot: target.packageRoot };
+    const matchingTarget = clonedTargetFacts();
     const executor: ProductionRemoteExecutor = {
       run: async (invocation) => {
         invocations.push(invocation);
@@ -365,9 +389,37 @@ function runtimeFacts(facts: RuntimeArtifactAttestation): string {
     `bytes=${facts.bytes}`,
     `packageRoot=${facts.packageRoot}`,
     `version=${facts.version}`,
+    `osId=${facts.osId}`,
+    `osVersion=${facts.osVersion}`,
+    `architecture=${facts.architecture}`,
+    `kernelRelease=${facts.kernelRelease}`,
+    `libcKind=${facts.libcKind}`,
+    `libcVersion=${facts.libcVersion}`,
+    `nodeVersion=${facts.nodeVersion}`,
+    `nodeAbi=${facts.nodeAbi}`,
+    `timezone=${facts.timezone}`,
+    `tzdataSha256=${facts.tzdataSha256}`,
+    `launcherKind=${facts.launcherKind}`,
+    `launcherSha256=${facts.launcherSha256}`,
+    `browserStatus=${facts.browserStatus}`,
+    `browserSha256=${facts.browserSha256}`,
+    `mediaStatus=${facts.mediaStatus}`,
+    `mediaSha256=${facts.mediaSha256}`,
+    `nativeToolsStatus=${facts.nativeToolsStatus}`,
+    `nativeToolsSha256=${facts.nativeToolsSha256}`,
     "COMIS_RUNTIME_ATTESTATION_V1_END",
     "",
   ].join("\n");
+}
+
+function clonedTargetFacts(): RuntimeArtifactAttestation {
+  return {
+    ...target,
+    digestSha256: source.digestSha256,
+    entryCount: source.entryCount,
+    bytes: source.bytes,
+    version: source.version,
+  };
 }
 
 function makeCloneExecutor(
@@ -390,7 +442,7 @@ function makeCloneExecutor(
         const facts =
           targetProbeCount === 1 || keepTargetDivergent
             ? target
-            : { ...source, packageRoot: target.packageRoot };
+            : clonedTargetFacts();
         return ok({ stdout: runtimeFacts(facts), exitCode: 0 });
       }
       return ok({ stdout: "", exitCode: 0 });

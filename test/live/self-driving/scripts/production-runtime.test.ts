@@ -20,8 +20,10 @@ import { ok } from "@comis/shared";
 import {
   RUNTIME_FACTS_BEGIN,
   RUNTIME_FACTS_END,
+  STRICT_RUNTIME_PARITY_REQUIREMENTS,
   buildRuntimeArtifactAttestationPlan,
   buildRuntimeArtifactProbeScript,
+  compareRuntimePackageArtifacts,
   compareRuntimeArtifacts,
   inspectRuntimeArtifactAttestations,
   parseRuntimeArtifactFacts,
@@ -91,6 +93,24 @@ function validFacts(overrides: Partial<RuntimeArtifactAttestation> = {}): string
     bytes: 4096,
     packageRoot: "/opt/comis/node_modules/comisai",
     version: "1.2.3",
+    osId: "ubuntu",
+    osVersion: "24.04",
+    architecture: "x86_64",
+    kernelRelease: "6.8.0-71-generic",
+    libcKind: "glibc",
+    libcVersion: "2.39",
+    nodeVersion: "22.17.1",
+    nodeAbi: "127",
+    timezone: "Asia/Jerusalem",
+    tzdataSha256: "b".repeat(64),
+    launcherKind: "systemd",
+    launcherSha256: "c".repeat(64),
+    browserStatus: "available",
+    browserSha256: "d".repeat(64),
+    mediaStatus: "available",
+    mediaSha256: "e".repeat(64),
+    nativeToolsStatus: "available",
+    nativeToolsSha256: "f".repeat(64),
     ...overrides,
   };
   return [
@@ -100,6 +120,24 @@ function validFacts(overrides: Partial<RuntimeArtifactAttestation> = {}): string
     `bytes=${facts.bytes}`,
     `packageRoot=${facts.packageRoot}`,
     `version=${facts.version}`,
+    `osId=${facts.osId}`,
+    `osVersion=${facts.osVersion}`,
+    `architecture=${facts.architecture}`,
+    `kernelRelease=${facts.kernelRelease}`,
+    `libcKind=${facts.libcKind}`,
+    `libcVersion=${facts.libcVersion}`,
+    `nodeVersion=${facts.nodeVersion}`,
+    `nodeAbi=${facts.nodeAbi}`,
+    `timezone=${facts.timezone}`,
+    `tzdataSha256=${facts.tzdataSha256}`,
+    `launcherKind=${facts.launcherKind}`,
+    `launcherSha256=${facts.launcherSha256}`,
+    `browserStatus=${facts.browserStatus}`,
+    `browserSha256=${facts.browserSha256}`,
+    `mediaStatus=${facts.mediaStatus}`,
+    `mediaSha256=${facts.mediaSha256}`,
+    `nativeToolsStatus=${facts.nativeToolsStatus}`,
+    `nativeToolsSha256=${facts.nativeToolsSha256}`,
     RUNTIME_FACTS_END,
     "",
   ].join("\n");
@@ -145,6 +183,33 @@ describe("production runtime artifact attestation", () => {
     expect(plan.source.stdin).toBe(plan.target.stdin);
     expect(plan.source.stdin).toContain("systemctl show");
     expect(plan.source.stdin).not.toMatch(/systemctl\s+(?:start|stop|restart|enable|disable)/u);
+
+    const unsupportedPlan = buildRuntimeArtifactAttestationPlan(profile, {
+      requirements: {
+        ...STRICT_RUNTIME_PARITY_REQUIREMENTS,
+        launcher: "declared_unsupported",
+      },
+      sourceLauncher: {
+        kind: "declared_unsupported",
+        nodePath: "/opt/node/bin/node",
+        packageRoot: "/opt/comis/node_modules/comisai",
+      },
+      targetLauncher: {
+        kind: "declared_unsupported",
+        nodePath: "/srv/node/bin/node",
+        packageRoot: "/srv/comis/node_modules/comisai",
+      },
+    });
+    expect(unsupportedPlan.source.args).toEqual([
+      "sudo",
+      "bash",
+      "-s",
+      "--",
+      "comis-source",
+      "declared_unsupported",
+      "/opt/node/bin/node",
+      "/opt/comis/node_modules/comisai",
+    ]);
   });
 
   it("resolves the package root from systemd ExecStart and returns content-free facts", () => {
@@ -157,6 +222,12 @@ describe("production runtime artifact attestation", () => {
         packageRoot: realpathSync(fixture.packageRoot),
         version: "1.2.3",
         digestSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        nodeVersion: process.versions.node,
+        nodeAbi: process.versions.modules,
+        timezone: expect.any(String),
+        tzdataSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        launcherKind: "systemd",
+        launcherSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
       });
       expect(facts.entryCount).toBeGreaterThan(0);
       expect(facts.bytes).toBeGreaterThan(0);
@@ -207,10 +278,19 @@ describe("production runtime artifact attestation", () => {
 
     expect(script).toContain("systemctl show");
     expect(script).toContain("ExecStart");
+    expect(script).toContain("DropInPaths");
+    expect(script).toContain("process.versions.modules");
+    expect(script).toContain("/etc/localtime");
+    expect(script).toContain("ffmpeg");
+    expect(script).toContain("chromium");
+    expect(script).toContain("head -c 4096");
+    expect(script).toContain("timeout 5");
     expect(script).not.toContain("/home/comis");
     expect(script).not.toContain("/usr/lib/node_modules/comisai");
     expect(script).not.toMatch(/systemctl\s+(?:start|stop|restart|enable|disable)/u);
     expect(script).not.toMatch(/(?:^|\s)(?:rm|mv|cp|chmod|chown|tee|install)(?:\s|$)/mu);
+    expect(script).not.toContain("Environment=");
+    expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
   });
 
   it("rejects unbounded, incomplete, duplicate, unknown, and malformed facts", () => {
@@ -226,6 +306,11 @@ describe("production runtime artifact attestation", () => {
     ).toBe(false);
     expect(parseRuntimeArtifactFacts(validFacts({ digestSha256: "A".repeat(64) })).ok).toBe(false);
     expect(parseRuntimeArtifactFacts(validFacts({ packageRoot: "relative/path" })).ok).toBe(false);
+    expect(
+      parseRuntimeArtifactFacts(
+        validFacts({ browserStatus: "unavailable", browserSha256: "d".repeat(64) }),
+      ).ok,
+    ).toBe(false);
     expect(parseRuntimeArtifactFacts(`banner\n${validFacts()}`).ok).toBe(false);
   });
 
@@ -239,16 +324,95 @@ describe("production runtime artifact attestation", () => {
       }),
     ).toEqual({ ok: true, value: undefined });
 
-    for (const target of [
-      { ...source, digestSha256: "b".repeat(64) },
-      { ...source, entryCount: source.entryCount + 1 },
-      { ...source, bytes: source.bytes + 1 },
-      { ...source, version: "1.2.4" },
-    ]) {
+    for (const [field, target] of [
+      ["digestSha256", { ...source, digestSha256: "b".repeat(64) }],
+      ["entryCount", { ...source, entryCount: source.entryCount + 1 }],
+      ["bytes", { ...source, bytes: source.bytes + 1 }],
+      ["version", { ...source, version: "1.2.4" }],
+      ["osId", { ...source, osId: "debian" }],
+      ["osVersion", { ...source, osVersion: "12" }],
+      ["architecture", { ...source, architecture: "aarch64" }],
+      ["kernelRelease", { ...source, kernelRelease: "6.8.0-72-generic" }],
+      ["libcKind", { ...source, libcKind: "musl" as const }],
+      ["libcVersion", { ...source, libcVersion: "1.2.5" }],
+      ["nodeVersion", { ...source, nodeVersion: "22.18.0" }],
+      ["nodeAbi", { ...source, nodeAbi: "128" }],
+      ["timezone", { ...source, timezone: "Etc/UTC" }],
+      ["tzdataSha256", { ...source, tzdataSha256: "1".repeat(64) }],
+      ["launcherSha256", { ...source, launcherSha256: "2".repeat(64) }],
+      ["browserSha256", { ...source, browserSha256: "3".repeat(64) }],
+      ["mediaSha256", { ...source, mediaSha256: "4".repeat(64) }],
+      ["nativeToolsSha256", { ...source, nativeToolsSha256: "5".repeat(64) }],
+    ] as const) {
       const result = compareRuntimeArtifacts(source, target);
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.kind).toBe("runtime_mismatch");
+      if (!result.ok) {
+        expect(result.error.kind).toBe("runtime_mismatch");
+        expect(result.error.field).toBe(field);
+      }
     }
+  });
+
+  it("keeps package clone integrity separate from host semantic fidelity", () => {
+    const source = parseFacts(validFacts());
+    const semanticallyDifferent = {
+      ...source,
+      nodeAbi: "128",
+      libcVersion: "2.40",
+      timezone: "Etc/UTC",
+      launcherSha256: "1".repeat(64),
+    };
+
+    expect(compareRuntimePackageArtifacts(source, semanticallyDifferent)).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(compareRuntimeArtifacts(source, semanticallyDifferent).ok).toBe(false);
+
+    const packageDifferent = { ...semanticallyDifferent, digestSha256: "9".repeat(64) };
+    const packageResult = compareRuntimePackageArtifacts(source, packageDifferent);
+    expect(packageResult.ok).toBe(false);
+    if (!packageResult.ok) expect(packageResult.error.field).toBe("digestSha256");
+  });
+
+  it("does not call unavailable required capabilities exact and honors explicit unsupported scope", () => {
+    const source = parseFacts(validFacts());
+    const unavailableBrowser = {
+      ...source,
+      browserStatus: "unavailable" as const,
+      browserSha256: "none" as const,
+    };
+    const strict = compareRuntimeArtifacts(unavailableBrowser, unavailableBrowser);
+    expect(strict.ok).toBe(false);
+    if (!strict.ok) expect(strict.error.field).toBe("browserStatus");
+
+    const scoped = compareRuntimeArtifacts(unavailableBrowser, unavailableBrowser, {
+      ...STRICT_RUNTIME_PARITY_REQUIREMENTS,
+      browser: "declared_unsupported",
+    });
+    expect(scoped).toEqual({ ok: true, value: undefined });
+
+    const unsupportedLauncher = {
+      ...source,
+      launcherKind: "unsupported" as const,
+      launcherSha256: "none" as const,
+    };
+    expect(
+      compareRuntimeArtifacts(unsupportedLauncher, unsupportedLauncher, {
+        ...STRICT_RUNTIME_PARITY_REQUIREMENTS,
+        launcher: "declared_unsupported",
+      }),
+    ).toEqual({ ok: true, value: undefined });
+
+    const unverifiedTimezone = { ...source, tzdataSha256: "none" };
+    const timezoneResult = compareRuntimeArtifacts(unverifiedTimezone, unverifiedTimezone);
+    expect(timezoneResult.ok).toBe(false);
+    if (!timezoneResult.ok) expect(timezoneResult.error.field).toBe("tzdataSha256");
+
+    const unverifiedBrowser = { ...source, browserSha256: "none" };
+    const browserResult = compareRuntimeArtifacts(unverifiedBrowser, unverifiedBrowser);
+    expect(browserResult.ok).toBe(false);
+    if (!browserResult.ok) expect(browserResult.error.field).toBe("browserSha256");
   });
 
   it("returns both read-only attestations before enforcing artifact equality", async () => {

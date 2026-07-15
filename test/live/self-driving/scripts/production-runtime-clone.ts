@@ -13,7 +13,7 @@ import type {
 } from "./production-bootstrap.js";
 import type { ProductionReplayProfile } from "./production-profile.js";
 import {
-  compareRuntimeArtifacts,
+  compareRuntimePackageArtifacts,
   inspectRuntimeArtifactAttestations,
   type RuntimeArtifactAttestation,
 } from "./production-runtime.js";
@@ -213,7 +213,11 @@ if systemctl is-active --quiet "$unit"; then exit 73; fi
 if systemctl is-enabled --quiet "$unit"; then exit 74; fi
 quarantine="/etc/systemd/system/$unit.d/90-comis-replay-quarantine.conf"
 if [ ! -f "$quarantine" ] || [ -L "$quarantine" ] || \
-   ! grep -Fqx 'IPAddressDeny=any' "$quarantine"; then exit 75; fi
+   ! grep -Fqx 'IPAddressDeny=any' "$quarantine" || \
+   ! grep -Fqx 'PrivateNetwork=yes' "$quarantine" || \
+   ! grep -Fqx 'ProtectSystem=strict' "$quarantine" || \
+   ! grep -Fqx 'NoNewPrivileges=yes' "$quarantine" || \
+   ! grep -Fqx 'SocketBindDeny=any' "$quarantine"; then exit 75; fi
 case "$run_id" in
   [A-Za-z0-9]* ) ;;
   *) exit 76 ;;
@@ -271,7 +275,12 @@ if [ "$(cat /etc/comis/environment-role 2>/dev/null || true)" != test ]; then ex
 case "$service" in *.service) unit="$service" ;; *) unit="$service.service" ;; esac
 if systemctl is-active --quiet "$unit" || systemctl is-enabled --quiet "$unit"; then exit 73; fi
 quarantine="/etc/systemd/system/$unit.d/90-comis-replay-quarantine.conf"
-if [ ! -f "$quarantine" ] || ! grep -Fqx 'IPAddressDeny=any' "$quarantine"; then exit 74; fi
+if [ ! -f "$quarantine" ] || \
+   ! grep -Fqx 'IPAddressDeny=any' "$quarantine" || \
+   ! grep -Fqx 'PrivateNetwork=yes' "$quarantine" || \
+   ! grep -Fqx 'ProtectSystem=strict' "$quarantine" || \
+   ! grep -Fqx 'NoNewPrivileges=yes' "$quarantine" || \
+   ! grep -Fqx 'SocketBindDeny=any' "$quarantine"; then exit 74; fi
 case "$run_id" in [A-Za-z0-9]*) ;; *) exit 75 ;; esac
 case "$run_id" in *[!A-Za-z0-9_-]*) exit 75 ;; esac
 case "$package_root" in /*/node_modules/comisai) ;; *) exit 76 ;; esac
@@ -338,7 +347,15 @@ case "$unit_exec" in *"$entrypoint"*) ;; *) exit 87 ;; esac
 if [ "$(stat -c '%u:%g:%a' "$quarantine" 2>/dev/null || true)" != 0:0:644 ] || \
    ! grep -Fqx 'Environment=COMIS_REPLAY_TARGET=1' "$quarantine" || \
    ! grep -Fqx 'RestrictAddressFamilies=AF_UNIX' "$quarantine" || \
-   ! grep -Fqx 'IPAddressDeny=any' "$quarantine"; then exit 88; fi
+   ! grep -Fqx 'IPAddressDeny=any' "$quarantine" || \
+   ! grep -Fqx 'PrivateNetwork=yes' "$quarantine" || \
+   ! grep -Fqx 'PrivateDevices=yes' "$quarantine" || \
+   ! grep -Fqx 'PrivateMounts=yes' "$quarantine" || \
+   ! grep -Fqx 'ProtectSystem=strict' "$quarantine" || \
+   ! grep -Fqx 'ProtectHome=read-only' "$quarantine" || \
+   ! grep -Fqx 'NoNewPrivileges=yes' "$quarantine" || \
+   ! grep -Fqx 'SocketBindDeny=any' "$quarantine" || \
+   ! grep -Fqx 'ReadWritePaths=/run/comis-replay' "$quarantine"; then exit 88; fi
 `;
 
 const CANCEL_RUN_PROCESS = String.raw`cancel_run_process() {
@@ -428,7 +445,7 @@ export function buildProductionRuntimeClonePlan(
       "Source and target package versions must match before exact cloning",
     );
   }
-  if (compareRuntimeArtifacts(request.source, request.target).ok) {
+  if (compareRuntimePackageArtifacts(request.source, request.target).ok) {
     return invalid("precondition", "runtime", "Runtime artifacts already match");
   }
   const maximumBytes = calculateMaximumStreamBytes(request.source);
@@ -580,7 +597,7 @@ export async function cloneProductionRuntime(
       message: "Runtime artifacts could not be attested before cloning",
     });
   }
-  if (compareRuntimeArtifacts(before.value.source, before.value.target).ok) {
+  if (compareRuntimePackageArtifacts(before.value.source, before.value.target).ok) {
     const bootGuard = await runRemoteStage(
       request.executor,
       targetBootGuardInvocation(
@@ -669,8 +686,8 @@ export async function cloneProductionRuntime(
       },
     );
   }
-  const sourceStable = compareRuntimeArtifacts(before.value.source, after.value.source);
-  const targetExact = compareRuntimeArtifacts(after.value.source, after.value.target);
+  const sourceStable = compareRuntimePackageArtifacts(before.value.source, after.value.source);
+  const targetExact = compareRuntimePackageArtifacts(after.value.source, after.value.target);
   if (!sourceStable.ok || !targetExact.ok) {
     return failAfterRollback(
       request.executor,
