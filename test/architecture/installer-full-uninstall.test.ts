@@ -964,8 +964,7 @@ describe("install.sh full dedicated-user uninstall", () => {
   it("refuses a same-user non-Node process with a forged daemon argv", () => {
     const work = makeWorkDir();
     const dataDir = join(work, ".comis");
-    const forgedArgv =
-      "/tmp/comis-decoy/node_modules/@comis/daemon/dist/daemon-entrypoint.js";
+    const forgedArgv = "/tmp/comis-decoy/node_modules/@comis/daemon/dist/daemon.js";
     mkdirSync(dataDir);
 
     const pid = Number(

@@ -165,8 +165,14 @@ Result:  MATCH
 ### Actions
 
 **`"agent"` (default):** Renders the `messageTemplate` and `sessionKey`
-templates using the [template engine](#template-engine), then invokes the agent
-with the rendered message and session key.
+templates using the [template engine](#template-engine), then dispatches the
+agent turn with the rendered message and session key. The turn runs in the
+**background** — the endpoint acknowledges the request on receipt (`{ "received":
+true }`) without waiting for the turn to finish. An agent turn can run for many
+minutes (a driven CLI, a build, a review wait); blocking the response on it would
+hold the caller's connection open for the whole turn and, at the caller's request
+timeout, trigger a re-delivery storm. Turn failures are logged and emitted as
+diagnostics by the daemon, not returned as this request's status.
 
 **`"wake"`:** Triggers a daemon heartbeat. The `wakeMode` controls timing:
 - `"now"` (default): Fire the heartbeat immediately
@@ -176,12 +182,12 @@ with the rendered message and session key.
 
 | Status | Body | Cause |
 |--------|------|-------|
-| `200` | `{ "received": true, "mapping": "mapping-id" }` | Mapping matched and action executed |
+| `200` | `{ "received": true, "mapping": "mapping-id" }` | Mapping matched; `wake` handler ran, or the agent turn was dispatched to the background |
 | `401` | `{ "error": "..." }` | Invalid HMAC signature (when token configured) |
 | `400` | `{ "error": "Invalid JSON body" }` | Request body is not valid JSON |
 | `400` | `{ "error": "Request body exceeds maximum size" }` | Body exceeds `maxBodyBytes` |
 | `404` | `{ "error": "No matching webhook mapping" }` | No mapping matched the request path |
-| `500` | `{ "error": "Internal error" }` | Handler threw an error |
+| `500` | `{ "error": "Internal error" }` | A `wake` handler threw. Agent turns run in the background and never produce a `500` — their failures are logged/emitted, not returned |
 
 <Info>
 Source: `createMappedWebhookEndpoint()` in `packages/gateway/src/webhook/webhook-endpoint.ts`
