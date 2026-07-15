@@ -202,7 +202,7 @@ export class IcMessageRenderer extends LitElement {
       return html`<ic-skeleton-view variant="detail"></ic-skeleton-view>`;
     }
 
-    if (!this.hasSession) {
+    if (!this.hasSession && this.messages.length === 0) {
       return html`
         <div class="message-area">
           <ic-empty-state icon="chat" message="Select a session"

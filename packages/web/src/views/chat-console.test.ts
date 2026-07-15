@@ -1332,7 +1332,9 @@ describe("IcChatConsole", () => {
     const message = rendererQuery(el, "ic-chat-message") as any;
 
     expect(message).toBeTruthy();
-    expect(message?.content).toContain("/help");
+    expect(message?.role).toBe("system");
+    expect(message?.content).toContain("Available commands:");
+    expect(message?.content).toContain("/help - Show available commands");
   });
 
   /* ==================== Streaming Tests ==================== */
