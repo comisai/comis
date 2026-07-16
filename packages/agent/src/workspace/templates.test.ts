@@ -18,14 +18,23 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("DEFAULT_TEMPLATES workspace prose invariants (agent copy)", () => {
-  it("SOUL.md uses the canonical positioning without obsolete or absolute claims", () => {
+  it("SOUL.md describes Comis as a runtime for persistent agents", () => {
     const soulMd = DEFAULT_TEMPLATES["SOUL.md"];
     expect(soulMd).toContain(
-      "Comis is an open-source, security-first platform for AI agent teams.",
+      "Comis is an open-source, self-hosted runtime for AI agents that work over time.",
     );
+    expect(soulMd).not.toContain("security-first platform");
     expect(soulMd).not.toContain("Friendly by nature. Powerful by design.");
     expect(soulMd).not.toContain("No cloud dependency");
     expect(soulMd).not.toContain("You live in your human's messaging apps");
+  });
+
+  it("BOOTSTRAP.md: includes the shipped WhatsApp QR pairing path", () => {
+    const bootstrapMd = DEFAULT_TEMPLATES["BOOTSTRAP.md"];
+    expect(bootstrapMd).toContain(
+      "**WhatsApp** -- connect by scanning a QR code with the Baileys WhatsApp Web client",
+    );
+    expect(bootstrapMd).not.toContain("WhatsApp Business API");
   });
 
   it("AGENTS.md template must not advertise a pre-warmed venv that does not exist on disk", () => {

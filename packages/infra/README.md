@@ -32,7 +32,7 @@ logger.error(
 
 Application packages normally receive the structural `ComisLogger` contract through dependency injection; the daemon composition root owns the Pino runtime and subsystem child loggers.
 
-This package is part of [Comis](https://github.com/comisai/comis), an open-source agent runtime for governed execution.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source runtime built for AI agents you leave running.
 
 ```bash
 npm install comisai

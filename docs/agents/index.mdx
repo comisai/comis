@@ -4,16 +4,15 @@ description: "What agents are and how they work inside Comis"
 icon: "robot"
 ---
 
-An agent is your AI assistant -- it reads messages, thinks about what to do,
-uses tools, and responds. Comis can run multiple agents, each with its own
-personality, skills, and memory.
+An agent uses a model and a configured set of tools to handle work. Comis can
+run one agent or several, each with its own instructions, tools, state, and
+limits.
 
 ## What is an agent?
 
-Think of an agent as an AI employee that lives inside your chat channels. You
-give it a name, a personality, and a set of tools -- then it goes to work. It
-can answer questions, search the web, manage your schedule, send messages across
-platforms, and remember your preferences over time.
+You give an agent instructions, a model, and access to selected tools. It can
+answer questions, search the web, work on a schedule, send messages, and store
+information when those features are configured.
 
 Each agent has a logical identity and normally uses agent-scoped session keys,
 memory and context queries, workspace paths, instructions, budgets, and tool
@@ -38,16 +37,16 @@ security domains.
     memory recall, tool use, and safety checks along the way.
   </Card>
   <Card title="Memory" icon="brain" href="/agents/memory">
-    Your agent remembers past conversations, learns facts over time, and uses
-    that knowledge to give better answers.
+    Store and recall selected information with source, trust, and correction
+    history when memory and learning are enabled.
   </Card>
   <Card title="Tools" icon="screwdriver-wrench" href="/skills/index">
     Agents can search the web, manage schedules, send cross-platform messages,
     analyze images, and much more through built-in and custom skills.
   </Card>
   <Card title="Safety" icon="shield-halved" href="/agents/safety">
-    Built-in cost protection stops your agent from spending too much. Budget
-    limits, a safety fuse, and step counters keep things under control.
+    Use token limits, circuit breakers, step counters, graph budgets, and opt-in
+    spend ceilings. Configure and test the controls your workflow needs.
   </Card>
   <Card title="Models" icon="microchip" href="/agents/models">
     Catalog-driven access to the current providers in the pi-ai SDK (see `comis models list`
@@ -71,8 +70,8 @@ level:
    management, and more)
 5. **A reply is sent** back to the same chat
 
-The whole process takes just a few seconds. For the full walkthrough with a
-diagram, see the [Agent Lifecycle](/agents/lifecycle) page.
+Run time depends on the model, tools, provider, and workflow. For the full
+walkthrough with a diagram, see the [Agent Lifecycle](/agents/lifecycle) page.
 
 ## Slash commands
 

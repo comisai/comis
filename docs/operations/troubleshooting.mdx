@@ -311,9 +311,10 @@ This page covers the most common issues you might encounter with Comis. Each ent
 
     **How to fix for WhatsApp:**
 
-    1. Verify your WhatsApp Business API credentials
-    2. Check that the phone number ID and access token are correct
-    3. Make sure the WhatsApp Business account is active
+    1. Confirm `channels.whatsapp.authDir` points to a persistent, writable directory
+    2. Set `printQR: true`, restart the daemon, and check its output or logs
+    3. In WhatsApp, open **Settings**, then **Linked Devices**, then **Link a Device**
+    4. Scan the QR code; if an old session is invalid, remove only the configured auth directory and pair again
 
     **How to fix for Signal:**
 

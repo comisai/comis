@@ -46,7 +46,7 @@ Composable `createXxxPlugin()` factories enable runtime channel registration. Ea
 
 ## Part of Comis
 
-This package is part of [Comis](https://github.com/comisai/comis), an open-source agent runtime for governed execution.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source runtime built for AI agents you leave running.
 
 ```bash
 npm install comisai

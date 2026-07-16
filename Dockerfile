@@ -441,6 +441,6 @@ CMD ["node", "packages/daemon/dist/daemon.js"]
 # OCI metadata
 LABEL org.opencontainers.image.source="https://github.com/comisai/comis" \
       org.opencontainers.image.title="Comis" \
-      org.opencontainers.image.description="Open-source agent runtime for governed execution" \
+      org.opencontainers.image.description="Open-source runtime for AI agents you leave running" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.vendor="Comis"

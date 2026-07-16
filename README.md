@@ -5,7 +5,7 @@
 <p align="center">
   <strong>Run AI agents you can constrain, inspect, and recover.</strong>
   <br />
-  <sub>Open-source agent runtime for governed execution.</sub>
+  <sub>For the agent you leave running.</sub>
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@
 <p align="center">
   <a href="#quick-start"><strong>Quick Start</strong></a> ·
   <a href="https://docs.comis.ai">Documentation</a> ·
-  <a href="#capabilities">Capabilities</a> ·
+  <a href="#security-and-deployment">Security</a> ·
   <a href="#contributing">Contribute</a>
 </p>
 
@@ -26,176 +26,164 @@
 
 # Comis
 
-Comis is an Apache-2.0, self-hosted runtime for governed multi-agent workflows, built for AI platform and security teams and for operators moving persistent agents onto real tools and data. It provides scoped authority, bounded spend, recoverable context, provenance-aware memory, and operational evidence.
+Comis is an open-source, self-hosted runtime for AI agents that work over time: on a schedule, across long tasks, or with other agents.
 
-**Govern execution, memory, security, authority, and cost as one system.** Formal workflows, recoverable context, provenance-aware memory, scoped authority, bounded spend, and operational evidence share one governance model, enforced inside the runtime rather than by a proxy in front of it.
+Comis stores original messages and tool results outside the model's active prompt, while configured controls remain in the runtime. The model can work from shorter summaries without making those summaries the only record of what happened.
 
-**Every run leaves evidence.** What each agent was allowed to do, what it read, learned, and spent. When something fails, one command explains why.
-
-Comis runs on infrastructure you control. The controls apply to agents executing through Comis-controlled paths, and network access depends on the models, channels, tools, and media services you configure.
+Use Comis when an agent needs real tools, credentials, memory, budgets, and a clear record of its actions.
 
 > [!NOTE]
-> **Development status:** Comis is under active development. APIs and configuration may change, and deployments should be evaluated carefully before use in critical environments. See [Current limitations](#current-limitations) and the [threat model](THREAT_MODEL.md).
+> Comis is under active development. APIs and configuration may change. Review the [current limitations](https://docs.comis.ai/reference/known-limitations) and [threat model](THREAT_MODEL.md) before using it for critical work.
+
+## Why Comis
+
+- **Keep the work.** Original messages and tool results remain stored even when the model uses shorter summaries. The agent can search, inspect, and recover selected details when it needs them.
+
+- **Hold configured boundaries.** Authority checks, origin rules, credential scope, memory admission, and spending limits live outside prompt text. When configured, these controls can change what the runtime allows next.
+
+- **See what happened.** Instrumented runs produce bounded evidence about outcomes, cost, tool failures, policy decisions, and recovery. `comis explain` turns that evidence into an incident report without asking another model to guess.
+
+## Explain a Failed Run
+
+~~~bash
+comis explain "<sessionKey|traceId|rootRunId>"
+~~~
+
+The report includes the recorded outcome, attributed cost, tool and policy failures, coverage information, and suggested next steps. When the evidence matches a known rule, it also reports a likely cause. When no rule matches, it does not invent one.
+
+The explanation process makes no model calls. It can also run from local data when the daemon is unavailable:
+
+~~~bash
+comis explain "<sessionKey|traceId|rootRunId>" --offline
+~~~
+
+For a wider view:
+
+~~~bash
+comis fleet --since 24
+comis security audit-log
+~~~
+
+These reports are bounded and designed to exclude raw message bodies and credential values. Some error details may be sanitized, shortened, or replaced with a digest.
 
 ## Quick Start
 
-### One-line install
+### Managed install
 
-For a managed macOS or Linux host:
+For a macOS or Linux host you manage:
 
-```bash
+~~~bash
 curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash
-```
+~~~
 
-This downloads and runs the installer immediately. The managed-host installer can install Node.js and host dependencies, initialize Comis data, and register the daemon with systemd or PM2. On Linux, it also attempts to provision Chromium and Xvfb by default and can create a dedicated `comis` user for a systemd service.
+The installer can install Node.js and host tools, initialize Comis, and configure a background service.
 
-### Additional options
+To inspect the installer and preview its changes first:
 
-To inspect the installer and preview its changes before running it:
-
-```bash
+~~~bash
 curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh
 less comis-install.sh
 bash comis-install.sh --dry-run
 bash comis-install.sh
-```
+~~~
 
-If Node.js **22.19+** is already installed, install directly from npm:
+### npm install
 
-```bash
+If Node.js **22.19 or newer** is already installed:
+
+~~~bash
 npm install --global comisai
 comis init
-```
+~~~
 
-Direct npm installation does not install host tools, create a service account, or register a system service. Use `bash comis-install.sh --help` to review managed-installer opt-outs and service choices.
+The npm package does not install host tools, create a service account, or register a system service.
 
-Complete the setup wizard and start the daemon when prompted. If you choose to start it later, run `comis daemon start`. Then open `http://127.0.0.1:4766`, or connect a messaging channel during setup. Verify the daemon with:
+Complete the setup wizard and start the daemon when prompted. To start it later:
 
-```bash
+~~~bash
+comis daemon start
+~~~
+
+Open `http://127.0.0.1:4766`, or connect a messaging channel during setup. Check the daemon with:
+
+~~~bash
 curl http://127.0.0.1:4766/health
-```
+~~~
 
-For containers and production hosts, see the [installation guides](https://docs.comis.ai/installation). Linux with Bubblewrap is the recommended deployment target for isolated tool execution.
+See the [installation guides](https://docs.comis.ai/installation) for containers and production hosts. Linux with Bubblewrap is the recommended deployment target for isolated command execution.
 
-## Why Comis
+## A Good First Workload
 
-Comis does not compete on feature count alone. Its strength is one governance model across the agent lifecycle.
+A scheduled research brief is a practical first project.
 
-| Capability | What it provides |
-| --- | --- |
-| **Operational evidence** | Traces, trajectories, audit records, fleet and delivery health, and recall/cache diagnostics feed deterministic incident explanation: `comis explain` reports a session's outcome, cost, failures, and likely root cause in one call, with no LLM in the loop. |
-| **Bounded spend** | Provider cost accounting connects to graph budgets and configurable spend ceilings that stop a run when it crosses the line, instead of reporting the bill afterward. |
-| **Security for adversarial models** | Comis treats model output and external content as untrusted, with scoped stores, capability gates, deny-by-origin controls, encrypted secrets, credential brokering, memory/input/output guards, and audit events. |
-| **Per-agent operational control** | Assign each agent its own model, memory/context scopes, tools, budgets, policies, configurable secret allowlist, and routing bindings across channels and APIs. |
-| **Formal multi-agent execution** | One request-scoped typed graph coordinates sequential and parallel nodes, barriers, retries, budgets, approval nodes, debate, voting, refinement, and map-reduce under the same governance model as memory, secrets, and spend; configured durable runs add checkpoints and node-boundary recovery. |
-| **Recoverable context by default** | Canonical messages and tool results remain available beneath summaries in the default DAG-backed context engine and can be recovered with `ctx_search`, `ctx_inspect`, and `ctx_expand`. |
-| **Provenance-aware memory and learning** | Agents learn under governance: knowledge carries provenance and a trust ceiling, corroboration and outcomes gate what sticks, and corrections supersede and demote learned state rather than silently overwriting it, so a fix holds instead of relapsing. The result is memory you can inspect, evaluate, and audit. |
-| **Architecture built to evolve safely** | Hexagonal ports and adapters, a composition root, `Result` discipline, strict schemas, typed events, dependency rules, targeted test-neighbor gates, cycle checks, security linting, and shrink-only architecture gates keep change contained. |
+Comis can collect and compare sources in parallel, keep important findings available as older details are summarized, track cost when pricing is available, and retain evidence for a failed branch. Configure this first workload with read-only tools before connecting it to production systems.
 
-### When something fails, one command explains why
+See the [use cases](https://docs.comis.ai/get-started/use-cases) and [scheduling guide](https://docs.comis.ai/agent-tools/scheduling) for more ideas.
 
-Agent failures are usually reconstructed by hand from scattered logs. Comis records enough evidence at every boundary (model calls, tool calls, policy decisions, memory writes, spend) to answer the question directly:
+## What Comis Includes
 
-```bash
-comis explain "<sessionKey|traceId>"   # outcome, cost, tool failures, breaker timeline, likely root cause
-comis fleet --since 24                 # daemon-wide: degraded rate, top error kinds, cost, config posture
-comis security audit-log               # who accessed a secret, what was blocked, scrubbed and durable
-```
+- **Work that continues:** cron jobs, heartbeats, background work, sub-agents, and typed execution graphs with dependencies, retries, timeouts, budgets, and optional checkpoints.
+- **Context and memory:** recoverable original messages and tool results, plus ranked recall, source records, trust labels, supporting evidence, outcome signals, and correction history. Governed learning is available when enabled.
+- **Models and tools:** cloud model providers, local Ollama and LM Studio models, browser, web, files, media, scheduling, memory, infrastructure tools, and MCP integrations.
+- **Messaging:** Telegram, Discord, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email, and Microsoft Teams.
+- **Operator interfaces:** web dashboard, CLI, JSON-RPC, and WebSocket.
+- **Operations:** session and fleet reports, durable security audit records, provider cost accounting, optional OpenTelemetry export, and an optional Prometheus endpoint.
 
-The reports are deterministic (same input, same verdict), bounded, and content-safe: counts and hints, never message bodies or secrets. They can be shared in an incident review as-is.
+Configured spending limits can warn or refuse later model calls after a limit is crossed. They do not cancel a provider call that is already running.
 
-## Where Comis Fits
-
-- **Governed research and analysis:** coordinate parallel source gathering, synthesis, criticism, context recovery, provenance-aware memory, and a configured budget while retaining evidence for review.
-- **Controlled operational investigation:** collect read-only system evidence, correlate events, and produce an incident report with cost and audit records. Keep privileged remediation behind tested approval and isolation boundaries.
-- **Routed support and knowledge operations:** give specialized agents separate context, memory, tools, budgets, and routing while keeping the operator's control model consistent.
-
-## Capabilities
-
-- **Messaging:** Telegram, Discord, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email, and Microsoft Teams, with platform-specific media and interaction support.
-- **Models, tools, and MCP:** Cloud providers, local Ollama and LM Studio models, fallback chains, browser, files, web, media, scheduling, memory, infrastructure, MCP client integrations, and a permission-gated MCP server.
-- **Media:** Speech-to-text, text-to-speech, image and video analysis, image generation, and document extraction.
-- **Automation:** Cron, heartbeat monitoring, background work, sub-agents, and durable execution graphs.
-- **Interfaces:** Web dashboard, CLI, JSON-RPC, WebSocket, early Agent Client Protocol (ACP) bridge work, and experimental OpenAI-shaped HTTP endpoints.
-- **Observability:** Native traces and trajectories, deterministic incident explanation (`comis explain`), fleet health, a scrubbed security audit log, provider cost accounting, optional OpenTelemetry export aligned with the stable GenAI model-call conventions, and a loopback-default Prometheus endpoint.
-- **Storage:** Local SQLite stores with FTS5, optional vectors, session history, delivery queues, and encrypted-by-default secret storage.
+Configured graph checkpoints support recovery at node boundaries. They do not provide exact replay of every model response, tool call, network request, or external side effect.
 
 ## Security and Deployment
 
-Comis treats model output and external content as untrusted. The runtime includes AES-256-GCM encrypted secret storage by default, configurable per-agent secret allowlists, SSRF defenses, external-content wrapping, prompt-injection detection, memory-write validation, completed-response output guards, tool policy, and an audit trail persisted by default. Streaming consumers receive deltas before the final-response scan.
+Comis assumes that model output and external content may be unsafe. It includes encrypted secret storage, configurable per-agent secret rules, capability and origin checks, URL validation, prompt-injection detection, memory-write checks, checks on completed responses, tool policy, and durable security audit records. Streaming clients may receive partial output before the completed response is checked.
 
-Isolation depends on the host:
+These controls apply only to paths handled by Comis. Model, messaging, media, MCP, and tool providers may receive data that you deliberately send to them.
 
-- **Linux with Bubblewrap** provides the strongest supported tool isolation.
-- **macOS `sandbox-exec`** is best-effort and does not provide the same boundary as Linux.
-- By default, the interactive terminal driver refuses to spawn without its jail; an explicit operator-only setting can bypass that jail. The ordinary `exec` tool can run directly on the host when its sandbox is disabled or unavailable. Disable `exec` or deploy with Bubblewrap where this risk is unacceptable.
-- The default agent tool-policy profile is `full`, and an empty `secrets.allow` list is unrestricted. Narrow both before accepting untrusted input.
-- Skill-declared permissions are advisory unless the same limits are enforced through runtime tool policy and deployment controls.
-- Approval requests are available on explicitly wired paths when approvals are enabled; configured rules and default modes are not yet a universal policy engine.
+Important defaults and boundaries:
 
-**Credentials.** Secrets live in an encrypted store and resolve through a broker at use time, scoped by per-agent allowlists, with each access recorded in the audit trail. Agents receive what they were granted rather than ambient credentials.
+- Linux with Bubblewrap provides the strongest supported command isolation.
+- macOS `sandbox-exec` is best-effort and is not the same security boundary.
+- The ordinary `exec` tool can run on the host when its sandbox is disabled or unavailable.
+- The default tool-policy profile is `full`.
+- An empty per-agent `secrets.allow` list is unrestricted.
+- Human approvals are disabled by default and protect only paths explicitly connected to an approval gate.
 
-**Supply chain.** Every dependency across the monorepo is exact-pinned, with no floating version ranges anywhere. Workspace packages are private and bundled into the published tarball, npm releases publish with sigstore provenance through GitHub OIDC, and per-package coverage floors, security linting, and shrink-only architecture gates run on every change.
+Narrow tool access and secret rules before accepting untrusted input. Read the [threat model](THREAT_MODEL.md), [known limitations](https://docs.comis.ai/reference/known-limitations), and [security documentation](https://docs.comis.ai/security) before granting sensitive access.
 
-Read [THREAT_MODEL.md](THREAT_MODEL.md) before enabling shell, browser, network, or third-party integrations.
+Comis does not currently claim complete tenant isolation, high availability, compliance certification, a mature enterprise identity stack, or commercial support.
 
-## Current Limitations
+## Build from Source
 
-- Code extensions currently require source changes through ports, adapters, hooks, and tools. Prompt skills can be uploaded or imported, but Comis does not yet provide a stable third-party code-plugin ecosystem.
-- ACP support is early library-level bridge work. A daemon entrypoint and complete approval round-trip are not yet shipped.
-- Durable graphs support configured checkpoint recovery, but general exact replay remains incomplete.
-- Deterministic tests cover the core runtime extensively, but not every provider, channel, model, or deployment combination is validated live.
-- Comis is an enterprise-oriented foundation under active development. Evaluate identity integration, tenant isolation, availability, backup and restore, upgrades, and support before critical or regulated deployment.
-- APIs and configuration may change during active development; review release notes before upgrading.
+Comis is a pnpm and TypeScript monorepo built around ports and adapters. Core packages define contracts; adapters implement them; the daemon connects the running system.
 
-## Architecture
-
-Comis is a pnpm/TypeScript monorepo organized around hexagonal ports and adapters. `core` owns contracts and domain rules; adapters implement them; the daemon composition root wires the running system.
-
-| Layer | Packages |
-| --- | --- |
-| Foundations | `shared`, `core` |
-| Runtime | `infra`, `memory`, `agent`, `orchestrator`, `scheduler` |
-| Interfaces | `channels`, `gateway`, `cli`, `web` |
-| Capabilities | `skills` |
-| Operations and distribution | `observability`, `observability-otel`, `daemon`, `comis` |
-
-Build and validate from source:
-
-```bash
+~~~bash
 git clone https://github.com/comisai/comis.git
 cd comis
 pnpm install
 pnpm validate
-```
+~~~
 
 Start with the [architecture guide](https://docs.comis.ai/developer-guide/architecture), [package guide](https://docs.comis.ai/developer-guide/packages), and repository [engineering protocol](AGENTS.md).
 
 ## Contributing
 
-Contributors can start in any of these tracks:
+Current project work focuses on making persistent-agent failures repeatable, visible, and easier to fix.
 
-- **Governance and security:** threat scenarios, policy, secret brokering, approval behavior, memory validation, and adversarial tests.
-- **Standards and interoperability:** MCP authorization, ACP, A2A, OpenTelemetry semantics, and conformance fixtures.
-- **Runtime reliability:** graphs, recovery, context, memory, delivery, incident reconstruction, and cost enforcement.
-- **Integrations and deployments:** channels, providers, tools, hardened Linux profiles, containers, backup, and restore.
-- **Operator experience and documentation:** evidence views, provenance, budgets, approvals, failure explanation, tutorials, and accessibility.
+Useful contributions include:
 
-Browse [open issues](https://github.com/comisai/comis/issues) or discuss a proposal in [GitHub Discussions](https://github.com/comisai/comis/discussions). Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request; behavior changes follow test-first development and the full architecture and security validation gates.
+- Reproducing a failure and turning it into a focused test.
+- Adding a reliability scenario for boundaries, context recovery, cost, memory, delivery, or restart behavior.
+- Improving an incident report, validator, integration, deployment guide, or accessibility issue.
+- Adding support for a model, channel, tool, or hardened deployment profile.
 
-If Comis is useful, star the repository to help other contributors discover it.
+The planned **Comis Reliability Trials** will package small, repeatable scenarios that show whether a configured boundary held, required state remained recoverable, and the recorded evidence was sufficient.
 
-## Community
+Browse [open issues](https://github.com/comisai/comis/issues), start a proposal in [GitHub Discussions](https://github.com/comisai/comis/discussions), and read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
-- [Documentation](https://docs.comis.ai)
-- [GitHub Discussions](https://github.com/comisai/comis/discussions)
-- [Issues](https://github.com/comisai/comis/issues)
-- [Private security reports](https://github.com/comisai/comis/security)
-
-If your organization is evaluating governed agent operations (identity, isolation, audit, or spend-control requirements), open a [Discussion](https://github.com/comisai/comis/discussions); design feedback from real deployments directly shapes the roadmap.
-
-Comis builds on prior work from [pi-mono](https://github.com/earendil-works/pi) by [Mario Zechner](https://mariozechner.at/).
+If Comis is useful, star the repository to help other users and contributors find it.
 
 ## License
 
 Comis is licensed under the [Apache License 2.0](LICENSE). Commercial use, modification, redistribution, and private deployment are permitted under its terms.
+
+Comis builds on prior work from [pi-mono](https://github.com/earendil-works/pi) by [Mario Zechner](https://mariozechner.at/).

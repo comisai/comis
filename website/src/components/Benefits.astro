@@ -1,0 +1,40 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+const benefits = [
+  {
+    number: "01",
+    title: "Keep the work",
+    body: "Original messages and tool results stay stored while the model uses shorter summaries. Agents can search and recover selected details.",
+  },
+  {
+    number: "02",
+    title: "Hold configured boundaries",
+    body: "Authority, credential rules, memory checks, and spending controls live outside prompt text and can change what the runtime allows next.",
+  },
+  {
+    number: "03",
+    title: "See what happened",
+    body: "Instrumented runs record outcome, cost, tool and policy failures, and recovery details for a bounded incident report.",
+  },
+] as const;
+---
+
+<section id="why-comis" data-section="benefits" aria-labelledby="benefits-heading">
+  <div class="container">
+    <div class="section-intro benefit-intro">
+      <p class="eyebrow">Why Comis</p>
+      <h2 id="benefits-heading">Built for work that outlives the prompt.</h2>
+      <p class="lead">The model can forget. The runtime keeps the work, the rules, and the record outside the prompt.</p>
+    </div>
+
+    <div class="benefit-grid">
+      {benefits.map((benefit) => (
+        <article class="benefit-card">
+          <p class="technical-label" aria-hidden="true">{benefit.number}</p>
+          <h3>{benefit.title}</h3>
+          <p>{benefit.body}</p>
+        </article>
+      ))}
+    </div>
+  </div>
+</section>

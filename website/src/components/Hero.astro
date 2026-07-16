@@ -2,48 +2,51 @@
 // SPDX-License-Identifier: Apache-2.0
 import { SITE } from "../data/site";
 
-const workflow = [
-  ["Receive", "A channel, API, or schedule submits scoped work."],
-  ["Route", "A binding selects an agent with its own state and policies."],
-  ["Coordinate", "A typed graph runs sequential or parallel work."],
-  ["Constrain", "Capabilities, tool policy, budgets, and supported approvals limit execution."],
-  ["Explain", "Comis records the result, cost, policy decisions, and operational evidence."],
+const runStages = [
+  ["Before", "Set authority, credential, memory, and cost rules."],
+  ["During", "Keep messages and tool results when older details are summarized."],
+  ["After", "Explain recorded failure and recover useful detail."],
 ] as const;
 ---
 
 <section class="hero" data-section="hero" aria-labelledby="hero-heading">
   <div class="container hero-grid">
     <div class="hero-copy">
-      <p class="eyebrow status-line"><span aria-hidden="true"></span>{SITE.status}</p>
+      <p class="status-line"><span aria-hidden="true"></span>{SITE.status}</p>
+      <p class="hero-kicker">For the agent you leave running.</p>
       <h1 id="hero-heading">Run AI agents you can constrain, inspect, and recover.</h1>
       <p class="lead hero-lead">
-        Comis gives AI platform and security teams a self-hosted runtime for governed multi-agent workflows: scoped authority, bounded spend, recoverable context, provenance-aware memory.
-        Every run leaves evidence, and when something fails, one command explains why.
-        Controls apply only to agents executing through Comis-controlled paths.
+        Comis is for agents that work over time: on a schedule, across long tasks, or with other agents. Keep their work recoverable, apply configured boundaries outside the prompt, and understand failures without asking another model to guess.
       </p>
       <div class="hero-actions" role="group" aria-label="Get started">
-        <a class="button button-primary" href="#install">Get started</a>
-        <a class="button button-secondary" href={SITE.github}>View on GitHub</a>
-        <a class="text-link action-link" href={SITE.docs}>Read the docs</a>
+        <a class="button button-primary" href="#install">Install Comis</a>
+        <a class="button button-secondary" href="#reliability">See the evidence</a>
+        <a class="text-link action-link" href={SITE.github}>View on GitHub</a>
       </div>
     </div>
 
-    <figure class="workflow-panel">
-      <p class="technical-label">Governed execution</p>
-      <h2>From request to inspectable result.</h2>
-      <ol class="workflow-list">
-        {workflow.map(([title, description], index) => (
-          <li class="workflow-step">
-            <span class="workflow-number" aria-hidden="true">{index + 1}</span>
-            {index < workflow.length - 1 && <span class="workflow-connector" aria-hidden="true"></span>}
+    <aside class="run-panel" aria-label="Persistent run lifecycle">
+      <div class="run-panel-header">
+        <p class="technical-label">Persistent run</p>
+        <span class="runtime-badge"><span aria-hidden="true"></span>Kept by Comis</span>
+      </div>
+      <p class="run-panel-title">The record stays when older details are summarized.</p>
+      <ol class="run-stages">
+        {runStages.map(([title, description], index) => (
+          <li class="run-stage">
+            <span class="run-stage-number" aria-hidden="true">0{index + 1}</span>
             <div>
-              <h3>{title}</h3>
+              <strong>{title}</strong>
               <p>{description}</p>
             </div>
           </li>
         ))}
       </ol>
-      <figcaption>Illustrative workflow; not a customer deployment.</figcaption>
-    </figure>
+      <div class="run-panel-footer" aria-label="Runtime outcomes">
+        <span>State kept</span>
+        <span>Rules applied</span>
+        <span>Evidence recorded</span>
+      </div>
+    </aside>
   </div>
 </section>

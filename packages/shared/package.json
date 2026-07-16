@@ -4,7 +4,7 @@
   "version": "1.0.54",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
-  "description": "Shared types and utilities for the Comis governed agent runtime",
+  "description": "Shared types and utilities for the Comis agent runtime",
   "keywords": ["comis", "ai", "agent", "types", "result"],
   "engines": { "node": ">=22.19.0" },
   "files": ["dist"],

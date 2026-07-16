@@ -4,47 +4,53 @@ description: "Open-source agent runtime for governed execution"
 icon: "hand-wave"
 ---
 
-Comis gives AI platform and security teams an Apache-2.0, self-hosted runtime
-for governed multi-agent workflows, with scoped authority, bounded spend,
-recoverable context, provenance-aware memory, and operational evidence.
+> **For the agent you leave running.**
 
-It is also built for self-hosted operators and security-conscious builders
-moving persistent agents onto real tools and data. Its controls apply only to
-agents executing through Comis-controlled paths. Comis is under active
-development, so start with one agent and one bounded workflow, verify the
-deployment on your host, and expand authority only after the controls are
-tested.
+Comis is an Apache-2.0, self-hosted runtime for AI agents that work on a
+schedule, use real tools, build up context, or need to recover after a failure.
+It is an open-source agent runtime for governed execution.
+
+The promise is simple: **Keep the work. Hold configured boundaries. See what happened.**
+Comis keeps important run state outside the model's prompt, applies configured
+access and cost rules in the runtime, and records bounded evidence for later
+review.
+
+Comis is under active development. Start with one agent and one limited
+workflow. Test the controls on your host before you add broader access.
 
 ## Why Comis
 
-**Comis's advantage is coherence.** Formal execution, recoverable context,
-provenance-aware memory, scoped authority, bounded spend, and operational
-evidence work as one system.
+Comis is designed for work that continues beyond one chat window.
 
-<CardGroup cols={2}>
-  <Card title="Formal execution" icon="robot" href="/agents/execution-graphs">
-    Coordinate typed execution graphs with parallel work, barriers, retries,
-    budgets, approval nodes, and configured checkpoint recovery.
+<CardGroup cols={3}>
+  <Card title="Keep the work" icon="brain" href="/agents/context-management">
+    Keep messages and tool results available beneath shorter prompt summaries,
+    then recover selected detail when it is needed.
   </Card>
-  <Card title="Recoverable context" icon="brain" href="/agents/context-management">
-    Keep canonical messages and tool results available beneath summaries, then
-    recover detail with in-session context tools.
+  <Card title="Hold configured boundaries" icon="shield-check" href="/get-started/security">
+    Put tool access, credential scope, memory checks, and cost limits outside
+    the prompt. These controls protect only the paths wired through them.
   </Card>
-  <Card title="Provenance-aware memory" icon="puzzle-piece" href="/agents/memory">
-    Combine source provenance, trust labels, corroboration, outcome gates,
-    supersession, corrections, and usefulness feedback.
+  <Card title="See what happened" icon="magnifying-glass" href="/operations/observability">
+    Review run outcome, cost, tool and policy failures, and a rule-based likely
+    cause when the recorded evidence matches one.
   </Card>
-  <Card title="Scoped authority" icon="shield-check" href="/security/capability-model">
-    Constrain agent access with scoped stores, capability gates, deny-by-origin
-    controls, tool policy, encrypted secrets, and audit events.
+</CardGroup>
+
+## What the runtime brings together
+
+<CardGroup cols={3}>
+  <Card title="Long-running workflows" icon="robot" href="/agents/execution-graphs">
+    Coordinate sequential and parallel work with dependencies, retries,
+    budgets, and configured node-boundary recovery.
   </Card>
-  <Card title="Cost and evidence" icon="gauge" href="/operations/observability">
-    Connect traces, incident explanation, provider cost accounting, audit
-    records, and configured spend ceilings to operations.
+  <Card title="Learned memory with history" icon="puzzle-piece" href="/agents/memory">
+    Record sources and trust signals, require configured evidence, and preserve
+    prior history when eligible learned state is corrected.
   </Card>
   <Card title="Channels and interfaces" icon="messages" href="/channels/index">
-    Operate agents through messaging adapters, the web dashboard, CLI,
-    JSON-RPC, WebSocket, schedules, and configured integrations.
+    Start work from schedules, messaging channels, the web dashboard, CLI, or
+    APIs, then inspect it through the same runtime.
   </Card>
 </CardGroup>
 
@@ -70,7 +76,7 @@ media, and tool providers can still receive data routed to them.
     Follow a request through routing, execution, controls, state, and evidence.
   </Card>
   <Card title="Use Cases" icon="lightbulb" href="/get-started/use-cases">
-    Start with workflows where governance matters more than surface breadth.
+    Start with an overnight research brief or a limited, read-only investigation.
   </Card>
   <Card title="Security Boundaries" icon="shield-check" href="/get-started/security">
     Review defaults, opt-in controls, deployment assumptions, and residual risk.

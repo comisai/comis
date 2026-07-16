@@ -1,8 +1,12 @@
 # Comis
 
-Open-source agent runtime for governed execution.
+**For the agent you leave running.** Comis is an open-source agent runtime for
+governed execution.
 
-This image runs the Comis daemon, gateway, agents, scheduler, memory, and messaging adapters, including Microsoft Teams, Email, Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, and IRC, in one container.
+This image runs the Comis daemon, gateway, agents, scheduler, memory, and
+messaging adapters in one container. It is built for scheduled or unattended
+agent work that needs recoverable state, configured limits, and evidence after
+a failure.
 
 > **Development status:** Comis is under active development and does not support backward compatibility. Evaluate the exact provider, channel, tool, storage, and isolation configuration you need before using it for critical workloads.
 

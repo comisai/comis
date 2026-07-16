@@ -201,7 +201,7 @@ describe("install.sh public install contract", () => {
 
   it("uses the canonical public tagline throughout the installer", () => {
     expect(installSh).toContain(
-      'DEFAULT_TAGLINE="Open-source agent runtime for governed execution."',
+      'DEFAULT_TAGLINE="For the agent you leave running."',
     );
     expect(installSh).not.toContain("Friendly by nature. Powerful by design.");
   });

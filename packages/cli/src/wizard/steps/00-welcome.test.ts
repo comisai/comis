@@ -112,6 +112,19 @@ describe("welcomeStep", () => {
     expect(title).toBe("Security Notice");
   });
 
+  it("introduces Comis as a runtime for persistent agents", async () => {
+    const prompter = createMockPrompter({ confirm: true });
+    const state: WizardState = { ...INITIAL_STATE };
+
+    await welcomeStep.execute(state, prompter);
+
+    const firstNoteCall = (prompter.note as ReturnType<typeof vi.fn>).mock
+      .calls[0];
+    expect(firstNoteCall[0]).toBe(
+      "Welcome! This wizard will set up your persistent AI agent in a few steps.",
+    );
+  });
+
   it("calls outro() before throwing CancelError on decline", async () => {
     const prompter = createMockPrompter({ confirm: false });
     const state: WizardState = { ...INITIAL_STATE };

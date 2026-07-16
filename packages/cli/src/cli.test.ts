@@ -51,7 +51,9 @@ describe("CLI entry point", () => {
     });
 
     it("has the correct description", () => {
-      expect(program.description()).toContain("AI agent management CLI");
+      expect(program.description()).toBe(
+        "Command-line tools for the Comis persistent agent runtime",
+      );
     });
 
     it("has a semver version", () => {

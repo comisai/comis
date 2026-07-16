@@ -62,12 +62,15 @@ function metaContent(html, key) {
   return undefined;
 }
 
-const expectedTitle = "Comis: Open-source agent runtime for governed execution";
-const expectedDescription = "Self-hosted runtime for governed multi-agent workflows with scoped authority, bounded spend, recoverable context, and operational evidence.";
+const expectedTitle = "Comis: Runtime for persistent AI agents";
+const expectedDescription = "Open-source runtime for persistent AI agents. Keep work recoverable, apply configured boundaries, and explain failures without another model call.";
 const expectedInstallCommand = "curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash";
 const approvedExternalLinks = new Set([
   "https://docs.comis.ai",
   "https://docs.comis.ai/installation",
+  "https://docs.comis.ai/get-started/use-cases",
+  "https://docs.comis.ai/reference/known-limitations",
+  "https://docs.comis.ai/security",
   "https://github.com/comisai/comis",
   "https://github.com/comisai/comis/issues",
   "https://github.com/comisai/comis/discussions",
@@ -89,12 +92,13 @@ const htmlRoutes = distFiles
 sameValues(htmlRoutes, ["index.html"], "Generated HTML routes");
 
 const html = await readFile(path.join(distDir, "index.html"), "utf8");
+check(!html.includes("\u2014"), "Homepage must not contain em dashes");
 const mainMatch = html.match(/<main\b[^>]*>[\s\S]*?<\/main>/i);
 check(Boolean(mainMatch), "Homepage must contain a main landmark");
 const mainHtml = mainMatch?.[0] ?? "";
 
 const sectionOrder = tags(mainHtml, "section").map((tag) => attributes(tag).get("data-section"));
-sameValues(sectionOrder, ["hero", "why-comis", "workflows", "capabilities", "security", "install", "community"], "Homepage section order");
+sameValues(sectionOrder, ["hero", "reliability", "benefits", "workflow", "security", "install", "community"], "Homepage section order");
 
 check(tags(html, "header").length === 1, "Homepage must contain one header landmark");
 check(tags(html, "main").length === 1, "Homepage must contain one main landmark");
@@ -110,24 +114,20 @@ for (const section of tags(mainHtml, "section")) {
 
 const headings = [...html.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi)].map((match) => textContent(match[1]));
 sameValues(headings, [
-  "From request to inspectable result.",
-  "Govern execution, memory, security, authority, and cost as one system.",
-  "Use Comis when agent work needs evidence, boundaries, and recovery.",
-  "Operate agents across channels, tools, state, and schedules.",
-  "Layered security with explicit boundaries.",
-  "Install Comis on your infrastructure.",
-  "Help make agent governance reproducible.",
+  "Failure should leave evidence, not a mystery.",
+  "Built for work that outlives the prompt.",
+  "A good first project: an overnight research brief.",
+  "Start narrow. Expand after you test.",
+  "Install Comis on a host you control.",
+  "Help make persistent agents easier to trust.",
 ], "Homepage h2 hierarchy");
 
-const whySectionHtml = mainHtml.match(/<section\b[^>]*data-section="why-comis"[^>]*>[\s\S]*?<\/section>/i)?.[0] ?? "";
-const advantageHeadings = [...whySectionHtml.matchAll(/<h3\b[^>]*>([\s\S]*?)<\/h3>/gi)].map((match) => textContent(match[1]));
+const benefitsSectionHtml = mainHtml.match(/<section\b[^>]*data-section="benefits"[^>]*>[\s\S]*?<\/section>/i)?.[0] ?? "";
+const advantageHeadings = [...benefitsSectionHtml.matchAll(/<h3\b[^>]*>([\s\S]*?)<\/h3>/gi)].map((match) => textContent(match[1]));
 sameValues(advantageHeadings, [
-  "Typed execution",
-  "Recoverable canonical context",
-  "Provenance-aware memory",
-  "Scoped authority and layered security",
-  "Bounded spend",
-  "Operational evidence",
+  "Keep the work",
+  "Hold configured boundaries",
+  "See what happened",
 ], "Verified advantage hierarchy");
 
 const mainText = textContent(mainHtml
@@ -138,30 +138,31 @@ const visibleMainText = textContent(mainHtml
   .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
   .replace(/<code\b[\s\S]*?<\/code>/gi, " "));
 const wordCount = visibleMainText.match(/[\p{L}\p{N}]+(?:[’'-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
-check(wordCount <= 750, `Visible homepage copy must remain at or below 750 words; received ${wordCount}`);
+check(wordCount <= 650, `Visible homepage copy must remain at or below 650 words; received ${wordCount}`);
 
 for (const requiredText of [
-  "Apache-2.0 | Active development",
+  "Open source · Self-hosted · Active development",
+  "For the agent you leave running.",
   "Run AI agents you can constrain, inspect, and recover.",
-  "Comis gives AI platform and security teams a self-hosted runtime for governed multi-agent workflows, with scoped authority, bounded spend, recoverable context, provenance-aware memory, and operational evidence.",
-  "Controls apply only to agents executing through Comis-controlled paths.",
-  "Comis's advantage is coherence. Formal workflows, recoverable context, provenance-aware memory, scoped authority, bounded spend, and operational evidence share one governance model.",
-  "Coordinate sequential and parallel DAG nodes with barriers, retries, budgets, and configured recovery.",
-  "Keep messages and tool results available beneath summaries, then recover selected detail on demand.",
-  "Rank and revise learned state using provenance, corroboration, trust ceilings, outcomes, and corrections.",
-  "Treat models as untrusted with scoped state, capability gates, encrypted secrets, and content guards.",
-  "Combine provider cost accounting, graph budgets, and opt-in spend ceilings.",
-  "Connect traces, incident explanation, audits, fleet health, and recall diagnostics for investigation.",
-  "Governed research and analysis",
-  "Read-only operational investigation",
-  "The installer can add Node.js and host dependencies, initialize data, and register systemd or PM2. On Linux it can also provision Chromium, Xvfb, and a dedicated service user.",
+  "Comis is for agents that work over time: on a schedule, across long tasks, or with other agents. Keep their work recoverable, apply configured boundaries outside the prompt, and understand failures without asking another model to guess.",
+  "Original messages and tool results stay stored while the model uses shorter summaries. Agents can search and recover selected details.",
+  "Authority, credential rules, memory checks, and spending controls live outside prompt text and can change what the runtime allows next.",
+  "Instrumented runs record outcome, cost, tool and policy failures, and recovery details for a bounded incident report.",
+  "Comis explain builds a bounded report from recorded runtime evidence. It makes no model calls and does not invent a cause when no rule matches.",
+  "Reports are designed to exclude raw message bodies and credential values. Error details may be sanitized, shortened, or replaced with a digest.",
+  "A scheduled agent collects and compares sources, keeps useful findings available as older details are summarized, tracks cost when pricing is available, and records evidence for a failed branch.",
+  "Successful web content was mistaken for a failure.",
+  "Built-in test result; not a customer result.",
+  "content_heuristic_misclassification",
+  "Comis treats model output and external content as untrusted, but safe operation still depends on your host and configuration.",
+  "Self-hosted does not mean offline. Configured model, messaging, media, MCP, and tool providers may receive data you send to them.",
   "Linux with Bubblewrap is the recommended target. macOS isolation is best-effort and does not provide the same boundary.",
   "The ordinary exec tool can run directly on the host when its sandbox is disabled or unavailable.",
   "The default tool profile is full, and an empty per-agent secret allowlist is unrestricted. Narrow both before accepting untrusted input.",
-  "Streaming consumers can receive deltas before the completed response passes its final output scan.",
-  "Approval requests are available on explicitly wired paths when enabled; they are not a universal policy engine.",
-  "Skill-declared permissions are advisory unless the same limits are enforced through runtime tool policy and deployment controls.",
-  "Enterprise-oriented foundation, under active development:",
+  "Approvals are disabled by default and protect only explicitly wired paths when enabled.",
+  "Comis does not claim complete tenant isolation, high availability, compliance certification, or commercial support.",
+  "The managed installer can add Node.js, host tools, and a background service. Direct npm install keeps host setup in your hands.",
+  "Comis Reliability Trials are a planned way to turn real failures into small, repeatable tests.",
 ]) {
   check(mainText.includes(requiredText), `Required verified copy is missing: ${requiredText}`);
 }
@@ -181,6 +182,12 @@ for (const pattern of [
   /about the name/i,
   /good first issue/i,
   /discord\.gg/i,
+  /AI platform and security teams/i,
+  /every run leaves evidence/i,
+  /fix(?:es)? hold/i,
+  /stable GenAI/i,
+  /no floating version ranges/i,
+  /stop(?:s|ped)? (?:a|the) run/i,
 ]) {
   check(!pattern.test(visibleMainText), `Removed launch-stage content remains: ${pattern}`);
 }
@@ -199,10 +206,10 @@ check(/^https:\/\/comis\.ai\/_astro\/comis-social-preview\.[\w-]+\.png$/.test(so
 check(metaContent(html, "og:image:type") === "image/png", "Open Graph image type is incorrect");
 check(metaContent(html, "og:image:width") === "1280", "Open Graph image width is incorrect");
 check(metaContent(html, "og:image:height") === "640", "Open Graph image height is incorrect");
-check(metaContent(html, "og:image:alt") === "Comis logo", "Open Graph image alt text is incorrect");
+check(metaContent(html, "og:image:alt") === "Comis: For the agent you leave running.", "Open Graph image alt text is incorrect");
 check(metaContent(html, "twitter:card") === "summary_large_image", "Twitter card type is incorrect");
 check(metaContent(html, "twitter:image") === socialImageUrl, "Twitter image URL must match Open Graph");
-check(metaContent(html, "twitter:image:alt") === "Comis logo", "Twitter image alt text is incorrect");
+check(metaContent(html, "twitter:image:alt") === "Comis: For the agent you leave running.", "Twitter image alt text is incorrect");
 
 const canonical = tags(html, "link")
   .map((tag) => attributes(tag))
@@ -267,6 +274,7 @@ sameValues(footerHrefs, [
   "https://github.com/comisai/comis",
   "https://github.com/comisai/comis/issues",
   "https://github.com/comisai/comis/security",
+  "https://docs.comis.ai/reference/known-limitations",
   "https://github.com/comisai/comis/blob/main/LICENSE",
 ], "Footer links");
 
@@ -277,10 +285,13 @@ for (const image of tags(html, "img")) {
 }
 check(tags(html, "img").every((tag) => attributes(tag).get("width") === "838" && attributes(tag).get("height") === "202"), "Logo dimensions must match the source image ratio");
 
-const workflowList = mainHtml.match(/<ol\b[^>]*class="[^"]*workflow-list[^"]*"[^>]*>[\s\S]*?<\/ol>/i)?.[0] ?? "";
-check(tags(workflowList, "li").length === 5, "Workflow must be an ordered list with five steps");
-const workflowHeadings = [...workflowList.matchAll(/<h3\b[^>]*>([\s\S]*?)<\/h3>/gi)].map((match) => textContent(match[1]));
-sameValues(workflowHeadings, ["Receive", "Route", "Coordinate", "Constrain", "Explain"], "Governed workflow hierarchy");
+const proofSummary = mainHtml.match(/<dl\b[^>]*data-diagnosis-fixture[^>]*>[\s\S]*?<\/dl>/i)?.[0] ?? "";
+check(tags(proofSummary, "dt").length === 4, "Diagnosis fixture must contain four facts");
+sameValues(
+  [...proofSummary.matchAll(/<dt\b[^>]*>([\s\S]*?)<\/dt>/gi)].map((match) => textContent(match[1])),
+  ["Outcome", "Attributed cost", "Likely cause", "Model calls to explain"],
+  "Diagnosis fixture hierarchy",
+);
 check(!/\bautoplay\b/i.test(html), "Autoplay media is prohibited");
 check(!/\btarget="_blank"/i.test(html), "New-window links are prohibited");
 check(!/\btabindex="[1-9]/i.test(html), "Positive tabindex is prohibited");

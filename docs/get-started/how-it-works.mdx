@@ -1,55 +1,53 @@
 ---
 title: "How It Works"
-description: "How Comis routes, constrains, records, and recovers multi-agent work"
+description: "How Comis keeps long-running agent work recoverable, bounded, and inspectable"
 icon: "diagram-project"
 ---
 
-Comis is a governed agent runtime. It connects requests from channels, APIs,
-schedules, and the web dashboard to agents with explicit state, tools, budgets,
-and policy.
+Comis connects requests from schedules, channels, APIs, and the web dashboard
+to agents with their own state, tools, budgets, and rules. It is built for work
+that may continue after the current prompt has filled up or the operator has
+stepped away.
 
 import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
 <NonTechnicalNote />
 
-## From request to accountable result
+## From request to recoverable result
 
 ```mermaid
 flowchart LR
     A["Request arrives"] --> B["Route to a scoped agent"]
     B --> C["Run an agent turn or execution graph"]
-    C --> D["Apply authority, budget, and content controls"]
-    D --> E["Deliver the result"]
-    E --> F["Inspect state, cost, and evidence"]
+    C --> D["Apply configured access and cost rules"]
+    D --> E["Record state and evidence"]
+    E --> F["Deliver, inspect, or recover"]
 ```
 
 1. **Receive:** a channel, API, schedule, or dashboard submits work inside a
    request context.
 2. **Route:** bindings select an agent with its own model, workspace, context,
-   memory, tools, budget, secret policy, and channel rules.
+   memory, tools, budget, credential rules, and channel settings.
 3. **Coordinate:** the agent can answer directly, use tools, delegate work, or
    run a typed execution graph with sequential and parallel nodes.
-4. **Constrain:** capability gates, origin checks, tool policy, configured
-   budgets, input and memory validation, output guards, and supported approval
-   paths limit the work.
-5. **Record:** sessions, canonical context, memory provenance, traces, costs,
-   audit events, and execution state provide evidence for later inspection.
-6. **Deliver:** the result returns through the originating interface or a
-   configured delivery path.
+4. **Apply rules:** capability checks, origin checks, tool policy, configured
+   budgets, content checks, and supported approval paths limit the work.
+5. **Record:** sessions, stored context, memory sources, traces, costs, audit
+   events, and workflow state provide evidence for later inspection.
+6. **Deliver or recover:** the result returns through a configured path. If the
+   run stops, recorded state can support investigation and configured recovery.
 
-## The governance layers
+## Keep the work, hold boundaries, see what happened
 
-| Layer | What Comis controls |
+| Promise | What it means in Comis |
 |---|---|
-| **Execution** | Agent turns, sub-agents, typed DAGs, dependencies, retries, barriers, configured budgets, and durable checkpoints |
-| **Context** | Bounded active prompts backed by canonical messages and tool results that can be searched, inspected, and selectively expanded |
-| **Memory** | Trust labels, provenance, corroboration, outcome gates, supersession, corrections, and ranked recall |
-| **Authority** | Per-agent tools and secrets, capability membership, origin checks, scoped storage, credential brokering, and audit events |
-| **Cost** | Provider accounting, per-run graph budgets, and opt-in spend ceilings |
-| **Evidence** | Traces, trajectories, incident explanation, fleet health, delivery state, recall diagnostics, and security decisions |
+| **Keep the work** | The active prompt stays bounded, while stored messages and tool results can be searched, inspected, and selectively expanded. Configured workflow checkpoints can support node-boundary recovery. |
+| **Hold configured boundaries** | Tool access, capabilities, origin checks, credential scope, memory checks, graph budgets, and opt-in spend ceilings are applied outside prompt text. |
+| **See what happened** | Traces, costs, delivery state, audit events, and memory diagnostics feed bounded incident reports. A likely cause appears only when a deterministic rule matches the evidence. |
 
-These layers are useful individually. Comis's design advantage is that they are
-wired into one runtime instead of being separate controls around an agent loop.
+These parts share the same runtime and recorded run state. That lets an operator
+connect a failed action to the access rule, context, cost, or workflow state
+around it without asking another model to invent an explanation.
 
 ## How context stays recoverable
 

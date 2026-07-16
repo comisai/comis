@@ -3,7 +3,7 @@
   "version": "1.0.54",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
-  "description": "Open-source agent runtime for governed execution.",
+  "description": "Self-hosted runtime for AI agents that keep working, preserve useful context, follow configured limits, and explain recorded failures.",
   "keywords": [
     "comis",
     "ai",
@@ -11,10 +11,16 @@
     "ai-agents",
     "agentic-ai",
     "agent-runtime",
+    "persistent-agents",
+    "agent-reliability",
     "agent-orchestration",
     "agent-governance",
     "multi-agent",
     "agent-security",
+    "agent-observability",
+    "recoverable-context",
+    "agent-memory",
+    "incident-response",
     "ai-governance",
     "self-hosted",
     "open-source",
@@ -33,8 +39,7 @@
     "email",
     "microsoft-teams",
     "irc",
-    "line",
-    "assistant"
+    "line"
   ],
   "publishConfig": {
     "access": "public"

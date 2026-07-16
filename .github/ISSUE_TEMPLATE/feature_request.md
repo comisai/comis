@@ -23,6 +23,7 @@ Other approaches you have thought about.
 Select the user-facing area that best matches the request. It is fine to choose “Not sure.”
 
 - [ ] Agent behavior or workflows
+- [ ] Reliability, failure evidence, or recovery scenario
 - [ ] Messaging channel
 - [ ] Models, tools, MCP, or media
 - [ ] CLI or dashboard
@@ -33,7 +34,9 @@ Select the user-facing area that best matches the request. It is fine to choose 
 
 ## Success Criteria
 
-What observable behavior would tell you that this request is complete?
+What observable behavior would tell you that this request is complete? For a
+reliability scenario, include how to reproduce the failure, which boundary or
+recovery behavior should hold, and what evidence should prove it.
 
 ## Additional Context
 

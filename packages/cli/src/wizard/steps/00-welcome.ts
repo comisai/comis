@@ -61,7 +61,9 @@ export const welcomeStep: WizardStep = {
     prompter.intro(heading("Comis Agent Setup"));
 
     // Welcome message
-    prompter.note("Welcome! This wizard will set up your AI agent in a few steps.");
+    prompter.note(
+      "Welcome! This wizard will set up your persistent AI agent in a few steps.",
+    );
 
     // Security notice
     prompter.note(SECURITY_NOTICE, "Security Notice");

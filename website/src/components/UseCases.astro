@@ -1,37 +1,37 @@
 ---
 // SPDX-License-Identifier: Apache-2.0
-const workflows = [
-  {
-    label: "Best first workflow",
-    title: "Governed research and analysis",
-    body: "Coordinate source gathering, synthesis, and criticism while keeping context recoverable, memory provenance-aware, spend bounded, and evidence reviewable.",
-  },
-  {
-    label: "Controlled operations",
-    title: "Read-only operational investigation",
-    body: "Collect and correlate read-only evidence, then produce an incident report. Leave remediation disabled until approval and execution isolation are validated.",
-  },
+import { SITE } from "../data/site";
+
+const steps = [
+  ["Gather", "Collect sources on a schedule."],
+  ["Challenge", "Compare claims and record disagreements."],
+  ["Preserve", "Keep findings available as the prompt changes."],
+  ["Review", "Read the result or inspect a failed branch."],
 ] as const;
 ---
 
-<section data-section="workflows" aria-labelledby="workflows-heading">
-  <div class="container">
-    <div class="section-intro">
-      <p class="eyebrow">Where Comis fits</p>
-      <h2 id="workflows-heading">Use Comis when agent work needs evidence, boundaries, and recovery.</h2>
+<section data-section="workflow" aria-labelledby="workflow-heading">
+  <div class="container workflow-grid">
+    <div class="workflow-copy">
+      <p class="eyebrow">A useful first run</p>
+      <h2 id="workflow-heading">A good first project: an overnight research brief.</h2>
       <p class="lead">
-        Start with evidence-rich, low-authority work. Expand permissions only after the controls are tested on your host.
+        A scheduled agent collects and compares sources, keeps useful findings available as older details are summarized, tracks cost when pricing is available, and records evidence for a failed branch.
       </p>
+      <p class="supporting-copy">Start with read-only work. Add write access only after you test the controls on your host.</p>
+      <a class="text-link standalone-link" href={SITE.useCases}>Explore use cases</a>
     </div>
 
-    <div class="editorial-grid editorial-grid-two">
-      {workflows.map((workflow) => (
-        <article class="editorial-item workflow-use-case">
-          <p class="technical-label">{workflow.label}</p>
-          <h3>{workflow.title}</h3>
-          <p>{workflow.body}</p>
-        </article>
+    <ol class="workflow-steps">
+      {steps.map(([title, body], index) => (
+        <li class="workflow-step-card">
+          <span class="step-number" aria-hidden="true">0{index + 1}</span>
+          <div>
+            <h3>{title}</h3>
+            <p>{body}</p>
+          </div>
+        </li>
       ))}
-    </div>
+    </ol>
   </div>
 </section>

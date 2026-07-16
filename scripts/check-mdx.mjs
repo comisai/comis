@@ -295,6 +295,35 @@ for (const [name, value] of [
   if (!value.includes(canonicalTagline)) addFailure(`${name} is missing the canonical tagline`);
 }
 
+const campaignLine = "For the agent you leave running.";
+for (const [name, value] of [
+  ["docs/docs.json", JSON.stringify(docsConfig)],
+  ["docs/get-started/index.mdx", routeMap.get("get-started/index")?.value ?? ""],
+  ["docs/llms.txt", llms],
+  ["docs/sitemap.md", sitemap],
+]) {
+  if (!value.includes(campaignLine)) addFailure(`${name} is missing the persistent-run campaign line`);
+}
+
+const benefitLine = "Keep the work. Hold configured boundaries. See what happened.";
+for (const [name, value] of [
+  ["docs/get-started/index.mdx", routeMap.get("get-started/index")?.value ?? ""],
+  ["docs/llms.txt", llms],
+]) {
+  if (!value.includes(benefitLine)) addFailure(`${name} is missing the public benefit line`);
+}
+
+for (const [name, value] of [
+  ["README.md", await readFile(join(ROOT, "README.md"), "utf8")],
+  ["packages/comis/README.md", await readFile(join(ROOT, "packages/comis/README.md"), "utf8")],
+  ["docs/get-started/index.mdx", routeMap.get("get-started/index")?.value ?? ""],
+  ["docs/get-started/how-it-works.mdx", routeMap.get("get-started/how-it-works")?.value ?? ""],
+  ["docs/get-started/use-cases.mdx", routeMap.get("get-started/use-cases")?.value ?? ""],
+  ["docs/reference/known-limitations.mdx", routeMap.get("reference/known-limitations")?.value ?? ""],
+]) {
+  if (value.includes("\u2014")) addFailure(`${name} contains an em dash`);
+}
+
 const highValueFiles = [
   "get-started/quickstart",
   "installation/index",

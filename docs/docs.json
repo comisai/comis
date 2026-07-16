@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "maple",
   "name": "Comis",
-  "description": "Open-source agent runtime for governed execution.",
+  "description": "Open-source agent runtime for governed execution. For the agent you leave running.",
   "colors": {
     "primary": "#4F46E5",
     "light": "#A78BFA",

@@ -2,7 +2,7 @@
   "name": "comis-website",
   "type": "module",
   "version": "1.0.0",
-  "description": "Public website for the Comis governed agent runtime",
+  "description": "Public website for Comis, the runtime for persistent AI agents",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "private": true,

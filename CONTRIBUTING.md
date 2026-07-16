@@ -1,16 +1,23 @@
 # Contributing to Comis
 
-Thank you for your interest in contributing to Comis, an open-source governed
-agent runtime. Every contribution helps improve execution, context, memory,
-authority, cost controls, operational evidence, integrations, or documentation.
-We appreciate your time and effort.
+Thank you for your interest in Comis, an open-source runtime built for AI agents
+you leave running. Contributions help keep long-running work recoverable,
+configured boundaries enforceable, and failures understandable.
 
 ## Where Help Matters
 
-- Governance and security scenarios, policy behavior, secret handling, and adversarial tests
-- Standards and interoperability work across MCP, ACP, A2A, and OpenTelemetry
-- Runtime reliability across graphs, recovery, context, memory, delivery, and cost enforcement
-- Hardened deployment recipes, integrations, operator experience, and documentation
+- **Reliability scenarios:** reproduce a real failure, state the expected
+  boundary or recovery behavior, and add a deterministic check.
+- **Runtime reliability:** improve graphs, recovery, context, memory, delivery,
+  cost controls, or incident evidence.
+- **Security and interoperability:** improve policy behavior, secret handling,
+  adversarial tests, MCP, ACP, A2A, or OpenTelemetry support.
+- **Operator experience:** improve deployments, integrations, evidence views,
+  documentation, or accessibility.
+
+Reliability Trials are a planned contributor surface, not a finished command.
+Until that runner exists, propose a small reproducible scenario in an issue and
+pin its behavior with the closest existing test or live-test harness.
 
 ## Code of Conduct
 
