@@ -612,6 +612,45 @@ describe("createWhatsAppAdapter sendAttachment media-type branches", () => {
       "Send attachment failed",
     );
   });
+
+  it("keeps attachment captions and filenames out of outbound logs", async () => {
+    const privateCaption = "PRIVATE-WHATSAPP-CAPTION-DO-NOT-LOG";
+    const privateFileName = "PRIVATE-WHATSAPP-FILENAME-DO-NOT-LOG.xlsx";
+    const deps = makeDeps();
+    const adapter = createWhatsAppAdapter(deps);
+    await adapter.start();
+    mockEv.emit("connection.update", { connection: "open" });
+    mockSendMessage.mockResolvedValue({ key: { id: "wa-private" } });
+
+    await adapter.sendAttachment("C123", {
+      url: "https://example.com/private-caption.xlsx",
+      type: "file",
+      fileName: privateFileName,
+      caption: privateCaption,
+    });
+    await adapter.sendAttachment("C123", {
+      url: "https://example.com/private-filename.xlsx",
+      type: "file",
+      fileName: privateFileName,
+    });
+
+    const serializedLogs = JSON.stringify([
+      ...vi.mocked(deps.logger.debug).mock.calls,
+      ...vi.mocked(deps.logger.info).mock.calls,
+      ...vi.mocked(deps.logger.warn).mock.calls,
+      ...vi.mocked(deps.logger.error).mock.calls,
+    ]);
+    expect(serializedLogs).not.toContain(privateCaption);
+    expect(serializedLogs).not.toContain(privateFileName);
+    expect(deps.logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachmentType: "file",
+        captionLength: privateCaption.length,
+        hasFileName: true,
+      }),
+      "Outbound attachment",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

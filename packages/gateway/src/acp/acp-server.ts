@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: ACP HTTP server route handler; throws caught by Hono framework error-handler boundary.
 /**
- * ACP Agent Server — Agent Communication Protocol implementation for IDE integration.
+ * ACP Agent Server: experimental Agent Client Protocol support for client integration.
  *
  * Implements the ACP Agent interface from @agentclientprotocol/sdk, enabling
  * VS Code, JetBrains, Zed, and other ACP-compatible IDEs to connect to Comis
- * as an AI agent through the standardized Agent Communication Protocol.
+ * as an AI agent through the Agent Client Protocol.
  *
  * The ACP server runs as a standalone entry point that the IDE spawns as a subprocess,
  * communicating via ndJson over stdin/stdout.

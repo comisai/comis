@@ -3,11 +3,11 @@
 import { SITE } from "../data/site";
 
 const workflow = [
-  ["Receive", "A channel or API submits work."],
-  ["Route", "A binding selects the configured agent."],
-  ["Coordinate", "A durable execution graph runs sequential or parallel work."],
-  ["Use tools", "Policies and configured approvals govern supported tool paths."],
-  ["Deliver", "Comis returns the result and records operational evidence."],
+  ["Receive", "A channel, API, or schedule submits scoped work."],
+  ["Route", "A binding selects an agent with its own state and policies."],
+  ["Coordinate", "A typed graph runs sequential or parallel work."],
+  ["Constrain", "Capabilities, tool policy, budgets, and supported approvals limit execution."],
+  ["Explain", "Comis records the result, cost, policy decisions, and operational evidence."],
 ] as const;
 ---
 
@@ -15,9 +15,10 @@ const workflow = [
   <div class="container hero-grid">
     <div class="hero-copy">
       <p class="eyebrow status-line"><span aria-hidden="true"></span>{SITE.status}</p>
-      <h1 id="hero-heading">An open-source, security-first platform for AI agent teams.</h1>
+      <h1 id="hero-heading">Run AI agents you can constrain, inspect, and recover.</h1>
       <p class="lead hero-lead">
-        Run specialized agents across messaging, APIs, schedules, and durable workflows on infrastructure you control, with recoverable context and operational visibility.
+        Comis gives AI platform and security teams a self-hosted runtime for governed multi-agent workflows, with scoped authority, bounded spend, recoverable context, provenance-aware memory, and operational evidence.
+        Controls apply only to agents executing through Comis-controlled paths.
       </p>
       <div class="hero-actions" role="group" aria-label="Get started">
         <a class="button button-primary" href="#install">Get started</a>
@@ -27,8 +28,8 @@ const workflow = [
     </div>
 
     <figure class="workflow-panel">
-      <p class="technical-label">Example execution</p>
-      <h2>From message to traceable result</h2>
+      <p class="technical-label">Governed execution</p>
+      <h2>From request to inspectable result.</h2>
       <ol class="workflow-list">
         {workflow.map(([title, description], index) => (
           <li class="workflow-step">

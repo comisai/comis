@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
 import type { EventMap } from "./events.js";
 import { TypedEventBus } from "./bus.js";
@@ -337,6 +338,39 @@ describe("MessagingEvents payload structure", () => {
     const received = handler.mock.calls[0]![0] as EventMap["context:dag_compacted"];
     expect(received.conversationId).toBe("conv-1");
     expect(received.totalSummariesCreated).toBe(4);
+  });
+
+  it("context:thinking_downshifted is declared with a closed transition payload", () => {
+    const source = readFileSync(new URL("./events-messaging.ts", import.meta.url), "utf8");
+    const block = source.match(/"context:thinking_downshifted":\s*\{[\s\S]*?\n\s*\};/);
+
+    expect(block, "context:thinking_downshifted must be part of MessagingEvents").not.toBeNull();
+    expect(block![0]).toMatch(/agentId:\s*string/);
+    expect(block![0]).toMatch(
+      /originalThinkingLevel:\s*"off"\s*\|\s*"minimal"\s*\|\s*"low"\s*\|\s*"medium"\s*\|\s*"high"\s*\|\s*"xhigh"/,
+    );
+    expect(block![0]).toMatch(
+      /effectiveThinkingLevel:\s*"off"\s*\|\s*"minimal"\s*\|\s*"low"\s*\|\s*"medium"\s*\|\s*"high"\s*\|\s*"xhigh"/,
+    );
+  });
+
+  it("context:thinking_downshifted delivers the reasoning-level transition", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["context:thinking_downshifted"] = {
+      agentId: "agent_a",
+      originalThinkingLevel: "high",
+      effectiveThinkingLevel: "medium",
+    };
+
+    bus.on("context:thinking_downshifted", handler);
+    bus.emit("context:thinking_downshifted", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["context:thinking_downshifted"];
+    expect(received.agentId).toBe("agent_a");
+    expect(received.originalThinkingLevel).toBe("high");
+    expect(received.effectiveThinkingLevel).toBe("medium");
   });
 
   it("context:dag_expanded delivers in-session expansion-hit metrics (ids/counts/durationMs only)", () => {

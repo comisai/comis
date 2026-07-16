@@ -16,7 +16,7 @@ A connection between Comis and a messaging platform. Each platform (Discord, Tel
 
 ## AES (Advanced Encryption Standard)
 
-A widely-used encryption algorithm that scrambles data so only authorized parties can read it. In Comis, AES-256-GCM encrypts stored secrets and sensitive configuration values, ensuring that even if someone gains access to the database file, they cannot read your API keys or tokens. See [Secrets](/security/secrets).
+A widely-used encryption algorithm that scrambles data so only authorized parties can read it. In Comis, AES-256-GCM encrypts the secret store. A copied `secrets.db` is unreadable without the separate master key, but a compromised host or daemon account that can read both can decrypt it. See [Secrets](/security/secrets).
 
 ## Agent
 
@@ -72,7 +72,7 @@ A higher-level summary in the DAG context engine created by merging multiple lea
 
 ## Context DAG
 
-The lossless context engine ("Lossless Context DAG", LCD) — the **default** context engine (`contextEngine.version` defaults to `"dag"`; set `"pipeline"` to opt into the simpler engine). Unlike pipeline mode (which discards old content), DAG preserves the agent's full conversation history losslessly and reconstructs it verbatim each turn — every message, tool call, and tool result kept and paired by id — plus a verbatim [Fresh Tail](#fresh-tail) of the most recent steps. DAG zoomably compresses the oldest history under a token budget and exposes the in-session `ctx_*` expansion tools to recover compressed detail. See [Context Management](/agents/context-management#dag-mode-the-default-engine).
+The default context engine (`contextEngine.version` defaults to `"dag"`; set `"pipeline"` to opt into the simpler engine). "Lossless" describes the canonical message and tool-result records and their recoverability, not the provider prompt sent on every turn. The active prompt is budget-bounded: it keeps a verbatim [Fresh Tail](#fresh-tail), represents older regions with lossy summaries or selected raw steps, and preserves tool-call pairing. The in-session `ctx_search`, `ctx_inspect`, and `ctx_expand` tools can recover compressed detail from the canonical records when needed. See [Context Management](/agents/context-management#dag-mode-the-default-engine).
 
 ## Context Engine
 
@@ -188,7 +188,7 @@ The type of AI that powers your agent's ability to understand and generate text.
 
 ## Manifest
 
-The SKILL.md file that describes a skill's name, type, permissions, and input requirements. Every skill needs a manifest so Comis knows when and how to use it. See [Skill Manifest](/skills/manifest).
+The SKILL.md frontmatter that describes a prompt skill's name, type, declared permissions, and input requirements. Permission fields are currently descriptive metadata, not an enforced process sandbox or runtime authorization grant. Agent tool policy and each tool's own validation remain the authoritative controls. See [Skill Manifest](/skills/manifest).
 
 ## Narrative Casting
 
@@ -228,7 +228,11 @@ Technology that reads text from images. In Comis, OCR lets your agent extract te
 
 ## Plugin
 
-An extension that adds functionality to Comis by hooking into its lifecycle events. Plugins can add new tools, register HTTP routes, provide configuration options, and respond to system events. See [Plugins](/developer-guide/plugins).
+A source-integrated component that registers lifecycle hooks through
+`PluginRegistryApi`. The public registry exposes `registerHook` only; it does
+not register tools, HTTP routes, or configuration schemas, and Comis does not
+yet ship a stable third-party code-plugin loader. See
+[Plugins](/developer-guide/plugins).
 
 ## Pipeline Tool
 
@@ -260,7 +264,11 @@ A pattern used throughout Comis code where functions return either a success val
 
 ## Routing
 
-Rules that determine which agent handles messages from which channel or user. You can have different agents for different platforms, groups, or individual users -- each with their own personality and capabilities. See [Routing](/agents/routing).
+Rules that determine which agent handles messages from which channel or user. Routing separates ordinary request paths, but it is not a process or hostile-tenant isolation boundary: agents still share the trusted daemon and host. See [Routing](/agents/routing).
+
+## Secret Allowlist
+
+The per-agent glob patterns at `agents.<id>.secrets.allow` that restrict which secret names an agent's scoped secret manager can resolve. A non-empty list limits access to matching names. An omitted or empty list means **unrestricted access**, not "deny all," so operators must configure it explicitly for least privilege. See [Secrets](/security/secrets).
 
 ## Session
 
@@ -288,7 +296,7 @@ A command typed in chat starting with a forward slash that triggers a specific a
 
 ## SSRF (Server-Side Request Forgery)
 
-An attack where someone tricks a server into accessing internal resources it should not reach. Comis blocks this with its built-in network protection guard, which prevents agents from fetching internal URLs. See [Security](/security/defense-in-depth).
+An attack where someone tricks a server into accessing internal resources it should not reach. Comis validates URLs on guarded web-fetch paths and blocks private, loopback, link-local, and metadata destinations there. This is not a universal network firewall: separately implemented integrations, MCP servers, browsers, and unsandboxed shell commands have their own boundaries. See [Security](/security/defense-in-depth).
 
 ## Step Counter
 
@@ -308,7 +316,7 @@ The end-to-end process of preparing, executing, and capturing results from a sub
 
 ## Tenant
 
-An isolation boundary in Comis. Each tenant has separate memory, configuration, and agents. Most setups use a single tenant, but multi-tenant deployments let you run completely independent agent fleets on one installation. See [Configuration](/reference/config-yaml).
+A logical scope carried through requests and storage queries so memory, context, sessions, and other tenant-tagged records are not mixed during normal operation. Tenants and agent IDs still share one trusted daemon, process, filesystem, and host; they are not a hardened boundary between mutually hostile customers. Use separate deployments when process or host isolation is required. See [Configuration](/reference/config-yaml).
 
 ## Token
 
@@ -316,7 +324,7 @@ A unit of text that AI models process. Roughly 4 characters or three-quarters of
 
 ## Tool Policy
 
-Rules that control which tools an agent is allowed to use. Profiles range from minimal (basic tools only) to full (all tools available), giving you fine-grained control over agent capabilities. See [Tool Policy](/skills/tool-policy).
+Agent-level rules that control which registered tools an agent may use. Profiles range from minimal to `full`; `full` is the default and is intentionally broad. SKILL.md permission and `allowedTools` declarations are not currently an additional enforced runtime boundary. See [Tool Policy](/skills/tool-policy).
 
 ## Tool Deferral
 

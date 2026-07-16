@@ -365,6 +365,15 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /** The context-window governor reduced reasoning effort so the assembled
+   *  prompt could fit. Content-free routing decision: identifiers and closed
+   *  thinking-level unions only, never prompt or message content. */
+  "context:thinking_downshifted": {
+    agentId: string;
+    originalThinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+    effectiveThinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  };
+
   /** Per-LLM-call context budget equation from the LCD pre-flight fit check.
    *  Emitted once per runPreflightFitCheck —
    *  verdict "fits" | "downshifted" (thinking governor fired) | "exhausted"

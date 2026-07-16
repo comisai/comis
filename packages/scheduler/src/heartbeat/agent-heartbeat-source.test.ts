@@ -231,7 +231,7 @@ describe("createAgentHeartbeatSource", () => {
     expect(executor.execute).toHaveBeenCalledOnce();
   });
 
-  it("catches execution errors without throwing", async () => {
+  it("propagates execution errors after logging the source failure", async () => {
     const deps = createMockDeps();
     const executor = (deps.getExecutor as ReturnType<typeof vi.fn>)();
     executor.execute.mockRejectedValue(new Error("LLM timeout"));
@@ -239,8 +239,7 @@ describe("createAgentHeartbeatSource", () => {
 
     const source = createAgentHeartbeatSource(deps);
 
-    // Should NOT throw
-    await expect(source.onTick("agent1")).resolves.toBeUndefined();
+    await expect(source.onTick("agent1")).rejects.toThrow("LLM timeout");
 
     // Should log WARN
     expect(deps.logger.warn).toHaveBeenCalledWith(

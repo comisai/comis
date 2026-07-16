@@ -69,6 +69,7 @@ const FIXTURE_MESSAGES = [
 
 const CLEAN_COVERAGE = {
   filesScanned: 2,
+  fileCapReached: false,
   filesUnreadable: 0,
   userRecordsSeen: 2,
   unparsedUserRecords: 0,
@@ -184,12 +185,18 @@ describe("comis messages", () => {
     consoleSpy = createConsoleSpy();
     vi.mocked(extractSessionMessagesOffline).mockResolvedValueOnce({
       messages: FIXTURE_MESSAGES,
-      coverage: { ...CLEAN_COVERAGE, filesUnreadable: 2, recordCappedFiles: 1 },
+      coverage: {
+        ...CLEAN_COVERAGE,
+        filesUnreadable: 2,
+        recordCappedFiles: 1,
+        fileCapReached: true,
+      },
     });
     await run([]);
     const out = getSpyOutput(consoleSpy.log);
     expect(out).toContain("2 session file(s) were unreadable");
     expect(out).toContain("1 session file(s) hit the per-file record cap");
+    expect(out).toContain("session-file walk hit its global cap");
   });
 
   it("rejects an unparsable --since with a form-naming error instead of silently widening", async () => {
@@ -210,6 +217,23 @@ describe("comis messages", () => {
     expect(parsed).toHaveLength(2);
     expect(parsed[0]!.text).toBe("first line\nsecond line of the same message");
     expect(parsed[0]!.sessionKey).toBe("default:555:555:peer:555");
+  });
+
+  it("emits messages with authoritative extraction coverage as a JSON report", async () => {
+    consoleSpy = createConsoleSpy();
+    vi.mocked(extractSessionMessagesOffline).mockResolvedValueOnce({
+      messages: FIXTURE_MESSAGES,
+      coverage: { ...CLEAN_COVERAGE, unparsedUserRecords: 2, truncated: true },
+    });
+
+    await run(["--format", "json-report"]);
+
+    expect(JSON.parse(getSpyOutput(consoleSpy.log))).toEqual({
+      schema: "comis-offline-channel-messages-report",
+      schemaVersion: 1,
+      messages: FIXTURE_MESSAGES,
+      coverage: { ...CLEAN_COVERAGE, unparsedUserRecords: 2, truncated: true },
+    });
   });
 
   it("emits one JSON record per line under --format jsonl", async () => {

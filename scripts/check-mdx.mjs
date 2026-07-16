@@ -285,7 +285,7 @@ for (const flag of initFlags) {
   if (!cliDoc.includes(flag)) addFailure(`reference/cli.mdx is missing init flag ${flag}`);
 }
 
-const canonicalTagline = "An open-source, security-first platform for AI agent teams";
+const canonicalTagline = "Open-source agent runtime for governed execution";
 for (const [name, value] of [
   ["docs/docs.json", JSON.stringify(docsConfig)],
   ["docs/get-started/index.mdx", routeMap.get("get-started/index")?.value ?? ""],

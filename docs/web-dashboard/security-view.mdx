@@ -127,10 +127,13 @@ The History section shows a table of past approval decisions for reference. Each
 
 ### Rules
 
-The Rules section lets you configure how the approval system behaves:
-
-- **Default Mode** -- choose between manual approval for all requests, auto-approving low-risk actions, auto-approving low and medium-risk actions, or auto-approving everything
-- **Timeout** -- how long a request waits before expiring (set to 0 for no timeout)
+The Rules section exposes action-confirmation, agent-to-agent, Node permission,
+and approval-mode settings. Treat the approval-mode editor as configuration
+surface, not proof that an action is guarded. The current runtime has no
+general evaluator that applies a default approval mode to every action.
+Operator-backed confirmation occurs only when a supported execution path calls
+the approval gate. Use the Pending Queue to verify that each critical path
+actually created a request.
 
 ## Common Tasks
 

@@ -13,7 +13,7 @@
  * Usage:
  *   comis messages [--channel <type>] [--chat <id>] [--sender <id>] [--agent <id>]
  *     [--since <when>] [--until <when>] [--date <YYYY-MM-DD>] [--limit <n>]
- *     [--include-internal] [--format table|text|json|jsonl]
+ *     [--include-internal] [--format table|text|json|jsonl|json-report]
  *
  * `<when>` accepts epoch ms (`1783900800000`), relative-ago (`30m`, `24h`,
  * `7d`), or an ISO date/datetime (`2026-07-12`, `2026-07-12T10:00:00Z`).
@@ -133,6 +133,9 @@ function renderCoverageNotes(result: SessionMessagesResult): void {
   if (c.recordCappedFiles > 0) {
     warn(`${c.recordCappedFiles} session file(s) hit the per-file record cap — oldest records in them were not read`);
   }
+  if (c.fileCapReached) {
+    warn("the session-file walk hit its global cap — some session files were not inspected");
+  }
 }
 
 /**
@@ -155,7 +158,11 @@ export function registerMessagesCommand(program: Command): void {
     .option("--date <YYYY-MM-DD>", "One UTC day (sugar for --since <day> --until <next day>)")
     .option("--limit <n>", "Max messages returned (the latest N are kept)", "500")
     .option("--include-internal", "Include cron/sub-agent/heartbeat/system dispatch messages")
-    .option("--format <format>", "Output format: table | text | json | jsonl", "table")
+    .option(
+      "--format <format>",
+      "Output format: table | text | json | jsonl | json-report",
+      "table",
+    )
     .action(async (options: MessagesCliOptions) => {
       try {
         const nowMs = systemNowMs();
@@ -207,6 +214,15 @@ export function registerMessagesCommand(program: Command): void {
             }),
         );
 
+        if (options.format === "json-report") {
+          json({
+            schema: "comis-offline-channel-messages-report",
+            schemaVersion: 1,
+            messages: result.messages,
+            coverage: result.coverage,
+          });
+          return;
+        }
         if (options.format === "json") {
           json(result.messages);
           return;

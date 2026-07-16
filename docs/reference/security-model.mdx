@@ -27,8 +27,10 @@ surface**. Every other design decision flows from that.
 
 Every external input is wrapped, scanned, or filtered before it reaches the
 prompt. Every model output is scanned before it reaches the user. Every tool
-call is classified before it executes. The architecture never assumes any
-single check will catch everything.
+path applies its wired security controls before it executes. Callers that use
+the action classifier receive a fail-closed classification for unknown action
+identifiers. The architecture never assumes any single check will catch
+everything.
 
 ### STRIDE Coverage
 
@@ -285,23 +287,28 @@ Source: `sanitizeSkillBody()` in `packages/skills/src/prompt/sanitizer.ts`
 
 ## Execution Layer
 
-The execution layer classifies actions, enforces approval gates, prevents SSRF,
-and validates file paths before any side effects occur.
+The execution layer provides action classification and approval-gate
+primitives, prevents SSRF, and validates file paths. Classification and
+approval take effect only on execution paths that explicitly call them.
 
 ### Action Classifier
 
-Every action in the system is classified by risk level. Unknown actions default
-to `"destructive"` (fail-closed principle).
+`classifyAction()` assigns a risk level to each action identifier presented by
+a caller. Unknown identifiers default to `"destructive"`.
 
 | Classification | Description | Example Actions |
 |----------------|-------------|-----------------|
-| `read` | No side effects, safe to auto-approve | `file.read`, `memory.search`, `config.read` |
-| `mutate` | Modifiable side effects, logged | `file.write`, `memory.store`, `message.send` |
-| `destructive` | Irreversible or high-risk, may require confirmation | `file.delete`, `memory.clear`, `system.shutdown` |
+| `read` | No side effects | `file.read`, `memory.search`, `config.read` |
+| `mutate` | Modifiable side effects | `file.write`, `memory.store`, `message.send` |
+| `destructive` | Irreversible or high-risk | `file.delete`, `memory.clear`, `system.shutdown` |
 
 The registry contains **178 registered actions across 21 categories**. After
 bootstrap, the registry is locked via `lockRegistry()` to prevent runtime
-classification downgrades by malicious plugins.
+classification changes by source integrations.
+
+The classifier is a lookup utility, not a universal tool interceptor.
+`requiresConfirmation()` returns a boolean but does not create a pending
+approval request.
 
 For the complete action registry, see [Action Classifier](/reference/action-classifier).
 
@@ -311,38 +318,25 @@ Source: `classifyAction()` and `ACTION_REGISTRY` in `packages/core/src/security/
 
 ### Approval Gate
 
-The approval system controls whether agent-initiated actions proceed
-automatically, require human confirmation, or are denied.
+When `approvals.enabled` is true, the daemon wires `ApprovalGate` into selected
+execution paths. A guarded caller explicitly invokes `requestApproval()`, then
+awaits an operator decision before continuing. The gate also enforces timeout,
+short-lived approval and denial caches, and pending-request batching.
 
-**Three modes:**
+The gate currently protects selected management actions, memory delete and
+flush, channel configuration, pipeline execute and save, orchestrate
+pre-flight, install-detour overrides, and configured high-risk terminal session
+creation. It is not automatically placed in front of every tool or RPC method.
 
-| Mode | Behavior |
-|------|----------|
-| `auto` | Action proceeds without human confirmation |
-| `require` | Action pauses until human approves or denies |
-| `deny` | Action is rejected immediately |
-
-**Configuration layers:** Comis has two distinct configuration sections that
-interact:
-
-1. **`security.actionConfirmation`** -- Quick toggle for destructive/sensitive action confirmation
-2. **`approvals`** -- Full rule-based approval workflow with pattern matching
-
-The `approvals` system evaluates rules in order (first match wins). Each rule
-matches action types by pattern and specifies a mode, timeout, and minimum
-trust level.
-
-**Approval rule fields:**
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `actionPattern` | `string` | _(required)_ | Pattern matching action types |
-| `mode` | `"auto"` \| `"require"` \| `"deny"` | `"auto"` | Approval behavior |
-| `timeoutMs` | `number` | `300000` (5 min) | Timeout for human approval (0 = no timeout) |
-| `minTrustLevel` | `"untrusted"` \| `"basic"` \| `"verified"` \| `"admin"` | `"verified"` | Trust level required to auto-approve |
+<Warning>
+The schemas accept `security.actionConfirmation`, `approvals.defaultMode`, and
+`approvals.rules`, but there is currently no general execution rule evaluator
+that applies them across actions. Only an explicit call to
+`ApprovalGate.requestApproval()` creates a human approval pause.
+</Warning>
 
 <Info>
-Source: `ApprovalRuleSchema` and `ApprovalsConfigSchema` in `packages/core/src/config/schema-approvals.ts`
+Source: `createApprovalGate()` in `packages/core/src/approval/approval-gate.ts`
 </Info>
 
 ### SSRF Guard
@@ -859,7 +853,7 @@ Top-level `security` configuration.
 | `security.logRedaction` | `boolean` | `true` | Enable structured log redaction of sensitive fields |
 | `security.auditLog` | `boolean` | `true` | Enable audit event logging |
 | `security.permission` | `PermissionConfig` | _(see below)_ | Node.js permission model settings |
-| `security.actionConfirmation` | `ActionConfirmationConfig` | _(see below)_ | Action confirmation requirements |
+| `security.actionConfirmation` | `ActionConfirmationConfig` | _(see below)_ | Policy metadata for paths that explicitly consult it |
 | `security.agentToAgent` | `AgentToAgentConfig` | _(see below)_ | Agent-to-agent messaging policy |
 | `security.secrets` | `SecretsConfig` | _(see below)_ | Encrypted secrets store configuration |
 
@@ -875,9 +869,9 @@ Top-level `security` configuration.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `actionConfirmation.requireForDestructive` | `boolean` | `true` | Require confirmation for destructive actions |
-| `actionConfirmation.requireForSensitive` | `boolean` | `false` | Require confirmation for sensitive actions |
-| `actionConfirmation.autoApprove` | `string[]` | `[]` | Actions that bypass confirmation |
+| `actionConfirmation.requireForDestructive` | `boolean` | `true` | Confirmation signal available to paths that consult it |
+| `actionConfirmation.requireForSensitive` | `boolean` | `false` | Sensitive-action signal available to paths that consult it |
+| `actionConfirmation.autoApprove` | `string[]` | `[]` | Exemption identifiers available to paths that consult it |
 
 #### AgentToAgentConfig
 
@@ -902,14 +896,17 @@ Top-level `approvals` configuration.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `approvals.enabled` | `boolean` | `false` | Enable the approval workflow |
-| `approvals.defaultMode` | `"auto"` \| `"require"` \| `"deny"` | `"auto"` | Default mode for unmatched actions |
-| `approvals.rules` | `ApprovalRule[]` | `[]` | Ordered list of approval rules (first match wins) |
-| `approvals.defaultTimeoutMs` | `number` | `300000` (5 min) | Default approval request timeout |
+| `approvals.enabled` | `boolean` | `false` | Wire the gate into supported execution paths |
+| `approvals.defaultMode` | `"auto"` \| `"require"` \| `"deny"` | `"auto"` | Schema value; no general runtime evaluator currently consumes it |
+| `approvals.rules` | `ApprovalRule[]` | `[]` | Schema values; no general runtime evaluator currently consumes them |
+| `approvals.defaultTimeoutMs` | `number` | `300000` (5 min) | Pending approval request timeout |
+| `approvals.denialCacheTtlMs` | `number` | `60000` | Explicit-denial cache TTL |
+| `approvals.batchApprovalTtlMs` | `number` | `30000` | Explicit-approval cache TTL; `0` disables it |
 
 <Warning>
-If `approvals.enabled` is `false` but `approvals.rules` has entries, the rules
-are not evaluated. Comis logs a configuration warning in this case.
+If `approvals.enabled` is `false` but `approvals.rules` has entries, Comis logs
+a configuration warning. Enabling approvals wires supported call sites, but it
+does not make the rule schema a universal interceptor.
 </Warning>
 
 <Info>

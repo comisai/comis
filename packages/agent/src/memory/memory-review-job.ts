@@ -613,7 +613,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     const searchResult = searchOutcome.value;
     if (searchResult.ok && searchResult.value.length > 0) {
       duplicatesSkipped++;
-      logger.debug({ agentId, content: m.content.slice(0, 50) }, "Skipping duplicate memory");
+      logger.debug({ agentId, contentLength: m.content.length }, "Skipping duplicate memory");
       continue;
     }
 

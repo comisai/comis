@@ -1,6 +1,6 @@
 # Comis Web Dashboard
 
-Web UI for the [Comis](https://github.com/comisai/comis) AI agent platform — agent management, channel configuration, traces, and live event streams.
+Web UI for the [Comis](https://github.com/comisai/comis) governed agent runtime, including agent management, channel configuration, traces, and live event streams.
 
 This image bundles the compiled SPA served by **Nginx** (`nginx:alpine`), with a built-in reverse proxy to the daemon for `/api/*` and `/ws` traffic.
 

@@ -14,7 +14,7 @@
  */
 
 import type { NormalizedMessage, SessionKey, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort, AppContainer, FileLockPort, ChannelPort, DurableRunPort, OutwardSendLedgerPort, AgentCapability, AgentConfig } from "@comis/core";
-import { tryGetContext, safePath, systemNowMs, resolveWorkspaceDir } from "@comis/core";
+import { tryGetContext, safePath, systemNowMs, resolveWorkspaceDir, resolvePlatformDeliveryResult } from "@comis/core";
 import { createResultRefStore } from "@comis/skills/tools";
 import type { ComisLogger } from "@comis/infra";
 import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, classifyErrorContext, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
@@ -243,10 +243,11 @@ export function setupCrossSession(deps: {
     }
     // Delegate to the DeliveryService method form for format + chunk + retry + events.
     const result = await deps.deliveryService.deliverToChannel(adapter, channelId, text, options);
-    const success = result.ok && result.value.ok;
+    const platformDelivery = resolvePlatformDeliveryResult(result);
+    const success = platformDelivery.ok && platformDelivery.value.ok;
     deps.logger?.debug({ channelType, channelId, success, gateway: false }, "sendToChannel delivery outcome");
-    if (!result.ok) return false;
-    return result.value.ok;
+    if (!platformDelivery.ok) return false;
+    return platformDelivery.value.ok;
   };
 
   // executeSubAgent built via setup-cross-session-graph.ts.

@@ -1,7 +1,8 @@
 # Security Policy
 
-Comis is a security-first platform. We treat vulnerability reports as
-confidential and coordinate fixes through private channels.
+Comis is designed for security-conscious agent operations. We treat
+vulnerability reports as confidential and coordinate fixes through private
+channels.
 
 For the full trust model — trust boundaries, what Comis does and does not defend against, and known limitations — see [THREAT_MODEL.md](./THREAT_MODEL.md).
 
@@ -50,6 +51,12 @@ Comis includes several security mechanisms, with deployment-dependent limits:
 - **Tool Policy** -- Per-agent profiles and allow/deny rules constrain tool
   availability. The default profile is `full`, so operators should narrow it
   for untrusted users.
+- **Secret Scoping** -- Per-agent `secrets.allow` patterns can restrict secret
+  access. An empty list is currently unrestricted, so operators should set
+  explicit patterns for agents that accept untrusted input.
+- **Skill Metadata** -- Skill manifests can declare permissions and allowed
+  tools, but those declarations are advisory unless the same limits are
+  enforced through runtime tool policy and deployment controls.
 - **Audit Logging** -- Structured, content-free security-decision events support
   investigation; the audit log is not a complete transcript of every action.
 - **Credential Protection** -- Encrypted storage is the setup default. The

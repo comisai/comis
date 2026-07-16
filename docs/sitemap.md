@@ -6,10 +6,10 @@ A navigation index generated from the five documentation sections in docs.json. 
 
 ### Understand Comis
 
-- [Welcome to Comis](https://docs.comis.ai/get-started) — An open-source, security-first platform for AI agent teams
+- [Welcome to Comis](https://docs.comis.ai/get-started) — Open-source agent runtime for governed execution
 - [Quickstart](https://docs.comis.ai/get-started/quickstart) — Install Comis, configure an agent, and verify your first conversation
-- [Use Cases](https://docs.comis.ai/get-started/use-cases) — Real-world scenarios showing what you can build with Comis
-- [How It Works](https://docs.comis.ai/get-started/how-it-works) — A plain-language guide to how Comis processes messages and connects your agents
+- [Use Cases](https://docs.comis.ai/get-started/use-cases) — Governed workflows that make Comis's execution, state, authority, cost, and evidence concrete
+- [How It Works](https://docs.comis.ai/get-started/how-it-works) — How Comis routes, constrains, records, and recovers multi-agent work
 - [Security Boundaries](https://docs.comis.ai/get-started/security) — What Comis protects, what requires configuration, and what remains your responsibility
 - [Glossary](https://docs.comis.ai/get-started/glossary) — Definitions for every technical term used in the Comis documentation
 
@@ -223,4 +223,4 @@ A navigation index generated from the five documentation sections in docs.json. 
 - [Experimental OpenAI-Shaped API](https://docs.comis.ai/reference/openai-api) — Implemented request and response shapes for the experimental /v1/chat/completions, /v1/models, and /v1/embeddings routes
 - [Webhooks](https://docs.comis.ai/reference/webhooks) — Path-routed webhook ingestion with HMAC verification, template engine, and configurable presets
 - [Rate Limiting](https://docs.comis.ai/reference/rate-limiting) — Multi-layer rate limiting reference covering HTTP, WebSocket, config patch, and injection detection layers
-- [ACP Server](https://docs.comis.ai/reference/acp-server) — How IDE extensions and editor plugins talk to your Comis agents using the Agent Communication Protocol
+- [ACP Server](https://docs.comis.ai/reference/acp-server) — Experimental Agent Client Protocol building blocks for connecting ACP clients to Comis

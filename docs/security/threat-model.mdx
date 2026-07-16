@@ -34,6 +34,10 @@ after authentication rather than trusting model intent.
 - log redaction and security audit events enabled;
 - approval workflow **disabled**;
 - `full` tool-policy profile;
+- unrestricted per-agent secret resolution when `agents.<id>.secrets.allow` is
+  omitted or empty;
+- prompt-skill `permissions` and `allowedTools` declarations treated as
+  metadata, not an enforced per-skill authorization boundary;
 - exec sandbox requested, with an unsandboxed fallback for ordinary `exec`
   when no provider is available;
 - Node permission model disabled.
@@ -43,7 +47,7 @@ after authentication rather than trusting model intent.
 | Threat | Controls | Limit |
 |---|---|---|
 | Prompt injection to tool abuse | content wrapping, capability gates, tool policy, action classification, optional approvals | default tools are broad and approvals are opt-in |
-| Credential leakage | encrypted store, scoped secret access, redaction, memory/output guards, optional broker | host access to both database and master key defeats at-rest encryption |
+| Credential leakage | encrypted store, scoped secret access, redaction, memory/output guards, optional broker | host access to both database and master key defeats at-rest encryption; an empty agent secret allowlist is unrestricted |
 | Unauthorized gateway access | loopback bind, scoped bearer tokens, optional mTLS | publicly exposed bearer traffic requires TLS |
 | SSRF and path escape | guarded URL validation and safe-path checks | unsandboxed shell and separately implemented integrations have different boundaries |
 | Memory poisoning | write validation and trust-ranked recall | validation is heuristic, not truth verification |
@@ -62,8 +66,9 @@ is open; broker-only isolation is used only by specific driven workflows.
 
 Unknown actions default to the destructive classification, but classification
 does not itself pause execution. Human confirmation runs only when
-`approvals.enabled: true` and the applicable rule/default mode requires it.
-The shipped default is disabled with unmatched actions set to `auto`.
+`approvals.enabled: true` and the specific execution path explicitly calls the
+approval gate. The schema accepts rule and default-mode fields, but they are
+not a universal action-policy evaluator.
 
 ## Streaming
 
@@ -71,6 +76,15 @@ The output guard can sanitize a completed response. Streaming HTTP/SSE deltas
 may already have reached the client before that scan, so the final guard cannot
 retract them. Disable streaming or add buffering when this disclosure window is
 unacceptable.
+
+## Skill manifest boundary
+
+Comis sanitizes and pattern-scans Markdown prompt-skill bodies at load time by
+default. That is a heuristic content control, not code isolation. SKILL.md
+`permissions` and `allowedTools` fields are currently descriptive metadata;
+they do not replace agent tool policy, capability gates, tool-specific
+validation, or an active exec sandbox. MCP stdio servers and browser processes
+remain outside the ordinary exec sandbox.
 
 ## Out of scope
 
@@ -84,11 +98,14 @@ unacceptable.
 
 1. Use Linux and verify Bubblewrap at startup.
 2. Narrow the default `full` tool profile.
-3. Enable and test approvals if your policy requires human confirmation.
-4. Protect network exposure with scoped authentication and TLS.
-5. Back up the master key separately and restrict the daemon account.
-6. Review each MCP server as third-party code.
-7. Disable streaming on confidentiality-sensitive surfaces.
+3. Configure a non-empty `agents.<id>.secrets.allow` list for every agent that
+   does not need unrestricted credential access.
+4. Enable and test approvals if your policy requires human confirmation.
+5. Protect network exposure with scoped authentication and TLS.
+6. Back up the master key separately and restrict the daemon account.
+7. Review each prompt skill and MCP server as untrusted third-party content or
+   process code.
+8. Disable streaming on confidentiality-sensitive surfaces.
 
 See [Security](/security/index), [Hardening](/security/hardening),
 [Approvals](/security/approvals), and [Exec Sandbox](/security/exec-sandbox).

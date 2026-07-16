@@ -47,7 +47,7 @@ export function createSystemEventQueue(deps: SystemEventQueueDeps): SystemEventQ
 
       // Consecutive duplicate text deduplication
       if (queue.length > 0 && queue[queue.length - 1]!.text === text) {
-        logger.debug({ sessionKey, contextKey, text }, "Consecutive duplicate collapsed");
+        logger.debug({ sessionKey, contextKey, queueSize: queue.length }, "Consecutive duplicate collapsed");
         return;
       }
 
@@ -58,7 +58,8 @@ export function createSystemEventQueue(deps: SystemEventQueueDeps): SystemEventQ
           {
             sessionKey,
             contextKey,
-            droppedText: dropped.text,
+            droppedContextKey: dropped.contextKey,
+            maxCapacity,
             hint: "System events queue full; oldest event dropped. Consider increasing maxCapacity or investigating drain frequency",
             errorKind: "resource" as const,
           },
@@ -74,7 +75,7 @@ export function createSystemEventQueue(deps: SystemEventQueueDeps): SystemEventQ
       queue.push(entry);
 
       // Structured logging at DEBUG
-      logger.debug({ sessionKey, contextKey, text, queueSize: queue.length }, "System event enqueued");
+      logger.debug({ sessionKey, contextKey, queueSize: queue.length }, "System event enqueued");
     },
 
     peek(sessionKey) {

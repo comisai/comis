@@ -640,7 +640,14 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
         });
 
         deps.logger.debug(
-          { channelType: "discord", messageId: msg.id, chatId: channelId, preview: (attachment.caption ?? attachment.fileName ?? "").slice(0, 1500) },
+          {
+            channelType: "discord",
+            messageId: msg.id,
+            chatId: channelId,
+            attachmentType: attachment.type,
+            captionLength: attachment.caption?.length ?? 0,
+            hasFileName: attachment.fileName !== undefined,
+          },
           "Outbound attachment",
         );
         return ok(msg.id);

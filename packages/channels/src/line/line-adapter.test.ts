@@ -416,6 +416,43 @@ describe("createLineAdapter", () => {
         expect(result.error.message).toContain("Failed to send LINE attachment");
       }
     });
+
+    it("keeps attachment captions and filenames out of outbound logs", async () => {
+      const privateCaption = "PRIVATE-LINE-CAPTION-DO-NOT-LOG";
+      const privateFileName = "PRIVATE-LINE-FILENAME-DO-NOT-LOG.xlsx";
+      const deps = makeDeps();
+      const adapter = createLineAdapter(deps);
+      mockPushMessage.mockResolvedValue(makePushResponse("line-private"));
+
+      await adapter.sendAttachment("U1234", {
+        type: "file",
+        url: "https://example.com/private-caption.xlsx",
+        fileName: privateFileName,
+        caption: privateCaption,
+      });
+      await adapter.sendAttachment("U1234", {
+        type: "file",
+        url: "https://example.com/private-filename.xlsx",
+        fileName: privateFileName,
+      });
+
+      const serializedLogs = JSON.stringify([
+        ...vi.mocked(deps.logger.debug).mock.calls,
+        ...vi.mocked(deps.logger.info).mock.calls,
+        ...vi.mocked(deps.logger.warn).mock.calls,
+        ...vi.mocked(deps.logger.error).mock.calls,
+      ]);
+      expect(serializedLogs).not.toContain(privateCaption);
+      expect(serializedLogs).not.toContain(privateFileName);
+      expect(deps.logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attachmentType: "file",
+          captionLength: privateCaption.length,
+          hasFileName: true,
+        }),
+        "Outbound attachment",
+      );
+    });
   });
 
   // -----------------------------------------------------------------------

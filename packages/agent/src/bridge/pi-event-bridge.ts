@@ -798,17 +798,14 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           m.toolCallHistory.push(toolEvent.toolName);
           m.lastActiveToolName = toolEvent.toolName;
 
-          // Build truncated args preview for observability (1000 chars max, sanitized)
-          let argsPreview: string | undefined;
-          if (toolEvent.args !== undefined) {
-            try {
-              const raw = JSON.stringify(toolEvent.args);
-              const sanitized = sanitizeLogString(raw);
-              argsPreview = sanitized.length > 1000 ? sanitized.slice(0, 1000) + "…" : sanitized;
-            } catch {
-              argsPreview = "[unserializable]";
-            }
-          }
+          const argumentCount =
+            typeof toolEvent.args === "object" &&
+            toolEvent.args !== null &&
+            !Array.isArray(toolEvent.args)
+              ? Object.keys(toolEvent.args).length
+              : toolEvent.args === undefined
+                ? 0
+                : 1;
 
           // Store sanitized arg snapshot for failure correlation
           if (toolEvent.args !== undefined && typeof toolEvent.args === "object" && toolEvent.args !== null) {
@@ -849,8 +846,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           });
 
           deps.logger.debug(
-            { toolName: toolEvent.toolName, ...(argsPreview && { argsPreview }) },
-            argsPreview ? `Tool execution started: ${toolEvent.toolName}(${argsPreview})` : "Tool execution started",
+            { toolName: toolEvent.toolName, argumentCount },
+            "Tool execution started",
           );
           break;
         }
@@ -1122,7 +1119,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               m.failedToolNames.push(endEvent.toolName);
             }
 
-            // WARN log with error text + sanitized args
+            // WARN log with error text + content-free argument metadata. Tool
+            // argument values remain in protected execution evidence only;
+            // even short values can contain prompts, credentials, or message
+            // bodies and therefore must never cross into structured logs.
             // Include mcpServer and mcpErrorType for MCP tools
             deps.logger.warn(
               {
@@ -1130,7 +1130,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 toolCallId: endEvent.toolCallId,
                 durationMs,
                 ...(errorText && { errorText: sanitizeLogString(errorText).slice(0, 1500) }),
-                ...(sanitizedArgs && { toolArgs: sanitizedArgs }),
+                argumentCount: sanitizedArgs === undefined ? 0 : Object.keys(sanitizedArgs).length,
                 ...(mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
                 errorKind: toolErrorKind ?? ("dependency" as const),
                 // Name the bracketed `[error_code]` the errorText carries

@@ -218,7 +218,14 @@ export function createLineAdapter(deps: LineAdapterDeps): LineAdapterHandle {
       }
 
       deps.logger.debug(
-        { channelType: "line" as const, messageId, chatId, preview: (attachment.caption ?? attachment.fileName ?? "").slice(0, 1500) },
+        {
+          channelType: "line" as const,
+          messageId,
+          chatId,
+          attachmentType: attachment.type,
+          captionLength: attachment.caption?.length ?? 0,
+          hasFileName: attachment.fileName !== undefined,
+        },
         "Outbound attachment",
       );
 

@@ -1,301 +1,185 @@
 ---
 title: "Approvals"
-description: "How to require human approval before agents perform high-risk actions"
+description: "Human approval on execution paths that explicitly use the approval gate"
 icon: "clipboard-check"
 ---
 
-Comis can require human approval before agents perform destructive or
-sensitive operations. **The approval workflow is disabled by default.** Set
-`approvals.enabled: true` and configure the applicable rules before relying on
-it. Action classification continues while approvals are disabled, but it does
-not create a human-in-the-loop pause by itself.
+Comis can pause selected agent actions for an operator decision. The approval
+workflow is disabled by default. Set `approvals.enabled: true` to wire the
+`ApprovalGate` into the execution paths that support it.
 
 <Warning>
-The default unmatched mode is `auto`, and the default agent tool-policy profile
-is `full`. Enable and test approvals from the same agent, tool, and channel path
-you will expose to untrusted users.
+The approval gate is not a universal interceptor. It protects only code paths
+that explicitly call `ApprovalGate.requestApproval()`. Enabling approvals does
+not automatically wrap every tool, RPC method, or action classification.
 </Warning>
 
-## How It Works
+## Guarded Paths
 
-Here is what happens when an agent triggers the approval workflow:
+The current runtime calls the approval gate from selected paths, including:
+
+- gated agent, provider, skill, token, session, MCP, and channel management
+  actions;
+- memory deletion and flush;
+- channel configuration;
+- pipeline execution and save;
+- the `orchestrate` capability-footprint pre-flight;
+- install-detour overrides in `exec` soft-stop mode; and
+- terminal session creation for allowlist entries with `approveOnCreate`.
+
+Review the implementation of the exact tool path you expose. Other operations
+may use a model-facing confirmation handshake, a capability check, a trust
+gate, or no approval mechanism at all.
+
+## Request Lifecycle
+
+When a guarded path receives an `ApprovalGate` and calls it:
 
 <Steps>
-  <Step title="Agent wants to perform an action">
-    Your agent decides it needs to take an action -- for example, deleting a
-    file, sending a mass message, or modifying a configuration setting.
+  <Step title="The path creates a request">
+    The caller supplies the action identifier, tool name, sanitized parameters,
+    agent identity, session key, and trust level.
   </Step>
 
-  <Step title="Comis classifies the action">
-    Actions are classified as read, mutate, or destructive. Registered actions
-    have explicit classifications; an unknown action defaults to destructive.
-  </Step>
-
-  <Step title="Confirmation is checked">
-    If approvals are enabled and the first matching approval rule requires
-    confirmation, the request enters the approval workflow. With approvals
-    disabled, no request is created.
+  <Step title="The gate checks short-lived caches">
+    A matching recent approval resolves immediately as approved. A matching
+    recent denial resolves immediately as denied. Concurrent identical requests
+    join the existing pending request.
   </Step>
 
   <Step title="Execution pauses">
-    The agent stops and waits. The pending request surfaces in three places:
-    - The **web dashboard** at `/security` (real-time list with one-click
-      Approve / Deny buttons)
-    - The **JSON-RPC API** via `approvals.list` and `approvals.resolve`
-      methods
-    - **Channel DM** to the operator (when the agent runs on a chat channel
-      and the operator is reachable there)
-
-    The notification includes the action details, the requesting agent, and
-    the reason for the action.
+    On a cache miss, the gate creates a pending request and the guarded call
+    awaits its resolution. The request is available in the Security dashboard,
+    through the admin approval RPC methods, and through configured channel
+    approval interactions.
   </Step>
 
-  <Step title="You decide">
-    Approve the action to let it proceed, or deny it to block it. If you do
-    not respond within the timeout period (default: 5 minutes), the action is
-    automatically denied. This ensures that unanswered requests never hang
-    indefinitely.
+  <Step title="An operator resolves the request">
+    Approval lets the guarded call continue. Denial blocks it. If no operator
+    responds before `approvals.defaultTimeoutMs`, the gate denies the request.
   </Step>
 </Steps>
 
-## Dual-Cache Behavior
+The relevant admin RPC methods are:
 
-The approval gate keeps two short-lived caches so repeated identical requests
-do not flood operators. Both caches are keyed by `(agentId, actionType,
-target)`, so a request for `file.delete /tmp/a` is distinct from
-`file.delete /tmp/b`.
+- `admin.approval.pending`
+- `admin.approval.resolve`
+- `admin.approval.resolveAll`
+- `admin.approval.clearDenialCache`
+
+## Worked Example: Deleting Stored Memory
+
+`memory_manage` has an explicit approval-gate call for its `delete` action.
+
+<Steps>
+  <Step title="The agent calls memory_manage">
+    The tool validates the delete request and, when an approval gate is wired,
+    submits action `memory.delete` before calling the memory RPC.
+  </Step>
+
+  <Step title="The gate creates a pending request">
+    On a cache miss, the tool awaits the operator's decision. No memory is
+    deleted while that Promise is pending.
+  </Step>
+
+  <Step title="The operator approves or denies">
+    The dashboard or another approval surface resolves the request. Approval
+    lets `memory_manage` call `memory.delete`; denial returns a permission error
+    without performing the delete.
+  </Step>
+</Steps>
+
+`classifyAction("memory.delete")` also returns `"destructive"`, but that lookup
+does not create this request. The explicit call inside `memory_manage` is what
+enforces the human pause.
+
+## Cache Behavior
+
+The approval gate maintains two short-lived caches:
 
 | Cache | Default TTL | Behavior |
 |-------|-------------|----------|
-| **Denial cache** | 60 seconds (`approvals.denialCacheTtlMs`) | A fresh request that you just denied is **auto-denied** without paging you again. After the TTL expires, the next request pages you normally. |
-| **Approval cache** | 30 seconds (`approvals.batchApprovalTtlMs`) | A fresh request that you just approved is **auto-approved** so a retried agent step does not pause. Set to `0` to disable batching entirely. |
+| Denial cache | `60000` ms | A repeated request after an explicit denial is denied without paging the operator again. |
+| Approval cache | `30000` ms | A repeated request after an explicit approval is approved without another prompt. Set the TTL to `0` to disable this cache. |
 
-In addition, **batch followers** join an already-pending entry: if 5 sub-tasks
-all request `file.delete /var/log/old.log` while you are looking at the first
-one, your single Approve resolves all 5.
-
-The pending approval state serializes/restores on daemon restart, so an
-in-flight approval survives a `pm2 restart`.
-
-## Worked Example: Deleting a Build Artifact
-
-Walk through what happens when a coding agent named `code-assistant` decides
-to delete a stale build artifact.
-
-<Steps>
-  <Step title="The agent issues a tool call">
-    `code-assistant` calls `file.delete` with `path: ~/.comis/workspace-code-assistant/build/old.tar.gz`.
-  </Step>
-
-  <Step title="Action classifier marks it destructive">
-    `classifyAction("file.delete")` returns `"destructive"`. The
-    `requireForDestructive: true` policy triggers an approval request.
-  </Step>
-
-  <Step title="The gate publishes the request">
-    The `ApprovalGate` checks both caches; neither has a hit, so it creates
-    a pending entry, emits an `approval:requested` event, and parks the tool
-    call on a Promise. The agent's tool loop is now blocked.
-  </Step>
-
-  <Step title="You see it on the dashboard">
-    The web dashboard's Security view shows:
-    > **Pending approval** -- agent `code-assistant` wants to run
-    > `file.delete` on `build/old.tar.gz`. *Approve / Deny* (4:58 left).
-  </Step>
-
-  <Step title="You click Approve">
-    The dashboard calls `approvals.resolve` with `approved: true`. The gate
-    writes the entry to the **approval cache** (30s TTL), emits an
-    `approval:resolved` event, and unblocks the tool call. The agent
-    receives the file-delete result and continues.
-  </Step>
-
-  <Step title="A retry within 30 seconds is auto-approved">
-    If `code-assistant` decides 10 seconds later to also delete
-    `build/old.tar.gz` (e.g., because it raced against a sibling agent),
-    the gate finds the cache hit and auto-approves -- you do not see a
-    second prompt.
-  </Step>
-
-  <Step title="At 31+ seconds, normal approval resumes">
-    Past 30 seconds the cache entry expires. A new identical request would
-    page you again.
-  </Step>
-</Steps>
-
-## Two Systems Working Together
-
-Comis has two related but distinct configuration areas for action control.
-Understanding the difference prevents confusion when setting up your approval
-workflow.
+Both cache matching and pending-request batching use `sessionKey` plus the
+action string. Parameters and target values are not part of that key.
 
 <Warning>
-These two systems work together but are configured separately. Make sure you
-understand both before making changes.
+Approving an action can therefore auto-approve the same action in the same
+session with different parameters during the approval-cache TTL. Keep the TTL
+short, or set `approvals.batchApprovalTtlMs: 0` when each target needs a
+separate operator decision.
 </Warning>
 
-### Action Confirmation (the Policy Layer)
+Pending requests and unexpired approval-cache entries are serialized for a
+managed daemon restart and restored when the daemon starts again.
 
-Action confirmation determines **which** actions need confirmation based on
-their classification. This is the policy layer -- it decides what triggers the
-approval process.
+## Classification and Approval Are Separate
 
-```yaml title="~/.comis/config.yaml"
-security:
-  actionConfirmation:
-    requireForDestructive: true   # Require confirmation for destructive actions (default: true)
-    requireForSensitive: false    # Require for sensitive/mutate actions (default: false)
-    autoApprove:                  # Actions to auto-approve (bypass confirmation)
-      - "message.send"            # Example: let agents send messages freely
-```
+The action classifier and the approval gate are independent mechanisms:
 
-By default, destructive actions require confirmation (`requireForDestructive:
-true`) but sensitive/mutate actions do not (`requireForSensitive: false`). You
-can adjust this to match your risk tolerance.
+- `classifyAction()` returns `read`, `mutate`, or `destructive` for an action
+  identifier. Unknown identifiers return `destructive`.
+- `requiresConfirmation()` returns a boolean based on that classification.
+- Neither function creates an approval request or pauses execution.
+- `ApprovalGate.requestApproval()` creates the operator decision point, but
+  only callers that invoke it are guarded.
 
-The `autoApprove` list lets you exempt specific actions from confirmation even
-if their classification would normally require it. This is useful for actions
-that are technically destructive but routine in your workflow.
+Some tools use a separate `_confirmed` or `requiresConfirmation` handshake with
+the model. That handshake is not the operator-backed `ApprovalGate` workflow.
 
-### Approval Workflow (the Execution Layer)
+## Configuration Semantics
 
-The approval workflow controls **how** the approval process works -- including
-rules, timeouts, and trust levels. This is the execution layer that handles
-the actual approval requests.
+The settings currently consumed by the runtime approval gate are:
 
-```yaml title="~/.comis/config.yaml"
-approvals:
-  enabled: false                  # Enable the approval workflow (default: false)
-  defaultMode: auto               # Default mode: auto | require | deny
-  defaultTimeoutMs: 300000        # Timeout: 5 minutes (auto-deny)
-  rules:
-    - actionPattern: "file.delete"
-      mode: require               # Always require human approval
-      timeoutMs: 300000
-      minTrustLevel: verified
-```
+| Setting | Default | Runtime effect |
+|---------|---------|----------------|
+| `approvals.enabled` | `false` | Wires the gate into supported execution paths. |
+| `approvals.defaultTimeoutMs` | `300000` | Sets the pending request timeout. |
+| `approvals.denialCacheTtlMs` | `60000` | Sets the explicit-denial cache TTL. |
+| `approvals.batchApprovalTtlMs` | `30000` | Sets the explicit-approval cache TTL; `0` disables it. |
 
-Action confirmation decides **what** needs approval. The approval workflow
-decides **how** that approval happens. Both work together -- enable action
-confirmation to flag which actions need it, then configure the approval
-workflow to handle the requests.
-
-## Action Classifications
-
-Every action in Comis is classified into one of three levels. This
-classification drives the entire confirmation and approval system.
-
-| Classification | Meaning | Examples |
-|----------------|---------|----------|
-| Read | Safe, no side effects | Viewing files, reading memory, checking status |
-| Mutate | Modifies something, reversible | Sending messages, writing files, updating settings |
-| Destructive | Irreversible or high-impact | Deleting files, dropping data, bulk operations |
-
-Unknown actions that are not registered default to destructive -- Comis fails
-closed. This means new tools and custom actions are automatically treated as
-high-risk until they are explicitly classified. The registry is **locked**
-after bootstrap so plugins cannot downgrade classifications at runtime.
-
-<Tip>
-For the current registered actions and their classifications,
-see [Action Classifier Reference](/reference/action-classifier).
-</Tip>
-
-## Approval Modes
-
-The approval workflow supports three modes that control how requests are
-handled.
-
-- **auto** (default) -- The system decides based on action classification and
-  confirmation settings. Most actions proceed automatically; only flagged
-  actions pause for approval. This is the recommended mode for most setups.
-
-- **require** -- Always require human approval regardless of classification.
-  Use this for high-security environments where every action must be reviewed.
-
-- **deny** -- Always deny the action. Useful for permanently blocking certain
-  operations that should never be allowed, such as file deletion in a
-  read-only deployment.
-
-You can set a default mode for all actions and then override it for specific
-action patterns using rules:
+The schema also accepts `approvals.defaultMode`, `approvals.rules`, and
+`security.actionConfirmation`. There is currently no general execution rule
+evaluator that applies those values across tools or forwards classified actions
+to the approval gate. Do not rely on those fields to guard an action unless the
+specific execution path documents and implements their use.
 
 ```yaml title="~/.comis/config.yaml"
 approvals:
   enabled: true
-  defaultMode: auto               # Most actions use auto mode
-  rules:
-    - actionPattern: "file.delete"
-      mode: require               # But file deletion always needs approval
-    - actionPattern: "config.*"
-      mode: require               # And config changes need approval too
+  defaultTimeoutMs: 300000
+  denialCacheTtlMs: 60000
+  batchApprovalTtlMs: 0
 ```
+
+After enabling approvals, test each agent, tool, and channel path that matters
+to your deployment. A pending request proves that the specific path reached
+the operator-backed gate.
 
 ## Orchestrate Pre-flight
 
-The [`orchestrate`](/agent-tools/orchestrate) tool adds one approval hook of its own. When
-the approval workflow is enabled, a run's script is statically scanned for the set of
-capabilities its tool calls require, and **one** approval fires on that whole capability
-footprint — the exact set, as a single request — **before** the jailed child is spawned.
-Approve it once and the run proceeds; deny it and the run is refused before any code runs.
+When approvals are enabled, `orchestrate` statically extracts the capability
+footprint of a script and submits one approval request before spawning the
+jailed child. Approval covers that exact extracted capability set.
 
-The same pre-flight also **fails fast**: if the script calls a tool needing a capability the
-agent does not hold, the run is rejected pre-spawn with a clear, capability-named error — the
-model gets a precise "this needs `orch:web`" message instead of a mid-run failure after the
-jail has already been built.
-
-<Warning>
-The pre-flight is an **advisory** fail-fast and approval-UX layer — it is **not** the security
-boundary. The authoritative gate is the jailed child's capability socket, which denies any
-capability the agent does not hold by default (deny-by-absence). A script that hides its call
-sites from the static scan — for example, a dynamically-computed method name — simply proceeds
-past the pre-flight and is still denied at the socket. Never rely on the pre-flight to contain
-a capability: grant only the capabilities you intend, and the endpoint enforces them regardless.
-</Warning>
-
-## Using the Dashboard
-
-Pending approvals appear in the [Security dashboard](/web-dashboard/security-view).
-You can see the action details, the requesting agent, and the context for the
-request. Approve or deny with a single click.
-
-The dashboard shows a real-time list of all pending approval requests across
-all your agents, with the most recent requests at the top. Expired requests
-(those that timed out) are marked as auto-denied.
-
-## Configuration Reference
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `security.actionConfirmation.requireForDestructive` | `true` | Require confirmation for destructive actions |
-| `security.actionConfirmation.requireForSensitive` | `false` | Require confirmation for sensitive/mutate actions |
-| `security.actionConfirmation.autoApprove` | `[]` | Actions that bypass confirmation |
-| `approvals.enabled` | `false` | Enable the approval workflow |
-| `approvals.defaultMode` | `auto` | Default approval mode (auto, require, deny) |
-| `approvals.defaultTimeoutMs` | `300000` | Timeout in milliseconds (5 minutes, auto-deny) |
-| `approvals.denialCacheTtlMs` | `60000` | Auto-deny window for repeats of a denied request (60s) |
-| `approvals.batchApprovalTtlMs` | `30000` | Auto-approve window for repeats of an approved request (30s, `0` disables) |
-
-<Info>
-The `approvals.enabled` default is `false`. You need to explicitly enable the
-approval workflow to start receiving approval requests. Without it, action
-confirmation still classifies actions, but no human-in-the-loop step occurs.
-</Info>
-
-## Related
+The pre-flight is an approval and fail-fast layer, not the security boundary.
+The jailed child's capability socket remains authoritative and denies missing
+capabilities even when static extraction cannot see a dynamically constructed
+tool call.
 
 <CardGroup cols={2}>
   <Card title="Defense in Depth" icon="shield-halved" href="/security/defense-in-depth">
-    How approvals fit into the security layers
+    Place approvals within the broader security architecture
   </Card>
   <Card title="Hardening" icon="lock" href="/security/hardening">
-    Complete security hardening checklist
+    Review the deployment hardening checklist
   </Card>
   <Card title="Security Dashboard" icon="desktop" href="/web-dashboard/security-view">
-    Manage approvals in the web UI
+    Resolve pending requests in the web UI
   </Card>
   <Card title="Action Classifier Reference" icon="file-code" href="/reference/action-classifier">
-    Complete action registry
+    Inspect registered action risk levels
   </Card>
 </CardGroup>

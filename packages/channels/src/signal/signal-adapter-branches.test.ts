@@ -382,6 +382,44 @@ describe("createSignalAdapter sendAttachment", () => {
       expect(result.value).toBe("unknown");
     }
   });
+
+  it("keeps attachment captions and filenames out of outbound logs", async () => {
+    const privateCaption = "PRIVATE-SIGNAL-CAPTION-DO-NOT-LOG";
+    const privateFileName = "PRIVATE-SIGNAL-FILENAME-DO-NOT-LOG.xlsx";
+    mockRpcRequest.mockResolvedValue(ok({ timestamp: 4242 }));
+    const deps = makeDeps();
+    const adapter = createSignalAdapter(deps);
+    await adapter.start();
+
+    await adapter.sendAttachment("+15555550000", {
+      url: "/tmp/private-caption.xlsx",
+      type: "file",
+      fileName: privateFileName,
+      caption: privateCaption,
+    });
+    await adapter.sendAttachment("+15555550000", {
+      url: "/tmp/private-filename.xlsx",
+      type: "file",
+      fileName: privateFileName,
+    });
+
+    const serializedLogs = JSON.stringify([
+      ...vi.mocked(deps.logger.debug).mock.calls,
+      ...vi.mocked(deps.logger.info).mock.calls,
+      ...vi.mocked(deps.logger.warn).mock.calls,
+      ...vi.mocked(deps.logger.error).mock.calls,
+    ]);
+    expect(serializedLogs).not.toContain(privateCaption);
+    expect(serializedLogs).not.toContain(privateFileName);
+    expect(deps.logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachmentType: "file",
+        captionLength: privateCaption.length,
+        hasFileName: true,
+      }),
+      "Outbound attachment",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

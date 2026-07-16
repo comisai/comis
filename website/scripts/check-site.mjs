@@ -62,8 +62,8 @@ function metaContent(html, key) {
   return undefined;
 }
 
-const expectedTitle = "Comis — Open-source, security-first AI agent teams";
-const expectedDescription = "Run AI agent teams across messaging, APIs, schedules, and durable workflows on infrastructure you control, with recoverable context and operational visibility.";
+const expectedTitle = "Comis: Open-source agent runtime for governed execution";
+const expectedDescription = "Self-hosted runtime for governed multi-agent workflows with scoped authority, bounded spend, recoverable context, and operational evidence.";
 const expectedInstallCommand = "curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash";
 const approvedExternalLinks = new Set([
   "https://docs.comis.ai",
@@ -94,7 +94,7 @@ check(Boolean(mainMatch), "Homepage must contain a main landmark");
 const mainHtml = mainMatch?.[0] ?? "";
 
 const sectionOrder = tags(mainHtml, "section").map((tag) => attributes(tag).get("data-section"));
-sameValues(sectionOrder, ["hero", "why-comis", "capabilities", "security", "install", "community"], "Homepage section order");
+sameValues(sectionOrder, ["hero", "why-comis", "workflows", "capabilities", "security", "install", "community"], "Homepage section order");
 
 check(tags(html, "header").length === 1, "Homepage must contain one header landmark");
 check(tags(html, "main").length === 1, "Homepage must contain one main landmark");
@@ -110,13 +110,25 @@ for (const section of tags(mainHtml, "section")) {
 
 const headings = [...html.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi)].map((match) => textContent(match[1]));
 sameValues(headings, [
-  "From message to traceable result",
-  "Orchestration, context, and operations in one self-hosted platform.",
-  "The operating surface for an agent team.",
-  "Controls with explicit boundaries.",
+  "From request to inspectable result.",
+  "Govern execution, memory, security, authority, and cost as one system.",
+  "Use Comis when agent work needs evidence, boundaries, and recovery.",
+  "Operate agents across channels, tools, state, and schedules.",
+  "Layered security with explicit boundaries.",
   "Install Comis on your infrastructure.",
-  "Help shape Comis while it is still early.",
+  "Help make agent governance reproducible.",
 ], "Homepage h2 hierarchy");
+
+const whySectionHtml = mainHtml.match(/<section\b[^>]*data-section="why-comis"[^>]*>[\s\S]*?<\/section>/i)?.[0] ?? "";
+const advantageHeadings = [...whySectionHtml.matchAll(/<h3\b[^>]*>([\s\S]*?)<\/h3>/gi)].map((match) => textContent(match[1]));
+sameValues(advantageHeadings, [
+  "Typed execution",
+  "Recoverable canonical context",
+  "Provenance-aware memory",
+  "Scoped authority and layered security",
+  "Bounded spend",
+  "Operational evidence",
+], "Verified advantage hierarchy");
 
 const mainText = textContent(mainHtml
   .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
@@ -129,15 +141,27 @@ const wordCount = visibleMainText.match(/[\p{L}\p{N}]+(?:[’'-][\p{L}\p{N}]+)*/
 check(wordCount <= 750, `Visible homepage copy must remain at or below 750 words; received ${wordCount}`);
 
 for (const requiredText of [
-  "Apache-2.0 · Active development",
-  "An open-source, security-first platform for AI agent teams.",
-  "Run specialized agents across messaging, APIs, schedules, and durable workflows on infrastructure you control, with recoverable context and operational visibility.",
-  "The managed-host path can install Node.js and host dependencies, initialize Comis data, and register the daemon with systemd or PM2. On Linux, it also attempts to provision Chromium and Xvfb by default and can create a dedicated comis user for a systemd service.",
+  "Apache-2.0 | Active development",
+  "Run AI agents you can constrain, inspect, and recover.",
+  "Comis gives AI platform and security teams a self-hosted runtime for governed multi-agent workflows, with scoped authority, bounded spend, recoverable context, provenance-aware memory, and operational evidence.",
+  "Controls apply only to agents executing through Comis-controlled paths.",
+  "Comis's advantage is coherence. Formal workflows, recoverable context, provenance-aware memory, scoped authority, bounded spend, and operational evidence share one governance model.",
+  "Coordinate sequential and parallel DAG nodes with barriers, retries, budgets, and configured recovery.",
+  "Keep messages and tool results available beneath summaries, then recover selected detail on demand.",
+  "Rank and revise learned state using provenance, corroboration, trust ceilings, outcomes, and corrections.",
+  "Treat models as untrusted with scoped state, capability gates, encrypted secrets, and content guards.",
+  "Combine provider cost accounting, graph budgets, and opt-in spend ceilings.",
+  "Connect traces, incident explanation, audits, fleet health, and recall diagnostics for investigation.",
+  "Governed research and analysis",
+  "Read-only operational investigation",
+  "The installer can add Node.js and host dependencies, initialize data, and register systemd or PM2. On Linux it can also provision Chromium, Xvfb, and a dedicated service user.",
   "Linux with Bubblewrap is the recommended target. macOS isolation is best-effort and does not provide the same boundary.",
   "The ordinary exec tool can run directly on the host when its sandbox is disabled or unavailable.",
+  "The default tool profile is full, and an empty per-agent secret allowlist is unrestricted. Narrow both before accepting untrusted input.",
   "Streaming consumers can receive deltas before the completed response passes its final output scan.",
   "Approval requests are available on explicitly wired paths when enabled; they are not a universal policy engine.",
-  "If Comis is useful, star the repository to help other contributors discover it.",
+  "Skill-declared permissions are advisory unless the same limits are enforced through runtime tool policy and deployment controls.",
+  "Enterprise-oriented foundation, under active development:",
 ]) {
   check(mainText.includes(requiredText), `Required verified copy is missing: ${requiredText}`);
 }
@@ -170,13 +194,15 @@ check(metaContent(html, "og:type") === "website", "Open Graph type must be websi
 check(metaContent(html, "og:title") === expectedTitle, "Open Graph title is incorrect");
 check(metaContent(html, "og:description") === expectedDescription, "Open Graph description is incorrect");
 check(metaContent(html, "og:url") === "https://comis.ai/", "Open Graph URL is incorrect");
-check(metaContent(html, "og:image") === "https://comis.ai/images/comis-social-card.png", "Open Graph image URL is incorrect");
+const socialImageUrl = metaContent(html, "og:image") ?? "";
+check(/^https:\/\/comis\.ai\/_astro\/comis-social-preview\.[\w-]+\.png$/.test(socialImageUrl), "Open Graph image URL is incorrect");
 check(metaContent(html, "og:image:type") === "image/png", "Open Graph image type is incorrect");
-check(metaContent(html, "og:image:width") === "1200", "Open Graph image width is incorrect");
-check(metaContent(html, "og:image:height") === "630", "Open Graph image height is incorrect");
-check(Boolean(metaContent(html, "og:image:alt")), "Open Graph image alt text is missing");
+check(metaContent(html, "og:image:width") === "1280", "Open Graph image width is incorrect");
+check(metaContent(html, "og:image:height") === "640", "Open Graph image height is incorrect");
+check(metaContent(html, "og:image:alt") === "Comis logo", "Open Graph image alt text is incorrect");
 check(metaContent(html, "twitter:card") === "summary_large_image", "Twitter card type is incorrect");
-check(Boolean(metaContent(html, "twitter:image:alt")), "Twitter image alt text is missing");
+check(metaContent(html, "twitter:image") === socialImageUrl, "Twitter image URL must match Open Graph");
+check(metaContent(html, "twitter:image:alt") === "Comis logo", "Twitter image alt text is incorrect");
 
 const canonical = tags(html, "link")
   .map((tag) => attributes(tag))
@@ -253,6 +279,8 @@ check(tags(html, "img").every((tag) => attributes(tag).get("width") === "838" &&
 
 const workflowList = mainHtml.match(/<ol\b[^>]*class="[^"]*workflow-list[^"]*"[^>]*>[\s\S]*?<\/ol>/i)?.[0] ?? "";
 check(tags(workflowList, "li").length === 5, "Workflow must be an ordered list with five steps");
+const workflowHeadings = [...workflowList.matchAll(/<h3\b[^>]*>([\s\S]*?)<\/h3>/gi)].map((match) => textContent(match[1]));
+sameValues(workflowHeadings, ["Receive", "Route", "Coordinate", "Constrain", "Explain"], "Governed workflow hierarchy");
 check(!/\bautoplay\b/i.test(html), "Autoplay media is prohibited");
 check(!/\btarget="_blank"/i.test(html), "New-window links are prohibited");
 check(!/\btabindex="[1-9]/i.test(html), "Positive tabindex is prohibited");
@@ -275,24 +303,15 @@ check(cssSource.includes("outline-offset: 3px"), "Focus outline offset must be t
 check(cssSource.includes("min-height: 44px"), "Interactive targets must retain the 44-pixel minimum");
 check(cssSource.includes("prefers-reduced-motion: reduce"), "Reduced-motion handling is missing");
 
-const socialCardPath = path.join(distDir, "images", "comis-social-card.png");
-const socialCardSource = await readFile(path.join(websiteDir, "scripts", "social-card.html"), "utf8");
-check(
-  socialCardSource.includes("An open-source, security-first platform for AI agent teams."),
-  "Social card source must use the canonical Comis tagline",
-);
-check(
-  !socialCardSource.includes("Self-hosted infrastructure for auditable AI-agent teams."),
-  "Social card source still contains retired positioning",
-);
-const socialCard = await readFile(socialCardPath);
-check(socialCard.subarray(0, 8).toString("hex") === "89504e470d0a1a0a", "Social card must be a genuine PNG");
-check(socialCard.subarray(12, 16).toString("ascii") === "IHDR", "Social card PNG must contain an IHDR header");
-check(socialCard.readUInt32BE(16) === 1200 && socialCard.readUInt32BE(20) === 630, "Social card must be 1200×630");
-check((await stat(socialCardPath)).size < 250_000, "Social card must remain under 250 KB");
+const socialImagePath = path.join(distDir, new URL(socialImageUrl || "https://comis.ai/invalid").pathname.replace(/^\/+/, ""));
+const socialImage = await readFile(socialImagePath);
+check(socialImage.subarray(0, 8).toString("hex") === "89504e470d0a1a0a", "Social image must be a genuine PNG");
+check(socialImage.subarray(12, 16).toString("ascii") === "IHDR", "Social image PNG must contain an IHDR header");
+check(socialImage.readUInt32BE(16) === 1280 && socialImage.readUInt32BE(20) === 640, "Social image must be 1280×640");
+check((await stat(socialImagePath)).size < 250_000, "Social image must remain under 250 KB");
 
 const imageAssets = (await listFiles(path.join(distDir, "images"))).map((file) => path.basename(file)).sort();
-sameValues(imageAssets, ["comis-logo.png", "comis-social-card.png"], "Generated image assets");
+sameValues(imageAssets, ["comis-logo.png"], "Generated image assets");
 check(!distFiles.some((file) => /\.(?:jpe?g|mp4|webm)$/i.test(file)), "Removed image or video formats remain in the build");
 for (const requiredAsset of [
   "favicon-16x16.png",
@@ -340,5 +359,5 @@ if (failures.length > 0) {
   for (const failure of failures) console.error(`- ${failure}`);
   process.exitCode = 1;
 } else {
-  console.log(`Website validation passed: one route, six sections, ${wordCount} visible words, verified metadata and assets.`);
+  console.log(`Website validation passed: one route, seven sections, ${wordCount} visible words, verified metadata and assets.`);
 }

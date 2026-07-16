@@ -27,7 +27,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { parseFormattedSessionKey } from "@comis/core";
+import { parseFormattedSessionKey, safePath } from "@comis/core";
 import type { NormalizedMessage, EnvelopeConfig } from "@comis/core";
 import { sessionKeyToPath, wrapInEnvelope } from "@comis/agent";
 import { extractSessionMessages } from "./session-messages.js";
@@ -131,6 +131,28 @@ describe("extractSessionMessages", () => {
     expect(coverage.userRecordsSeen).toBe(2);
     expect(coverage.unparsedUserRecords).toBe(0);
     expect(coverage.truncated).toBe(false);
+  });
+
+  it("reports when the session file walk reaches its hard ceiling", () => {
+    const dataDir = tmpDataDir();
+    const channelDir = safePath(
+      safePath(safePath(safePath(dataDir, "workspace"), "sessions"), "default"),
+      "telegram",
+    );
+    fs.mkdirSync(channelDir, { recursive: true });
+    const first = safePath(channelDir, "unmapped-0000.jsonl");
+    fs.writeFileSync(first, "", "utf8");
+    for (let index = 1; index <= 5_000; index += 1) {
+      fs.linkSync(
+        first,
+        safePath(channelDir, `unmapped-${String(index).padStart(4, "0")}.jsonl`),
+      );
+    }
+
+    const { coverage } = extractSessionMessages(dataDir, {});
+
+    expect(coverage.filesScanned).toBe(5_000);
+    expect(coverage.fileCapReached).toBe(true);
   });
 
   it("parses multiple queued envelope headers in one user record as separate messages", () => {

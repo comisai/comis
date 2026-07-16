@@ -22,6 +22,7 @@ import {
 } from "@comis/core";
 
 import { createMockEventBus } from "./mock-event-bus.js";
+import { createMockLogger } from "./mock-logger.js";
 
 /**
  * Build a no-op HookRunner for tests that don't care about hooks.
@@ -78,6 +79,7 @@ export function makeDeliveryService(
   return createDeliveryService({
     hookRunner: overrides.hookRunner ?? makeNoopHookRunner(),
     deliveryQueue: overrides.deliveryQueue ?? createNoOpDeliveryQueue(),
+    logger: overrides.logger ?? createMockLogger(),
     eventBus: overrides.eventBus ?? createMockEventBus(),
     retryEngine: overrides.retryEngine,
     maxCharsOverride: overrides.maxCharsOverride,

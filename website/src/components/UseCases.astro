@@ -1,0 +1,37 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+const workflows = [
+  {
+    label: "Best first workflow",
+    title: "Governed research and analysis",
+    body: "Coordinate source gathering, synthesis, and criticism while keeping context recoverable, memory provenance-aware, spend bounded, and evidence reviewable.",
+  },
+  {
+    label: "Controlled operations",
+    title: "Read-only operational investigation",
+    body: "Collect and correlate read-only evidence, then produce an incident report. Leave remediation disabled until approval and execution isolation are validated.",
+  },
+] as const;
+---
+
+<section data-section="workflows" aria-labelledby="workflows-heading">
+  <div class="container">
+    <div class="section-intro">
+      <p class="eyebrow">Where Comis fits</p>
+      <h2 id="workflows-heading">Use Comis when agent work needs evidence, boundaries, and recovery.</h2>
+      <p class="lead">
+        Start with evidence-rich, low-authority work. Expand permissions only after the controls are tested on your host.
+      </p>
+    </div>
+
+    <div class="editorial-grid editorial-grid-two">
+      {workflows.map((workflow) => (
+        <article class="editorial-item workflow-use-case">
+          <p class="technical-label">{workflow.label}</p>
+          <h3>{workflow.title}</h3>
+          <p>{workflow.body}</p>
+        </article>
+      ))}
+    </div>
+  </div>
+</section>

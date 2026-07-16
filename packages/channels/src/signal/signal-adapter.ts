@@ -404,7 +404,14 @@ export function createSignalAdapter(deps: SignalAdapterDeps): ChannelPort {
       }
 
       deps.logger.debug(
-        { channelType: "signal" as const, messageId: attachmentMessageId, chatId, preview: (attachment.caption ?? attachment.fileName ?? "").slice(0, 1500) },
+        {
+          channelType: "signal" as const,
+          messageId: attachmentMessageId,
+          chatId,
+          attachmentType: attachment.type,
+          captionLength: attachment.caption?.length ?? 0,
+          hasFileName: attachment.fileName !== undefined,
+        },
         "Outbound attachment",
       );
 

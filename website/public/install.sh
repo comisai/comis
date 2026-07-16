@@ -16,7 +16,7 @@ ERROR='\033[38;2;229;89;58m'         # coral-dark    #E5593A
 MUTED='\033[38;2;100;116;139m'       # slate         #64748B
 NC='\033[0m' # No Color
 
-DEFAULT_TAGLINE="An open-source, security-first platform for AI agent teams."
+DEFAULT_TAGLINE="Open-source agent runtime for governed execution."
 MIN_NODE_VERSION="22.19.0"
 NODE_STANDALONE_VERSION="22.19.0"
 NODESOURCE_DEB_SETUP_SHA256="575583bbac2fccc0b5edd0dbc03e222d9f9dc8d724da996d22754d6411104fd1"
@@ -30,6 +30,18 @@ CLOAKBROWSER_NPM_VERSION="0.4.10"
 PLAYWRIGHT_CORE_NPM_VERSION="1.61.1"
 
 ORIGINAL_PATH="${PATH:-}"
+
+# Automation launchers may omit HOME. Bash can still resolve the invoking
+# account's home through tilde expansion, which keeps all user-scoped paths
+# anchored to the operating-system account instead of an arbitrary fallback.
+if [[ -z "${HOME:-}" ]]; then
+    resolved_invoking_home="$(cd ~ 2>/dev/null && pwd -P)" || true
+    if [[ -z "$resolved_invoking_home" || "$resolved_invoking_home" != /* ]]; then
+        printf 'Unable to resolve the invoking account home directory\n' >&2
+        exit 1
+    fi
+    export HOME="$resolved_invoking_home"
+fi
 
 INSTALLER_TMPDIR="$(mktemp -d)"
 chmod 0700 "$INSTALLER_TMPDIR"
@@ -577,7 +589,7 @@ run_with_spinner() {
         gum_status=0
         "$GUM" spin --spinner dot --title "$title" -- \
             bash -c "${cmd_quoted}; printf %s \$? >${rc_quoted}" 2>"$gum_err" || gum_status=$?
-        # The sentinel is the ground truth for the step's outcome — gum's own
+        # The sentinel is the ground truth for the step's outcome - gum's own
         # exit code is not. A gum that cannot drive the terminal can exit 0
         # without running the command at all, and a swallowed non-zero here
         # turns a failed step into a green checkmark.
@@ -587,7 +599,7 @@ run_with_spinner() {
             return "$wrapped_rc"
         fi
         if [[ "$gum_status" -eq 130 || "$gum_status" -eq 143 ]]; then
-            # Interrupted (SIGINT/SIGTERM) — don't rerun the command
+            # Interrupted (SIGINT/SIGTERM) - don't rerun the command
             return "$gum_status"
         fi
         # No sentinel: gum never ran the command (raw mode / ioctl / TTY init
@@ -753,7 +765,7 @@ wait_for_apt_lock() {
         sleep 5
         waited=$((waited + 5))
         if [[ "$waited" -ge 120 ]]; then
-            ui_warn "dpkg lock still held after 120s — trying anyway"
+            ui_warn "dpkg lock still held after 120s - trying anyway"
             break
         fi
     done
@@ -834,23 +846,23 @@ xvfb_present() {
 # Install the Xvfb package for HEADED mode. Best-effort UPGRADE, never a hard
 # requirement: if the install fails (or the binary still isn't present after),
 # downshift WITH_XVFB=0 so the rest of the install treats this as a headless
-# browser — the browser tool then works with the Chromium installed just above,
+# browser - the browser tool then works with the Chromium installed just above,
 # just without headed mode. Called only when WITH_XVFB is set.
 install_xvfb_pkg() {
     [[ "$WITH_XVFB" == "1" ]] || return 0
     run_quiet_step "Installing Xvfb (headed mode)" "$@" && xvfb_present && return 0
     WITH_XVFB=0
-    ui_warn "Xvfb install failed — falling back to headless Chromium (browser tool still works; headed mode disabled)"
+    ui_warn "Xvfb install failed - falling back to headless Chromium (browser tool still works; headed mode disabled)"
 }
 
 # install_browser_deps_linux
 # --------------------------
 # Install the Chromium runtime that packages/skills/src/tools/browser uses.
-# Idempotent — apt/dnf/yum/apk skip already-installed packages. The browser is
+# Idempotent - apt/dnf/yum/apk skip already-installed packages. The browser is
 # on-by-default (the browser tool ships enabled); only skipped by --without-browser.
 #
 # Stock-Chromium path. If you adopt CloakBrowser instead, swap the Chromium
-# package out for `cloakbrowser` (npm/pip) — the shared libs below are still
+# package out for `cloakbrowser` (npm/pip) - the shared libs below are still
 # required either way (CloakBrowser is a patched Chromium, not a static AppImage).
 install_browser_deps_linux() {
     [[ "$WITH_BROWSER" == "1" ]] || return 0
@@ -882,7 +894,7 @@ install_browser_deps_linux() {
             if [[ -n "$cand" && "$cand" != "(none)" ]]; then
                 printf '%s' "${base}t64"
             fi
-            # Empty output if neither exists — apt-get drops it from the list.
+            # Empty output if neither exists - apt-get drops it from the list.
         }
         local apt_browser_libs=""
         for base in libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
@@ -900,19 +912,19 @@ install_browser_deps_linux() {
 
         local installed_browser=""
 
-        # When --with-cloakbrowser is set, skip the Chrome install — the
+        # When --with-cloakbrowser is set, skip the Chrome install - the
         # binary will come from CloakBrowser via npm, installed for the
         # service user by install_cloakbrowser() after the user exists.
         # We still need the headless shared libs (installed above) and Xvfb
         # if requested.
         if [[ "$WITH_CLOAKBROWSER" == "1" ]]; then
-            ui_info "CloakBrowser mode — Chrome install skipped (binary comes via npm later)"
+            ui_info "CloakBrowser mode - Chrome install skipped (binary comes via npm later)"
             install_xvfb_pkg $sudo_cmd apt-get install -y -qq xvfb
             return 0
         fi
 
         # Browser binary. On Ubuntu 24.04 (noble) and newer, the `chromium`
-        # deb is gone — only a snap-shim `chromium-browser` exists. Snap
+        # deb is gone - only a snap-shim `chromium-browser` exists. Snap
         # chromium under systemd ProtectHome=read-only is unreliable, so on
         # apt systems we prefer the real Google Chrome deb (which Comis's
         # findChrome() probes at /usr/bin/google-chrome*).
@@ -928,7 +940,7 @@ install_browser_deps_linux() {
             ui_info "No real Chromium deb available; installing Google Chrome"
             # Pin the apt repo via a signed-by keyring so we don't pollute the
             # global trust store. The systemd unit's findChrome() walks Chrome,
-            # Brave, Edge, Chromium in that order — Chrome wins.
+            # Brave, Edge, Chromium in that order - Chrome wins.
             $sudo_cmd install -d -m 0755 /etc/apt/keyrings
             if curl -fsSL --proto '=https' --tlsv1.2 \
                 https://dl.google.com/linux/linux_signing_key.pub \
@@ -947,7 +959,7 @@ install_browser_deps_linux() {
             fi
         fi
         if [[ -z "$installed_browser" ]]; then
-            ui_warn "No Chromium/Chrome could be installed — browser tool will not start"
+            ui_warn "No Chromium/Chrome could be installed - browser tool will not start"
         fi
         # Some Debian/Ubuntu releases ship the binary as `chromium-browser`;
         # chrome-detection.ts probes both, but keep a symlink for predictability.
@@ -1002,13 +1014,13 @@ install_browser_deps_linux() {
 #     the reexec'd child running as the comis user)
 #
 # Lazy fallback: if the npm install or binary download fails, we warn but
-# don't fatal — the daemon would still come up; the browser tool would just
+# don't fatal - the daemon would still come up; the browser tool would just
 # error on first use. Operator can rerun: npx cloakbrowser install
 install_cloakbrowser() {
     [[ "$WITH_CLOAKBROWSER" == "1" ]] || return 0
     [[ "$OS" == "linux" ]] || return 0
 
-    # When root in the dedicated-user flow, defer — the reexec'd comis-user
+    # When root in the dedicated-user flow, defer - the reexec'd comis-user
     # invocation will hit this function from the non-root branch and do the
     # install with the right HOME.
     if is_root; then
@@ -1017,7 +1029,7 @@ install_cloakbrowser() {
             ui_info "CloakBrowser install deferred until the installer continues as '${target_user}'"
             return 0
         fi
-        # No target user — root install is fine (rare path: --no-user).
+        # No target user - root install is fine (rare path: --no-user).
     fi
 
     if ! command -v npm >/dev/null 2>&1; then
@@ -1028,7 +1040,7 @@ install_cloakbrowser() {
     # Pin the wrapper to a dedicated dir so we don't tangle with the global
     # comisai install or any other npm prefix the user has set. Skip
     # `npm init -y` because it derives the package name from the dirname
-    # and rejects names starting with "." — write a minimal package.json
+    # and rejects names starting with "." - write a minimal package.json
     # directly so the dotted hidden path works.
     local cloak_pkg_dir="$HOME/.cloakbrowser-wrapper"
     mkdir -p "$cloak_pkg_dir" 2>/dev/null || true
@@ -1089,7 +1101,7 @@ JSON
 # on any agent-issued shell command. Writing a tiny permissive profile for
 # /usr/bin/bwrap restores normal sandboxing.
 #
-# Safe to call on non-AppArmor distros (RHEL/Fedora) — returns early when
+# Safe to call on non-AppArmor distros (RHEL/Fedora) - returns early when
 # AppArmor isn't active or the bwrap binary isn't present.
 apparmor_bwrap_profile_is_managed() {
     local profile="$1"
@@ -1171,7 +1183,7 @@ PROFILE
         return 0
     fi
     run_quiet_step "Loading AppArmor profile for bubblewrap" "${parser_cmd[@]}" -r "$profile" \
-        || ui_warn "apparmor_parser -r failed — exec sandbox may fail until bwrap profile is loaded"
+        || ui_warn "apparmor_parser -r failed - exec sandbox may fail until bwrap profile is loaded"
 }
 
 # install_egress_logging
@@ -1184,7 +1196,7 @@ PROFILE
 # restriction, a malicious skill, MCP server, or prompt injection can write a
 # script that opens an outbound connection and bypass every command-string
 # defense. The actual security boundary has to be a uid-scoped iptables
-# allowlist (or seccomp BPF filter on connect()) — this function lays the
+# allowlist (or seccomp BPF filter on connect()) - this function lays the
 # groundwork.
 #
 # When COMIS_ENABLE_EGRESS_LOGGING=1 is set, this function creates the
@@ -1199,12 +1211,12 @@ PROFILE
 #
 # Disabled by default. Idempotent when enabled: skipped if the chain already
 # exists. Also skipped if iptables is unavailable or the comis user does not
-# yet exist. Non-fatal — failures cannot block the rest of the install.
+# yet exist. Non-fatal - failures cannot block the rest of the install.
 install_egress_logging() {
     [[ "$ENABLE_EGRESS_LOGGING" == "1" ]] || return 0
 
     if ! command -v iptables >/dev/null 2>&1; then
-        ui_warn "iptables not available — skipping egress logging"
+        ui_warn "iptables not available - skipping egress logging"
         return 0
     fi
 
@@ -1225,7 +1237,7 @@ install_egress_logging() {
     fi
 
     if ! $sudo_prefix iptables -N COMIS_EGRESS 2>/dev/null; then
-        ui_warn "Could not create COMIS_EGRESS chain — skipping egress logging"
+        ui_warn "Could not create COMIS_EGRESS chain - skipping egress logging"
         return 0
     fi
 
@@ -1233,13 +1245,13 @@ install_egress_logging() {
     # observes destinations but does not enforce policy.
     if ! $sudo_prefix iptables -A COMIS_EGRESS -m limit --limit 10/minute --limit-burst 20 \
         -j LOG --log-prefix "comis-egress: " --log-level 6 2>/dev/null; then
-        ui_warn "Could not add the rate-limited LOG rule — egress logging remains disabled"
+        ui_warn "Could not add the rate-limited LOG rule - egress logging remains disabled"
         $sudo_prefix iptables -F COMIS_EGRESS 2>/dev/null || true
         $sudo_prefix iptables -X COMIS_EGRESS 2>/dev/null || true
         return 0
     fi
     if ! $sudo_prefix iptables -A COMIS_EGRESS -j ACCEPT 2>/dev/null; then
-        ui_warn "Could not add the ACCEPT rule — egress logging remains disabled"
+        ui_warn "Could not add the ACCEPT rule - egress logging remains disabled"
         $sudo_prefix iptables -F COMIS_EGRESS 2>/dev/null || true
         $sudo_prefix iptables -X COMIS_EGRESS 2>/dev/null || true
         return 0
@@ -1247,7 +1259,7 @@ install_egress_logging() {
 
     # Hook the chain into OUTPUT, scoped to the comis uid only.
     if ! $sudo_prefix iptables -A OUTPUT -m owner --uid-owner "$COMIS_USER" -j COMIS_EGRESS 2>/dev/null; then
-        ui_warn "Could not wire COMIS_EGRESS into OUTPUT — egress logging remains disabled"
+        ui_warn "Could not wire COMIS_EGRESS into OUTPUT - egress logging remains disabled"
         $sudo_prefix iptables -F COMIS_EGRESS 2>/dev/null || true
         $sudo_prefix iptables -X COMIS_EGRESS 2>/dev/null || true
         return 0
@@ -1294,7 +1306,7 @@ install_uv() {
             uv_sha256="29418befb64f926a2dba3473e8e69acd00b36fb845d85344ef11321a993ad8f5"
             ;;
         *)
-            ui_warn "No verified uv artifact for $(uname -m) — Python-based MCP servers will be unavailable"
+            ui_warn "No verified uv artifact for $(uname -m) - Python-based MCP servers will be unavailable"
             return 0
             ;;
     esac
@@ -1305,11 +1317,11 @@ install_uv() {
     uv_archive="${uv_tmpdir}/uv.tar.gz"
     uv_url="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_target}.tar.gz"
     if ! download_file "$uv_url" "$uv_archive"; then
-        ui_warn "Could not download uv ${UV_VERSION} — Python-based MCP servers will be unavailable"
+        ui_warn "Could not download uv ${UV_VERSION} - Python-based MCP servers will be unavailable"
         return 0
     fi
     if ! verify_file_sha256 "$uv_archive" "$uv_sha256"; then
-        ui_warn "uv ${UV_VERSION} checksum verification failed — refusing to install"
+        ui_warn "uv ${UV_VERSION} checksum verification failed - refusing to install"
         return 0
     fi
     if ! tar -xzf "$uv_archive" -C "$uv_tmpdir"; then
@@ -1326,11 +1338,11 @@ install_uv() {
     if is_root; then
         run_quiet_step "Installing uv (for Python-based MCP servers)" \
             install -m 0755 "$uv_bin" "$uvx_bin" /usr/local/bin/ \
-            || ui_warn "uv install failed — Python-based MCP servers will be unavailable"
+            || ui_warn "uv install failed - Python-based MCP servers will be unavailable"
     else
         run_quiet_step "Installing uv (for Python-based MCP servers)" \
             sudo install -m 0755 "$uv_bin" "$uvx_bin" /usr/local/bin/ \
-            || ui_warn "uv install failed — Python-based MCP servers will be unavailable"
+            || ui_warn "uv install failed - Python-based MCP servers will be unavailable"
     fi
     return 0
 }
@@ -1369,7 +1381,7 @@ install_rust() {
             rustup_sha256="a97c8f56d7462908695348dd8c71ea6740c138ce303715793a690503a94fc9a9"
             ;;
         *)
-            ui_warn "No verified rustup artifact for $(uname -m) — Rust-based tools will be unavailable"
+            ui_warn "No verified rustup artifact for $(uname -m) - Rust-based tools will be unavailable"
             return 0
             ;;
     esac
@@ -1380,11 +1392,11 @@ install_rust() {
     rustup_bin="${rustup_tmpdir}/rustup-init"
     rustup_url="https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${rustup_target}/rustup-init"
     if ! download_file "$rustup_url" "$rustup_bin"; then
-        ui_warn "Could not download rustup ${RUSTUP_VERSION} — Rust-based tools will be unavailable"
+        ui_warn "Could not download rustup ${RUSTUP_VERSION} - Rust-based tools will be unavailable"
         return 0
     fi
     if ! verify_file_sha256 "$rustup_bin" "$rustup_sha256"; then
-        ui_warn "rustup ${RUSTUP_VERSION} checksum verification failed — refusing to install"
+        ui_warn "rustup ${RUSTUP_VERSION} checksum verification failed - refusing to install"
         return 0
     fi
     chmod 0755 "$rustup_bin"
@@ -1398,7 +1410,7 @@ install_rust() {
     if is_root; then
         run_quiet_step "Installing rust (for cargo-based tools)" \
             env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup "$rustup_bin" "${rustup_args[@]}" \
-            || { ui_warn "rustup install failed — Rust-based tools will be unavailable"; return 0; }
+            || { ui_warn "rustup install failed - Rust-based tools will be unavailable"; return 0; }
         # Symlink toolchain binaries into /usr/local/bin so they're on PATH inside
         # bwrap (which binds /usr RO via SYSTEM_RO_PATHS). The CARGO_HOME/bin dir
         # is NOT on the default PATH and NOT inside the bwrap RO bind set.
@@ -1409,7 +1421,7 @@ install_rust() {
     else
         run_quiet_step "Installing rust (for cargo-based tools)" \
             sudo env CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup "$rustup_bin" "${rustup_args[@]}" \
-            || { ui_warn "rustup install failed — Rust-based tools will be unavailable"; return 0; }
+            || { ui_warn "rustup install failed - Rust-based tools will be unavailable"; return 0; }
         for bin in cargo rustc rustup; do
             sudo ln -sf "/usr/local/cargo/bin/$bin" "/usr/local/bin/$bin" 2>/dev/null || true
         done
@@ -1422,7 +1434,7 @@ install_rust() {
 # ----------------------
 # Without RUSTUP_HOME exported, the rustup multiplexer can't find the system
 # toolchain at /usr/local/rustup and fails with "could not choose a version of
-# cargo to run, because no default is configured" — even when the symlinks at
+# cargo to run, because no default is configured" - even when the symlinks at
 # /usr/local/bin/{cargo,rustc} exist. Set it system-wide for login shells via
 # /etc/profile.d. The systemd unit also sets Environment=RUSTUP_HOME for the
 # daemon process (so bwrap children inherit it via wrapEnv's pass-through).
@@ -1706,11 +1718,11 @@ resolve_comisai_install_dir() {
 # Behavioral canary for the bundled-deps prune: actually load the installed
 # CLI entry (the `comis` bin target). The sentinel checks in
 # repair_comisai_bundled_deps catch the two KNOWN prune shapes cheaply; this
-# catches every shape by construction — an upgrade over an existing prefix
+# catches every shape by construction - an upgrade over an existing prefix
 # pruned @earendil-works/pi-tui (a transitive dep of pi-coding-agent), which
 # left both sentinels green while `comis --version` died with
 # ERR_MODULE_NOT_FOUND. Returns 0 when the CLI loads (or when there is no
-# entry to probe — an unexpected layout must not force a reify).
+# entry to probe - an unexpected layout must not force a reify).
 comisai_cli_loads() {
     local comisai_dir="$1"
     if [[ ! -f "${comisai_dir}/dist/cli-entry.js" ]]; then
@@ -1730,7 +1742,7 @@ repair_comisai_bundled_deps() {
     # package's bundledDependencies, both of which leave the daemon unable to
     # boot (ERR_MODULE_NOT_FOUND at startup):
     #   1. A bundled native-dep dir (bindings) lands EMPTY.
-    #   2. Transitive deps of a NON-bundled direct dep get skipped entirely —
+    #   2. Transitive deps of a NON-bundled direct dep get skipped entirely -
     #      e.g. @earendil-works/pi-coding-agent's `glob`. This is especially
     #      likely on a reinstall/upgrade over an existing global prefix, where
     #      npm prunes them. The narrow "empty bindings" heuristic misses this.
@@ -1750,7 +1762,7 @@ repair_comisai_bundled_deps() {
           && ! -d "${pca_dir}/node_modules/glob" ]]; then
         needs_repair=true
     fi
-    # Behavioral canary — catches the prune shapes the sentinels don't (the
+    # Behavioral canary - catches the prune shapes the sentinels don't (the
     # pi-tui class: sentinels clean, CLI load-broken).
     if [[ "$needs_repair" != "true" ]] && ! comisai_cli_loads "$comisai_dir"; then
         needs_repair=true
@@ -1793,7 +1805,7 @@ repair_comisai_bundled_deps() {
 # `npm install -g comisai`.
 #
 # Because it is OPTIONAL, a failed compile leaves `npm install` at exit 0 with
-# node-pty silently absent — npm never surfaces the failure, so the reactive
+# node-pty silently absent - npm never surfaces the failure, so the reactive
 # build-tools recovery in install_comis_npm (which keys off a NON-zero npm exit)
 # can't fire. At runtime the terminal tool then falls back to a degraded pipe
 # backend with only a WARN in the daemon log. This function converts that silent
@@ -1802,7 +1814,7 @@ repair_comisai_bundled_deps() {
 #
 # Linux-only: macOS ships a darwin prebuild, so node-pty always loads there.
 # Non-fatal: the daemon runs fine without node-pty (degraded terminal tool only),
-# so nothing here may abort the install — every path returns 0.
+# so nothing here may abort the install - every path returns 0.
 ensure_node_pty_built() {
     [[ "$OS" == "linux" ]] || return 0
 
@@ -1828,7 +1840,7 @@ ensure_node_pty_built() {
         fi
     fi
 
-    # Pin the rebuild to the exact version the installed package declares — read
+    # Pin the rebuild to the exact version the installed package declares - read
     # it from the on-disk package.json so the installer never drifts from the
     # source-of-truth pin in packages/comis/package.json.
     local pinned=""
@@ -1845,7 +1857,7 @@ ensure_node_pty_built() {
         return 0
     fi
 
-    ui_warn "node-pty could not be built — the terminal tool will run in degraded pipe mode"
+    ui_warn "node-pty could not be built - the terminal tool will run in degraded pipe mode"
     ui_info "  Piped commands still work; interactive TUIs (vim, full-screen CLIs) need a real PTY."
     ui_info "  To enable later (requires make, gcc/g++, python3):"
     ui_info "    cd ${comisai_dir} && npm install ${spec}"
@@ -1858,7 +1870,7 @@ NO_INIT=${COMIS_NO_INIT:-0}
 NO_PROMPT=${COMIS_NO_PROMPT:-0}
 # Skip the dedicated 'comis' user and install for the invoking user instead
 NO_USER="${COMIS_NO_USER:-0}"
-# Original CLI args, captured before parsing — replayed verbatim by the sudo re-exec
+# Original CLI args, captured before parsing - replayed verbatim by the sudo re-exec
 ORIGINAL_ARGS=()
 DRY_RUN=${COMIS_DRY_RUN:-0}
 INSTALL_METHOD=${COMIS_INSTALL_METHOD:-}
@@ -1894,12 +1906,12 @@ ENABLE_EGRESS_LOGGING="${COMIS_ENABLE_EGRESS_LOGGING:-0}"
 # System-service installs also request Xvfb and a virtual-display companion unit;
 # systemd-user installs downshift to headless before the install plan is shown.
 # STRICTLY best-effort: the call sites guard it (`install_browser_deps_linux || true`,
-# `render_xvfb_unit || ui_warn`), so a box where Chromium/Xvfb can't install — or a
-# rootless install — still gets a working daemon. An unavailable browser runtime
+# `render_xvfb_unit || ui_warn`), so a box where Chromium/Xvfb can't install - or a
+# rootless install - still gets a working daemon. An unavailable browser runtime
 # fails honestly at use. Opt out of the whole stack with
 # `--without-browser` / `COMIS_WITH_BROWSER=0`, or keep headless-only (drop the Xvfb
 # headed stack) with `--without-xvfb` / `COMIS_WITH_XVFB=0`, for a minimal footprint.
-# CloakBrowser stays opt-in (`--with-cloakbrowser`) — it swaps Chrome for an alternative
+# CloakBrowser stays opt-in (`--with-cloakbrowser`) - it swaps Chrome for an alternative
 # Chromium runtime, not an additive capability. WITH_XVFB / WITH_CLOAKBROWSER imply WITH_BROWSER.
 WITH_BROWSER="${COMIS_WITH_BROWSER:-1}"
 WITH_XVFB="${COMIS_WITH_XVFB:-1}"
@@ -2027,8 +2039,8 @@ Environment variables:
   COMIS_SERVICE=auto|systemd|systemd-user|pm2|none
   COMIS_NO_AUTOSTART=1
   COMIS_NO_SERVICE_START=1
-  COMIS_WITH_BROWSER=0|1               (default 1 — set 0 for a minimal footprint)
-  COMIS_WITH_XVFB=0|1                   (default 1 — set 0 to keep headless-only)
+  COMIS_WITH_BROWSER=0|1               (default 1 - set 0 for a minimal footprint)
+  COMIS_WITH_XVFB=0|1                   (default 1 - set 0 to keep headless-only)
   COMIS_WITH_CLOAKBROWSER=0|1
   COMIS_ENABLE_EGRESS_LOGGING=0|1       Default: 0 (disabled)
   COMIS_PURGE=1
@@ -2056,6 +2068,26 @@ require_option_value() {
         ui_error "Missing value for ${option}"
         echo "Run: bash comis-install.sh --help"
         exit 2
+    fi
+}
+
+validate_local_tarball_preflight() {
+    [[ -z "$COMIS_TARBALL" ]] && return 0
+    if [[ -L "$COMIS_TARBALL" ]]; then
+        ui_error "--tarball must not be a symbolic link: ${COMIS_TARBALL}"
+        return 1
+    fi
+    if [[ ! -e "$COMIS_TARBALL" ]]; then
+        ui_error "--tarball path does not exist: ${COMIS_TARBALL}"
+        return 1
+    fi
+    if [[ ! -f "$COMIS_TARBALL" ]]; then
+        ui_error "--tarball must be a regular file: ${COMIS_TARBALL}"
+        return 1
+    fi
+    if ! tar -tzf "$COMIS_TARBALL" >/dev/null 2>&1; then
+        ui_error "--tarball is not a readable gzip archive: ${COMIS_TARBALL}"
+        return 1
     fi
 }
 
@@ -2159,7 +2191,7 @@ parse_args() {
                 shift
                 ;;
             --without-browser)
-                # Opt out of the entire default browser stack (minimal footprint —
+                # Opt out of the entire default browser stack (minimal footprint -
                 # skips Chromium, the headless shared libs, and the Xvfb headed unit).
                 # The browser TOOL stays enabled in config but fails honestly at use
                 # for lack of a runtime. Must also zero WITH_XVFB / WITH_CLOAKBROWSER
@@ -2876,6 +2908,13 @@ is_root() {
     [[ "$(id -u)" -eq 0 ]]
 }
 
+validate_comis_user_name() {
+    if [[ ! "$COMIS_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || [[ "${#COMIS_USER}" -gt 32 ]]; then
+        ui_error "Invalid dedicated Linux user name"
+        return 1
+    fi
+}
+
 has_sudo() {
     command -v sudo >/dev/null 2>&1
 }
@@ -2895,13 +2934,13 @@ should_create_dedicated_user() {
 }
 
 # Decide how a Linux non-root install proceeds. The dedicated-user layout is
-# the default — the daemon should not run as the login user (whose ~/.ssh and
+# the default - the daemon should not run as the login user (whose ~/.ssh and
 # ~/.aws stay readable to it) just because the installer wasn't run as root.
 # Prints exactly one strategy token:
-#   dedicated-prompt — ask for consent, then re-run the installer under sudo
-#   current-user     — proceed as the invoking user (opt-out or not applicable)
-#   refuse-no-prompt — cannot ask (no TTY / --no-prompt): explicit choice required
-#   refuse-no-sudo   — cannot elevate: needs root or an explicit opt-out
+#   dedicated-prompt - ask for consent, then re-run the installer under sudo
+#   current-user     - proceed as the invoking user (opt-out or not applicable)
+#   refuse-no-prompt - cannot ask (no TTY / --no-prompt): explicit choice required
+#   refuse-no-sudo   - cannot elevate: needs root or an explicit opt-out
 nonroot_install_strategy() {
     if [[ "$OS" != "linux" ]] || is_root || [[ "$COMIS_REEXEC" == "1" ]] \
         || [[ "$NO_USER" == "1" ]] || [[ "$SERVICE_MANAGER" != "auto" ]] \
@@ -2952,7 +2991,7 @@ enforce_dedicated_user_default() {
                 ui_info "Dry run: would offer to re-run with sudo and install under the dedicated '${COMIS_USER}' user (--no-user opts out)"
                 ;;
             *)
-                ui_info "Dry run: a real run would stop here — a non-root install needs sudo (dedicated '${COMIS_USER}' user) or an explicit --no-user"
+                ui_info "Dry run: a real run would stop here - a non-root install needs sudo (dedicated '${COMIS_USER}' user) or an explicit --no-user"
                 ;;
         esac
         return 0
@@ -3402,7 +3441,7 @@ install_system_deps_as_root() {
     # uv/uvx for Python-based MCP servers (e.g. nanobanana) and rust/cargo for
     # the agent exec sandbox toolchain matrix. Both run even when Node was
     # already present (install_uv / install_rust are not part of install_node).
-    # Linux only — macOS users install uv/rust separately via brew/rustup-init
+    # Linux only - macOS users install uv/rust separately via brew/rustup-init
     # if needed (the daemon is Linux-only anyway).
     if [[ "$OS" == "linux" ]]; then
         install_uv
@@ -3415,7 +3454,7 @@ install_system_deps_as_root() {
     ui_success "System dependencies ready"
 }
 
-# Materialize the currently-running script at $dest — works for a file-based
+# Materialize the currently-running script at $dest - works for a file-based
 # invocation ($0) and for a curl|bash pipe (bash's script fd, else re-download).
 stage_install_script() {
     local dest="$1"
@@ -3436,6 +3475,16 @@ reexec_as_comis_user() {
     local comis_home
     comis_home="$(eval echo "~$COMIS_USER")"
 
+    # Keep privileged staging outside the service user's writable home. A
+    # root-owned randomized directory prevents pre-existing paths from
+    # redirecting either copy through a symbolic link.
+    local handoff_dir
+    if ! handoff_dir="$(mktemp -d /tmp/comis-install.XXXXXXXXXX)"; then
+        ui_error "Could not create a secure installer handoff directory"
+        return 1
+    fi
+    chmod 0711 "$handoff_dir"
+
     # Forward relevant args and env to the re-exec
     local -a forwarded_args=()
     [[ "$NO_INIT" == "1" ]] && forwarded_args+=(--no-init)
@@ -3449,17 +3498,16 @@ reexec_as_comis_user() {
     # runs as the unprivileged comis user) can read it. Operators commonly place
     # the tarball under /root or another path the comis user cannot read; the
     # forwarded path would then fail with "--tarball path does not exist". Copy
-    # it into the comis home (mirrors the install-script copy below) and forward
-    # that path instead.
+    # it into the secure handoff directory and forward that path instead.
     local staged_tarball=""
     if [[ -n "$COMIS_TARBALL" ]]; then
-        staged_tarball="${comis_home}/.comis-install-tarball.tgz"
+        staged_tarball="${handoff_dir}/comisai.tgz"
         if cp "$COMIS_TARBALL" "$staged_tarball" 2>/dev/null; then
             chown "$COMIS_USER:$COMIS_USER" "$staged_tarball" 2>/dev/null || true
-            chmod 0644 "$staged_tarball" 2>/dev/null || true
+            chmod 0600 "$staged_tarball" 2>/dev/null || true
             forwarded_args+=(--tarball "$staged_tarball")
         else
-            ui_warn "Could not stage tarball into ${comis_home}; forwarding original path"
+            ui_warn "Could not stage tarball for the user handoff; forwarding original path"
             forwarded_args+=(--tarball "$COMIS_TARBALL")
         fi
     fi
@@ -3471,19 +3519,30 @@ reexec_as_comis_user() {
     [[ "$WITH_CLOAKBROWSER" == "1" ]] && forwarded_args+=(--with-cloakbrowser)
 
     # Copy the install script to a location the comis user can read
-    local script_copy="${comis_home}/.comis-install.sh"
+    local script_copy="${handoff_dir}/install.sh"
     stage_install_script "$script_copy"
     chown "$COMIS_USER:$COMIS_USER" "$script_copy"
+    chmod 0700 "$script_copy"
 
     ui_info "Handing off to user '$COMIS_USER'"
     echo ""
 
     # Re-exec as the comis user with COMIS_REEXEC=1 to skip the handoff loop
-    su - "$COMIS_USER" -c "COMIS_REEXEC=1 bash '$script_copy' ${forwarded_args[*]}"
-    local rc=$?
+    local escaped_arg escaped_script forwarded_command
+    printf -v escaped_script '%q' "$script_copy"
+    forwarded_command="COMIS_REEXEC=1 bash $escaped_script"
+    for arg in "${forwarded_args[@]}"; do
+        printf -v escaped_arg '%q' "$arg"
+        forwarded_command+=" $escaped_arg"
+    done
+    local rc=0
+    if su - "$COMIS_USER" -c "$forwarded_command"; then
+        rc=0
+    else
+        rc=$?
+    fi
 
-    rm -f "$script_copy" 2>/dev/null || true
-    [[ -n "$staged_tarball" ]] && rm -f "$staged_tarball" 2>/dev/null || true
+    rm -rf "$handoff_dir" 2>/dev/null || true
 
     return "$rc"
 }
@@ -3995,7 +4054,7 @@ install_comis() {
     local package_name="comisai"
     local install_spec=""
 
-    # Local tarball overrides everything else — skips version resolution
+    # Local tarball overrides everything else - skips version resolution
     if [[ -n "$COMIS_TARBALL" ]]; then
         if [[ ! -f "$COMIS_TARBALL" ]]; then
             ui_error "--tarball path does not exist: ${COMIS_TARBALL}"
@@ -4244,7 +4303,7 @@ resolve_service_manager() {
             return 0
         fi
 
-        # No systemd — user almost certainly wants WSL guidance
+        # No systemd - user almost certainly wants WSL guidance
         if is_wsl; then
             ui_warn "WSL detected without systemd."
             echo "  To enable systemd on WSL, add this to /etc/wsl.conf (Windows side):"
@@ -4405,7 +4464,7 @@ cleanup_legacy_daemon_state() {
 # Populate COMIS_NODE_BIN, COMIS_DAEMON_JS, COMIS_SVC_USER, COMIS_SVC_HOME,
 # COMIS_DATA_DIR, COMIS_CONFIG_FILE based on the install method and service manager.
 resolve_service_template_vars() {
-    # Node binary — must be a real file, not a shim
+    # Node binary - must be a real file, not a shim
     local node_bin="${SELECTED_NODE_BIN:-}"
     if [[ -z "$node_bin" ]]; then
         node_bin="$(command -v node 2>/dev/null || true)"
@@ -4415,7 +4474,7 @@ resolve_service_template_vars() {
         return 1
     fi
 
-    # Resolve symlinks — systemd units need an absolute, stable path
+    # Resolve symlinks - systemd units need an absolute, stable path
     local resolved
     resolved="$(readlink -f "$node_bin" 2>/dev/null || echo "$node_bin")"
     COMIS_NODE_BIN="$resolved"
@@ -4462,7 +4521,7 @@ resolve_service_template_vars() {
         fi
         COMIS_DAEMON_JS="${git_dir}/packages/daemon/dist/daemon.js"
     else
-        # npm install — probe known layouts under the global npm root.
+        # npm install - probe known layouts under the global npm root.
         # The published `comisai` package bundles @comis/* under node_modules/;
         # a monorepo-style install instead exposes packages/daemon/.
         local npm_root=""
@@ -4514,12 +4573,12 @@ resolve_service_template_vars() {
 render_xvfb_unit() {
     [[ "$WITH_XVFB" == "1" ]] || return 0
     # Ground truth: don't register a companion unit whose ExecStart points at an
-    # Xvfb binary that isn't installed (headed install failed) — that would just
+    # Xvfb binary that isn't installed (headed install failed) - that would just
     # crash-loop the unit. Fall back silently to headless (the browser tool still
     # works; only headed mode is unavailable).
     if ! xvfb_present; then
         WITH_XVFB=0
-        ui_warn "Xvfb binary not found — skipping headed companion unit (browser runs headless)"
+        ui_warn "Xvfb binary not found - skipping headed companion unit (browser runs headless)"
         return 0
     fi
     # Defensive guard: the normal systemd-user path already downshifts to
@@ -4631,7 +4690,7 @@ XVFB
 # managed-by: comis-installer
 # template-version: 1
 # checksum: ${xvfb_checksum}
-# Do not edit by hand — the installer will refuse to overwrite a modified unit.
+# Do not edit by hand - the installer will refuse to overwrite a modified unit.
 HDR
     printf '%s\n' "$xvfb_body" >> "$tmp"
 
@@ -4666,12 +4725,12 @@ render_systemd_unit() {
     local user_line="User=${COMIS_SVC_USER}"
     local group_line="Group=${COMIS_SVC_GROUP}"
     if [[ "$scope" == "user" ]]; then
-        # User units run as the invoking user — no User=/Group= needed
+        # User units run as the invoking user - no User=/Group= needed
         user_line="# User= (user scope: inherits invoking user)"
         group_line="# Group= (user scope)"
     fi
 
-    # Browser-tool template variants. All empty by default — only populated
+    # Browser-tool template variants. All empty by default - only populated
     # when --with-browser (and optionally --with-xvfb) is set. Computed pre-
     # heredoc so the checksum baked at the top of the unit file matches the
     # rendered body without post-render rewrites.
@@ -4684,15 +4743,15 @@ render_systemd_unit() {
     local COMIS_PRIVATE_TMP_LINE="PrivateTmp=yes"
     if [[ "$WITH_BROWSER" == "1" ]]; then
         # Chrome needs syscalls outside `@system-service @mount setns` or the
-        # kernel SIGSYS-kills it (status=31/SYS) BEFORE it opens the CDP socket —
+        # kernel SIGSYS-kills it (status=31/SYS) BEFORE it opens the CDP socket -
         # so the browser tool's every navigate fails `connectOverCDP ECONNREFUSED`.
         # Determined by seccomp audit (type=1326) on a clean install, iterated to
         # convergence (launches + serves CDP + renders a real page, zero further
-        # denials): pkey_* (330 — V8 memory-protection keys), landlock_* (444 —
-        # Chrome's own self-sandbox), and — once a renderer spins up — ptrace (101)
+        # denials): pkey_* (330 - V8 memory-protection keys), landlock_* (444 -
+        # Chrome's own self-sandbox), and - once a renderer spins up - ptrace (101)
         # + seccomp (317). systemd unions multiple SystemCallFilter= lines.
         # Security posture: seccomp + landlock are RESTRICTION-ONLY (a process can
-        # only ADD limits to itself, never escape), pkey_* is memory-protection —
+        # only ADD limits to itself, never escape), pkey_* is memory-protection -
         # all safe. ptrace is the one real relaxation, but with NoNewPrivileges +
         # empty CapabilityBoundingSet (no CAP_SYS_PTRACE) + default YAMA it is
         # limited to same-uid children (Chrome tracing its own crash handler).
@@ -4705,19 +4764,19 @@ render_systemd_unit() {
         # and the systemd sandbox layer (ReadWritePaths).
         if [[ "$WITH_CLOAKBROWSER" == "1" ]]; then
             # CloakBrowser writes to a different set of paths than Google Chrome:
-            #   ~/.cloakbrowser/        — binary cache + auto-update workspace
+            #   ~/.cloakbrowser/        - binary cache + auto-update workspace
             #                             (also extensions/ inside each version)
-            #   ~/.config/chromium/     — crashpad (vendor string is "Chromium",
+            #   ~/.config/chromium/     - crashpad (vendor string is "Chromium",
             #                             not "google-chrome")
-            # CloakBrowser does NOT write ~/.local/share/applications/mimeapps —
+            # CloakBrowser does NOT write ~/.local/share/applications/mimeapps -
             # the upstream Chromium default-browser registration is patched out.
             # Tighter sandbox than the Chrome path.
             COMIS_BROWSER_FS_WRITE_FLAGS=" --allow-fs-write=${COMIS_SVC_HOME}/.config/comis/browser --allow-fs-write=${COMIS_SVC_HOME}/.cloakbrowser --allow-fs-write=${COMIS_SVC_HOME}/.config/chromium"
             COMIS_BROWSER_RW_PATHS=" ${COMIS_SVC_HOME}/.config/comis/browser ${COMIS_SVC_HOME}/.cloakbrowser ${COMIS_SVC_HOME}/.config/chromium"
         else
             # Stock Google Chrome writes outside the user-data-dir:
-            #   ~/.config/google-chrome/        — crashpad database, GCM store
-            #   ~/.local/share/applications/    — mimeapps.list (default-browser
+            #   ~/.config/google-chrome/        - crashpad database, GCM store
+            #   ~/.local/share/applications/    - mimeapps.list (default-browser
             #                                     registration; no flag disables)
             # Without these, Chrome dies before opening the CDP socket on its
             # first run under ProtectHome=read-only.
@@ -4767,15 +4826,15 @@ WorkingDirectory=${COMIS_WORKING_DIR}
 
 # --permission: Node permission model. fs-write scoped to paths the daemon
 # actually writes to at runtime:
-#   DATA_DIR        — config, logs, memory.db, workspace, sessions, and the
-#                     keyless local-STT whisper model cache (models/whisper/) —
+#   DATA_DIR        - config, logs, memory.db, workspace, sessions, and the
+#                     keyless local-STT whisper model cache (models/whisper/) -
 #                     so no extra fs-write flag is needed when local STT ships
-#   HOME/.npm       — npm cache + logs (MCP servers spawned via npx)
-#   HOME/.pi        — pi-agent-core SettingsManager (agent config dir)
-#   /tmp            — media temp files (PrivateTmp=yes sandboxes this already)
+#   HOME/.npm       - npm cache + logs (MCP servers spawned via npx)
+#   HOME/.pi        - pi-agent-core SettingsManager (agent config dir)
+#   /tmp            - media temp files (PrivateTmp=yes sandboxes this already)
 # fs-read wildcarded: ProtectSystem=strict + ProtectHome=read-only enforce the
 # real filesystem perimeter at the kernel level.
-# --allow-addons + --allow-worker: native deps like sharp and better-sqlite3 —
+# --allow-addons + --allow-worker: native deps like sharp and better-sqlite3 -
 # and the ONNX Runtime used by the local-STT whisper engine, so it needs no new flag.
 # --jitless and MemoryDenyWriteExecute are intentionally NOT set: both break
 # WebAssembly, which bundled undici (HTTP parsing) and the WASM ONNX fallback use.
@@ -4784,10 +4843,10 @@ ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-f
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=45
-# KillMode=process: on stop, systemd signals ONLY the main daemon process — NOT the whole
+# KillMode=process: on stop, systemd signals ONLY the main daemon process - NOT the whole
 # cgroup (the default 'control-group'). REQUIRED for durable terminal drives: a
 # durable session runs its child inside a detached 'tmux new-session -d' server that
-# daemonizes (reparented to init) but REMAINS a member of this unit's cgroup — the daemon
+# daemonizes (reparented to init) but REMAINS a member of this unit's cgroup - the daemon
 # cannot move it out (ProtectControlGroups=yes + non-root service user + no user bus). With
 # the default control-group kill, every 'systemctl restart' SIGKILLs that tmux server, so a
 # durable session can NEVER survive a restart. With KillMode=process the daemonized tmux
@@ -4827,6 +4886,8 @@ StandardError=journal
 SyslogIdentifier=comis
 
 Environment=NODE_ENV=production
+Environment=RUSTUP_HOME=/usr/local/rustup
+Environment=CARGO_HOME=/usr/local/cargo
 ${COMIS_BROWSER_ENV_LINES}
 EnvironmentFile=-${COMIS_ENV_FILE}
 
@@ -4835,7 +4896,7 @@ ProtectSystem=strict
 ProtectHome=read-only
 ${COMIS_PRIVATE_TMP_LINE}
 # ReadWritePaths punches through ProtectHome=read-only. It grants the WHOLE
-# service home read-write — the terminal driver's "filesystem: home" scope runs driven CLIs
+# service home read-write - the terminal driver's "filesystem: home" scope runs driven CLIs
 # (claude, codex, …) that keep state in their own home dirs (~/.claude, ~/.codex, ~/.local),
 # and the bwrap jail binds the DAEMON's view of ~/, so a read-only home read-onlys exactly
 # those dirs and the CLI exits at launch (can't write its state). The bwrap jail (uid/network
@@ -4859,8 +4920,8 @@ PrivateDevices=yes
 # fail with "Can't mount proc on /newroot/proc: Operation not permitted" when
 # the exec sandbox tries to spin up a nested PID namespace. Bisected on a live
 # VPS: enabling any of them cascades with the other hardening we do keep and
-# blocks /proc remount inside bwrap. The daemon runs trusted code — untrusted
-# agent commands are isolated by bwrap — so the relaxation does not materially
+# blocks /proc remount inside bwrap. The daemon runs trusted code - untrusted
+# agent commands are isolated by bwrap - so the relaxation does not materially
 # weaken the threat model.
 ProtectKernelTunables=no
 ProtectKernelModules=yes
@@ -4902,7 +4963,7 @@ UNIT
 # managed-by: comis-installer
 # template-version: 1
 # checksum: ${checksum}
-# Do not edit by hand — the installer will refuse to overwrite a modified unit.
+# Do not edit by hand - the installer will refuse to overwrite a modified unit.
 # To regenerate after an install.sh upgrade: re-run the installer.
 HDR
 )"
@@ -4929,7 +4990,7 @@ unit_is_managed() {
     [[ -f "$unit_path" && ! -L "$unit_path" ]] || return 1
     [[ "$(sed -n '1p' "$unit_path")" == "# managed-by: comis-installer" ]] || return 1
     [[ "$(sed -n '2p' "$unit_path")" == "# template-version: 1" ]] || return 1
-    [[ "$(sed -n '4p' "$unit_path")" == "# Do not edit by hand — the installer will refuse to overwrite a modified unit." ]] || return 1
+    [[ "$(sed -n '4p' "$unit_path")" == "# Do not edit by hand - the installer will refuse to overwrite a modified unit." ]] || return 1
     local recorded
     recorded="$(sed -n '3s/^# checksum: //p' "$unit_path")"
     [[ "$recorded" =~ ^[a-f0-9]{64}$ ]] || return 1
@@ -4995,7 +5056,7 @@ render_env_file() {
     local tmp
     tmp="$(mktempfile)"
     cat > "$tmp" <<ENV
-# Comis daemon environment — generated by install.sh.
+# Comis daemon environment - generated by install.sh.
 # Edit with: sudoedit ${target}
 # Restart after changes: sudo systemctl restart comis
 
@@ -5035,7 +5096,7 @@ maybe_seed_browser_config() {
     local headless_value="true"
     local source_flag="--with-browser"
     [[ "$WITH_CLOAKBROWSER" == "1" ]] && source_flag="--with-cloakbrowser"
-    # Seed headless=false (headed) ONLY when Xvfb is actually present — ground truth,
+    # Seed headless=false (headed) ONLY when Xvfb is actually present - ground truth,
     # not the WITH_XVFB intent flag. If the headed install failed, seeding headless=false
     # would launch Chrome against a display that isn't there; fall back to headless so
     # the browser tool works on the Chromium installed above.
@@ -5043,13 +5104,13 @@ maybe_seed_browser_config() {
         headless_value="false"
         source_flag="${source_flag} --with-xvfb"
     elif [[ "$WITH_XVFB" == "1" ]]; then
-        ui_warn "Xvfb not present — seeding headless browser config (headed mode unavailable)"
+        ui_warn "Xvfb not present - seeding headless browser config (headed mode unavailable)"
     fi
 
     local block
     block="$(cat <<YAML
 
-# Browser tool — installed via ${source_flag}
+# Browser tool - installed via ${source_flag}
 # noSandbox: required under systemd NoNewPrivileges=yes (the Chrome setuid
 # sandbox cannot elevate anyway; --no-sandbox is the supported path).
 # headless=false when Xvfb is present so the daemon uses the virtual display.
@@ -5071,7 +5132,7 @@ YAML
 
     # Two paths:
     #   * Non-root install (operator or reexec'd comis user, or --service
-    #     none / Docker): write directly. Do NOT route through maybe_sudo —
+    #     none / Docker): write directly. Do NOT route through maybe_sudo -
     #     that would unnecessarily escalate via sudo and create a root-owned
     #     file in the user's own HOME (broken under Docker, and surprising
     #     elsewhere). Plain `install` inherits the current user's ownership.
@@ -5092,8 +5153,8 @@ YAML
 # Poll the gateway health endpoint after service start.
 #
 # A cold first boot downloads the local embedding model (~146MB GGUF) into
-# ~/.comis/models/ and loads it before the gateway binds — ~30s on a small
-# 2-vCPU instance — so the window must comfortably outlast that. Override
+# ~/.comis/models/ and loads it before the gateway binds - ~30s on a small
+# 2-vCPU instance - so the window must comfortably outlast that. Override
 # with COMIS_GATEWAY_WAIT_SECS. Sets GATEWAY_WAIT_SECS_USED so callers can
 # report the window they actually waited.
 wait_for_daemon_ready() {
@@ -5178,7 +5239,7 @@ wait_for_daemon_ready() {
             fi
         fi
         if [[ $progress_shown -eq 0 && $SECONDS -ge $progress_at ]]; then
-            ui_info "Still waiting — a first boot downloads the local embedding model (~146MB) before the gateway listens"
+            ui_info "Still waiting - a first boot downloads the local embedding model (~146MB) before the gateway listens"
             progress_shown=1
         fi
         sleep 1
@@ -5210,7 +5271,7 @@ register_service_systemd() {
     maybe_sudo chown -R "${COMIS_SVC_USER}:${COMIS_SVC_GROUP}" "$COMIS_DATA_DIR"
     maybe_sudo chmod 0700 "$COMIS_DATA_DIR"
 
-    # Pre-create ~/.npm, ~/.pi, and ~/.cache for the same reason — all appear
+    # Pre-create ~/.npm, ~/.pi, and ~/.cache for the same reason - all appear
     # in the unit's ReadWritePaths= and must exist at service-start time. The
     # daemon (or uvx as a child) populates them on demand (npm cache, pi-agent
     # SettingsManager, uv tool cache).
@@ -5221,7 +5282,7 @@ register_service_systemd() {
     # resolves the user data dir to $XDG_CONFIG_HOME/comis/browser/<profile>;
     # render_systemd_unit adds the path to ReadWritePaths so the systemd
     # sandbox lets the browser write here. We also pre-create the paths
-    # the binary touches outside the user-data-dir — set differs for
+    # the binary touches outside the user-data-dir - set differs for
     # stock Chrome vs CloakBrowser (see render_systemd_unit for rationale).
     if [[ "$WITH_BROWSER" == "1" ]]; then
         if [[ "$WITH_CLOAKBROWSER" == "1" ]]; then
@@ -5439,11 +5500,11 @@ can_elevate() {
         return 0
     fi
     command -v sudo >/dev/null 2>&1 || return 1
-    # Cached credentials — works without prompt
+    # Cached credentials - works without prompt
     if sudo -n true 2>/dev/null; then
         return 0
     fi
-    # Interactive TTY available — sudo will prompt
+    # Interactive TTY available - sudo will prompt
     if [[ -t 0 || -t 1 ]] || (echo -n "" > /dev/tty) 2>/dev/null; then
         return 0
     fi
@@ -5611,7 +5672,7 @@ provision_environment_role_marker() {
     return 0
 }
 
-# Dispatch entry point — called from main() once the binary is in place.
+# Dispatch entry point - called from main() once the binary is in place.
 register_service() {
     if ! provision_environment_role_marker; then
         return 1
@@ -5689,7 +5750,7 @@ detect_active_service_manager() {
 restart_service_if_running() {
     # No-op in the re-exec'd comis-user child. That child runs unprivileged in
     # the "Finalizing setup" stage, BEFORE the root parent's register_service
-    # writes the systemd unit and the sudoers rule — so `sudo systemctl restart`
+    # writes the systemd unit and the sudoers rule - so `sudo systemctl restart`
     # here has no matching NOPASSWD grant and, with no tty, errors out with a
     # spurious "sudo: a password is required". The root parent owns service
     # registration AND the restart (it calls this again as root after the child
@@ -6038,7 +6099,7 @@ uninstall_systemd_unit() {
         ui_error "${unit_path} is a symlink; refusing to treat it as an installer-managed unit"
         return 1
     fi
-    # Check if user-edited — if so, don't delete
+    # Check if user-edited - if so, don't delete
     if [[ -f "$unit_path" ]] && ! unit_is_managed "$unit_path"; then
         ui_error "${unit_path} is not an unmodified installer-managed unit; refusing to remove it"
         return 1
@@ -6354,9 +6415,9 @@ uninstall_purge_data() {
     local data_dir="${target_home}/.comis"
 
     # Cloakbrowser artifacts (created by --with-cloakbrowser installs):
-    #   .cloakbrowser/           — alternative Chromium runtime cache (~200MB per
+    #   .cloakbrowser/           - alternative Chromium runtime cache (~200MB per
     #                              version, auto-update may keep ≥1 version)
-    #   .cloakbrowser-wrapper/   — installer-managed npm wrapper dir
+    #   .cloakbrowser-wrapper/   - installer-managed npm wrapper dir
     # Both belong to the daemon's user; safe to purge with the rest of the
     # daemon's data when --purge is set.
     local cloak_paths=(
@@ -6425,7 +6486,7 @@ uninstall_purge_data() {
 # ----------------------
 # Reverse install_egress_logging(): drop the uid-scoped OUTPUT jump(s), then
 # flush and delete the COMIS_EGRESS chain. Runs on the purge path BEFORE the
-# comis user is removed — the OUTPUT rule is uid-scoped, and deleting by rule
+# comis user is removed - the OUTPUT rule is uid-scoped, and deleting by rule
 # number keeps this working even when the uid no longer resolves to a name.
 # Idempotent and non-fatal: silently skipped when iptables is unavailable or
 # the chain does not exist.
@@ -6458,7 +6519,7 @@ uninstall_egress_chain() {
     if $sudo_prefix iptables -X COMIS_EGRESS 2>/dev/null; then
         ui_success "Removed COMIS_EGRESS iptables chain"
     else
-        ui_error "Could not delete COMIS_EGRESS chain — remove manually: iptables -X COMIS_EGRESS"
+        ui_error "Could not delete COMIS_EGRESS chain - remove manually: iptables -X COMIS_EGRESS"
         return 1
     fi
     return 0
@@ -6718,7 +6779,7 @@ uninstall_main() {
 
     ui_stage "Stopping and unregistering services"
 
-    # Try all three paths — they're all idempotent no-ops if nothing matches
+    # Try all three paths - they're all idempotent no-ops if nothing matches
     uninstall_systemd_unit "system"
     [[ "$OS" == "linux" ]] && [[ "${HOME}" != "/root" ]] && uninstall_systemd_unit "user"
     uninstall_xvfb_unit
@@ -6772,7 +6833,7 @@ main() {
         return 0
     fi
 
-    # Uninstall dispatch happens before any other setup — it has its own flow
+    # Uninstall dispatch happens before any other setup - it has its own flow
     if [[ "$UNINSTALL" == "1" ]]; then
         uninstall_main
         return $?
@@ -6788,6 +6849,17 @@ main() {
     else
         print_installer_banner
         detect_os_or_die
+    fi
+
+    if [[ "$OS" == "linux" ]] && ! validate_comis_user_name; then
+        return 1
+    fi
+
+    # Reject an impossible local package source before sudo prompts, dependency
+    # installation, account creation, or any other host mutation. install_comis()
+    # checks again in case the path changes after this preflight.
+    if ! validate_local_tarball_preflight; then
+        return 1
     fi
 
     # Linux non-root: the dedicated-user layout is the default. Ask to elevate
@@ -6991,7 +7063,8 @@ main() {
     restart_service_if_running
 
     # Run doctor on upgrades and git installs
-    if [[ "$is_upgrade" == "true" || "$INSTALL_METHOD" == "git" ]]; then
+    if [[ "$COMIS_REEXEC" != "1" ]] \
+        && [[ "$is_upgrade" == "true" || "$INSTALL_METHOD" == "git" ]]; then
         run_doctor
     fi
 
@@ -7021,10 +7094,10 @@ main() {
     fi
 
     # Register the daemon with the selected service manager.
-    # For re-exec'd children (SERVICE_MANAGER=none), this is a silent no-op —
+    # For re-exec'd children (SERVICE_MANAGER=none), this is a silent no-op -
     # service registration and the success banner are the root parent's job.
     if [[ "$COMIS_REEXEC" != "1" ]]; then
-        # Browser runtime — no-op unless --with-browser was passed. Runs here
+        # Browser runtime - no-op unless --with-browser was passed. Runs here
         # so the non-root install path also gets Chromium provisioned (root +
         # dedicated-user installs hit install_browser_deps_linux earlier via
         # install_system_deps_as_root).
@@ -7038,7 +7111,7 @@ main() {
         fi
     fi
 
-    # Re-exec'd children exit here — the root parent handles the success
+    # Re-exec'd children exit here - the root parent handles the success
     # banner and footer after it registers the systemd service.
     if [[ "$COMIS_REEXEC" == "1" ]]; then
         ui_success "Comis CLI installed"

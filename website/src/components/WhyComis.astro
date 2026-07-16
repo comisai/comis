@@ -2,17 +2,28 @@
 // SPDX-License-Identifier: Apache-2.0
 const differentiators = [
   {
-    title: "Auditable workflows",
-    body: "Run persistent execution graphs with parallel nodes, barriers, retries, budgets, approval nodes, debate, voting, refinement, and map-reduce.",
+    title: "Typed execution",
+    body: "Coordinate sequential and parallel DAG nodes with barriers, retries, budgets, and configured recovery.",
   },
   {
-    title: "Recoverable context",
-    body: "Keep canonical messages and tool results recoverable through DAG-backed summaries and ctx_search, ctx_inspect, and ctx_expand.",
-    technical: true,
+    title: "Recoverable canonical context",
+    body: "Keep messages and tool results available beneath summaries, then recover selected detail on demand.",
   },
   {
-    title: "Scoped operation",
-    body: "Scope agent-facing memory and context by tenant and agent. Configure separate models, budgets, tool policies, and secret allowlists.",
+    title: "Provenance-aware memory",
+    body: "Rank and revise learned state using provenance, corroboration, trust ceilings, outcomes, and corrections.",
+  },
+  {
+    title: "Scoped authority and layered security",
+    body: "Treat models as untrusted with scoped state, capability gates, encrypted secrets, and content guards.",
+  },
+  {
+    title: "Bounded spend",
+    body: "Combine provider cost accounting, graph budgets, and opt-in spend ceilings.",
+  },
+  {
+    title: "Operational evidence",
+    body: "Connect traces, incident explanation, audits, fleet health, and recall diagnostics for investigation.",
   },
 ] as const;
 ---
@@ -21,22 +32,18 @@ const differentiators = [
   <div class="container">
     <div class="section-intro">
       <p class="eyebrow">Why Comis</p>
-      <h2 id="why-heading">Orchestration, context, and operations in one self-hosted platform.</h2>
+      <h2 id="why-heading">Govern execution, memory, security, authority, and cost as one system.</h2>
       <p class="lead">
-        Comis combines the infrastructure needed to coordinate agent teams without hiding how work was routed, executed, or delivered.
+        <strong>Comis's advantage is coherence.</strong> Formal workflows, recoverable context, provenance-aware memory, scoped authority, bounded spend, and operational evidence share one governance model.
       </p>
     </div>
 
-    <div class="editorial-grid editorial-grid-three">
+    <div class="editorial-grid advantage-grid">
       {differentiators.map((item, index) => (
-        <article class="editorial-item">
-          <p class="technical-label">0{index + 1}</p>
+        <article class="editorial-item advantage-item">
+          <p class="technical-label" aria-hidden="true">0{index + 1}</p>
           <h3>{item.title}</h3>
-          {item.technical ? (
-            <p>Keep canonical messages and tool results recoverable through DAG-backed summaries and <code>ctx_search</code>, <code>ctx_inspect</code>, and <code>ctx_expand</code>.</p>
-          ) : (
-            <p>{item.body}</p>
-          )}
+          <p>{item.body}</p>
         </article>
       ))}
     </div>

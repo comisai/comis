@@ -1,34 +1,38 @@
 ---
 title: "Sandbox"
-description: "Skill sandboxing reference plus exec-tool OS-level sandbox config (bubblewrap / sandbox-exec)"
+description: "Prompt-skill safeguards and ordinary exec process-isolation boundaries"
 icon: "box"
 ---
 
-The sandbox is a multi-layer defense system for custom skill execution. It combines content scanning, input sanitization, tool policy enforcement, and execution limits to prevent malicious or runaway skill behavior. For the **separate** OS-level kernel namespace that wraps the `system.exec` shell tool, see the dedicated [Exec Sandbox](/security/exec-sandbox) page; this page summarizes its config keys and runtime detection at the bottom.
+Comis has prompt-skill content safeguards and a separate OS-level sandbox for ordinary `exec` child processes. These controls have different scopes, and neither is a universal sandbox for every skill, tool, integration, or agent. For the detailed process boundary, see [Exec Sandbox](/security/exec-sandbox).
 
 <Note>
-**Sandbox vocabulary.** Comis uses the word "sandbox" for two distinct
-mechanisms:
+**Sandbox vocabulary.** Documentation has historically used "sandbox" for two
+different mechanisms:
 
-- **Skill sandbox** -- the application-level layers documented on this page
-  (content scanning, sanitization, tool policy, execution limits). Always
-  active for every skill.
-- **Exec sandbox** -- the OS-level kernel namespace
-  (bubblewrap / sandbox-exec) that wraps the `system.exec` tool only.
-  Auto-detected at daemon startup; falls back to unsandboxed with a warning
-  if the binary is missing.
+- **Prompt-skill safeguards** -- load-time sanitization and optional pattern
+  scanning for Markdown prompt-skill bodies. They are not process isolation.
+  Agent-level tool policy and runtime limits apply separately. SKILL.md
+  `permissions` and `allowedTools` declarations are currently advisory metadata,
+  not an enforced per-skill boundary.
+- **Exec sandbox** -- OS-level confinement for child processes launched through
+  the ordinary `exec` tool when a supported provider is available and active.
+  It does not wrap MCP stdio servers, browser processes, in-process tools, or
+  every other way the daemon can reach the network or filesystem.
 
-The skill sandbox protects every skill regardless of how it executes. The
-exec sandbox protects only `system.exec`. Make sure to enable both.
+On Linux, working Bubblewrap provides the strongest supported boundary. macOS
+`sandbox-exec` is deprecated and best effort. If the provider is missing,
+disabled, or auto-disabled on a constrained container host, ordinary `exec`
+can run directly under the daemon account with a warning.
 </Note>
 
 ## Overview
 
-Every custom skill passes through four protection layers before and during execution:
+For Markdown prompt skills, the relevant layers are:
 
 <Steps>
   <Step title="Content Scanning">
-    Skill body inspected for dangerous patterns across 6 categories at load time.
+    Sanitized prompt-skill text is inspected for known patterns across six categories at load time when scanning is enabled.
   </Step>
 
   <Step title="Sanitization Pipeline">
@@ -36,20 +40,20 @@ Every custom skill passes through four protection layers before and during execu
   </Step>
 
   <Step title="Tool Policy Enforcement">
-    Available tools filtered by profile, allow/deny lists, and per-skill restrictions.
+    Registered tools are filtered by the agent's configured profile and allow/deny lists. This is agent-level policy, not enforcement of SKILL.md permission declarations.
   </Step>
 
   <Step title="Execution Limits">
-    Runtime constraints via budget protection, circuit breaker, step limits, and optional Node.js permissions.
+    Agent-loop budgets, circuit breakers, step limits, and optional Node.js permissions constrain their respective runtime paths. They do not form one per-skill process sandbox.
   </Step>
 </Steps>
 
 ## Content Scanning
 
-The content scanner inspects skill body content at load time for dangerous patterns. It is a pure function -- callers handle audit emission and blocking decisions.
+The content scanner inspects sanitized Markdown prompt-skill bodies at load time for known dangerous patterns. It does not inspect executable dependencies, MCP server binaries, browser code, or arbitrary files a skill later tells an agent to use. It is a pure function; callers handle audit emission and blocking decisions.
 
 <Info>
-  **Source:** `packages/skills/src/prompt/content-scanner.ts` -- patterns across 6 categories. Patterns imported from `@comis/core` injection-patterns module.
+  **Source:** `packages/skills/src/skills/prompt/content-scanner.ts` -- patterns across 6 categories. Patterns imported from `@comis/core` injection-patterns module.
 </Info>
 
 ### Scan Categories
@@ -151,7 +155,7 @@ For user-facing guide, see [Security Scanning](/skills/security-scanning).
 The 4-step sanitization pipeline processes skill body content before it reaches the system prompt. All functions are pure with no side effects.
 
 <Info>
-  **Source:** `packages/skills/src/prompt/sanitizer.ts` -- strict pipeline order: strip HTML comments, NFKC normalize, strip invisible, enforce size.
+  **Source:** `packages/skills/src/skills/prompt/sanitizer.ts` -- strict pipeline order: strip HTML comments, NFKC normalize, strip invisible, enforce size.
 </Info>
 
 ### Step 1: Strip HTML Comments
@@ -210,7 +214,7 @@ interface SanitizeResult {
 Tool policies control which tools are available to each agent during skill execution.
 
 <Info>
-  **Source:** `packages/skills/src/policy/tool-policy.ts` -- config-driven filtering with 5 profiles and group expansion.
+  **Source:** `packages/skills/src/skills/policy/tool-policy.ts` -- config-driven filtering with 5 profiles and group expansion.
 </Info>
 
 ### Built-in Profiles
@@ -231,15 +235,20 @@ Tool policies control which tools are available to each agent during skill execu
 2. **Allow list additions** -- add explicitly allowed tools (with group expansion)
 3. **Deny list removals** -- remove denied tools (deny always wins)
 
-### Per-Skill Restrictions
+### Skill Manifest Declarations
 
-In addition to agent-level tool policy, individual skills can declare tool restrictions in their SKILL.md manifest. These restrictions further filter the already-policy-filtered tool set. A skill cannot grant tools that the agent's policy denies.
+Prompt skills can declare `allowedTools` and `permissions` in SKILL.md. Comis
+parses those fields, but they are not currently connected to an enforced
+per-skill runtime filter or OS permission boundary. Treat them as descriptive
+metadata. The agent's `toolPolicy`, capability gates, and each tool's own
+validation are the enforceable controls.
 
 For user-facing guide, see [Tool Policy](/skills/tool-policy).
 
 ## Execution Limits
 
-Runtime constraints prevent runaway or expensive skill executions.
+Runtime constraints bound parts of the agent loop. They are not proof that a
+skill or every process it invokes is isolated.
 
 ### Budget Protection
 
@@ -268,7 +277,7 @@ Built-in tools that ingest external content have per-tool source profiles contro
 Hard ceilings: 5 MB max response bytes, 500K max chars. Operator overrides cannot exceed these values.
 
 <Info>
-  **Source:** `packages/skills/src/builtin/tool-source-profiles.ts` -- per-tool defaults with hard ceiling clamping. Operator overrides via per-agent config.
+  **Source:** `packages/skills/src/tools/builtin/tool-source-profiles.ts` -- per-tool defaults with hard ceiling clamping. Operator overrides via per-agent config.
 </Info>
 
 ## Defense Layer Summary
@@ -277,18 +286,21 @@ Hard ceilings: 5 MB max response bytes, 500K max chars. Operator overrides canno
 |-------|------|------|-------------------|
 | Content Scanning | Skill load time | Inspects skill body for malicious patterns | Blocks skill loading (CRITICAL) or flags for review (WARN) |
 | Sanitization | Skill load time | Strips hidden content and normalizes encoding | Silently removes dangerous content |
-| Tool Policy | Execution time | Filters available tools by profile/allow/deny | Tool call rejected |
+| Agent Tool Policy | Execution time | Filters registered tools by agent profile/allow/deny | Tool call rejected |
 | Budget | Execution time | Tracks cumulative token spend | Execution halted |
 | Circuit Breaker | Execution time | Tracks consecutive LLM failures | Requests rejected until cooldown |
 | Step Limit | Execution time | Counts tool-use iterations | Execution completed with current state |
 | Source Profiles | Tool result time | Caps external content size | Content truncated to limit |
-| Exec Sandbox | Execution time | Wraps exec child process in OS namespace (bwrap/sandbox-exec) | Logs WARN, runs unsandboxed (graceful fallback) |
-| Node Permissions | OS level | Restricts file system and network access | ERR_ACCESS_DENIED thrown |
+| Exec Sandbox | Ordinary `exec` child-process launch | Uses Bubblewrap on supported Linux or best-effort `sandbox-exec` on macOS when active | Missing/disabled provider logs a warning; ordinary `exec` may run under the daemon account without OS isolation |
+| Node Permissions | Supported Node.js launch paths | Optionally restricts configured file system and network access | `ERR_ACCESS_DENIED` on covered operations |
 | Bound `comis-agent` binary | Jail construction | sha256-verifies the in-jail CLI binary; binds it read-only (`--ro-bind`) | Loud WARN; CLI surface left unavailable (script surface intact) |
 
 ### Node.js Permissions
 
-When enabled, child processes spawned during skill execution run with restricted OS-level permissions. This provides a defense layer beneath application-level controls.
+When enabled on supported launch paths, the Node.js permission model restricts
+configured filesystem and network operations. It is disabled by default and is
+not a general sandbox for arbitrary child processes, MCP servers, browsers, or
+non-Node tools.
 
 See [Node Permissions](/reference/node-permissions) for full configuration reference.
 
@@ -303,25 +315,28 @@ The in-jail [`comis-agent` CLI](/reference/comis-agent-cli) is itself a defense 
 
 ## Exec Sandbox (OS-Level)
 
-The `system.exec` tool wraps every shell command in a kernel-enforced
-namespace. The provider is selected automatically at daemon startup based on
+When `agents.{id}.skills.execSandbox.enabled` is `"always"`, the ordinary
+`exec` tool uses the detected provider if one is available. This boundary is
+limited to that exec child process. Provider selection is based on
 `process.platform`:
 
 | Platform | Provider | Module |
 |----------|----------|--------|
-| Linux | `BwrapProvider` (bubblewrap) | `packages/skills/src/builtin/sandbox/bwrap-provider.ts` |
-| macOS (`darwin`) | `SandboxExecProvider` (sandbox-exec) | `packages/skills/src/builtin/sandbox/sandbox-exec-provider.ts` |
+| Linux | `BwrapProvider` (bubblewrap), strongest supported boundary when working | `packages/skills/src/tools/builtin/sandbox/bwrap-provider.ts` |
+| macOS (`darwin`) | `SandboxExecProvider` (`sandbox-exec`), deprecated and best effort | `packages/skills/src/tools/builtin/sandbox/sandbox-exec-provider.ts` |
 | Anything else | _none -- exec tool runs unsandboxed with a WARN log_ | -- |
 
 `detectSandboxProvider()` first probes the candidate binary's availability
 (`bwrap --version` or `sandbox-exec -h`); if the binary is missing it logs
 a structured warning with the install hint
-(`apt install bubblewrap`) and returns `undefined`, leaving the exec tool
-to run unsandboxed unless the operator has set `execSandbox.enabled:
-"never"` to disable it explicitly.
+(`apt install bubblewrap`) and can return `undefined`, leaving ordinary `exec`
+to run without an OS sandbox. On bare-metal Linux where Bubblewrap exists but
+its smoke test fails, Comis keeps the provider so exec calls fail rather than
+silently bypassing that broken provider. Container hosts can explicitly rely
+on the container boundary and run ordinary exec without an inner sandbox.
 
 <Info>
-Source: `detectSandboxProvider()` in `packages/skills/src/builtin/sandbox/detect-provider.ts`
+Source: `detectSandboxProvider()` in `packages/skills/src/tools/builtin/sandbox/detect-provider.ts`
 </Info>
 
 For the full mount table, attack scope, and configuration walkthrough, see
@@ -360,14 +375,14 @@ All sandbox-related configuration fields consolidated:
 
 | Config Path | Type | Default | Description |
 |------------|------|---------|-------------|
-| `agents.{id}.toolPolicy.profile` | `string` | `"coding"` | Tool policy profile name |
-| `agents.{id}.toolPolicy.allow` | `string[]` | `[]` | Additional tools to allow |
-| `agents.{id}.toolPolicy.deny` | `string[]` | `[]` | Tools to deny (overrides allow) |
+| `agents.{id}.skills.toolPolicy.profile` | `string` | `"full"` | Agent tool-policy profile name; narrow it for untrusted input |
+| `agents.{id}.skills.toolPolicy.allow` | `string[]` | `[]` | Additional tools to allow |
+| `agents.{id}.skills.toolPolicy.deny` | `string[]` | `[]` | Tools to deny (overrides allow) |
 | `agents.{id}.budget.maxTokens` | `number` | varies | Maximum tokens per execution |
 | `agents.{id}.budget.maxCostUsd` | `number` | varies | Maximum cost per execution |
 | `agents.{id}.skills.execSandbox.enabled` | `enum` | `"always"` | OS-level sandbox mode: `"always"` or `"never"` |
 | `agents.{id}.skills.execSandbox.readOnlyAllowPaths` | `string[]` | `[]` | Additional read-only paths inside sandbox |
-| `security.permission.enableNodePermissions` | `boolean` | `false` | Enable OS-level sandboxing |
+| `security.permission.enableNodePermissions` | `boolean` | `false` | Enable the optional Node.js permission model on covered paths |
 | `security.permission.allowedFsPaths` | `string[]` | `[]` | Allowed file system paths |
 | `security.permission.allowedNetHosts` | `string[]` | `[]` | Allowed network hosts |
 

@@ -112,6 +112,9 @@ describe("install.sh provisions the browser runtime with explicit Xvfb fallback"
     expect(body, "repository update failures must not be silently discarded").not.toMatch(
       /apt-get update -qq 2>\/dev\/null \|\| true/,
     );
+    expect(body, "Chrome installation must be gated on a checked repository update").toMatch(
+      /if run_quiet_step "Updating Google Chrome repository"\s*\\\s*\$sudo_cmd apt-get update -qq; then/,
+    );
   });
 
   // Xvfb (headed) is a best-effort UPGRADE over headless Chromium — never a hard

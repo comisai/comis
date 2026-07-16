@@ -29,6 +29,8 @@ import type {
   DeliveryQueuePort,
 } from "../ports/delivery-queue.js";
 import type { SendMessageOptions } from "../ports/channel.js";
+import type { ComisLogger } from "../logging/log-fields.js";
+import { sanitizeLogString } from "../security/log-sanitizer.js";
 import { tryGetContext } from "../context/context.js";
 
 import { formatForChannel } from "./format-for-channel.js";
@@ -38,12 +40,15 @@ import type { RetryEngine } from "./retry-engine.js";
 import { isPermanentError } from "./permanent-errors.js";
 import { computeQueueBackoff, resolveChunkLimit } from "./queue-backoff.js";
 
-import type {
-  DeliveryAdapter,
-  DeliverToChannelOptions,
-  DeliveryStrategy,
-  ChunkDeliveryResult,
-  DeliveryResult,
+import {
+  DeliveryQueueTransitionError,
+  type DeliveryQueueTransition,
+  type DeliveryQueueTransitionFailure,
+  type DeliveryAdapter,
+  type DeliverToChannelOptions,
+  type DeliveryStrategy,
+  type ChunkDeliveryResult,
+  type DeliveryResult,
 } from "./types.js";
 import { systemNowMs, systemSetTimeout } from "../runtime/system-time.js";
 
@@ -72,7 +77,7 @@ const PASSTHROUGH_PLATFORMS = new Set(["discord", "gateway", "echo"]);
 /**
  * Dependencies for createDeliveryService.
  *
- * `hookRunner` + `deliveryQueue` are REQUIRED. `eventBus`, `retryEngine`,
+ * `hookRunner` + `deliveryQueue` + `logger` are REQUIRED. `eventBus`, `retryEngine`,
  * `maxCharsOverride`, `replyMode`, and `abortSignal` are optional
  * per-instance / per-call knobs.
  *
@@ -90,7 +95,8 @@ export interface DeliveryServiceDeps {
    * is disabled.
    */
   deliveryQueue: DeliveryQueuePort;
-
+  /** Module-bound structured logger. REQUIRED for queue durability failures. */
+  logger: ComisLogger;
   /** Event bus. OPTIONAL — observability only; emits delivery:* events. */
   eventBus?: TypedEventBus;
 
@@ -105,20 +111,22 @@ export interface DeliveryServiceDeps {
 
   /**
    * OPTIONAL outbound-message →
-   * trajectory binding for the DIRECT ack path. The recurring delivery-queue
+   * trajectory binding for the direct platform-send path. The recurring delivery-queue
    * DRAIN (setup-delivery.ts:drainDeliveryQueue) already binds; but the PRIMARY
    * inbound-reply path (setup-and-route → executeAndDeliver → execution-deliver
    * → this `deliverToChannel`) sends via the direct ack (enqueue in_flight →
    * adapter.sendMessage → ack). Without this callback it would never bind the
    * minted reply id → trajectory, so a reaction on a normal agent reply would
-   * map-miss and never drive learning. Threaded here so the direct ack
+   * map-miss and never drive learning. Threaded here so the direct send
    * binds the SAME (messageId → scope) the drain does. `undefined` when learning-
-   * outcome is disabled for every agent → the direct ack does ZERO extra work
+   * outcome is disabled for every agent → the direct send does ZERO extra work
    * (byte-identity). The same callback instance feeds BOTH the drain and this
    * path, and `ReactionTrajectoryMap.record` is idempotent by messageId, so a
    * reply that traverses both (transient-nack → drain retry) cannot double-bind.
-   * Invoked ONLY on a successful ack with a non-null traceId AND a non-null
-   * agentId (the request ALS) — a null traceId/agentId (a pre-executor / non-
+   * Invoked on a successful platform send even when queue enqueue/ack fails:
+   * the minted message ID remains an accurate reaction target, while the queue
+   * failure is reported separately. Requires a non-null traceId AND agentId (the
+   * request ALS) — a null traceId/agentId (a pre-executor / non-
    * agent send) is a FAIL-CLOSED skip: mis-attributing a reaction to the tenantId
    * would corrupt cross-agent isolation, so we record nothing.
    */
@@ -128,6 +136,33 @@ export interface DeliveryServiceDeps {
   ) => void;
 }
 
+function reportQueueTransitionFailure(
+  deps: Pick<DeliveryServiceDeps, "eventBus" | "logger">,
+  transition: DeliveryQueueTransition, deliveryId: string | null, cause: Error,
+  channelId: string, channelType: string,
+): DeliveryQueueTransitionFailure {
+  const errorKind = "dependency" as const;
+  const timestamp = systemNowMs();
+  deps.logger.warn({
+    step: "delivery-queue-transition",
+    transition,
+    deliveryId,
+    channelId,
+    channelType,
+    err: sanitizeLogString(cause.message),
+    errorKind,
+    hint: "Check delivery queue storage health and restore writable persistence before retrying",
+  }, "Delivery queue transition failed");
+  deps.eventBus?.emit("delivery:queue_transition_failed", {
+    deliveryId,
+    transition,
+    errorKind,
+    channelId,
+    channelType,
+    timestamp,
+  });
+  return { transition, deliveryId, errorKind, cause };
+}
 /**
  * DeliveryService — outbound delivery + shutdown drain.
  *
@@ -341,6 +376,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
 
         // --- 4. SEND: each chunk ---
         const chunkResults: ChunkDeliveryResult[] = [];
+        const queueTransitionFailures: DeliveryQueueTransitionFailure[] = [];
         let aborted = false;
 
         for (let i = 0; i < chunks.length; i++) {
@@ -457,8 +493,15 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               // delivery:enqueued is emitted by the adapter (SqliteDeliveryQueueAdapter
               // emits inside enqueueInFlight after the INSERT succeeds -- single source of
               // truth). No-op here.
+            } else {
+              queueTransitionFailures.push(reportQueueTransitionFailure(
+                deps, "enqueue_in_flight", null, enqueueResult.error,
+                channelId, adapter.channelType,
+              ));
             }
-            // If enqueue fails, log and continue -- queue failure should not block delivery
+            // The platform send still proceeds so the returned transition error
+            // can retain the real send outcome instead of guessing whether the
+            // user received the chunk.
           }
 
           // Send with or without retry
@@ -507,20 +550,26 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
 
             // --- Queue: ack on success ---
             if (entryId) {
-              // ack failure is non-fatal -- log and continue
-              await deps.deliveryQueue.ack(entryId, result.value);
-              deps.eventBus?.emit("delivery:acked", {
-                entryId,
-                channelId,
-                channelType: adapter.channelType,
-                messageId: result.value,
-                durationMs: systemNowMs() - chunkSendStart,
-                timestamp: systemNowMs(),
-              });
+              const ackResult = await deps.deliveryQueue.ack(entryId, result.value);
+              if (ackResult.ok) {
+                deps.eventBus?.emit("delivery:acked", {
+                  entryId,
+                  channelId,
+                  channelType: adapter.channelType,
+                  messageId: result.value,
+                  durationMs: systemNowMs() - chunkSendStart,
+                  timestamp: systemNowMs(),
+                });
+              } else {
+                queueTransitionFailures.push(reportQueueTransitionFailure(
+                  deps, "ack", entryId, ackResult.error,
+                  channelId, adapter.channelType,
+                ));
+              }
             }
 
             // --- Bind the minted reply id → trajectory on the
-            // DIRECT ack path (the primary inbound-reply path sends HERE, not via
+            // DIRECT platform-send path (the primary inbound-reply path sends HERE, not via
             // the drain). Mirrors the drain's binding (setup-delivery.ts:287) so a
             // reaction on this outbound reply resolves its trajectory. Fail-closed:
             // a null traceId OR a null agentId (a pre-executor / non-agent send) is
@@ -529,11 +578,9 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
             // learning-outcome is disabled for all agents → zero extra work
             // (byte-identity). ReactionTrajectoryMap.record is idempotent by
             // messageId, so a reply that ALSO traverses the drain (transient-nack →
-            // retry) cannot double-bind. Diagnosability: the bind shares the
-            // SAME messageId as the delivery:acked event just emitted (so the
-            // attribution is reconstructable from the event trail), and the
-            // downstream observeReactionNonFatal INFO line is the proof it resolved
-            // — no raw daemon.log join needed.
+            // retry) cannot double-bind. Queue transition failure does not erase
+            // the independently true platform message ID; its dedicated event
+            // distinguishes that case from a durable acknowledgement.
             if (deps.recordOutboundMessage !== undefined && traceId !== null && agentId !== null) {
               deps.recordOutboundMessage(result.value, {
                 traceId,
@@ -550,8 +597,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               // attribution is observable — a later reaction map-miss can then be
               // told apart ("bind fired → entry evicted" vs "bind never fired")
               // from the event trail in one obs call, with no daemon.log grep.
-              // Same fail-closed branch as the bind; shares `messageId` with the
-              // `delivery:acked` event just emitted. IDS/closed-scalars ONLY —
+              // Same fail-closed branch as the bind. IDS/closed-scalars ONLY —
               // never a body or a secret (redaction discipline); `agentId` is the REAL
               // agent (never the tenantId). Only on the learning-enabled path
               // (recordOutboundMessage defined) → byte-identity when disabled.
@@ -570,53 +616,49 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
             // --- Queue: nack or fail on error ---
             if (entryId) {
               const errorMsg = result.error.message;
+              const failReason = strategy === "best-effort" || isPermanentError(errorMsg)
+                ? "permanent_error" as const
+                : deps.retryEngine
+                  ? "retries_exhausted" as const
+                  : null;
 
-              if (strategy === "best-effort") {
-                // Best-effort: fail the queue entry (terminal -- no drain re-delivery of stale chunks)
-                await deps.deliveryQueue.fail(entryId, errorMsg);
-                deps.eventBus?.emit("delivery:failed", {
-                  entryId,
-                  channelId,
-                  channelType: adapter.channelType,
-                  error: errorMsg,
-                  reason: "permanent_error",
-                  timestamp: systemNowMs(),
-                });
-              } else if (isPermanentError(errorMsg)) {
-                // Permanent error -- fail immediately, no retries
-                await deps.deliveryQueue.fail(entryId, errorMsg);
-                deps.eventBus?.emit("delivery:failed", {
-                  entryId,
-                  channelId,
-                  channelType: adapter.channelType,
-                  error: errorMsg,
-                  reason: "permanent_error",
-                  timestamp: systemNowMs(),
-                });
-              } else if (deps.retryEngine) {
-                // Retry engine was used and exhausted its retries -- fail
-                await deps.deliveryQueue.fail(entryId, errorMsg);
-                deps.eventBus?.emit("delivery:failed", {
-                  entryId,
-                  channelId,
-                  channelType: adapter.channelType,
-                  error: errorMsg,
-                  reason: "retries_exhausted",
-                  timestamp: systemNowMs(),
-                });
+              if (failReason !== null) {
+                const failResult = await deps.deliveryQueue.fail(entryId, errorMsg);
+                if (failResult.ok) {
+                  deps.eventBus?.emit("delivery:failed", {
+                    entryId,
+                    channelId,
+                    channelType: adapter.channelType,
+                    error: errorMsg,
+                    reason: failReason,
+                    timestamp: systemNowMs(),
+                  });
+                } else {
+                  queueTransitionFailures.push(reportQueueTransitionFailure(
+                    deps, "fail", entryId, failResult.error,
+                    channelId, adapter.channelType,
+                  ));
+                }
               } else {
                 // No retry engine -- nack for queue-level retry
                 const nextRetryAt = systemNowMs() + computeQueueBackoff(0);
-                await deps.deliveryQueue.nack(entryId, errorMsg, nextRetryAt);
-                deps.eventBus?.emit("delivery:nacked", {
-                  entryId,
-                  channelId,
-                  channelType: adapter.channelType,
-                  error: errorMsg,
-                  attemptCount: 1,
-                  nextRetryAt,
-                  timestamp: systemNowMs(),
-                });
+                const nackResult = await deps.deliveryQueue.nack(entryId, errorMsg, nextRetryAt);
+                if (nackResult.ok) {
+                  deps.eventBus?.emit("delivery:nacked", {
+                    entryId,
+                    channelId,
+                    channelType: adapter.channelType,
+                    error: errorMsg,
+                    attemptCount: 1,
+                    nextRetryAt,
+                    timestamp: systemNowMs(),
+                  });
+                } else {
+                  queueTransitionFailures.push(reportQueueTransitionFailure(
+                    deps, "nack", entryId, nackResult.error,
+                    channelId, adapter.channelType,
+                  ));
+                }
               }
             }
 
@@ -718,6 +760,9 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
           );
         }
 
+        if (queueTransitionFailures.length > 0) {
+          return err(new DeliveryQueueTransitionError(queueTransitionFailures, deliveryResult));
+        }
         return ok(deliveryResult);
       } catch (error) {
         // Unexpected error -- wrap in Result

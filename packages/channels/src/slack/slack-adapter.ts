@@ -572,7 +572,14 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         }
 
         deps.logger.debug(
-          { channelType: "slack", messageId: attachmentId, chatId: channelId, preview: (attachment.caption ?? attachment.fileName ?? "").slice(0, 1500) },
+          {
+            channelType: "slack",
+            messageId: attachmentId,
+            chatId: channelId,
+            attachmentType: attachment.type,
+            captionLength: attachment.caption?.length ?? 0,
+            hasFileName: attachment.fileName !== undefined,
+          },
           "Outbound attachment",
         );
         return ok(attachmentId);

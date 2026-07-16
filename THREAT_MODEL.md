@@ -44,6 +44,11 @@ handling, auditing, and process isolation.
 - the approval workflow defaults to **disabled** with unmatched actions in
   `auto` mode.
 - the default agent tool-policy profile is **`full`**.
+- an omitted or empty `agents.<id>.secrets.allow` list means unrestricted
+  access through that agent's scoped secret manager; least privilege requires
+  a non-empty allowlist.
+- prompt-skill `permissions` and `allowedTools` declarations are parsed as
+  metadata but are not an enforced per-skill runtime boundary.
 - exec sandbox configuration defaults to `always`, but ordinary `exec`
   currently falls back to unsandboxed execution if no provider is available.
 - the Node.js permission model is disabled by default.
@@ -58,7 +63,7 @@ provider must be verified on the deployed host.
 | Threat | Primary controls | Residual risk |
 |---|---|---|
 | Prompt injection leading to tool abuse | external-content wrapping, tool policy, capabilities, action classification, optional approvals, tool-specific validation | default tool policy is broad; approvals are opt-in; models can still choose harmful actions within granted authority |
-| Secret leakage in config, logs, memory, or completed output | encrypted store, secret references, scoped secret access, structured redaction, memory-write validation, output guard | host compromise defeats at-rest encryption when the host can read both key and database; streaming deltas can precede final scanning |
+| Secret leakage in config, logs, memory, or completed output | encrypted store, secret references, scoped secret access, structured redaction, memory-write validation, output guard | host compromise defeats at-rest encryption when the host can read both key and database; an empty per-agent secret allowlist is unrestricted; streaming deltas can precede final scanning |
 | Unauthorized gateway access | loopback default, scoped tokens, timing-safe comparison, optional mTLS | network exposure without TLS can disclose bearer tokens; operator configuration controls reachability |
 | SSRF on guarded web-fetch paths | URL validation for private, loopback, link-local, and metadata ranges; broker network modes on applicable jailed paths | not every network-capable integration shares the same fetch path; DNS and upstream behavior remain part of the threat surface |
 | Path traversal through Comis file tools | `safePath`, symlink-aware validation, workspace scoping | unsandboxed shell commands do not inherit file-tool path restrictions |
@@ -105,13 +110,23 @@ The credential broker keeps configured API keys out of selected driven-CLI
 processes and injects them only for matching upstream bindings. It does not
 broker every provider, OAuth/subscription CLI, MCP server, or network request.
 
+Per-agent secret scoping is opt-in least privilege. A non-empty
+`agents.<id>.secrets.allow` list restricts resolution to matching secret names.
+When the field is omitted or resolves to an empty list, the scoped manager is
+unrestricted rather than deny-all.
+
+Prompt-skill manifests can declare `permissions` and `allowedTools`, but those
+fields are not currently wired to a per-skill authorization or process sandbox.
+Use agent tool policy, capability gates, and tool-specific validation as the
+enforceable controls.
+
 ## Approval and action-classification boundary
 
 Unknown actions default to the destructive classification. Classification is
 an input to policy and audit; it is not itself a pause. The human approval gate
-runs only when `approvals.enabled: true`, and its ordered rules/default mode
-require approval or denial for the action. The shipped default is disabled and
-`auto`.
+runs only when `approvals.enabled: true` and the specific execution path calls
+it. The schema accepts ordered rules and a default mode, but they are not a
+universal action-policy evaluator.
 
 ## Output and streaming boundary
 
@@ -139,12 +154,15 @@ Before accepting untrusted input:
 
 1. run on a supported Linux host and verify Bubblewrap in daemon logs;
 2. narrow the default `full` tool policy;
-3. enable and test approval rules if human confirmation is required;
-4. keep the gateway on loopback or add scoped authentication and TLS;
-5. back up and restrict the master key separately from the encrypted database;
-6. review each MCP server as third-party process code;
-7. disable streaming where pre-scan disclosure is unacceptable;
-8. run `comis doctor`, `comis security audit`, and
+3. configure a non-empty secret allowlist for every agent that does not need
+   unrestricted credential access;
+4. enable approvals and test each guarded path if human confirmation is required;
+5. keep the gateway on loopback or add scoped authentication and TLS;
+6. back up and restrict the master key separately from the encrypted database;
+7. review each prompt skill and MCP server as untrusted third-party content or
+   process code, regardless of manifest declarations;
+8. disable streaming where pre-scan disclosure is unacceptable;
+9. run `comis doctor`, `comis security audit`, and
    `comis secrets audit --check` after configuration or host changes.
 
 ## Reporting vulnerabilities

@@ -914,10 +914,11 @@ describe("setupTools", () => {
         toolName: "memory_search",
         durationMs: 43,  // Math.round(42.567)
         success: true,
+        parameterCount: 1,
         userId: "user-1",
         agentId: "agent-1",
       }),
-      expect.stringContaining("Tool audit: memory_search succeeded"),
+      "Tool execution audited",
     );
   });
 

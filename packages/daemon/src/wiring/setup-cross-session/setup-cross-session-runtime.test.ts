@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import os from "node:os";
 import { MIN_SUB_AGENT_STEPS, resolveGraphCacheRetention } from "./index.js";
-import { SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+import { DeliveryQueueTransitionError, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
@@ -452,6 +452,34 @@ describe("setupCrossSession", () => {
     mockDeliverToChannel.mockResolvedValueOnce({ ok: false, error: new Error("delivery failed") });
     const result = await sendToChannel("telegram", "chat-123", "Hello");
     expect(result).toBe(false);
+  });
+
+  it("sendToChannel returns true when the platform sent but queue durability failed", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const deps = createMinimalDeps();
+    setupCrossSession(deps);
+    const sendToChannel = mockCreateCrossSessionSender.mock.calls[0][0].sendToChannel;
+    const platformResult = {
+      ok: true,
+      totalChunks: 1,
+      deliveredChunks: 1,
+      failedChunks: 0,
+      chunks: [{ ok: true, messageId: "platform-msg-1", charCount: 5, retried: false }],
+      totalChars: 5,
+    };
+    mockDeliverToChannel.mockResolvedValueOnce({
+      ok: false,
+      error: new DeliveryQueueTransitionError([{
+        transition: "ack",
+        deliveryId: "entry-1",
+        errorKind: "dependency",
+        cause: new Error("ack write failed"),
+      }], platformResult),
+    });
+
+    const result = await sendToChannel("telegram", "chat-123", "Hello");
+
+    expect(result).toBe(true);
   });
 
   it("sendToChannel returns false when deliverToChannel reports failed chunks", async () => {

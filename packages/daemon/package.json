@@ -4,7 +4,7 @@
   "version": "1.0.53",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
-  "description": "Background daemon and orchestrator for the Comis platform",
+  "description": "Background daemon and orchestrator for the Comis governed agent runtime",
   "keywords": ["comis", "ai", "agent", "daemon", "orchestrator"],
   "engines": { "node": ">=22.19.0" },
   "files": [

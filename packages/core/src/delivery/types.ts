@@ -10,7 +10,7 @@
  */
 
 import type { SendMessageOptions } from "../ports/channel.js";
-import type { Result } from "@comis/shared";
+import { ok, type Result } from "@comis/shared";
 
 // -------------------------------------------------------------------------
 // Delivery strategy + adapter
@@ -103,4 +103,71 @@ export interface DeliveryResult {
   chunks: ChunkDeliveryResult[];
   /** Total character count across all chunks. */
   totalChars: number;
+}
+
+/** Durable queue state transitions performed around a platform send. */
+export type DeliveryQueueTransition = "enqueue_in_flight" | "ack" | "nack" | "fail";
+
+/**
+ * One failed delivery-queue state transition.
+ *
+ * `deliveryId` is null only when the initial enqueue failed before the queue
+ * could assign an entry ID. Queue failures are dependency-boundary failures;
+ * the fixed classification keeps both logs and events closed and filterable.
+ */
+export interface DeliveryQueueTransitionFailure {
+  readonly transition: DeliveryQueueTransition;
+  readonly deliveryId: string | null;
+  readonly errorKind: "dependency";
+  readonly cause: Error;
+}
+
+/**
+ * The platform send completed, but one or more durability transitions failed.
+ *
+ * The actual platform result is retained so callers can distinguish "sent but
+ * not durably acknowledged" from "not sent and not durably rescheduled". The
+ * outer Result exposes the durability ambiguity. Platform-truth consumers may
+ * use the retained result, but the queue remains at-least-once: an unacknowledged
+ * in-flight row can still be retried after restart.
+ */
+export class DeliveryQueueTransitionError extends Error {
+  readonly kind = "queue_transition_failed" as const;
+  readonly failures: readonly DeliveryQueueTransitionFailure[];
+  readonly platformResult: DeliveryResult;
+
+  constructor(
+    failures: readonly DeliveryQueueTransitionFailure[],
+    platformResult: DeliveryResult,
+  ) {
+    const transitions = [...new Set(failures.map((failure) => failure.transition))].join(",");
+    super(`Delivery queue transition failed: ${transitions}`);
+    this.name = "DeliveryQueueTransitionError";
+    const failureClones = failures.map((failure) => Object.freeze({ ...failure }));
+    Object.freeze(failureClones);
+    this.failures = failureClones;
+    const chunks = platformResult.chunks.map((chunk) => Object.freeze({ ...chunk }));
+    Object.freeze(chunks);
+    this.platformResult = Object.freeze({
+      ...platformResult,
+      chunks,
+    });
+  }
+}
+
+/**
+ * Resolve the platform-send truth from a DeliveryService Result.
+ *
+ * Queue transition errors retain a complete platform result. Consumers that
+ * decide whether the user received a message or whether an outward-send ledger
+ * should commit must use that embedded truth; the service has already emitted
+ * the separate durability warning and health event.
+ */
+export function resolvePlatformDeliveryResult(
+  result: Result<DeliveryResult, Error>,
+): Result<DeliveryResult, Error> {
+  if (!result.ok && result.error instanceof DeliveryQueueTransitionError) {
+    return ok(result.error.platformResult);
+  }
+  return result;
 }

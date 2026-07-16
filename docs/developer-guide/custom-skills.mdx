@@ -4,7 +4,7 @@ description: "Advanced skill development with SkillPort, manifests, content scan
 icon: "wand-magic-sparkles"
 ---
 
-Custom skills extend what Comis agents can do. Beyond the built-in tools, you can create prompt-based skills with SKILL.md manifests, connect external MCP servers, or register plugin-provided tools. This page covers the developer internals -- the `SkillPort` interface, skill loading, content scanning, and the MCP integration layer.
+Custom skills extend what Comis agents can do. Beyond the built-in tools, you can create prompt-based skills with SKILL.md manifests or connect external MCP servers. This page covers the developer internals -- the `SkillPort` interface, skill loading, content scanning, and the MCP integration layer.
 
 ## SkillPort Interface
 
@@ -186,32 +186,17 @@ The integration layer translates between the MCP protocol and the internal `Skil
 For MCP server configuration and setup, see [MCP Integration](/skills/mcp). This page covers only the integration architecture.
 </Info>
 
-## Plugin-Provided Tools
+## Adding Code-Backed Tools
 
-Plugins can register tools via `registry.registerTool()` (documented in the [Plugins](/developer-guide/plugins) page). These tools become available alongside built-in tools and skill-provided tools.
+The plugin registry cannot register agent tools. Its public API exposes
+`registerHook` only, and Comis does not currently provide a stable third-party
+code-plugin loader.
 
-```typescript
-import type { PluginRegistryApi } from "@comis/core";
-
-registry.registerTool({
-  name: "sentiment_analyze",
-  description: "Analyze the sentiment of text",
-  parameters: {
-    type: "object",
-    properties: {
-      text: { type: "string", description: "Text to analyze" },
-    },
-    required: ["text"],
-  },
-  execute: async (params) => {
-    const text = params.text as string;
-    // Perform sentiment analysis
-    return { sentiment: "positive", confidence: 0.92 };
-  },
-});
-```
-
-Plugin tools, MCP tools, and prompt skills all go through the same `SkillPort` interface. The agent sees them identically and selects tools based on the task description matching the tool's description.
+Adding a built-in, code-backed tool requires implementing it in the skills
+package and wiring it into the runtime tool assembly. This is an application
+source change, not a plugin registration. For integrations that should remain
+outside the Comis process, use an MCP server. For instruction-only extensions,
+use a prompt skill.
 
 ## Skill Loading and Caching
 
@@ -243,8 +228,8 @@ The available skills listing is injected into the system prompt as an XML block,
   <Card title="MCP Integration" icon="server" href="/skills/mcp">
     Connecting MCP servers
   </Card>
-  <Card title="Plugins" icon="puzzle-piece" href="/developer-guide/plugins">
-    registerTool for plugin-provided tools
+  <Card title="Built-in Tools" icon="toolbox" href="/skills/built-in-tools">
+    Code-backed tools included with Comis
   </Card>
   <Card title="Tool Policy" icon="shield" href="/skills/tool-policy">
     Controlling which tools agents can use

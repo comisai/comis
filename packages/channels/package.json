@@ -4,7 +4,7 @@
   "version": "1.0.53",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
-  "description": "Messaging adapters for Comis AI agent teams, including Microsoft Teams, Email, Discord, Telegram, Slack, and more.",
+  "description": "Messaging adapters for the Comis governed agent runtime, including Microsoft Teams, Email, Discord, Telegram, Slack, and more.",
   "keywords": ["comis", "ai-agents", "messaging", "discord", "telegram", "slack", "whatsapp", "signal", "imessage", "line", "irc", "email", "microsoft-teams"],
   "engines": { "node": ">=22.19.0" },
   "files": ["dist"],

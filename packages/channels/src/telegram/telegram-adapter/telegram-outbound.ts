@@ -1,23 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: Telegram SDK boundary throws; consumed by adapter try/catch + inbound-pipeline catch.
-/**
- * Telegram outbound dispatch.
- *
- * State-first wrappers around every outbound operation that the adapter
- * handle exposes:
- *   - sendMessage / editMessage / reactToMessage / removeReaction
- *     / deleteMessage / sendAttachment
- *   - platformAction (the big switch covering pin/unpin/poll/sticker/
- *     chat_info/member_count/get_admins/sendTyping/set_title/
- *     set_description/ban/unban/promote/createForumTopic/
- *     editForumTopic/closeForumTopic/reopenForumTopic).
- *
- * State-first protocol: every helper takes `state: TelegramAdapterState`
- * as its FIRST positional parameter, `deps: TelegramAdapterDeps` as
- * SECOND, then per-call args.
- *
- * @module
- */
+/** Telegram outbound operations using state-first adapter helpers. */
 
 import { InputFile } from "grammy";
 import { ok, err } from "@comis/shared";
@@ -297,8 +280,9 @@ export async function sendAttachment(
         {
           channelType: "telegram",
           chatId,
-          fileName: attachment.fileName,
           attachmentType: attachment.type,
+          captionLength: attachment.caption?.length ?? 0,
+          hasFileName: attachment.fileName !== undefined,
           hint: "Telegram media send returned no message_id — the send was not accepted (a non-standard/empty response or a dropped upload); verify the chat exists and that the Bot API method supports this media type",
           errorKind: "platform" as const,
         },
@@ -313,12 +297,26 @@ export async function sendAttachment(
 
     if (isLocalPath) {
       deps.logger.info(
-        { channelType: "telegram", messageId: String(sentMessageId), chatId, fileName: attachment.fileName },
+        {
+          channelType: "telegram",
+          messageId: String(sentMessageId),
+          chatId,
+          attachmentType: attachment.type,
+          captionLength: attachment.caption?.length ?? 0,
+          hasFileName: attachment.fileName !== undefined,
+        },
         "Local file attachment sent",
       );
     }
     deps.logger.debug(
-      { channelType: "telegram", messageId: String(sent.message_id), chatId, preview: (attachment.caption ?? attachment.fileName ?? "").slice(0, 1500) },
+      {
+        channelType: "telegram",
+        messageId: String(sentMessageId),
+        chatId,
+        attachmentType: attachment.type,
+        captionLength: attachment.caption?.length ?? 0,
+        hasFileName: attachment.fileName !== undefined,
+      },
       "Outbound attachment",
     );
     return ok(String(sent.message_id));

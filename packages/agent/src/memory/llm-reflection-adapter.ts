@@ -31,6 +31,7 @@ import { ok, err, fromPromise, type Result } from "@comis/shared";
 import { systemSetTimeout, systemClearTimeout, wrapExternalContent } from "@comis/core";
 import type { DocSection, ExternalContentSource } from "@comis/core";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
+import { estimateMessageTokens } from "../safety/token-estimator.js";
 import { resolveJudgeModel, temperatureOption, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { REFLECT_PROMPT, parseReflectionResult, type ReflectionResult } from "./reflection-prompt.js";
 
@@ -44,8 +45,20 @@ const LLM_TIMEOUT_MS = 120_000;
 /** Output-token cap for one reflection call (a doc body / delta is bounded prose). */
 const REFLECT_MAX_TOKENS = 2_000;
 
+/** The completeSimple adapter reserves this much context before output clamping. */
+const COMPLETE_SIMPLE_CONTEXT_SAFETY_TOKENS = 4_096;
+
+/** Additional model-context headroom reserved for reflection input estimation. */
+const REFLECTION_CONTEXT_SAFETY_PERCENT = 5;
+
 /** Low LLM temperature — the doc should be a faithful generalization, not creative. */
 const REFLECT_TEMPERATURE = 0.3;
+
+/** Smallest useful head and tail retained when an oversized trajectory is bounded. */
+const MIN_TRAJECTORY_EDGE_CHARS = 64;
+
+/** Explicit marker between the retained trajectory head and tail. */
+const TRAJECTORY_OMISSION_MARKER = "[trajectory content omitted to fit the model context]";
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -151,6 +164,24 @@ function renderCurrentDoc(sections: DocSection[]): string {
   return `CURRENT DOC sections:\n${JSON.stringify({ sections }, null, 2)}`;
 }
 
+/** Estimate natural-language prompt tokens through the agent's canonical, script-aware estimator. */
+function estimateTextTokens(content: string): number {
+  return estimateMessageTokens({ role: "user", content, timestamp: 0 });
+}
+
+/** Retain deterministic, equally-sized evidence from both ends of an oversized trajectory. */
+function retainTrajectoryEdges(trajectoryText: string, retainedChars: number): string {
+  if (retainedChars >= trajectoryText.length) return trajectoryText;
+
+  const headChars = Math.ceil(retainedChars / 2);
+  const tailChars = Math.floor(retainedChars / 2);
+  return [
+    trajectoryText.slice(0, headChars),
+    TRAJECTORY_OMISSION_MARKER,
+    tailChars > 0 ? trajectoryText.slice(-tailChars) : "",
+  ].join("\n\n");
+}
+
 // ---------------------------------------------------------------------------
 // Adapter
 // ---------------------------------------------------------------------------
@@ -173,14 +204,6 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
   async function reflect(input: ReflectInput): Promise<Result<ReflectionResult, Error>> {
     const { trajectoryText, currentSections } = input;
 
-    // SECURITY: wrap the UNTRUSTED trajectory BEFORE the LLM — the
-    // injection-defense keystone. The delimited + labeled block is the
-    // boundary an embedded injection cannot cross. The doc's CURRENT sections are
-    // a TRUSTED preamble OUTSIDE the wrapped block. The per-kind source label only
-    // varies the boundary's LABEL, never the boundary itself.
-    const wrapped = wrapExternalContent(trajectoryText, { source });
-    const userContent = `${renderCurrentDoc(currentSections)}\n\nSUCCESSFUL trajectories to distil:\n${wrapped}`;
-
     let model;
     try {
       // Catalog-first, else construct from customModel (keyless/local).
@@ -194,6 +217,93 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
     }
     if (!model) {
       return err(new Error(`Reflection model not found: ${provider}/${modelId}`));
+    }
+
+    const reflectionOutputTokens = Math.min(REFLECT_MAX_TOKENS, model.maxTokens);
+    const safetyMarginTokens = Math.max(
+      Math.ceil((model.contextWindow * REFLECTION_CONTEXT_SAFETY_PERCENT) / 100),
+      COMPLETE_SIMPLE_CONTEXT_SAFETY_TOKENS,
+    );
+    const inputBudgetTokens = Math.max(
+      0,
+      model.contextWindow - reflectionOutputTokens - safetyMarginTokens,
+    );
+    const systemPromptTokens = estimateTextTokens(systemPrompt);
+    const trustedPreamble = `${renderCurrentDoc(currentSections)}\n\nSUCCESSFUL trajectories to distil:\n`;
+
+    // SECURITY: truncate only the UNTRUSTED trajectory, then wrap the retained
+    // text. The trusted current document is always passed byte-for-byte, outside
+    // the delimited block. Each candidate gets a complete boundary, so fitting
+    // can never cut off the end marker or expose attacker-controlled text.
+    const buildUserContent = (retainedChars: number): string => {
+      const boundedTrajectory = retainTrajectoryEdges(trajectoryText, retainedChars);
+      return `${trustedPreamble}${wrapExternalContent(boundedTrajectory, { source })}`;
+    };
+    const fitsInputBudget = (content: string): boolean =>
+      systemPromptTokens + estimateTextTokens(content) <= inputBudgetTokens;
+
+    let retainedTrajectoryChars = trajectoryText.length;
+    let userContent = buildUserContent(retainedTrajectoryChars);
+
+    if (!fitsInputBudget(userContent)) {
+      const minimumRetainedChars = Math.min(
+        trajectoryText.length,
+        MIN_TRAJECTORY_EDGE_CHARS * 2,
+      );
+      const minimumUserContent = buildUserContent(minimumRetainedChars);
+      const minimumInputTokens = systemPromptTokens + estimateTextTokens(minimumUserContent);
+
+      if (minimumInputTokens > inputBudgetTokens) {
+        logger.warn(
+          {
+            submodule: "llm-reflection-adapter",
+            step: "fit-context" as const,
+            errorKind: "precondition" as const,
+            model: `${provider}/${modelId}`,
+            contextWindowTokens: model.contextWindow,
+            inputBudgetTokens,
+            requiredInputTokens: minimumInputTokens,
+            hint: "use a reflection model with a larger context window or compact the current learned document before retrying",
+          },
+          "reflection prompt exceeds model context",
+        );
+        return err(
+          new Error(
+            `Reflection prompt requires at least ${minimumInputTokens} input tokens but ${provider}/${modelId} allows ${inputBudgetTokens}`,
+          ),
+        );
+      }
+
+      // Find the largest deterministic head/tail retention that the resolved
+      // model can accept. Every stored candidate has already passed the same
+      // script-aware estimator used by the agent's context pipeline.
+      retainedTrajectoryChars = minimumRetainedChars;
+      userContent = minimumUserContent;
+      let lower = minimumRetainedChars + 1;
+      let upper = trajectoryText.length - 1;
+      while (lower <= upper) {
+        const candidateRetainedChars = Math.floor((lower + upper) / 2);
+        const candidateUserContent = buildUserContent(candidateRetainedChars);
+        if (fitsInputBudget(candidateUserContent)) {
+          retainedTrajectoryChars = candidateRetainedChars;
+          userContent = candidateUserContent;
+          lower = candidateRetainedChars + 1;
+        } else {
+          upper = candidateRetainedChars - 1;
+        }
+      }
+
+      logger.debug(
+        {
+          submodule: "llm-reflection-adapter",
+          step: "fit-context" as const,
+          model: `${provider}/${modelId}`,
+          trajectoryChars: trajectoryText.length,
+          retainedTrajectoryChars,
+          inputBudgetTokens,
+        },
+        "reflection trajectory bounded to model context",
+      );
     }
 
     const controller = new AbortController();
@@ -210,7 +320,7 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
         {
           apiKey,
           ...temperatureOption(model, REFLECT_TEMPERATURE),
-          maxTokens: REFLECT_MAX_TOKENS,
+          maxTokens: reflectionOutputTokens,
           signal: controller.signal,
         },
       ),

@@ -1,8 +1,8 @@
 # Comis
 
-An open-source, security-first platform for AI agent teams.
+Open-source agent runtime for governed execution.
 
-This image runs the Comis daemon, gateway, agents, scheduler, memory, and messaging adapters—including Microsoft Teams, Email, Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, and IRC—in one container.
+This image runs the Comis daemon, gateway, agents, scheduler, memory, and messaging adapters, including Microsoft Teams, Email, Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, and IRC, in one container.
 
 > **Development status:** Comis is under active development and does not support backward compatibility. Evaluate the exact provider, channel, tool, storage, and isolation configuration you need before using it for critical workloads.
 

@@ -162,6 +162,7 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "delivery:acked",
   "delivery:dropped",
   "delivery:failed",
+  "delivery:queue_transition_failed",
   "delivery:retry",
 
   // -------------------------------------------------------------------

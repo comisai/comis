@@ -482,6 +482,27 @@ main > section {
   color: var(--text-secondary);
 }
 
+.install-copy {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.install-options {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.install-option {
+  display: grid;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  gap: var(--space-2);
+}
+
+.install-option p {
+  color: var(--text-secondary);
+}
+
 .install-section {
   scroll-margin-top: calc(var(--header-height) + var(--space-6));
 }
@@ -659,8 +680,8 @@ main > section {
     padding-block: var(--space-16);
   }
 
-  .editorial-grid-three {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .advantage-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .editorial-grid-two {
@@ -682,6 +703,10 @@ main > section {
 }
 
 @media (min-width: 1024px) {
+  .advantage-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .hero-grid {
     grid-template-columns: minmax(0, 11fr) minmax(0, 9fr);
     align-items: center;

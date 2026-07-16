@@ -41,7 +41,7 @@ Named tool-filtering profiles combine per-agent allow/deny lists with progressiv
 
 ## Part of Comis
 
-This package is part of [Comis](https://github.com/comisai/comis), an open-source, security-first platform for AI agent teams.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source agent runtime for governed execution.
 
 ```bash
 npm install comisai
