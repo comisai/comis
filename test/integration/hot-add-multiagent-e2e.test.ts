@@ -60,6 +60,7 @@ async function readSseEvents(
   response: Response,
   maxEvents: number,
   timeoutMs: number,
+  stopOnEvent?: string,
 ): Promise<SseEvent[]> {
   const events: SseEvent[] = [];
 
@@ -110,6 +111,13 @@ async function readSseEvents(
         }
 
         events.push(event);
+
+        // A single busy burst (e.g. agent wiring emitting dozens of
+        // secret:accessed audit events) can exceed maxEvents before the
+        // awaited event arrives — return as soon as the target is seen.
+        if (stopOnEvent && event.event === stopOnEvent) {
+          return events;
+        }
 
         if (events.length >= maxEvents) {
           break;
@@ -292,10 +300,11 @@ describe("Hot-Add Multi-Agent E2E Integration", () => {
           }
         }, 1500);
 
-        // Read SSE events. Use a higher cap and a longer window than the
-        // hot_removed test because agents.create + hotAdd (executor wiring,
-        // skill registry, scheduler) takes longer than agents.delete.
-        const events = await readSseEvents(response, 50, 15_000);
+        // Read SSE events until the hot_added event arrives (bounded by the
+        // event cap and window). agents.create + hotAdd emits a large burst
+        // (per-secret audit events during executor wiring) BEFORE hot_added,
+        // so the cap must comfortably exceed that burst.
+        const events = await readSseEvents(response, 500, 15_000, "agent:hot_added");
 
         // Assert at least one event has event === "agent:hot_added"
         const hotAddedEvents = events.filter((e) => e.event === "agent:hot_added");
@@ -364,8 +373,8 @@ describe("Hot-Add Multi-Agent E2E Integration", () => {
           }
         }, 500);
 
-        // Read SSE events
-        const events = await readSseEvents(response, 10, 10_000);
+        // Read SSE events until the hot_removed event arrives (bounded).
+        const events = await readSseEvents(response, 500, 10_000, "agent:hot_removed");
 
         // Assert at least one event has event === "agent:hot_removed"
         const hotRemovedEvents = events.filter((e) => e.event === "agent:hot_removed");
