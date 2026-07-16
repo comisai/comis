@@ -36,6 +36,11 @@ agents:
         maxConcurrentRuns: 5
         defaultTimezone: "UTC"
 
+# The suite serves its fixture pages from a local HTTP server; loopback
+# navigation is SSRF-blocked by default and needs this explicit opt-in.
+browser:
+  allowLoopbackNavigation: true
+
 gateway:
   enabled: true
   host: "127.0.0.1"

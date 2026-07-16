@@ -25,6 +25,7 @@ describe("resolveBrowserConfig", () => {
     });
     expect(config.headless).toBe(true);
     expect(config.noSandbox).toBe(false);
+    expect(config.allowLoopbackNavigation).toBe(false);
     expect(config.screenshotMaxSide).toBe(DEFAULT_SCREENSHOT_MAX_SIDE);
     expect(config.screenshotQuality).toBe(DEFAULT_SCREENSHOT_QUALITY);
     expect(config.snapshotMaxChars).toBe(DEFAULT_AI_SNAPSHOT_MAX_CHARS);
@@ -117,5 +118,10 @@ describe("resolveBrowserConfig", () => {
   it("overrides noSandbox", () => {
     const config = resolveBrowserConfig({ noSandbox: true });
     expect(config.noSandbox).toBe(true);
+  });
+
+  it("overrides allowLoopbackNavigation", () => {
+    const config = resolveBrowserConfig({ allowLoopbackNavigation: true });
+    expect(config.allowLoopbackNavigation).toBe(true);
   });
 });

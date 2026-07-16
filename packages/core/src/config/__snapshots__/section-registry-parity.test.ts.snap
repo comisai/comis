@@ -8862,6 +8862,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "allowLoopbackNavigation": false,
       "baseCdpPort": 18800,
       "cdpPort": 9222,
       "defaultProfile": "default",
@@ -8882,6 +8883,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "browser",
     "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "browser.allowLoopbackNavigation",
+    "type": "boolean"
   },
   {
     "default": 18800,
@@ -20680,6 +20687,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("bro
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "allowLoopbackNavigation": {
+      "default": false,
+      "type": "boolean"
+    },
     "baseCdpPort": {
       "default": 18800,
       "maximum": 65535,
@@ -20787,6 +20798,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("bro
     "viewport",
     "headless",
     "noSandbox",
+    "allowLoopbackNavigation",
     "screenshotMaxSide",
     "screenshotQuality",
     "snapshotMaxChars",
@@ -32255,6 +32267,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "browser": {
       "additionalProperties": false,
       "default": {
+        "allowLoopbackNavigation": false,
         "baseCdpPort": 18800,
         "cdpPort": 9222,
         "defaultProfile": "default",
@@ -32273,6 +32286,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         }
       },
       "properties": {
+        "allowLoopbackNavigation": {
+          "default": false,
+          "type": "boolean"
+        },
         "baseCdpPort": {
           "default": 18800,
           "maximum": 65535,
@@ -32380,6 +32397,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "viewport",
         "headless",
         "noSandbox",
+        "allowLoopbackNavigation",
         "screenshotMaxSide",
         "screenshotQuality",
         "snapshotMaxChars",

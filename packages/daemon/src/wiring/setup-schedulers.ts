@@ -853,8 +853,13 @@ export async function setupSchedulers(deps: {
     const agentSkillsConfig: SkillsConfig = agentConfig?.skills ?? SkillsConfigSchema.parse({});
     if (!agentSkillsConfig.builtinTools.browser) continue;
 
-    // Assign unique CDP port per agent to avoid port conflicts
-    const service = createBrowserService({ cdpPort: 9222 + browserPortOffset }, subprocessEnv);
+    // Operator browser config drives every service; the per-agent CDP port
+    // offset is applied on top of the configured base to avoid port conflicts.
+    const browserConfig = container.config.browser;
+    const service = createBrowserService(
+      { ...browserConfig, cdpPort: (browserConfig?.cdpPort ?? 9222) + browserPortOffset },
+      subprocessEnv,
+    );
     browserPortOffset++;
     browserServices.set(agentId, service);
     skillsLogger.info({ agentId }, "BrowserService created (idle until browser.start)");

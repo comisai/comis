@@ -2090,6 +2090,7 @@ Browser automation via Chrome DevTools Protocol (CDP).
 | `defaultProfile` | `string` | `"default"` | Named browser profile directory |
 | `headless` | `boolean` | `true` | Run in headless mode |
 | `noSandbox` | `boolean` | `false` | Disable Chrome sandbox (security-sensitive) |
+| `allowLoopbackNavigation` | `boolean` | `false` | Allow navigation to loopback addresses (127.0.0.0/8, ::1) — e.g. a local dev server. Off by default: loopback is an SSRF target. Private ranges and cloud-metadata IPs stay blocked regardless |
 | `screenshotMaxSide` | `number` | `2000` | Max screenshot dimension in pixels |
 | `screenshotQuality` | `number` | `80` | JPEG quality (1-100) |
 | `snapshotMaxChars` | `number` | `120000` | Max chars for DOM snapshot |

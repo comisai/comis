@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockValidateUrl = vi.hoisted(() => vi.fn());
+const mockValidateLocalServerUrl = vi.hoisted(() => vi.fn());
 const mockCreateNewPage = vi.hoisted(() => vi.fn());
 const mockLaunchChrome = vi.hoisted(() => vi.fn());
 const mockStopChrome = vi.hoisted(() => vi.fn());
@@ -21,6 +22,7 @@ vi.mock("@comis/core", async (importOriginal) => {
   return {
     ...actual,
     validateUrl: mockValidateUrl,
+    validateLocalServerUrl: mockValidateLocalServerUrl,
   };
 });
 
@@ -229,6 +231,60 @@ describe("BrowserService.navigate", () => {
     await expect(
       service.navigate({ url: "http://localhost/admin" }),
     ).rejects.toThrow(/SSRF blocked/);
+
+    expect(mockGoto).not.toHaveBeenCalled();
+  });
+
+  it("rejects a loopback destination by default without consulting the local-server guard", async () => {
+    mockValidateUrl.mockResolvedValueOnce({
+      ok: false,
+      error: new Error("Blocked: resolved IP 127.0.0.1 is in loopback range"),
+    });
+    const service = createBrowserService();
+
+    await expect(
+      service.navigate({ url: "http://127.0.0.1:8080/hello" }),
+    ).rejects.toThrow(/SSRF blocked/);
+
+    expect(mockValidateLocalServerUrl).not.toHaveBeenCalled();
+    expect(mockGoto).not.toHaveBeenCalled();
+  });
+
+  it("allows a loopback destination when allowLoopbackNavigation is enabled", async () => {
+    mockValidateUrl.mockResolvedValueOnce({
+      ok: false,
+      error: new Error("Blocked: resolved IP 127.0.0.1 is in loopback range"),
+    });
+    mockValidateLocalServerUrl.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        hostname: "127.0.0.1",
+        ip: "127.0.0.1",
+        url: new URL("http://127.0.0.1:8080/hello"),
+      },
+    });
+    const service = createBrowserService({ allowLoopbackNavigation: true });
+
+    await service.navigate({ url: "http://127.0.0.1:8080/hello" });
+
+    expect(mockValidateLocalServerUrl).toHaveBeenCalledWith("http://127.0.0.1:8080/hello");
+    expect(mockGoto).toHaveBeenCalledOnce();
+  });
+
+  it("keeps non-loopback private destinations blocked even with allowLoopbackNavigation enabled", async () => {
+    mockValidateUrl.mockResolvedValueOnce({
+      ok: false,
+      error: new Error("Blocked: resolved IP 10.0.0.5 is in private range"),
+    });
+    mockValidateLocalServerUrl.mockResolvedValueOnce({
+      ok: false,
+      error: new Error("Blocked: resolved IP 10.0.0.5 is not loopback"),
+    });
+    const service = createBrowserService({ allowLoopbackNavigation: true });
+
+    await expect(
+      service.navigate({ url: "http://10.0.0.5/router" }),
+    ).rejects.toThrow(/SSRF blocked: Blocked: resolved IP 10.0.0.5 is in private range/);
 
     expect(mockGoto).not.toHaveBeenCalled();
   });

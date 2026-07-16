@@ -34,6 +34,12 @@ export const BrowserConfigSchema = z.strictObject({
     headless: z.boolean().default(true),
     /** Disable Chrome sandbox (security-sensitive, default: false) */
     noSandbox: z.boolean().default(false),
+    /** Allow browser navigation to loopback addresses (127.0.0.0/8, ::1).
+     * Off by default: loopback is an SSRF target (local admin panels, the
+     * daemon's own gateway). Enable only to let the agent browse a local dev
+     * server. Non-loopback private ranges and cloud-metadata IPs stay blocked
+     * regardless of this setting. */
+    allowLoopbackNavigation: z.boolean().default(false),
     /** Maximum screenshot dimension in pixels (default: 2000) */
     screenshotMaxSide: z.number().int().positive().default(2000),
     /** Screenshot JPEG quality 1-100 (default: 80) */

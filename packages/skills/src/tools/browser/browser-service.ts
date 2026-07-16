@@ -21,7 +21,7 @@ import type {
   Route,
   WebSocketRoute,
 } from "playwright-core";
-import { validateUrl } from "@comis/core";
+import { validateUrl, validateLocalServerUrl } from "@comis/core";
 import { resolveBrowserConfig } from "./config.js";
 import {
   launchChrome,
@@ -247,6 +247,21 @@ export function createBrowserService(
     return `http://127.0.0.1:${config.cdpPort}`;
   }
 
+  /**
+   * SSRF verdict for every guarded browser URL (navigation, subresource
+   * routing, CDP fetch, WebSocket). Operator opt-in
+   * (`browser.allowLoopbackNavigation`) permits LOOPBACK targets only —
+   * validateLocalServerUrl allows loopback and still denies private ranges and
+   * cloud-metadata IPs, so the relaxation cannot widen into arbitrary
+   * internal-network egress.
+   */
+  async function checkGuardedUrl(href: string): Promise<Awaited<ReturnType<typeof validateUrl>>> {
+    const validation = await validateUrl(href);
+    if (validation.ok || !config.allowLoopbackNavigation) return validation;
+    const loopback = await validateLocalServerUrl(href);
+    return loopback.ok ? loopback : validation;
+  }
+
   async function validateNavigationTarget(rawUrl: string): Promise<string> {
     let parsed: URL;
     try {
@@ -266,7 +281,7 @@ export function createBrowserService(
       return parsed.href;
     }
 
-    const validation = await validateUrl(parsed.href);
+    const validation = await checkGuardedUrl(parsed.href);
     if (!validation.ok) {
       throw new Error(`SSRF blocked: ${validation.error.message}`);
     }
@@ -308,7 +323,7 @@ export function createBrowserService(
       return;
     }
 
-    const validation = await validateUrl(parsed.href);
+    const validation = await checkGuardedUrl(parsed.href);
     if (!validation.ok) {
       await route.abort("blockedbyclient");
       return;
@@ -348,7 +363,7 @@ export function createBrowserService(
 
     let validation: Awaited<ReturnType<typeof validateUrl>>;
     try {
-      validation = await validateUrl(parsed.href);
+      validation = await checkGuardedUrl(parsed.href);
     } catch {
       await failCdpRequest(session, event.requestId);
       return;
@@ -415,7 +430,7 @@ export function createBrowserService(
     }
 
     parsed.protocol = parsed.protocol === "wss:" ? "https:" : "http:";
-    const validation = await validateUrl(parsed.href);
+    const validation = await checkGuardedUrl(parsed.href);
     if (!validation.ok) {
       await socket.close({ code: 1008, reason: "Blocked by browser network policy" });
       return;
