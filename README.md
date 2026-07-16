@@ -74,25 +74,6 @@ Important learning boundaries:
 
 See the [memory and learning stress catalog](test/live/self-driving/targets/MEMORY-LEARNING-STRESS-CATALOG.md) for the adversarial workloads and inspection surfaces used to test these mechanisms.
 
-## What Current Evidence Shows
-
-The internal live catalog covers 14 learning lanes. Evidence should be read by property, not as one broad success claim.
-
-| Property | Current evidence |
-| --- | --- |
-| Candidate skill admission | Reproduced across the full catalog |
-| Fresh-session reuse | Reproduced in selected package-delivery and threat-hunting scenarios |
-| Rotated-input transfer | Reproduced in selected scenarios |
-| Candidate to active promotion | Reproduced in the package-delivery scenario |
-| Learned document direct execution | No direct execution path in the tested design |
-| General cold-versus-learned task lift | Not yet measured |
-| Profile and topic document behavior | Not established by the all-lanes result |
-| Independent reproduction | Not yet |
-
-Long delay, retention, and dormancy cases may use simulated, compressed, or seeded time. A capable model may already solve a selected workload cold, so successful reuse is not the same as measured performance improvement.
-
-These are internal mechanism results, not customer results or a certification.
-
 ## Quick Start
 
 ### Managed install
