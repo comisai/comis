@@ -1,23 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: Telegram SDK boundary throws; consumed by adapter try/catch + inbound-pipeline catch.
-/**
- * Telegram outbound dispatch.
- *
- * State-first wrappers around every outbound operation that the adapter
- * handle exposes:
- *   - sendMessage / editMessage / reactToMessage / removeReaction
- *     / deleteMessage / sendAttachment
- *   - platformAction (the big switch covering pin/unpin/poll/sticker/
- *     chat_info/member_count/get_admins/sendTyping/set_title/
- *     set_description/ban/unban/promote/createForumTopic/
- *     editForumTopic/closeForumTopic/reopenForumTopic).
- *
- * State-first protocol: every helper takes `state: TelegramAdapterState`
- * as its FIRST positional parameter, `deps: TelegramAdapterDeps` as
- * SECOND, then per-call args.
- *
- * @module
- */
+/** Telegram outbound operations using state-first adapter helpers. */
 
 import { InputFile } from "grammy";
 import { ok, err } from "@comis/shared";
