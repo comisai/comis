@@ -98,6 +98,7 @@ export const IMMUTABLE_CONFIG_PREFIXES: readonly string[] = [
   "providers",            // Provider configs contain API keys and credentials
   "approvals",            // Approval rules are security-critical policy
   "browser.noSandbox",    // Sandbox bypass is security-sensitive
+  "browser.allowLoopbackNavigation", // Relaxes the SSRF loopback block for browser navigation
 
   // Logging rotation config requires daemon restart
   "daemon.logging",         // File transport config requires daemon restart

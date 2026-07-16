@@ -16,7 +16,7 @@
  * @module
  */
 
-import { AuthorizationError } from "../errors.js";
+import { AuthorizationError, ValidationError } from "../errors.js";
 import {
   isImmutableConfigPath,
   AppConfigSchema,
@@ -271,7 +271,7 @@ export function bindConfigExportHandlers(
       // Zod-style message.
       const sha = rawParams.sha as string;
       if (!sha) {
-        throw new Error("sha parameter is required for config rollback");
+        throw new ValidationError("sha parameter is required for config rollback");
       }
       const userParams = stripInternalFields(rawParams);
       const params = ConfigRollbackContract.request.parse(userParams);

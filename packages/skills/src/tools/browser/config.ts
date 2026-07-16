@@ -40,6 +40,8 @@ export interface BrowserConfig {
   headless?: boolean;
   /** Disable Chrome sandbox (needed in some container envs). */
   noSandbox?: boolean;
+  /** Allow navigation to loopback addresses (default false — SSRF-blocked). */
+  allowLoopbackNavigation?: boolean;
   /** Maximum screenshot dimension in px (default 2000). */
   screenshotMaxSide?: number;
   /** JPEG compression quality (default 80). */
@@ -67,6 +69,7 @@ export function resolveBrowserConfig(
     },
     headless: partial?.headless ?? true,
     noSandbox: partial?.noSandbox ?? false,
+    allowLoopbackNavigation: partial?.allowLoopbackNavigation ?? false,
     screenshotMaxSide:
       positiveInt(partial?.screenshotMaxSide) ?? DEFAULT_SCREENSHOT_MAX_SIDE,
     screenshotQuality:

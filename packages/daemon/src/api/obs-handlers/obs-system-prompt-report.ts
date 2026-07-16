@@ -27,6 +27,7 @@ import {
 import type { SystemPromptReportRow } from "@comis/memory";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
+import { AuthorizationError } from "../errors.js";
 
 /** Default page size for `list`. Matches the contract `.optional()` default. */
 const DEFAULT_LIST_LIMIT = 10;
@@ -47,7 +48,7 @@ export function bindObsSystemPromptReportHandlers(
     // -----------------------------------------------------------------------
     [ObsSystemPromptReportLatestContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin trust level required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin trust level required");
 
       const userParams = stripInternalFields(rawParams);
       const params = ObsSystemPromptReportLatestContract.request.parse(userParams);
@@ -86,7 +87,7 @@ export function bindObsSystemPromptReportHandlers(
     // -----------------------------------------------------------------------
     [ObsSystemPromptReportListContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin trust level required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin trust level required");
 
       const userParams = stripInternalFields(rawParams);
       const params = ObsSystemPromptReportListContract.request.parse(userParams);

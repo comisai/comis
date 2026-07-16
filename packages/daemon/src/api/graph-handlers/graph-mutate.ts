@@ -369,7 +369,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       const tenantId = deps.tenantId ?? "default";
       const deleted = deps.namedGraphStore.softDelete(id, tenantId);
       if (!deleted) {
-        throw new Error("Named graph not found");
+        throw new PreconditionError("Named graph not found");
       }
 
       const result = { id, deleted: true };

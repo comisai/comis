@@ -328,7 +328,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Audit dependencies
-        run: pnpm audit --prod
+        # NOT `pnpm audit` — the registry retired its quick-audit endpoints
+        # (HTTP 410); the script queries the bulk advisory endpoint instead.
+        run: pnpm audit:prod
 
   # ---------------------------------------------------------------------------
   # ci-success — single required green check that aggregates every job above

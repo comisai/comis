@@ -47,6 +47,7 @@ import type { RpcHandler } from "./types.js";
 // Single source of truth: WorkspaceApiDeps (shared with workspace, approval,
 // mcp, skill, notification handlers).
 import type { WorkspaceApiDeps as BrowserHandlerDeps } from "./types.js";
+import { ValidationError } from "./errors.js";
 export type { BrowserHandlerDeps };
 
 // ---------------------------------------------------------------------------
@@ -170,7 +171,7 @@ export function createBrowserHandlers(deps: BrowserHandlerDeps): Record<string, 
       const agentId = (rawParams._agentId as string) ?? deps.defaultAgentId;
       // Bespoke pre-Zod for missing-request operator error (matches
       // existing browser-handlers.test.ts expectations).
-      if (!rawParams.request) throw new Error("request parameter is required for browser.act");
+      if (!rawParams.request) throw new ValidationError("request parameter is required for browser.act");
       const userParams = stripInternalFields(rawParams);
       const params = BrowserActContract.request.parse(userParams);
       const service = deps.getAgentBrowserService(agentId);

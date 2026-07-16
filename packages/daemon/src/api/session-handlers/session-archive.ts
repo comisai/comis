@@ -28,6 +28,7 @@ import {
 import type { ContextStoreScope } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, loadSessionAnyStore, type SessionHandlerDeps } from "./session-helpers.js";
+import { AuthorizationError } from "../errors.js";
 
 /**
  * Bind the session archive/lifecycle handlers. Object-spread compatible with
@@ -40,7 +41,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       // FIRST (preserves user-friendly error messages matching the existing
       // handler-test assertions — see session-handlers.test.ts:73-92).
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin trust level required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin trust level required");
       const sessionKey = rawParams.session_key as string;
       if (!sessionKey) throw new Error("Missing required parameter: session_key");
 
@@ -165,7 +166,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
     [SessionExportContract.method]: async (rawParams) => {
       // Bespoke pre-Zod: admin trust check + missing-key + not-found guards FIRST.
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin trust level required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin trust level required");
       const sessionKey = rawParams.session_key as string;
       if (!sessionKey) throw new Error("Missing required parameter: session_key");
 
@@ -201,7 +202,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
     // Fail-closed when lcdStore absent (never silently return 0).
     [SessionResetConversationContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin trust level required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin trust level required");
 
       const sessionKey = rawParams.session_key as string;
       if (!sessionKey) throw new Error("Missing required parameter: session_key");

@@ -95,6 +95,7 @@ import { fetchGitHubDir } from "./github-skill-fetch.js";
 // Single source of truth: WorkspaceApiDeps (shared with workspace, browser,
 // approval, mcp, notification handlers).
 import type { WorkspaceApiDeps as SkillHandlerDeps } from "./types.js";
+import { AuthorizationError } from "./errors.js";
 export type { SkillHandlerDeps };
 
 /**
@@ -207,7 +208,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       if (scope === "shared") {
         // GUARD: Only the default agent may write to shared skills
         if (callingAgentId !== deps.defaultAgentId) {
-          throw new Error(
+          throw new AuthorizationError(
             `Only the default agent ("${deps.defaultAgentId}") can manage shared skills. ` +
             `Agent "${callingAgentId}" must use scope: "local" to manage its own skills.`
           );
@@ -337,7 +338,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
 
       // Scope guard: fail fast before expensive network fetch
       if (scope === "shared" && callingAgentId !== deps.defaultAgentId) {
-        throw new Error(
+        throw new AuthorizationError(
           `Only the default agent ("${deps.defaultAgentId}") can manage shared skills. ` +
           `Agent "${callingAgentId}" must use scope: "local" to manage its own skills.`
         );
@@ -496,7 +497,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
 
       // Scope guard: only the default agent may delete shared skills
       if (scope === "shared" && callingAgentId !== deps.defaultAgentId) {
-        throw new Error(
+        throw new AuthorizationError(
           `Only the default agent ("${deps.defaultAgentId}") can manage shared skills. ` +
           `Agent "${callingAgentId}" must use scope: "local" to manage its own skills.`
         );

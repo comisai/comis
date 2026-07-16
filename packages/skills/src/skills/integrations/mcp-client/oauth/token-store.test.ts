@@ -227,15 +227,18 @@ describe("createTokenStore", () => {
 
     // Poll until the watcher's debounced cache-invalidation lands and the next
     // read re-reads the external value — no fixed sleep, so not load-sensitive.
+    // The window is generous: under a full-workspace coverage run the fs.watch
+    // event has taken >5s to land (observed flake on a saturated host).
     const invalidated = await waitFor(
       async () => (await store.tokens("notion"))?.access_token === "AT-EXTERNAL",
+      { attempts: 600, intervalMs: 25 },
     );
     expect(invalidated).toBe(true);
 
     const second = await store.tokens("notion");
     expect(second?.access_token).toBe("AT-EXTERNAL");
     expect(second?.refresh_token).toBe("RT2");
-  }, 10_000);
+  }, 20_000);
 
   it("keeps the last-good cache and logs WARN on a truncated/partial external write (fail-soft)", async () => {
     await store.saveTokens("notion", {

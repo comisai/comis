@@ -46,6 +46,7 @@
     "cycles": "node scripts/check-cycles.mjs",
     "cycles:refs": "tsc -b --dry packages/comis",
     "lint:security": "eslint --config eslint.config.js",
+    "audit:prod": "node scripts/audit-bulk.mjs",
     "lint:fixtures": "bash scripts/check-fixture-diff.sh",
     "docs:check": "tsx scripts/check-mcp-doc-examples.ts && node scripts/check-mdx.mjs",
     "test": "vitest",

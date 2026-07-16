@@ -39,8 +39,12 @@ describe("IMMUTABLE_CONFIG_PREFIXES", () => {
     expect(IMMUTABLE_CONFIG_PREFIXES).toContain("tooling");
   });
 
-  it("has exactly 14 entries", () => {
-    expect(IMMUTABLE_CONFIG_PREFIXES).toHaveLength(14);
+  it("contains immutable prefix: browser.allowLoopbackNavigation", () => {
+    expect(IMMUTABLE_CONFIG_PREFIXES).toContain("browser.allowLoopbackNavigation");
+  });
+
+  it("has exactly 15 entries", () => {
+    expect(IMMUTABLE_CONFIG_PREFIXES).toHaveLength(15);
   });
 });
 

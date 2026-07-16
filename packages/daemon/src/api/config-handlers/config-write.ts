@@ -20,7 +20,7 @@
  * @module
  */
 
-import { AuthorizationError } from "../errors.js";
+import { AuthorizationError, PreconditionError, ValidationError } from "../errors.js";
 import {
   isImmutableConfigPath,
   deepMerge,
@@ -95,7 +95,7 @@ export function bindConfigWriteHandlers(
           (obj && fp === "integrations" && v!.mcp !== null && typeof v!.mcp === "object" &&
            "servers" in (v!.mcp as Record<string, unknown>))
         ) {
-          throw new Error(
+          throw new PreconditionError(
             "integrations.mcp.servers is managed by mcp_manage. " +
             "Use mcp_manage(action:'connect'|'disconnect') instead."
           );
@@ -109,7 +109,7 @@ export function bindConfigWriteHandlers(
           { method: "config.patch", hint: "Config patch rate limit exceeded, retry after cooldown", errorKind: "validation" as const, retryAfterMs: bucket.retryAfterMs },
           "Config patch rate limited",
         );
-        throw new Error(
+        throw new PreconditionError(
           `Config patch rate limit exceeded: max 5 patches per minute. ` +
           `Try again in ${Math.ceil(bucket.retryAfterMs! / 1000)} seconds.`
         );
@@ -122,7 +122,7 @@ export function bindConfigWriteHandlers(
       // canonical {section, key, value} shape.
       const section = rawParams.section as string | undefined;
       if (!section) {
-        throw new Error('Missing required parameter "section" for config.patch');
+        throw new ValidationError('Missing required parameter "section" for config.patch');
       }
       const key = rawParams.key as string | undefined;
       // Strip dispatcher internals + run contract parse for type narrowing +
@@ -166,7 +166,7 @@ export function bindConfigWriteHandlers(
           const suffix = redirect
             ? ` ${formatRedirectHint(redirect)}`
             : " This setting requires manual operator intervention via config files.";
-          throw new Error(
+          throw new PreconditionError(
             `Config path "${key ? `${section}.${key}` : section}" is immutable and cannot be modified at runtime.${suffix}`,
           );
         }
@@ -217,7 +217,7 @@ export function bindConfigWriteHandlers(
           const issues = validation.error.issues
             .map((i) => `${i.path.join(".")}: ${i.message}`)
             .join("; ");
-          throw new Error(`Config validation failed: ${issues}`);
+          throw new ValidationError(`Config validation failed: ${issues}`);
         }
 
         // Determine config.local.yaml path (last entry from configPaths or default)
@@ -252,7 +252,7 @@ export function bindConfigWriteHandlers(
         const envWarnings = warnSuspiciousEnvValues(patch, section);
         if (envWarnings.length > 0) {
           const hints = envWarnings.map((w) => `${w.path}: "${w.value}" — ${w.hint}`).join("; ");
-          throw new Error(
+          throw new ValidationError(
             `Suspicious env value(s) in config patch: ${hints}. ` +
             `Use \${VAR_NAME} syntax to reference secrets stored via env_set.`,
           );

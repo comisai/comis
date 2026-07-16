@@ -189,7 +189,9 @@ describe("createSessionStore", () => {
     expect(deleted).toBe(2);
   });
 
-  it("session survives db close/reopen cycle (file-backed)", () => {
+  // File-backed close/reopen fsyncs to real disk — on a loaded CI runner this
+  // has exceeded the default 5s timeout (observed 6.6s), so it gets its own.
+  it("session survives db close/reopen cycle (file-backed)", { timeout: 20_000 }, () => {
     const dbPath = join(tmpdir(), `comis-test-${randomUUID()}.db`);
 
     // Create and populate
