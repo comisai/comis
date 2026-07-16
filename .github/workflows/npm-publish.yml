@@ -70,6 +70,14 @@ jobs:
           path: ~/.comis/models
           key: embedding-models-nomic-embed-text-v1.5-Q8_0
 
+      - name: Configure git identity for daemon config-versioning tests
+        # The validation below includes the config git-lifecycle suites, whose
+        # daemons commit config changes — a runner without user.email/user.name
+        # fails those commits (0 history entries). Same step as the ci.yml jobs.
+        run: |
+          git config --global user.email "ci@comis.local"
+          git config --global user.name "Comis CI"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
