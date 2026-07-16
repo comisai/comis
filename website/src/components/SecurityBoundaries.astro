@@ -19,6 +19,7 @@ const boundaries = [
       <h2 id="security-heading">Layered security with explicit boundaries.</h2>
       <p class="lead">
         Comis treats external content and model output as untrusted. Controls include encrypted secrets, scoped authority, SSRF defenses, content wrapping, memory validation, output guards, tool policy, and audit events.
+        Credentials resolve through a broker scoped by per-agent allowlists, with access recorded in the audit trail.
         The supply chain is disciplined too: dependencies are exact-pinned, workspace packages are bundled, and npm releases publish with sigstore provenance.
       </p>
       <div class="inline-links">

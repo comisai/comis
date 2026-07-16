@@ -10,12 +10,12 @@ const differentiators = [
     body: "Provider cost accounting connects to graph budgets and configurable spend ceilings that stop a run when it crosses the line.",
   },
   {
-    title: "Scoped authority and layered security",
-    body: "Treat models as untrusted with scoped state, capability gates, encrypted secrets, and content guards.",
+    title: "Per-agent scoped authority",
+    body: "Each agent gets its own model, memory and context scopes, tools, budgets, secret allowlist, and routing, enforced by capability gates.",
   },
   {
-    title: "Typed execution",
-    body: "Coordinate sequential and parallel DAG nodes with barriers, retries, budgets, and configured recovery.",
+    title: "One execution graph",
+    body: "A single request-scoped typed graph runs parallel work, barriers, retries, budgets, and approvals under the same governance model, with configured recovery.",
   },
   {
     title: "Recoverable canonical context",
@@ -23,7 +23,7 @@ const differentiators = [
   },
   {
     title: "Provenance-aware memory",
-    body: "Rank and revise learned state using provenance, corroboration, trust ceilings, outcomes, and corrections, giving memory you can inspect and audit.",
+    body: "Learned state carries provenance and trust ceilings; corrections supersede rather than silently overwrite, so fixes hold. Memory you can inspect and audit.",
   },
 ] as const;
 ---
