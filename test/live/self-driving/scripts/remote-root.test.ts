@@ -11,6 +11,7 @@ const HELPER = resolve(HERE, "_remote-root.sh");
 const WIRE_EMULATOR = resolve(HERE, "wire-emu.mjs");
 const DEPLOY_SCRIPTS = resolve(HERE, "deploy-scripts.sh");
 const DEPLOY_EMULATOR = resolve(HERE, "deploy-emu.sh");
+const INSTALL_VPS = resolve(HERE, "install-vps.sh");
 const temporaryDirectories: string[] = [];
 
 function shellQuote(value: string): string {
@@ -88,5 +89,23 @@ describe("sudo-aware live rig transport", () => {
     expect(scriptsSource).toContain("secrets get --offline COMIS_GATEWAY_TOKEN");
     expect(scriptsSource).toContain("tar --no-xattrs");
     expect(emulatorSource).toContain("tar --no-xattrs");
+  });
+
+  it("uses service-none mode when a deployed build must remain stopped", () => {
+    const source = readFileSync(INSTALL_VPS, "utf8");
+
+    expect(source).toMatch(
+      /if \[ "\$NO_SERVICE_START" = 1 \]; then install_flags="\$install_flags [^"]*--service none[^"]*"; fi/,
+    );
+    expect(source).toContain('installer_command="COMIS_REEXEC=1 $installer_command"');
+    expect(source).toContain("installer_command=\"su - '$COMIS_USER' -c $quoted_installer_command\"");
+  });
+
+  it("makes the stopped installer stage traversable by the service user", () => {
+    const source = readFileSync(INSTALL_VPS, "utf8");
+
+    expect(source).toContain("chmod 0755 '$REMOTE_STAGE'");
+    expect(source).toContain("chmod 0644 '$REMOTE_STAGE/install.sh'");
+    expect(source).toMatch(/chmod 0644[^\n]+\$REMOTE_STAGE\/\$\(basename "\$TGZ"\)/);
   });
 });

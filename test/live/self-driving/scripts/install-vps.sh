@@ -52,12 +52,22 @@ trap 'rm -rf "$SHIP_STAGE"' EXIT
 cp "$TGZ" "$SHIP_STAGE/"
 cp "$REPO/website/public/install.sh" "$SHIP_STAGE/install.sh"
 REMOTE_STAGE="/var/tmp/comis-install-$SHA-$$"
-tar --no-xattrs -C "$SHIP_STAGE" -cf - . | remote_root "rm -rf '$REMOTE_STAGE' && mkdir -p '$REMOTE_STAGE' && tar -xf - -C '$REMOTE_STAGE'"
+tar --no-xattrs -C "$SHIP_STAGE" -cf - . | remote_root "rm -rf '$REMOTE_STAGE' && mkdir -p '$REMOTE_STAGE' && tar -xf - -C '$REMOTE_STAGE' && chmod 0755 '$REMOTE_STAGE' && chmod 0644 '$REMOTE_STAGE/install.sh' '$REMOTE_STAGE/$(basename "$TGZ")'"
 
 echo "4) Run the production installer (--tarball --no-init; non-interactive over ssh)…"
 install_flags="--no-init"
-if [ "$NO_SERVICE_START" = 1 ]; then install_flags="$install_flags --no-service-start"; fi
-remote_root "bash '$REMOTE_STAGE/install.sh' --tarball '$REMOTE_STAGE/$(basename "$TGZ")' $install_flags" || {
+if [ "$NO_SERVICE_START" = 1 ]; then install_flags="$install_flags --no-service-start --service none"; fi
+installer_command="bash '$REMOTE_STAGE/install.sh' --tarball '$REMOTE_STAGE/$(basename "$TGZ")' $install_flags"
+if [ "$NO_SERVICE_START" = 1 ]; then
+  # `--service none` skips all unit and sudoers writes, but a root invocation would then install
+  # under /root. Run the public installer as the existing service user so the production package
+  # path is updated. Its dedicated-user child mode also suppresses the installer's existing-service
+  # restart path, keeping the already-stopped daemon untouched.
+  installer_command="COMIS_REEXEC=1 $installer_command"
+  printf -v quoted_installer_command '%q' "$installer_command"
+  installer_command="su - '$COMIS_USER' -c $quoted_installer_command"
+fi
+remote_root "$installer_command" || {
   echo "installer FAILED — rerun with the same command and append --verbose"
   exit 1
 }
