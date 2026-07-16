@@ -22,7 +22,8 @@
  * The core route set —
  *   - POST /control/chats/:id/messages   { fromUserId, text, opts? } → { messageId }
  *   - GET  /control/chats/:id/outbound    ?afterMessageId&waitMs       → RecordedOutbound[]
- * The remaining routes (media/location/reactions/callbacks/edits/service/reset/
+ *   - POST /control/chats/:id/reset                                  → { ok: true }
+ * The remaining routes (media/location/reactions/callbacks/edits/service/
  * faults) extend the same route map — the dispatch is a route map so routes are
  * additive.
  *
@@ -145,6 +146,8 @@ export interface ControlEmulator {
     newText: string,
     from: { id: number; firstName: string; username?: string },
   ): void;
+  /** Clear one chat's recorded state and pending inbound updates. */
+  resetChat(chat: { readonly chatId: number }): void;
   /** All recorded outbounds for a chat, in send order (the channel oracle). */
   outbound(chat: { readonly chatId: number }): readonly RecordedOutbound[];
   /**
@@ -171,6 +174,12 @@ export interface InjectMessageParams {
   readonly fromFirstName?: string;
   /** Optional sender @username. */
   readonly fromUsername?: string;
+}
+
+/** Parameters for the isolated chat-reset handler / `ControlClient.resetChat`. */
+export interface ResetChatParams {
+  /** The chat whose recorded state and pending inbound updates must be cleared. */
+  readonly chatId: number;
 }
 
 /** Parameters for the inject-reaction handler / `ControlClient.injectReaction`. */
@@ -291,6 +300,12 @@ export interface ControlClient {
    * @returns the minted message id.
    */
   injectMessage(params: InjectMessageParams): Promise<number>;
+  /**
+   * Clear one chat's state (the in-process equivalent of
+   * `POST /control/chats/:id/reset`). Calls the SAME `handleResetChat` as the
+   * HTTP route; global faults and other chats are unaffected.
+   */
+  resetChat(params: ResetChatParams): void;
   /**
    * Inject an inbound reaction-ADD on an existing bot reply (the in-process
    * equivalent of `POST /control/chats/:id/reactions`). Calls the SAME
@@ -455,6 +470,8 @@ const CHAT_LOCATION_PATH = /^\/control\/chats\/(-?\d+)\/location\/?$/;
 const CHAT_CALLBACKS_PATH = /^\/control\/chats\/(-?\d+)\/callbacks\/?$/;
 /** The `/control/chats/:id/edits` path → the captured chat id (the inject-edit route). */
 const CHAT_EDITS_PATH = /^\/control\/chats\/(-?\d+)\/edits\/?$/;
+/** The `/control/chats/:id/reset` path → the captured chat id. */
+const CHAT_RESET_PATH = /^\/control\/chats\/(-?\d+)\/reset\/?$/;
 /** The `/control/faults` path — POST sets a fault, DELETE clears all (the fault-injection route). */
 const FAULTS_PATH = /^\/control\/faults\/?$/;
 
@@ -590,6 +607,12 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       params.newText,
       { id: params.fromUserId, firstName: `user_${params.fromUserId}` },
     );
+    return { ok: true };
+  }
+
+  /** POST /control/chats/:id/reset — clear only that chat's state. */
+  function handleResetChat(chatId: number): { ok: true } {
+    emulator.resetChat({ chatId });
     return { ok: true };
   }
 
@@ -782,6 +805,12 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
       return { status: 200, body: handleInjectEdit(chatId, { messageId, newText, fromUserId }) };
     }
 
+    // POST /control/chats/:id/reset (clear one chat; faults are managed separately)
+    const resetMatch = ctx.path.match(CHAT_RESET_PATH);
+    if (resetMatch && ctx.httpMethod === "POST") {
+      return { status: 200, body: handleResetChat(Number(resetMatch[1])) };
+    }
+
     // POST /control/faults (inject a fault) / DELETE (clear all)
     const faultsMatch = ctx.path.match(FAULTS_PATH);
     if (faultsMatch && ctx.httpMethod === "POST") {
@@ -856,6 +885,10 @@ export function registerControlApi(backend: HttpBackend, emulator: ControlEmulat
   const client: ControlClient = {
     injectMessage(params) {
       return Promise.resolve(handleInject(params.chatId, params).messageId);
+    },
+    resetChat(params) {
+      // The SAME handler the HTTP route calls (in-process == HTTP parity).
+      handleResetChat(params.chatId);
     },
     injectReaction(params) {
       // The SAME handler the HTTP route calls (in-process == HTTP parity).

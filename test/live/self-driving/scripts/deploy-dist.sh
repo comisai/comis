@@ -12,6 +12,8 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$HERE/.live-env" ] && . "$HERE/.live-env" # per-box rig config (VPS ssh target, PKG, …) — see .live-env.example
+# shellcheck source=./_remote-root.sh
+. "$HERE/_remote-root.sh"
 REPO="${REPO:-$(git rev-parse --show-toplevel)}"
 VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or the env}"
 COMIS_USER="${COMIS_USER:-comis}"
@@ -43,7 +45,7 @@ DIRTY="$(cd "$REPO" && git diff --quiet && git diff --cached --quiet && echo cle
 # The provenance record moves WITH the code — a dist overlay that left the install-time record in
 # place made /root/comis-deployed-build lie about the running build (the stale-provenance trap).
 (cd "$STAGE" && tar czf - . 2>/dev/null) \
-  | ssh -o ConnectTimeout=20 "$VPS" "tar xzf - -C '$PKG' 2>/dev/null && chown -R $COMIS_USER:$COMIS_USER '$PKG' \
+  | remote_root "tar xzf - -C '$PKG' 2>/dev/null && chown -R $COMIS_USER:$COMIS_USER '$PKG' \
       && (chmod +x '$PKG/dist/cli-entry.js' 2>/dev/null || true) \
       && echo '$SHA $DIRTY  dist-overlay '\$(date -u +%Y-%m-%dT%H:%M:%SZ) > /root/comis-deployed-build \
       && echo extracted"
@@ -53,7 +55,7 @@ DIRTY="$(cd "$REPO" && git diff --quiet && git diff --cached --quiet && echo cle
 # `node …/cli.js` fallback). npm sets bin +x at install; a raw dist overlay must re-set it.
 
 echo "Verify (recursive — top-level globs miss dist subdirs):"
-ssh -o ConnectTimeout=15 "$VPS" "
+remote_root "
   echo -n '  orchestrate dist: '; find '$PKG/node_modules/@comis/skills/dist' -name 'orchestrate-tool.js' 2>/dev/null | head -1
   echo -n '  daemon wiring   : '; ls '$PKG/node_modules/@comis/daemon/dist/wiring' >/dev/null 2>&1 && echo present || echo MISSING
 "
@@ -67,7 +69,7 @@ echo "Dep-drift guard (dist overlay does NOT sync node_modules):"
 drift=0
 for dep in @earendil-works/pi-ai @earendil-works/pi-agent-core; do
   loc="$(node -p "try{require('$REPO/node_modules/$dep/package.json').version}catch{'?'}" 2>/dev/null)"
-  box="$(ssh -o ConnectTimeout=15 "$VPS" "node -p \"try{require('$PKG/node_modules/$dep/package.json').version}catch{'?'}\"" 2>/dev/null)"
+  box="$(remote_root "node -p \"try{require('$PKG/node_modules/$dep/package.json').version}catch{'?'}\"" 2>/dev/null)"
   if [ "$loc" = "$box" ]; then
     echo "  ok  $dep  $loc"
   else

@@ -11,7 +11,7 @@
 
 | Thing | Path / value | Notes |
 |---|---|---|
-| ssh target | `$VPS` — set `user@host` in `scripts/.live-env` (auto-sourced by the local scripts; `deploy-scripts.sh` renders it to `/root/comis-rig.env` for the box side) | you are root; the daemon runs as `$COMIS_USER` (default `comis`). ssh key lives in your `~/.ssh` |
+| ssh target | `$VPS` — set `user@host` in `scripts/.live-env` (auto-sourced by the local scripts; `deploy-scripts.sh` renders it to `/root/comis-rig.env` for the box side) | use root directly, or set `REMOTE_SUDO=1` for a passwordless-sudo deployment user; the daemon runs as `$COMIS_USER` (default `comis`). ssh key lives in your `~/.ssh` |
 | installation | `comis.service` (systemd) → `node --permission … $PKG/node_modules/@comis/daemon/dist/daemon.js` | `PKG=/home/comis/.npm-global/lib/node_modules/comisai` — the npm-global umbrella package; `comis` CLI on the comis user's PATH |
 | data dir | `/home/comis/.comis` (`DATA`) | config, secrets.db, sessions, workspace — owned by `comis` |
 | master key | `$DATA/.env` → `SECRETS_MASTER_KEY` | the daemon loads `<dataDir>/.env` at boot; the systemd unit also loads `/etc/comis/env` |

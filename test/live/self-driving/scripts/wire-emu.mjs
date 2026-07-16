@@ -9,8 +9,8 @@
 // so the box can be rewired to real Telegram by restoring it.
 //
 //   node /root/wire-emu.mjs           # wire → prints the patch; then restart the daemon
-import { readFileSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { readFileSync, writeFileSync, existsSync, copyFileSync, chmodSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { rig, requireCodeRoot } from "./_rig.mjs";
 
 const YAML = requireCodeRoot("yaml");
@@ -38,7 +38,9 @@ if (!tg.allowFrom.map(String).includes(String(rig.chatId))) tg.allowFrom.push(St
 
 writeFileSync(cfgPath, YAML.stringify(cfg));
 try {
-  execSync(`chown ${rig.comisUser}:${rig.comisUser} ${cfgPath}`);
+  chmodSync(cfgPath, 0o600);
+  chmodSync(backup, 0o600);
+  execFileSync("chown", [`${rig.comisUser}:${rig.comisUser}`, cfgPath, backup]);
 } catch {
   /* non-root local runs: ownership already right */
 }

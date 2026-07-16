@@ -13,6 +13,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$HERE/.live-env" ] && . "$HERE/.live-env"
+# shellcheck source=./_remote-root.sh
+. "$HERE/_remote-root.sh"
 REPO="${REPO:-$(git rev-parse --show-toplevel)}"
 VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or the env}"
 COMIS_USER="${COMIS_USER:-comis}"
@@ -30,7 +32,7 @@ LOCAL_SHA="$(cd "$REPO" && git rev-parse --short HEAD)"
 LOCAL_DIRTY="$(cd "$REPO" && git diff --quiet && git diff --cached --quiet && echo clean || echo dirty)"
 echo "=== verify-build (local $LOCAL_SHA/$LOCAL_DIRTY vs $VPS) ==="
 
-record="$(ssh -o ConnectTimeout=15 "$VPS" 'cat /root/comis-deployed-build 2>/dev/null')"
+record="$(remote_root 'cat /root/comis-deployed-build 2>/dev/null')"
 if [ -z "$record" ]; then
   fail "provenance" "no /root/comis-deployed-build on the box — deploy with install-vps.sh / deploy-dist.sh"
 else
@@ -44,7 +46,7 @@ else
 fi
 
 # Process freshness: daemon start must postdate the recorded deploy.
-proc="$(ssh -o ConnectTimeout=15 "$VPS" '
+proc="$(remote_root '
   rec=$(date -d "$(sed -E "s/.*deployed |.*dist-overlay //" /root/comis-deployed-build 2>/dev/null)" +%s 2>/dev/null || echo 0)
   pid=$(pgrep -f "node.*daemon\.js" | head -1)
   if [ -z "$pid" ]; then echo "NOPROC"; else
@@ -69,7 +71,7 @@ if [ -n "$SYMBOL" ]; then
   scope="$PKG/node_modules/@comis/${SYMPKG:+$SYMPKG/}"
   [ -z "$SYMPKG" ] && scope="$PKG/node_modules/@comis/"
   # shellcheck disable=SC2029 # remote expansion intended
-  hits="$(ssh -o ConnectTimeout=20 "$VPS" "grep -rl --include='*.js' -- '$SYMBOL' '$scope' 2>/dev/null | head -3")"
+  hits="$(remote_root "grep -rl --include='*.js' -- '$SYMBOL' '$scope' 2>/dev/null | head -3")"
   if [ -n "$hits" ]; then
     pass "symbol" "'$SYMBOL' present in the deployed dist:"
     printf '%s\n' "$hits" | sed 's/^/          /'

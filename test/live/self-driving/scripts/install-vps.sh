@@ -19,6 +19,8 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$HERE/.live-env" ] && . "$HERE/.live-env" # per-box rig config — see .live-env.example
+# shellcheck source=./_remote-root.sh
+. "$HERE/_remote-root.sh"
 REPO="${REPO:-$(git rev-parse --show-toplevel)}"
 VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or the env}"
 COMIS_USER="${COMIS_USER:-comis}"
@@ -26,6 +28,7 @@ COMIS_HOME="${COMIS_HOME:-/home/$COMIS_USER}"
 DATA="${DATA:-$COMIS_HOME/.comis}"
 PKG="${PKG:-$COMIS_HOME/.npm-global/lib/node_modules/comisai}"
 SERVICE="${SERVICE:-comis}"
+NO_SERVICE_START="${NO_SERVICE_START:-0}"
 
 if [ "${SKIP_BUILD:-0}" != 1 ]; then
   echo "1) pnpm build (SKIP_BUILD=1 to reuse the existing dist)…"
@@ -44,20 +47,41 @@ DIRTY="$(cd "$REPO" && git diff --quiet && git diff --cached --quiet && echo cle
 echo "   $(basename "$TGZ")  (build $SHA/$DIRTY)"
 
 echo "3) Ship tarball + installer to ${VPS}…"
-scp -o ConnectTimeout=20 "$TGZ" "$REPO/website/public/install.sh" "$VPS:/root/"
+SHIP_STAGE="$(mktemp -d)"
+trap 'rm -rf "$SHIP_STAGE"' EXIT
+cp "$TGZ" "$SHIP_STAGE/"
+cp "$REPO/website/public/install.sh" "$SHIP_STAGE/install.sh"
+REMOTE_STAGE="/var/tmp/comis-install-$SHA-$$"
+tar -C "$SHIP_STAGE" -cf - . | remote_root "rm -rf '$REMOTE_STAGE' && mkdir -p '$REMOTE_STAGE' && tar -xf - -C '$REMOTE_STAGE'"
 
 echo "4) Run the production installer (--tarball --no-init; non-interactive over ssh)…"
-# shellcheck disable=SC2029 # remote expansion of $(basename …) is intentional
-ssh -o ConnectTimeout=20 -o ServerAliveInterval=10 "$VPS" \
-  "bash /root/install.sh --tarball /root/$(basename "$TGZ") --no-init" || {
-  echo "installer FAILED — rerun with VERBOSE: ssh $VPS 'bash /root/install.sh --tarball /root/$(basename "$TGZ") --no-init --verbose'"
+install_flags="--no-init"
+if [ "$NO_SERVICE_START" = 1 ]; then install_flags="$install_flags --no-service-start"; fi
+remote_root "bash '$REMOTE_STAGE/install.sh' --tarball '$REMOTE_STAGE/$(basename "$TGZ")' $install_flags" || {
+  echo "installer FAILED — rerun with the same command and append --verbose"
   exit 1
 }
+
+if [ "$NO_SERVICE_START" = 1 ]; then
+  echo "5) Record and verify the installed build while keeping the service stopped…"
+  remote_root "
+    set -u
+    echo '$SHA $DIRTY  deployed-stopped '\$(date -u +%Y-%m-%dT%H:%M:%SZ) > /root/comis-deployed-build
+    echo -n '  cli loads    : '; su - $COMIS_USER -c 'comis --version' || exit 1
+    state=\$(systemctl is-active '$SERVICE' 2>/dev/null || true)
+    [ \"\$state\" != active ] || { echo 'service unexpectedly active'; exit 1; }
+    echo \"  service      : \$state (intentionally not started)\"
+    rm -rf '$REMOTE_STAGE'
+  "
+  LOCAL_VER="$(node -p "require('$REPO/packages/comis/package.json').version")"
+  echo "Done. Local build $LOCAL_VER @ $SHA/$DIRTY is installed on $VPS; the service remains stopped."
+  exit 0
+fi
 
 echo "5) Restart the service onto the new code + verify (an installer UPGRADE does not restart a"
 echo "   running daemon — without this the old code keeps serving; live-proven on the first run)…"
 # Self-contained on purpose: on a fresh box the kit helpers (restart-daemon.sh) aren't deployed yet.
-ssh -o ConnectTimeout=20 -o ServerAliveInterval=10 "$VPS" "
+remote_root "
   set -u
   echo '$SHA $DIRTY  deployed '\$(date -u +%Y-%m-%dT%H:%M:%SZ) > /root/comis-deployed-build
   echo -n '  cli loads    : '; su - $COMIS_USER -c 'comis --version' || { echo 'BROKEN — bundled-deps repair did not hold'; exit 1; }
@@ -74,6 +98,7 @@ ssh -o ConnectTimeout=20 -o ServerAliveInterval=10 "$VPS" "
   echo -n '  service      : '; systemctl is-active $SERVICE
   echo -n '  unit exec    : '; systemctl show -p ExecStart $SERVICE 2>/dev/null | grep -oE '[^ ]*daemon\.js' | head -1
   echo -n '  fresh boot   : '; printf '%s' \"\$line\" | grep -oE '\"time\":\"[^\"]+\"|\"version\":\"[^\"]+\"' | tr '\n' ' '; echo
+  rm -rf '$REMOTE_STAGE'
 "
 LOCAL_VER="$(node -p "require('$REPO/packages/comis/package.json').version")"
 echo "Done. Local build $LOCAL_VER @ $SHA/$DIRTY is installed AND serving on $VPS."
