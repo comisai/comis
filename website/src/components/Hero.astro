@@ -2,51 +2,57 @@
 // SPDX-License-Identifier: Apache-2.0
 import { SITE } from "../data/site";
 
-const runStages = [
-  ["Before", "Set authority, credential, memory, and cost rules."],
-  ["During", "Keep messages and tool results when older details are summarized."],
-  ["After", "Explain recorded failure and recover useful detail."],
-] as const;
+const checks = ["Origin", "Capability", "Credential", "Budget"] as const;
 ---
 
 <section class="hero" data-section="hero" aria-labelledby="hero-heading">
   <div class="container hero-grid">
     <div class="hero-copy">
       <p class="status-line"><span aria-hidden="true"></span>{SITE.status}</p>
-      <p class="hero-kicker">For the agent you leave running.</p>
-      <h1 id="hero-heading">Run AI agents you can constrain, inspect, and recover.</h1>
+      <p class="hero-kicker">Security-first agent runtime</p>
+      <h1 id="hero-heading">Let agents learn and act. Keep authority in the runtime.</h1>
       <p class="lead hero-lead">
-        Comis is for agents that work over time: on a schedule, across long tasks, or with other agents. Keep their work recoverable, apply configured boundaries outside the prompt, and understand failures without asking another model to guess.
+        Comis is an open-source, self-hosted, security-first runtime for agents that work across sessions. It can carry qualifying experience forward as sourced, correctable guidance, while configured runtime controls decide what the agent may do.
       </p>
-      <div class="hero-actions" role="group" aria-label="Get started">
-        <a class="button button-primary" href="#install">Install Comis</a>
-        <a class="button button-secondary" href="#reliability">See the evidence</a>
+      <div class="hero-actions" role="group" aria-label="Explore Comis">
+        <a class="button button-primary" href="#learning">See how Comis works</a>
+        <a class="button button-secondary" href={SITE.securityDocs}>Read the security model</a>
         <a class="text-link action-link" href={SITE.github}>View on GitHub</a>
       </div>
     </div>
 
-    <aside class="run-panel" aria-label="Persistent run lifecycle">
-      <div class="run-panel-header">
-        <p class="technical-label">Persistent run</p>
-        <span class="runtime-badge"><span aria-hidden="true"></span>Kept by Comis</span>
+    <figure class="authority-panel" aria-labelledby="authority-panel-title">
+      <div class="panel-bar">
+        <span class="panel-title">Runtime authority gate</span>
+        <span class="runtime-badge"><span aria-hidden="true"></span>Decision path</span>
       </div>
-      <p class="run-panel-title">The record stays when older details are summarized.</p>
-      <ol class="run-stages">
-        {runStages.map(([title, description], index) => (
-          <li class="run-stage">
-            <span class="run-stage-number" aria-hidden="true">0{index + 1}</span>
-            <div>
-              <strong>{title}</strong>
-              <p>{description}</p>
-            </div>
-          </li>
-        ))}
-      </ol>
-      <div class="run-panel-footer" aria-label="Runtime outcomes">
-        <span>State kept</span>
-        <span>Rules applied</span>
-        <span>Evidence recorded</span>
+      <div class="authority-flow">
+        <div class="flow-node flow-input">
+          <span class="technical-label">Input</span>
+          <strong>Prior guidance + new task</strong>
+        </div>
+        <span class="flow-connector" aria-hidden="true"></span>
+        <div class="flow-node">
+          <span class="technical-label">Model</span>
+          <strong>Proposes an action</strong>
+        </div>
+        <span class="flow-connector" aria-hidden="true"></span>
+        <div class="runtime-gate">
+          <div class="gate-heading">
+            <span class="technical-label">Runtime checks</span>
+            <span class="gate-state">enforced</span>
+          </div>
+          <ul class="gate-checks" aria-label="Runtime checks">
+            {checks.map((check) => <li><span aria-hidden="true"></span>{check}</li>)}
+          </ul>
+        </div>
+        <div class="flow-outcomes" aria-label="Possible outcomes">
+          <span class="outcome-allowed">Allowed</span>
+          <span class="outcome-denied">Denied</span>
+        </div>
+        <div class="evidence-line"><span aria-hidden="true"></span>Decision and evidence recorded</div>
       </div>
-    </aside>
+      <figcaption id="authority-panel-title">Guidance can influence a proposal. It cannot grant itself permission.</figcaption>
+    </figure>
   </div>
 </section>

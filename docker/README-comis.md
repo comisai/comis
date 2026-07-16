@@ -1,12 +1,12 @@
 # Comis
 
-**For the agent you leave running.** Comis is an open-source agent runtime for
-governed execution.
+Comis is an open-source security-first runtime for AI agents that learn and act
+across sessions.
 
 This image runs the Comis daemon, gateway, agents, scheduler, memory, and
-messaging adapters in one container. It is built for scheduled or unattended
-agent work that needs recoverable state, configured limits, and evidence after
-a failure.
+messaging adapters in one container. Learned guidance can influence what an
+agent proposes, but it cannot grant permission. Capabilities, credential scope,
+tool policy, and configured limits remain in the runtime.
 
 > **Development status:** Comis is under active development and does not support backward compatibility. Evaluate the exact provider, channel, tool, storage, and isolation configuration you need before using it for critical workloads.
 

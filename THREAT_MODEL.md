@@ -18,6 +18,7 @@ handling, auditing, and process isolation.
 
 - provider, channel, gateway, OAuth, and integration credentials;
 - message history, memory, workspace files, and generated artifacts;
+- cross-session learned guidance, its provenance, and correction history;
 - gateway and administrative control-plane access;
 - host filesystem, network access, and compute budget;
 - agent identity, configuration, capabilities, and cross-agent boundaries.
@@ -30,6 +31,7 @@ handling, auditing, and process isolation.
 | Gateway clients | Authenticated by scoped bearer token and, when configured, mTLS. The gateway binds to loopback by default. |
 | Model and agent output | Semi-trusted. Tool requests and completed responses pass through policy/guard layers. |
 | External content | Untrusted. Guarded ingestion paths wrap it as data before prompt assembly. |
+| Learned state | Semi-trusted persistent model input. Candidate or active guidance can affect later model choices, but it is not runtime authority. |
 | Built-in tools | Authorized per agent and constrained by the relevant tool implementation. Not every tool is an OS-sandboxed process. |
 | Exec child process | Confined only when a supported sandbox provider is available and active. |
 | MCP stdio server | Separate third-party process outside the exec sandbox. Its executable and host privileges are operator-controlled. |
@@ -49,6 +51,9 @@ handling, auditing, and process isolation.
   a non-empty allowlist.
 - prompt-skill `permissions` and `allowedTools` declarations are parsed as
   metadata but are not an enforced per-skill runtime boundary.
+- cross-session learning is enabled by default. Candidate guidance can be
+  available before active promotion, and the default `single_owner`
+  corroboration mode is not independent-source corroboration.
 - exec sandbox configuration defaults to `always`, but ordinary `exec`
   currently falls back to unsandboxed execution if no provider is available.
 - the Node.js permission model is disabled by default.
@@ -57,6 +62,35 @@ Operators must not describe destructive actions as human-approved unless they
 have enabled, configured, and tested the approval workflow. Operators must not
 describe a process as sandboxed based only on configuration; the runtime
 provider must be verified on the deployed host.
+
+## Learned-state and cross-session boundary
+
+Learned guidance is persistent input to later model turns. It must be treated
+as a security boundary, even though it is not executable code or a permission
+system.
+
+- Candidate guidance may surface before active promotion and influence which
+  already-authorized tool the model requests.
+- The default `single_owner` corroboration mode accepts repeated qualifying
+  observations from one explicitly trusted owner. That is not independent
+  corroboration. Operators can select the stricter `distinct_sessions` mode.
+- Static validation blocks selected critical patterns, but warning-level
+  harmful or jailbreak-like language can pass and remain persuasive to the
+  model.
+- Recall is scoped to the tenant and agent, not to an individual sender or end
+  user. Per-user confidentiality requires separate tenants, agents, or another
+  isolation layer.
+- A recorded correction is an input to the correction and demotion gates. It
+  does not guarantee immediate demotion, retirement, or a durable behavior
+  change.
+- Learned documents are advisory Markdown with no direct script or dynamic
+  replay path. Learned text cannot by itself execute a command or grant a
+  capability, credential, lease, approval, or larger budget.
+
+Learned text can still steer the model toward an action that is already within
+its configured reach. Capability checks, origin checks, tool policy, secret
+scope, approvals on supported paths, budgets, leases, and process isolation
+remain the enforceable boundaries.
 
 ## Defended threats
 
@@ -67,7 +101,7 @@ provider must be verified on the deployed host.
 | Unauthorized gateway access | loopback default, scoped tokens, timing-safe comparison, optional mTLS | network exposure without TLS can disclose bearer tokens; operator configuration controls reachability |
 | SSRF on guarded web-fetch paths | URL validation for private, loopback, link-local, and metadata ranges; broker network modes on applicable jailed paths | not every network-capable integration shares the same fetch path; DNS and upstream behavior remain part of the threat surface |
 | Path traversal through Comis file tools | `safePath`, symlink-aware validation, workspace scoping | unsandboxed shell commands do not inherit file-tool path restrictions |
-| Memory poisoning | memory-write validation, trust labels, trust-ranked recall | validation is heuristic; stored external content can still be wrong |
+| Memory poisoning and learned-state steering | memory-write validation, trust labels, provenance, configured corroboration, correction history, trust-ranked recall | candidate guidance can surface before promotion; warning-level harmful language can pass validation; learned text can influence authorized tool choice |
 | Cross-agent confused-deputy calls | capability gates, origin/trust checks, scoped stores and workspaces | all agents share the trusted daemon and host; configuration mistakes can grant excessive capability |
 | Vulnerable MCP integrations | opt-in configuration, manifest/tool filtering, eligibility checks, result sanitization, circuit breakers, malware advisory checks for supported stdio paths | MCP stdio processes run outside the exec sandbox with the daemon account's host privileges |
 | Dependency tampering | exact version pins, automated audits, CodeQL, release provenance, bundled workspace packages | upstream dependency and build-system compromise cannot be eliminated |
@@ -164,6 +198,8 @@ Before accepting untrusted input:
 8. disable streaming where pre-scan disclosure is unacceptable;
 9. run `comis doctor`, `comis security audit`, and
    `comis secrets audit --check` after configuration or host changes.
+10. review learning corroboration and recall scope, and use separate tenants or
+    agents where users must not share learned guidance.
 
 ## Reporting vulnerabilities
 

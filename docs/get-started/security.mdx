@@ -50,6 +50,29 @@ that all external content is harmless.
 
 ## Important boundaries
 
+### Learned state crosses sessions
+
+Cross-session guidance is persistent model input, so it is part of the
+security boundary:
+
+- candidate guidance may surface before active promotion and influence which
+  already-authorized tool the model requests;
+- the default `single_owner` corroboration mode uses repeated qualifying
+  observations from one explicitly trusted owner, not independent sources;
+- static validation blocks selected critical patterns, but warning-level
+  harmful or jailbreak-like language can pass;
+- recall is scoped to the tenant and agent, not to an individual sender or end
+  user;
+- recording a correction does not guarantee immediate demotion, retirement, or
+  a durable behavior change; and
+- learned documents are advisory Markdown with no direct script or dynamic
+  replay path. They cannot by themselves execute a command or grant a
+  capability, credential, lease, approval, or larger budget.
+
+Learned guidance can still persuade the model to request an action that is
+within its configured reach. Use separate tenants or agents for per-user
+confidentiality, review the learning policy, and keep runtime authority narrow.
+
 ### Approvals are opt-in
 
 `security.actionConfirmation` classifies actions, but the human approval
@@ -111,6 +134,8 @@ key makes the database unreadable because Comis has no recovery service.
 6. Review every MCP server as third-party code with its own process privileges.
 7. Disable live streaming where pre-scan token disclosure is unacceptable.
 8. Run `comis security audit`, `comis secrets audit --check`, and `comis doctor`.
+9. Review learning corroboration and recall scope, and isolate users who must
+   not share learned guidance.
 
 ## Read the complete model
 

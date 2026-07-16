@@ -48,7 +48,7 @@ export const program = new Command();
 
 program
   .name("comis")
-  .description("Command-line tools for the Comis persistent agent runtime")
+  .description("Command-line tools for the Comis security-first agent runtime")
   .version(readCliVersion() ?? "");
 
 // Register command groups

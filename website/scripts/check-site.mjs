@@ -62,13 +62,13 @@ function metaContent(html, key) {
   return undefined;
 }
 
-const expectedTitle = "Comis: Runtime for persistent AI agents";
-const expectedDescription = "Open-source runtime for persistent AI agents. Keep work recoverable, apply configured boundaries, and explain failures without another model call.";
-const expectedInstallCommand = "curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash";
+const expectedTitle = "Comis: Security-first runtime for AI agents";
+const expectedDescription = "Open-source, self-hosted runtime for bounded agent action and governed learning across sessions, with runtime-enforced authority and recorded evidence.";
+const expectedReviewCommand = "curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh";
+const expectedConvenienceCommand = "curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash";
 const approvedExternalLinks = new Set([
   "https://docs.comis.ai",
   "https://docs.comis.ai/installation",
-  "https://docs.comis.ai/get-started/use-cases",
   "https://docs.comis.ai/reference/known-limitations",
   "https://docs.comis.ai/security",
   "https://github.com/comisai/comis",
@@ -77,6 +77,7 @@ const approvedExternalLinks = new Set([
   "https://github.com/comisai/comis/blob/main/CONTRIBUTING.md",
   "https://github.com/comisai/comis/security",
   "https://github.com/comisai/comis/blob/main/THREAT_MODEL.md",
+  "https://github.com/comisai/comis/blob/main/test/live/self-driving/targets/MEMORY-LEARNING-STRESS-CATALOG.md",
   "https://github.com/comisai/comis/blob/main/LICENSE",
 ]);
 
@@ -92,13 +93,13 @@ const htmlRoutes = distFiles
 sameValues(htmlRoutes, ["index.html"], "Generated HTML routes");
 
 const html = await readFile(path.join(distDir, "index.html"), "utf8");
-check(!html.includes("\u2014"), "Homepage must not contain em dashes");
+check(!/[\u00b7\u2010-\u2015\u2018-\u201f\u2190-\u21ff]/u.test(html), "Homepage must use plain ASCII punctuation");
 const mainMatch = html.match(/<main\b[^>]*>[\s\S]*?<\/main>/i);
 check(Boolean(mainMatch), "Homepage must contain a main landmark");
 const mainHtml = mainMatch?.[0] ?? "";
 
 const sectionOrder = tags(mainHtml, "section").map((tag) => attributes(tag).get("data-section"));
-sameValues(sectionOrder, ["hero", "reliability", "benefits", "workflow", "security", "install", "community"], "Homepage section order");
+sameValues(sectionOrder, ["hero", "problem", "learning", "pillars", "evidence", "security", "community", "install"], "Homepage section order");
 
 check(tags(html, "header").length === 1, "Homepage must contain one header landmark");
 check(tags(html, "main").length === 1, "Homepage must contain one main landmark");
@@ -114,21 +115,23 @@ for (const section of tags(mainHtml, "section")) {
 
 const headings = [...html.matchAll(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi)].map((match) => textContent(match[1]));
 sameValues(headings, [
-  "Failure should leave evidence, not a mystery.",
-  "Built for work that outlives the prompt.",
-  "A good first project: an overnight research brief.",
-  "Start narrow. Expand after you test.",
+  "Agent autonomy is a security boundary. What an agent learns becomes part of that boundary.",
+  "How experience becomes reusable guidance.",
+  "Four runtime pillars for bounded autonomy.",
+  "Show what the agent learned. Show what stayed bounded.",
+  "Security-first, with explicit boundaries.",
+  "Build it. Break it. Measure it. Improve it.",
   "Install Comis on a host you control.",
-  "Help make persistent agents easier to trust.",
 ], "Homepage h2 hierarchy");
 
-const benefitsSectionHtml = mainHtml.match(/<section\b[^>]*data-section="benefits"[^>]*>[\s\S]*?<\/section>/i)?.[0] ?? "";
-const advantageHeadings = [...benefitsSectionHtml.matchAll(/<h3\b[^>]*>([\s\S]*?)<\/h3>/gi)].map((match) => textContent(match[1]));
-sameValues(advantageHeadings, [
-  "Keep the work",
-  "Hold configured boundaries",
-  "See what happened",
-], "Verified advantage hierarchy");
+const pillarsSectionHtml = mainHtml.match(/<section\b[^>]*data-section="pillars"[^>]*>[\s\S]*?<\/section>/i)?.[0] ?? "";
+const pillarHeadings = [...pillarsSectionHtml.matchAll(/<h3\b[^>]*>([\s\S]*?)<\/h3>/gi)].map((match) => textContent(match[1]));
+sameValues(pillarHeadings, [
+  "Govern context and learning",
+  "Keep authority outside the model",
+  "Bound execution and delegation",
+  "Explain, recover, and improve",
+], "Runtime pillar hierarchy");
 
 const mainText = textContent(mainHtml
   .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
@@ -137,39 +140,55 @@ const visibleMainText = textContent(mainHtml
   .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
   .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
   .replace(/<code\b[\s\S]*?<\/code>/gi, " "));
-const wordCount = visibleMainText.match(/[\p{L}\p{N}]+(?:[’'-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
-check(wordCount <= 650, `Visible homepage copy must remain at or below 650 words; received ${wordCount}`);
+const wordCount = visibleMainText.match(/[\p{L}\p{N}]+(?:['-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
+check(wordCount >= 700 && wordCount <= 1125, `Visible homepage copy must stay between 700 and 1125 words; received ${wordCount}`);
 
 for (const requiredText of [
-  "Open source · Self-hosted · Active development",
-  "For the agent you leave running.",
-  "Run AI agents you can constrain, inspect, and recover.",
-  "Comis is for agents that work over time: on a schedule, across long tasks, or with other agents. Keep their work recoverable, apply configured boundaries outside the prompt, and understand failures without asking another model to guess.",
-  "Original messages and tool results stay stored while the model uses shorter summaries. Agents can search and recover selected details.",
-  "Authority, credential rules, memory checks, and spending controls live outside prompt text and can change what the runtime allows next.",
-  "Instrumented runs record outcome, cost, tool and policy failures, and recovery details for a bounded incident report.",
+  "Open source / Self-hosted / Active development",
+  "Let agents learn and act. Keep authority in the runtime.",
+  "Comis is an open-source, self-hosted, security-first runtime for agents that work across sessions.",
+  "Guidance can influence a proposal. It cannot grant itself permission.",
+  "The runtime is the software around the model that stores state, applies rules, runs tools, and records evidence.",
+  "Candidate guidance can influence model behavior before promotion. It still cannot create a credential, capability, lease, approval, or larger budget.",
+  "The default evidence rule can admit one owner's experience. It is not independent corroboration.",
+  "ctx_search",
+  "ctx_inspect",
+  "ctx_expand",
+  "Anthropic, OpenAI, and Gemini",
+  "capability gates, origin checks, scoped secrets, encrypted storage, and the optional Credential Broker",
+  "spawn count, cost, tokens, time, rates, outward actions, and leases",
+  "jailed execution, capability-limited Unix sockets, expiring leases, and brokered credentials",
+  "Persistent interactive terminals fail closed when the supported Linux isolation path cannot be established.",
   "Comis explain builds a bounded report from recorded runtime evidence. It makes no model calls and does not invent a cause when no rule matches.",
-  "Reports are designed to exclude raw message bodies and credential values. Error details may be sanitized, shortened, or replaced with a digest.",
-  "A scheduled agent collects and compares sources, keeps useful findings available as older details are summarized, tracks cost when pricing is available, and records evidence for a failed branch.",
-  "Successful web content was mistaken for a failure.",
-  "Built-in test result; not a customer result.",
-  "content_heuristic_misclassification",
+  "Fresh-session reuse",
+  "Rotated-input transfer",
+  "Guidance accepted",
+  "Reused in a new session",
+  "Works with changed input",
+  "Measured task improvement",
+  "Reproduced by another team",
+  "Not yet measured",
+  "Internal evidence, not an independent or customer result.",
   "Comis treats model output and external content as untrusted, but safe operation still depends on your host and configuration.",
   "Self-hosted does not mean offline. Configured model, messaging, media, MCP, and tool providers may receive data you send to them.",
   "Linux with Bubblewrap is the recommended target. macOS isolation is best-effort and does not provide the same boundary.",
-  "The ordinary exec tool can run directly on the host when its sandbox is disabled or unavailable.",
-  "The default tool profile is full, and an empty per-agent secret allowlist is unrestricted. Narrow both before accepting untrusted input.",
-  "Approvals are disabled by default and protect only explicitly wired paths when enabled.",
+  "Ordinary exec can reach the host when its sandbox is disabled or unavailable.",
+  "The default tool profile is full, an empty per-agent secret allowlist is unrestricted, and approvals are off by default.",
+  "Approvals protect only explicitly wired paths.",
   "Comis does not claim complete tenant isolation, high availability, compliance certification, or commercial support.",
   "The managed installer can add Node.js, host tools, and a background service. Direct npm install keeps host setup in your hands.",
-  "Comis Reliability Trials are a planned way to turn real failures into small, repeatable tests.",
+  "Comis Open Evidence is a planned public proof program, not a shipped benchmark suite.",
+  "Bring a workload, an attack path, a learning failure, or an integration. Leave a reproducible result or a maintained artifact.",
+  "Comis is an Apache-2.0 TypeScript project built around ports and adapters.",
 ]) {
   check(mainText.includes(requiredText), `Required verified copy is missing: ${requiredText}`);
 }
 
 const installCommand = mainHtml.match(/<code\b[^>]*data-install-command[^>]*>([\s\S]*?)<\/code>/i)?.[1] ?? "";
-check(textContent(installCommand) === expectedInstallCommand, "Primary installer command must be the hardened one-line install");
+check(textContent(installCommand) === expectedReviewCommand, "Primary installer command must use the review-first download path");
 check(mainText.includes("curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh"), "Review-first installer alternative is missing");
+check(mainText.includes(expectedConvenienceCommand), "One-line convenience installer is missing");
+check(mainText.indexOf(expectedReviewCommand) < mainText.indexOf(expectedConvenienceCommand), "Review-first install must appear before the one-line convenience path");
 check(mainText.includes("bash comis-install.sh --dry-run"), "Installer dry-run command is missing");
 check(mainText.includes("npm install --global comisai"), "Direct npm installation path is missing");
 for (const pattern of [
@@ -178,7 +197,7 @@ for (const pattern of [
   /\bcompetitor\b/i,
   /\bpersona(?:s)?\b/i,
   /cost savings/i,
-  /\bbenchmark(?:s)?\b/i,
+  /customer-proven/i,
   /about the name/i,
   /good first issue/i,
   /discord\.gg/i,
@@ -188,6 +207,11 @@ for (const pattern of [
   /stable GenAI/i,
   /no floating version ranges/i,
   /stop(?:s|ped)? (?:a|the) run/i,
+  /secure by default/i,
+  /enterprise-ready/i,
+  /fully sandboxed/i,
+  /immune to (?:prompt injection|poisoning)/i,
+  /proven root cause/i,
 ]) {
   check(!pattern.test(visibleMainText), `Removed launch-stage content remains: ${pattern}`);
 }
@@ -195,6 +219,7 @@ check(!/\b\d+(?:\.\d+)?%/.test(visibleMainText), "Unverified percentage claim re
 
 check(textContent(html.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ?? "") === expectedTitle, "Page title does not match the approved title");
 check(metaContent(html, "description") === expectedDescription, "Meta description does not match the approved description");
+check(metaContent(html, "theme-color") === "#08111e", "Browser theme color must match the page navy");
 check(expectedTitle.length <= 60, "Page title exceeds 60 characters");
 check(expectedDescription.length <= 160, "Meta description exceeds 160 characters");
 check(metaContent(html, "og:type") === "website", "Open Graph type must be website");
@@ -206,10 +231,10 @@ check(/^https:\/\/comis\.ai\/_astro\/comis-social-preview\.[\w-]+\.png$/.test(so
 check(metaContent(html, "og:image:type") === "image/png", "Open Graph image type is incorrect");
 check(metaContent(html, "og:image:width") === "1280", "Open Graph image width is incorrect");
 check(metaContent(html, "og:image:height") === "640", "Open Graph image height is incorrect");
-check(metaContent(html, "og:image:alt") === "Comis: For the agent you leave running.", "Open Graph image alt text is incorrect");
+check(metaContent(html, "og:image:alt") === "Comis: Governed learning, bounded action, recorded evidence.", "Open Graph image alt text is incorrect");
 check(metaContent(html, "twitter:card") === "summary_large_image", "Twitter card type is incorrect");
 check(metaContent(html, "twitter:image") === socialImageUrl, "Twitter image URL must match Open Graph");
-check(metaContent(html, "twitter:image:alt") === "Comis: For the agent you leave running.", "Twitter image alt text is incorrect");
+check(metaContent(html, "twitter:image:alt") === "Comis: Governed learning, bounded action, recorded evidence.", "Twitter image alt text is incorrect");
 
 const canonical = tags(html, "link")
   .map((tag) => attributes(tag))
@@ -303,7 +328,7 @@ check(executableScripts.length === 1, `Homepage must contain one executable clip
 check(attributes(executableScripts[0] ?? "").get("src") === "/copy-command.js", "Clipboard enhancement must load from the local static script");
 
 const quickStartSource = await readFile(path.join(websiteDir, "public", "copy-command.js"), "utf8");
-for (const label of ["Copy command", "Copied", "Copy failed", "One-line installer command copied.", "Couldn’t copy. Select the command and copy it manually."]) {
+for (const label of ["Copy command", "Copied", "Copy failed", "Review-first download command copied.", "Couldn't copy. Select the command and copy it manually."]) {
   check(quickStartSource.includes(label), `Clipboard state is missing: ${label}`);
 }
 const cssSource = await readFile(path.join(sourceDir, "styles", "global.css"), "utf8");
@@ -313,12 +338,18 @@ check(cssSource.includes("outline: 3px solid var(--coral)"), "Focus outline must
 check(cssSource.includes("outline-offset: 3px"), "Focus outline offset must be three pixels");
 check(cssSource.includes("min-height: 44px"), "Interactive targets must retain the 44-pixel minimum");
 check(cssSource.includes("prefers-reduced-motion: reduce"), "Reduced-motion handling is missing");
+check(/@media \(max-width: 639px\)[\s\S]*?\.nav-learning,[\s\S]*?\.nav-security[\s\S]*?display:\s*none/.test(cssSource), "Phone navigation links must remain hidden after the shared text-link rule");
+const baseCss = cssSource.slice(0, cssSource.indexOf("@media (min-width: 640px)"));
+check(baseCss.lastIndexOf(".nav-learning,") > baseCss.lastIndexOf(".text-link {"), "Base navigation hiding must follow the shared text-link display rule");
+check(/@media \(max-width: 639px\)[\s\S]*?\.evidence-command-line code[\s\S]*?white-space:\s*normal/.test(cssSource), "The evidence command must wrap on phones");
+check(/@media \(max-width: 639px\)[\s\S]*?\.evidence-command-line\s*\{[\s\S]*?align-items:\s*flex-start/.test(cssSource), "The wrapped evidence prompt must align with the first line");
+check(!/font-size:\s*(?:9|10)px/.test(cssSource), "Meaningful technical labels must not fall below 11 pixels");
 
 const socialImagePath = path.join(distDir, new URL(socialImageUrl || "https://comis.ai/invalid").pathname.replace(/^\/+/, ""));
 const socialImage = await readFile(socialImagePath);
 check(socialImage.subarray(0, 8).toString("hex") === "89504e470d0a1a0a", "Social image must be a genuine PNG");
 check(socialImage.subarray(12, 16).toString("ascii") === "IHDR", "Social image PNG must contain an IHDR header");
-check(socialImage.readUInt32BE(16) === 1280 && socialImage.readUInt32BE(20) === 640, "Social image must be 1280×640");
+check(socialImage.readUInt32BE(16) === 1280 && socialImage.readUInt32BE(20) === 640, "Social image must be 1280x640");
 check((await stat(socialImagePath)).size < 250_000, "Social image must remain under 250 KB");
 
 const imageAssets = (await listFiles(path.join(distDir, "images"))).map((file) => path.basename(file)).sort();
@@ -357,8 +388,12 @@ for (const header of ["Content-Security-Policy", "Permissions-Policy", "Strict-T
 }
 check(!headers.includes("'unsafe-inline'"), "Content Security Policy must not allow inline scripts or styles");
 
+const webManifest = JSON.parse(await readFile(path.join(distDir, "site.webmanifest"), "utf8"));
+check(webManifest.description === "Open-source runtime for bounded action and governed learning.", "Web manifest description is out of sync");
+
 const deploymentWorkflow = await readFile(path.join(websiteDir, "..", ".github", "workflows", "deploy-website.yml"), "utf8");
 check(deploymentWorkflow.includes('wranglerVersion: "4.110.0"'), "Cloudflare deployment must pin the audited Wrangler release");
+check(deploymentWorkflow.includes('"assets/comis-social-preview.png"'), "Website deployment must watch the shared social preview asset");
 
 const packageJson = JSON.parse(await readFile(path.join(websiteDir, "package.json"), "utf8"));
 sameValues(Object.keys(packageJson.dependencies).sort(), ["@astrojs/sitemap", "astro"], "Website runtime dependencies");
@@ -370,5 +405,5 @@ if (failures.length > 0) {
   for (const failure of failures) console.error(`- ${failure}`);
   process.exitCode = 1;
 } else {
-  console.log(`Website validation passed: one route, seven sections, ${wordCount} visible words, verified metadata and assets.`);
+  console.log(`Website validation passed: one route, eight sections, ${wordCount} visible words, verified positioning, boundaries, metadata, and assets.`);
 }

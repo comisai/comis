@@ -1,6 +1,6 @@
 # @comis/cli
 
-Command-line interface for [Comis](https://github.com/comisai/comis), an open-source runtime for AI agents you leave running.
+Command-line interface for [Comis](https://github.com/comisai/comis), an open-source security-first runtime for AI agents that learn and act across sessions.
 
 ## Install
 
@@ -63,7 +63,7 @@ comis agent configure my-agent
 
 Run `comis --help` or `comis <command> --help` for the authoritative command surface.
 
-This package is part of [Comis](https://github.com/comisai/comis), an open-source runtime built for AI agents you leave running.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source security-first runtime for AI agents that learn and act across sessions.
 
 ## License
 

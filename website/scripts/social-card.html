@@ -10,9 +10,9 @@
         display: grid;
         padding: 56px;
         background:
-          radial-gradient(circle at 84% 18%, rgba(31, 191, 212, 0.14), transparent 30%),
-          radial-gradient(circle at 10% 92%, rgba(255, 106, 69, 0.12), transparent 34%),
-          #0b1220;
+          radial-gradient(circle at 84% 18%, rgba(67, 197, 213, 0.14), transparent 30%),
+          radial-gradient(circle at 10% 92%, rgba(255, 123, 90, 0.11), transparent 34%),
+          #08111e;
         color: #f8fafc;
         font-family: Inter, ui-sans-serif, system-ui, sans-serif;
       }
@@ -23,8 +23,8 @@
         overflow: hidden;
         padding: 46px 52px;
         border: 1px solid rgba(255, 255, 255, 0.14);
-        border-radius: 24px;
-        background: rgba(18, 28, 45, 0.9);
+        border-radius: 20px;
+        background: rgba(14, 25, 41, 0.92);
         box-shadow: 0 32px 90px rgba(0, 0, 0, 0.3);
       }
       main::after {
@@ -54,15 +54,15 @@
       .status::before {
         width: 10px;
         height: 10px;
-        border-radius: 50%;
-        background: #ff6a45;
-        box-shadow: 0 0 20px rgba(255, 106, 69, 0.55);
+        border-radius: 2px;
+        background: #ff7b5a;
+        box-shadow: 0 0 20px rgba(255, 123, 90, 0.5);
         content: "";
       }
       .content { align-self: center; }
       .kicker {
         margin: 0 0 18px;
-        color: #ff805f;
+        color: #ff7b5a;
         font-family: ui-monospace, SFMono-Regular, monospace;
         font-size: 20px;
         font-weight: 600;
@@ -70,9 +70,9 @@
         text-transform: uppercase;
       }
       h1 {
-        max-width: 990px;
+        max-width: 1040px;
         margin: 0;
-        font-size: 62px;
+        font-size: 60px;
         font-weight: 600;
         letter-spacing: -0.04em;
         line-height: 1.04;
@@ -92,23 +92,31 @@
         text-transform: uppercase;
       }
       footer span + span { padding-left: 28px; border-left: 1px solid rgba(255, 255, 255, 0.12); }
-      footer span::before { margin-right: 10px; color: #32c1d4; content: "✓"; }
+      footer span::before {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        margin-right: 12px;
+        border-radius: 2px;
+        background: #43c5d5;
+        content: "";
+      }
     </style>
   </head>
   <body>
     <main>
       <header>
         <img src="../public/images/comis-logo.png" alt="Comis" />
-        <div class="status">Open source · Self-hosted</div>
+        <div class="status">Open source / Self-hosted</div>
       </header>
       <div class="content">
-        <p class="kicker">For the agent you leave running.</p>
-        <h1>Run AI agents you can constrain, inspect, and recover.</h1>
+        <p class="kicker">Security-first agent runtime</p>
+        <h1>Let agents learn and act. Keep authority in the runtime.</h1>
       </div>
       <footer aria-label="Comis advantages">
-        <span>Keep the work</span>
-        <span>Hold boundaries</span>
-        <span>See what happened</span>
+        <span>Governed learning</span>
+        <span>Bounded action</span>
+        <span>Recorded evidence</span>
       </footer>
     </main>
   </body>

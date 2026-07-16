@@ -9,15 +9,14 @@ your agent picks up over time, so it can recall them in future conversations
 without repeating itself.
 
 **Who it is for.** Anyone who wants their agent to remember things across
-sessions. Configuration is optional — sensible defaults work out of the box.
+sessions. Configuration is optional; the memory system is enabled by default.
 
 Your agent does not just forget everything after each conversation. Comis stores
-important information in long-term memory -- facts, conversation summaries,
-instructions, and more. This memory persists across sessions and helps your
-agent get smarter over time. Memory is backed by a single SQLite database
-(SQLite + FTS5 full-text index + a vector index when an embedding provider is
-configured) — see [Search](/agents/search) and
-[Embeddings](/agents/embeddings).
+information in long-term memory -- facts, conversation summaries, instructions,
+and more. This memory persists across sessions and can influence future
+responses. Memory is backed by a single SQLite database (SQLite + FTS5 full-text
+index + a vector index when an embedding provider is configured); see
+[Search](/agents/search) and [Embeddings](/agents/embeddings).
 
 ## Memory types
 
@@ -46,13 +45,16 @@ your application.
 
 ## Trust levels
 
-Each memory has a trust level that controls how it is used when recalled:
+Each memory has a trust level that controls eligibility and ranking during
+recall. A trust level is a provenance and policy label, not proof that the
+content is correct.
 
 **system** -- Created by Comis itself (compaction summaries, internal data).
-Fully trusted. The agent treats these as reliable facts.
+This is the highest policy tier, but generated summaries can still be wrong.
 
-**learned** -- Things the agent learned from conversations with you. Trusted
-by default. The agent treats these as information from a reliable source.
+**learned** -- Things extracted or synthesized from eligible conversations and
+memory sources. This tier is included in recall by default. It does not mean the
+content was independently verified or is reliable.
 
 **external** -- Information from outside sources (web searches, tool results
 from untrusted inputs). When an external memory is recalled, it is marked with
@@ -83,10 +85,11 @@ from recent conversations:
 3. Each extracted item is stored with `trust_level: "learned"`.
 4. The new memories are queued for embedding (so meaning-based recall works).
 
-This means your agent slowly builds up a personalised picture of you and your
-work without you having to say "remember this." The review runs on a
-configurable schedule and de-duplicates by content hash so repeated facts do
-not clutter the database.
+This means your agent can build a personalised picture of you and your work
+without you having to say "remember this." The review runs on a configurable
+schedule and de-duplicates by content hash so repeated facts do not clutter the
+database. Review output is LLM-generated and can be wrong. The `learned` label
+does not turn it into a verified fact.
 
 The job is implemented in
 `packages/agent/src/memory/memory-review-job.ts`.
@@ -115,14 +118,14 @@ Each agent's memories are isolated by tenant ID, which means if you run
 multiple agents, they each have their own separate memory space. An agent
 cannot accidentally access another agent's memories.
 
-Recall is scoped to `(tenant, agent)` — memory is **agent-scoped**, not
+Recall is scoped to `(tenant, agent)` -- memory is **agent-scoped**, not
 per-user. An agent has one shared memory across every conversation it holds
 within a tenant, so the same agent recalls a fact regardless of which chat or
 sender it was learned from (the per-memory sender is provenance, not a recall
 filter). This is the intended behavior for a single-owner deployment (you talk
 to your agent from several chats and share one memory). If you run **one agent
 for multiple distinct people** under a single tenant, be aware that a personal
-fact learned from one person is recallable when talking to another — give each
+fact learned from one person is recallable when talking to another. Give each
 person their own agent (or tenant) if their memories must stay private.
 
 The database uses WAL mode (write-ahead logging) by default, which allows
@@ -145,11 +148,10 @@ without requiring manual cleanup.
 
 ## Recall pipeline
 
-Before every agent response, Comis runs a single recall orchestrator —
-`MemoryRecall` (`packages/agent/src/rag/memory-recall.ts`) — that turns your
-incoming message into the most relevant set of memories. It **replaced the
-older inline recall path** (a flat search → trust-filter → sort → dedup). The
-orchestrator runs these stages in order:
+Before every agent response, Comis runs a single recall orchestrator,
+`MemoryRecall` (`packages/agent/src/rag/memory-recall.ts`), that turns your
+incoming message into a relevant set of memories. The orchestrator runs these
+stages in order:
 
 ```mermaid
 flowchart LR
@@ -165,16 +167,16 @@ flowchart LR
    (`rag.lanes.fts.weight`, default `1.0`; `rag.lanes.vector.weight`, default
    `1.5`). On top
    of those two base lanes, three further lanes are fused in **only when enabled**
-   — the entity lane, the temporal-spread lane, and the causal lane (all
+   -- the entity lane, the temporal-spread lane, and the causal lane (all
    **default-OFF**). See [Search](/agents/search).
 2. **FUSE** -- the lanes are merged with **Reciprocal Rank Fusion (RRF, `k=60`)**.
-   Fusion order — *not* reranking — is the default recall ordering.
+   Fusion order, not reranking, is the default recall ordering.
 3. **RERANK** *(locally-gated; auto-on only when the reranker model is already
    present)* -- when active, a cross-encoder re-scores the top fused candidates.
    On a fresh all-default install the model is absent, so this stage is skipped
    and recall stays on the fusion order.
 4. **SCORE** -- multiplicative boosts are applied to the reranked-or-fused score:
-   recency, temporal proximity, proof count, and trust — plus a usefulness factor
+   recency, temporal proximity, proof count, and trust, plus a usefulness factor
    when the recall-utility feedback loop is on (the `rag.scoring.*` alphas below).
 5. **TRUST-FILTER** -- memories whose trust level is not in `includeTrustLevels`
    are dropped (`external` excluded by default).
@@ -240,9 +242,9 @@ Trust is a **ranking signal**, not only an inclusion filter. During the SCORE
 stage, `rag.scoring.trustAlpha` (default `0.1`) boosts more-trusted memories, and
 ties are broken in the order **`system > learned > external`**. The pre-existing
 `includeTrustLevels` filter still decides which trust levels are *eligible*; the
-ranking dimension decides their *order* once they qualify. This is what keeps a
-trusted fact ahead of an equally-relevant but less-trusted one, preserving the
-poisoning-resistance posture.
+ranking dimension decides their *order* once they qualify. This keeps a
+higher-tier record ahead of an equally relevant lower-tier record. It does not
+establish that either record is true.
 
 | Boost | Knob | Default |
 |-------|------|---------|
@@ -350,20 +352,33 @@ observation** — growing its `proof_count` and `source_ids` and appending to it
   source IDs are diffed against the ones already recorded), so a repeated pass is a no-op;
 - **trust-ceiling preserving** — the folded trust level is `min(sources)`, so a
   fold can only **lower** an observation's trust, never launder it upward;
-- **non-destructive** — a correction **supersedes** the prior body with a
-  bi-temporal history-append (the prior body is kept in `history`, never hard-deleted).
+- **non-destructive** -- when a correction is accepted into a refreshed profile
+  or topic document, it **supersedes** the prior body with a bi-temporal history
+  append (the prior body is kept in `history`, never hard-deleted).
 
 Because the grown `proof_count` feeds the `proofAlpha` ranking boost, a fact
 corroborated across runs out-ranks a one-off mention at recall time.
 
-The reflection engine is **outcome-gated** (it learns only from trusted-origin
-successful trajectories) and gated by `learning.enabled` under the master
-`memory.enabled` switch. In the same pass it also distils **advisory procedure
-docs** from **verifiably-successful `orchestrate` runs** — a `kind:"skill"` doc
-that records the run's deterministic tool footprint and surfaces into
-`<available_skills>` bounded by a per-agent budget. Such a doc is **advisory**:
-the model reads it and **re-authors** the script through its own permissioned
-tools; it is never a stored/replayed template and adds **no new execution path**.
+The reflection engine is gated by `learning.enabled` under the master
+`memory.enabled` switch. For skill sources it selects trusted-origin
+trajectories whose configured outcome resolver reports `success`. That fused
+label is not independent proof of task success: mixed signals can classify a
+session that failed overall as successful. In the same pass the engine can
+distil **advisory procedure docs** from `orchestrate` runs resolved as successful.
+A `kind:"skill"` doc records the run's deterministic tool footprint and can
+surface into `<available_skills>` within a per-agent budget. Read-only
+`candidate` docs may surface before promotion so they can receive reuse
+feedback; `active` is the higher proof tier, not a prerequisite for first use.
+The model reads a surfaced doc and **re-authors** the script through its own
+permissioned tools. It is never a stored or replayed template and adds **no new
+execution path**.
+
+The static learned-document validator blocks critical secret or poison patterns,
+but warning-level patterns, including some jailbreak-like language, can pass
+validation. A correction signal also does not guarantee demotion or durable
+behavior change. It must be enabled, attributed to a surfaced skill, clear the
+confidence and corroboration gates, and produce a weakening trend before the
+state changes.
 The configuration lives in the
 [Memory configuration](/agents/memory-config#the-one-learning-reflection-engine)
 reference; this page describes the concept.

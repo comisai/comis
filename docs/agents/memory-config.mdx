@@ -1,13 +1,13 @@
 ---
 title: "Memory configuration"
-description: "Every Comis memory capability and the exact config option that enables it — recall, the recall-time signals, the one learning-reflection engine, and the maintenance jobs"
+description: "Every Comis memory capability and the exact config option that enables it: recall, outcome signals, governed learning, and maintenance"
 icon: "sliders"
 ---
 
 **What this page is.** The complete reference for Comis's agent-memory capabilities and the
-exact config option for each. **The memory features are ON by default (opt-out)** — a fresh
+exact config option for each. **The memory features are ON by default (opt-out)**; a fresh
 install runs them and you edit config to turn them off. The trust boundary
-(`rag.scoring.trustAlpha`, `rag.includeTrustLevels`) is **frozen** — not a tunable capability.
+(`rag.scoring.trustAlpha`, `rag.includeTrustLevels`) is **frozen**, not a tunable capability.
 
 <Warning>
   The LLM **build/ask** features (the session review job, the one learning-reflection cron,
@@ -28,7 +28,7 @@ embeddings + reranker + the cost kill switch) is the top-level `memory:` block. 
 below is the **effective default** — set any `enabled: false` to opt a feature out.
 
 <Note>
-  On by default is necessary but not always sufficient — several capabilities also need
+  On by default is necessary but not always sufficient; several capabilities also need
   *built derived state* (a populated graph, scored usefulness) before they change recall. See
   [Dependencies & gotchas](#dependencies--gotchas) below.
 </Note>
@@ -97,9 +97,10 @@ agents:
     # ───────────────────────────────────────────────────────────────────
     # 3. OUTCOME SIGNAL + the ask tool
     # ───────────────────────────────────────────────────────────────────
-    learningOutcome:                 # the Verified Learning outcome signal (gates reflection + forgetting)
-      enabled: false                 # default OFF (opt-in)
+    learningOutcome:                 # fused outcome signal used by reflection + forgetting
+      enabled: true                  # default ON (opt-out)
       judge: { enabled: true }       # cost-gated LLM fallback for a conversational turn
+      correction: { enabled: true }  # cost-gated correction detector; a signal is not an automatic demotion
 
     dialectic:                       # memory_ask grounded-Q&A tool (the one query-time LLM surface)
       enabled: true
@@ -128,12 +129,12 @@ agents:
       reflect:                       # the one __REFLECT__ cron (skill + profile + topic in one pass)
         schedule: "0 */3 * * *"      # best-out-of-box: every 3 hours (near-real-time learning)
         minConfidence: 0.6           # reflection-side confidence floor [0..1]
-        promoteAtProofCount: 3       # verified-success count at which a doc promotes candidate → active
+        promoteAtProofCount: 3       # attributed reuse-success count for candidate-to-active promotion
         maxDocsPerRun: 100           # finite DoS bound, set high so it does not throttle learning
         maxProcedureDocsSurfaced: 10 # per-agent cap on orchestrate-derived procedure docs in <available_skills> (the scaling guard)
         corroboration:               # HOW a topic must corroborate before it can seed a learned doc
-          mode: single_owner         # default: learn from one explicitly-trusted owner's repetition. "distinct_sessions" = the stricter ≥2-distinct-(session,sender) gate (see below)
-          minObservations: 2         # single_owner ONLY: min distinct successful repetitions by the owner (≥2; a single success never corroborates)
+          mode: single_owner         # default: repetition by one explicitly named owner; not independent corroboration
+          minObservations: 2         # single_owner only: minimum repeated success-labeled observations
       forget:                        # the wrongness-based soft-eviction policy (the __LIFECYCLE__ sweep reads these)
         maxDormantDays: 365          # best-out-of-box: remember ~a year (forget pure-disuse less)
         failureEvictionFloor: 3      # corroborated failure_count at/above which a non-exempt memory is soft-evicted
@@ -154,19 +155,20 @@ agents:
 | **FEED** loop | `rag.feedback.enabled` | Boosts memories that proved useful (`scoring.usefulnessAlpha`) |
 | **LEARN-IQ** | `rag.queryUnderstanding.intentReweight` (+ `synonyms`, `temporalParse`) | LLM-free query understanding / lane reweighting |
 | **FORGET** (recall decay) | `rag.forget.enabled` | Per-type score decay demotes stale memories at recall (`scoring.forgetAlpha`) |
-| Outcome signal | `learningOutcome.enabled` | Records each finished turn's real task-outcome (the signal reflection + forgetting gate on) |
+| Outcome signal | `learningOutcome.enabled` | Records and fuses configured outcome observations used by reflection and forgetting |
 | **DIALECTIC** | `dialectic.enabled` | The `memory_ask` grounded-Q&A tool (query-time LLM) |
 | Review | `memoryReview.enabled` | Turns sessions into reviewed memories (accumulate tier) |
 | Lifecycle sweep | `memoryLifecycle.enabled` | The keyless `__LIFECYCLE__` soft-eviction sweep (thresholds in `learning.forget.*`) |
-| **LEARN** (reflection) | `learning.enabled` | The one outcome-gated reflection engine — maintains the learned **skill** docs, the per-user **profile** doc, and higher-order **topic** observations in one pass; plus the wrongness-based soft eviction (`learning.forget.*`) |
+| **LEARN** (reflection) | `learning.enabled` | Maintains learned **skill**, per-user **profile**, and **topic** docs, plus soft eviction (`learning.forget.*`) |
 
 ## The one learning-reflection engine
 
-Comis's learning layer is **one outcome-gated reflection engine**. A single `__REFLECT__`
-cron maintains named **Mental Model** docs
-(`kind: skill | profile | topic`) via byte-stable delta-ops, gated on a **real task outcome**
-(the `learningOutcome` signal) rather than a text-overlap proxy. The whole layer is governed by
-**one flag** — `agents.<id>.learning.enabled` — under the master `memory.enabled` switch.
+Comis's learning layer is **one governed reflection engine**. A single `__REFLECT__`
+cron maintains named **Mental Model** docs (`kind: skill | profile | topic`) via
+byte-stable delta operations. Skill reflection uses the fused `learningOutcome`
+signal instead of text overlap alone. That signal is evidence, not a guarantee
+that the task actually succeeded. The whole layer is governed by **one flag**,
+`agents.<id>.learning.enabled`, under the master `memory.enabled` switch.
 
 ```yaml
 agents:
@@ -176,90 +178,95 @@ agents:
       reflect:
         schedule: "0 3 * * *"  # the one reflection cron
         minConfidence: 0.6     # the reflection-side confidence floor
-        promoteAtProofCount: 3 # candidate → active after this many attributed successes
-        maxDocsPerRun: 25      # per-run cost bound
+        promoteAtProofCount: 3 # candidate to active after this many attributed success labels
+        maxDocsPerRun: 100     # per-run cost bound
         maxProcedureDocsSurfaced: 10 # per-agent surface cap on procedure docs (default 10)
         corroboration:
-          mode: distinct_sessions # OVERRIDE the single_owner default with the stricter ≥2-distinct-sessions gate (multi-user box)
-          minObservations: 2   # (single_owner only) the owner must succeed at the same task ≥2 times before it seeds a skill
+          mode: distinct_sessions # stricter than the single_owner default
+          minObservations: 2   # single_owner only: repeated observations required
       forget:
-        maxDormantDays: 90
+        maxDormantDays: 365
         failureEvictionFloor: 3
         highProofFloor: 5
 ```
 
-- **Reflection (`learning.reflect.*`)** — the `__REFLECT__` cron clusters trusted-origin
-  **successful** trajectories and distils them into Mental Model docs at `trust=learned`. A doc
-  seeds only once its topic **corroborates** (`learning.reflect.corroboration.mode`, below). A learned
-  doc is **advisory** (no executable column — the agent reads it and acts through its own
-  already-permissioned tools); it can **never** exceed `learned` trust (a DB `CHECK` makes
-  `system` structurally impossible). An admitted `candidate` **promotes to `active`** once its
-  `proof_count` crosses `promoteAtProofCount` from attributed successful reuse; an active doc
-  **demotes** (`active` → `stale` → `archived`) on corroborated, sustained failing reuse. The
-  per-user **profile** doc (`kind:"profile"`) and higher-order **topic** observations
-  (`kind:"topic"`) are maintained in the **same pass** — a profile **correction supersedes**
-  the prior doc with a bi-temporal **history-append** (the prior body is preserved in the doc's
-  `history`, never hard-deleted), and external-trust sources are excluded by the engine's
-  two-axis anti-poison SELECT. The same pass also distils **advisory procedure docs** from
-  **verifiably-successful `orchestrate` runs** — a `kind:"skill"` doc that additionally records
-  the deterministic **tool footprint** of the run (the audited tool names). It is outcome-gated
-  and **demote-on-failure** like every learned doc, and it is **advisory**: the model reads the
-  guidance and **re-authors** the script through its own already-permissioned tools — the doc is
-  never a stored or replayed template, and there is **no new execution path**.
-- **Procedure-doc surface budget (`learning.reflect.maxProcedureDocsSurfaced`, default `10`)** —
+- **Reflection (`learning.reflect.*`)** -- for skill docs, the `__REFLECT__`
+  cron clusters trusted-origin trajectories whose configured outcome resolver
+  reports `success`. A fused success label is not independent verification. Mixed
+  tool, pipeline, judge, reaction, or correction signals can classify a session
+  that failed overall as successful. Profile and topic docs are built from the
+  eligible `system` and `learned` memory corpus instead of the skill outcome path.
+  Every admitted doc is stored at `trust=learned`; this is a policy label and
+  trust ceiling, not a claim that the content is reliable.
+- **Admission and surfacing** -- a topic must pass the selected corroboration
+  mode and the static learned-document validator before admission. Critical
+  secret and poison patterns are rejected. Warning-level patterns, including
+  some jailbreak-like language, are recorded but can pass. A read-only,
+  non-evicted `candidate` can surface in `<available_skills>` before promotion so
+  it can receive reuse feedback. `active` remains the higher proof tier. Mutating,
+  stale, archived, and evicted docs do not surface.
+- **Promotion, correction, and demotion** -- attributed reuse labeled `success`
+  increments proof and can promote `candidate` to `active` at
+  `promoteAtProofCount`. A recorded correction does not by itself guarantee
+  demotion or a durable behavior change. The correction detector must be enabled,
+  the prior turn must attribute a surfaced skill, confidence and failure
+  corroboration must pass, and the trend must become weakening before a skill
+  moves to `stale`. When an accepted profile or topic update supersedes an
+  existing doc, the prior body is appended to `history` rather than hard-deleted.
+- **Authority and scope** -- learned docs contain advisory Markdown and no
+  executable column. The model re-authors any action through its existing tools,
+  capability gates, approvals, credentials, and sandbox posture. The learned doc
+  adds no execution authority. Reads and writes are scoped to `(tenant, agent)`;
+  this is not a per-chat or per-sender recall boundary.
+- **Procedure-doc surface budget (`learning.reflect.maxProcedureDocsSurfaced`, default `10`)** --
   a per-agent cap on how many procedure docs surface into one prompt's `<available_skills>`. With
   no ranked top-K at surface time, a burst of procedure docs would otherwise bloat every prompt;
-  the budget caps that subset only — when it is exceeded the **most-corroborated** procedure docs
+  the budget caps that subset only. When it is exceeded the highest-proof procedure docs
   (highest proof count) keep their slot, surfaced in a stable listing order. User-intent **skill**
-  docs and **topic** docs are **unaffected** — they keep a separate, uncapped path.
-- **Forgetting (`learning.forget.*`)** — couples a memory's decay to its outcome-attributed
-  `failure_count`, so **wrong fades faster than merely old**, and **soft-evicts** a sufficiently
+  docs and **topic** docs are **unaffected**; they keep a separate, uncapped path.
+- **Forgetting (`learning.forget.*`)** -- couples a memory's decay to its outcome-attributed
+  `failure_count` and **soft-evicts** a sufficiently
   weak or stale memory: it is marked `evicted_at` (excluded from recall, still resolvable via
   `asOf`/inspect, **reversible**, never hard-deleted). A memory implicated in
   `failureEvictionFloor` (default 3) or more **corroborated** failures is soft-evicted regardless
   of its decayed strength, while a memory at/above `highProofFloor` (default 5) is **exempt**.
-  A **corroboration gate** (≥2 independent failures, or one deterministic source, on every
+  A **corroboration gate** (two distinct-session observations, or one deterministic source, on every
   `failure_count` increment) plus exemptions for pinned / `system` / high-`proof_count` memories
-  make induced eviction impractical: a poisoner cannot evict a well-corroborated, pinned, or
-  system memory no matter how many failures it induces. The sweep runs on the keyless
+  reduce induced eviction risk. The sweep runs on the keyless
   `memoryLifecycle` cron (`__LIFECYCLE__`).
 
 Recall **ranking** itself is the **fixed `rag.scoring`** fusion (deterministic RRF + the
-cross-encoder reranker) — there is no learned recall weight.
+cross-encoder reranker); there is no learned recall weight.
 
 ### Corroboration: single-owner (default) vs distinct-sessions (`learning.reflect.corroboration`)
 
-Before a topic can seed a learned doc it must **corroborate**. The mode governs what counts as
-corroboration:
+Before a topic can seed a learned doc it must satisfy the configured admission
+gate. The configuration calls both modes corroboration, but they provide
+different evidence strength:
 
-- **`mode: single_owner`** (**default**) — **repetition-as-corroboration**, tuned for the primary
-  Comis use case: a **single-owner deployment** (one trusted DM). One stable session means the
-  distinct-sessions gate below is structurally unreachable (cardinality is always 1), so it would
-  never learn anything. In `single_owner` mode the engine counts an **explicitly-trusted owner's
-  repeated successes**: when the owner succeeds at the same task **≥`minObservations`** times
-  (default `2`, never one-shot), the topic corroborates. The distinct-sessions gate still applies
-  as a superset, so a box with **two or more** explicitly-trusted senders is handled the
-  multi-user way automatically.
-- **`mode: distinct_sessions`** — the classic **anti-domination** gate: a topic needs **≥2 distinct
-  `(session, sender)`** successful observations. N near-identical successes from one sender in one
-  session count **once**. Set this explicitly on a multi-user box that wants to **require**
-  independent sessions even from its single trusted owner (the stricter posture).
+- **`mode: single_owner`** (**default**) -- repetition by exactly one sender
+  explicitly named in `elevatedReply.senderTrustMap`. The topic can seed after
+  `minObservations` success-labeled repetitions (default `2`). These observations
+  can come from the same owner and session, so this is **not independent
+  corroboration** and does not prove the guidance is correct. It exists so a
+  single-owner deployment can learn without requiring another sender.
+- **`mode: distinct_sessions`** -- requires at least two distinct
+  `(session, sender)` observations. Repeats from one sender in one session count
+  once. This is the stricter anti-domination posture, although distinct keys are
+  still evidence signals rather than proof of correctness.
 
 <Note>
-  **`single_owner` is safe by construction as a default**, even on a multi-user box. Repetition is
-  counted **only** among senders the operator **explicitly named** in
-  [`elevatedReply.senderTrustMap`](/reference/config-yaml) (resolving to a non-external tier) — a
-  sender trusted merely by a promiscuous `defaultTrustLevel`, or an unknown sender, can ride past
-  the success filter yet **never** self-corroborate by repetition. It also requires a **single**
-  distinct owner, so a box with **≥2** explicitly-trusted senders falls back to the
-  distinct-sessions gate. The only behavior change versus `distinct_sessions` is for a box with
-  **exactly one** explicitly-trusted owner: it learns from that owner's repetition (one session)
-  instead of requiring two sessions. Choose `distinct_sessions` if you want to forbid even that.
+  The `single_owner` gate excludes unknown senders and senders trusted only by
+  `defaultTrustLevel`; repetition counts only for an operator-named sender. If
+  two or more explicitly named senders are present, Comis falls back to the
+  distinct-sessions gate. These controls reduce who can seed a doc, but they do
+  not establish truth. Choose `distinct_sessions` when same-owner repetition is
+  not enough for your risk model.
 </Note>
 
 The `reflect:funnel` telemetry carries a `singleOwnerCorroborated` count (how many topics
 corroborated via repetition this run), so [`comis explain`](/reference/cli#comis-explain) and
-[`comis fleet`](/reference/cli#comis-fleet) show the mode is active — an `admitted > 0` run with
+[`comis fleet`](/reference/cli#comis-fleet) show the mode is active. An `admitted > 0` run with
 `maxClusterCardinality: 1` reads as single-owner learning, not a contradiction.
 
 See [`learning` in config-yaml](/reference/config-yaml#learning-agents-learning) for every key
@@ -286,18 +293,20 @@ or an unsupported block is pointed straight at the line to fix. A **bare config*
      sweep — live as **soft, reversible** eviction (`evicted_at`) when `learning.enabled` is on
      (it reads `learning.forget.*`), exempting pinned/system/high-proof memories. See
      [the one learning-reflection engine](#the-one-learning-reflection-engine).
-   - **Reflection** needs a stream of trusted-origin **successful** outcomes to learn from — it
-     gates on the `learningOutcome` signal, and abstains (a benign skip, never a failure) when a
-     run finds no corroborated success.
-2. **`dialectic` (`memory_ask`) spends tokens per ask** — it is the only query-time LLM
+   - **Reflection** needs eligible sources and, for skill docs, enough
+     trusted-origin trajectories resolved as `success`. A resolved success is a
+     fused signal, not proof that the overall task succeeded. The cron abstains
+     when no topic passes its selected admission gate.
+2. **`dialectic` (`memory_ask`) spends tokens per ask**; it is the only query-time LLM
    surface in the memory stack. Everything else in recall is LLM-free.
 3. **Trust is frozen, not a tunable capability.** `rag.scoring.trustAlpha` and
    `rag.includeTrustLevels` are the trust hard-boundary; leave them at the shipped values.
-4. **On by default — watch your spend.** The LLM build/ask features are opt-out so operators
+4. **On by default; watch your spend.** The LLM build/ask features are opt-out so operators
    get the full memory stack from day one; they spend your own budget. Your controls are the
    first-run notice and the master switch `memory.enabled: false` (or per-feature
-   `enabled: false`). Measure the effect in your own domain — Comis's honest, reproducible
+   `enabled: false`). Measure the effect in your own domain. Comis's reproducible
    methodology and the latest costed results are on the
    [Memory benchmarks](/agents/memory-benchmarks) page.
 
-See also: [Memory](/agents/memory) · [Search](/agents/search) · [Embeddings](/agents/embeddings) · [RAG](/agents/rag).
+See also: [Memory](/agents/memory), [Search](/agents/search),
+[Embeddings](/agents/embeddings), and [RAG](/agents/rag).

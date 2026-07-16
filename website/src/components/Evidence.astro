@@ -1,0 +1,55 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+import { SITE } from "../data/site";
+
+const evidence = [
+  ["Guidance accepted", "Candidate admission", "Internally reproduced across catalog mechanisms"],
+  ["Reused in a new session", "Fresh-session reuse", "Reproduced in selected scenarios"],
+  ["Works with changed input", "Rotated-input transfer", "Reproduced in selected scenarios"],
+  ["Measured task improvement", "General measured lift", "Not yet measured"],
+  ["Reproduced by another team", "Independent reproduction", "Not yet"],
+] as const;
+---
+
+<section id="evidence" data-section="evidence" aria-labelledby="evidence-heading">
+  <div class="container evidence-grid">
+    <div class="evidence-copy">
+      <p class="eyebrow">Current evidence</p>
+      <h2 id="evidence-heading">Show what the agent learned. Show what stayed bounded.</h2>
+      <p class="lead">A useful result names the workload, the state transition, the denied escalation, and the limits of the test.</p>
+
+      <div class="evidence-table-wrap">
+        <table class="evidence-table" data-evidence-status>
+          <caption class="visually-hidden">Current governed-learning evidence</caption>
+          <thead><tr><th scope="col">Property</th><th scope="col">Current status</th></tr></thead>
+          <tbody>
+            {evidence.map(([property, term, status]) => (
+              <tr><th scope="row"><span>{property}</span><small>{term}</small></th><td>{status}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="evidence-note">Internal evidence, not an independent or customer result. Read the <a href={SITE.learningCatalog}>learning stress catalog</a> for scenario scope and limitations.</p>
+    </div>
+
+    <figure class="terminal-panel diagnosis-panel">
+      <div class="panel-bar">
+        <div class="panel-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <span class="panel-title">Recorded incident evidence</span>
+      </div>
+      <div class="diagnosis-body">
+        <div class="command-line evidence-command-line">
+          <span class="prompt" aria-hidden="true">$</span>
+          <code>comis explain &lt;sessionKey|traceId|rootRunId&gt;</code>
+        </div>
+        <dl class="diagnosis-facts" data-diagnosis-fixture>
+          <div><dt>Outcome</dt><dd><span class="status-mark" aria-hidden="true"></span>degraded</dd></div>
+          <div><dt>Attributed cost</dt><dd>$1.320669</dd></div>
+          <div><dt>Likely cause</dt><dd class="cause-value"><span>Successful web content was classified as a failure.</span><code>content_heuristic_misclassification</code></dd></div>
+          <div><dt>Model calls to explain</dt><dd class="zero-value">0</dd></div>
+        </dl>
+      </div>
+      <figcaption>Comis explain builds a bounded report from recorded runtime evidence. It makes no model calls and does not invent a cause when no rule matches.</figcaption>
+    </figure>
+  </div>
+</section>

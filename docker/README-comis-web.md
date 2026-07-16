@@ -1,8 +1,10 @@
 # Comis Web Dashboard
 
 Web dashboard for [Comis](https://github.com/comisai/comis), the open-source
-runtime for AI agents you leave running. Use it to manage agents and channels,
-inspect traces, and follow live events.
+security-first runtime for AI agents that learn and act across sessions. Use it
+to manage agents and channels, inspect traces, review learned state, and follow
+live events. Learned guidance can influence an agent's proposals, but it cannot
+grant permission; runtime controls remain authoritative.
 
 This image bundles the compiled SPA served by **Nginx** (`nginx:alpine`), with a built-in reverse proxy to the daemon for `/api/*` and `/ws` traffic.
 

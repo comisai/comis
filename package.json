@@ -1,7 +1,7 @@
 {
   "name": "comis-workspace",
   "private": true,
-  "description": "Self-hosted runtime for AI agents that keep working, preserve useful context, follow configured limits, and explain recorded failures.",
+  "description": "Open-source security-first runtime for AI agents that learn and act across sessions.",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "type": "module",
@@ -24,6 +24,8 @@
     "agent-reliability",
     "agent-orchestration",
     "agent-governance",
+    "agent-learning",
+    "governed-learning",
     "multi-agent",
     "agent-security",
     "agent-observability",

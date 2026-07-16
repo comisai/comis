@@ -3,9 +3,9 @@
 </p>
 
 <p align="center">
-  <strong>Run AI agents you can constrain, inspect, and recover.</strong>
+  <strong>Open-source security-first runtime for AI agents that learn and act across sessions.</strong>
   <br />
-  <sub>For the agent you leave running.</sub>
+  <sub>Let agents learn and act. Keep authority in the runtime.</sub>
 </p>
 
 <p align="center">
@@ -16,9 +16,9 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start"><strong>Quick Start</strong></a> ·
-  <a href="https://docs.comis.ai/get-started">Documentation</a> ·
-  <a href="https://github.com/comisai/comis">GitHub</a> ·
+  <a href="#quick-start"><strong>Quick Start</strong></a> |
+  <a href="https://docs.comis.ai/get-started">Documentation</a> |
+  <a href="https://github.com/comisai/comis">GitHub</a> |
   <a href="https://github.com/comisai/comis/discussions">Discussions</a>
 </p>
 
@@ -26,16 +26,18 @@
 
 `comisai` is the public npm distribution of Comis. It installs the `comis` CLI and exposes ESM entry points for the platform's public packages.
 
-Comis is an open-source, self-hosted runtime for AI agents that work on schedules, across long tasks, or with other agents. It stores original messages and tool results outside the model's active prompt, while configured controls remain in the runtime.
+Comis is an open-source security-first runtime for AI agents that learn and act across sessions. It is self-hosted and built for agents that work on schedules, across long tasks, or with other agents. It stores original messages, tool results, learned guidance, and operational evidence outside the model's active prompt.
+
+Learned guidance can influence what an agent proposes in a later session, but it cannot grant permission. Capabilities, origin checks, credential scope, tool policy, budgets, and other configured controls remain authoritative in the runtime.
 
 > [!NOTE]
 > Comis is under active development. APIs and configuration may change. Review the [current limitations](https://docs.comis.ai/reference/known-limitations) and [threat model](https://github.com/comisai/comis/blob/main/THREAT_MODEL.md) before using it for critical work.
 
 ## Why Comis
 
-- **Keep the work.** Original messages and tool results remain recoverable when the model uses shorter summaries.
-- **Hold configured boundaries.** Authority, origin, credential scope, memory admission, and spending controls live outside prompt text.
-- **See what happened.** `comis explain` builds a bounded incident report from recorded evidence without making another model call.
+- **Keep authority outside the model.** Capability and origin checks, credential scope, tool policy, and configured limits are enforced by runtime paths rather than prompt text.
+- **Govern learning across sessions.** Source records, trust signals, configured corroboration, usefulness, and correction history shape which experience can return as guidance.
+- **Recover and explain the work.** Original messages and tool results remain selectively recoverable, while `comis explain` builds a bounded incident report from recorded evidence without making another model call.
 
 ## Quick Start
 
@@ -87,13 +89,15 @@ Reports are bounded and designed to exclude raw message bodies and credential va
 ## What Comis Includes
 
 - Scheduled work, background jobs, sub-agents, and typed execution graphs.
-- Recoverable original messages and tool results, plus memory with source records.
+- Recoverable original messages and tool results, plus trust-aware memory and governed learning with source records.
 - Configurable authority, credential scope, tool policy, and spending limits.
 - Cloud models, local Ollama and LM Studio models, built-in tools, and MCP integrations.
 - Telegram, Discord, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email, and Microsoft Teams.
 - Web dashboard, CLI, JSON-RPC, WebSocket, session reports, fleet health, audit records, cost accounting, optional OpenTelemetry export, and optional Prometheus metrics.
 
 Configured spending limits can refuse later model calls after a limit is crossed; they do not cancel a call already in progress. Configured graph checkpoints recover at node boundaries but do not provide exact replay of every external side effect.
+
+Eligible learned guidance can affect future model proposals and tool selection. It does not create a new capability, reveal a secret, expand a budget, or bypass an origin or tool-policy check. Admission and recall depend on configuration, and the presence of learned guidance is not by itself evidence of a general task-performance improvement.
 
 ## Security Boundaries
 

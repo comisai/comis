@@ -2,45 +2,52 @@
 // SPDX-License-Identifier: Apache-2.0
 import { SITE } from "../data/site";
 
+const controls = [
+  ["Layered authority", "Privileged paths use capability gates, origin checks, scoped secrets, encrypted storage, and the optional Credential Broker."],
+  ["Secure CLI path", "CLI-driven autonomy can use jailed execution, capability-limited Unix sockets, expiring leases, and brokered credentials."],
+  ["Interactive terminal", "Persistent interactive terminals fail closed when the supported Linux isolation path cannot be established."],
+  ["Whole-tree limits", "Configured limits can cover the parent agent and every child it starts, including outward actions and leases."],
+] as const;
+
 const boundaries = [
-  ["Isolation", "Linux with Bubblewrap is the recommended target. macOS isolation is best-effort and does not provide the same boundary."],
-  ["Host execution", "The ordinary exec tool can run directly on the host when its sandbox is disabled or unavailable."],
-  ["Authority defaults", "The default tool profile is full, and an empty per-agent secret allowlist is unrestricted. Narrow both before accepting untrusted input."],
-  ["Approvals", "Approvals are disabled by default and protect only explicitly wired paths when enabled."],
+  ["Host isolation", "Linux with Bubblewrap is the recommended target. macOS isolation is best-effort and does not provide the same boundary. Ordinary exec can reach the host when its sandbox is disabled or unavailable."],
+  ["Defaults", "The default tool profile is full, an empty per-agent secret allowlist is unrestricted, and approvals are off by default. Approvals protect only explicitly wired paths. Narrow these before accepting untrusted input."],
+  ["Learning", "The default evidence rule can admit one owner's experience. It is not independent corroboration. Candidate text may affect tool selection, and validation does not catch every harmful instruction."],
+  ["External systems", "Self-hosted does not mean offline. Configured model, messaging, media, MCP, and tool providers may receive data you send to them."],
 ] as const;
 ---
 
-<section class="surface-section security-section" data-section="security" aria-labelledby="security-heading">
-  <div class="container security-grid">
-    <div class="security-copy">
+<section id="security" class="surface-section security-section" data-section="security" aria-labelledby="security-heading">
+  <div class="container">
+    <div class="section-intro security-intro">
       <p class="eyebrow">Security and deployment</p>
-      <h2 id="security-heading">Start narrow. Expand after you test.</h2>
-      <p class="lead">
-        Comis treats model output and external content as untrusted, but safe operation still depends on your host and configuration.
-      </p>
-      <p class="supporting-copy">
-        Self-hosted does not mean offline. Configured model, messaging, media, MCP, and tool providers may receive data you send to them.
-      </p>
-      <p class="scope-note">
-        Comis does not claim complete tenant isolation, high availability, compliance certification, or commercial support.
-      </p>
+      <h2 id="security-heading">Security-first, with explicit boundaries.</h2>
+      <p class="lead">Comis treats model output and external content as untrusted, but safe operation still depends on your host and configuration.</p>
+    </div>
+
+    <div class="security-columns">
+      <div class="security-column" aria-labelledby="controls-heading">
+        <div class="column-heading"><p class="technical-label">What the runtime can enforce</p><h3 id="controls-heading">Independent control layers</h3></div>
+        <div class="security-list">
+          {controls.map(([title, body]) => <article><h4>{title}</h4><p>{body}</p></article>)}
+        </div>
+      </div>
+
+      <div class="security-column boundary-column" aria-labelledby="boundaries-heading">
+        <div class="column-heading"><p class="technical-label">What operators must decide</p><h3 id="boundaries-heading">Current boundaries</h3></div>
+        <div class="security-list">
+          {boundaries.map(([title, body]) => <article><h4>{title}</h4><p>{body}</p></article>)}
+        </div>
+      </div>
+    </div>
+
+    <div class="security-footer">
+      <p>Comis does not claim complete tenant isolation, high availability, compliance certification, or commercial support.</p>
       <nav class="inline-links" aria-label="Security resources">
         <a class="text-link" href={SITE.securityDocs}>Security guide</a>
         <a class="text-link" href={SITE.threatModel}>Threat model</a>
         <a class="text-link" href={SITE.knownLimitations}>Known limitations</a>
       </nav>
-    </div>
-
-    <div class="boundary-list">
-      {boundaries.map(([title, body], index) => (
-        <article class="boundary-item">
-          <span class="boundary-number" aria-hidden="true">0{index + 1}</span>
-          <div>
-            <h3>{title}</h3>
-            <p>{body}</p>
-          </div>
-        </article>
-      ))}
     </div>
   </div>
 </section>

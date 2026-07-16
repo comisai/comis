@@ -32,10 +32,10 @@ jobs:
         include:
           - repo: comisai/comis
             readme: docker/README-comis.md
-            short: "Open-source runtime for AI agents you leave running"
+            short: "Open-source security-first runtime for AI agents that learn and act across sessions"
           - repo: comisai/comis-web
             readme: docker/README-comis-web.md
-            short: "Comis web dashboard SPA (Nginx + reverse proxy)"
+            short: "Web dashboard for the Comis security-first agent runtime"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 

@@ -18,10 +18,10 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("DEFAULT_TEMPLATES workspace prose invariants (agent copy)", () => {
-  it("SOUL.md describes Comis as a runtime for persistent agents", () => {
+  it("SOUL.md describes the security-first cross-session runtime", () => {
     const soulMd = DEFAULT_TEMPLATES["SOUL.md"];
     expect(soulMd).toContain(
-      "Comis is an open-source, self-hosted runtime for AI agents that work over time.",
+      "Comis is an open-source, self-hosted, security-first runtime for AI agents that learn and act across sessions.",
     );
     expect(soulMd).not.toContain("security-first platform");
     expect(soulMd).not.toContain("Friendly by nature. Powerful by design.");

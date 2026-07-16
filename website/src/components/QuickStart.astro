@@ -3,18 +3,23 @@
 import { SITE } from "../data/site";
 ---
 
-<section id="install" class="install-section" data-section="install" aria-labelledby="install-heading">
-  <div class="reading-container install-copy">
+<section id="install" class="surface-section install-section" data-section="install" aria-labelledby="install-heading">
+  <div class="container install-grid">
+    <div class="install-copy">
     <p class="eyebrow">Quick start</p>
     <h2 id="install-heading">Install Comis on a host you control.</h2>
     <p class="lead">
       The managed installer can add Node.js, host tools, and a background service. Direct npm install keeps host setup in your hands.
     </p>
+    <p class="supporting-copy">Start with a read-only workload on supported Linux isolation. Add tools, credentials, and write access only after testing your policy.</p>
+    <a class="text-link standalone-link" href={SITE.installationDocs}>Read the installation guide</a>
+    </div>
 
+    <div class="install-runtime">
     <div class="command-panel install-command-panel">
-      <div class="command-line" role="region" tabindex="0" aria-label="One-line installer command">
+      <div class="command-line" role="region" tabindex="0" aria-label="Review-first installer download command">
         <span class="prompt" aria-hidden="true">$</span>
-        <code id="install-command" data-install-command>{SITE.installCommand}</code>
+        <code id="install-command" data-install-command>{SITE.reviewCommand}</code>
       </div>
       <button class="copy-button" type="button" data-copy-button hidden>
         <span data-copy-label>Copy command</span>
@@ -24,16 +29,17 @@ import { SITE } from "../data/site";
 
     <div class="install-options">
       <article class="install-option">
-        <p class="technical-label">Review first</p>
-        <p>Download with <code>curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh</code>, inspect the file, then run <code>bash comis-install.sh --dry-run</code>.</p>
+        <p class="technical-label">Inspect, test, run</p>
+        <p>Read the file with <code>less comis-install.sh</code>, preview changes with <code>bash comis-install.sh --dry-run</code>, then run <code>bash comis-install.sh</code>.</p>
       </article>
       <article class="install-option">
         <p class="technical-label">Use npm</p>
         <p>With Node.js 22.19 or newer, run <code>npm install --global comisai</code>, then <code>comis init</code>.</p>
       </article>
     </div>
-
-    <a class="text-link standalone-link" href={SITE.installationDocs}>Read the installation guide</a>
+    <p class="convenience-path"><strong>One-line convenience:</strong> <code>{SITE.installCommand}</code>. This skips local review of the installer.</p>
+    <p class="architecture-note">Comis is an Apache-2.0 TypeScript project built around ports and adapters. Most code integrations are source-integrated and wired in the composition root.</p>
+    </div>
   </div>
 </section>
 

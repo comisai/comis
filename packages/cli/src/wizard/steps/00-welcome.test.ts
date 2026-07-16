@@ -112,7 +112,7 @@ describe("welcomeStep", () => {
     expect(title).toBe("Security Notice");
   });
 
-  it("introduces Comis as a runtime for persistent agents", async () => {
+  it("shows the cross-session Comis agent setup message", async () => {
     const prompter = createMockPrompter({ confirm: true });
     const state: WizardState = { ...INITIAL_STATE };
 
@@ -121,7 +121,7 @@ describe("welcomeStep", () => {
     const firstNoteCall = (prompter.note as ReturnType<typeof vi.fn>).mock
       .calls[0];
     expect(firstNoteCall[0]).toBe(
-      "Welcome! This wizard will set up your persistent AI agent in a few steps.",
+      "Welcome! This wizard will set up a Comis agent that can learn and act across sessions.",
     );
   });
 

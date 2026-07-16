@@ -52,7 +52,7 @@ describe("CLI entry point", () => {
 
     it("has the correct description", () => {
       expect(program.description()).toBe(
-        "Command-line tools for the Comis persistent agent runtime",
+        "Command-line tools for the Comis security-first agent runtime",
       );
     });
 

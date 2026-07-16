@@ -12,7 +12,7 @@ if (copyButton && copyLabel && copyStatus && command) {
     try {
       await navigator.clipboard.writeText(commandText);
       copyLabel.textContent = "Copied";
-      copyStatus.textContent = "One-line installer command copied.";
+      copyStatus.textContent = "Review-first download command copied.";
       copyButton.dataset.state = "success";
     } catch {
       const selection = window.getSelection();
@@ -21,7 +21,7 @@ if (copyButton && copyLabel && copyStatus && command) {
       selection?.removeAllRanges();
       selection?.addRange(range);
       copyLabel.textContent = "Copy failed";
-      copyStatus.textContent = "Couldn’t copy. Select the command and copy it manually.";
+      copyStatus.textContent = "Couldn't copy. Select the command and copy it manually.";
       copyButton.dataset.state = "failure";
     }
 

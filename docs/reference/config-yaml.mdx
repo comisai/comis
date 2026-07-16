@@ -752,15 +752,27 @@ Controls whether within-conversation history is assembled **relevance-first** (t
 
 #### Learning Outcome (agents.*.learningOutcome)
 
-The **Verified Learning** outcome signal: a durable record of each finished trajectory's net task-outcome (`success` / `failure` / `corrected` / `unknown`), so learning can gate on a real task-outcome instead of a text-overlap proxy. It is the signal the [reflection engine](#learning-agents-learning) and the wrongness-based forgetting both gate on. **Default-OFF** and **gated by the master cost switch** (`memory.enabled` -- when that is `false`, `learningOutcome` is force-disabled regardless of the per-agent flag). The deterministic tool/pipeline signal is the primary source; the cost-gated LLM judge (`judge.enabled`, default **on** / opt-out) is the **fallback** that resolves a CONVERSATIONAL turn — one with no deterministic tool/pipeline signal, which would otherwise fuse to `unknown` and derive no learning. The judge runs ONE cheap-model pass ONLY when the deterministic resolve is `unknown` (so resolved turns skip it) and is force-disabled by the master cost switch. The capture is daemon-side and content-free -- ids / closed enums / counts only, never a message body. When enabled, observations are written to the `outcome_events` ledger (see [data-directory.mdx](/operations/data-directory)) and surfaced on the trajectory for `comis explain` (the `learning` obs signal) and via `comis memory learning`.
+The learning outcome signal is a durable record of configured observations for a
+finished trajectory (`success` / `failure` / `corrected` / `unknown`). Reflection
+and outcome-aware forgetting consume the fused result instead of relying on text
+overlap alone. It is **default-ON** and gated by the master cost switch
+(`memory.enabled`); setting the master switch to `false` force-disables it.
+Deterministic tool and pipeline observations take precedence. The cost-gated LLM
+judge is the fallback when deterministic resolution returns `unknown`. Capture is
+daemon-side and content-free: ids, closed enums, counts, and confidence only.
+
+The fused result is evidence, not independent verification of the overall task.
+Mixed observations can resolve to `success` for a session that failed overall.
+Operators should inspect the source labels and use their own workload evaluation
+before treating learned guidance as reliable.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable outcome capture for this agent (opt-in; additionally force-disabled when `memory.enabled` is `false`) |
+| `enabled` | `boolean` | `true` | Enable outcome capture for this agent (opt-out; force-disabled when `memory.enabled` is `false`) |
 | `sources` | `string[]` | `["tool", "pipeline"]` | Which signal sources may contribute observations (closed set: `tool` / `pipeline` / `correction` / `judge` / `reaction` / `explicit`) |
 | `reactionMap` | `object` | `{ success: ["👍", "✅"], failure: ["👎", "❌"] }` | Maps an inbound-reaction emoji to an outcome: a reaction added to one of this agent's own outbound messages on Discord/Slack/Telegram is matched against this map and recorded as a `reaction`-source observation (see the note below). Slack short names (`thumbsup`/`white_check_mark`/`thumbsdown`/`x` and the `+1`/`-1` aliases) reconcile to the Unicode defaults automatically. |
 | `judge.enabled` | `boolean` | `true` | Cost-gated LLM judge as the **fallback** outcome source (opt-out). Runs ONE cheap-model pass ONLY when the deterministic resolve is `unknown` — i.e. a conversational turn with no tool/pipeline signal — and records a `judge`-source observation (reward capped at 0.7, always out-ranked by a deterministic signal). Routed via the `outcomeJudge` model tier (below); force-disabled when `memory.enabled` is `false` |
-| `correction.enabled` | `boolean` | `false` | Enable the optional cost-gated correction detector: a follow-up "no, do X instead" turn is classified (via the `outcomeJudge` tier) and emits a `corrected` soft-failure of the prior trajectory. Default off — an LLM over untrusted follow-up text is a net-new surface; also force-disabled by `memory.enabled: false` |
+| `correction.enabled` | `boolean` | `true` | Enable the cost-gated correction detector. A classified follow-up emits a `corrected` soft-failure for the prior trajectory. This signal does not automatically demote a learned skill; attribution, confidence, corroboration, and trend gates still apply. Force-disabled by `memory.enabled: false` |
 | `minConfidenceToLearn` | `number` (0–1) | `0.6` | Minimum fused confidence required before a resolved outcome drives learning |
 | `retentionDays` | `number` | `90` | Age horizon for the `outcome_events` ledger; rows older than this are pruned at daemon startup (anti-DoS, runs regardless of the enable flag). Best-out-of-box `90` (larger outcome corpus for reflection; was `30`) |
 
@@ -773,25 +785,57 @@ The **Verified Learning** outcome signal: a durable record of each finished traj
 
 #### Learning (agents.*.learning)
 
-The **one outcome-gated reflection engine**: a single per-agent learning layer that maintains named **Mental Model** docs (`kind: skill | profile | topic`) at `trust=learned` via byte-stable delta-ops, plus the wrongness-based soft eviction. There are no separate per-loop blocks — skill-synthesis, profile, and topic learning all run through this one layer. **One flag** — `enabled` — gates the WHOLE layer, **default-ON (opt-out)** and **gated by the master cost switch** (`memory.enabled` -- when that is `false`, the whole learning layer is force-disabled regardless of the per-agent flag). It gates on the [`learningOutcome`](#learning-outcome-agents-learningoutcome) signal (a real task outcome), not a text-overlap proxy. Recall **ranking** itself is always the fixed `rag.scoring` fusion (deterministic RRF + the cross-encoder reranker) — the learning layer learns docs and forgets wrong memories, but tunes **no** recall weight.
+The governed reflection engine maintains named **Mental Model** docs
+(`kind: skill | profile | topic`) at `trust=learned` via byte-stable delta
+operations, plus outcome-aware soft eviction. Skill, profile, and topic learning
+share this layer. **One flag**, `enabled`, gates the whole layer. It is
+**default-ON (opt-out)** and force-disabled when `memory.enabled` is `false`.
+Skill reflection consumes the fused [`learningOutcome`](#learning-outcome-agents-learningoutcome)
+signal. The `learned` trust value is a policy label and ceiling, not a guarantee
+that a document is correct. Recall ranking stays on the fixed `rag.scoring`
+fusion; learning tunes no recall weight.
 
-When the reflection cron admits a doc that **promotes to `active`** and is **read-only**, it is **surfaced** to the agent: it is listed in `<available_skills>` (appended after platform skills so the prompt-cache prefix stays stable — see [prompt cache](/agents/cache#learned-skill-listing-stability)) and materialized to a per-agent `.learned-skills/<name>/SKILL.md` listed by its absolute path (the same shape platform skills use, so the `read` tool opens it directly and skill-use attribution matches). Promotion is gated by `reflect.promoteAtProofCount` from attributed successful reuse; corroborated, sustained failing reuse demotes (`active` → `stale` → `archived`) and drops it from the surface. A learned doc is **advisory** (no executable column) and can **never** exceed `learned` trust (a DB `CHECK` makes `system` structurally impossible — see [data-directory.mdx](/operations/data-directory)). **Procedure** docs distilled from verifiably-successful `orchestrate` runs (a `kind: skill` doc that additionally records the run's deterministic tool footprint) surface through the **same** listing, but that subset is capped per agent by `reflect.maxProcedureDocsSurfaced` (default `10`) so a burst cannot bloat every prompt — user-intent skill docs and topic docs keep a separate, uncapped path. The agent **re-authors** the script from the advisory guidance under its own permissioned tools; the surface adds no execution path.
+A read-only, non-evicted doc in `candidate` **or** `active` state can surface to
+the agent in `<available_skills>` and as
+`.learned-skills/<name>/SKILL.md`. Candidates surface before promotion so they
+can be tried and receive reuse feedback; `active` is the higher proof tier.
+Mutating, stale, archived, and evicted docs do not surface. Attributed reuse
+labeled `success` can promote a candidate at `reflect.promoteAtProofCount`.
+Corroborated failure plus a weakening trend can demote it. A recorded correction
+does not guarantee demotion or durable behavior change.
+
+Learned docs are advisory Markdown with no executable column. Procedure docs
+record a deterministic tool-name footprint from `orchestrate` runs resolved as
+successful, but the resolved label is not proof that the overall task succeeded.
+The model must re-author any action through its existing permissioned tools. The
+document adds no execution path or authority. Static validation rejects critical
+secret and poison patterns, but warning-level patterns, including some
+jailbreak-like language, can pass. All learned-doc store operations are scoped to
+`(tenant, agent)`, not to a chat or sender.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `true` | The SINGLE master gate for the whole learning layer (opt-out; force-disabled when `memory.enabled` is `false`). When off, reflection registers no cron and the soft-eviction sweep evicts nothing — recall is byte-identical |
 | `reflect.schedule` | `string` (cron) | `"0 */3 * * *"` | The `__REFLECT__` cron expression. Best-out-of-box every 3 hours (near-real-time learning — a skill corroborated mid-day is usable within hours, not next-night; was daily 03:00 UTC). Reflects skill + profile + topic docs in one pass |
 | `reflect.minConfidence` | `number` (0–1) | `0.6` | The reflection-side confidence floor a candidate doc must clear before admission. Distinct from `learningOutcome.minConfidenceToLearn` (the separate outcome-resolution floor) |
-| `reflect.promoteAtProofCount` | `number` (positive int) | `3` | The verified-success count at which an admitted `candidate` doc promotes to `active`, reinforced on each **attributed successful reuse** (a single success below the bar never mints an `active` doc) |
+| `reflect.promoteAtProofCount` | `number` (positive int) | `3` | The attributed reuse-success count at which an admitted `candidate` doc promotes to `active`. Candidates may surface before reaching this bar |
 | `reflect.maxDocsPerRun` | `number` (positive int) | `100` | Per-run admitted-doc cap — a finite DoS bound (kept finite for safety even with cost ignored). Best-out-of-box `100` (don't throttle a burst of corroborated learning; was `25`) |
 | `reflect.maxProcedureDocsSurfaced` | `number` (positive int) | `10` | Per-agent surface cap on **procedure** docs (the `orchestrate`-derived subset that records a tool footprint) listed in `<available_skills>` — the scaling guard, since there is no ranked top-K at surface time. When the cap is exceeded the **most-corroborated** procedure docs (highest proof count) keep a slot, surfaced in a stable listing order; user-intent **skill** docs and **topic** docs are unaffected (separate, uncapped path) |
-| `reflect.corroboration.mode` | `"single_owner" \| "distinct_sessions"` | `"single_owner"` | How a topic must **corroborate** before it can seed a learned doc. `single_owner` (**default**, the primary Comis use case): **repetition-as-corroboration** — an **explicitly-trusted** owner (a sender named in `elevatedReply.senderTrustMap`, non-external tier) repeating the same success `≥minObservations` times corroborates it, so a single trusted DM (where distinct sessions is structurally unreachable) can learn. Safe by construction: a promiscuous-`defaultTrustLevel` or unknown sender can ride past the success filter yet never self-corroborate by repetition, and a box with ≥2 explicitly-trusted senders auto-falls-back to the stricter gate. `distinct_sessions`: the anti-domination gate — ≥2 distinct `(session, sender)` observations (one flooding actor stays cardinality 1); set it explicitly to require independent sessions even from a single trusted owner |
-| `reflect.corroboration.minObservations` | `number` (int ≥ 2) | `2` | `single_owner` mode ONLY: the minimum distinct successful repetitions by the owner before a topic corroborates. `≥2` — a single success never corroborates. Ignored in `distinct_sessions` mode |
+| `reflect.corroboration.mode` | `"single_owner" \| "distinct_sessions"` | `"single_owner"` | Admission gate for a topic. `single_owner` counts repeated success-labeled observations from exactly one operator-named sender. This is same-owner repetition, not independent corroboration. `distinct_sessions` requires at least two distinct `(session, sender)` observations and is the stricter anti-domination posture |
+| `reflect.corroboration.minObservations` | `number` (int >= 2) | `2` | In `single_owner` mode, the minimum repeated success-labeled observations from the owner. Ignored in `distinct_sessions` mode |
 | `forget.maxDormantDays` | `number` (positive int) | `365` | Dormancy window (days): the keyless lifecycle sweep soft-evicts a memory dormant (un-recalled) longer than this. Best-out-of-box `365` (remember ~a year; forget pure-disuse far less aggressively; was `90`). The anti-poison failure-eviction belt is UNAFFECTED |
-| `forget.failureEvictionFloor` | `number` (positive int) | `3` | Corroborated `failure_count` at/above which a NON-EXEMPT memory is soft-evicted regardless of its decayed strength (each `failure_count` increment is corroboration-gated: ≥2 independent failures, or one deterministic source) |
+| `forget.failureEvictionFloor` | `number` (positive int) | `3` | `failure_count` at or above which a non-exempt memory is soft-evicted regardless of decayed strength. Each increment requires two distinct-session observations or one deterministic source |
 | `forget.highProofFloor` | `number` (positive int) | `5` | The high-proof exemption — a memory at/above this proof count is **exempt** from failure eviction, so a poisoner cannot evict a well-corroborated memory no matter how many failures it induces |
 
-> **Reflection is fail-closed and corroboration-bounded.** In the **default** `single_owner` mode reflection corroborates a topic on an **explicitly-trusted owner's repetition** (`≥minObservations` successes of the same task) and writes a **low** initial proof count regardless — so a single trusted DM (where distinct sessions is unreachable) can learn, while a stranger still cannot: repetition is counted **only** among senders the operator explicitly named, and a box with ≥2 explicitly-trusted senders auto-falls-back to the distinct-sessions gate. In `distinct_sessions` mode a topic instead needs **≥2 distinct `(session, sender)`** observations (N near-identical successes from one sender count once). External-trust sources are excluded by the engine's two-axis anti-poison SELECT in **every** mode. On a `small`/`nano` agent below the synthesis capability gate the reflection cron **abstains** (Defer ≠ Retry — a benign skip, never a failure or a retry). The whole loop is **observable** (counts/ids only) via [`comis explain`](/reference/cli#comis-explain) (the `learning` signal + the `learned_skill_failing` verdict, plus the `singleOwnerCorroborated` funnel count) and the [`comis memory skills`](/reference/cli#comis-memory) admission funnel.
+> **Admission boundary.** In the default `single_owner` mode, repetition counts
+> only for a sender explicitly named by the operator. Unknown senders and senders
+> trusted only by `defaultTrustLevel` cannot use this path. A deployment with two
+> or more explicitly named senders falls back to `distinct_sessions`. These are
+> origin and repetition controls, not independent verification of truth. External
+> trust sources are excluded in every mode. A `small` or `nano` agent below the
+> synthesis capability gate abstains. Counts and ids are visible through
+> [`comis explain`](/reference/cli#comis-explain) and
+> [`comis memory skills`](/reference/cli#comis-memory).
 
 > **Gate composition.** `learning.enabled` is the single switch for the whole layer: the outcome-reward write (`recordUsage` on success / `recordFailure` on failure-or-corrected — the `memory_usefulness.failure_count` source), the reflection cron, and the wrongness-based soft eviction (`forget.*`). The soft eviction **composes with** — does not replace — the `memoryLifecycle` cron (the schedule that runs the sweep) and the `rag.forget` recall-score decay. Eviction is **soft and reversible** — a memory un-evicts on renewed usefulness, is never hard-deleted, and stays resolvable via `asOf`/inspect — and emits counts-only `learning:memory_demoted` / `learning:memory_evicted` signals for `comis explain` / `comis fleet`. See the `memory_usefulness.failure_count` / `memories.evicted_at` columns in [data-directory.mdx](/operations/data-directory).
 
@@ -901,11 +945,15 @@ A pre-delivery critic that checks the terminal response against the GoalAnchor c
 | `enabled` | `boolean` | `true` | Enable content scanning at skill load time |
 | `blockOnCritical` | `boolean` | `true` | Block skill loading when CRITICAL findings are present |
 
+WARN findings are reported but do not block loading under the default policy.
+The learned-document validator follows the same critical-only rejection boundary,
+so warning-level jailbreak-like language can be admitted.
+
 **Exec Sandbox (agents.*.skills.execSandbox)**
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | `enum` | `"always"` | OS-level sandbox for exec commands: `"always"` (sandbox active, graceful fallback if binary unavailable) or `"never"` (sandbox disabled) |
+| `enabled` | `enum` | `"always"` | Requested OS-level sandbox posture for ordinary `exec`. With `"always"`, Comis uses the detected provider, but if no supported provider is available it logs a warning and ordinary `exec` runs on the host. `"never"` disables the sandbox. Use the Linux jailed autonomy or terminal surfaces when unavailable isolation must refuse execution |
 | `readOnlyAllowPaths` | `string[]` | `[]` | Additional filesystem paths exposed read-only inside the sandbox (e.g., `/opt/data`) |
 
 #### Secrets (agents.*.secrets)

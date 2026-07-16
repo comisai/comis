@@ -1,19 +1,22 @@
 ---
 title: "Welcome to Comis"
-description: "Open-source agent runtime for governed execution"
+description: "Open-source security-first runtime for AI agents that learn and act across sessions"
 icon: "hand-wave"
 ---
 
-> **For the agent you leave running.**
+> **Let agents learn and act. Keep authority in the runtime.**
 
-Comis is an Apache-2.0, self-hosted runtime for AI agents that work on a
-schedule, use real tools, build up context, or need to recover after a failure.
-It is an open-source agent runtime for governed execution.
+**Governed learning. Bounded action. Recorded evidence.**
 
-The promise is simple: **Keep the work. Hold configured boundaries. See what happened.**
-Comis keeps important run state outside the model's prompt, applies configured
-access and cost rules in the runtime, and records bounded evidence for later
-review.
+Comis is an Apache-2.0, self-hosted, security-first runtime for AI agents that
+learn and act across sessions. It is built for agents that work on a schedule,
+use real tools, build up context, or need to recover after a failure.
+
+The promise is simple: learned guidance can influence what an agent proposes,
+but it cannot grant permission. Comis keeps identity, capabilities, credential
+scope, tool policy, and configured limits in the runtime, outside prompt text.
+It also keeps important run state and bounded evidence available for recovery
+and review.
 
 Comis is under active development. Start with one agent and one limited
 workflow. Test the controls on your host before you add broader access.
@@ -23,17 +26,17 @@ workflow. Test the controls on your host before you add broader access.
 Comis is designed for work that continues beyond one chat window.
 
 <CardGroup cols={3}>
-  <Card title="Keep the work" icon="brain" href="/agents/context-management">
-    Keep messages and tool results available beneath shorter prompt summaries,
-    then recover selected detail when it is needed.
+  <Card title="Keep authority outside the model" icon="shield-check" href="/get-started/security">
+    Apply capability, origin, credential, tool, and configured budget controls
+    in runtime paths rather than relying on prompt instructions.
   </Card>
-  <Card title="Hold configured boundaries" icon="shield-check" href="/get-started/security">
-    Put tool access, credential scope, memory checks, and cost limits outside
-    the prompt. These controls protect only the paths wired through them.
+  <Card title="Govern learning across sessions" icon="brain" href="/agents/memory">
+    Use source records, trust signals, configured corroboration, usefulness, and
+    correction history to govern which experience can return as guidance.
   </Card>
-  <Card title="See what happened" icon="magnifying-glass" href="/operations/observability">
-    Review run outcome, cost, tool and policy failures, and a rule-based likely
-    cause when the recorded evidence matches one.
+  <Card title="Recover and explain the work" icon="magnifying-glass" href="/operations/observability">
+    Recover selected context and review run outcome, cost, policy failures, and
+    a rule-based likely cause when the recorded evidence matches one.
   </Card>
 </CardGroup>
 
@@ -46,7 +49,8 @@ Comis is designed for work that continues beyond one chat window.
   </Card>
   <Card title="Learned memory with history" icon="puzzle-piece" href="/agents/memory">
     Record sources and trust signals, require configured evidence, and preserve
-    prior history when eligible learned state is corrected.
+    prior history when eligible learned state is corrected. Learned text can
+    guide proposals, but it cannot expand runtime authority.
   </Card>
   <Card title="Channels and interfaces" icon="messages" href="/channels/index">
     Start work from schedules, messaging channels, the web dashboard, CLI, or

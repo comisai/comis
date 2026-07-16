@@ -1,13 +1,13 @@
 ---
 title: "How It Works"
-description: "How Comis keeps long-running agent work recoverable, bounded, and inspectable"
+description: "How Comis governs agent action and learning across sessions"
 icon: "diagram-project"
 ---
 
-Comis connects requests from schedules, channels, APIs, and the web dashboard
-to agents with their own state, tools, budgets, and rules. It is built for work
-that may continue after the current prompt has filled up or the operator has
-stepped away.
+Comis is an open-source security-first runtime for AI agents that learn and act
+across sessions. It connects requests from schedules, channels, APIs, and the
+web dashboard to agents with their own state, tools, budgets, learning history,
+and rules.
 
 import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
@@ -20,7 +20,7 @@ flowchart LR
     A["Request arrives"] --> B["Route to a scoped agent"]
     B --> C["Run an agent turn or execution graph"]
     C --> D["Apply configured access and cost rules"]
-    D --> E["Record state and evidence"]
+    D --> E["Record state, evidence, and eligible learning"]
     E --> F["Deliver, inspect, or recover"]
 ```
 
@@ -32,22 +32,40 @@ flowchart LR
    run a typed execution graph with sequential and parallel nodes.
 4. **Apply rules:** capability checks, origin checks, tool policy, configured
    budgets, content checks, and supported approval paths limit the work.
-5. **Record:** sessions, stored context, memory sources, traces, costs, audit
-   events, and workflow state provide evidence for later inspection.
+5. **Record:** sessions, stored context, memory sources, eligible learned
+   guidance, traces, costs, audit events, and workflow state provide evidence
+   for later inspection and configured recall.
 6. **Deliver or recover:** the result returns through a configured path. If the
    run stops, recorded state can support investigation and configured recovery.
 
-## Keep the work, hold boundaries, see what happened
+Learned or stored text can influence what the model proposes next, including
+which tool it asks to use. It cannot grant a capability, reveal a credential,
+raise a budget, or bypass a runtime check.
 
-| Promise | What it means in Comis |
+## Govern authority, learning, and recovery
+
+| Runtime responsibility | What it means in Comis |
 |---|---|
-| **Keep the work** | The active prompt stays bounded, while stored messages and tool results can be searched, inspected, and selectively expanded. Configured workflow checkpoints can support node-boundary recovery. |
-| **Hold configured boundaries** | Tool access, capabilities, origin checks, credential scope, memory checks, graph budgets, and opt-in spend ceilings are applied outside prompt text. |
-| **See what happened** | Traces, costs, delivery state, audit events, and memory diagnostics feed bounded incident reports. A likely cause appears only when a deterministic rule matches the evidence. |
+| **Keep authority outside the model** | Tool access, capabilities, origin checks, credential scope, memory checks, graph budgets, and opt-in spend ceilings are applied outside prompt text. |
+| **Govern learning across sessions** | Source records, trust signals, configured corroboration, usefulness, and correction history shape which experience can return as guidance. That guidance can influence proposals but cannot grant permission. |
+| **Recover and explain the work** | Stored messages and tool results can be searched, inspected, and selectively expanded. Traces, costs, delivery state, audit events, and memory diagnostics feed bounded incident reports. |
 
 These parts share the same runtime and recorded run state. That lets an operator
 connect a failed action to the access rule, context, cost, or workflow state
 around it without asking another model to invent an explanation.
+
+## How learning remains governed
+
+Comis can turn qualifying experience into candidate or active learned guidance,
+depending on configuration. Source records, trust signals, configured evidence,
+usefulness, and correction state affect admission and recall. Candidate guidance
+may be available for read-only use before active promotion when configured.
+
+Learned guidance remains model input, not runtime authority. It has no direct
+script execution path, and every proposed action still passes through the
+capability, origin, credential, tool-policy, and budget controls wired to that
+path. Learning admission demonstrates that guidance was recorded; it is not by
+itself proof of a general performance improvement.
 
 ## How context stays recoverable
 

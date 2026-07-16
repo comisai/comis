@@ -62,7 +62,7 @@ export const welcomeStep: WizardStep = {
 
     // Welcome message
     prompter.note(
-      "Welcome! This wizard will set up your persistent AI agent in a few steps.",
+      "Welcome! This wizard will set up a Comis agent that can learn and act across sessions.",
     );
 
     // Security notice

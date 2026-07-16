@@ -1,7 +1,7 @@
 {
   "name": "Comis",
   "short_name": "Comis",
-  "description": "Open-source runtime for persistent AI agents.",
+  "description": "Open-source runtime for bounded action and governed learning.",
   "start_url": "/",
   "scope": "/",
   "icons": [

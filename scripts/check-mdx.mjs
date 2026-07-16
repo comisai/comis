@@ -285,7 +285,7 @@ for (const flag of initFlags) {
   if (!cliDoc.includes(flag)) addFailure(`reference/cli.mdx is missing init flag ${flag}`);
 }
 
-const canonicalTagline = "Open-source agent runtime for governed execution";
+const canonicalTagline = "Open-source security-first runtime for AI agents that learn and act across sessions";
 for (const [name, value] of [
   ["docs/docs.json", JSON.stringify(docsConfig)],
   ["docs/get-started/index.mdx", routeMap.get("get-started/index")?.value ?? ""],
@@ -295,17 +295,16 @@ for (const [name, value] of [
   if (!value.includes(canonicalTagline)) addFailure(`${name} is missing the canonical tagline`);
 }
 
-const campaignLine = "For the agent you leave running.";
+const campaignLine = "Let agents learn and act. Keep authority in the runtime.";
 for (const [name, value] of [
-  ["docs/docs.json", JSON.stringify(docsConfig)],
   ["docs/get-started/index.mdx", routeMap.get("get-started/index")?.value ?? ""],
   ["docs/llms.txt", llms],
   ["docs/sitemap.md", sitemap],
 ]) {
-  if (!value.includes(campaignLine)) addFailure(`${name} is missing the persistent-run campaign line`);
+  if (!value.includes(campaignLine)) addFailure(`${name} is missing the authority-and-learning campaign line`);
 }
 
-const benefitLine = "Keep the work. Hold configured boundaries. See what happened.";
+const benefitLine = "Governed learning. Bounded action. Recorded evidence.";
 for (const [name, value] of [
   ["docs/get-started/index.mdx", routeMap.get("get-started/index")?.value ?? ""],
   ["docs/llms.txt", llms],

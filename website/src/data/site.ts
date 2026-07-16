@@ -3,16 +3,16 @@
 export const SITE = {
   name: "Comis",
   url: "https://comis.ai",
-  title: "Comis: Runtime for persistent AI agents",
+  title: "Comis: Security-first runtime for AI agents",
   description:
-    "Open-source runtime for persistent AI agents. Keep work recoverable, apply configured boundaries, and explain failures without another model call.",
-  positioning: "Open-source runtime for persistent AI agents.",
-  status: "Open source · Self-hosted · Active development",
+    "Open-source, self-hosted runtime for bounded agent action and governed learning across sessions, with runtime-enforced authority and recorded evidence.",
+  positioning: "Open-source runtime for bounded action and governed learning.",
+  status: "Open source / Self-hosted / Active development",
+  reviewCommand: "curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh -o comis-install.sh",
   installCommand: "curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash",
   npm: "https://www.npmjs.com/package/comisai",
   docs: "https://docs.comis.ai",
   installationDocs: "https://docs.comis.ai/installation",
-  useCases: "https://docs.comis.ai/get-started/use-cases",
   knownLimitations: "https://docs.comis.ai/reference/known-limitations",
   securityDocs: "https://docs.comis.ai/security",
   githubOrganization: "https://github.com/comisai",
@@ -22,5 +22,7 @@ export const SITE = {
   contributing: "https://github.com/comisai/comis/blob/main/CONTRIBUTING.md",
   security: "https://github.com/comisai/comis/security",
   threatModel: "https://github.com/comisai/comis/blob/main/THREAT_MODEL.md",
+  learningCatalog:
+    "https://github.com/comisai/comis/blob/main/test/live/self-driving/targets/MEMORY-LEARNING-STRESS-CATALOG.md",
   license: "https://github.com/comisai/comis/blob/main/LICENSE",
 } as const;

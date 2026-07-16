@@ -1,12 +1,14 @@
 # Comis Documentation Sitemap
 
-A navigation index generated from the five documentation sections in docs.json. For the agent you leave running.
+A navigation index generated from the five documentation sections in docs.json.
+
+Open-source security-first runtime for AI agents that learn and act across sessions. Let agents learn and act. Keep authority in the runtime.
 
 ## Start here
 
 ### Understand Comis
 
-- [Welcome to Comis](https://docs.comis.ai/get-started): Open-source agent runtime for governed execution. For the agent you leave running.
+- [Welcome to Comis](https://docs.comis.ai/get-started): Security-first agent action, governed learning across sessions, recoverable context, and runtime authority
 - [Quickstart](https://docs.comis.ai/get-started/quickstart) — Install Comis, configure an agent, and verify your first conversation
 - [Use Cases](https://docs.comis.ai/get-started/use-cases): Practical starting points for agents that run on a schedule or continue outside one chat window
 - [How It Works](https://docs.comis.ai/get-started/how-it-works): How Comis keeps long-running agent work recoverable, bounded, and inspectable

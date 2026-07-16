@@ -3,7 +3,7 @@
   "version": "1.0.54",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
-  "description": "Self-hosted runtime for AI agents that keep working, preserve useful context, follow configured limits, and explain recorded failures.",
+  "description": "Open-source security-first runtime for AI agents that learn and act across sessions.",
   "keywords": [
     "comis",
     "ai",
@@ -15,6 +15,8 @@
     "agent-reliability",
     "agent-orchestration",
     "agent-governance",
+    "agent-learning",
+    "governed-learning",
     "multi-agent",
     "agent-security",
     "agent-observability",
