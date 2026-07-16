@@ -19,7 +19,7 @@ EMU_DIR="${EMU_DIR:-/root/comis-emu}"
 
 echo "1) stream the emulator subtree → $VPS:$EMU_DIR (self-driving/ + logs excluded — the emulator"
 echo "   needs bin/ + emulators/ + harness/; runs/ can be hundreds of MB)…"
-(cd "$REPO/test/live" && tar -cf - --exclude=node_modules --exclude=self-driving --exclude='*.log' .) \
+(cd "$REPO/test/live" && tar --no-xattrs -cf - --exclude=node_modules --exclude=self-driving --exclude='*.log' .) \
   | remote_root "rm -rf '$EMU_DIR/test/live' && mkdir -p '$EMU_DIR/test/live' && tar -xf - -C '$EMU_DIR/test/live'"
 # ESM marker so tsx treats the .ts files as ESM (same trick as the original hand-step).
 remote_root "printf '%s' '{\"type\":\"module\"}' > '$EMU_DIR/package.json'"

@@ -52,7 +52,7 @@ trap 'rm -rf "$SHIP_STAGE"' EXIT
 cp "$TGZ" "$SHIP_STAGE/"
 cp "$REPO/website/public/install.sh" "$SHIP_STAGE/install.sh"
 REMOTE_STAGE="/var/tmp/comis-install-$SHA-$$"
-tar -C "$SHIP_STAGE" -cf - . | remote_root "rm -rf '$REMOTE_STAGE' && mkdir -p '$REMOTE_STAGE' && tar -xf - -C '$REMOTE_STAGE'"
+tar --no-xattrs -C "$SHIP_STAGE" -cf - . | remote_root "rm -rf '$REMOTE_STAGE' && mkdir -p '$REMOTE_STAGE' && tar -xf - -C '$REMOTE_STAGE'"
 
 echo "4) Run the production installer (--tarball --no-init; non-interactive over ssh)…"
 install_flags="--no-init"

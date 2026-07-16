@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it } from "vitest";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HELPER = resolve(HERE, "_remote-root.sh");
 const WIRE_EMULATOR = resolve(HERE, "wire-emu.mjs");
+const DEPLOY_SCRIPTS = resolve(HERE, "deploy-scripts.sh");
+const DEPLOY_EMULATOR = resolve(HERE, "deploy-emu.sh");
 const temporaryDirectories: string[] = [];
 
 function shellQuote(value: string): string {
@@ -77,5 +79,14 @@ describe("sudo-aware live rig transport", () => {
     expect(source).toContain("chmodSync(cfgPath, 0o600)");
     expect(source).toContain("chmodSync(backup, 0o600)");
     expect(source).toContain('execFileSync("chown", [`${rig.comisUser}:${rig.comisUser}`, cfgPath, backup])');
+  });
+
+  it("resolves an offline gateway secret and omits local extended attributes from streamed archives", () => {
+    const scriptsSource = readFileSync(DEPLOY_SCRIPTS, "utf8");
+    const emulatorSource = readFileSync(DEPLOY_EMULATOR, "utf8");
+
+    expect(scriptsSource).toContain("secrets get --offline COMIS_GATEWAY_TOKEN");
+    expect(scriptsSource).toContain("tar --no-xattrs");
+    expect(emulatorSource).toContain("tar --no-xattrs");
   });
 });

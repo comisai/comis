@@ -41,7 +41,7 @@ for file in "$HERE"/*.sh; do
 done
 relative_files=()
 for file in "${box_files[@]}"; do relative_files+=("${file#"$HERE/"}"); done
-tar -C "$HERE" -cf - "${relative_files[@]}" | remote_root "tar -xf - -C /root"
+tar --no-xattrs -C "$HERE" -cf - "${relative_files[@]}" | remote_root "tar -xf - -C /root"
 
 # GWTOKEN auto-fetch — when .live-env doesn't carry it, resolve it FROM THE BOX so the rendered
 # rig env (and every RPC helper) still works: the secrets store first (`comis secrets get` — the
@@ -49,7 +49,7 @@ tar -C "$HERE" -cf - "${relative_files[@]}" | remote_root "tar -xf - -C /root"
 # init-config.mjs flow). Also self-heals token ROTATION: a re-deploy re-fetches the current value
 # instead of shipping a stale one that 4001s mid-run.
 if [ -z "${GWTOKEN:-}" ]; then
-  GWTOKEN="$(remote_root "su - $COMIS_USER -c 'comis secrets get COMIS_GATEWAY_TOKEN' 2>/dev/null" | tail -1 | tr -d '[:space:]')" || true
+  GWTOKEN="$(remote_root "su - $COMIS_USER -c 'comis secrets get --offline COMIS_GATEWAY_TOKEN' 2>/dev/null" | tail -1 | tr -d '[:space:]')" || true
   src="the box secrets store"
   if [ "${#GWTOKEN}" -lt 32 ]; then
     GWTOKEN="$(remote_root 'node /root/rig-token.mjs 2>/dev/null' | tr -d '[:space:]')" || true
