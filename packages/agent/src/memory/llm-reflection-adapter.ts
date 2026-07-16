@@ -31,10 +31,6 @@ import { ok, err, fromPromise, type Result } from "@comis/shared";
 import { systemSetTimeout, systemClearTimeout, wrapExternalContent } from "@comis/core";
 import type { DocSection, ExternalContentSource } from "@comis/core";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
-import {
-  MIN_SAFETY_MARGIN_TOKENS,
-  SAFETY_MARGIN_PERCENT,
-} from "../context-engine/constants.js";
 import { estimateMessageTokens } from "../safety/token-estimator.js";
 import { resolveJudgeModel, temperatureOption, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
 import { REFLECT_PROMPT, parseReflectionResult, type ReflectionResult } from "./reflection-prompt.js";
@@ -51,6 +47,9 @@ const REFLECT_MAX_TOKENS = 2_000;
 
 /** The completeSimple adapter reserves this much context before output clamping. */
 const COMPLETE_SIMPLE_CONTEXT_SAFETY_TOKENS = 4_096;
+
+/** Additional model-context headroom reserved for reflection input estimation. */
+const REFLECTION_CONTEXT_SAFETY_PERCENT = 5;
 
 /** Low LLM temperature — the doc should be a faithful generalization, not creative. */
 const REFLECT_TEMPERATURE = 0.3;
@@ -222,8 +221,7 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
 
     const reflectionOutputTokens = Math.min(REFLECT_MAX_TOKENS, model.maxTokens);
     const safetyMarginTokens = Math.max(
-      Math.ceil((model.contextWindow * SAFETY_MARGIN_PERCENT) / 100),
-      MIN_SAFETY_MARGIN_TOKENS,
+      Math.ceil((model.contextWindow * REFLECTION_CONTEXT_SAFETY_PERCENT) / 100),
       COMPLETE_SIMPLE_CONTEXT_SAFETY_TOKENS,
     );
     const inputBudgetTokens = Math.max(
