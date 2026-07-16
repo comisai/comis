@@ -16,6 +16,7 @@ import {
 } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type GraphHandlerDeps } from "./graph-helpers.js";
+import { PreconditionError } from "../errors.js";
 
 // ---------------------------------------------------------------------------
 // Export handlers
@@ -49,7 +50,7 @@ export function bindGraphExportHandlers(deps: GraphHandlerDeps): Record<string, 
       const tenantId = deps.tenantId ?? "default";
       const entry = deps.namedGraphStore.load(id, tenantId);
       if (!entry) {
-        throw new Error("Named graph not found");
+        throw new PreconditionError("Named graph not found");
       }
 
       // Strip inputFrom/inputMapping from persisted graph JSON

@@ -24,6 +24,7 @@ import { ObsCacheStatsWindowContract, systemNowMs } from "@comis/core";
 import { buildCacheStatsRpcHandler } from "@comis/observability";
 import type { RpcHandler } from "./types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-handlers/obs-helpers.js";
+import { AuthorizationError } from "./errors.js";
 
 /**
  * Empty window shape (CacheStatsWindow with all-zero totals + empty
@@ -66,7 +67,7 @@ export function createCacheHandlers(
       ): Promise<unknown> => {
         const trustLevel = rawParams._trustLevel as string | undefined;
         if (trustLevel !== "admin") {
-          throw new Error("Admin trust level required");
+          throw new AuthorizationError("Admin trust level required");
         }
         const sinceMs = (rawParams.sinceMs as number | undefined) ?? 0;
         const untilMs = (rawParams.untilMs as number | undefined) ?? systemNowMs();

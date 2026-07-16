@@ -48,7 +48,7 @@
  * @module
  */
 
-import { AuthorizationError } from "./errors.js";
+import { AuthorizationError, ValidationError } from "./errors.js";
 import {
   SecretsSetContract,
   SecretsGetContract,
@@ -179,7 +179,7 @@ export function createSecretsHandlers(
         );
       }
       if (!SECRET_NAME_PATTERN.test(nameRaw)) {
-        throw new Error(
+        throw new ValidationError(
           `Invalid name format: "${nameRaw}". Names must start with an uppercase letter ` +
             `and contain only uppercase letters, digits, and underscores (e.g., OPENAI_API_KEY).`,
         );
@@ -300,7 +300,7 @@ export function createSecretsHandlers(
         );
       }
       if (!SECRET_NAME_PATTERN.test(nameRaw)) {
-        throw new Error(
+        throw new ValidationError(
           `Invalid name format: "${nameRaw}". Names must start with an uppercase letter ` +
             `and contain only uppercase letters, digits, and underscores.`,
         );
@@ -522,7 +522,7 @@ export function createSecretsHandlers(
         );
       }
       if (!SECRET_NAME_PATTERN.test(nameRaw)) {
-        throw new Error(
+        throw new ValidationError(
           `Invalid name format: "${nameRaw}". Names must start with an uppercase letter ` +
             `and contain only uppercase letters, digits, and underscores.`,
         );

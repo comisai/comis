@@ -24,7 +24,7 @@
  *
  * @module
  */
-import { AuthorizationError } from "./errors.js";
+import { AuthorizationError, ValidationError } from "./errors.js";
 import {
   DaemonSetLogLevelContract,
   SystemPingContract,
@@ -81,7 +81,7 @@ export function createDaemonHandlers(deps: DaemonHandlerDeps): Record<string, Rp
       // in-depth gate against future bespoke-vs-contract drift.
       const level = rawParams.level as string | undefined;
       if (!level) {
-        throw new Error("level parameter is required");
+        throw new ValidationError("level parameter is required");
       }
       // Validate level is a known Pino level.
       // "silent" is intentionally excluded -- it suppresses all logging

@@ -30,6 +30,7 @@ import {
   loadJsonlSession,
   collectAvailableSessionKeys,
 } from "./session-helpers.js";
+import { PreconditionError } from "../errors.js";
 
 /**
  * Bind the session read handlers. Object-spread compatible with
@@ -102,7 +103,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       if (callerAgentId) {
         const owner = parseFormattedSessionKey(sessionKey)?.agentId;
         if (owner !== callerAgentId) {
-          throw new Error(`Session not found: ${sessionKey}`);
+          throw new PreconditionError(`Session not found: ${sessionKey}`);
         }
       }
 
@@ -131,7 +132,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
         const hint = available.length > 0
           ? `. Available session keys: ${available.join(", ")}`
           : ". Use action 'list' to discover available session keys";
-        throw new Error(`Session not found: ${sessionKey}${hint}`);
+        throw new PreconditionError(`Session not found: ${sessionKey}${hint}`);
       }
 
       // Parse session key for metadata

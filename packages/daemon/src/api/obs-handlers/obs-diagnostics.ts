@@ -16,7 +16,7 @@
  * @module
  */
 
-import { AuthorizationError } from "../errors.js";
+import { AuthorizationError, ValidationError } from "../errors.js";
 import {
   ObsChannelsAllContract,
   ObsChannelsGetContract,
@@ -172,7 +172,7 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
       // Bespoke pre-Zod guard preserves the exact error message
       // ("Invalid request: channelId parameter is required").
       const channelIdRaw = rawParams.channelId as string | undefined;
-      if (!channelIdRaw) throw new Error("Invalid request: channelId parameter is required");
+      if (!channelIdRaw) throw new ValidationError("Invalid request: channelId parameter is required");
 
       const userParams = stripInternalFields(rawParams);
       const params = ObsChannelsGetContract.request.parse(userParams);

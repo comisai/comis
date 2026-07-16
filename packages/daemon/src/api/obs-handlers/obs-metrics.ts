@@ -33,6 +33,7 @@ import { isVecAvailable } from "@comis/memory";
 import type { ProviderBilling } from "../../observability/billing-estimator.js";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
+import { AuthorizationError, ValidationError } from "../errors.js";
 
 /**
  * Bind the observability metrics RPC handlers. Object-spread compatible
@@ -47,7 +48,7 @@ export function bindObsMetricsHandlers(deps: ObsHandlerDeps): Record<string, Rpc
     // -----------------------------------------------------------------------
     [ObsBillingByProviderContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin trust level required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin trust level required");
 
       const userParams = stripInternalFields(rawParams);
       const params = ObsBillingByProviderContract.request.parse(userParams);
@@ -131,13 +132,13 @@ export function bindObsMetricsHandlers(deps: ObsHandlerDeps): Record<string, Rpc
     // -----------------------------------------------------------------------
     [ObsBillingByAgentContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin trust level required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin trust level required");
 
       // Bespoke pre-Zod guard preserves the legacy error message
       // ("Invalid request: agentId parameter is required") — covered by
       // obs-handlers.test.ts assertions.
       const agentIdRaw = rawParams.agentId as string | undefined;
-      if (!agentIdRaw) throw new Error("Invalid request: agentId parameter is required");
+      if (!agentIdRaw) throw new ValidationError("Invalid request: agentId parameter is required");
 
       const userParams = stripInternalFields(rawParams);
       const params = ObsBillingByAgentContract.request.parse(userParams);
@@ -212,12 +213,12 @@ export function bindObsMetricsHandlers(deps: ObsHandlerDeps): Record<string, Rpc
     // -----------------------------------------------------------------------
     [ObsBillingBySessionContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin trust level required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin trust level required");
 
       // Bespoke pre-Zod guard preserves the legacy error message
       // ("Invalid request: sessionKey parameter is required").
       const sessionKeyRaw = rawParams.sessionKey as string | undefined;
-      if (!sessionKeyRaw) throw new Error("Invalid request: sessionKey parameter is required");
+      if (!sessionKeyRaw) throw new ValidationError("Invalid request: sessionKey parameter is required");
 
       const userParams = stripInternalFields(rawParams);
       const params = ObsBillingBySessionContract.request.parse(userParams);
@@ -248,7 +249,7 @@ export function bindObsMetricsHandlers(deps: ObsHandlerDeps): Record<string, Rpc
     // -----------------------------------------------------------------------
     [ObsBillingTotalContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin trust level required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin trust level required");
 
       const userParams = stripInternalFields(rawParams);
       const params = ObsBillingTotalContract.request.parse(userParams);
@@ -303,7 +304,7 @@ export function bindObsMetricsHandlers(deps: ObsHandlerDeps): Record<string, Rpc
     // -----------------------------------------------------------------------
     [ObsBillingUsage24hContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin trust level required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin trust level required");
 
       // Parse runs for defense-in-depth (request body is {} — no fields).
       const userParams = stripInternalFields(rawParams);
@@ -340,7 +341,7 @@ export function bindObsMetricsHandlers(deps: ObsHandlerDeps): Record<string, Rpc
     // -----------------------------------------------------------------------
     [AgentCacheStatsContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin trust level required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin trust level required");
 
       const userParams = stripInternalFields(rawParams);
       const params = AgentCacheStatsContract.request.parse(userParams);
@@ -380,7 +381,7 @@ export function bindObsMetricsHandlers(deps: ObsHandlerDeps): Record<string, Rpc
     // -----------------------------------------------------------------------
     [ObsGetCacheStatsContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin trust level required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin trust level required");
 
       const userParams = stripInternalFields(rawParams);
       ObsGetCacheStatsContract.request.parse(userParams);
@@ -404,7 +405,7 @@ export function bindObsMetricsHandlers(deps: ObsHandlerDeps): Record<string, Rpc
     // -----------------------------------------------------------------------
     [MemoryEmbeddingCacheContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
-      if (trustLevel !== "admin") throw new Error("Admin trust level required");
+      if (trustLevel !== "admin") throw new AuthorizationError("Admin trust level required");
 
       const userParams = stripInternalFields(rawParams);
       MemoryEmbeddingCacheContract.request.parse(userParams);
