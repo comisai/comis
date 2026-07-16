@@ -492,8 +492,11 @@ export interface AttachTrajectoryParams {
   readonly recorder: TrajectoryRecorder;
   /**
    * Optional filter: when present, only event names that pass the
-   * predicate are subscribed. The predicate runs ONCE per event name
-   * at attach time — it does not run per event emit.
+   * predicate are subscribed, except `session:started` and `session:ended`.
+   * Those lifecycle boundaries are always retained so restart recovery can
+   * distinguish an active session from an explicitly destroyed one. The
+   * predicate runs ONCE per event name at attach time — it does not run per
+   * event emit.
    */
   readonly filter?: (eventName: TrajectoryBridgedEventName) => boolean;
   /**
@@ -547,7 +550,15 @@ export function attachTrajectoryToEventBus(
   // Type assertion narrowing: the as-const mapping makes Object.entries
   // lose precision, so iterate over the typed keys instead.
   for (const eventName of Object.keys(TRAJECTORY_BRIDGE_MAPPING) as Array<TrajectoryBridgedEventName>) {
-    if (filter !== undefined && !filter(eventName)) continue;
+    const requiredLifecycleEvent =
+      eventName === "session:started" || eventName === "session:ended";
+    if (
+      !requiredLifecycleEvent &&
+      filter !== undefined &&
+      !filter(eventName)
+    ) {
+      continue;
+    }
 
     const handler = (payload: unknown) => {
       // Session-scoping: another session's event never lands in this

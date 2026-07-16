@@ -718,9 +718,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // Suppress per-turn re-emits: session.started fires ONCE per
           // session (not per pi-mono turn). The bridge is
           // per-turn, so consult the session-scoped trajectoryRegistry
-          // latch — it survives across turns and resets only when the
-          // session is destroyed (or the daemon restarts and rebuilds
-          // the registry fresh). When the registry is absent
+          // latch — it survives across turns and restores from mandatory
+          // lifecycle rows after daemon restart. Session destruction closes
+          // the registry entry after session.ended, resetting the latch.
+          // When the registry is absent
           // (legacy/test callers), fall through to the legacy
           // unconditional emit so existing harnesses keep working.
           const formattedKey = formatSessionKey(deps.sessionKey);

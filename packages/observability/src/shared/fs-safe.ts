@@ -114,6 +114,24 @@ export class FileSizeLimitExceeded extends Error {
   }
 }
 
+export type RegularFileReadRejectionKind =
+  | "symlink"
+  | "non_regular"
+  | "size_limit"
+  | "changed";
+
+/** Typed rejection for a target that cannot provide a safe regular-file snapshot. */
+export class RegularFileReadRejected extends Error {
+  public readonly name = "RegularFileReadRejected" as const;
+  public readonly code = "REGULAR_FILE_READ_REJECTED" as const;
+  public readonly kind: RegularFileReadRejectionKind;
+
+  constructor(kind: RegularFileReadRejectionKind, detail: string) {
+    super(`Refusing regular-file read (${kind}): ${detail}`);
+    this.kind = kind;
+  }
+}
+
 /** Options for `appendRegularFile`. */
 export interface AppendRegularFileOptions {
   /** Absolute path to the target file. */
@@ -222,6 +240,20 @@ function resolveOpenFlags(): number {
   return flags;
 }
 
+/** Resolve read-only flags with conditional O_NOFOLLOW. */
+function resolveReadOpenFlags(): number {
+  let flags = fs.constants.O_RDONLY;
+  const nofollow = (fs.constants as Record<string, number | undefined>)[
+    "O_NOFOLLOW"
+  ];
+  if (typeof nofollow === "number") flags |= nofollow;
+  const nonblock = (fs.constants as Record<string, number | undefined>)[
+    "O_NONBLOCK"
+  ];
+  if (typeof nonblock === "number") flags |= nonblock;
+  return flags;
+}
+
 /**
  * Append `content` to `path` under symlink-safe semantics.
  *
@@ -314,6 +346,112 @@ export function appendRegularFile(
     return err(e instanceof Error ? e : new Error(String(e)));
   } finally {
     // Step 7: always close the fd, even on error.
+    try {
+      fs.closeSync(fd);
+    } catch {
+      // Already closed or invalid — ignore.
+    }
+  }
+}
+
+/** Options for `readRegularFile`. */
+export interface ReadRegularFileOptions {
+  /** Absolute path to an existing regular file. */
+  readonly path: string;
+  /** Maximum bytes allowed before allocating the result buffer. */
+  readonly maxFileBytes: number;
+  /** Optional real-path confinement base, symmetric with the write helpers. */
+  readonly confinedBaseDir?: string;
+}
+
+/** Result payload on success. */
+export interface ReadRegularFileSuccess {
+  readonly content: Buffer;
+  readonly totalBytes: number;
+}
+
+export type ReadRegularFileError =
+  | SymlinkParentRejected
+  | PathEscapesConfinementError
+  | RegularFileReadRejected
+  | Error;
+
+/** Read a bounded regular-file snapshot via O_NOFOLLOW and descriptor fstats. */
+export function readRegularFile(
+  options: ReadRegularFileOptions,
+): Result<ReadRegularFileSuccess, ReadRegularFileError> {
+  const target = options.path;
+  const parentDir = path.dirname(target);
+
+  // Probe the final component first so ENOENT reaches append-target callers.
+  try {
+    if (fs.lstatSync(target).isSymbolicLink()) {
+      return err(new RegularFileReadRejected("symlink", target));
+    }
+  } catch (e) {
+    return err(e instanceof Error ? e : new Error(String(e)));
+  }
+
+  try {
+    const parentStat = fs.lstatSync(parentDir);
+    if (parentStat.isSymbolicLink()) {
+      return err(new SymlinkParentRejected(parentDir));
+    }
+  } catch (e) {
+    return err(e instanceof Error ? e : new Error(String(e)));
+  }
+
+  if (options.confinedBaseDir !== undefined) {
+    try {
+      const rejection = assertConfinedPath(target, options.confinedBaseDir);
+      if (rejection !== undefined) return err(rejection);
+    } catch (e) {
+      return err(e instanceof Error ? e : new Error(String(e)));
+    }
+  }
+
+  let fd: number;
+  try {
+    fd = fs.openSync(target, resolveReadOpenFlags());
+  } catch (e) {
+    return err(e instanceof Error ? e : new Error(String(e)));
+  }
+
+  try {
+    const initialStat = fs.fstatSync(fd);
+    if (!initialStat.isFile()) {
+      return err(new RegularFileReadRejected("non_regular", target));
+    }
+    if (initialStat.size > options.maxFileBytes) {
+      return err(
+        new RegularFileReadRejected(
+          "size_limit",
+          `File exceeds read size cap: ${initialStat.size} > ${options.maxFileBytes} bytes`,
+        ),
+      );
+    }
+
+    const content = Buffer.alloc(initialStat.size);
+    let offset = 0;
+    while (offset < content.length) {
+      const bytesRead = fs.readSync(
+        fd,
+        content,
+        offset,
+        content.length - offset,
+        offset,
+      );
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const finalStat = fs.fstatSync(fd);
+    if (offset !== initialStat.size || finalStat.size !== initialStat.size) {
+      return err(new RegularFileReadRejected("changed", target));
+    }
+    return ok({ content, totalBytes: initialStat.size });
+  } catch (e) {
+    return err(e instanceof Error ? e : new Error(String(e)));
+  } finally {
     try {
       fs.closeSync(fd);
     } catch {

@@ -166,6 +166,8 @@ export { writeTrajectoryPointerFileBestEffort } from "./trajectory/pointer-file.
 export type { WriteTrajectoryPointerFileParams } from "./trajectory/pointer-file.js";
 
 export { createTrajectoryRecorder } from "./trajectory/runtime.js";
+export { TrajectoryResumeError } from "./trajectory/persisted-state.js";
+export type { TrajectoryResumeFailureKind } from "./trajectory/persisted-state.js";
 
 export {
   attachTrajectoryToEventBus,

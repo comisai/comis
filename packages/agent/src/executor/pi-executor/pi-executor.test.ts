@@ -6413,6 +6413,23 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     expect(src).toMatch(/deps\.trajectoryConfig\?\.maxFileBytes/);
   });
 
+  it("forwards the executor logger into the trajectory recorder init", async () => {
+    const src = await readPiExecutorSrc();
+    const trajectoryInitStart = src.indexOf("const trajectoryInit = {");
+    expect(trajectoryInitStart).toBeGreaterThan(0);
+    const closeIdx = src.indexOf("};", trajectoryInitStart);
+    expect(closeIdx).toBeGreaterThan(trajectoryInitStart);
+    expect(src.slice(trajectoryInitStart, closeIdx)).toMatch(/logger:\s*deps\.logger/);
+  });
+
+  it("surfaces trajectory resume failures without caching them as disabled", async () => {
+    const src = await readPiExecutorSrc();
+    expect(src).toMatch(/trajectoryResult\.ok/);
+    expect(src).toMatch(/failureKind:\s*error\.failureKind/);
+    expect(src).toMatch(/eventBus\.emit\(\s*"observability:trajectory_degraded"/);
+    expect(src).toContain("Trajectory recorder could not resume persisted state");
+  });
+
   it("trajectory_init_includes_sessionFile_from_sessionAdapter (pointer sidecar)", async () => {
     // The pointer file <sessionFile>.trajectory-path.json
     // is written by createTrajectoryRecorder ONLY when init.sessionFile

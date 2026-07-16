@@ -39,6 +39,8 @@ import {
   attachTrajectoryToEventBus,
   createTrajectoryRecorder,
   type TrajectoryRecorder,
+  type TrajectoryResumeError,
+  type TrajectoryResumeFailureKind,
   attachCacheTraceToEventBus,
   createCacheTrace,
   type CacheTrace,
@@ -142,6 +144,28 @@ import { computeOutputHeadroom } from "../../context-engine/output-headroom.js";
 
 /** Number of turns to restrict breakpoints after server eviction. */
 const EVICTION_COOLDOWN_TURNS = 2;
+
+function trajectoryResumeErrorKind(
+  failureKind: TrajectoryResumeFailureKind,
+): ErrorKind {
+  switch (failureKind) {
+    case "invalid_jsonl":
+      return "validation";
+    case "confinement":
+    case "symlink":
+    case "non_regular":
+      return "precondition";
+    case "permission":
+    case "size_limit":
+    case "changed":
+    case "io":
+      return "resource";
+    default: {
+      const _exhaustive: never = failureKind;
+      return _exhaustive;
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Factory
@@ -747,9 +771,9 @@ async function runSessionLocked(
   // subscribes once for the duration of this execute() call. Both the
   // recorder and the bridge subscription are torn down in the runner-block
   // finally (after postExecution).
-  // createTrajectoryRecorder returns null when COMIS_TRAJECTORY=0 or
-  // diagnostics.trajectory.enabled=false — the null-check below makes
-  // the wiring a no-op in that case.
+  // createTrajectoryRecorder returns ok(null) when disabled and an explicit
+  // error for an unsafe persisted state. The setup block reports errors and
+  // continues the turn without a recorder.
   let trajectoryRecorder: TrajectoryRecorder | null = null;
   let trajectoryUnsubscribe: (() => void) | undefined;
   // Cache-trace recorder local-variable lifecycle. Mirrors the trajectory
@@ -783,6 +807,7 @@ async function runSessionLocked(
     //     keep working).
     const trajectoryInit = {
       agentId: agentId ?? config.name,
+      logger: deps.logger,
       sessionId: formattedKey,
       sessionKey: formattedKey,
       // Record the run's ACTUAL working tree (the worktree when present)
@@ -827,13 +852,37 @@ async function runSessionLocked(
         ? (n: string) => eventTypes.includes(n)
         : undefined;
 
+    const reportTrajectoryResumeFailure = (
+      error: TrajectoryResumeError,
+    ): void => {
+      deps.logger.error(
+        {
+          agentId: agentId ?? config.name,
+          sessionKey: formattedKey,
+          failureKind: error.failureKind,
+          sourceCode: error.sourceCode,
+          errorKind: trajectoryResumeErrorKind(error.failureKind),
+          hint: "Inspect trajectory path confinement, file type, ownership, permissions, size cap, and JSONL envelope integrity; fix the artifact before retrying this session",
+        },
+        "Trajectory recorder could not resume persisted state",
+      );
+      deps.eventBus.emit("observability:trajectory_degraded", {
+        agentId: agentId ?? config.name,
+        sessionKey: formattedKey,
+        traceId: tryGetContext()?.traceId ?? formattedKey,
+        reason: "resume_failed",
+        failureKind: error.failureKind,
+        timestamp: deps.clock.now(),
+      });
+    };
+
     if (deps.trajectoryRegistry !== undefined) {
       // Session-scoped: registry returns the same recorder across turns.
       // The bridge subscription is owned by the registry — no
       // `trajectoryUnsubscribe` to track locally; the registry's
       // `close(formattedKey)` (driven by session-destroy) and
       // `closeAll()` (daemon shutdown) own the teardown.
-      const { recorder } = deps.trajectoryRegistry.getOrCreate(
+      const trajectoryResult = deps.trajectoryRegistry.getOrCreate(
         formattedKey,
         trajectoryInit,
         deps.eventBus,
@@ -841,7 +890,11 @@ async function runSessionLocked(
           | ((n: import("@comis/observability").TrajectoryBridgedEventName) => boolean)
           | undefined,
       );
-      trajectoryRecorder = recorder;
+      if (trajectoryResult.ok) {
+        trajectoryRecorder = trajectoryResult.value.recorder;
+      } else {
+        reportTrajectoryResumeFailure(trajectoryResult.error);
+      }
       // trajectoryUnsubscribe stays undefined — registry owns it.
     } else {
       // Legacy per-turn path. flushAndClose still runs in this execute's
@@ -849,7 +902,12 @@ async function runSessionLocked(
       // fires per turn (both break the session-trajectory invariants the
       // registry guarantees). Kept for tests and callers
       // that haven't wired the registry yet.
-      trajectoryRecorder = createTrajectoryRecorder(trajectoryInit);
+      const trajectoryResult = createTrajectoryRecorder(trajectoryInit);
+      if (trajectoryResult.ok) {
+        trajectoryRecorder = trajectoryResult.value;
+      } else {
+        reportTrajectoryResumeFailure(trajectoryResult.error);
+      }
       if (trajectoryRecorder !== null) {
         trajectoryUnsubscribe = attachTrajectoryToEventBus({
           eventBus: deps.eventBus,

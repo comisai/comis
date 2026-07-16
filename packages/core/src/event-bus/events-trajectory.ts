@@ -2,14 +2,16 @@
 /**
  * TrajectoryEvents: the trajectory-observability lifecycle events
  * (`prompt:*`, `session:*`, `memory:injected`, `tool:timeout`) consumed by the
- * trajectory event-bus bridge.
+ * trajectory event-bus bridge, plus the content-free
+ * `observability:trajectory_degraded` persistence-health signal.
  *
  * A standalone domain interface, composed into `EventMap` (events.ts) exactly
  * like the other domain groups (AgentEvents / ChannelEvents / TerminalEvents / …).
  *
- * Subscribed via @comis/observability/trajectory/event-bus-bridge.ts. Each is
- * emitted at a single canonical site and consumed via the EventBus rather than
- * call-site instrumentation.
+ * Lifecycle members are subscribed via
+ * @comis/observability/trajectory/event-bus-bridge.ts. The degradation member
+ * is consumed by daemon diagnostic persistence because the failed recorder
+ * cannot record its own failure. Each is emitted at a single canonical site.
  *
  * @module
  */
@@ -40,10 +42,9 @@ export interface TrajectoryEvents {
   };
 
   /**
-   * Agent run started — emitted on pi-mono `agent_start` (first turn of
-   * an execution). Distinct from `session:created` which fires on
-   * sessionStore creation; this fires per execute() lifecycle (every
-   * inbound message starts a new agent run).
+   * Session trajectory started — emitted on the first pi-mono `agent_start`
+   * for a logical session. The session-scoped registry suppresses later
+   * turns and restores that latch from the durable trajectory after restart.
    *
    * Emit site: `packages/agent/src/bridge/pi-event-bridge.ts`
    */
@@ -107,6 +108,29 @@ export interface TrajectoryEvents {
     source: "runtime" | "test" | "bench";
     /** The mapped endReason (the named degradation cause) — closed-set label. */
     endReason: string;
+    timestamp: number;
+  };
+
+  /**
+   * The trajectory recorder could not safely resume an existing JSONL stream.
+   * This is a content-free health signal: correlation identifiers plus closed
+   * failure labels only. The operator-facing error stays on the structured ERROR;
+   * no filesystem path, error message, or trajectory content rides this event.
+   */
+  "observability:trajectory_degraded": {
+    agentId: string;
+    sessionKey: string;
+    traceId: string;
+    reason: "resume_failed";
+    failureKind:
+      | "permission"
+      | "confinement"
+      | "symlink"
+      | "non_regular"
+      | "size_limit"
+      | "invalid_jsonl"
+      | "changed"
+      | "io";
     timestamp: number;
   };
 

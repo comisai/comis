@@ -46,6 +46,7 @@ import {
   deliveryEventToRow,
   diagnosticEventToRow,
   sessionSummaryEventToRow,
+  trajectoryDegradedEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
   recallDegradedEventToRow,
@@ -129,6 +130,7 @@ export {
   deliveryEventToRow,
   diagnosticEventToRow,
   sessionSummaryEventToRow,
+  trajectoryDegradedEventToRow,
   dagDegradedEventToRow,
   healthBudgetExceededEventToRow,
   recallDegradedEventToRow,
@@ -329,6 +331,13 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   // (no new table/buffer/transaction) — written under category:"session_summary".
   eventBus.on("session:summary", (payload) => {
     diagnosticBuffer.push(sessionSummaryEventToRow(payload));
+  });
+
+  // A recorder that cannot safely resume its existing JSONL must surface in
+  // fleet diagnostics, not only in a local WARN. The event and row contain
+  // identifiers + closed failure labels only.
+  eventBus.on("observability:trajectory_degraded", (payload) => {
+    diagnosticBuffer.push(trajectoryDegradedEventToRow(payload));
   });
 
   // Persist the high-value WARNs to obs_diagnostics

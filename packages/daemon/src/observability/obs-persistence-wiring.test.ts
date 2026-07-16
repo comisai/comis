@@ -21,6 +21,7 @@ import {
   generationQualityEventToRow,
   pipelineAuthoredEventToRow,
   orchestrateRunSummaryEventToRow,
+  trajectoryDegradedEventToRow,
   sandboxDowngradeRefusedEventToRow,
   deliveryDeadletteredEventToRow,
   nodeBudgetExceededEventToRow,
@@ -1521,6 +1522,70 @@ describe("autonomyDenialBreakerEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
+// trajectoryDegradedEventToRow (trajectory resume failure → health_signal)
+// ---------------------------------------------------------------------------
+
+describe("trajectoryDegradedEventToRow", () => {
+  it("maps a trajectory resume failure to an attributed content-free warning row", () => {
+    const row = trajectoryDegradedEventToRow({
+      agentId: "agent-1",
+      sessionKey: "tenant:telegram:chat",
+      traceId: "trace-1",
+      reason: "resume_failed",
+      failureKind: "symlink",
+      timestamp: 10_000,
+    });
+
+    expect(row).toEqual({
+      timestamp: 10_000,
+      category: "health_signal",
+      severity: "warning",
+      agentId: "agent-1",
+      sessionKey: "tenant:telegram:chat",
+      traceId: "trace-1",
+      message: "trajectory_resume_failed",
+      details: JSON.stringify({
+        signal: "trajectory_resume_failed",
+        reason: "resume_failed",
+        failureKind: "symlink",
+      }),
+    });
+    expect(Object.keys(JSON.parse(row.details ?? "{}")).sort()).toEqual([
+      "failureKind",
+      "reason",
+      "signal",
+    ]);
+  });
+
+  it("preserves every closed resume failure kind without accepting an error body", () => {
+    for (const failureKind of [
+      "permission",
+      "confinement",
+      "symlink",
+      "non_regular",
+      "size_limit",
+      "invalid_jsonl",
+      "changed",
+      "io",
+    ] as const) {
+      const row = trajectoryDegradedEventToRow({
+        agentId: "agent-1",
+        sessionKey: "session-1",
+        traceId: "trace-1",
+        reason: "resume_failed",
+        failureKind,
+        timestamp: 10_001,
+      });
+      expect(JSON.parse(row.details ?? "{}")).toEqual({
+        signal: "trajectory_resume_failed",
+        reason: "resume_failed",
+        failureKind,
+      });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // setupObsPersistence
 // ---------------------------------------------------------------------------
 
@@ -1618,6 +1683,7 @@ describe("setupObsPersistence", () => {
     expect(eventBus.on).toHaveBeenCalledWith("context:dag_degraded", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("health:budget_exceeded", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("mcp:server:reconnect_failed", expect.any(Function));
+    expect(eventBus.on).toHaveBeenCalledWith("observability:trajectory_degraded", expect.any(Function));
     // The 2 multilingual health_signal subscriptions.
     expect(eventBus.on).toHaveBeenCalledWith("context:script_zero_hit", expect.any(Function));
     expect(eventBus.on).toHaveBeenCalledWith("context:summary_language_mismatch", expect.any(Function));
@@ -1701,16 +1767,21 @@ describe("setupObsPersistence", () => {
       durationMs: 1200, exitCode: 0, stdoutBytesRaw: 40, stdoutCharsReentered: 40,
       resultRefCount: 2, resultRefBytes: 80000, estSavedTokens: 19960, savedRatio: 0.99, timestamp: 1014,
     });
+    // o. A trajectory recorder could not safely resume its existing JSONL.
+    eventBus.emit("observability:trajectory_degraded", {
+      agentId: "a1", sessionKey: "sk-1", traceId: "trace-1",
+      reason: "resume_failed", failureKind: "invalid_jsonl", timestamp: 1015,
+    });
 
     // Flush the diagnostic buffer.
     vi.advanceTimersByTime(500);
 
-    // Exactly one health_signal row per event (15 total), each with the right message.
+    // Exactly one health_signal row per event (16 total), each with the right message.
     const calls = (obsStore.insertDiagnostic as ReturnType<typeof vi.fn>).mock.calls;
     const healthRows = calls
       .map((c) => c[0] as { category?: string; message?: string; details?: string })
       .filter((r) => r.category === "health_signal");
-    expect(healthRows).toHaveLength(15);
+    expect(healthRows).toHaveLength(16);
     const messages = healthRows.map((r) => r.message).sort();
     expect(messages).toEqual([
       "autonomy:denial_breaker_tripped",
@@ -1728,6 +1799,7 @@ describe("setupObsPersistence", () => {
       "security:sandbox_downgrade_refused",
       "subagent:budget_exceeded",
       "subagent:delivery_deadlettered",
+      "trajectory_resume_failed",
     ]);
     // The autonomy rows carry their closed signal labels.
     expect(JSON.parse(healthRows.find((r) => r.message === "durable:orphaned")!.details ?? "{}").signal).toBe("durable_orphaned");
@@ -1747,6 +1819,12 @@ describe("setupObsPersistence", () => {
     const orchRow = healthRows.find((r) => r.message === "orchestrate:run_summary")!;
     expect(JSON.parse(orchRow.details ?? "{}").signal).toBe("orchestrate_efficiency");
     expect(JSON.parse(orchRow.details ?? "{}").estSavedTokens).toBe(19960);
+    const trajectoryRow = healthRows.find((r) => r.message === "trajectory_resume_failed")!;
+    expect(JSON.parse(trajectoryRow.details ?? "{}")).toEqual({
+      signal: "trajectory_resume_failed",
+      reason: "resume_failed",
+      failureKind: "invalid_jsonl",
+    });
     expect(orchRow.details ?? "").not.toContain("orch-1");
     // The three ORCH-OBS rows carry their closed signal labels.
     expect(JSON.parse(healthRows.find((r) => r.message === "security:sandbox_downgrade_refused")!.details ?? "{}").signal).toBe("sandbox_downgrade_refused");

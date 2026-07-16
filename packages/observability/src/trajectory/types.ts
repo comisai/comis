@@ -487,9 +487,9 @@ export interface TrajectoryEvent {
  *   - `sentinelReserveBytes = 2 * 1024` (head-room reserved inside the
  *     file budget for the `trace.truncated` sentinel emit).
  *
- * `enabled = false` causes `createTrajectoryRecorder` to return `null`
- * (no-op contract; consumers null-check). The env override
- * `COMIS_TRAJECTORY=0` short-circuits the same way.
+ * `enabled = false` causes `createTrajectoryRecorder` to return `ok(null)`.
+ * The env override `COMIS_TRAJECTORY=0` short-circuits the same way. Durable
+ * read/validation failures are returned as `err`, never conflated with disablement.
  */
 /**
  * Optional byte-budget overrides clustered into a single `budgets` field.
@@ -578,8 +578,8 @@ export interface TrajectoryRecorderInit {
 
   /**
    * Enable/disable. Default true. When false `createTrajectoryRecorder`
-   * returns null (no-op contract). Env `COMIS_TRAJECTORY=0` also
-   * short-circuits to null.
+   * returns `ok(null)` (no-op contract). Env `COMIS_TRAJECTORY=0` also
+   * short-circuits to `ok(null)`.
    */
   readonly enabled?: boolean;
 
@@ -616,9 +616,8 @@ export interface TraceTruncatedParams {
 }
 
 /**
- * Writer interface returned by `createTrajectoryRecorder`. A no-op
- * disabled state is conveyed via a `null` return — consumers null-check
- * once at the construction site.
+ * Writer interface carried by `createTrajectoryRecorder`'s successful Result.
+ * A no-op disabled state is conveyed as `ok(null)`.
  *
  * `recordEvent` is fire-and-forget: it returns a Result with `"queued"`
  * or `"dropped"` (the latter when the per-writer queued-bytes cap would
@@ -631,6 +630,9 @@ export interface TraceTruncatedParams {
 export interface TrajectoryRecorder {
   /** Resolved on-disk path of the trajectory file. */
   readonly filePath: string;
+
+  /** Durable lifecycle snapshot used to restore the daemon registry latch. */
+  readonly sessionStartedActive: boolean;
 
   /**
    * Enqueue one event. `type` must be a closed-union TrajectoryEventType.

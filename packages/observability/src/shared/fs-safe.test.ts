@@ -47,6 +47,7 @@ import * as path from "node:path";
 
 import {
   appendRegularFile,
+  readRegularFile,
   writeRegularFile,
   ensureContainedDir,
   SymlinkParentRejected,
@@ -241,6 +242,103 @@ describe("appendRegularFile — defensive chmod 0o600 even when file already exi
     const result = appendRegularFile({ path: target, content: "more\n" });
     expect(result.ok).toBe(true);
     expect(fs.statSync(target).mode & 0o777).toBe(0o600);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// readRegularFile (symlink-safe bounded read)
+// ---------------------------------------------------------------------------
+describe("readRegularFile — bounded symlink-safe reads", () => {
+  it("uses O_NONBLOCK so a swapped non-regular target cannot stall the daemon", () => {
+    const source = fs.readFileSync(new URL("./fs-safe.ts", import.meta.url), "utf8");
+    const readFlagsStart = source.indexOf("function resolveReadOpenFlags");
+    const readFlagsEnd = source.indexOf("return flags;", readFlagsStart);
+    expect(readFlagsStart).toBeGreaterThan(-1);
+    expect(source.slice(readFlagsStart, readFlagsEnd)).toContain("O_NONBLOCK");
+  });
+
+  it("reads one existing regular file and reports its exact byte length", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-read-happy-"));
+    const target = path.join(tmpDir, "trajectory.jsonl");
+    fs.writeFileSync(target, "first\nsecond\n", { mode: 0o600 });
+
+    const result = readRegularFile({
+      path: target,
+      maxFileBytes: 1024,
+      confinedBaseDir: tmpDir,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.value.content.toString("utf8")).toBe("first\nsecond\n");
+    expect(result.value.totalBytes).toBe(13);
+  });
+
+  it("rejects a final-component symlink without reading its target", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-read-symlink-"));
+    const outside = path.join(tmpDir, "outside.jsonl");
+    const target = path.join(tmpDir, "trajectory.jsonl");
+    fs.writeFileSync(outside, "sensitive\n", { mode: 0o600 });
+    fs.symlinkSync(outside, target);
+
+    const result = readRegularFile({
+      path: target,
+      maxFileBytes: 1024,
+      confinedBaseDir: tmpDir,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(fs.readFileSync(outside, "utf8")).toBe("sensitive\n");
+  });
+
+  it("rejects an escaping ancestor symlink when confinedBaseDir is set", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-read-confine-"));
+    const baseDir = path.join(tmpDir, "base");
+    const outsideDir = path.join(tmpDir, "outside");
+    const outsideInner = path.join(outsideDir, "inner");
+    fs.mkdirSync(baseDir, { recursive: true });
+    fs.mkdirSync(outsideInner, { recursive: true });
+    fs.writeFileSync(path.join(outsideInner, "trajectory.jsonl"), "outside\n");
+    fs.symlinkSync(outsideDir, path.join(baseDir, "escape"));
+
+    const result = readRegularFile({
+      path: path.join(baseDir, "escape", "inner", "trajectory.jsonl"),
+      maxFileBytes: 1024,
+      confinedBaseDir: baseDir,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(PathEscapesConfinementError);
+    }
+  });
+
+  it("rejects an oversized file before returning any content", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-read-limit-"));
+    const target = path.join(tmpDir, "trajectory.jsonl");
+    fs.writeFileSync(target, "x".repeat(65), { mode: 0o600 });
+
+    const result = readRegularFile({
+      path: target,
+      maxFileBytes: 64,
+      confinedBaseDir: tmpDir,
+    });
+
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a directory after opening it without returning content", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-read-directory-"));
+    const target = path.join(tmpDir, "not-a-file");
+    fs.mkdirSync(target);
+
+    const result = readRegularFile({
+      path: target,
+      maxFileBytes: 1024,
+      confinedBaseDir: tmpDir,
+    });
+
+    expect(result.ok).toBe(false);
   });
 });
 

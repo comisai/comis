@@ -50,8 +50,10 @@ import { z } from "zod";
  *     256 KB is fixed by the runtime; only the file cap is
  *     operator-tunable).
  *   - `eventTypes` — optional allowlist of trajectory event types to
- *     record. When omitted the writer records every bridge-mapped
- *     event (the default mode).
+ *     record. Session start/end lifecycle boundaries are always retained so
+ *     restart recovery can distinguish active and explicitly closed sessions.
+ *     When omitted the writer records every bridge-mapped event (the default
+ *     mode).
  */
 const TrajectoryConfigSchema = z
   .object({

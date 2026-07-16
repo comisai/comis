@@ -153,6 +153,30 @@ export function sessionSummaryEventToRow(
 }
 
 /**
+ * Map a trajectory-recorder resume failure to an attributed warning row. The
+ * row carries only correlation identifiers and closed labels; filesystem paths,
+ * error messages, and trajectory content remain outside the persistence event.
+ */
+export function trajectoryDegradedEventToRow(
+  payload: EventMap["observability:trajectory_degraded"],
+): DiagnosticRow {
+  return {
+    timestamp: payload.timestamp,
+    category: "health_signal",
+    severity: "warning",
+    agentId: payload.agentId,
+    sessionKey: payload.sessionKey,
+    traceId: payload.traceId,
+    message: "trajectory_resume_failed",
+    details: JSON.stringify({
+      signal: "trajectory_resume_failed",
+      reason: payload.reason,
+      failureKind: payload.failureKind,
+    }),
+  };
+}
+
+/**
  * The `context:dag_degraded` reasons that are NOT genuine degrades:
  *  - `serialized_wait`: the bounded-wait back-pressure signal (an
  *    ingest/compaction write queued on the per-conversation single-flight

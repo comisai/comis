@@ -35,8 +35,8 @@
  *      reserved head-room.
  *
  * Disabled state: when `enabled === false` OR `COMIS_TRAJECTORY=0` the
- * factory returns `null`. Consumers null-check at the construction
- * site — we ship a literal null instead of a stub-shape object.
+ * factory returns `ok(null)`. Unsafe persisted state returns an explicit
+ * error so callers do not cache an operational failure as disablement.
  *
  * Cross-cutting:
  *   - `randomUUID()` for `entryId` is the standard global; we use the
@@ -50,6 +50,7 @@ import { randomUUID } from "node:crypto";
 
 import { systemDateFrom, systemGetEnv, systemNowMs, tryGetContext } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
+import { ok, type Result } from "@comis/shared";
 
 import { getQueuedFileWriter, type QueuedFileWriter } from "../shared/queued-file-writer.js";
 import { safeJsonStringify } from "../shared/safe-json-stringify.js";
@@ -61,6 +62,10 @@ import {
 
 import { resolveTrajectoryFilePath } from "./paths.js";
 import { writeTrajectoryPointerFileBestEffort } from "./pointer-file.js";
+import {
+  readPersistedTrajectoryState,
+  type TrajectoryResumeError,
+} from "./persisted-state.js";
 import type {
   TraceTruncatedParams,
   TrajectoryEvent,
@@ -290,9 +295,9 @@ function acquireWriter(filePath: string, opts: AcquireOpts): QueuedFileWriter {
 // ---------------------------------------------------------------------------
 
 /**
- * Construct a per-session trajectory recorder. Returns `null` when
- * disabled via init flag or `COMIS_TRAJECTORY=0` env var (consumers
- * null-check at the construction site).
+ * Construct a per-session trajectory recorder. Intentional disablement is
+ * represented by `ok(null)`; persisted-state failures return `err(...)` so
+ * callers cannot cache or mistake an operational failure for configuration.
  *
  * The returned recorder is bound to one file path; multiple recorders
  * for the same file (rare) share the underlying queued writer via the
@@ -300,9 +305,9 @@ function acquireWriter(filePath: string, opts: AcquireOpts): QueuedFileWriter {
  */
 export function createTrajectoryRecorder(
   init: TrajectoryRecorderInit,
-): TrajectoryRecorder | null {
-  if (init.enabled === false) return null;
-  if (isDisabledByEnv()) return null;
+): Result<TrajectoryRecorder | null, TrajectoryResumeError> {
+  if (init.enabled === false) return ok(null);
+  if (isDisabledByEnv()) return ok(null);
 
   const filePath = resolveTrajectoryFilePath({
     sessionId: init.sessionId,
@@ -331,6 +336,45 @@ export function createTrajectoryRecorder(
   // hard cap simply mean the hard cap fires first.
   const captureMaxBytes =
     init.budgets?.captureMaxBytes ?? TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES;
+
+  // A daemon restart creates a fresh in-memory registry while retaining the
+  // append-only trajectory file. Resume both ordering and capture accounting
+  // from disk before acquiring the writer; starting either counter at zero
+  // would duplicate seq values and reset the soft file budget.
+  const logger: ComisLogger | undefined = init.logger;
+  const persistedState = readPersistedTrajectoryState({
+    filePath,
+    sessionId: init.sessionId,
+    maxFileBytes: maxRuntimeFileBytes,
+    ...(init.confinedBaseDir !== undefined
+      ? { confinedBaseDir: init.confinedBaseDir }
+      : {}),
+  });
+  if (!persistedState.ok) {
+    return persistedState;
+  }
+  if (persistedState.value.malformedRecords > 0) {
+    logger?.warn(
+      {
+        errorKind: "validation" as const,
+        trajectoryFile: filePath,
+        malformedRecords: persistedState.value.malformedRecords,
+        hint: "Inspect the trajectory JSONL for partial or malformed records; valid records will continue from the highest persisted sequence",
+      },
+      "Trajectory recorder found malformed persisted records while resuming",
+    );
+  }
+  if (persistedState.value.sequenceRegressions > 0) {
+    logger?.warn(
+      {
+        errorKind: "validation" as const,
+        trajectoryFile: filePath,
+        sequenceRegressions: persistedState.value.sequenceRegressions,
+        hint: "Use the highest persisted sequence as the durable high-water mark and inspect readers that sort historical events by seq",
+      },
+      "Trajectory recorder found non-monotonic persisted sequence values",
+    );
+  }
 
   // Acquire writer via LRU-bookkeeping helper. Handles
   // move-to-end on re-access and eviction of oldest writers when the
@@ -363,24 +407,35 @@ export function createTrajectoryRecorder(
     });
   }
 
-  // Extract optional logger for operator diagnostics.
-  // Uses @comis/core's structural ComisLogger contract — no @comis/infra dep.
-  const logger: ComisLogger | undefined = init.logger;
-
   // Mutable per-recorder state. Each recorder owns its own seq counter
   // and write-byte accumulator (the writer chassis is shared across
   // recorders for the same path, but the seq/byte accounting is local).
   const state = {
-    seq: 0,
-    writtenBytes: 0,
+    seq: persistedState.value.maxSeq,
+    writtenBytes: persistedState.value.writtenBytes,
     droppedEvents: 0,
     droppedEventBytes: 0,
-    closed: false,
+    closed: persistedState.value.softClosed,
+    needsLineBreak: persistedState.value.needsLineBreak,
     // Guard: emit the hard-cap WARN at most once per recorder lifetime.
     // Without this flag, every subsequent call to recordEvent after the
     // hard-cap fires would re-emit the WARN.
     hardCapWarnEmitted: false,
   };
+
+  function queueLine(line: string): "queued" | "dropped" {
+    const appendLine = state.needsLineBreak ? `\n${line}` : line;
+    const result = writer.write(appendLine);
+    if (result === "queued") {
+      state.needsLineBreak = false;
+      state.writtenBytes += Buffer.byteLength(appendLine, "utf8");
+    }
+    return result;
+  }
+
+  function appendBytes(line: string): number {
+    return Buffer.byteLength(state.needsLineBreak ? `\n${line}` : line, "utf8");
+  }
 
   // ---------------------------------------------------------------------------
   // Shared internal helper for trace.truncated sentinel emission.
@@ -412,11 +467,12 @@ export function createTrajectoryRecorder(
     const line = encodeLine(sentinel);
     // Bypass file-cap accounting — the sentinelReserveBytes head-room
     // (default 2 KB) is what makes this safe even when the cap is exhausted.
-    return writer.write(line);
+    return queueLine(line);
   }
 
   const recorder: TrajectoryRecorder = {
     filePath,
+    sessionStartedActive: persistedState.value.sessionStartedActive,
     recordEvent(
       type: TrajectoryEventType,
       data?: Record<string, unknown>,
@@ -452,8 +508,8 @@ export function createTrajectoryRecorder(
       // 3. Encode + check per-event byte cap. Replace payload with
       //    sentinel when the envelope exceeds the cap.
       let line = encodeLine(evt);
-      let bytes = Buffer.byteLength(line, "utf8");
-      if (bytes > maxRuntimeEventBytes) {
+      const eventBytes = Buffer.byteLength(line, "utf8");
+      if (eventBytes > maxRuntimeEventBytes) {
         const replacement = buildEvent({
           type,
           init,
@@ -461,14 +517,14 @@ export function createTrajectoryRecorder(
           sanitized: {
             truncated: true,
             reason: EVENT_SIZE_SENTINEL_REASON,
-            originalBytes: bytes,
+            originalBytes: eventBytes,
             limitBytes: maxRuntimeEventBytes,
           },
           ...(parentEntryId !== undefined ? { parentEntryId } : {}),
         });
         line = encodeLine(replacement);
-        bytes = Buffer.byteLength(line, "utf8");
       }
+      const bytes = appendBytes(line);
 
       // 4a. Soft capture cap. When writtenBytes would cross
       //     TRAJECTORY_RUNTIME_CAPTURE_MAX_BYTES (default 10 MB,
@@ -515,10 +571,9 @@ export function createTrajectoryRecorder(
       }
 
       // 5. Hand to the queued writer.
-      const result = writer.write(line);
+      const result = queueLine(line);
       if (result === "queued") {
         state.seq += 1;
-        state.writtenBytes += bytes;
       } else {
         // Backpressure-dropped — the writer's queued-bytes cap was
         // exceeded. Account for trace.truncated emit at close-time.
@@ -587,7 +642,7 @@ export function createTrajectoryRecorder(
           },
         });
         const line = encodeLine(sentinel);
-        writer.write(line);
+        queueLine(line);
       }
 
       await writer.flushAndClose();
@@ -606,7 +661,7 @@ export function createTrajectoryRecorder(
     },
   };
 
-  return recorder;
+  return ok(recorder);
 }
 
 // ---------------------------------------------------------------------------
