@@ -396,6 +396,8 @@ describe("wireLearningCorrection — correction → prior-trajectory observe", (
       agentId: AGENT,
       sessionKey: formatSessionKey(sessionKey()),
       traceId: TRACE,
+      toolCalls: 0,
+      llmCalls: 1,
       receivedAt: NOW,
       executionDurationMs: 5,
       deliveryDurationMs: 0,

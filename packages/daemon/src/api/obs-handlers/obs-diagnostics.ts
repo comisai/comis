@@ -87,6 +87,7 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
           agentId: r.agentId || undefined,
           channelId: undefined as string | undefined,
           sessionKey: r.sessionKey || undefined,
+          traceId: r.traceId || undefined,
           data: { message: r.message, details: r.details, severity: r.severity },
         }));
 
@@ -225,6 +226,11 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
           error: r.errorMessage || undefined,
           agentId: r.agentId,
           sessionKey: r.sessionKey || undefined,
+          traceId: r.traceId || undefined,
+          toolCalls: r.toolCalls,
+          llmCalls: r.llmCalls,
+          tokensTotal: r.tokensTotal,
+          costTotal: r.costTotal,
         }));
 
         // Filter by channelId if specified

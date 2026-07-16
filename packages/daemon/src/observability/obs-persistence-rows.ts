@@ -70,14 +70,15 @@ export function tokenUsageEventToRow(
  * suitable for SQLite insertion.
  * Maps `totalDurationMs` to `latencyMs`, `success` to `status`, `finishReason`
  * to `errorMessage` (only when `!success`), `tokensUsed` to `tokensTotal`,
- * `cost` to `costTotal`. Sets `traceId: ""` (not in event payload).
+ * `cost` to `costTotal`. Preserves correlation and call-count epistemic state:
+ * completed turns carry exact counts; turns without an execution result carry null.
  */
 export function deliveryEventToRow(
   payload: EventMap["diagnostic:message_processed"],
 ): DeliveryRow {
   return {
     timestamp: payload.timestamp,
-    traceId: "",
+    traceId: payload.traceId ?? "",
     agentId: payload.agentId,
     channelType: payload.channelType,
     channelId: payload.channelId,
@@ -85,8 +86,8 @@ export function deliveryEventToRow(
     status: payload.success ? "success" : "error",
     latencyMs: payload.totalDurationMs,
     errorMessage: payload.success ? undefined : payload.finishReason,
-    toolCalls: undefined,
-    llmCalls: undefined,
+    toolCalls: payload.toolCalls,
+    llmCalls: payload.llmCalls,
     tokensTotal: payload.tokensUsed,
     costTotal: payload.cost,
   };
@@ -107,7 +108,7 @@ export function diagnosticEventToRow(event: DiagnosticEvent): DiagnosticRow {
     sessionKey: event.sessionKey,
     message: event.eventType,
     details: JSON.stringify(event.data),
-    traceId: undefined,
+    traceId: event.traceId,
   };
 }
 

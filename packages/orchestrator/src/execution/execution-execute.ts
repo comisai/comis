@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import type { ChannelPort, NormalizedMessage, SessionKey, PerChannelStreamingConfig } from "@comis/core";
 import { formatSessionKey, runWithContext, tryGetContext, createDeliveryOrigin, systemNowMs, systemSetInterval, systemClearInterval, systemScheduleTimeout } from "@comis/core";
 import { withTimeout, TimeoutError } from "@comis/shared";
-import type { AgentExecutor } from "@comis/agent";
+import type { AgentExecutor, ExecutionResult } from "@comis/agent";
 import type { CommandDirectives } from "../commands/index.js";
 import { sanitizeAssistantResponse, createThinkingTagFilter } from "@comis/agent";
 
@@ -36,8 +36,7 @@ export type ExecuteDeps = Pick<
 /** Result from LLM execution. */
 export interface ExecuteResult {
   /** Raw execution result from the agent executor. */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  result: any;
+  result: ExecutionResult | undefined;
   /** Accumulated delta text (streaming path). */
   accumulated: string;
   /** Tokens used. */
@@ -165,7 +164,7 @@ export async function executeLlm(
     typingLifecycle?.controller.refreshTtl();
   };
 
-  let result;
+  let result: ExecutionResult;
   try {
     result = await withTimeout(
       runWithContext({

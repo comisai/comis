@@ -168,8 +168,8 @@ export interface DeliveryRow {
   latencyMs: number;
   errorMessage?: string;
   messagePreview?: string;
-  toolCalls?: number;
-  llmCalls?: number;
+  toolCalls?: number | null;
+  llmCalls?: number | null;
   tokensTotal?: number;
   costTotal?: number;
 }

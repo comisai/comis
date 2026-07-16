@@ -608,8 +608,8 @@ export function initSchema(
       latency_ms INTEGER NOT NULL,
       error_message TEXT DEFAULT '',
       message_preview TEXT DEFAULT '',
-      tool_calls INTEGER DEFAULT 0,
-      llm_calls INTEGER DEFAULT 0,
+      tool_calls INTEGER,
+      llm_calls INTEGER,
       tokens_total INTEGER DEFAULT 0,
       cost_total REAL DEFAULT 0
     );

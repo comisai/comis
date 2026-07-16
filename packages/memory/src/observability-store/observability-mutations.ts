@@ -191,8 +191,8 @@ export function bindMutations(db: Database.Database): ObservabilityMutations {
       entry.latencyMs,
       entry.errorMessage ?? "",
       entry.messagePreview ?? "",
-      entry.toolCalls ?? 0,
-      entry.llmCalls ?? 0,
+      entry.toolCalls ?? null,
+      entry.llmCalls ?? null,
       entry.tokensTotal ?? 0,
       entry.costTotal ?? 0,
     );

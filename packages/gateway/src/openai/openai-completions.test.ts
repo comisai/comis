@@ -14,6 +14,8 @@ function createMockDeps(
       response: "Hello from the agent!",
       tokensUsed: { input: 10, output: 20, total: 30 },
       finishReason: "stop",
+      stepsExecuted: 0,
+      llmCalls: 1,
     }),
     logger: { info: vi.fn(), error: vi.fn() },
     ...overrides,
@@ -64,6 +66,8 @@ describe("createOpenaiCompletionsRoute", () => {
         response: "ok",
         tokensUsed: { input: 0, output: 0, total: 0 },
         finishReason: "stop",
+        stepsExecuted: 0,
+        llmCalls: 1,
       });
       const deps = createMockDeps({ executeAgent });
       const app = createOpenaiCompletionsRoute(deps);
@@ -90,6 +94,8 @@ describe("createOpenaiCompletionsRoute", () => {
         response: "ok",
         tokensUsed: { input: 0, output: 0, total: 0 },
         finishReason: "stop",
+        stepsExecuted: 0,
+        llmCalls: 1,
       });
       const deps = createMockDeps({ executeAgent });
       const app = createOpenaiCompletionsRoute(deps);
@@ -117,6 +123,8 @@ describe("createOpenaiCompletionsRoute", () => {
           response: "Truncated",
           tokensUsed: { input: 5, output: 5, total: 10 },
           finishReason: "max_steps",
+          stepsExecuted: 50,
+          llmCalls: 50,
         }),
       });
       const app = createOpenaiCompletionsRoute(deps);
@@ -138,6 +146,8 @@ describe("createOpenaiCompletionsRoute", () => {
         response: "ok",
         tokensUsed: { input: 0, output: 0, total: 0 },
         finishReason: "stop",
+        stepsExecuted: 0,
+        llmCalls: 1,
       });
       const deps = createMockDeps({ executeAgent });
       const app = createOpenaiCompletionsRoute(deps);
@@ -208,7 +218,13 @@ describe("createOpenaiCompletionsRoute", () => {
           params.onDelta("just output it.", "thinking");
           params.onDelta("Hi!", "text");
         }
-        return { response: "Hi!", tokensUsed: { input: 5, output: 5, total: 10 }, finishReason: "stop" };
+        return {
+          response: "Hi!",
+          tokensUsed: { input: 5, output: 5, total: 10 },
+          finishReason: "stop",
+          stepsExecuted: 0,
+          llmCalls: 1,
+        };
       });
       const app = createOpenaiCompletionsRoute(createMockDeps({ executeAgent }));
       const res = await app.request("/", {
@@ -237,6 +253,8 @@ describe("createOpenaiCompletionsRoute", () => {
           response: "Hello world",
           tokensUsed: { input: 5, output: 10, total: 15 },
           finishReason: "stop",
+          stepsExecuted: 0,
+          llmCalls: 1,
         };
       });
 
@@ -308,6 +326,8 @@ describe("createOpenaiCompletionsRoute", () => {
         response: "ok",
         tokensUsed: { input: 0, output: 0, total: 0 },
         finishReason: "stop",
+        stepsExecuted: 0,
+        llmCalls: 1,
       });
       const deps = createMockDeps({ executeAgent });
       const app = createOpenaiCompletionsRoute(deps);
@@ -482,6 +502,8 @@ describe("createOpenaiCompletionsRoute", () => {
         response: "ok",
         tokensUsed: { input: 1, output: 2, total: 3 },
         finishReason: "stop",
+        stepsExecuted: 2,
+        llmCalls: 3,
         traceId: "trace-abc",
         agentId: "default",
         // The wiring returns the FORMATTED tenant-qualified key; the emit must carry it
@@ -505,6 +527,8 @@ describe("createOpenaiCompletionsRoute", () => {
         channelType: "openai",
         agentId: "default",
         traceId: "trace-abc",
+        toolCalls: 2,
+        llmCalls: 3,
         // MUST be the 3-part tenant-qualified key from the wiring, NOT a 2-part fallback.
         sessionKey: "default:openai-api:openai",
         success: true,
@@ -520,6 +544,8 @@ describe("createOpenaiCompletionsRoute", () => {
           response: "hi",
           tokensUsed: { input: 1, output: 1, total: 2 },
           finishReason: "stop",
+          stepsExecuted: 1,
+          llmCalls: 2,
           traceId: "trace-stream",
           agentId: "default",
         };
@@ -541,10 +567,12 @@ describe("createOpenaiCompletionsRoute", () => {
       expect(call?.[1]).toMatchObject({
         channelType: "openai",
         traceId: "trace-stream",
+        toolCalls: 1,
+        llmCalls: 2,
       });
     });
 
-    it("does not emit or throw when no eventBus is wired (back-compat)", async () => {
+    it("does not emit or throw when no eventBus is wired", async () => {
       const deps = createMockDeps(); // no eventBus
       const app = createOpenaiCompletionsRoute(deps);
       const res = await app.request("/", {

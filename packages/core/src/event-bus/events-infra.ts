@@ -168,6 +168,10 @@ export interface InfraEvents {
      * executor's runWithContext scope).
      */
     traceId?: string;
+    /** Exact tool executions for completed turns; null when execution did not return a result. */
+    toolCalls: number | null;
+    /** Exact model calls for completed turns; null when execution did not return a result. */
+    llmCalls: number | null;
     receivedAt: number;
     executionDurationMs: number;
     deliveryDurationMs: number;

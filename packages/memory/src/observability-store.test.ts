@@ -259,6 +259,24 @@ describe("ObservabilityStore", () => {
       expect(row.costTotal).toBeCloseTo(0.005);
     });
 
+    it("persists unavailable delivery call counts as SQL NULL instead of fabricated zeroes", () => {
+      store.insertDelivery({
+        ...baseDelivery,
+        toolCalls: undefined,
+        llmCalls: undefined,
+      });
+
+      const raw = db
+        .prepare("SELECT tool_calls, llm_calls FROM obs_delivery")
+        .get() as { tool_calls: number | null; llm_calls: number | null };
+      expect(raw.tool_calls).toBeNull();
+      expect(raw.llm_calls).toBeNull();
+
+      const row = store.queryDelivery()[0]!;
+      expect(row.toolCalls).toBeNull();
+      expect(row.llmCalls).toBeNull();
+    });
+
     it("queries with channelType filter", () => {
       store.insertDelivery({ ...baseDelivery, channelType: "telegram" });
       store.insertDelivery({ ...baseDelivery, channelType: "discord" });

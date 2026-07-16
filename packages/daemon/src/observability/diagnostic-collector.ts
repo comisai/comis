@@ -20,6 +20,7 @@ export interface DiagnosticEvent {
   agentId: string | undefined;
   channelId: string | undefined;
   sessionKey: string | undefined;
+  traceId?: string;
   data: Record<string, unknown>;
 }
 
@@ -74,6 +75,7 @@ export function createDiagnosticCollector(deps: {
       agentId?: string;
       channelId?: string;
       sessionKey?: string;
+      traceId?: string;
       timestamp?: number;
     },
   ): void {
@@ -87,6 +89,7 @@ export function createDiagnosticCollector(deps: {
         agentId: extracted.agentId,
         channelId: extracted.channelId,
         sessionKey: extracted.sessionKey,
+        traceId: extracted.traceId,
         data: payload as unknown as Record<string, unknown>,
       });
     }) as EventHandler<K>;
@@ -102,6 +105,7 @@ export function createDiagnosticCollector(deps: {
   subscribe("observability:token_usage", "usage", (p) => ({
     agentId: p.agentId,
     channelId: p.channelId,
+    traceId: p.traceId,
     timestamp: p.timestamp,
   }));
 
@@ -140,6 +144,7 @@ export function createDiagnosticCollector(deps: {
     agentId: p.agentId,
     channelId: p.channelId,
     sessionKey: p.sessionKey,
+    traceId: p.traceId,
     timestamp: p.timestamp,
   }));
 

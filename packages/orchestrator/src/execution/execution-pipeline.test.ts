@@ -483,9 +483,20 @@ describe("executeAndDeliver", () => {
       const eventBus = makeEventBus();
       const deps = makeDeps({ eventBus });
       const msg = makeMessage();
+      const executor = makeExecutor({
+        execute: vi.fn(async () => ({
+          response: "Agent response text",
+          sessionKey: makeSessionKey(),
+          tokensUsed: { input: 100, output: 50, total: 150 },
+          cost: { total: 0.001 },
+          stepsExecuted: 3,
+          llmCalls: 4,
+          finishReason: "stop" as const,
+        })),
+      });
 
       await executeAndDeliver(
-        deps, makeAdapter(), msg, msg, makeExecutor(), makeSessionKey(),
+        deps, makeAdapter(), msg, msg, executor, makeSessionKey(),
         "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
       );
 
@@ -497,6 +508,8 @@ describe("executeAndDeliver", () => {
           agentId: "agent-1",
           tokensUsed: 150,
           cost: 0.001,
+          toolCalls: 3,
+          llmCalls: 4,
           success: true,
         }),
       );
@@ -1217,6 +1230,8 @@ describe("executeAndDeliver", () => {
         expect.objectContaining({
           messageId: msg.id,
           agentId: "agent-1",
+          toolCalls: null,
+          llmCalls: null,
           success: true,
         }),
       );

@@ -460,7 +460,13 @@ describe("openai/responses executeAgent request-context wrap (§2.6)", () => {
       getExecutor: vi.fn(() => ({
         execute: vi.fn(async () => {
           seenTraceIds.push(tryGetContext()?.traceId);
-          return { response: "ok", tokensUsed: 0, finishReason: "stop" };
+          return {
+            response: "ok",
+            tokensUsed: 0,
+            finishReason: "stop",
+            stepsExecuted: 7,
+            llmCalls: 8,
+          };
         }),
       })) as any,
     });
@@ -469,11 +475,16 @@ describe("openai/responses executeAgent request-context wrap (§2.6)", () => {
     const routeArgs = vi.mocked(createOpenaiCompletionsRoute).mock.calls[0]![0] as {
       executeAgent: (p: { message: string }) => Promise<unknown>;
     };
-    await routeArgs.executeAgent({ message: "hi" });
+    const result = await routeArgs.executeAgent({ message: "hi" }) as {
+      stepsExecuted: number;
+      llmCalls: number;
+    };
 
     expect(seenTraceIds).toHaveLength(1);
     expect(seenTraceIds[0]).toBeDefined();
     expect(typeof seenTraceIds[0]).toBe("string");
+    expect(result.stepsExecuted).toBe(7);
+    expect(result.llmCalls).toBe(8);
   });
 
   it("responses executeAgent runs the executor inside an ALS context carrying a traceId", async () => {

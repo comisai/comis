@@ -516,8 +516,8 @@ export const DeliveryDbRowSchema = z.strictObject({
   latency_ms: z.number(),
   error_message: z.string(),
   message_preview: z.string(),
-  tool_calls: z.number(),
-  llm_calls: z.number(),
+  tool_calls: z.number().nullable(),
+  llm_calls: z.number().nullable(),
   tokens_total: z.number(),
   cost_total: z.number(),
 });

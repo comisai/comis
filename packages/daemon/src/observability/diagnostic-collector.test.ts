@@ -37,6 +37,7 @@ describe("createDiagnosticCollector", () => {
     expect(recent[0]!.eventType).toBe("observability:token_usage");
     expect(recent[0]!.agentId).toBe("agent-1");
     expect(recent[0]!.channelId).toBe("ch-1");
+    expect(recent[0]!.traceId).toBe("t1");
   });
 
   it("categorizes message events correctly", () => {

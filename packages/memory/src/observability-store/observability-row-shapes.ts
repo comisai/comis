@@ -71,8 +71,8 @@ export interface DeliveryDbRow {
   latency_ms: number;
   error_message: string;
   message_preview: string;
-  tool_calls: number;
-  llm_calls: number;
+  tool_calls: number | null;
+  llm_calls: number | null;
   tokens_total: number;
   cost_total: number;
 }

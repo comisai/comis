@@ -189,7 +189,7 @@ describe("InfraEvents payload structure", () => {
     expect(received.expiresAtMs).toBe(expiresAt);
   });
 
-  it("diagnostic:message_processed delivers all timing fields, tokensUsed, cost, finishReason", () => {
+  it("diagnostic:message_processed delivers timing, cost, finish reason, and exact call counts", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const now = Date.now();
@@ -199,6 +199,9 @@ describe("InfraEvents payload structure", () => {
       channelType: "telegram",
       agentId: "agent-1",
       sessionKey: "t1:u1:c1",
+      traceId: "trace-1",
+      toolCalls: 2,
+      llmCalls: 3,
       receivedAt: now - 3000,
       executionDurationMs: 2500,
       deliveryDurationMs: 200,
@@ -221,6 +224,9 @@ describe("InfraEvents payload structure", () => {
     expect(received.totalDurationMs).toBe(2700);
     expect(received.tokensUsed).toBe(1500);
     expect(received.cost).toBe(0.018);
+    expect(received.traceId).toBe("trace-1");
+    expect(received.toolCalls).toBe(2);
+    expect(received.llmCalls).toBe(3);
     expect(received.finishReason).toBe("end_turn");
   });
 

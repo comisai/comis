@@ -17,6 +17,9 @@ export interface DeliveryContext {
   error?: string;
   agentId?: string;
   sessionKey?: string;
+  traceId?: string;
+  toolCalls?: number | null;
+  llmCalls?: number | null;
   steps?: Array<{ name: string; timestamp: number; durationMs: number; status: "ok" | "error"; error?: string }>;
   metadata?: Record<string, unknown>;
 }
@@ -88,6 +91,9 @@ export function createDeliveryTracer(deps: {
       error: payload.success ? undefined : payload.finishReason,
       agentId: payload.agentId,
       sessionKey: payload.sessionKey,
+      traceId: payload.traceId,
+      toolCalls: payload.toolCalls,
+      llmCalls: payload.llmCalls,
       steps,
     });
   }) as EventHandler<"diagnostic:message_processed">;
@@ -130,6 +136,8 @@ export function createDeliveryTracer(deps: {
         success: true,
         agentId: undefined,
         sessionKey: pendingEntry.sessionKey,
+        toolCalls: null,
+        llmCalls: null,
       });
       pending.delete(payload.channelId);
     }

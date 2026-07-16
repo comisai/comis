@@ -471,6 +471,8 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
         response: result.response,
         tokensUsed: result.tokensUsed,
         finishReason: result.finishReason,
+        stepsExecuted: result.stepsExecuted,
+        llmCalls: result.llmCalls,
         traceId: turnTraceId,
         agentId: defaultAgentId,
         // FORMATTED tenant-qualified key (tenantId:userId:channelId) so the per-turn

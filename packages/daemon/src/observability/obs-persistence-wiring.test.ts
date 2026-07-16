@@ -271,6 +271,9 @@ describe("deliveryEventToRow", () => {
       channelType: "telegram",
       agentId: "agent-1",
       sessionKey: "sk-1",
+      traceId: "trace-1",
+      toolCalls: 2,
+      llmCalls: 3,
       receivedAt: 900,
       executionDurationMs: 80,
       deliveryDurationMs: 20,
@@ -289,7 +292,9 @@ describe("deliveryEventToRow", () => {
     expect(row.latencyMs).toBe(100);
     expect(row.tokensTotal).toBe(300);
     expect(row.costTotal).toBe(0.02);
-    expect(row.traceId).toBe("");
+    expect(row.traceId).toBe("trace-1");
+    expect(row.toolCalls).toBe(2);
+    expect(row.llmCalls).toBe(3);
     expect(row.channelType).toBe("telegram");
     expect(row.sessionKey).toBe("sk-1");
   });
@@ -301,6 +306,9 @@ describe("deliveryEventToRow", () => {
       channelType: "discord",
       agentId: "agent-2",
       sessionKey: "sk-2",
+      traceId: "trace-2",
+      toolCalls: null,
+      llmCalls: null,
       receivedAt: 800,
       executionDurationMs: 150,
       deliveryDurationMs: 50,
@@ -317,6 +325,8 @@ describe("deliveryEventToRow", () => {
     expect(row.status).toBe("error");
     expect(row.errorMessage).toBe("rate_limited");
     expect(row.latencyMs).toBe(200);
+    expect(row.toolCalls).toBeNull();
+    expect(row.llmCalls).toBeNull();
   });
 });
 
@@ -326,7 +336,7 @@ describe("deliveryEventToRow", () => {
 
 describe("diagnosticEventToRow", () => {
   it("maps DiagnosticEvent fields to DiagnosticRow with JSON.stringify for details", () => {
-    const event: DiagnosticEvent = {
+    const event = {
       id: "diag-1",
       category: "message",
       eventType: "diagnostic:message_processed",
@@ -334,8 +344,9 @@ describe("diagnosticEventToRow", () => {
       agentId: "agent-1",
       channelId: "chan-1",
       sessionKey: "sk-1",
+      traceId: "trace-1",
       data: { foo: "bar", count: 42 },
-    };
+    } as DiagnosticEvent & { traceId: string };
 
     const row = diagnosticEventToRow(event);
 
@@ -346,7 +357,7 @@ describe("diagnosticEventToRow", () => {
     expect(row.sessionKey).toBe("sk-1");
     expect(row.message).toBe("diagnostic:message_processed");
     expect(row.details).toBe(JSON.stringify({ foo: "bar", count: 42 }));
-    expect(row.traceId).toBeUndefined();
+    expect(row.traceId).toBe("trace-1");
   });
 
   it("handles undefined agentId and sessionKey", () => {
@@ -2018,6 +2029,9 @@ describe("setupObsPersistence", () => {
       channelType: "telegram",
       agentId: "a1",
       sessionKey: "sk-1",
+      traceId: "trace-persisted",
+      toolCalls: 1,
+      llmCalls: 2,
       receivedAt: 900,
       executionDurationMs: 80,
       deliveryDurationMs: 20,
@@ -2035,7 +2049,13 @@ describe("setupObsPersistence", () => {
     // Both delivery and diagnostic should be inserted
     expect(obsStore.insertDelivery).toHaveBeenCalledTimes(1);
     expect(obsStore.insertDelivery).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "success", latencyMs: 100 }),
+      expect.objectContaining({
+        status: "success",
+        latencyMs: 100,
+        traceId: "trace-persisted",
+        toolCalls: 1,
+        llmCalls: 2,
+      }),
     );
 
     expect(obsStore.insertDiagnostic).toHaveBeenCalledTimes(1);
@@ -2043,6 +2063,7 @@ describe("setupObsPersistence", () => {
       expect.objectContaining({
         category: "message",
         message: "diagnostic:message_processed",
+        traceId: "trace-persisted",
       }),
     );
 
@@ -2088,6 +2109,7 @@ describe("setupObsPersistence", () => {
     eventBus.emit("diagnostic:message_processed", {
       messageId: "m1", channelId: "c1", channelType: "telegram",
       agentId: "a1", sessionKey: "sk-1", receivedAt: 900,
+      toolCalls: null, llmCalls: null,
       executionDurationMs: 80, deliveryDurationMs: 20, totalDurationMs: 100,
       tokensUsed: 0, cost: 0, success: true, finishReason: "end_turn",
       timestamp: 1000,

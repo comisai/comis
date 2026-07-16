@@ -218,7 +218,12 @@ export async function executeAndDeliver(
   const receivedAt = systemNowMs();
 
   /** Emit diagnostic:message_processed with current lifecycle state. */
-  function emitDiagnostic(tokensUsed: number, cost: number, finishReason: string): void {
+  function emitDiagnostic(
+    tokensUsed: number,
+    cost: number,
+    finishReason: string,
+    callCounts: { toolCalls: number | null; llmCalls: number | null },
+  ): void {
     deps.eventBus.emit("diagnostic:message_processed", {
       messageId: effectiveMsg.id,
       channelId: effectiveMsg.channelId,
@@ -231,6 +236,8 @@ export async function executeAndDeliver(
       // ingress context reuses the trajectory traceId; absent only on non-context
       // paths (the writer then fails closed).
       traceId: tryGetContext()?.traceId,
+      toolCalls: callCounts.toolCalls,
+      llmCalls: callCounts.llmCalls,
       receivedAt,
       executionDurationMs: systemNowMs() - receivedAt,
       deliveryDurationMs: 0,
@@ -344,7 +351,15 @@ export async function executeAndDeliver(
           tenantId: sessionKey.tenantId,
         }),
       }, () => executor.execute(effectiveMsg, sessionKey, tools, undefined, agentId, directives as CommandDirectives | undefined, undefined, { operationType: "interactive" as const }));
-      emitDiagnostic(policyResult.tokensUsed.total, policyResult.cost.total, policyResult.finishReason);
+      emitDiagnostic(
+        policyResult.tokensUsed.total,
+        policyResult.cost.total,
+        policyResult.finishReason,
+        {
+          toolCalls: policyResult.stepsExecuted,
+          llmCalls: policyResult.llmCalls,
+        },
+      );
       return;
     }
 
@@ -444,11 +459,16 @@ export async function executeAndDeliver(
 
   try {
     if (execResult.timedOut) {
-      emitDiagnostic(0, 0, "timeout");
+      emitDiagnostic(0, 0, "timeout", { toolCalls: null, llmCalls: null });
       // Aborted turn (timeout): the renderer keeps the diagnostic trail.
       await finalizeCoordinator({ kind: "aborted", reason: "timeout" });
       return;
     }
+
+    const callCounts = {
+      toolCalls: execResult.result?.stepsExecuted ?? null,
+      llmCalls: execResult.result?.llmCalls ?? null,
+    };
 
     // Signal execution complete for thinking mode
     if (typingLifecycle && blockStreamCfg.typingMode !== "message") {
@@ -481,11 +501,11 @@ export async function executeAndDeliver(
       const silentReason: "NO_REPLY" | "SILENT" =
         filterResult.reason === "filtered" ? "NO_REPLY" : "SILENT";
       if (filterResult.reason === "filtered") {
-        emitDiagnostic(execResult.tokensUsed, execResult.cost, "filtered");
+        emitDiagnostic(execResult.tokensUsed, execResult.cost, "filtered", callCounts);
       } else if (filterResult.reason === "voice_delivered") {
-        emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason);
+        emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason, callCounts);
       } else {
-        emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason);
+        emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason, callCounts);
       }
       // A resource abort that produced no deliverable text is a TRUTHFUL
       // failure, not a silent delete — the operator must see the stop (the
@@ -573,7 +593,7 @@ export async function executeAndDeliver(
     }
 
     // Emit diagnostic:message_processed for full lifecycle tracking
-    emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason);
+    emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason, callCounts);
   } finally {
     // Release the activity coordinator's subscription (idempotent; safe after
     // finalize). Guarantees unsubscribe even on an unexpected throw before
@@ -599,4 +619,3 @@ export async function executeAndDeliver(
     }
   }
 }
-

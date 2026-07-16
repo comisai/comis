@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { TypedEventBus } from "@comis/core";
+import { TypedEventBus, type EventMap } from "@comis/core";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createDeliveryTracer,
@@ -26,17 +26,23 @@ describe("createDeliveryTracer", () => {
     channelType: string;
     agentId: string;
     sessionKey: string;
+    traceId: string;
+    toolCalls: number | null;
+    llmCalls: number | null;
     totalDurationMs: number;
     success: boolean;
     finishReason: string;
     timestamp: number;
   }> = {}): void {
-    bus.emit("diagnostic:message_processed", {
+    const payload = {
       messageId: overrides.messageId ?? "msg-1",
       channelId: overrides.channelId ?? "ch-1",
       channelType: overrides.channelType ?? "telegram",
       agentId: overrides.agentId ?? "agent-1",
       sessionKey: overrides.sessionKey ?? "default:user-1:ch-1",
+      traceId: overrides.traceId ?? "trace-1",
+      toolCalls: overrides.toolCalls === undefined ? 2 : overrides.toolCalls,
+      llmCalls: overrides.llmCalls === undefined ? 3 : overrides.llmCalls,
       receivedAt: Date.now() - (overrides.totalDurationMs ?? 150),
       executionDurationMs: (overrides.totalDurationMs ?? 150) - 20,
       deliveryDurationMs: 20,
@@ -46,7 +52,11 @@ describe("createDeliveryTracer", () => {
       success: overrides.success ?? true,
       finishReason: overrides.finishReason ?? "stop",
       timestamp: overrides.timestamp ?? Date.now(),
-    });
+    } as EventMap["diagnostic:message_processed"] & {
+      toolCalls: number | null;
+      llmCalls: number | null;
+    };
+    bus.emit("diagnostic:message_processed", payload);
   }
 
   function emitReceived(channelId: string, channelType = "telegram"): void {
@@ -79,6 +89,9 @@ describe("createDeliveryTracer", () => {
       channelType: "telegram",
       agentId: "agent-1",
       sessionKey: "default:user-1:ch-1",
+      traceId: "trace-delivery",
+      toolCalls: 4,
+      llmCalls: 5,
       totalDurationMs: 200,
       success: true,
     });
@@ -92,6 +105,9 @@ describe("createDeliveryTracer", () => {
     expect(recent[0]!.success).toBe(true);
     expect(recent[0]!.agentId).toBe("agent-1");
     expect(recent[0]!.sessionKey).toBe("default:user-1:ch-1");
+    expect(recent[0]!.traceId).toBe("trace-delivery");
+    expect(recent[0]!.toolCalls).toBe(4);
+    expect(recent[0]!.llmCalls).toBe(5);
     expect(recent[0]!.error).toBeUndefined();
   });
 
@@ -114,6 +130,16 @@ describe("createDeliveryTracer", () => {
     expect(recent[0]!.latencyMs).toBe(50);
     expect(recent[0]!.success).toBe(true);
     expect(recent[0]!.sessionKey).toBe("default:user-1:ch-corr");
+    expect(recent[0]!.toolCalls).toBeNull();
+    expect(recent[0]!.llmCalls).toBeNull();
+  });
+
+  it("preserves unknown primary call counts as null", () => {
+    emitDiagnosticProcessed({ toolCalls: null, llmCalls: null });
+
+    const recent = tracer.getRecent();
+    expect(recent[0]!.toolCalls).toBeNull();
+    expect(recent[0]!.llmCalls).toBeNull();
   });
 
   it("getRecent returns newest first", () => {
@@ -173,6 +199,9 @@ describe("createDeliveryTracer", () => {
         channelType: "telegram",
         agentId: "agent-1",
         sessionKey: "default:user-1:ch-1",
+        traceId: `trace-${i}`,
+        toolCalls: i,
+        llmCalls: i + 1,
         receivedAt: Date.now() - 100,
         executionDurationMs: 80,
         deliveryDurationMs: 20,

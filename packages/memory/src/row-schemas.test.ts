@@ -259,6 +259,27 @@ describe("row-schemas — internal DB row runtime parses", () => {
     expect(DeliveryDbRowSchema.safeParse(sample).success).toBe(true);
   });
 
+  it("DeliveryDbRowSchema accepts unknown call counts as null", () => {
+    const sample = {
+      id: 1,
+      timestamp: 1700000000000,
+      trace_id: "trace-1",
+      agent_id: "agent-1",
+      channel_type: "telegram",
+      channel_id: "tg-1",
+      session_key: "sess-1",
+      status: "timeout",
+      latency_ms: 200,
+      error_message: "",
+      message_preview: "",
+      tool_calls: null,
+      llm_calls: null,
+      tokens_total: 0,
+      cost_total: 0,
+    };
+    expect(DeliveryDbRowSchema.safeParse(sample).success).toBe(true);
+  });
+
   it("DiagnosticDbRowSchema parses a complete diagnostics row", () => {
     const sample = {
       id: 1,

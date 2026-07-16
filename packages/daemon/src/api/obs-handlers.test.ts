@@ -274,7 +274,7 @@ describe("createObsHandlers - dual-source merge", () => {
     // SQLite historical rows (pre-startup)
     const sqliteRows = [
       { id: 1, timestamp: 500, category: "usage", severity: "info", agentId: "a1", sessionKey: "", message: "old event", details: "", traceId: "" },
-      { id: 2, timestamp: 800, category: "message", severity: "warn", agentId: "", sessionKey: "", message: "older event", details: "", traceId: "" },
+      { id: 2, timestamp: 800, category: "message", severity: "warn", agentId: "", sessionKey: "", message: "older event", details: "", traceId: "trace-historical" },
       // This one is post-startup and should be filtered out
       { id: 3, timestamp: 1200, category: "usage", severity: "info", agentId: "a1", sessionKey: "", message: "overlap", details: "", traceId: "" },
     ];
@@ -296,7 +296,10 @@ describe("createObsHandlers - dual-source merge", () => {
     });
 
     const handlers = createObsHandlers(deps);
-    const result = await handlers["obs.diagnostics"]!({ _trustLevel: "admin" }) as { events: Array<{ id: string; timestamp: number }>; counts: unknown };
+    const result = await handlers["obs.diagnostics"]!({ _trustLevel: "admin" }) as {
+      events: Array<{ id: string; timestamp: number; traceId?: string }>;
+      counts: unknown;
+    };
 
     // Should have in-memory (2) + historical pre-startup (2, filtered out the overlap)
     expect(result.events.length).toBe(4);
@@ -307,6 +310,7 @@ describe("createObsHandlers - dual-source merge", () => {
     expect(result.events[3]!.timestamp).toBe(500);
     // Verify historical ones have sqlite- prefix IDs
     expect(result.events[2]!.id).toBe("sqlite-2");
+    expect(result.events[2]!.traceId).toBe("trace-historical");
     expect(result.events[3]!.id).toBe("sqlite-1");
   });
 
@@ -392,7 +396,7 @@ describe("createObsHandlers - dual-source merge", () => {
     ];
 
     const sqliteRows = [
-      { id: 1, timestamp: 500, traceId: "t1", agentId: "a1", channelType: "telegram", channelId: "ch1", sessionKey: "", status: "success", latencyMs: 200, errorMessage: "", messagePreview: "", toolCalls: 0, llmCalls: 0, tokensTotal: 0, costTotal: 0 },
+      { id: 1, timestamp: 500, traceId: "t1", agentId: "a1", channelType: "telegram", channelId: "ch1", sessionKey: "", status: "success", latencyMs: 200, errorMessage: "", messagePreview: "", toolCalls: 2, llmCalls: 3, tokensTotal: 0, costTotal: 0 },
       // This one is post-startup, should be filtered out
       { id: 2, timestamp: 1200, traceId: "t2", agentId: "a1", channelType: "telegram", channelId: "ch1", sessionKey: "", status: "success", latencyMs: 150, errorMessage: "", messagePreview: "", toolCalls: 0, llmCalls: 0, tokensTotal: 0, costTotal: 0 },
     ];
@@ -413,12 +417,22 @@ describe("createObsHandlers - dual-source merge", () => {
     });
 
     const handlers = createObsHandlers(deps);
-    const result = await handlers["obs.delivery.recent"]!({ _trustLevel: "admin" }) as { deliveries: Array<{ deliveredAt: number }> };
+    const result = await handlers["obs.delivery.recent"]!({ _trustLevel: "admin" }) as {
+      deliveries: Array<{
+        deliveredAt: number;
+        traceId?: string;
+        toolCalls?: number | null;
+        llmCalls?: number | null;
+      }>;
+    };
 
     // 1 in-memory + 1 historical (the overlap at ts=1200 is filtered out)
     expect(result.deliveries.length).toBe(2);
     expect(result.deliveries[0]!.deliveredAt).toBe(2000);
     expect(result.deliveries[1]!.deliveredAt).toBe(500);
+    expect(result.deliveries[1]!.traceId).toBe("t1");
+    expect(result.deliveries[1]!.toolCalls).toBe(2);
+    expect(result.deliveries[1]!.llmCalls).toBe(3);
   });
 
   it("obs.delivery.stats merges SQLite + in-memory stats", async () => {

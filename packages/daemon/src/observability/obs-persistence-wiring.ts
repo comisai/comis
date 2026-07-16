@@ -323,6 +323,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
       agentId: payload.agentId,
       channelId: payload.channelId,
       sessionKey: payload.sessionKey,
+      traceId: payload.traceId,
       data: payload as unknown as Record<string, unknown>,
     }));
   });

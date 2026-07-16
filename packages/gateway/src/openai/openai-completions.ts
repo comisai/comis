@@ -46,9 +46,13 @@ export interface OpenaiCompletionsDeps {
     response: string;
     tokensUsed: { input: number; output: number; total: number };
     finishReason: string;
+    /** Exact tool executions reported by the agent turn. */
+    stepsExecuted: number;
+    /** Exact model calls reported by the agent turn. */
+    llmCalls: number;
     /** The turn's trajectory id (=== the runWithContext traceId). Carried back so the
      *  completion emit can attribute the turn (the `comis explain` / Verified Learning
-     *  resolve key). Optional for back-compat with callers that don't thread it. */
+     *  resolve key). Optional when the caller has no request context. */
     traceId?: string;
     /** The agent that ran the turn (the executor's resolved agentId). Optional. */
     agentId?: string;
@@ -96,6 +100,8 @@ function emitTurnDiagnostic(
     result: {
       tokensUsed: { total: number };
       finishReason: string;
+      stepsExecuted: number;
+      llmCalls: number;
       traceId?: string;
       agentId?: string;
       /** The FORMATTED `tenantId:userId:channelId` session key from the executor wiring.
@@ -123,6 +129,8 @@ function emitTurnDiagnostic(
         args.result.sessionKey ??
         `${args.sessionKey.userId}:${args.sessionKey.channelId}`,
       traceId: args.result.traceId,
+      toolCalls: args.result.stepsExecuted,
+      llmCalls: args.result.llmCalls,
       receivedAt: args.receivedAt,
       executionDurationMs: elapsed,
       deliveryDurationMs: 0,
