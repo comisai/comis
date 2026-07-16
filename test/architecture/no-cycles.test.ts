@@ -142,7 +142,10 @@ function canonicalizeCycle(cycle: readonly string[]): string {
 }
 
 describe("no-cycles -- intra-package via madge (source mode)", () => {
-  it("packages/*/src introduces no NEW source-level circular import paths beyond the recorded baseline", async () => {
+  // The full-workspace madge source scan has exceeded the project's 120s
+  // default on a saturated release runner (observed during the v1.0.54
+  // npm-publish validation) — give it its own generous ceiling.
+  it("packages/*/src introduces no NEW source-level circular import paths beyond the recorded baseline", { timeout: 360_000 }, async () => {
     const rootPaths = WORKSPACE_PACKAGES.map((p) =>
       resolve(REPO_ROOT, `packages/${p}/src`),
     );
