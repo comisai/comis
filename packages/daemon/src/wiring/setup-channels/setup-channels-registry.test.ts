@@ -167,6 +167,7 @@ import { setupChannels, type ChannelsDeps } from "./index.js";
 import { bootstrapAdapters } from "../setup-channels-adapters.js";
 // createChannelManager lives in @comis/orchestrator (alongside channel-manager.ts).
 import { createChannelManager } from "@comis/orchestrator";
+import { createDeliveryService } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1236,6 +1237,20 @@ describe("setupChannels", () => {
   // -- ChannelManager creation tests --
 
   describe("ChannelManager lifecycle", () => {
+    it("threads one recorder instance into native inbound and physical delivery seams", async () => {
+      mockAdaptersByType.set("telegram", mockAdapter);
+      const { container } = makeContainer();
+      const activityRecorder = { marker: "same-recorder" } as never;
+      const deps = makeDeps({ container, activityRecorder });
+
+      await setupChannels(deps);
+
+      expect(vi.mocked(createDeliveryService).mock.calls[0]![0]!.activityRecorder)
+        .toBe(activityRecorder);
+      expect(vi.mocked(createChannelManager).mock.calls[0]![0]!.activityRecorder)
+        .toBe(activityRecorder);
+    });
+
     it("creates and starts ChannelManager when adapters present", async () => {
       mockAdaptersByType.set("telegram", mockAdapter);
       const { container } = makeContainer();

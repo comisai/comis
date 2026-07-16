@@ -194,6 +194,9 @@ export type { BatchIndexer, BatchIndexerOptions, BatchIndexerResult } from "./em
 // SQLite adapter base (shared DB lifecycle utility)
 export { openSqliteDatabase, chmodDbFiles } from "./sqlite-adapter-base.js";
 export type { SqliteAdapterOptions } from "./sqlite-adapter-base.js";
+export {
+  openWorkerProductionActivityRecorder,
+} from "./production-activity-recorder-worker.js";
 
 // SQLite secret store (SecretStorePort encrypted SQLite implementation)
 export { createSqliteSecretStore } from "./sqlite-secret-store.js";

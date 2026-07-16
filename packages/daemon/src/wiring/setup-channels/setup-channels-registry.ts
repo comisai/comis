@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, MsTeamsConversationStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, EnvPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, MsTeamsConversationStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, EnvPort, TimerPort, ActivityStreamPort, ProductionActivityRecorderPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -113,6 +113,8 @@ export interface ChannelsDeps {
    *  activityStreamPort. Optional: absent → no inbound coordinatorFactory is built
    *  (the pipeline gate stays false, fail-closed §22.2 Day-0). */
   activityStream?: ActivityStreamPort;
+  /** Opt-in prospective recorder; undefined is the byte-inert default. */
+  activityRecorder: ProductionActivityRecorderPort | undefined;
   /** The process-singleton activity circuit breaker (constructed once in
    *  daemon.ts). Threaded into every per-turn coordinator so a permission/error
    *  storm on one (agentId, channelKey) pair auto-quiesces it across turns.
@@ -362,7 +364,9 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     hookRunner: container.hookRunner,
     deliveryQueue: deps.deliveryQueue ?? createNoOpDeliveryQueue(),
     logger: channelsLogger,
+    clock: deps.clock,
     eventBus: container.eventBus,
+    activityRecorder: deps.activityRecorder,
     // Bind the minted reply id → trajectory on the direct platform-send
     // path too (the primary inbound-reply path sends here, not via the drain).
     // Same callback instance the drain receives (foundation.recordOutboundMessage);
@@ -463,6 +467,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       clock: deps.clock,
       timers: deps.timers,
       activityStream: deps.activityStream, // ActivityStreamPort for the inbound coordinatorFactory
+      activityRecorder: deps.activityRecorder,
       activityBreaker: deps.activityBreaker, // process-singleton breaker (shared)
       executionPlanPort: deps.executionPlanPort, // shared ExecutionPlanHolder for the chat plan-stream
       activityRendererFactory: deps.activityRendererFactory, // test seam

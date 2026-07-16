@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import { PerAgentConfigSchema, ToolingConfigSchema, type AppContainer, type GatewayConfig } from "@comis/core";
+import {
+  AppConfigSchema,
+  PerAgentConfigSchema,
+  ToolingConfigSchema,
+  type AppContainer,
+  type GatewayConfig,
+} from "@comis/core";
 import type { GatewayServerHandle } from "@comis/gateway";
 import type { ComisLogger } from "@comis/infra";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -178,7 +184,11 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
         defaultTimeoutMs: 300_000,
       },
       lifecycleReactions: { enabled: false, emojiTier: "unicode", timing: { debounceMs: 700, holdDoneMs: 3000, holdErrorMs: 5000, stallSoftMs: 15000, stallHardMs: 30000 }, perChannel: {} },
-      observability: { persistence: { enabled: false, retentionDays: 30, snapshotIntervalMs: 300_000 } },
+      observability: AppConfigSchema.parse({
+        observability: {
+          persistence: { enabled: false, retentionDays: 30, snapshotIntervalMs: 300_000 },
+        },
+      }).observability,
       deliveryQueue: { enabled: false, maxQueueDepth: 10_000, defaultMaxAttempts: 5, defaultExpireMs: 3_600_000, drainOnStartup: true, drainBudgetMs: 60_000, pruneIntervalMs: 300_000 },
       providers: { entries: {} },
       tenantId: "default",

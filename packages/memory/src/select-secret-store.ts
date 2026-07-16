@@ -44,6 +44,7 @@ export type SelectedSecretStore =
       secretStore: SqliteSecretStoreHandle;
       secretsDb: Database.Database;
       secretsCrypto: SecretsCrypto;
+      activityRecordingMasterKey: Buffer;
     }
   | { kind: "file"; secretStore: SecretStorePort }
   | { kind: "env"; secretStore: SecretStorePort };
@@ -155,13 +156,14 @@ export function selectSecretStore(input: {
         ),
       );
     }
-    const { crypto, dbPath } = setupResult.value;
+    const { crypto, activityRecordingMasterKey, dbPath } = setupResult.value;
     const store = createSqliteSecretStore(dbPath, crypto);
     return ok({
       kind: "encrypted",
       secretStore: store,
       secretsDb: store.db,
       secretsCrypto: crypto,
+      activityRecordingMasterKey,
     });
   }
 

@@ -5,6 +5,32 @@ import type { EventMap } from "./events.js";
 import { TypedEventBus } from "./bus.js";
 
 describe("InfraEvents payload structure", () => {
+  it("activity recording gap event carries only closed operational fields", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["activity-recording:gap"] = {
+      sourceKind: "delivery_platform_attempt",
+      reason: "storage_failed",
+      gapDurablyAccounted: true,
+      gapCount: 3,
+      errorKind: "resource",
+      timestamp: 1_700_000_000_000,
+    };
+
+    bus.on("activity-recording:gap", handler);
+    bus.emit("activity-recording:gap", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    expect(Object.keys(payload).sort()).toEqual([
+      "errorKind",
+      "gapCount",
+      "gapDurablyAccounted",
+      "reason",
+      "sourceKind",
+      "timestamp",
+    ]);
+  });
+
   it("approval:requested delivers requestId, toolName, params, timeoutMs, shortId", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();

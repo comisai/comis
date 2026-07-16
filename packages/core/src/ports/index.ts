@@ -95,6 +95,26 @@ export type { EnvPort } from "./env.js";
 export type { TimerPort, TimerHandle } from "./timer.js";
 export type { ComputeDailyResetNextRun } from "./schedule-callback.js";
 export type {
+  ActivityRecordingCiphertext,
+  ActivityRecordingCryptoContext,
+  ActivityRecordingCryptoPort,
+  ActivityRecordingCryptoPurpose,
+  ActivityRecordingHeadAuthorityPort,
+  ActivityRecordingTrustedHead,
+  ActivityRecordingExactness,
+  ActivityRecordingEvidenceExport,
+  ActivityRecordingEvidenceExportInput,
+  ActivityRecordingEvidenceRecord,
+  ActivityRecordingFailure,
+  ActivityRecordingInspection,
+  ActivityRecordingAttemptReceipt,
+  ActivityRecordingReceipt,
+  BeginDeliveryPlatformAttemptInput,
+  FinishDeliveryPlatformAttemptInput,
+  ProductionActivityRecorderPort,
+  RecordInboundChannelActivityInput,
+} from "./activity-recorder.js";
+export type {
   TranscriptionPort,
   TranscriptionOptions,
   TranscriptionResult,

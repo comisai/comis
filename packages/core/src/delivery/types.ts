@@ -32,6 +32,8 @@ export interface DeliveryAdapter {
     options?: SendMessageOptions,
   ): Promise<Result<string, Error>>;
   channelType: string;
+  /** Adapter instance identity used by retry observability when available. */
+  readonly channelId?: string;
 }
 
 // -------------------------------------------------------------------------

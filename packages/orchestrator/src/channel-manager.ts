@@ -25,7 +25,17 @@ import type { SessionLifecycle } from "@comis/agent";
 import type { CommandQueue } from "./queue/command-queue.js";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { InteractiveCallbackRouter } from "./approval/index.js";
-import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, NormalizedReaction, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
+import type {
+  ActivityRecordingFailure,
+  ChannelPort,
+  DeliveryQueuePort,
+  DeliveryService,
+  NormalizedMessage,
+  NormalizedReaction,
+  ProductionActivityRecorderPort,
+  SessionKey,
+  TypedEventBus,
+} from "@comis/core";
 // Orchestrator imports ONLY the @comis/core activity port + ctx type
 // (never the observability impl — hexagonal boundary). The
 // ActivityTurnCoordinator is a local execution type.
@@ -36,7 +46,7 @@ import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedRepl
 import { formatSessionKey, runWithContext, getMessageTraceId, systemNowMs, parseReaction } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import type { ComisLogger } from "@comis/core";
-import type { Result } from "@comis/shared";
+import { fromPromise, suppressError, tryCatch, type Result } from "@comis/shared";
 
 // channel-manager.ts lives in @comis/orchestrator, so the six imports below
 // reach into the @comis/channels public surface — block-pacer,
@@ -116,6 +126,8 @@ export interface ChannelManagerDeps {
   getResetTriggers?: (agentId: string) => string[];
   /** Optional retry engine for resilient message delivery. When absent, sends use adapter.sendMessage directly. */
   retryEngine?: RetryEngine;
+  /** Prospective recorder for normalized adapter inputs. Disabled when absent. */
+  activityRecorder?: ProductionActivityRecorderPort;
   /** Delivery queue for crash-safe message persistence. Optional -- when absent, agent responses skip queue. */
   deliveryQueue?: DeliveryQueuePort;
   /** DeliveryService constructed once at the daemon composition root
@@ -245,6 +257,97 @@ export interface ChannelManagerDeps {
    * every real adapter at boot).
    */
   adapterRegistry?: Map<string, ChannelPort>;
+}
+
+function reportActivityRecordingFailure(
+  deps: Pick<ChannelManagerDeps, "eventBus" | "logger">,
+  failure: ActivityRecordingFailure,
+): void {
+  deps.logger.warn({
+    step: "activity-recording",
+    sourceKind: failure.sourceKind,
+    reason: failure.reason,
+    gapDurablyAccounted: failure.gapDurablyAccounted,
+    gapCount: failure.gapCount,
+    errorKind: failure.errorKind,
+    hint: "Restore activity recorder storage and key access before relying on prospective replay evidence",
+  }, "Prospective activity recording gap detected");
+  deps.eventBus.emit("activity-recording:gap", {
+    sourceKind: failure.sourceKind,
+    reason: failure.reason,
+    gapDurablyAccounted: failure.gapDurablyAccounted,
+    gapCount: failure.gapCount,
+    errorKind: failure.errorKind,
+    timestamp: failure.occurredAtMs,
+  });
+}
+
+function isActivityRecorderResult(value: unknown): value is Result<unknown, ActivityRecordingFailure> {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as { readonly ok?: unknown; readonly value?: unknown; readonly error?: unknown };
+  return candidate.ok === true
+    ? "value" in candidate
+    : candidate.ok === false && "error" in candidate;
+}
+
+function recordNormalizedChannelInboundActivity(
+  deps: Pick<
+    ChannelManagerDeps,
+    "activityRecorder" | "deliveryService" | "eventBus" | "logger"
+  >,
+  traceId: string,
+  message: NormalizedMessage,
+): void {
+  const recorder = deps.activityRecorder;
+  if (recorder === undefined) return;
+  const invoked = tryCatch(() => recorder.recordInboundChannelActivity({
+    traceId,
+    occurredAtMs: message.timestamp,
+    message,
+  }));
+  if (!invoked.ok) {
+    reportActivityRecordingFailure(deps, {
+      sourceKind: "channel_inbound_normalized",
+      reason: "storage_failed",
+      gapDurablyAccounted: false,
+      gapCount: 0,
+      occurredAtMs: message.timestamp,
+      errorKind: "resource",
+      cause: invoked.error,
+    });
+    return;
+  }
+  const completed = fromPromise(invoked.value).then((recorded) => {
+    if (!recorded.ok) {
+      reportActivityRecordingFailure(deps, {
+        sourceKind: "channel_inbound_normalized",
+        reason: "storage_failed",
+        gapDurablyAccounted: false,
+        gapCount: 0,
+        occurredAtMs: message.timestamp,
+        errorKind: "resource",
+        cause: recorded.error,
+      });
+      return;
+    }
+    if (!isActivityRecorderResult(recorded.value)) {
+      reportActivityRecordingFailure(deps, {
+        sourceKind: "channel_inbound_normalized",
+        reason: "storage_failed",
+        gapDurablyAccounted: false,
+        gapCount: 0,
+        occurredAtMs: message.timestamp,
+        errorKind: "resource",
+        cause: new Error("Activity recorder returned a malformed result"),
+      });
+      return;
+    }
+    if (!recorded.value.ok) reportActivityRecordingFailure(deps, recorded.value.error);
+  });
+  deps.deliveryService.trackActivityRecording(completed);
+  suppressError(completed, "channel-inbound-activity-recording", () => {
+    deps.logger.debug({ step: "activity-recording" }, "Inbound activity recording task failed");
+  });
 }
 
 export interface ChannelManager {
@@ -417,6 +520,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
             },
             async () => {
               try {
+                recordNormalizedChannelInboundActivity(deps, traceId, msg);
                 // Pre-agent intercept: graph report button callbacks
                 if (
                   deps.onGraphReportRequest

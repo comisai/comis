@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: SQLite adapter boundary rejects invalid options before filesystem mutation.
 /**
  * Shared SQLite database lifecycle utility.
  *
@@ -21,6 +22,8 @@ export interface SqliteAdapterOptions {
   dbPath: string;
   /** Enable WAL mode (default: true) */
   walMode?: boolean;
+  /** Lock wait configured before any journal-mode mutation. */
+  busyTimeoutMs?: number;
   /** Schema initialization function -- called after pragmas, before returning db */
   initSchema?: (db: Database.Database) => void;
 }
@@ -36,7 +39,12 @@ export interface SqliteAdapterOptions {
  * @returns The opened Database instance, ready for use
  */
 export function openSqliteDatabase(opts: SqliteAdapterOptions): Database.Database {
-  const { dbPath, walMode = true, initSchema } = opts;
+  const { dbPath, walMode = true, busyTimeoutMs, initSchema } = opts;
+  if (busyTimeoutMs !== undefined
+    && (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs <= 0
+      || busyTimeoutMs > 2_147_483_647)) {
+    throw new Error("SQLite busy timeout must be a positive 32-bit integer");
+  }
 
   // Create parent directory if needed
   if (dbPath !== ":memory:") {
@@ -47,6 +55,7 @@ export function openSqliteDatabase(opts: SqliteAdapterOptions): Database.Databas
   const db = new Database(dbPath);
 
   // Standard pragmas
+  if (busyTimeoutMs !== undefined) db.pragma(`busy_timeout = ${busyTimeoutMs}`);
   if (walMode) db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
   db.pragma("foreign_keys = ON");

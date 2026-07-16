@@ -2,19 +2,8 @@
 /**
  * DeliveryService factory.
  *
- * The single outbound-delivery entry point for channel adapters:
- *  1. Hooks run through `deps.hookRunner` — REQUIRED, injected at
- *     construction, never resolved from global state.
- *  2. Deps are captured in closure at construction (`deps.deliveryQueue` is
- *     REQUIRED; eventBus / retryEngine / abortSignal / maxCharsOverride /
- *     replyMode are optional, so the INNER `?.` on those fields is
- *     deliberate). In-flight outbound `Promise` tracking is owned internally
- *     by the factory and drained via the public `drainInFlight()` method —
- *     callers must NOT inject a tracking Set via deps.
- *
- * Hook execution order, traceId propagation, the suppressError wrap on
- * after_delivery, and all `delivery:*` event emissions are load-bearing
- * contracts pinned by the pipeline tests in delivery-service.test.ts.
+ * Single outbound-delivery entry point. Dependencies and in-flight tracking
+ * are factory-owned; hook order and delivery events are contract-tested.
  *
  * @module
  */
@@ -30,6 +19,8 @@ import type {
 } from "../ports/delivery-queue.js";
 import type { SendMessageOptions } from "../ports/channel.js";
 import type { ComisLogger } from "../logging/log-fields.js";
+import type { ProductionActivityRecorderPort } from "../ports/activity-recorder.js";
+import type { ClockPort } from "../ports/clock.js";
 import { sanitizeLogString } from "../security/log-sanitizer.js";
 import { tryGetContext } from "../context/context.js";
 
@@ -39,6 +30,7 @@ import { chunkBlocks } from "./block-chunker.js";
 import type { RetryEngine } from "./retry-engine.js";
 import { isPermanentError } from "./permanent-errors.js";
 import { computeQueueBackoff, resolveChunkLimit } from "./queue-backoff.js";
+import { createActivityRecordingAdapter } from "./activity-recording-delivery-adapter.js";
 
 import {
   DeliveryQueueTransitionError,
@@ -97,11 +89,16 @@ export interface DeliveryServiceDeps {
   deliveryQueue: DeliveryQueuePort;
   /** Module-bound structured logger. REQUIRED for queue durability failures. */
   logger: ComisLogger;
+  /** Injected wall clock used by recorder attempt/outcome ordering. */
+  clock: ClockPort;
   /** Event bus. OPTIONAL — observability only; emits delivery:* events. */
   eventBus?: TypedEventBus;
 
   /** Retry engine. OPTIONAL — no retry without it. */
   retryEngine?: RetryEngine;
+
+  /** Prospective recorder for physical platform attempts. Disabled when absent. */
+  activityRecorder?: ProductionActivityRecorderPort;
 
   /** Per-caller chunk-size override. OPTIONAL — defaults to DEFAULT_CHUNK_LIMIT (4000). */
   maxCharsOverride?: number;
@@ -178,6 +175,9 @@ export interface DeliveryService {
     options?: DeliverToChannelOptions & { abortSignal?: AbortSignal },
   ): Promise<Result<DeliveryResult, Error>>;
 
+  /** Add recorder work initiated outside the outbound delivery boundary. */
+  trackActivityRecording(operation: Promise<unknown>): void;
+
   /**
    * Drain in-flight outbound sends with a deadline.
    *
@@ -216,8 +216,18 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
    * the factory closure — callers cannot inject one via deps.
    */
   const inFlightSends = new Set<Promise<unknown>>();
+  const inFlightActivityRecordings = new Set<Promise<unknown>>();
+
+  function trackActivityRecording(operation: Promise<unknown>): void {
+    inFlightActivityRecordings.add(operation);
+    void operation.then(
+      () => inFlightActivityRecordings.delete(operation),
+      () => inFlightActivityRecordings.delete(operation),
+    );
+  }
 
   return {
+    trackActivityRecording,
     async deliverToChannel(
       adapter: DeliveryAdapter,
       channelId: string,
@@ -507,6 +517,15 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
           // Send with or without retry
           const retried = Boolean(deps.retryEngine);
           const chunkSendStart = systemNowMs();
+          const physicalSendAdapter = createActivityRecordingAdapter({
+            ...deps,
+            trackActivityRecording,
+          }, adapter, {
+            traceId,
+            origin: options?.origin ?? "unknown",
+            chunkIndex: i,
+            totalChunks: chunks.length,
+          });
 
           // Build the send promise WITHOUT awaiting yet, so we can register it
           // in the internal inFlightSends Set synchronously before the
@@ -520,12 +539,12 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 // RetryEngine expects a ChannelPort-like adapter -- our
                 // DeliveryAdapter has the same sendMessage signature, so cast
                 // through unknown
-                adapter as unknown as Parameters<RetryEngine["sendWithRetry"]>[0],
+                physicalSendAdapter as unknown as Parameters<RetryEngine["sendWithRetry"]>[0],
                 channelId,
                 chunk,
                 sendOpts,
               )
-            : adapter.sendMessage(channelId, chunk, sendOpts);
+            : physicalSendAdapter.sendMessage(channelId, chunk, sendOpts);
 
           const tracked: Promise<unknown> = sendPromise;
           inFlightSends.add(tracked);
@@ -775,7 +794,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
       deadlineMs = 5000,
     ): Promise<{ drained: number; remaining: number; durationMs: number }> {
       const start = systemNowMs();
-      const inFlightCount = inFlightSends.size;
+      const inFlightCount = inFlightSends.size + inFlightActivityRecordings.size;
       if (inFlightCount === 0) {
         return { drained: 0, remaining: 0, durationMs: 0 };
       }
@@ -783,15 +802,15 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
       // is the sanctioned-root indirection for `setTimeout`
       // (the only sanctioned-root in `packages/core/src/runtime/system-time.ts`).
       await Promise.race([
-        Promise.allSettled([...inFlightSends]),
+        Promise.allSettled([...inFlightSends, ...inFlightActivityRecordings]),
         new Promise<void>((resolve) => {
           const handle = systemSetTimeout(() => resolve(), deadlineMs);
           handle.unref?.();
         }),
       ]);
       return {
-        drained: inFlightCount - inFlightSends.size,
-        remaining: inFlightSends.size,
+        drained: inFlightCount - inFlightSends.size - inFlightActivityRecordings.size,
+        remaining: inFlightSends.size + inFlightActivityRecordings.size,
         durationMs: systemNowMs() - start,
       };
     },

@@ -7,6 +7,12 @@ export {
   NormalizedMessageSchema,
   parseMessage,
   getMessageTraceId,
+  ACTIVITY_RECORDING_EXACTNESS_BLOCKERS,
+  ActivityRecordingExactnessBlockerSchema,
+  ActivityRecordingGapReasonSchema,
+  ActivityRecordingOutcomeClassSchema,
+  ActivityRecordingRecordKindSchema,
+  ActivityRecordingSourceKindSchema,
   // NormalizedReaction
   NormalizedReactionSchema,
   parseReaction,
@@ -101,6 +107,9 @@ export { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "../provider/ke
 export type {
   Attachment,
   NormalizedMessage,
+  ActivityRecordingGapReason,
+  ActivityRecordingRecordKind,
+  ActivityRecordingSourceKind,
   NormalizedReaction,
   TrustLevel,
   MemoryEntry,

@@ -99,6 +99,8 @@ describe("setupSecrets", () => {
       if (result.ok) {
         expect(result.value).not.toBeNull();
         expect(result.value!.crypto).toBeDefined();
+        expect(result.value!.activityRecordingMasterKey).toHaveLength(32);
+        expect(result.value!.activityRecordingMasterKey.toString("hex")).not.toBe(VALID_HEX_KEY);
         expect(result.value!.dbPath).toBeDefined();
       }
     });

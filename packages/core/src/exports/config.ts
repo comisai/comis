@@ -310,6 +310,7 @@ export type {
   OrchestrationAuthoringConfig,
   // Spend kill-switch config
   SpendConfig,
+  ActivityRecordingConfig,
   // Agent autonomy named-profile resolver
   AutonomyConfig,
   AutonomyMessageConfig,

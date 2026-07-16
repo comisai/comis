@@ -362,6 +362,8 @@ export interface BootContext {
   billingEstimator: Awaited<ReturnType<typeof setupObservability>>["billingEstimator"];
   channelActivityTracker: Awaited<ReturnType<typeof setupObservability>>["channelActivityTracker"];
   deliveryTracer: Awaited<ReturnType<typeof setupObservability>>["deliveryTracer"];
+  /** Opt-in prospective activity evidence recorder. Undefined when disabled. */
+  activityRecorder: import("@comis/core").ProductionActivityRecorderPort | undefined;
   // The canonical ActivityStream (orchestrator-facing ActivityStreamPort)
   // + its drain hook, threaded from bootFoundation to bootShutdown.
   activityStream: Awaited<ReturnType<typeof setupObservability>>["activityStream"];
