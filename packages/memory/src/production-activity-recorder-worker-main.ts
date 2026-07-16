@@ -27,6 +27,7 @@ interface WorkerOptions {
 }
 
 type RecorderMethod =
+  | "recordGap"
   | "recordInboundChannelActivity"
   | "beginDeliveryPlatformAttempt"
   | "finishDeliveryPlatformAttempt"
@@ -61,7 +62,8 @@ function isRequestFrame(value: unknown): value is RequestFrame {
   const candidate = value as Partial<RequestFrame>;
   return candidate.kind === "request"
     && typeof candidate.requestId === "string"
-    && (candidate.method === "recordInboundChannelActivity"
+    && (candidate.method === "recordGap"
+      || candidate.method === "recordInboundChannelActivity"
       || candidate.method === "beginDeliveryPlatformAttempt"
       || candidate.method === "finishDeliveryPlatformAttempt"
       || candidate.method === "exportEvidence"
@@ -96,9 +98,12 @@ function wireResult(result: Result<unknown, unknown>): unknown {
   };
 }
 
-function isSingleRecordEvidencePage(input: unknown): boolean {
-  if (typeof input !== "object" || input === null) return false;
-  return (input as { readonly limit?: unknown }).limit === 1;
+function singleRecordEvidencePage(input: unknown): unknown {
+  if (typeof input !== "object" || input === null) return input;
+  const limit = (input as { readonly limit?: unknown }).limit;
+  return Number.isSafeInteger(limit) && Number(limit) >= 1 && Number(limit) <= 1_000
+    ? { ...input, limit: 1 }
+    : input;
 }
 
 function invoke(
@@ -106,6 +111,8 @@ function invoke(
   frame: RequestFrame,
 ): Promise<Result<unknown, unknown>> {
   switch (frame.method) {
+    case "recordGap":
+      return recorder.recordGap(frame.input as never);
     case "recordInboundChannelActivity":
       return recorder.recordInboundChannelActivity(frame.input as never);
     case "beginDeliveryPlatformAttempt":
@@ -113,12 +120,7 @@ function invoke(
     case "finishDeliveryPlatformAttempt":
       return recorder.finishDeliveryPlatformAttempt(frame.input as never);
     case "exportEvidence":
-      if (!isSingleRecordEvidencePage(frame.input)) {
-        return Promise.resolve(err(new Error(
-          "Worker evidence export requires single-record cursor pages",
-        )));
-      }
-      return recorder.exportEvidence(frame.input as never);
+      return recorder.exportEvidence(singleRecordEvidencePage(frame.input) as never);
     case "inspect":
       return recorder.inspect();
     case "heartbeat":
@@ -134,6 +136,7 @@ function post(message: unknown): void {
 
 function sourceKindForMethod(method: RecorderMethod): ActivityRecordingSourceKind | undefined {
   switch (method) {
+    case "recordGap": return undefined;
     case "recordInboundChannelActivity": return "channel_inbound_normalized";
     case "beginDeliveryPlatformAttempt": return "delivery_platform_attempt";
     case "finishDeliveryPlatformAttempt": return "delivery_platform_outcome";

@@ -19,6 +19,7 @@ import {
 import { createRowMapper } from "./row-mapper.js";
 import { exportActivityEvidence } from "./production-activity-recorder-evidence.js";
 import {
+  ActivityGapInputSchema,
   DeliveryAttemptInputSchema,
   DeliveryOutcomeInputSchema,
   InboundActivityInputSchema,
@@ -349,7 +350,7 @@ function createSqliteProductionActivityRecorderUnchecked(
           recoveryNoLongerEligible: true,
         });
       }
-    } else if (input.kind === "delivery_platform_outcome") {
+    } else if (input.kind === "delivery_platform_outcome" || input.settlement !== undefined) {
       const settlement = input.settlement;
       if (settlement === undefined) {
         return err<InternalAppendFailure>({
@@ -366,6 +367,7 @@ function createSqliteProductionActivityRecorderUnchecked(
       }
       const parent = parentRead.value;
       if (parent === undefined || parent.kind !== "delivery_platform_attempt"
+        || input.parentRecordId !== settlement.recordId
         || parent.record_id !== settlement.recordId
         || parent.sequence !== settlement.sequence
         || parent.record_hash !== settlement.recordHash
@@ -544,6 +546,34 @@ function createSqliteProductionActivityRecorderUnchecked(
   }
 
   const recorder: RuntimeProductionActivityRecorder = {
+    recordGap(input) {
+      if (closed) return Promise.resolve(err(closedFailure(
+        input.sourceKind, input.occurredAtMs,
+      )));
+      const parsed = tryCatch(() => ActivityGapInputSchema.safeParse(input));
+      if (!parsed.ok || !parsed.value.success) {
+        return Promise.resolve(err(rejectWithoutGap({
+          sourceKind: input.sourceKind,
+          reason: "payload_invalid",
+          occurredAtMs: Number.isSafeInteger(input.occurredAtMs) && input.occurredAtMs >= 0
+            ? input.occurredAtMs
+            : 0,
+          cause: new Error("Activity gap control input failed validation"),
+        })));
+      }
+      return Promise.resolve(err(accountLoss({
+        sourceKind: parsed.value.data.sourceKind,
+        reason: parsed.value.data.reason,
+        occurredAtMs: parsed.value.data.occurredAtMs,
+        traceId: parsed.value.data.traceId,
+        parentRecordId: parsed.value.data.parentRecordId,
+        cause: new Error("Activity request was replaced by a bounded durable gap"),
+        ...("settlement" in parsed.value.data
+          ? { settlement: parsed.value.data.settlement }
+          : {}),
+      })));
+    },
+
     recordInboundChannelActivity(input: RecordInboundChannelActivityInput) {
       if (closed) return Promise.resolve(err(closedFailure(
         "channel_inbound_normalized", input.occurredAtMs,

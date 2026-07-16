@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
+  ActivityRecordingGapReasonSchema,
   ActivityRecordingOutcomeClassSchema,
+  ActivityRecordingSourceKindSchema,
   NormalizedMessageSchema,
 } from "@comis/core";
 import { z } from "zod";
@@ -63,3 +65,21 @@ export const EvidenceExportInputSchema = z.strictObject({
   snapshotHeadSequence: z.number().int().nonnegative().optional(),
   limit: z.number().int().min(1).max(1_000),
 });
+
+const ActivityGapBaseSchema = z.strictObject({
+  sourceKind: ActivityRecordingSourceKindSchema,
+  reason: ActivityRecordingGapReasonSchema,
+  occurredAtMs: z.number().int().nonnegative(),
+});
+
+export const ActivityGapInputSchema = z.union([
+  ActivityGapBaseSchema.extend({
+    traceId: z.guid().nullable(),
+    parentRecordId: z.null(),
+  }),
+  ActivityGapBaseSchema.extend({
+    traceId: z.guid(),
+    parentRecordId: z.string().regex(/^record:\d{20}$/),
+    settlement: DeliveryAttemptReceiptSchema,
+  }),
+]);

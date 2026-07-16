@@ -9,6 +9,7 @@ import type { ComisLogger } from "../logging/log-fields.js";
 import type { ProductionActivityRecorderPort } from "../ports/activity-recorder.js";
 import { createNoOpDeliveryQueue } from "./no-op-delivery-queue.js";
 import type { RetryEngine } from "./retry-engine.js";
+import { createActivityRecordingAdapter } from "./activity-recording-delivery-adapter.js";
 import { createDeliveryService } from "./delivery-service.js";
 import type { DeliveryAdapter } from "./types.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
@@ -67,6 +68,149 @@ function makeRecorder(): ProductionActivityRecorderPort {
 }
 
 describe("DeliveryService prospective activity recording", () => {
+  it("preserves the physical send when the recorder clock throws", async () => {
+    const sendMessage = vi.fn().mockResolvedValue(ok("platform-message"));
+    const recorder = makeRecorder();
+    const wrapped = createActivityRecordingAdapter({
+      activityRecorder: recorder,
+      clock: { now: () => { throw new Error("recorder clock failed"); } },
+      logger: {
+        ...makeLogger(),
+        warn: () => { throw new Error("recorder warning failed"); },
+        debug: () => { throw new Error("recorder debug failed"); },
+      } as unknown as ComisLogger,
+      eventBus: {
+        emit: () => { throw new Error("recorder event failed"); },
+      } as unknown as TypedEventBus,
+      trackActivityRecording: () => { throw new Error("recorder tracking failed"); },
+    }, {
+      channelType: "echo",
+      sendMessage,
+    }, {
+      traceId: "550e8400-e29b-41d4-a716-446655440000",
+      origin: "agent",
+      chunkIndex: 0,
+      totalChunks: 1,
+    });
+
+    await expect(wrapped.sendMessage("channel-a", "hello", {}))
+      .resolves.toEqual(ok("platform-message"));
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith("channel-a", "hello", {});
+  });
+
+  it("preserves the physical send when recorder reporting and tracking throw", async () => {
+    const sendMessage = vi.fn().mockResolvedValue(ok("platform-message"));
+    const recorder = makeRecorder();
+    vi.mocked(recorder.beginDeliveryPlatformAttempt).mockImplementation(() => {
+      throw new Error("recorder invocation failed");
+    });
+    const wrapped = createActivityRecordingAdapter({
+      activityRecorder: recorder,
+      clock: { now: () => 100 },
+      logger: {
+        ...makeLogger(),
+        warn: () => { throw new Error("recorder warning failed"); },
+      } as unknown as ComisLogger,
+      eventBus: {
+        emit: () => { throw new Error("recorder event failed"); },
+      } as unknown as TypedEventBus,
+      trackActivityRecording: () => { throw new Error("recorder tracking failed"); },
+    }, {
+      channelType: "echo",
+      sendMessage,
+    }, {
+      traceId: "550e8400-e29b-41d4-a716-446655440000",
+      origin: "agent",
+      chunkIndex: 0,
+      totalChunks: 1,
+    });
+
+    await expect(wrapped.sendMessage("channel-a", "hello", {}))
+      .resolves.toEqual(ok("platform-message"));
+    expect(sendMessage).toHaveBeenCalledExactlyOnceWith("channel-a", "hello", {});
+  });
+
+  it("records the physical settlement timestamp before a delayed attempt receipt", async () => {
+    let nowMs = 100;
+    let releaseBegin: ((result: Awaited<ReturnType<
+      ProductionActivityRecorderPort["beginDeliveryPlatformAttempt"]
+    >>) => void) | undefined;
+    const recorder = makeRecorder();
+    vi.mocked(recorder.beginDeliveryPlatformAttempt).mockImplementation(() => new Promise((resolve) => {
+      releaseBegin = resolve;
+    }));
+    const adapter: DeliveryAdapter = {
+      channelType: "echo",
+      sendMessage: vi.fn().mockImplementation(async () => {
+        nowMs = 110;
+        return ok("platform-message");
+      }),
+    };
+    const service = createDeliveryService({
+      hookRunner: makeHooks(),
+      deliveryQueue: createNoOpDeliveryQueue(),
+      logger: makeLogger(),
+      clock: { now: () => nowMs },
+      activityRecorder: recorder,
+    });
+
+    const delivered = await service.deliverToChannel(adapter, "channel-a", "hello");
+    nowMs = 900;
+    releaseBegin?.(ok({
+      recordId: "record:00000000000000000001",
+      sequence: 1,
+      recordHash: "a".repeat(64),
+      attemptId: "550e8400-e29b-41d4-a716-446655440001",
+      settlementCapability: "A".repeat(43),
+      traceId: "550e8400-e29b-41d4-a716-446655440000",
+      occurredAtMs: 100,
+    }));
+    await service.drainInFlight(5_000);
+
+    expect(delivered.ok).toBe(true);
+    expect(recorder.finishDeliveryPlatformAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ occurredAtMs: 110 }),
+    );
+  });
+
+  it("reports an outcome gap when the settlement clock becomes unavailable", async () => {
+    let clockReads = 0;
+    const recorder = makeRecorder();
+    const logger = makeLogger();
+    const eventBus = new TypedEventBus();
+    const gapHandler = vi.fn();
+    eventBus.on("activity-recording:gap", gapHandler);
+    const adapter: DeliveryAdapter = {
+      channelType: "echo",
+      sendMessage: vi.fn().mockResolvedValue(ok("platform-message")),
+    };
+    const service = createDeliveryService({
+      hookRunner: makeHooks(),
+      deliveryQueue: createNoOpDeliveryQueue(),
+      logger,
+      clock: {
+        now: () => {
+          clockReads += 1;
+          if (clockReads === 1) return 100;
+          throw new Error("settlement clock failed");
+        },
+      },
+      eventBus,
+      activityRecorder: recorder,
+    });
+
+    const delivered = await service.deliverToChannel(adapter, "channel-a", "hello");
+    await service.drainInFlight(5_000);
+
+    expect(delivered.ok).toBe(true);
+    expect(recorder.finishDeliveryPlatformAttempt).not.toHaveBeenCalled();
+    expect(gapHandler).toHaveBeenCalledWith(expect.objectContaining({
+      sourceKind: "delivery_platform_outcome",
+      reason: "clock_unavailable",
+      gapDurablyAccounted: false,
+    }));
+  });
+
   it("includes externally initiated recorder work in the shutdown drain", async () => {
     let resolveRecording: () => void = () => undefined;
     const recording = new Promise<void>((resolve) => { resolveRecording = resolve; });

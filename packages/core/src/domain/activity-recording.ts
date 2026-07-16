@@ -2,6 +2,12 @@
 import { err, ok, type Result } from "@comis/shared";
 import { z } from "zod";
 
+/** Fixed structured-clone ceiling shared by recorder config and worker transport. */
+export const ACTIVITY_RECORDING_MAX_WIRE_FRAME_BYTES = 16 * 1024 * 1024;
+export const ACTIVITY_RECORDING_WIRE_ENVELOPE_RESERVE_BYTES = 4 * 1024;
+export const ACTIVITY_RECORDING_MAX_PAYLOAD_BYTES =
+  ACTIVITY_RECORDING_MAX_WIRE_FRAME_BYTES - ACTIVITY_RECORDING_WIRE_ENVELOPE_RESERVE_BYTES;
+
 /** Families not yet captured by the prospective activity recorder. */
 export const ActivityRecordingExactnessBlockerSchema = z.enum([
   "trusted_external_head_anchor_missing",

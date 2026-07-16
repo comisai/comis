@@ -55,6 +55,15 @@ describe("ObservabilityConfigSchema", () => {
     }).success).toBe(false);
   });
 
+  it("rejects a payload limit larger than the aggregate worker frame", () => {
+    expect(ObservabilityConfigSchema.safeParse({
+      activityRecording: {
+        maxPayloadBytes: 32 * 1024 * 1024,
+        maxStoredBytes: 128 * 1024 * 1024,
+      },
+    }).success).toBe(false);
+  });
+
   it("produces valid defaults from empty object", () => {
     const result = ObservabilityConfigSchema.safeParse({});
     expect(result.success).toBe(true);

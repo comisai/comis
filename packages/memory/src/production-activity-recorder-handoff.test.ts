@@ -234,6 +234,124 @@ describe("production activity recorder bounded handoff", () => {
     expect(!result.ok && result.error.gapDurablyAccounted).toBe(false);
   });
 
+  it("latches transport failure and rejects later work without another handoff timeout", async () => {
+    const timers = createFakeTimers();
+    const transport = new FakeTransport();
+    const recorder = makeHandoff({
+      transport,
+      clock: createFakeClock(1_700_000_000_000),
+      timers,
+      capacity: 2,
+      operationTimeoutMs: 1_000,
+    });
+    transport.fail(new Error("worker exited"));
+
+    const result = await recorder.recordInboundChannelActivity({
+      traceId: randomUUID(), occurredAtMs: 1_700_000_000_000, message: makeMessage(),
+    });
+
+    expect(transport.sent).toHaveLength(0);
+    expect(!result.ok && result.error.reason).toBe("storage_failed");
+    expect(!result.ok && result.error.gapDurablyAccounted).toBe(false);
+  });
+
+  it("uses a bounded control frame to durably account an oversized request", async () => {
+    const transport = new FakeTransport();
+    const recorder = makeHandoff({
+      transport,
+      clock: createFakeClock(1_700_000_000_000),
+      timers: createFakeTimers(),
+      capacity: 2,
+      operationTimeoutMs: 1_000,
+      maxFrameBytes: 512,
+    });
+
+    const recorded = recorder.recordInboundChannelActivity({
+      traceId: randomUUID(),
+      occurredAtMs: 1_700_000_000_000,
+      message: { ...makeMessage(), metadata: { oversized: "x".repeat(4_096) } },
+    });
+    expect(transport.sent).toHaveLength(1);
+    const frame = transport.sent[0] as { readonly method?: unknown; readonly requestId: string };
+    expect(frame.method).toBe("recordGap");
+    transport.respond({
+      kind: "response",
+      requestId: frame.requestId,
+      result: {
+        ok: false,
+        error: {
+          sourceKind: "channel_inbound_normalized",
+          reason: "payload_too_large",
+          gapDurablyAccounted: true,
+          gapCount: 1,
+          occurredAtMs: 1_700_000_000_000,
+          errorKind: "validation",
+        },
+      },
+    });
+
+    const result = await recorded;
+    expect(!result.ok && result.error.gapDurablyAccounted).toBe(true);
+    expect(!result.ok && result.error.gapCount).toBe(1);
+  });
+
+  it("preserves attempt authority when an oversized outcome becomes a gap", async () => {
+    const transport = new FakeTransport();
+    const recorder = makeHandoff({
+      transport,
+      clock: createFakeClock(1_700_000_000_100),
+      timers: createFakeTimers(),
+      capacity: 2,
+      operationTimeoutMs: 1_000,
+      maxFrameBytes: 1_500,
+    });
+    const attempt = {
+      recordId: "record:00000000000000000001",
+      sequence: 1,
+      recordHash: "a".repeat(64),
+      attemptId: "550e8400-e29b-41d4-a716-446655440001",
+      settlementCapability: "A".repeat(43),
+      traceId: "550e8400-e29b-41d4-a716-446655440000",
+      occurredAtMs: 1_700_000_000_000,
+    };
+
+    const recorded = recorder.finishDeliveryPlatformAttempt({
+      attempt,
+      occurredAtMs: 1_700_000_000_100,
+      outcomeClass: "adapter_throw",
+      error: { name: "Error", message: "x".repeat(4_096) },
+    });
+    expect(transport.sent).toHaveLength(1);
+    const frame = transport.sent[0] as {
+      readonly method?: unknown;
+      readonly requestId: string;
+      readonly input?: unknown;
+    };
+    expect(frame.method).toBe("recordGap");
+    expect(frame.input).toEqual(expect.objectContaining({
+      traceId: attempt.traceId,
+      parentRecordId: attempt.recordId,
+      settlement: attempt,
+    }));
+    transport.respond({
+      kind: "response",
+      requestId: frame.requestId,
+      result: {
+        ok: false,
+        error: {
+          sourceKind: "delivery_platform_outcome",
+          reason: "payload_too_large",
+          gapDurablyAccounted: true,
+          gapCount: 1,
+          occurredAtMs: 1_700_000_000_100,
+          errorKind: "validation",
+        },
+      },
+    });
+
+    expect(!((await recorded).ok)).toBe(true);
+  });
+
   it("keeps one heartbeat queued until acknowledgement and cancels it on close", async () => {
     const timers = createFakeTimers();
     const transport = new FakeTransport();
@@ -339,7 +457,7 @@ describe("production activity recorder bounded handoff", () => {
     expect(transport.terminate).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects oversized cyclic and accessor-backed frames before transport cloning", async () => {
+  it("rejects cyclic and accessor-backed frames before transport cloning", async () => {
     const transport = new FakeTransport();
     const created = createProductionActivityRecorderHandoff({
       transport,
@@ -351,16 +469,6 @@ describe("production activity recorder bounded handoff", () => {
     } as Parameters<typeof createProductionActivityRecorderHandoff>[0]);
     expect(created.ok).toBe(true);
     if (!created.ok) return;
-
-    const oversizedPromise = created.value.recordInboundChannelActivity({
-      traceId: randomUUID(),
-      occurredAtMs: 1_700_000_000_000,
-      message: { ...makeMessage(), metadata: { marker: "x".repeat(4_096) } },
-    });
-    await Promise.resolve();
-    expect(transport.sent).toHaveLength(0);
-    const oversized = await oversizedPromise;
-    expect(!oversized.ok && oversized.error.reason).toBe("payload_too_large");
 
     const cyclicMetadata: Record<string, unknown> = {};
     cyclicMetadata.self = cyclicMetadata;

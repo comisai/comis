@@ -2,6 +2,7 @@
 import { err, type Result } from "@comis/shared";
 
 import type {
+  ActivityRecordingAttemptReceipt,
   ActivityRecordingFailure,
   ActivityRecordingGapReason,
   ActivityRecordingReceipt,
@@ -21,6 +22,7 @@ interface LossInput {
   readonly traceId: string | null;
   readonly parentRecordId: string | null;
   readonly occurredAtMs: number;
+  readonly settlement?: ActivityRecordingAttemptReceipt;
 }
 
 interface CreateFailureAccountingOptions {
@@ -77,6 +79,7 @@ export function createActivityRecorderFailureAccounting(
       occurredAtMs: input.occurredAtMs,
       payload: { reason: input.reason, sourceKind: input.sourceKind },
       useGapReserve: true,
+      ...(input.settlement === undefined ? {} : { settlement: input.settlement }),
     });
     return {
       reason: input.reason,
@@ -118,6 +121,7 @@ export function createActivityRecorderFailureAccounting(
       traceId: input.traceId,
       parentRecordId: input.parentRecordId,
       occurredAtMs: input.occurredAtMs,
+      ...(input.settlement === undefined ? {} : { settlement: input.settlement }),
     }));
   }
 

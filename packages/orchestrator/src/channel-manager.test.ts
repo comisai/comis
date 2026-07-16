@@ -413,6 +413,116 @@ describe("createChannelManager", () => {
       expect(JSON.stringify(vi.mocked(deps.logger.warn).mock.calls)).not.toContain(privateError);
     });
 
+    it("continues inbound processing when synchronous recorder failure reporters throw", async () => {
+      const adapter = makeAdapter();
+      const activityRecorder = makeActivityRecorder();
+      vi.mocked(activityRecorder.recordInboundChannelActivity).mockImplementation(() => {
+        throw new Error("recorder invocation failed");
+      });
+      const logger = createMockLogger();
+      vi.mocked(logger.warn).mockImplementation(() => {
+        throw new Error("recorder warning failed");
+      });
+      const eventBus = makeEventBus();
+      vi.mocked(eventBus.emit).mockImplementation(() => {
+        throw new Error("recorder event failed");
+      });
+      const processInboundMessage = vi.fn(async () => {}) as unknown as
+        ChannelManagerDeps["processInboundMessage"];
+      const deps = makeDeps({
+        adapters: [adapter],
+        activityRecorder,
+        logger,
+        eventBus,
+        processInboundMessage,
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      await adapter._handlers[0]!(makeMessage());
+
+      expect(processInboundMessage).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "activity-recording:gap",
+        expect.objectContaining({ reason: "storage_failed", gapDurablyAccounted: false }),
+      );
+    });
+
+    it("continues inbound processing without waiting when recorder tracking throws", async () => {
+      const adapter = makeAdapter();
+      const activityRecorder = makeActivityRecorder();
+      vi.mocked(activityRecorder.recordInboundChannelActivity).mockImplementation(
+        () => new Promise(() => undefined),
+      );
+      const deliveryService = makeFakeDeliveryService();
+      vi.mocked(deliveryService.trackActivityRecording).mockImplementation(() => {
+        throw new Error("recorder tracking failed");
+      });
+      const processInboundMessage = vi.fn(async () => {}) as unknown as
+        ChannelManagerDeps["processInboundMessage"];
+      const deps = makeDeps({
+        adapters: [adapter],
+        activityRecorder,
+        deliveryService,
+        processInboundMessage,
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      await adapter._handlers[0]!(makeMessage());
+
+      expect(processInboundMessage).toHaveBeenCalledTimes(1);
+      expect(deliveryService.trackActivityRecording).toHaveBeenCalledTimes(1);
+    });
+
+    it("settles recorder work when asynchronous gap reporters throw", async () => {
+      const adapter = makeAdapter();
+      const activityRecorder = makeActivityRecorder();
+      vi.mocked(activityRecorder.recordInboundChannelActivity).mockResolvedValue(err({
+        sourceKind: "channel_inbound_normalized",
+        reason: "storage_failed",
+        gapDurablyAccounted: false,
+        gapCount: 1,
+        occurredAtMs: 1_700_000_000_000,
+        errorKind: "resource",
+        cause: new Error("private recorder failure"),
+      }));
+      const logger = createMockLogger();
+      vi.mocked(logger.warn).mockImplementation(() => {
+        throw new Error("recorder warning failed");
+      });
+      const eventBus = makeEventBus();
+      vi.mocked(eventBus.emit).mockImplementation(() => {
+        throw new Error("recorder event failed");
+      });
+      let tracked: Promise<unknown> | undefined;
+      const deliveryService = makeFakeDeliveryService();
+      vi.mocked(deliveryService.trackActivityRecording).mockImplementation((operation) => {
+        tracked = operation;
+      });
+      const processInboundMessage = vi.fn(async () => {}) as unknown as
+        ChannelManagerDeps["processInboundMessage"];
+      const deps = makeDeps({
+        adapters: [adapter],
+        activityRecorder,
+        logger,
+        eventBus,
+        deliveryService,
+        processInboundMessage,
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      await adapter._handlers[0]!(makeMessage());
+
+      expect(processInboundMessage).toHaveBeenCalledTimes(1);
+      expect(tracked).toBeDefined();
+      await expect(tracked).resolves.toBeUndefined();
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(eventBus.emit).toHaveBeenCalledTimes(1);
+    });
+
     it("continues inbound processing when activity recording never completes", async () => {
       const adapter = makeAdapter();
       const activityRecorder = makeActivityRecorder();

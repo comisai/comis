@@ -82,6 +82,131 @@ describe("production activity recorder worker integration", () => {
     expect((await opened.value.close()).ok).toBe(true);
   });
 
+  it("durably records a gap when an activity request exceeds the worker frame", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "comis-recorder-worker-gap-"));
+    tempDirs.push(dir);
+    const opened = await openWorkerProductionActivityRecorder({
+      dbPath: join(dir, "activity.db"),
+      masterKey: randomBytes(32),
+      limits: {
+        maxPayloadBytes: 1_024,
+        maxStoredBytes: 8 * 1024 * 1024,
+        maxRecords: 10_000,
+        gapReserveBytes: 64 * 1024,
+        gapReserveRecords: 100,
+        busyTimeoutMs: 100,
+      },
+      clock: createFakeClock(1_700_000_000_000),
+      timers: createFakeTimers(),
+      handoffCapacity: 16,
+      operationTimeoutMs: 1_000,
+      startupTimeoutMs: 1_000,
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+
+    const recorded = await opened.value.recordInboundChannelActivity({
+      traceId: randomUUID(),
+      occurredAtMs: 1_700_000_000_000,
+      message: {
+        id: randomUUID(), channelId: "chat_a", channelType: "telegram", senderId: "user_a",
+        text: "private prompt", timestamp: 1_700_000_000_000, attachments: [],
+        metadata: { oversized: "x".repeat(5_000) },
+      },
+    });
+    const inspection = await opened.value.inspect();
+
+    expect(recorded.ok).toBe(false);
+    expect(!recorded.ok && recorded.error.reason).toBe("payload_too_large");
+    expect(!recorded.ok && recorded.error.gapDurablyAccounted).toBe(true);
+    expect(inspection.ok && inspection.value.recordCount).toBe(1);
+    expect(inspection.ok && inspection.value.gapCount).toBe(1);
+    await opened.value.close();
+  });
+
+  it("settles an oversized delivery outcome with its authenticated attempt gap", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "comis-recorder-worker-outcome-gap-"));
+    tempDirs.push(dir);
+    const dbPath = join(dir, "activity.db");
+    const masterKey = randomBytes(32);
+    const limits = {
+      maxPayloadBytes: 1_024,
+      maxStoredBytes: 8 * 1024 * 1024,
+      maxRecords: 10_000,
+      gapReserveBytes: 64 * 1024,
+      gapReserveRecords: 100,
+      busyTimeoutMs: 100,
+    };
+    const opened = await openWorkerProductionActivityRecorder({
+      dbPath,
+      streamId: "oversized-outcome-gap",
+      masterKey,
+      limits,
+      clock: createFakeClock(1_700_000_000_000),
+      timers: createFakeTimers(),
+      handoffCapacity: 16,
+      operationTimeoutMs: 1_000,
+      startupTimeoutMs: 1_000,
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+
+    const attempt = await opened.value.beginDeliveryPlatformAttempt({
+      traceId: randomUUID(),
+      occurredAtMs: 1_700_000_000_000,
+      channelType: "telegram",
+      channelId: "chat_a",
+      text: "private response",
+      options: {},
+      origin: "agent_response",
+      chunkIndex: 0,
+      totalChunks: 1,
+    });
+    expect(attempt.ok).toBe(true);
+    if (!attempt.ok) return;
+    const recorded = await opened.value.finishDeliveryPlatformAttempt({
+      attempt: attempt.value,
+      occurredAtMs: 1_700_000_000_100,
+      outcomeClass: "adapter_throw",
+      error: { name: "Error", message: "x".repeat(10_000) },
+    });
+    const inspection = await opened.value.inspect();
+    const gapPage = await opened.value.exportEvidence({
+      afterSequence: 1,
+      snapshotHeadSequence: 2,
+      limit: 10,
+    });
+
+    expect(!recorded.ok && recorded.error.reason).toBe("payload_too_large");
+    expect(!recorded.ok && recorded.error.gapDurablyAccounted).toBe(true);
+    expect(inspection.ok && inspection.value.recordCount).toBe(2);
+    expect(inspection.ok && inspection.value.gapCount).toBe(1);
+    expect(gapPage.ok && gapPage.value.records[0]).toEqual(expect.objectContaining({
+      kind: "gap",
+      traceId: attempt.value.traceId,
+      parentRecordId: attempt.value.recordId,
+    }));
+    expect((await opened.value.close()).ok).toBe(true);
+
+    const reopened = await openWorkerProductionActivityRecorder({
+      dbPath,
+      streamId: "oversized-outcome-gap",
+      masterKey,
+      limits,
+      clock: createFakeClock(1_700_000_000_200),
+      timers: createFakeTimers(),
+      handoffCapacity: 16,
+      operationTimeoutMs: 1_000,
+      startupTimeoutMs: 1_000,
+    });
+    expect(reopened.ok).toBe(true);
+    if (!reopened.ok) return;
+    const reopenedInspection = await reopened.value.inspect();
+    expect(reopenedInspection.ok && reopenedInspection.value.recordCount).toBe(2);
+    expect(reopenedInspection.ok && reopenedInspection.value.gapCount).toBe(1);
+    await reopened.value.close();
+  });
+
   it("serializes recorder commits made by independent operating-system processes", async () => {
     const dir = mkdtempSync(join(tmpdir(), "comis-recorder-processes-"));
     tempDirs.push(dir);
@@ -287,7 +412,9 @@ describe("production activity recorder worker integration", () => {
     }
 
     const aggregate = await opened.value.exportEvidence({ limit: 2 });
-    expect(aggregate.ok).toBe(false);
+    expect(aggregate.ok).toBe(true);
+    expect(aggregate.ok && aggregate.value.records).toHaveLength(1);
+    expect(aggregate.ok && aggregate.value.nextAfterSequence).toBe(1);
     const boundedPage = await opened.value.exportEvidence({ limit: 1 });
     expect(boundedPage.ok).toBe(true);
     await opened.value.close();

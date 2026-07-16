@@ -6,6 +6,7 @@ import type {
   ActivityRecordingAttemptReceipt,
   ActivityRecordingCiphertext,
   ActivityRecordingCryptoPort,
+  ActivityRecordingFailure,
   ActivityRecordingGapReason,
   ActivityRecordingHeadAuthorityPort,
   ActivityRecordingReceipt,
@@ -72,7 +73,18 @@ export interface InternalAppendFailure extends ActivityPayloadFailure {
 }
 
 export interface RuntimeProductionActivityRecorder extends ProductionActivityRecorderPort {
+  recordGap(input: RecordActivityGapInput): Promise<Result<void, ActivityRecordingFailure>>;
   heartbeat(): Promise<Result<void, Error>>;
+}
+
+export interface RecordActivityGapInput {
+  readonly sourceKind: ActivityRecordingSourceKind;
+  readonly reason: ActivityRecordingGapReason;
+  readonly occurredAtMs: number;
+  readonly traceId: string | null;
+  readonly parentRecordId: string | null;
+  /** Required authority when the gap settles an oversized delivery outcome. */
+  readonly settlement?: ActivityRecordingAttemptReceipt;
 }
 
 export const DEFAULT_ACTIVITY_RECORDING_WRITER_LEASE_MS = 30_000;

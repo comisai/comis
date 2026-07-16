@@ -263,7 +263,7 @@ function reportActivityRecordingFailure(
   deps: Pick<ChannelManagerDeps, "eventBus" | "logger">,
   failure: ActivityRecordingFailure,
 ): void {
-  deps.logger.warn({
+  void tryCatch(() => deps.logger.warn({
     step: "activity-recording",
     sourceKind: failure.sourceKind,
     reason: failure.reason,
@@ -271,15 +271,15 @@ function reportActivityRecordingFailure(
     gapCount: failure.gapCount,
     errorKind: failure.errorKind,
     hint: "Restore activity recorder storage and key access before relying on prospective replay evidence",
-  }, "Prospective activity recording gap detected");
-  deps.eventBus.emit("activity-recording:gap", {
+  }, "Prospective activity recording gap detected"));
+  void tryCatch(() => deps.eventBus.emit("activity-recording:gap", {
     sourceKind: failure.sourceKind,
     reason: failure.reason,
     gapDurablyAccounted: failure.gapDurablyAccounted,
     gapCount: failure.gapCount,
     errorKind: failure.errorKind,
     timestamp: failure.occurredAtMs,
-  });
+  }));
 }
 
 function isActivityRecorderResult(value: unknown): value is Result<unknown, ActivityRecordingFailure> {
@@ -318,7 +318,34 @@ function recordNormalizedChannelInboundActivity(
     return;
   }
   const completed = fromPromise(invoked.value).then((recorded) => {
-    if (!recorded.ok) {
+    const handled = tryCatch(() => {
+      if (!recorded.ok) {
+        reportActivityRecordingFailure(deps, {
+          sourceKind: "channel_inbound_normalized",
+          reason: "storage_failed",
+          gapDurablyAccounted: false,
+          gapCount: 0,
+          occurredAtMs: message.timestamp,
+          errorKind: "resource",
+          cause: recorded.error,
+        });
+        return;
+      }
+      if (!isActivityRecorderResult(recorded.value)) {
+        reportActivityRecordingFailure(deps, {
+          sourceKind: "channel_inbound_normalized",
+          reason: "storage_failed",
+          gapDurablyAccounted: false,
+          gapCount: 0,
+          occurredAtMs: message.timestamp,
+          errorKind: "resource",
+          cause: new Error("Activity recorder returned a malformed result"),
+        });
+        return;
+      }
+      if (!recorded.value.ok) reportActivityRecordingFailure(deps, recorded.value.error);
+    });
+    if (!handled.ok) {
       reportActivityRecordingFailure(deps, {
         sourceKind: "channel_inbound_normalized",
         reason: "storage_failed",
@@ -326,27 +353,16 @@ function recordNormalizedChannelInboundActivity(
         gapCount: 0,
         occurredAtMs: message.timestamp,
         errorKind: "resource",
-        cause: recorded.error,
+        cause: handled.error,
       });
-      return;
     }
-    if (!isActivityRecorderResult(recorded.value)) {
-      reportActivityRecordingFailure(deps, {
-        sourceKind: "channel_inbound_normalized",
-        reason: "storage_failed",
-        gapDurablyAccounted: false,
-        gapCount: 0,
-        occurredAtMs: message.timestamp,
-        errorKind: "resource",
-        cause: new Error("Activity recorder returned a malformed result"),
-      });
-      return;
-    }
-    if (!recorded.value.ok) reportActivityRecordingFailure(deps, recorded.value.error);
   });
-  deps.deliveryService.trackActivityRecording(completed);
+  void tryCatch(() => deps.deliveryService.trackActivityRecording(completed));
   suppressError(completed, "channel-inbound-activity-recording", () => {
-    deps.logger.debug({ step: "activity-recording" }, "Inbound activity recording task failed");
+    void tryCatch(() => deps.logger.debug(
+      { step: "activity-recording" },
+      "Inbound activity recording task failed",
+    ));
   });
 }
 

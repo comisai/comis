@@ -4,6 +4,8 @@
 export { AttachmentSchema, VoiceMetaSchema, NormalizedMessageSchema, parseMessage, getMessageTraceId } from "./normalized-message.js";
 export type { Attachment, VoiceMeta, NormalizedMessage } from "./normalized-message.js";
 export {
+  ACTIVITY_RECORDING_MAX_WIRE_FRAME_BYTES,
+  ACTIVITY_RECORDING_WIRE_ENVELOPE_RESERVE_BYTES,
   ACTIVITY_RECORDING_EXACTNESS_BLOCKERS,
   ActivityRecordingExactnessBlockerSchema,
   ActivityRecordingGapReasonSchema,

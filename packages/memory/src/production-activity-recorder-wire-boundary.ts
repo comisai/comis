@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { types as nodeTypes } from "node:util";
 
+import {
+  ACTIVITY_RECORDING_MAX_WIRE_FRAME_BYTES,
+  ACTIVITY_RECORDING_WIRE_ENVELOPE_RESERVE_BYTES,
+} from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 
 export interface ActivityRecordingWirePreflightFailure {
@@ -12,19 +16,16 @@ const MAX_WIRE_DEPTH = 16;
 const MAX_WIRE_NODES = 8_192;
 const MAX_WIRE_KEYS = 256;
 const MAX_WIRE_ARRAY_ITEMS = 256;
-const MAX_WIRE_FRAME_BYTES = 16 * 1024 * 1024;
-const WIRE_ENVELOPE_RESERVE_BYTES = 4 * 1024;
-
 /** Derive one fixed aggregate cap for both request and response worker frames. */
 export function activityRecordingWireFrameBytes(maxPayloadBytes: number): Result<number, Error> {
   if (!Number.isSafeInteger(maxPayloadBytes) || maxPayloadBytes <= 0) {
     return err(new Error("Activity recording wire payload limit is invalid"));
   }
   return ok(Math.min(
-    MAX_WIRE_FRAME_BYTES,
-    maxPayloadBytes > Number.MAX_SAFE_INTEGER - WIRE_ENVELOPE_RESERVE_BYTES
-      ? MAX_WIRE_FRAME_BYTES
-      : maxPayloadBytes + WIRE_ENVELOPE_RESERVE_BYTES,
+    ACTIVITY_RECORDING_MAX_WIRE_FRAME_BYTES,
+    maxPayloadBytes > Number.MAX_SAFE_INTEGER - ACTIVITY_RECORDING_WIRE_ENVELOPE_RESERVE_BYTES
+      ? ACTIVITY_RECORDING_MAX_WIRE_FRAME_BYTES
+      : maxPayloadBytes + ACTIVITY_RECORDING_WIRE_ENVELOPE_RESERVE_BYTES,
   ));
 }
 

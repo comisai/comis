@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
+import { ACTIVITY_RECORDING_MAX_PAYLOAD_BYTES } from "../domain/activity-recording.js";
 
 // ── Monitoring ──────────────────────────────────────────────────────────
 
@@ -359,7 +360,9 @@ const ExportConfigSchema = z.strictObject({
 /** Bounded, opt-in prospective activity evidence recorder. */
 export const ActivityRecordingConfigSchema = z.strictObject({
   enabled: z.boolean().default(false),
-  maxPayloadBytes: z.number().int().positive().default(256 * 1024),
+  maxPayloadBytes: z.number().int().positive()
+    .max(ACTIVITY_RECORDING_MAX_PAYLOAD_BYTES)
+    .default(256 * 1024),
   maxStoredBytes: z.number().int().positive().default(1024 * 1024 * 1024),
   maxRecords: z.number().int().positive().default(1_000_000),
   gapReserveBytes: z.number().int().positive().default(8 * 1024 * 1024),

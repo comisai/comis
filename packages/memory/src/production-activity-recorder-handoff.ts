@@ -47,6 +47,7 @@ export interface ProductionActivityRecorderHandoffOptions {
 }
 
 type RecorderMethod =
+  | "recordGap"
   | "recordInboundChannelActivity"
   | "beginDeliveryPlatformAttempt"
   | "finishDeliveryPlatformAttempt"
@@ -67,6 +68,7 @@ const ERROR_KINDS = new Set<ErrorKind>([
   "config", "network", "auth", "validation", "precondition", "timeout",
   "resource", "dependency", "internal", "platform", "sandbox_unavailable",
 ]);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -82,11 +84,48 @@ function isReceipt(value: unknown): value is ActivityRecordingReceipt {
 function isAttemptReceipt(value: unknown): value is ActivityRecordingAttemptReceipt {
   if (!isObject(value) || !isReceipt(value)) return false;
   const candidate = value as Record<string, unknown>;
-  return typeof candidate.attemptId === "string"
+  return typeof candidate.attemptId === "string" && UUID_PATTERN.test(candidate.attemptId)
     && typeof candidate.settlementCapability === "string"
     && /^[A-Za-z0-9_-]{43}$/.test(candidate.settlementCapability)
-    && typeof candidate.traceId === "string"
+    && typeof candidate.traceId === "string" && UUID_PATTERN.test(candidate.traceId)
     && Number.isSafeInteger(candidate.occurredAtMs) && Number(candidate.occurredAtMs) >= 0;
+}
+
+function ownDataValue(value: unknown, key: string): unknown {
+  if (!isObject(value)) return undefined;
+  const descriptor = tryCatch(() => Object.getOwnPropertyDescriptor(value, key));
+  return descriptor.ok && descriptor.value !== undefined && "value" in descriptor.value
+    ? descriptor.value.value
+    : undefined;
+}
+
+function gapCausality(
+  method: RecorderMethod,
+  input: unknown,
+  maxFrameBytes: number,
+): {
+  readonly traceId: string | null;
+  readonly parentRecordId: string | null;
+  readonly settlement?: ActivityRecordingAttemptReceipt;
+} {
+  if (method === "finishDeliveryPlatformAttempt") {
+    const attempt = ownDataValue(input, "attempt");
+    const bounded = preflightActivityRecordingWireValue(attempt, maxFrameBytes);
+    if (bounded.ok && isAttemptReceipt(attempt)) {
+      return {
+        traceId: attempt.traceId,
+        parentRecordId: attempt.recordId,
+        settlement: attempt,
+      };
+    }
+  }
+  if (method === "recordInboundChannelActivity" || method === "beginDeliveryPlatformAttempt") {
+    const traceId = ownDataValue(input, "traceId");
+    if (typeof traceId === "string" && UUID_PATTERN.test(traceId)) {
+      return { traceId, parentRecordId: null };
+    }
+  }
+  return { traceId: null, parentRecordId: null };
 }
 
 function isInspection(value: unknown): value is ActivityRecordingInspection {
@@ -208,6 +247,7 @@ export function createProductionActivityRecorderHandoff(
   let closePromise: Promise<Result<void, Error>> | undefined;
   let heartbeatTimer: TimerHandle | undefined;
   let heartbeatInFlight = false;
+  let transportFailure: Error | undefined;
 
   function settlePending(requestId: string, result: Result<unknown, unknown>): void {
     const request = pending.get(requestId);
@@ -229,7 +269,14 @@ export function createProductionActivityRecorderHandoff(
           }));
       settlePending(requestId, result);
     }
+    for (const acknowledged of outstanding.values()) acknowledged?.();
     outstanding.clear();
+  }
+
+  function markTransportFailed(cause: Error): void {
+    transportFailure ??= new Error("Activity recorder worker became unavailable", { cause });
+    heartbeatTimer?.cancel();
+    failPending(transportFailure);
   }
 
   options.transport.onMessage((message) => {
@@ -260,6 +307,15 @@ export function createProductionActivityRecorderHandoff(
       } else {
         settlePending(message.requestId, err(genericError(wire.error)));
       }
+      return;
+    }
+    if (request.method === "recordGap") {
+      settlePending(message.requestId, err(runtimeFailure({
+        sourceKind: request.sourceKind!,
+        reason: "storage_failed",
+        occurredAtMs: request.occurredAtMs,
+        cause: new Error("Activity recorder worker returned success for a gap control frame"),
+      })));
       return;
     }
     if ((request.method === "recordInboundChannelActivity"
@@ -303,8 +359,7 @@ export function createProductionActivityRecorderHandoff(
     settlePending(message.requestId, ok(wire.value));
   });
   options.transport.onFailure((error) => {
-    heartbeatTimer?.cancel();
-    failPending(new Error("Activity recorder worker became unavailable", { cause: error }));
+    markTransportFailed(error);
   });
   options.transport.unref();
 
@@ -323,7 +378,19 @@ export function createProductionActivityRecorderHandoff(
     occurredAtMs?: number,
     bypassCapacity = false,
     onAcknowledged?: () => void,
+    allowGapFallback = true,
   ): Promise<Result<unknown, unknown>> {
+    if (transportFailure !== undefined) {
+      onAcknowledged?.();
+      return Promise.resolve(sourceKind === undefined
+        ? err(transportFailure)
+        : err(runtimeFailure({
+            sourceKind,
+            reason: "storage_failed",
+            occurredAtMs: occurredAtMs ?? 0,
+            cause: transportFailure,
+          })));
+    }
     const clock = readClock();
     if (!clock.ok) {
       onAcknowledged?.();
@@ -358,6 +425,16 @@ export function createProductionActivityRecorderHandoff(
     };
     const bounded = preflightActivityRecordingWireValue(frame, options.maxFrameBytes);
     if (!bounded.ok) {
+      if (sourceKind !== undefined && allowGapFallback && method !== "recordGap"
+        && bounded.error.reason === "payload_too_large") {
+        const causality = gapCausality(method, input, options.maxFrameBytes);
+        return request("recordGap", {
+          sourceKind,
+          reason: bounded.error.reason,
+          occurredAtMs: effectiveOccurredAtMs,
+          ...causality,
+        }, sourceKind, effectiveOccurredAtMs, bypassCapacity, onAcknowledged, false);
+      }
       onAcknowledged?.();
       return Promise.resolve(sourceKind === undefined
         ? err(bounded.error.cause)
@@ -389,17 +466,7 @@ export function createProductionActivityRecorderHandoff(
       outstanding.set(requestId, onAcknowledged);
       const posted = tryCatch(() => options.transport.postMessage(frame));
       if (!posted.ok) {
-        outstanding.delete(requestId);
-        onAcknowledged?.();
-        const result = sourceKind === undefined
-          ? err(posted.error)
-          : err(runtimeFailure({
-              sourceKind,
-              reason: "storage_failed",
-              occurredAtMs: effectiveOccurredAtMs,
-              cause: posted.error,
-            }));
-        settlePending(requestId, result);
+        markTransportFailed(posted.error);
       }
     });
   }
