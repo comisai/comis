@@ -211,7 +211,7 @@ describe("daemonStartStep", () => {
 
     expect(spawn).toHaveBeenCalledWith(
       "node",
-      expect.arrayContaining([expect.stringContaining("daemon-entrypoint.js")]),
+      expect.arrayContaining([expect.stringContaining("daemon")]),
       expect.objectContaining({ detached: true }),
     );
 
@@ -359,13 +359,11 @@ describe("daemonStartStep", () => {
     // /.dockerenv present + every other path exists (including the
     // /proc/<pid>/cmdline + status reads inside findContainerDaemonPid).
     vi.mocked(existsSync).mockReturnValue(true);
-    // Stub /proc walk: one pid 42 owned by PID 1, cmdline contains the daemon entrypoint.
+    // Stub /proc walk: one pid 42 owned by PID 1, cmdline contains "daemon.js".
     vi.mocked(readdirSync).mockReturnValue(["1", "42"] as unknown as ReturnType<typeof readdirSync>);
     vi.mocked(readFileSync).mockImplementation(((p: unknown) => {
       const path = String(p);
-      if (path === "/proc/42/cmdline") {
-        return "node\0/app/packages/daemon/dist/daemon-entrypoint.js\0";
-      }
+      if (path === "/proc/42/cmdline") return "node\0/app/packages/daemon/dist/daemon.js\0";
       if (path === "/proc/42/status") return "Name:\tnode\nPPid:\t1\n";
       return "";
     }) as never);

@@ -12,7 +12,7 @@
 | Thing | Path / value | Notes |
 |---|---|---|
 | ssh target | `$VPS` — set `user@host` in `scripts/.live-env` (auto-sourced by the local scripts; `deploy-scripts.sh` renders it to `/root/comis-rig.env` for the box side) | you are root; the daemon runs as `$COMIS_USER` (default `comis`). ssh key lives in your `~/.ssh` |
-| installation | `comis.service` (systemd) → `node --permission … $PKG/node_modules/@comis/daemon/dist/daemon-entrypoint.js` | `PKG=/home/comis/.npm-global/lib/node_modules/comisai` — the npm-global umbrella package; `comis` CLI on the comis user's PATH |
+| installation | `comis.service` (systemd) → `node --permission … $PKG/node_modules/@comis/daemon/dist/daemon.js` | `PKG=/home/comis/.npm-global/lib/node_modules/comisai` — the npm-global umbrella package; `comis` CLI on the comis user's PATH |
 | data dir | `/home/comis/.comis` (`DATA`) | config, secrets.db, sessions, workspace — owned by `comis` |
 | master key | `$DATA/.env` → `SECRETS_MASTER_KEY` | the daemon loads `<dataDir>/.env` at boot; the systemd unit also loads `/etc/comis/env` |
 | secrets | encrypted `secrets.db` | API keys, OAuth profiles, `COMIS_GATEWAY_TOKEN` — `su - comis -c 'comis secrets list'` |
@@ -28,7 +28,7 @@ VPS** (same host as the daemon).
 
 systemd owns the lifecycle (`User=comis` in the unit): restart with `bash /root/restart-daemon.sh`
 (= `systemctl restart comis` + a boot-verify against the fresh structured log), never a hand
-`setsid node … daemon-entrypoint.js`. Why it matters: as root, `os.homedir()`=`/root` → anything writing a
+`setsid node … daemon.js`. Why it matters: as root, `os.homedir()`=`/root` → anything writing a
 homedir-derived path hits `/root`, blocked by `--permission` → cryptic
 `FATAL: Access to this API has been restricted` (no path in the message). Root-owned leftovers in
 `~comis/.comis` then EACCES the comis daemon — `scripts/setup-vps.sh` (once per box) chowns them back,
@@ -166,10 +166,10 @@ Do not start the real test plan until ALL hold:
 > A harness with a silent gotcha (a too-short token that 401s, a stale `dist/`, a wrong env var, the wrong session path) makes a healthy daemon look broken and burns a whole cycle. Phase 0 is where you make the rig tell the truth.
 
 ## Traps that cost cycles (the short list — full set in `scripts/README.md` + `03-OBSERVABILITY.md`)
-- **`pkill -f "daemon-entrypoint.js"` self-matches your ssh shell** (its argv contains the pattern) → kills the shell → ssh exit 255. Always anchor: `pkill -9 -f "^node .*daemon-entrypoint\.js"`. **Same trap for the emulator:** `pkill -f "vps-emu"` self-kills the ssh shell running it (argv has "vps-emu.ts") — anchor `pkill -9 -f "^node .*vps-emu"`. And a backgrounded `nohup/setsid … &` emulator dies on ssh close → launch it in **tmux**. Both are baked into **`scripts/restart-emu.sh`** (use it; the port is kernel-allocated, so re-wire after: `node /root/wire-emu.mjs && bash /root/restart-daemon.sh`).
+- **`pkill -f "daemon.js"` self-matches your ssh shell** (its argv contains the pattern) → kills the shell → ssh exit 255. Always anchor: `pkill -9 -f "^node .*daemon\.js"`. **Same trap for the emulator:** `pkill -f "vps-emu"` self-kills the ssh shell running it (argv has "vps-emu.ts") — anchor `pkill -9 -f "^node .*vps-emu"`. And a backgrounded `nohup/setsid … &` emulator dies on ssh close → launch it in **tmux**. Both are baked into **`scripts/restart-emu.sh`** (use it; the port is kernel-allocated, so re-wire after: `node /root/wire-emu.mjs && bash /root/restart-daemon.sh`).
 - **Severing the LCD needs the FORMATTED session key, not the trajectory-filename form.** `session.reset_conversation {session_key}` wants `default:<chatId>:<chatId>:peer:<chatId>` (read it from `db.mjs sql "SELECT DISTINCT session_key FROM lcd_messages"`), NOT the `~`-separated trajectory filename (`<chatId>~peer~<chatId>`). On a key-format mismatch it returns `lcdRowsDeleted:0` **silently** (no error) → the LCD is NOT cleared and a "cross-session" recall test is invalid. Verify `lcdRowsDeleted>0` after a sever.
 - **Media OUTPUT delivery (image-gen/TTS/video-gen) is observable on the channel oracle** — the emulator records `sendPhoto`/`sendAudio`/`sendVideo` (with `mediaKind`), not just `sendVoice`/`sendDocument`. A media-only turn delivers no text, so `drive.mjs` prints `[NO SUBSTANTIVE ANSWER]` — read the outbound (`…/outbound` shows the `sendAudio`/`sendPhoto`) not the drive's text verdict.
 - **SSH drops on long sleeps** → add `-o ServerAliveInterval=5`. macOS has no `timeout`.
-- **`pgrep -f daemon-entrypoint.js` false-matches** your `bash -lc`/`sudo` wrappers → filter `grep -vE "bash|sudo|grep"`.
+- **`pgrep -f daemon.js` false-matches** your `bash -lc`/`sudo` wrappers → filter `grep -vE "bash|sudo|grep"`.
 - **Don't chase an `effectiveWindow:8192` viable-floor WARN** — for a catalog-unknown model it's usually an invalid/mistyped model, not a window bug. Pick a valid model.
 - **rootRunId has two formats:** orchestrate=`root-default-<id>`; graph/spawn=`root-session-<sessionKey>`.

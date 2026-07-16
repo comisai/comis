@@ -51,7 +51,7 @@ security:
 that was launched with the `--permission` flag (and any children that
 inherit it via `NODE_OPTIONS`). To enforce these restrictions you must:
 
-1. Launch the daemon under Node.js 22.19.0 or newer with `node --permission --allow-fs-read=... --allow-fs-write=... --allow-net=... packages/daemon/dist/daemon-entrypoint.js`.
+1. Launch the daemon under Node.js 22.19.0 or newer with `node --permission --allow-fs-read=... --allow-fs-write=... --allow-net=... packages/daemon/dist/daemon.js`.
 2. Mirror the same paths/hosts in `security.permission.allowedFsPaths` and `allowedNetHosts` so audit/security checks (e.g. the SSRF surface check in `packages/cli/src/security/checks/ssrf-surface.ts`) report the surface accurately.
 
 Setting `enableNodePermissions: true` alone does NOT pass `--permission`

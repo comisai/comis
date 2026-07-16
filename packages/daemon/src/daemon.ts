@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: daemon bootstrap composition-root failures propagate to the executable boundary, where startup fails closed.
+// @allow-throw: daemon bootstrap composition-root failures (secrets bootstrap, decryption, etc.); hard-fail at startup is the correct contract (bootstrap() returns Result but daemon.ts is the entry point that catches it and exits).
 /**
- * Live daemon composition root.
+ * Daemon Entry Point: composition root for the entire daemon process.
  *
  * Structure: (1) imports; (2) DEFAULT_CONFIG_PATHS + applyInspectDefaultsForLogging;
  * (3) hardenDataDirPermissions; (4) runPreflightDoctor; (5) process.env scrub helpers;
@@ -9,7 +9,7 @@
  * buildGraphCoordinatorDeps, wirePostChannelsLifecycle); (8) gateway-stage helpers
  * (resolveGatewayTokens, createHotAdd/Remove, buildRpcDispatchDeps,
  * replayContinuationsIfAny); (9) shutdown-stage helpers; (10) bootFoundation /
- * bootAgents / bootChannels / bootGateway / bootShutdown; (11) live start API.
+ * bootAgents / bootChannels / bootGateway / bootShutdown; (11) main(); (12) direct-run guard.
  *
  * The 4-handle chain (Foundation → Agents → Channels → Gateway) is collapsed into ONE
  * BootContext (`./daemon-types.ts`): each boot* helper takes `boot: BootContext` and
@@ -162,7 +162,7 @@ import { writeFile as fsWriteFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve as pathResolve } from "node:path";
 import { createExecGit } from "./config/exec-git.js";
-import { saveLastKnownGood } from "./config/last-known-good.js";
+import { saveLastKnownGood, buildRollbackSuggestion, handleRestoreFlag } from "./config/last-known-good.js";
 import { runConfigBootstrapAndEmitObserve } from "./config/bootstrap-observe.js";
 import {
   createRestartContinuationTracker,
@@ -2873,7 +2873,6 @@ async function bootShutdown(
   }
 
   return {
-    kind: "live",
     container, logger, logLevelManager, tokenTracker,
     processMonitor, shutdownHandle, cronSchedulers, resetSchedulers,
     browserServices, heartbeatRunner, gatewayHandle, adapterRegistry: adaptersByType,
@@ -2896,38 +2895,52 @@ async function bootShutdown(
   };
 }
 
-/** Start the full live composition after the minimal entrypoint authorizes it. */
-export async function startLiveDaemon(overrides: DaemonOverrides = {}): Promise<DaemonInstance> {
+/** Main daemon entry point. Wires all subsystem modules and returns DaemonInstance. */
+export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInstance> {
   const startupStartMs = Date.now();
   const instanceId = randomUUID().slice(0, 8);
 
   // Anthropic SDK debug log lines route through console.debug -> util.inspect.
-  // Deepen inspect defaults before code can construct an Anthropic client so
-  // the first SDK request diagnostic uses the intended inspection depth.
+  // Deepen inspect defaults BEFORE any code path that may construct an
+  // Anthropic client (skills/agent setup, prewarm, etc.) so the very first
+  // `[req] sending request` line shows the full body. Gated on ANTHROPIC_LOG
+  // so production runs are unaffected.
   // eslint-disable-next-line no-restricted-syntax -- process.env access required before SecretManager is initialized; ANTHROPIC_LOG is the SDK-owned switch, not a comis credential.
   applyInspectDefaultsForLogging(process.env as Record<string, string | undefined>);
 
-  // Probe native dependencies before subsystem initialization so missing
-  // bindings fail once with a repair hint instead of entering a restart loop.
+  // Preflight: probe native deps before any subsystem init so a missing
+  // better-sqlite3 'bindings' module fails fast with a clear repair hint
+  // instead of cascading into a systemd restart loop.
   const exitFn = overrides.exit ?? ((code: number) => process.exit(code));
   await (overrides.preflightDoctor ?? ((fn) => runPreflightDoctor(fn)))(exitFn);
 
-  // The five boot helpers populate one composition-root context in order.
+  // The 4-handle chain collapsed into a single BootContext that the 5
+  // boot* helpers populate in sequence. main() owns the single `boot`
+  // variable; helpers mutate it via Object.assign.
   const boot: BootContext = createEmptyBootContext();
-  // Foundation owns data, secrets, configuration, logging, memory, and the
-  // deferred references consumed by later stages.
+
+  // Stage 1: foundation. Owns data-dir + secrets + bootstrap + logging +
+  // observability + memory + obs-persistence + context store + session
+  // mirroring + Gemini cache + background tasks + deferred refs.
   await bootFoundation(boot, { overrides, startupStartMs, instanceId });
 
-  // A partial boot must release the singleton data lock. Normal shutdown owns
-  // the same release after the shutdown stage has been installed.
+  // Stages 2-5: wrapped so a failure in any post-foundation stage releases the
+  // singleton lock. Under normal boot, setupShutdown.onShutdown owns
+  // the release; this catch handles partial-boot failures before that fires.
   try {
-    // Agents owns executors, media, scheduler, RPC, approvals, and delivery.
+    // Stage 2: agents. Owns agent executors + mcpClientManager + schedulers +
+    // media + RPC bridge + approval gate (with restore) + delivery queue.
     await bootAgents(boot, { overrides });
-    // Channels owns adapters, tools, notifications, graphs, and monitoring.
+    // Stage 3: channels. Owns sandbox/image-gen + tools (HOISTED) + channel
+    // adapters + notifications + bg completion runner + cross-session + graph
+    // + monitoring + heartbeat + wake coalescer + agent runtime state.
     await bootChannels(boot);
-    // Gateway owns external listeners, dispatch, and continuation replay.
+    // Stage 4: gateway. Owns token registry + session store bridge + shutdown
+    // ref slot + hot-add/hot-remove closures + RPC dispatch deps assembly +
+    // gateway server + restart continuation replay.
     await bootGateway(boot, { overrides, startupStartMs, instanceId });
-    // Shutdown completes lifecycle wiring and returns the live capability set.
+    // Stage 5: shutdown. Constructs shutdown handle, wires health logging,
+    // emits the startup banner ("Comis daemon started"), returns DaemonInstance.
     return await bootShutdown(boot, { overrides, startupStartMs, instanceId });
   } catch (e: unknown) {
     releaseDataDirLock(boot.dataDir);
@@ -2935,7 +2948,45 @@ export async function startLiveDaemon(overrides: DaemonOverrides = {}): Promise<
   }
 }
 
-/** Public programmatic live-daemon API. The executable role gate is daemon-entrypoint.ts. */
-export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInstance> {
-  return startLiveDaemon(overrides);
+// Only run when invoked directly (not imported).
+// Under pm2, process.argv[1] is ProcessContainerFork.js — detect via pm_id env var.
+const isDirectRun =
+  typeof process !== "undefined" &&
+  process.argv[1] &&
+  (process.argv[1].endsWith("daemon.js") ||
+    process.argv[1].endsWith("daemon.ts") ||
+    // eslint-disable-next-line no-restricted-syntax -- Trusted: checking pm2 runtime indicator
+    process.env["pm_id"] !== undefined);
+
+if (isDirectRun) {
+  // Handle --restore-last-good before startup
+  if (process.argv.includes("--restore-last-good")) {
+    // eslint-disable-next-line no-restricted-syntax -- process.env access needed for config path resolution
+    const rawPaths = process.env["COMIS_CONFIG_PATHS"];
+    const paths = (rawPaths ? rawPaths.split(":") : DEFAULT_CONFIG_PATHS).filter((p) => existsSync(p));
+    handleRestoreFlag(paths, (code) => process.exit(code));
+  } else {
+    main().catch((error: unknown) => {
+      // Fatal error -- log to stderr and exit
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`FATAL: ${message}\n`);
+
+      // Suggest rollback from last-known-good config
+      // eslint-disable-next-line no-restricted-syntax -- process.env access needed for config path resolution
+      const rawPaths = process.env["COMIS_CONFIG_PATHS"];
+      const paths = (rawPaths ? rawPaths.split(":") : DEFAULT_CONFIG_PATHS).filter((p) => existsSync(p));
+      if (paths.length > 0) {
+        const suggestion = buildRollbackSuggestion(paths[paths.length - 1]!);
+        if (suggestion) {
+          process.stderr.write(`\n--- Last-known-good config available ---\n`);
+          process.stderr.write(`${suggestion.hint}\n`);
+          if (suggestion.diff) {
+            process.stderr.write(`\nChanges since last successful startup:\n${suggestion.diff}\n`);
+          }
+        }
+      }
+
+      process.exit(1);
+    });
+  }
 }

@@ -16,8 +16,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildProductionSnapshotPlan,
-  deriveProductionSnapshotDataTreeIdentity,
-  deriveProductionSnapshotEnvironmentEvidenceIdentity,
+  deriveProductionSnapshotTreeIdentity,
   parseProductionSnapshotManifest,
   type ProductionSnapshotManifest,
 } from "./production-snapshot.js";
@@ -55,8 +54,7 @@ function makeManifest(
       capability: "captured",
       gaps: [],
     },
-    dataTreeIdentitySha256: "0".repeat(64),
-    sourceEnvironmentEvidenceIdentitySha256: "0".repeat(64),
+    treeIdentitySha256: "0".repeat(64),
     entries: [
       { path: "data", type: "directory", mode: "0700", size: 0, ...entryMetadata },
       {
@@ -143,11 +141,8 @@ function makeManifest(
   const merged = { ...base, ...overrides };
   return {
     ...merged,
-    dataTreeIdentitySha256:
-      overrides.dataTreeIdentitySha256 ?? deriveProductionSnapshotDataTreeIdentity(merged),
-    sourceEnvironmentEvidenceIdentitySha256:
-      overrides.sourceEnvironmentEvidenceIdentitySha256 ??
-      deriveProductionSnapshotEnvironmentEvidenceIdentity(merged),
+    treeIdentitySha256:
+      overrides.treeIdentitySha256 ?? deriveProductionSnapshotTreeIdentity(merged),
   };
 }
 
@@ -350,24 +345,6 @@ describe("production source snapshot seam", () => {
       gid: 1002,
       mtimeNs: "1752560000123456789",
     });
-  });
-
-  it("separates restorable data identity from captured environment evidence", () => {
-    const original = makeManifest();
-    const environmentChanged = makeManifest({
-      entries: original.entries.map((entry) =>
-        entry.path === "system/etc/comis/env"
-          ? { ...entry, sha256: "9".repeat(64) }
-          : entry,
-      ),
-    });
-
-    expect(environmentChanged.dataTreeIdentitySha256).toBe(
-      original.dataTreeIdentitySha256,
-    );
-    expect(environmentChanged.sourceEnvironmentEvidenceIdentitySha256).not.toBe(
-      original.sourceEnvironmentEvidenceIdentitySha256,
-    );
   });
 
   it("rejects absolute traversal backslash and control-character manifest paths", () => {
@@ -665,11 +642,8 @@ describe("production source snapshot seam", () => {
       expect(
         parsed.value.entries.filter(({ type }) => type === "directory").every(({ size }) => size === 0),
       ).toBe(true);
-      expect(parsed.value.dataTreeIdentitySha256).toBe(
-        deriveProductionSnapshotDataTreeIdentity(parsed.value),
-      );
-      expect(parsed.value.sourceEnvironmentEvidenceIdentitySha256).toBe(
-        deriveProductionSnapshotEnvironmentEvidenceIdentity(parsed.value),
+      expect(parsed.value.treeIdentitySha256).toBe(
+        deriveProductionSnapshotTreeIdentity(parsed.value),
       );
 
       unlinkSync(join(stage, "manifest.json"));

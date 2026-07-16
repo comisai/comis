@@ -360,7 +360,7 @@ tsx test/live/bin/vps-emu-msteams.ts
 #    then boot the daemon with the two seams from the emulator's printed `daemonEnv`:
 COMIS_MSTEAMS_TEST_JWKS=/tmp/comis-msteams-jwks.json \
 COMIS_MSTEAMS_TEST_CONNECTOR=http://127.0.0.1:<emuPort> \
-  node packages/daemon/dist/daemon-entrypoint.js
+  node packages/daemon/dist/daemon.js
 
 # 3. Drive an inbound turn (signs a Bearer via the emulator, POSTs to the ingress,
 #    polls the Connector oracle for the agent reply):

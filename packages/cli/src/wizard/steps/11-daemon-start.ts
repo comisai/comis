@@ -312,7 +312,7 @@ type ServiceManager = "systemd" | "systemd-user" | "direct";
  * Find the comis daemon PID inside the container.
  *
  * Scans /proc for processes whose parent is PID 1 and whose cmdline
- * contains the daemon entrypoint. Used to signal the container's daemon for a
+ * contains "daemon.js". Used to signal the container's daemon for a
  * Docker-native restart instead of spawning a sibling.
  */
 async function findContainerDaemonPid(): Promise<number | undefined> {
@@ -332,7 +332,7 @@ async function findContainerDaemonPid(): Promise<number | undefined> {
         continue;
       }
       if (ppid !== "1") continue;
-      if (!cmdline.includes("daemon-entrypoint.js")) continue;
+      if (!cmdline.includes("daemon.js")) continue;
       return pid;
     }
   } catch { /* /proc not accessible */ }
@@ -609,10 +609,7 @@ export const daemonStartStep: WizardStep = {
     spinner.start("Starting daemon...");
 
     try {
-      const daemonPath = new URL(
-        "../../../../daemon/dist/daemon-entrypoint.js",
-        import.meta.url,
-      ).pathname;
+      const daemonPath = new URL("../../../../daemon/dist/daemon.js", import.meta.url).pathname;
 
       if (!existsSync(daemonPath)) {
         spinner.stop("Daemon binary not found");

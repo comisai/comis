@@ -509,7 +509,7 @@ If you need a literally separate bot identity per agent (different
 mkdir -p ~/.comis-research && cp ~/.comis/config.yaml ~/.comis-research/config.yaml
 # Edit to use a different TELEGRAM_BOT_TOKEN and a single agent
 COMIS_CONFIG_PATHS="$HOME/.comis-research/config.yaml" \
-  pm2 start packages/daemon/dist/daemon-entrypoint.js --name comis-research
+  pm2 start packages/daemon/dist/daemon.js --name comis-research
 ```
 
 The schema currently allows one `channels.telegram` entry per daemon, so

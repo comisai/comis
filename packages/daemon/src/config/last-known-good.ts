@@ -177,7 +177,7 @@ export function buildRollbackSuggestion(configPath: string): {
   return {
     hint:
       `A last-known-good config exists from a previous successful startup. ` +
-      `To restore it, run: node daemon-entrypoint.js --restore-last-good\n` +
+      `To restore it, run: node daemon.js --restore-last-good\n` +
       `Or manually: cp "${lkgPath}" "${configPath}"`,
     lkgPath,
     diff,

@@ -492,7 +492,7 @@ If you use `secrets.db`, make sure you also have your `SECRETS_MASTER_KEY` store
 By default Comis resolves config from `~/.comis/config.yaml` and `~/.comis/config.local.yaml`. You can override this with `COMIS_CONFIG_PATHS`, a colon-separated list of absolute paths:
 
 ```bash
-COMIS_CONFIG_PATHS="/etc/comis/config.yaml:/home/me/.comis/config.yaml" node packages/daemon/dist/daemon-entrypoint.js
+COMIS_CONFIG_PATHS="/etc/comis/config.yaml:/home/me/.comis/config.yaml" node packages/daemon/dist/daemon.js
 ```
 
 The data directory (`~/.comis/`) is separately controlled by `COMIS_DATA_DIR`. See [Configuration](/installation/configuration) for a full reference.
@@ -521,7 +521,7 @@ To start completely fresh:
 
 ```bash
 # Stop the daemon first
-pm2 stop comis   # or an anchored daemon-entrypoint.js process match
+pm2 stop comis   # or pkill -f daemon.js
 
 # Remove everything
 rm -rf ~/.comis

@@ -57,7 +57,7 @@ async function runPm2(...args: string[]): Promise<{ stdout: string; stderr: stri
 async function handleSetup(options: { enableBoot?: boolean }): Promise<void> {
   await ensurePm2();
 
-  const daemonPath = new URL("../../../daemon/dist/daemon-entrypoint.js", import.meta.url).pathname;
+  const daemonPath = new URL("../../../daemon/dist/daemon.js", import.meta.url).pathname;
   if (!existsSync(daemonPath)) {
     error("Daemon binary not found. Run `pnpm build` first.");
     process.exit(1);

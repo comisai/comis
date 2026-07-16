@@ -7,7 +7,7 @@
 #      command (its argv contains "vps-emu.ts") → it kills itself → empty output /
 #      ssh exit 255, emulator never relaunched. MUST anchor `^node ` (the bash/ssh
 #      wrapper argv starts with "bash"/"sshd", never "node"). Same class as the
-#      `pkill -f daemon-entrypoint.js` trap in 01-SETUP.
+#      `pkill -f daemon.js` trap in 01-SETUP.
 #  (2) BG-OVER-SSH DIES — `nohup … &` / `setsid … &` inside an ssh command dies when
 #      the channel closes despite nohup/setsid. tmux fully detaches and persists.
 #

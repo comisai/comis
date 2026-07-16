@@ -20,7 +20,6 @@
  */
 
 import type { TimerPort, SessionKey } from "@comis/core";
-import type { ReplayQuarantineRuntime } from "./replay-quarantine.js";
 import type { AppContainer, ChannelPort, DeliveryQueuePort, DeliveryAdapter } from "@comis/core";
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import type { ChannelActivityRenderer } from "@comis/core";
@@ -130,7 +129,6 @@ export interface PermissionCorrection {
  * The running daemon instance with all wired services.
  */
 export interface DaemonInstance {
-  readonly kind: "live";
   readonly container: AppContainer;
   readonly logger: ComisLogger;
   readonly logLevelManager: LogLevelManager;
@@ -195,9 +193,6 @@ export interface DaemonInstance {
     saveByFormattedKey: (sessionKey: string, messages: unknown[], metadata?: Record<string, unknown>) => void;
   };
 }
-
-/** Honest daemon startup result: full live capabilities or isolated replay quarantine. */
-export type DaemonRuntime = DaemonInstance | ReplayQuarantineRuntime;
 
 /**
  * Overrides for dependency injection during testing.

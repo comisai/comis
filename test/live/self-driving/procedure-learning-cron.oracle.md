@@ -72,7 +72,7 @@ Confirm the SHIPPED shape on the box before driving (the CLI rides the comis use
 ## STEP 1 — deploy + restart (ground the run on THIS build)
 
 Deploy the current `dist` and restart the daemon so the live process is not running a stale
-`dist/daemon-entrypoint.js` (`scripts/deploy-dist.sh` + `bash /root/restart-daemon.sh`; full dep changes →
+`dist/daemon.js` (`scripts/deploy-dist.sh` + `bash /root/restart-daemon.sh`; full dep changes →
 `scripts/install-vps.sh`). Verify the live build is THIS checkout before driving
 (`cat /root/comis-deployed-build` + the HEAD-only symbol grep, 01-SETUP.md §2).
 

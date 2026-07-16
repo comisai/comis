@@ -20,7 +20,7 @@ chown -R "$COMIS_USER:$COMIS_USER" "$DATA"
 
 echo "3) Layout sanity (the production installation this rig targets)…"
 echo -n "   service      : "; systemctl is-active "$SERVICE" 2>/dev/null || echo "not-active"
-echo -n "   daemon dist  : "; ls "$PKG/node_modules/@comis/daemon/dist/daemon-entrypoint.js" 2>/dev/null || echo "MISSING — run install-vps.sh first"
+echo -n "   daemon dist  : "; ls "$PKG/node_modules/@comis/daemon/dist/daemon.js" 2>/dev/null || echo "MISSING — run install-vps.sh first"
 echo -n "   cli          : "; su - "$COMIS_USER" -c 'command -v comis' 2>/dev/null || echo "MISSING from $COMIS_USER PATH"
 echo -n "   rpc client   : "; ls "$PKG/node_modules/@comis/cli/dist/client/rpc-client.js" 2>/dev/null || echo "MISSING"
 echo -n "   jail deps    : "; for b in bwrap tmux ffmpeg; do printf '%s:%s ' "$b" "$(command -v $b >/dev/null && echo ok || echo MISSING)"; done; echo

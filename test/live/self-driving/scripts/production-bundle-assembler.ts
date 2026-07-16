@@ -16,7 +16,7 @@ import {
 } from "./production-evidence.js";
 import { parseProductionCaptureEpisode } from "./production-episode.js";
 import {
-  deriveProductionSnapshotDataTreeIdentity,
+  deriveProductionSnapshotTreeIdentity,
   parseProductionSnapshotManifest,
   type ProductionSnapshotManifest,
 } from "./production-snapshot.js";
@@ -170,23 +170,20 @@ function decodePrivateText(plaintext: Uint8Array): Result<string, ProductionRepl
 function stateIdentity(
   manifest: Pick<
     ProductionSnapshotManifest,
-    "entries" | "metadataIdentity" | "dataTreeIdentitySha256"
+    "entries" | "metadataIdentity" | "treeIdentitySha256"
   >,
 ): ReplayStateIdentity | null {
   let bytes = 0;
-  const dataEntries = manifest.entries.filter(
-    (entry) => entry.path === "data" || entry.path.startsWith("data/"),
-  );
-  for (const entry of dataEntries) {
+  for (const entry of manifest.entries) {
     if (entry.type !== "file") continue;
     bytes += entry.size;
     if (!Number.isSafeInteger(bytes)) return null;
   }
-  const treeDigestSha256 = deriveProductionSnapshotDataTreeIdentity(manifest);
-  if (!equalDigest(treeDigestSha256, manifest.dataTreeIdentitySha256)) return null;
+  const treeDigestSha256 = deriveProductionSnapshotTreeIdentity(manifest);
+  if (!equalDigest(treeDigestSha256, manifest.treeIdentitySha256)) return null;
   return {
     treeDigestSha256,
-    entryCount: dataEntries.length,
+    entryCount: manifest.entries.length,
     bytes,
   };
 }
@@ -194,7 +191,7 @@ function stateIdentity(
 export function deriveProductionSnapshotStateIdentity(
   manifest: Pick<
     ProductionSnapshotManifest,
-    "entries" | "metadataIdentity" | "dataTreeIdentitySha256"
+    "entries" | "metadataIdentity" | "treeIdentitySha256"
   >,
 ): Result<ReplayStateIdentity, ProductionReplayBundleAssemblyError> {
   const identity = stateIdentity(manifest);

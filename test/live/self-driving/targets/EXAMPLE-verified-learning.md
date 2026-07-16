@@ -114,7 +114,7 @@ drive these FIRST. The **reflection LLM call** that admits a doc (REFL-3/4 + INV
 ## LIVE-RUN lessons — don't re-discover
 - **The box may be on a STALE dist.** A run once found the VPS running a stale dist (no `schema-mental-models.js`);
   deploy YOUR current dist + PROVE on new code via ground truth (fresh `memory.db` has `mental_models`, NOT
-  `learned_skills`; the 3 crons via `cron.list`; fresh daemon-entrypoint.js process start) before trusting any result.
+  `learned_skills`; the 3 crons via `cron.list`; fresh daemon.js mtime) before trusting any result.
 - **Migrate the config FIRST or the daemon FATALs at parse.** A leftover legacy `memory.costFeatures.enabled`
   is an unknown key under the `z.strictObject` `MemoryConfigSchema` → Bootstrap FATAL. cfg-patch
   `{"memory":{"costFeatures":"__DELETE__","enabled":true}}` before the first restart.
