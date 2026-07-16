@@ -4354,7 +4354,7 @@ process_is_comis_daemon() {
         local arg
         while IFS= read -r -d '' arg; do
             case "$arg" in
-                */node_modules/@comis/daemon/dist/daemon-entrypoint.js|*/packages/daemon/dist/daemon-entrypoint.js)
+                */node_modules/@comis/daemon/dist/daemon.js|*/packages/daemon/dist/daemon.js)
                     return 0
                     ;;
             esac
@@ -4370,7 +4370,7 @@ process_is_comis_daemon() {
     local process_command
     process_command="$(ps -ww -o command= -p "$pid" 2>/dev/null || true)"
     case "$process_command" in
-        *"/node_modules/@comis/daemon/dist/daemon-entrypoint.js"*|*"/packages/daemon/dist/daemon-entrypoint.js"*) return 0 ;;
+        *"/node_modules/@comis/daemon/dist/daemon.js"*|*"/packages/daemon/dist/daemon.js"*) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -4519,7 +4519,7 @@ resolve_service_template_vars() {
         if [[ -n "${final_git_dir:-}" ]]; then
             git_dir="$final_git_dir"
         fi
-        COMIS_DAEMON_JS="${git_dir}/packages/daemon/dist/daemon-entrypoint.js"
+        COMIS_DAEMON_JS="${git_dir}/packages/daemon/dist/daemon.js"
     else
         # npm install - probe known layouts under the global npm root.
         # The published `comisai` package bundles @comis/* under node_modules/;
@@ -4539,8 +4539,8 @@ resolve_service_template_vars() {
         )
 
         local -a candidate_entries=(
-            "node_modules/@comis/daemon/dist/daemon-entrypoint.js"
-            "packages/daemon/dist/daemon-entrypoint.js"
+            "node_modules/@comis/daemon/dist/daemon.js"
+            "packages/daemon/dist/daemon.js"
         )
 
         COMIS_DAEMON_JS=""
@@ -4559,7 +4559,7 @@ resolve_service_template_vars() {
             ui_error "Could not locate comisai daemon entry point."
             echo "  Searched under:"
             for root in "${candidate_roots[@]}"; do
-                echo "    ${root}/{node_modules/@comis/daemon,packages/daemon}/dist/daemon-entrypoint.js"
+                echo "    ${root}/{node_modules/@comis/daemon,packages/daemon}/dist/daemon.js"
             done
             return 1
         fi
