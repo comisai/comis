@@ -56,6 +56,19 @@ jobs:
         # bwrap --unshare-net test ("loopback: Failed RTM_NEWADDR").
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      # The integration/e2e daemons boot a LOCAL embedding model; global test
+      # setup downloads the ~139 MB GGUF once from Hugging Face and per-fork
+      # boots hard-link it. When HF is slow or throttled that download blows
+      # the cap and 40+ daemon boots cold-download in parallel straight into
+      # the 60s hook timeout. Persist the model across runs so HF is never
+      # on the boot path. Key must track DEFAULT_EMBEDDING_MODEL_URI
+      # (test/support/model-cache.ts).
+      - name: Cache local embedding models
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.comis/models
+          key: embedding-models-nomic-embed-text-v1.5-Q8_0
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
