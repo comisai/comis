@@ -6,20 +6,6 @@
 > honestly.** This file is the orchestration loop. It cites the other kit docs — read each when it says to.
 > Do not pause to ask the user what to do; the target IS the directive. Drive.
 
-## Route production evidence before this loop
-
-If the target names a real production host, activity window, incident, user-channel history, proactive
-dispatch, cron execution, or a production-to-test reconstruction, follow
-**`06-PRODUCTION-FORENSIC-REPLAY.md` before STEP 1**. The production host is evidence, not the emulator rig:
-never run `clean-restart.sh`, `wire-emu.mjs`, channel emulators, config patchers, database seeders, or normal
-drive helpers against it. Pin source and target machine identities, inspect first, and confine all replay
-mutation to the test-role machine. Source service mutation is limited to an explicitly authorized bounded
-freeze; otherwise capture only from an already stopped source or use read-only historical evidence.
-
-Historical evidence without a pre-activity checkpoint is useful but is not exact replay. A prospective
-bounded episode must prove its initial checkpoint, per-source watermarks, deterministic inputs, dependency
-cassettes, and independent final observation before this loop may use the word “exact.”
-
 ## Non-negotiables (carry these through every step — full text in `02-DISCIPLINE.md`)
 1. **A false success is the worst outcome.** Make the system tell the truth about failure *before* you optimize for success.
 2. **Ground truth, not the reply.** The agent's chat reply is the *least* trustworthy oracle. Read the daemon log / trajectory / `explain` / the dual oracle (`03-OBSERVABILITY.md`).

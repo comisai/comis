@@ -1,48 +1,16 @@
 # Live-test helper scripts — VPS + channel emulators (Telegram, Microsoft Teams)
 
-Ready-to-run versions of every helper used in the live-test, targeting the **installer-created layout**
+Ready-to-run versions of every helper used in the live-test, targeting the **production installation**
 (the systemd + npm-global layout `website/public/install.sh` creates — the same thing users get).
 Read **`../01-SETUP.md`** for the full setup playbook and **`../03-OBSERVABILITY.md`** for the traps —
 this folder is the copy-paste toolkit those docs refer to. (Driven by `../00-MISSION.md`.)
 
-## Production forensic controller
+## Config — ALL per-box values live in `.live-env` (gitignored)
 
-Use `production-replay.ts` only for a pinned production → isolated-test investigation. Read
-`../06-PRODUCTION-FORENSIC-REPLAY.md` first. It validates distinct machine identities and roles, installs a
-fresh target without starting it, applies the test-role quarantine, seals runtime artifacts through
-trusted controller composition, and compares offline message and evidence inventories. The public
-controller exposes no state capture or promotion command.
-
-```bash
-CTRL='test/live/self-driving/scripts/production-replay-controller.sh'
-
-$CTRL profile
-$CTRL doctor
-$CTRL prepare-target
-$CTRL runtime-attest
-$CTRL seal-runtime --run-id runtime-capture-a1 --attempt-id 0123456789abcdef0123456789abcdef
-$CTRL recover-runtime --run-id runtime-capture-a1 --attempt-id 0123456789abcdef0123456789abcdef
-$CTRL messages-attest --channel telegram
-$CTRL evidence-parity
-```
-
-The wrapper runs the controller in a pinned Ubuntu image and keeps its private recovery authority in the
-`comis-production-replay-controller-v1` Docker volume. It requires the operator SSH agent and mounts
-owner-controlled SSH config and known-hosts files read-only; neither those inputs nor `.live-env` enter
-the image build context.
-
-The current controller stops at verified preparation and attestation. It does not yet drive the live Comis
-composition root, transfer state, or claim exact replay. Keep the target stopped. The ordinary emulator
-scripts below operate on `VPS`; `VPS` must never point at the production source.
-
-## Config — all host values live in `.live-env` (gitignored)
-
-`cp .live-env.example .live-env`, set mode `0600`, and edit. The local scripts auto-source it; `deploy-scripts.sh`
+`cp .live-env.example .live-env` and edit. The LOCAL scripts auto-source it; `deploy-scripts.sh`
 renders it to **`/root/comis-rig.env`** on the box, where the box-side `.sh` scripts source it and the
-`.mjs` helpers read it via **`_rig.mjs`** (explicit env always wins). The production controller requires
-the `SOURCE_*` and `TARGET_*` fields documented in `.live-env.example`. The synthetic emulator helpers
-require `VPS`, which must select the test machine. The remaining fields describe the standard installer
-layout:
+`.mjs` helpers read it via **`_rig.mjs`** (explicit env always wins). Only `VPS` is mandatory — the
+rest ARE the standard install.sh layout:
 
 | Var | Default | Meaning |
 |---|---|---|
