@@ -227,7 +227,8 @@ jobs:
       # on the boot path. Key must track DEFAULT_EMBEDDING_MODEL_URI
       # (test/support/model-cache.ts).
       - name: Cache local embedding models
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: model-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.comis/models
           key: embedding-models-nomic-embed-text-v1.5-Q8_0
@@ -253,6 +254,26 @@ jobs:
             test/integration/install-detour-soft-stop-e2e.test.ts \
             test/integration/install-detour-advise-e2e.test.ts \
             test/integration/tooling-fixture-render.test.ts
+
+      - name: Check embedding model completeness (guards the cache save)
+        id: model-cache-complete
+        if: always() && steps.model-cache.outputs.cache-hit != 'true'
+        run: |
+          rm -f ~/.comis/models/*.ipull* 2>/dev/null || true
+          if ls ~/.comis/models/*nomic-embed*.gguf >/dev/null 2>&1; then
+            echo "complete=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Save even when the job failed — a slow-registry run that still finished
+      # the download banks the model for every later run.
+      - name: Save local embedding models cache
+        if: always() && steps.model-cache-complete.outputs.complete == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.comis/models
+          key: embedding-models-nomic-embed-text-v1.5-Q8_0
 
   # ---------------------------------------------------------------------------
   # e2e — orchestrate driver + flow-matrix gate (boots the daemon)
@@ -287,7 +308,8 @@ jobs:
       # on the boot path. Key must track DEFAULT_EMBEDDING_MODEL_URI
       # (test/support/model-cache.ts).
       - name: Cache local embedding models
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: model-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.comis/models
           key: embedding-models-nomic-embed-text-v1.5-Q8_0
@@ -308,6 +330,26 @@ jobs:
 
       - name: E2E flow-matrix gate
         run: pnpm test:orchestrate --check-matrix
+
+      - name: Check embedding model completeness (guards the cache save)
+        id: model-cache-complete
+        if: always() && steps.model-cache.outputs.cache-hit != 'true'
+        run: |
+          rm -f ~/.comis/models/*.ipull* 2>/dev/null || true
+          if ls ~/.comis/models/*nomic-embed*.gguf >/dev/null 2>&1; then
+            echo "complete=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Save even when the job failed — a slow-registry run that still finished
+      # the download banks the model for every later run.
+      - name: Save local embedding models cache
+        if: always() && steps.model-cache-complete.outputs.complete == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.comis/models
+          key: embedding-models-nomic-embed-text-v1.5-Q8_0
 
   # ---------------------------------------------------------------------------
   # tarball — published-package smoke (pnpm pack + install)
