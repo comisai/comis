@@ -26,15 +26,13 @@
 
 # Comis
 
-Comis gives AI platform and security teams an Apache-2.0, self-hosted runtime for governed multi-agent workflows, with scoped authority, bounded spend, recoverable context, provenance-aware memory, and operational evidence.
+Comis is an Apache-2.0, self-hosted runtime for governed multi-agent workflows, built for AI platform and security teams and for operators moving persistent agents onto real tools and data. It provides scoped authority, bounded spend, recoverable context, provenance-aware memory, and operational evidence.
 
-**Govern execution, memory, security, authority, and cost as one system.** Formal workflows, recoverable context, provenance-aware memory, scoped authority, bounded spend, and operational evidence share one governance model.
+**Govern execution, memory, security, authority, and cost as one system.** Formal workflows, recoverable context, provenance-aware memory, scoped authority, bounded spend, and operational evidence share one governance model, enforced inside the runtime rather than by a proxy in front of it.
 
-It is also built for self-hosted operators and security-conscious builders moving persistent agents onto real tools and data.
+**Every run leaves evidence.** What each agent was allowed to do, what it read, learned, and spent. When something fails, one command explains why.
 
-The controls apply to agents executing through Comis-controlled paths.
-
-Comis runs on infrastructure you control. Network access depends on the models, channels, tools, and media services you configure.
+Comis runs on infrastructure you control. The controls apply to agents executing through Comis-controlled paths, and network access depends on the models, channels, tools, and media services you configure.
 
 > [!NOTE]
 > **Development status:** Comis is under active development. APIs and configuration may change, and deployments should be evaluated carefully before use in critical environments. See [Current limitations](#current-limitations) and the [threat model](THREAT_MODEL.md).
@@ -85,13 +83,26 @@ Comis does not compete on feature count alone. Its strength is one governance mo
 
 | Capability | What it provides |
 | --- | --- |
+| **Operational evidence** | Traces, trajectories, audit records, fleet and delivery health, and recall/cache diagnostics feed deterministic incident explanation: `comis explain` reports a session's outcome, cost, failures, and likely root cause in one call, with no LLM in the loop. |
+| **Bounded spend** | Provider cost accounting connects to graph budgets and configurable spend ceilings that stop a run when it crosses the line, instead of reporting the bill afterward. |
+| **Security for adversarial models** | Comis treats model output and external content as untrusted, with scoped stores, capability gates, deny-by-origin controls, encrypted secrets, credential brokering, memory/input/output guards, and audit events. |
+| **Per-agent operational control** | Assign each agent its own model, memory/context scopes, tools, budgets, policies, configurable secret allowlist, and routing bindings across channels and APIs. |
 | **Formal multi-agent execution** | Typed DAGs coordinate sequential and parallel nodes with barriers, retries, budgets, approval nodes, debate, voting, refinement, and map-reduce; configured durable runs add checkpoints and node-boundary recovery. |
 | **Recoverable context by default** | Canonical messages and tool results remain available beneath summaries in the default DAG-backed context engine and can be recovered with `ctx_search`, `ctx_inspect`, and `ctx_expand`. |
-| **Provenance-aware memory and learning** | Learning combines source provenance, configurable corroboration, trust ceilings, outcome gates, correction-driven demotion, supersession, and usefulness feedback. |
-| **Security for adversarial models** | Comis treats model output and external content as untrusted, with scoped stores, capability gates, deny-by-origin controls, encrypted secrets, credential brokering, memory/input/output guards, and audit events. |
-| **Bounded spend and operational evidence** | Traces, trajectories, incident explanation, fleet and delivery health, recall/cache diagnostics, audit records, provider cost accounting, and opt-in spend ceilings connect enforcement to investigation. |
-| **Per-agent operational control** | Assign each agent its own model, memory/context scopes, tools, budgets, policies, configurable secret allowlist, and routing bindings across channels and APIs. |
+| **Provenance-aware memory and learning** | Learning combines source provenance, configurable corroboration, trust ceilings, outcome gates, correction-driven demotion, supersession, and usefulness feedback: a memory architecture you can inspect, evaluate, and trust. |
 | **Architecture built to evolve safely** | Hexagonal ports and adapters, a composition root, `Result` discipline, strict schemas, typed events, dependency rules, targeted test-neighbor gates, cycle checks, security linting, and shrink-only architecture gates keep change contained. |
+
+### When something fails, one command explains why
+
+Agent failures are usually reconstructed by hand from scattered logs. Comis records enough evidence at every boundary (model calls, tool calls, policy decisions, memory writes, spend) to answer the question directly:
+
+```bash
+comis explain "<sessionKey|traceId>"   # outcome, cost, tool failures, breaker timeline, likely root cause
+comis fleet --since 24                 # daemon-wide: degraded rate, top error kinds, cost, config posture
+comis security audit-log               # who accessed a secret, what was blocked, scrubbed and durable
+```
+
+The reports are deterministic (same input, same verdict), bounded, and content-safe: counts and hints, never message bodies or secrets. They can be shared in an incident review as-is.
 
 ## Where Comis Fits
 
@@ -106,6 +117,7 @@ Comis does not compete on feature count alone. Its strength is one governance mo
 - **Media:** Speech-to-text, text-to-speech, image and video analysis, image generation, and document extraction.
 - **Automation:** Cron, heartbeat monitoring, background work, sub-agents, and durable execution graphs.
 - **Interfaces:** Web dashboard, CLI, JSON-RPC, WebSocket, early Agent Client Protocol (ACP) bridge work, and experimental OpenAI-shaped HTTP endpoints.
+- **Observability:** Native traces and trajectories, deterministic incident explanation (`comis explain`), fleet health, a scrubbed security audit log, provider cost accounting, optional OpenTelemetry export aligned with the stable GenAI model-call conventions, and a loopback-default Prometheus endpoint.
 - **Storage:** Local SQLite stores with FTS5, optional vectors, session history, delivery queues, and encrypted-by-default secret storage.
 
 ## Security and Deployment
@@ -120,6 +132,8 @@ Isolation depends on the host:
 - The default agent tool-policy profile is `full`, and an empty `secrets.allow` list is unrestricted. Narrow both before accepting untrusted input.
 - Skill-declared permissions are advisory unless the same limits are enforced through runtime tool policy and deployment controls.
 - Approval requests are available on explicitly wired paths when approvals are enabled; configured rules and default modes are not yet a universal policy engine.
+
+**Supply chain.** Every dependency across the monorepo is exact-pinned, with no floating version ranges anywhere. Workspace packages are private and bundled into the published tarball, npm releases publish with sigstore provenance through GitHub OIDC, and per-package coverage floors, security linting, and shrink-only architecture gates run on every change.
 
 Read [THREAT_MODEL.md](THREAT_MODEL.md) before enabling shell, browser, network, or third-party integrations.
 
@@ -175,6 +189,8 @@ If Comis is useful, star the repository to help other contributors discover it.
 - [GitHub Discussions](https://github.com/comisai/comis/discussions)
 - [Issues](https://github.com/comisai/comis/issues)
 - [Private security reports](https://github.com/comisai/comis/security)
+
+If your organization is evaluating governed agent operations (identity, isolation, audit, or spend-control requirements), open a [Discussion](https://github.com/comisai/comis/discussions); design feedback from real deployments directly shapes the roadmap.
 
 Comis builds on prior work from [pi-mono](https://github.com/earendil-works/pi) by [Mario Zechner](https://mariozechner.at/).
 

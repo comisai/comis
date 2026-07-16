@@ -482,6 +482,41 @@ main > section {
   color: var(--text-secondary);
 }
 
+.evidence-grid {
+  display: grid;
+  gap: var(--space-12);
+}
+
+.evidence-grid > div:first-child {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+}
+
+.command-panel.evidence-panel {
+  margin-block: 0;
+  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.evidence-command {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.evidence-description {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.evidence-panel .development-note {
+  margin-top: var(--space-2);
+  font-size: 13px;
+}
+
 .install-copy {
   display: grid;
   gap: var(--space-4);
@@ -715,6 +750,12 @@ main > section {
 
   .security-grid {
     grid-template-columns: minmax(0, 9fr) minmax(0, 11fr);
+    gap: var(--space-16);
+  }
+
+  .evidence-grid {
+    grid-template-columns: minmax(0, 10fr) minmax(0, 10fr);
+    align-items: center;
     gap: var(--space-16);
   }
 

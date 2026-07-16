@@ -5,7 +5,7 @@ export const SITE = {
   url: "https://comis.ai",
   title: "Comis: Open-source agent runtime for governed execution",
   description:
-    "Self-hosted runtime for governed multi-agent workflows with scoped authority, bounded spend, recoverable context, and operational evidence.",
+    "Self-hosted runtime for governed multi-agent workflows with scoped authority, bounded spend, recoverable context, and operational evidence. When something fails, one command explains why.",
   positioning: "Open-source agent runtime for governed execution.",
   status: "Apache-2.0 | Active development",
   installCommand: "curl -fsSL --proto '=https' --tlsv1.2 https://comis.ai/install.sh | bash",
