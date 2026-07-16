@@ -1,16 +1,36 @@
 # Contributing to Comis
 
-Thank you for your interest in contributing to Comis, an open-source governed
-agent runtime. Every contribution helps improve execution, context, memory,
-authority, cost controls, operational evidence, integrations, or documentation.
-We appreciate your time and effort.
+Thank you for your interest in Comis, an open-source security-first runtime for
+agents that learn and act across sessions. Contributions help keep identity,
+credentials, permissions, execution limits, and learned state under runtime
+control while making failures recoverable and understandable.
 
 ## Where Help Matters
 
-- Governance and security scenarios, policy behavior, secret handling, and adversarial tests
-- Standards and interoperability work across MCP, ACP, A2A, and OpenTelemetry
-- Runtime reliability across graphs, recovery, context, memory, delivery, and cost enforcement
-- Hardened deployment recipes, integrations, operator experience, and documentation
+- **Workloads:** contribute a small, realistic task that tests bounded action,
+  recovery, context use, or governed learning.
+- **Attack paths:** test capability checks, prompt injection defenses, secret
+  handling, sandbox boundaries, origin checks, and outward-action controls.
+- **Learning failures:** reproduce unsafe, stale, misleading, over-broad, or
+  ineffective learned guidance and show how it should be handled.
+- **Integrations:** improve channels, model and tool adapters, MCP, telemetry,
+  deployment profiles, and the evidence needed to understand their behavior.
+- **Operator experience:** improve installation, incident views,
+  documentation, accessibility, and safe defaults.
+
+**Comis Open Evidence** is a planned public umbrella for reproducible workloads,
+attack paths, learning failures, and integration results. It is not a shipped
+runner, certification, or formal governance program. Until dedicated tooling
+exists, use the closest existing unit, integration, simulator, or live-test
+harness and report exactly what it proves.
+
+Start with the [Open Evidence Proposal](https://github.com/comisai/comis/issues/new?template=open_evidence.md)
+template. Include the evidence level, tested profile, and residual risk so a
+reader can distinguish a code trace from a controlled test, live run, or
+independent reproduction.
+
+Do not publish an unpatched vulnerability or sensitive attack path in an issue.
+Use the private process in [SECURITY.md](SECURITY.md) instead.
 
 ## Code of Conduct
 
@@ -86,12 +106,33 @@ pnpm lint:security
 
 This runs ESLint with `eslint-plugin-security` rules that catch common security issues in JavaScript and TypeScript code.
 
+### Run Targeted Checks First
+
+During development, run the smallest check that covers your change. Examples:
+
+```bash
+# One test file
+pnpm test -- packages/<package>/src/<component>.test.ts
+
+# Architecture contracts
+pnpm test:architecture
+
+# Documentation
+pnpm docs:check
+
+# Marketing website
+cd website && npm run validate
+```
+
+Targeted checks shorten the feedback loop. They do not replace the full
+repository gate.
+
 ### Contribution Bar
 
 Every fix and every feature in `packages/*/src/**` starts with a failing test that
 fails on the pre-patch code, then a production patch that flips it to green. The
 failing test output (test name + assertion error) goes in the **RED Test Proof**
-section of the PR template — it is the proof of the red state. Exempt from TDD:
+section of the PR template -- it is the proof of the red state. Exempt from TDD:
 pure docs, comments, formatting, and build-tooling/CI/config edits.
 
 Before opening a PR, run the full validation suite:
@@ -116,22 +157,28 @@ not be merged. Remove an allowlist entry only when you have fixed the underlying
 3. `pnpm validate` passes (clean build, cycles, lint:security, test:coverage)
 4. Keep PRs focused -- one feature or fix per pull request
 5. Security-sensitive changes require additional review from maintainers
-6. Link to the GitHub issue this PR addresses (required — see AI-Generated and Bulk PRs below)
+6. Link the GitHub issue for behavior, architecture, or security work. A small
+   change limited to documentation, typos, formatting, or neutral test fixtures
+   may use `N/A: <reason>` when it cannot change runtime behavior or security
+   expectations.
 
 ## AI-Generated and Bulk PRs
 
 AI assistance is welcome for research, drafting, and understanding the codebase.
 However:
 
-- **File an issue first.** Before opening any PR — AI-generated or otherwise — open
-  a GitHub issue describing the problem or feature. PRs that arrive without a linked
-  issue will be closed pending one.
+- **File an issue first for material changes.** Behavior, architecture, and
+  security proposals need a linked issue before implementation. A small change
+  limited to documentation, typos, formatting, or neutral test fixtures may be
+  submitted directly when it cannot change runtime behavior or security
+  expectations.
 - **Bulk agent PRs are closed unreviewed.** PRs that appear to be auto-generated in
   bulk (multiple PRs from the same account in a short window, boilerplate descriptions,
   no linked issue) will be closed without review.
-- **Quality bar is the same regardless of authorship.** An AI-assisted PR must meet
-  the same contribution bar as a human-authored one: tests-first RED with proof,
-  shrink-only allowlists, `pnpm lint:security`, `pnpm validate`.
+- **Quality bar is the same regardless of authorship.** An AI-assisted PR must
+  meet the same contribution bar as a human-authored one: tests-first RED with
+  proof, shrink-only allowlists, targeted checks, and the applicable full
+  validation gate.
 
 The intent is not to block AI assistance but to prevent low-effort submissions that
 consume reviewer time without meeting the project's quality standards.

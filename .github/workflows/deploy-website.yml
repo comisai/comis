@@ -5,11 +5,13 @@ on:
     branches: [main]
     paths:
       - "website/**"
+      - "assets/comis-social-preview.png"
       - ".github/workflows/deploy-website.yml"
   pull_request:
     branches: [main]
     paths:
       - "website/**"
+      - "assets/comis-social-preview.png"
       - ".github/workflows/deploy-website.yml"
 
 concurrency:

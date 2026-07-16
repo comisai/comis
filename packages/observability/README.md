@@ -59,7 +59,7 @@ maskToken("sk-abc1234567890def", { keepStart: 4, keepEnd: 4 });
 
 ## Part of Comis
 
-This package is part of [Comis](https://github.com/comisai/comis), an open-source agent runtime for governed execution.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source security-first runtime for AI agents that learn and act across sessions.
 
 ```bash
 npm install comisai

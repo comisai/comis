@@ -30,7 +30,7 @@ Task scheduling, cron management, and background job infrastructure for the [Com
 
 ## Part of Comis
 
-This package is part of [Comis](https://github.com/comisai/comis), an open-source agent runtime for governed execution.
+This package is part of [Comis](https://github.com/comisai/comis), an open-source security-first runtime for AI agents that learn and act across sessions.
 
 ```bash
 npm install comisai

@@ -1,17 +1,23 @@
 # Comis
 
-> Open-source agent runtime for governed execution.
+> Open-source security-first runtime for AI agents that learn and act across sessions.
 
-Canonical documentation index. Security controls are configuration- and platform-dependent; review the security boundaries before deployment.
+Let agents learn and act. Keep authority in the runtime.
+
+Governed learning. Bounded action. Recorded evidence.
+
+Learned guidance can influence what an agent proposes, but it cannot grant permission. Identity, capabilities, credentials, tool policy, and configured limits remain authoritative in the runtime.
+
+Canonical documentation index. Security controls depend on configuration and the host platform; review the security boundaries before deployment.
 
 ## Start here
 
 ### Understand Comis
 
-- [Welcome to Comis](https://docs.comis.ai/get-started): Open-source agent runtime for governed execution
+- [Welcome to Comis](https://docs.comis.ai/get-started): Security-first agent action, governed learning across sessions, recoverable context, and runtime authority
 - [Quickstart](https://docs.comis.ai/get-started/quickstart): Install Comis, configure an agent, and verify your first conversation
-- [Use Cases](https://docs.comis.ai/get-started/use-cases): Governed workflows that make Comis's execution, state, authority, cost, and evidence concrete
-- [How It Works](https://docs.comis.ai/get-started/how-it-works): How Comis routes, constrains, records, and recovers multi-agent work
+- [Use Cases](https://docs.comis.ai/get-started/use-cases): Practical starting points for agents that run on a schedule or continue outside one chat window
+- [How It Works](https://docs.comis.ai/get-started/how-it-works): How Comis governs agent action and learning across sessions
 - [Security Boundaries](https://docs.comis.ai/get-started/security): What Comis protects, what requires configuration, and what remains your responsibility
 - [Glossary](https://docs.comis.ai/get-started/glossary): Definitions for every technical term used in the Comis documentation
 
@@ -44,7 +50,7 @@ Canonical documentation index. Security controls are configuration- and platform
 - [Memory Recall (RAG)](https://docs.comis.ai/agents/rag): How relevant stored context can be recalled for a new request
 - [Message Queue](https://docs.comis.ai/agents/queue): How Comis handles multiple messages and ensures orderly processing
 - [Execution Graphs](https://docs.comis.ai/agents/execution-graphs): Multi-agent DAG orchestration -- define, execute, and monitor workflows where each node is a sub-agent task
-- [Memory](https://docs.comis.ai/agents/memory): How your agent stores and organizes long-term knowledge
+- [Memory](https://docs.comis.ai/agents/memory): How Comis records, evaluates, recalls, and corrects agent-visible knowledge
 - [Memory configuration](https://docs.comis.ai/agents/memory-config): Every Comis memory capability and the exact config option that enables it — recall, the recall-time signals, the one learning-reflection engine, and the maintenance jobs
 - [Search](https://docs.comis.ai/agents/search): How your agent finds relevant memories
 - [Embeddings](https://docs.comis.ai/agents/embeddings): Setting up meaning-based memory search

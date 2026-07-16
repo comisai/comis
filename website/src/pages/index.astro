@@ -1,25 +1,27 @@
 ---
 // SPDX-License-Identifier: Apache-2.0
 import Base from "../layouts/Base.astro";
-import Capabilities from "../components/Capabilities.astro";
 import Community from "../components/Community.astro";
+import Evidence from "../components/Evidence.astro";
 import Footer from "../components/Footer.astro";
+import GovernedLearning from "../components/GovernedLearning.astro";
 import Hero from "../components/Hero.astro";
+import Pillars from "../components/Pillars.astro";
+import Problem from "../components/Problem.astro";
 import QuickStart from "../components/QuickStart.astro";
 import SecurityBoundaries from "../components/SecurityBoundaries.astro";
-import UseCases from "../components/UseCases.astro";
-import WhyComis from "../components/WhyComis.astro";
 ---
 
 <Base>
   <main id="main-content">
     <Hero />
-    <WhyComis />
-    <UseCases />
-    <Capabilities />
+    <Problem />
+    <GovernedLearning />
+    <Pillars />
+    <Evidence />
     <SecurityBoundaries />
-    <QuickStart />
     <Community />
+    <QuickStart />
   </main>
   <Footer />
 </Base>

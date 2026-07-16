@@ -10,12 +10,11 @@ Answers to the most common questions about running and using Comis.
 
 <AccordionGroup>
   <Accordion title="What is Comis?">
-    Comis is an open-source agent runtime for governed execution. It gives AI
-    platform and security teams a self-hosted way to run multi-agent workflows
-    across messaging channels, APIs, and schedules with scoped authority,
-    bounded spend, recoverable context, provenance-aware memory, and
-    operational evidence. Controls apply only to agents executing through
-    Comis-controlled paths.
+    Comis is an open-source, self-hosted, security-first runtime for AI agents that learn and act across sessions.
+    It starts work from schedules, messaging channels, APIs, or the web, keeps
+    important run state outside the model's prompt, applies configured access
+    and cost rules, and records bounded evidence for later review. Controls
+    apply only to paths that run through them.
   </Accordion>
 
   <Accordion title="Is Comis free?">
@@ -52,7 +51,11 @@ Answers to the most common questions about running and using Comis.
     scheduled work. Comis cannot promise a per-message or per-execution price;
     inspect your provider billing and use Comis's cost reports and budgets.
 
-    Comis includes built-in budget controls to prevent unexpected spending. You can set per-agent token limits, cost caps, and circuit breakers that pause an agent if it exceeds your budget. See [Agent Safety](/agents/safety) for details.
+    Comis includes token limits, graph budgets, circuit breakers, and opt-in
+    spend ceilings. A configured spend ceiling can warn or refuse later model
+    calls after recorded priced usage crosses the limit; it does not cancel a
+    provider call that is already in progress. See [Agent Safety](/agents/safety)
+    for details.
   </Accordion>
 
   <Accordion title="What hardware do I need?">
@@ -78,7 +81,7 @@ Answers to the most common questions about running and using Comis.
     - **Telegram** — full support including groups, inline keyboards, and media
     - **Discord** — servers, DMs, threads, reactions, and embeds
     - **Slack** — workspaces with Socket Mode or HTTP mode
-    - **WhatsApp** — via the WhatsApp Business API
+    - **WhatsApp:** via the Baileys WhatsApp Web client
     - **Signal** — via signal-cli (self-hosted)
     - **iMessage** — macOS only, via AppleScript integration
     - **LINE** — via the LINE Messaging API

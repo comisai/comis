@@ -45,12 +45,40 @@ as trusted.
   policy and auditing. The human approval workflow is a separate opt-in layer.
 - **Credential handling:** encrypted storage, scoped resolution, redaction, and
   optional broker injection reduce plaintext exposure.
-- **Output and memory guards:** completed responses and memory writes are
+- **Learned-state controls:** source trust, provenance, configured
+  corroboration, usefulness, and correction history shape what can return in a
+  later session.
+- **Output and memory guards:** completed responses and new memory writes are
   scanned for secret-shaped or suspicious content.
 - **Audit and diagnostics:** content-free security-decision events and operator
   checks help reconstruct and verify the active posture.
 - **OS isolation:** Bubblewrap or `sandbox-exec` confines supported exec paths;
   scope and availability are documented rather than assumed.
+
+## Learned state is a security boundary
+
+Cross-session guidance is persistent model input. Candidate guidance may
+surface before active promotion and influence which already-authorized tool
+the model requests.
+
+The default `single_owner` corroboration mode accepts repeated qualifying
+observations from one explicitly trusted owner. It is not independent-source
+corroboration. Static validation blocks selected critical patterns, but
+warning-level harmful or jailbreak-like language can pass and remain
+persuasive.
+
+Recall is scoped to the tenant and agent, not to an individual sender or end
+user. Use separate tenants, agents, or another isolation layer when users must
+not share learned guidance. Recording a correction feeds the correction and
+demotion process, but does not guarantee immediate demotion, retirement, or a
+durable behavior change.
+
+Learned documents are advisory Markdown with no direct script or dynamic
+replay path. Learned text cannot by itself execute a command or grant a
+capability, credential, lease, approval, or larger budget. It can still steer
+the model toward actions already within its configured reach, so tool policy,
+capability checks, origin checks, credential scope, approvals on supported
+paths, budgets, leases, and host isolation remain authoritative.
 
 ## Verify a deployment
 

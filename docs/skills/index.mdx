@@ -51,12 +51,14 @@ the underlying coding-agent framework gets them out of the box.
 
 - **File operations** -- read, write, edit, search files; apply patches; edit
   Jupyter notebooks
-- **Shell commands** -- execute commands and manage background processes inside
-  an OS-level sandbox
+- **Shell commands** -- execute commands and manage background processes. Comis
+  uses an OS sandbox when a supported provider is available, but ordinary
+  `exec` falls back to host execution with a warning when it is not
 - **Web access** -- search the web (8 providers) and fetch page content
 - **Browser automation** -- control a headless Chromium browser (16 actions)
-- **Context tools** -- search and recall content from the current session or
-  the compressed context DAG
+- **Context tools** -- use the shipped `ctx_search`, `ctx_inspect`, and
+  `ctx_expand` tools to recover detail from the current DAG session's lossless
+  context store
 
 You can enable or disable each one individually through configuration, so an
 agent that should not run shell commands can have `exec` turned off while
@@ -116,6 +118,15 @@ A prompt skill might define:
 
 Prompt skills are the easiest way to customize your agent. If you can write a
 document, you can write a prompt skill.
+
+Comis can also surface read-only learned Mental Model documents through the
+same `<available_skills>` prompt channel. These are not equivalent to
+operator-authored prompt skills. A read-only `candidate` can surface before it
+is promoted to `active`, its `learned` label does not prove reliability, and
+warning-level harmful language can pass static validation. Learned documents
+are advisory Markdown only; they add no tool, credential, capability, approval,
+or sandbox authority. Their store and recall boundary is `(tenant, agent)`, not
+an individual chat or sender.
 
 In a multi-agent setup, each named agent automatically discovers skills from its
 own workspace directory. Skills can be scoped as agent-local or shared across all

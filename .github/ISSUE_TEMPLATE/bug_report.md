@@ -6,6 +6,10 @@ labels: bug
 assignees: ''
 ---
 
+If this report could reveal an unpatched vulnerability, do not continue in a
+public issue. Follow the private disclosure process in
+[SECURITY.md](https://github.com/comisai/comis/security/policy).
+
 ## Description
 
 A clear and concise description of the bug.
@@ -49,3 +53,14 @@ Paste relevant output from `comis doctor`, `comis status`, or daemon logs. **Rem
 ## Additional Context
 
 Any other context about the problem.
+
+## Evidence Profile (Optional)
+
+If the bug concerns a security boundary, learning behavior, recovery, or an
+integration, include:
+
+- **Evidence level:** code trace, deterministic test, controlled harness, live
+  integration run, or independent reproduction
+- **Tested profile:** operating system, isolation mode, provider/model, tool and
+  permission profile, and fresh or existing state
+- **Residual risk:** what the reproduction does not test or prove

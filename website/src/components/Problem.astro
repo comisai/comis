@@ -1,0 +1,35 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+
+const paths = [
+  ["External content", "can shape memory and later proposals"],
+  ["Shells and credentials", "can turn a proposal into an outward action"],
+  ["Schedules and child agents", "can extend reach across time and a task tree"],
+] as const;
+---
+
+<section class="surface-section problem-section" data-section="problem" aria-labelledby="problem-heading">
+  <div class="container split-grid problem-grid">
+    <div class="section-copy">
+      <p class="eyebrow">The control problem</p>
+      <h2 id="problem-heading">Agent autonomy is a security boundary. What an agent learns becomes part of that boundary.</h2>
+      <p class="lead">
+        Prompt injection is not limited to one prompt when an agent can remember, run tools, start other agents, and return later. Useful learning and safe action need one control system.
+      </p>
+      <p class="supporting-copy">
+        The runtime is the software around the model that stores state, applies rules, runs tools, and records evidence. In Comis, that layer owns permission. Prompt text and learned text do not.
+      </p>
+    </div>
+
+    <div class="threat-ledger" aria-label="Agent security paths">
+      <p class="technical-label ledger-title">Signals that cross sessions</p>
+      {paths.map(([source, effect], index) => (
+        <div class="ledger-row">
+          <span class="ledger-index" aria-hidden="true">0{index + 1}</span>
+          <div><strong>{source}</strong><p>{effect}</p></div>
+        </div>
+      ))}
+      <p class="ledger-rule"><span>Model</span> proposes. <span>Runtime</span> decides.</p>
+    </div>
+  </div>
+</section>

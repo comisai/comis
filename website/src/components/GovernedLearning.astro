@@ -1,0 +1,35 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+
+const stages = [
+  ["Qualify", "Consider the outcome, source trust, and usefulness of an experience."],
+  ["Admit", "Validate candidate guidance and apply the configured evidence rule."],
+  ["Reuse", "Surface sourced guidance in a later session without changing authority."],
+  ["Correct", "Use later outcomes to promote, demote, retire, or preserve guidance."],
+] as const;
+---
+
+<section id="learning" data-section="learning" aria-labelledby="learning-heading">
+  <div class="container">
+    <div class="section-intro learning-intro">
+      <p class="eyebrow">Governed learning</p>
+      <h2 id="learning-heading">How experience becomes reusable guidance.</h2>
+      <p class="lead">Comis can carry qualifying experience across sessions with its source, evidence, usefulness, and correction history attached.</p>
+    </div>
+
+    <ol class="learning-stages">
+      {stages.map(([title, body], index) => (
+        <li class="learning-stage">
+          <div class="stage-topline"><span class="stage-number" aria-hidden="true">0{index + 1}</span><span class="stage-state">recorded</span></div>
+          <h3>{title}</h3>
+          <p>{body}</p>
+        </li>
+      ))}
+    </ol>
+
+    <aside class="learning-boundary" aria-label="Learning authority boundary">
+      <span class="boundary-icon" aria-hidden="true">!</span>
+      <p>Candidate guidance can influence model behavior before promotion. It still cannot create a credential, capability, lease, approval, or larger budget.</p>
+    </aside>
+  </div>
+</section>

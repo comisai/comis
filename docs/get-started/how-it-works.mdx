@@ -1,55 +1,71 @@
 ---
 title: "How It Works"
-description: "How Comis routes, constrains, records, and recovers multi-agent work"
+description: "How Comis governs agent action and learning across sessions"
 icon: "diagram-project"
 ---
 
-Comis is a governed agent runtime. It connects requests from channels, APIs,
-schedules, and the web dashboard to agents with explicit state, tools, budgets,
-and policy.
+Comis is an open-source security-first runtime for AI agents that learn and act
+across sessions. It connects requests from schedules, channels, APIs, and the
+web dashboard to agents with their own state, tools, budgets, learning history,
+and rules.
 
 import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
 <NonTechnicalNote />
 
-## From request to accountable result
+## From request to recoverable result
 
 ```mermaid
 flowchart LR
     A["Request arrives"] --> B["Route to a scoped agent"]
     B --> C["Run an agent turn or execution graph"]
-    C --> D["Apply authority, budget, and content controls"]
-    D --> E["Deliver the result"]
-    E --> F["Inspect state, cost, and evidence"]
+    C --> D["Apply configured access and cost rules"]
+    D --> E["Record state, evidence, and eligible learning"]
+    E --> F["Deliver, inspect, or recover"]
 ```
 
 1. **Receive:** a channel, API, schedule, or dashboard submits work inside a
    request context.
 2. **Route:** bindings select an agent with its own model, workspace, context,
-   memory, tools, budget, secret policy, and channel rules.
+   memory, tools, budget, credential rules, and channel settings.
 3. **Coordinate:** the agent can answer directly, use tools, delegate work, or
    run a typed execution graph with sequential and parallel nodes.
-4. **Constrain:** capability gates, origin checks, tool policy, configured
-   budgets, input and memory validation, output guards, and supported approval
-   paths limit the work.
-5. **Record:** sessions, canonical context, memory provenance, traces, costs,
-   audit events, and execution state provide evidence for later inspection.
-6. **Deliver:** the result returns through the originating interface or a
-   configured delivery path.
+4. **Apply rules:** capability checks, origin checks, tool policy, configured
+   budgets, content checks, and supported approval paths limit the work.
+5. **Record:** sessions, stored context, memory sources, eligible learned
+   guidance, traces, costs, audit events, and workflow state provide evidence
+   for later inspection and configured recall.
+6. **Deliver or recover:** the result returns through a configured path. If the
+   run stops, recorded state can support investigation and configured recovery.
 
-## The governance layers
+Learned or stored text can influence what the model proposes next, including
+which tool it asks to use. It cannot grant a capability, reveal a credential,
+raise a budget, or bypass a runtime check.
 
-| Layer | What Comis controls |
+## Govern authority, learning, and recovery
+
+| Runtime responsibility | What it means in Comis |
 |---|---|
-| **Execution** | Agent turns, sub-agents, typed DAGs, dependencies, retries, barriers, configured budgets, and durable checkpoints |
-| **Context** | Bounded active prompts backed by canonical messages and tool results that can be searched, inspected, and selectively expanded |
-| **Memory** | Trust labels, provenance, corroboration, outcome gates, supersession, corrections, and ranked recall |
-| **Authority** | Per-agent tools and secrets, capability membership, origin checks, scoped storage, credential brokering, and audit events |
-| **Cost** | Provider accounting, per-run graph budgets, and opt-in spend ceilings |
-| **Evidence** | Traces, trajectories, incident explanation, fleet health, delivery state, recall diagnostics, and security decisions |
+| **Keep authority outside the model** | Tool access, capabilities, origin checks, credential scope, memory checks, graph budgets, and opt-in spend ceilings are applied outside prompt text. |
+| **Govern learning across sessions** | Source records, trust signals, configured corroboration, usefulness, and correction history shape which experience can return as guidance. That guidance can influence proposals but cannot grant permission. |
+| **Recover and explain the work** | Stored messages and tool results can be searched, inspected, and selectively expanded. Traces, costs, delivery state, audit events, and memory diagnostics feed bounded incident reports. |
 
-These layers are useful individually. Comis's design advantage is that they are
-wired into one runtime instead of being separate controls around an agent loop.
+These parts share the same runtime and recorded run state. That lets an operator
+connect a failed action to the access rule, context, cost, or workflow state
+around it without asking another model to invent an explanation.
+
+## How learning remains governed
+
+Comis can turn qualifying experience into candidate or active learned guidance,
+depending on configuration. Source records, trust signals, configured evidence,
+usefulness, and correction state affect admission and recall. Candidate guidance
+may be available for read-only use before active promotion when configured.
+
+Learned guidance remains model input, not runtime authority. It has no direct
+script execution path, and every proposed action still passes through the
+capability, origin, credential, tool-policy, and budget controls wired to that
+path. Learning admission demonstrates that guidance was recorded; it is not by
+itself proof of a general performance improvement.
 
 ## How context stays recoverable
 

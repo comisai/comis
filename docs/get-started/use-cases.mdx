@@ -1,42 +1,43 @@
 ---
 title: "Use Cases"
-description: "Governed workflows that make Comis's execution, state, authority, cost, and evidence concrete"
+description: "Practical starting points for agents that run on a schedule or continue outside one chat window"
 icon: "lightbulb"
 ---
 
-Comis is most useful when an agent system has moved beyond an experiment and
-needs explicit authority, recoverable state, bounded cost, and evidence. The
-patterns below use capabilities available in the runtime today; they are not
-claims of turnkey industry solutions.
+Comis is most useful when you need to leave an agent working and still keep its
+state, limits, and failures understandable. The patterns below use capabilities
+available in the runtime today. They are starting points, not complete industry
+solutions.
 
 import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
 <NonTechnicalNote />
 
-## Governed research and analysis
+## Overnight research brief
 
-**What you build:** parallel agents gather sources, a synthesis step reconciles
-them, and a critic checks the result before delivery.
+**What you build:** a scheduled run gathers sources, compares the findings, asks
+a critic to check the draft, and delivers a brief in the morning.
 
 **Why Comis fits:**
 
-- [execution graphs](/agents/execution-graphs) coordinate parallel research,
-  barriers, synthesis, criticism, and retries;
+- [execution graphs](/agents/execution-graphs) coordinate research, comparison,
+  criticism, and retries;
 - [context recovery](/agents/context-management) lets the run search and expand
   canonical detail omitted from the active prompt;
-- [memory provenance](/agents/memory) keeps learned claims tied to sources and
-  trust signals;
-- configured [budgets and cost controls](/agents/safety) bound the run; and
-- [traces and incident evidence](/operations/observability) make the result
-  reviewable.
+- [memory history](/agents/memory) keeps eligible learned claims tied to sources
+  and trust signals;
+- configured [budgets and cost controls](/agents/safety) limit admitted work;
+  and
+- [traces and incident evidence](/operations/observability) show what completed,
+  what failed, and what it cost.
 
-This is the recommended first multi-agent workflow because it demonstrates the
-governance model without requiring broad production permissions.
+This is the recommended first workflow because it is useful, runs unattended,
+and can start with read-only web and file access.
 
 ## Controlled operational investigation
 
-**What you build:** agents collect read-only system evidence, correlate events,
-and produce an incident report with cost and audit records.
+**What you build:** an agent collects read-only system evidence, connects related
+events, and produces an incident report with cost and audit records.
 
 **Why Comis fits:**
 
@@ -53,10 +54,10 @@ Keep the first deployment read-only. Add remediation only after approval
 behavior and Linux execution isolation are enabled and tested on the target
 host.
 
-## Routed support and knowledge operations
+## Routed support and knowledge work
 
 **What you build:** specialized agents handle different channels, users, or
-knowledge domains while the operator keeps one control model.
+knowledge areas while the operator keeps one set of runtime controls.
 
 **Why Comis fits:**
 
@@ -72,10 +73,10 @@ workflow design. Comis approval support is not yet a universal policy engine.
 
 ## When a smaller tool may be enough
 
-If you need one personal assistant, a model wrapper, or only a graph library,
-a smaller tool may be simpler. Choose Comis when several persistent agents,
-credentials, memories, budgets, interfaces, and operators need one inspectable
-governance model.
+If you need a simple chat assistant, a model wrapper, or only a graph library, a
+smaller tool may be easier. Choose Comis when one or more unattended agents use
+real credentials, build long context, work on a schedule, or must
+leave evidence after a failure.
 
 ## Start building
 

@@ -2,7 +2,7 @@
   "name": "comis-website",
   "type": "module",
   "version": "1.0.0",
-  "description": "Public website for the Comis governed agent runtime",
+  "description": "Public website for Comis, the open-source security-first runtime for AI agents that learn and act across sessions",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
   "private": true,

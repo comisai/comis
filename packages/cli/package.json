@@ -4,7 +4,7 @@
   "version": "1.0.54",
   "author": "Moshe Anconina",
   "license": "Apache-2.0",
-  "description": "Command-line interface for the Comis governed agent runtime",
+  "description": "Command-line interface for the Comis agent runtime",
   "keywords": [
     "comis",
     "ai",

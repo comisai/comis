@@ -8,7 +8,7 @@ This page covers everything you need to start contributing to Comis: setting up 
 
 ## Prerequisites
 
-- **Node.js >= 22** -- runtime and build toolchain
+- **Node.js >= 22.19.0** -- runtime and build toolchain
 - **pnpm** -- package manager (monorepo workspace support)
 - **Git** -- version control
 - **Linux** for deployment (macOS works for development only)
@@ -19,7 +19,7 @@ This page covers everything you need to start contributing to Comis: setting up 
 
 <Step title="Clone the repository">
 ```bash
-git clone https://github.com/comis-platform/comis.git
+git clone https://github.com/comisai/comis.git
 cd comis
 ```
 </Step>
@@ -68,7 +68,7 @@ The codebase follows five mandatory engineering principles:
 - **YAGNI** -- Do not add config keys, port methods, or feature flags without a concrete caller
 - **DRY (Rule of Three)** -- Extract shared helpers only after three repetitions
 - **Fail Fast** -- Return `err()` for unsupported or unsafe states via the Result pattern
-- **Secure by Default** -- Security rules enforced at lint time
+- **Security checks in CI** -- Lint and architecture rules enforce specific code constraints
 
 ### Naming Conventions
 

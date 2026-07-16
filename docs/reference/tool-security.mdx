@@ -138,10 +138,19 @@ Groups provide convenient bulk operations using `group:xxx` syntax in allow/deny
 | `group:supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` |
 
 <Note>
-There are no `group:context` / `group:context_expand` groups: the DAG context
-engine's on-demand `ctx_*` recall tools are not yet shipped, so no tool group
-bundles them.
+The shipped DAG context tools are `ctx_search`, `ctx_inspect`, and `ctx_expand`.
+They are wired only for a live, fully scoped DAG session and are read-only and
+`never-export`. There is no `group:context` convenience group; operators can
+name an individual tool in an allow or deny list when needed.
 </Note>
+
+<Warning>
+  The ordinary `exec` tool is not fail-closed on sandbox availability. With
+  `skills.execSandbox.enabled: "always"`, Comis uses a detected OS sandbox, but
+  if no supported provider is available it logs a warning and executes on the
+  host. The persistent terminal driver and jailed autonomy surfaces have
+  separate Linux isolation requirements and refusal behavior.
+</Warning>
 
 ### Resolution Precedence
 
@@ -280,6 +289,18 @@ The content scanner inspects skill body content at load time for dangerous patte
 
 - **CRITICAL**: Patterns that indicate active exploitation attempts (exec injection, reverse shells, crypto mining, base64 decode piping, XML breakout)
 - **WARN**: Patterns that are suspicious but may have legitimate uses (environment harvesting, curl piping, long encoded strings, mining pool domains)
+
+With the default `blockOnCritical: true` policy, CRITICAL findings block a
+prompt skill and WARN findings do not. A warning is detection evidence, not a
+clean bill of health.
+
+Learned Mental Model documents use a separate static validator built on the
+memory-write scan. It rejects critical secret or poison findings, but
+warning-level findings are recorded and allowed. This means some
+jailbreak-like or otherwise harmful language can pass learned-document
+validation and later influence model tool selection. Learned docs remain
+advisory and add no execution authority, but operators should not treat
+validation or the `learned` trust label as proof of reliability.
 
 ### Scan Result
 

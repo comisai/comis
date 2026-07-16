@@ -1,7 +1,7 @@
 {
   "name": "Comis",
   "short_name": "Comis",
-  "description": "Open-source agent runtime for governed execution.",
+  "description": "Open-source runtime for bounded action and governed learning.",
   "start_url": "/",
   "scope": "/",
   "icons": [
@@ -16,7 +16,7 @@
       "type": "image/png"
     }
   ],
-  "theme_color": "#0F172A",
-  "background_color": "#0F172A",
+  "theme_color": "#0B1220",
+  "background_color": "#0B1220",
   "display": "standalone"
 }

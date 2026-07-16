@@ -1,0 +1,50 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+
+const pillars = [
+  {
+    number: "01",
+    title: "Govern context and learning",
+    body: "Keep lossless messages and tool results outside the active prompt. Recover selected details with ctx_search, ctx_inspect, and ctx_expand. Recall memory and admit learned guidance with trust, source, usefulness, and correction signals.",
+    mechanisms: "context recovery / provenance / correction",
+  },
+  {
+    number: "02",
+    title: "Keep authority outside the model",
+    body: "Apply capability gates, origin checks, scoped secrets, encrypted storage, and the optional Credential Broker outside prompt text. The model can request access; the runtime controls whether that access exists.",
+    mechanisms: "capabilities / origin / secrets / leases",
+  },
+  {
+    number: "03",
+    title: "Bound execution and delegation",
+    body: "Run typed dependency graphs with cache-aware parallel subagents. Share limits across the full task tree for spawn count, cost, tokens, time, rates, outward actions, and leases.",
+    mechanisms: "typed DAG / parallel fanout / tree limits",
+  },
+  {
+    number: "04",
+    title: "Explain, recover, and improve",
+    body: "Use cache-aware execution across Anthropic, OpenAI, and Gemini, context transforms, and graph fanout. Record execution evidence and assemble a bounded incident explanation without another model call.",
+    mechanisms: "cache trace / execution evidence / comis explain",
+  },
+] as const;
+---
+
+<section class="surface-section pillars-section" data-section="pillars" aria-labelledby="pillars-heading">
+  <div class="container">
+    <div class="section-intro">
+      <p class="eyebrow">The runtime</p>
+      <h2 id="pillars-heading">Four runtime pillars for bounded autonomy.</h2>
+      <p class="lead">Security is not one filter. It is a connected set of controls around context, learning, tools, delegation, credentials, and evidence.</p>
+    </div>
+
+    <div class="pillar-grid">
+      {pillars.map((pillar) => (
+        <article class="pillar-card">
+          <div class="pillar-heading"><span class="pillar-number" aria-hidden="true">{pillar.number}</span><h3>{pillar.title}</h3></div>
+          <p>{pillar.body}</p>
+          <p class="pillar-mechanisms">{pillar.mechanisms}</p>
+        </article>
+      ))}
+    </div>
+  </div>
+</section>

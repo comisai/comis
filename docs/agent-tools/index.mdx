@@ -49,7 +49,7 @@ File and code tools are always available unless explicitly denied by tool policy
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `exec` | Sandboxed shell execution with restricted-binary policy | [Built-in Tools](/skills/built-in-tools) |
+| `exec` | Shell execution with restricted-binary policy and OS sandboxing when a supported provider is available. Otherwise it warns and runs on the host | [Built-in Tools](/skills/built-in-tools) |
 | `process` | Background process lifecycle (spawn, kill, status, logs) | [Built-in Tools](/skills/built-in-tools) |
 
 ### Terminal (Interactive Shell)
@@ -133,7 +133,18 @@ Media tools process images, audio, video, and documents. Agents can analyze imag
 
 ### Memory
 
-Memory tools give agents access to their long-term memory. Agents automatically build up memory over time, but these tools let them explicitly search, read, and store information. Memory uses hybrid text and vector search for semantic matching, so agents can find relevant memories even with different wording.
+Memory tools give agents access to long-term memory. The review and reflection
+jobs can build memory over time, and these tools let an agent explicitly search,
+read, and store information. Memory uses hybrid text and vector search for
+semantic matching.
+
+The recall boundary is `(tenant, agent)`, not an individual user, chat, or
+sender. An agent shared by several people can recall a fact learned from one
+person while speaking to another. The `learned` trust label controls policy and
+ranking; it does not prove that content is reliable. Governed-learning
+documents are advisory Markdown, and read-only candidates can surface before
+promotion. Warning-level harmful language can pass their static validator.
+Recording a correction does not guarantee demotion or durable behavior change.
 
 | Tool | Description | Guide |
 |------|-------------|-------|
