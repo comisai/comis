@@ -138,11 +138,13 @@ describe("Log Verification", () => {
         traceId: "trace-123",
       });
 
-      // Poll for log entry instead of fixed delay
+      // Poll for log entry instead of fixed delay. The audit line carries a
+      // CONSTANT message — tool params/free text stay out of daemon logs by
+      // design — so the identifying detail is in the structured fields.
       const result = await waitForLogEntry(
         () => logCapture.getEntries(),
         {
-          msg: /Tool audit: test-tool succeeded/,
+          msg: /Tool execution audited/,
           toolName: "test-tool",
           durationMs: 42,
           success: true,
@@ -163,11 +165,12 @@ describe("Log Verification", () => {
         traceId: "trace-456",
       });
 
-      // Poll for log entry instead of fixed delay
+      // Poll for log entry instead of fixed delay (constant message — see above).
       const result = await waitForLogEntry(
         () => logCapture.getEntries(),
         {
-          msg: /Tool audit: fail-tool failed/,
+          msg: /Tool execution audited/,
+          toolName: "fail-tool",
           success: false,
         },
       );

@@ -233,9 +233,24 @@ describe("Infrastructure Mutation Operations", () => {
       };
       process.on("unhandledRejection", rejectionHandler);
 
-      const result = (await rpcCall("gateway.restart", {
-        _trustLevel: "admin",
-      })) as Record<string, unknown>;
+      // Pin the NON-systemd branch: the handler detects systemd from
+      // INVOCATION_ID/NOTIFY_SOCKET, and hosted CI runners sometimes export
+      // those (the runner agent itself is a systemd service) — the assertion
+      // must not depend on the runner image's environment.
+      const savedInvocationId = process.env.INVOCATION_ID;
+      const savedNotifySocket = process.env.NOTIFY_SOCKET;
+      delete process.env.INVOCATION_ID;
+      delete process.env.NOTIFY_SOCKET;
+
+      let result: Record<string, unknown>;
+      try {
+        result = (await rpcCall("gateway.restart", {
+          _trustLevel: "admin",
+        })) as Record<string, unknown>;
+      } finally {
+        if (savedInvocationId !== undefined) process.env.INVOCATION_ID = savedInvocationId;
+        if (savedNotifySocket !== undefined) process.env.NOTIFY_SOCKET = savedNotifySocket;
+      }
 
       expect(result.restarting).toBe(true);
       expect(result.systemd).toBe(false);
