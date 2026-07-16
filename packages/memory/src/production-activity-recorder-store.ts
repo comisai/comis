@@ -3,18 +3,13 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 
 import {
-  ACTIVITY_RECORDING_EXACTNESS_BLOCKERS,
   type ActivityRecordingAttemptReceipt,
   type ActivityRecordingCiphertext,
   type ActivityRecordingCryptoContext,
   type ActivityRecordingCryptoPurpose,
   type ActivityRecordingEvidenceExport,
-  type ActivityRecordingFailure,
-  type ActivityRecordingGapReason,
   type ActivityRecordingInspection,
   type ActivityRecordingReceipt,
-  type ActivityRecordingSourceKind,
-  type ActivityRecordingTrustedHead,
   type BeginDeliveryPlatformAttemptInput,
   type FinishDeliveryPlatformAttemptInput,
   type ProductionActivityRecorderPort,
@@ -29,14 +24,11 @@ import {
   InboundActivityInputSchema,
 } from "./production-activity-recorder-input-schema.js";
 import {
-  ACTIVITY_RECORDING_ZERO_HASH,
   canonicalRecordIndex,
   ciphertextBytes,
   ciphertextDigest,
   isActivityRecordingCiphertext,
-  makeTrustedHead,
   sha256,
-  trustedHeadsEqual,
 } from "./production-activity-recorder-integrity.js";
 import { serializeActivityPayload } from "./production-activity-recorder-json.js";
 import {
@@ -49,6 +41,8 @@ import {
   type ActivityRecordingWriterStateRow,
 } from "./production-activity-recorder-row-schema.js";
 import { createActivityRecorderStatements } from "./production-activity-recorder-statements.js";
+import { createActivityRecorderFailureAccounting } from "./production-activity-recorder-failure-accounting.js";
+import { createActivityRecordingHeadState } from "./production-activity-recorder-head-state.js";
 import {
   type AppendRecordInput,
   type CreateSqliteProductionActivityRecorderOptions,
@@ -57,7 +51,6 @@ import {
   type SealedRecord,
   DEFAULT_ACTIVITY_RECORDING_WRITER_LEASE_MS,
   databaseFailureReason,
-  errorKindFor,
   initSchema,
   recordIdFor,
   validLimits,
@@ -203,78 +196,21 @@ function createSqliteProductionActivityRecorderUnchecked(
   });
   const verifyRowAuthenticity = verifier.verifyRow;
   const verifyRows = verifier.verifyAll;
-  function headForMeta(meta: ActivityRecordingMetaRow): ActivityRecordingTrustedHead {
-    return makeTrustedHead({
-      streamId,
-      instanceId,
-      sequence: meta.record_count,
-      recordHash: meta.head_hash,
-      logicalBytes: meta.logical_bytes,
-      recordCount: meta.record_count,
-      gapCount: meta.gap_count,
-    });
-  }
-
-  function validateAuthorityHead(
-    head: ActivityRecordingTrustedHead,
-    meta: ActivityRecordingMetaRow,
-  ): Result<void, Error> {
-    if (!trustedHeadsEqual(head, makeTrustedHead({
-      streamId: head.streamId,
-      instanceId: head.instanceId,
-      sequence: head.sequence,
-      recordHash: head.recordHash,
-      logicalBytes: head.logicalBytes,
-      recordCount: head.recordCount,
-      gapCount: head.gapCount,
-    }))) return err(new Error("Trusted activity head failed state authentication"));
-    if (head.streamId !== streamId || head.instanceId !== instanceId || head.sequence !== head.recordCount) {
-      return err(new Error("Trusted activity head stream or instance identity mismatch"));
-    }
-    if (head.sequence > meta.record_count) return err(new Error("Activity database is behind its trusted monotonic head"));
-    if (head.sequence === 0) {
-      return head.recordHash === ACTIVITY_RECORDING_ZERO_HASH
-        && head.logicalBytes === 0 && head.gapCount === 0
-        ? ok(undefined)
-        : err(new Error("Trusted activity genesis head is invalid"));
-    }
-    const row = parseRecord(selectRecordAt.get(head.sequence));
-    if (!row.ok || row.value === undefined) return err(row.ok ? new Error("Trusted head record missing") : row.error);
-    const authenticated = verifyRowAuthenticity(row.value);
-    if (!authenticated.ok) return authenticated;
-    return row.value.record_hash === head.recordHash
-      && row.value.state_logical_bytes === head.logicalBytes
-      && row.value.state_record_count === head.recordCount
-      && row.value.state_gap_count === head.gapCount
-      ? ok(undefined)
-      : err(new Error("Trusted head does not match its authenticated database prefix"));
-  }
-
-  function synchronizeTrustedHead(): Result<void, Error> {
-    const authority = options.headAuthority;
-    if (authority === undefined) return ok(undefined);
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const meta = readMeta();
-      if (!meta.ok) return meta;
-      const read = tryCatch(() => authority.read(streamId));
-      if (!read.ok) return read;
-      if (!read.value.ok) return read.value;
-      const current = read.value.value;
-      if (current !== undefined) {
-        const valid = validateAuthorityHead(current, meta.value);
-        if (!valid.ok) return valid;
-      } else if (meta.value.record_count > 0) {
-        return err(new Error("Trusted activity head is missing for a nonempty database"));
-      }
-      const next = headForMeta(meta.value);
-      if (trustedHeadsEqual(current, next)) return ok(undefined);
-      const updated = tryCatch(() => authority.compareAndSet({ streamId, expected: current, next }));
-      if (!updated.ok) return updated;
-      if (!updated.value.ok) return updated.value;
-      if (updated.value.value === "updated") return ok(undefined);
-    }
-    return err(new Error("Trusted activity head compare-and-set did not converge"));
-  }
+  const headState = createActivityRecordingHeadState({
+    streamId,
+    instanceId,
+    authority: options.headAuthority,
+    readMeta,
+    readRecord: (sequence) => parseRecord(selectRecordAt.get(sequence)),
+    verifyRow: verifyRowAuthenticity,
+    runReadTransaction(operation) {
+      const transaction = db.transaction(operation);
+      const inspected = tryCatch(() => transaction.deferred());
+      return inspected.ok ? inspected.value : inspected;
+    },
+  });
+  const { synchronize: synchronizeTrustedHead, inspectionForState, inspect: inspectState } =
+    headState;
 
   const verifyTransaction = db.transaction(() => verifyRows());
   const verification = tryCatch(() => verifyTransaction.deferred());
@@ -526,88 +462,8 @@ function createSqliteProductionActivityRecorderUnchecked(
     const meta = readMeta();
     return meta.ok ? meta.value.gap_count : 0;
   }
-
-  function rejectWithoutGap(input: {
-    readonly sourceKind: ActivityRecordingSourceKind;
-    readonly reason: ActivityRecordingGapReason;
-    readonly occurredAtMs: number;
-    readonly cause: Error;
-  }): ActivityRecordingFailure {
-    return {
-      ...input,
-      gapDurablyAccounted: false,
-      gapCount: currentGapCount(),
-      errorKind: errorKindFor(input.reason),
-    };
-  }
-
-  function accountLoss(input: {
-    readonly sourceKind: ActivityRecordingSourceKind;
-    readonly reason: ActivityRecordingGapReason;
-    readonly cause: Error;
-    readonly traceId: string | null;
-    readonly parentRecordId: string | null;
-    readonly occurredAtMs: number;
-  }): ActivityRecordingFailure {
-    const gap = appendRecord({
-      kind: "gap",
-      traceId: input.traceId,
-      parentRecordId: input.parentRecordId,
-      attemptId: null,
-      capabilityDigest: null,
-      occurredAtMs: input.occurredAtMs,
-      payload: { reason: input.reason, sourceKind: input.sourceKind },
-      useGapReserve: true,
-    });
-    return {
-      reason: input.reason,
-      sourceKind: input.sourceKind,
-      gapDurablyAccounted: gap.ok,
-      gapCount: currentGapCount(),
-      occurredAtMs: input.occurredAtMs,
-      errorKind: errorKindFor(input.reason),
-      cause: input.cause,
-    };
-  }
-
-  function isSettlementRejection(reason: ActivityRecordingGapReason): boolean {
-    return reason === "causal_parent_invalid"
-      || reason === "attempt_already_settled"
-      || reason === "settlement_capability_invalid"
-      || reason === "trace_mismatch"
-      || reason === "timestamp_order_invalid"
-      || reason === "outcome_shape_invalid";
-  }
-
-  function appendOrAccount(
-    sourceKind: ActivityRecordingSourceKind,
-    input: AppendRecordInput,
-  ): Result<ActivityRecordingReceipt, ActivityRecordingFailure> {
-    const appended = appendRecord(input);
-    if (appended.ok) return appended;
-    if (appended.error.persistedReceipt !== undefined
-      || appended.error.reason === "head_anchor_conflict"
-      || appended.error.reason === "head_anchor_unavailable"
-      || isSettlementRejection(appended.error.reason)) {
-      return err({
-        reason: appended.error.reason,
-        sourceKind,
-        gapDurablyAccounted: false,
-        gapCount: currentGapCount(),
-        occurredAtMs: input.occurredAtMs,
-        errorKind: errorKindFor(appended.error.reason),
-        cause: appended.error.cause,
-      });
-    }
-    return err(accountLoss({
-      sourceKind,
-      reason: appended.error.reason,
-      cause: appended.error.cause,
-      traceId: input.traceId,
-      parentRecordId: input.parentRecordId,
-      occurredAtMs: input.occurredAtMs,
-    }));
-  }
+  const { rejectWithoutGap, accountLoss, appendOrAccount, closedFailure } =
+    createActivityRecorderFailureAccounting({ appendRecord, currentGapCount });
 
   function renewCurrentWriterLease(): Result<void, Error> {
     const clock = readClockMs();
@@ -656,18 +512,6 @@ function createSqliteProductionActivityRecorderUnchecked(
 
   let closed = false;
 
-  function closedFailure(
-    sourceKind: ActivityRecordingSourceKind,
-    occurredAtMs: number,
-  ): ActivityRecordingFailure {
-    return rejectWithoutGap({
-      sourceKind,
-      reason: "recorder_closed",
-      occurredAtMs,
-      cause: new Error("Production activity recorder is closed"),
-    });
-  }
-
   function accountUnsettledAtShutdown(): Result<void, Error> {
     const clock = readClockMs();
     if (!clock.ok) return clock;
@@ -697,84 +541,6 @@ function createSqliteProductionActivityRecorderUnchecked(
     return marked.value.changes === 1
       ? ok(undefined)
       : err(new Error("Activity recorder writer lease could not be closed"));
-  }
-
-  function inspectionForState(input: {
-    readonly sequence: number;
-    readonly headHash: string;
-    readonly logicalBytes: number;
-    readonly gapCount: number;
-  }): ActivityRecordingInspection {
-    const expectedHead = makeTrustedHead({
-      streamId,
-      instanceId,
-      sequence: input.sequence,
-      recordHash: input.headHash,
-      logicalBytes: input.logicalBytes,
-      recordCount: input.sequence,
-      gapCount: input.gapCount,
-    });
-    const authority = options.headAuthority;
-    const checked = authority === undefined
-      ? ok(false)
-      : tryCatch(() => {
-          const read = authority.read(streamId);
-          return read.ok && trustedHeadsEqual(read.value, expectedHead);
-        });
-    const trustedHeadAnchor = checked.ok && checked.value;
-    const blockers = !trustedHeadAnchor
-      ? ACTIVITY_RECORDING_EXACTNESS_BLOCKERS
-      : ACTIVITY_RECORDING_EXACTNESS_BLOCKERS.filter(
-          (blocker) => blocker !== "trusted_external_head_anchor_missing",
-        );
-    return {
-      headSequence: input.sequence,
-      headHash: input.headHash,
-      recordCount: input.sequence,
-      logicalBytes: input.logicalBytes,
-      gapCount: input.gapCount,
-      trustedHeadAnchor,
-      exactness: { eligible: false, blockers },
-    };
-  }
-
-  function authenticateMetaState(meta: ActivityRecordingMetaRow): Result<void, Error> {
-    if (meta.record_count === 0) {
-      return meta.head_hash === ACTIVITY_RECORDING_ZERO_HASH
-        && meta.logical_bytes === 0 && meta.gap_count === 0 && meta.next_sequence === 1
-        ? ok(undefined)
-        : err(new Error("Activity recording genesis metadata failed validation"));
-    }
-    const row = parseRecord(selectRecordAt.get(meta.record_count));
-    if (!row.ok || row.value === undefined) {
-      return err(row.ok ? new Error("Activity recording inspection head is missing") : row.error);
-    }
-    const authenticated = verifyRowAuthenticity(row.value);
-    if (!authenticated.ok) return authenticated;
-    return row.value.record_hash === meta.head_hash
-      && row.value.state_logical_bytes === meta.logical_bytes
-      && row.value.state_record_count === meta.record_count
-      && row.value.state_gap_count === meta.gap_count
-      && meta.next_sequence === meta.record_count + 1
-      ? ok(undefined)
-      : err(new Error("Activity recording inspection metadata failed validation"));
-  }
-
-  function inspectState(): Result<ActivityRecordingInspection, Error> {
-    const inspectTransaction = db.transaction(() => {
-      const meta = readMeta();
-      if (!meta.ok) return meta;
-      const authenticated = authenticateMetaState(meta.value);
-      if (!authenticated.ok) return authenticated;
-      return ok(inspectionForState({
-        sequence: meta.value.record_count,
-        headHash: meta.value.head_hash,
-        logicalBytes: meta.value.logical_bytes,
-        gapCount: meta.value.gap_count,
-      }));
-    });
-    const inspected = tryCatch(() => inspectTransaction.deferred());
-    return inspected.ok ? inspected.value : inspected;
   }
 
   const recorder: RuntimeProductionActivityRecorder = {
