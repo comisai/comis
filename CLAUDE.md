@@ -203,20 +203,11 @@ Steps to ship `vX.Y.Z`:
 
 1. **Bump all 16 `packages/*/package.json` to `X.Y.Z`** — they must move together. The umbrella `comisai` package (in `packages/comis/`) bundles the others, so version drift between them surfaces at publish time, not in local builds.
 
-2. **Update version-pinned docs.** Sweep with:
+2. **Sweep for version pins.** The docs no longer pin release versions (de-pinned in the accuracy-first docs rewrite), so as of v1.0.54 this sweep should hit only the 16 `packages/*/package.json` — but run it every bump as the guard against a pin creeping back:
    ```bash
    grep -rn '<old-version>' --include='*.json' --include='*.mdx' --include='*.md' . \
      | grep -v node_modules | grep -v 'dist/' | grep -v package-lock | grep -v CHANGELOG
    ```
-   Files that pin the current version (update every bump):
-   - `docs/get-started/quickstart.mdx`
-   - `docs/installation/install-linux.mdx`
-   - `docs/installation/install-vps.mdx`
-   - `docs/installation/install-render.mdx`
-   - `docs/reference/cli.mdx`
-   - `docker/README-comis.md`
-   - `docker/README-comis-web.md`
-
    `docs/operations/docker.mdx` mentions a version illustratively (`pushing vX.Y.Z produces …`) and is **not** bumped per release.
 
 3. **Validate:** `pnpm validate` — clean build, cycles (madge + project-reference), lint:security, and coverage must all pass before the bump commit. (Skipping the cycles step once let a release ship with a missing `@comis/core` dep in `packages/web/package.json` and a latent 17-cycle backlog go unnoticed for days.) For the release, also run `pnpm validate:full` on Linux to exercise the integration + tarball tiers.
@@ -227,10 +218,11 @@ Steps to ship `vX.Y.Z`:
    git push origin main
    gh release create vX.Y.Z --title vX.Y.Z --notes "<notes>"
    ```
-   The `vX.Y.Z` tag triggers four workflows in `.github/workflows/`:
+   The `vX.Y.Z` tag triggers three workflows in `.github/workflows/` (there is no separate release-artifacts workflow — `gh release create` itself publishes the release):
    - `npm-publish.yml` — `pnpm publish -r --provenance` (sigstore attestation via GitHub OIDC). Runs `packages/comis/scripts/prepack.js`, which bundles `@comis/*` into `node_modules/@comis/` for inclusion in the tarball.
    - `docker-release.yml`, `dockerhub-release.yml` — multi-arch images (`linux/amd64` + `linux/arm64`), both `default` and `slim` variants. arm64 builds on a native runner (not QEMU).
-   - `release.yml` — GitHub release artifacts.
+
+   After the runs complete, verify the publish actually landed: `npm view comisai dist-tags` must show the new version (the npm job has silently drifted before).
 
 ### Supply-chain invariants (do not regress)
 
