@@ -23,7 +23,6 @@ import {
 
 import { createMockEventBus } from "./mock-event-bus.js";
 import { createMockLogger } from "./mock-logger.js";
-import { createFakeClock } from "./fake-clock.js";
 
 /**
  * Build a no-op HookRunner for tests that don't care about hooks.
@@ -81,10 +80,8 @@ export function makeDeliveryService(
     hookRunner: overrides.hookRunner ?? makeNoopHookRunner(),
     deliveryQueue: overrides.deliveryQueue ?? createNoOpDeliveryQueue(),
     logger: overrides.logger ?? createMockLogger(),
-    clock: overrides.clock ?? createFakeClock(1_700_000_000_000),
     eventBus: overrides.eventBus ?? createMockEventBus(),
     retryEngine: overrides.retryEngine,
-    activityRecorder: overrides.activityRecorder,
     maxCharsOverride: overrides.maxCharsOverride,
     replyMode: overrides.replyMode,
     // in-flight outbound tracking is now internal to

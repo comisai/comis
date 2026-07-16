@@ -28,7 +28,6 @@ export const SYNTHETIC_ERROR_KIND_MAP = {
  * the event is ignored.
  */
 export const TYPED_ERROR_KIND_EVENTS = [
-  "activity-recording:gap",
   "auth:refresh_failed",
   "tool:executed",
 ] as const satisfies ReadonlyArray<keyof EventMap>;

@@ -40,7 +40,6 @@ import type { DeliveryQueuePort } from "../ports/delivery-queue.js";
 import type { ComisLogger } from "../logging/log-fields.js";
 import { makeDeliveryService } from "../../../../test/support/factories.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
-import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
 /**
  * Build a no-op HookRunner with vi.fn() spies on every method. The fields
@@ -88,7 +87,6 @@ function makeDeps(
     hookRunner: makeNoopHookRunner(),
     deliveryQueue: createNoOpDeliveryQueue(),
     logger: makeLogger(),
-    clock: createFakeClock(1_700_000_000_000),
     ...overrides,
   };
 }
@@ -115,16 +113,13 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     expect(typeof service.deliverToChannel).toBe("function");
   });
 
-  it("returned shape matches delivery, recorder tracking, and drain interface", () => {
+  it("returned shape matches the deliverToChannel + drainInFlight interface", () => {
     const service = createDeliveryService(makeDeps());
-    // Ordering is
+    // The service exposes both `deliverToChannel` (per-call outbound
+    // delivery) and `drainInFlight` (shutdown drain). Ordering is
     // factory-emission order — assert on the Set so iteration order is
     // irrelevant.
-    expect(new Set(Object.keys(service))).toEqual(new Set([
-      "deliverToChannel",
-      "trackActivityRecording",
-      "drainInFlight",
-    ]));
+    expect(new Set(Object.keys(service))).toEqual(new Set(["deliverToChannel", "drainInFlight"]));
   });
 
   it("constructing the service does NOT call tryGetContext()", () => {

@@ -164,22 +164,6 @@ export type {
   CaManagerPort,
   EgressControlPort,
   EgressMaterialization,
-  ActivityRecordingCiphertext,
-  ActivityRecordingCryptoContext,
-  ActivityRecordingCryptoPort,
-  ActivityRecordingCryptoPurpose,
-  ActivityRecordingHeadAuthorityPort,
-  ActivityRecordingTrustedHead,
-  ActivityRecordingEvidenceExport,
-  ActivityRecordingEvidenceExportInput,
-  ActivityRecordingFailure,
-  ActivityRecordingInspection,
-  ActivityRecordingAttemptReceipt,
-  ActivityRecordingReceipt,
-  BeginDeliveryPlatformAttemptInput,
-  FinishDeliveryPlatformAttemptInput,
-  ProductionActivityRecorderPort,
-  RecordInboundChannelActivityInput,
 } from "../ports/index.js";
 
 // LCD parts <-> pi-ai Message codec. Runtime VALUES (not types) — the pure

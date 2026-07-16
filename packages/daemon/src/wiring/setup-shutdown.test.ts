@@ -30,7 +30,6 @@ function createMinimalDeps(overrides: Partial<ShutdownDeps> = {}): ShutdownDeps 
     cronSchedulers: new Map(),
     resetSchedulers: new Map(),
     browserServices: new Map(),
-    activityRecorder: undefined,
     tokenTracker: {
       getAll: vi.fn(() => []),
       record: vi.fn(),
@@ -183,33 +182,6 @@ describe("setupShutdown", () => {
     expect(deps.channelActivityTracker.dispose).toHaveBeenCalled();
     expect(deps.deliveryTracer.dispose).toHaveBeenCalled();
     expect(deps.db.close).toHaveBeenCalled();
-  });
-
-  it("closes prospective activity recording after physical channel sends drain", async () => {
-    const callOrder: string[] = [];
-    const deps = createMinimalDeps({
-      channelManager: {
-        stopAll: vi.fn(async () => { callOrder.push("channel-manager"); }),
-      },
-      activityRecorder: {
-        close: vi.fn(async () => {
-          callOrder.push("activity-recorder");
-          return { ok: true as const, value: undefined };
-        }),
-      } as never,
-      db: {
-        close: vi.fn(() => { callOrder.push("memory-database"); }),
-        pragma: vi.fn(),
-      },
-    });
-    const setupShutdown = await getSetupShutdown();
-
-    await setupShutdown(deps).shutdownHandle.trigger("SIGTERM");
-
-    expect(callOrder.indexOf("activity-recorder"))
-      .toBeGreaterThan(callOrder.indexOf("channel-manager"));
-    expect(callOrder.indexOf("activity-recorder"))
-      .toBeLessThan(callOrder.indexOf("memory-database"));
   });
 
   // -------------------------------------------------------------------------

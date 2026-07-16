@@ -33,7 +33,6 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | sendPolicyConfig | optional | all sends are allowed | packages/orchestrator/src/channel-manager.ts:97 |
 | getResetTriggers | optional | no trigger-phrase detection | packages/orchestrator/src/channel-manager.ts:99 |
 | retryEngine | optional | sends use adapter.sendMessage directly | packages/orchestrator/src/channel-manager.ts:105 |
-| activityRecorder | optional | native inbound turns and physical platform attempts are not prospectively captured; exactness remains ineligible | packages/orchestrator/src/channel-manager.ts:130 |
 | deliveryQueue | optional | agent responses skip queue | packages/orchestrator/src/channel-manager.ts:107 |
 | deliveryService | required | — | packages/orchestrator/src/channel-manager.ts:111 |
 | queueConfig | optional | default queue behavior used | packages/orchestrator/src/channel-manager.ts:121 |

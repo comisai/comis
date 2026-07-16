@@ -3,67 +3,6 @@ import { describe, it, expect } from "vitest";
 import { ObservabilityConfigSchema } from "./schema-observability.js";
 
 describe("ObservabilityConfigSchema", () => {
-  it("keeps prospective production activity recording disabled by default", () => {
-    const result = ObservabilityConfigSchema.safeParse({});
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.activityRecording).toEqual({
-        enabled: false,
-        maxPayloadBytes: 256 * 1024,
-        maxStoredBytes: 1024 * 1024 * 1024,
-        maxRecords: 1_000_000,
-        gapReserveBytes: 8 * 1024 * 1024,
-        gapReserveRecords: 10_000,
-        handoffCapacity: 4_096,
-        operationTimeoutMs: 5_000,
-        startupTimeoutMs: 10_000,
-        busyTimeoutMs: 5_000,
-      });
-    }
-  });
-
-  it("accepts bounded prospective activity recording limits", () => {
-    const result = ObservabilityConfigSchema.safeParse({
-      activityRecording: {
-        enabled: true,
-        maxPayloadBytes: 4096,
-        maxStoredBytes: 1_000_000,
-        maxRecords: 100,
-        gapReserveBytes: 100_000,
-        gapReserveRecords: 10,
-        handoffCapacity: 16,
-        operationTimeoutMs: 500,
-        startupTimeoutMs: 1_000,
-        busyTimeoutMs: 100,
-      },
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects a zero activity recorder database lock timeout", () => {
-    expect(ObservabilityConfigSchema.safeParse({
-      activityRecording: { busyTimeoutMs: 0 },
-    }).success).toBe(false);
-  });
-
-  it("rejects activity recording reserves that consume the full cap", () => {
-    expect(ObservabilityConfigSchema.safeParse({
-      activityRecording: { maxStoredBytes: 1000, gapReserveBytes: 1000 },
-    }).success).toBe(false);
-    expect(ObservabilityConfigSchema.safeParse({
-      activityRecording: { maxRecords: 10, gapReserveRecords: 10 },
-    }).success).toBe(false);
-  });
-
-  it("rejects a payload limit larger than the aggregate worker frame", () => {
-    expect(ObservabilityConfigSchema.safeParse({
-      activityRecording: {
-        maxPayloadBytes: 32 * 1024 * 1024,
-        maxStoredBytes: 128 * 1024 * 1024,
-      },
-    }).success).toBe(false);
-  });
-
   it("produces valid defaults from empty object", () => {
     const result = ObservabilityConfigSchema.safeParse({});
     expect(result.success).toBe(true);

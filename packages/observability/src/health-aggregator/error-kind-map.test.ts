@@ -11,10 +11,6 @@ import {
 } from "./error-kind-map.js";
 
 describe("SYNTHETIC_ERROR_KIND_MAP", () => {
-  it("uses the activity recording gap payload error kind", () => {
-    expect(resolveErrorKind("activity-recording:gap", { errorKind: "auth" })).toBe("auth");
-  });
-
   it("security:injection_detected → internal", () => {
     expect(SYNTHETIC_ERROR_KIND_MAP["security:injection_detected"]).toBe("internal");
   });

@@ -6,8 +6,9 @@
  * receives the manager handle + lifecycle reactors + command queue for ChannelsResult.
  * @module
  */
+
 import { readdir, readFile, stat } from "node:fs/promises";
-import type { Attachment, ChannelPort, ChannelPluginPort, DeliveryService, ExecutionPlanPort, NormalizedMessage, SessionKey, ClockPort, TimerPort, ActivityStreamPort, TurnActivityContext, ProductionActivityRecorderPort } from "@comis/core";
+import type { Attachment, ChannelPort, ChannelPluginPort, DeliveryService, ExecutionPlanPort, NormalizedMessage, SessionKey, ClockPort, TimerPort, ActivityStreamPort, TurnActivityContext } from "@comis/core";
 import { formatSessionKey, safePath, systemNowDate, themeForName, chatProjection } from "@comis/core";
 import { createPlanStream } from "@comis/observability";
 import type { AppContainer } from "@comis/core";
@@ -60,7 +61,6 @@ export interface ChannelManagerBuildDeps {
    *  assembled + injected onto createChannelManager (pipeline gate true). Absent →
    *  no inbound coordinatorFactory (gate false, fail-closed §22.2). */
   activityStream?: ActivityStreamPort;
-  activityRecorder: ProductionActivityRecorderPort | undefined;
   /** Process-singleton circuit breaker (daemon.ts D2), shared across coordinators. */
   activityBreaker?: ActivityBreakerGate;
   /** SHARED ExecutionPlanHolder (DEFAULT agent) from createAcpWiring().holder — SAME ref as
@@ -252,7 +252,6 @@ export async function buildAndStartChannelManager(
       commandQueue,
       sessionManager,
       retryEngine,
-      activityRecorder: deps.activityRecorder,
       deliveryQueue: deps.deliveryQueue,
       deliveryService,
       channelRegistry,
@@ -592,6 +591,7 @@ export async function buildAndStartChannelManager(
       if (lifecycleReactors.length > 0) channelsLogger.info({ reactorCount: lifecycleReactors.length }, "Lifecycle reactors initialized");
     }
   }
+
   // activityRenderers + coordinatorFactory built BEFORE the manager (above); map returned for the registry's ChannelsResult activity-counters scrape.
   return { channelManager, lifecycleReactors, commandQueue, activityRenderers };
 }

@@ -483,10 +483,6 @@ export {
 // imports @comis/channels).
 
 export { createActivityStream } from "./activity/activity-stream.js";
-export {
-  createActivityRecordingCrypto,
-  deriveActivityRecordingMasterKey,
-} from "./activity-recording/activity-recording-crypto.js";
 export type {
   ActivityStream,
   CreateActivityStreamDeps,

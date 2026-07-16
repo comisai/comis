@@ -1,10 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { BackgroundTaskOrigin } from "../domain/background-task-origin.js";
-import type {
-  ActivityRecordingGapReason,
-  ActivityRecordingSourceKind,
-} from "../domain/activity-recording.js";
-import type { ErrorKind } from "../logging/log-fields.js";
 import type { McpServerEntry } from "../config/schema-integrations.js";
 import type { InjectionRule } from "../security/provider-catalog/index.js";
 
@@ -16,16 +11,6 @@ import type { InjectionRule } from "../security/provider-catalog/index.js";
  * diagnostic:*, media:*, scheduler:*, observability:metrics, system:*
  */
 export interface InfraEvents {
-  /** A recorder boundary failed; payload content and arbitrary error text are excluded. */
-  "activity-recording:gap": {
-    sourceKind: ActivityRecordingSourceKind;
-    reason: ActivityRecordingGapReason;
-    gapDurablyAccounted: boolean;
-    gapCount: number;
-    errorKind: ErrorKind;
-    timestamp: number;
-  };
-
   // -------------------------------------------------------------------------
   // Approval gate events
   // -------------------------------------------------------------------------

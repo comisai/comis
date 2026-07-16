@@ -17,7 +17,6 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { createFakeClock } from "../support/fake-clock.js";
 import { EchoChannelAdapter } from "@comis/channels";
 // createChannelManager + ChannelManagerDeps live in @comis/orchestrator
 // alongside processInboundMessage. The dep-inject indirection is preserved
@@ -62,7 +61,6 @@ function makeRealDeliveryService(eventBus: any) {
     hookRunner: createHookRunner(createPluginRegistry(), { eventBus, catchErrors: true }),
     deliveryQueue: createNoOpDeliveryQueue(),
     logger,
-    clock: createFakeClock(1_700_000_000_000),
     eventBus,
   });
 }

@@ -19,7 +19,6 @@ import {
   safePath,
 } from "@comis/core";
 import type { SecretsCrypto } from "@comis/core";
-import { deriveActivityRecordingMasterKey } from "@comis/observability";
 
 /**
  * Result of a successful secrets bootstrap when a valid master key is provided.
@@ -27,8 +26,6 @@ import { deriveActivityRecordingMasterKey } from "@comis/observability";
 export interface SecretsBootResult {
   /** SecretsCrypto engine initialized with the parsed master key */
   readonly crypto: SecretsCrypto;
-  /** Dedicated root key for the isolated activity-recording crypto domain. */
-  readonly activityRecordingMasterKey: Buffer;
   /** Resolved absolute path where secrets.db should be created */
   readonly dbPath: string;
 }
@@ -90,16 +87,10 @@ export function setupSecrets(
     );
   }
 
-  const activityKey = deriveActivityRecordingMasterKey(masterKey);
-  if (!activityKey.ok) {
-    return err(new Error("Failed to initialize activity recording crypto authority"));
-  }
-
   const dbPath = safePath(opts.dataDir, "secrets.db");
 
   return ok({
     crypto: cryptoResult.value,
-    activityRecordingMasterKey: activityKey.value,
     dbPath,
   });
 }

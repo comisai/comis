@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
-import { ACTIVITY_RECORDING_MAX_PAYLOAD_BYTES } from "../domain/activity-recording.js";
 
 // ── Monitoring ──────────────────────────────────────────────────────────
 
@@ -357,44 +356,6 @@ const ExportConfigSchema = z.strictObject({
   quarterHourBuckets: z.boolean().default(true),
 });
 
-/** Bounded, opt-in prospective activity evidence recorder. */
-export const ActivityRecordingConfigSchema = z.strictObject({
-  enabled: z.boolean().default(false),
-  maxPayloadBytes: z.number().int().positive()
-    .max(ACTIVITY_RECORDING_MAX_PAYLOAD_BYTES)
-    .default(256 * 1024),
-  maxStoredBytes: z.number().int().positive().default(1024 * 1024 * 1024),
-  maxRecords: z.number().int().positive().default(1_000_000),
-  gapReserveBytes: z.number().int().positive().default(8 * 1024 * 1024),
-  gapReserveRecords: z.number().int().positive().default(10_000),
-  handoffCapacity: z.number().int().positive().default(4_096),
-  operationTimeoutMs: z.number().int().positive().default(5_000),
-  startupTimeoutMs: z.number().int().positive().default(10_000),
-  busyTimeoutMs: z.number().int().positive().max(2_147_483_647).default(5_000),
-}).superRefine((value, context) => {
-  if (value.gapReserveBytes >= value.maxStoredBytes) {
-    context.addIssue({
-      code: "custom",
-      path: ["gapReserveBytes"],
-      message: "gapReserveBytes must be smaller than maxStoredBytes",
-    });
-  }
-  if (value.gapReserveRecords >= value.maxRecords) {
-    context.addIssue({
-      code: "custom",
-      path: ["gapReserveRecords"],
-      message: "gapReserveRecords must be smaller than maxRecords",
-    });
-  }
-  if (value.maxPayloadBytes >= value.maxStoredBytes - value.gapReserveBytes) {
-    context.addIssue({
-      code: "custom",
-      path: ["maxPayloadBytes"],
-      message: "maxPayloadBytes must fit inside the non-reserved storage cap",
-    });
-  }
-});
-
 /**
  * Root observability configuration schema.
  *
@@ -421,10 +382,6 @@ export const ObservabilityConfigSchema = z.strictObject({
   costGranularity: CostGranularitySchema.default(() => CostGranularitySchema.parse({})),
   /** Cost-export surface — CSV + quarter-hour bucketing, ship on. */
   export: ExportConfigSchema.default(() => ExportConfigSchema.parse({})),
-  /** Prospective activity recording — opt-in and disabled by default. */
-  activityRecording: ActivityRecordingConfigSchema.default(
-    () => ActivityRecordingConfigSchema.parse({}),
-  ),
 });
 
 export type ObservabilityConfig = z.infer<typeof ObservabilityConfigSchema>;
@@ -439,7 +396,6 @@ export type OtelConfig = z.infer<typeof OtelConfigSchema>;
 export type PrometheusConfig = z.infer<typeof PrometheusConfigSchema>;
 export type CostGranularityConfig = z.infer<typeof CostGranularitySchema>;
 export type ExportConfig = z.infer<typeof ExportConfigSchema>;
-export type ActivityRecordingConfig = z.infer<typeof ActivityRecordingConfigSchema>;
 export {
   LogRotationConfigSchema,
   AuditConfigSchema,

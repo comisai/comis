@@ -13725,18 +13725,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
-      "activityRecording": {
-        "busyTimeoutMs": 5000,
-        "enabled": false,
-        "gapReserveBytes": 8388608,
-        "gapReserveRecords": 10000,
-        "handoffCapacity": 4096,
-        "maxPayloadBytes": 262144,
-        "maxRecords": 1000000,
-        "maxStoredBytes": 1073741824,
-        "operationTimeoutMs": 5000,
-        "startupTimeoutMs": 10000
-      },
       "alertBudget": {
         "enabled": true,
         "thresholds": {
@@ -13840,83 +13828,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "observability",
     "type": "object"
-  },
-  {
-    "default": {
-      "busyTimeoutMs": 5000,
-      "enabled": false,
-      "gapReserveBytes": 8388608,
-      "gapReserveRecords": 10000,
-      "handoffCapacity": 4096,
-      "maxPayloadBytes": 262144,
-      "maxRecords": 1000000,
-      "maxStoredBytes": 1073741824,
-      "operationTimeoutMs": 5000,
-      "startupTimeoutMs": 10000
-    },
-    "immutable": false,
-    "path": "observability.activityRecording",
-    "type": "object"
-  },
-  {
-    "default": 5000,
-    "immutable": false,
-    "path": "observability.activityRecording.busyTimeoutMs",
-    "type": "integer"
-  },
-  {
-    "default": false,
-    "immutable": false,
-    "path": "observability.activityRecording.enabled",
-    "type": "boolean"
-  },
-  {
-    "default": 8388608,
-    "immutable": false,
-    "path": "observability.activityRecording.gapReserveBytes",
-    "type": "integer"
-  },
-  {
-    "default": 10000,
-    "immutable": false,
-    "path": "observability.activityRecording.gapReserveRecords",
-    "type": "integer"
-  },
-  {
-    "default": 4096,
-    "immutable": false,
-    "path": "observability.activityRecording.handoffCapacity",
-    "type": "integer"
-  },
-  {
-    "default": 262144,
-    "immutable": false,
-    "path": "observability.activityRecording.maxPayloadBytes",
-    "type": "integer"
-  },
-  {
-    "default": 1000000,
-    "immutable": false,
-    "path": "observability.activityRecording.maxRecords",
-    "type": "integer"
-  },
-  {
-    "default": 1073741824,
-    "immutable": false,
-    "path": "observability.activityRecording.maxStoredBytes",
-    "type": "integer"
-  },
-  {
-    "default": 5000,
-    "immutable": false,
-    "path": "observability.activityRecording.operationTimeoutMs",
-    "type": "integer"
-  },
-  {
-    "default": 10000,
-    "immutable": false,
-    "path": "observability.activityRecording.startupTimeoutMs",
-    "type": "integer"
   },
   {
     "default": {
@@ -38614,18 +38525,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "observability": {
       "additionalProperties": false,
       "default": {
-        "activityRecording": {
-          "busyTimeoutMs": 5000,
-          "enabled": false,
-          "gapReserveBytes": 8388608,
-          "gapReserveRecords": 10000,
-          "handoffCapacity": 4096,
-          "maxPayloadBytes": 262144,
-          "maxRecords": 1000000,
-          "maxStoredBytes": 1073741824,
-          "operationTimeoutMs": 5000,
-          "startupTimeoutMs": 10000
-        },
         "alertBudget": {
           "enabled": true,
           "thresholds": {
@@ -38727,94 +38626,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "trajectory": {}
       },
       "properties": {
-        "activityRecording": {
-          "additionalProperties": false,
-          "default": {
-            "busyTimeoutMs": 5000,
-            "enabled": false,
-            "gapReserveBytes": 8388608,
-            "gapReserveRecords": 10000,
-            "handoffCapacity": 4096,
-            "maxPayloadBytes": 262144,
-            "maxRecords": 1000000,
-            "maxStoredBytes": 1073741824,
-            "operationTimeoutMs": 5000,
-            "startupTimeoutMs": 10000
-          },
-          "properties": {
-            "busyTimeoutMs": {
-              "default": 5000,
-              "maximum": 9007199254740991,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "enabled": {
-              "default": false,
-              "type": "boolean"
-            },
-            "gapReserveBytes": {
-              "default": 8388608,
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991,
-              "type": "integer"
-            },
-            "gapReserveRecords": {
-              "default": 10000,
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991,
-              "type": "integer"
-            },
-            "handoffCapacity": {
-              "default": 4096,
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991,
-              "type": "integer"
-            },
-            "maxPayloadBytes": {
-              "default": 262144,
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991,
-              "type": "integer"
-            },
-            "maxRecords": {
-              "default": 1000000,
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991,
-              "type": "integer"
-            },
-            "maxStoredBytes": {
-              "default": 1073741824,
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991,
-              "type": "integer"
-            },
-            "operationTimeoutMs": {
-              "default": 5000,
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991,
-              "type": "integer"
-            },
-            "startupTimeoutMs": {
-              "default": 10000,
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "enabled",
-            "maxPayloadBytes",
-            "maxStoredBytes",
-            "maxRecords",
-            "gapReserveBytes",
-            "gapReserveRecords",
-            "handoffCapacity",
-            "operationTimeoutMs",
-            "startupTimeoutMs",
-            "busyTimeoutMs"
-          ],
-          "type": "object"
-        },
         "alertBudget": {
           "additionalProperties": false,
           "default": {
@@ -39327,8 +39138,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "otel",
         "prometheus",
         "costGranularity",
-        "export",
-        "activityRecording"
+        "export"
       ],
       "type": "object"
     },

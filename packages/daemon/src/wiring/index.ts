@@ -11,10 +11,6 @@ export {
 } from "./daemon-utils.js";
 export { setupLogging, type LoggingResult } from "./setup-logging.js";
 export { setupObservability, rehydrateSpendFromStore, type ObservabilityResult } from "./setup-observability.js";
-export {
-  setupProductionActivityRecorder,
-  type ProductionActivityRecorderSetup,
-} from "./setup-production-activity-recorder.js";
 export { setupHealth, type HealthResult, setupMonitoring, type MonitoringResult } from "./setup-health.js";
 export { setupMemory, type MemoryResult } from "./setup-memory.js";
 export { setupMedia, createImageGenGetter, type MediaResult } from "./setup-media.js";

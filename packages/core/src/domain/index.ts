@@ -3,24 +3,6 @@
 
 export { AttachmentSchema, VoiceMetaSchema, NormalizedMessageSchema, parseMessage, getMessageTraceId } from "./normalized-message.js";
 export type { Attachment, VoiceMeta, NormalizedMessage } from "./normalized-message.js";
-export {
-  ACTIVITY_RECORDING_MAX_WIRE_FRAME_BYTES,
-  ACTIVITY_RECORDING_WIRE_ENVELOPE_RESERVE_BYTES,
-  ACTIVITY_RECORDING_EXACTNESS_BLOCKERS,
-  ActivityRecordingExactnessBlockerSchema,
-  ActivityRecordingGapReasonSchema,
-  ActivityRecordingOutcomeClassSchema,
-  ActivityRecordingRecordKindSchema,
-  ActivityRecordingSourceKindSchema,
-  parseActivityRecordingExactnessBlocker,
-} from "./activity-recording.js";
-export type {
-  ActivityRecordingExactnessBlocker,
-  ActivityRecordingGapReason,
-  ActivityRecordingOutcomeClass,
-  ActivityRecordingRecordKind,
-  ActivityRecordingSourceKind,
-} from "./activity-recording.js";
 export { NormalizedReactionSchema, parseReaction } from "./normalized-reaction.js";
 export type { NormalizedReaction } from "./normalized-reaction.js";
 

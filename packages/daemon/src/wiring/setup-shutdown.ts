@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { AppContainer, ApprovalGate, ProductionActivityRecorderPort, SecretStorePort } from "@comis/core";
+import type { AppContainer, ApprovalGate, SecretStorePort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { GatewayServerHandle } from "@comis/gateway";
 import type { HeartbeatRunner, CronScheduler, WakeCoalescer, PerAgentHeartbeatRunner } from "@comis/scheduler";
@@ -77,8 +77,6 @@ export interface ShutdownDeps {
   browserServices: Map<string, BrowserService>;
   /** Channel lifecycle manager (optional). */
   channelManager?: { stopAll: () => Promise<void> };
-  /** Opt-in prospective activity recorder, closed after channel sends drain. */
-  activityRecorder: ProductionActivityRecorderPort | undefined;
   /** Heartbeat runner for periodic health checks (optional). */
   heartbeatRunner?: HeartbeatRunner;
   /** Per-agent heartbeat runner for shutdown cleanup */
@@ -208,7 +206,6 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     resetSchedulers,
     browserServices,
     channelManager,
-    activityRecorder,
     heartbeatRunner,
     perAgentRunner,
     wakeCoalescer,
@@ -511,25 +508,6 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           await channelManager.stopAll();
           daemonLogger.info({ component: "channel-manager", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "channel-manager", daemonLogger);
-      }
-      if (activityRecorder) {
-        const stopMs = systemNowMs();
-        await withStepTimeout(async () => {
-          const closed = await activityRecorder.close();
-          if (!closed.ok) {
-            daemonLogger.warn({
-              component: "production-activity-recorder",
-              errorKind: "resource" as const,
-              hint: "Inspect recorder storage health before relying on the final prospective evidence tail",
-            }, "Production activity recorder close failed");
-            return;
-          }
-          daemonLogger.info({
-            component: "production-activity-recorder",
-            durationMs: systemNowMs() - stopMs,
-            shutdownOrder: ++shutdownOrder,
-          }, "Component stopped");
-        }, "production-activity-recorder", daemonLogger);
       }
       // Stop proxy typing controllers + sweep timer. Previously
       // hosted in a system:shutdown subscriber inside

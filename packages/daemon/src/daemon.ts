@@ -60,7 +60,6 @@ import { createGatewayServer } from "@comis/gateway";
 import {
   setupLogging,
   setupObservability, rehydrateSpendFromStore,
-  setupProductionActivityRecorder,
   setupHealth,
   setupMemory,
   setupAgents,
@@ -336,7 +335,7 @@ function buildChannelManagerDeps(deps: {
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, recordOutboundMessage, executionTrackers,
-    onSuspiciousContent, dataDir, clock, timers, env, activityBreaker, activityStream, activityRecorder, activityRendererFactoryOverride,
+    onSuspiciousContent, dataDir, clock, timers, env, activityBreaker, activityStream, activityRendererFactoryOverride,
     executionPlanPorts, oauthManagers,
   } = agents;
   // Per-agent OAuth access-token resolver (auto-refreshing) so the
@@ -379,7 +378,7 @@ function buildChannelManagerDeps(deps: {
     // the orchestrator-facing redacted ActivityStream (setupObservability)
     // injected into the inbound coordinatorFactory as its activityStreamPort.
     // the process-singleton circuit breaker shared across every coordinator.
-    activityStream, activityRecorder, activityBreaker,
+    activityStream, activityBreaker,
     // the DEFAULT agent's shared ExecutionPlanHolder reference
     // (MUST be the same reference as PiExecutorDeps.executionPlanHolder +
     // AcpServerDeps.executionPlanPort, NOT a parallel createExecutionPlanHolder).
@@ -1182,11 +1181,9 @@ async function bootFoundation(
   const secretStore: import("@comis/core").SecretStorePort = selected.secretStore;
   let secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
   let secretsDb: import("better-sqlite3").Database | undefined;
-  let activityRecordingMasterKey: Buffer | undefined;
   if (selected.kind === "encrypted") {
     secretsCrypto = selected.secretsCrypto;
     secretsDb = selected.secretsDb;
-    activityRecordingMasterKey = selected.activityRecordingMasterKey;
   }
 
   // Build mergedEnv (store-wins) + stage-1 scrub.
@@ -1541,21 +1538,6 @@ async function bootFoundation(
     seedBundledSkills(defaultSeedBundledSkillsDeps(bundledSkillsRoot, safePath(dataDir, "skills"), agentLogger));
   }
 
-  const recorderSetup = await setupProductionActivityRecorder({
-    config: container.config.observability.activityRecording,
-    dataDir: pathResolve(container.config.dataDir || dataDir),
-    activityRecordingMasterKey,
-    clock,
-    timers,
-    logger: logLevelManager.getLogger("activity-recording"),
-  });
-  activityRecordingMasterKey?.fill(0);
-  activityRecordingMasterKey = undefined;
-  if (!recorderSetup.ok) {
-    throw new Error(`Production activity recorder setup failed: ${recorderSetup.error.message}`);
-  }
-  const { activityRecorder } = recorderSetup.value;
-
   // Mutate boot with all Group A foundation fields. The 2 forward-ref slots
   // (channelPluginsRef, bgNotifyRef) were eagerly initialized by
   // createEmptyBootContext(); here we wire the bgNotifyFn closure that reads
@@ -1571,7 +1553,7 @@ async function bootFoundation(
     schedulerLogger, skillsLogger, memoryLogger, daemonVersion,
     tokenTracker, sharedCostTracker,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
-    activityStream, activityRecorder, disposeActivityStream, spendAccumulator, otelHandle, // spendAccumulator: the spend kill-switch → bridge; otelHandle: the OTLP/Prometheus exporter → setupShutdown.
+    activityStream, disposeActivityStream, spendAccumulator, otelHandle, // spendAccumulator: the spend kill-switch → bridge; otelHandle: the OTLP/Prometheus exporter → setupShutdown.
     contextPipelineCollector,
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
@@ -2726,7 +2708,7 @@ async function bootShutdown(
     logger, daemonLogger, processMonitor, container, exitFn,
     tokenTracker, startupTimestamp: startupStartMs,
     activeExecutions, graphCoordinator, subAgentRunner, cronSchedulers, resetSchedulers,
-    browserServices, channelManager, activityRecorder: boot.activityRecorder, heartbeatRunner, perAgentRunner, wakeCoalescer, gatewayHandle,
+    browserServices, channelManager, heartbeatRunner, perAgentRunner, wakeCoalescer, gatewayHandle,
     mediaTempManager, skillWatcherHandles,
     diagnosticCollector, channelActivityTracker, deliveryTracer, contextPipelineCollector,
     backgroundIndexingPromise, db,

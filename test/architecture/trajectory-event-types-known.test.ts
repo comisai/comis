@@ -98,9 +98,6 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // cost-relevant break belongs on the per-session timeline),
   // so it is NOT listed here (the disjoint invariant — it lives in TRAJECTORY_BRIDGE_MAPPING).
   "observability:latency",
-  // Recorder integrity is daemon-health state with its own durable gap row,
-  // not a session trajectory step.
-  "activity-recording:gap",
   // The three observability:spend_* events were REMOVED from
   // this allowlist and MAPPED into TRAJECTORY_BRIDGE_MAPPING — a spend-killed
   // session was undiagnosable via `comis explain` while these were fleet-only.
