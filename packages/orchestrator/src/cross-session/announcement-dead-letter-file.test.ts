@@ -116,7 +116,6 @@ describe("announcement dead-letter file", () => {
 
     expect(events).toEqual([
       `open:${temporaryPath}:wx:${0o600}`,
-      `handle-chmod:${temporaryPath}:${0o600}`,
       `write:${temporaryPath}`,
       `sync:${temporaryPath}`,
       `close:${temporaryPath}`,
@@ -129,6 +128,25 @@ describe("announcement dead-letter file", () => {
       "sync:/data",
       "close:/data",
     ]);
+  });
+
+  it("avoids fchmod because the daemon Node permission model disables that API", async () => {
+    const handleChmod = vi.fn().mockRejectedValue(
+      Object.assign(new Error("fchmod API is disabled when Permission Model is enabled."), {
+        code: "ERR_ACCESS_DENIED",
+      }),
+    );
+    const operations = createRecordingOperations([]);
+    const openOriginal = operations.open;
+    operations.open = async (...args) => {
+      const handle = await openOriginal(...args);
+      return { ...handle, chmod: handleChmod };
+    };
+
+    await expect(
+      writeDeadLetterEntries("/data/dead-letters.jsonl", [makeEntry()], operations),
+    ).resolves.toEqual({ ok: true, value: undefined });
+    expect(handleChmod).not.toHaveBeenCalled();
   });
 
   it("returns an error when the parent directory cannot be synced", async () => {

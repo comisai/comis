@@ -678,6 +678,56 @@ describe("createSubAgentRunner", () => {
     expect(deps.batcher.enqueue).not.toHaveBeenCalled();
   });
 
+  it("shutdown suppresses a halted result while its failure summary is still persisting", async () => {
+    let releaseMemory!: (value: { ok: boolean }) => void;
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "partial result",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.01 },
+      finishReason: "max_steps",
+      stepsExecuted: 50,
+    });
+    deps.memoryAdapter = {
+      store: vi.fn().mockReturnValue(new Promise((resolve) => {
+        releaseMemory = resolve;
+      })),
+    };
+    deps.sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: true as const,
+      identity: { agentId: "parent-agent", rootRunId: "root-1", stepIndex: 3 },
+    }));
+    deps.batcher = {
+      enqueue: vi.fn().mockResolvedValue(ok("queued")),
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      pending: 0,
+      hasDelivered: vi.fn().mockReturnValue(false),
+      markDelivered: vi.fn(),
+    };
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "halt before post-processing stalls",
+      agentId: "child-agent",
+      callerAgentId: "parent-agent",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.memoryAdapter.store).toHaveBeenCalledOnce();
+
+    const shutdown = runner.shutdown();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await shutdown;
+
+    expect(deps.sendGovernedAnnouncement).toHaveBeenCalledOnce();
+    expect(deps.batcher.enqueue).not.toHaveBeenCalled();
+
+    releaseMemory({ ok: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.batcher.enqueue).not.toHaveBeenCalled();
+  });
+
   // -----------------------------------------------------------------------
   // getRunStatus returns undefined for unknown runId
   // -----------------------------------------------------------------------
@@ -3057,7 +3107,7 @@ describe("abort wiring in spawn", () => {
     });
 
     const runner = createSubAgentRunner(deps);
-    runner.spawn({
+    const runId = runner.spawn({
       task: "big task",
       agentId: "default",
       announceChannelType: "discord",
@@ -3069,6 +3119,11 @@ describe("abort wiring in spawn", () => {
     expect(deps.sendToChannel).toHaveBeenCalledTimes(1);
     const text = vi.mocked(deps.sendToChannel).mock.calls[0]![2];
     expect(text).toContain("Abort: step_limit");
+    expect(runner.getRunStatus(runId)).toMatchObject({
+      status: "failed",
+      error: "Execution completed with finishReason: max_steps",
+      result: { finishReason: "max_steps" },
+    });
   });
 
   // completion with stop does not include abort in announcement

@@ -300,7 +300,8 @@ describe("AnnouncementBatcher", () => {
   it("blocks parent execution when durable decision reservation fails", async () => {
     const deadLetterQueue = makeDecisionQueue();
     deadLetterQueue.reserveDecision.mockResolvedValue(err(new Error("disk unavailable")));
-    const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement: vi.fn() });
+    const logger = { debug: vi.fn(), warn: vi.fn() };
+    const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement: vi.fn(), logger });
     const batcher = createAnnouncementBatcher(deps);
 
     const result = await batcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-failed" }));
@@ -308,6 +309,10 @@ describe("AnnouncementBatcher", () => {
 
     expect(result.ok).toBe(false);
     expect(deps.announceToParent).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: "disk unavailable" }),
+      "Announcement decision reservation failed",
+    );
   });
 
   it("resolves a durable decision only after NO_REPLY or a committed receipt", async () => {

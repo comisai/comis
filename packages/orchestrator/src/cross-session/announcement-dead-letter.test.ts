@@ -892,6 +892,30 @@ describe("AnnouncementDeadLetterQueue parent decision reservations", () => {
     expect(conflict).toMatchObject({ ok: false });
     expect(queue.size()).toBe(1);
   });
+
+  it("logs the bounded storage error when a parent decision cannot persist", async () => {
+    const storageError = Object.assign(new Error("permission model denied atomic write"), {
+      code: "ERR_ACCESS_DENIED",
+    });
+    const logger = createMockLogger();
+    const queue = createAnnouncementDeadLetterQueue({
+      filePath,
+      eventBus: createMockEventBus(),
+      logger,
+      fileOperations: {
+        open: vi.fn().mockRejectedValue(storageError),
+        rename: vi.fn(),
+        unlink: vi.fn(),
+        chmod: vi.fn(),
+      },
+    });
+
+    await expect(queue.reserveDecision(decisionInput())).resolves.toMatchObject({ ok: false });
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ err: "permission model denied atomic write" }),
+      "Parent decision reservation was not durably persisted",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
