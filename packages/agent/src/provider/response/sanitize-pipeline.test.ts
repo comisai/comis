@@ -75,6 +75,8 @@ describe("sanitizeAssistantResponse", () => {
   });
 
   it("truncates a fabricated user-role continuation after the assistant answer", () => {
+    const warn = vi.fn();
+    setSanitizeLogger({ warn } as any);
     const input = [
       "סימנתי את אזור חדרה. כרגע יש שם 3 רכבים.",
       "",
@@ -83,6 +85,14 @@ describe("sanitizeAssistantResponse", () => {
 
     expect(sanitizeAssistantResponse(input)).toBe(
       "סימנתי את אזור חדרה. כרגע יש שם 3 רכבים.",
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "response-sanitizer",
+        reason: "plain-user-role-continuation",
+        errorKind: "dependency",
+      }),
+      "Removed fabricated user-role continuation from assistant response",
     );
   });
 

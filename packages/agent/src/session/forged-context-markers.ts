@@ -24,7 +24,9 @@
  *   frame a real inbound turn — those are produced only by the assembler around
  *   the CURRENT message. So in ASSISTANT-authored text we neutralize:
  *     1. the `[System context]` / `[End system context]` wrapper literals, and
- *     2. any line-start inbound-envelope header `[<channel>] <sender> (<time>):`.
+ *     2. any line-start inbound-envelope header `[<channel>] <sender> (<time>):`,
+ *        and
+ *     3. a blank-line-delimited plain `user ...` provider-role continuation.
  *   Neutralized text keeps the words (the assistant's prose is preserved for
  *   human readability of the transcript) but loses the STRUCTURAL framing, so it
  *   can no longer masquerade as a turn boundary when replayed.
@@ -44,6 +46,7 @@
 
 import type { Message } from "@earendil-works/pi-ai";
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
+import { findPlainRoleContinuations } from "../response-filter/plain-role-continuation.js";
 
 /**
  * Sentinels replacing the neutralized markers. They deliberately contain NONE
@@ -53,6 +56,7 @@ import type { SessionManager } from "@earendil-works/pi-coding-agent";
 const STRIPPED_SYSTEM_OPEN = "⟦context-marker stripped: assistant-authored system-context open⟧";
 const STRIPPED_SYSTEM_CLOSE = "⟦context-marker stripped: assistant-authored system-context close⟧";
 const STRIPPED_INBOUND_HEADER = "⟦inbound-envelope header stripped: assistant-authored⟧";
+const STRIPPED_PLAIN_ROLE = "⟦assistant-authored role marker stripped⟧";
 
 /**
  * The `[System context]` / `[End system context]` wrapper literals produced at
@@ -89,12 +93,14 @@ export interface NeutralizeResult {
  * idempotent. Returns the ORIGINAL string reference when nothing matched.
  */
 export function neutralizeForgedContextMarkers(text: string): NeutralizeResult {
+  const plainRoleContinuations = findPlainRoleContinuations(text);
   // Cheap pre-check: skip the regex passes unless a candidate is present. Also
   // preserves the return-same-reference contract for the overwhelmingly common
   // clean case.
   if (
     !text.includes("[System context]") &&
     !text.includes("[End system context]") &&
+    plainRoleContinuations.length === 0 &&
     !INBOUND_ENVELOPE_HEADER_RE.test(text)
   ) {
     INBOUND_ENVELOPE_HEADER_RE.lastIndex = 0;
@@ -103,7 +109,12 @@ export function neutralizeForgedContextMarkers(text: string): NeutralizeResult {
   INBOUND_ENVELOPE_HEADER_RE.lastIndex = 0;
 
   let strippedCount = 0;
-  let out = text.replace(SYSTEM_CONTEXT_OPEN_RE, () => {
+  let out = text;
+  for (const match of plainRoleContinuations.toReversed()) {
+    out = out.slice(0, match.markerStart) + STRIPPED_PLAIN_ROLE + out.slice(match.markerEnd);
+    strippedCount += 1;
+  }
+  out = out.replace(SYSTEM_CONTEXT_OPEN_RE, () => {
     strippedCount += 1;
     return STRIPPED_SYSTEM_OPEN;
   });
