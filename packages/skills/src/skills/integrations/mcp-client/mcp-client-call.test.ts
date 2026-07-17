@@ -172,7 +172,7 @@ describe("R8 needs_reauth", () => {
 });
 
 describe("request correlation", () => {
-  it("forwards the request trace for progress and server policy correlation", async () => {
+  it("registers MCP progress handling while forwarding the request trace separately", async () => {
     const serverName = "ituran";
     const state = makeConnectedState(serverName, () =>
       Promise.resolve({ content: [{ type: "text", text: "{}" }] }),
@@ -189,12 +189,15 @@ describe("request correlation", () => {
         name: "ituran_places_list",
         arguments: { name_contains: "area" },
         _meta: {
-          progressToken: "40000000-0000-4000-8000-000000000004",
           "comis.ai/requestTraceId": "40000000-0000-4000-8000-000000000004",
         },
       },
       undefined,
-      { timeout: 5000 },
+      {
+        timeout: 5000,
+        onprogress: expect.any(Function),
+        resetTimeoutOnProgress: true,
+      },
     );
   });
 });
