@@ -8,13 +8,13 @@
  * `createOrchestrateReplayRespawn` — the sandbox-backed pinned-byte re-spawn that
  * `comis orchestrate replay <runId>` drives. It re-runs a durable orchestrate
  * run's PINNED script bytes in the SAME jail envelope a live run uses, but with
- * `COMIS_ORCH_SOCKET` pointed at the SEPARATE operator replay socket (INV-1) so
+ * `COMIS_ORCH_SOCKET` pointed at the separate operator replay socket so
  * the recorded results are served back deterministically — never the production
  * capability endpoint.
  *
  * It composes the SHIPPED primitives verbatim (never a fork of the jail logic):
  *   - {@link loadResumeSpec} — resolve the PINNED bytes (the sole source; the
- *     operator supplies no script — T-WS4-03);
+ *     the operator supplies no script);
  *   - the SAME `defaultResolveJailNode`/`defaultResolveJailPython`/
  *     `defaultResolveJailAgentCli` resolvers + `SDK_ASSETS` copy + `scrubSecretEnv`
  *     + `sandbox.buildArgs` the runner uses (so the replay jail is byte-identical);
@@ -23,13 +23,14 @@
  *     byte-identity).
  *
  * The real bwrap byte-identical round-trip is the `.linux`/VPS tier; this seam's
- * LOGIC (pinned-byte load, INV-1 socket target, honest-degrade) is macOS-unit-
+ * Logic (pinned-byte load, isolated socket target, honest degradation) is unit-
  * testable with an injected spawn.
  *
  * @module
  */
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { safePath, type ComisLogger } from "@comis/core";
@@ -46,6 +47,7 @@ import {
   defaultOrchestrateDurableFs,
   loadResumeSpec,
   type OrchestrateDurableRuns,
+  type ResumePrincipal,
 } from "./orchestrate-durable.js";
 import { runScriptWithOneShotRepair, type OrchestrateSpawnFn } from "./orchestrate-repair.js";
 import { closeSeccompProfileFd, loadSeccompProfileFd } from "../sandbox/seccomp-profile.js";
@@ -72,6 +74,8 @@ export interface OrchestrateReplayRespawnInput {
   readonly socketPath: string;
   readonly bearer: string;
   readonly childEnv: Record<string, string | undefined>;
+  /** Persisted execution identity, supplied by the operator-authenticated replay handler. */
+  readonly principal: ResumePrincipal;
 }
 
 /** The re-spawn closure: re-run the pinned bytes against the replay socket → stdout. */
@@ -83,7 +87,7 @@ export type OrchestrateReplayRespawnFn = (
 export interface OrchestrateReplayRespawnDeps {
   /** The OS sandbox provider — the SAME one the orchestrate runner jails with. */
   readonly sandbox: SandboxProvider;
-  /** The durable-run store — `getByRootRun` resolves the run's pinned scriptRef. */
+  /** The durable-run store resolves the execution checkpoint's pinned scriptRef. */
   readonly durableRuns: OrchestrateDurableRuns;
   /** Structured logger. */
   readonly logger: ComisLogger;
@@ -123,99 +127,106 @@ export function createOrchestrateReplayRespawn(
     deps.resolveJailAgentCliFn ?? (() => defaultResolveJailAgentCli(sdkAssetsDir));
   const replayTimeoutMs = deps.replayTimeoutMs ?? DEFAULT_REPLAY_TIMEOUT_MS;
 
-  return async ({ rootRunId, workspacePath, socketPath, childEnv }) => {
+  return async ({ rootRunId, workspacePath, socketPath, childEnv, principal }) => {
     // 1. Load the PINNED bytes (the sole source — the operator supplies no script).
     const loaded = await loadResumeSpec(deps.durableRuns, defaultOrchestrateDurableFs, {
       resumeRunId: rootRunId,
       workspacePath,
+      principal,
     });
     if (!loaded.ok) {
       throw new Error(`orchestrate replay: ${loaded.error}`);
     }
     const { scriptRef, scriptBytes, language } = loaded.value;
+    // The original agent workspace is input-only. Stage the pinned script + SDK
+    // into a fresh host directory that is RO-bound into the replay jail, then
+    // remove it regardless of spawn outcome.
+    const replayWorkspacePath = mkdtempSync(safePath(tmpdir(), "comis-replay-run-"));
 
-    // 2. Copy the committed SDK + runtime shim so the pinned script's imports resolve
-    //    (the IDENTICAL asset set a live run gets; both paths safePath-confined).
-    for (const asset of SDK_ASSETS) {
-      copyFileSync(safePath(sdkAssetsDir, asset), safePath(workspacePath, asset));
-    }
-
-    // 3. Resolve the jail node / interpreter / CLI — honest-degrade (throw) on an
-    //    unavailable jail; NEVER a quiet host-side run outside the jail (INV-1 fail-closed).
-    const seccompFd = loadSeccompFd();
     try {
-      const jailNode = resolveNode();
-      if (jailNode.mode === "unavailable") {
-        throw new Error(`orchestrate replay jail unavailable: ${jailNode.hint}`);
+      // 2. Copy the committed SDK + runtime shim into the throwaway stage so the
+      //    pinned script's imports resolve without writing into the live workspace.
+      for (const asset of SDK_ASSETS) {
+        copyFileSync(safePath(sdkAssetsDir, asset), safePath(replayWorkspacePath, asset));
       }
-      let interp: string;
-      if (language === "py") {
-        const jailPython = resolvePython();
-        if (jailPython.mode === "unavailable") {
-          throw new Error(`orchestrate replay 'py' surface unavailable: ${jailPython.hint}`);
+      const scriptPath = safePath(replayWorkspacePath, scriptRef);
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath-confined throwaway replay stage.
+      mkdirSync(dirname(scriptPath), { recursive: true });
+
+      // 3. Resolve the jail node / interpreter / CLI — honest-degrade (throw) on an
+      //    unavailable jail; never a quiet host-side run outside the jail.
+      const seccompFd = loadSeccompFd();
+      try {
+        const jailNode = resolveNode();
+        if (jailNode.mode === "unavailable") {
+          throw new Error(`orchestrate replay jail unavailable: ${jailNode.hint}`);
         }
-        interp = jailPython.pythonBin;
-      } else {
-        interp = jailNode.mode === "bind" ? jailNode.execPath : "node";
+        let interp: string;
+        if (language === "py") {
+          const jailPython = resolvePython();
+          if (jailPython.mode === "unavailable") {
+            throw new Error(`orchestrate replay 'py' surface unavailable: ${jailPython.hint}`);
+          }
+          interp = jailPython.pythonBin;
+        } else {
+          interp = jailNode.mode === "bind" ? jailNode.execPath : "node";
+        }
+        const jailAgentCli = resolveAgentCli();
+
+        // 4. The disposable workspace is RO-bound. Writable temp is the sandbox's
+        //    private /tmp, never the original workspace or daemon recording root.
+        const args = deps.sandbox.buildArgs({
+          workspacePath: replayWorkspacePath,
+          workspaceReadOnly: true,
+          sharedPaths: [],
+          readOnlyPaths: [],
+          cwd: replayWorkspacePath,
+          tempDir: "/tmp",
+          network: { mode: "cap-socket", capSocketPath: socketPath },
+          seccompFd,
+          jailNode,
+          jailAgentCli,
+        });
+        const bin = args[0]!;
+        const spawnArgs = [...args.slice(1), "/bin/bash", "-c", `${interp} ${scriptRef}`];
+
+        // 5. Env: scrub the base, set COMIS_AGENT_BIN when the CLI is bound, THEN merge
+        //    the caller's childEnv LAST so COMIS_ORCH_SOCKET (→ the replay socket) +
+        //    COMIS_CAP_LEASE (the ephemeral bearer) always win.
+        const env: Record<string, string | undefined> = scrubSecretEnv(deps.baseEnv ?? {});
+        if (jailAgentCli.mode === "bind") {
+          env.COMIS_AGENT_BIN = jailAgentCli.binPath;
+        }
+        Object.assign(env, childEnv);
+
+        // 6. Re-spawn the PINNED bytes. The host writes them before spawn; the child
+        //    sees the completed throwaway stage read-only and cannot persist changes.
+        const stdout = await runScriptWithOneShotRepair({
+          spawnFn,
+          bin,
+          spawnArgs,
+          childEnv: env,
+          scriptPath,
+          timeoutMs: replayTimeoutMs,
+          script: scriptBytes,
+          language,
+          capabilityClass: undefined,
+          repairSeam: undefined,
+          log,
+          runId: rootRunId,
+        });
+        log.info(
+          { rootRunId, step: "replay-respawn-complete", stdoutBytes: stdout.length },
+          "orchestrate replay re-spawn complete",
+        );
+        return { stdout };
+      } finally {
+        // Always close the inherited seccomp fd (null-safe + double-close-safe).
+        closeSeccompProfileFd(seccompFd);
       }
-      const jailAgentCli = resolveAgentCli();
-
-      // 4. Build the cap-socket jail args pointed at the SEPARATE replay socket
-      //    (INV-1) — never the production capability endpoint.
-      const tempDir = safePath(workspacePath, ".tmp");
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath-confined to the run workspace (mirrors orchestrate-tool.ts).
-      mkdirSync(tempDir, { recursive: true });
-      const args = deps.sandbox.buildArgs({
-        workspacePath,
-        sharedPaths: [],
-        readOnlyPaths: [],
-        cwd: workspacePath,
-        tempDir,
-        network: { mode: "cap-socket", capSocketPath: socketPath },
-        seccompFd,
-        jailNode,
-        jailAgentCli,
-      });
-      const bin = args[0]!;
-      const spawnArgs = [...args.slice(1), "/bin/bash", "-c", `${interp} ${scriptRef}`];
-
-      // 5. Env: scrub the base, set COMIS_AGENT_BIN when the CLI is bound, THEN merge
-      //    the caller's childEnv LAST so COMIS_ORCH_SOCKET (→ the replay socket) +
-      //    COMIS_CAP_LEASE (→ the ephemeral bearer) ALWAYS win (INV-1 by construction).
-      const env: Record<string, string | undefined> = scrubSecretEnv(deps.baseEnv ?? {});
-      if (jailAgentCli.mode === "bind") {
-        env.COMIS_AGENT_BIN = jailAgentCli.binPath;
-      }
-      Object.assign(env, childEnv);
-
-      // 6. Re-spawn the PINNED bytes. Deterministic replay ⇒ NO auto-repair
-      //    (repairSeam/capabilityClass undefined) — a regenerated script would break
-      //    byte-identity. runScriptWithOneShotRepair writes the pinned bytes to the
-      //    scriptPath and drives the jailed child to completion.
-      const scriptPath = safePath(workspacePath, scriptRef);
-      const stdout = await runScriptWithOneShotRepair({
-        spawnFn,
-        bin,
-        spawnArgs,
-        childEnv: env,
-        scriptPath,
-        timeoutMs: replayTimeoutMs,
-        script: scriptBytes,
-        language,
-        capabilityClass: undefined,
-        repairSeam: undefined,
-        log,
-        runId: rootRunId,
-      });
-      log.info(
-        { rootRunId, step: "replay-respawn-complete", stdoutBytes: stdout.length },
-        "orchestrate replay re-spawn complete",
-      );
-      return { stdout };
     } finally {
-      // Always close the inherited seccomp fd (null-safe + double-close-safe) — the
-      // parent keeps its own copy after fork; a leak exhausts the daemon fd table.
-      closeSeccompProfileFd(seccompFd);
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- mkdtemp-created throwaway replay stage.
+      rmSync(replayWorkspacePath, { recursive: true, force: true });
     }
   };
 }

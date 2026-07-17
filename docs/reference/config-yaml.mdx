@@ -317,7 +317,7 @@ behavior.
 | `outward.originOnly` | `boolean` | `true` | When true, only the agent's own origin channel is an auto-allowable outward target; a new target needs an explicit grant. |
 | `outward.perTargetGrants` | `string[]` | `[]` | Explicit per-target grant list. A send to a non-origin target is denied unless its channel id is listed here. |
 | `outward.volumeCap` | `number` | `4000` | Per-send volume bound (a mass-recipient / high-volume send trips this gate even when reversible). Positive integer. |
-| `durability.enabled` | `boolean` | `true` | Durable runs (on by default — full capability out of the box): the daemon persists a per-root checkpoint as the spawn tree advances, emits a keep-alive heartbeat, and on restart re-mints the run from its persisted (attenuated) capabilities + reconciles any crashed-mid-send message exactly-once. Set `false` to opt out (no durable stores or watchdog). Only takes effect for an autonomy-bearing agent. |
+| `durability.enabled` | `boolean` | `true` | Durable runs (on by default — full capability out of the box): the daemon persists a per-root checkpoint as the spawn tree advances, emits a keep-alive heartbeat, and on restart re-mints the run from its persisted attenuated capabilities. A retained committed outward operation short-circuits; any interrupted or otherwise ambiguous send is parked `unresolved` and escalated without a channel query or replay. This is duplicate suppression for one stable operation identity, not universal exactly-once delivery. Set `false` to opt out (no durable stores or watchdog). Only takes effect for an autonomy-bearing agent. |
 | `durability.staleHeartbeatMs` | `number` | `120000` | Lapsed-heartbeat threshold in milliseconds. A running run whose last heartbeat is older than this is treated as crashed and orphan-swept by the daemon-wide watchdog (which also fires at this cadence). Default is 4x `keepAliveMs` (the conservative ratio: a transiently-slow run must not be falsely failed and its work duplicated). Positive integer. |
 | `durability.keepAliveMs` | `number` | `30000` | Keep-alive write cadence in milliseconds — how often a live run stamps its heartbeat, independent of step/spawn completion so a long-running child never looks stale. Positive integer. |
 | `durability.recoveryBudgetMs` | `number` | `30000` | Wall-clock recovery budget in milliseconds for one boot/watchdog pass. A backlog larger than the budget is partially recovered and the remainder deferred to the next pass (no thundering herd on a large crash backlog). Positive integer. |
@@ -1101,6 +1101,9 @@ Channel adapter configuration. Each key is a channel platform name.
 | `webhookUrl` | `string (URL)` | _(unset)_ | Webhook URL for receiving events |
 | `allowFrom` | `string[]` | `[]` | Allowed sender IDs (empty = allow all) |
 | `mediaProcessing` | `MediaProcessing` | _(all true)_ | Per-channel media processing overrides |
+
+`webhookUrl` is platform-dependent. Telegram currently supports polling only and
+fails adapter startup when this field is set.
 
 **Media Processing (channels.*.mediaProcessing)**
 

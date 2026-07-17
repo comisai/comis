@@ -10,9 +10,10 @@
 
 import type { TypedEventBus } from "@comis/core";
 import { systemNowMs, systemSetInterval, systemClearInterval, setSsrfBlockHook, tryGetContext } from "@comis/core";
-import type { ObservabilityStore, TokenUsageRow, DeliveryRow, DiagnosticRow, ChannelSnapshotRow, AuditEventRow } from "@comis/memory";
+import type { ObservabilityStore, TokenUsageRow, DeliveryRow, DiagnosticRow, ChannelSnapshotRow, AuditEventRow, ObsTableName } from "@comis/memory";
 import { cacheBreakEventToRow } from "@comis/memory";
 import type { ComisLogger } from "@comis/infra";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 // The durable security-audit sink (row-builders + subscribers),
 // extracted to keep this file under the 800-line cap.
 import { wireAuditSink } from "./obs-audit-sink.js";
@@ -72,16 +73,41 @@ import {
 /** Public interface for the write buffer. */
 export interface ObsWriteBuffer<T> {
   push(item: T): void;
-  flush(): void;
+  flush(): Result<ObsWriteBufferFlushStatus, ObsWriteBufferFailure>;
+  /** Drop queued rows without writing them; returns the number discarded. */
+  discard(): number;
   drain(): void;
   readonly pending: number;
+  readonly dropped: number;
+}
+
+/** Content-free outcome of a buffer flush. */
+export interface ObsWriteBufferFlushStatus {
+  flushed: number;
+  pending: number;
+  dropped: number;
+}
+
+/** Content-free persistence failure state safe for logs and RPC control flow. */
+export interface ObsWriteBufferFailure {
+  kind: "persistence_unavailable";
+  pending: number;
+  dropped: number;
+  consecutiveFailures: number;
+  retryAfterMs: number;
 }
 
 /** Options for creating a write buffer. */
 export interface ObsWriteBufferOptions<T> {
+  /** Must commit the whole batch atomically or throw before committing it. */
   flushFn: (items: T[]) => void;
+  onFlushError?: (failure: ObsWriteBufferFailure) => void;
+  onRecovery?: (status: ObsWriteBufferFlushStatus & { durationMs: number }) => void;
   maxSize?: number;
+  maxPending?: number;
   intervalMs?: number;
+  reportIntervalMs?: number;
+  nowMs?: () => number;
 }
 
 /**
@@ -90,33 +116,109 @@ export interface ObsWriteBufferOptions<T> {
 export function createObsWriteBuffer<T>(
   opts: ObsWriteBufferOptions<T>,
 ): ObsWriteBuffer<T> {
-  const { flushFn, maxSize = 50, intervalMs = 500 } = opts;
+  const {
+    flushFn,
+    onFlushError,
+    onRecovery,
+    intervalMs = 500,
+    reportIntervalMs = 30_000,
+    nowMs = systemNowMs,
+  } = opts;
+  const maxSize = Math.max(1, Math.floor(opts.maxSize ?? 50));
+  const maxPending = Math.max(maxSize, Math.floor(opts.maxPending ?? 500));
   let buffer: T[] = [];
+  let dropped = 0;
+  let consecutiveFailures = 0;
+  let retryAtMs = 0;
+  let degradedAtMs: number | undefined;
+  let lastReportAtMs: number | undefined;
+
+  function failure(now: number): ObsWriteBufferFailure {
+    return {
+      kind: "persistence_unavailable",
+      pending: buffer.length,
+      dropped,
+      consecutiveFailures,
+      retryAfterMs: Math.max(0, retryAtMs - now),
+    };
+  }
+
+  function reportFailure(now: number): void {
+    if (lastReportAtMs !== undefined && now - lastReportAtMs < reportIntervalMs) return;
+    lastReportAtMs = now;
+    void tryCatch(() => onFlushError?.(failure(now)));
+  }
+
+  function flush(): Result<ObsWriteBufferFlushStatus, ObsWriteBufferFailure> {
+    if (buffer.length === 0) return ok({ flushed: 0, pending: 0, dropped });
+    const now = nowMs();
+    if (consecutiveFailures > 0 && now < retryAtMs) {
+      reportFailure(now);
+      return err(failure(now));
+    }
+    const batch = buffer.slice();
+    const flushed = tryCatch(() => flushFn(batch));
+    if (!flushed.ok) {
+      degradedAtMs ??= now;
+      consecutiveFailures += 1;
+      retryAtMs = now + Math.min(intervalMs * (2 ** (consecutiveFailures - 1)), 30_000);
+      reportFailure(now);
+      return err(failure(now));
+    }
+    buffer.splice(0, batch.length);
+    const status = { flushed: batch.length, pending: buffer.length, dropped };
+    const recoveredFromMs = degradedAtMs;
+    if (recoveredFromMs !== undefined) {
+      void tryCatch(() => onRecovery?.({
+        ...status,
+        durationMs: Math.max(0, now - recoveredFromMs),
+      }));
+    }
+    consecutiveFailures = 0;
+    retryAtMs = 0;
+    degradedAtMs = undefined;
+    lastReportAtMs = undefined;
+    return ok(status);
+  }
+
   const timer = systemSetInterval(() => { flush(); }, intervalMs);
   timer.unref();
 
-  function flush(): void {
-    if (buffer.length === 0) return;
-    const batch = buffer;
-    buffer = [];
-    flushFn(batch);
+  function push(item: T): void {
+    // During an outage retain the newest bounded window; stale rows are the
+    // least useful after recovery and must never grow the daemon heap without limit.
+    if (buffer.length >= maxPending) {
+      buffer.shift();
+      dropped += 1;
+    }
+    buffer.push(item);
+    if (buffer.length >= maxSize && consecutiveFailures === 0) flush();
   }
 
-  function push(item: T): void {
-    buffer.push(item);
-    if (buffer.length >= maxSize) { flush(); }
+  function discard(): number {
+    const discarded = buffer.length;
+    buffer = [];
+    consecutiveFailures = 0;
+    retryAtMs = 0;
+    degradedAtMs = undefined;
+    lastReportAtMs = undefined;
+    return discarded;
   }
 
   function drain(): void {
     systemClearInterval(timer);
+    // Shutdown makes one final attempt even when the normal retry is deferred.
+    retryAtMs = 0;
     flush();
   }
 
   return {
     push,
     flush,
+    discard,
     drain,
     get pending(): number { return buffer.length; },
+    get dropped(): number { return dropped; },
   };
 }
 
@@ -213,10 +315,30 @@ export interface ObsPersistenceDeps {
   persistence?: { cacheBreaks: boolean };
 }
 
+/** Successful canonical flush across one or more resettable tables. */
+export interface ObsPersistenceFlushStatus {
+  tables: readonly ObsTableName[];
+  flushed: number;
+  pending: number;
+  dropped: number;
+}
+
+/** Content-free failure returned to readers so they can use a degraded source. */
+export interface ObsPersistenceFlushFailure {
+  kind: "persistence_unavailable";
+  tables: readonly ObsTableName[];
+  pending: number;
+  dropped: number;
+}
+
 /** Result from setupObsPersistence(). */
 export interface ObsPersistenceResult {
   /** Synchronous drain of all 5 write buffers (incl. the audit buffer). */
   drainAll(): void;
+  /** Flush queued rows for one resettable table, or all resettable tables. */
+  flushPending(table: ObsTableName | "all"): Result<ObsPersistenceFlushStatus, ObsPersistenceFlushFailure>;
+  /** Drop queued rows covered by an observability reset; audit is never reset. */
+  discardPending(table: ObsTableName | "all"): number;
   /** Periodic channel snapshot timer handle (for shutdown cleanup). */
   snapshotTimer: ReturnType<typeof setInterval>;
 }
@@ -251,6 +373,23 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     persistence,
   } = deps;
 
+  const onBufferFlushError = (bufferName: string) => (failure: ObsWriteBufferFailure): void => {
+    logger?.warn({
+      bufferName,
+      pending: failure.pending,
+      dropped: failure.dropped,
+      consecutiveFailures: failure.consecutiveFailures,
+      retryAfterMs: failure.retryAfterMs,
+      hint: "Check SQLite health and disk capacity; the bounded queue retains the newest rows and retries automatically",
+      errorKind: "resource" as const,
+    }, "Observability persistence is degraded");
+  };
+  const onBufferRecovery = (bufferName: string) => (
+    status: ObsWriteBufferFlushStatus & { durationMs: number },
+  ): void => {
+    logger?.info({ bufferName, ...status }, "Observability persistence recovered");
+  };
+
   // a. Create 5 write buffers with transactional flush functions
   const tokenUsageBuffer = createObsWriteBuffer<TokenUsageRow>({
     flushFn: (items) => {
@@ -260,6 +399,8 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
         }
       })();
     },
+    onFlushError: onBufferFlushError("token_usage"),
+    onRecovery: onBufferRecovery("token_usage"),
   });
 
   const deliveryBuffer = createObsWriteBuffer<DeliveryRow>({
@@ -270,6 +411,8 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
         }
       })();
     },
+    onFlushError: onBufferFlushError("delivery"),
+    onRecovery: onBufferRecovery("delivery"),
   });
 
   const diagnosticBuffer = createObsWriteBuffer<DiagnosticRow>({
@@ -280,6 +423,8 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
         }
       })();
     },
+    onFlushError: onBufferFlushError("diagnostics"),
+    onRecovery: onBufferRecovery("diagnostics"),
   });
 
   const channelSnapshotBuffer = createObsWriteBuffer<ChannelSnapshotRow>({
@@ -290,6 +435,8 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
         }
       })();
     },
+    onFlushError: onBufferFlushError("channels"),
+    onRecovery: onBufferRecovery("channels"),
   });
 
   // A DEDICATED audit buffer (distinct obs_audit_events table +
@@ -304,6 +451,8 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
         }
       })();
     },
+    onFlushError: onBufferFlushError("audit"),
+    onRecovery: onBufferRecovery("audit"),
   });
 
   // b. Subscribe to event bus (NEW listeners alongside existing collectors)
@@ -567,5 +716,73 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     auditBuffer.drain();
   }
 
-  return { drainAll, snapshotTimer };
+  function discardPending(table: ObsTableName | "all"): number {
+    if (table === "all") {
+      return tokenUsageBuffer.discard()
+        + deliveryBuffer.discard()
+        + diagnosticBuffer.discard()
+        + channelSnapshotBuffer.discard();
+    }
+    switch (table) {
+      case "token_usage":
+        return tokenUsageBuffer.discard();
+      case "delivery":
+        return deliveryBuffer.discard();
+      case "diagnostics":
+        return diagnosticBuffer.discard();
+      case "channels":
+        return channelSnapshotBuffer.discard();
+      default: {
+        const _exhaustive: never = table;
+        return _exhaustive;
+      }
+    }
+  }
+
+  function flushTable(table: ObsTableName): Result<ObsWriteBufferFlushStatus, ObsWriteBufferFailure> {
+    switch (table) {
+      case "token_usage":
+        return tokenUsageBuffer.flush();
+      case "delivery":
+        return deliveryBuffer.flush();
+      case "diagnostics":
+        return diagnosticBuffer.flush();
+      case "channels":
+        return channelSnapshotBuffer.flush();
+      default: {
+        const _exhaustive: never = table;
+        return _exhaustive;
+      }
+    }
+  }
+
+  function flushPending(
+    table: ObsTableName | "all",
+  ): Result<ObsPersistenceFlushStatus, ObsPersistenceFlushFailure> {
+    const tables: readonly ObsTableName[] = table === "all"
+      ? ["token_usage", "delivery", "diagnostics", "channels"]
+      : [table];
+    let flushed = 0;
+    let pending = 0;
+    let dropped = 0;
+    const failedTables: ObsTableName[] = [];
+    for (const current of tables) {
+      const result = flushTable(current);
+      if (result.ok) {
+        flushed += result.value.flushed;
+        pending += result.value.pending;
+        dropped += result.value.dropped;
+      } else {
+        failedTables.push(current);
+        pending += result.error.pending;
+        dropped += result.error.dropped;
+      }
+    }
+    if (failedTables.length > 0) {
+      return err({ kind: "persistence_unavailable", tables: failedTables, pending, dropped });
+    }
+    return ok({ tables, flushed, pending, dropped });
+  }
+
+  return { drainAll, flushPending, discardPending, snapshotTimer };
 }

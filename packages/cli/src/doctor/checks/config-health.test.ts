@@ -100,7 +100,7 @@ describe("configHealthCheck", () => {
     expect(findings[0]?.status).toBe("warn");
     expect(findings[0]?.message).toContain("COMIS_GATEWAY_TOKEN");
     expect(findings[0]?.message).toContain("gateway.tokens[0].secret");
-    expect(findings[0]?.message).toContain("encrypted secret store");
+    expect(findings[0]?.message).toContain("configured secret store");
     expect(findings[1]?.status).toBe("warn");
     expect(findings[1]?.message).toContain("validation issues");
   });

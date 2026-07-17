@@ -1,9 +1,9 @@
 # ChannelManagerDeps Audit
 
 **Generated:** 2026-05-11
-**Interface source:** `packages/orchestrator/src/channel-manager.ts:78–218` (38-field interface)
-**Construction site:** `packages/daemon/src/wiring/setup-channels.ts:739` (single site — `createChannelManager({`)
-**Field count:** 38 (7 required + 31 optional + 0 stale-fallback)
+**Interface source:** `packages/orchestrator/src/channel-manager.ts` (45-field interface)
+**Construction site:** `packages/daemon/src/wiring/setup-channels/setup-channels-runtime.ts` (single site — `createChannelManager({`)
+**Field count:** 45 (9 required + 36 optional + 0 stale-fallback)
 
 This file is co-located with the orchestrator package. `files: ["dist"]` in `packages/orchestrator/package.json` excludes it from the npm tarball.
 
@@ -19,10 +19,12 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 | **Field** | **Classification** | **When-absent** | **Evidence-link** |
 |-----------|--------------------|-----------------|-------------------|
+| tenantId | required | — | packages/orchestrator/src/channel-manager.ts:154 |
 | eventBus | required | — | packages/orchestrator/src/channel-manager.ts:79 |
 | messageRouter | required | — | packages/orchestrator/src/channel-manager.ts:80 |
 | sessionManager | required | — | packages/orchestrator/src/channel-manager.ts:81 |
 | createExecutor | required | — | packages/orchestrator/src/channel-manager.ts:82 |
+| persistInboundMessage | required | — | packages/orchestrator/src/channel-manager.ts:161 |
 | adapters | optional | channelRegistry plugins are the sole adapter source (production path when adapters is empty) | packages/orchestrator/src/channel-manager.ts:84 |
 | logger | required | — | packages/orchestrator/src/channel-manager.ts:85 |
 | preprocessMessage | optional | inbound messages pass through unprocessed (no voice transcription / image analysis pre-agent) | packages/orchestrator/src/channel-manager.ts:87 |
@@ -69,7 +71,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Summary
 
-- **Total fields:** 40 (7 required + 33 optional)
+- **Total fields:** 45 (9 required + 36 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value)
 

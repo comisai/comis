@@ -19,7 +19,7 @@
  * @module
  */
 
-import { systemNowMs, type TypedEventBus } from "@comis/core";
+import { systemNowMs, toSafeErrorLogString, type TypedEventBus } from "@comis/core";
 import type { FailureResult } from "./graph-state-machine.js";
 import type { GraphRunState } from "./graph-coordinator-state.js";
 
@@ -152,7 +152,7 @@ export function applyNodeBudgetBreach(
   );
   if (!failRes.ok) {
     deps.logger?.warn(
-      { graphId: gs.graphId, nodeId, error: failRes.error, hint: "Node may have been concurrently updated", errorKind: "internal" as const },
+      { graphId: gs.graphId, nodeId, error: toSafeErrorLogString(failRes.error), hint: "Node may have been concurrently updated", errorKind: "internal" as const },
       "Budget-fail node transition failed",
     );
   }

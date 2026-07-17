@@ -36,6 +36,7 @@ import {
   API_CONTRACTS_ORDERED,
   requireCapability,
   CapabilityDeniedError,
+  tryGetContext,
   type AgentCapability,
   type ClockPort,
 } from "@comis/core";
@@ -43,9 +44,10 @@ import { resolveAutonomy } from "@comis/core";
 import { assertNotAgentOrigin } from "../api/shared/assert-not-agent-origin.js";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import { createResultRefStore } from "@comis/skills/tools";
-import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import {
   createCapabilityEndpoint,
   createReplayRecorder,
@@ -85,8 +87,15 @@ function createRealSinkOver(
   handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>>,
 ): RpcCall {
   const captured: { emit: ReturnType<typeof vi.fn> } = { emit: vi.fn() };
+  const emitSafely = vi.fn((event: string, payload: unknown) => {
+    captured.emit(event, payload);
+    return { hadListeners: false, failures: [], pendingFailures: Promise.resolve([]) };
+  });
   const sinkDeps = {
-    container: { eventBus: { emit: captured.emit }, config: { tenantId: "test" } },
+    container: {
+      eventBus: { emit: captured.emit, emitSafely },
+      config: { tenantId: "test" },
+    },
   };
   return async (method: string, params: Record<string, unknown>) => {
     const handler = handlers[method];
@@ -111,6 +120,7 @@ function mintValidLease(
     caps,
     budgetRef: "budget-1",
     sessionKey: "tenant:channel:user",
+    trustLevel: "user",
     rootRunId: "run-1",
   });
   return bearer;
@@ -189,12 +199,267 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     // were stripped, then the lease values injected on top.
     expect(calledParams._agentId).toBe("agent-real");
     expect(calledParams._capabilities).toEqual(["orch:cron"]);
-    // The forged control fields are ABSENT (not merely overridden): every
-    // INTERNAL_FIELD_NAME the wire carried must be gone before injection.
-    expect("_trustLevel" in calledParams).toBe(false);
-    expect("_userId" in calledParams).toBe(false);
+    // Forged values are replaced by the validated lease principal.
+    expect(calledParams._trustLevel).toBe("user");
+    expect(calledParams._userId).toBe("channel");
     expect("_callerChannelId" in calledParams).toBe(false);
-    expect("_tenantId" in calledParams).toBe(false);
+    expect(calledParams._tenantId).toBe("tenant");
+  });
+
+  it("dispatches session.spawn inside a locked principal derived only from the validated lease", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const leaseInput = {
+      agentId: "parent-agent",
+      caps: ["orch:spawn"] as AgentCapability[],
+      budgetRef: "budget-spawn",
+      sessionKey: "tenant-a:user-a:chat-a:thread:topic-a",
+      trustLevel: "user" as const,
+      rootRunId: "root-spawn",
+      deliveryOrigin: {
+        channelType: "telegram",
+        channelId: "chat-a",
+        userId: "user-a",
+        tenantId: "tenant-a",
+        threadId: "topic-a",
+      },
+    };
+    const { bearer } = leaseManager.mintLease(leaseInput);
+    const rpcCall = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+      const context = tryGetContext();
+      expect(context).toMatchObject({
+        tenantId: "tenant-a",
+        userId: "user-a",
+        sessionKey: "tenant-a:user-a:chat-a:thread:topic-a",
+        agentId: "parent-agent",
+        channelType: "telegram",
+        trustLevel: "user",
+        deliveryOrigin: leaseInput.deliveryOrigin,
+      });
+      expect(Object.getOwnPropertyDescriptor(context, "agentId")).toMatchObject({
+        writable: false,
+        configurable: false,
+      });
+      expect(Object.isFrozen(context?.deliveryOrigin)).toBe(true);
+      return { accepted: true, params };
+    });
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+
+    await endpoint.handleCapCall(bearer, "session.spawn", {
+      task: "bounded task",
+      agent_id: "child-agent",
+      _agentId: "forged-agent",
+      _callerSessionKey: "forged:session:key",
+      _callerChannelType: "discord",
+      _callerChannelId: "forged-channel",
+    });
+
+    const [, calledParams] = rpcCall.mock.calls[0]!;
+    expect(calledParams).toMatchObject({
+      task: "bounded task",
+      agent_id: "child-agent",
+      _agentId: "parent-agent",
+      _callerSessionKey: "tenant-a:user-a:chat-a:thread:topic-a",
+      _callerChannelType: "telegram",
+      _callerChannelId: "chat-a",
+      _capabilities: ["orch:spawn"],
+    });
+  });
+
+  it("reconstructs the lease principal and trusted routing fields for every direct RPC", async () => {
+    const leaseManager = createLeaseManager({ clock: createTestClock() });
+    const deliveryOrigin = {
+      channelType: "telegram",
+      channelId: "chat-a",
+      userId: "user-a",
+      tenantId: "tenant-a",
+    };
+    const issued = leaseManager.mintLease({
+      agentId: "agent-a",
+      caps: ["orch:cron"],
+      budgetRef: "budget-a",
+      sessionKey: "tenant-a:user-a:chat-a",
+      trustLevel: "user",
+      deliveryOrigin,
+      rootRunId: "root-a",
+      checkpointId: "checkpoint-a",
+      parentLeaseId: "lease-parent",
+    });
+    const rpcCall = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+      expect(tryGetContext()).toMatchObject({
+        tenantId: "tenant-a",
+        userId: "user-a",
+        sessionKey: "tenant-a:user-a:chat-a",
+        agentId: "agent-a",
+        trustLevel: "user",
+        deliveryOrigin,
+      });
+      expect(params).toMatchObject({
+        _agentId: "agent-a",
+        _capabilities: ["orch:cron"],
+        _rootRunId: "root-a",
+        _leaseId: issued.leaseId,
+        _parentLeaseId: "lease-parent",
+        _checkpointId: "checkpoint-a",
+        _trustLevel: "user",
+        _callerSessionKey: "tenant-a:user-a:chat-a",
+        _callerChannelType: "telegram",
+        _callerChannelId: "chat-a",
+        _deliveryTarget: {
+          channelType: "telegram",
+          channelId: "chat-a",
+          userId: "user-a",
+          tenantId: "tenant-a",
+        },
+      });
+      return { ok: true };
+    });
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+
+    await endpoint.handleCapCall(issued.bearer, "cron.add", {
+      payload_kind: "agent_turn",
+      _trustLevel: "admin",
+      _callerChannelId: "forged",
+    });
+  });
+
+  it("reconstructs the same lease principal for RPC-backed tool.invoke routes", async () => {
+    const leaseManager = createLeaseManager({ clock: createTestClock() });
+    const deliveryOrigin = {
+      channelType: "telegram",
+      channelId: "chat-a",
+      userId: "user-a",
+      tenantId: "tenant-a",
+    };
+    const issued = leaseManager.mintLease({
+      agentId: "agent-a",
+      caps: ["orch:read"],
+      budgetRef: "budget-a",
+      sessionKey: "tenant-a:user-a:chat-a",
+      trustLevel: "guest",
+      deliveryOrigin,
+      rootRunId: "root-a",
+      checkpointId: "checkpoint-a",
+    });
+    const rpcCall = vi.fn(async (method: string, params: Record<string, unknown>) => {
+      expect(method).toBe("memory.search_files");
+      expect(tryGetContext()).toMatchObject({
+        agentId: "agent-a",
+        trustLevel: "guest",
+        deliveryOrigin,
+      });
+      expect(params).toMatchObject({
+        query: "needle",
+        _agentId: "agent-a",
+        _rootRunId: "root-a",
+        _checkpointId: "checkpoint-a",
+        _callerSessionKey: "tenant-a:user-a:chat-a",
+        _callerChannelId: "chat-a",
+      });
+      return { matches: [] };
+    });
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+
+    await endpoint.handleCapCall(issued.bearer, "tool.invoke", {
+      tool: "memory_search",
+      args: { query: "needle", _rootRunId: "forged" },
+    });
+  });
+
+  it("preserves a child session and its distinct requester channel and thread exactly", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const deliveryOrigin = {
+      channelType: "telegram",
+      channelId: "parent-chat",
+      userId: "user-a",
+      tenantId: "tenant-a",
+      threadId: "parent-topic",
+    };
+    const leaseInput = {
+      agentId: "child-agent",
+      caps: ["orch:spawn"] as AgentCapability[],
+      budgetRef: "budget-child",
+      sessionKey: "tenant-a:user-a:sub-agent:run-1",
+      trustLevel: "user" as const,
+      rootRunId: "root-spawn",
+      deliveryOrigin,
+    };
+    const { bearer } = leaseManager.mintLease(leaseInput);
+    const rpcCall = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+      expect(tryGetContext()).toMatchObject({
+        sessionKey: leaseInput.sessionKey,
+        agentId: "child-agent",
+        deliveryOrigin,
+      });
+      return params;
+    });
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+
+    await endpoint.handleCapCall(bearer, "session.spawn", { task: "nested task" });
+
+    expect(rpcCall).toHaveBeenCalledWith("session.spawn", expect.objectContaining({
+      _callerSessionKey: leaseInput.sessionKey,
+      _callerChannelType: "telegram",
+      _callerChannelId: "parent-chat",
+    }));
+  });
+
+  it.each([
+    {
+      name: "missing origin",
+      sessionKey: "tenant-a:user-a:chat-a",
+      deliveryOrigin: undefined,
+    },
+    {
+      name: "malformed session",
+      sessionKey: "not-a-session",
+      deliveryOrigin: {
+        channelType: "telegram", channelId: "chat-a", userId: "user-a", tenantId: "tenant-a",
+      },
+    },
+    {
+      name: "cross-user origin",
+      sessionKey: "tenant-a:user-a:chat-a",
+      deliveryOrigin: {
+        channelType: "telegram", channelId: "chat-a", userId: "user-b", tenantId: "tenant-a",
+      },
+    },
+    {
+      name: "cross-tenant origin",
+      sessionKey: "tenant-a:user-a:chat-a",
+      deliveryOrigin: {
+        channelType: "telegram", channelId: "chat-a", userId: "user-a", tenantId: "tenant-b",
+      },
+    },
+    {
+      name: "malformed origin",
+      sessionKey: "tenant-a:user-a:chat-a",
+      deliveryOrigin: {
+        channelType: "", channelId: "chat-a", userId: "user-a", tenantId: "tenant-a",
+      },
+    },
+  ])("rejects session.spawn with $name before dispatch", async ({ sessionKey, deliveryOrigin }) => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const leaseInput = {
+      agentId: "parent-agent",
+      caps: ["orch:spawn"] as AgentCapability[],
+      budgetRef: "budget-spawn",
+      sessionKey,
+      trustLevel: "user" as const,
+      rootRunId: "root-spawn",
+      ...(deliveryOrigin !== undefined ? { deliveryOrigin } : {}),
+    };
+    const { bearer } = leaseManager.mintLease(leaseInput);
+    const rpcCall = vi.fn(async () => ({ accepted: true }));
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
+
+    await expect(endpoint.handleCapCall(bearer, "session.spawn", {
+      task: "bounded task",
+      agent_id: "child-agent",
+    })).rejects.toThrow(/principal/i);
+    expect(rpcCall).not.toHaveBeenCalled();
   });
 
   // A bad/garbage bearer is denied (validate returns null), and the
@@ -235,6 +500,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
       caps: ["orch:cron"],
       budgetRef: "b",
       sessionKey: "t:c:u",
+      trustLevel: "user",
       rootRunId: "run-r",
     });
     leaseManager.revoke(leaseId);
@@ -284,7 +550,14 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
   it("denies a denylisted agents.create via the pre-check before dispatch", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
-    const bearer = mintValidLease(leaseManager, ["orch:cron"]);
+    const { bearer } = leaseManager.mintLease({
+      agentId: "admin-agent",
+      caps: ["orch:cron"],
+      budgetRef: "budget-admin",
+      sessionKey: "tenant-a:user-a:chat-a",
+      trustLevel: "admin",
+      rootRunId: "root-admin",
+    });
     const rpcCall = vi.fn(async () => ({ ok: true }));
     const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall });
 
@@ -341,13 +614,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     );
   });
 
-  // Admin → denied: an admin method is DENIED through the endpoint.
-  // By design NO admin method maps to an orch:* cap (the capability model grants
-  // only non-admin orchestration), so the lease audience denies every admin
-  // method at `validate` (the first gate) — the handler is never reached, with
-  // ALL caps granted. (The deny-by-origin chokepoint is the defense-in-depth
-  // SECOND gate, proven independently below.)
-  it("denies an admin method (out of every lease's audience) and never dispatches", async () => {
+  it("denies an admin method for a non-admin lease and never dispatches", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
 
@@ -379,6 +646,43 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
 
     await expect(endpoint.handleCapCall(bearer, adminNonDenylisted, {})).rejects.toThrow();
     expect(rpcCall).not.toHaveBeenCalled();
+  });
+
+  it("dispatches a non-management admin method for an exact admin-trust lease", async () => {
+    const leaseManager = createLeaseManager({ clock: createTestClock() });
+    const deliveryOrigin = {
+      channelType: "telegram",
+      channelId: "chat-a",
+      userId: "user-a",
+      tenantId: "tenant-a",
+    };
+    const issued = leaseManager.mintLease({
+      agentId: "admin-agent",
+      caps: [],
+      budgetRef: "budget-admin",
+      sessionKey: "tenant-a:user-a:chat-a",
+      trustLevel: "admin",
+      deliveryOrigin,
+      rootRunId: "root-admin",
+    });
+    const handler = vi.fn(async (params: Record<string, unknown>) => {
+      expect(params._trustLevel).toBe("admin");
+      expect(tryGetContext()?.trustLevel).toBe("admin");
+      return { edited: true };
+    });
+    const endpoint = createCapabilityEndpoint({
+      leaseManager,
+      rpcCall: createRealSinkOver({ "message.edit": handler }),
+    });
+
+    expect(leaseManager.validate(issued.bearer, "message.edit")?.trustLevel).toBe("admin");
+    await expect(endpoint.handleCapCall(issued.bearer, "message.edit", {
+      channel_type: "telegram",
+      channel_id: "chat-a",
+      message_id: "message-a",
+      text: "updated",
+    })).resolves.toEqual({ edited: true });
+    expect(handler).toHaveBeenCalledOnce();
   });
 
   // The deny-by-origin chokepoint is load-bearing:
@@ -567,7 +871,7 @@ describe("createCapabilityEndpoint tool.invoke dispatch", () => {
     expect(params.q).toBe("x");
     expect(params._agentId).toBe("agent-honest"); // lease wins, not "victim"
     expect(params._capabilities).toEqual(["orch:read"]);
-    expect("_trustLevel" in params).toBe(false); // forged escalation stripped
+    expect(params._trustLevel).toBe("user"); // forged escalation replaced by lease trust
   });
 
   // Admin unreachable: no admin tool is cap-mapped, so tool.invoke
@@ -926,23 +1230,22 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership", () => {
   // _outwardStepIndex for an OUTWARD message method (orch:message) and strips a
   // forged inbound value before re-injecting the trusted allocated one.
   //
-  // DURABILITY-POSTURE DEPENDENCY (documented): the exactly-once outward dedup is
-  // ACTIVE only under `autonomy.durability.enabled` — that flag is what wires
-  // `deps.durableRuns`, the sole source of the allocated index. Otherwise the send
-  // is a best-effort, un-ledgered pass-through (still delivered). Durable resumable
-  // runs are a separate, not-yet-wired capability. So the exactly-once proof below
-  // REQUIRES a durableRuns stub (Pitfall 2 — a distinctness assertion that passed
-  // without the stub would be vacuous); the companion pass-through test proves the
-  // honest degradation when the store is absent.
+  // Retained-operation duplicate suppression is active only when the outward
+  // ledger is wired. Otherwise the send is a pass-through without an allocated key.
   // -------------------------------------------------------------------------
 
-  /** A durableRuns stub whose allocateOutwardStep returns a monotonic 0,1,… per root. */
+  /** An outward ledger stub that persists one step per caller operation identity. */
   function makeAllocStore() {
     const counters = new Map<string, number>();
+    const operations = new Map<string, number>();
     return {
-      allocateOutwardStep: vi.fn(async (rootRunId: string) => {
+      allocateStep: vi.fn(async (rootRunId: string, operationId: string) => {
+        const operationKey = `${rootRunId}:${operationId}`;
+        const existing = operations.get(operationKey);
+        if (existing !== undefined) return { ok: true as const, value: existing };
         const next = counters.has(rootRunId) ? counters.get(rootRunId)! + 1 : 0;
         counters.set(rootRunId, next);
+        operations.set(operationKey, next);
         return { ok: true as const, value: next };
       }),
     } as never;
@@ -954,50 +1257,61 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership", () => {
     // orch:message is the audience for message.send/reply/react.
     const bearer = mintValidLease(leaseManager, ["orch:message"], "agent-out");
     const rpcCall = vi.fn(async () => ({ ok: true }));
-    const durableRuns = makeAllocStore();
-    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, durableRuns });
+    const outwardLedger = makeAllocStore();
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, outwardLedger });
 
-    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "one" });
-    await endpoint.handleCapCall(bearer, "message.reply", { channelId: "c", text: "two" });
+    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "one" }, "operation-send");
+    await endpoint.handleCapCall(bearer, "message.reply", { channelId: "c", text: "two" }, "operation-reply");
 
     expect(rpcCall).toHaveBeenCalledTimes(2); // both deliver — neither dropped
     expect((rpcCall.mock.calls[0][1] as Record<string, unknown>)._outwardStepIndex).toBe(0);
     expect((rpcCall.mock.calls[1][1] as Record<string, unknown>)._outwardStepIndex).toBe(1);
   });
 
-  // MUT-02 (the typed SDK method rides the shipped ledger): comis_tools.message_send(...)
+  // The typed SDK method rides the shipped ledger: comis_tools.message_send(...)
   // dispatches callCapSocket("message.send", args) → the endpoint's DIRECT-method
   // branch of handleCapCall (NOT tool.invoke), so allocateOutwardStepIfNeeded fires.
-  // Two IDENTICAL message.send in ONE run (the duplicate-send / retry shape — a
-  // double-effect risk) therefore get DISTINCT indices 0 then 1, so a duplicated
-  // outward step dedupes exactly-once. This exercises the SAME wire path the typed
-  // method takes, against the REAL allocateOutwardStepIfNeeded (a durableRuns stub,
-  // NOT a mock of the allocator). No new dedup code — MUT-02 rides the shipped ledger.
-  it("two identical message.send in one run get distinct _outwardStepIndex 0 then 1 (duplicate-send exactly-once)", async () => {
+  // Two attempts for ONE logical message.send carry the SAME caller operation
+  // identity and therefore receive the SAME step, so the downstream ledger can
+  // dedupe a response-loss retry. This exercises the SAME wire path the typed
+  // method takes, against the real allocateOutwardStepIfNeeded and an outward
+  // ledger stub, not a mock of the endpoint helper.
+  it("a response-loss retry with the same caller operation identity reuses one _outwardStepIndex", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
     const bearer = mintValidLease(leaseManager, ["orch:message"], "agent-dup");
     const rpcCall = vi.fn(async () => ({ ok: true }));
-    const durableRuns = makeAllocStore();
-    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, durableRuns });
+    const outwardLedger = makeAllocStore();
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, outwardLedger });
 
     // The SAME outward method twice in one run (mintValidLease pins rootRunId "run-1").
-    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "first" });
-    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "retry" });
+    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "first" }, "logical-send-1");
+    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "retry" }, "logical-send-1");
 
-    expect(rpcCall).toHaveBeenCalledTimes(2); // both deliver — neither dropped
+    expect(rpcCall).toHaveBeenCalledTimes(2); // downstream ledger owns the dedup
     expect((rpcCall.mock.calls[0][1] as Record<string, unknown>)._outwardStepIndex).toBe(0);
-    expect((rpcCall.mock.calls[1][1] as Record<string, unknown>)._outwardStepIndex).toBe(1);
-    // Pitfall-2 (self-documenting): the distinctness above REQUIRES the stub — the
-    // real allocateOutwardStep(rootRunId) is what produced 0 then 1, keyed on the
-    // tree-stable rootRunId. The companion pass-through test below (no durableRuns)
-    // asserts the index is undefined, so a distinctness proof that passed WITHOUT the
-    // stub would be exposed as vacuous rather than exercising the ledger.
-    const alloc = (durableRuns as unknown as { allocateOutwardStep: ReturnType<typeof vi.fn> })
-      .allocateOutwardStep;
+    expect((rpcCall.mock.calls[1][1] as Record<string, unknown>)._outwardStepIndex).toBe(0);
+    const alloc = (outwardLedger as unknown as { allocateStep: ReturnType<typeof vi.fn> })
+      .allocateStep;
     expect(alloc).toHaveBeenCalledTimes(2);
-    expect(alloc).toHaveBeenNthCalledWith(1, "run-1");
-    expect(alloc).toHaveBeenNthCalledWith(2, "run-1");
+    expect(alloc).toHaveBeenNthCalledWith(1, "run-1", "logical-send-1");
+    expect(alloc).toHaveBeenNthCalledWith(2, "run-1", "logical-send-1");
+  });
+
+  it("blocks a durable socket outward call that has no caller operation identity", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:message"], "agent-missing-id");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const outwardLedger = makeAllocStore();
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, outwardLedger });
+
+    await expect(endpoint.handleCapCall(
+      bearer,
+      "message.send",
+      { channelId: "c", text: "blocked" },
+    )).rejects.toThrow(/operation identity/i);
+    expect(rpcCall).not.toHaveBeenCalled();
   });
 
   it("a forged inbound _outwardStepIndex is stripped, then the trusted allocated index is injected", async () => {
@@ -1005,12 +1319,12 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership", () => {
     const leaseManager = createLeaseManager({ clock });
     const bearer = mintValidLease(leaseManager, ["orch:message"], "agent-out");
     const rpcCall = vi.fn(async () => ({ ok: true }));
-    const durableRuns = makeAllocStore();
-    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, durableRuns });
+    const outwardLedger = makeAllocStore();
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, outwardLedger });
 
     // The jailed client forges _outwardStepIndex: 999 to try to self-collide /
     // perturb ordering. The strip drops it; the allocated 0 replaces it.
-    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "x", _outwardStepIndex: 999 });
+    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "x", _outwardStepIndex: 999 }, "operation-forgery-test");
 
     const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
     expect(forwarded._outwardStepIndex).toBe(0); // trusted allocation, NOT the forged 999
@@ -1021,36 +1335,51 @@ describe("createCapabilityEndpoint rate-limit + cron self-ownership", () => {
     const leaseManager = createLeaseManager({ clock });
     const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-cron");
     const rpcCall = vi.fn(async () => ({ ok: true }));
-    const durableRuns = makeAllocStore();
-    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, durableRuns });
+    const outwardLedger = makeAllocStore();
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, outwardLedger });
 
     await endpoint.handleCapCall(bearer, "cron.add", { schedule: "x" });
 
     const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
     expect(forwarded._outwardStepIndex).toBeUndefined();
-    expect((durableRuns as { allocateOutwardStep: ReturnType<typeof vi.fn> }).allocateOutwardStep).not.toHaveBeenCalled();
+    expect((outwardLedger as { allocateStep: ReturnType<typeof vi.fn> }).allocateStep).not.toHaveBeenCalled();
   });
 
-  it("is a pass-through (no index) when no durableRuns store is wired", async () => {
+  it("is a pass-through when no outward ledger is wired", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
     const bearer = mintValidLease(leaseManager, ["orch:message"], "agent-out");
     const rpcCall = vi.fn(async () => ({ ok: true }));
-    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall }); // no durableRuns
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall }); // no outward ledger
 
-    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "x" });
+    await endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "x" }, "operation-pass-through");
 
     const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
     expect(forwarded._outwardStepIndex).toBeUndefined();
   });
+
+  it("fails closed before RPC dispatch when the wired durable counter rejects the lease trust", async () => {
+    const leaseManager = createLeaseManager({ clock: createTestClock() });
+    const bearer = mintValidLease(leaseManager, ["orch:message"], "agent-out");
+    const rpcCall = vi.fn(async () => ({ ok: true }));
+    const outwardLedger = {
+      allocateStep: vi.fn(async () => ({ ok: false as const, error: new Error("trust mismatch") })),
+    } as never;
+    const endpoint = createCapabilityEndpoint({ leaseManager, rpcCall, outwardLedger });
+
+    await expect(
+      endpoint.handleCapCall(bearer, "message.send", { channelId: "c", text: "blocked" }, "operation-allocation-error"),
+    ).rejects.toThrow(/trust mismatch/);
+    expect(rpcCall).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
-// REPLAY-01 — the content-free replay recorder at the handleCapCall chokepoint.
+// The content-free replay recorder at the handleCapCall chokepoint.
 // After a SUCCESSFUL cap-socket call on a run with orchestrateResume ON, ONE
 // content-free `{seq, method, paramsDigest} → pointer` line is appended to
-// <workspace>/results/replay.jsonl — digests + ResultRef pointers ONLY (INV-5 /
-// T-WS1-01), never raw params/body/bearer, even for a small inline result (A3).
+// <recording-root>/results/<run>/replay.jsonl contains digests and ResultRef pointers only,
+// never raw params, result bodies, or bearers, even for a small inline result.
 // Nothing is written when the run's replay recording is off (default posture).
 // ---------------------------------------------------------------------------
 
@@ -1070,14 +1399,193 @@ function makeRecorder(
   const store = createResultRefStore({ logger: makeSilentLogger() });
   return createReplayRecorder({
     isEnabled: () => enabled,
-    resolveWorkspace: () => workspacePath,
-    materialize: (payload, ctx) => store.materialize(payload, "orchestrate_replay", ctx),
+    recordingRootPath: workspacePath,
+    materialize: (payload, ctx) => store.materialize(payload, "orchestrate_replay", {
+      ...ctx,
+      workspacePath: ctx.recordingRootPath,
+    }),
     nowMs: () => clock.now(),
   });
 }
 
-describe("createCapabilityEndpoint replay recorder (REPLAY-01, content-free)", () => {
-  it("appends exactly one content-free {seq,method,paramsDigest}→pointer line with no params/body/bearer", async () => {
+function findReplayLogs(workspacePath: string): string[] {
+  return readdirSync(workspacePath, { recursive: true })
+    .map(String)
+    .filter((path) => path.endsWith("replay.jsonl"))
+    .map((path) => join(workspacePath, path));
+}
+
+function findReplayLog(workspacePath: string): string {
+  const matches = findReplayLogs(workspacePath);
+  if (matches.length !== 1) {
+    throw new Error(`expected one replay log, found ${matches.length}`);
+  }
+  return matches[0]!;
+}
+
+describe("createCapabilityEndpoint content-free replay recorder", () => {
+  it("serializes same-run materialization and replay lines by record invocation order", async () => {
+    const clock = createTestClock();
+    const dir = mkdtempSync(join(tmpdir(), "replay-order-"));
+    const store = createResultRefStore({ logger: makeSilentLogger() });
+    let releaseFirst = (): void => {};
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const recorder = createReplayRecorder({
+      isEnabled: () => true,
+      recordingRootPath: dir,
+      materialize: async (payload, ctx) => {
+        if (payload.includes("first")) await firstGate;
+        return store.materialize(payload, "orchestrate_replay", {
+          ...ctx,
+          workspacePath: ctx.recordingRootPath,
+        });
+      },
+      nowMs: () => clock.now(),
+    });
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-order");
+    const lease = leaseManager.validate(bearer, "cron.add");
+    if (lease === null) throw new Error("expected a valid lease");
+
+    const first = recorder.record(lease, "cron.add", { n: 1 }, { first: true });
+    const second = recorder.record(lease, "cron.run", { n: 2 }, { second: true });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    const lines = readFileSync(findReplayLog(dir), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { seq: number; method: string });
+    expect(lines).toEqual([
+      expect.objectContaining({ seq: 0, method: "cron.add" }),
+      expect.objectContaining({ seq: 1, method: "cron.run" }),
+    ]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("isolates concurrent runs' replay logs and pointers so per-run cleanup removes only its owner", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "replay-isolation-"));
+    const store = createResultRefStore({ logger: makeSilentLogger() });
+    const recorder = createReplayRecorder({
+      isEnabled: () => true,
+      recordingRootPath: dir,
+      materialize: (payload, ctx) => store.materialize(payload, "orchestrate_replay", {
+        ...ctx,
+        workspacePath: ctx.recordingRootPath,
+      }),
+      nowMs: () => 1_700_000_000_000,
+    });
+    const leaseA = {
+      agentId: "agent-a", rootRunId: "shared-root", checkpointId: "run-a", sessionKey: "t:u:c",
+    } as never;
+    const leaseB = {
+      agentId: "agent-a", rootRunId: "shared-root", checkpointId: "run-b", sessionKey: "t:u:c",
+    } as never;
+
+    await Promise.all([
+      recorder.record(leaseA, "cron.add", { run: "a" }, { owner: "a" }),
+      recorder.record(leaseB, "cron.add", { run: "b" }, { owner: "b" }),
+    ]);
+    expect(findReplayLogs(dir)).toHaveLength(2);
+
+    await store.cleanupRun({ workspacePath: dir, runId: "run-a" });
+
+    const survivorLogs = findReplayLogs(dir);
+    expect(survivorLogs).toHaveLength(1);
+    const survivor = JSON.parse(readFileSync(survivorLogs[0]!, "utf8").trim()) as {
+      result: string;
+    };
+    expect(JSON.parse(readFileSync(join(dir, survivor.result), "utf8"))).toEqual({ owner: "b" });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("best-effort recording contains circular and bigint serialization failures without exposing content", async () => {
+    const warn = vi.fn();
+    const logger = {
+      debug: vi.fn(), info: vi.fn(), warn, error: vi.fn(),
+      fatal: vi.fn(), trace: vi.fn(), audit: vi.fn(), level: "silent",
+      child: vi.fn().mockReturnThis(),
+    } as never;
+    const recorder = createReplayRecorder({
+      isEnabled: () => true,
+      recordingRootPath: "/tmp/unused-replay-workspace",
+      materialize: vi.fn(async () => {
+        throw new Error("materializer rejected tok-secret-materializer-sentinel");
+      }),
+      nowMs: () => 1,
+      logger,
+    });
+    const lease = {
+      leaseId: "lease-a",
+      parentLeaseId: undefined,
+      rootRunId: "run-a",
+      sessionKey: "tenant-a:user-a:chat-a",
+      agentId: "agent-a",
+      caps: ["orch:cron"],
+      issuedAt: 0,
+      expiresAt: 10,
+      audience: ["cron.add"],
+    } as never;
+    const circular: Record<string, unknown> = { marker: "tok-secret-circular-sentinel" };
+    circular.self = circular;
+
+    await expect(
+      recorder.record(lease, "cron.add", {}, circular),
+    ).resolves.toBeUndefined();
+    await expect(
+      recorder.record(lease, "cron.add", {}, { amount: 1n }),
+    ).resolves.toBeUndefined();
+    await expect(
+      recorder.record(lease, "cron.add", {}, { serializable: true }),
+    ).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalled();
+    const serialized = JSON.stringify(warn.mock.calls);
+    expect(serialized).not.toContain("tok-secret-circular-sentinel");
+    expect(serialized).not.toContain("tok-secret-materializer-sentinel");
+    expect(warn.mock.calls.every(([fields]) =>
+      (fields as Record<string, unknown>).errorKind === "internal"
+      && typeof (fields as Record<string, unknown>).hint === "string"
+    )).toBe(true);
+  });
+
+  it("does not turn a completed RPC effect into failure when an injected recorder rejects", async () => {
+    const clock = createTestClock();
+    const leaseManager = createLeaseManager({ clock });
+    const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-best-effort");
+    const rpcCall = vi.fn(async () => ({ applied: true }));
+    const warn = vi.fn();
+    const logger = {
+      debug: vi.fn(), info: vi.fn(), warn, error: vi.fn(),
+      fatal: vi.fn(), trace: vi.fn(), audit: vi.fn(), level: "silent",
+      child: vi.fn().mockReturnThis(),
+    } as never;
+    const endpoint = createCapabilityEndpoint({
+      leaseManager,
+      rpcCall,
+      replayRecorder: {
+        record: vi.fn(async () => {
+          throw new Error("tok-secret-recorder-rejection");
+        }),
+      },
+      logger,
+    });
+
+    await expect(
+      endpoint.handleCapCall(bearer, "cron.add", { schedule: "x" }),
+    ).resolves.toEqual({ applied: true });
+    expect(rpcCall).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("tok-secret-recorder-rejection");
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "internal", hint: expect.any(String) }),
+      expect.any(String),
+    );
+  });
+
+  it("appends exactly one integrity-bound content-free replay line with no params/body/bearer", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
     const bearer = mintValidLease(leaseManager, ["orch:cron"], "agent-rec");
@@ -1093,7 +1601,7 @@ describe("createCapabilityEndpoint replay recorder (REPLAY-01, content-free)", (
 
     await endpoint.handleCapCall(bearer, "cron.add", { schedule: "SENSITIVE_PARAM_MARKER" });
 
-    const logPath = join(dir, "results", "replay.jsonl");
+    const logPath = findReplayLog(dir);
     const raw = readFileSync(logPath, "utf8");
     const lines = raw.trim().split("\n");
     expect(lines).toHaveLength(1);
@@ -1102,6 +1610,7 @@ describe("createCapabilityEndpoint replay recorder (REPLAY-01, content-free)", (
       seq: number;
       method: string;
       paramsDigest: string;
+      resultDigest: string;
       result: string;
     };
     expect(entry.seq).toBe(0);
@@ -1110,10 +1619,13 @@ describe("createCapabilityEndpoint replay recorder (REPLAY-01, content-free)", (
     // ORIGINAL wire params (what the re-spawned script re-sends), never the raw params.
     expect(entry.paramsDigest).toBe(replayParamsDigest({ schedule: "SENSITIVE_PARAM_MARKER" }));
     expect(entry.paramsDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(entry.resultDigest).toBe(
+      createHash("sha256").update(JSON.stringify({ token: "SECRET_BODY_MARKER", ok: true })).digest("hex"),
+    );
     // The result is a POINTER into results/, never the body.
     expect(entry.result).toMatch(/^results\//);
 
-    // INV-5 / T-WS1-01: the serialized line leaks NO raw params, NO result body, NO bearer.
+    // The serialized line contains no raw params, result body, or bearer.
     expect(raw).not.toContain("SENSITIVE_PARAM_MARKER");
     expect(raw).not.toContain("SECRET_BODY_MARKER");
     expect(raw).not.toContain(bearer);
@@ -1143,7 +1655,7 @@ describe("createCapabilityEndpoint replay recorder (REPLAY-01, content-free)", (
     await endpoint.handleCapCall(bearer, "cron.add", { schedule: "x" });
 
     const entry = JSON.parse(
-      readFileSync(join(dir, "results", "replay.jsonl"), "utf8").trim(),
+      readFileSync(findReplayLog(dir), "utf8").trim(),
     ) as { result: string };
     expect(entry.result).toMatch(/^results\//);
     const pointerPath = join(dir, entry.result);
@@ -1191,7 +1703,7 @@ describe("createCapabilityEndpoint replay recorder (REPLAY-01, content-free)", (
     await endpoint.handleCapCall(bearer, "cron.add", { schedule: "one" });
     await endpoint.handleCapCall(bearer, "cron.run", { jobId: "j1" });
 
-    const lines = readFileSync(join(dir, "results", "replay.jsonl"), "utf8")
+    const lines = readFileSync(findReplayLog(dir), "utf8")
       .trim()
       .split("\n")
       .map((l) => JSON.parse(l) as { seq: number; method: string });
@@ -1221,7 +1733,7 @@ describe("createCapabilityEndpoint replay recorder (REPLAY-01, content-free)", (
     });
 
     const entry = JSON.parse(
-      readFileSync(join(dir, "results", "replay.jsonl"), "utf8").trim(),
+      readFileSync(findReplayLog(dir), "utf8").trim(),
     ) as { method: string; paramsDigest: string };
     // The recorded method is the WIRE method (tool.invoke), and the digest is over
     // the ORIGINAL wire params {tool, args} the re-spawned script re-sends.

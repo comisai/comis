@@ -2,7 +2,7 @@
 /**
  * (Linux/VPS restart-sim) — the REAL daemon-restart boot-sweep recovery for a
  * resumable `orchestrate` run (RESUME-03). A green run on the VPS (`pnpm
- * validate:full`) proves, against a REAL sqlite `durable_runs` store + a REAL
+ * validate:full`) proves, against a real SQLite durable checkpoint store + a real
  * temp workspace (never a mock — CLAUDE.md Root-Cause), that:
  *
  *   - a resumable orchestrate row (`{ rootRunId, scriptRef, checkpointRef }`, flat
@@ -31,7 +31,13 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ClockPort, TimerPort, TimerHandle, DurableRunPort } from "@comis/core";
+import {
+  TypedEventBus,
+  type ClockPort,
+  type TimerPort,
+  type TimerHandle,
+  type DurableRunPort,
+} from "@comis/core";
 import type { ComisLogger, LeaseManager } from "@comis/infra";
 import { createSqliteDurableRunStore, ensureDurableRunTable, ensureOutwardLedgerTable } from "@comis/memory";
 
@@ -70,6 +76,7 @@ describe.skipIf(!RUN_LINUX)("orchestrate durable-resume boot-sweep recovery (res
   let ws: string;
   let db: unknown;
   const ROOT = "orch-vps-1";
+  const AGENT = "agent-vps";
   const SCRIPT_REF = "orch-vps-1.ts";
   const CHECKPOINT_REF = "results/ckpt.json";
 
@@ -89,13 +96,19 @@ describe.skipIf(!RUN_LINUX)("orchestrate durable-resume boot-sweep recovery (res
   /** Seed a resumable orchestrate row into the persisted store (the pre-bounce state). */
   async function seedResumableRow(store: DurableRunPort): Promise<void> {
     const r = await store.upsertCheckpoint({
+      checkpointId: ROOT,
       rootRunId: ROOT,
+      agentId: AGENT,
+      sessionKey: "tenant-a:user-a:telegram:chat-a",
+      ownerTenantId: "tenant-a",
+      ownerUserId: "user-a",
+      deliveryOrigin: null,
       spawnTree: [], // FLAT ⇒ the orchestrate arm (never resumeGraph)
       caps: [],
       leaseIds: [],
       budgetConsumed: 0,
       cronOrigin: null,
-      stepIndex: -1,
+      trustLevel: "user",
       status: "running",
       lastHeartbeatAt: testClock.now(),
       scriptRef: SCRIPT_REF,
@@ -107,17 +120,19 @@ describe.skipIf(!RUN_LINUX)("orchestrate durable-resume boot-sweep recovery (res
   function freshEngineAfterBounce(emit: (event: string, payload: unknown) => void) {
     // A FRESH engine over the SAME persisted db + the REAL orchestrateResume cluster
     // = the daemon "bounce": the boot sweep scans the seeded running rows.
+    const eventBus = new TypedEventBus();
+    eventBus.on("durable:resumed", (payload) => emit("durable:resumed", payload));
+    eventBus.on("durable:orphaned", (payload) => emit("durable:orphaned", payload));
     return buildDurableResume({
       db,
       durabilityCfg: { enabled: true, staleHeartbeatMs: 60_000, keepAliveMs: 15_000, recoveryBudgetMs: 30_000 },
       boundedAutonomy: makeBoundedAutonomy() as never,
       sharedLeaseManager: makeLeaseManager(),
-      channelAdaptersRef: new Map(),
-      eventBus: { emit } as never,
+      eventBus,
       logger: silentLogger,
       clock: testClock,
       timers: testTimers,
-      orchestrateResume: buildOrchestrateResumeWiring({ defaultWorkspaceDir: ws, logger: silentLogger }),
+      orchestrateResume: buildOrchestrateResumeWiring({ workspaceDirs: new Map([[AGENT, ws]]), logger: silentLogger }),
     });
   }
 

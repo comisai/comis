@@ -422,14 +422,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DispatcherTaskManager",
       "ActiveSessionKey",
       "BackgroundSessionResolverDeps",
-      // Sub-agent runtime moved from packages/daemon/src/ to
-      // packages/agent/src/spawn/. The 7 entries below are the move's type
-      // and helper exports that have no in-repo consumer at the moment
-      // (the moved tests/integration coverage import via the local file
-      // path, not via @comis/agent). createSubAgentRunner and
-      // ANNOUNCE_PARENT_TIMEOUT_MS are NOT listed because they DO have
-      // in-repo consumers (wiring/setup-cross-session.ts and
-      // graph/graph-completion.ts respectively).
+      // These sub-agent runtime types and helpers are supported package
+      // surface even though their tests consume the co-located modules.
       "SubAgentRunnerDeps",
       "SubAgentRun",
       "SpawnParams",
@@ -1018,6 +1012,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "isSecretRef",
       "SecretRefOrStringSchema",
       "DeliveryOriginSchema",
+      // parseDeliveryFailureStage is the Result-returning public parser paired
+      // with DeliveryFailureStageSchema. Internal storage and wire contracts
+      // consume the schema directly, while external callers use the parser to
+      // validate standalone values without depending on Zod control flow.
+      "parseDeliveryFailureStage",
       // IncidentReportSchema is the Zod schema for the obs.explain response
       // (the IncidentReport wire shape). The handler + the
       // contract consume the inferred *type* `IncidentReport` (which has
@@ -2327,12 +2326,8 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "main",
       "DaemonInstance",
       "DaemonOverrides",
-      // Sub-agent runtime relocated to @comis/agent. The 9 entries
-      // previously tracked here (createSubAgentRunner,
-      // ANNOUNCE_PARENT_TIMEOUT_MS, the 4 type names, sweepResultFiles,
-      // buildAnnouncementMessage, deliverFailureNotification) have been
-      // removed from packages/daemon/src/index.ts and the 7 orphan entries
-      // are now tracked under @comis/agent above.
+      // The daemon package owns only daemon composition and handlers; sub-agent
+      // execution helpers belong to the agent package surface above.
       "createAnnouncementDeadLetterQueue",
       "AnnouncementDeadLetterQueue",
       "DeadLetterEntry",

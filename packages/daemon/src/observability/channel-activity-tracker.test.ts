@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { TypedEventBus } from "@comis/core";
+import { TypedEventBus, type EventMap } from "@comis/core";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createChannelActivityTracker,
@@ -35,7 +35,7 @@ describe("createChannelActivityTracker", () => {
       sessionKey: { tenantId: "default", userId: "user-1", channelId: "ch-1" },
     });
 
-    const activity = tracker.get("ch-1");
+    const activity = tracker.get("telegram", "ch-1");
     expect(activity).toBeDefined();
     expect(activity!.channelId).toBe("ch-1");
     expect(activity!.channelType).toBe("telegram");
@@ -45,19 +45,63 @@ describe("createChannelActivityTracker", () => {
   });
 
   it("tracks activity from message:sent events", () => {
-    bus.emit("message:sent", {
+    const payload: EventMap["message:sent"] = {
+      channelType: "telegram",
       channelId: "ch-2",
       messageId: "msg-1",
       content: "response",
-    });
+      sourceChannelType: "telegram",
+      sourceChannelId: "ch-2",
+      sourceMessageId: "source-1",
+    };
+    bus.emit("message:sent", payload);
 
-    const activity = tracker.get("ch-2");
+    const activity = tracker.get("telegram", "ch-2");
     expect(activity).toBeDefined();
     expect(activity!.channelId).toBe("ch-2");
     expect(activity!.messagesSent).toBe(1);
     expect(activity!.messagesReceived).toBe(0);
-    // No channelType in message:sent payload, defaults to "unknown"
-    expect(activity!.channelType).toBe("unknown");
+    expect(activity!.channelType).toBe("telegram");
+  });
+
+  it("keeps same channel ids isolated across channel types", () => {
+    tracker.recordActivity("shared", "telegram", "received");
+    tracker.recordActivity("shared", "slack", "received");
+    tracker.recordActivity("shared", "telegram", "sent");
+
+    expect(tracker.getAll()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        channelId: "shared",
+        channelType: "telegram",
+        messagesReceived: 1,
+        messagesSent: 1,
+      }),
+      expect.objectContaining({
+        channelId: "shared",
+        channelType: "slack",
+        messagesReceived: 1,
+        messagesSent: 0,
+      }),
+    ]));
+    expect(tracker.getAll()).toHaveLength(2);
+  });
+
+  it("looks up channel activity by channel type and channel id", () => {
+    tracker.recordActivity("shared", "telegram", "received");
+    tracker.recordActivity("shared", "slack", "sent");
+
+    expect(tracker.get("telegram", "shared")).toMatchObject({
+      channelType: "telegram",
+      channelId: "shared",
+      messagesReceived: 1,
+      messagesSent: 0,
+    });
+    expect(tracker.get("slack", "shared")).toMatchObject({
+      channelType: "slack",
+      channelId: "shared",
+      messagesReceived: 0,
+      messagesSent: 1,
+    });
   });
 
   it("updates lastActiveAt on every event", () => {
@@ -78,7 +122,7 @@ describe("createChannelActivityTracker", () => {
       sessionKey: { tenantId: "default", userId: "user-1", channelId: "ch-1" },
     });
 
-    const firstActive = tracker.get("ch-1")!.lastActiveAt;
+    const firstActive = tracker.get("telegram", "ch-1")!.lastActiveAt;
 
     // Advance time
     vi.advanceTimersByTime(5_000);
@@ -97,7 +141,7 @@ describe("createChannelActivityTracker", () => {
       sessionKey: { tenantId: "default", userId: "user-1", channelId: "ch-1" },
     });
 
-    const secondActive = tracker.get("ch-1")!.lastActiveAt;
+    const secondActive = tracker.get("telegram", "ch-1")!.lastActiveAt;
     expect(secondActive).toBeGreaterThan(firstActive);
     expect(secondActive - firstActive).toBe(5_000);
   });
@@ -119,9 +163,13 @@ describe("createChannelActivityTracker", () => {
     });
 
     bus.emit("message:sent", {
+      channelType: "telegram",
       channelId: "ch-2",
       messageId: "msg-1",
       content: "response",
+      sourceChannelType: "telegram",
+      sourceChannelId: "ch-2",
+      sourceMessageId: "source-1",
     });
 
     bus.emit("message:received", {
@@ -145,7 +193,7 @@ describe("createChannelActivityTracker", () => {
   });
 
   it("get returns undefined for unknown channel", () => {
-    expect(tracker.get("nonexistent")).toBeUndefined();
+    expect(tracker.get("telegram", "nonexistent")).toBeUndefined();
   });
 
   it("getStale returns channels inactive beyond threshold", () => {
@@ -215,9 +263,13 @@ describe("createChannelActivityTracker", () => {
     });
 
     bus.emit("message:sent", {
+      channelType: "telegram",
       channelId: "ch-2",
       messageId: "msg-1",
       content: "also active",
+      sourceChannelType: "telegram",
+      sourceChannelId: "ch-2",
+      sourceMessageId: "source-1",
     });
 
     // With threshold of 60s and no time elapsed, all channels are recent
@@ -230,7 +282,7 @@ describe("createChannelActivityTracker", () => {
     tracker.recordActivity("ch-manual", "slack", "received");
     tracker.recordActivity("ch-manual", "slack", "sent");
 
-    const activity = tracker.get("ch-manual");
+    const activity = tracker.get("slack", "ch-manual");
     expect(activity).toBeDefined();
     expect(activity!.channelId).toBe("ch-manual");
     expect(activity!.channelType).toBe("slack");
@@ -255,9 +307,13 @@ describe("createChannelActivityTracker", () => {
     });
 
     bus.emit("message:sent", {
+      channelType: "telegram",
       channelId: "ch-2",
       messageId: "msg-1",
       content: "world",
+      sourceChannelType: "telegram",
+      sourceChannelId: "ch-2",
+      sourceMessageId: "source-1",
     });
 
     expect(tracker.getAll()).toHaveLength(2);
@@ -265,8 +321,8 @@ describe("createChannelActivityTracker", () => {
     tracker.reset();
 
     expect(tracker.getAll()).toHaveLength(0);
-    expect(tracker.get("ch-1")).toBeUndefined();
-    expect(tracker.get("ch-2")).toBeUndefined();
+    expect(tracker.get("telegram", "ch-1")).toBeUndefined();
+    expect(tracker.get("telegram", "ch-2")).toBeUndefined();
   });
 
   it("dispose stops collecting events", () => {
@@ -304,15 +360,19 @@ describe("createChannelActivityTracker", () => {
     });
 
     bus.emit("message:sent", {
+      channelType: "telegram",
       channelId: "ch-3",
       messageId: "msg-2",
       content: "also after",
+      sourceChannelType: "telegram",
+      sourceChannelId: "ch-3",
+      sourceMessageId: "source-2",
     });
 
     // Still only 1 channel from before dispose
     expect(tracker.getAll()).toHaveLength(1);
-    expect(tracker.get("ch-1")).toBeDefined();
-    expect(tracker.get("ch-new")).toBeUndefined();
-    expect(tracker.get("ch-3")).toBeUndefined();
+    expect(tracker.get("telegram", "ch-1")).toBeDefined();
+    expect(tracker.get("discord", "ch-new")).toBeUndefined();
+    expect(tracker.get("telegram", "ch-3")).toBeUndefined();
   });
 });

@@ -9,11 +9,14 @@
  * @module
  */
 
-import { Hono } from "hono";
+import { Hono, type Env } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { SSEStreamingApi } from "hono/streaming";
-import { suppressError } from "@comis/shared";
-import { systemNowMs, type TypedEventBus } from "@comis/core";
+import {
+  formatSessionKey,
+  systemNowMs,
+  type TypedEventBus,
+} from "@comis/core";
 import {
   ChatCompletionRequestSchema,
   createOpenAIError,
@@ -23,6 +26,17 @@ import {
   type ChatCompletion,
   type ChatCompletionChunk,
 } from "./openai-types.js";
+import { createSseDeliveryTracker } from "./sse-delivery-tracker.js";
+import {
+  emitGatewayTurnDiagnostic,
+  formatGatewayErrorForLog,
+  type GatewayTurnResult,
+} from "./turn-diagnostic.js";
+import { prepareApiConversation } from "./api-conversation.js";
+
+interface OpenaiCompletionsEnv extends Env {
+  Variables: { clientScopes: readonly string[] };
+}
 
 // ---------------------------------------------------------------------------
 // Dependencies interface
@@ -36,36 +50,35 @@ import {
  * must wire this to AgentExecutor.execute() with onDelta forwarded.
  */
 export interface OpenaiCompletionsDeps {
+  /** Tenant used to construct exact failure diagnostics before execution returns. */
+  tenantId?: string;
+  /** Default agent used when model resolution does not select one explicitly. */
+  agentId?: string;
   /** Execute an agent turn with optional streaming callback. */
   executeAgent: (params: {
     message: string;
     systemPrompt?: string;
     sessionKey?: { userId: string; channelId: string; peerId: string };
+    /** Scopes from the bearer token already verified by the parent route. */
+    authenticatedScopes: readonly string[];
     onDelta?: (delta: string, kind?: "text" | "thinking") => void;
-  }) => Promise<{
+    traceId: string;
+    agentId?: string;
+    /** Cancels the executing turn when its inbound HTTP request disconnects. */
+    signal: AbortSignal;
+  }) => Promise<GatewayTurnResult & {
     response: string;
     tokensUsed: { input: number; output: number; total: number };
-    finishReason: string;
     /** Exact tool executions reported by the agent turn. */
     stepsExecuted: number;
     /** Exact model calls reported by the agent turn. */
     llmCalls: number;
-    /** The turn's trajectory id (=== the runWithContext traceId). Carried back so the
-     *  completion emit can attribute the turn (the `comis explain` / Verified Learning
-     *  resolve key). Optional when the caller has no request context. */
-    traceId?: string;
-    /** The agent that ran the turn (the executor's resolved agentId). Optional. */
-    agentId?: string;
-    /** The FORMATTED `tenantId:userId:channelId` session key (formatSessionKey). Carried
-     *  back so the per-turn diagnostic emits the tenant-qualified key — downstream tenant
-     *  derivation (Verified Learning resolve, obs attribution) needs all three parts. */
-    sessionKey?: string;
   }>;
 
   /** Optional model alias resolution. Returns undefined if model not found. */
   resolveModel?: (
     modelId: string,
-  ) => { provider: string; modelId: string } | undefined;
+  ) => { provider: string; modelId: string; agentId?: string } | undefined;
 
   /**
    * Optional event bus. When present, the route emits one
@@ -76,7 +89,7 @@ export interface OpenaiCompletionsDeps {
    * outcome is observed but NEVER resolved (no RANK reward / FORGET accrual / SURFACE
    * promote-demote) and the turn is invisible to obs (`comis explain` / delivery tracer).
    */
-  eventBus?: Pick<TypedEventBus, "emit">;
+  eventBus?: Pick<TypedEventBus, "emitSafely">;
 
   /** Logger for request lifecycle events. */
   logger: {
@@ -85,68 +98,111 @@ export interface OpenaiCompletionsDeps {
   };
 }
 
-/**
- * Emit one `diagnostic:message_processed` for a completed OpenAI-compat turn.
- *
- * The OpenAI chat API bypasses the channel `execution-pipeline` (the sole other
- * emitter) and never fires `graph:completed`, so without this the Verified Learning
- * resolve loop (setup-learning.ts) and the obs delivery/persistence tracers never see
- * chat-API turns. Mirrors `execution-pipeline.ts`'s `emitDiagnostic`. No-op when no
- * `eventBus` is wired. Non-fatal — a throwing subscriber must never break the response.
- */
-function emitTurnDiagnostic(
+type GatewaySessionKey = { userId: string; channelId: string; peerId: string };
+
+function fallbackSessionKey(
+  deps: OpenaiCompletionsDeps,
+  sessionKey: GatewaySessionKey,
+): string {
+  return formatSessionKey({
+    tenantId: deps.tenantId ?? "default",
+    userId: sessionKey.userId,
+    channelId: sessionKey.channelId,
+    peerId: sessionKey.peerId,
+  });
+}
+
+function emitCompletionDiagnostic(
   deps: OpenaiCompletionsDeps,
   args: {
-    result: {
-      tokensUsed: { total: number };
-      finishReason: string;
-      stepsExecuted: number;
-      llmCalls: number;
-      traceId?: string;
-      agentId?: string;
-      /** The FORMATTED `tenantId:userId:channelId` session key from the executor wiring.
-       *  REQUIRED for correct tenant derivation downstream: the Verified Learning
-       *  resolve loop derives the tenant via deriveTenantFromSessionKey(sessionKey), so a
-       *  2-part `userId:channelId` key resolves the WRONG tenant → 0 rows → unknown verdict
-       *  (live finding 2026-06-18). Falls back to a 2-part key only when the wiring omits it. */
-      sessionKey?: string;
-    };
-    sessionKey: { userId: string; channelId: string; peerId: string };
+    result: GatewayTurnResult;
+    sessionKey: GatewaySessionKey;
     completionId: string;
+    traceId: string;
+    agentId: string;
     receivedAt: number;
+    executionCompletedAt: number;
+    completedAt?: number;
   },
 ): void {
-  if (!deps.eventBus) return;
-  const now = systemNowMs();
-  const elapsed = now - args.receivedAt;
-  try {
-    deps.eventBus.emit("diagnostic:message_processed", {
-      messageId: args.completionId,
-      channelId: args.sessionKey.channelId,
-      channelType: "openai",
-      agentId: args.result.agentId ?? "default",
-      sessionKey:
-        args.result.sessionKey ??
-        `${args.sessionKey.userId}:${args.sessionKey.channelId}`,
-      traceId: args.result.traceId,
-      toolCalls: args.result.stepsExecuted,
-      llmCalls: args.result.llmCalls,
-      receivedAt: args.receivedAt,
-      executionDurationMs: elapsed,
-      deliveryDurationMs: 0,
-      totalDurationMs: elapsed,
-      tokensUsed: args.result.tokensUsed.total,
-      cost: 0,
-      success: args.result.finishReason !== "error",
-      finishReason: args.result.finishReason,
-      timestamp: now,
+  emitGatewayTurnDiagnostic(deps, {
+    messageId: args.completionId,
+    channelId: "openai",
+    channelType: "openai",
+    fallbackAgentId: args.agentId,
+    fallbackSessionKey: fallbackSessionKey(deps, args.sessionKey),
+    fallbackTraceId: args.traceId,
+    result: args.result,
+    receivedAt: args.receivedAt,
+    executionCompletedAt: args.executionCompletedAt,
+    ...(args.completedAt !== undefined ? { completedAt: args.completedAt } : {}),
+  });
+}
+
+/** Record an executor rejection before the route returns or closes its stream. */
+function emitExecutionFailureDiagnostic(
+  deps: OpenaiCompletionsDeps,
+  args: {
+    sessionKey: GatewaySessionKey;
+    completionId: string;
+    traceId: string;
+    agentId: string;
+    receivedAt: number;
+    executionCompletedAt: number;
+  },
+): void {
+  emitCompletionDiagnostic(deps, {
+    ...args,
+    result: {
+      tokensUsed: { total: 0 },
+      finishReason: "error",
+      stepsExecuted: null,
+      llmCalls: null,
+      status: "error",
+      failureStage: "execution",
+    },
+  });
+}
+
+function emitDeliveryFailureDiagnostic(
+  deps: OpenaiCompletionsDeps,
+  args: {
+    result?: GatewayTurnResult;
+    sessionKey: GatewaySessionKey;
+    completionId: string;
+    traceId: string;
+    agentId: string;
+    receivedAt: number;
+    executionCompletedAt: number;
+    completedAt: number;
+    preserveExecutionFailure?: boolean;
+  },
+): void {
+  if (
+    args.preserveExecutionFailure === true &&
+    args.result !== undefined &&
+    args.result.status !== "success"
+  ) {
+    emitCompletionDiagnostic(deps, {
+      ...args,
+      result: args.result,
     });
-  } catch (err) {
-    deps.logger.error(
-      { err, hint: "diagnostic:message_processed subscriber threw", errorKind: "internal" as const },
-      "OpenAI turn diagnostic emit failed (non-fatal)",
-    );
+    return;
   }
+  emitCompletionDiagnostic(deps, {
+    ...args,
+    result: {
+      ...(args.result ?? {
+        tokensUsed: { total: 0 },
+        finishReason: "error",
+        stepsExecuted: null,
+        llmCalls: null,
+      }),
+      status: "error",
+      failureStage: "delivery",
+      errorKind: "platform",
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -168,8 +224,12 @@ async function handleStreamingCompletion(params: {
   systemPrompt: string | undefined;
   completionId: string;
   created: number;
-  sessionKey: { userId: string; channelId: string; peerId: string };
+  sessionKey: GatewaySessionKey;
+  traceId: string;
+  agentId: string;
+  authenticatedScopes: readonly string[];
   receivedAt: number;
+  requestSignal: AbortSignal;
 }): Promise<void> {
   const {
     stream,
@@ -180,8 +240,14 @@ async function handleStreamingCompletion(params: {
     completionId,
     created,
     sessionKey,
+    traceId,
+    agentId,
+    authenticatedScopes,
     receivedAt,
+    requestSignal,
   } = params;
+  const delivery = createSseDeliveryTracker(stream, requestSignal);
+  try {
 
   // First chunk: role announcement
   const roleChunk: ChatCompletionChunk = {
@@ -197,15 +263,37 @@ async function handleStreamingCompletion(params: {
       },
     ],
   };
-  await stream.writeSSE({ data: JSON.stringify(roleChunk) });
+  if (!await delivery.write(JSON.stringify(roleChunk))) {
+    const completedAt = delivery.failedAt ?? systemNowMs();
+    deps.logger.error(
+      {
+        ...(delivery.error !== undefined
+          ? { err: formatGatewayErrorForLog(delivery.error) }
+          : {}),
+        completionId,
+        hint: "Check client connectivity and gateway stream delivery",
+        errorKind: "platform" as const,
+      },
+      "OpenAI streaming delivery failed before execution",
+    );
+    emitDeliveryFailureDiagnostic(deps, {
+      sessionKey,
+      completionId,
+      traceId,
+      agentId,
+      receivedAt,
+      executionCompletedAt: receivedAt,
+      completedAt,
+    });
+    return;
+  }
 
   // Execute agent with onDelta callback for content streaming. The executor threads a
-  // delta KIND (text vs thinking); SKIP "thinking" deltas so the OpenAI-compat stream
-  // never leaks the model's raw reasoning into delta.content — matching the non-stream
-  // path (which strips thinking) so streamed content == final content (reasoning-leak,
-  // live 2026-06-20). An absent kind (legacy callers) is treated as visible text.
+  // delta kind (text vs thinking). Skip thinking deltas so the stream never
+  // exposes raw reasoning and stays consistent with the non-streaming result.
+  // An absent optional kind is treated as visible text.
   const onDelta = (delta: string, kind?: "text" | "thinking"): void => {
-    if (kind === "thinking") return;
+    if (kind === "thinking" || delivery.signal.aborted) return;
     const contentChunk: ChatCompletionChunk = {
       id: completionId,
       object: "chat.completion.chunk",
@@ -219,10 +307,7 @@ async function handleStreamingCompletion(params: {
         },
       ],
     };
-    suppressError(
-      stream.writeSSE({ data: JSON.stringify(contentChunk) }),
-      "Stream may have been closed by client -- ignore write errors",
-    );
+    delivery.enqueue(JSON.stringify(contentChunk));
   };
 
   let result: Awaited<ReturnType<typeof deps.executeAgent>>;
@@ -232,29 +317,102 @@ async function handleStreamingCompletion(params: {
       systemPrompt,
       sessionKey,
       onDelta,
+      traceId,
+      agentId,
+      authenticatedScopes,
+      signal: delivery.signal,
     });
   } catch (err) {
+    const executionCompletedAt = systemNowMs();
+    delivery.sealQueue();
+    await delivery.drain();
+    if (delivery.failedAt !== undefined) {
+      deps.logger.error(
+        {
+          ...(delivery.error !== undefined
+            ? { err: formatGatewayErrorForLog(delivery.error) }
+            : {}),
+          completionId,
+          hint: "Check client connectivity and gateway stream delivery",
+          errorKind: "platform" as const,
+        },
+        "OpenAI streaming delivery failed while execution was cancelling",
+      );
+      emitDeliveryFailureDiagnostic(deps, {
+        sessionKey,
+        completionId,
+        traceId,
+        agentId,
+        receivedAt,
+        executionCompletedAt,
+        completedAt: delivery.failedAt,
+      });
+      return;
+    }
     deps.logger.error(
       {
-        err,
+        err: formatGatewayErrorForLog(err),
         completionId,
-        hint: "Check agent executor logs or LLM provider connectivity",
-        errorKind: "dependency" as const,
+        hint: "Inspect agent execution logs for the originating boundary",
+        errorKind: "internal" as const,
       },
       "Agent execution failed during streaming",
     );
-    // Write error as a data event before closing
-    await stream.writeSSE({
-      data: JSON.stringify(
-        createOpenAIError(500, "Internal server error"),
-      ),
+    emitExecutionFailureDiagnostic(deps, {
+      sessionKey,
+      completionId,
+      traceId,
+      agentId,
+      receivedAt,
+      executionCompletedAt,
     });
-    await stream.writeSSE({ data: "[DONE]" });
+    // Write error as a data event before closing
+    await delivery.write(JSON.stringify(createOpenAIError(500, "Internal server error")));
+    await delivery.write("[DONE]");
+    if (delivery.failedAt !== undefined) {
+      deps.logger.error(
+        {
+          ...(delivery.error !== undefined
+            ? { err: formatGatewayErrorForLog(delivery.error) }
+            : {}),
+          completionId,
+          hint: "Check client connectivity and gateway stream delivery",
+          errorKind: "platform" as const,
+        },
+        "OpenAI streaming delivery failed after execution error",
+      );
+    }
     return;
   }
-
-  // Turn completed — emit the per-turn diagnostic (resolve + obs). Streaming path.
-  emitTurnDiagnostic(deps, { result, sessionKey, completionId, receivedAt });
+  const executionCompletedAt = systemNowMs();
+  const failedBeforeExecutionSettled = delivery.failedAt !== undefined;
+  delivery.sealQueue();
+  await delivery.drain();
+  if (delivery.failedAt !== undefined) {
+    deps.logger.error(
+      {
+        ...(delivery.error !== undefined
+          ? { err: formatGatewayErrorForLog(delivery.error) }
+          : {}),
+        completionId,
+        hint: "Check client connectivity and gateway stream delivery",
+        errorKind: "platform" as const,
+      },
+      "OpenAI streaming content delivery failed",
+    );
+    emitDeliveryFailureDiagnostic(deps, {
+      result,
+      sessionKey,
+      completionId,
+      traceId,
+      agentId,
+      receivedAt,
+      executionCompletedAt,
+      completedAt: delivery.failedAt,
+      preserveExecutionFailure: !failedBeforeExecutionSettled,
+    });
+    return;
+  }
 
   // Final chunk with finish_reason
   const finishChunk: ChatCompletionChunk = {
@@ -270,25 +428,65 @@ async function handleStreamingCompletion(params: {
       },
     ],
   };
-  await stream.writeSSE({ data: JSON.stringify(finishChunk) });
+  if (await delivery.write(JSON.stringify(finishChunk))) {
 
-  // Usage chunk (always send -- harmless, and most clients expect it)
-  const usageChunk: ChatCompletionChunk = {
-    id: completionId,
-    object: "chat.completion.chunk",
-    created,
-    model: body.model,
-    choices: [],
-    usage: {
-      prompt_tokens: result.tokensUsed.input,
-      completion_tokens: result.tokensUsed.output,
-      total_tokens: result.tokensUsed.total,
-    },
-  };
-  await stream.writeSSE({ data: JSON.stringify(usageChunk) });
+    // Usage chunk (always send -- harmless, and most clients expect it)
+    const usageChunk: ChatCompletionChunk = {
+      id: completionId,
+      object: "chat.completion.chunk",
+      created,
+      model: body.model,
+      choices: [],
+      usage: {
+        prompt_tokens: result.tokensUsed.input,
+        completion_tokens: result.tokensUsed.output,
+        total_tokens: result.tokensUsed.total,
+      },
+    };
+    await delivery.write(JSON.stringify(usageChunk));
 
-  // Terminal marker
-  await stream.writeSSE({ data: "[DONE]" });
+    // Terminal marker
+    await delivery.write("[DONE]");
+  }
+  if (delivery.failedAt !== undefined) {
+    deps.logger.error(
+      {
+        ...(delivery.error !== undefined
+          ? { err: formatGatewayErrorForLog(delivery.error) }
+          : {}),
+        completionId,
+        hint: "Check client connectivity and gateway stream delivery",
+        errorKind: "platform" as const,
+      },
+      "OpenAI streaming delivery failed",
+    );
+    emitDeliveryFailureDiagnostic(deps, {
+      result,
+      sessionKey,
+      completionId,
+      traceId,
+      agentId,
+      receivedAt,
+      executionCompletedAt,
+      completedAt: delivery.failedAt,
+      preserveExecutionFailure: true,
+    });
+    return;
+  }
+
+  // A stream is successful only after its terminal protocol writes resolve.
+  emitCompletionDiagnostic(deps, {
+    result,
+    sessionKey,
+    completionId,
+    traceId,
+    agentId,
+    receivedAt,
+    executionCompletedAt,
+  });
+  } finally {
+    delivery.dispose();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -308,8 +506,8 @@ async function handleStreamingCompletion(params: {
  */
 export function createOpenaiCompletionsRoute(
   deps: OpenaiCompletionsDeps,
-): Hono {
-  const app = new Hono();
+): Hono<OpenaiCompletionsEnv> {
+  const app = new Hono<OpenaiCompletionsEnv>();
 
   app.post("/", async (c) => {
     try {
@@ -332,47 +530,34 @@ export function createOpenaiCompletionsRoute(
       }
 
       const body = parseResult.data;
+      const authenticatedScopes = c.get("clientScopes") ?? [];
       // Turn-lifecycle clock for the diagnostic:message_processed emit (resolve + obs).
       const receivedAt = systemNowMs();
 
-      // V1-NO-VISION: the multimodal array form now PARSES (no opaque schema 400),
-      // but vision input is not yet wired through /v1 → if ANY message carries an
-      // image_url block, fail FAST with a NAMED error rather than silently dropping
-      // the image and answering as if it were text-only.
+      // Multimodal input parses at the wire boundary, but vision execution is
+      // not supported here. Reject image blocks instead of dropping them.
       if (body.messages.some((m) => flattenMessageContent(m.content).hasImage)) {
         return c.json(createOpenAIError(400, VISION_UNSUPPORTED_MESSAGE, "messages"), 400);
       }
 
-      // Extract system messages (concatenate all system role messages in order).
-      // Content-block arrays are flattened to their text (image blocks rejected above).
-      const systemParts: string[] = [];
-      for (const m of body.messages) {
-        if (m.role === "system") {
-          systemParts.push(flattenMessageContent(m.content).text);
-        }
-      }
-      const systemPrompt = systemParts.length > 0 ? systemParts.join("\n") : undefined;
-
-      // Extract the last user message as agent input (flattened to text).
-      let userMessage = "";
-      for (let i = body.messages.length - 1; i >= 0; i--) {
-        if (body.messages[i].role === "user") {
-          userMessage = flattenMessageContent(body.messages[i].content).text;
-          break;
-        }
-      }
-
-      if (!userMessage) {
+      const conversation = prepareApiConversation(body.messages.map((entry) => ({
+        role: entry.role,
+        content: flattenMessageContent(entry.content).text,
+      })));
+      if (!conversation) {
         return c.json(
           createOpenAIError(400, "No user message found in messages array"),
           400,
         );
       }
+      const userMessage = conversation.message;
+      const systemPrompt = conversation.systemPrompt;
 
       // Optional model alias resolution
+      let resolvedModel: ReturnType<NonNullable<OpenaiCompletionsDeps["resolveModel"]>> = undefined;
       if (deps.resolveModel) {
-        const resolved = deps.resolveModel(body.model);
-        if (!resolved) {
+        resolvedModel = deps.resolveModel(body.model);
+        if (!resolvedModel) {
           return c.json(
             createOpenAIError(404, `Model not found: ${body.model}`),
             404,
@@ -383,6 +568,8 @@ export function createOpenaiCompletionsRoute(
       // Generate completion identifiers
       const completionId = `chatcmpl-${crypto.randomUUID()}`;
       const created = Math.floor(systemNowMs() / 1000);
+      const traceId = crypto.randomUUID();
+      const agentId = resolvedModel?.agentId ?? deps.agentId ?? "default";
 
       // Build session key for OpenAI compat requests
       const sessionKey = {
@@ -405,7 +592,11 @@ export function createOpenaiCompletionsRoute(
             completionId,
             created,
             sessionKey,
+            traceId,
+            agentId,
+            authenticatedScopes,
             receivedAt,
+            requestSignal: c.req.raw.signal,
           });
         });
       }
@@ -413,14 +604,91 @@ export function createOpenaiCompletionsRoute(
       // -----------------------------------------------------------------
       // Non-streaming path
       // -----------------------------------------------------------------
-      const result = await deps.executeAgent({
-        message: userMessage,
-        systemPrompt,
-        sessionKey,
-      });
+      let result: Awaited<ReturnType<typeof deps.executeAgent>>;
+      try {
+        result = await deps.executeAgent({
+          message: userMessage,
+          systemPrompt,
+          sessionKey,
+          traceId,
+          agentId,
+          authenticatedScopes,
+          signal: c.req.raw.signal,
+        });
+      } catch (err) {
+        const executionCompletedAt = systemNowMs();
+        if (c.req.raw.signal.aborted) {
+          deps.logger.error(
+            {
+              completionId,
+              hint: "Check client connectivity and gateway request cancellation",
+              errorKind: "platform" as const,
+            },
+            "OpenAI non-streaming request disconnected during execution",
+          );
+          emitDeliveryFailureDiagnostic(deps, {
+            sessionKey,
+            completionId,
+            traceId,
+            agentId,
+            receivedAt,
+            executionCompletedAt,
+            completedAt: executionCompletedAt,
+          });
+          return c.json(createOpenAIError(500, "Request delivery cancelled"), 500);
+        }
+        deps.logger.error(
+          {
+            err: formatGatewayErrorForLog(err),
+            completionId,
+            hint: "Inspect agent execution logs for the originating boundary",
+            errorKind: "internal" as const,
+          },
+          "Agent execution failed",
+        );
+        emitExecutionFailureDiagnostic(deps, {
+          sessionKey,
+          completionId,
+          traceId,
+          agentId,
+          receivedAt,
+          executionCompletedAt,
+        });
+        return c.json(createOpenAIError(500, "Internal server error"), 500);
+      }
 
+      const executionCompletedAt = systemNowMs();
+      if (c.req.raw.signal.aborted) {
+        deps.logger.error(
+          {
+            completionId,
+            hint: "Check client connectivity and gateway request cancellation",
+            errorKind: "platform" as const,
+          },
+          "OpenAI non-streaming request disconnected before response delivery",
+        );
+        emitDeliveryFailureDiagnostic(deps, {
+          result,
+          sessionKey,
+          completionId,
+          traceId,
+          agentId,
+          receivedAt,
+          executionCompletedAt,
+          completedAt: executionCompletedAt,
+        });
+        return c.json(createOpenAIError(500, "Request delivery cancelled"), 500);
+      }
       // Turn completed — emit the per-turn diagnostic (resolve + obs). Non-streaming path.
-      emitTurnDiagnostic(deps, { result, sessionKey, completionId, receivedAt });
+      emitCompletionDiagnostic(deps, {
+        result,
+        sessionKey,
+        completionId,
+        traceId,
+        agentId,
+        receivedAt,
+        executionCompletedAt,
+      });
 
       const completion: ChatCompletion = {
         id: completionId,
@@ -445,7 +713,7 @@ export function createOpenaiCompletionsRoute(
     } catch (err) {
       deps.logger.error(
         {
-          err,
+          err: formatGatewayErrorForLog(err),
           hint: "Inspect the request body and agent configuration",
           errorKind: "internal" as const,
         },

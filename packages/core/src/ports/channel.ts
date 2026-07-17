@@ -240,13 +240,13 @@ export interface ChannelPort {
    * @param channelId - Target channel/chat identifier
    * @param attachment - The attachment payload (type, url, optional metadata)
    * @param options - Additional send options (e.g. replyTo)
-   * @returns The platform-specific message ID, or an error
+   * @returns A tracked or delivered-untracked completion receipt, or an error
    */
   sendAttachment?(
     channelId: string,
     attachment: AttachmentPayload,
     options?: SendMessageOptions,
-  ): Promise<Result<string, Error>>;
+  ): Promise<Result<AttachmentSendReceipt, Error>>;
 
   /**
    * Get the current status of this channel adapter.
@@ -270,30 +270,24 @@ export interface ChannelPort {
   ): Promise<Result<unknown, Error>>;
 
   /**
-   * Reconcile a crash-interrupted outward send: query the platform for "did
-   * this send actually land?" so recovery can decide commit vs replay for an
-   * `unknown_after_send` ledger row.
-   *
-   * OPTIONAL — adapters that cannot query the platform for "did this send?" OMIT
-   * it; recovery treats absence as `unresolved` → park+escalate.
-   * NEVER return not_sent for a channel that cannot actually tell —
-   * that is a double-send dressed as a reconcile.
+   * Conservative diagnostic probe for a crash-interrupted outward send.
+   * Recovery does not use content history as delivery evidence and never
+   * replays based on this method. Adapters normally omit it; an implementation
+   * may only report that platform truth is unresolved.
    *
    * @param query - The content digest + time window to match against platform history
-   * @returns The closed sent/not_sent/unresolved outcome, or an error
+   * @returns The closed unresolved outcome, or an error
    */
   reconcileSend?(query: ReconcileSendQuery): Promise<Result<ReconcileSendOutcome, Error>>;
 }
 
 /**
- * The lookup key for {@link ChannelPort.reconcileSend} — a content digest plus
- * the time window to scan platform history for. Content-free: the `contentDigest`
- * (sha256), never the body.
+ * The content-free diagnostic key for {@link ChannelPort.reconcileSend}.
  */
 export interface ReconcileSendQuery {
   /** Target channel/chat/room identifier. */
   readonly channelId: string;
-  /** sha256 of the sent content — matched against platform history, never the body. */
+  /** sha256 of the sent content, never the body. */
   readonly contentDigest: string;
   /** Lower bound (epoch ms) of the send window to scan. */
   readonly sentAfterMs: number;
@@ -302,17 +296,10 @@ export interface ReconcileSendQuery {
 }
 
 /**
- * The closed-union verdict of a {@link ChannelPort.reconcileSend}:
- *   - `sent`       — the message is present on the platform; `platformMessageId` is the id.
- *   - `not_sent`   — the platform was queried and the message is definitively absent.
- *   - `unresolved` — the platform could not tell (the honest "cannot determine").
- * `unresolved` is a first-class designed outcome, NOT a failure — there is no
- * silent default-to-`sent`/`not_sent`.
+ * The only admissible diagnostic verdict. Content/time matching cannot prove a
+ * unique platform operation, so neither delivery nor absence is claimed.
  */
-export type ReconcileSendOutcome =
-  | { readonly kind: "sent"; readonly platformMessageId: string }
-  | { readonly kind: "not_sent" }
-  | { readonly kind: "unresolved" };
+export type ReconcileSendOutcome = { readonly kind: "unresolved" };
 
 /**
  * Options for sending a message. Channel adapters may support different subsets.
@@ -364,6 +351,17 @@ export interface FetchedMessage {
   /** Message creation timestamp in milliseconds since epoch */
   timestamp: number;
 }
+
+/**
+ * Receipt for a completed attachment send.
+ *
+ * Both variants mean the platform send completed. `delivered_untracked`
+ * records that no usable platform message ID was returned, so callers must
+ * not retry or fall back to a duplicate send and must not emit ID-based events.
+ */
+export type AttachmentSendReceipt =
+  | { readonly kind: "tracked"; readonly messageId: string }
+  | { readonly kind: "delivered_untracked" };
 
 /**
  * Payload describing an attachment to send to a channel.

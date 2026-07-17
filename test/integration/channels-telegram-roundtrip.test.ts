@@ -32,7 +32,7 @@ describe("INTEGRATION: telegram channel — credential validator + adapter wire 
     mock = createMockTelegramServer();
     const handle = await mock.start();
     const plugin = createTelegramPlugin({
-      botToken: "12345:test",
+      getBotToken: () => "12345:test",
       apiRoot: handle.baseUrl,
       logger: createMockLogger(),
     });

@@ -60,6 +60,7 @@ function baseInput(over: Partial<AutonomyToolInputs> = {}): AutonomyToolInputs {
     brokerContext: undefined,
     sandboxProvider: { name: "mock", available: () => true, buildArgs: () => [], wrapEnv: (e: never) => e } as never,
     sessionKey: undefined,
+    trustLevel: "user",
     logger: makeLogger(),
     baseEnv: { PATH: "/usr/bin" },
     ...over,
@@ -80,6 +81,44 @@ describe("buildAutonomyToolWiring", () => {
     expect((handle.outputGuard as never as { registerSecret: ReturnType<typeof vi.fn> }).registerSecret).toHaveBeenCalledWith("lease-xyz");
     expect(brokerSpawnEnv?.placeholders?.COMIS_CAP_LEASE).toBe("lease-xyz");
     expect(brokerSpawnEnv?.placeholders?.COMIS_ORCH_SOCKET).toBe("/data/cap.sock");
+  });
+
+  it("binds the exact requester origin to both assembly and per-run child leases", () => {
+    const requesterOrigin = Object.freeze({
+      channelType: "telegram",
+      channelId: "chat-1",
+      userId: "user-1",
+      tenantId: "tenant-1",
+      threadId: "topic-1",
+    });
+    const input = baseInput({
+      trustLevel: "admin",
+      sessionKey: {
+        tenantId: "tenant-1",
+        userId: "user-1",
+        channelId: "chat-1",
+        threadId: "topic-1",
+      },
+      requesterOrigin,
+    });
+    buildAutonomyToolWiring(input);
+    const handle = input.capEndpointHandle!;
+    const mint = (handle.leaseManager as never as { mintLease: ReturnType<typeof vi.fn> }).mintLease;
+    expect(mint.mock.calls[0]![0]).toMatchObject({
+      sessionKey: "tenant-1:user-1:chat-1:thread:topic-1",
+      trustLevel: "admin",
+      deliveryOrigin: requesterOrigin,
+    });
+
+    const args = mockCreateOrchestrateTool.mock.calls[0]![0] as {
+      mintRunLease?: (runId: string, timeoutMs: number) => { leaseId: string; bearer: string };
+    };
+    args.mintRunLease!("run-child", 30_000);
+    expect(mint.mock.calls[1]![0]).toMatchObject({
+      sessionKey: "tenant-1:user-1:chat-1:thread:topic-1",
+      trustLevel: "admin",
+      deliveryOrigin: requesterOrigin,
+    });
   });
 
   // The mint anchors the tree root in the bounded-
@@ -109,6 +148,31 @@ describe("buildAutonomyToolWiring", () => {
     expect(mint.mock.calls[0]![0]).toMatchObject({ rootRunId: "root-parent-stable" });
     const reg = (handle.boundedAutonomy as never as { registerRoot: ReturnType<typeof vi.fn> }).registerRoot;
     expect(reg).toHaveBeenCalledWith("root-parent-stable", "leaseid-1", undefined);
+  });
+
+  it("attenuates a child assembly against the authenticated parent capabilities and lease", () => {
+    const input = baseInput({
+      parentAuthority: {
+        rootRunId: "root-parent",
+        leaseId: "lease-parent",
+        caps: ["orch:read"],
+      },
+    } as Partial<AutonomyToolInputs>);
+    const result = buildAutonomyToolWiring(input);
+    const mint = (input.capEndpointHandle!.leaseManager as never as {
+      mintLease: ReturnType<typeof vi.fn>;
+    }).mintLease;
+
+    expect(mint.mock.calls[0]![0]).toEqual(expect.objectContaining({
+      rootRunId: "root-parent",
+      parentLeaseId: "lease-parent",
+      caps: ["orch:read"],
+    }));
+    expect(result.assemblyAuthority).toEqual({
+      rootRunId: "root-parent",
+      leaseId: "leaseid-1",
+      caps: ["orch:read"],
+    });
   });
 
   it("assembles the orchestrate tool with the cap socket + the minted env for an autonomy agent with a sandbox", () => {
@@ -294,14 +358,14 @@ describe("buildAutonomyToolWiring", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Per-run child lease seam (D5, EXPLAIN-01) — the correlation keystone.
+  // Per-run child lease seam — the correlation keystone.
   // buildAutonomyToolWiring threads a mintRunLease(runId, timeoutMs) closure into
   // createOrchestrateTool. The closure mints a short-TTL CHILD lease per run:
   // same caps, SAME rootRunId (tree accounting untouched — registerRoot is NOT
   // called for the child), parentLeaseId = the assembly leaseId, TTL clamped to
   // the run timeout; it registers the child bearer in OutputGuard at mint.
   // revokeByRootRun still reaches the child (it scans by the inherited rootRunId),
-  // so kill is preserved (INV-7).
+  // so tree-wide kill remains effective.
   // -------------------------------------------------------------------------
   describe("per-run child lease seam (mintRunLease, D5)", () => {
     it("threads a mintRunLease closure into createOrchestrateTool", () => {
@@ -310,7 +374,7 @@ describe("buildAutonomyToolWiring", () => {
       expect(typeof args.mintRunLease).toBe("function");
     });
 
-    it("mints the child with parentLeaseId=assembly + SAME rootRunId + TTL clamped to timeoutMs, registers the bearer, and does NOT registerRoot the child (INV-7)", () => {
+    it("mints a registered child lease under the assembly root without registering a second root", () => {
       const input = baseInput({ callerRootRunId: "root-stable-1" });
       buildAutonomyToolWiring(input);
       const handle = input.capEndpointHandle!;
@@ -340,7 +404,7 @@ describe("buildAutonomyToolWiring", () => {
         caps: unknown;
       };
       expect(childInput.parentLeaseId).toBe("leaseid-1"); // = the assembly leaseId (BrokerSpawnEnv.leaseId)
-      expect(childInput.rootRunId).toBe("root-stable-1"); // SAME as the assembly (INV-7)
+      expect(childInput.rootRunId).toBe("root-stable-1"); // same as the assembly
       expect(childInput.ttlMs).toBe(42_000); // TTL clamped to the run timeout...
       expect(childInput.maxTtlMs).toBe(42_000); // ...hard ceiling === soft TTL === timeoutMs
       expect(childInput.caps).toEqual(assemblyInput.caps); // resolved.capabilities (never broadened)
@@ -352,15 +416,74 @@ describe("buildAutonomyToolWiring", () => {
 
       // D5: registerRoot is NOT called for the child — the per-root
       // budget/semaphore/kill accounting stays keyed on the single registered
-      // assembly lease (INV-7); the child rides the same rootRunId.
+      // assembly lease; the child rides the same rootRunId.
       expect(reg).toHaveBeenCalledTimes(1);
     });
 
-    it("revokeByRootRun reaches EVERY per-run child lease minted via the seam (INV-7 kill; registerRoot skipped is safe)", () => {
+    it("re-mints a resumed run with its persisted root, trust, identity, and attenuated capabilities", () => {
+      const input = baseInput({
+        trustLevel: "admin",
+        callerRootRunId: "root-current",
+        sessionKey: { tenantId: "tenant-current", userId: "user-current", channelId: "chat-current" },
+        requesterOrigin: {
+          channelType: "telegram",
+          channelId: "chat-current",
+          userId: "user-current",
+          tenantId: "tenant-current",
+        },
+      });
+      buildAutonomyToolWiring(input);
+      const handle = input.capEndpointHandle!;
+      const mint = (handle.leaseManager as never as { mintLease: ReturnType<typeof vi.fn> }).mintLease;
+      const args = mockCreateOrchestrateTool.mock.calls[0]![0] as {
+        mintRunLease?: (
+          runId: string,
+          timeoutMs: number,
+          authority?: {
+            agentId: string;
+            sessionKey: string;
+            trustLevel: "user";
+            caps: readonly ["orch:read"];
+            rootRunId: string;
+            sourceCheckpointId: string;
+            ownerTenantId: string;
+            ownerUserId: string;
+            deliveryOrigin: null;
+          },
+        ) => { leaseId: string; bearer: string };
+      };
+
+      args.mintRunLease!("replacement-checkpoint", 25_000, {
+        agentId: "agent-owner",
+        sessionKey: "tenant-owner:user-owner:chat-owner",
+        ownerTenantId: "tenant-owner",
+        ownerUserId: "user-owner",
+        deliveryOrigin: null,
+        trustLevel: "user",
+        caps: ["orch:read"],
+        rootRunId: "root-persisted",
+        sourceCheckpointId: "source-checkpoint",
+      });
+
+      expect(mint.mock.calls[1]![0]).toEqual(expect.objectContaining({
+        agentId: "agent-owner",
+        sessionKey: "tenant-owner:user-owner:chat-owner",
+        trustLevel: "user",
+        caps: ["orch:read"],
+        rootRunId: "root-persisted",
+        checkpointId: "replacement-checkpoint",
+        ttlMs: 25_000,
+        maxTtlMs: 25_000,
+      }));
+      expect(mint.mock.calls[1]![0]).not.toHaveProperty("parentLeaseId");
+      expect(mint.mock.calls[1]![0]).not.toHaveProperty("deliveryOrigin");
+    });
+
+    it("revokeByRootRun reaches every child lease even when child root registration is skipped", () => {
       // A REAL LeaseManager (ground truth — not the fixed mock): the assembly
       // lease + each per-run child share the rootRunId, so revokeByRootRun (which
       // scans by rootRunId) reaches the children even though registerRoot was
-      // skipped for them. This is the INV-7 kill guarantee end-to-end.
+      // skipped for them. This proves tree-wide kill end-to-end.
       const realLease = createLeaseManager({ clock: createFakeClock(1_700_000_000_000) });
       const handle = makeHandle();
       (handle as unknown as { leaseManager: LeaseManager }).leaseManager = realLease;

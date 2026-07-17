@@ -16,6 +16,7 @@
 
 import type {
   AttachmentPayload,
+  AttachmentSendReceipt,
   ChannelPort,
   ChannelStatus,
   MessageHandler,
@@ -34,7 +35,12 @@ import {
 import { validateWhatsAppAuth } from "./credential-validator.js";
 import { mapBaileysToNormalized, type BaileysMessage } from "./message-mapper.js";
 import { createWhatsAppVoiceSender } from "./voice-sender.js";
-import { systemNowMs, systemSetTimeout, runWithContext } from "@comis/core";
+import {
+  createAttachmentSendReceipt,
+  systemNowMs,
+  systemSetTimeout,
+  runWithContext,
+} from "@comis/core";
 import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -184,7 +190,7 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
           "Inbound message",
         );
         void runWithContext(
-          { traceId, startedAt: systemNowMs(), channelType: "whatsapp", tenantId: "default", trustLevel: "admin" },
+          { traceId, startedAt: systemNowMs(), channelType: "whatsapp", tenantId: "default", trustLevel: "user" },
           () => {
             for (const handler of handlers) {
               try {
@@ -412,7 +418,7 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
       attachment: AttachmentPayload,
        
       _options?: SendMessageOptions,
-    ): Promise<Result<string, Error>> {
+    ): Promise<Result<AttachmentSendReceipt, Error>> {
       if (!sock || !connected) {
         const notConnectedErr = new Error("WhatsApp not connected");
         deps.logger.warn(
@@ -466,19 +472,31 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
         }
 
         const sent = await sock.sendMessage(channelId, mediaPayload);
-        const attachmentId = sent?.key?.id ?? "";
+        const receipt = createAttachmentSendReceipt(sent?.key?.id);
+        if (receipt.kind === "delivered_untracked") {
+          deps.logger.warn(
+            {
+              channelType: "whatsapp",
+              chatId: channelId,
+              hint: "WhatsApp accepted the attachment without key.id. Do not retry; wait for platform reconciliation",
+              errorKind: "platform" as const,
+            },
+            "Attachment delivered without platform tracking",
+          );
+        }
         deps.logger.debug(
           {
             channelType: "whatsapp",
-            messageId: attachmentId,
             chatId: channelId,
+            tracking: receipt.kind,
+            ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
             attachmentType: attachment.type,
             captionLength: attachment.caption?.length ?? 0,
             hasFileName: attachment.fileName !== undefined,
           },
           "Outbound attachment",
         );
-        return ok(attachmentId);
+        return ok(receipt);
       } catch (error) {
         const sendErr = error instanceof Error ? error : new Error(String(error));
         deps.logger.warn(

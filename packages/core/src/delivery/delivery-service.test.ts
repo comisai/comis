@@ -35,11 +35,17 @@ import type {
   DeliveryAdapter,
   DeliverToChannelOptions,
 } from "./types.js";
-import type { RetryEngine } from "./retry-engine.js";
+import {
+  AMBIGUOUS_SEND_OUTCOME_ERROR,
+  EXPLICIT_SEND_REJECTION_ERROR,
+  RETRY_EXHAUSTED_SEND_ERROR,
+  type RetryEngine,
+} from "./retry-engine.js";
 import type { DeliveryQueuePort } from "../ports/delivery-queue.js";
 import type { ComisLogger } from "../logging/log-fields.js";
 import { makeDeliveryService } from "../../../../test/support/factories.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
+import { TypedEventBus } from "../event-bus/bus.js";
 
 /**
  * Build a no-op HookRunner with vi.fn() spies on every method. The fields
@@ -300,6 +306,7 @@ function makeLongMarkdown(charTarget: number): string {
 function createMockDeliveryQueue(): DeliveryQueuePort & {
   enqueue: ReturnType<typeof vi.fn>;
   enqueueInFlight: ReturnType<typeof vi.fn>;
+  claim: ReturnType<typeof vi.fn>;
   ack: ReturnType<typeof vi.fn>;
   nack: ReturnType<typeof vi.fn>;
   fail: ReturnType<typeof vi.fn>;
@@ -312,6 +319,7 @@ function createMockDeliveryQueue(): DeliveryQueuePort & {
   return {
     enqueue: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
     enqueueInFlight: vi.fn().mockResolvedValue(ok("entry-uuid-1")),
+    claim: vi.fn().mockResolvedValue(ok(true)),
     ack: vi.fn().mockResolvedValue(ok(undefined)),
     nack: vi.fn().mockResolvedValue(ok(undefined)),
     fail: vi.fn().mockResolvedValue(ok(undefined)),
@@ -326,6 +334,143 @@ function createMockDeliveryQueue(): DeliveryQueuePort & {
 }
 
 describe("DeliveryService — full pipeline behavior", () => {
+  describe("observational subscriber isolation", () => {
+    it("preserves a successful receipt and reaches later delivery observers", async () => {
+      const eventBus = new TypedEventBus();
+      const logger = makeLogger();
+      const queue = createMockDeliveryQueue();
+      const laterAckObserver = vi.fn();
+      const laterChunkObserver = vi.fn();
+      const laterCompleteObserver = vi.fn();
+      const observedEvents = [
+        ["delivery:acked", laterAckObserver],
+        ["delivery:chunk_sent", laterChunkObserver],
+        ["delivery:complete", laterCompleteObserver],
+      ] as const;
+      for (const [event, laterObserver] of observedEvents) {
+        eventBus.on(event, () => {
+          throw new Error(`${event} subscriber failed`);
+        });
+        eventBus.on(event, laterObserver);
+      }
+      const service = createDeliveryService(makeDeps({
+        deliveryQueue: queue,
+        eventBus,
+        logger,
+      }));
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(ok("platform-message-1"));
+
+      const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value).toMatchObject({
+          ok: true,
+          deliveredChunks: 1,
+          chunks: [{ ok: true, messageId: "platform-message-1" }],
+        });
+      }
+      expect(adapter.sendMessage).toHaveBeenCalledOnce();
+      expect(laterAckObserver).toHaveBeenCalledOnce();
+      expect(laterChunkObserver).toHaveBeenCalledOnce();
+      expect(laterCompleteObserver).toHaveBeenCalledOnce();
+      expect(logger.warn).toHaveBeenCalledTimes(3);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventName: "delivery:acked",
+          subscriberFailurePhase: "sync",
+          subscriberFailureCount: 1,
+          firstListenerIndex: 0,
+          errorKind: "internal",
+          hint: expect.any(String),
+        }),
+        expect.any(String),
+      );
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(
+        "delivery:acked subscriber failed",
+      );
+    });
+
+    it("logs a rejected async delivery subscriber without changing the receipt", async () => {
+      const eventBus = new TypedEventBus();
+      const logger = makeLogger();
+      const laterObserver = vi.fn();
+      eventBus.on("delivery:complete", async () => {
+        await Promise.resolve();
+        throw new Error("async completion observer failed");
+      });
+      eventBus.on("delivery:complete", laterObserver);
+      const service = createDeliveryService(makeDeps({ eventBus, logger }));
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(ok("platform-message-async"));
+
+      const result = await service.deliverToChannel(adapter, "chat-1", "Hello");
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(result.ok).toBe(true);
+      expect(laterObserver).toHaveBeenCalledOnce();
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventName: "delivery:complete",
+          subscriberFailurePhase: "async",
+          subscriberFailureCount: 1,
+          firstListenerIndex: 0,
+          errorKind: "internal",
+          hint: expect.any(String),
+        }),
+        "Observational event subscriber failed",
+      );
+    });
+
+    it("contains outbound trajectory-binding failure after a successful send", async () => {
+      const credential = `xoxb-${"b".repeat(32)}`;
+      const eventBus = new TypedEventBus();
+      const logger = makeLogger();
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(ok("platform-message-2"));
+      const recordOutboundMessage = vi.fn(() => {
+        throw new Error(`trajectory binding failed ${credential}`);
+      });
+      const replyBoundObserver = vi.fn();
+      eventBus.on("delivery:reply_bound", replyBoundObserver);
+      const service = createDeliveryService(makeDeps({
+        deliveryQueue: createMockDeliveryQueue(),
+        eventBus,
+        logger,
+        recordOutboundMessage,
+      }));
+
+      const result = await runWithContext(
+        {
+          traceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          tenantId: "tenant-1",
+          userId: "user-1",
+          agentId: "agent-1",
+          startedAt: 1_000,
+        },
+        () => service.deliverToChannel(adapter, "chat-1", "Hello", { origin: "agent" }),
+      );
+
+      expect(result.ok).toBe(true);
+      expect(adapter.sendMessage).toHaveBeenCalledOnce();
+      expect(recordOutboundMessage).toHaveBeenCalledOnce();
+      expect(replyBoundObserver).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "delivery-reply-bind",
+          errorKind: "internal",
+          hint: expect.any(String),
+        }),
+        expect.any(String),
+      );
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(credential);
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Empty text
   // -------------------------------------------------------------------------
@@ -1019,7 +1164,10 @@ describe("DeliveryService — full pipeline behavior", () => {
       await service.deliverToChannel(adapter, "chat-1", "Hello");
 
       expect(queue.fail).toHaveBeenCalledTimes(1);
-      expect(queue.fail).toHaveBeenCalledWith("entry-uuid-1", "Bad Request: chat not found");
+      expect(queue.fail).toHaveBeenCalledWith(
+        "entry-uuid-1",
+        EXPLICIT_SEND_REJECTION_ERROR,
+      );
 
       // Verify delivery:failed event emitted with permanent_error reason
       const failedEvents = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
@@ -1036,13 +1184,16 @@ describe("DeliveryService — full pipeline behavior", () => {
     it("calls fail with retries_exhausted when retryEngine exhausts retries", async () => {
       const adapter = createMockAdapter("telegram");
       const retryEngine = createMockRetryEngine();
-      retryEngine.sendWithRetry.mockResolvedValue(err(new Error("500 Server Error")));
+      retryEngine.sendWithRetry.mockResolvedValue(err(new Error("429 Too Many Requests")));
       const service = makeDeliveryService({ deliveryQueue: queue, retryEngine, eventBus });
 
       await service.deliverToChannel(adapter, "chat-1", "Hello");
 
       expect(queue.fail).toHaveBeenCalledTimes(1);
-      expect(queue.fail).toHaveBeenCalledWith("entry-uuid-1", "500 Server Error");
+      expect(queue.fail).toHaveBeenCalledWith(
+        "entry-uuid-1",
+        RETRY_EXHAUSTED_SEND_ERROR,
+      );
 
       // Verify delivery:failed event emitted with retries_exhausted reason
       const failedEvents = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
@@ -1052,29 +1203,52 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(failedEvents[0][1].reason).toBe("retries_exhausted");
     });
 
-    it("calls nack with backoff when send fails transiently without retryEngine", async () => {
+    it("parks an ambiguous send outcome without retrying when no retry engine is configured", async () => {
       const adapter = createMockAdapter("telegram");
-      adapter.sendMessage.mockResolvedValue(err(new Error("500 Server Error")));
-      const service = makeDeliveryService({ deliveryQueue: queue, eventBus });
+      const credential = "sk-abcdefghijklmnopqrstuvwxyz1234567890";
+      adapter.sendMessage.mockResolvedValue(
+        err(new Error(`500 Server Error ${credential}`)),
+      );
+      const service = createDeliveryService(makeDeps({ deliveryQueue: queue, eventBus }));
+
+      await service.deliverToChannel(adapter, "chat-1", "Hello");
+
+      expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
+      expect(queue.fail).toHaveBeenCalledWith(
+        "entry-uuid-1",
+        AMBIGUOUS_SEND_OUTCOME_ERROR,
+      );
+      expect(queue.nack).not.toHaveBeenCalled();
+
+      const failedEvents = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (call: unknown[]) => call[0] === "delivery:failed",
+      );
+      expect(failedEvents).toHaveLength(1);
+      expect(failedEvents[0][1]).toMatchObject({
+        error: AMBIGUOUS_SEND_OUTCOME_ERROR,
+        reason: "uncertain_outcome",
+      });
+      expect(JSON.stringify({
+        failCalls: queue.fail.mock.calls,
+        eventCalls: eventBus.emit.mock.calls,
+      })).not.toContain(credential);
+
+      expect(queue.ack).not.toHaveBeenCalled();
+    });
+
+    it("nacks an explicit rate-limit rejection for a later safe retry without a retry engine", async () => {
+      const adapter = createMockAdapter("telegram");
+      adapter.sendMessage.mockResolvedValue(err(new Error("429 Too Many Requests")));
+      const service = createDeliveryService(makeDeps({ deliveryQueue: queue, eventBus }));
 
       await service.deliverToChannel(adapter, "chat-1", "Hello");
 
       expect(queue.nack).toHaveBeenCalledTimes(1);
-      const [entryId, errorMsg, nextRetryAt] = queue.nack.mock.calls[0];
-      expect(entryId).toBe("entry-uuid-1");
-      expect(errorMsg).toBe("500 Server Error");
-      // nextRetryAt should be roughly now + 5000ms (first backoff level)
-      expect(nextRetryAt).toBeGreaterThan(Date.now() - 2000);
-
-      // Verify delivery:nacked event emitted
-      const nackedEvents = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.filter(
-        (call: unknown[]) => call[0] === "delivery:nacked",
+      expect(queue.nack).toHaveBeenCalledWith(
+        "entry-uuid-1",
+        EXPLICIT_SEND_REJECTION_ERROR,
+        expect.any(Number),
       );
-      expect(nackedEvents.length).toBe(1);
-      expect(nackedEvents[0][1].attemptCount).toBe(1);
-      expect(typeof nackedEvents[0][1].nextRetryAt).toBe("number");
-
-      expect(queue.ack).not.toHaveBeenCalled();
       expect(queue.fail).not.toHaveBeenCalled();
     });
 
@@ -1341,7 +1515,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       it("reports nack failure without emitting a nacked success state", async () => {
         queue.nack.mockResolvedValue(err(new Error("nack write failed")));
         const adapter = createMockAdapter("telegram");
-        adapter.sendMessage.mockResolvedValue(err(new Error("500 Server Error")));
+        adapter.sendMessage.mockResolvedValue(err(new Error("429 Too Many Requests")));
         const logger = makeLogger();
         const service = createDeliveryService({
           ...makeDeps({ deliveryQueue: queue, eventBus }),
@@ -1866,6 +2040,7 @@ describe("DeliveryService — full pipeline behavior", () => {
     function createMockQueue(): DeliveryQueuePort & {
       enqueue: ReturnType<typeof vi.fn>;
       enqueueInFlight: ReturnType<typeof vi.fn>;
+      claim: ReturnType<typeof vi.fn>;
       ack: ReturnType<typeof vi.fn>;
       nack: ReturnType<typeof vi.fn>;
       fail: ReturnType<typeof vi.fn>;
@@ -1878,6 +2053,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       return {
         enqueue: vi.fn().mockImplementation(async () => ok(`entry-${++entryCounter}`)),
         enqueueInFlight: vi.fn().mockImplementation(async () => ok(`entry-${++entryCounter}`)),
+        claim: vi.fn().mockResolvedValue(ok(true)),
         ack: vi.fn().mockResolvedValue(ok(undefined)),
         nack: vi.fn().mockResolvedValue(ok(undefined)),
         fail: vi.fn().mockResolvedValue(ok(undefined)),
@@ -2126,6 +2302,32 @@ describe("DeliveryService — full pipeline behavior", () => {
       const final = await service.drainInFlight(5000);
       expect(final.drained).toBe(0);
       expect(final.remaining).toBe(0);
+    });
+
+    it("does not create a secondary unhandled rejection when an adapter send rejects", async () => {
+      const primary = new Error("adapter transport rejected");
+      const adapter = makeAdapter(vi.fn().mockRejectedValue(primary), "telegram");
+      const service = createDeliveryService(makeDeps());
+      const unhandled: unknown[] = [];
+      const captureUnhandled = (reason: unknown): void => {
+        unhandled.push(reason);
+      };
+      process.on("unhandledRejection", captureUnhandled);
+
+      try {
+        const result = await service.deliverToChannel(adapter, "chat-1", "hello");
+        expect(result).toEqual(err(primary));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(unhandled).toEqual([]);
+        expect(await service.drainInFlight(100)).toEqual({
+          drained: 0,
+          remaining: 0,
+          durationMs: 0,
+        });
+      } finally {
+        process.off("unhandledRejection", captureUnhandled);
+      }
     });
 
     it("createDeliveryService rejects an inFlightSends deps field at compile time", () => {

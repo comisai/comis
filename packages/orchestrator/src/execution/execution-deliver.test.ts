@@ -110,9 +110,22 @@ function makeDeliveryService(): DeliverDeps["deliveryService"] {
   };
 }
 
+function makeEventBus(): DeliverDeps["eventBus"] {
+  const emit = vi.fn((_event: string, _payload: unknown) => true);
+  return {
+    emit,
+    emitSafely: vi.fn((event: string, payload: unknown) => ({
+      hadListeners: emit(event, payload),
+      failures: [],
+    })),
+    on: vi.fn().mockReturnThis(),
+    off: vi.fn().mockReturnThis(),
+  } as unknown as DeliverDeps["eventBus"];
+}
+
 function makeDeps(overrides?: Partial<DeliverDeps>): DeliverDeps {
   return {
-    eventBus: { emit: vi.fn(), on: vi.fn(), off: vi.fn() } as unknown as DeliverDeps["eventBus"],
+    eventBus: makeEventBus(),
     logger: createMockLogger(),
     deliveryService: makeDeliveryService(),
     ...overrides,
@@ -305,6 +318,9 @@ describe("deliverExecutionResponse — delivery receipt", () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
+    expect(result.error.totalChunks).toBe(
+      result.error.deliveredChunks + result.error.failedChunks,
+    );
     expect(result.error.failedChunks).toBeGreaterThanOrEqual(1);
     expect(result.error.errorKind).toBe("platform");
     expect(result.error.lastError.length).toBeLessThanOrEqual(200);

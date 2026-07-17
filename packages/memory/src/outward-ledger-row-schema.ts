@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Zod row schema for the `outward_send_ledger` table — the three-state
- * exactly-once outward-send ledger. SSOT for the file-internal
+ * Zod row schema for the `outward_send_ledger` table — the closed five-state
+ * outward-send uncertainty ledger. SSOT for the file-internal
  * `OutwardLedgerDbRow` type in `outward-send-ledger-store.ts`.
  *
  * Lives in its OWN module (NOT `row-schemas.ts`) because that file is at the
@@ -13,11 +13,11 @@
  *     store's `rowToRecord` maps `?? undefined` at the domain boundary.
  *   - INTEGER → `z.number()`; TEXT → `z.string()` (nullable TEXT → `.nullable()`).
  *
- * SECURITY — CONTENT-FREE (mirrors durable_runs / video_jobs): the column set is
- * `content_digest` (sha256) + routing/lifecycle + the reconcile verdict ONLY.
+ * SECURITY — CONTENT-FREE (mirrors durable_run_checkpoints / video_jobs): the column set is
+ * `content_digest` (sha256) + routing/lifecycle + the recovery outcome only.
  * There is deliberately NO `body`/`text`/`message` column and NO
  * secret/token/bearer column — the strictObject REJECTS one if the DDL ever adds
- * it. The reconcile matches on the digest, never the message text.
+ * it. Digests bind immutable operation identity without retaining message text.
  *
  * The `state` column re-enforces the closed five-member OutwardSendState union at
  * READ (belt-and-suspenders the SQL CHECK constraint + the TypeScript union type).
@@ -41,20 +41,62 @@ export const OutwardLedgerDbRowSchema = z.strictObject({
   agent_id: z.string(),
   channel_type: z.string(),
   channel_id: z.string(),
+  operation_kind: z.enum([
+    "message_send",
+    "message_reply",
+    "message_react",
+    "cross_session_announcement",
+  ]),
+  operation_fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
   // 'send_attempt_started' | 'unknown_after_send' | 'committed' | 'failed' |
   // 'unresolved' — the SQL CHECK belt-and-suspenders the closed TypeScript union.
-  state: z.string(),
+  state: z.enum([
+    "send_attempt_started",
+    "unknown_after_send",
+    "committed",
+    "failed",
+    "unresolved",
+  ]),
   // Set only once state='committed'; NULL on every in-flight / failed row.
   platform_message_id: z.string().nullable(),
   // sha256 ONLY — NEVER the message body. NOT NULL in the DDL.
-  content_digest: z.string(),
-  // 'sent' | 'not_sent' | 'unresolved' — NULL until a reconcile resolves the row.
-  reconcile_outcome: z.string().nullable(),
-  attempt_count: z.number(),
-  // The markFailed errorKind / reconcile hint; NULL on a healthy row.
+  content_digest: z.string().regex(/^[0-9a-f]{64}$/),
+  // 'unresolved' after recovery parks an uncertain row; otherwise NULL.
+  reconcile_outcome: z.literal("unresolved").nullable(),
+  attempt_count: z.number().int().min(0),
+  // The markFailed error classification; NULL outside the failed state.
   last_error: z.string().nullable(),
-  created_at_ms: z.number(),
-  updated_at_ms: z.number(),
+  created_at_ms: z.number().int().nonnegative(),
+  updated_at_ms: z.number().int().nonnegative(),
+}).superRefine((row, ctx) => {
+  const committed = row.state === "committed";
+  if (
+    committed !==
+    (typeof row.platform_message_id === "string" && row.platform_message_id.length > 0)
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["platform_message_id"],
+      message: "committed rows require one non-empty platform message id and other states forbid it",
+    });
+  }
+  if ((row.state === "unresolved") !== (row.reconcile_outcome === "unresolved")) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["reconcile_outcome"],
+      message: "only unresolved rows carry the unresolved recovery outcome",
+    });
+  }
+  if (
+    (row.state === "failed") !==
+    (typeof row.last_error === "string" && row.last_error.length > 0)
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["last_error"],
+      message: "failed rows require one error classification and other states forbid it",
+    });
+  }
 });
 
 export type OutwardLedgerDbRow = z.infer<typeof OutwardLedgerDbRowSchema>;

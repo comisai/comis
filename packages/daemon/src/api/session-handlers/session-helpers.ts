@@ -20,7 +20,7 @@
 
 import { readdirSync, statSync, readFileSync } from "node:fs";
 import { safePath, systemGetEnv, systemDateFrom, formatSessionKey } from "@comis/core";
-import { pathToSessionKey } from "@comis/agent";
+import { INBOUND_MESSAGE_LEDGER_SUFFIX, pathToSessionKey } from "@comis/agent";
 
 // Re-aliased from the cluster slice in api/types.ts.
 // Single source of truth: SessionsApiDeps. The session-handlers factory
@@ -48,21 +48,25 @@ export interface JsonlSessionInfo {
 }
 
 /**
+ * True for a LIVE session transcript file; false for the co-located
+ * non-transcript sidecars: observability trajectories
+ * (`<file>.jsonl.trajectory.jsonl`) and inbound provenance ledgers
+ * (`<file>~ledger~inbound.jsonl`). Session-key components encode literal `~`
+ * characters, so the reserved ledger suffix cannot collide with a transcript.
+ * Both scanners must share this predicate so sidecar records are never counted
+ * or returned as SDK sessions.
+ */
+function isLiveTranscriptFile(file: string): boolean {
+  return file.endsWith(".jsonl")
+    && !file.endsWith(".trajectory.jsonl")
+    && !file.endsWith(INBOUND_MESSAGE_LEDGER_SUFFIX);
+}
+
+/**
  * Scan JSONL session directories for each configured agent and return
  * session info records for sessions that exist only as JSONL files.
  * Performance-guarded: skips agents with >1000 session files.
  */
-/**
- * True for a LIVE session transcript file; false for the co-located
- * observability artifacts (`<file>.jsonl.trajectory.jsonl`). Both scanners
- * must share this predicate: counting trajectory EVENTS as session messages
- * re-surfaced a deleted session in session.list as
- * `default:<name>.jsonl.trajectory` (observed live).
- */
-function isLiveTranscriptFile(file: string): boolean {
-  return file.endsWith(".jsonl") && !file.endsWith(".trajectory.jsonl");
-}
-
 export function scanJsonlSessions(
   agentDataDir: string,
   agents: Record<string, unknown>,

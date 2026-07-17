@@ -216,6 +216,7 @@ export const TRAJECTORY_EVENT_TYPES = [
   "orchestrate.run_summary",
 
   // Delivery queue lifecycle.
+  "delivery.outward_ledger_transition",
   "delivery.queued",
   "delivery.dispatched",
   "delivery.aborted",

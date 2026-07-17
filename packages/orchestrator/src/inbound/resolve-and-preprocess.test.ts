@@ -55,6 +55,10 @@ function makeLogger() {
   };
 }
 
+function insertedPersistence(plan = { payloads: [], ledgerContent: "" }) {
+  return { ok: true as const, value: plan };
+}
+
 function makeDeps(overrides?: Partial<ResolveAndPreprocessDeps>): ResolveAndPreprocessDeps {
   const defaultExecutor = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -62,6 +66,7 @@ function makeDeps(overrides?: Partial<ResolveAndPreprocessDeps>): ResolveAndPrep
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
   const defaults: ResolveAndPreprocessDeps = {
+    tenantId: "default",
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     logger: makeLogger() as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -71,6 +76,7 @@ function makeDeps(overrides?: Partial<ResolveAndPreprocessDeps>): ResolveAndPrep
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     sessionManager: { loadOrCreate: vi.fn() } as any,
     createExecutor: vi.fn(() => defaultExecutor),
+    persistInboundMessage: vi.fn(async () => insertedPersistence()),
   };
   return { ...defaults, ...overrides };
 }
@@ -190,5 +196,101 @@ describe("resolveAndPreprocess cross-channel session key is byte-identical", () 
 
     expect(key).not.toContain(":thread:");
     expect(key).toBe("default:dc-user-4:thread-chan-77:peer:dc-user-4:guild:guild-9");
+  });
+});
+
+describe("resolveAndPreprocess inbound provenance ownership", () => {
+  it("redacts credentials from durable provenance failure logs", async () => {
+    const credential = `xoxb-${"r".repeat(32)}`;
+    const deps = makeDeps({
+      persistInboundMessage: vi.fn(async () => ({
+        ok: false as const,
+        error: {
+          error: new Error(`provenance unavailable ${credential}`),
+          errorKind: "resource" as const,
+        },
+      })) as never,
+    });
+
+    await expect(resolveAndPreprocess(
+      deps,
+      makeAdapter(),
+      makeMsg({ id: "11111111-1111-4111-8111-111111111119" }),
+    )).rejects.toThrow("provenance unavailable");
+
+    expect(JSON.stringify(deps.logger.error.mock.calls)).not.toContain(credential);
+  });
+
+  it("directs integrity failures to quarantine without asking for a resend", async () => {
+    const credential = `xoxb-${"q".repeat(32)}`;
+    const deps = makeDeps({
+      persistInboundMessage: vi.fn(async () => ({
+        ok: false as const,
+        error: {
+          error: new Error(`provenance identity collision ${credential}`),
+          errorKind: "precondition" as const,
+        },
+      })) as never,
+    });
+
+    await expect(resolveAndPreprocess(
+      deps,
+      makeAdapter(),
+      makeMsg({ id: "11111111-1111-4111-8111-111111111118" }),
+    )).rejects.toThrow("provenance identity collision");
+
+    expect(deps.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "precondition",
+        hint: expect.stringMatching(/quarantine/i),
+      }),
+      "Inbound message provenance persistence failed",
+    );
+    const logged = JSON.stringify(deps.logger.error.mock.calls);
+    expect(logged).not.toContain(credential);
+    expect(logged).not.toMatch(/resend/i);
+  });
+
+  it("persists the admitted physical message before discovering that no executor exists", async () => {
+    const persistInboundMessage = vi.fn(async () => insertedPersistence());
+    const deps = makeDeps({
+      createExecutor: vi.fn(() => undefined),
+      persistInboundMessage,
+    });
+    const message = makeMsg({ id: "11111111-1111-4111-8111-111111111111" });
+
+    const result = await resolveAndPreprocess(deps, makeAdapter(), message);
+
+    expect(result).toMatchObject({ kind: "no_executor", agentId: "agent-test" });
+    expect(persistInboundMessage).toHaveBeenCalledOnce();
+    expect(deps.sessionManager.loadOrCreate).not.toHaveBeenCalled();
+  });
+
+  it("returns the exact immutable provenance plan produced by the durable append", async () => {
+    const persistedPlan = {
+      payloads: [{
+        schemaVersion: 1,
+        batchId: "11111111-1111-4111-8111-111111111111",
+        chunkIndex: 0,
+        chunkCount: 1,
+        recordedAt: 1_789_000_100_000,
+        messages: [],
+      }],
+      ledgerContent: "planned-line\n",
+    };
+    const deps = makeDeps({
+      persistInboundMessage: vi.fn(async () => ({
+        ok: true,
+        value: persistedPlan,
+      })) as never,
+    });
+
+    const result = await resolveAndPreprocess(
+      deps,
+      makeAdapter(),
+      makeMsg({ id: "11111111-1111-4111-8111-111111111111" }),
+    );
+
+    expect(result).toMatchObject({ inboundProvenancePlan: persistedPlan });
   });
 });

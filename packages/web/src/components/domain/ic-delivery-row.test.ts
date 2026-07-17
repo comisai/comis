@@ -13,31 +13,52 @@ import "./ic-delivery-row.js";
 const MOCK_TRACE: DeliveryTrace = {
   traceId: "trace-001",
   timestamp: Date.now() - 60_000,
-  channelType: "telegram",
-  messagePreview: "Hello, how can I help you today?",
+  sourceChannelType: "discord",
+  targetChannelType: "telegram",
   status: "success",
   latencyMs: 187,
+  error: null,
+  failureStage: null,
+  errorKind: null,
   stepCount: 3,
 };
 
-const MOCK_FAILED_TRACE: DeliveryTrace = {
+const MOCK_ERROR_TRACE: DeliveryTrace = {
   traceId: "trace-002",
   timestamp: Date.now() - 120_000,
-  channelType: "discord",
-  messagePreview: "Failed message that did not arrive",
-  status: "failed",
+  sourceChannelType: "telegram",
+  targetChannelType: "discord",
+  status: "error",
   latencyMs: null,
+  error: "delivery_failed",
+  failureStage: "delivery",
+  errorKind: "platform",
   stepCount: 1,
 };
 
 const MOCK_TIMEOUT_TRACE: DeliveryTrace = {
   traceId: "trace-003",
   timestamp: Date.now() - 300_000,
-  channelType: "slack",
-  messagePreview: "This is a really long message that should be truncated to fit nicely in the table row cell",
+  sourceChannelType: "telegram",
+  targetChannelType: "slack",
   status: "timeout",
   latencyMs: 30000,
+  error: "prompt_timeout",
+  failureStage: "execution",
+  errorKind: "timeout",
   stepCount: 2,
+};
+
+const MOCK_FILTERED_TRACE: DeliveryTrace = {
+  ...MOCK_TRACE,
+  traceId: "trace-004",
+  status: "filtered",
+};
+
+const MOCK_ABORTED_TRACE: DeliveryTrace = {
+  ...MOCK_TRACE,
+  traceId: "trace-005",
+  status: "aborted",
 };
 
 /* ------------------------------------------------------------------ */
@@ -78,18 +99,18 @@ describe("IcDeliveryRow", () => {
     expect((relTime as any).timestamp).toBe(MOCK_TRACE.timestamp);
   });
 
-  it("3 - shows channel type as tag", async () => {
+  it("shows the delivery destination rather than the source as the channel tag", async () => {
     const el = await createElement({ trace: MOCK_TRACE });
     const tag = el.shadowRoot?.querySelector("ic-tag");
     expect(tag).toBeTruthy();
     expect(tag?.textContent?.trim()).toBe("telegram");
   });
 
-  it("4 - shows truncated message preview", async () => {
+  it("renders the content-free trace identifier in the third column", async () => {
     const el = await createElement({ trace: MOCK_TRACE });
-    const messageCell = el.shadowRoot?.querySelector(".cell-message");
+    const messageCell = el.shadowRoot?.querySelector(".cell-trace");
     expect(messageCell).toBeTruthy();
-    expect(messageCell?.textContent?.trim()).toBe(MOCK_TRACE.messagePreview);
+    expect(messageCell?.textContent?.trim()).toBe(MOCK_TRACE.traceId);
   });
 
   it("5 - shows success status indicator", async () => {
@@ -98,15 +119,27 @@ describe("IcDeliveryRow", () => {
     expect(statusIcon).toBeTruthy();
   });
 
-  it("6 - shows failed status indicator", async () => {
-    const el = await createElement({ trace: MOCK_FAILED_TRACE });
-    const statusIcon = el.shadowRoot?.querySelector('svg[aria-label="Failed"]');
+  it("6 - shows error status indicator", async () => {
+    const el = await createElement({ trace: MOCK_ERROR_TRACE });
+    const statusIcon = el.shadowRoot?.querySelector('svg[aria-label="Error"]');
     expect(statusIcon).toBeTruthy();
   });
 
   it("7 - shows timeout status indicator", async () => {
     const el = await createElement({ trace: MOCK_TIMEOUT_TRACE });
     const statusIcon = el.shadowRoot?.querySelector('svg[aria-label="Timeout"]');
+    expect(statusIcon).toBeTruthy();
+  });
+
+  it("shows filtered status indicator with an accessible label", async () => {
+    const el = await createElement({ trace: MOCK_FILTERED_TRACE });
+    const statusIcon = el.shadowRoot?.querySelector('svg[aria-label="Filtered"]');
+    expect(statusIcon).toBeTruthy();
+  });
+
+  it("shows aborted status indicator with an accessible label", async () => {
+    const el = await createElement({ trace: MOCK_ABORTED_TRACE });
+    const statusIcon = el.shadowRoot?.querySelector('svg[aria-label="Aborted"]');
     expect(statusIcon).toBeTruthy();
   });
 
@@ -117,7 +150,7 @@ describe("IcDeliveryRow", () => {
   });
 
   it("9 - shows '--' for null latency", async () => {
-    const el = await createElement({ trace: MOCK_FAILED_TRACE });
+    const el = await createElement({ trace: MOCK_ERROR_TRACE });
     const latencyCell = el.shadowRoot?.querySelector(".cell-latency");
     expect(latencyCell?.textContent?.trim()).toBe("--");
   });
@@ -170,12 +203,17 @@ describe("IcDeliveryRow", () => {
     expect(cells?.length ?? 0).toBe(0);
   });
 
-  it("15 - truncates long message preview at 40 chars", async () => {
-    const el = await createElement({ trace: MOCK_TIMEOUT_TRACE });
-    const messageCell = el.shadowRoot?.querySelector(".cell-message");
+  it("truncates a long trace identifier at 40 characters", async () => {
+    const longTrace = {
+      ...MOCK_TIMEOUT_TRACE,
+      traceId: "trace-identifier-that-is-deliberately-longer-than-forty-characters",
+    };
+    const el = await createElement({ trace: longTrace });
+    const messageCell = el.shadowRoot?.querySelector(".cell-trace");
     const text = messageCell?.textContent?.trim() ?? "";
     // 40 chars + "..."
     expect(text.length).toBeLessThanOrEqual(43);
+    expect(text).toContain("trace-identifier");
     expect(text).toContain("...");
   });
 

@@ -35,13 +35,17 @@ describe("MessagingEvents payload structure", () => {
     expect(payload.sessionKey.channelId).toBe("c1");
   });
 
-  it("message:sent delivers channelId, messageId, content", () => {
+  it("message:sent carries exact source and target channel identities", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["message:sent"] = {
+      channelType: "telegram",
       channelId: "c1",
       messageId: "msg-001",
       content: "Reply text",
+      sourceChannelType: testMessage.channelType,
+      sourceChannelId: testMessage.channelId,
+      sourceMessageId: testMessage.id,
     };
 
     bus.on("message:sent", handler);
@@ -49,9 +53,49 @@ describe("MessagingEvents payload structure", () => {
 
     expect(handler).toHaveBeenCalledWith(payload);
     const received = handler.mock.calls[0]![0] as EventMap["message:sent"];
+    expect(received.channelType).toBe("telegram");
     expect(received.channelId).toBe("c1");
     expect(received.messageId).toBe("msg-001");
     expect(received.content).toBe("Reply text");
+    expect(received.sourceChannelType).toBe("telegram");
+    expect(received.sourceChannelId).toBe("c1");
+    expect(received.sourceMessageId).toBe(testMessage.id);
+  });
+
+  it("message:terminal carries one exact source identity and closed outcome", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["message:terminal"] = {
+      channelType: "telegram",
+      channelId: "c1",
+      sourceMessageId: testMessage.id,
+      outcome: "filtered",
+      reason: "gate_skipped",
+      timestamp: Date.now(),
+    };
+
+    bus.on("message:terminal", handler);
+    bus.emit("message:terminal", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+  });
+
+  it("response:filtered carries the exact suppressed source message identity", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["response:filtered"] = {
+      channelType: "telegram",
+      channelId: "c1",
+      sourceMessageId: testMessage.id,
+      suppressedBy: "NO_REPLY",
+      timestamp: Date.now(),
+    };
+
+    bus.on("response:filtered", handler);
+    bus.emit("response:filtered", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    expect((handler.mock.calls[0]![0] as EventMap["response:filtered"]).sourceMessageId).toBe(testMessage.id);
   });
 
   it("message:streaming delivers delta + accumulated", () => {
@@ -471,6 +515,35 @@ describe("MessagingEvents payload structure", () => {
 
     // @ts-expect-error - missing content in message:sent
     bus.emit("message:sent", { channelId: "c1", messageId: "m1" });
+
+    // @ts-expect-error - channelType is part of the required channel identity
+    const missingChannelType: EventMap["message:sent"] = {
+      channelId: "c1",
+      messageId: "m1",
+      content: "reply",
+      sourceChannelType: "telegram",
+      sourceChannelId: "c1",
+      sourceMessageId: testMessage.id,
+    };
+    void missingChannelType;
+
+    // @ts-expect-error - filtered terminal events require their channel adapter type
+    const filteredWithoutChannelType: EventMap["response:filtered"] = {
+      channelId: "c1",
+      sourceMessageId: testMessage.id,
+      suppressedBy: "NO_REPLY",
+      timestamp: Date.now(),
+    };
+    void filteredWithoutChannelType;
+
+    // @ts-expect-error - filtered terminal events must identify the inbound source
+    const filteredWithoutSource: EventMap["response:filtered"] = {
+      channelType: "telegram",
+      channelId: "c1",
+      suppressedBy: "NO_REPLY",
+      timestamp: Date.now(),
+    };
+    void filteredWithoutSource;
   });
 
   // The content-free margin-arbiter observability event.

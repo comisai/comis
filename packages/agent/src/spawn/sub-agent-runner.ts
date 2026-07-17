@@ -14,7 +14,10 @@
 import {
   formatSessionKey,
   parseFormattedSessionKey,
+  createDeliveryOrigin,
+  createResolvedRequestContext,
   runWithContext,
+  tryGetContext,
   type SessionKey,
   type TypedEventBus,
   type AgentToAgentConfig,
@@ -28,8 +31,10 @@ import {
   SUB_AGENT_TOOL_DENYLIST,
   toolReachableGroups,
   RequiredToolsUnreachableError,
+  toSafeErrorLogString,
   type UnreachableToolEntry,
   type SubAgentSpawnRejectedEvent,
+  type UserTrustLevel,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import {
@@ -38,13 +43,18 @@ import {
 } from "./coordinator-progress-fork.js";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
 import { randomUUID } from "node:crypto";
-import type { AnnouncementBatcher, AnnouncementDeadLetterQueue } from "./announcement-ports.js";
+import type {
+  AnnouncementBatcher,
+  AnnouncementDeadLetterQueue,
+  SendGovernedCompletionAnnouncement,
+} from "./announcement-ports.js";
 import type { DeliveryDedup } from "./announce-key.js";
 import {
   classifyAbortReason,
   buildAnnouncementMessage,
   deliverAnnouncement,
   deliverFailureNotification,
+  resolveAnnouncementThreadId,
   validateOutputs,
   sweepResultFiles,
   persistFailureRecord,
@@ -59,10 +69,11 @@ import type { RunHandle } from "../executor/active-run-registry.js";
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Hard timeout for announceToParent calls at all call sites (300 seconds / 5 minutes).
- *  Parent agents may call slow tools (image generation at 120s, web search, etc.)
- *  in response to announcements. 30s caused premature fallback + duplicate delivery. */
+/** Hard timeout for the text-only parent candidate execution. A timeout leaves
+ *  the durable decision reservation quarantined and never starts another path. */
 export const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
+const SHUTDOWN_ACTIVE_GRACE_MS = 30_000;
+const SHUTDOWN_NOTICE_GRACE_MS = 5_000;
 
 /**
  * Build the composite-key triple from a SubAgentRun for resolver lookups.
@@ -114,7 +125,7 @@ function deriveCompositeForRun(run: SubAgentRun): {
 // Public interfaces
 // ---------------------------------------------------------------------------
 
-// @optional-field-count: 13 — SubAgentRun is the per-run flight-record state; its
+// @optional-field-count: 15 — SubAgentRun is the per-run flight-record state; its
 // optionals are independent, lifecycle-populated facets of ONE run (result/error
 // set at completion; requesterOrigin/announce* at spawn; graphId/nodeId/abortGroup
 // for graph routing; parentLeaseId/ceilingSlotAcquired for the tree-wide ceiling/
@@ -124,6 +135,8 @@ export interface SubAgentRun {
   runId: string;
   status: "running" | "completed" | "failed" | "queued";
   agentId: string;
+  /** Authoritative caller trust captured when the spawn was accepted. */
+  trustLevel: UserTrustLevel;
   task: string;
   sessionKey: string;
   startedAt: number;
@@ -146,10 +159,16 @@ export interface SubAgentRun {
    *  spawn tree; the root mints this id and descendants inherit it. The unified
    *  semaphore keys on it and killByRootRun enumerates a whole tree by it. */
   rootRunId: string;
+  /** Exact attenuated capability ceiling accepted for this child. */
+  caps: readonly AgentCapability[];
   /** Lease that authorized this spawn (revocation-cascade correlation); undefined for the root. */
   parentLeaseId?: string;
+  /** This child's own assembly lease, recorded after tool assembly. */
+  leaseId?: string;
   /** Session key of the caller agent, used for active children counting. */
   callerSessionKey?: string;
+  /** Authenticated caller agent that owns completion delivery. */
+  callerAgentId?: string;
   /** Announce channel type for failure notifications (stored at spawn for ghost sweep access). */
   announceChannelType?: string;
   /** Announce channel ID for failure notifications (stored at spawn for ghost sweep access). */
@@ -181,6 +200,10 @@ export interface SubAgentRunnerDeps {
   sessionStore: {
     save(key: SessionKey, messages: unknown[], metadata: Record<string, unknown>): void;
     delete(key: SessionKey): void;
+    /** Read persisted ownership before a multi-round run reuses a session. */
+    loadByFormattedKey(formattedKey: string): {
+      metadata: Record<string, unknown>;
+    } | undefined;
   };
   executeAgent: (
     agentId: string,
@@ -191,6 +214,17 @@ export interface SubAgentRunnerDeps {
     overrides?: { graphId?: string; nodeId?: string; reuseSessionKey?: string; graphNodeDepth?: number },
     /** Per-spawn token budget — becomes the child's BudgetGuard per-execution cap. */
     tokenBudget?: number,
+    /** Exact parent authority used to attenuate the child's own tool assembly. */
+    autonomyContext?: {
+      rootRunId: string;
+      parentLeaseId?: string;
+      parentCaps: readonly AgentCapability[];
+      onAssemblyAuthority(authority: {
+        rootRunId: string;
+        leaseId: string;
+        caps: readonly AgentCapability[];
+      }): void;
+    },
   ) => Promise<{
     response: string;
     tokensUsed: { total: number; cacheRead?: number; cacheWrite?: number };
@@ -206,16 +240,17 @@ export interface SubAgentRunnerDeps {
     };
   }>;
   sendToChannel: (channelType: string, channelId: string, text: string, options?: { threadId?: string }) => Promise<boolean>;
-  /** Optional callback to inject announcement into parent session for agent rewriting.
-   *  When provided, used instead of sendToChannel for completion announcements.
-   *  Falls back to sendToChannel if not provided or if call fails. */
+  /** Optional callback that asks the parent agent to rewrite an announcement.
+   *  It returns the candidate text without performing the platform send;
+   *  `undefined` means the parent intentionally chose NO_REPLY. */
   announceToParent?: (
     callerAgentId: string,
     callerSessionKey: SessionKey,
     text: string,
     channelType: string,
     channelId: string,
-  ) => Promise<void>;
+    options?: { threadId?: string },
+  ) => Promise<string | undefined>;
   eventBus: TypedEventBus;
   config: AgentToAgentConfig;
   tenantId: string;
@@ -281,6 +316,8 @@ export interface SubAgentRunnerDeps {
   batcher?: AnnouncementBatcher;
   /** Optional dead-letter queue for persisting failed announcement deliveries */
   deadLetterQueue?: AnnouncementDeadLetterQueue;
+  /** Durable single-attempt sender for final completion-announcement delivery. */
+  sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
   /**
    * Shared, bounded delivered-key store, forwarded to deliverAnnouncement
    * + deliverFailureNotification so the failure-path dedup is correct whether or
@@ -363,7 +400,7 @@ export interface SubAgentRunnerDeps {
   dataDir?: string;
   /** Wall-clock + monotonic time reads. */
   clock: ClockPort;
-  /** Timer scheduling. Sweep-interval + watchdog setTimeout + shutdown-timeout setTimeout. */
+  /** Timer scheduling for the sweep interval and per-run watchdog. */
   timers: TimerPort;
   /**
    * The durable-run checkpoint store. OPTIONAL — when
@@ -398,7 +435,11 @@ export interface SubAgentRunnerDeps {
   durableRunFacts?: (
     rootRunId: string,
     agentId: string,
-  ) => { caps: readonly AgentCapability[]; leaseIds: readonly string[]; budgetConsumed: number } | undefined;
+  ) => {
+    caps: readonly AgentCapability[];
+    leaseIds: readonly string[];
+    rootBudget: import("@comis/core").DurableRootBudget;
+  } | undefined;
   /** Optional lifecycle hooks for spawn preparation and completion */
   lifecycleHooks?: {
     prepareSpawn(params: {
@@ -509,8 +550,23 @@ export interface SpawnParams {
    * both are absent the checkpoint records an empty set (a safe degrade).
    */
   caps?: readonly AgentCapability[];
-  /** Caller type for GraphCoordinator bypass of children limit. */
-  callerType?: "agent" | "graph";
+  /** Caller boundary. GraphCoordinator bypasses the children limit; the
+   *  authenticated control plane bypasses agent-principal binding only. */
+  callerType?: "agent" | "graph" | "control-plane";
+  /**
+   * Attempt identity reserved by GraphCoordinator and persisted in its running
+   * launch claim before this runner is allowed to start the side effect. Honored
+   * only for graph-owned spawns.
+   */
+  reservedRunId?: string;
+  /**
+   * Authoritative trust snapshot for a graph run. Only graph-marked spawns
+   * consume this field; direct spawns always read trust from the live parent
+   * RequestContext. GraphCoordinator resolves it once at graph submission so
+   * later queued/dependent nodes cannot inherit whichever ALS happens to drive
+   * their promotion.
+   */
+  callerTrustLevel?: UserTrustLevel;
   /** File paths for the sub-agent to reference. */
   artifactRefs?: string[];
   /** Objective statement that survives context compaction. */
@@ -616,6 +672,20 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const { clock, timers } = deps;
   const runs = new Map<string, SubAgentRun>();
   const activePromises = new Set<Promise<void>>();
+  const activeRunIds = new Set<string>();
+  const deliverySuppressedRunIds = new Set<string>();
+  const failureNotificationPromises = new Set<Promise<void>>();
+  let acceptingSpawns = true;
+  let shutdownPromise: Promise<void> | undefined;
+
+  function trackFailureNotification(promise: Promise<void>): void {
+    const tracked = promise.then(
+      () => undefined,
+      () => undefined,
+    );
+    failureNotificationPromises.add(tracked);
+    void tracked.then(() => failureNotificationPromises.delete(tracked));
+  }
 
   // -------------------------------------------------------------------------
   // Durable checkpoint + keep-alive heartbeat.
@@ -638,71 +708,87 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   }
 
   /**
-   * Write the initial durable checkpoint at the SPAWN BOUNDARY and start
-   * the keep-alive heartbeat. `stepIndex` starts at -1 (the never-sent
-   * sentinel — the outward counter is owned by allocateOutwardStep, NOT here).
+   * Write the initial execution checkpoint at the spawn boundary and start
+   * the keep-alive heartbeat.
    * Inert when no store is wired. Never throws.
    */
-  function startDurableCheckpoint(run: SubAgentRun, params: SpawnParams): void {
+  function persistDurableCheckpoint(run: SubAgentRun, params: SpawnParams): void {
     const store = deps.durableRuns;
     if (!store) return;
     const rootRunId = run.rootRunId;
     const facts = deps.durableRunFacts?.(rootRunId, params.agentId);
-    // Caps: explicit spawn param wins (the lease's minted caps), else the
-    // injected facts resolver, else an empty set (a safe degrade — a resume
-    // re-mints the persisted caps VERBATIM, so empty is zero-authority, never
-    // an over-grant).
-    const caps = params.caps ?? facts?.caps ?? [];
-    const leaseIds = facts?.leaseIds ?? (params.parentLeaseId ? [params.parentLeaseId] : []);
-    const budgetConsumed = facts?.budgetConsumed ?? 0;
+    const leaseIds = facts?.leaseIds ?? [run.parentLeaseId, run.leaseId]
+      .filter((leaseId): leaseId is string => leaseId !== undefined);
+    const rootBudget = facts?.rootBudget ?? {
+      startedAtMs: clock.now(),
+      tokensConsumed: 0,
+      usdConsumed: 0,
+    };
     const cronOrigin = deriveCronOrigin(params);
+    const owner = parseFormattedSessionKey(run.sessionKey);
+    if (owner === undefined) {
+      deps.logger?.warn(
+        {
+          runId: run.runId,
+          rootRunId,
+          hint: "Persist the child with a valid formatted session key before starting durability",
+          errorKind: "validation" as const,
+        },
+        "Durable checkpoint skipped: invalid child session identity",
+      );
+      return;
+    }
     void store
       .upsertCheckpoint({
+        checkpointId: run.runId,
         rootRunId,
-        spawnTree: [rootRunId],
+        agentId: run.agentId,
+        sessionKey: run.sessionKey,
+        ownerTenantId: owner.tenantId,
+        ownerUserId: owner.userId,
+        deliveryOrigin: run.requesterOrigin ?? null,
+        spawnTree: [run.runId],
         // Copy into mutable arrays — DurableRunRecord's caps/leaseIds are mutable
         // (the Zod-inferred shape); the deps/params surfaces are readonly.
-        caps: [...caps],
+        caps: [...run.caps],
         leaseIds: [...leaseIds],
-        budgetConsumed,
+        budgetConsumed: rootBudget.usdConsumed,
+        rootBudget,
         cronOrigin,
-        stepIndex: -1,
+        trustLevel: run.trustLevel,
         status: "running",
         lastHeartbeatAt: clock.now(),
+        scriptRef: null,
+        checkpointRef: null,
       })
       .then((r) => {
         if (!r.ok) {
           deps.logger?.warn(
-            { rootRunId, err: r.error, hint: "durable checkpoint upsert failed — the run still proceeds; it will not be resumable after a crash", errorKind: "internal" as const },
+            { rootRunId, err: toSafeErrorLogString(r.error), hint: "durable checkpoint upsert failed — the run still proceeds; it will not be resumable after a crash", errorKind: "internal" as const },
             "Durable checkpoint: upsert failed (run continues)",
           );
         }
       })
       .catch((err: unknown) => {
         deps.logger?.warn(
-          { rootRunId, err, hint: "durable checkpoint upsert threw — the run still proceeds", errorKind: "internal" as const },
+          { rootRunId, err: toSafeErrorLogString(err), hint: "durable checkpoint upsert threw — the run still proceeds", errorKind: "internal" as const },
           "Durable checkpoint: upsert threw (run continues)",
         );
       });
+  }
+
+  /** Write the initial durable row and start its independent keep-alive. */
+  function startDurableCheckpoint(run: SubAgentRun, params: SpawnParams): void {
+    const store = deps.durableRuns;
+    if (!store) return;
+    persistDurableCheckpoint(run, params);
 
     // A keep-alive that fires INDEPENDENT of step/spawn completion so a
     // long-running child never trips the watchdog's stale threshold.
     // One interval per run, cleared on terminal settle (no leaked timer).
     if (!heartbeatTimers.has(run.runId)) {
       const handle = timers.setInterval(() => {
-        suppressError(
-          store
-            .touchHeartbeat(rootRunId, clock.now())
-            .then((r) => {
-              if (!r.ok) {
-                deps.logger?.debug(
-                  { rootRunId, err: r.error, hint: "durable heartbeat touch failed; the watchdog may orphan-sweep this run if it persists", errorKind: "internal" as const },
-                  "Durable heartbeat: touch failed",
-                );
-              }
-            }),
-          "durable heartbeat touch (best-effort)",
-        );
+        persistDurableCheckpoint(run, params);
       }, DURABLE_KEEPALIVE_MS);
       handle.unref();
       heartbeatTimers.set(run.runId, handle);
@@ -726,7 +812,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     if (!store) return;
     suppressError(
       store
-        .markCompleted(run.rootRunId)
+        .markCompleted(run.runId)
         .then((r) => {
           if (!r.ok) {
             deps.logger?.warn(
@@ -1089,15 +1175,20 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       // Deliver failure notification using stored announce channel
       if (run.announceChannelType && run.announceChannelId) {
-        deliverFailureNotification({
+        trackFailureNotification(deliverFailureNotification({
           channelType: run.announceChannelType,
           channelId: run.announceChannelId,
           task: run.task,
           runtimeMs: runningDurationMs,
           runId,
+          threadId: resolveAnnouncementThreadId(
+            run.requesterOrigin,
+            run.announceChannelType,
+            run.announceChannelId,
+          ),
+          callerAgentId: run.callerAgentId,
           callerSessionKey: run.callerSessionKey,  // shared dedup key
-        // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
-        }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
+        }, deps));
       }
 
       // Lifecycle hook (fire-and-forget)
@@ -1147,14 +1238,168 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   // -------------------------------------------------------------------------
 
   function spawn(params: SpawnParams): string {
+    if (!acceptingSpawns) {
+      // @allow-throw: spawn() is the synchronous daemon RPC boundary and must reject admission after shutdown starts.
+      throw new Error("Sub-agent runner is shutting down");
+    }
     // Reset dedup signal at the start of every call so a non-deduped spawn
     // does not see a stale hit from the previous invocation.
     lastDedupHit = undefined;
 
+    const requesterOrigin = params.requesterOrigin;
+    const isGraphSpawn = params.callerType === "graph";
+    if (isGraphSpawn && params.reservedRunId !== undefined && runs.has(params.reservedRunId)) {
+      // @allow-throw: graph launch identity collisions are rejected before any spawn ceiling is acquired.
+      throw new Error("Graph spawn reserved run identity is already active");
+    }
+    const isContextIndependentSpawn = isGraphSpawn || params.callerType === "control-plane";
+    const callerContext = tryGetContext();
+    const hasExplicitAnnouncementRoute = params.announceChannelType !== undefined
+      || params.announceChannelId !== undefined;
+    const parsedReuseSession = params.reuseSessionKey
+      ? parseFormattedSessionKey(params.reuseSessionKey)
+      : undefined;
+
+    const rejectCallerPrincipal = (): never => {
+      deps.logger?.warn({
+        agentId: params.agentId,
+        reason: "caller_principal_mismatch",
+        hint: "Reject the spawn and verify the caller session, agent, and delivery route were copied from the active request context",
+        errorKind: "auth" as const,
+      }, "Sub-agent spawn rejected: caller principal mismatch");
+      // @allow-throw: spawn() is a daemon RPC boundary and rejects forged caller identity before creating a run or session.
+      throw new Error("Spawn rejected: caller principal does not match the active request context");
+    };
+
+    // GraphCoordinator snapshots and authorizes graph nodes independently, and
+    // route-less daemon jobs may call the runner outside ALS. A direct spawn
+    // that does have ambient request identity must bind every supplied caller
+    // field to that principal exactly; partial or stale async state cannot pick
+    // another parent session, agent, chat, or announcement destination.
+    if (params.callerType === "agent" && callerContext === undefined) {
+      rejectCallerPrincipal();
+    }
+    if (!isContextIndependentSpawn && callerContext !== undefined) {
+      const parsedCallerSession = params.callerSessionKey === undefined
+        ? undefined
+        : parseFormattedSessionKey(params.callerSessionKey);
+      if (
+        callerContext.userId === undefined
+        || callerContext.sessionKey === undefined
+        || callerContext.agentId === undefined
+        || params.callerSessionKey !== callerContext.sessionKey
+        || params.callerAgentId !== callerContext.agentId
+        || parsedCallerSession === undefined
+        || parsedCallerSession.tenantId !== callerContext.tenantId
+        || parsedCallerSession.userId !== callerContext.userId
+        || (
+          parsedReuseSession !== undefined
+          && (
+            parsedReuseSession.tenantId !== callerContext.tenantId
+            || parsedReuseSession.userId !== callerContext.userId
+          )
+        )
+      ) {
+        rejectCallerPrincipal();
+      }
+
+      const contextOrigin = callerContext.deliveryOrigin;
+      if (
+        requesterOrigin !== undefined
+        && (
+          contextOrigin === undefined
+          || (
+            contextOrigin.tenantId !== requesterOrigin.tenantId
+            || contextOrigin.userId !== requesterOrigin.userId
+            || contextOrigin.channelType !== requesterOrigin.channelType
+            || contextOrigin.channelId !== requesterOrigin.channelId
+            || contextOrigin.threadId !== requesterOrigin.threadId
+            || (
+              callerContext.channelType !== undefined
+              && callerContext.channelType !== requesterOrigin.channelType
+            )
+          )
+        )
+      ) {
+        rejectCallerPrincipal();
+      }
+      if (
+        hasExplicitAnnouncementRoute
+        && (
+          requesterOrigin === undefined
+          || params.announceChannelType !== requesterOrigin.channelType
+          || params.announceChannelId !== requesterOrigin.channelId
+        )
+      ) {
+        rejectCallerPrincipal();
+      }
+    }
+    const announcementRouteMismatch = requesterOrigin !== undefined
+      && (
+        requesterOrigin.tenantId !== deps.tenantId
+        || (hasExplicitAnnouncementRoute && (
+          params.announceChannelType === undefined
+          || params.announceChannelId === undefined
+          || params.announceChannelType !== requesterOrigin.channelType
+          || params.announceChannelId !== requesterOrigin.channelId
+        ))
+        || (parsedReuseSession !== undefined && (
+          parsedReuseSession.tenantId !== requesterOrigin.tenantId
+          || parsedReuseSession.userId !== requesterOrigin.userId
+        ))
+      );
+    if (announcementRouteMismatch) {
+      deps.logger?.warn({
+        agentId: params.agentId,
+        reason: "announcement_route_mismatch",
+        hint: "Spawn rejected because the requested announcement route or reused session does not belong to the authenticated requester",
+        errorKind: "precondition" as const,
+      }, "Sub-agent spawn rejected: announcement route mismatch");
+      // @allow-throw: spawn() is a daemon RPC boundary and rejects forged routing before creating a run or session.
+      throw new Error("Spawn rejected: announcement route does not match the authenticated requester");
+    }
+
     // 0. Resolve depth and config values for limit enforcement
     const currentDepth = params.depth ?? 0;
     const maxDepth = params.maxDepth ?? deps.config.subagentContext?.maxSpawnDepth ?? 3;
-    const isGraphSpawn = params.callerType === "graph";
+    // Snapshot authorization at the acceptance boundary. Direct spawns trust
+    // only the live framework context; a caller-provided field cannot elevate
+    // them. Graph nodes consume the coordinator's submission-time snapshot.
+    // Missing context/data is guest, never the RequestContext schema default.
+    const acceptedTrustLevel: UserTrustLevel = isGraphSpawn
+      ? params.callerTrustLevel ?? "guest"
+      : callerContext?.trustLevel ?? "guest";
+
+    if (parsedReuseSession !== undefined) {
+      if (parsedReuseSession.tenantId !== deps.tenantId) {
+        deps.logger?.warn({
+          agentId: params.agentId,
+          reason: "reused_session_tenant_mismatch",
+          hint: "Reject the spawn and use a persistent session from the configured tenant",
+          errorKind: "auth" as const,
+        }, "Sub-agent spawn rejected: reused session tenant mismatch");
+        // @allow-throw: spawn() is a daemon RPC boundary and rejects cross-tenant session reuse before creating a run.
+        throw new Error("Spawn rejected: reused session tenant does not match the configured tenant");
+      }
+      const reuseSessionKey = params.reuseSessionKey ?? rejectCallerPrincipal();
+      const persistedSession = deps.sessionStore.loadByFormattedKey(reuseSessionKey);
+      if (persistedSession !== undefined) {
+        const persistedAgentId = typeof persistedSession.metadata.agentId === "string"
+          && persistedSession.metadata.agentId.length > 0
+          ? persistedSession.metadata.agentId
+          : undefined;
+        if (persistedAgentId !== params.agentId) {
+          deps.logger?.warn({
+            agentId: params.agentId,
+            reason: "reused_session_owner_mismatch",
+            hint: "Reject the spawn and use a persistent session owned by the requested child agent",
+            errorKind: "auth" as const,
+          }, "Sub-agent spawn rejected: reused session ownership mismatch");
+          // @allow-throw: spawn() is a daemon RPC boundary and rejects cross-agent session reuse before creating a run.
+          throw new Error("Spawn rejected: reused session ownership does not match the requested agent");
+        }
+      }
+    }
 
     // Establish the tree-stable rootRunId. The root
     // (the first caller with no rootRunId) mints one; every descendant MUST pass its
@@ -1163,6 +1408,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // each escape the parent's ceiling. Uses the injected
     // ClockPort (never the wall-clock global — the globals.test.ts arch-gate).
     const rootRunId = params.rootRunId ?? `root-${params.agentId}-${clock.now().toString(36)}`;
+    const acceptedCaps = [
+      ...(params.caps
+        ?? deps.durableRunFacts?.(rootRunId, params.agentId)?.caps
+        ?? []),
+    ];
 
     // Depth check (applies to ALL spawns including graph)
     if (currentDepth >= maxDepth) {
@@ -1400,6 +1650,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           runId: queuedRunId,
           status: "queued",
           agentId: params.agentId,
+          trustLevel: acceptedTrustLevel,
           task: params.task,
           sessionKey: "",
           startedAt: 0,
@@ -1407,8 +1658,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           requesterOrigin: params.requesterOrigin,
           depth: currentDepth,
           rootRunId,
+          caps: acceptedCaps,
           ...(params.parentLeaseId !== undefined ? { parentLeaseId: params.parentLeaseId } : {}),
           callerSessionKey: params.callerSessionKey,
+          callerAgentId: params.callerAgentId,
           announceChannelType: params.announceChannelType,
           announceChannelId: params.announceChannelId,
           graphId: params.graphId,
@@ -1538,15 +1791,20 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     }
 
     // Normal (non-queued) path: create run and start execution
-    const runId = randomUUID();
+    const runId = isGraphSpawn && params.reservedRunId !== undefined
+      ? params.reservedRunId
+      : randomUUID();
     const run: SubAgentRun = {
       runId, status: "running", agentId: params.agentId,
+      trustLevel: acceptedTrustLevel,
       task: params.task, sessionKey: "", startedAt: clock.now(),
       requesterOrigin: params.requesterOrigin,
       depth: currentDepth,
       rootRunId,
+      caps: acceptedCaps,
       ...(params.parentLeaseId !== undefined ? { parentLeaseId: params.parentLeaseId } : {}),
       callerSessionKey: params.callerSessionKey,
+      callerAgentId: params.callerAgentId,
       announceChannelType: params.announceChannelType,
       announceChannelId: params.announceChannelId,
       graphId: params.graphId,
@@ -1596,9 +1854,14 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           "Failed to parse reuseSessionKey",
         );
         // Fall through to normal session creation
-        subSessionKey = { tenantId: deps.tenantId, userId: `sub-agent-${runId}`, channelId: `sub-agent:${runId}` };
+        subSessionKey = {
+          tenantId: deps.tenantId,
+          userId: params.requesterOrigin?.userId ?? `sub-agent-${runId}`,
+          channelId: `sub-agent:${runId}`,
+        };
         formattedKey = formatSessionKey(subSessionKey);
         deps.sessionStore.save(subSessionKey, [], {
+          agentId: params.agentId,
           parentSessionKey: params.callerSessionKey,
           spawnedByAgent: params.callerAgentId,
           spawnedAt: clock.now(),
@@ -1621,7 +1884,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         });
       } else {
         formattedKey = params.reuseSessionKey;
-        subSessionKey = { tenantId: parsed.tenantId, userId: parsed.userId, channelId: parsed.channelId };
+        subSessionKey = { ...parsed, agentId: params.agentId };
         deps.logger?.info(
           { runId, reuseSessionKey: params.reuseSessionKey, agentId: params.agentId },
           "Reusing persistent session for multi-round driver",
@@ -1630,9 +1893,14 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       }
     } else {
       // Normal path: create new session
-      subSessionKey = { tenantId: deps.tenantId, userId: `sub-agent-${runId}`, channelId: `sub-agent:${runId}` };
+      subSessionKey = {
+        tenantId: deps.tenantId,
+        userId: params.requesterOrigin?.userId ?? `sub-agent-${runId}`,
+        channelId: `sub-agent:${runId}`,
+      };
       formattedKey = formatSessionKey(subSessionKey);
       deps.sessionStore.save(subSessionKey, [], {
+        agentId: params.agentId,
         parentSessionKey: params.callerSessionKey,
         spawnedByAgent: params.callerAgentId,
         spawnedAt: clock.now(),
@@ -1725,32 +1993,56 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           ...(params.graphId ? { graphId: params.graphId } : {}),
           ...(params.nodeId ? { nodeId: params.nodeId } : {}),
         }, "Sub-agent execution started");
-        const parsed = parseFormattedSessionKey(formattedKey);
-
         // Propagate delivery origin into ALS so sub-agent tool calls
         // (e.g. pipeline execute -> graph.execute RPC) include announce channel fields.
         // Without this, setup-tools.ts cannot inject _callerChannelType/_callerChannelId.
-        const subDeliveryOrigin = run.announceChannelType && run.announceChannelId
-          ? {
-              channelType: run.announceChannelType,
-              channelId: run.announceChannelId,
-              userId: parsed?.userId ?? "sub-agent",
-              tenantId: parsed?.tenantId ?? deps.tenantId,
-            }
+        const childTenantId = subSessionKey.tenantId;
+        const childUserId = subSessionKey.userId;
+        const originChannelType = run.announceChannelType ?? run.requesterOrigin?.channelType;
+        const originChannelId = run.announceChannelId ?? run.requesterOrigin?.channelId;
+        const preservesRequesterRoute = originChannelType === run.requesterOrigin?.channelType
+          && originChannelId === run.requesterOrigin?.channelId;
+        const subDeliveryOrigin = originChannelType && originChannelId
+          ? createDeliveryOrigin({
+              channelType: originChannelType,
+              channelId: originChannelId,
+              userId: preservesRequesterRoute
+                ? run.requesterOrigin?.userId ?? childUserId
+                : childUserId,
+              // The child session is the tenant isolation authority. Never let
+              // a serialized routing object move the child into another tenant.
+              tenantId: childTenantId,
+              ...(preservesRequesterRoute && run.requesterOrigin?.threadId
+                ? { threadId: run.requesterOrigin.threadId }
+                : {}),
+            })
           : undefined;
 
+        const childContext = createResolvedRequestContext({
+          traceId,
+          tenantId: childTenantId,
+          userId: childUserId,
+          sessionKey: subSessionKey,
+          agentId: run.agentId,
+          startedAt: clock.now(),
+          trustLevel: run.trustLevel,
+          // Propagate channel context for downstream tool RPC injection
+          ...(subDeliveryOrigin && { channelType: subDeliveryOrigin.channelType }),
+          ...(subDeliveryOrigin && { deliveryOrigin: subDeliveryOrigin }),
+        });
+        if (!childContext.ok) {
+          deps.logger?.error({
+            runId,
+            agentId: run.agentId,
+            hint: "Inspect the persisted child session and requester route for inconsistent principal identity",
+            errorKind: "internal" as const,
+          }, "Sub-agent request context validation failed");
+          // @allow-throw: the surrounding execution boundary records the failed run and releases all lifecycle resources.
+          throw childContext.error;
+        }
+
         const result = await runWithContext(
-          {
-            traceId,
-            tenantId: parsed?.tenantId ?? deps.tenantId,
-            userId: parsed?.userId ?? "sub-agent",
-            sessionKey: formattedKey,
-            startedAt: clock.now(),
-            trustLevel: "admin",
-            // Propagate channel context for downstream tool RPC injection
-            ...(run.announceChannelType && { channelType: run.announceChannelType }),
-            ...(subDeliveryOrigin && { deliveryOrigin: subDeliveryOrigin }),
-          },
+          childContext.value,
           () => deps.executeAgent(
             params.agentId, subSessionKey, params.task, params.max_steps, params.callerAgentId,
             params.graphId && params.nodeId
@@ -1759,11 +2051,29 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                 ? { reuseSessionKey: params.reuseSessionKey }
                 : undefined,
             params.tokenBudget,
+            {
+              rootRunId: run.rootRunId,
+              ...(run.parentLeaseId !== undefined
+                ? { parentLeaseId: run.parentLeaseId }
+                : {}),
+              parentCaps: run.caps,
+              onAssemblyAuthority: (authority) => {
+                const heldCaps = new Set(run.caps);
+                const widened = authority.caps.some((capability) => !heldCaps.has(capability));
+                if (authority.rootRunId !== run.rootRunId || widened) {
+                  // @allow-throw: the surrounding execution boundary records this invalid composition-root authority and releases run resources.
+                  throw new Error("Sub-agent assembly authority exceeded its authenticated parent ceiling");
+                }
+                run.leaseId = authority.leaseId;
+                run.caps = [...authority.caps];
+                persistDurableCheckpoint(run, params);
+              },
+            },
           ),
         );
 
         // Guard: if already killed, skip completion logic
-        if (run.status === "failed") return;
+        if (runs.get(runId)?.status === "failed") return;
 
         const completedAt = clock.now();
         run.status = "completed";
@@ -2025,6 +2335,14 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           }
         }
 
+        // A bounded shutdown may stop the run while post-processing is still
+        // active. The attributed failure notice then owns delivery; never
+        // enqueue a late success behind the final batch drain.
+        if (
+          runs.get(runId)?.status === "failed"
+          || deliverySuppressedRunIds.has(runId)
+        ) return;
+
         // Route provider_degraded to failure notification path
         // When isDegraded() skips the LLM call, executor returns empty response with
         // finishReason "provider_degraded". Route to deliverFailureNotification instead
@@ -2037,6 +2355,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               task: params.task,
               runtimeMs,
               runId,
+              threadId: resolveAnnouncementThreadId(
+                params.requesterOrigin,
+                params.announceChannelType,
+                params.announceChannelId,
+              ),
+              callerAgentId: params.callerAgentId,
               callerSessionKey: params.callerSessionKey,  // shared dedup key
             }, deps);
           }
@@ -2084,6 +2408,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               announcementText,
               announceChannelType: params.announceChannelType,
               announceChannelId: params.announceChannelId,
+              announceThreadId: resolveAnnouncementThreadId(
+                params.requesterOrigin,
+                params.announceChannelType,
+                params.announceChannelId,
+              ),
               callerAgentId: params.callerAgentId,
               callerSessionKey: params.callerSessionKey,
               runId,
@@ -2206,6 +2535,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             task: params.task,
             runtimeMs,
             runId,
+            threadId: resolveAnnouncementThreadId(
+              params.requesterOrigin,
+              params.announceChannelType,
+              params.announceChannelId,
+            ),
+            callerAgentId: params.callerAgentId,
             callerSessionKey: params.callerSessionKey,  // shared dedup key
           }, deps);
         } else {
@@ -2322,15 +2657,20 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       // Deliver failure notification (LLM-free)
       if (params.announceChannelType && params.announceChannelId) {
-        deliverFailureNotification({
+        trackFailureNotification(deliverFailureNotification({
           channelType: params.announceChannelType,
           channelId: params.announceChannelId,
           task: params.task,
           runtimeMs,
           runId,
+          threadId: resolveAnnouncementThreadId(
+            params.requesterOrigin,
+            params.announceChannelType,
+            params.announceChannelId,
+          ),
+          callerAgentId: params.callerAgentId,
           callerSessionKey: params.callerSessionKey,  // shared dedup key
-        // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
-        }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
+        }, deps));
       }
 
       // Lifecycle hook (fire-and-forget)
@@ -2358,8 +2698,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     execPromise.finally(() => watchdogTimer.cancel());
 
     activePromises.add(execPromise);
+    activeRunIds.add(runId);
     execPromise.finally(() => {
       activePromises.delete(execPromise);
+      activeRunIds.delete(runId);
+      deliverySuppressedRunIds.delete(runId);
       // Release the tree-wide ceiling slot this run reserved (idempotent;
       // a no-op for promoted queued runs, which never acquired). This fires for
       // EVERY started run on its terminal settle — completion, failure, AND a
@@ -2570,18 +2913,23 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // the parent only knows about a kill it issued itself; an autonomous
     // health-monitor kill would otherwise be silent until the user asks.
     if (killedBy !== "parent" && run.announceChannelType && run.announceChannelId) {
-      deliverFailureNotification({
+      trackFailureNotification(deliverFailureNotification({
         channelType: run.announceChannelType,
         channelId: run.announceChannelId,
         task: run.task,
         runtimeMs: killRuntimeMs,
         runId,
+        threadId: resolveAnnouncementThreadId(
+          run.requesterOrigin,
+          run.announceChannelType,
+          run.announceChannelId,
+        ),
+        callerAgentId: run.callerAgentId,
         callerSessionKey: run.callerSessionKey,  // shared dedup key
         detail: killedBy === "health_monitor"
           ? `The background task was stopped by the daemon health monitor${opts?.idleMs !== undefined ? ` after ${Math.round(opts.idleMs / 1000)}s without progress` : ""}${opts?.thresholdMs !== undefined ? ` (security.agentToAgent.subagentContext.stuckKillThresholdMs=${opts.thresholdMs})` : ""}.`
           : `The background task was stopped (${killedBy}).`,
-      // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
-      }, deps).catch(() => { /* deliverFailureNotification already handles errors internally */ });
+      }, deps));
     }
 
     deps.logger?.info({
@@ -2680,15 +3028,101 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     return steerRunHelper(steerDeps, runId, message);
   }
 
-  async function shutdown(): Promise<void> {
+  async function waitForTrackedPromises(
+    tracked: ReadonlySet<Promise<void>>,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    if (tracked.size === 0) return true;
+    let timeoutHandle: TimerHandle | undefined;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timeoutHandle = timers.setTimeout(() => resolve("timeout"), timeoutMs);
+      timeoutHandle.unref();
+    });
+    while (tracked.size > 0) {
+      const outcome = await Promise.race([
+        Promise.allSettled([...tracked]).then(() => "settled" as const),
+        timeout,
+      ]);
+      if (outcome === "timeout") {
+        timeoutHandle?.cancel();
+        return false;
+      }
+    }
+    timeoutHandle?.cancel();
+    return true;
+  }
+
+  async function performShutdown(): Promise<void> {
     sweepInterval.cancel();
 
-    // Flush any batched announcements before draining active runs
-    if (deps.batcher) {
-      await deps.batcher.shutdown();
+    const activeSettled = await waitForTrackedPromises(
+      activePromises,
+      SHUTDOWN_ACTIVE_GRACE_MS,
+    );
+    if (!activeSettled) {
+      const remaining = new Set(activeRunIds);
+      for (const run of runs.values()) {
+        if (run.status === "queued") remaining.add(run.runId);
+      }
+      for (const runId of remaining) {
+        const run = runs.get(runId);
+        if (run?.status === "completed") {
+          deliverySuppressedRunIds.add(runId);
+          if (run.announceChannelType && run.announceChannelId) {
+            trackFailureNotification(deliverFailureNotification({
+              channelType: run.announceChannelType,
+              channelId: run.announceChannelId,
+              task: run.task,
+              runtimeMs: (run.completedAt ?? clock.now()) - run.startedAt,
+              runId,
+              threadId: resolveAnnouncementThreadId(
+                run.requesterOrigin,
+                run.announceChannelType,
+                run.announceChannelId,
+              ),
+              callerAgentId: run.callerAgentId,
+              callerSessionKey: run.callerSessionKey,
+              detail: "The background task finished, but result delivery was stopped during daemon shutdown.",
+            }, deps));
+          }
+          continue;
+        }
+        killRun(runId, {
+          killedBy: "system",
+          reason: "Stopped during daemon shutdown",
+        });
+      }
+      deps.logger?.warn(
+        {
+          activeRunCount: remaining.size,
+          errorKind: "timeout" as const,
+          hint: "Inspect the attributed shutdown failure notices and any retained outward operations",
+        },
+        "Sub-agent shutdown grace expired; remaining runs were stopped",
+      );
     }
 
-    // Drain dead-letter queue before shutdown
+    const noticesSettled = await waitForTrackedPromises(
+      failureNotificationPromises,
+      SHUTDOWN_NOTICE_GRACE_MS,
+    );
+    if (!noticesSettled) {
+      deps.logger?.warn(
+        {
+          notificationCount: failureNotificationPromises.size,
+          errorKind: "timeout" as const,
+          hint: "Inspect the outward ledger; timed-out governed notices remain retained for recovery",
+        },
+        "Sub-agent shutdown notice grace expired",
+      );
+    }
+
+    // The batcher closes its own admission and waits any reservation already
+    // admitted before this final drain. Stopped runs are status-gated from
+    // producing a late success when their underlying provider call returns.
+    await deps.batcher?.shutdown();
+
+    // Batcher delivery may have persisted a dead letter, so drain it last.
     if (deps.deadLetterQueue) {
       try {
         await deps.deadLetterQueue.drain(deps.sendToChannel, markRecoveredDelivered);
@@ -2697,18 +3131,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       }
     }
 
-    if (activePromises.size === 0) return;
+  }
 
-    // Wait for all active runs with a 30-second timeout
-    const timeout = new Promise<void>((resolve) => {
-      const timer = timers.setTimeout(resolve, 30_000);
-      timer.unref();
-    });
-
-    await Promise.race([
-      Promise.allSettled([...activePromises]),
-      timeout,
-    ]);
+  function shutdown(): Promise<void> {
+    acceptingSpawns = false;
+    shutdownPromise ??= performShutdown();
+    return shutdownPromise;
   }
 
   /** Late-bind graph coordinator for direct kill cascade notification. */

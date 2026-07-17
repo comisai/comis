@@ -59,6 +59,8 @@ export interface RpcAdapterDeps {
   /** Load chat session history. */
   getSessionHistory: (params: {
     channelId?: string;
+    peerId?: string;
+    clientId: string;
   }) => Promise<{ messages: Array<{ role: string; content: string; timestamp: number }> }>;
 
   /** Intercept slash commands before sending to LLM. */
@@ -66,6 +68,7 @@ export interface RpcAdapterDeps {
     message: string;
     agentId?: string;
     sessionKey?: { userId: string; channelId: string; peerId: string };
+    clientId?: string;
     scopes?: readonly string[];
   }) => Promise<{ handled: boolean; response?: string; directives?: Record<string, unknown> }> | { handled: boolean; response?: string; directives?: Record<string, unknown> } | undefined;
 
@@ -129,6 +132,7 @@ async function handleAgentRequest(
       message: p.message as string,
       agentId,
       sessionKey,
+      clientId: context.clientId,
       scopes: context.scopes,
     });
     if (cmdResult?.handled && cmdResult.response) {

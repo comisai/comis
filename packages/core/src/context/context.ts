@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: getContext() invariant: AsyncLocalStorage scope assertion. Caller chose getContext() (vs tryGetContext()) signaling they require the context; throw is the contract. Consumed by request-path code which runs under the channel/RPC dispatch boundary.
 import { AsyncLocalStorage } from "node:async_hooks";
+import { isProxy } from "node:util/types";
 import { z } from "zod";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { DeliveryOriginSchema } from "../domain/delivery-origin.js";
+import type { DeliveryOrigin } from "../domain/delivery-origin.js";
+import { formatSessionKey, parseSessionKey } from "../domain/session-key.js";
+import type { SessionKey } from "../domain/session-key.js";
 
 /**
  * User trust level for authorization decisions.
@@ -26,32 +31,25 @@ export type UserTrustLevel = z.infer<typeof UserTrustLevelSchema>;
  *
  * tenantId defaults to "default" for single-tenant deployments.
  * traceId is a UUID for distributed tracing / log correlation.
- * trustLevel defaults to "admin" for standard authorization.
+ * trustLevel defaults to "guest" so an unparsed or provisional request never
+ * gains privileges before its authenticated sender mapping is resolved.
  *
- * userId/sessionKey are optional — they are NOT known at channel ingress.
- * Channel adapters set traceId + channelType at ingress;
- * resolveAndPreprocess in inbound-pipeline.ts fills in userId/sessionKey
- * post-queue. Post-queue callers (execution-execute.ts) continue to set
- * both fields. An empty string "" is still rejected — only undefined is
- * acceptable as the "not yet resolved" state.
- *
- * agentId is likewise optional (NOT known at channel ingress) — the executor
- * populates it at the per-turn entry. The in-session ctx_* tools read it
- * per-call from the LIVE context to scope LCD store reads by
- * agent — never a wiring-time closure that
- * could serve multiple agents the same scope.
+ * userId/sessionKey/agentId are optional because they are not known at channel
+ * ingress. The inbound pipeline fills them on the original context after agent
+ * and session resolution, so execution, tools, and delivery inherit one scope.
+ * Empty strings remain invalid; only undefined represents unresolved identity.
  */
 export const RequestContextSchema = z.strictObject({
     tenantId: z.string().min(1).default("default"),
     userId: z.string().min(1).optional(),
     sessionKey: z.string().min(1).optional(),
-    /** Resolved agent id for the turn — populated at the executor entry (optional, not known at channel ingress, like sessionKey). Read per-call by the ctx_* tools to scope LCD reads by agent. */
+    /** Resolved agent id for the turn, filled by the inbound pipeline. */
     agentId: z.string().min(1).optional(),
     /** Authenticated gateway client identity for request-scoped, client-targeted delivery. */
     clientId: z.string().min(1).optional(),
     traceId: z.guid(),
     startedAt: z.number().int().positive(),
-    trustLevel: UserTrustLevelSchema.default("admin"),
+    trustLevel: UserTrustLevelSchema.default("guest"),
     /** Per-session random delimiter for external content wrapping */
     contentDelimiter: z.string().min(16).optional(),
     /** Channel type for the originating request (e.g. "telegram", "discord"). Flows through AsyncLocalStorage for downstream delivery routing. */
@@ -66,11 +64,255 @@ export const RequestContextSchema = z.strictObject({
 
 export type RequestContext = z.infer<typeof RequestContextSchema>;
 
+/** Turn identity resolved after channel ingress selects an agent and session. */
+export interface ResolvedRequestContext {
+  tenantId: string;
+  userId: string;
+  sessionKey: SessionKey;
+  agentId: string;
+  trustLevel: UserTrustLevel;
+  deliveryOrigin: DeliveryOrigin;
+}
+
+/** Complete identity for a freshly-created synthetic request boundary. */
+export interface ResolvedRequestContextSeed {
+  tenantId: string;
+  userId: string;
+  sessionKey: SessionKey;
+  agentId: string;
+  clientId?: string;
+  traceId: string;
+  startedAt: number;
+  trustLevel: UserTrustLevel;
+  contentDelimiter?: string;
+  channelType?: string;
+  deliveryOrigin?: DeliveryOrigin;
+  resolvedModel?: string;
+  resolvedLanguage?: string;
+}
+
 /**
  * The AsyncLocalStorage instance that holds RequestContext.
  * Module-level singleton -- shared across the entire process.
  */
 const requestContextStorage = new AsyncLocalStorage<RequestContext>();
+
+const resolvedContexts = new WeakSet<RequestContext>();
+
+const lockedContextFields = [
+  "tenantId",
+  "userId",
+  "sessionKey",
+  "agentId",
+  "clientId",
+  "traceId",
+  "startedAt",
+  "trustLevel",
+  "contentDelimiter",
+  "channelType",
+  "deliveryOrigin",
+] as const satisfies readonly (keyof RequestContext)[];
+
+const mutableContextFields = [
+  "resolvedModel",
+  "resolvedLanguage",
+] as const satisfies readonly (keyof RequestContext)[];
+
+interface ContextInspection {
+  descriptors: ReadonlyMap<PropertyKey, PropertyDescriptor>;
+  enumerableValues: Record<string, unknown>;
+  extensible: boolean;
+}
+
+/** Inspect a context without invoking any property getter. */
+function inspectContext(context: RequestContext): Result<ContextInspection, Error> {
+  const inspected = tryCatch((): ContextInspection | undefined => {
+    if (isProxy(context) || Object.getPrototypeOf(context) !== Object.prototype) {
+      return undefined;
+    }
+    const descriptors = new Map<PropertyKey, PropertyDescriptor>();
+    const enumerableEntries: Array<readonly [string, unknown]> = [];
+    for (const field of Reflect.ownKeys(context)) {
+      const descriptor = Object.getOwnPropertyDescriptor(context, field);
+      if (descriptor === undefined || !("value" in descriptor)) return undefined;
+      descriptors.set(field, descriptor);
+      if (typeof field === "string" && descriptor.enumerable === true) {
+        enumerableEntries.push([field, descriptor.value]);
+      }
+    }
+    return {
+      descriptors,
+      enumerableValues: Object.fromEntries(enumerableEntries),
+      extensible: Object.isExtensible(context),
+    };
+  });
+  if (!inspected.ok || inspected.value === undefined) {
+    return err(new Error("Inbound request context could not be inspected safely"));
+  }
+  return ok(inspected.value);
+}
+
+function inspectedValue(
+  inspection: ContextInspection,
+  field: keyof RequestContext,
+): unknown {
+  return inspection.descriptors.get(field)?.value;
+}
+
+function lockResolvedContext(
+  context: RequestContext,
+  inspection: ContextInspection,
+  parsed: RequestContext,
+): Result<RequestContext, Error> {
+  const mutableResult = tryCatch(() => {
+    if (!inspection.extensible) return false;
+    for (const field of [...lockedContextFields, ...mutableContextFields]) {
+      const descriptor = inspection.descriptors.get(field);
+      if (
+        descriptor !== undefined
+        && (
+          !("value" in descriptor)
+          || descriptor.writable !== true
+          || descriptor.configurable !== true
+        )
+      ) {
+        return false;
+      }
+    }
+    return true;
+  });
+  if (!mutableResult.ok || !mutableResult.value) {
+    return err(new Error("Inbound request context is not safely mutable"));
+  }
+
+  const committed = tryCatch(() => {
+    if (parsed.deliveryOrigin !== undefined) {
+      Object.freeze(parsed.deliveryOrigin);
+    }
+    const lockedValues: ReadonlyArray<readonly [keyof RequestContext, unknown]> = [
+      ["tenantId", parsed.tenantId],
+      ["userId", parsed.userId],
+      ["sessionKey", parsed.sessionKey],
+      ["agentId", parsed.agentId],
+      ["clientId", parsed.clientId],
+      ["traceId", parsed.traceId],
+      ["startedAt", parsed.startedAt],
+      ["trustLevel", parsed.trustLevel],
+      ["contentDelimiter", parsed.contentDelimiter],
+      ["channelType", parsed.channelType],
+      ["deliveryOrigin", parsed.deliveryOrigin],
+    ];
+    const mutableValues: ReadonlyArray<readonly [keyof RequestContext, unknown]> = [
+      ["resolvedModel", parsed.resolvedModel],
+      ["resolvedLanguage", parsed.resolvedLanguage],
+    ];
+    const descriptors = Object.fromEntries([
+      ...lockedValues.map(([field, value]) => [field, {
+        value,
+        enumerable: true,
+        writable: false,
+        configurable: false,
+      }] as const),
+      ...mutableValues.map(([field, value]) => [field, {
+        value,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      }] as const),
+    ]) as PropertyDescriptorMap;
+    Object.defineProperties(context, descriptors);
+    resolvedContexts.add(context);
+    return context;
+  });
+  return committed.ok
+    ? ok(committed.value)
+    : err(new Error("Inbound request context could not be committed safely"));
+}
+
+/**
+ * Validate and lock a complete context before a synthetic request boundary
+ * enters AsyncLocalStorage. Unlike channel ingress, these callers already know
+ * the full principal and therefore must not expose a mutable authorization
+ * object to downstream asynchronous work.
+ */
+export function createResolvedRequestContext(
+  seed: ResolvedRequestContextSeed,
+): Result<RequestContext, Error> {
+  const captured = tryCatch(() => ({
+    tenantId: seed.tenantId,
+    userId: seed.userId,
+    sessionKey: seed.sessionKey,
+    agentId: seed.agentId,
+    clientId: seed.clientId,
+    traceId: seed.traceId,
+    startedAt: seed.startedAt,
+    trustLevel: seed.trustLevel,
+    contentDelimiter: seed.contentDelimiter,
+    channelType: seed.channelType,
+    deliveryOrigin: seed.deliveryOrigin,
+    resolvedModel: seed.resolvedModel,
+    resolvedLanguage: seed.resolvedLanguage,
+  }));
+  if (!captured.ok) {
+    return err(new Error("Resolved request context could not be inspected safely"));
+  }
+
+  const sessionResult = tryCatch(() => parseSessionKey(captured.value.sessionKey));
+  if (!sessionResult.ok || !sessionResult.value.ok) {
+    return err(new Error("Resolved request session key failed validation"));
+  }
+  const sessionKey = sessionResult.value.value;
+  if (
+    sessionKey.tenantId !== captured.value.tenantId
+    || sessionKey.userId !== captured.value.userId
+    || (
+      sessionKey.agentId !== undefined
+      && sessionKey.agentId !== captured.value.agentId
+    )
+  ) {
+    return err(new Error("Resolved request session identity is inconsistent"));
+  }
+
+  const originResult = captured.value.deliveryOrigin === undefined
+    ? undefined
+    : tryCatch(() => DeliveryOriginSchema.safeParse(captured.value.deliveryOrigin));
+  if (
+    originResult !== undefined
+    && (!originResult.ok || !originResult.value.success)
+  ) {
+    return err(new Error("Resolved request delivery origin failed validation"));
+  }
+  const deliveryOrigin = originResult?.ok && originResult.value.success
+    ? originResult.value.data
+    : undefined;
+  if (
+    deliveryOrigin !== undefined
+    && (
+      deliveryOrigin.tenantId !== captured.value.tenantId
+      || deliveryOrigin.userId !== captured.value.userId
+      || (
+        captured.value.channelType !== undefined
+        && captured.value.channelType !== deliveryOrigin.channelType
+      )
+    )
+  ) {
+    return err(new Error("Resolved request delivery identity is inconsistent"));
+  }
+
+  const parsedResult = tryCatch(() => RequestContextSchema.safeParse({
+    ...captured.value,
+    sessionKey: formatSessionKey(sessionKey),
+    channelType: captured.value.channelType ?? deliveryOrigin?.channelType,
+    deliveryOrigin,
+  }));
+  if (!parsedResult.ok || !parsedResult.value.success) {
+    return err(new Error("Resolved request context failed validation"));
+  }
+  const context = parsedResult.value.data;
+  const inspectionResult = inspectContext(context);
+  if (!inspectionResult.ok) return inspectionResult;
+  return lockResolvedContext(context, inspectionResult.value, context);
+}
 
 /**
  * Get the current RequestContext from the async call chain.
@@ -98,6 +340,158 @@ export function getContext(): RequestContext {
  */
 export function tryGetContext(): RequestContext | undefined {
   return requestContextStorage.getStore();
+}
+
+/**
+ * Fill the unresolved fields on the existing inbound context without creating
+ * a nested AsyncLocalStorage scope. Trace identity and ingress time are kept.
+ */
+export function enrichCurrentContext(
+  enrichment: ResolvedRequestContext,
+): Result<RequestContext, Error> {
+  const context = requestContextStorage.getStore();
+  if (context === undefined) {
+    return err(new Error("Cannot enrich request context outside an inbound scope"));
+  }
+
+  // Reject proxies, foreign prototypes, and accessors before spreading or
+  // reading a single context field. A rejected context must not get a chance to
+  // run a getter with side effects.
+  const inspectionResult = inspectContext(context);
+  if (!inspectionResult.ok) return inspectionResult;
+  const inspection = inspectionResult.value;
+
+  const enrichmentResult = tryCatch(() => ({
+    tenantId: enrichment.tenantId,
+    userId: enrichment.userId,
+    sessionKey: enrichment.sessionKey,
+    agentId: enrichment.agentId,
+    trustLevel: enrichment.trustLevel,
+    deliveryOrigin: enrichment.deliveryOrigin,
+  }));
+  if (!enrichmentResult.ok) {
+    return err(new Error("Resolved request context could not be inspected safely"));
+  }
+  const resolved = enrichmentResult.value;
+
+  const sessionResult = tryCatch(() => parseSessionKey(resolved.sessionKey));
+  if (!sessionResult.ok || !sessionResult.value.ok) {
+    return err(new Error("Resolved request session key failed validation"));
+  }
+  const sessionKey = sessionResult.value.value;
+
+  const originResult = tryCatch(() => DeliveryOriginSchema.safeParse(resolved.deliveryOrigin));
+  if (!originResult.ok || !originResult.value.success) {
+    return err(new Error("Resolved request delivery origin failed validation"));
+  }
+  const deliveryOrigin = originResult.value.data;
+
+  if (
+    sessionKey.tenantId !== resolved.tenantId
+    || sessionKey.userId !== resolved.userId
+    || (sessionKey.agentId !== undefined && sessionKey.agentId !== resolved.agentId)
+  ) {
+    return err(new Error("Resolved request session identity is inconsistent"));
+  }
+  if (
+    deliveryOrigin.tenantId !== resolved.tenantId
+    || deliveryOrigin.userId !== resolved.userId
+  ) {
+    return err(new Error("Resolved request delivery identity is inconsistent"));
+  }
+
+  const existingChannelType = inspectedValue(inspection, "channelType");
+  if (
+    existingChannelType !== undefined
+    && existingChannelType !== deliveryOrigin.channelType
+  ) {
+    return err(new Error("Resolved request channel conflicts with delivery origin"));
+  }
+  const formattedSessionKey = formatSessionKey(sessionKey);
+  const parsedResult = tryCatch(() => RequestContextSchema.safeParse({
+    ...inspection.enumerableValues,
+    tenantId: resolved.tenantId,
+    userId: resolved.userId,
+    sessionKey: formattedSessionKey,
+    agentId: resolved.agentId,
+    trustLevel: resolved.trustLevel,
+    channelType: existingChannelType ?? deliveryOrigin.channelType,
+    deliveryOrigin,
+  }));
+  if (!parsedResult.ok) {
+    return err(new Error("Inbound request context could not be inspected safely"));
+  }
+  const parsed = parsedResult.value;
+  if (!parsed.success) {
+    return err(new Error("Resolved request context failed validation"));
+  }
+  const snapshot = {
+    tenantId: inspectedValue(inspection, "tenantId"),
+    userId: inspectedValue(inspection, "userId"),
+    sessionKey: inspectedValue(inspection, "sessionKey"),
+    agentId: inspectedValue(inspection, "agentId"),
+    clientId: inspectedValue(inspection, "clientId"),
+    trustLevel: inspectedValue(inspection, "trustLevel"),
+    deliveryOrigin: inspectedValue(inspection, "deliveryOrigin"),
+    authorizationAlreadyResolved: inspectedValue(inspection, "userId") !== undefined
+      || inspectedValue(inspection, "clientId") !== undefined
+      || inspectedValue(inspection, "agentId") !== undefined
+      || inspectedValue(inspection, "sessionKey") !== undefined
+      || inspectedValue(inspection, "deliveryOrigin") !== undefined,
+  };
+  if (
+    snapshot.authorizationAlreadyResolved
+    && snapshot.tenantId !== parsed.data.tenantId
+  ) {
+    return err(new Error("Resolved request context conflicts with existing tenantId"));
+  }
+  if (snapshot.userId !== undefined && snapshot.userId !== parsed.data.userId) {
+    return err(new Error("Resolved request context conflicts with existing userId"));
+  }
+  if (
+    snapshot.sessionKey !== undefined
+    && snapshot.sessionKey !== parsed.data.sessionKey
+  ) {
+    return err(new Error("Resolved request context conflicts with existing sessionKey"));
+  }
+  if (snapshot.agentId !== undefined && snapshot.agentId !== parsed.data.agentId) {
+    return err(new Error("Resolved request context conflicts with existing agentId"));
+  }
+  const existingOriginResult = snapshot.deliveryOrigin === undefined
+    ? undefined
+    : tryCatch(() => DeliveryOriginSchema.safeParse(snapshot.deliveryOrigin));
+  if (
+    existingOriginResult !== undefined
+    && (!existingOriginResult.ok || !existingOriginResult.value.success)
+  ) {
+    return err(new Error("Existing request delivery origin failed validation"));
+  }
+  const existingOrigin = existingOriginResult?.ok && existingOriginResult.value.success
+    ? existingOriginResult.value.data
+    : undefined;
+  const resolvedOrigin = parsed.data.deliveryOrigin;
+  if (
+    existingOrigin !== undefined
+    && resolvedOrigin !== undefined
+    && (
+      existingOrigin.channelType !== resolvedOrigin.channelType
+      || existingOrigin.channelId !== resolvedOrigin.channelId
+      || existingOrigin.userId !== resolvedOrigin.userId
+      || existingOrigin.threadId !== resolvedOrigin.threadId
+      || existingOrigin.tenantId !== resolvedOrigin.tenantId
+    )
+  ) {
+    return err(new Error("Resolved request context conflicts with existing deliveryOrigin"));
+  }
+  if (
+    snapshot.authorizationAlreadyResolved
+    && snapshot.trustLevel !== parsed.data.trustLevel
+  ) {
+    return err(new Error("Resolved request context conflicts with existing trustLevel"));
+  }
+  if (resolvedContexts.has(context)) return ok(context);
+
+  return lockResolvedContext(context, inspection, parsed.data);
 }
 
 /**

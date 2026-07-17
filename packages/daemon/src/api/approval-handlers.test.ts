@@ -11,12 +11,19 @@ import type { ApprovalRequest } from "@comis/core";
 function makePendingRequest(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
   return {
     requestId: overrides.requestId ?? "req-001",
+    shortId: overrides.shortId ?? "abc123XYZ789",
     toolName: overrides.toolName ?? "agents.restart",
     action: overrides.action ?? "agents.restart",
     params: overrides.params ?? { agentId: "bot-1" },
     agentId: overrides.agentId ?? "agent-1",
     sessionKey: overrides.sessionKey ?? "default:user1:discord",
     trustLevel: overrides.trustLevel ?? "user",
+    callbackOwner: overrides.callbackOwner ?? {
+      tenantId: "default",
+      userId: "user1",
+      channelType: "discord",
+      channelKey: "discord",
+    },
     createdAt: overrides.createdAt ?? Date.now(),
     timeoutMs: overrides.timeoutMs ?? 30_000,
   };

@@ -215,7 +215,12 @@ export { setupSecrets } from "./setup-secrets.js";
 export type { SecretsBootResult } from "./setup-secrets.js";
 
 // Offline secrets write helpers (CLI daemon-free bootstrap path)
-export { offlineSecretSet, offlineSecretsList, offlineSecretGet } from "./offline-secrets-write.js";
+export {
+  offlineSecretGet,
+  offlineSecretGetForMode,
+  offlineSecretsList,
+  offlineSecretSet,
+} from "./offline-secrets-write.js";
 export { offlineOAuthProfileSet } from "./offline-oauth-write.js";
 
 // Named graph store (server-side pipeline persistence)
@@ -249,10 +254,11 @@ export { createSqliteDurableRunStore } from "./durable-run-store.js";
 export type { DurableRunStoreOptions } from "./durable-run-store.js";
 export { ensureDurableRunTable } from "./schema-durable-runs.js";
 
-// Outward-send exactly-once ledger. The SQLite-backed OutwardSendLedgerPort the
-// resume engine reconciles on boot (listUnreconciled) and the send-wrap site
-// consults for the dedup short-circuit; ensureOutwardLedgerTable is the idempotent
-// DDL initSchema calls — exported for the chaos/offline path.
+// Outward-send duplicate-suppression and uncertainty ledger. The SQLite-backed
+// OutwardSendLedgerPort is scanned on boot so uncertain rows can be parked, and
+// the send wrapper consults it for retained-operation short-circuits.
+// ensureOutwardLedgerTable is the idempotent DDL initSchema calls — exported for
+// the chaos/offline path.
 export { createSqliteOutwardSendLedger } from "./outward-send-ledger-store.js";
 export { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
 

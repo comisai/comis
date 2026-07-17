@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { ChannelPort, NormalizedMessage, SessionKey, DeliveryService } from "@comis/core";
+import type { ChannelPort, NormalizedMessage, RequestContext, SessionKey, DeliveryService } from "@comis/core";
 import type { PerChannelStreamingConfig, StreamingConfig } from "@comis/core";
 import { StreamingConfigSchema, PerChannelStreamingConfigSchema } from "@comis/core";
 import type { AgentExecutor } from "@comis/agent";
 // Queue types live in orchestrator. Relative paths used because orchestrator
 // cannot import its own published name.
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import type {
@@ -92,8 +92,13 @@ function makeExecutor(overrides?: Partial<AgentExecutor>): AgentExecutor {
 }
 
 function makeEventBus() {
+  const emit = vi.fn((_event: string, _payload: unknown) => true);
   return {
-    emit: vi.fn(() => true),
+    emit,
+    emitSafely: vi.fn((event: string, payload: unknown) => ({
+      hadListeners: emit(event, payload),
+      failures: [],
+    })),
     on: vi.fn().mockReturnThis(),
     off: vi.fn().mockReturnThis(),
     once: vi.fn().mockReturnThis(),
@@ -173,6 +178,28 @@ function makeSessionKey(overrides?: Partial<SessionKey>): SessionKey {
     tenantId: "default",
     userId: "user-1",
     channelId: "12345",
+    ...overrides,
+  };
+}
+
+function makeResolvedContext(
+  overrides: Partial<RequestContext> = {},
+): RequestContext {
+  return {
+    tenantId: "default",
+    userId: "user-1",
+    sessionKey: "default:user-1:12345",
+    agentId: "agent-1",
+    traceId: "550e8400-e29b-41d4-a716-446655440001",
+    startedAt: systemNowMs(),
+    trustLevel: "user",
+    channelType: "telegram",
+    deliveryOrigin: {
+      channelType: "telegram",
+      channelId: "12345",
+      userId: "user-1",
+      tenantId: "default",
+    },
     ...overrides,
   };
 }
@@ -390,6 +417,10 @@ describe("executeAndDeliver", () => {
     capturedPacerConfig = undefined;
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   // -------------------------------------------------------------------
   // Basic dispatch
   // -------------------------------------------------------------------
@@ -402,10 +433,10 @@ describe("executeAndDeliver", () => {
       const sk = makeSessionKey();
       const cfg = makeBlockStreamCfg();
 
-      await executeAndDeliver(
+      await runWithContext(makeResolvedContext(), () => executeAndDeliver(
         deps, adapter, msg, msg, executor, sk, "agent-1",
         cfg, new Set(), makeSendOverrides(),
-      );
+      ));
 
       expect(executor.execute).toHaveBeenCalledWith(
         msg,
@@ -415,7 +446,7 @@ describe("executeAndDeliver", () => {
         "agent-1",
         undefined, // no directives
         undefined, // prevTimestamp
-        { operationType: "interactive" }, // overrides
+        { operationType: "interactive", inboundProvenancePlans: [] }, // overrides
       );
     });
 
@@ -427,10 +458,10 @@ describe("executeAndDeliver", () => {
       const sk = makeSessionKey();
       const cfg = makeBlockStreamCfg();
 
-      await executeAndDeliver(
+      await runWithContext(makeResolvedContext(), () => executeAndDeliver(
         deps, adapter, msg, msg, executor, sk, "agent-1",
         cfg, new Set(), makeSendOverrides(),
-      );
+      ));
 
       expect(adapter.sendMessage).toHaveBeenCalled();
       const callArgs = vi.mocked(adapter.sendMessage).mock.calls[0];
@@ -438,14 +469,7 @@ describe("executeAndDeliver", () => {
       expect(callArgs[1]).toBe("Agent response text"); // text
     });
 
-    it("the delivery stage runs under a request context carrying the resolved agentId (so deliverToChannel can bind the reply → trajectory)", async () => {
-      // The delivery happens AFTER executeLlm returns (outside the executor's
-      // runWithContext) and would otherwise inherit the channel-ingress ALS,
-      // which has NO agentId (context.ts:38). deliverToChannel reads ctx.agentId
-      // to persist the REAL agent into the queue optionsJson AND bind the minted
-      // reply id → trajectory (the reaction-attribution keystone). This test
-      // captures the ctx.agentId visible INSIDE deliverToChannel; it must be the
-      // resolved agent, not undefined (which is what the ingress context carries).
+    it("the delivery stage inherits the resolved inbound agent context", async () => {
       let agentIdInDelivery: string | undefined = "SENTINEL_NOT_SET";
       const capturingDelivery: DeliveryService = {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only fake
@@ -465,17 +489,18 @@ describe("executeAndDeliver", () => {
       };
       const deps = makeDeps({ deliveryService: capturingDelivery });
 
-      await executeAndDeliver(
-        deps, makeAdapter(), makeMessage(), makeMessage(), makeExecutor(),
-        makeSessionKey(), "mldag", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      await runWithContext(
+        makeResolvedContext({ agentId: "mldag" }),
+        () => executeAndDeliver(
+          deps, makeAdapter(), makeMessage(), makeMessage(), makeExecutor(),
+          makeSessionKey(), "mldag", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+        ),
       );
 
       expect(capturingDelivery.deliverToChannel).toHaveBeenCalled();
-      // The delivery stage must see the resolved agentId on the ALS — NOT
-      // undefined (which fail-closes both reaction-binding paths).
       expect(
         agentIdInDelivery,
-        "deliverToChannel must run under a context carrying the resolved agentId (else the reply→trajectory binding fail-closes and reactions never attribute)",
+        "delivery must inherit the resolved agentId used for reply attribution",
       ).toBe("mldag");
     });
 
@@ -510,9 +535,217 @@ describe("executeAndDeliver", () => {
           cost: 0.001,
           toolCalls: 3,
           llmCalls: 4,
-          success: true,
+          status: "success",
         }),
       );
+    });
+
+    it("marks the lifecycle diagnostic unsuccessful when channel delivery fails", async () => {
+      const eventBus = makeEventBus();
+      const deliveryService: DeliveryService = {
+        deliverToChannel: vi.fn(async () => err(new Error("platform unavailable"))),
+        drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
+      };
+      const deps = makeDeps({ eventBus, deliveryService });
+      const msg = makeMessage();
+
+      await executeAndDeliver(
+        deps, makeAdapter(), msg, msg, makeExecutor(), makeSessionKey(),
+        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      );
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "diagnostic:message_processed",
+        expect.objectContaining({
+          messageId: msg.id,
+          status: "error",
+          finishReason: "stop",
+          failureStage: "delivery",
+          errorKind: "platform",
+          toolCalls: 0,
+          llmCalls: 1,
+        }),
+      );
+    });
+
+    it("reports execution and delivery stage durations separately", async () => {
+      vi.useFakeTimers({ now: 1_000 });
+      const eventBus = makeEventBus();
+      const executor = makeExecutor({
+        execute: vi.fn(async () => {
+          vi.setSystemTime(1_100);
+          return {
+            response: "Agent response text",
+            sessionKey: makeSessionKey(),
+            tokensUsed: { input: 10, output: 5, total: 15 },
+            cost: { total: 0.001 },
+            stepsExecuted: 0,
+            llmCalls: 1,
+            finishReason: "stop" as const,
+          };
+        }),
+      });
+      const adapter = makeAdapter({
+        sendMessage: vi.fn(async () => {
+          vi.setSystemTime(1_140);
+          return ok("msg-timed");
+        }),
+      });
+
+      await executeAndDeliver(
+        makeDeps({ eventBus }), adapter, makeMessage(), makeMessage(), executor,
+        makeSessionKey(), "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      );
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "diagnostic:message_processed",
+        expect.objectContaining({
+          executionDurationMs: 100,
+          deliveryDurationMs: 40,
+          totalDurationMs: 140,
+        }),
+      );
+    });
+
+    it("excludes ingress queueing and preprocessing from execution duration", async () => {
+      vi.useFakeTimers({ now: 1_100 });
+      const eventBus = makeEventBus();
+      const assembleToolsForAgent = vi.fn(async () => {
+        vi.setSystemTime(1_200);
+        return [];
+      });
+      const executor = makeExecutor({
+        execute: vi.fn(async () => {
+          vi.setSystemTime(1_300);
+          return {
+            response: "Agent response text",
+            sessionKey: makeSessionKey(),
+            tokensUsed: { input: 10, output: 5, total: 15 },
+            cost: { total: 0.001 },
+            stepsExecuted: 0,
+            llmCalls: 1,
+            finishReason: "stop" as const,
+          };
+        }),
+      });
+      const adapter = makeAdapter({
+        sendMessage: vi.fn(async () => {
+          vi.setSystemTime(1_340);
+          return ok("msg-timed");
+        }),
+      });
+
+      await executeAndDeliver(
+        makeDeps({ eventBus, assembleToolsForAgent }),
+        adapter,
+        makeMessage(),
+        makeMessage(),
+        executor,
+        makeSessionKey(),
+        "agent-1",
+        makeBlockStreamCfg(),
+        new Set(),
+        makeSendOverrides(),
+        undefined,
+        undefined,
+        1_000,
+      );
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "diagnostic:message_processed",
+        expect.objectContaining({
+          receivedAt: 1_000,
+          executionDurationMs: 100,
+          deliveryDurationMs: 40,
+          totalDurationMs: 340,
+        }),
+      );
+    });
+
+    it("emits an execution error and releases lifecycle resources when the executor rejects", async () => {
+      const eventBus = makeEventBus();
+      const { lifecycle } = makeTypingLifecycle();
+      const executor = makeExecutor({
+        execute: vi.fn(async () => {
+          throw new Error("provider exploded");
+        }),
+      });
+
+      await expect(
+        executeAndDeliver(
+          makeDeps({ eventBus }), makeAdapter(), makeMessage(), makeMessage(), executor,
+          makeSessionKey(), "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(), lifecycle,
+        ),
+      ).rejects.toThrow("provider exploded");
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "diagnostic:message_processed",
+        expect.objectContaining({
+          status: "error",
+          failureStage: "execution",
+          finishReason: "error",
+          toolCalls: null,
+          llmCalls: null,
+        }),
+      );
+      expect(eventBus.off).toHaveBeenCalledWith("tool:started", expect.any(Function));
+      expect(eventBus.off).toHaveBeenCalledWith("tool:executed", expect.any(Function));
+      expect(eventBus.off).toHaveBeenCalledWith("execution:aborted", expect.any(Function));
+      expect(lifecycle.dispose).toHaveBeenCalledOnce();
+    });
+
+    it("keeps a late user stop authoritative through delivery finalization", async () => {
+      const eventBus = makeEventBus();
+      let abortListener: ((event: {
+        sessionKey: SessionKey;
+        reason: "user_stop";
+        agentId: string;
+        timestamp: number;
+      }) => void) | undefined;
+      vi.mocked(eventBus.on).mockImplementation(((event: string, handler: typeof abortListener) => {
+        if (event === "execution:aborted") abortListener = handler;
+        return eventBus;
+      }) as typeof eventBus.on);
+      const finalize = vi.fn(async () => undefined);
+      const deliveryService = makeFakeDeliveryService();
+      vi.mocked(deliveryService.deliverToChannel).mockImplementation(async () => {
+        abortListener?.({
+          sessionKey: makeSessionKey(),
+          reason: "user_stop",
+          agentId: "agent-1",
+          timestamp: systemNowMs(),
+        });
+        return ok({
+          ok: true,
+          totalChunks: 1,
+          deliveredChunks: 1,
+          failedChunks: 0,
+          chunks: [{ ok: true, messageId: "msg-stopped", charCount: 19, retried: false }],
+          totalChars: 19,
+        });
+      });
+      const deps = makeDeps({
+        eventBus,
+        deliveryService,
+        activityStreamPort: {} as ExecutionPipelineDeps["activityStreamPort"],
+        coordinatorFactory: () => ({
+          start: vi.fn(),
+          finalize,
+          dispose: vi.fn(),
+          counters: vi.fn(() => ({})),
+        } as any),
+      });
+
+      await runWithContext(makeResolvedContext(), () => executeAndDeliver(
+        deps, makeAdapter(), makeMessage(), makeMessage(), makeExecutor(), makeSessionKey(),
+        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      ));
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "diagnostic:message_processed",
+        expect.objectContaining({ status: "aborted", finishReason: "stop" }),
+      );
+      expect(finalize).toHaveBeenCalledWith({ kind: "aborted", reason: "user_cancel" });
     });
 
     it("emits message:sent event carrying the real lastChunkMessageId (not block-delivery)", async () => {
@@ -533,6 +766,7 @@ describe("executeAndDeliver", () => {
           channelId: "12345",
           messageId: "msg-99",
           content: "Agent response text",
+          sourceMessageId: msg.id,
         }),
       );
       // Defend against regression: no message:sent emit carries the synthetic id.
@@ -602,7 +836,7 @@ describe("executeAndDeliver", () => {
       // Diagnostic should still be emitted
       expect(eventBus.emit).toHaveBeenCalledWith(
         "diagnostic:message_processed",
-        expect.objectContaining({ success: true }),
+        expect.objectContaining({ status: "success" }),
       );
     });
 
@@ -632,8 +866,19 @@ describe("executeAndDeliver", () => {
       expect(eventBus.emit).toHaveBeenCalledWith(
         "response:filtered",
         expect.objectContaining({
-          channelId: "telegram-123",
+          channelType: "telegram",
+          channelId: msg.channelId,
+          sourceMessageId: msg.id,
           suppressedBy: "NO_REPLY",
+        }),
+      );
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "diagnostic:message_processed",
+        expect.objectContaining({
+          status: "filtered",
+          finishReason: "stop",
+          toolCalls: 0,
+          llmCalls: 1,
         }),
       );
     });
@@ -672,6 +917,43 @@ describe("executeAndDeliver", () => {
         expect.objectContaining({
           channelId: "telegram-123",
           channelType: "telegram",
+        }),
+      );
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "diagnostic:message_processed",
+        expect.objectContaining({ status: "filtered", finishReason: "stop" }),
+      );
+    });
+
+    it("when policy denies and execution rejects: emits an execution error before rethrowing", async () => {
+      const eventBus = makeEventBus();
+      const executor = makeExecutor({
+        execute: vi.fn(async () => {
+          throw new Error("denied-path provider failure");
+        }),
+      });
+      const deps = makeDeps({
+        eventBus,
+        sendPolicyConfig: {
+          enabled: true,
+          defaultAction: "deny",
+          rules: [],
+        },
+      });
+
+      await expect(executeAndDeliver(
+        deps, makeAdapter(), makeMessage(), makeMessage(), executor, makeSessionKey(),
+        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      )).rejects.toThrow("denied-path provider failure");
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "diagnostic:message_processed",
+        expect.objectContaining({
+          status: "error",
+          failureStage: "execution",
+          finishReason: "error",
+          toolCalls: null,
+          llmCalls: null,
         }),
       );
     });
@@ -889,7 +1171,9 @@ describe("executeAndDeliver", () => {
   describe("outbound media pipeline", () => {
     it("delivers media before text when MEDIA: directives found", async () => {
       const adapter = makeAdapter({
-        sendAttachment: vi.fn(async () => ok("attachment-id")),
+        sendAttachment: vi.fn(async () =>
+          ok({ kind: "tracked" as const, messageId: "attachment-id" })
+        ),
       } as any);
       const executor = makeExecutor({
         execute: vi.fn(async () => ({
@@ -923,9 +1207,11 @@ describe("executeAndDeliver", () => {
       expect(sentText).toBe("Caption text");
     });
 
-    it("media-only response emits message:sent with media-only-delivery (no coalesce events)", async () => {
+    it("emits the real attachment ID for a media-only response without coalesce events", async () => {
       const adapter = makeAdapter({
-        sendAttachment: vi.fn(async () => ok("attachment-id")),
+        sendAttachment: vi.fn(async () =>
+          ok({ kind: "tracked" as const, messageId: "attachment-id" })
+        ),
       } as any);
       const executor = makeExecutor({
         execute: vi.fn(async () => ({
@@ -955,11 +1241,101 @@ describe("executeAndDeliver", () => {
 
       // Text delivery should be skipped
       expect(adapter.sendMessage).not.toHaveBeenCalled();
-      // message:sent with media-only
+      // message:sent carries the platform attachment ID.
       expect(eventBus.emit).toHaveBeenCalledWith(
         "message:sent",
         expect.objectContaining({
-          messageId: "media-only-delivery",
+          messageId: "attachment-id",
+        }),
+      );
+    });
+
+    it("media-only attachment failure emits an error diagnostic without message sent", async () => {
+      const adapter = makeAdapter({
+        sendAttachment: vi.fn(async () => err(new Error("attachment rejected"))),
+      } as any);
+      const eventBus = makeEventBus();
+      const deps = makeDeps({
+        eventBus,
+        parseOutboundMedia: vi.fn(() => ({
+          text: "",
+          mediaUrls: ["https://example.com/image.png"],
+        })),
+        outboundMediaFetch: vi.fn(async () => ok({ buffer: Buffer.from("img"), mimeType: "image/png" })),
+      });
+      const executor = makeExecutor({
+        execute: vi.fn(async () => ({
+          response: "MEDIA: https://example.com/image.png",
+          sessionKey: makeSessionKey(),
+          tokensUsed: { input: 100, output: 50, total: 150 },
+          cost: { total: 0.001 },
+          stepsExecuted: 0,
+          llmCalls: 1,
+          finishReason: "stop" as const,
+        })),
+      });
+
+      await executeAndDeliver(
+        deps, adapter, makeMessage(), makeMessage(), executor, makeSessionKey(),
+        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      );
+
+      expect(eventBus.emit).not.toHaveBeenCalledWith(
+        "message:sent",
+        expect.objectContaining({ messageId: "attachment-id" }),
+      );
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "diagnostic:message_processed",
+        expect.objectContaining({
+          status: "error",
+          failureStage: "delivery",
+          errorKind: "platform",
+          finishReason: "stop",
+        }),
+      );
+    });
+
+    it("attachment failure remains a delivery error when caption text succeeds", async () => {
+      const adapter = makeAdapter({
+        sendAttachment: vi.fn(async () => err(new Error("attachment rejected"))),
+      } as any);
+      const eventBus = makeEventBus();
+      const deps = makeDeps({
+        eventBus,
+        parseOutboundMedia: vi.fn(() => ({
+          text: "Caption text",
+          mediaUrls: ["https://example.com/image.png"],
+        })),
+        outboundMediaFetch: vi.fn(async () => ok({ buffer: Buffer.from("img"), mimeType: "image/png" })),
+      });
+      const executor = makeExecutor({
+        execute: vi.fn(async () => ({
+          response: "MEDIA: https://example.com/image.png\nCaption text",
+          sessionKey: makeSessionKey(),
+          tokensUsed: { input: 100, output: 50, total: 150 },
+          cost: { total: 0.001 },
+          stepsExecuted: 0,
+          llmCalls: 1,
+          finishReason: "stop" as const,
+        })),
+      });
+
+      await executeAndDeliver(
+        deps, adapter, makeMessage(), makeMessage(), executor, makeSessionKey(),
+        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      );
+
+      expect(adapter.sendMessage).toHaveBeenCalledWith(
+        "12345",
+        "Caption text",
+        expect.any(Object),
+      );
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "diagnostic:message_processed",
+        expect.objectContaining({
+          status: "error",
+          failureStage: "delivery",
+          errorKind: "platform",
         }),
       );
     });
@@ -1232,7 +1608,43 @@ describe("executeAndDeliver", () => {
           agentId: "agent-1",
           toolCalls: null,
           llmCalls: null,
-          success: true,
+          status: "timeout",
+          finishReason: "timeout",
+          failureStage: "execution",
+          errorKind: "timeout",
+        }),
+      );
+    });
+
+    it("preserves known call counts when the executor returns prompt_timeout", async () => {
+      const eventBus = makeEventBus();
+      const executor = makeExecutor({
+        execute: vi.fn(async () => ({
+          response: "The model request timed out.",
+          sessionKey: makeSessionKey(),
+          tokensUsed: { input: 200, output: 0, total: 200 },
+          cost: { total: 0.004 },
+          stepsExecuted: 2,
+          llmCalls: 3,
+          finishReason: "prompt_timeout" as const,
+        })),
+      });
+      const deps = makeDeps({ eventBus });
+
+      await executeAndDeliver(
+        deps, makeAdapter(), makeMessage(), makeMessage(), executor, makeSessionKey(),
+        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      );
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "diagnostic:message_processed",
+        expect.objectContaining({
+          status: "timeout",
+          finishReason: "prompt_timeout",
+          failureStage: "execution",
+          errorKind: "timeout",
+          toolCalls: 2,
+          llmCalls: 3,
         }),
       );
     });
@@ -1363,7 +1775,9 @@ describe("executeAndDeliver", () => {
   describe("outbound media and voice thread sendOptions", () => {
     it("passes thread sendOptions to deliverOutboundMedia", async () => {
       const adapter = makeAdapter({
-        sendAttachment: vi.fn(async () => ok("msg-99")),
+        sendAttachment: vi.fn(async () =>
+          ok({ kind: "tracked" as const, messageId: "msg-99" })
+        ),
       });
       const executor = makeExecutor({
         execute: vi.fn(async () => ({
@@ -1408,7 +1822,9 @@ describe("executeAndDeliver", () => {
     });
 
     it("passes thread sendOptions to executeVoiceResponse via adapter", async () => {
-      const sendAttachmentMock = vi.fn(async () => ok({}));
+      const sendAttachmentMock = vi.fn(async () =>
+        ok({ kind: "delivered_untracked" as const })
+      );
       const adapter = makeAdapter({
         sendAttachment: sendAttachmentMock,
       });
@@ -1511,17 +1927,22 @@ describe("executeAndDeliver", () => {
       const deps = makeDeps({ eventBus });
       const cfg = makeBlockStreamCfg({ typingMode: "thinking" });
       const msg = makeMessage();
+      const traceId = "550e8400-e29b-41d4-a716-446655440301";
 
-      const promise = executeAndDeliver(
-        deps, makeAdapter(), msg, msg, executor, makeSessionKey(),
-        "agent-1", cfg, new Set(), makeSendOverrides(), lifecycle,
-      );
+      const promise = runWithContext({
+        traceId,
+        startedAt: systemNowMs(),
+        channelType: "telegram",
+      }, () => executeAndDeliver(
+          deps, makeAdapter(), msg, msg, executor, makeSessionKey(),
+          "agent-1", cfg, new Set(), makeSendOverrides(), lifecycle,
+        ));
       // Let microtasks settle so the event handlers are registered and typing starts
       await vi.advanceTimersByTimeAsync(0);
 
       // Simulate tool:started
       expect(handlers["tool:started"]).toBeDefined();
-      handlers["tool:started"]();
+      handlers["tool:started"]({ traceId });
       const callsAfterStart = vi.mocked(typingCtrl.refreshTtl).mock.calls.length;
 
       // Advance by 30s -- the interval should fire once
@@ -1530,7 +1951,7 @@ describe("executeAndDeliver", () => {
 
       // Simulate tool:executed (all tools done)
       expect(handlers["tool:executed"]).toBeDefined();
-      handlers["tool:executed"]();
+      handlers["tool:executed"]({ traceId });
 
       // Track call count after clearing
       const callsAfterClear = vi.mocked(typingCtrl.refreshTtl).mock.calls.length;
@@ -1570,19 +1991,24 @@ describe("executeAndDeliver", () => {
       const deps = makeDeps({ eventBus });
       const cfg = makeBlockStreamCfg({ typingMode: "thinking" });
       const msg = makeMessage();
+      const traceId = "550e8400-e29b-41d4-a716-446655440302";
 
-      const promise = executeAndDeliver(
-        deps, makeAdapter(), msg, msg, executor, makeSessionKey(),
-        "agent-1", cfg, new Set(), makeSendOverrides(), lifecycle,
-      );
+      const promise = runWithContext({
+        traceId,
+        startedAt: systemNowMs(),
+        channelType: "telegram",
+      }, () => executeAndDeliver(
+          deps, makeAdapter(), msg, msg, executor, makeSessionKey(),
+          "agent-1", cfg, new Set(), makeSendOverrides(), lifecycle,
+        ));
       await vi.advanceTimersByTimeAsync(0);
 
       // Start two overlapping tools
-      handlers["tool:started"]();
-      handlers["tool:started"]();
+      handlers["tool:started"]({ traceId });
+      handlers["tool:started"]({ traceId });
 
       // Complete one tool -- interval should keep running (activeToolCount = 1)
-      handlers["tool:executed"]();
+      handlers["tool:executed"]({ traceId });
 
       const callsBeforeAdvance = vi.mocked(typingCtrl.refreshTtl).mock.calls.length;
       await vi.advanceTimersByTimeAsync(30_000);
@@ -1590,7 +2016,7 @@ describe("executeAndDeliver", () => {
       expect(vi.mocked(typingCtrl.refreshTtl).mock.calls.length).toBe(callsBeforeAdvance + 1);
 
       // Complete second tool -- interval should stop
-      handlers["tool:executed"]();
+      handlers["tool:executed"]({ traceId });
       const callsAfterAllDone = vi.mocked(typingCtrl.refreshTtl).mock.calls.length;
       await vi.advanceTimersByTimeAsync(30_000);
       // No more interval calls
@@ -1662,10 +2088,10 @@ describe("executeAndDeliver", () => {
       const sk = makeSessionKey();
       const cfg = makeBlockStreamCfg();
 
-      await executeAndDeliver(
+      await runWithContext(makeResolvedContext(), () => executeAndDeliver(
         deps, adapter, msg, msg, executor, sk, "agent-1",
         cfg, new Set(), makeSendOverrides(),
-      );
+      ));
 
       // The mock of createBlockPacer captures its config
       expect(capturedPacerConfig).toBeDefined();
@@ -1678,6 +2104,53 @@ describe("executeAndDeliver", () => {
   // Resource abort recovery delivery
   // -------------------------------------------------------------------
   describe("resource abort recovery", () => {
+    it("marks a resource-aborted lifecycle unsuccessful even when recovery text is delivered", async () => {
+      const eventBus = makeEventBus();
+      const handlers: Record<string, Function> = {};
+      eventBus.on = vi.fn((event: string, handler: Function) => {
+        handlers[event] = handler;
+        return eventBus;
+      });
+      const sk = makeSessionKey();
+      const executor = makeExecutor({
+        execute: vi.fn(async () => {
+          handlers["execution:aborted"]?.({
+            sessionKey: sk,
+            reason: "max_steps",
+            agentId: "agent-1",
+            timestamp: Date.now(),
+          });
+          return {
+            response: "Recovered text from completed steps",
+            sessionKey: sk,
+            tokensUsed: { input: 500, output: 20, total: 520 },
+            cost: { total: 0.01 },
+            stepsExecuted: 7,
+            llmCalls: 8,
+            finishReason: "max_steps" as const,
+          };
+        }),
+      });
+      const deps = makeDeps({ eventBus });
+
+      await executeAndDeliver(
+        deps, makeAdapter(), makeMessage(), makeMessage(), executor, sk,
+        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      );
+
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "diagnostic:message_processed",
+        expect.objectContaining({
+          status: "error",
+          finishReason: "max_steps",
+          failureStage: "execution",
+          errorKind: "resource",
+          toolCalls: 7,
+          llmCalls: 8,
+        }),
+      );
+    });
+
     it("delivers response when budget_exceeded aborts execution mid-run", async () => {
       const adapter = makeAdapter();
       const eventBus = makeEventBus();
@@ -1715,10 +2188,10 @@ describe("executeAndDeliver", () => {
       const msg = makeMessage();
       const cfg = makeBlockStreamCfg();
 
-      await executeAndDeliver(
+      await runWithContext(makeResolvedContext(), () => executeAndDeliver(
         deps, adapter, msg, msg, executor, sk, "agent-1",
         cfg, new Set(), makeSendOverrides(),
-      );
+      ));
 
       // The response should have been delivered despite the pre-aborted signal
       // The pacer receives a fresh (non-aborted) signal for resource aborts
@@ -1764,10 +2237,10 @@ describe("executeAndDeliver", () => {
       const msg = makeMessage();
       const cfg = makeBlockStreamCfg();
 
-      await executeAndDeliver(
+      await runWithContext(makeResolvedContext(), () => executeAndDeliver(
         deps, adapter, msg, msg, executor, sk, "agent-1",
         cfg, new Set(), makeSendOverrides(),
-      );
+      ));
 
       // Should send the canned resource-abort notification instead of silence
       expect(adapter.sendMessage).toHaveBeenCalledWith(
@@ -1812,26 +2285,32 @@ describe("executeAndDeliver", () => {
       const msg = makeMessage();
       const cfg = makeBlockStreamCfg();
 
-      await executeAndDeliver(
+      await runWithContext(makeResolvedContext(), () => executeAndDeliver(
         deps, adapter, msg, msg, executor, sk, "agent-1",
         cfg, new Set(), makeSendOverrides(),
-      );
+      ));
 
       // The original (aborted) signal should be passed to pacer, NOT a fresh one
       expect(capturedPacerConfig).toBeDefined();
       expect(capturedPacerConfig!.externalSignal).toBeDefined();
       expect(capturedPacerConfig!.externalSignal!.aborted).toBe(true);
+      expect(eventBus.emit).toHaveBeenCalledWith(
+        "diagnostic:message_processed",
+        expect.objectContaining({
+          status: "aborted",
+          finishReason: "stop",
+          toolCalls: 3,
+          llmCalls: 3,
+        }),
+      );
     });
   });
 
   // -------------------------------------------------------------------
-  // policy-retry path runWithContext must reuse ingress traceId
+  // Send-policy denial inherits the resolved inbound context
   // -------------------------------------------------------------------
-  describe("policy-retry runWithContext reuses ingress traceId", () => {
+  describe("policy-denied execution context", () => {
     it("policy-deny path: executor sees ingress traceId, not a fresh mint", async () => {
-      // The policy-deny path in executeAndDeliver calls runWithContext with
-      // traceId: randomUUID() — it must reuse tryGetContext()?.traceId from
-      // the outer scope.
       const ingressTraceId = "550e8400-e29b-41d4-a716-446655440003";
 
       let capturedTraceId: string | undefined;
@@ -1858,13 +2337,11 @@ describe("executeAndDeliver", () => {
         },
       });
 
-      // Simulate the outer ingress context from channel-manager / echo-adapter wrap
       await runWithContext(
-        {
+        makeResolvedContext({
           traceId: ingressTraceId,
-          startedAt: systemNowMs(),
-          channelType: "echo",
-        },
+          channelType: "telegram",
+        }),
         () =>
           executeAndDeliver(
             deps,
@@ -1880,7 +2357,6 @@ describe("executeAndDeliver", () => {
           ),
       );
 
-      // policy-retry path must inherit the ingress traceId
       expect(capturedTraceId, "policy-deny executor should see ingress traceId, not a fresh mint").toBe(ingressTraceId);
     });
   });

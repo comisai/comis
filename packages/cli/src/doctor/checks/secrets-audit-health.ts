@@ -50,13 +50,13 @@ function runSecretsAudit(context: DoctorContext): DoctorFinding[] {
       suggestion: "Move this value to a SecretRef or environment variable",
       repairable: false,
     }));
-  } catch (e) {
+  } catch {
     return [
       {
         category: CATEGORY,
         check: CHECK_NAME,
         status: "skip",
-        message: `Secrets audit threw: ${e instanceof Error ? e.message : String(e)}`,
+        message: "Secrets audit could not complete",
         repairable: false,
       },
     ];

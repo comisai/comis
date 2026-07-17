@@ -416,7 +416,7 @@ export async function assembleFleetHealthReport(
   const topErrorKinds = Object.entries(fleet.topErrorKinds).map(([kind, count]) => ({ kind, count }));
 
   // The AUTONOMY slice. autonomy runs ARE
-  // durable_runs by construction, so the run counts come from the crash-surviving
+  // durable_run_checkpoints by construction, so the run counts come from the crash-surviving
   // DurableRunPort.countByStatus (NOT the session-rollup schema). Soft-fail read
   // (the getRollingSpendUsd / obsStore? precedent) — NO new clock read, reuse the
   // ONE `sinceMs` window. The resumed/killed counts + the worst rootRunId are

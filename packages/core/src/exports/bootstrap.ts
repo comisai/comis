@@ -8,13 +8,23 @@ export { loadEnvFile, assertEnvLoaded, resetEnvLoadedForTest } from "../load-env
 export {
   RequestContextSchema,
   UserTrustLevelSchema,
+  createResolvedRequestContext,
+  enrichCurrentContext,
   getContext,
   tryGetContext,
   runWithContext,
 } from "../context/index.js";
 
-export type { RequestContext, UserTrustLevel } from "../context/index.js";
+export type {
+  RequestContext,
+  ResolvedRequestContextSeed,
+  UserTrustLevel,
+} from "../context/index.js";
 
 // Bootstrap (composition root)
-export { bootstrap, INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME } from "../bootstrap.js";
+export {
+  bootstrap,
+  INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME,
+  resolveConfigRuntimePaths,
+} from "../bootstrap.js";
 export type { BootstrapOptions, AppContainer } from "../bootstrap.js";

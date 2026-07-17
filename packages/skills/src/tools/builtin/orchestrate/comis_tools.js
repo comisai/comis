@@ -223,14 +223,14 @@ export const comis_tools = {
   async write(args) {
     return invoke("write", args);
   },
-  async message_send(args) {
-    return callCapSocket("message.send", args);
+  async message_send(args, operationId) {
+    return callCapSocket("message.send", args, operationId);
   },
-  async message_reply(args) {
-    return callCapSocket("message.reply", args);
+  async message_reply(args, operationId) {
+    return callCapSocket("message.reply", args, operationId);
   },
-  async message_react(args) {
-    return callCapSocket("message.react", args);
+  async message_react(args, operationId) {
+    return callCapSocket("message.react", args, operationId);
   },
 };
 

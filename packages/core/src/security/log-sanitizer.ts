@@ -30,6 +30,8 @@ import {
   DISCORD_BOT_TOKEN,
   DB_CONNECTION_STRING,
 } from "./injection-patterns.js";
+import { tryCatch } from "@comis/shared";
+import { redactOutputText } from "./output-redactor.js";
 
 /**
  * Credential patterns to detect and redact in log strings.
@@ -157,4 +159,22 @@ export function redactErrorMessage(body: string): string {
       // produced (single-space only — never alters non-redacted prose spacing).
       .replace(/ {2,}/g, " ")
   );
+}
+
+/**
+ * Convert an unknown failure into a bounded, credential-redacted log field.
+ * The conversion cannot throw even when an object exposes hostile accessors,
+ * and it never includes an Error stack.
+ */
+export function toSafeErrorLogString(error: unknown): string {
+  const messageRead = tryCatch(
+    (): unknown => error instanceof Error ? error.message : String(error),
+  );
+  if (!messageRead.ok || typeof messageRead.value !== "string") {
+    return "[unreadable error message]";
+  }
+
+  const boundedInput = messageRead.value.slice(0, 4_096);
+  const catalogRedacted = redactOutputText(sanitizeLogString(boundedInput)).text;
+  return redactErrorMessage(catalogRedacted).slice(0, 1_000);
 }

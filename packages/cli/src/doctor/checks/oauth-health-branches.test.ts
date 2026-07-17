@@ -199,39 +199,38 @@ describe("oauthHealthCheck — HTTPS_PROXY lowercase variant detection", () => {
 describe("oauthHealthCheck — store-open failure", () => {
   it("emits fail finding when selectOAuthCredentialStore throws synchronously during file-store open", async () => {
     vi.mocked(agent.selectOAuthCredentialStore).mockImplementation(() => {
-      throw new Error("EACCES: cannot read profile store");
+      throw new Error("EACCES: PRIVATE_STORE_SENTINEL");
     });
     const findings = await oauthHealthCheck.run(baseContext);
     const profileStore = findings.find((f) => f.check === "Profile store");
     expect(profileStore!.status).toBe("fail");
-    expect(profileStore!.message).toContain("Failed to open OAuth store");
-    expect(profileStore!.message).toContain("EACCES");
+    expect(profileStore!.message).toContain("OAuth profile store");
+    expect(profileStore!.message).not.toContain("PRIVATE_STORE_SENTINEL");
   });
 
-  it("wraps a non-Error throw value via String() coercion in the open-failure message", async () => {
+  it("does not surface a non-Error throw value from the store opener", async () => {
     vi.mocked(agent.selectOAuthCredentialStore).mockImplementation(() => {
-      // Throwing a string (non-Error) to exercise the String() coercion branch
-      throw "raw string error";
+      throw "PRIVATE_NON_ERROR_SENTINEL";
     });
     const findings = await oauthHealthCheck.run(baseContext);
     const profileStore = findings.find((f) => f.check === "Profile store");
     expect(profileStore!.status).toBe("fail");
-    expect(profileStore!.message).toContain("raw string error");
+    expect(profileStore!.message).not.toContain("PRIVATE_NON_ERROR_SENTINEL");
   });
 });
 
 // ---------------------------------------------------------------------------
-// list() failure surfaces verbatim
+// list() failure remains content-free
 // ---------------------------------------------------------------------------
 
-describe("oauthHealthCheck — store.list() schema-mismatch surfacing", () => {
-  it("surfaces store.list() error verbatim in Profile schema finding when version mismatch is detected", async () => {
+describe("oauthHealthCheck — store.list() schema-mismatch reporting", () => {
+  it("reports store.list() failure without surfacing adapter error content", async () => {
     vi.mocked(agent.selectOAuthCredentialStore).mockReturnValue(
       buildStoreMock({
         list: async () =>
           err(
             new Error(
-              "version mismatch: file has schema 2 but CLI expects 1. Hint: delete ~/.comis/oauth/profiles.json and re-run comis auth login",
+              "version mismatch: PRIVATE_LIST_SENTINEL",
             ),
           ),
       }),
@@ -239,8 +238,8 @@ describe("oauthHealthCheck — store.list() schema-mismatch surfacing", () => {
     const findings = await oauthHealthCheck.run(baseContext);
     const schemaFinding = findings.find((f) => f.check === "Profile schema");
     expect(schemaFinding!.status).toBe("fail");
-    expect(schemaFinding!.message).toContain("version mismatch");
-    expect(schemaFinding!.message).toContain("Hint:");
+    expect(schemaFinding!.message).toContain("schema");
+    expect(schemaFinding!.message).not.toContain("PRIVATE_LIST_SENTINEL");
     // Per-profile findings are NOT emitted after schema mismatch
     const profileFindings = findings.filter((f) => f.check.startsWith("Profile openai-codex"));
     expect(profileFindings).toHaveLength(0);
@@ -299,13 +298,13 @@ describe("oauthHealthCheck — refreshTest error paths", () => {
     }
   });
 
-  it("surfaces network error when fetch itself throws (DNS / firewall / connection refused)", async () => {
+  it("reports a network failure without surfacing fetch error content", async () => {
     const profile = buildProfile();
     vi.mocked(agent.selectOAuthCredentialStore).mockReturnValue(
       buildStoreMock({ list: async () => ok([profile]) }),
     );
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      new Error("ENOTFOUND auth.openai.com"),
+      new Error("ENOTFOUND auth.openai.com PRIVATE_REFRESH_SENTINEL"),
     );
     try {
       const findings = await oauthHealthCheck.run({
@@ -314,21 +313,20 @@ describe("oauthHealthCheck — refreshTest error paths", () => {
       });
       const refreshFinding = findings.find((f) => f.check.includes("refresh test"));
       expect(refreshFinding!.status).toBe("fail");
-      expect(refreshFinding!.message).toContain("ENOTFOUND");
+      expect(refreshFinding!.message).not.toContain("PRIVATE_REFRESH_SENTINEL");
       expect(refreshFinding!.suggestion).toContain("auth.openai.com");
     } finally {
       fetchSpy.mockRestore();
     }
   });
 
-  it("surfaces fetch-throw non-Error value via String() coercion in refresh test", async () => {
+  it("does not surface a non-Error value thrown by fetch", async () => {
     const profile = buildProfile();
     vi.mocked(agent.selectOAuthCredentialStore).mockReturnValue(
       buildStoreMock({ list: async () => ok([profile]) }),
     );
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(
-      // Throwing a plain object (non-Error) to exercise the String() branch
-      { custom: "non-error throw" },
+      { custom: "PRIVATE_REFRESH_OBJECT_SENTINEL" },
     );
     try {
       const findings = await oauthHealthCheck.run({
@@ -337,6 +335,34 @@ describe("oauthHealthCheck — refreshTest error paths", () => {
       });
       const refreshFinding = findings.find((f) => f.check.includes("refresh test"));
       expect(refreshFinding!.status).toBe("fail");
+      expect(refreshFinding!.message).not.toContain("PRIVATE_REFRESH_OBJECT_SENTINEL");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("does not surface an unknown OAuth response body", async () => {
+    const profile = buildProfile();
+    vi.mocked(agent.selectOAuthCredentialStore).mockReturnValue(
+      buildStoreMock({ list: async () => ok([profile]) }),
+    );
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "unexpected_error",
+          error_description: "Authorization: Bearer PRIVATE_BODY_SENTINEL",
+        }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    try {
+      const findings = await oauthHealthCheck.run({
+        ...baseContext,
+        refreshTest: true,
+      });
+      const refreshFinding = findings.find((f) => f.check.includes("refresh test"));
+      expect(refreshFinding?.status).toBe("fail");
+      expect(refreshFinding?.message).not.toContain("PRIVATE_BODY_SENTINEL");
     } finally {
       fetchSpy.mockRestore();
     }

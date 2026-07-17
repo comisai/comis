@@ -239,9 +239,13 @@ console.log(`sent total=${total}`);
 ```
 
 The fetch, the transform, the write, and the send all happen inside the jail in **one** turn; the
-large fetched payload never enters context. The outward send rides an **exactly-once** guarantee
-when [durability](/agents/autonomy#durability--resume) is enabled — otherwise it is a best-effort
-pass-through: the send still goes, it is just not deduped across a crash.
+large fetched payload never enters context. When
+[durability](/agents/autonomy#durability--resume) is enabled, one stable operation identity
+suppresses another execution while its ledger row is retained: a committed repeat returns the
+prior receipt, while an ambiguous outcome is parked `unresolved` and escalated. Comis does not
+claim universal exactly-once delivery or infer platform truth from channel history. With durability
+disabled, the send is a best-effort pass-through with no retained-operation protection across a
+crash.
 
 ## Python (`language: "py"`)
 

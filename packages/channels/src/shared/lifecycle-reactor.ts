@@ -12,12 +12,13 @@
 
 import type {
   ChannelPort,
+  EventMap,
   TypedEventBus,
   SessionKey,
   LifecycleReactionsConfig,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
-import { suppressError } from "@comis/shared";
+import { suppressError, tryCatch } from "@comis/shared";
 
 import {
   isValidTransition,
@@ -31,7 +32,8 @@ import {
 } from "./emoji-tier-map.js";
 import { toSlackShortname } from "./slack-emoji-map.js";
 import { computeStallThresholds } from "./stall-detector.js";
-import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
+import { emitObservationalEventSafely, systemClearTimeout, systemNowMs, systemSetTimeout, toSafeErrorLogString, tryGetContext } from "@comis/core";
+import { parseFormattedSessionKey } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -73,6 +75,8 @@ interface ReactorState {
   holdTimer: ReturnType<typeof setTimeout> | null;
   channelId: string;
   platformMessageId: string;
+  sourceKeys: Set<string>;
+  traceKeys: Set<string>;
   phaseEnteredAt: number;
 }
 
@@ -84,19 +88,15 @@ interface ReactorState {
  * Extract channelId from either a formatted string sessionKey or a SessionKey object.
  *
  * - SessionKey object: direct `.channelId` property access
- * - Formatted string: `[agent:X:]tenantId:userId:channelId[:peer:...]`
- *   Parse by splitting on ":" -- channelId is at index 2 (or 4 if agent prefix present)
+ * - Formatted string: use the canonical session-key parser so channel IDs
+ *   containing `:` remain round-trip safe and tagged suffixes are excluded.
  */
 export function extractChannelId(sessionKey: string | SessionKey | undefined): string | undefined {
   if (sessionKey == null) return undefined;
   if (typeof sessionKey === "object" && sessionKey !== null) {
     return sessionKey.channelId;
   }
-  const parts = sessionKey.split(":");
-  if (parts[0] === "agent") {
-    return parts.length >= 5 ? parts[4] : undefined;
-  }
-  return parts.length >= 3 ? parts[2] : undefined;
+  return parseFormattedSessionKey(sessionKey)?.channelId;
 }
 
 // ---------------------------------------------------------------------------
@@ -133,11 +133,42 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
   const reactToMessage = adapter.reactToMessage.bind(adapter);
   const removeReaction = adapter.removeReaction.bind(adapter);
 
-  // Per-message state: key is `${channelId}:${platformMessageId}`
+  // JSON tuple keys cannot alias when a platform id itself contains `:`.
   const messageStates = new Map<string, ReactorState>();
+  const messageKeyBySource = new Map<string, string>();
+  const messageKeyByTrace = new Map<string, string>();
 
-  // Secondary index: channelId -> most recent active messageKey
-  const activeMessageByChannel = new Map<string, string>();
+  type ReactionEventName =
+    | "reaction:cleanup"
+    | "reaction:terminal"
+    | "reaction:phase_changed"
+    | "reaction:stall_detected";
+
+  function emitReactionEvent<K extends ReactionEventName>(
+    eventName: K,
+    payload: EventMap[K],
+  ): void {
+    emitObservationalEventSafely({ eventBus, logger }, eventName, payload);
+  }
+
+  function runPlatformReaction(
+    operation: () => Promise<unknown>,
+    action: string,
+    suppressedReason: string,
+  ): void {
+    const started = tryCatch(operation);
+    if (!started.ok) {
+      void tryCatch(() => logger.warn({
+        channelType,
+        action,
+        err: toSafeErrorLogString(started.error),
+        hint: "Inspect the channel reaction adapter; lifecycle state and cleanup continued",
+        errorKind: "platform" as const,
+      }, "Lifecycle platform reaction failed synchronously"));
+      return;
+    }
+    suppressError(started.value, suppressedReason);
+  }
 
   // Effective emoji tier (per-channel override or global)
   const perChannelConfig = Object.hasOwn(config.perChannel, channelType)
@@ -157,8 +188,9 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
 
     // Remove old emoji fire-and-forget (non-blocking)
     if (state.currentEmoji) {
-      suppressError(
-        removeReaction(state.channelId, state.platformMessageId, state.currentEmoji),
+      runPlatformReaction(
+        () => removeReaction(state.channelId, state.platformMessageId, state.currentEmoji),
+        "remove_previous",
         "lifecycle-reactor: platform may have already removed old reaction",
       );
     }
@@ -167,23 +199,27 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
     const previousEmoji = state.currentEmoji;
     state.currentEmoji = emoji;
 
-    if (channelType === "telegram" && deps.reactWithFallback) {
+    const reactWithFallback = deps.reactWithFallback;
+    if (channelType === "telegram" && reactWithFallback) {
       // Telegram: use fallback chain for REACTION_INVALID errors
-      suppressError(
-        deps.reactWithFallback(adapter, state.channelId, state.platformMessageId, emoji),
+      runPlatformReaction(
+        () => reactWithFallback(adapter, state.channelId, state.platformMessageId, emoji),
+        "apply_fallback",
         "lifecycle-reactor: telegram reaction fallback fire-and-forget",
       );
     } else if (channelType === "slack") {
       // Slack: convert Unicode emoji to Slack shortname
       const slackName = toSlackShortname(emoji);
-      suppressError(
-        reactToMessage(state.channelId, state.platformMessageId, slackName),
+      runPlatformReaction(
+        () => reactToMessage(state.channelId, state.platformMessageId, slackName),
+        "apply",
         "lifecycle-reactor: slack reaction fire-and-forget",
       );
     } else {
       // All other platforms: use emoji directly
-      suppressError(
-        reactToMessage(state.channelId, state.platformMessageId, emoji),
+      runPlatformReaction(
+        () => reactToMessage(state.channelId, state.platformMessageId, emoji),
+        "apply",
         "lifecycle-reactor: platform reaction fire-and-forget",
       );
     }
@@ -219,17 +255,19 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
 
     // Remove from maps
     messageStates.delete(messageKey);
-
-    // Remove from secondary index (find matching value)
-    for (const [chId, mk] of activeMessageByChannel) {
-      if (mk === messageKey) {
-        activeMessageByChannel.delete(chId);
-        break;
+    for (const sourceKey of state.sourceKeys) {
+      if (messageKeyBySource.get(sourceKey) === messageKey) {
+        messageKeyBySource.delete(sourceKey);
+      }
+    }
+    for (const traceKey of state.traceKeys) {
+      if (messageKeyByTrace.get(traceKey) === messageKey) {
+        messageKeyByTrace.delete(traceKey);
       }
     }
 
     // Emit cleanup event
-    eventBus.emit("reaction:cleanup", {
+    emitReactionEvent("reaction:cleanup", {
       messageId: state.platformMessageId,
       channelType,
       channelId: state.channelId,
@@ -276,7 +314,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
 
       // Emit terminal event
       const emoji = getEmojiForPhase(newPhase, effectiveTier) ?? "";
-      eventBus.emit("reaction:terminal", {
+      emitReactionEvent("reaction:terminal", {
         messageId: state.platformMessageId,
         channelType,
         channelId: state.channelId,
@@ -294,15 +332,16 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
       // Start hold timer: after hold, remove reaction and clean up
       state.holdTimer = systemSetTimeout(() => {
         // Remove the terminal emoji
-        suppressError(
-          removeReaction(state.channelId, state.platformMessageId, state.currentEmoji),
+        runPlatformReaction(
+          () => removeReaction(state.channelId, state.platformMessageId, state.currentEmoji),
+          "hold_cleanup",
           "lifecycle-reactor: hold timer cleanup fire-and-forget",
         );
         cleanupMessage(messageKey);
       }, holdMs);
 
       // Emit phase_changed
-      eventBus.emit("reaction:phase_changed", {
+      emitReactionEvent("reaction:phase_changed", {
         messageId: state.platformMessageId,
         channelType,
         channelId: state.channelId,
@@ -360,7 +399,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
       if (stallMs >= thresholds.hardMs) {
         // Hard stall
         transitionPhase(messageKey, "stall_hard");
-        eventBus.emit("reaction:stall_detected", {
+        emitReactionEvent("reaction:stall_detected", {
           messageId: state.platformMessageId,
           channelType,
           channelId: state.channelId,
@@ -373,7 +412,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
       } else {
         // Soft stall
         transitionPhase(messageKey, "stall_soft");
-        eventBus.emit("reaction:stall_detected", {
+        emitReactionEvent("reaction:stall_detected", {
           messageId: state.platformMessageId,
           channelType,
           channelId: state.channelId,
@@ -391,7 +430,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
             if (state.phase !== "stall_soft") return;
             const hardStallMs = systemNowMs() - state.phaseEnteredAt;
             transitionPhase(messageKey, "stall_hard");
-            eventBus.emit("reaction:stall_detected", {
+            emitReactionEvent("reaction:stall_detected", {
               messageId: state.platformMessageId,
               channelType,
               channelId: state.channelId,
@@ -408,7 +447,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
 
     // Emit phase_changed
     const emoji = getEmojiForPhase(newPhase, effectiveTier) ?? "";
-    eventBus.emit("reaction:phase_changed", {
+    emitReactionEvent("reaction:phase_changed", {
       messageId: state.platformMessageId,
       channelType,
       channelId: state.channelId,
@@ -424,7 +463,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
   // Event handlers
   // ------------------------------------------------------------------
 
-  function onMessageReceived(event: { message: { channelType: string; channelId: string; metadata?: Record<string, unknown> }; sessionKey: SessionKey }): void {
+  function onMessageReceived(event: EventMap["message:received"]): void {
     // Only process messages for this adapter's channel type
     if (event.message.channelType !== channelType) return;
 
@@ -434,7 +473,76 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
 
     const messageId = String(platformMessageId);
     const channelId = event.message.channelId;
-    const messageKey = `${channelId}:${messageId}`;
+    const messageKey = JSON.stringify([channelType, channelId, messageId]);
+    const contextualTraceId = tryGetContext()?.traceId;
+    const metadataTraceId = event.message.metadata?.traceId;
+    const traceId = typeof metadataTraceId === "string" && metadataTraceId.length > 0
+      ? metadataTraceId
+      : contextualTraceId;
+    const sourceKey = JSON.stringify([
+      channelType,
+      channelId,
+      event.message.id,
+    ]);
+    const traceKey = traceId === undefined
+      ? undefined
+      : JSON.stringify([channelType, traceId]);
+    const sourceOwnerKey = messageKeyBySource.get(sourceKey);
+    if (sourceOwnerKey !== undefined && sourceOwnerKey !== messageKey) {
+      const sourceOwner = messageStates.get(sourceOwnerKey);
+      if (sourceOwner !== undefined) {
+        if (traceKey !== undefined) {
+          sourceOwner.traceKeys.add(traceKey);
+          messageKeyByTrace.set(traceKey, sourceOwnerKey);
+        }
+        logger.debug({
+          channelType,
+          chatId: channelId,
+          messageId,
+        }, "Repeated source identity retained its first platform lifecycle");
+        return;
+      }
+      messageKeyBySource.delete(sourceKey);
+    }
+    const existingState = messageStates.get(messageKey);
+    if (existingState !== undefined) {
+      const isKnownSource = existingState.sourceKeys.has(sourceKey);
+      if (!isTerminal(existingState.phase) || isKnownSource) {
+        existingState.sourceKeys.add(sourceKey);
+        messageKeyBySource.set(sourceKey, messageKey);
+        if (traceKey !== undefined) {
+          existingState.traceKeys.add(traceKey);
+          messageKeyByTrace.set(traceKey, messageKey);
+        }
+        logger.debug({
+          channelType,
+          chatId: channelId,
+          messageId,
+        }, "Repeated platform message attached to existing lifecycle state");
+        return;
+      }
+
+      // A new normalized source can legitimately reuse a platform message ID
+      // after the prior lifecycle reached terminal. Cancel the old hold before
+      // replacing the state so its timer cannot remove the new lifecycle.
+      if (existingState.currentEmoji) {
+        runPlatformReaction(
+          () => removeReaction(
+            existingState.channelId,
+            existingState.platformMessageId,
+            existingState.currentEmoji,
+          ),
+          "terminal_replacement",
+          "lifecycle-reactor: terminal replacement removes prior reaction",
+        );
+      }
+      cleanupMessage(messageKey);
+      logger.debug({
+        channelType,
+        chatId: channelId,
+        messageId,
+      }, "Terminal lifecycle replaced for a new source message");
+    }
 
     // Create reactor state
     const state: ReactorState = {
@@ -445,71 +553,86 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
       holdTimer: null,
       channelId,
       platformMessageId: messageId,
+      sourceKeys: new Set([sourceKey]),
+      traceKeys: new Set(traceKey === undefined ? [] : [traceKey]),
       phaseEnteredAt: systemNowMs(),
     };
 
     messageStates.set(messageKey, state);
-    activeMessageByChannel.set(channelId, messageKey);
+    messageKeyBySource.set(sourceKey, messageKey);
+    if (traceKey !== undefined) messageKeyByTrace.set(traceKey, messageKey);
 
     // Transition to "queued" phase
     transitionPhase(messageKey, "queued");
   }
 
-  function onToolStarted(event: { toolName: string; sessionKey?: string }): void {
-    const channelId = extractChannelId(event.sessionKey);
-    if (!channelId) return;
-
-    const messageKey = activeMessageByChannel.get(channelId);
+  function onToolStarted(event: EventMap["tool:started"]): void {
+    if (event.traceId === undefined) return;
+    const messageKey = messageKeyByTrace.get(JSON.stringify([channelType, event.traceId]));
     if (!messageKey) return;
+    const state = messageStates.get(messageKey);
+    const eventChannelId = extractChannelId(event.sessionKey);
+    if (state === undefined || (eventChannelId !== undefined && eventChannelId !== state.channelId)) return;
 
     const targetPhase = classifyToolPhase(event.toolName);
     transitionPhase(messageKey, targetPhase);
   }
 
-  function onToolExecuted(event: { sessionKey?: string }): void {
-    const channelId = extractChannelId(event.sessionKey);
-    if (!channelId) return;
-
-    const messageKey = activeMessageByChannel.get(channelId);
+  function onToolExecuted(event: EventMap["tool:executed"]): void {
+    if (event.traceId === undefined) return;
+    const messageKey = messageKeyByTrace.get(JSON.stringify([channelType, event.traceId]));
     if (!messageKey) return;
+    const state = messageStates.get(messageKey);
+    const eventChannelId = extractChannelId(event.sessionKey);
+    if (state === undefined || (eventChannelId !== undefined && eventChannelId !== state.channelId)) return;
 
     // Tool completed -- transition back to thinking (LLM is generating again)
     transitionPhase(messageKey, "thinking");
   }
 
-  function onQueueDequeued(event: { sessionKey: SessionKey }): void {
+  function onQueueDequeued(event: EventMap["queue:dequeued"]): void {
+    if (event.channelType !== channelType) return;
     const channelId = extractChannelId(event.sessionKey);
     if (!channelId) return;
 
-    const messageKey = activeMessageByChannel.get(channelId);
+    const traceId = tryGetContext()?.traceId;
+    let messageKey = traceId === undefined
+      ? undefined
+      : messageKeyByTrace.get(JSON.stringify([channelType, traceId]));
+    if (messageKey === undefined) {
+      const candidates = [...messageStates.entries()].filter(([, state]) =>
+        state.channelId === channelId && !isTerminal(state.phase));
+      if (candidates.length === 1) messageKey = candidates[0]![0];
+    }
     if (!messageKey) return;
+    if (messageStates.get(messageKey)?.channelId !== channelId) return;
 
     transitionPhase(messageKey, "thinking");
   }
 
-  function onMessageSent(event: { channelId: string }): void {
-    const messageKey = activeMessageByChannel.get(event.channelId);
+  function onMessageTerminal(event: EventMap["message:terminal"]): void {
+    if (event.channelType !== channelType) return;
+    const messageKey = messageKeyBySource.get(
+      JSON.stringify([channelType, event.channelId, event.sourceMessageId]),
+    );
     if (!messageKey) return;
+    if (messageStates.get(messageKey)?.channelId !== event.channelId) return;
 
-    transitionPhase(messageKey, "done");
-  }
-
-  function onExecutionAborted(event: { sessionKey: SessionKey }): void {
-    const channelId = extractChannelId(event.sessionKey);
-    if (!channelId) return;
-
-    const messageKey = activeMessageByChannel.get(channelId);
-    if (!messageKey) return;
-
-    transitionPhase(messageKey, "error");
-  }
-
-  function onResponseFiltered(event: { channelId: string }): void {
-    const messageKey = activeMessageByChannel.get(event.channelId);
-    if (!messageKey) return;
-
-    // Response was suppressed but execution succeeded
-    transitionPhase(messageKey, "done");
+    switch (event.outcome) {
+      case "success":
+      case "filtered":
+        transitionPhase(messageKey, "done");
+        return;
+      case "error":
+      case "timeout":
+      case "aborted":
+        transitionPhase(messageKey, "error");
+        return;
+      default: {
+        const _exhaustive: never = event.outcome;
+        return _exhaustive;
+      }
+    }
   }
 
   // ------------------------------------------------------------------
@@ -520,9 +643,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
   eventBus.on("tool:started", onToolStarted);
   eventBus.on("tool:executed", onToolExecuted);
   eventBus.on("queue:dequeued", onQueueDequeued);
-  eventBus.on("message:sent", onMessageSent);
-  eventBus.on("execution:aborted", onExecutionAborted);
-  eventBus.on("response:filtered", onResponseFiltered);
+  eventBus.on("message:terminal", onMessageTerminal);
 
   // ------------------------------------------------------------------
   // Return handle
@@ -548,16 +669,15 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
 
       // Clear maps
       messageStates.clear();
-      activeMessageByChannel.clear();
+      messageKeyBySource.clear();
+      messageKeyByTrace.clear();
 
       // Unsubscribe from all events
       eventBus.off("message:received", onMessageReceived);
       eventBus.off("tool:started", onToolStarted);
       eventBus.off("tool:executed", onToolExecuted);
       eventBus.off("queue:dequeued", onQueueDequeued);
-      eventBus.off("message:sent", onMessageSent);
-      eventBus.off("execution:aborted", onExecutionAborted);
-      eventBus.off("response:filtered", onResponseFiltered);
+      eventBus.off("message:terminal", onMessageTerminal);
     },
   };
 }

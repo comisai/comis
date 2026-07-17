@@ -22,6 +22,7 @@ import type {
   ChannelSnapshotRow,
   SystemPromptReportRow,
 } from "./observability-store-types.js";
+import type { DeliveryFailureStage, DeliveryStatus, ErrorKind } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // snake_case row types (internal: what SQLite returns)
@@ -67,9 +68,11 @@ export interface DeliveryDbRow {
   channel_type: string;
   channel_id: string;
   session_key: string;
-  status: string;
+  status: DeliveryStatus;
   latency_ms: number;
   error_message: string;
+  failure_stage: DeliveryFailureStage | null;
+  error_kind: ErrorKind | null;
   message_preview: string;
   tool_calls: number | null;
   llm_calls: number | null;
@@ -189,6 +192,8 @@ export function deliveryFromRow(row: DeliveryDbRow): DeliveryRow {
     status: row.status,
     latencyMs: row.latency_ms,
     errorMessage: row.error_message,
+    failureStage: row.failure_stage,
+    errorKind: row.error_kind,
     messagePreview: row.message_preview,
     toolCalls: row.tool_calls,
     llmCalls: row.llm_calls,

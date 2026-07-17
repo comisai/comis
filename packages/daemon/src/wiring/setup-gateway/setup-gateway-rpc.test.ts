@@ -11,7 +11,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tryGetContext, type SessionKey } from "@comis/core";
+import {
+  formatSessionKey,
+  parseFormattedSessionKey,
+  TypedEventBus,
+  tryGetContext,
+  type RequestContext,
+  type SessionKey,
+} from "@comis/core";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createGatewayAttachmentPersister } from "../gateway-attachment-persistence.js";
@@ -27,6 +34,17 @@ vi.mock("../../api/rpc-dispatch.js", () => ({
   createRpcDispatch: mockCreateRpcDispatch,
   classifyRpcError: mockClassifyRpcError,
 }));
+
+function makePassingSessionAdapters(agentIds: string[] = ["default"]) {
+  return new Map(agentIds.map((agentId) => [agentId, {
+    destroySession: vi.fn(async () => undefined),
+    getSessionStats: vi.fn(() => undefined),
+    persistInboundMessage: vi.fn(async () => ({
+      ok: true as const,
+      value: { payloads: [], ledgerContent: "" },
+    })),
+  }]));
+}
 
 describe("setupRpcBridge", () => {
   beforeEach(() => {
@@ -328,6 +346,7 @@ describe("buildRpcAdapterDeps executeAgent unknown-agent guard", () => {
       rpcCall: (async () => ({})) as never,
       costTrackers: new Map() as never,
       workspaceDirs: new Map() as never,
+      piSessionAdapters: makePassingSessionAdapters(Object.keys(agents)) as never,
       activeExecutions: new Map() as never,
     });
     return { executeAgent: deps.executeAgent, getExecutor };
@@ -364,17 +383,463 @@ describe("buildRpcAdapterDeps executeAgent unknown-agent guard", () => {
   });
 });
 
+describe("buildRpcAdapterDeps executeAgent inbound provenance", () => {
+  async function makeProvenanceDeps(options?: {
+    persistResult?: { ok: true; value: undefined } | {
+      ok: false;
+      error: { error: Error; errorKind: "validation" | "resource" };
+    };
+    eventBus?: TypedEventBus;
+    save?: (...args: unknown[]) => void;
+  }) {
+    const mod = await import("./setup-gateway-rpc.js");
+    const order: string[] = [];
+    const logger = createMockLogger();
+    const emit = vi.fn((eventName: string, _payload?: unknown) => {
+      if (eventName === "message:received") order.push("received");
+    });
+    const eventBus = options?.eventBus ?? {
+      emit,
+      emitSafely: vi.fn((eventName: string, payload: unknown) => {
+        emit(eventName, payload);
+        return {
+          hadListeners: false,
+          failures: [],
+          pendingFailures: Promise.resolve([]),
+        };
+      }),
+    };
+    const execute = vi.fn(async () => {
+      order.push("execute");
+      return {
+        response: "Done",
+        tokensUsed: { input: 1, output: 1, total: 2 },
+        finishReason: "stop",
+        cost: { total: 0 },
+        stepsExecuted: 0,
+        llmCalls: 1,
+      };
+    });
+    const persistInboundMessage = vi.fn(async () => {
+      order.push("persist");
+      return options?.persistResult ?? {
+        ok: true as const,
+        value: { payloads: [], ledgerContent: "" },
+      };
+    });
+    const deps = mod.buildRpcAdapterDeps({
+      container: {
+        config: { tenantId: "tenant-a" },
+        eventBus,
+      } as unknown as Parameters<typeof mod.buildRpcAdapterDeps>[0]["container"],
+      gwConfig: {} as never,
+      agents: { default: { name: "Default" } } as never,
+      defaultAgentId: "default",
+      gatewayLogger: logger,
+      memoryApi: {} as never,
+      sessionStore: {
+        load: () => undefined,
+        save: options?.save ?? vi.fn(),
+      } as never,
+      getExecutor: (() => ({ execute })) as never,
+      assembleToolsForAgent: (async () => {
+        order.push("tools");
+        return [];
+      }) as never,
+      preprocessMessageText: (async (text: string) => {
+        order.push("preprocess");
+        return `enriched:${text}`;
+      }) as never,
+      rpcCall: (async () => ({})) as never,
+      costTrackers: new Map() as never,
+      workspaceDirs: new Map(),
+      piSessionAdapters: new Map([[
+        "default",
+        {
+          destroySession: vi.fn(),
+          getSessionStats: vi.fn(),
+          persistInboundMessage,
+        },
+      ]]) as never,
+      activeExecutions: new Map() as never,
+    });
+    return { deps, emit, execute, logger, order, persistInboundMessage };
+  }
+
+  it("commits the exact gateway message before reception, preprocessing, tools, and direct execution", async () => {
+    const { deps, execute, order, persistInboundMessage } = await makeProvenanceDeps();
+
+    await deps.executeAgent({
+      message: "User-authored gateway text",
+      sessionKey: { userId: "user_a", channelId: "gateway-channel", peerId: "peer_a" },
+      scopes: ["rpc"],
+    });
+
+    expect(order).toEqual(["persist", "received", "preprocess", "tools", "execute"]);
+    expect(persistInboundMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ channelId: "gateway-channel", peerId: "peer_a" }),
+      expect.objectContaining({
+        channelType: "gateway",
+        channelId: "gateway-channel",
+        senderId: "peer_a",
+        text: "User-authored gateway text",
+      }),
+      expect.any(Number),
+    );
+    expect(execute.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      text: "enriched:User-authored gateway text",
+      originalMessages: [expect.objectContaining({ text: "User-authored gateway text" })],
+    }));
+  });
+
+  it("fails closed with actionable logging and terminal events when the gateway ledger commit fails", async () => {
+    const persistenceError = new Error("ledger unavailable");
+    const { deps, emit, execute, logger, order, persistInboundMessage } = await makeProvenanceDeps({
+      persistResult: {
+        ok: false,
+        error: { error: persistenceError, errorKind: "resource" },
+      },
+    });
+
+    await expect(deps.executeAgent({
+      message: "Do not execute without a ledger",
+      sessionKey: { userId: "user_a", channelId: "gateway-channel", peerId: "peer_a" },
+      scopes: ["rpc"],
+    })).rejects.toBe(persistenceError);
+
+    expect(order).toEqual(["persist"]);
+    expect(persistInboundMessage).toHaveBeenCalledOnce();
+    expect(execute).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "default",
+        channelType: "gateway",
+        step: "session-provenance",
+        hint: expect.any(String),
+        errorKind: "resource",
+      }),
+      "Gateway inbound message provenance persistence failed",
+    );
+    const persistedMessage = persistInboundMessage.mock.calls[0]?.[1];
+    expect(emit).toHaveBeenCalledWith("message:terminal", {
+      channelType: "gateway",
+      channelId: "gateway-channel",
+      sourceMessageId: persistedMessage?.id,
+      outcome: "error",
+      reason: "inbound_rejected",
+      timestamp: expect.any(Number),
+    });
+    expect(emit).toHaveBeenCalledWith("system:error", {
+      error: persistenceError,
+      source: "gateway-session-provenance",
+    });
+    expect(emit).not.toHaveBeenCalledWith(
+      "message:received",
+      expect.anything(),
+    );
+  });
+
+  it("contains history and sent-event subscriber failures while preserving the execution result and later observers", async () => {
+    const eventBus = new TypedEventBus();
+    const laterSystemObserver = vi.fn();
+    const laterSentObserver = vi.fn();
+    eventBus.on("system:error", () => {
+      throw new Error("private history subscriber payload");
+    });
+    eventBus.on("system:error", laterSystemObserver);
+    eventBus.on("message:sent", () => {
+      throw new Error("private response subscriber payload");
+    });
+    eventBus.on("message:sent", laterSentObserver);
+    const { deps, execute, logger } = await makeProvenanceDeps({
+      eventBus,
+      save: () => {
+        throw new Error("session store unavailable");
+      },
+    });
+
+    const result = await deps.executeAgent({
+      message: "User-authored gateway text",
+      sessionKey: { userId: "user_a", channelId: "gateway-channel", peerId: "peer_a" },
+      scopes: ["rpc"],
+    });
+
+    expect(result.response).toBe("Done");
+    expect(execute).toHaveBeenCalledOnce();
+    expect(laterSystemObserver).toHaveBeenCalledTimes(2);
+    expect(laterSentObserver).toHaveBeenCalledOnce();
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("private history subscriber payload");
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("private response subscriber payload");
+  });
+});
+
+describe("buildRpcAdapterDeps executeAgent request context", () => {
+  it("isolates identical caller-selected sessions by authenticated gateway client", async () => {
+    const mod = await import("./setup-gateway-rpc.js");
+    const executedKeys: SessionKey[] = [];
+    const savedOwners = new Map<string, unknown>();
+    const sessionStore = {
+      load: vi.fn(() => undefined),
+      save: vi.fn((key: SessionKey, _messages: unknown[], metadata?: Record<string, unknown>) => {
+        savedOwners.set(formatSessionKey(key), metadata?.gatewayClientId);
+      }),
+    };
+    const deps = mod.buildRpcAdapterDeps({
+      container: {
+        config: { tenantId: "tenant-a" },
+        eventBus: { emit: vi.fn() },
+      } as unknown as Parameters<typeof mod.buildRpcAdapterDeps>[0]["container"],
+      gwConfig: {} as never,
+      agents: { default: { name: "Default" } } as never,
+      defaultAgentId: "default",
+      gatewayLogger: createMockLogger() as never,
+      memoryApi: {} as never,
+      sessionStore: sessionStore as never,
+      getExecutor: (() => ({
+        execute: vi.fn(async (_message: unknown, key: SessionKey) => {
+          executedKeys.push(key);
+          return {
+            response: "Done",
+            tokensUsed: { input: 1, output: 1, total: 2 },
+            finishReason: "stop",
+            cost: { total: 0 },
+            stepsExecuted: 0,
+            llmCalls: 1,
+          };
+        }),
+      })) as never,
+      assembleToolsForAgent: (async () => []) as never,
+      preprocessMessageText: (async (text: string) => text) as never,
+      rpcCall: (async () => ({})) as never,
+      costTrackers: new Map() as never,
+      workspaceDirs: new Map(),
+      piSessionAdapters: makePassingSessionAdapters(["default", "specialist"]) as never,
+      activeExecutions: new Map() as never,
+    });
+    const selectedSession = {
+      userId: "caller-selected-user",
+      channelId: "shared-channel",
+      peerId: "shared-peer",
+    };
+
+    await deps.executeAgent({
+      message: "From A",
+      clientId: "client-a",
+      sessionKey: selectedSession,
+      scopes: ["rpc"],
+    });
+    await deps.executeAgent({
+      message: "From B",
+      clientId: "client-b",
+      sessionKey: selectedSession,
+      scopes: ["rpc"],
+    });
+
+    expect(executedKeys).toHaveLength(2);
+    expect(executedKeys[0]?.peerId).toBe("shared-peer");
+    expect(executedKeys[1]?.peerId).toBe("shared-peer");
+    expect(executedKeys[0]?.userId).not.toBe("caller-selected-user");
+    expect(executedKeys[1]?.userId).not.toBe("caller-selected-user");
+    expect(formatSessionKey(executedKeys[0]!)).not.toBe(formatSessionKey(executedKeys[1]!));
+    expect(savedOwners.get(formatSessionKey(executedKeys[0]!))).toBe("client-a");
+    expect(savedOwners.get(formatSessionKey(executedKeys[1]!))).toBe("client-b");
+  });
+
+  it("rejects an existing gateway session whose persisted client owner differs", async () => {
+    const mod = await import("./setup-gateway-rpc.js");
+    const getExecutor = vi.fn(() => ({ execute: vi.fn() }));
+    const eventBus = new TypedEventBus();
+    const laterObserver = vi.fn();
+    eventBus.on("system:error", () => {
+      throw new Error("private ownership subscriber payload");
+    });
+    eventBus.on("system:error", laterObserver);
+    const logger = createMockLogger();
+    const deps = mod.buildRpcAdapterDeps({
+      container: {
+        config: { tenantId: "tenant-a" },
+        eventBus,
+      } as unknown as Parameters<typeof mod.buildRpcAdapterDeps>[0]["container"],
+      gwConfig: {} as never,
+      agents: { default: { name: "Default" } } as never,
+      defaultAgentId: "default",
+      gatewayLogger: logger as never,
+      memoryApi: {} as never,
+      sessionStore: {
+        load: () => ({
+          messages: [],
+          metadata: { agentId: "default", gatewayClientId: "client-a" },
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+        save: vi.fn(),
+      } as never,
+      getExecutor: getExecutor as never,
+      assembleToolsForAgent: (async () => []) as never,
+      preprocessMessageText: (async (text: string) => text) as never,
+      rpcCall: (async () => ({})) as never,
+      costTrackers: new Map() as never,
+      workspaceDirs: new Map(),
+      piSessionAdapters: makePassingSessionAdapters(["default", "specialist"]) as never,
+      activeExecutions: new Map() as never,
+    });
+
+    await expect(deps.executeAgent({
+      message: "Continue",
+      clientId: "client-b",
+      sessionKey: { userId: "ignored", channelId: "shared", peerId: "peer" },
+      scopes: ["rpc"],
+    })).rejects.toThrow(/different gateway client/i);
+    expect(getExecutor).not.toHaveBeenCalled();
+    expect(laterObserver).toHaveBeenCalledOnce();
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(
+      "private ownership subscriber payload",
+    );
+  });
+
+  it("rejects a gateway session already owned by a different agent", async () => {
+    const mod = await import("./setup-gateway-rpc.js");
+    const getExecutor = vi.fn(() => ({ execute: vi.fn() }));
+    const deps = mod.buildRpcAdapterDeps({
+      container: {
+        config: { tenantId: "tenant-a" },
+        eventBus: { emit: vi.fn() },
+      } as unknown as Parameters<typeof mod.buildRpcAdapterDeps>[0]["container"],
+      gwConfig: {} as never,
+      agents: { default: { name: "Default" }, specialist: { name: "Specialist" } } as never,
+      defaultAgentId: "default",
+      gatewayLogger: createMockLogger() as never,
+      memoryApi: {} as never,
+      sessionStore: {
+        load: () => ({ messages: [], metadata: { agentId: "default" }, createdAt: 1, updatedAt: 1 }),
+        save: vi.fn(),
+      } as never,
+      getExecutor: getExecutor as never,
+      assembleToolsForAgent: (async () => []) as never,
+      preprocessMessageText: (async (text: string) => text) as never,
+      rpcCall: (async () => ({})) as never,
+      costTrackers: new Map() as never,
+      workspaceDirs: new Map(),
+      piSessionAdapters: makePassingSessionAdapters(["default", "specialist"]) as never,
+      activeExecutions: new Map() as never,
+    });
+
+    await expect(deps.executeAgent({
+      agentId: "specialist",
+      message: "Continue",
+      sessionKey: { userId: "user_a", channelId: "gateway-channel", peerId: "peer_a" },
+      scopes: ["rpc"],
+    })).rejects.toThrow(/owned by a different agent/i);
+    expect(getExecutor).not.toHaveBeenCalled();
+  });
+
+  it("keeps one resolved context through preprocessing, tool assembly, and execution", async () => {
+    const observedContexts: Array<RequestContext | undefined> = [];
+    const observedStartedAt: Array<number | undefined> = [];
+    const observeContext = (): void => {
+      const context = tryGetContext();
+      observedContexts.push(context);
+      observedStartedAt.push(context?.startedAt);
+    };
+    const mod = await import("./setup-gateway-rpc.js");
+    const deps = mod.buildRpcAdapterDeps({
+      container: {
+        config: { tenantId: "tenant-a" },
+        eventBus: { emit: vi.fn() },
+      } as unknown as Parameters<typeof mod.buildRpcAdapterDeps>[0]["container"],
+      gwConfig: {} as never,
+      agents: {
+        default: { name: "Default" },
+        specialist: { name: "Specialist" },
+      } as never,
+      defaultAgentId: "default",
+      gatewayLogger: createMockLogger() as never,
+      memoryApi: {} as never,
+      sessionStore: { load: () => undefined, save: () => undefined } as never,
+      getExecutor: vi.fn(() => ({
+        execute: vi.fn(async () => {
+          observeContext();
+          return {
+            response: "Done",
+            tokensUsed: { input: 1, output: 1, total: 2 },
+            finishReason: "stop",
+            cost: { total: 0 },
+            stepsExecuted: 0,
+            llmCalls: 1,
+          };
+        }),
+      })) as never,
+      assembleToolsForAgent: vi.fn(async () => {
+        observeContext();
+        return [];
+      }) as never,
+      preprocessMessageText: vi.fn(async (text: string) => {
+        observeContext();
+        return text;
+      }) as never,
+      rpcCall: (async () => ({})) as never,
+      costTrackers: new Map() as never,
+      workspaceDirs: new Map(),
+      piSessionAdapters: makePassingSessionAdapters(["default", "specialist"]) as never,
+      activeExecutions: new Map() as never,
+    });
+
+    await deps.executeAgent({
+      agentId: "specialist",
+      message: "Continue",
+      clientId: "dashboard-a",
+      sessionKey: {
+        userId: "user_a",
+        channelId: "gateway-channel",
+        peerId: "peer_a",
+      },
+      scopes: ["admin"],
+    });
+
+    expect(observedContexts).toHaveLength(3);
+    const [preprocessContext, toolsContext, executorContext] = observedContexts;
+    expect(preprocessContext).toBeDefined();
+    expect(toolsContext).toBe(preprocessContext);
+    expect(executorContext).toBe(preprocessContext);
+    expect(preprocessContext).toMatchObject({
+      tenantId: "tenant-a",
+      agentId: "specialist",
+      clientId: "dashboard-a",
+      trustLevel: "admin",
+      channelType: "gateway",
+      deliveryOrigin: {
+        channelType: "gateway",
+        channelId: "gateway-channel",
+        tenantId: "tenant-a",
+      },
+    });
+    expect(preprocessContext?.userId).toMatch(/^gateway-[a-f0-9]{64}$/);
+    expect(preprocessContext?.deliveryOrigin?.userId).toBe(preprocessContext?.userId);
+    expect(preprocessContext?.sessionKey).toBe(
+      `tenant-a:${preprocessContext?.userId}:gateway-channel:peer:peer_a`,
+    );
+    expect(preprocessContext?.startedAt).toEqual(expect.any(Number));
+    expect(preprocessContext?.startedAt).toBeGreaterThan(0);
+    expect(observedStartedAt).toEqual([
+      preprocessContext?.startedAt,
+      preprocessContext?.startedAt,
+      preprocessContext?.startedAt,
+    ]);
+    expect(Reflect.set(preprocessContext!, "trustLevel", "guest")).toBe(false);
+    expect(Reflect.set(preprocessContext!, "agentId", "forged-agent")).toBe(false);
+  });
+});
+
 describe("buildRpcAdapterDeps attachment history bridge", () => {
   it("persists the user before attachments and appends the response afterward", async () => {
-    const sessionKey: SessionKey = {
-      tenantId: "tenant-a",
-      userId: "user_a",
-      channelId: "history-channel",
-    };
     const marker = '<!-- attachment:{"url":"/media/image.png","type":"image","mimeType":"image/png","fileName":"image.png"} -->';
     let stored = {
       messages: [] as Array<{ role: string; content: string; timestamp: number }>,
-      metadata: { label: "Pinned chat" },
+      metadata: {
+        label: "Pinned chat",
+        agentId: "default",
+        gatewayClientId: "dashboard-a",
+      },
       createdAt: 1,
       updatedAt: 1,
     };
@@ -398,7 +863,12 @@ describe("buildRpcAdapterDeps attachment history bridge", () => {
     const execute = vi.fn(async () => {
       expect(stored.messages.map((message) => message.content)).toEqual(["Show the image"]);
       expect(tryGetContext()?.clientId).toBe("dashboard-a");
-      persistAttachment(sessionKey, marker);
+      const contextSessionKey = tryGetContext()?.sessionKey;
+      const parsedSessionKey = contextSessionKey === undefined
+        ? undefined
+        : parseFormattedSessionKey(contextSessionKey);
+      expect(parsedSessionKey).toBeDefined();
+      persistAttachment(parsedSessionKey!, marker);
       return {
         response: "Done",
         tokensUsed: { input: 1, output: 1, total: 2 },
@@ -426,6 +896,7 @@ describe("buildRpcAdapterDeps attachment history bridge", () => {
       rpcCall: (async () => ({})) as never,
       costTrackers: new Map() as never,
       workspaceDirs: new Map(),
+      piSessionAdapters: makePassingSessionAdapters() as never,
       activeExecutions: new Map() as never,
     });
 
@@ -436,12 +907,17 @@ describe("buildRpcAdapterDeps attachment history bridge", () => {
       scopes: ["rpc"],
     });
 
+    expect(stored.metadata).toEqual({
+      label: "Pinned chat",
+      agentId: "default",
+      gatewayClientId: "dashboard-a",
+    });
+
     expect(stored.messages.map((message) => message.content)).toEqual([
       "Show the image",
       marker,
       "Done",
     ]);
-    expect(stored.metadata).toEqual({ label: "Pinned chat" });
   });
 
   it("warns with recovery guidance when main history persistence fails", async () => {
@@ -457,7 +933,17 @@ describe("buildRpcAdapterDeps attachment history bridge", () => {
     const deps = mod.buildRpcAdapterDeps({
       container: {
         config: { tenantId: "tenant-a" },
-        eventBus: { emit },
+        eventBus: {
+          emit,
+          emitSafely: vi.fn((eventName: string, payload: unknown) => {
+            emit(eventName, payload);
+            return {
+              hadListeners: false,
+              failures: [],
+              pendingFailures: Promise.resolve([]),
+            };
+          }),
+        },
       } as unknown as Parameters<typeof mod.buildRpcAdapterDeps>[0]["container"],
       gwConfig: {} as never,
       agents: { default: { name: "Default" } } as never,
@@ -480,6 +966,7 @@ describe("buildRpcAdapterDeps attachment history bridge", () => {
       rpcCall: (async () => ({})) as never,
       costTrackers: new Map() as never,
       workspaceDirs: new Map(),
+      piSessionAdapters: makePassingSessionAdapters() as never,
       activeExecutions: new Map() as never,
     });
 
@@ -492,7 +979,7 @@ describe("buildRpcAdapterDeps attachment history bridge", () => {
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         err: expect.stringContaining("database is locked"),
-        sessionKey: "tenant-a:user_a:history-channel",
+        sessionKey: "tenant-a:user_a:history-channel:peer:user_a",
         hint: expect.any(String),
         errorKind: "resource",
       }),
@@ -549,7 +1036,7 @@ describe("buildRpcAdapterDeps attachment history bridge", () => {
     })} -->`;
     let stored = {
       messages: [{ role: "assistant", content: canonicalMarker, timestamp: 1 }],
-      metadata: {},
+      metadata: { agentId: "default" },
       createdAt: 1,
       updatedAt: 1,
     };
@@ -588,6 +1075,7 @@ describe("buildRpcAdapterDeps attachment history bridge", () => {
         rpcCall: (async () => ({})) as never,
         costTrackers: new Map() as never,
         workspaceDirs: new Map([["default", workspaceDir]]),
+        piSessionAdapters: makePassingSessionAdapters() as never,
         activeExecutions: new Map() as never,
       });
 

@@ -79,7 +79,7 @@ const CHANNEL_RPC_HANDLERS: Record<string, unknown> = {
   "channels.enable": { success: true },
   "channels.disable": { success: true },
   "channels.get": MOCK_DISCORD_CONFIG,
-  "obs.delivery.recent": { entries: [] },
+  "obs.delivery.recent": { deliveries: [] },
   "obs.channels.activity": { hours: [] },
   "config.read": {
     sections: {

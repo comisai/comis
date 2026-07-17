@@ -52,13 +52,24 @@ function createTestClock(startMs = 1_700_000_000_000): { now: () => number; adva
  * CapabilityEndpointDeps. Captures both bus channels.
  */
 function makeAuditCapture(): {
-  container: { eventBus: { emit: ReturnType<typeof vi.fn>; on: ReturnType<typeof vi.fn> }; config: { tenantId: string } };
+  container: {
+    eventBus: {
+      emit: ReturnType<typeof vi.fn>;
+      emitSafely: ReturnType<typeof vi.fn>;
+      on: ReturnType<typeof vi.fn>;
+    };
+    config: { tenantId: string };
+  };
   audit: () => Array<Record<string, unknown>>;
   tree: () => Array<Record<string, unknown>>;
 } {
   const emit = vi.fn();
+  const emitSafely = vi.fn((event: string, payload: unknown) => {
+    emit(event, payload);
+    return { hadListeners: false, failures: [], pendingFailures: Promise.resolve([]) };
+  });
   const container = {
-    eventBus: { emit, on: vi.fn() },
+    eventBus: { emit, emitSafely, on: vi.fn() },
     config: { tenantId: "tenant-sock" },
   };
   const pull = (name: string) =>
@@ -80,6 +91,7 @@ describe("createCapabilityEndpoint — per-cap audit at the socket chokepoint", 
       caps: ["orch:read"],
       budgetRef: "budget-1",
       sessionKey: "tenant-sock:user-1:chan-1",
+      trustLevel: "user",
       rootRunId: "run-root-1",
       parentLeaseId: "lease-parent-9",
     });
@@ -127,6 +139,7 @@ describe("createCapabilityEndpoint — per-cap audit at the socket chokepoint", 
       caps: ["orch:read"], // in-audience for memory_search → validate passes
       budgetRef: "budget-1",
       sessionKey: "tenant-sock:user-1:chan-1",
+      trustLevel: "user",
       rootRunId: "run-root-1",
     });
 
@@ -169,6 +182,7 @@ describe("createCapabilityEndpoint — per-cap audit at the socket chokepoint", 
       caps: ["orch:read"],
       budgetRef: "budget-1",
       sessionKey: "tenant-sock:user-1:chan-1",
+      trustLevel: "user",
       rootRunId: "run-root-1",
     });
 
@@ -208,6 +222,7 @@ describe("createCapabilityEndpoint — per-cap audit at the socket chokepoint", 
       caps: ["orch:mcp"], // cap HELD → chokepoint allows the capability, routes to the executor
       budgetRef: "budget-1",
       sessionKey: "tenant-sock:user-1:chan-1",
+      trustLevel: "user",
       rootRunId: "run-root-1",
       parentLeaseId: "lease-parent-9",
     });
@@ -277,6 +292,7 @@ describe("createCapabilityEndpoint — per-cap audit on the SOCKET DIRECT-METHOD
       caps: ["orch:message"], // in-audience for message.send (orch:message)
       budgetRef: "budget-1",
       sessionKey: "tenant-sock:user-1:chan-1",
+      trustLevel: "user",
       rootRunId: "run-root-1",
       parentLeaseId: "lease-parent-9",
     });
@@ -332,7 +348,14 @@ describe("createCapabilityEndpoint — per-cap audit on the SOCKET DIRECT-METHOD
       caps: ["orch:spawn"], // in-audience for session.spawn → validate passes
       budgetRef: "budget-1",
       sessionKey: "tenant-sock:user-1:chan-1",
+      trustLevel: "user",
       rootRunId: "run-root-1",
+      deliveryOrigin: {
+        channelType: "telegram",
+        channelId: "chan-1",
+        userId: "user-1",
+        tenantId: "tenant-sock",
+      },
     });
 
     // The sink's per-handler requireCapability denies (a cap-not-held downstream
@@ -379,6 +402,7 @@ describe("createCapabilityEndpoint — per-cap audit on the SOCKET DIRECT-METHOD
       caps: ["orch:cron"], // in-audience for cron.add (orch:cron)
       budgetRef: "budget-1",
       sessionKey: "tenant-sock:user-1:chan-1",
+      trustLevel: "user",
       rootRunId: "run-root-1",
     });
 
@@ -419,6 +443,7 @@ describe("createCapabilityEndpoint — per-cap audit on the SOCKET DIRECT-METHOD
       caps: ["orch:message"],
       budgetRef: "budget-1",
       sessionKey: "tenant-sock:user-1:chan-1",
+      trustLevel: "user",
       rootRunId: "run-root-1",
     });
 

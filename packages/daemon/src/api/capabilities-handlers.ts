@@ -87,7 +87,7 @@ export interface CapabilitiesHandlerDeps {
   /** The default agent the self-scope falls back to (operator/CLI origin, or an unknown agent). */
   defaultAgentId: string;
   /** Tree-stable synthetic-root resolver. Absent ⇒ no live root ⇒ budget omitted. */
-  resolveRootRunId?: (sessionKey: SessionKey) => string;
+  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
   /** Structured logger for the content-free §2.7 instrumentation. */
   logger: ComisLogger;
 }
@@ -147,7 +147,7 @@ export function createCapabilitiesHandlers(
       let budget: ReturnType<BoundedAutonomy["snapshot"]>["budget"] | undefined;
       let outwardQuota: ReturnType<BoundedAutonomy["snapshot"]>["outwardQuota"] | undefined;
       const parsedKey = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
-      const rootRunId = parsedKey ? deps.resolveRootRunId?.(parsedKey) : undefined;
+      const rootRunId = parsedKey ? deps.resolveRootRunId?.(agentId, parsedKey) : undefined;
       if (rootRunId && deps.boundedAutonomy) {
         const snap = deps.boundedAutonomy.snapshot(rootRunId, agentId, "");
         budget = snap.budget;

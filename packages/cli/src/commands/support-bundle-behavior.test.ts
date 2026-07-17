@@ -156,7 +156,7 @@ describe("support-bundle json output", () => {
   });
 
   it("resolves config paths from the COMIS_CONFIG_PATHS environment when no --config flag is given", async () => {
-    envState = { COMIS_CONFIG_PATHS: "/a/config.yaml:/b/config.yaml" };
+    envState = { COMIS_CONFIG_PATHS: "/a/config.yaml,/b/config.yaml" };
     vi.mocked(generateSupportBundle).mockResolvedValue(degradedBundle as never);
 
     const program = createTestProgram();

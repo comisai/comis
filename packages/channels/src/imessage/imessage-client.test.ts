@@ -419,15 +419,44 @@ describe("createImsgClient", () => {
       expect(handler).not.toHaveBeenCalled();
     });
 
-    it("handles unparseable JSON lines gracefully", async () => {
+    it("handles unparseable JSON lines without logging their content", async () => {
       const logger = makeLogger();
       setupSpawnSuccess();
       const client = createImsgClient({ logger });
       await client.start();
 
-      readerLineHandler!("not json {{{");
+      const rawLine = "RAW_IMESSAGE_STDOUT_DO_NOT_LOG {{{";
+      readerLineHandler!(rawLine);
 
       expect(logger.debug).toHaveBeenCalled();
+      expect(JSON.stringify(logger.debug.mock.calls)).not.toContain(rawLine);
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ lineBytes: Buffer.byteLength(rawLine) }),
+        "imsg rpc: failed to parse line",
+      );
+    });
+
+    it("records stderr volume without logging child output", async () => {
+      const logger = makeLogger();
+      setupSpawnSuccess();
+      const client = createImsgClient({ logger });
+      await client.start();
+
+      const stderrHandler = mockStderr.on.mock.calls.find(
+        ([event]) => event === "data",
+      )?.[1] as ((chunk: Buffer) => void) | undefined;
+      expect(stderrHandler).toBeDefined();
+      const rawStderr = "RAW_IMESSAGE_STDERR_DO_NOT_LOG\nsecond line\n";
+      stderrHandler!(Buffer.from(rawStderr));
+
+      expect(JSON.stringify(logger.debug.mock.calls)).not.toContain("RAW_IMESSAGE_STDERR_DO_NOT_LOG");
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stderrBytes: Buffer.byteLength(rawStderr),
+          nonEmptyLineCount: 2,
+        }),
+        "imsg child process wrote stderr",
+      );
     });
   });
 });

@@ -31,6 +31,7 @@ function run(
     leaseIds: [],
     budgetConsumed: 0,
     cronOrigin: null,
+    trustLevel: "user",
     stepIndex: -1,
     status,
     lastHeartbeatAt,

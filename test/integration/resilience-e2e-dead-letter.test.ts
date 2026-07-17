@@ -130,7 +130,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
     });
 
     // Enqueue a failed announcement
-    dlq.enqueue({
+    await dlq.enqueue({
       announcementText: "Task complete: quantum research findings",
       channelType: "echo",
       channelId: "ch1",
@@ -139,9 +139,6 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
       attemptCount: 0,
       lastError: "sendToChannel failed",
     });
-
-    // Wait for fire-and-forget file append
-    await new Promise((r) => setTimeout(r, 100));
 
     // Verify entry was enqueued
     expect(dlq.size()).toBe(1);
@@ -202,7 +199,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
     });
 
     // Enqueue an entry
-    dlq.enqueue({
+    await dlq.enqueue({
       announcementText: "Expired announcement",
       channelType: "echo",
       channelId: "ch2",
@@ -212,7 +209,6 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
       lastError: "initial failure",
     });
 
-    await new Promise((r) => setTimeout(r, 100));
     expect(dlq.size()).toBe(1);
 
     // First drain: sendToChannel fails -> attemptCount goes to 1 (= maxRetries)
@@ -231,10 +227,10 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
     expect(dlq.size()).toBe(0);
     expect(secondSend).not.toHaveBeenCalled();
 
-    // Verify debug log about max retries exceeded
+    // Verify debug log about the attempt limit.
     expect(logger.debug).toHaveBeenCalledWith(
       expect.objectContaining({ runId: "run-2" }),
-      expect.stringContaining("max retries"),
+      expect.stringContaining("attempt limit"),
     );
   });
 
@@ -369,7 +365,7 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
     });
 
     // Enqueue an entry
-    dlq.enqueue({
+    await dlq.enqueue({
       announcementText: "Successfully delivered message",
       channelType: "echo",
       channelId: "ch4",
@@ -377,8 +373,6 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
       failedAt: Date.now(),
       attemptCount: 0,
     });
-
-    await new Promise((r) => setTimeout(r, 100));
 
     // Drain with successful sendToChannel
     const successSend = vi.fn().mockResolvedValue(true);

@@ -1,12 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Message } from "grammy/types";
-import { describe, expect, it, vi } from "vitest";
-import { mapGrammyToNormalized, type TelegramBotIdentity } from "./message-mapper.js";
+import { describe, expect, it } from "vitest";
+import {
+  mapGrammyToNormalized as mapTelegramUpdate,
+  type TelegramBotIdentity,
+} from "./message-mapper.js";
 
-// Mock crypto.randomUUID for deterministic test IDs
-vi.mock("node:crypto", () => ({
-  randomUUID: () => "550e8400-e29b-41d4-a716-446655440000",
-}));
+const TEST_BOT_IDENTITY: TelegramBotIdentity = {
+  id: 7777,
+  username: "comis_test_bot",
+};
+
+function mapGrammyToNormalized(
+  msg: Message,
+  chatId: number,
+  bot: TelegramBotIdentity = TEST_BOT_IDENTITY,
+) {
+  return mapTelegramUpdate(msg, chatId, "message", bot);
+}
 
 /** Helper to create a minimal text Message stub. */
 function stubTextMessage(overrides: Partial<Message> = {}): Message {
@@ -25,7 +36,7 @@ describe("message-mapper / mapGrammyToNormalized", () => {
     const msg = stubTextMessage();
     const result = mapGrammyToNormalized(msg, 123);
 
-    expect(result.id).toBe("550e8400-e29b-41d4-a716-446655440000");
+    expect(result.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(result.channelId).toBe("123");
     expect(result.channelType).toBe("telegram");
     expect(result.senderId).toBe("99");
@@ -72,11 +83,24 @@ describe("message-mapper / mapGrammyToNormalized", () => {
     expect(result.senderId).toBe("42");
   });
 
-  it("sets senderId to 'unknown' when msg.from is undefined", () => {
+  it("keeps an anonymous sender unique to its chat and message", () => {
     const msg = stubTextMessage({ from: undefined });
 
     const result = mapGrammyToNormalized(msg, 123);
-    expect(result.senderId).toBe("unknown");
+    expect(result.senderId).toBe("unknown:123:42");
+    expect(result.metadata.telegramSenderOrigin).toBe("unknown");
+  });
+
+  it("uses sender_chat identity instead of Telegram's anonymous service user", () => {
+    const msg = stubTextMessage({
+      from: { id: 1087968824, is_bot: true, first_name: "GroupAnonymousBot" },
+      sender_chat: { id: -100777, type: "channel", title: "Operators" },
+    });
+
+    const result = mapGrammyToNormalized(msg, -100123);
+
+    expect(result.senderId).toBe("chat:-100777");
+    expect(result.metadata.telegramSenderOrigin).toBe("chat");
   });
 
   it("uses chatId parameter as channelId (not message_id)", () => {
@@ -98,6 +122,78 @@ describe("message-mapper / mapGrammyToNormalized", () => {
     const result = mapGrammyToNormalized(msg, 123);
 
     expect(result.metadata.telegramMessageId).toBe(777);
+  });
+
+  it("derives a stable normalized id from the Telegram chat and message ids", () => {
+    const msg = stubTextMessage({ message_id: 777 });
+
+    const first = mapGrammyToNormalized(msg, -100123);
+    const replay = mapGrammyToNormalized(msg, -100123);
+    const otherMessage = mapGrammyToNormalized(
+      stubTextMessage({ message_id: 778 }),
+      -100123,
+    );
+    const otherChat = mapGrammyToNormalized(msg, -100124);
+
+    expect(mapGrammyToNormalized(msg, 123).id).toBe(
+      "f146379e-974b-53f4-9f63-f4ff81a1f1f1",
+    );
+    expect(replay.id).toBe(first.id);
+    expect(otherMessage.id).not.toBe(first.id);
+    expect(otherChat.id).not.toBe(first.id);
+  });
+
+  it("scopes stable normalized ids to the receiving Telegram bot account", () => {
+    const msg = stubTextMessage({ message_id: 777 });
+    const firstBot = mapGrammyToNormalized(msg, -100123, {
+      id: 7001,
+      username: "first_bot",
+    });
+    const firstBotReplay = mapGrammyToNormalized(msg, -100123, {
+      id: 7001,
+      username: "renamed_first_bot",
+    });
+    const secondBot = mapGrammyToNormalized(msg, -100123, {
+      id: 7002,
+      username: "second_bot",
+    });
+
+    expect(firstBotReplay.id).toBe(firstBot.id);
+    expect(secondBot.id).not.toBe(firstBot.id);
+  });
+
+  it("assigns replay-stable identities to distinct edited revisions", () => {
+    const original = stubTextMessage({
+      message_id: 777,
+      text: "Original body",
+    });
+    const firstEdit = stubTextMessage({
+      message_id: 777,
+      text: "First edited body",
+      edit_date: 1700000001,
+    });
+    const sameSecondEdit = stubTextMessage({
+      message_id: 777,
+      text: "Second edited body",
+      edit_date: 1700000001,
+    });
+
+    const mappedOriginal = mapTelegramUpdate(original, 123, "message", TEST_BOT_IDENTITY);
+    const mappedFirstEdit = mapTelegramUpdate(firstEdit, 123, "edited_message", TEST_BOT_IDENTITY);
+    const replayedFirstEdit = mapTelegramUpdate(firstEdit, 123, "edited_message", TEST_BOT_IDENTITY);
+    const mappedSecondEdit = mapTelegramUpdate(
+      sameSecondEdit,
+      123,
+      "edited_message",
+      TEST_BOT_IDENTITY,
+    );
+
+    expect(mappedFirstEdit.id).not.toBe(mappedOriginal.id);
+    expect(replayedFirstEdit.id).toBe(mappedFirstEdit.id);
+    expect(mappedSecondEdit.id).not.toBe(mappedFirstEdit.id);
+    expect(mappedFirstEdit.timestamp).toBe(1700000001 * 1000);
+    expect(mappedFirstEdit.metadata.telegramUpdateKind).toBe("edited_message");
+    expect(mappedFirstEdit.metadata.telegramEditDate).toBe(1700000001);
   });
 
   it("includes telegramChatType in metadata", () => {
@@ -236,7 +332,7 @@ describe("message-mapper / mapGrammyToNormalized", () => {
   });
 
   describe("bot addressing detection", () => {
-    const bot: TelegramBotIdentity = { id: 7777, username: "comis_test_bot" };
+    const bot = TEST_BOT_IDENTITY;
 
     it("flags isBotMentioned for @username mention entity matching the bot", () => {
       const text = "@comis_test_bot please summarize";
@@ -368,18 +464,15 @@ describe("message-mapper / mapGrammyToNormalized", () => {
       expect(result.metadata.isBotMentioned).toBe(true);
     });
 
-    it("omits all addressing flags when bot identity is not provided (back-compat)", () => {
+    it("uses the receiving account identity when evaluating message addressing", () => {
       const text = "@comis_test_bot please summarize";
       const msg = stubTextMessage({
         chat: { id: -1001234, type: "supergroup", title: "Group" } as Partial<Message["chat"]>,
         text,
         entities: [{ type: "mention", offset: 0, length: "@comis_test_bot".length }],
       } as Partial<Message>);
-      // Existing 2-arg call signature must continue to work and must NOT
-      // populate addressing flags — the adapter is responsible for passing
-      // the bot identity once getMe() succeeds.
       const result = mapGrammyToNormalized(msg, -1001234);
-      expect(result.metadata).not.toHaveProperty("isBotMentioned");
+      expect(result.metadata.isBotMentioned).toBe(true);
       expect(result.metadata).not.toHaveProperty("replyToBot");
       expect(result.metadata).not.toHaveProperty("isBotCommand");
     });

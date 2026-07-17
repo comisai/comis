@@ -4,8 +4,11 @@
 export {
   // NormalizedMessage
   AttachmentSchema,
+  INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
   NormalizedMessageSchema,
   parseMessage,
+  parseInboundMessageProvenanceBatch,
+  getOriginalInboundMessages,
   getMessageTraceId,
   // NormalizedReaction
   NormalizedReactionSchema,
@@ -53,6 +56,10 @@ export {
   // DeliveryOrigin
   DeliveryOriginSchema,
   createDeliveryOrigin,
+  DeliveryStatusSchema,
+  DeliveryFailureStageSchema,
+  parseDeliveryFailureStage,
+  parseDeliveryStatus,
   // ExecutionGraph
   NodeStatusSchema,
   GraphStatusSchema,
@@ -100,6 +107,7 @@ export { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "../provider/ke
 
 export type {
   Attachment,
+  OriginalInboundMessage,
   NormalizedMessage,
   NormalizedReaction,
   TrustLevel,
@@ -124,6 +132,7 @@ export type {
   RichCard,
   RichEffect,
   ApprovalRequest,
+  ApprovalCallbackOwner,
   ApprovalResolution,
   SerializedApprovalRequest,
   SerializedApprovalCacheEntry,
@@ -131,6 +140,8 @@ export type {
   CredentialMapping,
   SecretRef,
   DeliveryOrigin,
+  DeliveryStatus,
+  DeliveryFailureStage,
   // ExecutionGraph
   NodeStatus,
   GraphStatus,

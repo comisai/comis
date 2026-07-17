@@ -20,7 +20,12 @@
 import type { AppContainer, AppConfig } from "@comis/core";
 import { systemDateFrom } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor, CostTracker } from "@comis/agent";
+import type {
+  AgentExecutor,
+  BackgroundSessionResolver,
+  ComisSessionManager,
+  CostTracker,
+} from "@comis/agent";
 import type { MemoryApi, SqliteMemoryAdapter, createEmbeddingQueue, createSessionStore } from "@comis/memory";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import { dirname, resolve } from "node:path";
@@ -119,6 +124,8 @@ export interface GatewayDeps {
   sessionStore: ReturnType<typeof createSessionStore>;
   /** Resolver for per-agent executors. */
   getExecutor: (agentId: string) => AgentExecutor;
+  /** Resolver for exact live-run cancellation on HTTP disconnect. */
+  sessionResolver: BackgroundSessionResolver;
   /** Deterministic unattended honest-fail backstop (webhook-claude-cli-tdd-20260701): reap the LIVE
    *  never-tasked drives a webhook turn left behind so the delivery is an honest failure, not a silent
    *  success. Threaded into the webhook route. Absent ⇒ inert. */
@@ -143,19 +150,10 @@ export interface GatewayDeps {
   /** Daemon startup timestamp (ms since epoch) -- surfaced as ISO on /health. */
   startupStartMs: number;
   /** Per-agent JSONL session adapters for pi-executor /new /reset /status commands. */
-  piSessionAdapters?: Map<string, {
-    destroySession(key: SessionKey): Promise<void>;
-    getSessionStats(key: SessionKey): {
-      messageCount: number;
-      createdAt?: number;
-      tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
-      cost?: number;
-      userMessages?: number;
-      assistantMessages?: number;
-      toolCalls?: number;
-      toolResults?: number;
-    } | undefined;
-  }>;
+  piSessionAdapters?: Map<
+    string,
+    Pick<ComisSessionManager, "destroySession" | "getSessionStats" | "persistInboundMessage">
+  >;
   /** Complete three-layer conversation forget for slash /new + /reset
    *  (createConversationReset — live finding 2026-06-11). */
   destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
@@ -244,6 +242,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     cachedPort,
     sessionStore,
     getExecutor,
+    sessionResolver,
     reapNeverTaskedDrives,
     assembleToolsForAgent,
     preprocessMessageText,
@@ -414,6 +413,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     gwConfig,
     tokenStore,
     getExecutor,
+    sessionResolver,
     reapNeverTaskedDrives,
     assembleToolsForAgent,
     preprocessMessageText,

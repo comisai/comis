@@ -10,7 +10,9 @@ Comis uses a `TypedEventBus` for cross-module communication. Instead of packages
 
 The `TypedEventBus` wraps Node.js `EventEmitter` with a type-safe generic interface. All typed events are defined in the `EventMap` interface, which is composed from 5 domain-specific sub-interfaces (`MessagingEvents`, `AgentEvents`, `ChannelEvents`, `InfraEvents`, `TerminalEvents`).
 
-API methods include `emit()`, `on()`, `off()`, `once()`, `removeAllListeners()`, `listenerCount()`, and `setMaxListeners()`. All methods are constrained by `EventMap` -- you cannot emit an event name that does not exist in the map, and every payload is type-checked at compile time.
+API methods include `emit()`, `emitSafely()`, `on()`, `off()`, `once()`, `removeAllListeners()`, `listenerCount()`, and `setMaxListeners()`. All methods are constrained by `EventMap` -- you cannot emit an event name that does not exist in the map, and every payload is type-checked at compile time.
+
+Use `emit()` when subscriber failure is part of the publisher's control flow and must surface. Use `emitSafely()` for observational notifications after an authoritative state change or external side effect. It invokes every subscriber in registration order, contains synchronous throws, and contains promise rejections without delaying the publisher. Publishers must log both the immediate `failures` and the asynchronously resolved `pendingFailures` with bounded, sanitized error metadata; neither failure path may alter the authoritative result.
 
 ```typescript
 import type { TypedEventBus, EventMap } from "@comis/core";
@@ -92,9 +94,10 @@ Message lifecycle, session management, subagent lifecycle, compaction, context e
 | `execution:prompt_timeout` | agentId, sessionKey, timeoutMs, timestamp |
 | `execution:signed_replay_recovered` | agentId, sessionKey, blocksRemoved, thoughtSignaturesStripped, succeeded, timestamp |
 | `message:received` | message, sessionKey |
-| `message:sent` | channelId, messageId, content |
+| `message:terminal` | channelType, channelId, sourceMessageId, outcome, reason, timestamp |
+| `message:sent` | channelType, channelId, messageId, content, sourceChannelType, sourceChannelId, sourceMessageId |
 | `message:streaming` | channelId, messageId, delta, accumulated |
-| `response:filtered` | channelId, suppressedBy, timestamp |
+| `response:filtered` | channelType, channelId, sourceMessageId, suppressedBy, timestamp |
 | `session:created` | sessionKey, timestamp |
 | `session:expired` | sessionKey, reason |
 | `session:cross_send` | fromSessionKey, toSessionKey, mode, timestamp |
@@ -289,8 +292,8 @@ Approval gates, config patches, plugin lifecycle, hook execution, auth token rot
 | `config:patched` | section, key, patchedBy, timestamp |
 | `diagnostic:billing_snapshot` | providers, totalCost, timestamp |
 | `diagnostic:channel_health` | channels, timestamp |
-| `diagnostic:message_processed` | messageId, channelId, channelType, agentId, sessionKey, receivedAt, executionDurationMs, deliveryDurationMs, totalDurationMs, tokensUsed, cost, success, finishReason, timestamp |
-| `diagnostic:webhook_delivered` | webhookId, source, event, statusCode, success, durationMs, error, timestamp |
+| `diagnostic:message_processed` | messageId, channelId, channelType, agentId, sessionKey, receivedAt, executionDurationMs, deliveryDurationMs, totalDurationMs, tokensUsed, cost, status, finishReason, failureStage, errorKind, timestamp |
+| `diagnostic:webhook_delivered` | webhookId, source, event, statusCode, success, durationMs, failureReason, timestamp |
 | `hook:executed` | hookName, pluginId, durationMs, success, error, timestamp |
 | `mcp:server:connected` | serverName, transport, toolCount, durationMs, timestamp |
 | `mcp:server:connect_failed` | serverName, transport, reason, timestamp |

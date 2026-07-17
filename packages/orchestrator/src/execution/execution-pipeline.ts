@@ -2,91 +2,66 @@
 /**
  * Execution Pipeline: Thin orchestrator for outbound delivery.
  *
- * Delegates to 3 focused phase modules (the former execution-policy phase
- * was inlined directly into the executeAndDeliver body — its 5 PolicyDeps
- * fields already lived on ExecutionPipelineDeps, so the seam was pure
- * cosmetic):
- *   1. execution-execute — LLM execution with timeout, thinking filter, abort
- *   2. execution-filter  — response sanitization, filtering, media, voice, prefix
- *   3. execution-deliver — chunking, coalescing, block pacing, delivery
- *
- * The pre-execute send-policy gate, sender trust resolution, and elevated
- * reply routing are now an inline block at the head of executeAndDeliver
- * (Stage 1 marker below).
+ * Delegates policy/routing, LLM execution, response filtering, and delivery
+ * to focused phase modules while retaining exact-once lifecycle ownership.
  *
  * @module
  */
 
-import { randomUUID } from "node:crypto";
-import type { ChannelPort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryQueuePort, DeliveryService } from "@comis/core";
+import type { ChannelPort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryQueuePort, DeliveryService, ErrorKind } from "@comis/core";
 import type { PerChannelStreamingConfig, StreamingConfig } from "@comis/core";
-import { PerChannelStreamingConfigSchema } from "@comis/core";
+import { ERROR_KINDS } from "@comis/core";
 import type { SendPolicyConfig, ElevatedReplyConfig } from "@comis/core";
-import type { SendMessageOptions } from "@comis/core";
-import { formatSessionKey, runWithContext, tryGetContext, createDeliveryOrigin, systemNowMs, narrowChatType } from "@comis/core";
+import { formatSessionKey, tryGetContext, systemNowMs, narrowChatType, toSafeErrorLogString } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 // The orchestrator imports ONLY the core activity port + types (never
 // the @comis/observability implementation). The ActivityStreamPort
 // impl + the per-channel renderer are injected at the daemon composition root.
-import type { ActivityStreamPort, TurnActivityContext, TurnOutcome } from "@comis/core";
+import type {
+  ActivityStreamPort,
+  TurnActivityContext,
+  TurnOutcome,
+} from "@comis/core";
 import type { ActivityTurnCoordinator } from "./activity-turn-coordinator.js";
 import type { Result } from "@comis/shared";
-import type { AgentExecutor } from "@comis/agent";
-import type { CommandDirectives } from "../commands/index.js";
+import { fromPromise, tryCatch } from "@comis/shared";
+import type { AgentExecutor, InboundMessageProvenancePlan } from "@comis/agent";
 // Relative path used because orchestrator cannot import its own published name.
 import type { CommandQueue } from "../queue/command-queue.js";
 
-import { isGroupMessage, evaluateSendPolicy, applySessionOverride } from "@comis/channels";
 import type {
   BlockPacer,
   TypingLifecycleController,
   ChannelRegistry,
   SendOverrideStore,
-  SendPolicyContext,
   VoiceResponsePipelineDeps,
 } from "@comis/channels";
 import type { RetryEngine } from "@comis/core";
 
-// Pipeline-stage imports
-// Note: the former send-policy phase body (formerly a sibling source file
-// exporting one phase function + PolicyDeps + PolicyResult) was inlined
-// directly into executeAndDeliver below. The 5 deps fields (eventBus,
-// logger, sendPolicyConfig, getElevatedReplyConfig, channelRegistry)
-// already live on ExecutionPipelineDeps — no interface change required.
 import { executeLlm } from "./execution-execute.js";
-import { filterExecutionResponse } from "./execution-filter.js";
+import {
+  filterExecutionResponse,
+} from "./execution-filter.js";
 import { deliverExecutionResponse } from "./execution-deliver.js";
+import { emitObservationalEvent } from "./execution-event-emitter.js";
+import { createMediaDeliveryFailureReceipt } from "./execution-media-receipt.js";
+import { runExecutionPolicy } from "./execution-policy.js";
 import { mapAbortToTurnOutcome } from "./turn-outcome-mapper.js";
+import {
+  classifyExecutionAbortReason,
+  classifyExecutionFinishReason,
+  type LifecycleOutcome,
+} from "./execution-lifecycle-outcome.js";
+import {
+  createSourceTerminalScope,
+  type SourceTerminalScope,
+} from "../source-message-terminal.js";
 
-// ---------------------------------------------------------------------------
-// Platform-specific configuration
-// ---------------------------------------------------------------------------
-
-/**
- * Metadata keys that carry thread context -- must be propagated to followup messages.
- * Mirror of TELEGRAM_THREAD_META_KEYS in thread-context.ts -- kept in sync via
- * cross-reference unit test.
- */
-export const THREAD_PROPAGATION_KEYS = [
-  "threadId", "telegramThreadId", "telegramIsForum", "telegramThreadScope",
-] as const;
-
-/**
- * Build thread-related SendMessageOptions from inbound message metadata.
- * Returns undefined when no thread context present.
- */
-export function buildThreadSendOpts(
-  metadata?: Record<string, unknown>,
-): Pick<SendMessageOptions, "threadId" | "extra"> | undefined {
-  const threadId = metadata?.threadId as string | undefined;
-  if (!threadId) return undefined;
-  return {
-    threadId,
-    extra: metadata?.telegramThreadScope
-      ? { telegramThreadScope: metadata.telegramThreadScope }
-      : undefined,
-  };
-}
+export {
+  buildThreadSendOpts,
+  resolveStreamingConfig,
+  THREAD_PROPAGATION_KEYS,
+} from "./execution-routing-config.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -145,53 +120,6 @@ export interface ExecutionPipelineDeps {
 }
 
 // ---------------------------------------------------------------------------
-// Streaming config resolution
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve per-channel streaming configuration.
- *
- * Priority: per-channel override > global defaults > hardcoded defaults.
- */
-export function resolveStreamingConfig(
-  channelType: string,
-  streamingConfig?: StreamingConfig,
-): PerChannelStreamingConfig {
-  // No global streaming config provided — return the per-channel schema defaults.
-  // (Schema is the single source of truth; no inline literals.)
-  //
-  // Documented deviation: the `StreamingConfigSchema.parse({})` lane is
-  // satisfied at AppConfig parse time (operator YAML → AppConfig in
-  // packages/core/src/config); inside this resolver we only use
-  // `PerChannelStreamingConfigSchema.parse({})` because the resolver's
-  // return type is `PerChannelStreamingConfig`, not `StreamingConfig`.
-  if (!streamingConfig) {
-    return PerChannelStreamingConfigSchema.parse({});
-  }
-
-  // Per-channel override wins over globals.
-  const perChannel = streamingConfig.perChannel[channelType];
-  if (perChannel) return perChannel;
-
-  // No per-channel override — merge schema defaults with global default* fields.
-  return {
-    ...PerChannelStreamingConfigSchema.parse({}),
-    enabled: streamingConfig.enabled,
-    chunkMode: streamingConfig.defaultChunkMode,
-    chunkMinChars: streamingConfig.defaultChunkMinChars,
-    deliveryTiming: streamingConfig.defaultDeliveryTiming,
-    coalescer: streamingConfig.defaultCoalescer,
-    typingMode: streamingConfig.defaultTypingMode,
-    typingRefreshMs: streamingConfig.defaultTypingRefreshMs,
-    typingCircuitBreakerThreshold: streamingConfig.defaultTypingCircuitBreakerThreshold,
-    typingTtlMs: streamingConfig.defaultTypingTtlMs,
-    useMarkdownIR: streamingConfig.defaultUseMarkdownIR,
-    tableMode: streamingConfig.defaultTableMode,
-    replyMode: streamingConfig.defaultReplyMode,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Main execution pipeline (thin orchestrator)
 // ---------------------------------------------------------------------------
 
@@ -213,42 +141,160 @@ export async function executeAndDeliver(
   sendOverrides: SendOverrideStore,
   typingLifecycle?: TypingLifecycleController,
   directives?: Record<string, unknown>,
+  ingressReceivedAt?: number,
+  sourceTerminalScope?: SourceTerminalScope,
+  queueSignal?: AbortSignal,
+  inboundProvenancePlans: readonly InboundMessageProvenancePlan[] = [],
 ): Promise<void> {
   // Track lifecycle timing for diagnostic:message_processed event
-  const receivedAt = systemNowMs();
+  const executionEnteredAt = systemNowMs();
+  const receivedAt =
+    ingressReceivedAt !== undefined &&
+    Number.isSafeInteger(ingressReceivedAt) &&
+    ingressReceivedAt > 0
+      ? Math.min(ingressReceivedAt, executionEnteredAt)
+      : executionEnteredAt;
+  let executionStartedAt: number | undefined;
+  let executionCompletedAt: number | undefined;
+  let diagnosticEmitted = false;
+  let knownUsage: {
+    tokensUsed: number;
+    cost: number;
+    finishReason: string;
+    toolCalls: number | null;
+    llmCalls: number | null;
+  } | undefined;
+  let rejectionStage: "execution" | "delivery" = "execution";
+  let rejectionErrorKind: ErrorKind = "internal";
+  let coordinator: ActivityTurnCoordinator | undefined;
+  let coordinatorStarted = false;
+  let coordinatorFinalized = false;
+  let executionCleanup: (() => void) | undefined;
+  const terminalScope = sourceTerminalScope ?? createSourceTerminalScope(
+    deps,
+    effectiveMsg,
+    adapter.channelType,
+  );
 
-  /** Emit diagnostic:message_processed with current lifecycle state. */
+  function logContainedFailure(
+    error: Error,
+    cleanupStep: string,
+    hint: string,
+    message: string,
+  ): void {
+    // Logging must not turn an already-contained observability/cleanup failure
+    // into the primary turn failure.
+    tryCatch(() => deps.logger.warn({
+      err: toSafeErrorLogString(error),
+      cleanupStep,
+      hint,
+      errorKind: "internal" as const,
+    }, message));
+  }
+
+  function classifyRejectionError(error: Error, fallback: ErrorKind): ErrorKind {
+    const classified = tryCatch(() => {
+      if (typeof error === "object" && error !== null && "errorKind" in error) {
+        const candidate = (error as { errorKind?: unknown }).errorKind;
+        if (typeof candidate === "string") {
+          return ERROR_KINDS.find((kind) => kind === candidate) ?? fallback;
+        }
+      }
+      return fallback;
+    });
+    return classified.ok ? classified.value : fallback;
+  }
+
+  /** Emit diagnostic:message_processed once without coupling observers to the turn. */
   function emitDiagnostic(
     tokensUsed: number,
     cost: number,
     finishReason: string,
+    outcome: LifecycleOutcome,
     callCounts: { toolCalls: number | null; llmCalls: number | null },
+    completedAt = systemNowMs(),
   ): void {
-    deps.eventBus.emit("diagnostic:message_processed", {
-      messageId: effectiveMsg.id,
-      channelId: effectiveMsg.channelId,
-      channelType: adapter.channelType,
-      agentId,
-      sessionKey: formatSessionKey(sessionKey),
-      // Carry the turn's trajectory id so the Verified Learning correction
-      // writer can record the prior completed trajectory for a single-agent turn
-      // off the PAYLOAD (this emit runs outside the executor's runWithContext). The
-      // ingress context reuses the trajectory traceId; absent only on non-context
-      // paths (the writer then fails closed).
-      traceId: tryGetContext()?.traceId,
-      toolCalls: callCounts.toolCalls,
-      llmCalls: callCounts.llmCalls,
-      receivedAt,
-      executionDurationMs: systemNowMs() - receivedAt,
-      deliveryDurationMs: 0,
-      totalDurationMs: systemNowMs() - receivedAt,
-      tokensUsed,
-      cost,
-      success: true,
-      finishReason,
-      timestamp: systemNowMs(),
-    });
+    if (diagnosticEmitted) return;
+    diagnosticEmitted = true;
+    const boundedCompletedAt = Math.max(receivedAt, completedAt);
+    const boundedExecutionCompletedAt = Math.min(
+      boundedCompletedAt,
+      Math.max(receivedAt, executionCompletedAt ?? boundedCompletedAt),
+    );
+    const boundedExecutionStartedAt = Math.min(
+      boundedExecutionCompletedAt,
+      Math.max(receivedAt, executionStartedAt ?? boundedExecutionCompletedAt),
+    );
+    const executionDurationMs = boundedExecutionCompletedAt - boundedExecutionStartedAt;
+    const totalDurationMs = boundedCompletedAt - receivedAt;
+    emitObservationalEvent(deps, "diagnostic:message_processed", {
+        messageId: effectiveMsg.id,
+        channelId: effectiveMsg.channelId,
+        channelType: adapter.channelType,
+        agentId,
+        sessionKey: formatSessionKey(sessionKey),
+        // Carry the turn's trajectory id so the Verified Learning correction
+        // writer can record the prior completed trajectory for a single-agent turn
+        // off the payload without depending on subscriber-time ALS. The inbound
+        // context retains the trajectory traceId throughout the turn; absent only
+        // on direct non-entry calls (the writer then fails closed).
+        traceId: tryGetContext()?.traceId,
+        toolCalls: callCounts.toolCalls,
+        llmCalls: callCounts.llmCalls,
+        status: outcome.status,
+        ...(outcome.failureStage !== undefined ? { failureStage: outcome.failureStage } : {}),
+        ...(outcome.errorKind !== undefined ? { errorKind: outcome.errorKind } : {}),
+        receivedAt,
+        executionDurationMs,
+        deliveryDurationMs: boundedCompletedAt - boundedExecutionCompletedAt,
+        totalDurationMs,
+        tokensUsed,
+        cost,
+        finishReason,
+        timestamp: boundedCompletedAt,
+      });
+    terminalScope.publish(
+      outcome.status,
+      "execution_completed",
+      boundedCompletedAt,
+    );
   }
+
+  async function finalizeCoordinator(outcome: TurnOutcome): Promise<void> {
+    if (!coordinator || !coordinatorStarted || coordinatorFinalized) return;
+    coordinatorFinalized = true;
+    const finalized = await fromPromise(coordinator.finalize(outcome));
+    if (!finalized.ok) {
+      logContainedFailure(
+        finalized.error,
+        "coordinator_finalize",
+        "Check the activity renderer; the authoritative delivery lifecycle and any primary failure were preserved",
+        "Activity coordinator finalization failed",
+      );
+    }
+  }
+
+  async function stopForQueueAbort(): Promise<boolean> {
+    if (!queueSignal?.aborted) return false;
+    const usage = knownUsage ?? {
+      tokensUsed: 0,
+      cost: 0,
+      finishReason: "aborted",
+      toolCalls: null,
+      llmCalls: null,
+    };
+    emitDiagnostic(
+      usage.tokensUsed,
+      usage.cost,
+      usage.finishReason,
+      { status: "aborted" },
+      { toolCalls: usage.toolCalls, llmCalls: usage.llmCalls },
+    );
+    await finalizeCoordinator({ kind: "aborted", reason: "user_cancel" });
+    return true;
+  }
+
+  const pipelineResult = await fromPromise((async (): Promise<void> => {
 
   // Resolve tools for this agent.
   // Pass sessionKey so setup-tools can thread the session's persistent
@@ -264,150 +310,58 @@ export async function executeAndDeliver(
       "Tools assembled for agent",
     );
   }
+  if (await stopForQueueAbort()) return;
 
-  // ===================================================================
-  // Stage 1: Send policy gate, trust level, elevated reply routing
-  // (Inlined from the former send-policy phase module — 5 deps fields
-  // already lived on ExecutionPipelineDeps.)
-  // ===================================================================
-
-  // Capability-driven config lookup (falls back to hardcoded maps)
-  const caps = deps.channelRegistry?.getCapabilities(adapter.channelType);
-  const metaKey = caps?.replyToMetaKey;
-  // In DMs, skip reply-to for visible-quote channels -- quoting the user's own
-  // message adds noise in 1-on-1 chats. Channels that thread via invisible
-  // headers (email: In-Reply-To/References) declare threadReplyInDm so a 1:1
-  // reply still threads instead of starting a fresh thread each time.
-  const replyTo =
-    (isGroupMessage(originalMsg) || caps?.threadReplyInDm) && metaKey && originalMsg.metadata?.[metaKey]
-      ? String(originalMsg.metadata[metaKey])
-      : undefined;
-
-  // Resolve sender trust level from elevatedReply config (defaults to "user")
-  let trustLevel: "guest" | "user" | "admin" = "user";
-  if (deps.getElevatedReplyConfig) {
-    const elevCfg = deps.getElevatedReplyConfig(agentId);
-    if (elevCfg?.enabled) {
-      const senderId = effectiveMsg.senderId;
-      const mapped = elevCfg.senderTrustMap[senderId] ?? elevCfg.defaultTrustLevel;
-      if (mapped === "admin" || mapped === "user" || mapped === "guest") {
-        trustLevel = mapped;
-      }
-    }
-  }
-
-  // -------------------------------------------------------------------
-  // SEND POLICY GATE (checked once before any delivery path)
-  // -------------------------------------------------------------------
-  if (deps.sendPolicyConfig?.enabled) {
-    const policyCtx: SendPolicyContext = {
-      channelId: adapter.channelId,
-      channelType: adapter.channelType,
-      chatType: originalMsg.chatType ?? "dm",
-    };
-    let policyDecision = evaluateSendPolicy(policyCtx, deps.sendPolicyConfig);
-
-    // Apply per-session override
-    const overrideKey = formatSessionKey(sessionKey);
-    const override = sendOverrides.get(overrideKey);
-    policyDecision = applySessionOverride(policyDecision, override);
-
-    if (!policyDecision.allowed) {
-      deps.eventBus.emit("sendpolicy:denied", {
-        channelId: adapter.channelId,
-        channelType: adapter.channelType,
-        chatType: policyCtx.chatType,
-        reason: policyDecision.reason,
-        timestamp: systemNowMs(),
-      });
-      deps.logger.info(
-        { channelId: adapter.channelId, reason: policyDecision.reason },
-        "Send policy denied outbound message",
-      );
-
-      // Still execute the agent (for session history), just skip sending.
-      // (Silent-execute path preserved verbatim from pre-inline pipeline —
-      // one of two executor.execute call sites.)
-      const policyResult = await runWithContext({
-        // Same reuse pattern as execution-execute.ts.
-        // Policy-retry path inherits the ingress traceId.
-        traceId: tryGetContext()?.traceId ?? randomUUID(),
-        tenantId: sessionKey.tenantId,
-        userId: sessionKey.userId,
-        // Stamp the resolved agentId onto the ALS for
-        // context-consistency with the main execute path (execution-execute.ts).
-        // This branch skips the SEND, but keeping agentId on the context avoids a
-        // divergent ALS shape between the two executor entry points.
-        agentId,
-        sessionKey: formatSessionKey(sessionKey),
-        startedAt: systemNowMs(),
-        trustLevel,
-        channelType: adapter.channelType,
-        deliveryOrigin: createDeliveryOrigin({
-          channelType: adapter.channelType,
-          channelId: effectiveMsg.channelId,
-          userId: sessionKey.userId,
-          threadId: effectiveMsg.metadata?.threadId as string | undefined,
-          tenantId: sessionKey.tenantId,
-        }),
-      }, () => executor.execute(effectiveMsg, sessionKey, tools, undefined, agentId, directives as CommandDirectives | undefined, undefined, { operationType: "interactive" as const }));
-      emitDiagnostic(
-        policyResult.tokensUsed.total,
-        policyResult.cost.total,
-        policyResult.finishReason,
-        {
-          toolCalls: policyResult.stepsExecuted,
-          llmCalls: policyResult.llmCalls,
-        },
-      );
-      return;
-    }
-
-    deps.eventBus.emit("sendpolicy:allowed", {
-      channelId: adapter.channelId,
-      channelType: adapter.channelType,
-      chatType: policyCtx.chatType,
-      reason: policyDecision.reason,
-      timestamp: systemNowMs(),
+  let policy;
+  try {
+    policy = await runExecutionPolicy({
+      deps,
+      adapter,
+      effectiveMsg,
+      originalMsg,
+      executor,
+      sessionKey,
+      agentId,
+      sendOverrides,
+      ...(tools === undefined ? {} : { tools }),
+      ...(directives === undefined ? {} : { directives }),
+      inboundProvenancePlans,
+      onExecutionStart: () => { executionStartedAt = systemNowMs(); },
+      onExecutionComplete: () => { executionCompletedAt = systemNowMs(); },
     });
+  } catch (error) {
+    emitDiagnostic(
+      0,
+      0,
+      "error",
+      { status: "error", failureStage: "execution", errorKind: "internal" },
+      { toolCalls: null, llmCalls: null },
+      executionCompletedAt,
+    );
+    // @allow-throw: inbound channel boundary converts executor rejection to its user-visible degraded response.
+    throw error;
   }
-
-  // -------------------------------------------------------------------
-  // ELEVATED REPLY MODE (mutates effectiveMsg via parameter rebind)
-  // -------------------------------------------------------------------
-  if (deps.getElevatedReplyConfig) {
-    const elevConfig = deps.getElevatedReplyConfig(agentId);
-    if (elevConfig?.enabled) {
-      const senderId = effectiveMsg.senderId;
-      const tl = elevConfig.senderTrustMap[senderId] ?? elevConfig.defaultTrustLevel;
-      const modelRoute = elevConfig.trustModelRoutes[tl];
-      if (modelRoute) {
-        deps.eventBus.emit("elevated:model_routed", {
-          sessionKey: formatSessionKey(sessionKey),
-          senderTrustLevel: tl,
-          modelRoute,
-          agentId,
-          timestamp: systemNowMs(),
-        });
-        effectiveMsg = {
-          ...effectiveMsg,
-          metadata: {
-            ...(effectiveMsg.metadata ?? {}),
-            modelRoute,
-          },
-        };
-      }
-      const promptOverride = elevConfig.trustPromptOverrides[tl];
-      if (promptOverride) {
-        effectiveMsg = {
-          ...effectiveMsg,
-          metadata: {
-            ...(effectiveMsg.metadata ?? {}),
-            systemPromptOverride: promptOverride,
-          },
-        };
-      }
-    }
+  effectiveMsg = policy.effectiveMsg;
+  const { replyTo, trustLevel } = policy;
+  if (policy.kind === "denied") {
+    const policyResult = policy.result;
+    knownUsage = {
+      tokensUsed: policyResult.tokensUsed.total,
+      cost: policyResult.cost.total,
+      finishReason: policyResult.finishReason,
+      toolCalls: policyResult.stepsExecuted,
+      llmCalls: policyResult.llmCalls,
+    };
+    if (await stopForQueueAbort()) return;
+    const policyLifecycle = classifyExecutionFinishReason(policyResult.finishReason);
+    emitDiagnostic(
+      policyResult.tokensUsed.total,
+      policyResult.cost.total,
+      policyResult.finishReason,
+      policyLifecycle.status === "success" ? { status: "filtered" } : policyLifecycle,
+      { toolCalls: policyResult.stepsExecuted, llmCalls: policyResult.llmCalls },
+    );
+    return;
   }
 
   // ===================================================================
@@ -421,7 +375,6 @@ export async function executeAndDeliver(
   // injected (the daemon composition root supplies them); otherwise the turn
   // runs without the activity coordinator.
   // ===================================================================
-  let coordinator: ActivityTurnCoordinator | undefined;
   if (deps.activityStreamPort && deps.coordinatorFactory) {
     const traceId = tryGetContext()?.traceId ?? formatSessionKey(sessionKey);
     const turnCtx: TurnActivityContext = {
@@ -438,36 +391,95 @@ export async function executeAndDeliver(
     };
     coordinator = deps.coordinatorFactory(turnCtx);
     coordinator.start(turnCtx);
-  }
-
-  // Finalize the coordinator exactly once with the turn's outcome (the delete
-  // gate lives inside finalize). Idempotent: subsequent calls no-op so each
-  // early-return path can finalize and the finally can dispose safely.
-  let coordinatorFinalized = false;
-  async function finalizeCoordinator(outcome: TurnOutcome): Promise<void> {
-    if (!coordinator || coordinatorFinalized) return;
-    coordinatorFinalized = true;
-    await coordinator.finalize(outcome);
+    coordinatorStarted = true;
   }
 
   // Stage 2: LLM execution with timeout, thinking filter, abort signal
-  const execResult = await executeLlm(
-    deps, adapter, effectiveMsg, sessionKey, agentId, executor,
-    trustLevel, blockStreamCfg, replyTo, typingLifecycle,
-    tools, directives,
-  );
-
-  try {
-    if (execResult.timedOut) {
-      emitDiagnostic(0, 0, "timeout", { toolCalls: null, llmCalls: null });
-      // Aborted turn (timeout): the renderer keeps the diagnostic trail.
-      await finalizeCoordinator({ kind: "aborted", reason: "timeout" });
-      return;
-    }
+    const execResult = await (async () => {
+      try {
+        executionStartedAt = systemNowMs();
+        const completed = await executeLlm(
+          deps, adapter, effectiveMsg, sessionKey, agentId, executor,
+          trustLevel, blockStreamCfg, replyTo, typingLifecycle,
+          tools, directives,
+          inboundProvenancePlans,
+        );
+        executionCompletedAt = systemNowMs();
+        return completed;
+      } catch (error) {
+        executionCompletedAt = systemNowMs();
+        emitDiagnostic(
+          0,
+          0,
+          "error",
+          { status: "error", failureStage: "execution", errorKind: "internal" },
+          { toolCalls: null, llmCalls: null },
+          executionCompletedAt,
+        );
+        await finalizeCoordinator({
+          kind: "failure",
+          errorKind: "internal",
+          failedEvents: [],
+        });
+        // @allow-throw: inbound channel boundary converts executor rejection to its user-visible degraded response.
+        throw error;
+      }
+    })();
+    executionCleanup = execResult.cleanup;
 
     const callCounts = {
       toolCalls: execResult.result?.stepsExecuted ?? null,
       llmCalls: execResult.result?.llmCalls ?? null,
+    };
+    knownUsage = {
+      tokensUsed: execResult.tokensUsed,
+      cost: execResult.cost,
+      finishReason: execResult.finishReason,
+      ...callCounts,
+    };
+    if (await stopForQueueAbort()) return;
+
+    if (execResult.timedOut) {
+      emitDiagnostic(
+        0,
+        0,
+        "timeout",
+        { status: "timeout", failureStage: "execution", errorKind: "timeout" },
+        { toolCalls: null, llmCalls: null },
+      );
+      // Aborted turn (timeout): the renderer keeps the diagnostic trail.
+      await finalizeCoordinator({ kind: "aborted", reason: "timeout" });
+      return;
+    }
+    rejectionStage = "delivery";
+    rejectionErrorKind = "internal";
+
+    const readExecutionLifecycle = (): LifecycleOutcome => {
+      const abortReason = execResult.currentAbortReason();
+      return abortReason !== undefined
+        ? classifyExecutionAbortReason(abortReason)
+        : classifyExecutionFinishReason(execResult.result!.finishReason);
+    };
+
+    const readCoordinatorExecutionOutcome = (): TurnOutcome | undefined => {
+      const executionLifecycle = readExecutionLifecycle();
+      const currentAbortReason = execResult.currentAbortReason();
+      const abortOutcome = mapAbortToTurnOutcome({
+        finishReason: execResult.finishReason,
+        resourceAborted: execResult.resourceAborted,
+        abortReason: currentAbortReason,
+      });
+      return executionLifecycle.status === "error"
+        ? abortOutcome ?? {
+            kind: "failure",
+            errorKind: executionLifecycle.errorKind ?? "internal",
+            failedEvents: [],
+          }
+        : executionLifecycle.status === "timeout"
+          ? { kind: "aborted", reason: "timeout" }
+          : executionLifecycle.status === "aborted"
+            ? { kind: "aborted", reason: "user_cancel" }
+            : undefined;
     };
 
     // Signal execution complete for thinking mode
@@ -475,84 +487,104 @@ export async function executeAndDeliver(
       typingLifecycle.markRunComplete();
     }
 
-    // A resource abort (max_steps / loop_detected) maps to a TRUTHFUL failure —
-    // never a bare "❌ platform" mislabel and never a silent delete that hides
-    // the stop from the operator (FIX #3 / T-hbe-04). Computed once here and
-    // applied on BOTH the no-deliver (silent) and delivery branches. The mapper
-    // returns undefined for a normal finish, leaving every existing branch as-is.
-    const abortOutcome = mapAbortToTurnOutcome({
-      finishReason: execResult.finishReason,
-      resourceAborted: execResult.resourceAborted,
-      abortReason: execResult.abortReason,
-    });
-
     // Stage 3: Response sanitization, filtering, media, voice, prefix
     const filterResult = await filterExecutionResponse(
       deps, adapter, effectiveMsg, originalMsg, sessionKey, agentId,
       execResult.result, execResult.accumulated, replyTo,
-      execResult.resourceAborted, execResult.abortReason, execResult.finishReason,
+      execResult.resourceAborted, execResult.currentAbortReason(), execResult.finishReason,
+      (kind) => { rejectionErrorKind = kind; },
+      queueSignal,
     );
 
+    if (await stopForQueueAbort()) return;
+
     if (!filterResult.deliver) {
-      // Nothing reaches the user this turn → a silent outcome. "filtered"
-      // = the model produced no user-visible reply (NO_REPLY); a voice-only
-      // delivery or any other non-deliver reason reads as SILENT. The renderer
-      // deletes the transient scaffolding on silent.
+      const executionLifecycle = readExecutionLifecycle();
+      const mediaDeliveryFailed = (filterResult.mediaDelivery?.failed ?? 0) > 0;
+      // Text delivery is skipped here. Filtered/empty turns remain silent;
+      // successful voice/media sends carry a receipt below so the renderer
+      // finalizes only after their attachment delivery has completed.
       const silentReason: "NO_REPLY" | "SILENT" =
         filterResult.reason === "filtered" ? "NO_REPLY" : "SILENT";
-      if (filterResult.reason === "filtered") {
-        emitDiagnostic(execResult.tokensUsed, execResult.cost, "filtered", callCounts);
-      } else if (filterResult.reason === "voice_delivered") {
-        emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason, callCounts);
-      } else {
-        emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason, callCounts);
-      }
+      const lifecycleOutcome: LifecycleOutcome = executionLifecycle.status !== "success"
+        ? executionLifecycle
+        : mediaDeliveryFailed
+          ? { status: "error", failureStage: "delivery", errorKind: "platform" }
+          : filterResult.reason === "filtered"
+            ? { status: "filtered" }
+            : executionLifecycle;
+      const completedAt = filterResult.completedAtMs ?? systemNowMs();
+      const nonTextDeliveredChunks = filterResult.mediaDelivery?.delivered ?? 0;
+      const nonTextDelivery = !mediaDeliveryFailed && executionLifecycle.status === "success"
+        ? filterResult.reason === "voice_delivered"
+          ? {
+              ok: true as const,
+              deliveredChunks: 1 + nonTextDeliveredChunks,
+              ...(filterResult.receipt.kind === "tracked"
+                ? { lastChunkMessageId: filterResult.receipt.messageId }
+                : {}),
+              deliveredAtMs: completedAt,
+            }
+          : filterResult.reason === "media_only" &&
+              nonTextDeliveredChunks > 0
+            ? {
+                ok: true as const,
+                deliveredChunks: nonTextDeliveredChunks,
+                ...(filterResult.mediaDelivery?.lastReceipt?.kind === "tracked"
+                  ? { lastChunkMessageId: filterResult.mediaDelivery.lastReceipt.messageId }
+                  : {}),
+                deliveredAtMs: completedAt,
+              }
+            : undefined
+        : undefined;
+      const mediaFailureReceipt = mediaDeliveryFailed && filterResult.mediaDelivery !== undefined
+        ? createMediaDeliveryFailureReceipt(
+            filterResult.mediaDelivery,
+            undefined,
+            filterResult.reason === "voice_delivered" ? 1 : 0,
+          )
+        : undefined;
+      emitDiagnostic(
+        execResult.tokensUsed,
+        execResult.cost,
+        execResult.finishReason,
+        lifecycleOutcome,
+        callCounts,
+        completedAt,
+      );
       // A resource abort that produced no deliverable text is a TRUTHFUL
       // failure, not a silent delete — the operator must see the stop (the
       // ~150-read loop incident produced no useful reply and was hidden).
-      await finalizeCoordinator(abortOutcome ?? { kind: "silent", reason: silentReason });
+      await finalizeCoordinator(
+        readCoordinatorExecutionOutcome()
+          ?? (mediaFailureReceipt !== undefined
+            ? {
+                kind: "failure",
+                errorKind: "platform",
+                failedEvents: [],
+                deliveryReceipt: mediaFailureReceipt,
+              }
+            : nonTextDelivery
+              ? { kind: "success", trivial: false, delivery: nonTextDelivery }
+              : { kind: "silent", reason: silentReason }),
+      );
       return;
     }
 
-    // Stage 4: Chunking, coalescing, block pacing, delivery.
-    // deliverExecutionResponse now returns a delivery receipt.
-    //
-    // The delivery runs OUTSIDE the executor's
-    // runWithContext (executeLlm returns the text; delivery happens here), so it
-    // would otherwise inherit the channel-ingress ALS — which carries NO agentId
-    // (context.ts:38: "NOT known at channel ingress"). deliverToChannel reads
-    // ctx.agentId to (a) persist the REAL agent into the queue optionsJson and
-    // (b) bind the minted reply id → trajectory (the reaction-attribution
-    // keystone). Without agentId on THIS context, ctx.agentId is undefined → the
-    // reply's agentId is never recorded and both binding paths fail-closed → a
-    // reaction on the reply map-misses. Wrap
-    // the delivery in a context that inherits the ingress traceId/tenant/session
-    // and ADDS the resolved agentId so the binding fires on the primary path.
-    const deliveryReceipt = await runWithContext(
-      {
-        traceId: tryGetContext()?.traceId ?? randomUUID(),
-        tenantId: sessionKey.tenantId,
-        userId: sessionKey.userId,
-        agentId,
-        sessionKey: formatSessionKey(sessionKey),
-        startedAt: systemNowMs(),
-        trustLevel,
-        channelType: adapter.channelType,
-        deliveryOrigin: createDeliveryOrigin({
-          channelType: adapter.channelType,
-          channelId: effectiveMsg.channelId,
-          userId: sessionKey.userId,
-          threadId: effectiveMsg.metadata?.threadId as string | undefined,
-          tenantId: sessionKey.tenantId,
-        }),
-      },
-      () =>
-        deliverExecutionResponse(
-          deps, adapter, effectiveMsg, filterResult.text,
-          blockStreamCfg, activePacers, replyTo,
-          execResult.deliverySignal, typingLifecycle,
-        ),
+    // Stage 4: Chunking, coalescing, block pacing, delivery. The inbound
+    // context already carries resolved agent/session identity, and the queue
+    // preserves that scope through execution and delivery.
+    rejectionErrorKind = "platform";
+    const deliverySignal = queueSignal === undefined
+      ? execResult.deliverySignal
+      : AbortSignal.any([execResult.deliverySignal, queueSignal]);
+    const deliveryReceipt = await deliverExecutionResponse(
+      deps, adapter, effectiveMsg, filterResult.text,
+      blockStreamCfg, activePacers, replyTo,
+      deliverySignal, typingLifecycle,
     );
+
+    if (await stopForQueueAbort()) return;
 
     // Emit message:sent with the REAL last-chunk message id from the receipt
     // (replaces the prior synthetic placeholder id). On a delivery
@@ -560,23 +592,63 @@ export async function executeAndDeliver(
     // deliveredChunks 0, empty id), there is no real message to announce, so
     // the message:sent emit is skipped — downstream subscribers only ever see
     // a real platform message id.
+    rejectionErrorKind = "internal";
     if (deliveryReceipt.ok && deliveryReceipt.value.lastChunkMessageId) {
-      deps.eventBus.emit("message:sent", {
+      emitObservationalEvent(deps, "message:sent", {
+        channelType: adapter.channelType,
         channelId: effectiveMsg.channelId,
         messageId: deliveryReceipt.value.lastChunkMessageId,
         content: filterResult.text,
+        sourceChannelType: originalMsg.channelType,
+        sourceChannelId: originalMsg.channelId,
+        sourceMessageId: originalMsg.id,
       });
     }
 
-    // Finalize the activity coordinator from the delivery receipt.
-    // Success → the gate inside finalize defers the renderer's
-    // delete until deliveredAtMs; any observed status:"failed" event reclassifies
-    // to failure (no delete). A delivery failure receipt → kind:"failure" so the
-    // diagnostic trail is kept.
-    if (abortOutcome) {
+    const coordinatorExecutionOutcome = readCoordinatorExecutionOutcome();
+    const mediaDeliveryFailed = (filterResult.mediaDelivery?.failed ?? 0) > 0;
+    const mediaFailureReceipt = mediaDeliveryFailed && filterResult.mediaDelivery !== undefined
+      ? createMediaDeliveryFailureReceipt(filterResult.mediaDelivery, deliveryReceipt)
+      : undefined;
+    const executionLifecycle = readExecutionLifecycle();
+    const deliveryLifecycle: LifecycleOutcome = executionLifecycle.status !== "success"
+      ? executionLifecycle
+      : mediaDeliveryFailed
+        ? { status: "error", failureStage: "delivery", errorKind: "platform" }
+      : deliveryReceipt.ok
+        ? deliveryReceipt.value.deliveredChunks > 0
+          ? { status: "success" }
+          : { status: "filtered" }
+        : {
+            status: "error",
+            failureStage: "delivery",
+            errorKind: deliveryReceipt.error.errorKind,
+          };
+    emitDiagnostic(
+      execResult.tokensUsed,
+      execResult.cost,
+      execResult.finishReason,
+      deliveryLifecycle,
+      callCounts,
+      deliveryReceipt.ok
+        ? deliveryReceipt.value.deliveredAtMs
+        : deliveryReceipt.error.failedAtMs,
+    );
+
+    // Finalize only after the authoritative lifecycle event is visible. A
+    // renderer/coordinator failure is contained by finalizeCoordinator so it
+    // cannot reclassify an already-delivered turn or trigger inbound fallback.
+    if (coordinatorExecutionOutcome) {
       // Partial text may have delivered, but the run was stopped — render the
       // truthful failure, not a success.
-      await finalizeCoordinator(abortOutcome);
+      await finalizeCoordinator(coordinatorExecutionOutcome);
+    } else if (mediaFailureReceipt !== undefined) {
+      await finalizeCoordinator({
+        kind: "failure",
+        errorKind: "platform",
+        failedEvents: [],
+        deliveryReceipt: mediaFailureReceipt,
+      });
     } else if (deliveryReceipt.ok) {
       await finalizeCoordinator({
         kind: "success",
@@ -591,31 +663,88 @@ export async function executeAndDeliver(
         deliveryReceipt: deliveryReceipt.error,
       });
     }
+  })());
 
-    // Emit diagnostic:message_processed for full lifecycle tracking
-    emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason, callCounts);
-  } finally {
-    // Release the activity coordinator's subscription (idempotent; safe after
-    // finalize). Guarantees unsubscribe even on an unexpected throw before
-    // finalize ran (aborted-turn cleanup).
-    coordinator?.dispose();
+  if (!pipelineResult.ok) {
+    const failureKind = classifyRejectionError(pipelineResult.error, rejectionErrorKind);
+    const usage = knownUsage ?? {
+      tokensUsed: 0,
+      cost: 0,
+      finishReason: "error",
+      toolCalls: null,
+      llmCalls: null,
+    };
+    emitDiagnostic(
+      usage.tokensUsed,
+      usage.cost,
+      usage.finishReason,
+      { status: "error", failureStage: rejectionStage, errorKind: failureKind },
+      { toolCalls: usage.toolCalls, llmCalls: usage.llmCalls },
+    );
+    await finalizeCoordinator({
+      kind: "failure",
+      errorKind: failureKind,
+      failedEvents: [],
+    });
+  }
 
-    // Cleanup event listeners from execution phase
-    execResult.cleanup();
+  function runCleanupStep(cleanupStep: string, cleanup: () => void): void {
+    const cleaned = tryCatch(cleanup);
+    if (!cleaned.ok) {
+      logContainedFailure(
+        cleaned.error,
+        cleanupStep,
+        "Inspect the named cleanup handler; later cleanup steps and the primary turn outcome were preserved",
+        "Execution pipeline cleanup failed",
+      );
+    }
+  }
 
-    // Ensure typing is always stopped on error/completion
-    if (typingLifecycle) {
-      const wasActive = typingLifecycle.controller.isActive;
-      const startedAt = typingLifecycle.controller.startedAt;
-      typingLifecycle.dispose();
-      if (wasActive) {
-        deps.eventBus.emit("typing:stopped", {
+  // Snapshot typing state independently so a broken getter cannot prevent
+  // disposal of the coordinator, execution listeners, or typing lifecycle.
+  let typingWasActive = false;
+  let typingStartedAt = 0;
+  if (typingLifecycle) {
+    const typingState = tryCatch(() => ({
+      isActive: typingLifecycle.controller.isActive,
+      startedAt: typingLifecycle.controller.startedAt,
+    }));
+    if (typingState.ok) {
+      typingWasActive = typingState.value.isActive;
+      typingStartedAt = typingState.value.startedAt;
+    } else {
+      logContainedFailure(
+        typingState.error,
+        "typing_state",
+        "Inspect the typing controller state getters; remaining cleanup still ran",
+        "Typing cleanup state read failed",
+      );
+    }
+  }
+
+  if (coordinator) {
+    runCleanupStep("coordinator_dispose", () => coordinator?.dispose());
+  }
+  if (executionCleanup) {
+    runCleanupStep("execution_cleanup", executionCleanup);
+  }
+  if (typingLifecycle) {
+    runCleanupStep("typing_dispose", () => typingLifecycle.dispose());
+    if (typingWasActive) {
+      runCleanupStep("typing_stopped_event", () => {
+        const timestamp = systemNowMs();
+        emitObservationalEvent(deps, "typing:stopped", {
           channelId: adapter.channelId,
           chatId: effectiveMsg.channelId,
-          durationMs: systemNowMs() - startedAt,
-          timestamp: systemNowMs(),
+          durationMs: timestamp - typingStartedAt,
+          timestamp,
         });
-      }
+      });
     }
+  }
+
+  if (!pipelineResult.ok) {
+    // @allow-throw: the inbound channel boundary converts the preserved primary rejection to its user-visible degraded response.
+    throw pipelineResult.error;
   }
 }

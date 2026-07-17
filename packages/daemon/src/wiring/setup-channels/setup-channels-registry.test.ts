@@ -76,6 +76,18 @@ vi.mock("@comis/orchestrator", () => ({
   processInboundMessage: vi.fn(async () => {}),
   createMessageRouter: vi.fn(() => ({ resolve: vi.fn() })),
   createCommandQueue: vi.fn(() => ({})),
+  parseSlashCommand: vi.fn((text: string) => ({
+    found: text.startsWith("/"),
+    command: text.slice(1).split(" ")[0],
+    args: [],
+    cleanedText: "",
+  })),
+  createCommandHandler: vi.fn((deps: { destroySession: (key: SessionKey) => void }) => ({
+    handle: (_parsed: unknown, key: SessionKey) => {
+      deps.destroySession(key);
+      return { handled: true, response: "New session created.", directives: { newSession: true } };
+    },
+  })),
 }));
 
 const mockResolveOperationModel = vi.fn(() => ({
@@ -116,6 +128,10 @@ vi.mock("@comis/core", async () => {
   // adapter.sendMessage) so existing assertions keep working.
   return {
     formatSessionKey: vi.fn((sk: SessionKey) => `${sk.tenantId}:${sk.userId}:${sk.channelId}`),
+    createResolvedRequestContext: vi.fn((input: Record<string, unknown>) => ({
+      ok: true as const,
+      value: input,
+    })),
     runWithContext: vi.fn(async (_ctx: any, fn: () => any) => fn()),
     // credentials.ts (memory-review gate) consults the keyless
     // allowlist + sentinel; mirror the real @comis/core values so the partial
@@ -138,6 +154,7 @@ vi.mock("@comis/core", async () => {
       drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
     })),
     createNoOpDeliveryQueue: vi.fn(() => ({})),
+    toSafeErrorLogString: vi.fn((error: Error) => error.message),
     systemNowMs: () => Date.now(),
     systemNowDate: () => new Date(),
     // isInQuietHours (via the cron quiet-hours gate) converts an epoch ms to a
@@ -221,6 +238,7 @@ function makeContainer(): { container: AppContainer; eventHandlers: EventHandler
         eventHandlers.push({ event, callback: cb });
       }),
       emit: vi.fn(),
+      emitSafely: vi.fn(() => ({ hadListeners: false, failures: [] })),
     },
     // setup-channels constructs DeliveryService via
     // createDeliveryService({ hookRunner: container.hookRunner, ... }). Mocked
@@ -236,6 +254,7 @@ function makeDeps(overrides: Partial<ChannelsDeps> & { container?: AppContainer 
   const { container } = containerOverride ? { container: containerOverride } : makeContainer();
   return {
     container,
+    dataDir: "/tmp/comis-channel-test",
     executors: new Map(),
     defaultAgentId: "agent1",
     sessionManager: { expire: vi.fn(), loadOrCreate: vi.fn(() => []), save: vi.fn() } as any,
@@ -1245,6 +1264,102 @@ describe("setupChannels", () => {
       expect(createChannelManager).toHaveBeenCalled();
       expect(mockChannelManager.startAll).toHaveBeenCalled();
       expect(result.channelManager).toBe(mockChannelManager);
+    });
+
+    it("threads the configured tenant into the channel manager", async () => {
+      mockAdaptersByType.set("telegram", mockAdapter);
+      const { container } = makeContainer();
+      container.config.tenantId = "tenant-production";
+
+      await setupChannels(makeDeps({ container }));
+
+      expect(createChannelManager).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(createChannelManager).mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({ tenantId: "tenant-production" }),
+      );
+    });
+
+    it("binds resolved inbound persistence to the matching per-agent session adapter", async () => {
+      mockAdaptersByType.set("telegram", mockAdapter);
+      const persistInboundMessage = vi.fn(async () => ({
+        ok: true as const,
+        value: { payloads: [], ledgerContent: "" },
+      }));
+      const piSessionAdapters = new Map([[
+        "agent1",
+        {
+          getSessionStats: vi.fn(),
+          destroySession: vi.fn(async () => undefined),
+          persistInboundMessage,
+        },
+      ]]);
+      const { container } = makeContainer();
+      const deps = makeDeps({
+        container,
+        piSessionAdapters,
+        clock: { now: () => 1_789_000_100_000 } as never,
+      });
+      await setupChannels(deps);
+      const cmDeps = vi.mocked(createChannelManager).mock.calls[0]![0]!;
+      const message = {
+        id: "11111111-1111-4111-8111-111111111111",
+        channelId: "chat-1",
+        channelType: "telegram",
+        senderId: "user_a",
+        text: "persist me",
+        timestamp: 1_789_000_000_000,
+        attachments: [],
+        metadata: {},
+      } satisfies NormalizedMessage;
+      const sessionKey: SessionKey = {
+        tenantId: "default",
+        userId: "user_a",
+        channelId: "chat-1",
+        agentId: "agent1",
+      };
+
+      const result = await cmDeps.persistInboundMessage(
+        "agent1",
+        message,
+        sessionKey,
+      );
+
+      expect(result).toEqual({
+        ok: true,
+        value: { payloads: [], ledgerContent: "" },
+      });
+      expect(persistInboundMessage).toHaveBeenCalledWith(
+        sessionKey,
+        message,
+        1_789_000_100_000,
+      );
+    });
+
+    it("rejects a channel reset when durable conversation destruction fails", async () => {
+      mockAdaptersByType.set("telegram", mockAdapter);
+      const destroyError = new Error("conversation storage refused reset");
+      const destroyConversation = vi.fn(async () => Promise.reject(destroyError));
+      const { container } = makeContainer();
+      await setupChannels(makeDeps({
+        container,
+        destroyConversation,
+        clock: { now: () => 1_789_000_100_000 } as never,
+      }));
+      const cmDeps = vi.mocked(createChannelManager).mock.calls[0]![0]!;
+      const sessionKey: SessionKey = {
+        tenantId: "default",
+        userId: "user_a",
+        channelId: "chat-1",
+        agentId: "agent1",
+      };
+
+      await expect(cmDeps.handleSlashCommand?.("/new", sessionKey, "agent1"))
+        .rejects.toBe(destroyError);
+
+      expect(container.eventBus.emit).not.toHaveBeenCalledWith(
+        "session:expired",
+        expect.objectContaining({ reason: "chat-reset" }),
+      );
     });
 
     it("does not create ChannelManager when no adapters", async () => {

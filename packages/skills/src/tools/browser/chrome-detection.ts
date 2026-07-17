@@ -35,6 +35,40 @@ export type RunningChrome = {
   proc: ChildProcessWithoutNullStreams;
 };
 
+type ChromeStderrClass =
+  | "none"
+  | "sandbox_denied"
+  | "missing_dependency"
+  | "profile_locked"
+  | "unknown";
+
+/** Collapse untrusted Chrome stderr into a closed operator-facing class. */
+function classifyChromeStderr(stderr: string): ChromeStderrClass {
+  const normalized = stderr.toLowerCase();
+  if (normalized.trim().length === 0) return "none";
+  if (
+    normalized.includes("bad system call") ||
+    normalized.includes("sigsys") ||
+    normalized.includes("sandbox")
+  ) {
+    return "sandbox_denied";
+  }
+  if (
+    normalized.includes("shared librar") ||
+    normalized.includes("shared object") ||
+    normalized.includes("cannot open shared")
+  ) {
+    return "missing_dependency";
+  }
+  if (
+    normalized.includes("profile") &&
+    (normalized.includes("lock") || normalized.includes("already in use"))
+  ) {
+    return "profile_locked";
+  }
+  return "unknown";
+}
+
 // ── Chrome Detection ─────────────────────────────────────────────────
 
 function exists(filePath: string): boolean {
@@ -351,12 +385,19 @@ export async function launchChrome(
   // under a hardened systemd sandbox, or a missing shared lib) surfaces only as an
   // opaque downstream "connectOverCDP ECONNREFUSED" and needs hand-reproduction.
   let stderrTail = "";
+  let stderrBytes = 0;
+  let stderrTruncated = false;
   proc.stderr?.on("data", (chunk: Buffer) => {
-    stderrTail = (stderrTail + chunk.toString()).slice(-2000);
+    stderrBytes += chunk.byteLength;
+    const combined = stderrTail + chunk.toString("utf8");
+    stderrTruncated ||= combined.length > 2000;
+    stderrTail = combined.slice(-2000);
   });
-  let exitInfo = "";
+  let exitCode: number | null = null;
+  let exitSignal: NodeJS.Signals | null = null;
   proc.on("exit", (code, signal) => {
-    exitInfo = signal ? `killed by signal ${signal}` : `exited with code ${code}`;
+    exitCode = code;
+    exitSignal = signal;
   });
 
   // Wait for CDP to become reachable.
@@ -376,13 +417,15 @@ export async function launchChrome(
       // ignore
     }
     const diag = [
-      exitInfo ? `chrome ${exitInfo}` : "chrome process alive but CDP never became reachable",
-      stderrTail.trim() ? `stderr: ${stderrTail.trim().split("\n").slice(-4).join(" ⏎ ")}` : "",
-    ]
-      .filter(Boolean)
-      .join("; ");
+      exitSignal !== null ? `exitSignal=${exitSignal}` : undefined,
+      exitSignal === null && exitCode !== null ? `exitCode=${exitCode}` : undefined,
+      exitSignal === null && exitCode === null ? "exitState=cdp_unreachable" : undefined,
+      `stderrClass=${classifyChromeStderr(stderrTail)}`,
+      `stderrBytes=${stderrBytes}`,
+      `stderrTruncated=${stderrTruncated}`,
+    ].filter((field): field is string => field !== undefined).join("; ");
     throw new Error(
-      `Failed to start Chrome CDP on port ${cdpPort} for profile "${profileName}" — ${diag}`,
+      `Failed to start Chrome CDP on port ${cdpPort} — ${diag}`,
     );
   }
 

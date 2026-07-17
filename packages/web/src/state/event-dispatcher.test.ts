@@ -1,265 +1,394 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEventDispatcher, type EventDispatcher } from "./event-dispatcher.js";
-import { SSE_EVENT_TYPES } from "../api/types/index.js";
-
-// -- Mock EventSource --
-
-class MockEventSource {
-  url: string;
-  onopen: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  onmessage: ((ev: MessageEvent) => void) | null = null;
-  close = vi.fn();
-  private listeners = new Map<string, EventListener>();
-
-  addEventListener(type: string, listener: EventListener): void {
-    this.listeners.set(type, listener);
-  }
-
-  /** Test helper: simulate a typed SSE event */
-  simulateEvent(type: string, data: string): void {
-    const listener = this.listeners.get(type);
-    if (listener) {
-      listener({ data } as unknown as Event);
-    }
-  }
-
-  constructor(url: string) {
-    this.url = url;
-    MockEventSource.lastInstance = this;
-  }
-  static lastInstance: MockEventSource | null = null;
-}
-vi.stubGlobal("EventSource", MockEventSource);
-
-// -- Tests --
 
 const BASE_URL = "http://localhost:3000";
 const TOKEN = "test-event-token";
 
+function sseResponse(chunks: readonly string[], close = true): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk));
+      }
+      if (close) {
+        controller.close();
+      }
+    },
+  });
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+function pendingSseResponse(): Response {
+  return sseResponse([], false);
+}
+
+function cancellableSseResponse(chunk: string, onCancel: () => void): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(chunk));
+    },
+    cancel() {
+      onCancel();
+    },
+  });
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
 describe("createEventDispatcher", () => {
   let dispatcher: EventDispatcher;
+  let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    MockEventSource.lastInstance = null;
+    fetchMock = vi.fn().mockResolvedValue(pendingSseResponse());
+    vi.stubGlobal("fetch", fetchMock);
     dispatcher = createEventDispatcher();
   });
 
   afterEach(() => {
     dispatcher.stop();
-    vi.restoreAllMocks();
-    vi.stubGlobal("EventSource", MockEventSource);
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
-  it("returns object with start, stop, addEventListener, connected", () => {
+  it("returns the documented dispatcher surface", () => {
     expect(typeof dispatcher.start).toBe("function");
     expect(typeof dispatcher.stop).toBe("function");
     expect(typeof dispatcher.addEventListener).toBe("function");
-    expect(dispatcher.connected).toBeDefined();
-  });
-
-  it("start creates EventSource with correct URL including token", () => {
-    dispatcher.start(BASE_URL, TOKEN);
-
-    expect(MockEventSource.lastInstance).not.toBeNull();
-    expect(MockEventSource.lastInstance!.url).toBe(
-      `${BASE_URL}/api/events?token=${encodeURIComponent(TOKEN)}`,
-    );
-  });
-
-  it("connected becomes true on EventSource onopen", () => {
-    expect(dispatcher.connected).toBe(false);
-
-    dispatcher.start(BASE_URL, TOKEN);
-    MockEventSource.lastInstance!.onopen!();
-
-    expect(dispatcher.connected).toBe(true);
-  });
-
-  it("connected becomes false on EventSource onerror", () => {
-    dispatcher.start(BASE_URL, TOKEN);
-    MockEventSource.lastInstance!.onopen!();
-    expect(dispatcher.connected).toBe(true);
-
-    MockEventSource.lastInstance!.onerror!();
     expect(dispatcher.connected).toBe(false);
   });
 
-  it("addEventListener registers callback for event type", () => {
-    const handler = vi.fn();
-    dispatcher.addEventListener("message:received", handler);
-
+  it("uses an authenticated fetch whose URL contains neither token nor query string", async () => {
     dispatcher.start(BASE_URL, TOKEN);
-    MockEventSource.lastInstance!.onopen!();
 
-    // Simulate an SSE event
-    MockEventSource.lastInstance!.simulateEvent(
-      "message:received",
-      JSON.stringify({ userId: "u1", text: "hello" }),
-    );
-
-    expect(handler).toHaveBeenCalledWith({ userId: "u1", text: "hello" });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/events`);
+    expect(url).not.toContain(TOKEN);
+    expect(url).not.toContain("?");
+    expect(init).toMatchObject({
+      method: "GET",
+      headers: {
+        Accept: "text/event-stream",
+        Authorization: `Bearer ${TOKEN}`,
+      },
+    });
   });
 
-  it("addEventListener returns unsubscribe function", () => {
-    const handler = vi.fn();
-    const unsubscribe = dispatcher.addEventListener("approval:requested", handler);
+  it("marks the dispatcher connected after the authenticated stream opens", async () => {
+    dispatcher.start(BASE_URL, TOKEN);
 
-    expect(typeof unsubscribe).toBe("function");
+    await vi.waitFor(() => expect(dispatcher.connected).toBe(true));
+  });
 
+  it("parses chunk-split CRLF events and delivers JSON through both channels", async () => {
+    const callback = vi.fn();
+    const documentListener = vi.fn();
+    dispatcher.addEventListener("message:received", callback);
+    document.addEventListener("message:received", documentListener);
+    fetchMock.mockResolvedValueOnce(
+      sseResponse([
+        ": keepalive\r",
+        "\nevent: message:rece",
+        "ived\r\nid: 7\r\ndata: {\"messageId\":\"m-1\",",
+        "\"channelType\":\"telegram\"}\r",
+        "\n\r",
+        "\n",
+      ]),
+    );
+
+    dispatcher.start(BASE_URL, TOKEN);
+
+    await vi.waitFor(() => {
+      expect(callback).toHaveBeenCalledWith({ messageId: "m-1", channelType: "telegram" });
+    });
+    expect(documentListener).toHaveBeenCalledTimes(1);
+    expect((documentListener.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({
+      messageId: "m-1",
+      channelType: "telegram",
+    });
+    document.removeEventListener("message:received", documentListener);
+  });
+
+  it("joins multiline data and falls back to the generic message event", async () => {
+    const callback = vi.fn();
+    dispatcher.addEventListener("message", callback);
+    fetchMock.mockResolvedValueOnce(sseResponse(["data: first line\ndata: second line\n\n"]));
+
+    dispatcher.start(BASE_URL, TOKEN);
+
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith("first line\nsecond line"));
+  });
+
+  it("delivers empty event data as an empty object", async () => {
+    const callback = vi.fn();
+    dispatcher.addEventListener("ping", callback);
+    fetchMock.mockResolvedValueOnce(sseResponse(["event: ping\ndata:\n\n"]));
+
+    dispatcher.start(BASE_URL, TOKEN);
+
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith({}));
+  });
+
+  it("does not deliver an incomplete event when the response stream ends mid-frame", async () => {
+    vi.useFakeTimers();
+    const callback = vi.fn();
+    dispatcher.addEventListener("message:received", callback);
+    fetchMock.mockResolvedValueOnce(
+      sseResponse(["event: message:received\ndata: {\"messageId\":\"partial\"}"]),
+    );
+
+    dispatcher.start(BASE_URL, TOKEN);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it("returns an unsubscribe function that prevents later delivery", async () => {
+    const callback = vi.fn();
+    const unsubscribe = dispatcher.addEventListener("approval:requested", callback);
     unsubscribe();
-
-    dispatcher.start(BASE_URL, TOKEN);
-    MockEventSource.lastInstance!.simulateEvent(
-      "approval:requested",
-      JSON.stringify({ id: 1 }),
+    fetchMock.mockResolvedValueOnce(
+      sseResponse(["event: approval:requested\ndata: {\"requestId\":\"a-1\"}\n\n"]),
     );
 
-    expect(handler).not.toHaveBeenCalled();
-  });
-
-  it("callback handlers receive parsed JSON data from SSE events", () => {
-    const handler = vi.fn();
-    dispatcher.addEventListener("system:error", handler);
-
     dispatcher.start(BASE_URL, TOKEN);
 
-    const payload = { code: "ERR_01", message: "Something failed" };
-    MockEventSource.lastInstance!.simulateEvent(
-      "system:error",
-      JSON.stringify(payload),
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it("delivers an event to every callback registered for its type", async () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    dispatcher.addEventListener("message:sent", first);
+    dispatcher.addEventListener("message:sent", second);
+    fetchMock.mockResolvedValueOnce(
+      sseResponse(["event: message:sent\ndata: {\"messageId\":\"m-2\"}\n\n"]),
     );
 
-    expect(handler).toHaveBeenCalledWith(payload);
-  });
-
-  it("dispatches CustomEvent on document for each received SSE event", () => {
-    const received: CustomEvent[] = [];
-    const listener = (ev: Event) => received.push(ev as CustomEvent);
-    document.addEventListener("message:received", listener);
-
     dispatcher.start(BASE_URL, TOKEN);
 
-    const payload = { userId: "u2", text: "world" };
-    MockEventSource.lastInstance!.simulateEvent(
-      "message:received",
-      JSON.stringify(payload),
+    await vi.waitFor(() => {
+      expect(first).toHaveBeenCalledWith({ messageId: "m-2" });
+      expect(second).toHaveBeenCalledWith({ messageId: "m-2" });
+    });
+  });
+
+  it("isolates a throwing callback and still delivers to later subscribers and document", async () => {
+    const first = vi.fn(() => {
+      throw new Error("subscriber failed");
+    });
+    const second = vi.fn();
+    const documentListener = vi.fn();
+    dispatcher.addEventListener("message:sent", first);
+    dispatcher.addEventListener("message:sent", second);
+    document.addEventListener("message:sent", documentListener);
+    fetchMock.mockResolvedValueOnce(
+      sseResponse(["event: message:sent\ndata: {\"messageId\":\"m-safe\"}\n\n"]),
     );
 
-    expect(received).toHaveLength(1);
-    expect(received[0].detail).toEqual(payload);
-
-    document.removeEventListener("message:received", listener);
-  });
-
-  it("CustomEvent detail contains parsed SSE data", () => {
-    const received: CustomEvent[] = [];
-    const listener = (ev: Event) => received.push(ev as CustomEvent);
-    document.addEventListener("approval:requested", listener);
-
     dispatcher.start(BASE_URL, TOKEN);
 
-    const data = { approvalId: "ap-123", action: "tool_exec" };
-    MockEventSource.lastInstance!.simulateEvent(
-      "approval:requested",
-      JSON.stringify(data),
+    await vi.waitFor(() => expect(second).toHaveBeenCalledWith({ messageId: "m-safe" }));
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(documentListener).toHaveBeenCalledTimes(1);
+    document.removeEventListener("message:sent", documentListener);
+  });
+
+  it("observes a rejecting callback and still delivers to later subscribers and document", async () => {
+    const rejectingThen = vi.fn((
+      _resolve: ((value: void) => unknown) | null | undefined,
+      reject: ((reason: unknown) => unknown) | null | undefined,
+    ) => {
+      reject?.(new Error("subscriber failed asynchronously"));
+      return Promise.resolve();
+    });
+    const rejectingThenable = { then: rejectingThen } as PromiseLike<void>;
+    const first = vi.fn(() => rejectingThenable);
+    const second = vi.fn();
+    const documentListener = vi.fn();
+    dispatcher.addEventListener("message:sent", first);
+    dispatcher.addEventListener("message:sent", second);
+    document.addEventListener("message:sent", documentListener);
+    fetchMock.mockResolvedValueOnce(
+      sseResponse(["event: message:sent\ndata: {\"messageId\":\"m-async-safe\"}\n\n"]),
     );
 
-    expect(received).toHaveLength(1);
-    expect(received[0].detail).toEqual(data);
+    dispatcher.start(BASE_URL, TOKEN);
 
-    document.removeEventListener("approval:requested", listener);
+    await vi.waitFor(() => expect(rejectingThen).toHaveBeenCalledTimes(1));
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledWith({ messageId: "m-async-safe" });
+    expect(documentListener).toHaveBeenCalledTimes(1);
+    document.removeEventListener("message:sent", documentListener);
   });
 
-  it("stop closes EventSource", () => {
+  it("stop aborts the authenticated fetch and clears connected state", async () => {
     dispatcher.start(BASE_URL, TOKEN);
-    const source = MockEventSource.lastInstance!;
+    await vi.waitFor(() => expect(dispatcher.connected).toBe(true));
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const signal = init.signal as AbortSignal;
 
     dispatcher.stop();
 
-    expect(source.close).toHaveBeenCalledTimes(1);
-  });
-
-  it("stop clears all callback handlers", () => {
-    const handler = vi.fn();
-    dispatcher.addEventListener("message:sent", handler);
-
-    dispatcher.start(BASE_URL, TOKEN);
-    dispatcher.stop();
-
-    // Restart and simulate event -- handler should not fire
-    dispatcher.start(BASE_URL, TOKEN);
-    MockEventSource.lastInstance!.simulateEvent(
-      "message:sent",
-      JSON.stringify({ text: "hi" }),
-    );
-
-    expect(handler).not.toHaveBeenCalled();
-  });
-
-  it("registers listeners for all expected SSE event types", () => {
-    dispatcher.start(BASE_URL, TOKEN);
-    const source = MockEventSource.lastInstance!;
-
-    // Verify all SSE_EVENT_TYPES are registered by checking document receives each
-    for (const eventType of SSE_EVENT_TYPES) {
-      const received: CustomEvent[] = [];
-      const listener = (ev: Event) => received.push(ev as CustomEvent);
-      document.addEventListener(eventType, listener);
-
-      source.simulateEvent(eventType, JSON.stringify({ type: eventType }));
-
-      expect(received).toHaveLength(1);
-      expect(received[0].type).toBe(eventType);
-
-      document.removeEventListener(eventType, listener);
-    }
-  });
-
-  it("handles non-JSON SSE data gracefully", () => {
-    const handler = vi.fn();
-    dispatcher.addEventListener("ping", handler);
-
-    dispatcher.start(BASE_URL, TOKEN);
-    MockEventSource.lastInstance!.simulateEvent("ping", "not json");
-
-    expect(handler).toHaveBeenCalledWith("not json");
-  });
-
-  it("handles empty SSE data as empty object", () => {
-    const handler = vi.fn();
-    dispatcher.addEventListener("ping", handler);
-
-    dispatcher.start(BASE_URL, TOKEN);
-    MockEventSource.lastInstance!.simulateEvent("ping", "");
-
-    expect(handler).toHaveBeenCalledWith({});
-  });
-
-  it("multiple handlers for the same event type all receive the event", () => {
-    const handler1 = vi.fn();
-    const handler2 = vi.fn();
-
-    dispatcher.addEventListener("message:received", handler1);
-    dispatcher.addEventListener("message:received", handler2);
-
-    dispatcher.start(BASE_URL, TOKEN);
-    MockEventSource.lastInstance!.simulateEvent(
-      "message:received",
-      JSON.stringify({ text: "test" }),
-    );
-
-    expect(handler1).toHaveBeenCalledWith({ text: "test" });
-    expect(handler2).toHaveBeenCalledWith({ text: "test" });
-  });
-
-  it("stop sets connected to false", () => {
-    dispatcher.start(BASE_URL, TOKEN);
-    MockEventSource.lastInstance!.onopen!();
-    expect(dispatcher.connected).toBe(true);
-
-    dispatcher.stop();
+    expect(signal.aborted).toBe(true);
     expect(dispatcher.connected).toBe(false);
+  });
+
+  it("stop clears callback handlers before a later restart", async () => {
+    const callback = vi.fn();
+    dispatcher.addEventListener("message:sent", callback);
+    dispatcher.start(BASE_URL, TOKEN);
+    await vi.waitFor(() => expect(dispatcher.connected).toBe(true));
+    dispatcher.stop();
+    fetchMock.mockResolvedValueOnce(
+      sseResponse(["event: message:sent\ndata: {\"messageId\":\"m-3\"}\n\n"]),
+    );
+
+    dispatcher.start(BASE_URL, TOKEN);
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await Promise.resolve();
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it("continues reconnecting with capped backoff beyond eight failures", async () => {
+    vi.useFakeTimers();
+    fetchMock.mockRejectedValue(new TypeError("network unavailable"));
+
+    dispatcher.start(BASE_URL, TOKEN);
+    await vi.advanceTimersByTimeAsync(220_000);
+
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(9);
+    expect(dispatcher.connected).toBe(false);
+  });
+
+  it.each([408, 425, 429, 500, 503])(
+    "retries transient HTTP status %s",
+    async (status) => {
+      vi.useFakeTimers();
+      fetchMock
+        .mockResolvedValueOnce(new Response(null, { status }))
+        .mockResolvedValueOnce(pendingSseResponse());
+
+      dispatcher.start(BASE_URL, TOKEN);
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(dispatcher.connected).toBe(true);
+    },
+  );
+
+  it.each([401, 403])("keeps authentication status %s terminal", async (status) => {
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValue(new Response(null, { status }));
+
+    dispatcher.start(BASE_URL, TOKEN);
+    await vi.advanceTimersByTimeAsync(220_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(dispatcher.connected).toBe(false);
+  });
+
+  it("honors a valid SSE retry directive for the next connection", async () => {
+    vi.useFakeTimers();
+    fetchMock
+      .mockResolvedValueOnce(sseResponse(["retry: 7000\n\n"]))
+      .mockResolvedValueOnce(pendingSseResponse());
+
+    dispatcher.start(BASE_URL, TOKEN);
+    await vi.advanceTimersByTimeAsync(6_999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores a malformed SSE retry directive", async () => {
+    vi.useFakeTimers();
+    fetchMock
+      .mockResolvedValueOnce(sseResponse(["retry: 7seconds\n\n"]))
+      .mockResolvedValueOnce(pendingSseResponse());
+
+    dispatcher.start(BASE_URL, TOKEN);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("resets exponential backoff after a successful connection", async () => {
+    vi.useFakeTimers();
+    fetchMock
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockResolvedValueOnce(sseResponse([": opened\n\n"]))
+      .mockResolvedValueOnce(pendingSseResponse());
+
+    dispatcher.start(BASE_URL, TOKEN);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("cancels and aborts an oversized event stream before reconnecting", async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn();
+    fetchMock
+      .mockResolvedValueOnce(
+        cancellableSseResponse(`data: ${"x".repeat(300_000)}`, cancel),
+      )
+      .mockResolvedValueOnce(pendingSseResponse());
+
+    dispatcher.start(BASE_URL, TOKEN);
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledTimes(1));
+    const [, firstInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((firstInit.signal as AbortSignal).aborted).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("aborts an errored response stream before reconnecting", async () => {
+    vi.useFakeTimers();
+    const erroredBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error("stream failed"));
+      },
+    });
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(erroredBody, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        }),
+      )
+      .mockResolvedValueOnce(pendingSseResponse());
+
+    dispatcher.start(BASE_URL, TOKEN);
+    await vi.advanceTimersByTimeAsync(0);
+    const [, firstInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((firstInit.signal as AbortSignal).aborted).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

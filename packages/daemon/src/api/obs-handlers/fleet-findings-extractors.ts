@@ -419,7 +419,7 @@ export function subagentKilledFromRow(row: DiagnosticRow): { killedBy: string } 
  *  `durable_orphaned` health_signal row's details JSON (the obs-autonomy-rows
  *  shape). Defensive parse cloning `nodeBudgetExceededFromRow` — a non-orphaned /
  *  malformed / missing row folds to `null` (ignored; counts only, never throws). The
- *  `reason` is a CLOSED enum (not_resumable / reread_failed / invalid_caps /
+ *  `reason` is a CLOSED enum (not_resumable / reread_failed / invalid_record / invalid_caps /
  *  resume_failed) mapped at the source — NEVER the engine's free-text reason — so it
  *  is rendered only into a count + a closed-token detail. `rootRunId` is an id (the
  *  worst-run drill-down), not a body. */
@@ -437,7 +437,7 @@ export function durableOrphanedFromRow(row: DiagnosticRow): { reason: string; ro
   }
 }
 
-/** The resumed `stepIndex` + the `rootRunId` from a
+/** The resumed checkpoint identity + the `rootRunId` from a
  *  `durable_resumed` health_signal row's details JSON. Defensive parse (the
  *  durableOrphanedFromRow clone) — a non-resumed / malformed / missing row folds to
  *  `null`. A resumed run is healthy crash-recovery (it has NO finding); this extractor

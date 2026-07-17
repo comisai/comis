@@ -13,18 +13,21 @@ import {
 
 const CATALOG_ENTRIES: ModelsCatalogEntry[] = [
   {
+    id: "anthropic/claude-sonnet-4-5-20250929",
     provider: "anthropic",
     modelId: "claude-sonnet-4-5-20250929",
     displayName: "Claude Sonnet 4",
     contextWindow: 200000,
   },
   {
+    id: "anthropic/claude-haiku-3-20250219",
     provider: "anthropic",
     modelId: "claude-haiku-3-20250219",
     displayName: "Claude Haiku 3",
     contextWindow: 200000,
   },
   {
+    id: "openai/gpt-4o",
     provider: "openai",
     modelId: "gpt-4o",
     displayName: "GPT-4o",
@@ -153,6 +156,63 @@ describe("openai-models", () => {
       const body = await res.json();
       expect(body.id).toBe("openai/gpt-4o");
       expect(body.owned_by).toBe("openai");
+    });
+
+    it("preserves explicit canonical ids in both the model list and lookup", async () => {
+      const entries = [
+        {
+          id: "first",
+          provider: "anthropic",
+          modelId: "shared-model",
+          displayName: "First",
+          contextWindow: 200000,
+        },
+        {
+          id: "second",
+          provider: "anthropic",
+          modelId: "shared-model",
+          displayName: "Second",
+          contextWindow: 200000,
+        },
+      ];
+      const app = createApp(createDeps(entries));
+      const listResponse = await app.request("/");
+      const listBody = await listResponse.json();
+      const firstResponse = await app.request("/first");
+      const firstBody = await firstResponse.json();
+
+      expect.soft(listBody.data.map((model: { id: string }) => model.id)).toEqual([
+        "first",
+        "second",
+      ]);
+      expect.soft(firstResponse.status).toBe(200);
+      expect(firstBody.id).toBe("first");
+    });
+
+    it("matches the complete canonical id instead of an overlapping suffix", async () => {
+      const entries: ModelsCatalogEntry[] = [
+        {
+          id: "short",
+          provider: "provider-a",
+          modelId: "model-a",
+          displayName: "Short",
+          contextWindow: 200000,
+        },
+        {
+          id: "group/short",
+          provider: "provider-b",
+          modelId: "model-b",
+          displayName: "Grouped short",
+          contextWindow: 200000,
+        },
+      ];
+      const app = createApp(createDeps(entries));
+
+      const exactResponse = await app.request("/group/short");
+      const prefixedResponse = await app.request("/arbitrary/short");
+
+      expect((await exactResponse.json()).id).toBe("group/short");
+      expect(prefixedResponse.status).toBe(404);
     });
   });
 

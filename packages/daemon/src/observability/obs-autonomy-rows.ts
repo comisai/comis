@@ -12,7 +12,7 @@
  *
  * CONTENT-FREE by construction: each `details` carries the
  * closed `signal` label + the closed reason ENUM (orphaned) / the integer COUNT
- * (revoked/killed) / the numeric stepIndex (resumed) + the rootRunId (an id)
+ * (revoked/killed) / the checkpoint id (resumed) + the rootRunId (an id)
  * ONLY — NEVER the engine's free-text orphan reason, a lease bearer/selector, or
  * any body (AGENTS.md §2.7). The free-text orphan reason stays on the WARN log / notify at
  * the source (durable-resume-engine.ts); it never reaches the typed event or this
@@ -29,7 +29,8 @@ import type { DiagnosticRow } from "@comis/memory";
  * durable run (a cron-fired/in-flight run that did NOT resume after a restart) had
  * NO fleet surface; an operator could not learn (cross-session) how often runs are
  * orphaned and for which closed reason. `details` carries the CLOSED reason enum
- * ONLY (not_resumable / reread_failed / invalid_caps / resume_failed) — NEVER the
+ * ONLY (not_resumable / reread_failed / invalid_record / invalid_caps /
+ * resume_failed) — NEVER the
  * engine's free-text reason (which stays on the WARN log / notify). The engine event
  * has no agentId/sessionKey (insertDiagnostic defaults absent columns to "").
  * severity:"warning" (an orphaned run is operator-visible degradation).
@@ -55,8 +56,8 @@ export function durableOrphanedEventToRow(payload: EventMap["durable:orphaned"])
  * Map a `durable:resumed` event to a `health_signal` diagnostic row. A resumed
  * in-flight run is healthy crash-recovery, not degradation, so severity:"info" —
  * a resume does NOT inflate the fleet degrade count (the same benign-reason
- * discipline as BENIGN_DAG_DEGRADED_REASONS). `details` carries the numeric stepIndex (the resumed checkpoint
- * position) + the rootRunId ONLY.
+ * discipline as BENIGN_DAG_DEGRADED_REASONS). `details` carries the execution
+ * checkpoint identity and tree root only.
  */
 export function durableResumedEventToRow(payload: EventMap["durable:resumed"]): DiagnosticRow {
   return {
@@ -68,7 +69,7 @@ export function durableResumedEventToRow(payload: EventMap["durable:resumed"]): 
     message: "durable:resumed",
     details: JSON.stringify({
       signal: "durable_resumed",
-      stepIndex: payload.stepIndex,
+      checkpointId: payload.checkpointId,
       rootRunId: payload.rootRunId,
     }),
     traceId: undefined,

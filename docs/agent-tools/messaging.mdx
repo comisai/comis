@@ -248,7 +248,7 @@ This is **off by default** and only does anything when `learningOutcome.enabled`
 |---------|--------------------------|-------|
 | Discord | Yes | Binds `MessageReactionAdd`; the required gateway intents are already held. |
 | Slack | Yes | Binds the `reaction_added` event; **requires operator setup** (below). |
-| Telegram | Yes | Binds `message_reaction`; **requires operator setup** for a webhook deployment (below). |
+| Telegram | Yes | Binds `message_reaction`; polling opts into this update type automatically. |
 | WhatsApp / Signal / iMessage / LINE / IRC / Email | No | These platforms' inbound APIs expose no per-reaction event carrying the reactor's identity. This is an honest no-op, not a gap — the agent can still *send* reactions where the capability matrix above allows it. |
 
 ### Operator setup
@@ -256,7 +256,7 @@ This is **off by default** and only does anything when `learningOutcome.enabled`
 The reaction-capable platforms need a one-time setup so the platform actually delivers reaction events:
 
 - **Slack** — add the `reactions:read` OAuth scope to the app and subscribe to the `reaction_added` event in the app's Event Subscriptions. Without both, Slack silently delivers no reaction events and the signal stays dark with no error.
-- **Telegram** — the bot opts into `message_reaction` updates automatically when Comis runs it in polling mode (the default). If you instead run Telegram via a **webhook**, you must include `message_reaction` in the `allowed_updates` list you pass to `setWebhook` (alongside `message`, `edited_message`, `callback_query`, and `poll`) — omitting it stops reaction delivery to the webhook.
+- **Telegram** — the bot opts into `message_reaction` updates automatically. Telegram webhook ingestion is not available; setting a webhook URL fails adapter startup.
 - **Discord** — no developer-portal change. Comis already holds the `GuildMessageReactions` / `DirectMessageReactions` intents.
 
 ## Cross-Channel Messaging

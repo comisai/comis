@@ -21,14 +21,25 @@
  * @module
  */
 
-const TLS_CERT_ERROR_CODES = new Set([
+const TLS_CERT_ERROR_CODES = [
   "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
   "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
   "CERT_HAS_EXPIRED",
   "DEPTH_ZERO_SELF_SIGNED_CERT",
   "SELF_SIGNED_CERT_IN_CHAIN",
   "ERR_TLS_CERT_ALTNAME_INVALID",
-]);
+] as const;
+
+/** Content-free OpenSSL certificate codes safe to expose to operators. */
+export type TlsCertificateErrorCode = (typeof TLS_CERT_ERROR_CODES)[number];
+
+/** Content-free network classification safe to expose to operators. */
+export type TlsPreflightNetworkReason =
+  | "timeout"
+  | "dns"
+  | "connection"
+  | "proxy"
+  | "other";
 
 const TLS_CERT_ERROR_PATTERNS = [
   /unable to get local issuer certificate/i,
@@ -58,11 +69,15 @@ export type TlsPreflightResult =
   | { ok: true }
   | {
       ok: false;
-      kind: TlsPreflightFailureKind;
-      /** OpenSSL error code when available (e.g. UNABLE_TO_GET_ISSUER_CERT_LOCALLY). */
-      code?: string;
-      /** Raw error string for log `err` field — safe to surface to operators. */
-      message: string;
+      kind: "tls-cert";
+      /** Recognized OpenSSL error code; arbitrary dependency codes are discarded. */
+      code?: TlsCertificateErrorCode;
+    }
+  | {
+      ok: false;
+      kind: "network";
+      /** Bounded failure class; raw dependency errors never cross this boundary. */
+      reason: TlsPreflightNetworkReason;
     };
 
 /** Options for the preflight probe. */
@@ -77,8 +92,8 @@ export interface RunOAuthTlsPreflightOptions {
  * Issue a single TLS preflight GET against auth.openai.com/oauth/authorize.
  *
  * Resolves to {ok:true} on any HTTP response (302 included — that's the
- * expected success path with redirect:"manual"). Resolves to {ok:false,
- * kind, code?, message} on fetch error.
+ * expected success path with redirect:"manual"). Failures expose only a
+ * closed classification and a recognized certificate code when available.
  *
  * Never throws.
  */
@@ -114,8 +129,34 @@ function classifyTlsPreflightError(error: unknown): TlsPreflightResult {
       : typeof root.message === "string"
         ? root.message
         : String(error);
+  const knownTlsCode = TLS_CERT_ERROR_CODES.find((candidate) => candidate === code);
   const isTlsCert =
-    (code ? TLS_CERT_ERROR_CODES.has(code) : false) ||
+    knownTlsCode !== undefined ||
     TLS_CERT_ERROR_PATTERNS.some((re) => re.test(message));
-  return { ok: false, kind: isTlsCert ? "tls-cert" : "network", code, message };
+  if (isTlsCert) {
+    return knownTlsCode === undefined
+      ? { ok: false, kind: "tls-cert" }
+      : { ok: false, kind: "tls-cert", code: knownTlsCode };
+  }
+  return { ok: false, kind: "network", reason: classifyNetworkReason(code, message) };
+}
+
+function classifyNetworkReason(
+  code: string | undefined,
+  message: string,
+): TlsPreflightNetworkReason {
+  const evidence = `${code ?? ""} ${message}`;
+  if (/timeout|timed out|abort|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT/i.test(evidence)) {
+    return "timeout";
+  }
+  if (/ENOTFOUND|EAI_AGAIN|EAI_FAIL|dns|name resolution/i.test(evidence)) {
+    return "dns";
+  }
+  if (/ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|socket hang up/i.test(evidence)) {
+    return "connection";
+  }
+  if (/proxy|HTTP 407|tunnel/i.test(evidence)) {
+    return "proxy";
+  }
+  return "other";
 }

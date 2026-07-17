@@ -30,7 +30,11 @@ import { join } from "node:path";
 
 import type { ComisLogger } from "@comis/core";
 import { createSqliteDurableRunStore, ensureDurableRunTable } from "@comis/memory";
-import { createOrchestrateReplayRespawn, detectSandboxProvider } from "@comis/skills/tools";
+import {
+  createOrchestrateReplayRespawn,
+  detectSandboxProvider,
+  safeResultRunId,
+} from "@comis/skills/tools";
 
 import {
   createOrchestrateReplaySocket,
@@ -56,10 +60,12 @@ const jailAvailable = canJailRun();
 
 describe.skipIf(!jailAvailable)("orchestrate.replay real jailed byte-identical round-trip (Linux only)", () => {
   let ws: string;
+  let recordingRoot: string;
   let db: unknown;
   let socketPath: string;
   let socket: OrchestrateReplaySocket | undefined;
   const ROOT = "orch-replay-vps-1";
+  const BEARER = "ephemeral-replay-bearer";
   const SCRIPT_REF = "orch-replay-vps-1.ts";
   // A DETERMINISTIC pinned script (no cap call) — its stdout is byte-identical on
   // every replay, which is the REPLAY-02 property the automated tier proves; the
@@ -68,13 +74,14 @@ describe.skipIf(!jailAvailable)("orchestrate.replay real jailed byte-identical r
 
   beforeEach(async () => {
     ws = mkdtempSync(join(tmpdir(), "comis-replay-vps-"));
-    mkdirSync(join(ws, "results"), { recursive: true });
+    recordingRoot = mkdtempSync(join(tmpdir(), "comis-replay-recordings-vps-"));
+    mkdirSync(join(recordingRoot, "results", safeResultRunId(ROOT)), { recursive: true });
     // The pinned bytes the replay re-spawns (the sole source — no re-supplied script).
     writeFileSync(join(ws, SCRIPT_REF), PINNED);
     // An empty recorded log — the socket loads + binds cleanly with nothing to serve
     // (this deterministic script makes no cap call). A recorded-call round-trip is
     // the operator's manual `comis orchestrate replay` verify.
-    writeFileSync(join(ws, "results", "replay.jsonl"), "");
+    writeFileSync(join(recordingRoot, "results", safeResultRunId(ROOT), "replay.jsonl"), "");
     // eslint-disable-next-line no-restricted-syntax -- Linux/VPS integration gate.
     const Database = (await import("better-sqlite3")).default;
     db = new Database(":memory:");
@@ -83,17 +90,23 @@ describe.skipIf(!jailAvailable)("orchestrate.replay real jailed byte-identical r
     const store = createSqliteDurableRunStore(db as never);
     await store.upsertCheckpoint({
       rootRunId: ROOT, spawnTree: [], caps: [], leaseIds: [], budgetConsumed: 0,
-      cronOrigin: null, stepIndex: -1, status: "running", lastHeartbeatAt: Date.now(),
+      cronOrigin: null, trustLevel: "user", stepIndex: -1, status: "running", lastHeartbeatAt: Date.now(),
       scriptRef: SCRIPT_REF, checkpointRef: null,
     });
     socketPath = join(ws, "replay.sock");
-    socket = createOrchestrateReplaySocket({ workspacePath: ws, logger: silentLogger });
+    socket = createOrchestrateReplaySocket({
+      recordingRootPath: recordingRoot,
+      runId: ROOT,
+      expectedBearer: BEARER,
+      logger: silentLogger,
+    });
     await socket.start(socketPath);
   });
 
   afterEach(async () => {
     await socket?.close();
     rmSync(ws, { recursive: true, force: true });
+    rmSync(recordingRoot, { recursive: true, force: true });
   });
 
   it("re-spawns the pinned bytes in the real jail → byte-identical stdout, against the SEPARATE replay socket (INV-1)", async () => {
@@ -107,13 +120,21 @@ describe.skipIf(!jailAvailable)("orchestrate.replay real jailed byte-identical r
       baseEnv: { PATH: process.env.PATH },
     });
 
-    const bearer = "ephemeral-replay-bearer";
     // INV-1: the child dials the SEPARATE replay socket, never the prod endpoint.
-    const childEnv = buildReplayChildEnv(socketPath, bearer);
+    const childEnv = buildReplayChildEnv(socketPath, BEARER);
     expect(childEnv.COMIS_ORCH_SOCKET).toBe(socketPath);
 
-    const first = await respawn({ rootRunId: ROOT, workspacePath: ws, socketPath, bearer, childEnv });
-    const second = await respawn({ rootRunId: ROOT, workspacePath: ws, socketPath, bearer, childEnv });
+    const principal = {
+      agentId: "default",
+      sessionKey: "default:default:default",
+      ownerTenantId: "default",
+      ownerUserId: "default",
+      deliveryOrigin: null,
+      trustLevel: "user" as const,
+      caps: [],
+    };
+    const first = await respawn({ rootRunId: ROOT, workspacePath: ws, socketPath, bearer: BEARER, childEnv, principal });
+    const second = await respawn({ rootRunId: ROOT, workspacePath: ws, socketPath, bearer: BEARER, childEnv, principal });
 
     // Deterministic pinned bytes ⇒ byte-identical stdout across replays.
     expect(first.stdout.trim()).toBe(JSON.stringify({ ok: true, n: 42 }));

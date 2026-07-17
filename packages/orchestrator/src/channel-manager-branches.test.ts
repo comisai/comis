@@ -3,7 +3,7 @@
  * Branch-gap tests for createChannelManager (channel-manager.ts).
  *
  * The existing channel-manager.test.ts exercises core paths (start/stop,
- * sendMessage, graph-report intercept). This file fills uncovered branches:
+ * sendMessage, authenticated inbound forwarding). This file fills uncovered branches:
  * - channelRegistry-sourced adapters
  * - debounce flush handler routing (adapter lookup hit + miss)
  * - injectMessage adapter-not-found branch
@@ -22,6 +22,7 @@ import type {
 import type { AgentExecutor, SessionLifecycle } from "@comis/agent";
 import type { MessageRouter } from "./routing/message-router.js";
 import { ok } from "@comis/shared";
+import { tryGetContext } from "@comis/core";
 import { createMockLogger } from "../../../test/support/mock-logger.js";
 import {
   createChannelManager,
@@ -129,10 +130,32 @@ function makeEventBus(): TypedEventBus {
 
 function makeDeps(overrides?: Partial<ChannelManagerDeps>): ChannelManagerDeps {
   return {
+    tenantId: "default",
     eventBus: makeEventBus(),
     messageRouter: makeRouter(),
     sessionManager: makeSessionManager(),
     createExecutor: vi.fn(() => makeExecutor()),
+    persistInboundMessage: vi.fn(async (_agentId, message) => ({
+      ok: true as const,
+      value: {
+        payloads: [{
+            schemaVersion: 1 as const,
+            batchId: message.id,
+            chunkIndex: 0,
+            chunkCount: 1,
+            recordedAt: message.timestamp,
+            messages: [{
+              id: message.id,
+              channelId: message.channelId,
+              channelType: message.channelType,
+              senderId: message.senderId,
+              text: message.text,
+              timestamp: message.timestamp,
+            }],
+        }],
+        ledgerContent: "test-ledger-record\n",
+      },
+    })),
     adapters: [],
     logger: createMockLogger(),
     deliveryService: makeFakeDeliveryService(),
@@ -375,7 +398,55 @@ describe("createChannelManager injectMessage early-exit branches", () => {
     expect(onMessageProcessed).toHaveBeenCalledWith(msg, "telegram");
   });
 
-  it("intercepts injected graph:report button callback before forwarding to pipeline", async () => {
+  it("keeps injected lifecycle hooks and pipeline in one fail-closed request scope", async () => {
+    const adapter = makeAdapter({ channelType: "telegram" });
+    const observed: Array<ReturnType<typeof tryGetContext>> = [];
+    const onMessageReceived = vi.fn(() => {
+      observed.push(tryGetContext());
+    });
+    const processInboundMessage = vi.fn(async () => {
+      observed.push(tryGetContext());
+    });
+    const onMessageProcessed = vi.fn(() => {
+      observed.push(tryGetContext());
+    });
+    const deps = makeDeps({
+      tenantId: "tenant-production",
+      adapters: [adapter],
+      processInboundMessage,
+      onMessageReceived,
+      onMessageProcessed,
+    });
+    const mgr = createChannelManager(deps);
+    await mgr.startAll();
+    const msg: NormalizedMessage = {
+      id: "msg-scoped-injection",
+      channelId: "c-1",
+      channelType: "telegram",
+      senderId: "u-1",
+      text: "hello",
+      timestamp: 1,
+      attachments: [],
+      metadata: {},
+    };
+
+    await mgr.injectMessage("telegram", msg);
+
+    expect(observed).toHaveLength(3);
+    expect(observed[0]).toBeDefined();
+    expect(observed[1]).toBe(observed[0]);
+    expect(observed[2]).toBe(observed[0]);
+    expect(observed[0]).toMatchObject({
+      traceId: msg.metadata.traceId,
+      channelType: "telegram",
+      tenantId: "tenant-production",
+      trustLevel: "user",
+    });
+    expect(observed[0]?.agentId).toBeUndefined();
+    expect(observed[0]?.sessionKey).toBeUndefined();
+  });
+
+  it("forwards unsigned graph report callback text into the authenticated inbound pipeline", async () => {
     const adapter = makeAdapter({ channelType: "telegram" });
     const processInboundMessage = vi.fn();
     const onGraphReportRequest = vi.fn(async () => undefined);
@@ -401,15 +472,9 @@ describe("createChannelManager injectMessage early-exit branches", () => {
     };
     await mgr.injectMessage("telegram", msg);
 
-    expect(onGraphReportRequest).toHaveBeenCalledWith(
-      "graph-42",
-      "telegram",
-      "c-1",
-      adapter,
-      undefined,
-    );
-    expect(onMessageReceived).not.toHaveBeenCalled();
-    expect(processInboundMessage).not.toHaveBeenCalled();
+    expect(onGraphReportRequest).not.toHaveBeenCalled();
+    expect(onMessageReceived).toHaveBeenCalledWith(msg, "telegram");
+    expect(processInboundMessage).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -452,5 +517,41 @@ describe("createChannelManager stopAll shutdown ordering", () => {
       }),
       "Failed to stop adapter",
     );
+  });
+});
+
+describe("createChannelManager inbound failure logging", () => {
+  it("logs a bounded redacted message instead of the raw pipeline exception", async () => {
+    const credential = `xoxb-${"s".repeat(32)}`;
+    const logger = createMockLogger();
+    const adapter = makeAdapter();
+    const deps = makeDeps({
+      adapters: [adapter],
+      logger,
+      processInboundMessage: vi.fn(async () => {
+        throw new Error(`request https://private.example failed with ${credential}`);
+      }),
+    });
+    const manager = createChannelManager(deps);
+    await manager.startAll();
+    const message: NormalizedMessage = {
+      id: "msg-privacy",
+      channelId: "chat-1",
+      channelType: "telegram",
+      senderId: "user-1",
+      text: "hello",
+      timestamp: 1,
+      attachments: [],
+      metadata: {},
+    };
+
+    await expect(adapter._handlers[0]!(message)).rejects.toThrow("private.example");
+
+    const failure = vi.mocked(logger.error).mock.calls.find(
+      (call) => call[1] === "Unhandled error in message handler",
+    );
+    expect(typeof failure?.[0].err).toBe("string");
+    expect(JSON.stringify(failure)).not.toContain(credential);
+    expect(JSON.stringify(failure)).not.toContain("private.example");
   });
 });

@@ -3,8 +3,8 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import type { RpcClient } from "../api/rpc-client.js";
-import type { DeliveryTrace, DeliveryStep } from "../api/types/index.js";
-import { systemClearInterval, systemDateFrom, systemNowMs, systemSetInterval } from "@comis/core";
+import type { DeliveryStats, DeliveryTrace, DeliveryStep } from "../api/types/index.js";
+import { systemClearInterval, systemDateFrom, systemSetInterval } from "@comis/core";
 
 // Side-effect imports (register custom elements)
 import "../components/data/ic-stat-card.js";
@@ -25,6 +25,38 @@ const RPC_REFRESH_INTERVAL_MS = 30_000;
 
 /** Default time range: 7 days in milliseconds. */
 const DEFAULT_SINCE_MS = 604_800_000;
+
+interface DeliveryRecord {
+  readonly sourceChannelId: string;
+  readonly sourceChannelType: string;
+  readonly targetChannelType: string;
+  readonly targetChannelId: string;
+  readonly deliveredAt: number;
+  readonly latencyMs: number;
+  readonly status: unknown;
+  readonly error: unknown;
+  readonly traceId: string | null;
+  readonly failureStage: unknown;
+  readonly errorKind: unknown;
+  readonly steps: ReadonlyArray<DeliveryStep> | null;
+}
+
+interface DeliveryRecentResponse {
+  readonly deliveries: ReadonlyArray<DeliveryRecord>;
+}
+
+function normalizeDeliveryStatus(status: unknown): DeliveryTrace["status"] {
+  switch (status) {
+    case "success":
+    case "error":
+    case "timeout":
+    case "filtered":
+    case "aborted":
+      return status;
+    default:
+      return "error";
+  }
+}
 
 /**
  * Standalone delivery view with success rate gauge, P50/P95/P99 latency stats,
@@ -172,8 +204,10 @@ export class IcDeliveryView extends LitElement {
       }
 
       .detail-card-value.status-success { color: var(--ic-success); }
-      .detail-card-value.status-failed { color: var(--ic-error); }
+      .detail-card-value.status-error { color: var(--ic-error); }
       .detail-card-value.status-timeout { color: var(--ic-warning); }
+      .detail-card-value.status-filtered { color: var(--ic-text-dim); }
+      .detail-card-value.status-aborted { color: var(--ic-warning); }
 
       .no-steps {
         font-size: var(--ic-text-sm);
@@ -243,7 +277,7 @@ export class IcDeliveryView extends LitElement {
   @state() private _searchQuery = "";
   @state() private _statusFilter = "all";
   @state() private _channelFilter = "all";
-  @state() private _deliveryStats: { total: number; successes: number; failures: number; avgLatencyMs: number } | null = null;
+  @state() private _deliveryStats: DeliveryStats | null = null;
   @state() private _traces: DeliveryTrace[] = [];
   @state() private _selectedTrace: DeliveryTrace | null = null;
   @state() private _detailOpen = false;
@@ -317,8 +351,8 @@ export class IcDeliveryView extends LitElement {
 
     try {
       const [statsResult, tracesResult] = await Promise.allSettled([
-        rpc.call<Record<string, unknown>>("obs.delivery.stats", { sinceMs: this._sinceMs }),
-        rpc.call<unknown>("obs.delivery.recent", { sinceMs: this._sinceMs, limit: 200 }),
+        rpc.call<DeliveryStats>("obs.delivery.stats", { sinceMs: this._sinceMs }),
+        rpc.call<DeliveryRecentResponse>("obs.delivery.recent", { sinceMs: this._sinceMs, limit: 200 }),
       ]);
 
       if (statsResult.status === "rejected" && tracesResult.status === "rejected") {
@@ -326,24 +360,17 @@ export class IcDeliveryView extends LitElement {
       }
 
       if (statsResult.status === "fulfilled") {
-        const raw = statsResult.value;
-        this._deliveryStats = {
-          total: Number(raw.totalDelivered ?? raw.total ?? 0),
-          successes: Number(raw.successes ?? Math.round(Number(raw.totalDelivered ?? 0) * Number(raw.successRate ?? 0) / 100)),
-          failures: Number(raw.failed ?? raw.failures ?? 0),
-          avgLatencyMs: Number(raw.avgLatencyMs ?? 0),
-        };
+        this._deliveryStats = statsResult.value;
+      } else {
+        this._deliveryStats = null;
       }
 
       if (tracesResult.status === "fulfilled") {
-        const rawTraces = tracesResult.value;
-        if (Array.isArray(rawTraces)) {
-          this._traces = rawTraces.map((d: Record<string, unknown>) => this._normalizeTrace(d));
-        } else {
-          const wrapped = rawTraces as Record<string, unknown>;
-          const arr = Array.isArray(wrapped.traces) ? wrapped.traces : Array.isArray(wrapped.deliveries) ? wrapped.deliveries : [];
-          this._traces = (arr as Record<string, unknown>[]).map((d) => this._normalizeTrace(d));
-        }
+        this._traces = tracesResult.value.deliveries.map((delivery) => this._normalizeTrace(delivery));
+      } else {
+        this._traces = [];
+        this._selectedTrace = null;
+        this._detailOpen = false;
       }
 
       this._computeLatencyPercentiles();
@@ -353,25 +380,20 @@ export class IcDeliveryView extends LitElement {
     }
   }
 
-  private _normalizeTrace(d: Record<string, unknown>): DeliveryTrace {
-    const traceId = String(d.traceId ?? `${d.sourceChannelId ?? "unknown"}-${d.deliveredAt ?? systemNowMs()}`);
-    const timestamp = Number(d.timestamp ?? d.deliveredAt ?? systemNowMs());
-    const channelType = String(d.sourceChannelType ?? d.targetChannelType ?? d.channelType ?? "unknown");
-    const messagePreview = String(
-      (d as Record<string, Record<string, unknown>>).metadata?.messagePreview ??
-      (typeof d.message === "string" ? (d.message as string).slice(0, 80) : d.messagePreview ?? "..."),
-    );
-    const status = d.status === "failed" ? "failed" : d.status === "timeout" ? "timeout" :
-      (typeof d.success === "boolean" ? (d.success ? "success" : "failed") : "success");
-    const latencyMs = d.latencyMs != null ? Number(d.latencyMs) : null;
-    const steps = Array.isArray(d.steps) ? d.steps as DeliveryStep[] : [];
+  private _normalizeTrace(delivery: DeliveryRecord): DeliveryTrace {
+    const steps = delivery.steps ?? [];
     return {
-      traceId,
-      timestamp,
-      channelType,
-      messagePreview,
-      status: status as DeliveryTrace["status"],
-      latencyMs,
+      traceId: delivery.traceId ?? `${delivery.sourceChannelId}-${delivery.deliveredAt}`,
+      timestamp: delivery.deliveredAt,
+      sourceChannelType: delivery.sourceChannelType,
+      targetChannelType: delivery.targetChannelType,
+      status: normalizeDeliveryStatus(delivery.status),
+      latencyMs: delivery.latencyMs,
+      error: typeof delivery.error === "string" ? delivery.error : null,
+      failureStage: delivery.failureStage === "execution" || delivery.failureStage === "delivery"
+        ? delivery.failureStage
+        : null,
+      errorKind: typeof delivery.errorKind === "string" ? delivery.errorKind : null,
       stepCount: steps.length,
       steps,
     };
@@ -379,6 +401,9 @@ export class IcDeliveryView extends LitElement {
 
   private _computeLatencyPercentiles(): void {
     const values = this._traces
+      .filter((trace) =>
+        trace.status === "success" || trace.status === "error" || trace.status === "timeout",
+      )
       .map((t) => t.latencyMs)
       .filter((v): v is number => v != null)
       .sort((a, b) => a - b);
@@ -388,10 +413,12 @@ export class IcDeliveryView extends LitElement {
       return;
     }
 
+    const nearestRank = (percentile: number): number =>
+      values[Math.max(0, Math.ceil(values.length * percentile) - 1)]!;
     this._latencyPercentiles = {
-      p50: values[Math.floor(values.length * 0.50)]!,
-      p95: values[Math.floor(values.length * 0.95)]!,
-      p99: values[Math.floor(values.length * 0.99)]!,
+      p50: nearestRank(0.50),
+      p95: nearestRank(0.95),
+      p99: nearestRank(0.99),
     };
   }
 
@@ -404,8 +431,9 @@ export class IcDeliveryView extends LitElement {
       const q = this._searchQuery.toLowerCase();
       result = result.filter(
         (t) =>
-          t.messagePreview.toLowerCase().includes(q) ||
-          t.channelType.toLowerCase().includes(q),
+          t.traceId.toLowerCase().includes(q) ||
+          t.sourceChannelType.toLowerCase().includes(q) ||
+          t.targetChannelType.toLowerCase().includes(q),
       );
     }
 
@@ -414,32 +442,38 @@ export class IcDeliveryView extends LitElement {
     }
 
     if (this._channelFilter !== "all") {
-      result = result.filter((t) => t.channelType === this._channelFilter);
+      result = result.filter((t) => t.targetChannelType === this._channelFilter);
     }
 
     return result;
   }
 
   private get _uniqueChannels(): string[] {
-    return [...new Set(this._traces.map((t) => t.channelType))].sort();
+    return [...new Set(this._traces.map((t) => t.targetChannelType))].sort();
   }
 
-  private get _successRate(): number {
-    if (this._deliveryStats && this._deliveryStats.total > 0) {
-      return Math.round((this._deliveryStats.successes / this._deliveryStats.total) * 100);
+  private get _successRate(): number | null {
+    if (this._deliveryStats) {
+      return this._deliveryStats.attempted > 0
+        ? Math.round((this._deliveryStats.success / this._deliveryStats.attempted) * 100)
+        : null;
     }
-    if (this._traces.length === 0) return 0;
-    const successes = this._traces.filter((t) => t.status === "success").length;
-    return Math.round((successes / this._traces.length) * 100);
+    const attempted = this._traces.filter(
+      (trace) => trace.status === "success" || trace.status === "error" || trace.status === "timeout",
+    );
+    if (attempted.length === 0) return null;
+    const successes = attempted.filter((trace) => trace.status === "success").length;
+    return Math.round((successes / attempted.length) * 100);
   }
 
   private get _channelRates(): Array<{ channel: string; rate: number }> {
     const groups = new Map<string, { ok: number; total: number }>();
     for (const t of this._traces) {
-      const g = groups.get(t.channelType) ?? { ok: 0, total: 0 };
+      if (t.status === "filtered" || t.status === "aborted") continue;
+      const g = groups.get(t.targetChannelType) ?? { ok: 0, total: 0 };
       g.total++;
       if (t.status === "success") g.ok++;
-      groups.set(t.channelType, g);
+      groups.set(t.targetChannelType, g);
     }
     return [...groups.entries()]
       .map(([channel, g]) => ({ channel, rate: Math.round((g.ok / g.total) * 100) }))
@@ -499,14 +533,15 @@ export class IcDeliveryView extends LitElement {
   private _renderStats() {
     const rate = this._successRate;
     const p = this._latencyPercentiles;
-    const approximate = this._traces.length < 10;
+    const approximate = this._traces.length < 10
+      || (this._deliveryStats?.total ?? this._traces.length) > this._traces.length;
     const total = this._deliveryStats?.total ?? this._traces.length;
 
     return html`
       <div class="stats-row">
         <ic-stat-card
           label="Success Rate"
-          .value=${`${rate}%`}
+          .value=${rate === null ? "N/A" : `${rate}%`}
         ></ic-stat-card>
         <ic-stat-card
           label="P50 Latency"
@@ -557,11 +592,13 @@ export class IcDeliveryView extends LitElement {
         <select class="filter-select" @change=${this._onStatusFilter}>
           <option value="all">All Status</option>
           <option value="success" ?selected=${this._statusFilter === "success"}>Success</option>
-          <option value="failed" ?selected=${this._statusFilter === "failed"}>Failed</option>
+          <option value="error" ?selected=${this._statusFilter === "error"}>Error</option>
           <option value="timeout" ?selected=${this._statusFilter === "timeout"}>Timeout</option>
+          <option value="filtered" ?selected=${this._statusFilter === "filtered"}>Filtered</option>
+          <option value="aborted" ?selected=${this._statusFilter === "aborted"}>Aborted</option>
         </select>
         <select class="filter-select" @change=${this._onChannelFilter}>
-          <option value="all">All Channels</option>
+          <option value="all">All Destinations</option>
           ${this._uniqueChannels.map(
             (ch) => html`<option value=${ch} ?selected=${this._channelFilter === ch}>${ch}</option>`,
           )}
@@ -582,8 +619,8 @@ export class IcDeliveryView extends LitElement {
       <div class="trace-table" role="table" aria-label="Delivery traces">
         <div class="table-header" role="row">
           <div class="cell" role="columnheader">Time</div>
-          <div class="cell" role="columnheader">Channel</div>
-          <div class="cell" role="columnheader">Message</div>
+          <div class="cell" role="columnheader">Destination</div>
+          <div class="cell" role="columnheader">Trace</div>
           <div class="cell" role="columnheader">Status</div>
           <div class="cell" role="columnheader">Latency</div>
           <div class="cell" role="columnheader">Steps</div>
@@ -615,12 +652,28 @@ export class IcDeliveryView extends LitElement {
       >
         <div class="detail-cards">
           <div class="detail-card">
-            <div class="detail-card-label">Channel</div>
-            <div class="detail-card-value">${t.channelType}</div>
+            <div class="detail-card-label">Source</div>
+            <div class="detail-card-value">${t.sourceChannelType}</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-card-label">Destination</div>
+            <div class="detail-card-value">${t.targetChannelType}</div>
           </div>
           <div class="detail-card">
             <div class="detail-card-label">Status</div>
             <div class="detail-card-value status-${t.status}">${t.status}</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-card-label">Failure Stage</div>
+            <div class="detail-card-value">${t.failureStage ?? "--"}</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-card-label">Error Kind</div>
+            <div class="detail-card-value">${t.errorKind ?? "--"}</div>
+          </div>
+          <div class="detail-card">
+            <div class="detail-card-label">Error</div>
+            <div class="detail-card-value">${t.error ?? "--"}</div>
           </div>
           <div class="detail-card">
             <div class="detail-card-label">Latency</div>

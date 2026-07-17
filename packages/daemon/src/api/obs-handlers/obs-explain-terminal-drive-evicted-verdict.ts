@@ -37,7 +37,7 @@
  * idle-reaped is rooted in the no-task stall — the eviction is its consequence) and ABOVE
  * the `completed_with_tool_errors` catch-all (a reaper kill is a specific terminal-
  * lifecycle cause, more root than "some tools failed"). It keys only on
- * `terminalDriveEvicted` (absent on the frozen 678/503 fixtures), so it cannot regress a
+ * `terminalDriveEvicted` (absent on the established cost and breaker fixtures), so it cannot regress a
  * non-terminal session. The return type is structurally identical to the registry's
  * `RootCause` (no cross-module type import ⇒ no cycle).
  *

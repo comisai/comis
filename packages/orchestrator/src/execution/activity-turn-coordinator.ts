@@ -51,10 +51,11 @@ import type {
   ComisLogger,
   ErrorKind,
 } from "@comis/core";
-import { redactValue, isNonEmptyEvents } from "@comis/core";
+import { isNonEmptyEvents, redactValue, toSafeErrorLogString } from "@comis/core";
 import type { Result } from "@comis/shared";
-import { suppressError } from "@comis/shared";
+import { fromPromise, suppressError, tryCatch } from "@comis/shared";
 import { randomUUID } from "node:crypto";
+import { emitObservationalEvent } from "./execution-event-emitter.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -340,6 +341,24 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     }, "Activity renderer reported an error");
   }
 
+  /** Keep one failing cleanup action from skipping the remaining resources. */
+  function runCleanup(
+    cleanupStep: "debounce" | "delivery_gate" | "activity_subscription" | "plan_subscription",
+    cleanup: (() => void) | undefined,
+  ): void {
+    if (cleanup === undefined) return;
+    const result = tryCatch(cleanup);
+    if (result.ok) return;
+    deps.logger.warn({
+      submodule: "activity-turn-coordinator",
+      step: "cleanup",
+      cleanupStep,
+      err: toSafeErrorLogString(result.error),
+      errorKind: "internal" as const,
+      hint: "Inspect the failing activity cleanup adapter; remaining coordinator cleanup continued",
+    }, "Activity coordinator cleanup failed");
+  }
+
   /**
    * Kill-switch gate. Returns true when this renderer's activity must be
    * suppressed for the current turn. Reads the LIVE getter on every call (no
@@ -498,16 +517,35 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     if (disposed) return;
     disposed = true;
     subAgentStack.length = 0;
-    debounceHandle?.cancel();
+    const debounceToCancel = debounceHandle;
+    debounceHandle = undefined;
     // Cancel the in-flight delivery gate so an aborted turn does not leave a
     // timer holding the event loop open. cancel() is idempotent.
-    pendingGate?.cancel();
-    subscription?.unsubscribe();
+    const pendingGateToCancel = pendingGate;
+    pendingGate = undefined;
+    const subscriptionToRelease = subscription;
+    subscription = undefined;
     // Detach the SEP plan-stream subscription so a re-extracted
     // plan after this turn's dispose never fires the (now-stale) handler.
-    planUnsubscribe?.();
+    const planToUnsubscribe = planUnsubscribe;
     planUnsubscribe = undefined;
     latestPlanSnapshot = undefined;
+
+    runCleanup(
+      "debounce",
+      debounceToCancel === undefined ? undefined : () => debounceToCancel.cancel(),
+    );
+    runCleanup(
+      "delivery_gate",
+      pendingGateToCancel === undefined ? undefined : () => pendingGateToCancel.cancel(),
+    );
+    runCleanup(
+      "activity_subscription",
+      subscriptionToRelease === undefined
+        ? undefined
+        : () => subscriptionToRelease.unsubscribe(),
+    );
+    runCleanup("plan_subscription", planToUnsubscribe);
   }
 
   /**
@@ -544,7 +582,7 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     // Content-free: closed outcome kind + closed ErrorKind + a fixed
     // named-constant reason + counts.
     if (deps.eventBus && turnCtx !== undefined) {
-      deps.eventBus.emit("activity:turn_finalized", {
+      emitObservationalEvent({ eventBus: deps.eventBus, logger: deps.logger }, "activity:turn_finalized", {
         sessionKey: turnCtx.sessionKey,
         agentId: turnCtx.agentId,
         channelType: turnCtx.channelType,
@@ -588,7 +626,17 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   /** Call renderer.finalize and surface any render error as WARN. */
   async function dispatchFinalize(outcome: TurnOutcome): Promise<void> {
     counters.deleteApplied++;
-    const result: Result<void, ActivityRenderError> = await deps.renderer.finalize(outcome);
+    const invoked = tryCatch(() => deps.renderer.finalize(outcome));
+    if (!invoked.ok) {
+      warnRenderError("finalize", { kind: "internal", cause: invoked.error });
+      return;
+    }
+    const settled = await fromPromise(invoked.value);
+    if (!settled.ok) {
+      warnRenderError("finalize", { kind: "internal", cause: settled.error });
+      return;
+    }
+    const result: Result<void, ActivityRenderError> = settled.value;
     if (!result.ok) warnRenderError("finalize", result.error);
   }
 

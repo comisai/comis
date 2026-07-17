@@ -9,7 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { ok, err, type Result } from "@comis/shared";
-import type { TypedEventBus, ClockPort, TimerPort } from "@comis/core";
+import { emitObservationalEventSafely, type TypedEventBus, type ClockPort, type TimerPort } from "@comis/core";
 import { persistTaskSync, recoverTasks, removeTaskFile } from "./background-task-persistence.js";
 import type {
   BackgroundTask,
@@ -177,7 +177,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       incrementCounters(agentId);
       persistTaskSync(dataDir, task);
 
-      eventBus.emit("background_task:promoted", {
+      emitObservationalEventSafely({ eventBus, logger }, "background_task:promoted", {
         agentId,
         taskId,
         toolName,
@@ -200,7 +200,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       persistTaskSync(dataDir, task);
 
       const durationMs = task.completedAt - task.startedAt;
-      eventBus.emit("background_task:completed", {
+      emitObservationalEventSafely({ eventBus, logger }, "background_task:completed", {
         agentId: task.origin.agentId,
         taskId,
         toolName: task.toolName,
@@ -229,7 +229,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       persistTaskSync(dataDir, task);
 
       const durationMs = task.completedAt - task.startedAt;
-      eventBus.emit("background_task:failed", {
+      emitObservationalEventSafely({ eventBus, logger }, "background_task:failed", {
         agentId: task.origin.agentId,
         taskId,
         toolName: task.toolName,
@@ -255,7 +255,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       decrementCounters(task.origin.agentId);
       persistTaskSync(dataDir, task);
 
-      eventBus.emit("background_task:cancelled", {
+      emitObservationalEventSafely({ eventBus, logger }, "background_task:cancelled", {
         agentId: task.origin.agentId,
         taskId,
         toolName: task.toolName,
@@ -308,7 +308,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             continue;
           }
           count++;
-          eventBus.emit("background_task:failed", {
+          emitObservationalEventSafely({ eventBus, logger }, "background_task:failed", {
             agentId: task.origin.agentId,
             taskId: task.id,
             toolName: task.toolName,

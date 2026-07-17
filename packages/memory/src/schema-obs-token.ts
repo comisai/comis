@@ -14,6 +14,7 @@
  */
 
 import type Database from "better-sqlite3";
+import { requireTableInfoRows } from "./schema-introspection.js";
 
 /**
  * Forward-only upgrade of `obs_token_usage` for the cost-correctness work.
@@ -41,9 +42,11 @@ import type Database from "better-sqlite3";
  * @param db - An open better-sqlite3 Database whose `obs_token_usage` table exists.
  */
 export function ensureObsTokenColumns(db: Database.Database): void {
-  // Object-literal cast — the sanctioned PRAGMA idiom (not `as Foo[]`).
   const cols = new Set(
-    (db.prepare(`PRAGMA table_info(obs_token_usage)`).all() as { name: string }[]).map((r) => r.name),
+    requireTableInfoRows(
+      db.prepare(`PRAGMA table_info(obs_token_usage)`).all(),
+      "obs_token_usage",
+    ).map((row) => row.name),
   );
 
   // Part 1 — DROP the dead cache_retention column (rebuild; guarded so re-run-safe).
@@ -98,7 +101,10 @@ export function ensureObsTokenColumns(db: Database.Database): void {
   // Part 2 — ADD the 5 cost-correctness columns (guarded, nullable → O(1) ADD).
   // Re-probe after the rebuild (the rebuilt table has none of them yet).
   const cols2 = new Set(
-    (db.prepare(`PRAGMA table_info(obs_token_usage)`).all() as { name: string }[]).map((r) => r.name),
+    requireTableInfoRows(
+      db.prepare(`PRAGMA table_info(obs_token_usage)`).all(),
+      "obs_token_usage",
+    ).map((row) => row.name),
   );
   if (!cols2.has("warmup_turn")) db.exec(`ALTER TABLE obs_token_usage ADD COLUMN warmup_turn INTEGER`);
   if (!cols2.has("cache_eligible")) db.exec(`ALTER TABLE obs_token_usage ADD COLUMN cache_eligible INTEGER`);

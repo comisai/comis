@@ -286,6 +286,7 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
       eventBus,
       tokenStore: deps.tokenStore,
       rpcAdapterDeps,
+      bodyLimitBytes: config.httpBodyLimitBytes,
     });
     app.route("", sseEndpoint);
 

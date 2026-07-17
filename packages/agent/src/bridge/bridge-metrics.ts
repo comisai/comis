@@ -46,10 +46,10 @@ export interface BridgeMetricsState {
   textEmitted: boolean;
   lastLlmErrorMessage: string | undefined;
 
-  /** Per-turn capture of outbound delivery events. Populated by pi-event-bridge
+  /** Per-execution capture of outbound delivery events. Populated by pi-event-bridge
    *  on tool_execution_end for `message(action='send'|'reply'|'attach')`.
-   *  Read by executor-post-execution.ts to make sentinel-aware decisions.
-   *  Reset at turn start. */
+   *  Read by the prompt runner to authorize a silent final response only after
+   *  exact-route delivery. The bridge itself is execution-scoped. */
   outboundLog: Array<{ action: string; channelType: string; channelId: string; timestamp: number }>;
 
   // Tool tracking

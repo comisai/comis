@@ -157,7 +157,7 @@ function credsParseFinding(
       "fail",
       check,
       `Unresolved appPassword reference: \${${unresolvedAppPassword.varName}} at ${unresolvedAppPassword.path}` +
-        " — not in env, ~/.comis/.env, or the encrypted secret store",
+        " — not in the process environment, active data-dir .env, or configured secret store",
       "Set the variable in the environment or store it via comis secrets set",
     );
   }
@@ -252,11 +252,11 @@ async function recentInboundFinding(): Promise<DoctorFinding> {
       found = true;
       lastInboundAt = entry.lastInboundAt;
     }
-  } catch (e) {
+  } catch {
     return finding(
       "skip",
       check,
-      `Recent-inbound not checked — channel-status RPC failed: ${e instanceof Error ? e.message : String(e)}`,
+      "Recent-inbound not checked — channel-status RPC failed",
     );
   }
 

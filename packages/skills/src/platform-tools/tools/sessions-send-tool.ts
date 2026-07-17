@@ -61,6 +61,7 @@ export function createSessionsSendTool(rpcCall: RpcCall): AgentTool<typeof Sessi
         "Send a message into another session. Supports fire-and-forget (default), wait (blocks for response), and ping-pong (multi-turn exchange) modes.",
       parameters: SessionsSendParams,
       rpcMethod: "session.send",
+      useToolCallIdAsOperationId: true,
       transformParams(p) {
         const sessionKey = readStringParam(p, "session_key");
         const text = readStringParam(p, "text");

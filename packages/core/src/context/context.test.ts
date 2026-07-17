@@ -5,7 +5,14 @@ import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import type { RequestContext } from "./context.js";
-import { RequestContextSchema, getContext, tryGetContext, runWithContext } from "./context.js";
+import {
+  RequestContextSchema,
+  createResolvedRequestContext,
+  enrichCurrentContext,
+  getContext,
+  tryGetContext,
+  runWithContext,
+} from "./context.js";
 
 function makeContext(overrides: Partial<RequestContext> = {}): RequestContext {
   return {
@@ -19,7 +26,82 @@ function makeContext(overrides: Partial<RequestContext> = {}): RequestContext {
   };
 }
 
+function makeResolvedSession(
+  overrides: Partial<{ tenantId: string; userId: string; channelId: string }> = {},
+) {
+  return {
+    tenantId: "tenant-1",
+    userId: "user-1",
+    channelId: "chat-1",
+    ...overrides,
+  };
+}
+
 describe("RequestContext", () => {
+  describe("createResolvedRequestContext", () => {
+    it("creates a coherent locked context for a synthetic request boundary", () => {
+      const result = createResolvedRequestContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "guest",
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.sessionKey).toBe("tenant-1:user-1:chat-1");
+      expect(Reflect.set(result.value, "trustLevel", "admin")).toBe(false);
+      expect(Reflect.set(result.value, "agentId", "agent-2")).toBe(false);
+      expect(Reflect.set(result.value, "resolvedLanguage", "en")).toBe(true);
+      expect(result.value.resolvedLanguage).toBe("en");
+    });
+
+    it("freezes a coherent delivery origin and rejects conflicting identities", () => {
+      const valid = createResolvedRequestContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "user",
+        channelType: "telegram",
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+      });
+      const invalid = createResolvedRequestContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession({ userId: "user-2" }),
+        agentId: "agent-1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "user",
+      });
+      const invalidAgent = createResolvedRequestContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: { ...makeResolvedSession(), agentId: "agent-2" },
+        agentId: "agent-1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "user",
+      });
+
+      expect(valid.ok).toBe(true);
+      if (valid.ok) expect(Object.isFrozen(valid.value.deliveryOrigin)).toBe(true);
+      expect(invalid.ok).toBe(false);
+      expect(invalidAgent.ok).toBe(false);
+    });
+  });
+
   describe("runWithContext + getContext", () => {
     it("returns context within scope", () => {
       const ctx = makeContext();
@@ -60,6 +142,499 @@ describe("RequestContext", () => {
       runWithContext(ctx, () => {
         expect(tryGetContext()).toEqual(ctx);
       });
+    });
+  });
+
+  describe("enrichCurrentContext", () => {
+    it("fills resolved turn identity on the existing inbound context object", () => {
+      const ctx = makeContext({
+        tenantId: "default",
+        userId: undefined,
+        sessionKey: undefined,
+        agentId: undefined,
+        channelType: "telegram",
+      });
+
+      const result = runWithContext(ctx, () => enrichCurrentContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        trustLevel: "admin",
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(ctx).toMatchObject({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: "tenant-1:user-1:chat-1",
+        agentId: "agent-1",
+        trustLevel: "admin",
+        deliveryOrigin: { channelType: "telegram", channelId: "chat-1" },
+      });
+      if (result.ok) expect(result.value).toBe(ctx);
+    });
+
+    it("rejects invalid resolved identity without mutating the inbound context", () => {
+      const ctx = makeContext({ agentId: undefined });
+
+      const result = runWithContext(ctx, () => enrichCurrentContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "",
+        trustLevel: "user",
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+      }));
+
+      expect(result.ok).toBe(false);
+      expect(ctx.agentId).toBeUndefined();
+    });
+
+    it("accepts an exact repeated enrichment without replacing the context", () => {
+      const ctx = makeContext({
+        userId: undefined,
+        sessionKey: undefined,
+        agentId: undefined,
+        trustLevel: "admin",
+      });
+      const enrichment = {
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        trustLevel: "guest" as const,
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+      };
+
+      const results = runWithContext(ctx, () => [
+        enrichCurrentContext(enrichment),
+        enrichCurrentContext(enrichment),
+      ]);
+
+      expect(results.every((result) => result.ok)).toBe(true);
+      if (results[1]?.ok) expect(results[1].value).toBe(ctx);
+      expect(ctx.trustLevel).toBe("guest");
+    });
+
+    it("rejects conflicting repeated authorization fields without mutation", () => {
+      const ctx = makeContext({
+        agentId: "agent-1",
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+      });
+
+      const result = runWithContext(ctx, () => enrichCurrentContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession({ channelId: "chan-1" }),
+        agentId: "agent-2",
+        trustLevel: "admin",
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-2",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+      }));
+
+      expect(result.ok).toBe(false);
+      expect(ctx).toMatchObject({
+        agentId: "agent-1",
+        trustLevel: "user",
+        deliveryOrigin: { channelId: "chat-1" },
+      });
+    });
+
+    it("locks resolved authorization while leaving execution annotations writable", () => {
+      const ctx = makeContext({
+        userId: undefined,
+        sessionKey: undefined,
+        agentId: undefined,
+        trustLevel: "user",
+      });
+
+      const result = runWithContext(ctx, () => enrichCurrentContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        trustLevel: "user",
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+      }));
+
+      expect(result.ok).toBe(true);
+      for (const field of [
+        "tenantId",
+        "userId",
+        "sessionKey",
+        "agentId",
+        "trustLevel",
+        "deliveryOrigin",
+      ] as const) {
+        expect(Object.getOwnPropertyDescriptor(ctx, field)?.writable).toBe(false);
+      }
+      expect(Reflect.set(ctx, "trustLevel", "admin")).toBe(false);
+      expect(Reflect.set(ctx, "agentId", "agent-2")).toBe(false);
+      expect(Reflect.set(ctx, "resolvedModel", "provider:model-a")).toBe(true);
+      expect(ctx.resolvedModel).toBe("provider:model-a");
+    });
+
+    it.each([
+      {
+        name: "session tenant",
+        context: {},
+        enrichment: { sessionKey: makeResolvedSession({ tenantId: "tenant-2" }) },
+      },
+      {
+        name: "session user",
+        context: {},
+        enrichment: { sessionKey: makeResolvedSession({ userId: "user-2" }) },
+      },
+      {
+        name: "session agent",
+        context: {},
+        enrichment: { sessionKey: { ...makeResolvedSession(), agentId: "agent-2" } },
+      },
+      {
+        name: "delivery origin tenant",
+        context: {},
+        enrichment: {
+          deliveryOrigin: {
+            channelType: "telegram",
+            channelId: "chat-1",
+            userId: "user-1",
+            tenantId: "tenant-2",
+          },
+        },
+      },
+      {
+        name: "delivery origin user",
+        context: {},
+        enrichment: {
+          deliveryOrigin: {
+            channelType: "telegram",
+            channelId: "chat-1",
+            userId: "user-2",
+            tenantId: "tenant-1",
+          },
+        },
+      },
+      {
+        name: "ingress channel",
+        context: { channelType: "discord" },
+        enrichment: {},
+      },
+    ])("rejects a resolved $name that conflicts with the root inbound identity", ({
+      context: contextOverrides,
+      enrichment: enrichmentOverrides,
+    }) => {
+      const ctx = makeContext({
+        tenantId: "default",
+        userId: undefined,
+        sessionKey: undefined,
+        agentId: undefined,
+        trustLevel: "guest",
+        channelType: "telegram",
+        ...contextOverrides,
+      });
+      const before = Object.getOwnPropertyDescriptors(ctx);
+      const enrichment = {
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        trustLevel: "user" as const,
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+        ...enrichmentOverrides,
+      };
+
+      const result = runWithContext(ctx, () => enrichCurrentContext(enrichment));
+
+      expect(result.ok).toBe(false);
+      expect(Object.getOwnPropertyDescriptors(ctx)).toEqual(before);
+    });
+
+    it("locks absent authorization fields instead of leaving them addable", () => {
+      const ctx = makeContext({
+        tenantId: "default",
+        userId: undefined,
+        sessionKey: undefined,
+        agentId: undefined,
+        channelType: "telegram",
+      });
+
+      const result = runWithContext(ctx, () => enrichCurrentContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        trustLevel: "user",
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+      }));
+
+      expect(result.ok).toBe(true);
+      for (const field of [
+        "tenantId",
+        "userId",
+        "sessionKey",
+        "agentId",
+        "clientId",
+        "traceId",
+        "startedAt",
+        "trustLevel",
+        "contentDelimiter",
+        "channelType",
+        "deliveryOrigin",
+      ] as const) {
+        expect(Object.getOwnPropertyDescriptor(ctx, field)).toMatchObject({
+          writable: false,
+          configurable: false,
+        });
+      }
+      expect(Reflect.set(ctx, "clientId", "forged-client")).toBe(false);
+      expect(Reflect.set(ctx, "contentDelimiter", "0123456789abcdef")).toBe(false);
+    });
+
+    it("does not expose a transferable marker that skips authorization locking", () => {
+      const source = makeContext({
+        tenantId: "default",
+        userId: undefined,
+        sessionKey: undefined,
+        agentId: undefined,
+        channelType: "telegram",
+      });
+      const resolved = {
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        trustLevel: "user" as const,
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+      };
+      const sourceResult = runWithContext(source, () => enrichCurrentContext(resolved));
+      expect(sourceResult.ok).toBe(true);
+      const exposedMarker = Object.getOwnPropertySymbols(source).find(
+        (symbol) => String(symbol).includes("resolved-request-context"),
+      );
+
+      const forged = makeContext({
+        tenantId: resolved.tenantId,
+        userId: resolved.userId,
+        sessionKey: "tenant-1:user-1:chat-1",
+        agentId: resolved.agentId,
+        trustLevel: resolved.trustLevel,
+        deliveryOrigin: { ...resolved.deliveryOrigin },
+        channelType: "telegram",
+      });
+      Object.defineProperty(
+        forged,
+        exposedMarker ?? Symbol("comis.resolved-request-context"),
+        { value: true, enumerable: false, writable: false, configurable: true },
+      );
+      const forgedResult = runWithContext(forged, () => enrichCurrentContext(resolved));
+
+      expect(exposedMarker).toBeUndefined();
+      expect(forgedResult.ok).toBe(true);
+      expect(Object.getOwnPropertyDescriptor(forged, "trustLevel")).toMatchObject({
+        writable: false,
+        configurable: false,
+      });
+      expect(Reflect.set(forged, "trustLevel", "admin")).toBe(false);
+    });
+
+    it.each(["userId", "clientId"] as const)(
+      "treats an existing %s as resolved authorization when trust conflicts",
+      (field) => {
+        const ctx = makeContext({
+          tenantId: "tenant-1",
+          userId: field === "userId" ? "user-1" : undefined,
+          clientId: field === "clientId" ? "client-1" : undefined,
+          sessionKey: undefined,
+          agentId: undefined,
+          trustLevel: "guest",
+          channelType: "telegram",
+        });
+        const before = Object.getOwnPropertyDescriptors(ctx);
+
+        const result = runWithContext(ctx, () => enrichCurrentContext({
+          tenantId: "tenant-1",
+          userId: "user-1",
+          sessionKey: makeResolvedSession(),
+          agentId: "agent-1",
+          trustLevel: "admin",
+          deliveryOrigin: {
+            channelType: "telegram",
+            channelId: "chat-1",
+            userId: "user-1",
+            tenantId: "tenant-1",
+          },
+        }));
+
+        expect(result.ok).toBe(false);
+        expect(Object.getOwnPropertyDescriptors(ctx)).toEqual(before);
+      },
+    );
+
+    it("returns an error without mutating a frozen inbound context", () => {
+      const ctx = Object.freeze(makeContext({
+        userId: undefined,
+        sessionKey: undefined,
+        agentId: undefined,
+      }));
+      const before = JSON.stringify(ctx);
+
+      const result = runWithContext(ctx, () => enrichCurrentContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        trustLevel: "user",
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+      }));
+
+      expect(result.ok).toBe(false);
+      expect(JSON.stringify(ctx)).toBe(before);
+    });
+
+    it("returns an error before partially changing a non-extensible context", () => {
+      const ctx = Object.preventExtensions(makeContext({
+        tenantId: "default",
+        userId: undefined,
+        sessionKey: undefined,
+        agentId: undefined,
+        trustLevel: "guest",
+      }));
+      const before = JSON.stringify(ctx);
+
+      const result = runWithContext(ctx, () => enrichCurrentContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        trustLevel: "admin",
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+      }));
+
+      expect(result.ok).toBe(false);
+      expect(JSON.stringify(ctx)).toBe(before);
+    });
+
+    it("contains hostile accessors without invoking their setters", () => {
+      const ctx = makeContext({
+        userId: undefined,
+        sessionKey: undefined,
+        agentId: undefined,
+      });
+      let setterCalls = 0;
+      Object.defineProperty(ctx, "userId", {
+        configurable: true,
+        enumerable: true,
+        get: () => undefined,
+        set: () => {
+          setterCalls++;
+          throw new Error("hostile setter");
+        },
+      });
+
+      const result = runWithContext(ctx, () => enrichCurrentContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        trustLevel: "user",
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+      }));
+
+      expect(result.ok).toBe(false);
+      expect(setterCalls).toBe(0);
+      expect(ctx.agentId).toBeUndefined();
+    });
+
+    it("rejects a throwing context getter without invoking it", () => {
+      const ctx = makeContext({ agentId: undefined });
+      let getterCalls = 0;
+      Object.defineProperty(ctx, "agentId", {
+        configurable: true,
+        enumerable: true,
+        get: () => {
+          getterCalls++;
+          throw new Error("hostile getter");
+        },
+      });
+
+      const result = runWithContext(ctx, () => enrichCurrentContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        trustLevel: "user",
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+      }));
+
+      expect(result.ok).toBe(false);
+      expect(getterCalls).toBe(0);
+      expect(ctx.trustLevel).toBe("user");
     });
   });
 
@@ -298,14 +873,14 @@ describe("RequestContext", () => {
   });
 
   describe("trustLevel", () => {
-    it("trustLevel defaults to 'admin'", () => {
+    it("trustLevel defaults to fail-closed guest", () => {
       const result = RequestContextSchema.parse({
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
         traceId: randomUUID(),
         startedAt: Date.now(),
       });
-      expect(result.trustLevel).toBe("admin");
+      expect(result.trustLevel).toBe("guest");
     });
 
     it("accepts admin trustLevel", () => {

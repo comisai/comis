@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Bundle-size gate: the generated contracts artifact fits within
- * 120 KB minified + 38 KB gzipped (sized for ~190 actual RPC methods).
+ * Bundle-size gate: the generated validator bundle must remain within the
+ * configured minified and gzipped budgets.
  *
  * Test strategy: read the committed `contracts.generated.size.json` (produced
  * by `pnpm contracts:generate`) and assert the totals are within budget. The
@@ -43,7 +43,7 @@ interface SizeReportShape {
 }
 
 describe("contracts bundle-size budget", () => {
-  it("contracts.generated.size.json reports within 120 KB minified + 38 KB gzipped", () => {
+  it("contracts.generated.size.json reports within the configured size budgets", () => {
     const raw = readFileSync(SIZE_REPORT, "utf8");
     const report = JSON.parse(raw) as SizeReportShape;
 

@@ -18,6 +18,7 @@ import type {
   MessageHandler,
   ChannelStatus,
   AttachmentPayload,
+  AttachmentSendReceipt,
   NormalizedMessage,
   ChannelPluginPort,
   ChannelCapability,
@@ -111,8 +112,8 @@ function createCustomAdapter(options: CustomAdapterOptions): ChannelPort & {
       _channelId: string,
       _attachment: AttachmentPayload,
       _options?: unknown,
-    ): Promise<Result<string, Error>> {
-      return ok(`custom-attach-${messageCounter++}`);
+    ): Promise<Result<AttachmentSendReceipt, Error>> {
+      return ok({ kind: "tracked", messageId: `custom-attach-${messageCounter++}` });
     },
 
     async platformAction(
@@ -217,7 +218,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       expect(adapter.channelType).toBe("custom");
     });
 
-    it("sendMessage returns ok(string) with message ID, sendAttachment returns ok(string)", async () => {
+    it("sendMessage returns an ID and sendAttachment returns a truthful receipt", async () => {
       const adapter = createCustomAdapter({
         channelId: "test-03",
         channelType: "custom",
@@ -230,7 +231,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
         expect(typeof msg1.value).toBe("string");
       }
 
-      // sendAttachment returns ok(string)
+      // sendAttachment returns a tracked or delivered-untracked receipt.
       const attachment: AttachmentPayload = {
         type: "image",
         url: "https://example.com/image.png",
@@ -240,7 +241,7 @@ describe("CADPT: Custom Adapter Contract & Capability Validation", () => {
       const attach1 = await adapter.sendAttachment("ch-1", attachment);
       expect(attach1.ok).toBe(true);
       if (attach1.ok) {
-        expect(typeof attach1.value).toBe("string");
+        expect(attach1.value).toEqual({ kind: "tracked", messageId: "custom-attach-1" });
       }
 
       // Message IDs are unique

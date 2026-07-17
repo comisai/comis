@@ -9,13 +9,21 @@ import { fileURLToPath } from "node:url";
 import { ok, err } from "@comis/shared";
 import { resolveModelProfile } from "../model-profile.js";
 import type { PerAgentConfig, SessionKey, NormalizedMessage } from "@comis/core";
-import { formatSessionKey, runWithContext, tryGetContext } from "@comis/core";
+import {
+  createDeliveryOrigin,
+  formatSessionKey,
+  INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
+  runWithContext,
+  tryGetContext,
+  TypedEventBus,
+} from "@comis/core";
 import type { ExecutionResult } from "../types.js";
 import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot } from "../prompt-assembly.js";
 import { clearSessionToolSchemaSnapshot } from "../executor-session-state.js";
 import { resetPairedMemoryDedupForTests } from "../executor-post-execution.js";
 import type { CacheBreakEvent, CacheBreakReason, PendingChanges } from "../cache-detection/index.js";
 import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
+import { planInboundMessageProvenance } from "../../session/inbound-message-provenance.js";
 
 // ---------------------------------------------------------------------------
 // Hoisted mock setup -- vi.hoisted runs before vi.mock factories
@@ -31,6 +39,8 @@ const {
   mockSetSystemPrompt,
   mockCompact,
   mockAbortCompaction,
+  mockAppendCustomEntry,
+  mockAppendInboundMessageLedger,
   mockSendCustomMessage,
   mockStreamFn,
   mockSteer,
@@ -43,6 +53,7 @@ const {
   mockSetThinkingLevel,
   mockSession,
   mockBridgeListener,
+  mockHasOutboundDelivery,
   mockGetResult,
   mockApplyOverrides,
   mockSettingsManagerCreate,
@@ -69,6 +80,11 @@ const {
   const mockSetSystemPrompt = vi.fn();
   const mockCompact = vi.fn().mockResolvedValue({ summary: "compacted", firstKeptEntryId: "e1", tokensBefore: 5000 });
   const mockAbortCompaction = vi.fn();
+  const mockAppendCustomEntry = vi.fn().mockReturnValue("provenance-entry");
+  const mockAppendInboundMessageLedger = vi.fn().mockReturnValue({
+    ok: true,
+    value: undefined,
+  });
 
   const mockSendCustomMessage = vi.fn().mockResolvedValue(undefined);
   const mockStreamFn = vi.fn().mockReturnValue("original-stream");
@@ -117,6 +133,7 @@ const {
   };
 
   const mockBridgeListener = vi.fn();
+  const mockHasOutboundDelivery = vi.fn().mockReturnValue(false);
   const mockGetResult = vi.fn().mockReturnValue({
     tokensUsed: { input: 100, output: 50, total: 150 },
     cost: { total: 0.01 },
@@ -174,6 +191,8 @@ const {
     mockSetSystemPrompt,
     mockCompact,
     mockAbortCompaction,
+    mockAppendCustomEntry,
+    mockAppendInboundMessageLedger,
     mockSendCustomMessage,
     mockStreamFn,
     mockSteer,
@@ -186,6 +205,7 @@ const {
     mockSetThinkingLevel,
     mockSession,
     mockBridgeListener,
+    mockHasOutboundDelivery,
     mockGetResult,
     mockApplyOverrides,
     mockSettingsManagerCreate,
@@ -250,6 +270,7 @@ vi.mock("../../bridge/pi-event-bridge.js", () => ({
     // postExecution reads the per-turn skill-use carrier back. Default
     // empty (no skill attributed) → memory:skill_used not emitted.
     getUsedSkillIds: () => new Set<string>(),
+    hasOutboundDelivery: mockHasOutboundDelivery,
   }),
 }));
 
@@ -320,6 +341,7 @@ import { createCapabilityPortStub } from "../../../../core/src/ports/__test-help
 import { repairOrphanedMessages, scrubPoisonedThinkingBlocks } from "../../session/orphaned-message-repair.js";
 import { scrubRedactedToolCalls } from "../../session/scrub-redacted-tool-calls.js";
 import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
+import { INTERACTIVE_SILENT_FAILURE_RESPONSE } from "../prompt-runner/interactive-silent-recovery.js";
 import { assembleRichSystemPrompt, loadWorkspaceBootstrapFiles, buildBootstrapContextFiles } from "../../bootstrap/index.js";
 import { wrapInEnvelope } from "../../envelope/message-envelope.js";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -338,13 +360,25 @@ const testSessionKey: SessionKey = {
 };
 
 const testMessage: NormalizedMessage = {
-  id: "msg-1",
+  id: "11111111-1111-4111-8111-111111111111",
   text: "hello world",
   senderId: "user1",
   channelId: "c1",
   channelType: "test",
   timestamp: Date.now(),
 } as NormalizedMessage;
+
+function makeInboundProvenanceOverrides(
+  message: NormalizedMessage,
+  recordedAt = Date.parse("2026-03-12T00:00:00.000Z"),
+) {
+  const planned = planInboundMessageProvenance(message, recordedAt);
+  if (!planned.ok) throw planned.error.error;
+  return {
+    operationType: "interactive" as const,
+    inboundProvenancePlans: [planned.value],
+  };
+}
 
 const testConfig: PerAgentConfig = {
   name: "test-agent",
@@ -361,6 +395,7 @@ const testConfig: PerAgentConfig = {
 // ---------------------------------------------------------------------------
 
 function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
+  const emit = vi.fn();
   return {
     circuitBreaker: {
       isOpen: vi.fn().mockReturnValue(false),
@@ -394,7 +429,11 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
       getCount: vi.fn().mockReturnValue(0),
     },
     eventBus: {
-      emit: vi.fn(),
+      emit,
+      emitSafely: vi.fn((event: string, payload: unknown) => {
+        emit(event, payload);
+        return { hadListeners: false, failures: [], pendingFailures: Promise.resolve([]) };
+      }),
       on: vi.fn(),
       off: vi.fn(),
       once: vi.fn(),
@@ -429,12 +468,18 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
           const mockSm = {
             buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
             appendMessage: vi.fn(),
+            appendCustomEntry: mockAppendCustomEntry,
             getSessionDir: vi.fn().mockReturnValue("/tmp/test-session"),
           };
           const value = await fn(mockSm);
           return ok(value);
         },
       ),
+      appendInboundMessageLedger: mockAppendInboundMessageLedger,
+      persistInboundMessage: vi.fn().mockResolvedValue(ok({
+        payloads: [],
+        ledgerContent: "",
+      })),
       destroySession: vi.fn().mockResolvedValue(undefined),
     },
     workspaceDir: "/tmp/test-workspace",
@@ -498,6 +543,11 @@ describe("PiExecutor", () => {
     mockSubscribe.mockReturnValue(vi.fn());
     mockCompact.mockResolvedValue({ summary: "compacted", firstKeptEntryId: "e1", tokensBefore: 5000 });
     mockAbortCompaction.mockReset();
+    mockAppendCustomEntry.mockReset().mockReturnValue("provenance-entry");
+    mockAppendInboundMessageLedger.mockReset().mockReturnValue({
+      ok: true,
+      value: undefined,
+    });
     mockGetUserMessagesForForking.mockReturnValue([
       { entryId: "entry-1", text: "First user message" },
       { entryId: "entry-2", text: "Second user message" },
@@ -529,6 +579,7 @@ describe("PiExecutor", () => {
     // Reset steering mocks
     mockSteer.mockResolvedValue(undefined);
     mockFollowUp.mockResolvedValue(undefined);
+    mockHasOutboundDelivery.mockReset().mockReturnValue(false);
     mockSession.isStreaming = false;
     mockSession.isCompacting = false;
     // getVisibleAssistantText now reads from mockSession.messages
@@ -652,6 +703,200 @@ describe("PiExecutor", () => {
       expect(promptText).toContain("[System context]");
       expect(promptText).toContain("[End system context]");
       expect(promptText).toContain("hello world");
+    });
+
+    it("mirrors the exact preprocessed inbound provenance plan before model dispatch", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+      const rawMessage = { ...testMessage, text: "raw initial body" } as NormalizedMessage;
+      const processedMessage = { ...testMessage, text: "processed model body" } as NormalizedMessage;
+      const recordedAt = Date.parse("2026-03-12T00:00:00.000Z");
+      const overrides = makeInboundProvenanceOverrides(rawMessage, recordedAt);
+
+      await executor.execute(
+        processedMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        overrides,
+      );
+
+      const expectedBatch = {
+        schemaVersion: 1,
+        batchId: rawMessage.id,
+        chunkIndex: 0,
+        chunkCount: 1,
+        recordedAt,
+        messages: [{
+          id: rawMessage.id,
+          channelId: rawMessage.channelId,
+          channelType: rawMessage.channelType,
+          senderId: rawMessage.senderId,
+          text: rawMessage.text,
+          timestamp: rawMessage.timestamp,
+        }],
+      };
+      expect(mockAppendInboundMessageLedger).not.toHaveBeenCalled();
+      expect(mockAppendCustomEntry).toHaveBeenCalledTimes(2);
+      expect(mockAppendCustomEntry).toHaveBeenNthCalledWith(
+        1,
+        INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
+        expectedBatch,
+      );
+      expect(mockAppendCustomEntry).toHaveBeenNthCalledWith(
+        2,
+        INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
+        expectedBatch,
+      );
+      expect(mockAppendCustomEntry.mock.invocationCallOrder[0]).toBeLessThan(
+        mockPrompt.mock.invocationCallOrder[0]!,
+      );
+      expect(mockAppendCustomEntry.mock.invocationCallOrder[1]).toBeLessThan(
+        mockPrompt.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("stops model dispatch when inbound provenance cannot be persisted", async () => {
+      mockAppendCustomEntry.mockImplementationOnce(() => {
+        throw new Error("session disk unavailable");
+      });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined, makeInboundProvenanceOverrides(testMessage),
+      );
+
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(result.finishReason).toBe("error");
+      expect(result.response).toBe("The message could not be saved safely. Please try again.");
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "session-provenance",
+          errorKind: "resource",
+          hint: expect.stringContaining("session-storage limits"),
+        }),
+        "Inbound message provenance persistence failed",
+      );
+    });
+
+    it("contains a provenance failure whose Error message accessor is hostile", async () => {
+      const hostile = new Error("placeholder");
+      Object.defineProperty(hostile, "message", {
+        get() { throw new Error("message accessor escaped"); },
+      });
+      mockAppendCustomEntry.mockImplementationOnce(() => {
+        throw hostile;
+      });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined, makeInboundProvenanceOverrides(testMessage),
+      );
+
+      expect(result.finishReason).toBe("error");
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "session-provenance",
+          err: "[unreadable error message]",
+        }),
+        "Inbound message provenance persistence failed",
+      );
+    });
+
+    it("contains a provenance failure whose Error message accessor is not a string", async () => {
+      const hostile = new Error("placeholder");
+      Object.defineProperty(hostile, "message", {
+        get() { return { untrusted: "not a string" }; },
+      });
+      mockAppendCustomEntry.mockImplementationOnce(() => {
+        throw hostile;
+      });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined, makeInboundProvenanceOverrides(testMessage),
+      );
+
+      expect(result.finishReason).toBe("error");
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "session-provenance",
+          err: "[unreadable error message]",
+        }),
+        "Inbound message provenance persistence failed",
+      );
+    });
+
+    it("redacts credentials and URLs from provenance failure logs", async () => {
+      const credential = `xoxb-${"s".repeat(32)}`;
+      mockAppendCustomEntry.mockImplementationOnce(() => {
+        throw new Error(`write failed at https://private.example/session with ${credential}`);
+      });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined, makeInboundProvenanceOverrides(testMessage),
+      );
+
+      expect(JSON.stringify(deps.logger.error.mock.calls)).not.toContain(credential);
+      expect(JSON.stringify(deps.logger.error.mock.calls)).not.toContain("private.example");
+    });
+
+    it("stops model dispatch when the adjacent provenance marker cannot be persisted", async () => {
+      mockAppendCustomEntry
+        .mockReturnValueOnce("early-provenance-entry")
+        .mockImplementationOnce(() => {
+          throw new Error("session disk became unavailable");
+        });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined, makeInboundProvenanceOverrides(testMessage),
+      );
+
+      expect(mockAppendCustomEntry).toHaveBeenCalledTimes(2);
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(result.finishReason).toBe("error");
+      expect(result.response).toBe("The message could not be saved safely. Please try again.");
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "session-provenance",
+          errorKind: "resource",
+          hint: expect.stringContaining("session-storage limits"),
+        }),
+        "Inbound message provenance persistence failed",
+      );
+    });
+
+    it("never appends the durable physical-message ledger from model execution", async () => {
+      mockAppendInboundMessageLedger.mockReturnValueOnce({
+        ok: false,
+        error: new Error("ledger disk unavailable"),
+      });
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(testMessage, testSessionKey);
+
+      expect(mockAppendInboundMessageLedger).not.toHaveBeenCalled();
+      expect(mockAppendCustomEntry).not.toHaveBeenCalled();
+      expect(mockPrompt).toHaveBeenCalledOnce();
+      expect(result.finishReason).toBe("stop");
     });
 
     it("returns response from getLastAssistantText", async () => {
@@ -1339,6 +1584,7 @@ describe("PiExecutor", () => {
           getDrainState: () => ({ drainInflightByKey: new Map<string, Promise<void>>() }),
           // Per-turn skill-use carrier read-back (empty in the mock).
           getUsedSkillIds: () => new Set<string>(),
+          hasOutboundDelivery: vi.fn().mockReturnValue(false),
         };
       });
 
@@ -1527,7 +1773,7 @@ describe("PiExecutor", () => {
       );
     });
 
-    it("empty assistant content produces empty response", async () => {
+    it("returns a visible failure when an interactive completion stays empty", async () => {
       // getVisibleAssistantText reads mockSession.messages directly
       // (no SDK delegation). An empty-content assistant — e.g. provider
       // returned no text blocks — must yield "".
@@ -1550,8 +1796,9 @@ describe("PiExecutor", () => {
 
       const result = await executor.execute(testMessage, testSessionKey);
 
-      expect(result.response).toBe("");
-      expect(result.finishReason).toBe("stop");
+      expect(result.response).toBe(INTERACTIVE_SILENT_FAILURE_RESPONSE);
+      expect(result.finishReason).toBe("error");
+      expect(mockFollowUp).toHaveBeenCalledOnce();
     });
 
     it("multiple sequential executions on same executor produce valid results", async () => {
@@ -1875,7 +2122,7 @@ describe("PiExecutor", () => {
             channel: "test",
           }),
           inboundMeta: expect.objectContaining({
-            messageId: "msg-1",
+            messageId: testMessage.id,
             senderId: "user1",
             chatId: "c1",
             channel: "test",
@@ -4346,7 +4593,7 @@ describe("PiExecutor", () => {
       expect(silentWarn).toBeUndefined();
     });
 
-    it("does NOT trigger when text was emitted in intermediate turn (multi-turn agentic loop)", async () => {
+    it("does not treat intermediate model text as delivery proof when the final response is empty", async () => {
       // Simulate: multi-turn agentic loop where text was produced in an
       // intermediate turn but the final assistant has no visible text
       // (empty final turn after bookkeeping tool call like memory_store).
@@ -4365,9 +4612,8 @@ describe("PiExecutor", () => {
 
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Should NOT be treated as error -- text was delivered mid-loop
-      expect(result.finishReason).not.toBe("error");
-      expect(result.response).toBe(""); // Empty is OK when text was streamed
+      expect(result.finishReason).toBe("error");
+      expect(result.response).toBe(INTERACTIVE_SILENT_FAILURE_RESPONSE);
 
       // Verify the WARN log was NOT emitted
       const warnCalls = (deps.logger.warn as Mock).mock.calls;
@@ -4763,7 +5009,7 @@ describe("PiExecutor", () => {
       expect(result.response).toBe("Normal final response");
     });
 
-    it("returns empty when no assistant messages have text blocks (degenerate case)", async () => {
+    it("returns a visible failure when no assistant message has a text block", async () => {
       mockGetLastAssistantText.mockReturnValue("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 100, output: 50, total: 150 },
@@ -4788,15 +5034,12 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Fallback tried but found nothing -- empty is the honest result
-      expect(result.response).toBe("");
+      expect(result.response).toBe(INTERACTIVE_SILENT_FAILURE_RESPONSE);
+      expect(result.finishReason).toBe("error");
     });
 
-    it("passes NO_REPLY silent token through unchanged (channel-layer filter handles suppression)", async () => {
-      // Contract change: silent tokens are explicit suppression
-      // signals; the agent layer passes them through unchanged so the
-      // channel-layer filter (packages/channels/src/shared/response-filter.ts)
-      // can suppress delivery downstream.
+    it("preserves NO_REPLY after message-tool delivery to the request route", async () => {
+      mockHasOutboundDelivery.mockReturnValue(true);
       mockGetLastAssistantText.mockReturnValue("NO_REPLY");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -4836,7 +5079,7 @@ describe("PiExecutor", () => {
       expect(result.finishReason).not.toBe("error");
     });
 
-    it("passes HEARTBEAT_OK silent token through unchanged (channel-layer filter handles suppression)", async () => {
+    it("preserves HEARTBEAT_OK for a heartbeat operation", async () => {
       mockGetLastAssistantText.mockReturnValue("HEARTBEAT_OK");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -4869,14 +5112,17 @@ describe("PiExecutor", () => {
 
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
-      const result = await executor.execute(testMessage, testSessionKey);
+      const result = await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined, { operationType: "heartbeat" },
+      );
 
       expect(result.response).toBe("HEARTBEAT_OK");
       expect(result.response).not.toContain("All systems are running normally.");
       expect(result.finishReason).not.toBe("error");
     });
 
-    it("passes HEARTBEAT_OK through unchanged even when prior turns include NO_REPLY (no recovery override)", async () => {
+    it("preserves HEARTBEAT_OK for heartbeat history containing NO_REPLY", async () => {
       mockGetLastAssistantText.mockReturnValue("HEARTBEAT_OK");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -4918,7 +5164,10 @@ describe("PiExecutor", () => {
 
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
-      const result = await executor.execute(testMessage, testSessionKey);
+      const result = await executor.execute(
+        testMessage, testSessionKey, undefined, undefined, undefined,
+        undefined, undefined, { operationType: "heartbeat" },
+      );
 
       expect(result.response).toBe("HEARTBEAT_OK");
       expect(result.response).not.toContain("Here is the analysis result.");
@@ -5175,12 +5424,7 @@ describe("PiExecutor", () => {
       expect(mockFollowUp).not.toHaveBeenCalled();
     });
 
-    it("late continuation still fires when synthesis is unavailable (pure-conversational thinking-only case)", async () => {
-      // L3 update: synthesis only fires when ≥1 tool call exists in the current
-      // execution window. For pure-conversational fixtures (no tool calls) where
-      // all visible text is thinking-only, recovery returns "" → late
-      // continuation still fires as before. This proves the L3 change did not
-      // break the late-continuation pathway for the case it was designed for.
+    it("returns a visible failure when late continuation remains silent", async () => {
       mockGetLastAssistantText.mockReturnValue("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -5222,8 +5466,8 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       const result = await executor.execute(testMessage, testSessionKey);
 
-      // Late continuation tried but followUp produced nothing visible → empty.
-      expect(result.response).toBe("");
+      expect(result.response).toBe(INTERACTIVE_SILENT_FAILURE_RESPONSE);
+      expect(result.finishReason).toBe("error");
       expect(mockFollowUp).toHaveBeenCalled();
     });
   });
@@ -5448,9 +5692,9 @@ describe("ExcludeDeferralResult wiring", () => {
 
       // Execute within an ALS context scope so tryGetContext() returns something
       const ctx = {
-        tenantId: "default",
+        tenantId: testSessionKey.tenantId,
         userId: "u1",
-        sessionKey: "t1:c1:u1",
+        sessionKey: formatSessionKey(testSessionKey),
         traceId: crypto.randomUUID(),
         startedAt: Date.now(),
         trustLevel: "admin" as const,
@@ -5504,6 +5748,157 @@ describe("ExcludeDeferralResult wiring", () => {
     });
   });
 
+  describe("request context principal immutability", () => {
+    it("rejects execution when the selected agent disagrees with resolved ALS identity", async () => {
+      mockPrompt.mockClear();
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+      const deliveryOrigin = createDeliveryOrigin({
+        channelType: "telegram",
+        channelId: "chat_a",
+        userId: "user_a",
+        tenantId: "default",
+      });
+      const ctx = {
+        tenantId: "default",
+        userId: testSessionKey.userId,
+        sessionKey: formatSessionKey(testSessionKey),
+        agentId: "agent-a",
+        traceId: crypto.randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "admin" as const,
+        channelType: "telegram",
+        deliveryOrigin,
+      };
+
+      const result = await runWithContext(ctx, () => executor.execute(
+        testMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        "agent-b",
+      ));
+
+      expect(result.finishReason).toBe("error");
+      expect(result.errorContext).toMatchObject({
+        errorType: "RequestContextIdentityMismatch",
+        retryable: false,
+      });
+      expect(ctx.agentId).toBe("agent-a");
+      expect(ctx.trustLevel).toBe("admin");
+      expect(ctx.deliveryOrigin).toBe(deliveryOrigin);
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(deps.authStorage.getApiKey).not.toHaveBeenCalled();
+      expect(deps.eventBus.emit).toHaveBeenCalledWith("security:warn", expect.objectContaining({
+        category: "request_context_identity_mismatch",
+        agentId: "agent-b",
+      }));
+    });
+
+    it("does not populate unresolved ALS agent identity from an execute argument", async () => {
+      mockPrompt.mockClear();
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+      const ctx = {
+        tenantId: "default",
+        userId: testSessionKey.userId,
+        sessionKey: formatSessionKey(testSessionKey),
+        traceId: crypto.randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "user" as const,
+      };
+
+      let inScopeAgentId: string | undefined;
+      await runWithContext(ctx, async () => {
+        await executor.execute(
+          testMessage,
+          testSessionKey,
+          undefined,
+          undefined,
+          "agent-b",
+        );
+        inScopeAgentId = tryGetContext()?.agentId;
+      });
+
+      expect(inScopeAgentId).toBeUndefined();
+      expect("agentId" in ctx).toBe(false);
+    });
+
+    it("returns the exact identity-mismatch result and reaches later security observers after failures", async () => {
+      mockPrompt.mockClear();
+      const eventBus = new TypedEventBus();
+      const laterObserver = vi.fn();
+      eventBus.on("security:warn", () => {
+        throw new Error("private sync identity subscriber content");
+      });
+      eventBus.on("security:warn", async () => {
+        throw new Error("private async identity subscriber content");
+      });
+      eventBus.on("security:warn", laterObserver);
+      const deps = createMockDeps({ eventBus });
+      const executor = createPiExecutor(testConfig, deps);
+      const ctx = {
+        tenantId: "default",
+        userId: testSessionKey.userId,
+        sessionKey: formatSessionKey(testSessionKey),
+        agentId: "agent-a",
+        traceId: crypto.randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "admin" as const,
+      };
+
+      const result = await runWithContext(ctx, () => executor.execute(
+        testMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        "agent-b",
+      ));
+
+      expect(result).toMatchObject({
+        finishReason: "error",
+        stepsExecuted: 0,
+        errorContext: {
+          errorType: "RequestContextIdentityMismatch",
+          retryable: false,
+        },
+      });
+      expect(laterObserver).toHaveBeenCalledOnce();
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(deps.authStorage.getApiKey).not.toHaveBeenCalled();
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+
+    it("rejects execution when the selected session disagrees with resolved ALS identity", async () => {
+      mockPrompt.mockClear();
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+      const ctx = {
+        tenantId: "default",
+        userId: testSessionKey.userId,
+        sessionKey: "default:other-user:other-session",
+        agentId: "agent-a",
+        traceId: crypto.randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "admin" as const,
+      };
+
+      const result = await runWithContext(ctx, () => executor.execute(
+        testMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        "agent-a",
+      ));
+
+      expect(result.finishReason).toBe("error");
+      expect(result.errorContext?.errorType).toBe("RequestContextIdentityMismatch");
+      expect(ctx.sessionKey).toBe("default:other-user:other-session");
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(deps.authStorage.getApiKey).not.toHaveBeenCalled();
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Output escalation on max_tokens truncation
   // -------------------------------------------------------------------------
@@ -5544,7 +5939,7 @@ describe("ExcludeDeferralResult wiring", () => {
       } as PerAgentConfig;
 
       const executor = createPiExecutor(escalationConfig, deps);
-      const result = await executor.execute(testSessionKey, testMessage);
+      const result = await executor.execute(testMessage, testSessionKey);
 
       // Should have called prompt twice (original + escalation retry)
       expect(mockPrompt.mock.calls.length).toBeGreaterThanOrEqual(2);
@@ -5580,7 +5975,7 @@ describe("ExcludeDeferralResult wiring", () => {
       } as PerAgentConfig;
 
       const executor = createPiExecutor(configWithMaxTokens, deps);
-      await executor.execute(testSessionKey, testMessage);
+      await executor.execute(testMessage, testSessionKey);
 
       // No escalation event should be emitted -- config.maxTokens is explicitly set
       const emittedCalls = (deps.eventBus.emit as Mock).mock.calls;
@@ -5612,7 +6007,7 @@ describe("ExcludeDeferralResult wiring", () => {
       } as PerAgentConfig;
 
       const executor = createPiExecutor(disabledConfig, deps);
-      await executor.execute(testSessionKey, testMessage);
+      await executor.execute(testMessage, testSessionKey);
 
       // No escalation event should be emitted -- escalation is disabled
       const emittedCalls = (deps.eventBus.emit as Mock).mock.calls;
@@ -5655,7 +6050,7 @@ describe("ExcludeDeferralResult wiring", () => {
       } as PerAgentConfig;
 
       const executor = createPiExecutor(escalationConfig, deps);
-      await executor.execute(testSessionKey, testMessage);
+      await executor.execute(testMessage, testSessionKey);
 
       const emittedCalls = (deps.eventBus.emit as Mock).mock.calls;
       const escalationEvent = emittedCalls.find(
@@ -5708,7 +6103,7 @@ describe("ExcludeDeferralResult wiring", () => {
       } as PerAgentConfig;
 
       const executor = createPiExecutor(escalationConfig, deps);
-      const result = await executor.execute(testSessionKey, testMessage);
+      const result = await executor.execute(testMessage, testSessionKey);
 
       // Response should be the escalated version, not the truncated one
       expect(result.response).toBe("full escalated response with complete content");

@@ -83,6 +83,27 @@ function makeDeps(overrides?: Partial<SlackAdapterDeps>): SlackAdapterDeps {
   };
 }
 
+function makeUploadResponse(
+  channelId: string,
+  messageId: string,
+  fileId = "F123",
+): Record<string, unknown> {
+  return {
+    ok: true,
+    files: [{
+      ok: true,
+      files: [{
+        id: fileId,
+        shares: {
+          public: {
+            [channelId]: [{ ts: messageId }],
+          },
+        },
+      }],
+    }],
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   eventHandlers.clear();
@@ -408,10 +429,12 @@ describe("createSlackAdapter fetchMessages", () => {
 // ---------------------------------------------------------------------------
 
 describe("createSlackAdapter sendAttachment", () => {
-  it("uploads file via files.uploadV2 and returns file id", async () => {
+  it("uploads a file and returns the posted Slack message timestamp instead of its file id", async () => {
     const adapter = createSlackAdapter(makeDeps());
     await adapter.start();
-    mockFilesUploadV2.mockResolvedValue({ file: { id: "F123" } });
+    mockFilesUploadV2.mockResolvedValue(
+      makeUploadResponse("C123", "1712345678.000100", "F123"),
+    );
 
     const result = await adapter.sendAttachment("C123", {
       url: "https://example.com/image.png",
@@ -423,7 +446,11 @@ describe("createSlackAdapter sendAttachment", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value).toBe("F123");
+      expect(result.value).toEqual({
+        kind: "tracked",
+        messageId: "1712345678.000100",
+      });
+      expect(result.value).not.toEqual(expect.objectContaining({ messageId: "F123" }));
     }
     expect(mockFilesUploadV2).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -434,11 +461,43 @@ describe("createSlackAdapter sendAttachment", () => {
     );
   });
 
+  it("returns the posted message timestamp for a private-channel file share", async () => {
+    const adapter = createSlackAdapter(makeDeps());
+    await adapter.start();
+    mockFilesUploadV2.mockResolvedValue({
+      ok: true,
+      files: [{
+        ok: true,
+        files: [{
+          id: "F-PRIVATE",
+          shares: {
+            private: {
+              C_PRIVATE: [{ ts: "1712345678.000150" }],
+            },
+          },
+        }],
+      }],
+    });
+
+    const result = await adapter.sendAttachment("C_PRIVATE", {
+      url: "https://example.com/private.png",
+      type: "image",
+      mimeType: "image/png",
+    });
+
+    expect(result).toEqual(ok({
+      kind: "tracked",
+      messageId: "1712345678.000150",
+    }));
+  });
+
   it("logs voice-send-started and voice-send-complete bookends when attachment is a voice note", async () => {
     const deps = makeDeps();
     const adapter = createSlackAdapter(deps);
     await adapter.start();
-    mockFilesUploadV2.mockResolvedValue({ file: { id: "VOICE-1" } });
+    mockFilesUploadV2.mockResolvedValue(
+      makeUploadResponse("C123", "1712345678.000200", "VOICE-1"),
+    );
 
     await adapter.sendAttachment("C123", {
       url: "https://example.com/voice.ogg",
@@ -459,7 +518,7 @@ describe("createSlackAdapter sendAttachment", () => {
     expect(deps.logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         channelType: "slack",
-        messageId: "VOICE-1",
+        messageId: "1712345678.000200",
       }),
       "Voice send complete",
     );
@@ -468,7 +527,9 @@ describe("createSlackAdapter sendAttachment", () => {
   it("defaults voice-note filename to voice-message.ogg when fileName is undefined", async () => {
     const adapter = createSlackAdapter(makeDeps());
     await adapter.start();
-    mockFilesUploadV2.mockResolvedValue({ file: { id: "V" } });
+    mockFilesUploadV2.mockResolvedValue(
+      makeUploadResponse("C123", "1712345678.000300", "V"),
+    );
 
     await adapter.sendAttachment("C123", {
       url: "https://example.com/voice.ogg",
@@ -486,7 +547,9 @@ describe("createSlackAdapter sendAttachment", () => {
   it("defaults non-voice filename to 'file' when fileName is undefined", async () => {
     const adapter = createSlackAdapter(makeDeps());
     await adapter.start();
-    mockFilesUploadV2.mockResolvedValue({ file: { id: "F" } });
+    mockFilesUploadV2.mockResolvedValue(
+      makeUploadResponse("C123", "1712345678.000400", "F"),
+    );
 
     await adapter.sendAttachment("C123", {
       url: "https://example.com/doc.pdf",
@@ -522,13 +585,41 @@ describe("createSlackAdapter sendAttachment", () => {
     );
   });
 
+  it("returns delivered-untracked when Slack reports only a file id", async () => {
+    const deps = makeDeps();
+    const adapter = createSlackAdapter(deps);
+    await adapter.start();
+    mockFilesUploadV2.mockResolvedValue({
+      ok: true,
+      files: [{ ok: true, files: [{ id: "F-NOT-A-MESSAGE" }] }],
+    });
+
+    const result = await adapter.sendAttachment("C123", {
+      url: "https://example.com/image.png",
+      type: "image",
+      mimeType: "image/png",
+      fileName: "image.png",
+    });
+
+    expect(result).toEqual(ok({ kind: "delivered_untracked" }));
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("Do not retry"),
+        errorKind: "platform",
+      }),
+      "Attachment delivered without platform tracking",
+    );
+  });
+
   it("keeps attachment captions and filenames out of outbound logs", async () => {
     const privateCaption = "PRIVATE-SLACK-CAPTION-DO-NOT-LOG";
     const privateFileName = "PRIVATE-SLACK-FILENAME-DO-NOT-LOG.xlsx";
     const deps = makeDeps();
     const adapter = createSlackAdapter(deps);
     await adapter.start();
-    mockFilesUploadV2.mockResolvedValue({ file: { id: "F-PRIVATE" } });
+    mockFilesUploadV2.mockResolvedValue(
+      makeUploadResponse("C123", "1712345678.000500", "F-PRIVATE"),
+    );
 
     await adapter.sendAttachment("C123", {
       url: "https://example.com/private-caption.xlsx",

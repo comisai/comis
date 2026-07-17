@@ -44,6 +44,7 @@ import {
   AutonomyEvictContract,
   stripInternalFields,
   systemGetEnv,
+  toSafeErrorLogString,
 } from "@comis/core";
 import type { DurableRunPort, EventMap } from "@comis/core";
 import type { LeaseManager } from "@comis/infra";
@@ -90,6 +91,8 @@ export interface AutonomyHandlerDeps {
    * revoke RPC (the lease is already revoked — the cooperative/hard stop holds).
    */
   durableRuns?: DurableRunPort;
+  /** Release retained DAG budget authority at an explicit root revoke/kill. */
+  revokeDurableRoot?: (rootRunId: string) => void;
   /**
    * The daemon-wide evicted-`rootRunId` set. OPTIONAL —
    * the composition root constructs `createEvictRegistry` and threads it
@@ -141,14 +144,18 @@ export function createAutonomyHandlers(deps: AutonomyHandlerDeps): Record<string
    * durable store is wired (durability off).
    */
   async function invalidatePersistedRecord(rootRunId: string, method: string): Promise<void> {
-    if (!deps.durableRuns) return;
+    if (!deps.durableRuns) {
+      deps.revokeDurableRoot?.(rootRunId);
+      return;
+    }
     const r = await deps.durableRuns.invalidateForRevoke(rootRunId);
     if (!r.ok) {
       deps.logger.warn(
-        { method, err: r.error, hint: "could not flip the durable run record to 'revoked'; a restart could resume it — verify the run is dead", errorKind: "dependency" as const },
+        { method, err: toSafeErrorLogString(r.error), hint: "could not flip the durable run record to 'revoked'; a restart could resume it — verify the run is dead", errorKind: "dependency" as const },
         "Durable record invalidate-on-revoke failed (lease still revoked)",
       );
     }
+    deps.revokeDurableRoot?.(rootRunId);
   }
 
   // Capture the OPTIONAL evictRegistry once so the conditional spread

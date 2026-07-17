@@ -9,11 +9,26 @@
  * @module
  */
 
-import { Hono } from "hono";
+import { Hono, type Env } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { SSEStreamingApi } from "hono/streaming";
-import { suppressError } from "@comis/shared";
+import {
+  formatSessionKey,
+  systemNowMs,
+  type TypedEventBus,
+} from "@comis/core";
 import { createOpenAIError } from "../openai/openai-types.js";
+import { createSseDeliveryTracker } from "../openai/sse-delivery-tracker.js";
+import { prepareApiConversation } from "../openai/api-conversation.js";
+
+interface ResponsesEndpointEnv extends Env {
+  Variables: { clientScopes: readonly string[] };
+}
+import {
+  emitGatewayTurnDiagnostic,
+  formatGatewayErrorForLog,
+  type GatewayTurnResult,
+} from "../openai/turn-diagnostic.js";
 import {
   ResponseRequestSchema,
   createSequenceCounter,
@@ -34,27 +49,116 @@ import {
  * callback for streaming content delivery.
  */
 export interface ResponsesEndpointDeps {
+  /** Tenant used to construct exact failure diagnostics before execution returns. */
+  tenantId?: string;
+  /** Default agent used when model resolution does not select one explicitly. */
+  agentId?: string;
   /** Execute an agent turn with optional streaming callback. */
   executeAgent: (params: {
     message: string;
+    systemPrompt?: string;
     sessionKey: { userId: string; channelId: string; peerId: string };
-    onDelta?: (delta: string) => void;
-  }) => Promise<{
+    /** Scopes from the bearer token already verified by the parent route. */
+    authenticatedScopes: readonly string[];
+    onDelta?: (delta: string, kind?: "text" | "thinking") => void;
+    traceId: string;
+    agentId?: string;
+    /** Cancels the executing turn when its inbound HTTP request disconnects. */
+    signal: AbortSignal;
+  }) => Promise<GatewayTurnResult & {
     response: string;
     tokensUsed: { input: number; output: number; total: number };
-    finishReason: string;
+    stepsExecuted: number;
+    llmCalls: number;
   }>;
 
   /** Optional model alias resolution. Returns undefined if model not found. */
   resolveModel?: (
     modelId: string,
-  ) => { provider: string; modelId: string } | undefined;
+  ) => { provider: string; modelId: string; agentId?: string } | undefined;
+
+  /** Optional event bus receiving one full-lifecycle diagnostic per request. */
+  eventBus?: Pick<TypedEventBus, "emitSafely">;
 
   /** Logger for request lifecycle events. */
   logger: {
     info(...args: unknown[]): void;
     error(...args: unknown[]): void;
   };
+}
+
+type ResponseSessionKey = { userId: string; channelId: string; peerId: string };
+
+function emitResponseDiagnostic(
+  deps: ResponsesEndpointDeps,
+  args: {
+    result: GatewayTurnResult;
+    sessionKey: ResponseSessionKey;
+    responseId: string;
+    traceId: string;
+    agentId: string;
+    receivedAt: number;
+    executionCompletedAt: number;
+    completedAt?: number;
+  },
+): void {
+  emitGatewayTurnDiagnostic(deps, {
+    messageId: args.responseId,
+    channelId: "responses",
+    channelType: "responses",
+    fallbackAgentId: args.agentId,
+    fallbackSessionKey: formatSessionKey({
+      tenantId: deps.tenantId ?? "default",
+      userId: args.sessionKey.userId,
+      channelId: args.sessionKey.channelId,
+      peerId: args.sessionKey.peerId,
+    }),
+    fallbackTraceId: args.traceId,
+    result: args.result,
+    receivedAt: args.receivedAt,
+    executionCompletedAt: args.executionCompletedAt,
+    ...(args.completedAt !== undefined ? { completedAt: args.completedAt } : {}),
+  });
+}
+
+function emitResponseExecutionFailure(
+  deps: ResponsesEndpointDeps,
+  args: Omit<Parameters<typeof emitResponseDiagnostic>[1], "result">,
+): void {
+  emitResponseDiagnostic(deps, {
+    ...args,
+    result: {
+      tokensUsed: { total: 0 },
+      finishReason: "error",
+      stepsExecuted: null,
+      llmCalls: null,
+      status: "error",
+      failureStage: "execution",
+    },
+  });
+}
+
+function emitResponseDeliveryFailure(
+  deps: ResponsesEndpointDeps,
+  args: Omit<Parameters<typeof emitResponseDiagnostic>[1], "result"> & {
+    result?: GatewayTurnResult;
+    completedAt: number;
+  },
+): void {
+  emitResponseDiagnostic(deps, {
+    ...args,
+    result: {
+      ...(args.result ?? {
+        tokensUsed: { total: 0 },
+        finishReason: "error",
+        stepsExecuted: null,
+        llmCalls: null,
+      }),
+      status: "error",
+      failureStage: "delivery",
+      errorKind: "platform",
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -73,14 +177,95 @@ async function handleStreamingResponse(params: {
   deps: ResponsesEndpointDeps;
   body: { model: string };
   userMessage: string;
+  systemPrompt: string | undefined;
   responseId: string;
   messageId: string;
-  sessionKey: { userId: string; channelId: string; peerId: string };
+  sessionKey: ResponseSessionKey;
+  traceId: string;
+  agentId: string;
+  authenticatedScopes: readonly string[];
+  receivedAt: number;
+  requestSignal: AbortSignal;
 }): Promise<void> {
-  const { stream, deps, body, userMessage, responseId, messageId, sessionKey } =
-    params;
+  const {
+    stream,
+    deps,
+    body,
+    userMessage,
+    systemPrompt,
+    responseId,
+    messageId,
+    sessionKey,
+    traceId,
+    agentId,
+    authenticatedScopes,
+    receivedAt,
+    requestSignal,
+  } = params;
   const counter = createSequenceCounter();
+  const delivery = createSseDeliveryTracker(stream, requestSignal);
   let accumulatedText = "";
+  try {
+
+  const recordDeliveryFailure = (
+    executionCompletedAt: number,
+    result?: GatewayTurnResult,
+    preserveExecutionFailure = true,
+  ): void => {
+    const completedAt = delivery.failedAt ?? systemNowMs();
+    deps.logger.error(
+      {
+        ...(delivery.error !== undefined
+          ? { err: formatGatewayErrorForLog(delivery.error) }
+          : {}),
+        responseId,
+        hint: "Check client connectivity and gateway stream delivery",
+        errorKind: "platform" as const,
+      },
+      "OpenResponses streaming delivery failed",
+    );
+    if (
+      preserveExecutionFailure &&
+      result !== undefined &&
+      result.status !== "success"
+    ) {
+      emitResponseDiagnostic(deps, {
+        result,
+        sessionKey,
+        responseId,
+        traceId,
+        agentId,
+        receivedAt,
+        executionCompletedAt,
+        completedAt,
+      });
+    } else {
+      emitResponseDeliveryFailure(deps, {
+        ...(result !== undefined ? { result } : {}),
+        sessionKey,
+        responseId,
+        traceId,
+        agentId,
+        receivedAt,
+        executionCompletedAt,
+        completedAt,
+      });
+    }
+  };
+
+  const logDeliveryFailure = (): void => {
+    deps.logger.error(
+      {
+        ...(delivery.error !== undefined
+          ? { err: formatGatewayErrorForLog(delivery.error) }
+          : {}),
+        responseId,
+        hint: "Check client connectivity and gateway stream delivery",
+        errorKind: "platform" as const,
+      },
+      "OpenResponses streaming delivery failed after execution error",
+    );
+  };
 
   // Build initial response shell (in_progress, empty output)
   const inProgressResponse: ResponseObject = {
@@ -98,7 +283,10 @@ async function handleStreamingResponse(params: {
     sequence_number: counter.next(),
     response: inProgressResponse,
   };
-  await stream.writeSSE({ data: JSON.stringify(inProgressEvent) });
+  if (!await delivery.write(JSON.stringify(inProgressEvent))) {
+    recordDeliveryFailure(receivedAt);
+    return;
+  }
 
   // Build in-progress message item
   const inProgressItem: OutputItem = {
@@ -116,7 +304,10 @@ async function handleStreamingResponse(params: {
     output_index: 0,
     item: inProgressItem,
   };
-  await stream.writeSSE({ data: JSON.stringify(itemAddedEvent) });
+  if (!await delivery.write(JSON.stringify(itemAddedEvent))) {
+    recordDeliveryFailure(receivedAt);
+    return;
+  }
 
   // 3. response.content_part.added
   const emptyPart: ContentPart = { type: "output_text", text: "" };
@@ -128,16 +319,20 @@ async function handleStreamingResponse(params: {
     content_index: 0,
     part: emptyPart,
   };
-  await stream.writeSSE({ data: JSON.stringify(partAddedEvent) });
+  if (!await delivery.write(JSON.stringify(partAddedEvent))) {
+    recordDeliveryFailure(receivedAt);
+    return;
+  }
 
   // Execute agent with onDelta for streaming deltas
   let result: Awaited<ReturnType<typeof deps.executeAgent>>;
   try {
     result = await deps.executeAgent({
       message: userMessage,
+      systemPrompt,
       sessionKey,
-      onDelta: (delta: string) => {
-        accumulatedText += delta;
+      onDelta: (delta: string, kind?: "text" | "thinking") => {
+        if (kind === "thinking" || delivery.signal.aborted) return;
 
         // 4. response.output_text.delta (for each chunk)
         const deltaEvent: ResponseStreamEvent = {
@@ -148,22 +343,41 @@ async function handleStreamingResponse(params: {
           content_index: 0,
           delta,
         };
-        suppressError(
-          stream.writeSSE({ data: JSON.stringify(deltaEvent) }),
-          "Stream may have been closed by client",
-        );
+        if (delivery.enqueue(JSON.stringify(deltaEvent))) {
+          accumulatedText += delta;
+        }
       },
+      traceId,
+      agentId,
+      authenticatedScopes,
+      signal: delivery.signal,
     });
   } catch (err) {
+    const executionCompletedAt = systemNowMs();
+    delivery.sealQueue();
+    await delivery.drain();
+    if (delivery.failedAt !== undefined) {
+      recordDeliveryFailure(executionCompletedAt);
+      return;
+    }
     deps.logger.error(
       {
-        err,
+        err: formatGatewayErrorForLog(err),
         responseId,
-        hint: "Check agent executor logs or LLM provider connectivity",
-        errorKind: "dependency" as const,
+        hint: "Inspect agent execution logs for the originating boundary",
+        errorKind: "internal" as const,
       },
       "Agent execution failed during streaming",
     );
+
+    emitResponseExecutionFailure(deps, {
+      sessionKey,
+      responseId,
+      traceId,
+      agentId,
+      receivedAt,
+      executionCompletedAt,
+    });
 
     // Emit response.failed event
     const failedResponse: ResponseObject = {
@@ -179,8 +393,57 @@ async function handleStreamingResponse(params: {
       sequence_number: counter.next(),
       response: failedResponse,
     };
-    await stream.writeSSE({ data: JSON.stringify(failedEvent) });
-    await stream.writeSSE({ data: "[DONE]" });
+    await delivery.write(JSON.stringify(failedEvent));
+    await delivery.write("[DONE]");
+    if (delivery.failedAt !== undefined) logDeliveryFailure();
+    return;
+  }
+  const executionCompletedAt = systemNowMs();
+  const failedBeforeExecutionSettled = delivery.failedAt !== undefined;
+  delivery.sealQueue();
+  await delivery.drain();
+  if (delivery.failedAt !== undefined) {
+    recordDeliveryFailure(
+      executionCompletedAt,
+      result,
+      !failedBeforeExecutionSettled,
+    );
+    return;
+  }
+
+  if (result.status !== "success") {
+    const failedResponse: ResponseObject = {
+      id: responseId,
+      object: "response",
+      status: "failed",
+      output: [],
+      model: body.model,
+      usage: {
+        input_tokens: result.tokensUsed.input,
+        output_tokens: result.tokensUsed.output,
+        total_tokens: result.tokensUsed.total,
+      },
+    };
+    const failedEvent: ResponseStreamEvent = {
+      type: "response.failed",
+      sequence_number: counter.next(),
+      response: failedResponse,
+    };
+    await delivery.write(JSON.stringify(failedEvent));
+    await delivery.write("[DONE]");
+    if (delivery.failedAt !== undefined) {
+      recordDeliveryFailure(executionCompletedAt, result);
+      return;
+    }
+    emitResponseDiagnostic(deps, {
+      result,
+      sessionKey,
+      responseId,
+      traceId,
+      agentId,
+      receivedAt,
+      executionCompletedAt,
+    });
     return;
   }
 
@@ -193,7 +456,7 @@ async function handleStreamingResponse(params: {
     content_index: 0,
     text: accumulatedText,
   };
-  await stream.writeSSE({ data: JSON.stringify(textDoneEvent) });
+  await delivery.write(JSON.stringify(textDoneEvent));
 
   // Build completed content part and item
   const completedPart: ContentPart = {
@@ -210,7 +473,7 @@ async function handleStreamingResponse(params: {
     content_index: 0,
     part: completedPart,
   };
-  await stream.writeSSE({ data: JSON.stringify(partDoneEvent) });
+  await delivery.write(JSON.stringify(partDoneEvent));
 
   // Build completed output item
   const completedItem: OutputItem = {
@@ -228,7 +491,7 @@ async function handleStreamingResponse(params: {
     output_index: 0,
     item: completedItem,
   };
-  await stream.writeSSE({ data: JSON.stringify(itemDoneEvent) });
+  await delivery.write(JSON.stringify(itemDoneEvent));
 
   // 8. response.completed
   const completedResponse: ResponseObject = {
@@ -248,10 +511,26 @@ async function handleStreamingResponse(params: {
     sequence_number: counter.next(),
     response: completedResponse,
   };
-  await stream.writeSSE({ data: JSON.stringify(completedEvent) });
+  await delivery.write(JSON.stringify(completedEvent));
 
   // Terminal marker
-  await stream.writeSSE({ data: "[DONE]" });
+  await delivery.write("[DONE]");
+  if (delivery.failedAt !== undefined) {
+    recordDeliveryFailure(executionCompletedAt, result);
+    return;
+  }
+  emitResponseDiagnostic(deps, {
+    result,
+    sessionKey,
+    responseId,
+    traceId,
+    agentId,
+    receivedAt,
+    executionCompletedAt,
+  });
+  } finally {
+    delivery.dispose();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -268,8 +547,10 @@ async function handleStreamingResponse(params: {
  * - Non-streaming: returns a complete ResponseObject JSON
  * - Streaming: emits semantic SSE events with monotonic sequence numbers
  */
-export function createResponsesRoute(deps: ResponsesEndpointDeps): Hono {
-  const app = new Hono();
+export function createResponsesRoute(
+  deps: ResponsesEndpointDeps,
+): Hono<ResponsesEndpointEnv> {
+  const app = new Hono<ResponsesEndpointEnv>();
 
   app.post("/", async (c) => {
     try {
@@ -291,28 +572,39 @@ export function createResponsesRoute(deps: ResponsesEndpointDeps): Hono {
       }
 
       const body = parseResult.data;
+      const authenticatedScopes = c.get("clientScopes") ?? [];
+      const receivedAt = systemNowMs();
 
-      // Extract message: string input used directly, array input joins user messages
-      let userMessage: string;
-      if (typeof body.input === "string") {
-        userMessage = body.input;
-      } else {
-        userMessage = body.input
-          .filter((m) => m.role === "user")
-          .map((m) => m.content)
-          .join("\n");
-      }
-
-      if (!userMessage) {
+      const conversation = prepareApiConversation(
+        typeof body.input === "string"
+          ? [{ role: "user", content: body.input }]
+          : body.input,
+      );
+      if (!conversation) {
         return c.json(
           createOpenAIError(400, "No user message found in input"),
           400,
         );
       }
+      const userMessage = conversation.message;
+      const systemPrompt = conversation.systemPrompt;
+
+      let resolvedModel: ReturnType<NonNullable<ResponsesEndpointDeps["resolveModel"]>> = undefined;
+      if (deps.resolveModel) {
+        resolvedModel = deps.resolveModel(body.model);
+        if (!resolvedModel) {
+          return c.json(
+            createOpenAIError(404, `Model not found: ${body.model}`),
+            404,
+          );
+        }
+      }
 
       // Generate identifiers
       const responseId = `resp_${crypto.randomUUID()}`;
       const messageId = `msg_${crypto.randomUUID()}`;
+      const traceId = crypto.randomUUID();
+      const agentId = resolvedModel?.agentId ?? deps.agentId ?? "default";
 
       // Session key for responses API requests
       const sessionKey = {
@@ -331,9 +623,15 @@ export function createResponsesRoute(deps: ResponsesEndpointDeps): Hono {
             deps,
             body,
             userMessage,
+            systemPrompt,
             responseId,
             messageId,
             sessionKey,
+            traceId,
+            agentId,
+            authenticatedScopes,
+            receivedAt,
+            requestSignal: c.req.raw.signal,
           });
         });
       }
@@ -341,10 +639,80 @@ export function createResponsesRoute(deps: ResponsesEndpointDeps): Hono {
       // -----------------------------------------------------------------
       // Non-streaming path
       // -----------------------------------------------------------------
-      const result = await deps.executeAgent({
-        message: userMessage,
-        sessionKey,
-      });
+      let result: Awaited<ReturnType<typeof deps.executeAgent>>;
+      try {
+        result = await deps.executeAgent({
+          message: userMessage,
+          systemPrompt,
+          sessionKey,
+          traceId,
+          agentId,
+          authenticatedScopes,
+          signal: c.req.raw.signal,
+        });
+      } catch (err) {
+        const executionCompletedAt = systemNowMs();
+        if (c.req.raw.signal.aborted) {
+          deps.logger.error(
+            {
+              responseId,
+              hint: "Check client connectivity and gateway request cancellation",
+              errorKind: "platform" as const,
+            },
+            "OpenResponses non-streaming request disconnected during execution",
+          );
+          emitResponseDeliveryFailure(deps, {
+            sessionKey,
+            responseId,
+            traceId,
+            agentId,
+            receivedAt,
+            executionCompletedAt,
+            completedAt: executionCompletedAt,
+          });
+          return c.json(createOpenAIError(500, "Request delivery cancelled"), 500);
+        }
+        deps.logger.error(
+          {
+            err: formatGatewayErrorForLog(err),
+            responseId,
+            hint: "Inspect agent execution logs for the originating boundary",
+            errorKind: "internal" as const,
+          },
+          "OpenResponses agent execution failed",
+        );
+        emitResponseExecutionFailure(deps, {
+          sessionKey,
+          responseId,
+          traceId,
+          agentId,
+          receivedAt,
+          executionCompletedAt,
+        });
+        return c.json(createOpenAIError(500, "Internal server error"), 500);
+      }
+      const executionCompletedAt = systemNowMs();
+      if (c.req.raw.signal.aborted) {
+        deps.logger.error(
+          {
+            responseId,
+            hint: "Check client connectivity and gateway request cancellation",
+            errorKind: "platform" as const,
+          },
+          "OpenResponses non-streaming request disconnected before response delivery",
+        );
+        emitResponseDeliveryFailure(deps, {
+          result,
+          sessionKey,
+          responseId,
+          traceId,
+          agentId,
+          receivedAt,
+          executionCompletedAt,
+          completedAt: executionCompletedAt,
+        });
+        return c.json(createOpenAIError(500, "Request delivery cancelled"), 500);
+      }
 
       const completedPart: ContentPart = {
         type: "output_text",
@@ -362,8 +730,8 @@ export function createResponsesRoute(deps: ResponsesEndpointDeps): Hono {
       const responseObject: ResponseObject = {
         id: responseId,
         object: "response",
-        status: "completed",
-        output: [completedItem],
+        status: result.status === "success" ? "completed" : "failed",
+        output: result.status === "success" ? [completedItem] : [],
         model: body.model,
         usage: {
           input_tokens: result.tokensUsed.input,
@@ -372,11 +740,21 @@ export function createResponsesRoute(deps: ResponsesEndpointDeps): Hono {
         },
       };
 
+      emitResponseDiagnostic(deps, {
+        result,
+        sessionKey,
+        responseId,
+        traceId,
+        agentId,
+        receivedAt,
+        executionCompletedAt,
+      });
+
       return c.json(responseObject);
     } catch (err) {
       deps.logger.error(
         {
-          err,
+          err: formatGatewayErrorForLog(err),
           hint: "Inspect the request body and agent configuration",
           errorKind: "internal" as const,
         },

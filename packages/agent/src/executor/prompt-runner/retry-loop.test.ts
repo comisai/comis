@@ -55,6 +55,11 @@ describe("retry-loop.ts — module surface", () => {
       stuckSessionDetected: true,
     });
   });
+
+  it("converts continuation failures to a safe debug-log string", () => {
+    expect(source).toMatch(/toSafeErrorLogString\(followUpResult\.error\)/);
+    expect(source).not.toMatch(/err:\s*followUpResult\.error/);
+  });
 });
 
 describe("retry-loop.ts — stuck-session guard", () => {
@@ -128,6 +133,10 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     channelId: string,
   ): { params: RunPromptParams; emit: ReturnType<typeof vi.fn> } {
     const emit = vi.fn();
+    const emitSafely = vi.fn((event: string, payload: unknown) => {
+      emit(event, payload);
+      return { hadListeners: false, failures: [], pendingFailures: Promise.resolve([]) };
+    });
     const logger = {
       trace: vi.fn(), debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
     };
@@ -155,7 +164,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
       onResetTimer: () => {},
       deps: {
         logger,
-        eventBus: { emit },
+        eventBus: { emit, emitSafely },
         clock: { now: () => 5678 },
         timers: {
           setTimeout: (fn: () => void) => {
@@ -208,7 +217,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     });
   });
 
-  it("regression: a plain client_request body still takes the client_request terminal branch (byte-identical dispatch for existing categories)", async () => {
+  it("routes a plain client_request body to the client_request terminal branch", async () => {
     vi.mocked(runWithModelRetry).mockResolvedValue({ succeeded: true });
     const { params, emit } = makeDispatchParams(
       makeHostileTools(),
@@ -352,10 +361,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     expect(emit.mock.calls.filter((c) => c[0] === "execution:tool_schema_unsupported")).toHaveLength(0);
   });
 
-  it("the default silent-retry path emits execution:recovery_attempted{reason:silent_retry} (the incident's re-drive path, previously log-only)", async () => {
-    // The strip-and-re-enter path was the smoking gun in the budget incident,
-    // findable only by a debug-log grep. Emit an event so `explain` shows the
-    // session re-entered the model on a silent failure.
+  it("the default silent-retry path emits a content-free recovery outcome", async () => {
     // Initial call succeeds-but-empty (drives detectSilentFailure); the retry
     // recovers with visible text.
     vi.mocked(runWithModelRetry).mockResolvedValue({ succeeded: true });
@@ -375,7 +381,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     expect(typeof calls[0]![1].succeeded).toBe("boolean");
   });
 
-  it("the continuation nudge (thinking-only final turn) emits execution:recovery_attempted{reason:continuation_nudge}", async () => {
+  it("the continuation nudge emits a content-free recovery outcome", async () => {
     vi.mocked(runWithModelRetry).mockResolvedValue({ succeeded: true });
     const { params, emit } = makeDispatchParams([], "", "c-continuation");
     // finishReason "stop" + empty visible text → the continuation nudge fires.
@@ -525,7 +531,7 @@ describe("processFailurePath — knob-named timeout diagnostics", () => {
     expect((usage![1] as Record<string, unknown>).latencyMs).toBe(1_800_000);
   });
 
-  it("regression: a non-timeout terminal error keeps finishReason 'error' + errorKind 'dependency' + the generic all-models hint", async () => {
+  it("maps a non-timeout terminal error to dependency failure with the all-models hint", async () => {
     const { params, warn, result } = makeFailureParams("c-generic-error");
 
     await processFailurePath(params, "hello", undefined, new Error("ECONNREFUSED connection refused"));

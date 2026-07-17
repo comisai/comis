@@ -68,8 +68,8 @@ export function tokenUsageEventToRow(
 /**
  * Map a `diagnostic:message_processed` event payload to a flat DeliveryRow
  * suitable for SQLite insertion.
- * Maps `totalDurationMs` to `latencyMs`, `success` to `status`, `finishReason`
- * to `errorMessage` (only when `!success`), `tokensUsed` to `tokensTotal`,
+ * Maps `totalDurationMs` to `latencyMs`, preserves the closed lifecycle status,
+ * and stores terminal provenance without collapsing neutral filtered outcomes,
  * `cost` to `costTotal`. Preserves correlation and call-count epistemic state:
  * completed turns carry exact counts; turns without an execution result carry null.
  */
@@ -83,9 +83,19 @@ export function deliveryEventToRow(
     channelType: payload.channelType,
     channelId: payload.channelId,
     sessionKey: payload.sessionKey,
-    status: payload.success ? "success" : "error",
+    status: payload.status,
     latencyMs: payload.totalDurationMs,
-    errorMessage: payload.success ? undefined : payload.finishReason,
+    errorMessage: payload.status === "error" || payload.status === "timeout" || payload.status === "aborted"
+      ? payload.failureStage === "delivery"
+        ? "delivery_failed"
+        : payload.status === "aborted"
+          ? "aborted"
+          : payload.status === "error" && payload.finishReason === "stop"
+            ? "execution_failed"
+            : payload.finishReason
+      : undefined,
+    failureStage: payload.failureStage ?? null,
+    errorKind: payload.errorKind ?? null,
     toolCalls: payload.toolCalls,
     llmCalls: payload.llmCalls,
     tokensTotal: payload.tokensUsed,

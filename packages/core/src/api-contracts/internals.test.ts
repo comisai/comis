@@ -52,8 +52,8 @@ describe("stripInternalFields()", () => {
     expect(Object.keys(result)).toHaveLength(0);
   });
 
-  it("exposes 18 dispatcher-injected internal field names in sorted order", () => {
-    expect(INTERNAL_FIELD_NAMES).toHaveLength(18);
+  it("exposes every dispatcher-injected internal field name in sorted order", () => {
+    expect(INTERNAL_FIELD_NAMES).toHaveLength(23);
     const sorted = [...INTERNAL_FIELD_NAMES].sort();
     expect([...INTERNAL_FIELD_NAMES]).toEqual(sorted);
   });
@@ -77,6 +77,13 @@ describe("stripInternalFields()", () => {
     const result = stripInternalFields({ _outwardStepIndex: 999, foo: 1 });
     expect(result).toEqual({ foo: 1 });
     expect(result._outwardStepIndex).toBeUndefined();
+  });
+
+  it("includes `_outwardOperationId` and strips a forged inbound value", () => {
+    expect(INTERNAL_FIELD_NAMES as readonly string[]).toContain("_outwardOperationId");
+    const result = stripInternalFields({ _outwardOperationId: "forged-operation", foo: 1 });
+    expect(result).toEqual({ foo: 1 });
+    expect(result._outwardOperationId).toBeUndefined();
   });
 
   it("includes `_autonomyMode` and strips a forged inbound value", () => {

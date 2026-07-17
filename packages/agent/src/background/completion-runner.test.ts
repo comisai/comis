@@ -1,28 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createBackgroundCompletionRunner } from "./completion-runner.js";
 import type { BackgroundTask } from "./background-task-types.js";
-import type { BackgroundTaskOrigin } from "@comis/core";
+import {
+  getContext,
+  RequestContextSchema,
+  runWithContext,
+  TypedEventBus,
+  type BackgroundTaskOrigin,
+  type RequestContext,
+} from "@comis/core";
 
 // Build a real-ish event bus so on()/off()/emit() work end-to-end. We
 // mock the executor, sessionStore, taskManager.getTask, fallbackNotifyFn,
 // and logger.
 function createFakeEventBus() {
-  const handlers = new Map<string, Set<(data: unknown) => void>>();
-  return {
-    on(event: string, handler: (data: unknown) => void) {
-      if (!handlers.has(event)) handlers.set(event, new Set());
-      handlers.get(event)!.add(handler);
-      return this;
-    },
-    off(event: string, handler: (data: unknown) => void) {
-      handlers.get(event)?.delete(handler);
-      return this;
-    },
-    emit(event: string, data: unknown) {
-      for (const h of handlers.get(event) ?? []) h(data);
-    },
-  } as unknown as import("@comis/core").TypedEventBus;
+  return new TypedEventBus();
 }
 
 function buildOrigin(over: Partial<BackgroundTaskOrigin> = {}): BackgroundTaskOrigin {
@@ -140,6 +134,197 @@ describe("createBackgroundCompletionRunner", () => {
     expect(reentered.hopCount).toBe(1);
     expect(reentered.sessionKey).toBe(task.origin.sessionKey);
     await runner.shutdown();
+  });
+
+  it("continues re-entry execution and reaches later observers when the first re-entry subscriber throws", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    const laterObserver = vi.fn();
+    eventBus.on("background_task:reentered", () => {
+      throw new Error("private completion payload from subscriber");
+    });
+    eventBus.on("background_task:reentered", laterObserver);
+    const runner = build();
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(laterObserver).toHaveBeenCalledOnce();
+    expect(executor.execute).toHaveBeenCalledOnce();
+    await runner.shutdown();
+  });
+
+  it("re-entry ignores a mismatched ambient admin context and uses the persisted physical route at guest trust", async () => {
+    const originTraceId = randomUUID();
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({
+        agentId: "agent_a",
+        sessionKey: "tenant_a:user_a:session-channel:thread:thread_a",
+        channelType: "telegram",
+        channelId: "chat_a",
+        traceId: originTraceId,
+      }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+
+    let reenteredContext: RequestContext | undefined;
+    let executorContext: RequestContext | undefined;
+    eventBus.on("background_task:reentered", () => {
+      reenteredContext = getContext();
+    });
+    executor.execute.mockImplementation(async () => {
+      await Promise.resolve();
+      executorContext = getContext();
+      return { ok: true };
+    });
+
+    const ambientAdmin = RequestContextSchema.parse({
+      tenantId: "tenant_admin",
+      userId: "admin_user",
+      sessionKey: "tenant_admin:admin_user:admin-channel",
+      agentId: "admin_agent",
+      traceId: randomUUID(),
+      startedAt: 100,
+      trustLevel: "admin",
+      channelType: "gateway",
+      deliveryOrigin: {
+        channelType: "gateway",
+        channelId: "admin-channel",
+        userId: "admin_user",
+        tenantId: "tenant_admin",
+      },
+    });
+
+    const runner = build();
+    await runWithContext(ambientAdmin, async () => {
+      eventBus.emit("background_task:completed", {
+        agentId: task.origin.agentId,
+        taskId: task.id,
+        toolName: task.toolName,
+        durationMs: 1,
+        origin: task.origin,
+        timestamp: 3,
+      });
+      await runner.shutdown();
+    });
+
+    expect(reenteredContext).toBeDefined();
+    expect(executorContext).toBe(reenteredContext);
+    expect(executorContext).toMatchObject({
+      tenantId: "tenant_a",
+      userId: "user_a",
+      sessionKey: task.origin.sessionKey,
+      agentId: "agent_a",
+      traceId: originTraceId,
+      trustLevel: "guest",
+      channelType: "telegram",
+      deliveryOrigin: {
+        channelType: "telegram",
+        channelId: "chat_a",
+        userId: "user_a",
+        tenantId: "tenant_a",
+      },
+    });
+    expect(executorContext?.startedAt).not.toBe(ambientAdmin.startedAt);
+    expect(Object.isFrozen(executorContext?.deliveryOrigin)).toBe(true);
+    expect(Reflect.set(executorContext!, "trustLevel", "admin")).toBe(false);
+    expect(Reflect.set(executorContext!, "agentId", "admin_agent")).toBe(false);
+  });
+
+  it("invalid persisted physical route is contained and falls back without executor re-entry", async () => {
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({
+        sessionKey: "tenant_a:user_a:session-channel",
+        channelType: "telegram",
+        channelId: "",
+        traceId: randomUUID(),
+      }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+
+    const runner = build();
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await runner.shutdown();
+
+    expect(executor.execute).not.toHaveBeenCalled();
+    expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "notified");
+    expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("restart re-entry without ambient context creates one valid guest scope for the event and executor", async () => {
+    const task = buildTask({
+      status: "failed",
+      error: "Daemon restarted while task was running",
+      result: undefined,
+      origin: buildOrigin({
+        agentId: "agent_restart",
+        sessionKey: "tenant_restart:user_restart:session-channel",
+        channelType: "telegram",
+        channelId: "chat_restart",
+        traceId: "not-a-valid-trace-id",
+      }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+
+    let reenteredContext: RequestContext | undefined;
+    let executorContext: RequestContext | undefined;
+    eventBus.on("background_task:reentered", () => {
+      reenteredContext = getContext();
+    });
+    executor.execute.mockImplementation(async () => {
+      await Promise.resolve();
+      executorContext = getContext();
+      return { ok: true };
+    });
+
+    const runner = build();
+    eventBus.emit("background_task:failed", {
+      agentId: task.origin.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      error: task.error!,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await runner.shutdown();
+
+    expect(reenteredContext).toBeDefined();
+    expect(executorContext).toBe(reenteredContext);
+    expect(RequestContextSchema.safeParse(executorContext).success).toBe(true);
+    expect(executorContext).toMatchObject({
+      tenantId: "tenant_restart",
+      userId: "user_restart",
+      sessionKey: task.origin.sessionKey,
+      agentId: "agent_restart",
+      trustLevel: "guest",
+      channelType: "telegram",
+      deliveryOrigin: {
+        channelType: "telegram",
+        channelId: "chat_restart",
+        userId: "user_restart",
+        tenantId: "tenant_restart",
+      },
+    });
+    expect(executorContext?.traceId).not.toBe(task.origin.traceId);
+    expect(Object.isFrozen(executorContext?.deliveryOrigin)).toBe(true);
   });
 
   it("failed event triggers executor.execute with failure header", async () => {
@@ -408,7 +593,7 @@ describe("trace continuity sub-tests", () => {
   }
 
   it("traceId from task.origin propagates into the synthetic NormalizedMessage.metadata.traceId", async () => {
-    const traceId = "trace-29a";
+    const traceId = randomUUID();
     const task = buildTask({
       result: "ok",
       origin: buildOrigin({ traceId }),
@@ -432,7 +617,7 @@ describe("trace continuity sub-tests", () => {
   });
 
   it("background_task:reentered event payload includes traceId from origin", async () => {
-    const traceId = "trace-29b";
+    const traceId = randomUUID();
     const reenteredEvents: Array<Record<string, unknown>> = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data as Record<string, unknown>));
     const task = buildTask({
@@ -488,6 +673,37 @@ describe("trace continuity sub-tests", () => {
       return obj && typeof obj === "object" && (obj as Record<string, unknown>).traceId === traceId;
     });
     expect(sawTraceId).toBe(true);
+    await runner.shutdown();
+  });
+
+  it("redacts executor rejection details from completion warning logs", async () => {
+    const credential = `xoxb-${"s".repeat(32)}`;
+    executor.execute.mockRejectedValueOnce(
+      new Error(`request https://private.example failed with ${credential}`),
+    );
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    const runner = buildRunner();
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const childLogger = (logger as unknown as { child: ReturnType<typeof vi.fn> }).child.mock.results[0]?.value;
+    const warning = childLogger?.warn.mock.calls.find(
+      (call: unknown[]) => call[1] === "Background completion: executor.execute() rejected",
+    );
+    expect(typeof warning?.[0].err).toBe("string");
+    const calls = JSON.stringify(childLogger?.warn.mock.calls ?? []);
+    expect(calls).not.toContain(credential);
+    expect(calls).not.toContain("private.example");
     await runner.shutdown();
   });
 });

@@ -24,6 +24,7 @@ function createMockRpcDeps(overrides?: Partial<RpcAdapterDeps>): RpcAdapterDeps 
     inspectMemory: vi.fn().mockResolvedValue({
       stats: { totalEntries: 10, totalSessions: 2 },
     }),
+    getSessionHistory: vi.fn().mockResolvedValue({ messages: [] }),
     getConfig: vi.fn().mockResolvedValue({
       agents: [{ id: "default", provider: "anthropic" }],
     }),
@@ -283,6 +284,31 @@ describe("createRestApi", () => {
       const res = await api.request("/activity?limit=-5", { headers: authHeaders() });
       expect(res.status).toBe(200);
     });
+
+    it("never returns retained message bodies or attachment metadata", async () => {
+      const buffer = new ActivityRingBuffer(100);
+      buffer.push("message:received", {
+        message: {
+          id: "message-1",
+          channelType: "telegram",
+          channelId: "chat-1",
+          senderId: "user-1",
+          text: "private inbound body",
+          attachments: [{ name: "private.pdf", metadata: { secret: "private" } }],
+          metadata: { token: "credential" },
+          timestamp: 42,
+        },
+      });
+
+      const api = createRestApi(createApiDeps({ activityBuffer: buffer }));
+      const res = await api.request("/activity", { headers: authHeaders() });
+      const serialized = JSON.stringify(await res.json());
+
+      expect(serialized).toContain("message-1");
+      expect(serialized).not.toContain("private inbound body");
+      expect(serialized).not.toContain("private.pdf");
+      expect(serialized).not.toContain("credential");
+    });
   });
 
   describe("GET /memory/search", () => {
@@ -336,6 +362,25 @@ describe("createRestApi", () => {
       const body = await res.json();
       expect(body.stats).toBeDefined();
       expect(deps.rpcAdapterDeps.inspectMemory).toHaveBeenCalledWith({});
+    });
+  });
+
+  describe("GET /chat/history", () => {
+    it("binds history reads to the authenticated gateway client", async () => {
+      const getSessionHistory = vi.fn().mockResolvedValue({ messages: [] });
+      const rpcAdapterDeps = createMockRpcDeps({ getSessionHistory });
+      const api = createRestApi(createApiDeps({ rpcAdapterDeps }));
+
+      const res = await api.request("/chat/history?channelId=shared&peerId=thread-a", {
+        headers: authHeaders(),
+      });
+
+      expect(res.status).toBe(200);
+      expect(getSessionHistory).toHaveBeenCalledWith({
+        channelId: "shared",
+        peerId: "thread-a",
+        clientId: "test-client",
+      });
     });
   });
 
@@ -489,15 +534,15 @@ describe("createRestApi", () => {
 });
 
 describe("ActivityRingBuffer", () => {
-  it("stores and retrieves entries", () => {
+  it("stores and retrieves content-free entries", () => {
     const buffer = new ActivityRingBuffer(10);
-    buffer.push("test", { data: 1 });
-    buffer.push("test", { data: 2 });
+    buffer.push("scheduler:job_started", { jobId: "job-1", status: "running" });
+    buffer.push("scheduler:job_started", { jobId: "job-2", status: "running" });
 
     const entries = buffer.getRecent(10);
     expect(entries).toHaveLength(2);
-    expect(entries[0].payload).toEqual({ data: 1 });
-    expect(entries[1].payload).toEqual({ data: 2 });
+    expect(entries[0].payload).toEqual({ jobId: "job-1", status: "running" });
+    expect(entries[1].payload).toEqual({ jobId: "job-2", status: "running" });
   });
 
   it("assigns incrementing IDs", () => {
@@ -526,13 +571,13 @@ describe("ActivityRingBuffer", () => {
   it("respects limit in getRecent", () => {
     const buffer = new ActivityRingBuffer(10);
     for (let i = 0; i < 5; i++) {
-      buffer.push("evt", { i });
+      buffer.push("scheduler:job_started", { attempt: i });
     }
 
     const entries = buffer.getRecent(2);
     expect(entries).toHaveLength(2);
-    expect((entries[0].payload as { i: number }).i).toBe(3);
-    expect((entries[1].payload as { i: number }).i).toBe(4);
+    expect((entries[0].payload as { attempt: number }).attempt).toBe(3);
+    expect((entries[1].payload as { attempt: number }).attempt).toBe(4);
   });
 
   it("clears all entries from the ActivityRingBuffer when clear() is invoked", () => {

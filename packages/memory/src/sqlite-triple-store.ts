@@ -67,6 +67,7 @@ import type Database from "better-sqlite3";
 import type { TripleStorePort, TripleScope, TripleInput, MemorySearchResult } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
+import { z } from "zod";
 import { createRowMapper, rowToEntry } from "./row-mapper.js";
 import { MemoryTripleRowSchema, MemoryRowSchema, SpreadNodeRowSchema } from "./row-schemas.js";
 
@@ -94,6 +95,9 @@ const tripleRowMapper = createRowMapper(MemoryTripleRowSchema);
 // parse via createRowMapper (no `as Foo[]`).
 const spreadNodeRowMapper = createRowMapper(SpreadNodeRowSchema);
 const memoryRowMapper = createRowMapper(MemoryRowSchema);
+const edgeCountMapper = createRowMapper(
+  z.strictObject({ c: z.number().int().nonnegative() }),
+);
 
 /**
  * Default per-node fan-out cap for the graph-spread walk — bounds each node's
@@ -599,8 +603,11 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
         // damps its neighbours. Scoped + current-truth; >=1 to avoid /0.
         let seedEdgeTotal = 0;
         for (const seed of seedSubjects) {
-          const raw = seedOutEdgeCount.get(tenantId, agentId, seed) as { c: number } | undefined;
-          seedEdgeTotal += raw?.c ?? 0;
+          const parsed = edgeCountMapper.parseOptionalRow(
+            seedOutEdgeCount.get(tenantId, agentId, seed),
+          );
+          if (!parsed.ok) return err(new Error(parsed.error.message));
+          seedEdgeTotal += parsed.value?.c ?? 0;
         }
         const idfDamp = Math.max(1, seedEdgeTotal / seedSubjects.length);
 

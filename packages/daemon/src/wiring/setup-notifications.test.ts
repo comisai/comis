@@ -45,6 +45,7 @@ function createMockDeliveryQueue(nextId = "delivery-entry-id"): MockDeliveryQueu
       enqueueCalls.push(entry);
       return ok(nextId);
     }),
+    claim: vi.fn(async () => ok(true)),
     ack: vi.fn(async () => ok(undefined)),
     nack: vi.fn(async () => ok(undefined)),
     fail: vi.fn(async () => ok(undefined)),

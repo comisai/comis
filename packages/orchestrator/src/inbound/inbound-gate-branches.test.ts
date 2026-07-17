@@ -16,6 +16,7 @@ import type {
   SessionKey,
   DeliveryService,
 } from "@comis/core";
+import { TypedEventBus } from "@comis/core";
 import { ok } from "@comis/shared";
 
 import { evaluateInboundGate } from "./inbound-gate.js";
@@ -38,7 +39,7 @@ function makeAdapter(channelType = "telegram"): ChannelPort {
     removeReaction: vi.fn(async () => ok(undefined)),
     deleteMessage: vi.fn(async () => ok(undefined)),
     fetchMessages: vi.fn(async () => ok([])),
-    sendAttachment: vi.fn(async () => ok("att-1")),
+    sendAttachment: vi.fn(async () => ok({ kind: "tracked" as const, messageId: "att-1" })),
     platformAction: vi.fn(async () => ok(undefined)),
   };
 }
@@ -84,9 +85,14 @@ function makeFakeDeliveryService(): DeliveryService {
   };
 }
 
-function makeDeps(overrides?: Partial<GateDeps>): GateDeps {
-  const eventBus = {
-    emit: vi.fn(() => true),
+function createMockEventBus() {
+  const emit = vi.fn(() => true);
+  return {
+    emit,
+    emitSafely: vi.fn((event: string, payload: unknown) => {
+      emit(event, payload);
+      return { hadListeners: false, failures: [], pendingFailures: Promise.resolve([]) };
+    }),
     on: vi.fn().mockReturnThis(),
     off: vi.fn().mockReturnThis(),
     once: vi.fn().mockReturnThis(),
@@ -94,6 +100,10 @@ function makeDeps(overrides?: Partial<GateDeps>): GateDeps {
     listenerCount: vi.fn(() => 0),
     setMaxListeners: vi.fn().mockReturnThis(),
   };
+}
+
+function makeDeps(overrides?: Partial<GateDeps>): GateDeps {
+  const eventBus = createMockEventBus();
   const logger = {
     info: vi.fn(),
     warn: vi.fn(),
@@ -150,6 +160,39 @@ describe("evaluateInboundGate /send command", () => {
 
     expect(result.action).toBe("handled");
     expect([...overrides.values()]).toContain("on");
+  });
+
+  it("keeps the send override and acknowledgement when its observer throws", async () => {
+    const eventBus = new TypedEventBus();
+    const laterObserver = vi.fn();
+    eventBus.on("sendpolicy:override_changed", () => {
+      throw new Error("private send policy subscriber content");
+    });
+    eventBus.on("sendpolicy:override_changed", laterObserver);
+    const deps = makeDeps({ eventBus });
+    const overrides = new Map<string, "on" | "off" | "inherit">();
+    const result = await evaluateInboundGate(
+      deps,
+      makeAdapter(),
+      makeMsg({ text: "/send on" }),
+      makeSessionKey(),
+      "agent-1",
+      {
+        get: (key: string) => overrides.get(key),
+        set: (key: string, value: "on" | "off" | "inherit") => overrides.set(key, value),
+        delete: (key: string) => overrides.delete(key),
+      },
+    );
+
+    expect(result.action).toBe("handled");
+    expect([...overrides.values()]).toEqual(["on"]);
+    expect(deps.deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      expect.anything(),
+      "chat-1",
+      "Send policy override set to: on",
+      expect.any(Object),
+    );
+    expect(laterObserver).toHaveBeenCalledOnce();
   });
 
   it("refuses /send override when sender is not the session owner", async () => {
@@ -277,15 +320,7 @@ describe("evaluateInboundGate /stop command interception", () => {
         abort,
       })),
     };
-    const eventBus = {
-      emit: vi.fn(() => true),
-      on: vi.fn().mockReturnThis(),
-      off: vi.fn().mockReturnThis(),
-      once: vi.fn().mockReturnThis(),
-      removeAllListeners: vi.fn().mockReturnThis(),
-      listenerCount: vi.fn(() => 0),
-      setMaxListeners: vi.fn().mockReturnThis(),
-    };
+    const eventBus = createMockEventBus();
     const deps = makeDeps({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       sessionResolver: sessionResolver as any,
@@ -347,6 +382,58 @@ describe("evaluateInboundGate /stop command interception", () => {
       "No active execution to stop.",
       expect.any(Object),
     );
+  });
+
+  it("reports the successful stop and reaches later observers when abort observers throw or reject", async () => {
+    const abort = vi.fn(async () => undefined);
+    const eventBus = new TypedEventBus();
+    const laterObserver = vi.fn();
+    eventBus.on("execution:aborted", () => {
+      throw new Error("private sync abort subscriber content");
+    });
+    eventBus.on("execution:aborted", async () => {
+      throw new Error("private async abort subscriber content");
+    });
+    eventBus.on("execution:aborted", laterObserver);
+    const deps = makeDeps({
+      eventBus,
+      sessionResolver: {
+        resolveActiveSession: () => ({
+          isStreaming: () => true,
+          isCompacting: () => false,
+          steer: vi.fn(),
+          followUp: vi.fn(),
+          abort,
+        }),
+      } as never,
+    });
+    const adapter = makeAdapter();
+
+    const result = await evaluateInboundGate(
+      deps,
+      adapter,
+      makeMsg({ text: "/stop" }),
+      makeSessionKey(),
+      "agent-1",
+      { get: () => undefined, set: vi.fn(), delete: vi.fn() },
+    );
+
+    expect(result.action).toBe("handled");
+    expect(abort).toHaveBeenCalledOnce();
+    expect(deps.deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      adapter,
+      "chat-1",
+      "Execution stopped.",
+      expect.any(Object),
+    );
+    expect(deps.deliveryService.deliverToChannel).not.toHaveBeenCalledWith(
+      adapter,
+      "chat-1",
+      expect.stringContaining("Could not stop"),
+      expect.any(Object),
+    );
+    expect(laterObserver).toHaveBeenCalledOnce();
+    await new Promise((resolve) => setImmediate(resolve));
   });
 
   it("reports could-not-stop and logs warn when abort throws", async () => {
@@ -419,15 +506,7 @@ describe("evaluateInboundGate reset trigger phrase gate", () => {
       expire: vi.fn(() => true),
       cleanStale: vi.fn(() => 0),
     };
-    const eventBus = {
-      emit: vi.fn(() => true),
-      on: vi.fn().mockReturnThis(),
-      off: vi.fn().mockReturnThis(),
-      once: vi.fn().mockReturnThis(),
-      removeAllListeners: vi.fn().mockReturnThis(),
-      listenerCount: vi.fn(() => 0),
-      setMaxListeners: vi.fn().mockReturnThis(),
-    };
+    const eventBus = createMockEventBus();
     const deps = makeDeps({
       sessionManager,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -459,6 +538,47 @@ describe("evaluateInboundGate reset trigger phrase gate", () => {
       "Session reset.",
       expect.any(Object),
     );
+  });
+
+  it("keeps the expired session and reset acknowledgement when its observer throws", async () => {
+    const eventBus = new TypedEventBus();
+    const laterObserver = vi.fn();
+    eventBus.on("session:expired", () => {
+      throw new Error("private reset subscriber content");
+    });
+    eventBus.on("session:expired", laterObserver);
+    const sessionManager = {
+      loadOrCreate: vi.fn(() => []),
+      save: vi.fn(),
+      isExpired: vi.fn(() => false),
+      expire: vi.fn(() => true),
+      cleanStale: vi.fn(() => 0),
+    };
+    const deps = makeDeps({
+      eventBus,
+      sessionManager,
+      getResetTriggers: () => ["reset"],
+    });
+    const adapter = makeAdapter();
+
+    const result = await evaluateInboundGate(
+      deps,
+      adapter,
+      makeMsg({ text: "reset" }),
+      makeSessionKey(),
+      "agent-1",
+      { get: () => undefined, set: vi.fn(), delete: vi.fn() },
+    );
+
+    expect(result.action).toBe("handled");
+    expect(sessionManager.expire).toHaveBeenCalledOnce();
+    expect(deps.deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      adapter,
+      "chat-1",
+      "Session reset.",
+      expect.any(Object),
+    );
+    expect(laterObserver).toHaveBeenCalledOnce();
   });
 
   // greetingGenerator-based tests deleted: the greetingGenerator deps slot was

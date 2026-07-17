@@ -77,6 +77,7 @@ export function createDiagnosticCollector(deps: {
       sessionKey?: string;
       traceId?: string;
       timestamp?: number;
+      data: Record<string, unknown>;
     },
   ): void {
     const handler = ((payload: EventMap[K]) => {
@@ -90,7 +91,7 @@ export function createDiagnosticCollector(deps: {
         channelId: extracted.channelId,
         sessionKey: extracted.sessionKey,
         traceId: extracted.traceId,
-        data: payload as unknown as Record<string, unknown>,
+        data: extracted.data,
       });
     }) as EventHandler<K>;
 
@@ -107,37 +108,66 @@ export function createDiagnosticCollector(deps: {
     channelId: p.channelId,
     traceId: p.traceId,
     timestamp: p.timestamp,
+    data: {
+      executionId: p.executionId,
+      provider: p.provider,
+      model: p.model,
+      tokens: p.tokens,
+      cost: p.cost,
+      latencyMs: p.latencyMs,
+      cacheReadTokens: p.cacheReadTokens,
+      cacheWriteTokens: p.cacheWriteTokens,
+      cacheEligible: p.cacheEligible,
+    },
   }));
 
   subscribe("message:received", "message", (p) => ({
     channelId: p.message.channelId,
     sessionKey: formatSessionKey(p.sessionKey),
     timestamp: undefined,
+    data: {
+      messageId: p.message.id,
+      channelType: p.message.channelType,
+      attachmentCount: p.message.attachments?.length ?? 0,
+      originalMessageCount: p.message.originalMessages?.length ?? 1,
+    },
   }));
 
   subscribe("message:sent", "message", (p) => ({
+    channelType: p.channelType,
     channelId: p.channelId,
     timestamp: undefined,
+    data: {
+      messageId: p.messageId,
+      channelType: p.channelType,
+      sourceChannelType: p.sourceChannelType,
+      sourceChannelId: p.sourceChannelId,
+      sourceMessageId: p.sourceMessageId,
+    },
   }));
 
   subscribe("session:created", "session", (p) => ({
     sessionKey: formatSessionKey(p.sessionKey),
     timestamp: p.timestamp,
+    data: {},
   }));
 
   subscribe("session:expired", "session", (p) => ({
     sessionKey: formatSessionKey(p.sessionKey),
     timestamp: undefined,
+    data: {},
   }));
 
   subscribe("retry:attempted", "message", (p) => ({
     channelId: p.channelId,
     timestamp: p.timestamp,
+    data: { attempt: p.attempt, maxAttempts: p.maxAttempts, delayMs: p.delayMs },
   }));
 
   subscribe("retry:exhausted", "message", (p) => ({
     channelId: p.channelId,
     timestamp: p.timestamp,
+    data: { totalAttempts: p.totalAttempts },
   }));
 
   subscribe("diagnostic:message_processed", "message", (p) => ({
@@ -146,10 +176,32 @@ export function createDiagnosticCollector(deps: {
     sessionKey: p.sessionKey,
     traceId: p.traceId,
     timestamp: p.timestamp,
+    data: {
+      messageId: p.messageId,
+      channelType: p.channelType,
+      toolCalls: p.toolCalls,
+      llmCalls: p.llmCalls,
+      receivedAt: p.receivedAt,
+      executionDurationMs: p.executionDurationMs,
+      deliveryDurationMs: p.deliveryDurationMs,
+      totalDurationMs: p.totalDurationMs,
+      tokensUsed: p.tokensUsed,
+      cost: p.cost,
+      status: p.status,
+      ...(p.failureStage === undefined ? {} : { failureStage: p.failureStage }),
+      ...(p.errorKind === undefined ? {} : { errorKind: p.errorKind }),
+    },
   }));
 
   subscribe("diagnostic:webhook_delivered", "webhook", (p) => ({
     timestamp: p.timestamp,
+    data: {
+      source: p.source,
+      event: p.event,
+      statusCode: p.statusCode,
+      success: p.success,
+      durationMs: p.durationMs,
+    },
   }));
 
   return {

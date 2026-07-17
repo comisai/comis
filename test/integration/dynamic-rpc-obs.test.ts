@@ -252,7 +252,7 @@ describe("OBS: Observability Namespace Dynamic RPC Methods", () => {
       expect(Array.isArray(result.stale)).toBe(true);
     });
 
-    it("obs.channels.get rejects missing channelId", async () => {
+    it("obs.channels.get rejects a missing compound channel identity", async () => {
       const response = (await sendJsonRpc(
         ws,
         "obs.channels.get",
@@ -270,11 +270,11 @@ describe("OBS: Observability Namespace Dynamic RPC Methods", () => {
       expect((error.message as string).toLowerCase()).toContain("channelid");
     });
 
-    it("obs.channels.get returns null for unknown channelId", async () => {
+    it("obs.channels.get returns null for an unknown compound channel identity", async () => {
       const response = (await sendJsonRpc(
         ws,
         "obs.channels.get",
-        { channelId: "nonexistent" },
+        { channelType: "telegram", channelId: "nonexistent" },
         ++rpcId,
         { timeoutMs: RPC_FAST_MS },
       )) as Record<string, unknown>;

@@ -21,7 +21,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { SessionKey, NormalizedMessage } from "@comis/core";
-import { formatSessionKey, runWithContext, systemNowMs } from "@comis/core";
+import { createDeliveryOrigin, createResolvedRequestContext, formatSessionKey, runWithContext, systemNowMs } from "@comis/core";
 import type { SchedulerLogger } from "../shared-types.js";
 import type { SystemEventQueue } from "../system-events/system-event-queue.js";
 import type { EffectiveHeartbeatConfig } from "./heartbeat-config.js";
@@ -217,6 +217,33 @@ export function createAgentHeartbeatSource(
       // 2. Resolve session key
       const sessionKey = resolveHeartbeatSessionKey(agentId, config, agentConfig.tenantId);
       const formattedKey = formatSessionKey(sessionKey);
+      const heartbeatChannelType = config.target?.channelType ?? "heartbeat";
+
+      const heartbeatContext = createResolvedRequestContext({
+        traceId: randomUUID(),
+        tenantId: sessionKey.tenantId,
+        userId: sessionKey.userId,
+        agentId,
+        sessionKey,
+        startedAt: systemNowMs(),
+        trustLevel: "user",
+        channelType: heartbeatChannelType,
+        deliveryOrigin: createDeliveryOrigin({
+          channelType: heartbeatChannelType,
+          channelId: sessionKey.channelId,
+          userId: sessionKey.userId,
+          tenantId: sessionKey.tenantId,
+        }),
+      });
+      if (!heartbeatContext.ok) {
+        logger.error({
+          agentId,
+          hint: "Verify the heartbeat session and delivery target resolve to the same tenant and user",
+          errorKind: "internal" as const,
+        }, "Heartbeat request context validation failed");
+        return;
+      }
+      await runWithContext(heartbeatContext.value, async () => {
 
       // 3. Peek events and resolve trigger kind
       const events = deps.systemEventQueue.peek(formattedKey);
@@ -239,7 +266,6 @@ export function createAgentHeartbeatSource(
       // configured target's channelType (defaulting to "heartbeat" when no
       // delivery target is wired). channelId is sessionKey.channelId
       // (matches resolveHeartbeatSessionKey above).
-      const heartbeatChannelType = config.target?.channelType ?? "heartbeat";
       if (
         isQueueBusy(deps.sessionResolver, {
           agentId,
@@ -298,7 +324,7 @@ export function createAgentHeartbeatSource(
 
       // 8. Create synthetic NormalizedMessage
       const msg: NormalizedMessage = {
-        id: `heartbeat-${randomUUID()}`,
+        id: randomUUID(),
         channelId: sessionKey.channelId,
         channelType: config.target?.channelType ?? "heartbeat",
         senderId: "system",
@@ -326,24 +352,12 @@ export function createAgentHeartbeatSource(
         "Heartbeat run starting",
       );
 
-      // 10. Execute via injected executor (wrapped in runWithContext)
+      // 10. Execute via injected executor inside the heartbeat boundary scope.
       const executor = deps.getExecutor(agentId);
-      const result = await runWithContext(
-        {
-          traceId: randomUUID(),
-          tenantId: sessionKey.tenantId,
-          userId: sessionKey.userId,
-          sessionKey: formattedKey,
-          startedAt: systemNowMs(),
-          trustLevel: "user",
-          channelType: msg.channelType,
-        },
-        () => executor.execute(msg, sessionKey, tools, agentId,
-          {
-            model,
-            operationType: "heartbeat",
-          }),
-      );
+      const result = await executor.execute(msg, sessionKey, tools, agentId, {
+        model,
+        operationType: "heartbeat",
+      });
 
       logger.info(
         { agentId, trigger, durationMs: systemNowMs() - msg.timestamp },
@@ -420,6 +434,7 @@ export function createAgentHeartbeatSource(
             );
           });
       }
+      });
     } catch (err: unknown) {
       logger.warn(
         {

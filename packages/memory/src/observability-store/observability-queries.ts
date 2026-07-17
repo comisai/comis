@@ -5,8 +5,9 @@
  */
 
 import type Database from "better-sqlite3";
+import { z } from "zod";
+import { createRowMapper } from "../row-mapper.js";
 import {
-  deliveryMapper,
   diagnosticMapper,
   channelSnapshotMapper,
   providerAggMapper,
@@ -14,11 +15,8 @@ import {
   sessionAggMapper,
   hourlyBucketMapper,
   sessionSummaryRollupMapper,
-  deliveryStatsMapper,
   systemPromptReportMapper,
   type ObservabilityStore,
-  type DeliveryRow,
-  type DeliveryQueryParams,
   type DiagnosticRow,
   type DiagnosticQueryParams,
   type ChannelSnapshotRow,
@@ -27,17 +25,19 @@ import {
   type SessionAggregation,
   type HourlyBucket,
   type SessionSummaryRollup,
-  type DeliveryStats,
   type SystemPromptReportRow,
 } from "./observability-store-types.js";
 // The *FromRow mappers live in observability-row-shapes.ts (extracted for the
 // file-size cap; imported here directly to avoid a store-types↔row-shapes cycle).
 import {
-  deliveryFromRow,
   diagnosticFromRow,
   snapshotFromRow,
   systemPromptReportFromRow,
 } from "./observability-row-shapes.js";
+
+const offSessionCostMapper = createRowMapper(
+  z.strictObject({ total_cost: z.number() }),
+);
 
 /** Shape of the subset of ObservabilityStore implemented by this module. */
 export type ObservabilityQueries = Pick<
@@ -47,8 +47,6 @@ export type ObservabilityQueries = Pick<
   | "aggregateBySession"
   | "aggregateHourly"
   | "aggregateSessionsInWindow"
-  | "queryDelivery"
-  | "deliveryStats"
   | "queryDiagnostics"
   | "offSessionCostSince"
   | "latestChannelSnapshots"
@@ -156,34 +154,20 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     ORDER BY id
   `);
 
-  const deliveryStatsAllStmt = db.prepare(`
-    SELECT
-      COUNT(*) as total,
-      COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success,
-      COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as error,
-      COALESCE(SUM(CASE WHEN status = 'timeout' THEN 1 ELSE 0 END), 0) as timeout,
-      COALESCE(SUM(CASE WHEN status = 'filtered' THEN 1 ELSE 0 END), 0) as filtered,
-      COALESCE(AVG(latency_ms), 0) as avg_latency_ms
-    FROM obs_delivery
-  `);
-
-  const deliveryStatsSinceStmt = db.prepare(`
-    SELECT
-      COUNT(*) as total,
-      COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success,
-      COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) as error,
-      COALESCE(SUM(CASE WHEN status = 'timeout' THEN 1 ELSE 0 END), 0) as timeout,
-      COALESCE(SUM(CASE WHEN status = 'filtered' THEN 1 ELSE 0 END), 0) as filtered,
-      COALESCE(AVG(latency_ms), 0) as avg_latency_ms
-    FROM obs_delivery WHERE timestamp >= ?
-  `);
-
   const latestSnapshotsStmt = db.prepare(`
-    SELECT s.* FROM obs_channel_snapshots s
-    INNER JOIN (
-      SELECT channel_type, MAX(timestamp) as max_ts
-      FROM obs_channel_snapshots GROUP BY channel_type
-    ) latest ON s.channel_type = latest.channel_type AND s.timestamp = latest.max_ts
+    SELECT snapshot.*
+    FROM obs_channel_snapshots snapshot
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM obs_channel_snapshots newer
+      WHERE newer.channel_type = snapshot.channel_type
+        AND newer.channel_id = snapshot.channel_id
+        AND (
+          newer.timestamp > snapshot.timestamp
+          OR (newer.timestamp = snapshot.timestamp AND newer.id > snapshot.id)
+        )
+    )
+    ORDER BY snapshot.channel_type, snapshot.channel_id
   `);
 
   // SystemPromptReport queries.
@@ -356,54 +340,6 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     return [...bySession.values()];
   }
 
-  function queryDelivery(params?: DeliveryQueryParams): DeliveryRow[] {
-    const conditions: string[] = [];
-    const values: unknown[] = [];
-
-    if (params?.sinceMs != null) {
-      conditions.push("timestamp >= ?");
-      values.push(params.sinceMs);
-    }
-    if (params?.channelType != null) {
-      conditions.push("channel_type = ?");
-      values.push(params.channelType);
-    }
-    if (params?.status != null) {
-      conditions.push("status = ?");
-      values.push(params.status);
-    }
-
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const limit = params?.limit ?? 1000;
-    const sql = `SELECT * FROM obs_delivery ${where} ORDER BY timestamp DESC LIMIT ?`;
-    values.push(limit);
-
-    const parsed = deliveryMapper.parseRows(db.prepare(sql).all(...values));
-    // Degrade-on-validation-error: observability query -> empty result.
-    const rows = parsed.ok ? parsed.value : [];
-    return rows.map(deliveryFromRow);
-  }
-
-  function deliveryStats(sinceMs?: number): DeliveryStats {
-    const raw = sinceMs != null
-      ? deliveryStatsSinceStmt.get(sinceMs)
-      : deliveryStatsAllStmt.get();
-    const parsed = deliveryStatsMapper.parseOptionalRow(raw);
-    // Degrade-on-validation-error or missing row -> zero-stats.
-    const row = parsed.ok ? parsed.value : undefined;
-    if (!row) {
-      return { total: 0, success: 0, error: 0, timeout: 0, filtered: 0, avgLatencyMs: 0 };
-    }
-    return {
-      total: row.total,
-      success: row.success,
-      error: row.error,
-      timeout: row.timeout,
-      filtered: row.filtered,
-      avgLatencyMs: row.avg_latency_ms,
-    };
-  }
-
   function queryDiagnostics(params?: DiagnosticQueryParams): DiagnosticRow[] {
     const conditions: string[] = [];
     const values: unknown[] = [];
@@ -434,8 +370,8 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
 
   /** Total USD cost of off-session (`__PREFIX__`-keyed background-job) LLM spend since `sinceMs`. Distinct from the per-session cost the fleet rollup sums (no double-count). */
   function offSessionCostSince(sinceMs: number): number {
-    const row = offSessionCostSinceStmt.get(sinceMs) as { total_cost: number } | undefined;
-    return row?.total_cost ?? 0;
+    const parsed = offSessionCostMapper.parseOptionalRow(offSessionCostSinceStmt.get(sinceMs));
+    return parsed.ok ? (parsed.value?.total_cost ?? 0) : 0;
   }
 
   function latestChannelSnapshots(): ChannelSnapshotRow[] {
@@ -483,8 +419,6 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     aggregateBySession,
     aggregateHourly,
     aggregateSessionsInWindow,
-    queryDelivery,
-    deliveryStats,
     queryDiagnostics,
     offSessionCostSince,
     latestChannelSnapshots,

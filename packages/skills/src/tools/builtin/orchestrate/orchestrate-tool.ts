@@ -3,68 +3,36 @@
 // and on a failed jailed child via throwToolError / Error — both are caught
 // by the AgentTool execution boundary (agent-loop) and surfaced as a tool error.
 /**
- * `orchestrate-tool` — the `orchestrate` runner. The
- * headline autonomy primitive: the model writes ONE script that chains
- * capability-scoped typed tools (the committed `comis_tools` SDK) in a jailed
- * child, and only size-bounded stdout re-enters context — a search→fetch→
- * synthesize chain in one inference turn, with intermediate results riding
- * ResultRefs (queried in-jail) rather than the transcript.
+ * The `orchestrate` runner executes one model-authored script in the bwrap
+ * cap-socket jail. The committed SDK exposes only capability-scoped tools;
+ * intermediate data stays in ResultRefs and only size-bounded stdout re-enters
+ * context. Missing jail prerequisites fail closed instead of falling back to a
+ * host-side run, and the runner owns result cleanup in `finally`.
  *
- * It composes the SHIPPED substrate, adding NO new sandbox primitive:
- *   - the bwrap cap-socket jail (`BwrapProvider.buildArgs` with
- *     `network:{mode:"cap-socket"}` → `--unshare-net` + the cap socket `--bind`;
- *     `~/.comis` is masked by construction — the jail binds only the workspace +
- *     `SYSTEM_RO_PATHS`, never the data dir).
- *   - `resolveJailNode` for the honest-degrade: no `node`/`bwrap`
- *     inside the jail → a loud precondition error, NEVER a quiet host-side run
- *     outside the jail.
- *   - the committed `comis_tools.{d.ts,js}` SDK + the
- *     `orchestrate-sdk-runtime.js` shim, copied into the workspace so
- *     the script can `import "./comis_tools.js"`.
- *   - the `result-ref-store` run lifecycle — the runner owns
- *     `cleanupRun` in a `finally`.
- *   - `createToolResultSizeGuard` (@comis/agent) for the stdout size-bounce.
- *
- * Env-scrub: the inherited/base env is filtered through
- * {@link scrubSecretEnv} (drop any `*KEY* / *TOKEN* / *SECRET*` key) BEFORE the
- * daemon-injected lease vars (`COMIS_CAP_LEASE`/`COMIS_ORCH_SOCKET`) are merged —
- * the lease vars ride `brokerSpawnEnv.placeholders`, merged LAST, so they survive
- * the scrub by construction. A host secret can never leak into the
- * jailed (attacker-controlled) child; the lease the SDK authenticates with always
- * does.
- *
- * The arg-gen / env-scrub / SDK-write / size-bounce are macOS-unit-testable (the
- * spawn + jail-node resolution are injected seams); the real-bwrap stdout-only /
- * `~/.comis`-mask / `--unshare-net`-egress-cut is the `orchestrate-jail.linux.test.ts`
- * proof (skip-on-macOS, run on the VPS via `pnpm validate:full`).
+ * The inherited environment is secret-scrubbed before daemon-minted lease
+ * variables are merged last. Spawn, resolver, clock, and filesystem seams keep
+ * the control flow unit-testable; the Linux suite proves the real jail boundary.
  *
  * @module
  */
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
-
 import {
   registerActivityLabelSpec,
   safePath,
   systemNowMs,
+  toSafeErrorLogString,
   tryGetContext,
   type AgentCapability,
   type ComisLogger,
+  type DurableRootBudget,
   type EventMap,
+  type ResultRef,
 } from "@comis/core";
-import { createToolResultSizeGuard } from "@comis/agent";
 import type { CapabilityClass } from "@comis/agent";
-
-import {
-  resolveJailAgentCli,
-  resolveJailNode,
-  resolveJailPython,
-  SYSTEM_RO_PATHS,
-} from "../sandbox/bwrap-provider.js";
 import type {
   JailAgentCliResolution,
   JailNodeResolution,
@@ -73,6 +41,7 @@ import type {
 } from "../sandbox/types.js";
 import { loadSeccompProfileFd, closeSeccompProfileFd } from "../sandbox/seccomp-profile.js";
 import { throwToolError } from "../../../platform-tools/tool-helpers.js";
+import { resolveApprovalRequestContext } from "../../../platform-tools/approval-request-context.js";
 import type {
   CleanupRunContext,
   GcRunContext,
@@ -90,17 +59,31 @@ import {
 import type {
   OrchestrateFailureClass,
   OrchestrateSpawnFn,
-  OrchestrateSpawnedChild,
 } from "./orchestrate-repair.js";
 import {
   finalizeCompletedRun,
   markResumable,
   registerDurableRun,
   resolveScriptSource,
+  settleClaimedResumeFailure,
   defaultOrchestrateDurableFs,
 } from "./orchestrate-durable.js";
 import type { OrchestrateDurableRuns } from "./orchestrate-durable.js";
-import type { ResultRef } from "@comis/core";
+import type { ResumeAuthority } from "./orchestrate-durable.js";
+import {
+  defaultResolveJailAgentCli,
+  defaultResolveJailNode,
+  defaultResolveJailPython,
+  defaultSpawn,
+  sizeBounceStdout,
+} from "./orchestrate-runtime-defaults.js";
+
+export {
+  defaultResolveJailAgentCli,
+  defaultResolveJailNode,
+  defaultResolveJailPython,
+  defaultSpawn,
+} from "./orchestrate-runtime-defaults.js";
 
 // The jailed-child execution engine + its seam types live in orchestrate-repair;
 // re-export the public surface the runner has always exposed here (the barrel +
@@ -175,20 +158,23 @@ export interface OrchestrateResultStore {
 }
 
 /** Dependencies for the orchestrate runner (AGENTS.md §2.4 — injected). */
-// @optional-field-count: 17 — the daemon-minted optional wiring seams. Six
-// required fields (logger / workspace / cap-socket / sandbox / store / baseEnv)
-// are always present; each optional field is a presence-conditional collaborator
-// the composition root threads ONLY when its feature is active — the broker
-// lease-env + per-run lease mint, the event-bus run_summary, the pre-flight
-// allowed-caps + approval gate, the capability-class + one-shot repair seam, and
-// the clustered durable-run resume store (threaded only when resume is on) — plus
-// the test-injected seams (spawn / jail-node / jail-python / jail-agent-cli /
-// seccomp-fd / clock / sdk-assets-dir) that default to the real implementation
-// when absent. Each read site already guards on its own presence; clustering them
-// would couple unrelated wiring. Grows by one per new daemon-threaded seam.
+// @optional-field-count: 18 — feature-conditional daemon collaborators and
+// test-injected runtime seams. Every read site guards presence; clustering them
+// would couple unrelated wiring concerns.
 export interface OrchestrateToolDeps {
   /** Structured logger — instruments the boundary crossing (model → jailed child). */
   readonly logger: ComisLogger;
+  readonly trustLevel: "admin" | "user" | "guest"; // exact authenticated durable-run trust
+  /** Authenticated principal persisted with every resumable execution. */
+  readonly durablePrincipal?: {
+    readonly agentId: string;
+    readonly sessionKey: string;
+    readonly ownerTenantId: string;
+    readonly ownerUserId: string;
+    readonly deliveryOrigin: import("@comis/core").DeliveryOrigin | null;
+    readonly trustLevel: "admin" | "user" | "guest";
+    readonly caps: readonly AgentCapability[];
+  };
   /** Resolve the agent's jailed workspace path (the writable jail root). */
   readonly workspaceResolver: () => string;
   /**
@@ -205,7 +191,10 @@ export interface OrchestrateToolDeps {
    * Optional: when absent the child gets no lease (the SDK calls
    * would then fail their precondition — never a silent unauthenticated run).
    */
-  readonly brokerSpawnEnv?: { readonly placeholders: Record<string, string> };
+  readonly brokerSpawnEnv?: {
+    readonly placeholders: Record<string, string>;
+    readonly leaseId?: string;
+  };
   /** The ResultRef store — the runner owns `cleanupRun` on run end. */
   readonly store: OrchestrateResultStore;
   /** The directory holding the committed SDK assets to copy into the jail. */
@@ -240,31 +229,13 @@ export interface OrchestrateToolDeps {
    * {@link brokerSpawnEnv}, merged AFTER the scrub.
    */
   readonly baseEnv: Record<string, string | undefined>;
-  /**
-   * The per-run child-lease mint seam (D5, EXPLAIN-01). When present, the
-   * runner mints a short-TTL CHILD lease per run and injects the returned
-   * `bearer` as `COMIS_CAP_LEASE` — OVERRIDING the assembly bearer that rides
-   * {@link brokerSpawnEnv}. The child lease shares the assembly's `rootRunId`
-   * (tree accounting untouched) with `parentLeaseId` = the assembly lease, so
-   * every in-jail cap call for the run audits under this run's `leaseId` (the
-   * INV-1 per-run correlator). The runner SIZES the `ttlMs` it passes: the run
-   * timeout, or the run timeout + the one-shot-repair budget when auto-repair is
-   * enabled (so the single lease outlives the repair-completion await into the
-   * repaired re-run). Minted daemon-side and threaded as a plain closure —
-   * the runner never imports the LeaseManager. Absent (older wiring) → the assembly
-   * bearer authenticates (no per-run mint; never an unauthenticated run).
-   */
-  readonly mintRunLease?: (runId: string, ttlMs: number) => { leaseId: string; bearer: string };
-  /**
-   * The agent-side event bus, structurally typed to the ONE channel this runner
-   * emits (the emit-capability-audit.ts EmitCapabilityAuditDeps precedent). When
-   * present, every run — success AND each failure class — emits a content-free
-   * `orchestrate:run_summary` at completion (the `comis explain` / `comis fleet`
-   * signal). Emit from the TOOL (not a daemon graph handler) because this
-   * threaded bus reaches the live per-session trajectory bridge; the bridge
-   * attaches at execute() START, so the completion-time emit always lands.
-   * Absent (older wiring) ⇒ no emit (never an error — the run is unaffected).
-   */
+  /** Mint one child lease sized for the run plus any enabled repair attempt. */
+  readonly mintRunLease?: (
+    runId: string,
+    ttlMs: number,
+    resumeAuthority?: ResumeAuthority,
+  ) => { leaseId: string; bearer: string };
+  /** Optional event bus for the content-free completion summary. */
   readonly eventBus?: {
     emit: (
       event: "orchestrate:run_summary",
@@ -304,6 +275,7 @@ export interface OrchestrateToolDeps {
       toolName: string;
       action: string;
       params: Record<string, unknown>;
+      fingerprintParams: Record<string, unknown>;
       agentId: string;
       sessionKey: string;
       trustLevel: "admin" | "user" | "guest";
@@ -337,6 +309,8 @@ export interface OrchestrateToolDeps {
    * SKIPS cleanupRun, `resumeRunId` loads the pinned bytes. Absent ⇒ default-off.
    */
   readonly durableRuns?: OrchestrateDurableRuns;
+  /** Export the absolute per-root budget state persisted at each durable write. */
+  readonly durableBudgetState?: (rootRunId: string) => DurableRootBudget;
 }
 
 // ---------------------------------------------------------------------------
@@ -350,15 +324,6 @@ export const SDK_ASSETS = [
   "comis_tools.py",
   "orchestrate-sdk-runtime.js",
 ] as const;
-
-/** The comis-built comis-agent entry that is sha256-pinned + RO-bound. */
-const COMIS_AGENT_ENTRY_FILENAME = "comis-agent-entry.js";
-
-/** The committed manifest (rides into dist via the asset-copy) holding the pin. */
-const COMIS_AGENT_MANIFEST_FILENAME = "comis-agent-manifest.json";
-
-/** Max stdout characters that re-enter context — the rest is size-bounced. */
-const STDOUT_MAX_CHARS = 30_000;
 
 /** Default hard timeout for a jailed run (ms). Exported for the clamp tests. */
 export const DEFAULT_TIMEOUT_MS = 60_000;
@@ -472,21 +437,54 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       // Bound the model-supplied timeout (fallback default, clamp ceiling)
       // so a jailed script cannot pin a child for an arbitrarily long window.
       const timeoutMs = clampTimeoutMs(params.timeoutMs);
-      // Durable row key = the tree rootRunId (also the checkpoint core's key);
-      // `skipCleanup` gates the finally on a resumable timeout.
-      const durableKey = deps.rootRunId ?? runId;
       let skipCleanup = false;
+      let claimedResume:
+        | { authority: ResumeAuthority; scriptRef: string }
+        | undefined;
+      let resumeReplacementStarted = false;
 
+      const durablePrincipal = deps.durablePrincipal;
+      if (params.resumeRunId !== undefined && durablePrincipal === undefined) {
+        throwToolError("permission_denied", "Resume requires an authenticated session principal.", {
+          hint: "Retry from the original owning session.",
+        });
+      }
+
+      try {
       // Resolve the script source (fresh params, or PINNED bytes on a resume).
       // Fail-CLOSED: a resumeRunId with the surface off is REFUSED, not run as `script`.
       const resolved = await resolveScriptSource(params, deps.durableRuns, defaultOrchestrateDurableFs, {
         workspacePath,
         runId,
+        claimedAtMs: startedMs,
+        ...(durablePrincipal !== undefined ? { principal: durablePrincipal } : {}),
       });
       if (!resolved.ok) {
         throwToolError(resolved.error.code, resolved.error.message, { hint: resolved.error.hint });
       }
-      const { script, language, scriptName, checkpointRef: resumedCheckpointRef } = resolved.value;
+      const {
+        script,
+        language,
+        scriptName,
+        checkpointRef: resumedCheckpointRef,
+        resumeAuthority,
+      } = resolved.value;
+      if (resumeAuthority !== undefined) {
+        claimedResume = { authority: resumeAuthority, scriptRef: scriptName };
+      }
+      if (resumeAuthority !== undefined && deps.mintRunLease === undefined) {
+        throwToolError("permission_denied", "Resume requires a checkpoint-scoped lease mint.", {
+          hint: "Retry after restoring the capability lease layer.",
+        });
+      }
+      const treeRootRunId = resumeAuthority?.rootRunId ?? deps.rootRunId ?? runId;
+      const executionTrustLevel = resumeAuthority?.trustLevel ?? deps.trustLevel;
+      const executionCaps = resumeAuthority?.caps ?? durablePrincipal?.caps ?? [];
+      if (deps.durableRuns !== undefined && deps.durablePrincipal === undefined) {
+        throwToolError("permission_denied", "Durable execution requires an authenticated session principal.", {
+          hint: "Retry from the original agent session.",
+        });
+      }
 
       // Static pre-flight, run BEFORE any resource is acquired — no seccomp fd
       // opened, no run_summary emitted, no child spawned on a rejection (it precedes
@@ -505,8 +503,9 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       // still denied at the cap-socket endpoint by default-deny-by-absence, the sole
       // authoritative boundary.
       const footprint = extractCapabilityFootprint(script);
-      if (deps.allowedCaps) {
-        const held = new Set(deps.allowedCaps);
+      const allowedCaps = resumeAuthority?.caps ?? deps.allowedCaps;
+      if (allowedCaps) {
+        const held = new Set(allowedCaps);
         const missing = [...footprint.caps].filter((cap) => !held.has(cap)).sort();
         if (missing.length > 0) {
           throwToolError(
@@ -520,18 +519,18 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       }
       if (deps.approvalGate && footprint.caps.size > 0) {
         const sortedCaps = [...footprint.caps].sort();
-        // The trust level / agent id / session come from the framework-injected
-        // request context (tryGetContext), never from the model's params — the tool
-        // cannot self-supply them. Undefined outside a request scope (heartbeat/cron).
-        const ctx = tryGetContext();
+        // Identity comes only from the resolved framework request scope.
+        const approvalContext = resolveApprovalRequestContext();
+        if (!approvalContext.ok) throwToolError(
+          "permission_denied", approvalContext.error.message,
+          { hint: "Retry from a resolved agent request scope" },
+        );
         const resolution = await deps.approvalGate.requestApproval({
           toolName: "orchestrate",
           action: `orchestrate:${sortedCaps.join("+")}`,
           params: { caps: sortedCaps },
-          agentId: ctx?.userId ?? "unknown",
-          sessionKey: ctx?.sessionKey ?? "",
-          trustLevel: (ctx?.trustLevel ?? "admin") as "admin" | "user" | "guest",
-          ...(ctx?.channelType ? { channelType: ctx.channelType } : {}),
+          fingerprintParams: { caps: sortedCaps },
+          ...approvalContext.value,
         });
         if (!resolution.approved) {
           throwToolError("permission_denied", "Orchestrate run denied by the approval workflow.", {
@@ -540,7 +539,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         }
       }
 
-      // The per-run child leaseId (D5) — the per-run correlator carried on the
+      // The per-run child leaseId is the correlator carried on the
       // run_summary emit. Undefined when no mintRunLease seam is wired (the
       // assembly bearer authenticates instead).
       let childLeaseId: string | undefined;
@@ -551,12 +550,12 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       // the turn trajectory. Undefined outside a request scope (heartbeat/cron).
       const turnTraceId = tryGetContext()?.traceId;
 
-      // Emit the content-free run_summary (EXPLAIN-02) — success AND every failure
+      // Emit the content-free run_summary for success and every failure
       // class route through here. Captures the run's materialized {count,bytes}
-      // BEFORE the finally's cleanup wipes results/ (Pitfall 3), computes the
-      // SAVE-01 estimate, and self-attributes via rootRunId + sessionKey (the
+      // before the finally cleanup wipes results/, computes the saved-context
+      // estimate, and self-attributes via rootRunId + sessionKey (the
       // daemon-shared bus fans out to every session bridge). A no-op when no
-      // eventBus is wired — never the stderr tail / script body / params (INV-5).
+      // eventBus is wired — never the stderr tail, script body, or params.
       const emitRunSummary = (outcome: {
         readonly exitCode: number;
         readonly failureClass?: OrchestrateFailureClass;
@@ -573,7 +572,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         // can never perturb the run outcome (the run already rode its own
         // return/throw); the store aggregate read is inside the guard too.
         try {
-          const agg = deps.store.runAggregate?.({ workspacePath }) ?? { count: 0, bytes: 0 };
+          const agg = deps.store.runAggregate?.({ workspacePath, runId }) ?? { count: 0, bytes: 0 };
           const savings = estimateSavings(agg.bytes, outcome.stdoutCharsReentered);
           deps.eventBus.emit("orchestrate:run_summary", {
             runId,
@@ -605,7 +604,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           });
         } catch (emitErr) {
           log.debug(
-            { runId, err: emitErr instanceof Error ? emitErr : undefined },
+            { runId, err: toSafeErrorLogString(emitErr) },
             "orchestrate run_summary emit failed (non-fatal)",
           );
         }
@@ -658,7 +657,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         //     python3 resolved by `resolvePython`. Resolve + refuse-on-unavailable
         //     HERE — before buildArgs and the per-run lease mint — mirroring the
         //     node refuse above: an absent interpreter NEVER falls through to a
-        //     silent unjailed run (INV-1 fail-closed). The interpreter is invoked
+        //     silent unjailed run. The interpreter is invoked
         //     by its ABSOLUTE path (bind-mode node's execPath, or the resolved
         //     pythonBin): a bare `node`/`python3` is not on the jail's scrubbed
         //     PATH and would exit 127 (the #236 lesson). Python has no BIND net, so
@@ -738,11 +737,11 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         if (deps.brokerSpawnEnv) {
           Object.assign(childEnv, deps.brokerSpawnEnv.placeholders);
         }
-        // 5a. Per-run child lease (D5): when the daemon threads the mint seam,
+        // 5a. Per-run child lease: when the daemon threads the mint seam,
         //     mint a short-TTL CHILD bearer for THIS run and inject it as
         //     COMIS_CAP_LEASE — OVERRIDING the assembly bearer merged just above.
-        //     Every in-jail cap call then audits under this run's leaseId (the
-        //     INV-1 per-run correlator). Minted here (step 5), AFTER the
+        //     Every in-jail cap call then audits under this run's leaseId. Minted
+        //     here after the
         //     honest-degrade refusals (steps 3/3b), so a refused run wastes no
         //     lease. Absent seam → the assembly bearer authenticates (never an
         //     unauthenticated run). The child bearer is registered in OutputGuard
@@ -759,12 +758,12 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           // slow/local small models it targets). Extend the TTL by the repair budget
           // so the ONE minted lease covers the run+repair window; when repair is off,
           // keep the tight `timeoutMs`. The lease is only SIZED here, never re-minted
-          // — one leaseId per run (the INV-1 attribution the run_summary keys on) and
-          // the same audience-bound child (INV-7) are both preserved.
+          // — one leaseId per run and the same audience-bound child are both
+          // preserved.
           const repairEnabled =
             deps.repairSeam !== undefined && repairEnabledForClass(deps.capabilityClass);
           const leaseTtlMs = repairEnabled ? timeoutMs + REPAIR_LEASE_BUDGET_MS : timeoutMs;
-          const child = deps.mintRunLease(runId, leaseTtlMs);
+          const child = deps.mintRunLease(runId, leaseTtlMs, resumeAuthority);
           childLeaseId = child.leaseId;
           childEnv.COMIS_CAP_LEASE = child.bearer;
           log.debug(
@@ -788,12 +787,43 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
 
         // 5c. Register a resumable durable row (scriptRef) BEFORE the run so a restart's boot sweep finds it. Best-effort; COALESCE-safe.
         if (deps.durableRuns !== undefined) {
-          await registerDurableRun(deps.durableRuns, {
-            rootRunId: durableKey,
+          const principal = durablePrincipal;
+          if (principal === undefined) {
+            throwToolError("permission_denied", "Durable execution principal is unavailable.");
+          }
+          const registered = await registerDurableRun(deps.durableRuns, {
+            checkpointId: runId,
+            rootRunId: treeRootRunId,
+            agentId: principal.agentId,
+            sessionKey: principal.sessionKey,
+            ownerTenantId: principal.ownerTenantId,
+            ownerUserId: principal.ownerUserId,
+            deliveryOrigin: principal.deliveryOrigin,
+            caps: executionCaps,
+            leaseIds: [childLeaseId ?? deps.brokerSpawnEnv?.leaseId].filter(
+              (leaseId): leaseId is string => leaseId !== undefined,
+            ),
+            rootBudget: deps.durableBudgetState?.(treeRootRunId) ?? {
+              startedAtMs: startedMs,
+              tokensConsumed: 0,
+              usdConsumed: 0,
+            },
             scriptRef: scriptName,
             ...(resumedCheckpointRef !== undefined ? { checkpointRef: resumedCheckpointRef } : {}), // resume: carry resumed checkpointRef so the replayed resume() returns it (undefined ⇒ omitted)
             nowMs: now(),
+            trustLevel: executionTrustLevel,
           });
+          if (!registered.ok && resumeAuthority !== undefined) {
+            throwToolError(
+              "permission_denied",
+              "The durable resume replacement could not be registered.",
+              { hint: "The source root may have been revoked concurrently; start a new authorized run instead." },
+            );
+          }
+          if (registered.ok && resumeAuthority !== undefined) {
+            resumeReplacementStarted = true;
+            await deps.durableRuns.markCompleted?.(resumeAuthority.sourceCheckpointId);
+          }
         }
 
         // 6. Run the jailed child, with a bounded one-shot auto-repair. Writes the
@@ -817,12 +847,12 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           repairSeam: deps.repairSeam,
           log,
           runId,
-          keepAlive: { runs: deps.durableRuns, rootRunId: durableKey, now }, // durable heartbeat for the child run (no-op if durability off)
+          keepAlive: { runs: deps.durableRuns, checkpointId: runId, now },
         });
 
         const bounced = sizeBounceStdout(stdout);
         // The POST-bounce char count — the tokens that actually re-entered
-        // context (the SAVE-01 "actual"; raw stdout.length would overstate).
+        // context; raw stdout.length would overstate it.
         const stdoutCharsReentered = bounced.reduce((sum, b) => sum + b.text.length, 0);
         // A clean exit with NO lease is still a degraded run — name it
         // lease_absent so `comis explain` can attribute the missing lease.
@@ -848,10 +878,30 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
         // row + SKIP the finally cleanupRun so the pinned script + last checkpoint
         // survive (the orphan sweep reclaims a truly-dead run). Others clean normally.
         if (failureClass === "timeout" && deps.durableRuns !== undefined) {
+          const principal = durablePrincipal;
+          if (principal === undefined) {
+            throwToolError("permission_denied", "Durable execution principal is unavailable.");
+          }
           const decision = await markResumable(deps.durableRuns, {
-            rootRunId: durableKey,
+            checkpointId: runId,
+            rootRunId: treeRootRunId,
+            agentId: principal.agentId,
+            sessionKey: principal.sessionKey,
+            ownerTenantId: principal.ownerTenantId,
+            ownerUserId: principal.ownerUserId,
+            deliveryOrigin: principal.deliveryOrigin,
+            caps: executionCaps,
+            leaseIds: [childLeaseId ?? deps.brokerSpawnEnv?.leaseId].filter(
+              (leaseId): leaseId is string => leaseId !== undefined,
+            ),
+            rootBudget: deps.durableBudgetState?.(treeRootRunId) ?? {
+              startedAtMs: startedMs,
+              tokensConsumed: 0,
+              usdConsumed: 0,
+            },
             scriptRef: scriptName,
             nowMs: now(),
+            trustLevel: executionTrustLevel,
           });
           skipCleanup = decision.skipCleanup;
         }
@@ -875,7 +925,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           });
         } catch (gcErr) {
           log.warn(
-            { runId, errorKind: "resource" as const, err: gcErr instanceof Error ? gcErr : undefined },
+            { runId, errorKind: "resource" as const, err: toSafeErrorLogString(gcErr) },
             "orchestrate gcRun failed (non-fatal)",
           );
         }
@@ -887,113 +937,41 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           // (only a resumable timeout keeps them; a no-op when the surface is off).
           await finalizeCompletedRun(
             deps.durableRuns,
-            { rootRunId: durableKey, scriptRef: scriptName, workspacePath, runId },
+            {
+              checkpointId: runId,
+              rootRunId: treeRootRunId,
+              scriptRef: scriptName,
+              workspacePath,
+              runId,
+            },
             log,
           );
         }
       }
+      } catch (error) {
+        if (
+          claimedResume !== undefined
+          && !resumeReplacementStarted
+          && deps.durableRuns !== undefined
+        ) {
+          const sourceCheckpointId = claimedResume.authority.sourceCheckpointId;
+          await settleClaimedResumeFailure(
+            deps.durableRuns,
+            {
+              replacementCheckpointId: runId,
+              sourceCheckpointId,
+              workspacePath,
+              scriptRef: claimedResume.scriptRef,
+              cleanupSourceResults: () => deps.store.cleanupRun({
+                workspacePath,
+                runId: sourceCheckpointId,
+              }),
+            },
+            log,
+          );
+        }
+        throw error;
+      }
     },
   };
-}
-
-// ---------------------------------------------------------------------------
-// Internals.
-// ---------------------------------------------------------------------------
-
-/** A text content block (the only shape the runner returns — stdout-only). */
-interface TextBlock {
-  type: "text";
-  text: string;
-}
-
-/** Size-bounce the raw stdout into bounded text content. */
-function sizeBounceStdout(stdout: string): TextBlock[] {
-  const guard = createToolResultSizeGuard();
-  const result = guard.truncateIfNeeded(
-    [{ type: "text", text: stdout }],
-    STDOUT_MAX_CHARS,
-    "orchestrate stdout",
-  );
-  // The guard preserves the {type:"text", text} shape; map to the narrow block.
-  return result.content.map((b) => ({ type: "text" as const, text: b.text ?? "" }));
-}
-
-/** The default real spawn (the unit suite injects `spawnFn`; exported: the replay re-spawn drives it too). */
-export const defaultSpawn: OrchestrateSpawnFn = (bin, args, opts) =>
-  spawn(bin, args, {
-    env: opts.env,
-    cwd: opts.cwd,
-    stdio: ["ignore", "pipe", "pipe"],
-  }) as unknown as OrchestrateSpawnedChild;
-
-/** The default jail-node resolver — probe the jail PATH / bind the daemon node (exported: the replay re-spawn resolves identically). */
-export function defaultResolveJailNode(): JailNodeResolution {
-  return resolveJailNode({ pathDirs: SYSTEM_RO_PATHS, execPath: readExecPath() });
-}
-
-/**
- * The default jail-python resolver — probe the ABSOLUTE host interpreter bin
- * paths (NOT the SYSTEM_RO_PATHS directory roots `defaultResolveJailNode` uses).
- * Python has no BIND fallback the way node does (there is no daemon-python to
- * ro-bind), so probing roots (`/usr`,`/bin`) would falsely report `unavailable`
- * on a host that has `/usr/bin/python3`. All three candidates live under the
- * RO-bound `/usr`/`/bin`, so a hit is reachable in-jail at the same absolute path.
- */
-export function defaultResolveJailPython(): JailPythonResolution {
-  return resolveJailPython({
-    interpreterPaths: ["/usr/bin/python3", "/bin/python3", "/usr/local/bin/python3"],
-  });
-}
-
-/** Read `process.execPath` through a narrow boundary (the daemon's own node). */
-function readExecPath(): string {
-  return process.execPath;
-}
-
-/**
- * The default comis-agent CLI resolver. Resolve the built entry +
- * the committed manifest from `assetDir` (the built module dir, which carries
- * both via the copy-sandbox-assets step), read the pinned sha, and delegate to
- * `resolveJailAgentCli` (which hash-verifies the bound bytes). When the manifest
- * itself is absent (e.g. an old/partial build), honest-degrade to "unavailable"
- * — the CLI surface is off, the orchestrate SCRIPT surface still runs, NEVER an
- * unverified bind.
- */
-export function defaultResolveJailAgentCli(assetDir: string): JailAgentCliResolution {
-  const manifestPath = safePath(assetDir, COMIS_AGENT_MANIFEST_FILENAME);
-  if (!existsSync(manifestPath)) {
-    return {
-      mode: "unavailable",
-      hint:
-        "The comis-agent manifest is missing from the skills dist — the comis-agent " +
-        "CLI surface is UNAVAILABLE inside the jail (the orchestrate SCRIPT surface " +
-        "still works). Rebuild (pnpm build) so the manifest + entry ride into dist.",
-    };
-  }
-  // The manifest is a tiny build artifact in the trusted dist dir (not attacker-
-  // controlled); parse it for the sha pin. A malformed manifest honest-degrades.
-  let expectedSha: string;
-  try {
-    const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as { sha256?: unknown };
-    if (typeof parsed.sha256 !== "string" || parsed.sha256.length === 0) {
-      return {
-        mode: "unavailable",
-        hint:
-          "The comis-agent manifest is malformed (no sha256 pin) — the comis-agent " +
-          "CLI surface is UNAVAILABLE (the orchestrate SCRIPT surface still works). " +
-          "Regenerate it (pnpm agent-cli:manifest).",
-      };
-    }
-    expectedSha = parsed.sha256;
-  } catch {
-    return {
-      mode: "unavailable",
-      hint:
-        "The comis-agent manifest could not be read/parsed — the comis-agent CLI " +
-        "surface is UNAVAILABLE (the orchestrate SCRIPT surface still works). " +
-        "Regenerate it (pnpm agent-cli:manifest).",
-    };
-  }
-  const binPath = safePath(assetDir, COMIS_AGENT_ENTRY_FILENAME);
-  return resolveJailAgentCli({ binPath, expectedSha });
 }

@@ -86,6 +86,7 @@ describe("EventMap Payload Coverage", () => {
         sessionKey: SESSION_KEY,
       },
       "message:sent": {
+        channelType: "telegram",
         channelId: "ch-001",
         messageId: "msg-001",
         content: "Hello world",
@@ -468,7 +469,9 @@ describe("EventMap Payload Coverage", () => {
         timestamp: NOW,
       },
       "response:filtered": {
+        channelType: "telegram",
         channelId: "ch-001",
+        sourceMessageId: "source-001",
         suppressedBy: "NO_REPLY" as const,
         timestamp: NOW,
       },
@@ -678,7 +681,7 @@ describe("EventMap Payload Coverage", () => {
         totalDurationMs: 3350,
         tokensUsed: 1550,
         cost: 0.00885,
-        success: true,
+        status: "success",
         finishReason: "stop",
         timestamp: NOW,
       },
@@ -689,7 +692,7 @@ describe("EventMap Payload Coverage", () => {
         statusCode: 200,
         success: true,
         durationMs: 85,
-        error: undefined,
+        failureReason: undefined,
         timestamp: NOW,
       },
       "diagnostic:channel_health": {

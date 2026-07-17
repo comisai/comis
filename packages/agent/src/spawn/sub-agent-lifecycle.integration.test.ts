@@ -85,6 +85,7 @@ function buildDeps(overrides?: Partial<SubAgentRunnerDeps>): SubAgentRunnerDeps 
           sessionData.delete(formatted);
         },
       ),
+      loadByFormattedKey: vi.fn((formattedKey: string) => sessionData.get(formattedKey)),
     },
     executeAgent: vi.fn().mockResolvedValue({
       response: "task completed successfully",

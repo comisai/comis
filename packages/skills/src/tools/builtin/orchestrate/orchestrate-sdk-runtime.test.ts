@@ -4,7 +4,7 @@
  * generated `comis_tools.js` imports (`invoke` + `wrapResultRef`). These run on
  * macOS (no bwrap): the wire is exercised against a REAL in-test unix-socket
  * server that mirrors the capability endpoint's newline-JSON protocol
- * (`{ bearer, method, params }` → `{ result }` / `{ error }`), and the env is
+ * (`{ bearer, method, params, operationId? }` → `{ result }` / `{ error }`), and the env is
  * injected via `COMIS_ORCH_SOCKET`/`COMIS_CAP_LEASE` (read through the
  * `@comis/core` `systemGetEnv` seam in production).
  *
@@ -27,6 +27,7 @@ interface CapturedRequest {
   bearer: string;
   method: string;
   params?: Record<string, unknown>;
+  operationId?: string;
 }
 
 /**
@@ -226,6 +227,87 @@ describe("orchestrate-sdk-runtime", () => {
       server = await startFakeCapServer(socketPath, () => ({ error: "denied" }), []);
 
       await expect(callCapSocket("skills.create", { name: "x" })).rejects.toThrow(/denied/);
+    });
+
+    it("carries the caller-provided outward operation identity through the generated SDK", async () => {
+      const captured: CapturedRequest[] = [];
+      server = await startFakeCapServer(socketPath, () => ({ result: { sent: true } }), captured);
+
+      await comis_tools.message_send({ channelId: "chat_a", text: "hello" }, "operation-stable");
+
+      expect(captured).toHaveLength(1);
+      expect(captured[0]).toMatchObject({
+        method: "message.send",
+        operationId: "operation-stable",
+      });
+    });
+
+    it("refuses an outward call without a caller-provided operation identity", async () => {
+      const captured: CapturedRequest[] = [];
+      server = await startFakeCapServer(socketPath, () => ({ result: { sent: true } }), captured);
+
+      await expect(
+        callCapSocket("message.send", { channelId: "chat_a", text: "hello" }),
+      ).rejects.toThrow(/operation identity is required/i);
+
+      expect(captured).toHaveLength(0);
+    });
+
+    it("retries an outward response loss once with the same operation identity", async () => {
+      const captured: CapturedRequest[] = [];
+      const appliedOperations = new Set<string>();
+      let appliedCount = 0;
+      server = await new Promise<net.Server>((resolve, reject) => {
+        const s = net.createServer((socket) => {
+          let buf = "";
+          socket.setEncoding("utf8");
+          socket.on("data", (chunk: string) => {
+            buf += chunk;
+            const nl = buf.indexOf("\n");
+            if (nl === -1) return;
+            const req = JSON.parse(buf.slice(0, nl)) as CapturedRequest;
+            captured.push(req);
+            if (!appliedOperations.has(req.operationId ?? "")) {
+              appliedOperations.add(req.operationId ?? "");
+              appliedCount += 1;
+            }
+            if (captured.length === 1) {
+              socket.end();
+              return;
+            }
+            socket.end(`${JSON.stringify({ result: { sent: true } })}\n`);
+          });
+        });
+        s.on("error", reject);
+        s.listen({ path: socketPath }, () => resolve(s));
+      });
+
+      await expect(
+        callCapSocket("message.send", { channelId: "chat_a", text: "hello" }, "operation-retry"),
+      ).resolves.toEqual({ sent: true });
+
+      expect(captured).toHaveLength(2);
+      expect(captured.map((request) => request.operationId)).toEqual([
+        "operation-retry",
+        "operation-retry",
+      ]);
+      expect(appliedCount).toBe(1);
+    });
+
+    it("does not retry an outward application error", async () => {
+      const captured: CapturedRequest[] = [];
+      server = await startFakeCapServer(
+        socketPath,
+        () => ({ error: "capability_denied: orch:message" }),
+        captured,
+      );
+
+      await expect(
+        callCapSocket("message.reply", { messageId: "msg_a" }, "operation-denied"),
+      ).rejects.toThrow(/capability_denied/);
+
+      expect(captured).toHaveLength(1);
+      expect(captured[0].operationId).toBe("operation-denied");
     });
 
     it("rejects with a 'closed before a complete response line' error when the server closes without a newline reply (containment fault)", async () => {

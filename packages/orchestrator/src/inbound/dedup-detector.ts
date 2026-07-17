@@ -2,11 +2,11 @@
 /**
  * Bounded-LRU duplicate inbound message detector.
  *
- * Keyed by messageId string. A Map<string, number> (messageId → firstSeenAt)
+ * Keyed by source tuple string. A bounded insertion-ordered Map
  * is used for FIFO insertion-order eviction. The check is entirely synchronous
  * — no await, no setInterval.
  *
- * Eviction strategy (per .check() call — no background timer):
+ * Eviction strategy (per `.reserve()` call — no background timer):
  *   1. Sweep the front of the Map deleting entries whose firstSeenAt is
  *      older than `ts - windowMs` (FIFO = oldest entries are at the front).
  *   2. After the age sweep, if the Map still exceeds maxEntries, delete the
@@ -24,8 +24,16 @@ import { systemNowMs } from "@comis/core";
 // Public types
 // ---------------------------------------------------------------------------
 
-/** Result of a dedup check. */
-export interface DedupCheckResult {
+/** Reservation returned for a newly admitted physical source. */
+export interface DedupReservation {
+  /** Retain the source identity after the ingress attempt finishes successfully. */
+  commit(): void;
+  /** Release an uncommitted identity so a platform retry can be admitted. */
+  rollback(): void;
+}
+
+/** Result of reserving one physical source identity. */
+export interface DedupReservationResult {
   /** True when the messageId was already seen within the window. */
   isDuplicate: boolean;
   /** Timestamp (epoch ms) when the messageId was first seen.
@@ -34,16 +42,17 @@ export interface DedupCheckResult {
   /** Milliseconds between firstSeenAt and the current check.
    *  Undefined when isDuplicate is false. */
   deltaMs?: number;
+  /** Present only for a newly admitted source. */
+  reservation?: DedupReservation;
 }
 
 /**
  * Synchronous duplicate detector interface.
- * The `.check()` method is the single API surface.
+ * The `.reserve()` method is the single API surface.
  */
 export interface DedupDetector {
-  /** Check whether messageId was seen within the dedup window.
-   *  Records the messageId if not seen. Always synchronous. */
-  check(messageId: string): DedupCheckResult;
+  /** Reserve a source identity if it is not already pending or committed. */
+  reserve(sourceKey: string): DedupReservationResult;
 }
 
 /** Construction options for createDedupDetector. */
@@ -74,7 +83,7 @@ export interface DedupDetectorOptions {
  * @example
  * ```ts
  * const detector = createDedupDetector();
- * const r = detector.check(msg.id);
+ * const r = detector.reserve(sourceKey);
  * if (r.isDuplicate) {
  *   // emit dedup:duplicate_inbound, log WARN
  * }
@@ -85,18 +94,23 @@ export function createDedupDetector(opts: DedupDetectorOptions = {}): DedupDetec
   const windowMs   = opts.windowMs   ?? 10_000;
   const now        = opts.now        ?? systemNowMs;
 
-  // messageId → firstSeenAt (epoch ms). Map insertion order = FIFO.
-  const seen = new Map<string, number>();
+  interface Entry {
+    firstSeenAt: number;
+    token: number;
+    committed: boolean;
+  }
+  const seen = new Map<string, Entry>();
+  let nextToken = 1;
 
   return {
-    check(messageId: string): DedupCheckResult {
+    reserve(sourceKey: string): DedupReservationResult {
       const ts = now();
 
       // Step 1: evict expired entries from the front (FIFO oldest-first).
       // Map iteration visits in insertion order → oldest keys are first.
-      for (const [k, seenAt] of seen) {
-        if (seenAt < ts - windowMs) {
-          seen.delete(k);
+      for (const [key, entry] of seen) {
+        if (entry.firstSeenAt < ts - windowMs) {
+          seen.delete(key);
         } else {
           // Since the Map is ordered by insertion, once we find a non-expired
           // entry we know all subsequent entries are also non-expired.
@@ -106,15 +120,21 @@ export function createDedupDetector(opts: DedupDetectorOptions = {}): DedupDetec
 
       // Step 2: check for an existing entry BEFORE inserting (synchronous
       // read-then-write — no await between them; safe in Node's event loop).
-      if (seen.has(messageId)) {
-        const firstSeenAt = seen.get(messageId)!;
+      const existing = seen.get(sourceKey);
+      if (existing !== undefined) {
+        const firstSeenAt = existing.firstSeenAt;
         // Intentionally do NOT refresh the timestamp — keep firstSeenAt
         // stable so deltaMs grows monotonically within the window.
         return { isDuplicate: true, firstSeenAt, deltaMs: ts - firstSeenAt };
       }
 
       // Step 3: insert and enforce the size cap.
-      seen.set(messageId, ts);
+      const entry: Entry = {
+        firstSeenAt: ts,
+        token: nextToken++,
+        committed: false,
+      };
+      seen.set(sourceKey, entry);
       if (seen.size > maxEntries) {
         // Delete the oldest entry (first key in insertion order).
         const oldest = seen.keys().next().value;
@@ -123,7 +143,25 @@ export function createDedupDetector(opts: DedupDetectorOptions = {}): DedupDetec
         }
       }
 
-      return { isDuplicate: false };
+      let settled = false;
+      const reservation: DedupReservation = {
+        commit(): void {
+          if (settled) return;
+          settled = true;
+          const current = seen.get(sourceKey);
+          if (current?.token === entry.token) current.committed = true;
+        },
+        rollback(): void {
+          if (settled) return;
+          settled = true;
+          const current = seen.get(sourceKey);
+          if (current?.token === entry.token && !current.committed) {
+            seen.delete(sourceKey);
+          }
+        },
+      };
+
+      return { isDuplicate: false, reservation };
     },
   };
 }

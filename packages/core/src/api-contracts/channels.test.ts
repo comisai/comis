@@ -636,6 +636,20 @@ describe("MessageAttachContract", () => {
       })
     ).toThrow();
   });
+
+  it("accepts a tracked attachment response with its real platform ID", () => {
+    expect(() => MessageAttachContract.response.parse({
+      receipt: { kind: "tracked", messageId: "message-1" },
+      channelId: "123",
+    })).not.toThrow();
+  });
+
+  it("accepts delivered-untracked without manufacturing a message ID", () => {
+    expect(() => MessageAttachContract.response.parse({
+      receipt: { kind: "delivered_untracked" },
+      channelId: "123",
+    })).not.toThrow();
+  });
 });
 
 describe("Platform action contracts (Discord/Telegram/Slack/WhatsApp)", () => {

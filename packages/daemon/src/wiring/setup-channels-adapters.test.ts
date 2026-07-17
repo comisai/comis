@@ -169,8 +169,10 @@ describe("bootstrapAdapters", () => {
     // undefined for the second arg.
     expect(validateBotToken).toHaveBeenCalledWith("tok123", undefined);
     expect(createTelegramPlugin).toHaveBeenCalledWith(
-      expect.objectContaining({ botToken: "tok123", logger: channelsLogger }),
+      expect.objectContaining({ getBotToken: expect.any(Function), logger: channelsLogger }),
     );
+    const telegramDeps = vi.mocked(createTelegramPlugin).mock.calls[0]?.[0];
+    expect(telegramDeps?.getBotToken()).toBe("tok123");
     expect(result.adaptersByType.get("telegram")).toBe(mockTelegramPlugin.adapter);
     expect(result.tgPlugin).toBe(mockTelegramPlugin);
     expect(channelsLogger.info).toHaveBeenCalledWith(
@@ -192,7 +194,7 @@ describe("bootstrapAdapters", () => {
     expect(validateBotToken).toHaveBeenCalledWith("tok123", "http://127.0.0.1:54321");
     expect(createTelegramPlugin).toHaveBeenCalledWith(
       expect.objectContaining({
-        botToken: "tok123",
+        getBotToken: expect.any(Function),
         apiRoot: "http://127.0.0.1:54321",
       }),
     );
@@ -408,15 +410,46 @@ describe("bootstrapAdapters", () => {
   });
 
   it("falls back to SecretManager when botToken not in config", async () => {
+    const secrets = { TELEGRAM_BOT_TOKEN: "secret-tok" };
     const container = makeContainer(
       { telegram: { enabled: true } },
-      { TELEGRAM_BOT_TOKEN: "secret-tok" },
+      secrets,
     );
     const result = await bootstrapAdapters({ container, channelsLogger });
 
     expect(container.secretManager.get).toHaveBeenCalledWith("TELEGRAM_BOT_TOKEN");
     expect(validateBotToken).toHaveBeenCalledWith("secret-tok", undefined);
     expect(result.adaptersByType.get("telegram")).toBe(mockTelegramPlugin.adapter);
+    const telegramDeps = vi.mocked(createTelegramPlugin).mock.calls[0]?.[0];
+    secrets.TELEGRAM_BOT_TOKEN = "secret-rotated";
+    expect(telegramDeps?.getBotToken()).toBe("secret-rotated");
+  });
+
+  it("keeps an explicit Telegram config token authoritative over the canonical secret", async () => {
+    const secrets = { TELEGRAM_BOT_TOKEN: "secret-before" };
+    const container = makeContainer(
+      { telegram: { enabled: true, botToken: "resolved-at-bootstrap" } },
+      secrets,
+    );
+    await bootstrapAdapters({ container, channelsLogger });
+
+    const telegramDeps = vi.mocked(createTelegramPlugin).mock.calls[0]?.[0];
+    expect(telegramDeps?.getBotToken()).toBe("resolved-at-bootstrap");
+    secrets.TELEGRAM_BOT_TOKEN = "secret-after";
+    expect(telegramDeps?.getBotToken()).toBe("resolved-at-bootstrap");
+  });
+
+  it("refreshes a canonical secret reference that was resolved into config at bootstrap", async () => {
+    const secrets = { TELEGRAM_BOT_TOKEN: "secret-before" };
+    const container = makeContainer(
+      { telegram: { enabled: true, botToken: "secret-before" } },
+      secrets,
+    );
+    await bootstrapAdapters({ container, channelsLogger });
+
+    const telegramDeps = vi.mocked(createTelegramPlugin).mock.calls[0]?.[0];
+    secrets.TELEGRAM_BOT_TOKEN = "secret-after";
+    expect(telegramDeps?.getBotToken()).toBe("secret-after");
   });
 
   it("logs summary when adapters are initialized", async () => {

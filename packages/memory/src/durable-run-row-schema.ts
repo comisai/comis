@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Zod row schema for the `durable_runs` table — the durable checkpoint store.
+ * Zod row schema for the `durable_run_checkpoints` table — the durable checkpoint store.
  * SSOT for the file-internal `DurableRunDbRow` type in `durable-run-store.ts`.
  *
  * Lives in its OWN module (NOT `row-schemas.ts`) because that file is at the
@@ -13,27 +13,29 @@
  *   - INTEGER/REAL → `z.number()`; the JSON columns are TEXT → `z.string()` at
  *     the row layer (the store parses them to arrays at the domain boundary).
  *
- * SECURITY: the column set is the attenuated `caps` + routing/lifecycle + the
- * outward counter ONLY — NO key/token/secret/bearer column. The lease bearer is
+ * SECURITY: the column set is the attenuated `caps` + routing/lifecycle
+ * metadata only — NO key/token/secret/bearer column. The lease bearer is
  * re-minted on resume and is NEVER persisted here.
- *
- * `outward_step` (DDL DEFAULT -1) is the SOLE counter column. There is NO coarse
- * per-step index column. `DurableRunRecord.stepIndex` maps onto `outward_step`
- * in the store's rowToRecord (the -1 seed surfaces as stepIndex -1 for a
- * never-sent run, which the domain schema permits via `.min(-1)`).
  *
  * @module
  */
 
 import { z } from "zod";
+import { UserTrustLevelSchema } from "@comis/core";
 
 /**
- * Schema for the `durable_runs` table.
+ * Schema for the `durable_run_checkpoints` table.
  * SSOT for the file-internal `DurableRunDbRow` type in durable-run-store.ts.
  * Columns MUST match the `ensureDurableRunTable` DDL exactly (strictObject).
  */
 export const DurableRunDbRowSchema = z.strictObject({
+  checkpoint_id: z.string(),
   root_run_id: z.string(),
+  agent_id: z.string(),
+  session_key: z.string(),
+  owner_tenant_id: z.string(),
+  owner_user_id: z.string(),
+  delivery_origin: z.string().nullable(),
   // JSON TEXT columns — the store JSON.parses these into arrays at the domain
   // boundary (spawn_tree is the flat string[] OR DAG {nodeId,status,runId?}[]).
   spawn_tree: z.string(),
@@ -41,10 +43,7 @@ export const DurableRunDbRowSchema = z.strictObject({
   lease_ids: z.string(),
   budget_consumed: z.number(),
   cron_origin: z.string().nullable(),
-  // The SOLE outward-send counter (DDL DEFAULT -1). Owned only by
-  // allocateOutwardStep; maps to DurableRunRecord.stepIndex in rowToRecord. There
-  // is NO coarse per-step index column — strictObject rejects one if the DDL adds it.
-  outward_step: z.number(),
+  trust_level: UserTrustLevelSchema,
   // 'running' | 'orphaned' | 'completed' | 'revoked' — the SQL CHECK constraint
   // belt-and-suspenders the closed Zod union (DurableRunStatusSchema).
   status: z.string(),

@@ -15,13 +15,14 @@ import {
   systemNowMs,
   systemSetTimeout,
   systemClearTimeout,
+  toSafeErrorLogString,
 } from "@comis/core";
 import { tryCatch } from "@comis/shared";
 import { sanitizeAssistantResponse } from "@comis/agent";
 import { writeRegularFile } from "@comis/observability";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { interpolateTaskText, buildContextEnvelope } from "./template-interpolation.js";
-import { gatedSpawn } from "./graph-concurrency.js";
+import { gatedSpawn, releaseAndDrainQueue } from "./graph-concurrency.js";
 import { resolveNodeBudget, applyNodeBudgetBreach, emitSkipsAndSpawnReady } from "./graph-node-budget.js";
 import type {
   CoordinatorSharedState,
@@ -208,6 +209,15 @@ export function spawnNode(
     markNodeFailed: (gs: GraphRunState, nodeId: string, error: string) => void;
     startDriverNode: (gs: GraphRunState, nodeId: string, node: GraphNode, driver: NodeTypeDriver, envelopedTask: string) => void;
     spawnReadyNodes: (gs: GraphRunState) => void;
+    admitRegularNode?: (
+      gs: GraphRunState,
+      nodeId: string,
+      launch: {
+        reserve: (runId: string) => boolean;
+        start: (runId: string) => void;
+        cancel: (runId?: string) => void;
+      },
+    ) => void;
   },
 ): void {
   // Find the node definition
@@ -296,41 +306,49 @@ export function spawnNode(
     // Per-node token cap → the child's BudgetGuard per-execution
     // cap. Resolved ONCE here so the spawn arg + the graph:node_spawned obs event agree.
     const nodeTokenBudget = resolveNodeBudget(gs, nodeId, config.subAgentTokenBudget);
-    const runId = deps.subAgentRunner.spawn({
-      task: envelopedTask,
-      agentId: node.agentId ?? deps.defaultAgentId,
-      model: node.model,
-      max_steps: node.maxSteps,
-      // Per-node token cap → the child's BudgetGuard per-execution cap (mid-run hard stop). Pairs with the post-hoc node-fail in handleSubAgentCompleted.
-      tokenBudget: nodeTokenBudget,
-      callerSessionKey: gs.callerSessionKey,
-      callerAgentId: gs.callerAgentId,
-      callerType: "graph",
-      ...(gs.rootRunId !== undefined ? { rootRunId: gs.rootRunId } : {}), // nodes share the graph's tree root (killByRootRun reach)
-      graphSharedDir: gs.sharedDir,
-      graphTraceId: gs.graphTraceId,
-      graphId: gs.graphId,
-      nodeId,
-      // Root nodes (dependsOn=[]) = 0, downstream nodes = 1+.
-      // Used for depth-aware cache retention in setup-cross-session.
-      graphNodeDepth: node.dependsOn.length === 0 ? 0 : 1,
-      // Leaf: no other graph node depends on this one. Leaf nodes write
-      // 5m cache instead of 1h because their prefix has no consumers —
-      // see resolveGraphCacheRetention() for rationale.
-      isLeafNode: !gs.graph.graph.nodes.some((n) => n.dependsOn.includes(nodeId)),
-      ...(reuseSessionKeyOnRetry ? { reuseSessionKey: reuseSessionKeyOnRetry } : {}),
-      ...(nodeDiscoveredTools && nodeDiscoveredTools.length > 0 && { discoveredDeferredTools: nodeDiscoveredTools }),
-    });
+    const spawnRunner = (reservedRunId?: string): string => deps.subAgentRunner.spawn({
+        task: envelopedTask,
+        agentId: node.agentId ?? deps.defaultAgentId,
+        model: node.model,
+        max_steps: node.maxSteps,
+        // Per-node token cap → the child's BudgetGuard per-execution cap (mid-run hard stop). Pairs with the post-hoc node-fail in handleSubAgentCompleted.
+        tokenBudget: nodeTokenBudget,
+        callerSessionKey: gs.callerSessionKey,
+        callerAgentId: gs.callerAgentId,
+        callerType: "graph",
+        callerTrustLevel: gs.callerTrustLevel,
+        ...(gs.rootRunId !== undefined ? { rootRunId: gs.rootRunId } : {}),
+        ...(gs.parentLeaseId !== undefined ? { parentLeaseId: gs.parentLeaseId } : {}),
+        caps: [...gs.callerCaps],
+        ...(gs.callerDeliveryOrigin !== undefined
+          ? { requesterOrigin: gs.callerDeliveryOrigin }
+          : {}),
+        graphSharedDir: gs.sharedDir,
+        graphTraceId: gs.graphTraceId,
+        graphId: gs.graphId,
+        nodeId,
+        graphNodeDepth: node.dependsOn.length === 0 ? 0 : 1,
+        isLeafNode: !gs.graph.graph.nodes.some((n) => n.dependsOn.includes(nodeId)),
+        ...(reuseSessionKeyOnRetry ? { reuseSessionKey: reuseSessionKeyOnRetry } : {}),
+        ...(nodeDiscoveredTools && nodeDiscoveredTools.length > 0 && { discoveredDeferredTools: nodeDiscoveredTools }),
+        ...(reservedRunId !== undefined ? { reservedRunId } : {}),
+      });
 
-    gs.runIdToNode.set(runId, nodeId);
+    const reserve = (runId: string): boolean => {
+      const runResult = gs.stateMachine.markNodeRunning(nodeId, runId);
+      if (!runResult.ok) {
+        deps.logger?.warn(
+          { graphId: gs.graphId, nodeId, error: toSafeErrorLogString(runResult.error), hint: "Node may have been concurrently updated", errorKind: "internal" as const },
+          "Graph node state transition to running failed",
+        );
+        return false;
+      }
+      gs.runIdToNode.set(runId, nodeId);
+      gs.runningCount++;
+      return true;
+    };
 
-    const runResult = gs.stateMachine.markNodeRunning(nodeId, runId);
-    if (!runResult.ok) {
-      deps.logger?.warn(
-        { graphId: gs.graphId, nodeId, error: runResult.error, hint: "Node may have been concurrently updated", errorKind: "internal" as const },
-        "Graph node state transition to running failed",
-      );
-    } else {
+    const finishStarted = (runId: string): void => {
       deps.eventBus.emit("graph:node_updated", {
         graphId: gs.graphId,
         nodeId,
@@ -349,27 +367,65 @@ export function spawnNode(
         tokenBudget: nodeTokenBudget ?? null,
         timestamp: systemNowMs(),
       });
-    }
 
-    gs.runningCount++;
-
-    if (node.timeoutMs !== undefined && node.timeoutMs > 0) {
-      const timer = systemSetTimeout(() => {
-        const nodeState = gs.stateMachine.getNodeState(nodeId);
-        if (nodeState && nodeState.status === "running") {
-          deps.subAgentRunner.killRun(runId);
+      if (node.timeoutMs !== undefined && node.timeoutMs > 0) {
+        const timer = systemSetTimeout(() => {
+          const nodeState = gs.stateMachine.getNodeState(nodeId);
+          if (nodeState && nodeState.status === "running") {
+            deps.subAgentRunner.killRun(runId);
+          }
+        }, node.timeoutMs);
+        if (typeof timer === "object" && "unref" in timer) {
+          timer.unref();
         }
-      }, node.timeoutMs);
-      if (typeof timer === "object" && "unref" in timer) {
-        timer.unref();
+        gs.nodeTimers.set(nodeId, timer);
       }
-      gs.nodeTimers.set(nodeId, timer);
+
+      deps.logger?.debug(
+        { graphId: gs.graphId, nodeId, runId },
+        "Graph node spawned",
+      );
+    };
+
+    const cancel = (runId?: string): void => {
+      if (runId !== undefined && gs.runIdToNode.delete(runId)) {
+        gs.runningCount = Math.max(0, gs.runningCount - 1);
+      }
+      releaseAndDrainQueue(state, config);
+    };
+
+    const start = (runId: string): void => {
+      const spawned = tryCatch(() => spawnRunner(runId));
+      if (!spawned.ok || spawned.value !== runId) {
+        if (spawned.ok) deps.subAgentRunner.killRun(spawned.value);
+        cancel(runId);
+        const failure = spawned.ok
+          ? "Graph runner did not honor the reserved launch identity"
+          : "Graph runner rejected the persisted launch claim";
+        deps.logger?.error(
+          {
+            graphId: gs.graphId,
+            nodeId,
+            errorKind: "internal" as const,
+            hint: "Inspect the sub-agent runner launch boundary; recovery will not reuse this failed attempt",
+            ...(!spawned.ok ? { err: toSafeErrorLogString(spawned.error) } : {}),
+          },
+          failure,
+        );
+        callbacks.markNodeFailed(gs, nodeId, failure);
+        return;
+      }
+      finishStarted(runId);
+    };
+
+    if (callbacks.admitRegularNode !== undefined) {
+      callbacks.admitRegularNode(gs, nodeId, { reserve, start, cancel });
+      return;
     }
 
-    deps.logger?.debug(
-      { graphId: gs.graphId, nodeId, runId },
-      "Graph node spawned",
-    );
+    const runId = spawnRunner();
+    if (reserve(runId)) finishStarted(runId);
+    else releaseAndDrainQueue(state, config);
   });
 }
 
@@ -510,7 +566,7 @@ export function startDriverNode(
   const runResult = gs.stateMachine.markNodeRunning(nodeId, `driver:${nodeId}`);
   if (!runResult.ok) {
     deps.logger?.warn(
-      { graphId: gs.graphId, nodeId, error: runResult.error, hint: "Driver node state transition to running failed", errorKind: "internal" as const },
+      { graphId: gs.graphId, nodeId, error: toSafeErrorLogString(runResult.error), hint: "Driver node state transition to running failed", errorKind: "internal" as const },
       "Driver node state transition to running failed",
     );
   } else {
@@ -646,7 +702,7 @@ export function handleSubAgentCompleted(
     const result = gs.stateMachine.markNodeCompleted(nodeId, output);
     if (!result.ok) {
       deps.logger?.warn(
-        { graphId: gs.graphId, nodeId, error: result.error, hint: "Node may have been concurrently updated; harmless if graph reaches terminal state", errorKind: "internal" as const },
+        { graphId: gs.graphId, nodeId, error: toSafeErrorLogString(result.error), hint: "Node may have been concurrently updated; harmless if graph reaches terminal state", errorKind: "internal" as const },
         "Graph node state transition to completed failed",
       );
     }
@@ -659,7 +715,7 @@ export function handleSubAgentCompleted(
     const result = gs.stateMachine.markNodeCompleted(nodeId, output);
     if (!result.ok) {
       deps.logger?.warn(
-        { graphId: gs.graphId, nodeId, error: result.error, hint: "Node may have been concurrently updated", errorKind: "internal" as const },
+        { graphId: gs.graphId, nodeId, error: toSafeErrorLogString(result.error), hint: "Node may have been concurrently updated", errorKind: "internal" as const },
         "Graph node state transition to completed (partial) failed",
       );
     }
@@ -672,7 +728,7 @@ export function handleSubAgentCompleted(
     const result = gs.stateMachine.markNodeFailed(nodeId, errorText, run?.sessionKey);
     if (!result.ok) {
       deps.logger?.warn(
-        { graphId: gs.graphId, nodeId, error: result.error, hint: "Node may have been concurrently updated; harmless if graph reaches terminal state", errorKind: "internal" as const },
+        { graphId: gs.graphId, nodeId, error: toSafeErrorLogString(result.error), hint: "Node may have been concurrently updated; harmless if graph reaches terminal state", errorKind: "internal" as const },
         "Graph node state transition to failed failed",
       );
     }
@@ -774,7 +830,7 @@ export function handleSubAgentCompleted(
     const progressText = `${status} — ${done}/${total} nodes${label ? ` (${label})` : ""}`;
     deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, progressText).catch((sendErr: unknown) => {
       deps.logger?.debug(
-        { graphId: gs.graphId, nodeId, err: sendErr },
+        { graphId: gs.graphId, nodeId, err: toSafeErrorLogString(sendErr) },
         "Node progress delivery failed",
       );
     });
@@ -813,7 +869,7 @@ export function persistArtifacts(
     const writeResult = writeRegularFile({ path: safeResult.value, content: a.content, confinedBaseDir: gs.sharedDir });
     if (!writeResult.ok) {
       deps.logger?.warn(
-        { graphId: gs.graphId, nodeId, filename: a.filename, err: writeResult.error, hint: "Driver artifact write failed; downstream consumers will see no file", errorKind: "resource" as const },
+        { graphId: gs.graphId, nodeId, filename: a.filename, err: toSafeErrorLogString(writeResult.error), hint: "Driver artifact write failed; downstream consumers will see no file", errorKind: "resource" as const },
         "Driver artifact write rejected by fs-safe substrate",
       );
     }

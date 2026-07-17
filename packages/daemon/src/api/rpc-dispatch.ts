@@ -23,6 +23,7 @@ import {
   API_CONTRACTS_ORDERED,
   HANDLER_CAPABILITY_MAP,
   CapabilityDeniedError,
+  emitObservationalEventSafely,
   parseFormattedSessionKey,
   // The never-hang mode-aware deny decision. resolveEffectiveMode is the
   // fail-closed primitive (absent/forged/unknown mode → "default");
@@ -124,28 +125,6 @@ import { createProviderHandlers } from "./provider-handlers.js";
 // assignable from ApiDispatchDeps via structural subtyping.
 
 // ---------------------------------------------------------------------------
-// Media methods whose params carry a large base64/binary payload
-// (`source`/`image`/`video`/`audio`/`file`). The dispatcher error log writes
-// `params` for triage, but Pino's key-name redaction does NOT cover these
-// fields, so on a throw branch the whole image/video/audio body would land in
-// the daemon log — a content-hygiene violation (never log message bodies). For
-// these methods, omit the binary fields before logging; the method name + the
-// remaining small params still aid diagnosis.
-// ---------------------------------------------------------------------------
-
-const BINARY_PARAM_METHODS = new Set<string>([
-  "image.analyze",
-  "media.test.vision",
-  "media.test.video",
-  "media.test.document",
-  "media.test.stt",
-  "audio.transcribe",
-]);
-
-/** The large binary param keys stripped from the log payload for the methods above. */
-const BINARY_PARAM_KEYS = ["source", "image", "video", "audio", "file"] as const;
-
-// ---------------------------------------------------------------------------
 // Error classification
 // ---------------------------------------------------------------------------
 
@@ -216,6 +195,7 @@ const OFFLINE_FALLBACK_OBS_METHODS: ReadonlySet<string> = new Set([
  * @returns RpcCall function that dispatches to domain handlers
  */
 export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
+  const boundedAutonomy = deps.boundedAutonomy;
   // Build handler maps from each domain factory
   const handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
     ...createCronHandlers(deps),
@@ -285,6 +265,12 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
           // emits nothing → the revoke/kill counts are silently zero.
           eventBus: deps.container.eventBus,
           now: systemNowMs,
+          ...(boundedAutonomy
+            ? {
+                revokeDurableRoot: (rootRunId: string) =>
+                  boundedAutonomy.revokeDurableRoot(rootRunId),
+              }
+            : {}),
         })
       : {}),
     // orchestrate.replay — the operator deterministic-replay RPC. Gated on the
@@ -298,13 +284,13 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     ...(deps.orchestrateReplay && deps.durableRuns
       ? createOrchestrateReplayHandlers({
           durableRuns: deps.durableRuns,
-          // The run's jailed workspace (the replay socket reads its
-          // results/replay.jsonl). Single-agent default resolver; the
-          // run→workspace mapping refines at the composition root for the
-          // multi-agent drive.
-          resolveWorkspace: () => deps.defaultWorkspaceDir,
+          // Resolve only the workspace owned by the durable row's persisted
+          // agent identity. An absent agent fails closed in the replay session;
+          // never substitute the daemon's default agent workspace.
+          resolveWorkspace: (agentId) => deps.workspaceDirs.get(agentId),
           outputGuard: deps.orchestrateReplay.outputGuard,
           respawn: deps.orchestrateReplay.respawn,
+          recordingRootPath: deps.orchestrateReplay.recordingRootPath,
           ...(deps.orchestrateReplay.createReplaySocket
             ? { createReplaySocket: deps.orchestrateReplay.createReplaySocket }
             : {}),
@@ -637,7 +623,9 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       // the whole record when there is no session key + no resolver — never fabricate.
       const parsedKey = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
       const rootRunId =
-        parsedKey !== undefined ? deps.resolveRootRunId?.(parsedKey) : undefined;
+        parsedKey !== undefined && agentOrigin !== undefined
+          ? deps.resolveRootRunId?.(agentOrigin, parsedKey)
+          : undefined;
       // Gate the durable audit trail on a real cap + agent origin ONLY —
       // a gated decision is a security fact regardless of tree-root resolution.
       // emitCapabilityAudit emits `audit:event` unconditionally and SUPPRESSES the
@@ -717,11 +705,23 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
           if (rootRunId !== undefined && deps.denialBreaker) {
             const verdict = deps.denialBreaker.recordDenial(rootRunId);
             if (verdict.tripped) {
+              // The trip is authoritative. Complete the kill and per-root
+              // cleanup before announcing it to fallible observers.
+              deps.subAgentRunner.killByRootRun(rootRunId);
+              deps.escalate?.({
+                kind: "denial_breaker_tripped",
+                rootRunId,
+                reason: "consecutive floor-blocks reached denialBreakerN",
+                hint: "the run was aborted to avoid burning the budget on a deny loop (autonomy.denialBreakerN)",
+              });
+              deps.evictRegistry?.clear(rootRunId);
+              deps.denialBreaker.evict(rootRunId);
+
               // The Nth consecutive floor-block → ABORT the tree (not an
               // infinite retry loop) + escalate. Mirror bridge-safety-controls.ts's
               // execution:aborted emit shape; the obs layer consumes the reason.
               if (parsedKey !== undefined) {
-                deps.container.eventBus.emit("execution:aborted", {
+                emitObservationalEventSafely({ eventBus: deps.container.eventBus, logger: deps.logger }, "execution:aborted", {
                   sessionKey: parsedKey,
                   reason: "denial_breaker",
                   agentId: agentOrigin ?? "",
@@ -738,21 +738,10 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
               // above); systemNowMs is the globals-gate-safe wiring clock (no Date.now).
               // Content-free: the rootRunId (an id) + timestamp ONLY — the deny reason
               // rides the escalate() below, never the typed event.
-              deps.container.eventBus.emit("autonomy:denial_breaker_tripped", {
+              emitObservationalEventSafely({ eventBus: deps.container.eventBus, logger: deps.logger }, "autonomy:denial_breaker_tripped", {
                 rootRunId,
                 timestamp: systemNowMs(),
               });
-              deps.subAgentRunner.killByRootRun(rootRunId);
-              deps.escalate?.({
-                kind: "denial_breaker_tripped",
-                rootRunId,
-                reason: "consecutive floor-blocks reached denialBreakerN",
-                hint: "the run was aborted to avoid burning the budget on a deny loop (autonomy.denialBreakerN)",
-              });
-              // The tree is now dead — drop its per-root breaker + evict state
-              // so the in-memory maps cannot leak (the trip/kill cleanup path).
-              deps.evictRegistry?.clear(rootRunId);
-              deps.denialBreaker.evict(rootRunId);
             } else if (mode === "unattended") {
               // A would-ask deny under unattended escalates (out-of-band
               // + auditable) and the run CONTINUES (the re-throw below). Content-free.
@@ -778,34 +767,10 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       }
     } catch (err) {
       // Classify by raw object (instanceof) and severity-dispatch
-      // warn vs error. `params` joins the payload so subsequent
-      // operator debugging (e.g., `context.expand id=abc-123`) doesn't
-      // need a separate grep — the offending input is on the same log line.
+      // warn vs error. RPC parameters and error messages are untrusted request
+      // content, so the log carries only their cardinality and closed class.
       const classified = classifyRpcError(err);
-      // Defense-in-depth: auth.set params carry bare `access` and
-      // `refresh` OAuth token fields at the RPC boundary. Strip them
-      // before logging so a transient failure (SQLITE_BUSY, admin-gate
-      // rejection) does not write raw bearer tokens to the daemon log.
-      // This is defense-in-depth — Part A (CREDENTIAL_KEYS) is the
-      // primary, cross-cutting fix; this per-method projection is the
-      // second layer that survives any future sanitizer bypass or new
-      // credential-bearing field in the auth.set contract.
-      // Omit rather than replace: the operator sees method + err; the
-      // token value itself is never diagnostic for a write-failure path.
-      let safeParams: Record<string, unknown> = params;
-      if (method === "auth.set") {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars -- intentional destructuring to omit credential fields
-        const { access: _a, refresh: _r, accountId: _id, ...rest } = params;
-        safeParams = rest;
-      } else if (BINARY_PARAM_METHODS.has(method)) {
-        // Omit large base64/binary payload fields (image/video/audio
-        // bytes) from the log payload — content-hygiene (never log message
-        // bodies). Shallow-copy minus the binary keys; the method + small
-        // params (prompt, mimeType, language) remain for triage.
-        const rest: Record<string, unknown> = { ...params };
-        for (const key of BINARY_PARAM_KEYS) delete rest[key];
-        safeParams = rest;
-      }
+      const parameterCount = Object.keys(params).filter((key) => !key.startsWith("_")).length;
       // A routine operator flow — an admin-trust denial on a read-only obs
       // method the CLI probes-then-falls-back-offline (obs.explain /
       // obs.fleet.health) — logs at DEBUG, not WARN: otherwise every `comis
@@ -820,15 +785,11 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       deps.logger[effectiveLevel](
         {
           method,
-          params: safeParams,
-          // An expected typed refusal (auth/validation/precondition — level
-          // "warn"/"debug") logs its MESSAGE only: passing the Error object makes
-          // the serializer emit the full stack, and a routine operator flow (every
-          // `comis explain` run probes the admin-gated obs.explain before
-          // falling back offline) then reads as a fault in the daemon log.
-          // Stack traces are for internal errors only; unclassified internal
-          // errors keep the full err (the stack IS the diagnostic there).
-          err: classified.level === "warn" ? (err instanceof Error ? err.message : String(err)) : err,
+          parameterCount,
+          errorName:
+            classified.level === "warn" && err instanceof Error
+              ? err.name
+              : "UnhandledError",
           hint: classified.hint,
           errorKind: classified.errorKind,
         },

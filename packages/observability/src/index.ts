@@ -78,6 +78,7 @@ export type { FileSnapshot } from "./shared/file-snapshot.js";
 // 10 sibling writers through.
 export {
   appendRegularFile,
+  readRegularFile,
   writeRegularFile,
   ensureContainedDir,
   SymlinkParentRejected,
@@ -88,6 +89,9 @@ export type {
   AppendRegularFileOptions,
   AppendRegularFileSuccess,
   AppendRegularFileError,
+  ReadRegularFileOptions,
+  ReadRegularFileSuccess,
+  ReadRegularFileError,
   WriteRegularFileOptions,
   WriteRegularFileSuccess,
   WriteRegularFileError,

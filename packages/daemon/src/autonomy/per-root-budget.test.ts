@@ -344,6 +344,44 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate"
     expect(r.usdRemaining).toBeCloseTo(6, 10);
   });
 
+  it("exports and idempotently rehydrates absolute USD token and wall-clock state", () => {
+    const first = makeBudget({ aggregateUsd: 10, tokens: 1000, wallClockMs: 60_000 });
+    first.budget.registerRoot("root-restart");
+    expect(first.budget.reserveBudget(
+      "root-restart",
+      PRICED_PROVIDER,
+      PRICED_MODEL,
+      4,
+      100,
+    ).kind).toBe("ok");
+    first.clock.advance(10_000);
+    const persisted = first.budget.exportState("root-restart");
+    expect(persisted).toEqual({
+      startedAtMs: 1_000_000,
+      tokensConsumed: 100,
+      usdConsumed: 4,
+    });
+
+    const resumed = makeBudget({ aggregateUsd: 10, tokens: 1000, wallClockMs: 60_000 });
+    resumed.clock.advance(10_000);
+    resumed.budget.rehydrate("root-restart", persisted);
+    resumed.budget.rehydrate("root-restart", persisted);
+
+    expect(resumed.budget.exportState("root-restart")).toEqual(persisted);
+    expect(resumed.budget.remaining("root-restart")).toEqual({
+      tokensRemaining: 900,
+      wallClockMsRemaining: 50_000,
+      usdRemaining: 6,
+    });
+    expect(resumed.budget.reserveBudget(
+      "root-restart",
+      PRICED_PROVIDER,
+      PRICED_MODEL,
+      7,
+      1,
+    ).kind).toBe("exceeded");
+  });
+
   it("remaining() is a PURE read — it does not mutate the token total or anchor a window", () => {
     const wallClockMs = 60_000;
     const { budget, clock } = makeBudget({ tokens: 1000, wallClockMs });

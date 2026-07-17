@@ -10,7 +10,6 @@
  *
  * @module
  */
-
 import {
   type DeliveryOrigin,
   SessionSendContract,
@@ -24,7 +23,28 @@ import {
 } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, loadSessionAnyStore, type SessionHandlerDeps } from "./session-helpers.js";
-
+import { resolveSessionSpawnAuthority } from "./session-spawn-authority.js";
+type CallerContextMismatchField =
+  | "request context" | "resolved principal"
+  | "session" | "session identity" | "agent"
+  | "delivery origin tenant" | "delivery origin user"
+  | "delivery origin channel type" | "delivery origin channel id"
+  | "announcement route";
+type SessionSendAuthorizationFailure =
+  | "request context is required for an agent-origin call"
+  | "caller session is required for an agent-origin call"
+  | "caller agent does not match the request principal"
+  | "caller session does not match the request principal"
+  | "caller session identity does not match the request principal"
+  | "target session key is invalid"
+  | "target tenant does not match the request principal"
+  | "target user does not match the request principal"
+  | "target session metadata is required"
+  | "target agent ownership is required"
+  | "target agent ownership is inconsistent"
+  | "target delegation is inconsistent"
+  | "target agent hint does not match session ownership"
+  | "target agent does not match the request principal";
 /**
  * Bind the session mutation handlers. Object-spread compatible with
  * `Record<string, RpcHandler>`.
@@ -43,9 +63,97 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       const callerSessionKey = rawParams._callerSessionKey as string | undefined;
       const callerChannelType = rawParams._callerChannelType as string | undefined;
       const callerChannelId = rawParams._callerChannelId as string | undefined;
+      const callerAgentId = rawParams._agentId as string | undefined;
+      const announceOperationId = rawParams._outwardOperationId as string | undefined;
 
       const userParams = stripInternalFields(rawParams);
       const params = SessionSendContract.request.parse(userParams);
+
+      let authorizedTargetAgentId = params.agent_id;
+      if (callerAgentId !== undefined) {
+        const rejectAuthorization = (
+          failure: SessionSendAuthorizationFailure,
+        ): never => {
+          deps.logger?.audit?.({
+            kind: "capability_denied",
+            outcome: "denied",
+            actionType: "session.send",
+            agentId: callerAgentId,
+            authorizationFailure: failure,
+          }, "session.send target principal denied");
+          deps.logger?.warn({
+            method: "session.send",
+            authorizationFailure: failure,
+            hint: "Reject the send and verify the active request principal, target session owner, and parent-child delegation metadata",
+            errorKind: "auth" as const,
+          }, "session.send target principal authorization failed");
+          throw new Error(`session.send ${failure}`);
+        };
+
+        // `_agentId` is injected only on the model-facing in-process path. That
+        // path must have an independently-resolved ALS principal and caller
+        // session; otherwise stale or incomplete async state could authorize an
+        // arbitrary target. Calls without `_agentId` are the explicit
+        // authenticated control-plane path and remain governed by gateway scope.
+        const callerContext = tryGetContext()
+          ?? rejectAuthorization("request context is required for an agent-origin call");
+        const resolvedCallerSessionKey = callerSessionKey
+          ?? rejectAuthorization("caller session is required for an agent-origin call");
+        if (callerContext.agentId !== callerAgentId) {
+          rejectAuthorization("caller agent does not match the request principal");
+        }
+        if (callerContext.sessionKey !== resolvedCallerSessionKey) {
+          rejectAuthorization("caller session does not match the request principal");
+        }
+
+        const parsedCaller = parseFormattedSessionKey(resolvedCallerSessionKey);
+        if (
+          parsedCaller === undefined
+          || parsedCaller.tenantId !== callerContext.tenantId
+          || parsedCaller.userId !== callerContext.userId
+        ) {
+          rejectAuthorization("caller session identity does not match the request principal");
+        }
+        const parsedTarget = parseFormattedSessionKey(params.session_key)
+          ?? rejectAuthorization("target session key is invalid");
+        if (parsedTarget.tenantId !== callerContext.tenantId) {
+          rejectAuthorization("target tenant does not match the request principal");
+        }
+        if (parsedTarget.userId !== callerContext.userId) {
+          rejectAuthorization("target user does not match the request principal");
+        }
+
+        const targetSession = deps.sessionStore.loadByFormattedKey(params.session_key)
+          ?? rejectAuthorization("target session metadata is required");
+        const metadataAgentId = typeof targetSession.metadata.agentId === "string"
+          && targetSession.metadata.agentId.length > 0
+          ? targetSession.metadata.agentId
+          : undefined;
+        const targetRun = deps.subAgentRunner.getRunBySessionKey?.(params.session_key);
+        const runAgentId = targetRun?.agentId;
+        const resolvedTargetAgentId = metadataAgentId
+          ?? rejectAuthorization("target agent ownership is required");
+        if (runAgentId !== undefined && runAgentId !== resolvedTargetAgentId) {
+          rejectAuthorization("target agent ownership is inconsistent");
+        }
+        if (
+          targetRun !== undefined
+          && targetSession.metadata.parentSessionKey !== targetRun.callerSessionKey
+        ) {
+          rejectAuthorization("target delegation is inconsistent");
+        }
+        if (params.agent_id !== undefined && params.agent_id !== resolvedTargetAgentId) {
+          rejectAuthorization("target agent hint does not match session ownership");
+        }
+
+        const delegatedChild = resolvedTargetAgentId !== callerAgentId
+          && targetSession.metadata.spawnedByAgent === callerAgentId
+          && targetSession.metadata.parentSessionKey === resolvedCallerSessionKey;
+        if (resolvedTargetAgentId !== callerAgentId && !delegatedChild) {
+          rejectAuthorization("target agent does not match the request principal");
+        }
+        authorizedTargetAgentId = resolvedTargetAgentId;
+      }
 
       const mode = params.mode ?? "fire-and-forget";
       const result = await deps.crossSessionSender.send({
@@ -55,9 +163,11 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         timeoutMs: params.timeout_ms,
         maxTurns: params.max_turns,
         callerSessionKey,
+        ...(callerAgentId !== undefined ? { callerAgentId } : {}),
+        ...(announceOperationId !== undefined ? { announceOperationId } : {}),
         announceChannelType: callerChannelType,
         announceChannelId: callerChannelId,
-        agentId: params.agent_id,
+        agentId: authorizedTargetAgentId,
       });
       return result;
     },
@@ -75,10 +185,102 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       }
 
       // Internal-field reads BEFORE strip (caller-routing + audit trail).
-      const callerSessionKey = rawParams._callerSessionKey as string | undefined;
-      const callerChannelType = rawParams._callerChannelType as string | undefined;
-      const callerChannelId = rawParams._callerChannelId as string | undefined;
-      const callerAgentIdInternal = rawParams._agentId as string | undefined;
+      const hasInjectedCallerIdentity = rawParams._callerSessionKey !== undefined
+        || rawParams._callerChannelType !== undefined
+        || rawParams._callerChannelId !== undefined
+        || rawParams._agentId !== undefined;
+      const callerSessionKey = typeof rawParams._callerSessionKey === "string"
+        ? rawParams._callerSessionKey
+        : undefined;
+      const callerChannelType = typeof rawParams._callerChannelType === "string"
+        ? rawParams._callerChannelType
+        : undefined;
+      const callerChannelId = typeof rawParams._callerChannelId === "string"
+        ? rawParams._callerChannelId
+        : undefined;
+      const callerAgentIdInternal = typeof rawParams._agentId === "string"
+        ? rawParams._agentId
+        : undefined;
+      const ambientCallerContext = tryGetContext();
+
+      const rejectCallerContextMismatch = (
+        field: CallerContextMismatchField,
+      ): never => {
+        deps.logger?.audit?.({
+          kind: "capability_denied",
+          outcome: "denied",
+          actionType: "session.spawn",
+          mismatchField: field,
+        }, "session.spawn caller principal denied");
+        deps.logger?.warn({
+          method: "session.spawn",
+          mismatchField: field,
+          hint: "Reject the spawn and verify the in-process RPC injector preserves the active request principal",
+          errorKind: "auth" as const,
+        }, "session.spawn caller context mismatch");
+        throw new Error(`session.spawn caller ${field} does not match the request context`);
+      };
+
+      // The model-facing injector supplies one complete principal. Any one of
+      // its identity fields switches this call onto that path, where ALS is an
+      // independent authority and every field must agree. A call with none of
+      // these fields is the authenticated RPC control plane and intentionally
+      // does not inherit an ambient agent or delivery route.
+      let callerContext = undefined as typeof ambientCallerContext;
+      if (hasInjectedCallerIdentity) {
+        const resolvedContext = ambientCallerContext
+          ?? rejectCallerContextMismatch("request context");
+        const resolvedCallerSessionKey = callerSessionKey
+          ?? rejectCallerContextMismatch("resolved principal");
+        const resolvedCallerAgentId = callerAgentIdInternal
+          ?? rejectCallerContextMismatch("resolved principal");
+        const resolvedCallerChannelType = callerChannelType
+          ?? rejectCallerContextMismatch("resolved principal");
+        const resolvedCallerChannelId = callerChannelId
+          ?? rejectCallerContextMismatch("resolved principal");
+        const resolvedUserId = resolvedContext.userId
+          ?? rejectCallerContextMismatch("resolved principal");
+        const resolvedSessionKey = resolvedContext.sessionKey
+          ?? rejectCallerContextMismatch("resolved principal");
+        const resolvedAgentId = resolvedContext.agentId
+          ?? rejectCallerContextMismatch("resolved principal");
+        if (resolvedSessionKey !== resolvedCallerSessionKey) {
+          rejectCallerContextMismatch("session");
+        }
+        if (resolvedAgentId !== resolvedCallerAgentId) {
+          rejectCallerContextMismatch("agent");
+        }
+        const contextOrigin = resolvedContext.deliveryOrigin
+          ?? rejectCallerContextMismatch("resolved principal");
+
+        const parsedCallerSession = parseFormattedSessionKey(resolvedCallerSessionKey);
+        if (
+          parsedCallerSession === undefined
+          || parsedCallerSession.tenantId !== resolvedContext.tenantId
+          || parsedCallerSession.userId !== resolvedUserId
+        ) {
+          rejectCallerContextMismatch("session identity");
+        }
+        if (contextOrigin.tenantId !== resolvedContext.tenantId) {
+          rejectCallerContextMismatch("delivery origin tenant");
+        }
+        if (contextOrigin.userId !== resolvedUserId) {
+          rejectCallerContextMismatch("delivery origin user");
+        }
+        if (
+          contextOrigin.channelType !== resolvedCallerChannelType
+          || (
+            resolvedContext.channelType !== undefined
+            && resolvedContext.channelType !== resolvedCallerChannelType
+          )
+        ) {
+          rejectCallerContextMismatch("delivery origin channel type");
+        }
+        if (contextOrigin.channelId !== resolvedCallerChannelId) {
+          rejectCallerContextMismatch("delivery origin channel id");
+        }
+        callerContext = resolvedContext;
+      }
 
       const userParams = stripInternalFields(rawParams);
       const params = SessionSpawnContract.request.parse(userParams);
@@ -87,12 +289,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       const spawnAgentId = params.agent ?? deps.defaultAgentId;
       const maxSteps = params.max_steps;
 
-      // session.spawn is async-only. The poll-until-complete branch was
-      // deleted (CHANGELOG: callers passing `async: false` are now
-      // treated as async; such callers must update to expect the
-      // async-running response shape immediately). Pre-deletion grep
-      // gates verified 0 callers in packages/*/src/ or
-      // packages/skills/src/ pass `async: false`.
+      // session.spawn is async-only and returns the running response immediately.
       deps.logger?.info({
         method: "session.spawn",
         agentId: spawnAgentId,
@@ -102,15 +299,36 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
 
       const expectedOutputs = params.expected_outputs;
 
-      // DeliveryOrigin provides defaults for announce routing
-      // LLM-supplied explicit params take precedence over DeliveryOrigin defaults
+      // Model-facing route fields are hints only. They must match the immutable
+      // requester route exactly and never select a different destination.
       const explicitAnnounceType = params.announce_channel_type;
       const explicitAnnounceId = params.announce_channel_id;
 
-      // Build requesterOrigin from caller context (already validated DeliveryOrigin, serialized through RPC)
-      const requesterOrigin: DeliveryOrigin | undefined = callerChannelType && callerChannelId
-        ? { channelType: callerChannelType, channelId: callerChannelId, userId: "system", tenantId: "default" } as DeliveryOrigin
-        : undefined;
+      // Agent-origin calls use only the immutable route resolved on ALS. The
+      // authenticated control-plane path has no requester principal and may
+      // explicitly select an announcement route.
+      const contextOrigin = callerContext?.deliveryOrigin;
+      const requesterOrigin: DeliveryOrigin | undefined = contextOrigin;
+      const hasExplicitAnnouncementRoute = explicitAnnounceType !== undefined
+        || explicitAnnounceId !== undefined;
+      if (
+        hasExplicitAnnouncementRoute
+        && (
+          explicitAnnounceType === undefined
+          || explicitAnnounceId === undefined
+          || (
+            requesterOrigin !== undefined
+            && (
+              explicitAnnounceType !== requesterOrigin.channelType
+              || explicitAnnounceId !== requesterOrigin.channelId
+            )
+          )
+        )
+      ) {
+        rejectCallerContextMismatch("announcement route");
+      }
+      const announceChannelType = requesterOrigin?.channelType ?? explicitAnnounceType;
+      const announceChannelId = requesterOrigin?.channelId ?? explicitAnnounceId;
 
       // Read caller's spawn depth from session metadata for depth propagation
       const callerSession = callerSessionKey
@@ -144,42 +362,31 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       const reachableToolNames: ReadonlySet<string> | undefined =
         reachableToolNamesSet !== null ? reachableToolNamesSet : undefined;
 
-      // Establish the tree-stable rootRunId (+ parentLeaseId)
-      // BEFORE the spawn so the tree-wide spawn ceiling, killByRootRun, and
-      // the per-root budget all key on ONE id per spawn tree. Two cases:
-      //   - DESCENDANT: this spawn was initiated by a running sub-agent calling
-      //     sessions_spawn. The dispatcher injected THAT sub-agent's session key
-      //     as `_callerSessionKey`, which equals the spawning run's
-      //     `run.sessionKey`. Inherit that run's rootRunId AND its parentLeaseId
-      //     (the lease that authorized the parent) so the whole subtree shares
-      //     one root — without this every descendant minted a fresh root and the
-      //     fork-bomb escaped the ceiling (a silent under-count).
-      //   - TOP-LEVEL: an operator/channel turn with no parent run. Reuse the
-      //     session's stable synthetic root via resolveRootRunId so the ceiling
-      //     and the budget meter agree on the same tree id.
-      // Falls back to undefined (the runner mints a last-resort root) only when
-      // neither is available (older wiring with no resolver).
       const parentRun = callerSessionKey
         ? deps.subAgentRunner.getRunBySessionKey?.(callerSessionKey)
         : undefined;
+      if (parentRun !== undefined) {
+        requireCapability(parentRun.caps, "orch:spawn");
+      }
       const parsedCallerKey = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
-      const resolvedRootRunId =
-        parentRun?.rootRunId
-        ?? (parsedCallerKey ? deps.resolveRootRunId?.(parsedCallerKey) : undefined);
-      const inheritedParentLeaseId = parentRun?.parentLeaseId;
+      const inheritedAuthority = resolveSessionSpawnAuthority({
+        rawParams,
+        ...(parentRun !== undefined ? { parentRun } : {}),
+        ...(parsedCallerKey !== undefined ? { parsedCallerKey } : {}),
+        ...(callerAgentIdInternal !== undefined ? { callerAgentId: callerAgentIdInternal } : {}),
+        ...(deps.resolveRootRunId !== undefined ? { resolveRootRunId: deps.resolveRootRunId } : {}),
+      });
 
       // Async (only path): non-blocking spawn.
       const runId = deps.subAgentRunner.spawn({
         task,
         agentId: spawnAgentId,
+        callerType: hasInjectedCallerIdentity ? "agent" : "control-plane",
         callerSessionKey,
         callerAgentId: callerAgentIdInternal,
-        // Propagate the resolved tree root + the authorizing
-        // lease so the ceiling/kill/budget see one tree (omit when absent).
-        ...(resolvedRootRunId !== undefined ? { rootRunId: resolvedRootRunId } : {}),
-        ...(inheritedParentLeaseId !== undefined ? { parentLeaseId: inheritedParentLeaseId } : {}),
-        announceChannelType: explicitAnnounceType ?? callerChannelType,
-        announceChannelId: explicitAnnounceId ?? callerChannelId,
+        ...inheritedAuthority,
+        announceChannelType,
+        announceChannelId,
         model: params.model,
         requesterOrigin,
         max_steps: maxSteps,
@@ -195,7 +402,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         reachableToolNames,
         // Ride the parent's resolved reply language into child session
         // metadata (same channel as objective/toolGroups); read off the live ALS.
-        resolvedLanguage: tryGetContext()?.resolvedLanguage,
+        resolvedLanguage: callerContext?.resolvedLanguage,
         // Thread the `worktree?` request from the RPC param so the runner
         // persists it onto the child session metadata; executeSubAgent then runs
         // the child in an isolated git worktree (auto-clean-if-unchanged). Omit

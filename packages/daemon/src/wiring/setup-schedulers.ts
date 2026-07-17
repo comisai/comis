@@ -559,6 +559,10 @@ export async function setupSchedulers(deps: {
                   caps: resolved.capabilities, // attenuated to the agent's OWN resolved caps
                   budgetRef: `run-cron-${job.id}-${systemNowMs().toString(36)}`,
                   sessionKey: resolveMainSessionKey(job.agentId),
+                  // Cron agent turns execute inside the scheduler's synthetic
+                  // user RequestContext; the direct root lease must preserve
+                  // that same authority instead of inventing admin/guest.
+                  trustLevel: "user",
                   rootRunId,
                   // no parentLeaseId — a cron-fired run is a NEW root
                 });

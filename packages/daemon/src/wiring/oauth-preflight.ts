@@ -14,7 +14,7 @@
  *      `runOAuthTlsPreflight({ timeoutMs: 4000 })` from `@comis/agent`
  *      and surfaces the result via Pino:
  *        - `kind: "tls-cert"` → exactly one WARN with module + errorKind +
- *          distro-aware install hint + OpenSSL `code` + raw `message`.
+ *          distro-aware install hint + recognized OpenSSL `code`.
  *        - `kind: "network"` → a single DEBUG (no WARN — transient failures
  *          should not pollute the boot path).
  *        - `{ ok: true }` → silent (operators do not want noise on boot).
@@ -127,7 +127,6 @@ export async function emitOAuthTlsPreflightWarn(logger: ComisLogger): Promise<vo
         errorKind: "network" as const,
         hint,
         code: result.code,
-        message: result.message,
       },
       "OAuth TLS preflight failed: system CA bundle cannot validate auth.openai.com",
     );
@@ -137,8 +136,8 @@ export async function emitOAuthTlsPreflightWarn(logger: ComisLogger): Promise<vo
   logger.debug(
     {
       submodule: MODULE_NAME,
-      errorKind: "oauth_tls_network",
-      message: result.message,
+      errorKind: "network" as const,
+      reason: result.reason,
     },
     "OAuth TLS preflight network failure (skipping WARN — likely transient)",
   );

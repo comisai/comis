@@ -176,6 +176,7 @@ describe("discord-adapter -- MessageCreate + InteractionCreate runWithContext wr
     it("runs handlers inside runWithContext({ traceId, channelType: \"discord\" })", async () => {
       let ctxTraceId: string | undefined;
       let ctxChannelType: string | undefined;
+      let ctxTrustLevel: string | undefined;
       let stampedTraceId: string | undefined;
       const normalized = makeNormalized();
       vi.mocked(mapDiscordToNormalized).mockReturnValue(normalized);
@@ -185,6 +186,7 @@ describe("discord-adapter -- MessageCreate + InteractionCreate runWithContext wr
         const ctx = tryGetContext();
         ctxTraceId = ctx?.traceId;
         ctxChannelType = ctx?.channelType;
+        ctxTrustLevel = ctx?.trustLevel;
         stampedTraceId = m.metadata.traceId;
       });
       await adapter.start();
@@ -197,6 +199,7 @@ describe("discord-adapter -- MessageCreate + InteractionCreate runWithContext wr
       expect(ctxTraceId).toBeDefined();
       expect(ctxTraceId).toBe(stampedTraceId);
       expect(ctxChannelType).toBe("discord");
+      expect(ctxTrustLevel).toBe("user");
     });
   });
 
@@ -221,6 +224,7 @@ describe("discord-adapter -- MessageCreate + InteractionCreate runWithContext wr
     it("runs handlers inside runWithContext({ traceId, channelType: \"discord\" }) for interactions", async () => {
       let ctxTraceId: string | undefined;
       let ctxChannelType: string | undefined;
+      let ctxTrustLevel: string | undefined;
       let stampedTraceId: string | undefined;
 
       const adapter = createDiscordAdapter(makeDeps());
@@ -228,6 +232,7 @@ describe("discord-adapter -- MessageCreate + InteractionCreate runWithContext wr
         const ctx = tryGetContext();
         ctxTraceId = ctx?.traceId;
         ctxChannelType = ctx?.channelType;
+        ctxTrustLevel = ctx?.trustLevel;
         stampedTraceId = m.metadata.traceId;
       });
       await adapter.start();
@@ -240,6 +245,7 @@ describe("discord-adapter -- MessageCreate + InteractionCreate runWithContext wr
       expect(ctxTraceId).toBeDefined();
       expect(ctxTraceId).toBe(stampedTraceId);
       expect(ctxChannelType).toBe("discord");
+      expect(ctxTrustLevel).toBe("user");
     });
   });
 });

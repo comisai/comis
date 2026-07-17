@@ -96,6 +96,7 @@ function makeQueuePort(entries: DeliveryQueueEntry[]): DeliveryQueuePort {
   return {
     enqueue: vi.fn(),
     enqueueInFlight: vi.fn(),
+    claim: vi.fn(),
     ack: vi.fn(),
     nack: vi.fn(),
     fail: vi.fn(),
@@ -264,6 +265,19 @@ describe("session.history deliveryStatus join", () => {
 // preserved.
 // ---------------------------------------------------------------------------
 describe("session.history agent-origin self-scoping", () => {
+  it("session.history returns the exact caller session without a serialized agent field", async () => {
+    const deps = makeDeps({ deliveryQueue: makeQueuePort([]) });
+    const handlers = bindSessionReadHandlers(deps);
+
+    const r = (await handlers["session.history"]!({
+      session_key: SESSION_KEY,
+      _agentId: "caller-agent",
+      _callerSessionKey: SESSION_KEY,
+    })) as { messages: Array<{ role: string; content: string }> };
+
+    expect(r.messages.length).toBeGreaterThan(0);
+  });
+
   it("session.history denies an agent-origin caller reading a session that is not the caller's own", async () => {
     // _agentId is injected (agent-origin). The seeded session key
     // "test:user-1:chan-A" does not belong to the caller agent, so the read
@@ -275,6 +289,7 @@ describe("session.history agent-origin self-scoping", () => {
       handlers["session.history"]!({
         session_key: SESSION_KEY,
         _agentId: "attacker-agent",
+        _callerSessionKey: "test:attacker-user:attacker-channel",
       }),
     ).rejects.toThrow(/not found/i);
   });

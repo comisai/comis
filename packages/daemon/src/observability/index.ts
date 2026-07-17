@@ -61,8 +61,12 @@ export {
 } from "./obs-persistence-wiring.js";
 export type {
   ObsWriteBuffer,
+  ObsWriteBufferFailure,
+  ObsWriteBufferFlushStatus,
   ObsWriteBufferOptions,
   ObsPersistenceDeps,
+  ObsPersistenceFlushFailure,
+  ObsPersistenceFlushStatus,
   ObsPersistenceResult,
 } from "./obs-persistence-wiring.js";
 

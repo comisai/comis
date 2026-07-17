@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createPipelineTool } from "./pipeline-tool.js";
+import { runWithContext, type ApprovalGate, type RequestContext } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -23,6 +24,22 @@ function sampleNodes() {
     { node_id: "a", task: "Do A", depends_on: [], timeout_ms: 5000, max_steps: 10 },
     { node_id: "b", task: "Do B", depends_on: ["a"], agent: "helper", model: "fast" },
   ];
+}
+
+function makeApprovalContext(): RequestContext {
+  return {
+    tenantId: "default",
+    userId: "test-user",
+    agentId: "test-agent",
+    sessionKey: "default:test-user:chat-1",
+    traceId: "30000000-0000-4000-8000-000000000003",
+    startedAt: 1,
+    trustLevel: "admin",
+    channelType: "telegram",
+    deliveryOrigin: Object.freeze({
+      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+    }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -641,6 +658,63 @@ describe("createPipelineTool", () => {
         nodes: [{ node_id: "a", task: "fail" }],
       } as never),
     ).rejects.toThrow("raw string error");
+  });
+
+  describe("approval identity", () => {
+    it.each([
+      ["execute", {
+        action: "execute",
+        label: "run-label",
+        nodes: [{ node_id: "a", task: "Run" }],
+        on_failure: "continue",
+        timeout_ms: 2_000,
+        variables: { region: "west" },
+      }],
+      ["save", {
+        action: "save",
+        id: "saved-id",
+        label: "saved",
+        nodes: [{ node_id: "a", task: "Save" }],
+        settings: { onFailure: "continue" },
+      }],
+    ])("uses the resolved agent for %s approval", async (_action, params) => {
+      const requestApproval = vi.fn().mockResolvedValue({ approved: true });
+      const approvalGate = { requestApproval } as unknown as ApprovalGate;
+      const tool = createPipelineTool(rpcCall, undefined, approvalGate);
+
+      await runWithContext(makeApprovalContext(), () =>
+        tool.execute("tc-approval", params as never),
+      );
+
+      expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({
+        agentId: "test-agent",
+        sessionKey: "default:test-user:chat-1",
+        callbackOwner: {
+          tenantId: "default", userId: "test-user", channelType: "telegram", channelKey: "chat-1",
+        },
+      }));
+      const approval = requestApproval.mock.calls[0]![0] as {
+        params: Record<string, unknown>;
+        fingerprintParams: Record<string, unknown>;
+      };
+      const rpcMethod = _action === "execute" ? "graph.execute" : "graph.save";
+      const rpcOperation = rpcCall.mock.calls.find(([method]) => method === rpcMethod)?.[1];
+      expect(approval.fingerprintParams).toEqual(rpcOperation);
+      expect(JSON.stringify(approval.params)).not.toContain(_action === "execute" ? "Run" : "Save");
+    });
+
+    it("fails closed before calling the gate when resolved identity is missing", async () => {
+      const requestApproval = vi.fn().mockResolvedValue({ approved: true });
+      const approvalGate = { requestApproval } as unknown as ApprovalGate;
+      const tool = createPipelineTool(rpcCall, undefined, approvalGate);
+
+      await expect(tool.execute("tc-missing-identity", {
+        action: "execute",
+        nodes: [{ node_id: "a", task: "Run" }],
+      } as never)).rejects.toThrow(/resolved request identity/i);
+      expect(requestApproval).not.toHaveBeenCalled();
+      expect(rpcCall).not.toHaveBeenCalled();
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -1342,4 +1416,3 @@ describe("createPipelineTool — from_intent action", () => {
     expect((args as Record<string, unknown>)._synthesizedFromIntent).toBeUndefined();
   });
 });
-

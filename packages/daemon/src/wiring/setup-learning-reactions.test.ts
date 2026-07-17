@@ -404,7 +404,7 @@ describe("wireLearningCorrection — correction → prior-trajectory observe", (
       totalDurationMs: 5,
       tokensUsed: 100,
       cost: 0,
-      success: true,
+      status: "success",
       finishReason: "end_turn",
       timestamp: NOW,
       ...over,

@@ -387,9 +387,9 @@ export class BwrapProvider implements SandboxProvider {
       args.push("--bind", opts.tempDir, opts.tempDir);
     }
 
-    // -- Workspace (read-write) --
+    // -- Workspace (read-write for live runs; read-only for replay staging) --
     screenBind(opts.workspacePath, home); // caller-controlled → screened.
-    args.push("--bind", opts.workspacePath, opts.workspacePath);
+    args.push(opts.workspaceReadOnly ? "--ro-bind" : "--bind", opts.workspacePath, opts.workspacePath);
 
     // -- Shared paths (read-write) --
     for (const sp of opts.sharedPaths) {

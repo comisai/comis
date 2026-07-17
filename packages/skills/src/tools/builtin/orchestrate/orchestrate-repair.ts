@@ -356,7 +356,7 @@ export async function runScriptWithOneShotRepair(input: {
    * reaped by the watchdog's no-progress re-anchor cap. No-op when `runs` is
    * undefined (durability off).
    */
-  readonly keepAlive?: { runs: OrchestrateDurableRuns | undefined; rootRunId: string; now: () => number };
+  readonly keepAlive?: { runs: OrchestrateDurableRuns | undefined; checkpointId: string; now: () => number };
 }): Promise<string> {
   const {
     spawnFn,
@@ -433,6 +433,6 @@ export async function runScriptWithOneShotRepair(input: {
   };
 
   return keepAlive
-    ? withDurableKeepAlive(keepAlive.runs, keepAlive.rootRunId, { now: keepAlive.now, logger: log }, runWithRepair)
+    ? withDurableKeepAlive(keepAlive.runs, keepAlive.checkpointId, { now: keepAlive.now, logger: log }, runWithRepair)
     : runWithRepair();
 }

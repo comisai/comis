@@ -11,13 +11,18 @@
  * @module
  */
 
-import type { ChannelPort, NormalizedMessage, SessionKey } from "@comis/core";
+import type {
+  AttachmentSendReceipt,
+  ChannelPort,
+  NormalizedMessage,
+  SessionKey,
+} from "@comis/core";
 import { formatSessionKey, systemNowMs } from "@comis/core";
 import { sanitizeAssistantResponse, extractFinalTagContent } from "@comis/agent";
-import { suppressError } from "@comis/shared";
 
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";
 import { buildThreadSendOpts } from "./execution-pipeline.js";
+import { emitObservationalEvent } from "./execution-event-emitter.js";
 import {
   filterResponse,
   executeVoiceResponse,
@@ -49,8 +54,28 @@ export type FilterDeps = Pick<
 
 /** Result of the filter stage. */
 export type FilterResult =
-  | { deliver: true; text: string }
-  | { deliver: false; reason: string };
+  | { deliver: true; text: string; mediaDelivery?: MediaDeliveryOutcome }
+  | {
+      deliver: false;
+      reason: "voice_delivered";
+      receipt: AttachmentSendReceipt;
+      mediaDelivery?: MediaDeliveryOutcome;
+      completedAtMs: number;
+    }
+  | {
+      deliver: false;
+      reason: "empty" | "filtered" | "media_only" | "aborted";
+      mediaDelivery?: MediaDeliveryOutcome;
+      completedAtMs?: number;
+    };
+
+export interface MediaDeliveryOutcome {
+  delivered: number;
+  failed: number;
+  lastReceipt?: AttachmentSendReceipt;
+  /** Epoch ms captured immediately after a failed media batch settles. */
+  failedAtMs?: number;
+}
 
 // ---------------------------------------------------------------------------
 // Stage function
@@ -76,7 +101,13 @@ export async function filterExecutionResponse(
   resourceAborted: boolean,
   abortReason: string | undefined,
   diagFinishReason: string,
+  onFailureKind?: (kind: "internal" | "platform") => void,
+  signal?: AbortSignal,
 ): Promise<FilterResult> {
+  if (signal?.aborted) {
+    return { deliver: false, reason: "aborted", completedAtMs: systemNowMs() };
+  }
+
   // Sanitize raw SDK output via the response sanitization pipeline.
   let response: string;
   if (result.response) {
@@ -116,13 +147,7 @@ export async function filterExecutionResponse(
         ? `I ran out of processing budget. Here's what I completed:\n${summary}\n\nTo continue, send your next message or use +500k for more budget.`
         : "I've reached my processing limit for this request. Please try again or break the task into smaller steps.";
 
-      suppressError(
-        adapter.sendMessage(effectiveMsg.channelId, message, { replyTo }),
-        "empty-response resource-abort fallback delivery",
-        (msg: string) => deps.logger.debug({ errorKind: "internal" as const }, msg),
-      );
-
-      return { deliver: false, reason: "resource_abort_empty" };
+      return { deliver: true, text: message };
     }
 
     // Normal completion with empty response — the LLM finished (finishReason "stop")
@@ -137,17 +162,10 @@ export async function filterExecutionResponse(
         errorKind: "dependency" as const,
       }, "Empty response on normal completion — sending fallback acknowledgment");
 
-      suppressError(
-        adapter.sendMessage(
-          effectiveMsg.channelId,
-          "I completed the requested operations but wasn't able to generate a summary. Please check the results or ask me to continue.",
-          { replyTo },
-        ),
-        "empty-response stop-ack fallback delivery",
-        (msg: string) => deps.logger.debug({ errorKind: "internal" as const }, msg),
-      );
-
-      return { deliver: false, reason: "empty_stop_ack" };
+      return {
+        deliver: true,
+        text: "I completed the requested operations but wasn't able to generate a summary. Please check the results or ask me to continue.",
+      };
     }
 
     deps.logger.debug({
@@ -168,8 +186,10 @@ export async function filterExecutionResponse(
     reason: filter.suppressedBy ?? "delivered",
   }, "Response filter applied");
   if (!filter.shouldDeliver) {
-    deps.eventBus.emit("response:filtered", {
-      channelId: adapter.channelId,
+    emitObservationalEvent(deps, "response:filtered", {
+      channelType: adapter.channelType,
+      channelId: effectiveMsg.channelId,
+      sourceMessageId: effectiveMsg.id,
       suppressedBy: filter.suppressedBy!,
       timestamp: systemNowMs(),
     });
@@ -178,11 +198,13 @@ export async function filterExecutionResponse(
 
   // Use cleaned text (reply tags stripped) for delivery
   let finalDeliveryText = filter.cleanedText;
+  let mediaDelivery: MediaDeliveryOutcome | undefined;
 
   // -------------------------------------------------------------------
   // OUTBOUND MEDIA PIPELINE
   // -------------------------------------------------------------------
   if (deps.parseOutboundMedia && deps.outboundMediaFetch) {
+    onFailureKind?.("internal");
     const parsed = deps.parseOutboundMedia(finalDeliveryText);
 
     if (parsed.mediaUrls.length > 0) {
@@ -192,12 +214,14 @@ export async function filterExecutionResponse(
         chatId: effectiveMsg.channelId,
       }, "MEDIA: directives found in response");
 
+      onFailureKind?.("platform");
       const mediaResult = await deliverOutboundMedia(parsed.mediaUrls, {
         fetchUrl: deps.outboundMediaFetch,
         adapter,
         channelId: effectiveMsg.channelId,
         logger: deps.logger,
         sendOptions: buildThreadSendOpts(effectiveMsg.metadata),
+        ...(signal === undefined ? {} : { signal }),
       });
 
       deps.logger.debug({
@@ -206,7 +230,19 @@ export async function filterExecutionResponse(
         failed: mediaResult.failed,
       }, "Outbound media delivery complete");
 
+      mediaDelivery = {
+        ...mediaResult,
+        ...(mediaResult.failed > 0 ? { failedAtMs: systemNowMs() } : {}),
+      };
       finalDeliveryText = parsed.text;
+      if (signal?.aborted) {
+        return {
+          deliver: false,
+          reason: "aborted",
+          mediaDelivery,
+          completedAtMs: systemNowMs(),
+        };
+      }
     }
   }
 
@@ -218,6 +254,10 @@ export async function filterExecutionResponse(
   // delivery. Adapters without sendAttachment (e.g., IRC) cannot send voice
   // messages regardless of TTS config.
   if (deps.voiceResponsePipeline && typeof adapter.sendAttachment === "function") {
+    // The voice helper promises Result-based handling for provider/platform
+    // failures. A plain rejection is therefore an unexpected internal failure;
+    // explicitly tagged platform errors remain classifiable by the caller.
+    onFailureKind?.("internal");
     const voiceAdapter = {
       sendAttachment: adapter.sendAttachment.bind(adapter),
     };
@@ -228,19 +268,41 @@ export async function filterExecutionResponse(
       channelType: adapter.channelType,
       channelId: effectiveMsg.channelId,
       sendOptions: buildThreadSendOpts(effectiveMsg.metadata),
+      ...(signal === undefined ? {} : { signal }),
     });
+
+    if (signal?.aborted) {
+      return {
+        deliver: false,
+        reason: "aborted",
+        ...(mediaDelivery !== undefined ? { mediaDelivery } : {}),
+        completedAtMs: systemNowMs(),
+      };
+    }
 
     if (voiceResult.ok && voiceResult.value.voiceSent) {
       deps.logger.info(
         { channelType: adapter.channelType, chatId: effectiveMsg.channelId },
         "Voice response delivered, skipping text delivery",
       );
-      deps.eventBus.emit("message:sent", {
-        channelId: effectiveMsg.channelId,
-        messageId: "voice-delivery",
-        content: finalDeliveryText,
-      });
-      return { deliver: false, reason: "voice_delivered" };
+      if (voiceResult.value.receipt.kind === "tracked") {
+        emitObservationalEvent(deps, "message:sent", {
+          channelType: adapter.channelType,
+          channelId: effectiveMsg.channelId,
+          messageId: voiceResult.value.receipt.messageId,
+          content: finalDeliveryText,
+          sourceChannelType: originalMsg.channelType,
+          sourceChannelId: originalMsg.channelId,
+          sourceMessageId: originalMsg.id,
+        });
+      }
+      return {
+        deliver: false,
+        reason: "voice_delivered",
+        receipt: voiceResult.value.receipt,
+        ...(mediaDelivery !== undefined ? { mediaDelivery } : {}),
+        completedAtMs: systemNowMs(),
+      };
     }
     if (!voiceResult.ok) {
       deps.logger.warn(
@@ -258,19 +320,35 @@ export async function filterExecutionResponse(
 
   // If text is empty after stripping MEDIA: lines
   if (!finalDeliveryText.trim()) {
-    deps.eventBus.emit("message:sent", {
-      channelId: effectiveMsg.channelId,
-      messageId: "media-only-delivery",
-      content: finalDeliveryText,
-    });
-    return { deliver: false, reason: "media_only" };
+    if (mediaDelivery?.lastReceipt?.kind === "tracked") {
+      emitObservationalEvent(deps, "message:sent", {
+        channelType: adapter.channelType,
+        channelId: effectiveMsg.channelId,
+        messageId: mediaDelivery.lastReceipt.messageId,
+        content: finalDeliveryText,
+        sourceChannelType: originalMsg.channelType,
+        sourceChannelId: originalMsg.channelId,
+        sourceMessageId: originalMsg.id,
+      });
+    }
+    return {
+      deliver: false,
+      reason: "media_only",
+      ...(mediaDelivery !== undefined ? { mediaDelivery } : {}),
+      completedAtMs: systemNowMs(),
+    };
   }
 
   // === RESPONSE PREFIX ===
   if (deps.responsePrefixConfig?.template && deps.buildTemplateContext) {
+    onFailureKind?.("internal");
     const templateCtx = deps.buildTemplateContext(agentId, adapter.channelType, effectiveMsg);
     finalDeliveryText = applyPrefix(finalDeliveryText, deps.responsePrefixConfig, templateCtx);
   }
 
-  return { deliver: true, text: finalDeliveryText };
+  return {
+    deliver: true,
+    text: finalDeliveryText,
+    ...(mediaDelivery !== undefined ? { mediaDelivery } : {}),
+  };
 }

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createHash } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -397,7 +396,7 @@ describe("createSlackAdapter", () => {
       const deps = makeDeps();
       const adapter = createSlackAdapter(deps);
       adapter.onMessage(() => {
-        throw new Error("Handler failed");
+        throw new Error("Handler failed Authorization: Bearer private-handler-token");
       });
       await adapter.start();
 
@@ -407,6 +406,9 @@ describe("createSlackAdapter", () => {
       await new Promise((r) => setTimeout(r, 10));
 
       expect(deps.logger.error).toHaveBeenCalled();
+      expect(JSON.stringify(vi.mocked(deps.logger.error).mock.calls)).not.toContain(
+        "private-handler-token",
+      );
     });
   });
 
@@ -465,6 +467,24 @@ describe("createSlackAdapter", () => {
       if (!result.ok) {
         expect(result.error.message).toContain("Failed to send Slack message");
       }
+    });
+
+    it("redacts token-bearing API failures from boundary logs", async () => {
+      vi.mocked(validateSlackCredentials).mockResolvedValue(
+        ok({ userId: "U1", teamId: "T1", botId: "B1" }),
+      );
+      mockPostMessage.mockRejectedValue(
+        new Error("request failed Authorization: Bearer private-send-token"),
+      );
+      const deps = makeDeps();
+      const adapter = createSlackAdapter(deps);
+      await adapter.start();
+
+      await adapter.sendMessage("C123", "Hello");
+
+      expect(JSON.stringify(vi.mocked(deps.logger.warn).mock.calls)).not.toContain(
+        "private-send-token",
+      );
     });
   });
 
@@ -649,172 +669,9 @@ describe("createSlackAdapter", () => {
     });
   });
 
-  describe("reconcileSend", () => {
-    function digestOf(text: string): string {
-      return createHash("sha256").update(text).digest("hex").slice(0, 16);
-    }
-
-    async function startedAdapter() {
-      vi.mocked(validateSlackCredentials).mockResolvedValue(
-        ok({ userId: "U_BOT", teamId: "T1", botId: "B_BOT" }),
-      );
-      const adapter = createSlackAdapter(makeDeps());
-      await adapter.start();
-      return adapter;
-    }
-
-    it("returns sent with the message ts for a bot-authored, digest match", async () => {
-      const text = "the crash-interrupted body";
-      mockConversationsHistory.mockResolvedValue({
-        ok: true,
-        has_more: false,
-        messages: [
-          { ts: "1700000000.000100", bot_id: "B_BOT", text },
-        ],
-      });
-
-      const adapter = await startedAdapter();
-      const result = await adapter.reconcileSend!({
-        channelId: "C1",
-        contentDigest: digestOf(text),
-        sentAfterMs: 1_699_999_999_000,
-        sentBeforeMs: 1_700_000_001_000,
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toEqual({ kind: "sent", platformMessageId: "1700000000.000100" });
-      }
-      // ms->s conversion on the window bounds passed to the API.
-      expect(mockConversationsHistory).toHaveBeenCalledWith(
-        expect.objectContaining({
-          channel: "C1",
-          oldest: "1699999999",
-          latest: "1700000001",
-        }),
-      );
-    });
-
-    it("returns not_sent when a full (non-truncated) history has no digest match", async () => {
-      mockConversationsHistory.mockResolvedValue({
-        ok: true,
-        has_more: false,
-        messages: [{ ts: "1700000000.000100", bot_id: "B_BOT", text: "a different body" }],
-      });
-
-      const adapter = await startedAdapter();
-      const result = await adapter.reconcileSend!({
-        channelId: "C1",
-        contentDigest: digestOf("the body we are looking for"),
-        sentAfterMs: 1_699_999_999_000,
-        sentBeforeMs: 1_700_000_001_000,
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toEqual({ kind: "not_sent" });
-      }
-    });
-
-    it("returns unresolved (NOT not_sent) when conversations.history returns ok:false", async () => {
-      mockConversationsHistory.mockResolvedValue({ ok: false, error: "channel_not_found" });
-
-      const adapter = await startedAdapter();
-      const result = await adapter.reconcileSend!({
-        channelId: "C1",
-        contentDigest: digestOf("anything"),
-        sentAfterMs: 1,
-        sentBeforeMs: 2,
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toEqual({ kind: "unresolved" });
-        expect(result.value.kind).not.toBe("not_sent");
-      }
-    });
-
-    it("returns unresolved when conversations.history throws", async () => {
-      mockConversationsHistory.mockRejectedValue(new Error("ratelimited"));
-
-      const adapter = await startedAdapter();
-      const result = await adapter.reconcileSend!({
-        channelId: "C1",
-        contentDigest: digestOf("anything"),
-        sentAfterMs: 1,
-        sentBeforeMs: 2,
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toEqual({ kind: "unresolved" });
-      }
-    });
-
-    it("returns unresolved when has_more truncates the window — a partial fetch cannot prove absence", async () => {
-      mockConversationsHistory.mockResolvedValue({
-        ok: true,
-        has_more: true, // window truncated; absence is unprovable
-        messages: [{ ts: "1700000000.000100", bot_id: "B_BOT", text: "some body" }],
-      });
-
-      const adapter = await startedAdapter();
-      const result = await adapter.reconcileSend!({
-        channelId: "C1",
-        contentDigest: digestOf("the body we are looking for"),
-        sentAfterMs: 1_699_999_999_000,
-        sentBeforeMs: 1_700_000_001_000,
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toEqual({ kind: "unresolved" });
-      }
-    });
-
-    it("ignores a non-bot author whose message shares the digest (spoofing guard)", async () => {
-      const text = "identical body from a human";
-      mockConversationsHistory.mockResolvedValue({
-        ok: true,
-        has_more: false,
-        // No bot_id, and user is NOT our bot's user id.
-        messages: [{ ts: "1700000000.000100", user: "U_SOMEONE", text }],
-      });
-
-      const adapter = await startedAdapter();
-      const result = await adapter.reconcileSend!({
-        channelId: "C1",
-        contentDigest: digestOf(text),
-        sentAfterMs: 1_699_999_999_000,
-        sentBeforeMs: 1_700_000_001_000,
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toEqual({ kind: "not_sent" });
-      }
-    });
-
-    it("matches a message authored by our own user id (m.user === bot user id)", async () => {
-      const text = "sent under the bot user id";
-      mockConversationsHistory.mockResolvedValue({
-        ok: true,
-        has_more: false,
-        messages: [{ ts: "1700000000.000100", user: "U_BOT", text }],
-      });
-
-      const adapter = await startedAdapter();
-      const result = await adapter.reconcileSend!({
-        channelId: "C1",
-        contentDigest: digestOf(text),
-        sentAfterMs: 1_699_999_999_000,
-        sentBeforeMs: 1_700_000_001_000,
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toEqual({ kind: "sent", platformMessageId: "1700000000.000100" });
-      }
-    });
+  it("does not expose a content-history recovery oracle", () => {
+    const adapter = createSlackAdapter(makeDeps());
+    expect(adapter.reconcileSend).toBeUndefined();
+    expect(mockConversationsHistory).not.toHaveBeenCalled();
   });
 });

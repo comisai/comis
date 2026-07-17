@@ -27,7 +27,15 @@
  * @module
  */
 import { describe, it, expect, vi } from "vitest";
-import { resolveAutonomy, formatSessionKey, type SessionKey } from "@comis/core";
+import {
+  createDeliveryOrigin,
+  createResolvedRequestContext,
+  formatSessionKey,
+  parseFormattedSessionKey,
+  resolveAutonomy,
+  runWithContext,
+  type SessionKey,
+} from "@comis/core";
 import type { LeaseManager } from "@comis/infra";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
@@ -97,7 +105,7 @@ function makeHarness(autonomyOverrides?: Parameters<typeof resolveAutonomy>[0]) 
   );
 
   const runnerDeps: SubAgentRunnerDeps = {
-    sessionStore: { save: vi.fn(), delete: vi.fn() },
+    sessionStore: { save: vi.fn(), delete: vi.fn(), loadByFormattedKey: vi.fn() },
     executeAgent: executeAgent as unknown as SubAgentRunnerDeps["executeAgent"],
     sendToChannel: vi.fn().mockResolvedValue(true),
     eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
@@ -157,13 +165,34 @@ function makeHarness(autonomyOverrides?: Parameters<typeof resolveAutonomy>[0]) 
     // artifact. A correct fix propagates the tree
     // root EXPLICITLY, so it must hold even when every mint would differ.
     clock.advance(1_000);
-    const res = (await handlers["session.spawn"]!({
-      task: args.task,
-      _agentId: args.callerAgentId ?? "default",
-      _callerSessionKey: args.callerSessionKey,
-      _callerChannelType: "gateway",
-      _callerChannelId: "ch",
-    })) as { runId: string };
+    const parsedCaller = parseFormattedSessionKey(args.callerSessionKey);
+    if (parsedCaller === undefined) throw new Error("Test caller session must be valid");
+    const callerAgentId = args.callerAgentId ?? "default";
+    const deliveryOrigin = createDeliveryOrigin({
+      tenantId: parsedCaller.tenantId,
+      userId: parsedCaller.userId,
+      channelType: "gateway",
+      channelId: "ch",
+    });
+    const callerContext = createResolvedRequestContext({
+      tenantId: parsedCaller.tenantId,
+      userId: parsedCaller.userId,
+      sessionKey: { ...parsedCaller, agentId: callerAgentId },
+      agentId: callerAgentId,
+      traceId: "50000000-0000-4000-8000-000000000005",
+      startedAt: clock.now(),
+      trustLevel: "user",
+      channelType: "gateway",
+      deliveryOrigin,
+    });
+    if (!callerContext.ok) throw callerContext.error;
+    const res = (await runWithContext(callerContext.value, () => handlers["session.spawn"]!({
+        task: args.task,
+        _agentId: callerAgentId,
+        _callerSessionKey: args.callerSessionKey,
+        _callerChannelType: "gateway",
+        _callerChannelId: "ch",
+      }))) as { runId: string };
     return res;
   }
 

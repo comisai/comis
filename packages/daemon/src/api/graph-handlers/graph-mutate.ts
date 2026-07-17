@@ -26,6 +26,8 @@ import {
   GraphDeleteRunContract,
   stripInternalFields,
   requireCapability,
+  tryGetContext,
+  type AgentCapability,
 } from "@comis/core";
 import { extractUserVariables, substituteUserVariables } from "../../graph/user-variables.js";
 import type { RpcHandler } from "../types.js";
@@ -241,6 +243,10 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         graph: finalValidated,
         callerSessionKey: rawParams._callerSessionKey as string | undefined,
         callerAgentId: rawParams._agentId as string | undefined,
+        callerCaps: rawParams._capabilities as AgentCapability[] | undefined,
+        callerRootRunId: rawParams._rootRunId as string | undefined,
+        callerLeaseId: rawParams._leaseId as string | undefined,
+        callerDeliveryOrigin: tryGetContext()?.deliveryOrigin,
         announceChannelType: rawParams._callerChannelType as string | undefined,
         announceChannelId: rawParams._callerChannelId as string | undefined,
         nodeProgress: userParams.node_progress === true,

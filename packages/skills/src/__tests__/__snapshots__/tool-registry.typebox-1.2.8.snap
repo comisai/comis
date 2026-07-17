@@ -1154,6 +1154,10 @@
           "description": "Channel identifier (for channels.get, delivery.recent)",
           "type": "string"
         },
+        "channel_type": {
+          "description": "Channel adapter type (required with channel_id for channels.get)",
+          "type": "string"
+        },
         "classification": {
           "description": "Audit risk class filter: read | mutate | destructive — for audit",
           "type": "string"

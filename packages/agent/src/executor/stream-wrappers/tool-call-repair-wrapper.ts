@@ -159,7 +159,7 @@ export function createToolCallRepairWrapper(
             {
               submodule: "tool-call-repair-wrapper",
               toolName: toolCall.name,
-              errorKind: "tool_error" as ErrorKind,
+              errorKind: "validation" as ErrorKind,
               hint: "Model emitted irreparable tool-call JSON; returning validation_failed",
             },
             "Irreparable tool-call JSON — shape repair failed",

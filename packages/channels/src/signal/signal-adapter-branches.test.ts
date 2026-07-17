@@ -366,9 +366,12 @@ describe("createSignalAdapter sendAttachment", () => {
     );
   });
 
-  it("falls back to 'unknown' messageId for attachment when no timestamp in response", async () => {
-    mockRpcRequest.mockResolvedValue(ok({}));
-    const adapter = createSignalAdapter(makeDeps());
+  it.each([{}, { timestamp: 0 }, { timestamp: Number.NaN }])(
+    "returns delivered-untracked when an attachment send has no valid platform timestamp: %j",
+    async (rpcValue) => {
+    mockRpcRequest.mockResolvedValue(ok(rpcValue));
+    const deps = makeDeps();
+    const adapter = createSignalAdapter(deps);
     await adapter.start();
 
     const result = await adapter.sendAttachment("+15555550000", {
@@ -377,11 +380,16 @@ describe("createSignalAdapter sendAttachment", () => {
       mimeType: "image/png",
     } as never);
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value).toBe("unknown");
-    }
-  });
+    expect(result).toEqual(ok({ kind: "delivered_untracked" }));
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("Do not retry"),
+        errorKind: "platform",
+      }),
+      "Attachment delivered without platform tracking",
+    );
+    },
+  );
 
   it("keeps attachment captions and filenames out of outbound logs", async () => {
     const privateCaption = "PRIVATE-SIGNAL-CAPTION-DO-NOT-LOG";

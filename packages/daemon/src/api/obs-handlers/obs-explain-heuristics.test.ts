@@ -37,7 +37,7 @@ function makeSignals(overrides?: Partial<IncidentSignals>): IncidentSignals {
 
 describe("obs-explain-heuristics", () => {
   // ------------------------------------------------------------------------
-  // The frozen-fixture ordering: misclassification (root) over breaker (symptom).
+  // Root-cause ordering: misclassification precedes the breaker symptom.
   // ------------------------------------------------------------------------
 
   it("678: misclassification+breaker both present → content_heuristic_misclassification (root over symptom)", () => {
@@ -646,8 +646,8 @@ describe("obs-explain-heuristics", () => {
     expect(rootCause(makeSignals())).toBeNull();
   });
 
-  it("the frozen 678/503 fixtures are UNCHANGED (they carry no learning block)", () => {
-    const r678 = rootCause(
+  it("the established cost and breaker fixtures keep their verdicts when no learning block exists", () => {
+    const misclassificationResult = rootCause(
       makeSignals({
         hasMisclassificationSignal: true,
         misclassifiedTool: "web_fetch",
@@ -658,8 +658,8 @@ describe("obs-explain-heuristics", () => {
         mostFailedTool: "web_fetch",
       }),
     );
-    expect(r678!.code).toBe("content_heuristic_misclassification");
-    const r503 = rootCause(
+    expect(misclassificationResult!.code).toBe("content_heuristic_misclassification");
+    const breakerResult = rootCause(
       makeSignals({
         hasDoNotRetrySignal: true,
         breakerOpenedTool: "web_fetch",
@@ -667,7 +667,7 @@ describe("obs-explain-heuristics", () => {
         mostFailedTool: "web_fetch",
       }),
     );
-    expect(r503!.code).toBe("breaker_opened_repeated_failure");
+    expect(breakerResult!.code).toBe("breaker_opened_repeated_failure");
   });
 
   // ------------------------------------------------------------------------
@@ -933,7 +933,7 @@ describe("context_exhausted with served-bound budget evidence", () => {
 // ---------------------------------------------------------------------------
 // tool_schema_unsupported — an acute, deterministic provider-schema rejection
 // (grammar-compile/unmarshal 400). Placement is the ordering contract: AFTER
-// the two frozen-fixture codes (the frozen 678/503 fixtures carry no
+// the two established classification codes (the cost and breaker fixtures carry no
 // schema-rejection records, so they cannot regress), BEFORE the insurance
 // codes, and out-ranking the terminal-state explainers. Fires only when the
 // one-shot strip-retry did NOT recover — a recovered repair is evidence, not
@@ -1084,7 +1084,7 @@ describe("tool_schema_unsupported", () => {
 // timeout-heavy session with clean tools gets NO verdict at all (rule
 // 6 provider_timeout requires a TOOL failure); the terminal-band rule closes
 // exactly that gap. Placement: BELOW every tool-failure cause
-// (chronic-vs-acute ordering); the frozen 678/503 fixtures carry no
+// (chronic-vs-acute ordering); the established cost and breaker fixtures carry no
 // prompt_timeout records and no endReason "timeout", so they cannot regress
 // (the same no-regression argument as tool_schema_unsupported).
 // ---------------------------------------------------------------------------
@@ -1182,6 +1182,8 @@ describe("prompt_timeout terminal verdict", () => {
     const r = rootCause(makeSignals({ endReason: "timeout" }));
     expect(r).not.toBeNull();
     expect(r!.code).toBe("prompt_timeout");
+    expect(r!.detail).toBe("prompt timed out; no enriched timeout record was captured");
+    expect(r!.detail).not.toContain("pre-extension");
     expect(r!.suggestedNextSteps[0]).toMatch(/agents\.<id>\.promptTimeout\.promptTimeoutMs/);
     // No numbers invented anywhere in the verdict (the session carried none).
     expect(r!.detail).not.toMatch(/\d+ms/);
@@ -1227,9 +1229,9 @@ describe("prompt_timeout terminal verdict", () => {
     expect(r!.code).toBe("prompt_timeout");
   });
 
-  it("the frozen 678/503 fixture verdicts are UNCHANGED (no prompt_timeout records, no endReason timeout)", () => {
-    // The frozen-fixture no-regression argument, re-pinned for this rule.
-    const r678 = rootCause(
+  it("keeps established cost and breaker verdicts when timeout evidence is absent", () => {
+    // The established classifications remain ahead of the terminal timeout rule.
+    const misclassificationResult = rootCause(
       makeSignals({
         hasMisclassificationSignal: true,
         misclassifiedTool: "web_fetch",
@@ -1240,8 +1242,8 @@ describe("prompt_timeout terminal verdict", () => {
         mostFailedTool: "web_fetch",
       }),
     );
-    expect(r678!.code).toBe("content_heuristic_misclassification");
-    const r503 = rootCause(
+    expect(misclassificationResult!.code).toBe("content_heuristic_misclassification");
+    const breakerResult = rootCause(
       makeSignals({
         hasMisclassificationSignal: false,
         hasDoNotRetrySignal: true,
@@ -1250,6 +1252,6 @@ describe("prompt_timeout terminal verdict", () => {
         mostFailedTool: "web_fetch",
       }),
     );
-    expect(r503!.code).toBe("breaker_opened_repeated_failure");
+    expect(breakerResult!.code).toBe("breaker_opened_repeated_failure");
   });
 });

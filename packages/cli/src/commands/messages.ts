@@ -13,7 +13,7 @@
  * Usage:
  *   comis messages [--channel <type>] [--chat <id>] [--sender <id>] [--agent <id>]
  *     [--since <when>] [--until <when>] [--date <YYYY-MM-DD>] [--limit <n>]
- *     [--include-internal] [--format table|text|json|jsonl|json-report]
+ *     [--include-internal] [--format table|text|json|jsonl]
  *
  * `<when>` accepts epoch ms (`1783900800000`), relative-ago (`30m`, `24h`,
  * `7d`), or an ISO date/datetime (`2026-07-12`, `2026-07-12T10:00:00Z`).
@@ -23,7 +23,11 @@
  */
 
 import type { Command } from "commander";
-import { systemNowMs } from "@comis/core";
+import {
+  redactOutputText,
+  systemDateFrom,
+  systemNowMs,
+} from "@comis/core";
 import { error, info, json, warn } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import {
@@ -54,6 +58,15 @@ const RELATIVE_UNIT_MS: Record<string, number> = {
   d: 86_400_000,
 };
 
+const MESSAGE_FORMATS = new Set(["table", "text", "json", "jsonl"]);
+const MAX_MESSAGE_LIMIT = 10_000;
+const MESSAGE_REDACTION_POLICY_VERSION = 2;
+
+/** Whether an epoch is both integer-safe and representable by the runtime Date range. */
+function isValidEpochMs(value: number): boolean {
+  return Number.isSafeInteger(value) && !Number.isNaN(systemDateFrom(value).getTime());
+}
+
 /**
  * Parse a `<when>` bound: epoch ms, relative-ago (`Nm|Nh|Nd`), or ISO
  * date/datetime. Returns `undefined` when unparsable — the caller errors and
@@ -62,26 +75,136 @@ const RELATIVE_UNIT_MS: Record<string, number> = {
  * widened messages query dumps every conversation on the operator's terminal.
  */
 function parseWhen(value: string, nowMs: number): number | undefined {
-  if (/^\d+$/.test(value)) return Number(value);
+  if (/^\d+$/.test(value)) {
+    const epochMs = Number(value);
+    return isValidEpochMs(epochMs) ? epochMs : undefined;
+  }
   const relative = /^(\d+)([mhd])$/.exec(value);
-  if (relative !== null) return nowMs - Number(relative[1]) * RELATIVE_UNIT_MS[relative[2]!]!;
+  if (relative !== null) {
+    const amount = Number(relative[1]);
+    const deltaMs = amount * RELATIVE_UNIT_MS[relative[2]!]!;
+    const epochMs = nowMs - deltaMs;
+    return Number.isSafeInteger(amount) &&
+      Number.isSafeInteger(deltaMs) &&
+      isValidEpochMs(epochMs)
+      ? epochMs
+      : undefined;
+  }
+  const calendarDate = /^(\d{4}-\d{2}-\d{2})(?:T|$)/.exec(value)?.[1];
+  if (calendarDate === undefined || parseUtcDay(calendarDate) === undefined) return undefined;
   const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? undefined : parsed;
+  return isValidEpochMs(parsed) ? parsed : undefined;
+}
+
+/** Parse and strict-round-trip one UTC calendar day. */
+function parseUtcDay(value: string): number | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+  const epochMs = Date.parse(`${value}T00:00:00.000Z`);
+  if (!Number.isSafeInteger(epochMs)) return undefined;
+  return systemDateFrom(epochMs).toISOString().slice(0, 10) === value
+    ? epochMs
+    : undefined;
+}
+
+/** Scrub one complete displayed field through the canonical output catalog. */
+function scrubDisplayedField(value: string): { value: string; redacted: number } {
+  const result = redactOutputText(value);
+  return {
+    value: result.text,
+    redacted: result.redactions,
+  };
+}
+
+interface ScrubbedSerializedValue<T> {
+  readonly value: T;
+  readonly redacted: number;
+}
+
+/** Scrub every enumerable string value that JSON serialization could expose. */
+function scrubSerializedStrings<T>(value: T): ScrubbedSerializedValue<T> {
+  if (typeof value === "string") {
+    const scrubbed = scrubDisplayedField(value);
+    return { value: scrubbed.value as T, redacted: scrubbed.redacted };
+  }
+  if (Array.isArray(value)) {
+    let redacted = 0;
+    const scrubbed = value.map((entry) => {
+      const result = scrubSerializedStrings(entry);
+      redacted += result.redacted;
+      return result.value;
+    });
+    return { value: scrubbed as T, redacted };
+  }
+  if (value !== null && typeof value === "object") {
+    let redacted = 0;
+    const entries = Object.entries(value).map(([key, entry]) => {
+      const result = scrubSerializedStrings(entry);
+      redacted += result.redacted;
+      return [key, result.value] as const;
+    });
+    return { value: Object.fromEntries(entries) as T, redacted };
+  }
+  return { value, redacted: 0 };
+}
+
+/** Scrub every user-controlled displayed field before selecting an output renderer. */
+function scrubMessageOutput(result: SessionMessagesResult): SessionMessagesResult {
+  let secretRedactions = result.coverage.secretRedactions;
+  const messages = result.messages.map((message) => {
+    const scrubbed = scrubSerializedStrings(message);
+    secretRedactions += scrubbed.redacted;
+    return {
+      ...scrubbed.value,
+      redactions: message.redactions + scrubbed.redacted,
+    };
+  });
+  const unparsedEvidence = result.coverage.unparsedEvidence.map((evidence) => {
+    const scrubbed = scrubSerializedStrings(evidence);
+    secretRedactions += scrubbed.redacted;
+    return {
+      ...scrubbed.value,
+      redactions: evidence.redactions + scrubbed.redacted,
+    };
+  });
+  return {
+    messages,
+    coverage: { ...result.coverage, unparsedEvidence, secretRedactions },
+    completeness: result.completeness,
+  };
+}
+
+/** Remove terminal and bidi controls from one human-rendered output fragment. */
+function stripTerminalControls(value: string): string {
+  let result = "";
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined) continue;
+    if (
+      codePoint <= 0x1f ||
+      (codePoint >= 0x7f && codePoint <= 0x9f) ||
+      codePoint === 0x2028 ||
+      codePoint === 0x2029 ||
+      (codePoint >= 0x202a && codePoint <= 0x202e) ||
+      (codePoint >= 0x2066 && codePoint <= 0x2069)
+    ) continue;
+    result += character;
+  }
+  return result;
 }
 
 /** The one-line table preview of a message body (first line, bounded width). */
 function previewText(text: string): string {
-  const firstLine = text.split("\n", 1)[0] ?? "";
+  const firstLine = stripTerminalControls(text.split("\n", 1)[0] ?? "");
   return firstLine.length > 64 ? `${firstLine.slice(0, 63)}…` : firstLine;
 }
 
 /** Render the default table view: one preview row per message + a count summary. */
 function renderTable(result: SessionMessagesResult): void {
   const rows = result.messages.map((m) => ({
-    time: m.timestamp,
-    channel: m.channelType,
-    chat: m.chatId,
-    sender: m.senderId,
+    time: stripTerminalControls(m.timestamp),
+    channel: stripTerminalControls(m.channelType),
+    chat: stripTerminalControls(m.chatId),
+    sender: stripTerminalControls(m.senderId),
     preview: previewText(m.text),
   }));
   const width = (col: "time" | "channel" | "chat" | "sender", header: string): number =>
@@ -104,8 +227,13 @@ function renderTable(result: SessionMessagesResult): void {
 /** Render the full-text chat-log view (the human export format). */
 function renderText(messages: ExtractedChannelMessage[]): void {
   for (const m of messages) {
-    info(`[${m.channelType}] ${m.senderId} · chat ${m.chatId} · ${m.timestamp} (${m.envelopeTime})`);
-    for (const line of m.text.split("\n")) info(`  ${line}`);
+    const channelType = stripTerminalControls(m.channelType);
+    const senderId = stripTerminalControls(m.senderId);
+    const chatId = stripTerminalControls(m.chatId);
+    const timestamp = stripTerminalControls(m.timestamp);
+    const envelopeTime = stripTerminalControls(m.envelopeTime);
+    info(`[${channelType}] ${senderId} · chat ${chatId} · ${timestamp} (${envelopeTime})`);
+    for (const line of m.text.split("\n")) info(`  ${stripTerminalControls(line)}`);
     info("");
   }
   info(`${messages.length} message(s)`);
@@ -119,19 +247,70 @@ function renderCoverageNotes(result: SessionMessagesResult): void {
   }
   if (c.internalExcluded > 0) {
     info(
-      `${c.internalExcluded} internal dispatch message(s) (cron/sub-agent/heartbeat/system) excluded — --include-internal to show them`,
+      `${c.internalExcluded} internal dispatch message(s) (cron/sub-agent/heartbeat/cross-session/background/system) excluded — --include-internal to show them`,
+    );
+  }
+  if (c.secretRedactions > 0) {
+    info(`${c.secretRedactions} secret-bearing output field(s) redacted from message output`);
+  }
+  if (c.invalidProvenanceRecords > 0) {
+    warn(
+      `${c.invalidProvenanceRecords} malformed inbound-provenance record(s) fail-closed their synthetic user prompts`,
+    );
+  }
+  if (c.missingSidecars > 0) {
+    warn(`${c.missingSidecars} expected inbound provenance sidecar(s) were absent`);
+  }
+  if (c.provenanceConflicts > 0) {
+    warn(`${c.provenanceConflicts} same-source provenance identity conflict(s) were rejected`);
+  }
+  if (c.duplicateProvenanceMessagesExcluded > 0) {
+    info(
+      `${c.duplicateProvenanceMessagesExcluded} repeated physical message identity record(s) were deduplicated`,
+    );
+  }
+  if (c.conflictBackfillIncomplete) {
+    warn(
+      "late provenance conflicts exhausted the bounded backfill runway; fewer than --limit valid messages may be shown",
+    );
+  } else if (c.conflictCandidateCapReached) {
+    info("the bounded conflict-backfill runway was filled; the requested latest window remained complete");
+  }
+  if (c.compactionSummaryRecordsExcluded > 0) {
+    info(
+      `${c.compactionSummaryRecordsExcluded} compaction summary record(s) excluded as synthetic session storage`,
     );
   }
   if (c.unparsedUserRecords > 0) {
     info(
-      `${c.unparsedUserRecords} user record(s) had no parsable envelope (headerless turns, e.g. envelope.showProvider=false) and were counted, not shown`,
+      `${c.unparsedUserRecords} user record(s) lacked enough authoritative provenance to attribute safely and were counted, not shown`,
+    );
+  }
+  if (c.ambiguousEnvelopeRecords > 0) {
+    warn(
+      `${c.ambiguousEnvelopeRecords} unstructured envelope record(s) contained header-shaped body lines; each was preserved as one unsplit message`,
     );
   }
   if (c.filesUnreadable > 0) {
     warn(`${c.filesUnreadable} session file(s) were unreadable and skipped`);
   }
+  if (c.sessionDirectoriesUnreadable > 0) {
+    warn(`${c.sessionDirectoriesUnreadable} session directory read(s) failed and were skipped`);
+  }
+  if (c.corruptRecords > 0) {
+    warn(`${c.corruptRecords} corrupt session record(s) were skipped`);
+  }
+  if (c.oversizedRecords > 0) {
+    warn(`${c.oversizedRecords} oversized session record(s) exceeded the byte cap and were skipped`);
+  }
   if (c.recordCappedFiles > 0) {
     warn(`${c.recordCappedFiles} session file(s) hit the per-file record cap — oldest records in them were not read`);
+  }
+  if (c.byteCappedFiles > 0) {
+    warn(`${c.byteCappedFiles} session file(s) hit the per-file scan-byte cap — older bytes were not read`);
+  }
+  if (c.totalByteCapReached) {
+    warn("the aggregate session scan-byte cap was reached — some session bytes were not inspected");
   }
   if (c.fileCapReached) {
     warn("the session-file walk hit its global cap — some session files were not inspected");
@@ -157,10 +336,13 @@ export function registerMessagesCommand(program: Command): void {
     .option("--until <when>", "Upper bound (exclusive), same forms as --since")
     .option("--date <YYYY-MM-DD>", "One UTC day (sugar for --since <day> --until <next day>)")
     .option("--limit <n>", "Max messages returned (the latest N are kept)", "500")
-    .option("--include-internal", "Include cron/sub-agent/heartbeat/system dispatch messages")
+    .option(
+      "--include-internal",
+      "Include cron/sub-agent/heartbeat/cross-session/background/system dispatch messages",
+    )
     .option(
       "--format <format>",
-      "Output format: table | text | json | jsonl | json-report",
+      "Output format: table | text | json | jsonl",
       "table",
     )
     .action(async (options: MessagesCliOptions) => {
@@ -173,11 +355,12 @@ export function registerMessagesCommand(program: Command): void {
             error("--date is one-day sugar for --since/--until — pass either --date or the bounds, not both");
             process.exit(1);
           }
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(options.date)) {
-            error(`invalid --date '${options.date}' — expected YYYY-MM-DD`);
+          const dateStart = parseUtcDay(options.date);
+          if (dateStart === undefined) {
+            error(`invalid --date '${options.date}' — expected a valid UTC calendar date in YYYY-MM-DD form`);
             process.exit(1);
           }
-          sinceMs = Date.parse(`${options.date}T00:00:00.000Z`);
+          sinceMs = dateStart;
           untilMs = sinceMs + 86_400_000;
         } else {
           for (const [flag, value, assign] of [
@@ -195,11 +378,23 @@ export function registerMessagesCommand(program: Command): void {
             assign(parsed);
           }
         }
-        // A non-numeric --limit falls back to the default rather than crashing;
-        // the extractor clamps it to its own hard ceiling.
-        const limit = Number.isFinite(Number(options.limit)) ? Number(options.limit) : 500;
+        const limit = Number(options.limit);
+        if (!Number.isSafeInteger(limit) || limit <= 0) {
+          error(`invalid --limit '${options.limit}' — expected a positive safe integer`);
+          process.exit(1);
+        }
+        if (limit > MAX_MESSAGE_LIMIT) {
+          error(`invalid --limit '${options.limit}' — expected at most ${MAX_MESSAGE_LIMIT}`);
+          process.exit(1);
+        }
+        if (!MESSAGE_FORMATS.has(options.format)) {
+          error(
+            `invalid --format '${options.format}' — expected table, text, json, or jsonl`,
+          );
+          process.exit(1);
+        }
 
-        const result: SessionMessagesResult = await withSpinner(
+        const extracted: SessionMessagesResult = await withSpinner(
           "Extracting channel messages (offline)...",
           async () =>
             extractSessionMessagesOffline(resolveOfflineDataDir(), {
@@ -213,23 +408,24 @@ export function registerMessagesCommand(program: Command): void {
               includeInternal: options.includeInternal === true,
             }),
         );
+        const result = scrubMessageOutput(extracted);
 
-        if (options.format === "json-report") {
+        if (options.format === "json") {
           json({
             schema: "comis-offline-channel-messages-report",
-            schemaVersion: 1,
+            schemaVersion: 2,
             messages: result.messages,
             coverage: result.coverage,
+            completeness: result.completeness,
+            redaction: {
+              policyVersion: MESSAGE_REDACTION_POLICY_VERSION,
+              redactionsApplied: result.coverage.secretRedactions,
+            },
           });
-          return;
-        }
-        if (options.format === "json") {
-          json(result.messages);
           return;
         }
         if (options.format === "jsonl") {
           for (const m of result.messages) {
-            // eslint-disable-next-line no-console -- jsonl writes to stdout for redirection (> messages.jsonl)
             console.log(JSON.stringify(m));
           }
           return;
@@ -238,7 +434,8 @@ export function registerMessagesCommand(program: Command): void {
         else renderTable(result);
         renderCoverageNotes(result);
       } catch (e) {
-        error(`messages failed: ${e instanceof Error ? e.message : String(e)}`);
+        const failure = redactOutputText(e instanceof Error ? e.message : String(e));
+        error(`messages failed: ${failure.text}`);
         process.exit(1);
       }
     });

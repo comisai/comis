@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import Database from "better-sqlite3";
 import { initSchema } from "./schema.js";
 import { createObservabilityStore } from "./observability-store/index.js";
@@ -14,6 +14,38 @@ describe("ObservabilityStore", () => {
     initSchema(db, 768);
     store = createObservabilityStore(db);
   });
+
+  function insertRawDelivery(input: {
+    id?: unknown;
+    timestamp: unknown;
+    traceId: string;
+    status: string;
+    latencyMs: unknown;
+    toolCalls?: unknown;
+    llmCalls?: unknown;
+    tokensTotal?: unknown;
+    costTotal?: unknown;
+  }): void {
+    db.prepare(`
+      INSERT INTO obs_delivery (
+        id, timestamp, trace_id, agent_id, channel_type, channel_id, status,
+        latency_ms, tool_calls, llm_calls, tokens_total, cost_total
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      input.id ?? null,
+      input.timestamp,
+      input.traceId,
+      "agent-a",
+      "telegram",
+      "chat_a",
+      input.status,
+      input.latencyMs,
+      input.toolCalls ?? null,
+      input.llmCalls ?? null,
+      input.tokensTotal ?? 0,
+      input.costTotal ?? 0,
+    );
+  }
 
   // -----------------------------------------------------------------------
   // Token usage CRUD
@@ -238,6 +270,8 @@ describe("ObservabilityStore", () => {
       status: "success",
       latencyMs: 350,
       errorMessage: "",
+      failureStage: null,
+      errorKind: null,
       messagePreview: "Hello world",
       toolCalls: 2,
       llmCalls: 1,
@@ -257,6 +291,8 @@ describe("ObservabilityStore", () => {
       expect(row.latencyMs).toBe(350);
       expect(row.toolCalls).toBe(2);
       expect(row.costTotal).toBeCloseTo(0.005);
+      expect(row.failureStage).toBeNull();
+      expect(row.errorKind).toBeNull();
     });
 
     it("persists unavailable delivery call counts as SQL NULL instead of fabricated zeroes", () => {
@@ -295,6 +331,74 @@ describe("ObservabilityStore", () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]!.status).toBe("error");
     });
+
+    it("applies channel and exclusive beforeMs filters before the limit", () => {
+      store.insertDelivery({ ...baseDelivery, timestamp: 100, channelId: "ch-a" });
+      store.insertDelivery({ ...baseDelivery, timestamp: 200, channelId: "ch-a" });
+      store.insertDelivery({ ...baseDelivery, timestamp: 300, channelId: "ch-b" });
+
+      const rows = store.queryDelivery({ channelId: "ch-a", beforeMs: 250, limit: 1 });
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.timestamp).toBe(200);
+      expect(rows[0]!.channelId).toBe("ch-a");
+    });
+
+    it("persists delivery failure stage and closed error kind", () => {
+      store.insertDelivery({
+        ...baseDelivery,
+        status: "error",
+        failureStage: "delivery",
+        errorKind: "platform",
+      });
+
+      expect(store.queryDelivery()[0]).toMatchObject({
+        status: "error",
+        failureStage: "delivery",
+        errorKind: "platform",
+      });
+    });
+
+    it("queryDelivery retains valid rows when one persisted row is malformed", () => {
+      insertRawDelivery({ timestamp: 300, traceId: "valid-newer", status: "success", latencyMs: 100 });
+      insertRawDelivery({ timestamp: 200, traceId: "invalid-latency", status: "success", latencyMs: "not-a-number" });
+      insertRawDelivery({ timestamp: 100, traceId: "valid-older", status: "error", latencyMs: 200 });
+
+      const rows = store.queryDelivery();
+
+      expect(rows.map((row) => row.traceId)).toEqual(["valid-newer", "valid-older"]);
+      expect(rows.map((row) => row.status)).toEqual(["success", "error"]);
+    });
+
+    it("returns the newest valid row when malformed records fill the queryDelivery limit", () => {
+      insertRawDelivery({ timestamp: 300, traceId: "invalid-newest", status: "success", latencyMs: "not-a-number" });
+      insertRawDelivery({ timestamp: 200, traceId: "valid-newest", status: "success", latencyMs: 100 });
+      insertRawDelivery({ timestamp: 100, traceId: "valid-older", status: "error", latencyMs: 200 });
+
+      const rows = store.queryDelivery({ limit: 1 });
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ traceId: "valid-newest", timestamp: 200 });
+    });
+
+    it("queryDelivery logs bounded metadata when persisted rows are malformed", () => {
+      const warn = vi.fn();
+      store = createObservabilityStore(db, { logger: { warn } });
+      insertRawDelivery({ timestamp: 200, traceId: "invalid-latency", status: "success", latencyMs: "not-a-number" });
+      insertRawDelivery({ timestamp: 100, traceId: "valid-row", status: "success", latencyMs: 100 });
+
+      expect(store.queryDelivery()).toHaveLength(1);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn).toHaveBeenCalledWith(
+        {
+          invalidRows: 1,
+          firstErrorPath: "latency_ms",
+          hint: "Inspect obs_delivery integrity and restore or remove malformed rows",
+          errorKind: "validation",
+        },
+        "Invalid delivery rows omitted from observability query",
+      );
+    });
   });
 
   describe("deliveryStats", () => {
@@ -313,14 +417,35 @@ describe("ObservabilityStore", () => {
       store.insertDelivery({ ...base, status: "error", latencyMs: 50 });
       store.insertDelivery({ ...base, status: "timeout", latencyMs: 5000 });
       store.insertDelivery({ ...base, status: "filtered", latencyMs: 10 });
+      store.insertDelivery({ ...base, status: "aborted", latencyMs: 20 });
 
       const stats = store.deliveryStats();
-      expect(stats.total).toBe(5);
+      expect(stats.total).toBe(6);
       expect(stats.success).toBe(2);
       expect(stats.error).toBe(1);
       expect(stats.timeout).toBe(1);
       expect(stats.filtered).toBe(1);
-      expect(stats.avgLatencyMs).toBeCloseTo(1072); // (100+200+50+5000+10)/5
+      expect(stats.aborted).toBe(1);
+      expect(stats.attemptedLatencyMs).toBe(5350);
+      expect(stats.avgLatencyMs).toBeCloseTo(1337.5); // attempted rows only: (100+200+50+5000)/4
+    });
+
+    it("applies the exclusive historical cutoff before aggregation", () => {
+      const base = {
+        traceId: "t1",
+        agentId: "a1",
+        channelType: "telegram",
+        channelId: "ch-1",
+        latencyMs: 100,
+      };
+      store.insertDelivery({ ...base, timestamp: 999, status: "success" });
+      store.insertDelivery({ ...base, timestamp: 1000, status: "error" });
+
+      const stats = store.deliveryStats({ beforeMs: 1000 });
+
+      expect(stats.total).toBe(1);
+      expect(stats.success).toBe(1);
+      expect(stats.error).toBe(0);
     });
 
     it("returns zeroes when no data exists", () => {
@@ -328,6 +453,242 @@ describe("ObservabilityStore", () => {
       expect(stats.total).toBe(0);
       expect(stats.success).toBe(0);
       expect(stats.avgLatencyMs).toBe(0);
+    });
+
+    it("deliveryStats excludes malformed statuses from the lifecycle total", () => {
+      insertRawDelivery({ timestamp: 300, traceId: "valid-success", status: "success", latencyMs: 100 });
+      insertRawDelivery({ timestamp: 200, traceId: "invalid-status", status: "corrupt", latencyMs: 999 });
+      insertRawDelivery({ timestamp: 100, traceId: "valid-error", status: "error", latencyMs: 200 });
+
+      expect(store.deliveryStats()).toEqual({
+        total: 2,
+        attempted: 2,
+        success: 1,
+        error: 1,
+        timeout: 0,
+        filtered: 0,
+        aborted: 0,
+        attemptedLatencyMs: 300,
+        avgLatencyMs: 150,
+      });
+    });
+
+    it("deliveryStats excludes malformed latencies from attempted aggregates", () => {
+      insertRawDelivery({ timestamp: 300, traceId: "valid-success", status: "success", latencyMs: 100 });
+      insertRawDelivery({ timestamp: 200, traceId: "invalid-latency", status: "success", latencyMs: "not-a-number" });
+      insertRawDelivery({ timestamp: 100, traceId: "valid-error", status: "error", latencyMs: 200 });
+
+      expect(store.deliveryStats()).toEqual({
+        total: 2,
+        attempted: 2,
+        success: 1,
+        error: 1,
+        timeout: 0,
+        filtered: 0,
+        aborted: 0,
+        attemptedLatencyMs: 300,
+        avgLatencyMs: 150,
+      });
+    });
+
+    it("counts every authoritative error kind as a valid delivery row", () => {
+      store.insertDelivery({
+        timestamp: 100,
+        traceId: "sandbox-unavailable",
+        agentId: "agent-a",
+        channelType: "telegram",
+        channelId: "chat_a",
+        status: "error",
+        latencyMs: 25,
+        failureStage: "execution",
+        errorKind: "sandbox_unavailable",
+      });
+
+      expect(store.deliveryStats()).toMatchObject({
+        total: 1,
+        attempted: 1,
+        error: 1,
+        attemptedLatencyMs: 25,
+        avgLatencyMs: 25,
+      });
+    });
+
+    it("warns and excludes infinite numeric values from delivery aggregates", () => {
+      const warn = vi.fn();
+      store = createObservabilityStore(db, { logger: { warn } });
+      insertRawDelivery({
+        timestamp: 100,
+        traceId: "infinite-latency",
+        status: "success",
+        latencyMs: Number.POSITIVE_INFINITY,
+      });
+
+      expect(store.deliveryStats()).toMatchObject({
+        total: 0,
+        attempted: 0,
+        success: 0,
+        attemptedLatencyMs: 0,
+        avgLatencyMs: 0,
+      });
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ invalidRows: 1, errorKind: "validation" }),
+        expect.stringContaining("delivery"),
+      );
+    });
+
+    it("excludes unsafe finite latencies without erasing valid aggregate counts", () => {
+      const warn = vi.fn();
+      store = createObservabilityStore(db, { logger: { warn } });
+      insertRawDelivery({
+        timestamp: 300,
+        traceId: "unsafe-latency-a",
+        status: "success",
+        latencyMs: Number.MAX_VALUE,
+      });
+      insertRawDelivery({
+        timestamp: 200,
+        traceId: "unsafe-latency-b",
+        status: "error",
+        latencyMs: Number.MAX_VALUE,
+      });
+      insertRawDelivery({
+        timestamp: 100,
+        traceId: "valid-latency",
+        status: "success",
+        latencyMs: 25,
+      });
+
+      expect(store.deliveryStats()).toEqual({
+        total: 1,
+        attempted: 1,
+        success: 1,
+        error: 0,
+        timeout: 0,
+        filtered: 0,
+        aborted: 0,
+        attemptedLatencyMs: 25,
+        avgLatencyMs: 25,
+      });
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ invalidRows: 2, errorKind: "validation" }),
+        "Invalid delivery rows omitted from observability query",
+      );
+      expect(store.queryDelivery().map((row) => row.traceId)).toEqual(["valid-latency"]);
+    });
+
+    it("aggregates many individually valid latencies without SQLite integer overflow", () => {
+      const rowCount = 1_025;
+      for (let index = 0; index < rowCount; index += 1) {
+        insertRawDelivery({
+          timestamp: index + 1,
+          traceId: `large-valid-latency-${index}`,
+          status: "success",
+          latencyMs: Number.MAX_SAFE_INTEGER,
+        });
+      }
+
+      const stats = store.deliveryStats();
+
+      expect(stats.total).toBe(rowCount);
+      expect(stats.attempted).toBe(rowCount);
+      expect(stats.success).toBe(rowCount);
+      expect(Number.isFinite(stats.attemptedLatencyMs)).toBe(true);
+      expect(stats.attemptedLatencyMs).toBeGreaterThan(Number.MAX_SAFE_INTEGER);
+      expect(stats.avgLatencyMs).toBeCloseTo(Number.MAX_SAFE_INTEGER, -1);
+    });
+
+    it("queryDelivery and deliveryStats exclude every malformed numeric semantic class", () => {
+      insertRawDelivery({
+        id: 100,
+        timestamp: 1_000,
+        traceId: "valid",
+        status: "success",
+        latencyMs: 125.5,
+        toolCalls: 2,
+        llmCalls: 1,
+        tokensTotal: 50,
+        costTotal: 0.25,
+      });
+      insertRawDelivery({ id: -1, timestamp: 990, traceId: "negative-id", status: "success", latencyMs: 1 });
+      insertRawDelivery({ timestamp: -1, traceId: "negative-timestamp", status: "success", latencyMs: 1 });
+      insertRawDelivery({ timestamp: 980.5, traceId: "fractional-timestamp", status: "success", latencyMs: 1 });
+      insertRawDelivery({ timestamp: Number.POSITIVE_INFINITY, traceId: "infinite-timestamp", status: "success", latencyMs: 1 });
+      insertRawDelivery({ timestamp: 970, traceId: "negative-latency", status: "success", latencyMs: -1 });
+      insertRawDelivery({ timestamp: 965, traceId: "infinite-latency", status: "success", latencyMs: Number.POSITIVE_INFINITY });
+      insertRawDelivery({ timestamp: 960, traceId: "negative-tools", status: "success", latencyMs: 1, toolCalls: -1 });
+      insertRawDelivery({ timestamp: 955, traceId: "fractional-tools", status: "success", latencyMs: 1, toolCalls: 0.5 });
+      insertRawDelivery({ timestamp: 950, traceId: "infinite-tools", status: "success", latencyMs: 1, toolCalls: Number.POSITIVE_INFINITY });
+      insertRawDelivery({ timestamp: 945, traceId: "negative-llm", status: "success", latencyMs: 1, llmCalls: -1 });
+      insertRawDelivery({ timestamp: 940, traceId: "fractional-llm", status: "success", latencyMs: 1, llmCalls: 1.5 });
+      insertRawDelivery({ timestamp: 935, traceId: "infinite-llm", status: "success", latencyMs: 1, llmCalls: Number.POSITIVE_INFINITY });
+      insertRawDelivery({ timestamp: 930, traceId: "negative-tokens", status: "success", latencyMs: 1, tokensTotal: -1 });
+      insertRawDelivery({ timestamp: 925, traceId: "fractional-tokens", status: "success", latencyMs: 1, tokensTotal: 1.5 });
+      insertRawDelivery({ timestamp: 920, traceId: "infinite-tokens", status: "success", latencyMs: 1, tokensTotal: Number.POSITIVE_INFINITY });
+      insertRawDelivery({ timestamp: 915, traceId: "negative-cost", status: "success", latencyMs: 1, costTotal: -0.01 });
+      insertRawDelivery({ timestamp: 910, traceId: "infinite-cost", status: "success", latencyMs: 1, costTotal: Number.POSITIVE_INFINITY });
+
+      const queryWarn = vi.fn();
+      const queryStore = createObservabilityStore(db, { logger: { warn: queryWarn } });
+      expect(queryStore.queryDelivery().map((row) => row.traceId)).toEqual(["valid"]);
+      expect(queryWarn).toHaveBeenCalledWith(
+        expect.objectContaining({ invalidRows: 17, errorKind: "validation" }),
+        "Invalid delivery rows omitted from observability query",
+      );
+
+      const statsWarn = vi.fn();
+      const statsStore = createObservabilityStore(db, { logger: { warn: statsWarn } });
+      expect(statsStore.deliveryStats()).toEqual({
+        total: 1,
+        attempted: 1,
+        success: 1,
+        error: 0,
+        timeout: 0,
+        filtered: 0,
+        aborted: 0,
+        attemptedLatencyMs: 125.5,
+        avgLatencyMs: 125.5,
+      });
+      expect(statsWarn).toHaveBeenCalledWith(
+        expect.objectContaining({ invalidRows: 17, errorKind: "validation" }),
+        "Invalid delivery rows omitted from observability query",
+      );
+    });
+
+    it("deliveryStats warns about malformed rows beyond the recent-query limit", () => {
+      const warn = vi.fn();
+      store = createObservabilityStore(db, { logger: { warn } });
+      insertRawDelivery({ timestamp: 300, traceId: "valid-newest", status: "success", latencyMs: 100 });
+      insertRawDelivery({ timestamp: 200, traceId: "invalid-status", status: "corrupt", latencyMs: 999 });
+
+      expect(store.queryDelivery({ limit: 1 })).toHaveLength(1);
+      expect(warn).not.toHaveBeenCalled();
+
+      store.deliveryStats();
+
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          invalidRows: 1,
+          hint: expect.any(String),
+          errorKind: "validation",
+        }),
+        expect.stringContaining("delivery"),
+      );
+    });
+
+    it("warns once per store across repeated delivery query and stats polls", () => {
+      const warn = vi.fn();
+      store = createObservabilityStore(db, { logger: { warn } });
+      insertRawDelivery({ timestamp: 200, traceId: "invalid-latency", status: "success", latencyMs: "not-a-number" });
+      insertRawDelivery({ timestamp: 100, traceId: "valid-row", status: "success", latencyMs: 100 });
+
+      store.queryDelivery();
+      store.queryDelivery();
+      store.deliveryStats();
+      store.deliveryStats();
+
+      expect(warn).toHaveBeenCalledOnce();
     });
   });
 
@@ -424,6 +785,100 @@ describe("ObservabilityStore", () => {
       expect(dc.timestamp).toBe(1500);
       expect(dc.messagesSent).toBe(5);
     });
+
+    it("returns the latest snapshot for every channel type and channel id identity", () => {
+      store.insertChannelSnapshot({
+        timestamp: 1000,
+        channelType: "telegram",
+        channelId: "shared",
+        status: "active",
+        messagesSent: 1,
+        messagesReceived: 1,
+        uptimeMs: 1000,
+      });
+      store.insertChannelSnapshot({
+        timestamp: 2000,
+        channelType: "telegram",
+        channelId: "telegram-other",
+        status: "active",
+        messagesSent: 2,
+        messagesReceived: 2,
+        uptimeMs: 2000,
+      });
+      store.insertChannelSnapshot({
+        timestamp: 1500,
+        channelType: "slack",
+        channelId: "shared",
+        status: "active",
+        messagesSent: 3,
+        messagesReceived: 3,
+        uptimeMs: 1500,
+      });
+      store.insertChannelSnapshot({
+        timestamp: 3000,
+        channelType: "telegram",
+        channelId: "shared",
+        status: "active",
+        messagesSent: 4,
+        messagesReceived: 4,
+        uptimeMs: 3000,
+      });
+
+      const snapshots = store.latestChannelSnapshots();
+
+      expect(snapshots).toHaveLength(3);
+      expect(snapshots).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          channelType: "telegram",
+          channelId: "shared",
+          timestamp: 3000,
+          messagesSent: 4,
+        }),
+        expect.objectContaining({
+          channelType: "telegram",
+          channelId: "telegram-other",
+          timestamp: 2000,
+          messagesSent: 2,
+        }),
+        expect.objectContaining({
+          channelType: "slack",
+          channelId: "shared",
+          timestamp: 1500,
+          messagesSent: 3,
+        }),
+      ]));
+    });
+
+    it("breaks equal snapshot timestamps by the latest inserted compound identity row", () => {
+      store.insertChannelSnapshot({
+        timestamp: 1000,
+        channelType: "telegram",
+        channelId: "shared",
+        status: "active",
+        messagesSent: 1,
+        messagesReceived: 1,
+        uptimeMs: 1000,
+      });
+      store.insertChannelSnapshot({
+        timestamp: 1000,
+        channelType: "telegram",
+        channelId: "shared",
+        status: "stale",
+        messagesSent: 2,
+        messagesReceived: 3,
+        uptimeMs: 2000,
+      });
+
+      expect(store.latestChannelSnapshots()).toEqual([
+        expect.objectContaining({
+          channelType: "telegram",
+          channelId: "shared",
+          status: "stale",
+          messagesSent: 2,
+          messagesReceived: 3,
+        }),
+      ]);
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -479,8 +934,8 @@ describe("ObservabilityStore", () => {
       store.insertDiagnostic({ timestamp: oldTs, category: "error", severity: "warn", message: "old" });
       store.insertDiagnostic({ timestamp: recentTs, category: "error", severity: "warn", message: "recent" });
 
-      store.insertChannelSnapshot({ timestamp: oldTs, channelType: "telegram", status: "connected" });
-      store.insertChannelSnapshot({ timestamp: recentTs, channelType: "telegram", status: "connected" });
+      store.insertChannelSnapshot({ timestamp: oldTs, channelType: "telegram", channelId: "telegram-main", status: "connected" });
+      store.insertChannelSnapshot({ timestamp: recentTs, channelType: "telegram", channelId: "telegram-main", status: "connected" });
 
       // Prune with 1 day retention
       const result = store.prune(1);
@@ -534,7 +989,7 @@ describe("ObservabilityStore", () => {
         latencyMs: 100,
       });
       store.insertDiagnostic({ timestamp: 1000, category: "error", severity: "warn", message: "test" });
-      store.insertChannelSnapshot({ timestamp: 1000, channelType: "telegram", status: "connected" });
+      store.insertChannelSnapshot({ timestamp: 1000, channelType: "telegram", channelId: "telegram-main", status: "connected" });
 
       const result = store.resetAll();
       expect(result.tokenUsage).toBe(2);
@@ -583,7 +1038,7 @@ describe("ObservabilityStore", () => {
         latencyMs: 100,
       });
       store.insertDiagnostic({ timestamp: 1000, category: "error", severity: "warn", message: "test" });
-      store.insertChannelSnapshot({ timestamp: 1000, channelType: "telegram", status: "connected" });
+      store.insertChannelSnapshot({ timestamp: 1000, channelType: "telegram", channelId: "telegram-main", status: "connected" });
 
       const count = store.resetTable("token_usage");
       expect(count).toBe(1);
@@ -613,7 +1068,7 @@ describe("ObservabilityStore", () => {
       store.insertDiagnostic({ timestamp: 1000, category: "error", severity: "warn", message: "test" });
       expect(store.resetTable("diagnostics")).toBe(1);
 
-      store.insertChannelSnapshot({ timestamp: 1000, channelType: "telegram", status: "connected" });
+      store.insertChannelSnapshot({ timestamp: 1000, channelType: "telegram", channelId: "telegram-main", status: "connected" });
       expect(store.resetTable("channels")).toBe(1);
     });
   });

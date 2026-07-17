@@ -11,7 +11,11 @@
 
 import type { EmbeddingPort } from "@comis/core";
 import type Database from "better-sqlite3";
+import { z } from "zod";
 import { computeEmbeddingIdentityHash } from "./embedding-hash.js";
+import { createRowMapper } from "./row-mapper.js";
+
+const fingerprintValueMapper = createRowMapper(z.strictObject({ value: z.string() }));
 
 export interface ProviderFingerprint {
   modelId: string;
@@ -57,17 +61,15 @@ export function createFingerprintManager(db: Database.Database): FingerprintMana
     },
 
     getCurrent(): ProviderFingerprint | null {
-      const modelRow = db
-        .prepare("SELECT value FROM embedding_provider_meta WHERE key = ?")
-        .get("model_id") as { value: string } | undefined;
+      const statement = db.prepare("SELECT value FROM embedding_provider_meta WHERE key = ?");
+      const modelParsed = fingerprintValueMapper.parseOptionalRow(statement.get("model_id"));
+      const dimsParsed = fingerprintValueMapper.parseOptionalRow(statement.get("dimensions"));
+      const hashParsed = fingerprintValueMapper.parseOptionalRow(statement.get("fingerprint_hash"));
 
-      const dimsRow = db
-        .prepare("SELECT value FROM embedding_provider_meta WHERE key = ?")
-        .get("dimensions") as { value: string } | undefined;
-
-      const hashRow = db
-        .prepare("SELECT value FROM embedding_provider_meta WHERE key = ?")
-        .get("fingerprint_hash") as { value: string } | undefined;
+      if (!modelParsed.ok || !dimsParsed.ok || !hashParsed.ok) return null;
+      const modelRow = modelParsed.value;
+      const dimsRow = dimsParsed.value;
+      const hashRow = hashParsed.value;
 
       if (!modelRow || !dimsRow || !hashRow) return null;
 

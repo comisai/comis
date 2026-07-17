@@ -231,6 +231,9 @@ vi.mock("@comis/core", () => ({
   SkillsConfigSchema: { parse: mockSkillsConfigSchemaParse },
   tryGetContext: mockTryGetContext,
   parseFormattedSessionKey: mockParseFormattedSessionKey,
+  stripInternalFields: (params: Record<string, unknown>) => Object.fromEntries(
+    Object.entries(params).filter(([key]) => !key.startsWith("_")),
+  ),
   sanitizeLogString: mockSanitizeLogString,
   // getMcpTools stamps the truncation event timestamp via systemNowMs.
   // Deterministic stub so the emit closure has a numeric clock under test.
@@ -273,6 +276,8 @@ vi.mock("@comis/core", () => ({
       message: { channels: ["origin"], maxPerHour: 20 },
     };
   }),
+  attenuateCaps: (parent: string[], requested: string[]) =>
+    requested.filter((cap) => parent.includes(cap)),
   // buildAutonomyToolWiring degrades the resolved posture via
   // degradeAutonomy(resolved, {namespacePreflightOk}) before gating the orchestrate
   // surface. These tests don't pass namespacePreflightOk (→ defaults to true →
@@ -1077,6 +1082,29 @@ describe("setupTools", () => {
     expect((forwarded as Record<string, unknown>)._capabilities).toContain("orch:spawn");
     expect((forwarded as Record<string, unknown>)._capabilities).toContain("orch:graph");
     expect((forwarded as Record<string, unknown>)._capabilities).toContain("orch:cron");
+  });
+
+  it("injects only the delegated parent capability ceiling for a sub-agent tool assembly", async () => {
+    const rpcCall = vi.fn(async () => ({}));
+    const deps = createMinimalDeps({ rpcCall: rpcCall as any });
+    const setupTools = await getSetupTools();
+    const { assembleToolsForAgent } = setupTools(deps);
+
+    await assembleToolsForAgent("agent-1", {
+      autonomyParent: {
+        rootRunId: "root-parent",
+        leaseId: "lease-parent",
+        caps: ["orch:read"],
+      },
+    });
+
+    const pipelineArgs = mockAssembleToolPipeline.mock.calls[0][0];
+    pipelineArgs.platformTools();
+    const agentRpc = mockCreateCronTool.mock.calls[0][0];
+    await agentRpc("session.spawn", { task: "must stay bounded" });
+
+    const [, forwarded] = rpcCall.mock.calls.at(-1)!;
+    expect((forwarded as Record<string, unknown>)._capabilities).toEqual(["orch:read"]);
   });
 
   // -------------------------------------------------------------------------
@@ -2136,6 +2164,49 @@ describe("setupTools", () => {
       // bearer was minted + registered with the output guard so it can never be logged.
       expect(handle.leaseManager.mintLease).toHaveBeenCalledTimes(1);
       expect(handle.outputGuard.registerSecret).toHaveBeenCalledWith("lease-bearer-xyz");
+    });
+
+    it("binds an ambient resolved session and delivery origin into the minted capability lease", async () => {
+      const deliveryOrigin = Object.freeze({
+        channelType: "telegram",
+        channelId: "chat-1",
+        userId: "user-1",
+        tenantId: "tenant-1",
+        threadId: "topic-1",
+      });
+      mockTryGetContext.mockReturnValue({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: "tenant-1:user-1:chat-1:thread:topic-1",
+        agentId: "agent-1",
+        traceId: "30000000-0000-4000-8000-000000000003",
+        startedAt: 1_700_000_000_000,
+        trustLevel: "user",
+        channelType: "telegram",
+        deliveryOrigin,
+      });
+      mockParseFormattedSessionKey.mockReturnValue({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        channelId: "chat-1",
+        threadId: "topic-1",
+      });
+      const handle = mockCapHandle();
+      const deps = createMinimalDeps({
+        sandboxProvider: mockSandbox() as any,
+        capEndpointHandle: handle,
+        agents: autonomyAgent,
+      });
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+
+      await assembleToolsForAgent("agent-1");
+      mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+
+      expect(handle.leaseManager.mintLease).toHaveBeenCalledWith(expect.objectContaining({
+        sessionKey: "tenant-1:chat-1:user-1",
+        deliveryOrigin,
+      }));
     });
   });
 

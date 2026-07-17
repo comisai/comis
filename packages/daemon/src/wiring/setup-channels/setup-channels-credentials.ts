@@ -15,10 +15,10 @@
 
 import { randomUUID } from "node:crypto";
 import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
-import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
+import { createDeliveryOrigin, createResolvedRequestContext, runWithContext, systemNowMs } from "@comis/core";
 import { resolveCronJobCredential, cronCredentialSkipHint, cronCustomModelOpt } from "./setup-channels-cron-credential.js";
 import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, OperationModelResolution } from "@comis/agent";
+import type { AgentExecutor, ComisSessionManager, createSessionLifecycle, ActiveRunRegistry, OperationModelResolution } from "@comis/agent";
 import type { createSessionStore, MemoryApi } from "@comis/memory";
 import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, classifyError } from "@comis/agent";
 import { applyToolPolicy } from "@comis/skills";
@@ -97,10 +97,10 @@ export interface CronEventListenerDeps {
    *  deleted with their subsystems.) */
   memoryApi?: MemoryApi;
   tenantId?: string;
-  piSessionAdapters?: Map<string, {
-    getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
-    destroySession(key: SessionKey): Promise<void>;
-  }>;
+  piSessionAdapters?: Map<string, Pick<
+    ComisSessionManager,
+    "getSessionStats" | "destroySession" | "persistInboundMessage"
+  >>;
   cronExecutionTrackers?: Map<string, { record(entry: ExecutionLogEntry): Promise<void> }>;
   // ChannelsDeps fields that flow through from the registry caller — used by
   // the agent_turn execution branch for tool-policy application + execution-
@@ -244,7 +244,8 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       payload.onComplete?.({ status: "error", error: "No delivery target channel type" });
       return;
     }
-    const adapter = adaptersByType.get(deliveryTarget.channelType);
+    const deliveryChannelType = deliveryTarget.channelType;
+    const adapter = adaptersByType.get(deliveryChannelType);
     if (!adapter) {
       logger.warn(
         { channelType: deliveryTarget.channelType, jobName, hint: "Ensure the target channel adapter is started and registered", errorKind: "config" as const },
@@ -322,12 +323,28 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         );
       }
 
-      const sessionKey: SessionKey = {
-        tenantId: deliveryTarget.tenantId,
-        userId: deliveryTarget.userId,
+      const sessionKey: SessionKey = { tenantId: deliveryTarget.tenantId, userId: deliveryTarget.userId,
         channelId: `cron:${payload.jobId}`,
       };
-
+      const execStartTs = systemNowMs();
+      const cronContext = createResolvedRequestContext({
+        traceId: randomUUID(), tenantId: sessionKey.tenantId, userId: sessionKey.userId,
+        agentId: payload.agentId, sessionKey, startedAt: execStartTs, trustLevel: "user",
+        channelType: deliveryChannelType,
+        deliveryOrigin: createDeliveryOrigin({
+          channelType: deliveryChannelType, channelId: deliveryTarget.channelId,
+          userId: deliveryTarget.userId, tenantId: deliveryTarget.tenantId,
+        }),
+      });
+      if (!cronContext.ok) {
+        logger.error({ agentId: payload.agentId, jobName,
+          hint: "Verify the cron delivery target tenant and user match the synthetic execution session",
+          errorKind: "internal" as const,
+        }, "Cron request context validation failed");
+        payload.onComplete?.({ status: "error", error: "Cron request context validation failed" });
+        return;
+      }
+      await runWithContext(cronContext.value, async () => {
       // Fresh strategy — expire existing session before each execution
       if (sessionStrategy === "fresh") {
         sessionManager.expire(sessionKey);
@@ -347,9 +364,9 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       }
 
       const syntheticMsg: NormalizedMessage = {
-        id: `cron-${payload.jobId}-${systemNowMs()}`,
+        id: randomUUID(),
         channelId: deliveryTarget.channelId,
-        channelType: deliveryTarget.channelType,
+        channelType: deliveryChannelType,
         senderId: "system",
         text: resultText,
         timestamp: systemNowMs(),
@@ -357,7 +374,6 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         metadata: { isCronAgentTurn: true, jobId: payload.jobId, jobName },
       };
 
-      const execStartTs = systemNowMs();
       try {
         const allTools = deps.assembleToolsForAgent
           ? await deps.assembleToolsForAgent(payload.agentId)
@@ -390,22 +406,10 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
           { jobName, agentId: payload.agentId, channelType: deliveryTarget.channelType, toolCount: Array.isArray(tools) ? tools.length : 0 },
           "Executing cron agentTurn",
         );
-        const execResult = await runWithContext({
-          traceId: randomUUID(),
-          tenantId: sessionKey.tenantId,
-          userId: sessionKey.userId,
-          sessionKey: formatSessionKey(sessionKey),
-          startedAt: systemNowMs(),
-          trustLevel: "user",
-          channelType: deliveryTarget.channelType,
-          deliveryOrigin: deliveryTarget ? createDeliveryOrigin({
-            channelType: deliveryTarget.channelType,
-            channelId: deliveryTarget.channelId,
-            userId: deliveryTarget.userId,
-            tenantId: deliveryTarget.tenantId,
-          }) : undefined,
-        }, () => executor.execute(syntheticMsg, sessionKey, tools, undefined, payload.agentId,
-          undefined, undefined, cronOverrides));
+        const execResult = await executor.execute(
+          syntheticMsg, sessionKey, tools, undefined, payload.agentId,
+          undefined, undefined, cronOverrides,
+        );
 
         // Sanitize raw executor response: strip thinking tags, provider artifacts, unwrap <final>
         const rawResponse = execResult.response;
@@ -530,6 +534,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         await deliveryService.deliverToChannel(adapter, deliveryTarget.channelId, resultText, undefined);
         payload.onComplete?.({ status: "error", error: err instanceof Error ? err.message : String(err) });
       }
+      });
       return;
     }
 

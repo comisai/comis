@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createTokensManageTool } from "./tokens-manage-tool.js";
-import { runWithContext } from "@comis/core";
+import { createDeliveryOrigin, runWithContext } from "@comis/core";
 import type { RequestContext, ApprovalGate } from "@comis/core";
 
 // Mock @comis/core: preserve real implementations, override safePath
@@ -23,10 +23,18 @@ function makeContext(trustLevel: "admin" | "user" | "guest"): RequestContext {
   return {
     tenantId: "default",
     userId: "test-user",
-    sessionKey: "test-session",
+    agentId: "test-agent",
+    sessionKey: "default:test-user:chat-1",
     traceId: crypto.randomUUID(),
     startedAt: Date.now(),
     trustLevel,
+    channelType: "telegram",
+    deliveryOrigin: createDeliveryOrigin({
+      tenantId: "default",
+      userId: "test-user",
+      channelType: "telegram",
+      channelId: "chat-1",
+    }),
   };
 }
 

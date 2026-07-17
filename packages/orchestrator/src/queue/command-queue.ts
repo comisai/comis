@@ -17,7 +17,12 @@
  */
 
 import PQueue from "p-queue";
-import { ok, err, type Result } from "@comis/shared";
+import {
+  err,
+  fromPromise,
+  ok,
+  type Result,
+} from "@comis/shared";
 import type {
   NormalizedMessage,
   SessionKey,
@@ -25,12 +30,43 @@ import type {
   QueueConfig,
   PerChannelQueueConfig,
 } from "@comis/core";
+import type { InboundMessageProvenancePlan } from "@comis/agent";
 import type { ComisLogger } from "@comis/core";
-import { formatSessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemSetInterval, systemClearInterval } from "@comis/core";
+import {
+  formatSessionKey,
+  systemNowMs,
+  systemSetTimeout,
+  systemClearTimeout,
+  systemSetInterval,
+  systemClearInterval,
+  tryGetContext,
+} from "@comis/core";
 
-import type { SessionLane } from "./lane.js";
-import { applyOverflowPolicy } from "./overflow.js";
-import { coalesceMessages } from "./coalescer.js";
+import type {
+  QueueMessageHandler,
+  QueuedMessageEntry,
+  SessionLane,
+} from "./lane.js";
+import { applyOverflowPolicyToQueueEntries } from "./overflow.js";
+import {
+  createSourceTerminalScope,
+  type SourceTerminalScope,
+} from "../source-message-terminal.js";
+import {
+  captureQueueAsyncScope,
+  coalesceQueuedEntries,
+  createQueueLaneIdentity,
+  releaseQueueEntryResources,
+  type QueueDiscardReason,
+} from "./queue-entry-lifecycle.js";
+import { createQueueObservability } from "./queue-observability.js";
+
+interface ScheduledQueueTask {
+  readonly controller: AbortController;
+  started: boolean;
+  entry?: QueuedMessageEntry;
+  settled: Promise<void>;
+}
 
 /**
  * Dependencies required by createCommandQueue.
@@ -69,7 +105,10 @@ export interface CommandQueue {
     sessionKey: SessionKey,
     message: NormalizedMessage,
     channelType: string,
-    handler: (messages: NormalizedMessage[]) => Promise<void>,
+    handler: QueueMessageHandler,
+    sourceTerminalScope?: SourceTerminalScope,
+    releaseResources?: () => void,
+    inboundProvenancePlan?: InboundMessageProvenancePlan,
   ): Promise<Result<void, Error>>;
 
   /** Get current queue depth for a session (waiting + in-progress) */
@@ -120,21 +159,68 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
 
   /** Debounce timers keyed by session key (collect mode). */
   const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const scheduledTasks = new Set<ScheduledQueueTask>();
   let cleanupTimer: ReturnType<typeof setInterval> | undefined;
   let isShutdown = false;
+  let shutdownPromise: Promise<void> | undefined;
+  const {
+    emitQueueEvent,
+    logQueueEventFailure,
+    containBackgroundExecution,
+  } = createQueueObservability(eventBus, logger);
+
+  function emitRejectedEntries(
+    entries: readonly QueuedMessageEntry[],
+    reason: "queue_dropped" | "queue_rejected" | "queue_aborted",
+    outcome: "error" | "aborted" = "error",
+  ): void {
+    const timestamp = systemNowMs();
+    for (const entry of entries) {
+      entry.sourceTerminalScope.publish(outcome, reason, timestamp);
+      releaseEntryResources(entry, reason === "queue_dropped" ? "overflow" : "shutdown");
+    }
+  }
+
+  function releaseEntryResources(
+    entry: QueuedMessageEntry,
+    reason: QueueDiscardReason,
+  ): void {
+    releaseQueueEntryResources(entry, reason, logger);
+  }
+
+  function emitDroppedEntries(
+    before: readonly QueuedMessageEntry[],
+    after: readonly QueuedMessageEntry[],
+    policy: PerChannelQueueConfig["overflow"]["policy"],
+  ): void {
+    const retainedOwnership = new Set(after.map((entry) => entry.ownership));
+    const removed = before.filter(
+      (entry) => !retainedOwnership.has(entry.ownership),
+    );
+    if (policy === "summarize") {
+      for (const entry of removed) releaseEntryResources(entry, "overflow");
+      return;
+    }
+    emitRejectedEntries(removed, "queue_dropped");
+  }
 
   /** Get or create a session lane for the given key. */
-  function getOrCreateLane(key: string): SessionLane {
+  function getOrCreateLane(key: string, baseSessionKey: string): SessionLane {
     let lane = lanes.get(key);
     if (!lane) {
+      const sessionQueue = [...lanes.values()].find(
+        (candidate) => candidate.baseSessionKey === baseSessionKey,
+      )?.queue ?? new PQueue({ concurrency: 1 });
       lane = {
-        queue: new PQueue({ concurrency: 1 }),
-        pendingMessages: [],
+        baseSessionKey,
+        queue: sessionQueue,
+        pendingEntries: [],
+        logicalDepth: 0,
         isExecuting: false,
         lastActivityMs: systemNowMs(),
       };
       lanes.set(key, lane);
-      logger?.debug({ sessionKey: key }, "Session lane created");
+      logger?.debug({ sessionKey: baseSessionKey }, "Session lane created");
     }
     lane.lastActivityMs = systemNowMs();
     return lane;
@@ -157,30 +243,50 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
   function processCollectedMessages(
     key: string,
     lane: SessionLane,
-    sessionKey: SessionKey,
-    channelType: string,
-    handler: (messages: NormalizedMessage[]) => Promise<void>,
   ): void {
-    if (lane.pendingMessages.length === 0) return;
+    if (lane.pendingEntries.length === 0) return;
 
-    const collected = [...lane.pendingMessages];
-    lane.pendingMessages = [];
+    if (isShutdown) {
+      const discardedCount = lane.pendingEntries.reduce(
+        (count, entry) => count + entry.logicalCount,
+        0,
+      );
+      const rejected = lane.pendingEntries;
+      lane.pendingEntries = [];
+      lane.logicalDepth = Math.max(0, lane.logicalDepth - discardedCount);
+      emitRejectedEntries(rejected, "queue_rejected");
+      return;
+    }
 
-    const coalesced = coalesceMessages(collected);
+    const collected = [...lane.pendingEntries];
+    lane.pendingEntries = [];
 
-    // Emit coalesced event
-    eventBus.emit("queue:coalesced", {
-      sessionKey,
-      channelType,
-      messageCount: collected.length,
-      timestamp: systemNowMs(),
-    });
-
-    // Enqueue a single task with the coalesced message
-    void executeLaneTask(
-      lane, sessionKey, channelType, systemNowMs(), [coalesced], handler,
-      () => processCollectedMessages(key, lane, sessionKey, channelType, handler),
+    const coalescedEntry = coalesceQueuedEntries(
+      collected,
+      releaseEntryResources,
     );
+
+    coalescedEntry.runInAsyncScope(() => {
+      emitQueueEvent("queue:coalesced", {
+        sessionKey: coalescedEntry.sessionKey,
+        channelType: coalescedEntry.channelType,
+        messageCount: collected.length,
+        timestamp: systemNowMs(),
+      }, coalescedEntry.channelType);
+
+      // Enqueue a single task with the coalesced message. Register the
+      // Result conversion inside the retained entry's captured async scope so
+      // its error log keeps the same request identity as execution.
+      void containBackgroundExecution(
+        executeLaneTask(
+          lane,
+          coalescedEntry,
+          () => processCollectedMessages(key, lane),
+        ),
+        "collect",
+        coalescedEntry.channelType,
+      );
+    });
   }
 
   /** Start the periodic cleanup sweep for idle lanes. */
@@ -193,11 +299,14 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
           !lane.isExecuting &&
           lane.queue.size === 0 &&
           lane.queue.pending === 0 &&
-          lane.pendingMessages.length === 0 &&
+          lane.pendingEntries.length === 0 &&
           now - lane.lastActivityMs > config.cleanupIdleMs
         ) {
           lanes.delete(key);
-          logger?.debug({ sessionKey: key }, "Idle lane cleaned up");
+          logger?.debug(
+            { sessionKey: lane.baseSessionKey },
+            "Idle lane cleaned up",
+          );
         }
       }
     }, sweepIntervalMs);
@@ -209,9 +318,91 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
   // Start the cleanup sweep immediately
   startCleanupSweep();
 
+  function scheduleLaneTask(
+    lane: SessionLane,
+    task: (scheduled: ScheduledQueueTask) => Promise<void>,
+    entry?: QueuedMessageEntry,
+  ): Promise<void> {
+    const scheduled: ScheduledQueueTask = {
+      controller: new AbortController(),
+      started: false,
+      ...(entry === undefined ? {} : { entry }),
+      settled: Promise.resolve(),
+    };
+    scheduledTasks.add(scheduled);
+    const promise = lane.queue.add(
+      () => task(scheduled),
+      { signal: scheduled.controller.signal },
+    ) as Promise<void>;
+    scheduled.settled = fromPromise(promise).then(() => {
+      scheduledTasks.delete(scheduled);
+    });
+    return promise;
+  }
+
   /** Route a task through the globalGate. */
-  function runThroughGate(task: () => Promise<void>): Promise<void> {
-    return globalGate.add(task) as Promise<void>;
+  function runThroughGate(
+    task: () => Promise<void>,
+    scheduled: ScheduledQueueTask,
+  ): Promise<void> {
+    return globalGate.add(
+      () => {
+        scheduled.started = true;
+        return task();
+      },
+      { signal: scheduled.controller.signal },
+    ) as Promise<void>;
+  }
+
+  function runEntryThroughGate(
+    lane: SessionLane,
+    entry: QueuedMessageEntry,
+    scheduled: ScheduledQueueTask,
+    onComplete?: () => void,
+  ): Promise<void> {
+    return runThroughGate(() =>
+      entry.runInAsyncScope(async () => {
+        const dequeuedAt = systemNowMs();
+        const waitTimeMs = Math.max(0, dequeuedAt - entry.enqueuedAt);
+        emitQueueEvent("queue:dequeued", {
+          sessionKey: entry.sessionKey,
+          channelType: entry.channelType,
+          waitTimeMs,
+          timestamp: dequeuedAt,
+        }, entry.channelType);
+        logger?.info(
+          {
+            step: "queue-dequeue",
+            channelType: entry.channelType,
+            waitTimeMs,
+          },
+          "Message dequeued",
+        );
+        lane.isExecuting = true;
+        lane.abortController = new AbortController();
+        lane.activeEntry = entry;
+        entry.ownership.executionStarted = true;
+        try {
+          await entry.handler([entry.message], {
+            signal: lane.abortController.signal,
+            receivedAt: entry.receivedAt,
+            sourceTerminalScope: entry.sourceTerminalScope,
+            inboundProvenancePlans: entry.inboundProvenancePlans,
+          });
+        } finally {
+          lane.isExecuting = false;
+          delete lane.abortController;
+          if (lane.activeEntry === entry) delete lane.activeEntry;
+          lane.logicalDepth = Math.max(
+            0,
+            lane.logicalDepth - entry.logicalCount,
+          );
+          lane.lastActivityMs = systemNowMs();
+          onComplete?.();
+        }
+      }),
+      scheduled,
+    );
   }
 
   /**
@@ -221,35 +412,88 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
    */
   function executeLaneTask(
     lane: SessionLane,
-    sessionKey: SessionKey,
-    channelType: string,
-    enqueuedAt: number,
-    messages: NormalizedMessage[],
-    handler: (messages: NormalizedMessage[]) => Promise<void>,
+    entry: QueuedMessageEntry,
     onComplete?: () => void,
   ): Promise<void> {
-    return lane.queue.add(() =>
-      runThroughGate(async () => {
-        const dequeuedAt = systemNowMs();
-        eventBus.emit("queue:dequeued", {
-          sessionKey,
-          channelType,
-          waitTimeMs: dequeuedAt - enqueuedAt,
-          timestamp: dequeuedAt,
-        });
-        logger?.info({ step: "queue-dequeue", channelType, waitTimeMs: dequeuedAt - enqueuedAt }, "Message dequeued");
-        lane.isExecuting = true;
-        lane.abortController = new AbortController();
-        try {
-          await handler(messages);
-        } finally {
-          lane.isExecuting = false;
-          delete lane.abortController;
-          lane.lastActivityMs = systemNowMs();
-          onComplete?.();
-        }
-      }),
-    ) as Promise<void>;
+    return scheduleLaneTask(
+      lane,
+      (scheduled) => runEntryThroughGate(
+        lane,
+        entry,
+        scheduled,
+        onComplete,
+      ),
+      entry,
+    );
+  }
+
+  async function performShutdown(): Promise<void> {
+    logger?.debug({ activeLanes: lanes.size }, "Command queue shutting down");
+    isShutdown = true;
+
+    for (const timer of debounceTimers.values()) systemClearTimeout(timer);
+    debounceTimers.clear();
+
+    if (cleanupTimer !== undefined) {
+      systemClearInterval(cleanupTimer);
+      cleanupTimer = undefined;
+    }
+
+    for (const lane of lanes.values()) lane.queue.pause();
+    globalGate.pause();
+
+    // Publish ownership outcomes before cancellation settles any enqueue call.
+    // Every outer boundary shares the same scope, so its fallback publish is a
+    // no-op instead of a second terminal event.
+    const notStarted = [...scheduledTasks].filter(
+      (scheduled) => !scheduled.started,
+    );
+    emitRejectedEntries(
+      notStarted.flatMap((scheduled) =>
+        scheduled.entry === undefined ? [] : [scheduled.entry]),
+      "queue_rejected",
+    );
+    for (const lane of lanes.values()) {
+      emitRejectedEntries(lane.pendingEntries, "queue_rejected");
+      lane.pendingEntries = [];
+      if (lane.activeEntry !== undefined) {
+        emitRejectedEntries([lane.activeEntry], "queue_aborted", "aborted");
+      }
+      lane.abortController?.abort();
+    }
+
+    for (const scheduled of notStarted) {
+      scheduled.controller.abort(
+        new Error("Command queue shut down before message execution started"),
+      );
+    }
+    await Promise.all(notStarted.map((scheduled) => scheduled.settled));
+
+    // Wait for active lanes with a bounded timeout. Their canonical aborted
+    // terminal has already been published, so late completion cannot reclassify
+    // the physical source.
+    const activePromises: Promise<void>[] = [];
+    for (const lane of lanes.values()) {
+      if (lane.isExecuting) activePromises.push(lane.queue.onIdle());
+    }
+    if (activePromises.length > 0) {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        Promise.all(activePromises),
+        new Promise<void>((resolve) => {
+          timeout = systemSetTimeout(resolve, 3_000);
+        }),
+      ]);
+      if (timeout !== undefined) systemClearTimeout(timeout);
+    }
+
+    for (const lane of lanes.values()) {
+      lane.queue.clear();
+      lane.pendingEntries = [];
+      lane.logicalDepth = 0;
+    }
+    globalGate.clear();
+    lanes.clear();
   }
 
   return {
@@ -257,36 +501,83 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
       sessionKey: SessionKey,
       message: NormalizedMessage,
       channelType: string,
-      handler: (messages: NormalizedMessage[]) => Promise<void>,
+      handler: QueueMessageHandler,
+      sourceTerminalScope?: SourceTerminalScope,
+      releaseResources?: () => void,
+      inboundProvenancePlan?: InboundMessageProvenancePlan,
     ): Promise<Result<void, Error>> {
       if (isShutdown) {
         return err(new Error("Command queue is shut down"));
       }
 
       try {
-        const key = formatSessionKey(sessionKey);
-        const lane = getOrCreateLane(key);
-        const channelConfig = resolveChannelConfig(channelType);
-        const enqueuedAt = systemNowMs();
-
-        // Emit enqueued event
-        eventBus.emit("queue:enqueued", {
+        const context = tryGetContext();
+        const { baseSessionKey, laneKey: key } = createQueueLaneIdentity(
           sessionKey,
           channelType,
-          queueDepth: lane.queue.size + lane.queue.pending + 1,
+          context,
+        );
+        const lane = getOrCreateLane(key, baseSessionKey);
+        const channelConfig = resolveChannelConfig(channelType);
+        const enqueuedAt = systemNowMs();
+        const contextStartedAt = context?.startedAt;
+        const receivedAt =
+          contextStartedAt !== undefined &&
+          Number.isSafeInteger(contextStartedAt) &&
+          contextStartedAt > 0
+            ? Math.min(contextStartedAt, enqueuedAt)
+            : enqueuedAt;
+        const entry: QueuedMessageEntry = {
+          message,
+          inboundProvenancePlans: inboundProvenancePlan === undefined
+            ? []
+            : [inboundProvenancePlan],
+          sessionKey,
+          channelType,
+          enqueuedAt,
+          receivedAt,
+          logicalCount: 1,
+          handler,
+          runInAsyncScope: captureQueueAsyncScope(),
+          ownership: {
+            executionStarted: false,
+            resourcesReleased: false,
+            ...(releaseResources === undefined ? {} : { releaseResources }),
+          },
+          sourceTerminalScope: sourceTerminalScope ?? createSourceTerminalScope(
+            { eventBus, ...(logger === undefined ? {} : { logger }) },
+            message,
+            channelType,
+          ),
+        };
+        lane.logicalDepth++;
+
+        // Emit enqueued event
+        emitQueueEvent("queue:enqueued", {
+          sessionKey,
+          channelType,
+          queueDepth: lane.logicalDepth,
           mode: channelConfig.mode,
           timestamp: enqueuedAt,
-        });
+        }, channelType);
 
         const mode = channelConfig.mode;
 
-        logger?.info({ step: "queue-enqueue", channelType, mode: channelConfig.mode, queueDepth: lane.queue.size + lane.queue.pending + 1 }, "Message enqueued");
+        logger?.info(
+          {
+            step: "queue-enqueue",
+            channelType,
+            mode: channelConfig.mode,
+            queueDepth: lane.logicalDepth,
+          },
+          "Message enqueued",
+        );
 
         // ---------------------------------------------------------------
         // followup mode: Each message gets its own execution (default)
         // ---------------------------------------------------------------
         if (mode === "followup") {
-          await executeLaneTask(lane, sessionKey, channelType, enqueuedAt, [message], handler);
+          await executeLaneTask(lane, entry);
           return ok(undefined);
         }
 
@@ -296,17 +587,32 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
         if (mode === "collect") {
           if (lane.isExecuting) {
             // Lane is busy — accumulate message in pending list
-            lane.pendingMessages.push(message);
+            lane.pendingEntries.push(entry);
 
             // Apply overflow policy
-            const overflowResult = applyOverflowPolicy(
-              lane.pendingMessages,
+            const pendingBeforeOverflow = [...lane.pendingEntries];
+            const overflowResult = applyOverflowPolicyToQueueEntries(
+              lane.pendingEntries,
               channelConfig.overflow,
               eventBus,
               sessionKey,
               channelType,
+              (error) => logQueueEventFailure(
+                "queue:overflow",
+                error,
+                channelType,
+              ),
             );
-            lane.pendingMessages = overflowResult.messages;
+            lane.pendingEntries = overflowResult.entries;
+            emitDroppedEntries(
+              pendingBeforeOverflow,
+              overflowResult.entries,
+              channelConfig.overflow.policy,
+            );
+            lane.logicalDepth = Math.max(
+              0,
+              lane.logicalDepth - overflowResult.dropped,
+            );
 
             // If debounceMs > 0, reset debounce timer. The timer will
             // process collected messages after the debounce period if the
@@ -322,7 +628,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
                   debounceTimers.delete(key);
                   // Only process if execution has finished by debounce time
                   if (!lane.isExecuting) {
-                    processCollectedMessages(key, lane, sessionKey, channelType, handler);
+                    processCollectedMessages(key, lane);
                   }
                   // Otherwise, processCollectedMessages will be called in the
                   // finally block of the currently executing handler.
@@ -335,8 +641,9 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
 
           // Lane is idle — process immediately (no debounce for first message)
           await executeLaneTask(
-            lane, sessionKey, channelType, enqueuedAt, [message], handler,
-            () => processCollectedMessages(key, lane, sessionKey, channelType, handler),
+            lane,
+            entry,
+            () => processCollectedMessages(key, lane),
           );
           return ok(undefined);
         }
@@ -347,17 +654,32 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
         if (mode === "steer") {
           if (lane.isExecuting) {
             // Accumulate message
-            lane.pendingMessages.push(message);
+            lane.pendingEntries.push(entry);
 
             // Apply overflow policy
-            const overflowResult = applyOverflowPolicy(
-              lane.pendingMessages,
+            const pendingBeforeOverflow = [...lane.pendingEntries];
+            const overflowResult = applyOverflowPolicyToQueueEntries(
+              lane.pendingEntries,
               channelConfig.overflow,
               eventBus,
               sessionKey,
               channelType,
+              (error) => logQueueEventFailure(
+                "queue:overflow",
+                error,
+                channelType,
+              ),
             );
-            lane.pendingMessages = overflowResult.messages;
+            lane.pendingEntries = overflowResult.entries;
+            emitDroppedEntries(
+              pendingBeforeOverflow,
+              overflowResult.entries,
+              channelConfig.overflow.policy,
+            );
+            lane.logicalDepth = Math.max(
+              0,
+              lane.logicalDepth - overflowResult.dropped,
+            );
 
             // Abort the current execution
             lane.abortController?.abort();
@@ -371,37 +693,46 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
 
             // Steer re-execution after abort -- unique logic, not extractable to
             // executeLaneTask (coalesces pending messages inside the gate callback).
-            void lane.queue.add(() =>
-              runThroughGate(async () => {
-                if (lane.pendingMessages.length === 0) return;
-                const collected = [...lane.pendingMessages];
-                lane.pendingMessages = [];
-                const coalesced = coalesceMessages(collected);
-                eventBus.emit("queue:coalesced", {
-                  sessionKey, channelType,
-                  messageCount: collected.length, timestamp: systemNowMs(),
-                });
-                lane.isExecuting = true;
-                lane.abortController = new AbortController();
-                try {
-                  await handler([coalesced]);
-                } finally {
-                  lane.isExecuting = false;
-                  delete lane.abortController;
-                  lane.lastActivityMs = systemNowMs();
-                }
-              }),
-            );
+            const steerTask = scheduleLaneTask(lane, async (scheduled) => {
+              if (lane.pendingEntries.length === 0) return;
+              const collected = [...lane.pendingEntries];
+              lane.pendingEntries = [];
+              const coalescedEntry = coalesceQueuedEntries(
+                collected,
+                releaseEntryResources,
+              );
+              scheduled.entry = coalescedEntry;
+              await coalescedEntry.runInAsyncScope(async () => {
+                emitQueueEvent("queue:coalesced", {
+                  sessionKey: coalescedEntry.sessionKey,
+                  channelType: coalescedEntry.channelType,
+                  messageCount: collected.length,
+                  timestamp: systemNowMs(),
+                }, coalescedEntry.channelType);
+                await containBackgroundExecution(
+                  runEntryThroughGate(
+                    lane,
+                    coalescedEntry,
+                    scheduled,
+                  ),
+                  "steer",
+                  coalescedEntry.channelType,
+                );
+              });
+            });
+            // The retained-entry execution converts its rejection to Result.
+            // This outer conversion contains only unexpected scheduler faults.
+            void fromPromise(steerTask);
             return ok(undefined);
           }
 
           // Lane is idle — process immediately (like followup)
-          await executeLaneTask(lane, sessionKey, channelType, enqueuedAt, [message], handler);
+          await executeLaneTask(lane, entry);
           return ok(undefined);
         }
 
         // Unknown mode — treat as followup for safety
-        await executeLaneTask(lane, sessionKey, channelType, enqueuedAt, [message], handler);
+        await executeLaneTask(lane, entry);
         return ok(undefined);
       } catch (error: unknown) {
         const wrapped =
@@ -412,23 +743,26 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
 
     getQueueDepth(sessionKey: SessionKey): number {
       const key = formatSessionKey(sessionKey);
-      const lane = lanes.get(key);
-      if (!lane) return 0;
-      return lane.queue.size + lane.queue.pending;
+      return [...lanes.values()].reduce(
+        (depth, lane) => lane.baseSessionKey === key
+          ? depth + lane.logicalDepth
+          : depth,
+        0,
+      );
     },
 
     isProcessing(sessionKey: SessionKey): boolean {
       const key = formatSessionKey(sessionKey);
-      const lane = lanes.get(key);
-      if (!lane) return false;
-      return lane.isExecuting;
+      return [...lanes.values()].some(
+        (lane) => lane.baseSessionKey === key && lane.isExecuting,
+      );
     },
 
     async drain(sessionKey: SessionKey): Promise<void> {
       const key = formatSessionKey(sessionKey);
-      const lane = lanes.get(key);
-      if (!lane) return;
-      await lane.queue.onIdle();
+      await Promise.all([...lanes.values()]
+        .filter((lane) => lane.baseSessionKey === key)
+        .map((lane) => lane.queue.onIdle()));
     },
 
     async drainAll(): Promise<void> {
@@ -441,9 +775,9 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
     },
 
     touchLane(sessionKey: string): void {
-      const lane = lanes.get(sessionKey);
-      if (lane) {
-        lane.lastActivityMs = systemNowMs();
+      const now = systemNowMs();
+      for (const lane of lanes.values()) {
+        if (lane.baseSessionKey === sessionKey) lane.lastActivityMs = now;
       }
     },
 
@@ -451,7 +785,7 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
       let totalPending = 0;
       let totalExecuting = 0;
       for (const lane of lanes.values()) {
-        totalPending += lane.queue.size + lane.queue.pending;
+        totalPending += lane.logicalDepth;
         if (lane.isExecuting) totalExecuting++;
       }
       return {
@@ -461,42 +795,10 @@ export function createCommandQueue(deps: CommandQueueDeps): CommandQueue {
       };
     },
 
-    async shutdown(): Promise<void> {
-      logger?.debug({ activeLanes: lanes.size }, "Command queue shutting down");
-      isShutdown = true;
-
-      for (const timer of debounceTimers.values()) systemClearTimeout(timer);
-      debounceTimers.clear();
-
-      if (cleanupTimer !== undefined) { systemClearInterval(cleanupTimer); cleanupTimer = undefined; }
-
-      for (const lane of lanes.values()) lane.queue.pause();
-      globalGate.pause();
-
-      // Signal abort to all active lanes so in-flight LLM executions can
-      // terminate early rather than blocking shutdown indefinitely.
-      for (const lane of lanes.values()) {
-        if (lane.isExecuting && lane.abortController) {
-          lane.abortController.abort();
-        }
-      }
-
-      // Wait for active lanes with a bounded timeout -- don't block shutdown
-      // indefinitely if an execution ignores the abort signal.
-      const activePromises: Promise<void>[] = [];
-      for (const lane of lanes.values()) {
-        if (lane.isExecuting) activePromises.push(lane.queue.onIdle());
-      }
-      if (activePromises.length > 0) {
-        await Promise.race([
-          Promise.all(activePromises),
-          new Promise<void>((resolve) => systemSetTimeout(resolve, 3_000)),
-        ]);
-      }
-
-      for (const lane of lanes.values()) { lane.queue.clear(); lane.pendingMessages = []; }
-      globalGate.clear();
-      lanes.clear();
+    shutdown(): Promise<void> {
+      if (shutdownPromise !== undefined) return shutdownPromise;
+      shutdownPromise = performShutdown();
+      return shutdownPromise;
     },
   };
 }

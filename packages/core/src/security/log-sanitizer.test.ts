@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { sanitizeLogString, redactErrorMessage } from "./log-sanitizer.js";
+import {
+  redactErrorMessage,
+  sanitizeLogString,
+  toSafeErrorLogString,
+} from "./log-sanitizer.js";
 
 describe("sanitizeLogString", () => {
   describe("OpenAI/Anthropic API keys (sk-*)", () => {
@@ -390,5 +394,25 @@ describe("redactErrorMessage", () => {
     // never an orphaned leading double-space ("  sk... rejected").
     expect(result).not.toMatch(/ {2,}/);
     expect(result).toBe("[REDACTED] rejected");
+  });
+});
+
+describe("toSafeErrorLogString", () => {
+  it("returns a bounded credential-redacted message without a stack", () => {
+    const credential = `xoxb-${"s".repeat(32)}`;
+    const result = toSafeErrorLogString(new Error(`request failed ${credential} ${"x".repeat(2_000)}`));
+
+    expect(result).not.toContain(credential);
+    expect(result.length).toBeLessThanOrEqual(1_000);
+    expect(result).not.toContain("at ");
+  });
+
+  it("does not throw when an error message cannot be read or stringified", () => {
+    const hostile = Object.create(null, {
+      message: { get: () => { throw new Error("unreadable"); } },
+      toString: { value: () => { throw new Error("unstringifiable"); } },
+    });
+
+    expect(toSafeErrorLogString(hostile)).toBe("[unreadable error message]");
   });
 });

@@ -26,11 +26,24 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { suppressError } from "@comis/shared";
-import { systemNowMs } from "@comis/core";
-import type { NormalizedMessage, TypedEventBus, BackgroundTaskOrigin } from "@comis/core";
-import { parseFormattedSessionKey } from "@comis/core";
-import type { ComisLogger } from "@comis/core";
+import { fromPromise, suppressError, tryCatch, type Result } from "@comis/shared";
+import {
+  createDeliveryOrigin,
+  createResolvedRequestContext,
+  emitObservationalEventSafely,
+  parseFormattedSessionKey,
+  RequestContextSchema,
+  runWithContext,
+  systemNowMs,
+  toSafeErrorLogString,
+  type BackgroundTaskOrigin,
+  type ComisLogger,
+  type NormalizedMessage,
+  type RequestContext,
+  type ResolvedRequestContextSeed,
+  type SessionKey,
+  type TypedEventBus,
+} from "@comis/core";
 import type { AgentExecutor } from "../executor/types.js";
 import { formatCompletionAnnouncement } from "./completion-formatter.js";
 import type { BackgroundTaskManager, NotifyFn } from "./background-task-manager.js";
@@ -73,6 +86,43 @@ export interface BackgroundCompletionRunnerDeps {
    */
   isTurnInFlight?: (formattedSessionKey: string) => boolean;
   logger: ComisLogger;
+}
+
+/**
+ * Rebuild the request authority for a persisted completion without consulting
+ * ambient AsyncLocalStorage. A completion can resume after the originating
+ * request ended or while an unrelated request is active, so persisted routing
+ * identity is the only valid source and the resumed turn always starts as a
+ * guest.
+ */
+function createReentryContext(
+  origin: BackgroundTaskOrigin,
+  parsedKey: SessionKey,
+): Result<RequestContext, Error> {
+  const built = tryCatch(() => {
+    const persistedTrace = RequestContextSchema.shape.traceId.safeParse(origin.traceId);
+    const traceId = persistedTrace.success ? persistedTrace.data : randomUUID();
+    const deliveryOrigin = createDeliveryOrigin({
+      channelType: origin.channelType,
+      channelId: origin.channelId,
+      userId: parsedKey.userId,
+      tenantId: parsedKey.tenantId,
+    });
+    const seed: ResolvedRequestContextSeed = {
+      tenantId: parsedKey.tenantId,
+      userId: parsedKey.userId,
+      sessionKey: parsedKey,
+      agentId: origin.agentId,
+      traceId,
+      startedAt: systemNowMs(),
+      trustLevel: "guest" as const,
+      channelType: deliveryOrigin.channelType,
+      deliveryOrigin,
+    };
+    return seed;
+  });
+  if (!built.ok) return built;
+  return createResolvedRequestContext(built.value);
 }
 
 /**
@@ -221,6 +271,26 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
+    const reentryContext = createReentryContext(origin, parsedKey);
+    if (!reentryContext.ok) {
+      log.warn(
+        {
+          taskId,
+          sessionKey: origin.sessionKey,
+          hint: "Persisted completion route is invalid; inspect or remove the task state before retrying",
+          errorKind: "validation" as const,
+        },
+        "Background completion: invalid re-entry context",
+      );
+      await fallbackForTask(
+        task.id,
+        origin.agentId,
+        task.toolName,
+        `Background task "${task.toolName}" completed (routing failed).`,
+      );
+      return;
+    }
+
     // Format the announcement (byte-identical trailing instruction).
     const announcement = formatCompletionAnnouncement(task);
 
@@ -238,54 +308,60 @@ export function createBackgroundCompletionRunner(
         backgroundTaskId: task.id,
         toolName: task.toolName,
         agentId: origin.agentId,
-        traceId: origin.traceId ?? undefined,
+        traceId: reentryContext.value.traceId,
       },
     };
 
-    log.debug(
-      {
-        taskId,
-        sessionKey: origin.sessionKey,
-        agentId: origin.agentId,
-        toolName: task.toolName,
-        hopCount: nextHopCount,
-        // traceId from origin keeps debug logs threaded.
-        traceId: origin.traceId ?? undefined,
+    const scopedInvocation = tryCatch(() => runWithContext(
+      reentryContext.value,
+      async () => {
+        log.debug(
+          {
+            taskId,
+            sessionKey: origin.sessionKey,
+            agentId: origin.agentId,
+            toolName: task.toolName,
+            hopCount: nextHopCount,
+            traceId: reentryContext.value.traceId,
+          },
+          "Background completion runner: invoking executor",
+        );
+
+        // Emit immediately before executor.execute(). Integration tests compute
+        // latency from background_task:completed.timestamp to this event.
+        emitObservationalEventSafely({ eventBus: deps.eventBus, logger: log }, "background_task:reentered", {
+          taskId: task.id,
+          agentId: origin.agentId,
+          sessionKey: origin.sessionKey,
+          hopCount: nextHopCount,
+          traceId: reentryContext.value.traceId,
+          timestamp: systemNowMs(),
+        });
+
+        // One turn per event. Existing session lock orders concurrent calls.
+        const executor = tryCatch(() => deps.getExecutor(origin.agentId));
+        if (!executor.ok) return executor;
+        const execution = tryCatch(() => executor.value.execute(
+          syntheticMsg,
+          parsedKey,
+          undefined,
+          undefined,
+          origin.agentId,
+        ));
+        if (!execution.ok) return execution;
+        return fromPromise(execution.value);
       },
-      "Background completion runner: invoking executor",
-    );
-
-    // Emit background_task:reentered immediately before executor.execute().
-    // Integration tests compute p95 latency from
-    // background_task:completed.timestamp to this event's timestamp.
-    // Include traceId from origin so subscribers (and operator log streams)
-    // preserve the originating request's trace across the
-    // background_task:completed → :reentered boundary.
-    deps.eventBus.emit("background_task:reentered", {
-      taskId: task.id,
-      agentId: origin.agentId,
-      sessionKey: origin.sessionKey,
-      hopCount: nextHopCount,
-      traceId: origin.traceId ?? null,
-      timestamp: systemNowMs(),
-    });
-
-    // One turn per event. Existing session lock orders concurrent calls.
-    try {
-      await deps.getExecutor(origin.agentId).execute(
-        syntheticMsg,
-        parsedKey,
-        undefined,
-        undefined,
-        origin.agentId,
-      );
-    } catch (err) {
+    ));
+    const scopedResult = scopedInvocation.ok
+      ? await fromPromise(scopedInvocation.value)
+      : scopedInvocation;
+    const executionResult = scopedResult.ok ? scopedResult.value : scopedResult;
+    if (!executionResult.ok) {
       log.warn(
         {
           taskId,
-          err,
-          // traceId from origin keeps the WARN line threaded.
-          traceId: origin.traceId ?? undefined,
+          err: toSafeErrorLogString(executionResult.error),
+          traceId: reentryContext.value.traceId,
           hint: "Executor failed mid-completion turn; subscription remains active",
           errorKind: "internal" as const,
         },

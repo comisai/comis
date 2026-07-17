@@ -19,12 +19,10 @@
  * section NAMES while masking every value. Regress the digest to emit values and
  * this test fails loudly.
  *
- * The remaining value that ever LEAVES the config is the url-userinfo credential
- * planted in the gateway host: the gateway check echoes the configured URL —
- * credential and all — into `doctor.json`, so that seed genuinely reaches a
- * written file, where the writer's value-shape redaction pass masks it. The
- * redaction-sentinel assertion pins that the pass ran; every other seeded value
- * lives only in the raw config the digests never echo.
+ * Every seeded config value remains inside the resolved config: diagnostics may
+ * report section membership and posture, but never echo permission lists,
+ * provider headers, or other values into the bundle. The separate deep-session
+ * sweep below exercises value-shape redaction against content-bearing artifacts.
  *
  * The fleet assembler is injected with a hermetic empty-report fixture so the
  * sweep never loads the runtime graph the offline seam dynamic-imports. This does
@@ -34,9 +32,9 @@
  * regardless of the fleet stub — so both trusted-leaf files are still swept
  * against every seed.
  *
- * The gateway host resolves to loopback, so the connectivity probe stays local
- * (fast, no external network). Temp dirs ONLY — never the real ~/.comis. All
- * seed values are neutral fakes.
+ * The gateway host is loopback, so the connectivity probe stays local (fast, no
+ * external network). Temp dirs ONLY — never the real ~/.comis. All seed values
+ * are neutral fakes.
  */
 
 import { describe, it, expect, afterEach } from "vitest";
@@ -64,8 +62,7 @@ import { generateSupportBundle } from "./generate.js";
 /**
  * Every known secret shape as a neutral fake, each planted in a config VALUE
  * under a real schema section so the section NAME (never the value) lands in
- * config-posture.json. `URL_USERINFO` additionally flows into doctor.json via
- * the gateway host, where the value-shape pass masks it.
+ * config-posture.json.
  */
 const OPENAI_KEY = "sk-test00000000000000000000000000000000000000abcd";
 const AWS_KEY = "AKIAIOSFODNN7EXAMPLE";
@@ -148,11 +145,11 @@ afterEach(() => {
 /**
  * Write a valid config that plants a distinct secret shape in a VALUE under each
  * of three real schema sections:
- *  - `gateway.host` carries the url-userinfo credential (loopback after the `@`,
- *    on an unused port so the probe fails fast) — the one seed that leaves the
- *    config, echoed into doctor.json and masked there.
+ *  - `gateway.host` is a valid loopback bind target on an unused port so the
+ *    probe fails fast without external network access.
  *  - `security.permission.{allowedNetHosts,allowedFsPaths}` carry the AWS key,
- *    JWT, and registered canary — free-form string arrays no check echoes.
+ *    JWT, url-userinfo credential, and registered canary — free-form string
+ *    arrays no check echoes.
  *  - `providers.entries.<id>.{apiKeyName,headers}` carry the OpenAI key and the
  *    bearer token — provider values no check echoes.
  * The config PARSES, so config-posture.json is written and its section list
@@ -161,13 +158,14 @@ afterEach(() => {
 function writeSeededConfig(dataDir: string): string {
   const body =
     "gateway:\n" +
-    `  host: "${URL_USERINFO}"\n` +
+    "  host: 127.0.0.1\n" +
     "  port: 59237\n" +
     "security:\n" +
     "  permission:\n" +
     "    allowedNetHosts:\n" +
     `      - "${AWS_KEY}"\n` +
     `      - "${JWT}"\n` +
+    `      - "${URL_USERINFO}"\n` +
     "    allowedFsPaths:\n" +
     `      - "${REGISTERED}"\n` +
     "providers:\n" +
@@ -217,7 +215,7 @@ describe("no seeded secret survives any support-bundle output file", () => {
     }
   });
 
-  it("masks the url-userinfo credential that reaches doctor.json with the value-shape sentinel", async () => {
+  it("does not export credential-shaped permission values into doctor.json", async () => {
     const dataDir = makeDataDir();
     const configPath = writeSeededConfig(dataDir);
 
@@ -232,11 +230,9 @@ describe("no seeded secret survives any support-bundle output file", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    // The gateway check echoed the configured URL — credential and all — into
-    // doctor.json; the sentinel proves the redaction pass ran (the raw
-    // credential would be here without it).
+    // allowedNetHosts is valid free-form configuration, but doctor reports only
+    // diagnostic outcomes and must never export the configured value.
     const doctorJson = readFileSync(safePath(result.value.bundleDir, "doctor.json"), "utf8");
-    expect(doctorJson).toContain("<REDACTED:url-userinfo>");
     expect(doctorJson).not.toContain(URL_USERINFO);
     expect(doctorJson).not.toContain("user:pass");
   });

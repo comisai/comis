@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: CLI bootstrap offline path; errors propagate to CLI error handler.
 /**
- * Offline secrets write helpers.
+ * Offline secret-store helpers.
  *
- * Opens the encrypted SQLite store DIRECTLY without a running daemon.
- * ONLY to be called when the daemon is provably not running (daemon-free
- * first-time bootstrap path for `comis secrets set/import/list`).
+ * Writes open the encrypted SQLite store directly without a running daemon.
+ * Reads can select the file, encrypted, or env backend used by daemon startup.
+ * Only call direct store operations when the daemon is provably not running.
  *
  * Single-writer invariant: these functions MUST only be invoked after
  * isDaemonRunning() returns false. The daemon is the sole writer when running.
@@ -13,10 +13,11 @@
  * @module
  */
 
-import type { SecretMetadata } from "@comis/core";
+import type { CredentialStorageMode, SecretMetadata } from "@comis/core";
 import { loadEnvFile } from "@comis/core";
 import type { Result } from "@comis/shared";
-import { err } from "@comis/shared";
+import { err, ok } from "@comis/shared";
+import { createFileSecretStore } from "./file-secret-store.js";
 import { setupSecrets } from "./setup-secrets.js";
 import { createSqliteSecretStore } from "./sqlite-secret-store.js";
 
@@ -82,11 +83,10 @@ export function offlineSecretSet(opts: {
 /**
  * Daemon-free decrypted read of ONE secret.
  *
- * Breaks the gateway-token chicken-and-egg: `comis secrets get
- * COMIS_GATEWAY_TOKEN` previously required the daemon RPC, which required the
- * very token being fetched. Same trust model as the store itself — the caller
- * must hold SECRETS_MASTER_KEY (read from `envFilePath`, never process.env).
- * Returns ok(undefined) when the name is absent.
+ * Enables daemon-free gateway-token discovery because authenticating the RPC
+ * requires that token. Same trust model as the store itself — the caller must
+ * hold SECRETS_MASTER_KEY (read from `envFilePath`, never process.env). Returns
+ * ok(undefined) when the name is absent.
  */
 export function offlineSecretGet(opts: {
   name: string;
@@ -111,6 +111,34 @@ export function offlineSecretGet(opts: {
 
   const { crypto, dbPath } = setupResult.value;
   const store = createSqliteSecretStore(dbPath, crypto);
+  try {
+    return store.getDecrypted(opts.name);
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * Read one secret from the backend selected by the daemon's raw
+ * `security.storage` pre-read. Env mode has no separate store: callers overlay
+ * their process/.env snapshot after this returns `undefined`.
+ */
+export function offlineSecretGetForMode(opts: {
+  name: string;
+  mode: CredentialStorageMode;
+  dataDir: string;
+  envFilePath: string;
+}): Result<string | undefined, Error> {
+  if (opts.mode === "env") return ok(undefined);
+  if (opts.mode === "encrypted") {
+    return offlineSecretGet({
+      name: opts.name,
+      dataDir: opts.dataDir,
+      envFilePath: opts.envFilePath,
+    });
+  }
+
+  const store = createFileSecretStore({ dataDir: opts.dataDir });
   try {
     return store.getDecrypted(opts.name);
   } finally {

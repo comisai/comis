@@ -11,13 +11,11 @@
  *      registry-derived admin set (so every admin method is covered by the one
  *      check, not a subset).
  *   3. No scatter — NO `packages/daemon/src/api/*-handlers.ts` file contains
- *      `assertNotAgentOrigin` (single-chokepoint invariant: guards against a
- *      future half-migration that adds BOTH a chokepoint AND per-handler calls).
+ *      `assertNotAgentOrigin`; the check belongs only at the chokepoint.
  *
- * Sole `_agentId` injector:
- *   The ONLY daemon production site that injects `_agentId:` into an
- *   `rpcCall(...)` params object is `createAgentRpcCall` in
- *   `wiring/setup-tools.ts` (a one-entry allowlist pinned by file path).
+ * Authenticated `_agentId` injectors:
+ *   Fresh `_agentId` values may enter dispatch parameters only at the
+ *   in-process agent boundary and the validated capability-lease boundary.
  *
  * Soundness chain (documented for the next reader): the gateway boundary strips
  * external `_agentId`, so at the dispatch seam `_agentId`
@@ -210,7 +208,7 @@ describe("single deny-by-origin chokepoint in createRpcDispatch", () => {
       violations,
       formatViolations({
         description:
-          "Deny-by-origin must be ONE chokepoint in rpc-dispatch.ts — no per-handler assertNotAgentOrigin scatter (a half-migration adding both is a coverage-drift hazard).",
+          "Deny-by-origin must be one chokepoint in rpc-dispatch.ts with no per-handler assertNotAgentOrigin scatter.",
         violations,
         suggestedFix:
           "Remove the per-handler assertNotAgentOrigin call. The single chokepoint in rpc-dispatch.ts covers every admin-scoped method via ADMIN_METHODS.",
@@ -291,16 +289,12 @@ describe("the deny-by-origin set is the TRUE control plane (orch/agent-reachable
   });
 });
 
-describe("the sole legitimate _agentId injector reaches no admin handler", () => {
-  it("the ONLY daemon production site injecting `_agentId:` into an rpcCall(...) params object is wiring/setup-tools-capabilities.ts (createAgentRpcCall)", () => {
-    // Walk daemon/wiring/*.ts (the in-process dispatch wiring) and find every
-    // `_agentId:` PropertyAssignment whose enclosing CallExpression is
-    // `rpcCall(...)` — i.e. a fresh agent-origin injection into a dispatched
-    // params object. (Parameter-type decls like `_agentId: string,` and
-    // within-handler forwards of an already-present `params._agentId` are NOT
-    // injections and must not match. The web client injects `_agentId` into
-    // its OWN external requests, which the gateway strip removes
-    // before dispatch — that is a different package + an external origin.)
+describe("the authenticated _agentId injectors reach no admin handler", () => {
+  it("fresh `_agentId` assignments exist only at the in-process agent and validated lease boundaries", () => {
+    // Scan every production wiring object literal, not only direct rpcCall
+    // arguments. The capability endpoint now centralizes strip-then-inject in
+    // dispatchValidatedLeaseRpc before handing trusted params to its dispatch
+    // callback, so an enclosing-call-only scan would miss the real boundary.
     const injectorFiles = new Set<string>();
     const sites: ViolationCitation[] = [];
 
@@ -309,50 +303,27 @@ describe("the sole legitimate _agentId injector reaches no admin handler", () =>
       if (!src.includes("_agentId")) continue;
       const sf = ts.createSourceFile(file, src, ts.ScriptTarget.ES2023, true);
 
-      const visit = (n: ts.Node, inRpcCallArg: boolean): void => {
-        let nowInRpcCallArg = inRpcCallArg;
-        if (
-          ts.isCallExpression(n) &&
-          ts.isIdentifier(n.expression) &&
-          n.expression.text === "rpcCall"
-        ) {
-          // Descend into the arguments with the rpcCall-arg flag set.
-          for (const arg of n.arguments) visit(arg, true);
-          // The callee identifier itself is not an arg; stop here for this node.
-          return;
-        }
+      const visit = (n: ts.Node): void => {
         if (
           ts.isPropertyAssignment(n) &&
           ts.isIdentifier(n.name) &&
-          n.name.text === "_agentId" &&
-          inRpcCallArg
+          n.name.text === "_agentId"
         ) {
           injectorFiles.add(file);
           sites.push({ file: file.replace(REPO_ROOT + "/", ""), line: lineOf(sf, n) });
         }
-        ts.forEachChild(n, (c) => visit(c, nowInRpcCallArg));
+        ts.forEachChild(n, visit);
       };
-      ts.forEachChild(sf, (c) => visit(c, false));
+      ts.forEachChild(sf, visit);
     }
 
-    // Soundness: there must be AT LEAST one injector (otherwise the agent loop
-    // has no origin signal at all — a vacuous pass), and it must be EXACTLY the
-    // pinned createAgentRpcCall file.
+    // Soundness: both authenticated origins must inject the signal, and no
+    // third production wiring site may fabricate it.
     expect(injectorFiles.size, `injector sites found:\n${sites.map((s) => `  ${s.file}:${s.line}`).join("\n")}`).toBeGreaterThan(0);
 
-    // The legitimate _agentId injectors (both audited, both routing through the
-    // SAME createRpcDispatch deny-by-origin chokepoint):
-    //   1. createAgentRpcCall (wiring/setup-tools-capabilities.ts) — the in-process
-    //      agent path; extracted from setup-tools.ts for the file-size cap.
-    //   2. createCapabilityEndpoint (wiring/setup-capability-endpoint.ts) — the
-    //      loopback capability endpoint. It injects `_agentId: lease.agentId`
-    //      (after a successful lease validate) PRECISELY so the shipped
-    //      assertNotAgentOrigin chokepoint denies admin methods by origin. Both
-    //      inject ONLY after their own origin authentication (resolveAutonomy /
-    //      lease validate), so neither creates an un-audited agent-origin path.
     const expectedInjectors = new Set([
       resolve(WIRING_DIR, "setup-tools-capabilities.ts"),
-      resolve(WIRING_DIR, "setup-capability-endpoint.ts"),
+      resolve(WIRING_DIR, "setup-capability-session-spawn.ts"),
     ]);
     const unexpected = [...injectorFiles].filter((f) => !expectedInjectors.has(f));
     const violations: ViolationCitation[] = unexpected.map((f) => ({
@@ -363,17 +334,23 @@ describe("the sole legitimate _agentId injector reaches no admin handler", () =>
       violations,
       formatViolations({
         description:
-          "The ONLY legitimate _agentId injectors into an rpcCall(...) are createAgentRpcCall (setup-tools-capabilities.ts) and createCapabilityEndpoint (setup-capability-endpoint.ts). A new injector site would create an un-audited agent-origin path; route the call through one of those instead.",
+          "Fresh _agentId values may be injected only by the in-process agent boundary or dispatchValidatedLeaseRpc after lease validation.",
         violations,
         suggestedFix:
-          "Inject _agentId only via createAgentRpcCall or createCapabilityEndpoint. Any other in-process rpcCall must not set _agentId.",
-        designRef: "sole _agentId injectors: setup-tools-capabilities.ts and setup-capability-endpoint.ts",
+          "Route agent calls through createAgentRpcCall and jailed calls through dispatchValidatedLeaseRpc; do not add another injector.",
+        designRef: "authenticated _agentId injection boundaries",
       }),
     ).toEqual([]);
 
-    // Pin the expectation explicitly: exactly the two audited injector files.
+    const endpointSource = readFileSync(
+      resolve(WIRING_DIR, "setup-capability-endpoint.ts"),
+      "utf8",
+    );
+    expect(endpointSource).toContain("dispatchValidatedLeaseRpc({");
+    expect(endpointSource).not.toContain("_agentId:");
+
     expect([...injectorFiles].map((f) => f.replace(REPO_ROOT + "/", "")).sort()).toEqual([
-      "packages/daemon/src/wiring/setup-capability-endpoint.ts",
+      "packages/daemon/src/wiring/setup-capability-session-spawn.ts",
       "packages/daemon/src/wiring/setup-tools-capabilities.ts",
     ]);
   });

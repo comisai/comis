@@ -3,8 +3,9 @@
  * DeliveryQueuePort -- hexagonal architecture boundary for crash-safe delivery.
  *
  * Provides persistence for outbound messages so they survive daemon crashes.
- * The queue uses at-least-once delivery semantics: messages are enqueued before
- * send, acknowledged on success, and retried on failure.
+ * A platform call is never blindly replayed: drainers atomically claim pending
+ * rows, and an interrupted in-flight row is parked because its remote outcome
+ * cannot be reconstructed from local state.
  *
  * The createNoOpDeliveryQueue() factory lives at ../delivery/no-op-delivery-queue.ts;
  * this file is type-only.
@@ -47,6 +48,7 @@ export interface DeliveryQueueEntry {
   readonly expireAt: number;
   readonly lastAttemptAt: number | null;
   readonly nextRetryAt: number | null;
+  /** Fixed content-free outcome category; never a raw SDK/platform error. */
   readonly lastError: string | null;
   readonly traceId: string | null;
 }
@@ -74,18 +76,28 @@ export interface DeliveryQueuePort {
   enqueue(entry: DeliveryQueueEnqueueInput): Promise<Result<string, Error>>;
 
   /**
-   * Enqueue a new outbound message with status='in_flight' (process-local lease).
+   * Enqueue a new outbound message with status='in_flight'.
    *
    * Used by the channel-side synchronous-send path: insert as 'in_flight' so the
    * recurring drainer's `WHERE status='pending'` filter does not race-pick the row
    * mid-send. Same semantics as enqueue() except for the initial status.
-   * On crash, the startup sweep (recoverInFlight) resets these rows back to 'pending'.
+   * On crash, the startup sweep parks these rows as failed because the platform
+   * may already have accepted the message.
    *
    * Emits delivery:enqueued (same event as enqueue()) -- universal observability.
    *
    * @returns The assigned entry ID on success.
    */
   enqueueInFlight(entry: DeliveryQueueEnqueueInput): Promise<Result<string, Error>>;
+
+  /**
+   * Atomically claim one due pending row for a platform attempt.
+   *
+   * The adapter performs a compare-and-swap (`pending` -> `in_flight`). A false
+   * result means another drainer already owns the row or it is no longer due.
+   * Callers must not invoke the platform unless this returns true.
+   */
+  claim(id: string): Promise<Result<boolean, Error>>;
 
   /**
    * Mark an entry as successfully delivered.
@@ -97,7 +109,7 @@ export interface DeliveryQueuePort {
   /**
    * Record a transient failure and schedule a retry.
    * @param id - The queue entry ID
-   * @param error - Error description
+   * @param error - Fixed content-free rejection category
    * @param nextRetryAt - Epoch ms for next retry attempt
    */
   nack(id: string, error: string, nextRetryAt: number): Promise<Result<void, Error>>;
@@ -105,12 +117,13 @@ export interface DeliveryQueuePort {
   /**
    * Mark an entry as permanently failed (no more retries).
    * @param id - The queue entry ID
-   * @param error - Error description
+   * @param error - Fixed content-free terminal outcome category
    */
   fail(id: string, error: string): Promise<Result<void, Error>>;
 
   /**
-   * Retrieve all pending entries ready for delivery (scheduled_at <= now).
+   * Retrieve all pending entries ready for delivery (scheduled_at and any
+   * retry deadline are both <= now).
    * Ordered by created_at ASC (oldest first).
    */
   pendingEntries(): Promise<Result<DeliveryQueueEntry[], Error>>;
@@ -142,13 +155,14 @@ export interface DeliveryQueuePort {
   statusCounts(channelType?: string): Promise<Result<DeliveryQueueStatusCounts, Error>>;
 
   /**
-   * Reset all rows with status='in_flight' to status='pending', clearing last_error.
+   * Park all rows with status='in_flight' as failed with a fixed, content-free
+   * uncertainty reason.
    *
-   * Called once at daemon startup before the startup drain. Treats
-   * 'in_flight' as a process-local lease -- any in_flight row left over from a
-   * prior daemon process is by definition stale and must be re-attempted.
+   * Called once at daemon startup before the startup drain. A prior process may
+   * have crashed after the platform accepted the message but before ack(), so
+   * replaying a stale row could duplicate an irreversible outward effect.
    *
-   * @returns The number of rows recovered (transitioned in_flight -> pending).
+   * @returns The number of rows parked (transitioned in_flight -> failed).
    */
   recoverInFlight(): Promise<Result<number, Error>>;
 }

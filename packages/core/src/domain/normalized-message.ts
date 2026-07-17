@@ -2,6 +2,8 @@
 import { ok, err, type Result } from "@comis/shared";
 import { z } from "zod";
 
+const MAX_DATE_EPOCH_MS = 8_640_000_000_000_000;
+
 /**
  * Voice-specific metadata for voice notes and audio messages.
  */
@@ -38,6 +40,44 @@ export const AttachmentSchema = z.strictObject({
 export type Attachment = z.infer<typeof AttachmentSchema>;
 
 /**
+ * One physical channel message represented inside a synthetic coalesced turn.
+ *
+ * The queue may combine multiple rapid messages into one model prompt. This
+ * content-preserving projection keeps the original identities available for
+ * durable session provenance without retaining adapter-specific metadata.
+ */
+const OriginalInboundMessageSchema = z.strictObject({
+    id: z.guid(),
+    channelId: z.string().min(1),
+    channelType: z.string().min(1),
+    senderId: z.string().min(1),
+    text: z.string().max(32768),
+    timestamp: z.number().int().positive().max(MAX_DATE_EPOCH_MS),
+  });
+
+export type OriginalInboundMessage = z.infer<typeof OriginalInboundMessageSchema>;
+
+/** Session custom-entry payload containing the exact physical inbound batch. */
+const InboundMessageProvenanceBatchSchema = z.strictObject({
+    schemaVersion: z.literal(1),
+    batchId: z.guid(),
+    chunkIndex: z.number().int().nonnegative(),
+    chunkCount: z.number().int().positive().max(32),
+    recordedAt: z.number().int().positive().max(MAX_DATE_EPOCH_MS),
+    messages: z.array(OriginalInboundMessageSchema).min(1).max(10_000),
+  }).refine((batch) => batch.chunkIndex < batch.chunkCount, {
+    message: "chunkIndex must be less than chunkCount",
+    path: ["chunkIndex"],
+  });
+
+type InboundMessageProvenanceBatch = z.infer<
+  typeof InboundMessageProvenanceBatchSchema
+>;
+
+/** SDK custom-entry discriminator for structured inbound provenance. */
+export const INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE = "comis.inbound-message-provenance";
+
+/**
  * NormalizedMessage: Channel-agnostic representation of an incoming message.
  *
  * Every channel adapter converts its native message format into this shape
@@ -62,13 +102,14 @@ export const NormalizedMessageSchema = z.strictObject({
      * field is:
      *
      * - `traceId?: string` — Channel-ingress trace identifier.
-     *   Auto-injected by channel adapters before the handler fanout; the
-     *   orchestrator's `adapter.onMessage` wrap reads this via
-     *   `getMessageTraceId(msg)` to reuse the ingress traceId in its
-     *   `runWithContext` call (defense-in-depth).
+     *   Auto-injected by channel adapters before the handler fanout; downstream
+     *   orchestration verifies it against the inherited request scope and uses
+     *   it when an unscoped custom adapter needs a fallback entry boundary.
      *   Must be a valid UUID when present (z.guid validation).
      */
     metadata: z.looseObject({ traceId: z.guid().optional() }).default({}),
+    /** Exact physical messages represented by a synthetic coalesced turn. */
+    originalMessages: z.array(OriginalInboundMessageSchema).min(1).max(10_000).optional(),
   });
 
 export type NormalizedMessage = z.infer<typeof NormalizedMessageSchema>;
@@ -84,6 +125,33 @@ export function parseMessage(raw: unknown): Result<NormalizedMessage, z.ZodError
   return err(result.error);
 }
 
+/** Parse a structured inbound-provenance custom-entry payload. */
+export function parseInboundMessageProvenanceBatch(
+  raw: unknown,
+): Result<InboundMessageProvenanceBatch, z.ZodError> {
+  const result = InboundMessageProvenanceBatchSchema.safeParse(raw);
+  if (result.success) return ok(result.data);
+  return err(result.error);
+}
+
+/**
+ * Return the physical inbound messages represented by a normalized message.
+ * An uncoalesced message projects to a one-element list.
+ */
+export function getOriginalInboundMessages(
+  message: NormalizedMessage,
+): OriginalInboundMessage[] {
+  if (message.originalMessages !== undefined) return message.originalMessages;
+  return [{
+    id: message.id,
+    channelId: message.channelId,
+    channelType: message.channelType,
+    senderId: message.senderId,
+    text: message.text,
+    timestamp: message.timestamp,
+  }];
+}
+
 /**
  * Extract the channel-ingress trace identifier from a NormalizedMessage.
  *
@@ -92,7 +160,7 @@ export function parseMessage(raw: unknown): Result<NormalizedMessage, z.ZodError
  * guards against messages that never passed through the schema validator
  * (e.g. persisted messages or ones constructed from external sources).
  *
- * Usage (orchestrator wrap site):
+ * Usage (inbound boundary):
  * ```typescript
  * const traceId = getMessageTraceId(msg) ?? randomUUID();
  * runWithContext({ traceId, channelType: msg.channelType }, () => processInbound(msg));

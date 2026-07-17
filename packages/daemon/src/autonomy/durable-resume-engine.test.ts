@@ -1,33 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for the durable resume engine, covering both units:
- *   - `reconcileLedgerRow` — the exactly-once recovery resolution. Tests named
- *     "reconcile: ..." so `vitest -t reconcile` selects them.
+ *   - `reconcileLedgerRow` — atomic uncertainty parking and escalation without
+ *     a channel-history query or replay.
  *   - `createDurableResumeEngine` — resume-or-orphan + cap rehydrate + bounded
  *     recovery.
  *
- * The stubs (a recording ledger, a configurable channel, spy replaySend/notify,
- * a fake clock) keep the engine exhaustively unit-testable with no real I/O — it
+ * The stubs (a recording ledger, notify spy, and fake clock) keep the engine
+ * exhaustively unit-testable with no real I/O — it
  * is bound to the real stores / LeaseManager / channel adapters by the wiring.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import Database from "better-sqlite3";
 import { ok, err, type Result } from "@comis/shared";
-import type {
-  OutwardSendLedgerPort,
-  OutwardSendRecord,
-  OutwardSendState,
-  ReconcileOutcome,
-  ChannelPort,
-  ReconcileSendOutcome,
-  DurableRunRecord,
-  DurableRunPort,
-  ClockPort,
-  TimerPort,
-  TimerHandle,
+import {
   TypedEventBus,
+  type OutwardSendLedgerPort,
+  type OutwardSendRecord,
+  type OutwardSendState,
+  type DurableRunRecord,
+  type DurableRunPort,
+  type InvalidDurableRunCheckpoint,
+  type ClockPort,
+  type TimerPort,
+  type TimerHandle,
 } from "@comis/core";
 import type { ComisLogger, LeaseManager } from "@comis/infra";
 import {
@@ -45,7 +44,13 @@ import {
   type OrchestrateResumeSeams,
   type OrchestrateResumeWiring,
 } from "../wiring/setup-durable-resume.js";
-import { createResultRefStore } from "@comis/skills/tools";
+import { createResultRefStore, safeResultRunId } from "@comis/skills/tools";
+import {
+  createSqliteDurableRunStore,
+  createSqliteOutwardSendLedger,
+  ensureDurableRunTable,
+  ensureOutwardLedgerTable,
+} from "@comis/memory";
 
 // ─── test logger (records nothing; the engine never inspects it) ──────────────
 function makeLogger() {
@@ -74,12 +79,17 @@ function makeLogger() {
 // ─── content-free eventBus spy (the engine emits transition events) ───────────
 function makeEventBus() {
   const events: { event: string; payload: Record<string, unknown> }[] = [];
-  return {
-    events,
-    emit(event: string, payload: Record<string, unknown>): void {
-      events.push({ event, payload });
-    },
-  };
+  const eventBus = new TypedEventBus();
+  eventBus.on("delivery:outward_ledger_transition", (payload) => {
+    events.push({ event: "delivery:outward_ledger_transition", payload });
+  });
+  eventBus.on("durable:orphaned", (payload) => {
+    events.push({ event: "durable:orphaned", payload });
+  });
+  eventBus.on("durable:resumed", (payload) => {
+    events.push({ event: "durable:resumed", payload });
+  });
+  return Object.assign(eventBus, { events });
 }
 
 // ─── a recording ledger stub: tracks every method call, returns ok by default ─
@@ -90,13 +100,22 @@ interface LedgerCall {
 function makeLedger(opts?: {
   unreconciled?: OutwardSendRecord[];
   lookupRow?: OutwardSendRecord;
+  uncertaintyRoots?: readonly string[];
+  uncertaintyResult?: Result<boolean, Error>;
+  parkResult?: Result<boolean, Error>;
 }): OutwardSendLedgerPort & { calls: LedgerCall[] } {
   const calls: LedgerCall[] = [];
+  const uncertainRoots = new Set(opts?.uncertaintyRoots ?? []);
+  let pending = [...(opts?.unreconciled ?? [])];
   const record = (method: string, ...args: unknown[]): void => {
     calls.push({ method, args });
   };
   return {
     calls,
+    allocateStep: async (rootRunId, operationId) => {
+      record("allocateStep", rootRunId, operationId);
+      return ok(0);
+    },
     lookup: async (rootRunId, stepIndex) => {
       record("lookup", rootRunId, stepIndex);
       return ok(opts?.lookupRow);
@@ -117,25 +136,26 @@ function makeLedger(opts?: {
       record("markFailed", rootRunId, stepIndex, errorKind);
       return ok(undefined);
     },
-    resolveReconcile: async (rootRunId, stepIndex, outcome) => {
-      record("resolveReconcile", rootRunId, stepIndex, outcome);
-      return ok(undefined);
+    parkUncertain: async (rootRunId, stepIndex) => {
+      record("parkUncertain", rootRunId, stepIndex);
+      const result = opts?.parkResult ?? ok(true);
+      if (result.ok && result.value) {
+        uncertainRoots.add(rootRunId);
+        pending = pending.filter(
+          (row) => row.rootRunId !== rootRunId || row.stepIndex !== stepIndex,
+        );
+      }
+      return result;
     },
-    listUnreconciled: async () => {
-      record("listUnreconciled");
-      return ok(opts?.unreconciled ?? []);
+    hasUncertainty: async (rootRunId) => {
+      record("hasUncertainty", rootRunId);
+      return opts?.uncertaintyResult ?? ok(uncertainRoots.has(rootRunId));
+    },
+    listUnreconciled: async (limit) => {
+      record("listUnreconciled", limit);
+      return ok(pending.slice(0, limit));
     },
   };
-}
-
-// ─── a configurable channel stub (reconcileSend present or absent) ────────────
-function makeChannel(reconcile?: () => Promise<Result<ReconcileSendOutcome, Error>>): ChannelPort {
-  // A minimal ChannelPort — only reconcileSend matters for these tests; the rest
-  // throw if touched (they must not be).
-  const stub = {
-    reconcileSend: reconcile,
-  } as unknown as ChannelPort;
-  return stub;
 }
 
 // ─── a single unknown_after_send ledger row ──────────────────────────────────
@@ -148,8 +168,11 @@ function ledgerRow(overrides?: Partial<OutwardSendRecord>): OutwardSendRecord {
     channelType: "echo",
     channelId: "chan-1",
     state: "unknown_after_send" as OutwardSendState,
-    contentDigest: "deadbeef",
+    operationKind: "message_send",
+    operationFingerprint: "b".repeat(64),
+    contentDigest: "a".repeat(64),
     attemptCount: 1,
+    attemptedAtMs: 100_000,
     ...overrides,
   };
 }
@@ -159,144 +182,196 @@ function makeReconcileDeps(
 ): ReconcileLedgerDeps {
   return {
     ledger: makeLedger(),
-    channel: makeChannel(),
-    replaySend: vi.fn(async () => ok({ platformMessageId: "pm-replay" })),
     notify: vi.fn(),
     nowMs: () => 1_000_000,
     logger: makeLogger(),
+    eventBus: makeEventBus(),
     ...overrides,
   };
 }
 
-describe("reconcileLedgerRow exactly-once recovery resolution", () => {
-  it("reconcile: sent → resolveReconcile('sent') + commit(platformMessageId), NO replay (exactly once)", async () => {
+describe("reconcileLedgerRow conservative recovery parking", () => {
+  it("atomically parks an uncertain row and only records the parking transition", async () => {
     const ledger = makeLedger();
-    const replaySend = vi.fn(async () => ok({ platformMessageId: "should-not-happen" }));
-    const channel = makeChannel(async () => ok({ kind: "sent", platformMessageId: "pm-123" }));
-    const deps = makeReconcileDeps({ ledger, channel, replaySend });
-
-    const r = await reconcileLedgerRow(ledgerRow(), deps);
-
-    expect(r.ok).toBe(true);
-    expect(replaySend).not.toHaveBeenCalled(); // no double-send
-    const methods = ledger.calls.map((c) => c.method);
-    expect(methods).toContain("resolveReconcile");
-    expect(methods).toContain("commit");
-    // resolveReconcile got "sent"; commit got the platformMessageId
-    const resolve = ledger.calls.find((c) => c.method === "resolveReconcile");
-    expect(resolve?.args[2]).toBe("sent" satisfies ReconcileOutcome);
-    const commit = ledger.calls.find((c) => c.method === "commit");
-    expect(commit?.args[2]).toBe("pm-123");
-  });
-
-  it("reconcile: not_sent → resolveReconcile('not_sent') then EXACTLY ONE replay, then commit", async () => {
-    const ledger = makeLedger();
-    const replaySend = vi.fn(async () => ok({ platformMessageId: "pm-replayed" }));
-    const channel = makeChannel(async () => ok({ kind: "not_sent" }));
-    const deps = makeReconcileDeps({ ledger, channel, replaySend });
-
-    const r = await reconcileLedgerRow(ledgerRow(), deps);
-
-    expect(r.ok).toBe(true);
-    expect(replaySend).toHaveBeenCalledTimes(1); // exactly one send
-    const resolve = ledger.calls.find((c) => c.method === "resolveReconcile");
-    expect(resolve?.args[2]).toBe("not_sent" satisfies ReconcileOutcome);
-    const commit = ledger.calls.find((c) => c.method === "commit");
-    expect(commit?.args[2]).toBe("pm-replayed");
-  });
-
-  it("reconcile: unresolved → resolveReconcile('unresolved') + notify escalation, NO replay, NO commit", async () => {
-    const ledger = makeLedger();
-    const replaySend = vi.fn(async () => ok({ platformMessageId: "nope" }));
     const notify = vi.fn();
-    const channel = makeChannel(async () => ok({ kind: "unresolved" }));
-    const deps = makeReconcileDeps({ ledger, channel, replaySend, notify });
+    const deps = makeReconcileDeps({ ledger, notify });
 
     const r = await reconcileLedgerRow(ledgerRow(), deps);
 
-    expect(r.ok).toBe(true);
-    expect(replaySend).not.toHaveBeenCalled();
+    expect(r).toEqual({ ok: true, value: "parked" });
+    expect(ledger.calls.map((call) => call.method)).toEqual(["parkUncertain"]);
     expect(notify).toHaveBeenCalledTimes(1);
-    const resolve = ledger.calls.find((c) => c.method === "resolveReconcile");
-    expect(resolve?.args[2]).toBe("unresolved" satisfies ReconcileOutcome);
+  });
+
+  it("does not notify when another recovery worker already won the park", async () => {
+    const ledger = makeLedger({ parkResult: ok(false) });
+    const notify = vi.fn();
+    const deps = makeReconcileDeps({ ledger, notify });
+
+    const r = await reconcileLedgerRow(ledgerRow(), deps);
+
+    expect(r).toEqual({ ok: true, value: "parked" });
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the atomic park write fails", async () => {
+    const ledger = makeLedger({ parkResult: err(new Error("Bearer secret-value")) });
+    const logger = makeLogger();
+    const notify = vi.fn();
+    const deps = makeReconcileDeps({
+      ledger,
+      logger,
+      notify,
+    });
+
+    const result = await reconcileLedgerRow(ledgerRow(), deps);
+
+    expect(result.ok).toBe(false);
+    expect(notify).not.toHaveBeenCalled();
+    expect(JSON.stringify(logger.calls)).not.toContain("secret-value");
+  });
+
+  it("emits one content-free parked transition for the atomic winner", async () => {
+    const ledger = makeLedger();
+    const notify = vi.fn();
+    const eventBus = makeEventBus();
+    const deps = makeReconcileDeps({
+      ledger,
+      notify,
+      eventBus,
+    });
+
+    const result = await reconcileLedgerRow(ledgerRow(), deps);
+
+    expect(result.ok).toBe(true);
+    expect(ledger.calls.some((call) => call.method === "commit")).toBe(false);
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ kind: "send_unresolved" }));
+    expect(eventBus.events).toContainEqual({
+      event: "delivery:outward_ledger_transition",
+      payload: expect.objectContaining({ transition: "park", outcome: "parked" }),
+    });
+  });
+
+  it("two SQLite connections atomically park once and only the winner notifies", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "comis-outward-park-"));
+    const dbPath = join(dir, "memory.db");
+    const dbA = new Database(dbPath);
+    const dbB = new Database(dbPath);
+    try {
+      ensureOutwardLedgerTable(dbA);
+      ensureOutwardLedgerTable(dbB);
+      const ledgerA = createSqliteOutwardSendLedger(dbA, () => 250_000);
+      const ledgerB = createSqliteOutwardSendLedger(dbB, () => 250_000);
+      expect(await ledgerA.begin({
+        rootRunId: "root-concurrent",
+        stepIndex: 0,
+        agentId: "agent-a",
+        channelType: "echo",
+        channelId: "chan-a",
+        operationKind: "message_send",
+        operationFingerprint: "c".repeat(64),
+        contentDigest: "b".repeat(64),
+      })).toEqual({ ok: true, value: undefined });
+      expect(await ledgerA.markUnknown("root-concurrent", 0))
+        .toEqual({ ok: true, value: undefined });
+      const rowA = await ledgerA.lookup("root-concurrent", 0);
+      const rowB = await ledgerB.lookup("root-concurrent", 0);
+      if (!rowA.ok || rowA.value === undefined || !rowB.ok || rowB.value === undefined) {
+        throw new Error("test ledger row unavailable");
+      }
+      const notifyA = vi.fn();
+      const notifyB = vi.fn();
+
+      const [first, second] = await Promise.all([
+        reconcileLedgerRow(rowA.value, makeReconcileDeps({ ledger: ledgerA, notify: notifyA })),
+        reconcileLedgerRow(rowB.value, makeReconcileDeps({ ledger: ledgerB, notify: notifyB })),
+      ]);
+
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      expect(notifyA.mock.calls.length + notifyB.mock.calls.length).toBe(1);
+      const final = await ledgerA.lookup("root-concurrent", 0);
+      expect(final.ok && final.value?.state).toBe("unresolved");
+    } finally {
+      dbB.close();
+      dbA.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("parks send_attempt_started rows that crashed before the live send returned", async () => {
+    const ledger = makeLedger();
+    const notify = vi.fn();
+    const deps = makeReconcileDeps({ ledger, notify });
+
+    const r = await reconcileLedgerRow(ledgerRow({ state: "send_attempt_started" }), deps);
+
+    expect(r.ok).toBe(true);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(ledger.calls.find((c) => c.method === "parkUncertain")).toBeDefined();
     expect(ledger.calls.find((c) => c.method === "commit")).toBeUndefined();
   });
 
-  it("reconcile: channel WITHOUT reconcileSend → treated as unresolved (park+escalate), NO replay (Pitfall 2)", async () => {
+  it("keeps recovery notification and events content-free", async () => {
     const ledger = makeLedger();
-    const replaySend = vi.fn(async () => ok({ platformMessageId: "nope" }));
     const notify = vi.fn();
-    // channel is undefined (no live adapter) — the load-bearing fallback
-    const deps = makeReconcileDeps({ ledger, channel: undefined, replaySend, notify });
+    const eventBus = makeEventBus();
+    const deps = makeReconcileDeps({ ledger, notify, eventBus });
 
     const r = await reconcileLedgerRow(ledgerRow(), deps);
 
     expect(r.ok).toBe(true);
-    expect(replaySend).not.toHaveBeenCalled(); // never a double-send dressed as a reconcile
     expect(notify).toHaveBeenCalledTimes(1);
-    const resolve = ledger.calls.find((c) => c.method === "resolveReconcile");
-    expect(resolve?.args[2]).toBe("unresolved" satisfies ReconcileOutcome);
+    expect(JSON.stringify(notify.mock.calls)).not.toContain("a".repeat(64));
+    expect(JSON.stringify(eventBus.events)).not.toContain("a".repeat(64));
   });
 
-  it("reconcile: channel present but reconcileSend method absent (undefined) → unresolved, NO replay", async () => {
+  it("parks safely when no event emitter is configured", async () => {
     const ledger = makeLedger();
-    const replaySend = vi.fn(async () => ok({ platformMessageId: "nope" }));
     const notify = vi.fn();
-    const channel = makeChannel(undefined); // adapter exists but cannot reconcile
-    const deps = makeReconcileDeps({ ledger, channel, replaySend, notify });
+    const deps = makeReconcileDeps({ ledger, notify, eventBus: undefined });
 
     const r = await reconcileLedgerRow(ledgerRow(), deps);
 
     expect(r.ok).toBe(true);
-    expect(replaySend).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledTimes(1);
   });
 
-  it("reconcile: not_sent + replay fails with a PERMANENT error → markFailed('permanent'), retry budget skipped", async () => {
+  it("parks reaction uncertainty without fabricating a platform message id", async () => {
     const ledger = makeLedger();
-    // 'chat not found' matches isPermanentError
-    const replaySend = vi.fn(async () => err(new Error("Bad Request: chat not found")));
-    const channel = makeChannel(async () => ok({ kind: "not_sent" }));
-    const deps = makeReconcileDeps({ ledger, channel, replaySend });
+    const deps = makeReconcileDeps({ ledger });
 
-    const r = await reconcileLedgerRow(ledgerRow(), deps);
-
-    expect(r.ok).toBe(true); // a permanent failure is a resolved row, not an engine error
-    expect(replaySend).toHaveBeenCalledTimes(1); // one attempt, then no more
-    const markFailed = ledger.calls.find((c) => c.method === "markFailed");
-    expect(markFailed).toBeDefined();
-    expect(markFailed?.args[2]).toBe("permanent");
-    // a permanent failure must NOT commit
-    expect(ledger.calls.find((c) => c.method === "commit")).toBeUndefined();
-  });
-
-  it("reconcile: not_sent + replay fails with a TRANSIENT error → row LEFT for the next tick (no markFailed, no commit)", async () => {
-    const ledger = makeLedger();
-    const replaySend = vi.fn(async () => err(new Error("ETIMEDOUT socket hang up")));
-    const channel = makeChannel(async () => ok({ kind: "not_sent" }));
-    const deps = makeReconcileDeps({ ledger, channel, replaySend });
-
-    const r = await reconcileLedgerRow(ledgerRow(), deps);
+    const r = await reconcileLedgerRow(
+      ledgerRow({ operationKind: "message_react" }),
+      deps,
+    );
 
     expect(r.ok).toBe(true);
-    expect(replaySend).toHaveBeenCalledTimes(1);
-    // transient → neither terminal markFailed nor commit; the next boot retries
     expect(ledger.calls.find((c) => c.method === "markFailed")).toBeUndefined();
     expect(ledger.calls.find((c) => c.method === "commit")).toBeUndefined();
   });
 
-  it("reconcile: an already-committed row is a no-op — no reconcileSend, no replaySend", async () => {
+  it("never mutates a row beyond the single atomic park operation", async () => {
     const ledger = makeLedger();
-    const replaySend = vi.fn(async () => ok({ platformMessageId: "nope" }));
-    const reconcileSpy = vi.fn(async () => ok({ kind: "not_sent" } as ReconcileSendOutcome));
-    const channel = makeChannel(reconcileSpy);
-    const deps = makeReconcileDeps({ ledger, channel, replaySend });
+    const deps = makeReconcileDeps({ ledger });
+
+    const r = await reconcileLedgerRow(ledgerRow(), deps);
+
+    expect(r.ok).toBe(true);
+    expect(ledger.calls).toEqual([
+      { method: "parkUncertain", args: ["root-1", 0] },
+    ]);
+  });
+
+  it("an already-committed row is a pure no-op", async () => {
+    const ledger = makeLedger();
+    const notify = vi.fn();
+    const deps = makeReconcileDeps({ ledger, notify });
 
     const r = await reconcileLedgerRow(ledgerRow({ state: "committed" }), deps);
 
     expect(r.ok).toBe(true);
-    expect(reconcileSpy).not.toHaveBeenCalled();
-    expect(replaySend).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
     expect(ledger.calls).toHaveLength(0); // pure no-op
   });
 });
@@ -308,16 +383,26 @@ describe("reconcileLedgerRow exactly-once recovery resolution", () => {
 const VALID_CAPS: DurableRunRecord["caps"] = ["orch:read", "orch:message"];
 
 function durableRecord(overrides?: Partial<DurableRunRecord>): DurableRunRecord {
+  const rootRunId = overrides?.rootRunId ?? "root-1";
   return {
-    rootRunId: "root-1",
+    checkpointId: overrides?.checkpointId ?? `checkpoint-${rootRunId}`,
+    rootRunId,
+    agentId: "agent-a",
+    sessionKey: "tenant-a:user-a:chat-a",
+    ownerTenantId: "tenant-a",
+    ownerUserId: "user-a",
+    deliveryOrigin: null,
     spawnTree: ["lease-1"],
     caps: VALID_CAPS,
     leaseIds: ["lease-1"],
     budgetConsumed: 0,
+    rootBudget: { startedAtMs: 400_000, tokensConsumed: 0, usdConsumed: 0 },
     cronOrigin: null,
-    stepIndex: 0,
+    trustLevel: "user",
     status: "running",
     lastHeartbeatAt: 500_000,
+    scriptRef: null,
+    checkpointRef: null,
     ...overrides,
   };
 }
@@ -328,7 +413,8 @@ interface DurableCall {
 }
 function makeDurableRuns(opts?: {
   resumable?: DurableRunRecord[];
-  byRootRun?: Map<string, DurableRunRecord>;
+  invalid?: InvalidDurableRunCheckpoint[];
+  byCheckpoint?: Map<string, DurableRunRecord>;
 }): DurableRunPort & { calls: DurableCall[] } {
   const calls: DurableCall[] = [];
   const rec = (method: string, ...args: unknown[]): void => {
@@ -342,13 +428,23 @@ function makeDurableRuns(opts?: {
     },
     listResumable: async () => {
       rec("listResumable");
-      return ok(opts?.resumable ?? []);
+      return ok({ records: opts?.resumable ?? [], invalid: opts?.invalid ?? [] });
     },
-    getByRootRun: async (rootRunId) => {
-      rec("getByRootRun", rootRunId);
-      const found = opts?.byRootRun?.get(rootRunId);
+    getByCheckpoint: async (checkpointId) => {
+      rec("getByCheckpoint", checkpointId);
+      const found = opts?.byCheckpoint?.get(checkpointId)
+        ?? [...(opts?.byCheckpoint?.values() ?? [])]
+          .find((record) => record.checkpointId === checkpointId);
       // default: echo a running record so the re-read passes unless overridden
-      return ok(found ?? opts?.resumable?.find((r) => r.rootRunId === rootRunId));
+      return ok(found ?? opts?.resumable?.find((r) => r.checkpointId === checkpointId));
+    },
+    claimForResume: async (claim) => {
+      rec("claimForResume", claim);
+      const found = opts?.byCheckpoint?.get(claim.checkpointId)
+        ?? opts?.resumable?.find((record) => record.checkpointId === claim.checkpointId);
+      return found === undefined
+        ? ok({ kind: "not_found" as const })
+        : ok({ kind: "claimed" as const, record: found });
     },
     markOrphaned: async (rootRunId, reason) => {
       rec("markOrphaned", rootRunId, reason);
@@ -366,10 +462,7 @@ function makeDurableRuns(opts?: {
       rec("invalidateForRevoke", rootRunId);
       return ok(undefined);
     },
-    allocateOutwardStep: async (rootRunId) => {
-      rec("allocateOutwardStep", rootRunId);
-      return ok(0);
-    },
+    countByStatus: async () => ok({ orphaned: 0, revoked: 0, running: 0, completed: 0 }),
   };
 }
 
@@ -377,10 +470,8 @@ function makeEngineDeps(overrides: Partial<DurableResumeEngineDeps>): DurableRes
   return {
     durableRuns: makeDurableRuns(),
     ledger: makeLedger(),
-    channelFor: () => makeChannel(),
     remintLease: vi.fn((input) => ({ leaseId: `lease-for-${input.rootRunId}`, bearer: "bearer-x" })),
     resumeRun: vi.fn(async () => ok(undefined)),
-    replaySend: vi.fn(async () => ok({ platformMessageId: "pm" })),
     notify: vi.fn(),
     nowMs: () => 1_000_000,
     recoveryBudgetMs: 60_000,
@@ -391,8 +482,263 @@ function makeEngineDeps(overrides: Partial<DurableResumeEngineDeps>): DurableRes
 }
 
 describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () => {
-  it("resume happy path: re-mints a lease passing record.caps VERBATIM, then resumes from stepIndex (verbatim-caps-passed-to-mint)", async () => {
-    const record = durableRecord({ caps: VALID_CAPS });
+  it("two engines racing the same SQLite source mint and resume exactly one replacement", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "comis-resume-engine-race-"));
+    const dbPath = join(dir, "memory.db");
+    const dbA = new Database(dbPath);
+    const dbB = new Database(dbPath);
+    try {
+      ensureDurableRunTable(dbA);
+      ensureOutwardLedgerTable(dbA);
+      ensureDurableRunTable(dbB);
+      ensureOutwardLedgerTable(dbB);
+      const storeA = createSqliteDurableRunStore(dbA, () => 2_000);
+      const storeB = createSqliteDurableRunStore(dbB, () => 2_000);
+      const source = durableRecord({
+        checkpointId: "checkpoint-race-source",
+        rootRunId: "root-race-source",
+        rootBudget: { startedAtMs: 500, tokensConsumed: 0, usdConsumed: 0 },
+        lastHeartbeatAt: 1_000,
+      });
+      expect(await storeA.upsertCheckpoint(source)).toEqual({ ok: true, value: undefined });
+
+      let claimArrivals = 0;
+      let releaseClaims: (() => void) | undefined;
+      const bothAtClaim = new Promise<void>((resolve) => { releaseClaims = resolve; });
+      const observedSources: string[][] = [];
+      const withClaimBarrier = (store: DurableRunPort): DurableRunPort => ({
+        ...store,
+        listResumable: async () => {
+          const result = await store.listResumable();
+          if (result.ok) observedSources.push(result.value.records.map((record) => record.checkpointId));
+          return result;
+        },
+        claimForResume: async (claim) => {
+          claimArrivals++;
+          if (claimArrivals === 2) releaseClaims?.();
+          await bothAtClaim;
+          return store.claimForResume(claim);
+        },
+      });
+      const mintA = vi.fn(() => ({ leaseId: "lease-a", bearer: "bearer-a" }));
+      const mintB = vi.fn(() => ({ leaseId: "lease-b", bearer: "bearer-b" }));
+      const resumeA = vi.fn(async () => ok(undefined));
+      const resumeB = vi.fn(async () => ok(undefined));
+      const notifyA = vi.fn();
+      const notifyB = vi.fn();
+      const eventA = makeEventBus();
+      const eventB = makeEventBus();
+      const engineA = createDurableResumeEngine(makeEngineDeps({
+        durableRuns: withClaimBarrier(storeA),
+        ledger: createSqliteOutwardSendLedger(dbA, () => 2_000),
+        remintLease: mintA,
+        resumeRun: resumeA,
+        notify: notifyA,
+        eventBus: eventA,
+        nowMs: () => 2_000,
+      }));
+      const engineB = createDurableResumeEngine(makeEngineDeps({
+        durableRuns: withClaimBarrier(storeB),
+        ledger: createSqliteOutwardSendLedger(dbB, () => 2_000),
+        remintLease: mintB,
+        resumeRun: resumeB,
+        notify: notifyB,
+        eventBus: eventB,
+        nowMs: () => 2_000,
+      }));
+
+      const outcomes = await Promise.all([engineA.resumeAll(), engineB.resumeAll()]);
+
+      expect(outcomes.every((outcome) => outcome.ok)).toBe(true);
+      expect(claimArrivals).toBe(2);
+      expect(observedSources).toEqual([
+        [source.checkpointId],
+        [source.checkpointId],
+      ]);
+      expect(mintA.mock.calls.length + mintB.mock.calls.length).toBe(1);
+      expect(resumeA.mock.calls.length + resumeB.mock.calls.length).toBe(1);
+      expect([resumeA.mock.calls.length, resumeB.mock.calls.length].sort()).toEqual([0, 1]);
+      expect(notifyA).not.toHaveBeenCalled();
+      expect(notifyB).not.toHaveBeenCalled();
+      expect(
+        eventA.events.filter((event) => event.event === "durable:resumed").length
+        + eventB.events.filter((event) => event.event === "durable:resumed").length,
+      ).toBe(1);
+    } finally {
+      dbB.close();
+      dbA.close();
+    }
+
+    const verifyDb = new Database(dbPath);
+    try {
+      const verifyStore = createSqliteDurableRunStore(verifyDb, () => 3_000);
+      const sourceAfterRace = await verifyStore.getByCheckpoint("checkpoint-race-source");
+      expect(sourceAfterRace.ok && sourceAfterRace.value?.status).toBe("completed");
+      const scan = await verifyStore.listResumable();
+      expect(scan.ok && scan.value.records).toHaveLength(1);
+      if (scan.ok) {
+        expect(scan.value.records[0]?.checkpointId).toMatch(/^resume-/);
+        expect(scan.value.records[0]?.status).toBe("running");
+      }
+    } finally {
+      verifyDb.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves recovery authority when an observational resumed subscriber throws", async () => {
+    const db = new Database(":memory:");
+    try {
+      ensureDurableRunTable(db);
+      ensureOutwardLedgerTable(db);
+      const store = createSqliteDurableRunStore(db, () => 2_000);
+      const source = durableRecord({
+        checkpointId: "checkpoint-observer-failure",
+        rootRunId: "root-observer-failure",
+        rootBudget: { startedAtMs: 500, tokensConsumed: 0, usdConsumed: 0 },
+        lastHeartbeatAt: 1_000,
+      });
+      expect(await store.upsertCheckpoint(source)).toEqual({ ok: true, value: undefined });
+      const eventBus = new TypedEventBus();
+      eventBus.on("durable:resumed", () => {
+        throw new Error("subscriber failure with untrusted details");
+      });
+      const laterSubscriber = vi.fn();
+      eventBus.on("durable:resumed", laterSubscriber);
+      const logger = makeLogger();
+
+      const result = await createDurableResumeEngine(makeEngineDeps({
+        durableRuns: store,
+        ledger: createSqliteOutwardSendLedger(db, () => 2_000),
+        eventBus,
+        logger,
+        nowMs: () => 2_000,
+      })).resumeAll();
+
+      expect(result).toEqual({ ok: true, value: { resumed: 1, orphaned: 0, deferred: 0 } });
+      expect(laterSubscriber).toHaveBeenCalledTimes(1);
+      const sourceAfter = await store.getByCheckpoint(source.checkpointId);
+      expect(sourceAfter.ok && sourceAfter.value?.status).toBe("completed");
+      const resumableAfter = await store.listResumable();
+      expect(resumableAfter.ok && resumableAfter.value.records).toHaveLength(1);
+      if (resumableAfter.ok) {
+        expect(resumableAfter.value.records[0]?.checkpointId).toMatch(/^resume-/);
+      }
+      expect(logger.calls.some((call) =>
+        call.level === "warn"
+        && call.obj.eventName === "durable:resumed"
+        && call.obj.subscriberFailureCount === 1
+      )).toBe(true);
+      expect(JSON.stringify(logger.calls)).not.toContain("untrusted details");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("parks a running DAG replacement when a Telegram outward effect remains crash-uncertain", async () => {
+    const graph = durableRecord({
+      checkpointId: "checkpoint-graph-uncertain",
+      rootRunId: "root-graph-uncertain",
+      spawnTree: [{ nodeId: "publish", status: "running", runId: "old-run" }],
+      checkpointRef: "graph-runs/checkpoint-graph-uncertain/durable-checkpoint.json",
+    });
+    const durableRuns = makeDurableRuns({ resumable: [graph] });
+    const ledger = makeLedger({
+      unreconciled: [ledgerRow({
+        rootRunId: graph.rootRunId,
+        channelType: "telegram",
+      })],
+    });
+    const remintLease = vi.fn(() => ({ leaseId: "must-not-mint", bearer: "must-not-mint" }));
+    const resumeRun = vi.fn(async () => ok(undefined));
+
+    const result = await createDurableResumeEngine(makeEngineDeps({
+      durableRuns,
+      ledger,
+      remintLease,
+      resumeRun,
+    })).resumeAll();
+
+    expect(result).toEqual({ ok: true, value: { resumed: 0, orphaned: 1, deferred: 0 } });
+    expect(remintLease).not.toHaveBeenCalled();
+    expect(resumeRun).not.toHaveBeenCalled();
+    expect(durableRuns.calls.some((call) =>
+      call.method === "markOrphaned" && String(call.args[0]).startsWith("resume-")
+    )).toBe(true);
+  });
+
+  it("preserves checkpoint and replay evidence when outward delivery remains uncertain", async () => {
+    const record = durableRecord({
+      checkpointId: "checkpoint-preserve-uncertain",
+      rootRunId: "root-preserve-uncertain",
+      scriptRef: "orchestrate.py",
+      checkpointRef: "results/checkpoint.json",
+    });
+    const reclaimOrchestrateRun = vi.fn(async () => {});
+
+    const result = await createDurableResumeEngine(makeEngineDeps({
+      durableRuns: makeDurableRuns({ resumable: [record] }),
+      ledger: makeLedger({ uncertaintyRoots: [record.rootRunId] }),
+      reclaimOrchestrateRun,
+    })).resumeAll();
+
+    expect(result).toEqual({ ok: true, value: { resumed: 0, orphaned: 1, deferred: 0 } });
+    expect(reclaimOrchestrateRun).not.toHaveBeenCalled();
+  });
+
+  it("preserves checkpoint and replay evidence when the outward uncertainty query fails", async () => {
+    const record = durableRecord({
+      checkpointId: "checkpoint-preserve-query-failure",
+      rootRunId: "root-preserve-query-failure",
+      scriptRef: "orchestrate.py",
+      checkpointRef: "results/checkpoint.json",
+    });
+    const reclaimOrchestrateRun = vi.fn(async () => {});
+    const queryFailure = new Error("outward store unavailable");
+
+    const result = await createDurableResumeEngine(makeEngineDeps({
+      durableRuns: makeDurableRuns({ resumable: [record] }),
+      ledger: makeLedger({ uncertaintyResult: err(queryFailure) }),
+      reclaimOrchestrateRun,
+    })).resumeAll();
+
+    expect(result).toEqual({ ok: false, error: queryFailure });
+    expect(reclaimOrchestrateRun).not.toHaveBeenCalled();
+  });
+
+  it("orphans an invalid persisted principal while resuming unrelated valid checkpoints", async () => {
+    const valid = durableRecord({ rootRunId: "root-valid" });
+    const invalid: InvalidDurableRunCheckpoint = {
+      checkpointId: "checkpoint-invalid",
+      rootRunId: "root-invalid",
+      reason: "record_validation_failed",
+    };
+    const durableRuns = makeDurableRuns({ resumable: [valid], invalid: [invalid] });
+    const remintLease = vi.fn((input) => ({
+      leaseId: `lease-for-${input.rootRunId}`,
+      bearer: "bearer",
+    }));
+    const notify = vi.fn();
+
+    const result = await createDurableResumeEngine(
+      makeEngineDeps({ durableRuns, remintLease, notify }),
+    ).resumeAll();
+
+    expect(result).toEqual({ ok: true, value: { resumed: 1, orphaned: 1, deferred: 0 } });
+    expect(remintLease).toHaveBeenCalledTimes(1);
+    expect(remintLease.mock.calls[0]?.[0].rootRunId).toBe("root-valid");
+    expect(
+      durableRuns.calls.some(
+        (call) => call.method === "markOrphaned" && call.args[0] === "checkpoint-invalid",
+      ),
+    ).toBe(true);
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({ rootRunId: "root-invalid" }),
+    );
+  });
+
+  it("resume happy path re-mints the exact persisted identity and capabilities", async () => {
+    const record = durableRecord({ caps: VALID_CAPS, trustLevel: "admin" });
     const remintLease = vi.fn((input) => ({ leaseId: "lease-x", bearer: "b" }));
     const resumeRun = vi.fn(async () => ok(undefined));
     const deps = makeEngineDeps({
@@ -409,10 +755,16 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     // caps deep-equal the persisted set — NOT a re-attenuated subset
     const mintInput = remintLease.mock.calls[0][0];
     expect(mintInput.caps).toEqual(VALID_CAPS);
+    expect(mintInput.trustLevel).toBe("admin");
+    expect(mintInput).toEqual(expect.objectContaining({
+      agentId: record.agentId,
+      sessionKey: record.sessionKey,
+      rootRunId: record.rootRunId,
+      checkpointId: expect.stringMatching(/^resume-/),
+    }));
     expect(resumeRun).toHaveBeenCalledTimes(1);
-    // resumeRun got the record (carrying stepIndex) + the minted leaseId
-    expect(resumeRun.mock.calls[0][0].stepIndex).toBe(record.stepIndex);
-    expect(resumeRun.mock.calls[0][1]).toBe("lease-x");
+    expect(resumeRun.mock.calls[0][0].checkpointId).toEqual(expect.stringMatching(/^resume-/));
+    expect(resumeRun.mock.calls[0][1]).toEqual({ leaseId: "lease-x", bearer: "b" });
   });
 
   it("revoked-record-not-reminted: a status='revoked' re-read → markOrphaned + notify, remintLease NEVER called", async () => {
@@ -424,7 +776,7 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     const deps = makeEngineDeps({
       durableRuns: makeDurableRuns({
         resumable: [running],
-        byRootRun: new Map([["root-rev", revoked]]),
+        byCheckpoint: new Map([[running.checkpointId, revoked]]),
       }),
       remintLease,
       notify,
@@ -435,7 +787,7 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     expect(r.ok).toBe(true);
     expect(remintLease).not.toHaveBeenCalled();
     const dr = deps.durableRuns as ReturnType<typeof makeDurableRuns>;
-    expect(dr.calls.some((c) => c.method === "markOrphaned" && c.args[0] === "root-rev")).toBe(true);
+    expect(dr.calls.some((c) => c.method === "markOrphaned" && c.args[0] === running.checkpointId)).toBe(true);
     expect(notify).toHaveBeenCalled();
     if (r.ok) expect(r.value.orphaned).toBe(1);
   });
@@ -451,7 +803,7 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     const deps = makeEngineDeps({
       durableRuns: makeDurableRuns({
         resumable: [tampered],
-        byRootRun: new Map([["root-tamper", tampered]]),
+        byCheckpoint: new Map([[tampered.checkpointId, tampered]]),
       }),
       remintLease,
       notify,
@@ -462,7 +814,7 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     expect(r.ok).toBe(true);
     expect(remintLease).not.toHaveBeenCalled();
     const dr = deps.durableRuns as ReturnType<typeof makeDurableRuns>;
-    const orphan = dr.calls.find((c) => c.method === "markOrphaned" && c.args[0] === "root-tamper");
+    const orphan = dr.calls.find((c) => c.method === "markOrphaned" && c.args[0] === tampered.checkpointId);
     expect(orphan).toBeDefined();
     expect(String(orphan?.args[1])).toMatch(/cap/i); // reason mentions caps
     expect(notify).toHaveBeenCalled();
@@ -478,29 +830,104 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     const engine = createDurableResumeEngine(makeEngineDeps({ durableRuns, resumeRun }));
     for (let i = 0; i < 4; i++) await engine.resumeAll(); // ONE engine instance — the ledger persists across passes
     expect(resumeRun).toHaveBeenCalledTimes(3); // re-anchored 3×, then stopped (not re-anchored on pass 4)
-    const orphans = durableRuns.calls.filter((c) => c.method === "markOrphaned" && c.args[0] === "root-stuck");
+    const orphans = durableRuns.calls.filter((c) => c.method === "markOrphaned" && c.args[0] === record.checkpointId);
     expect(orphans).toHaveLength(1); // orphaned exactly once, on the 4th (over-cap) pass
     expect(String(orphans[0]!.args[1])).toMatch(/no-progress re-anchor/); // reason names the cap
   });
 
-  it("a NEVER-SENT run (stepIndex=-1) is re-anchored past the cap but NEVER orphaned — the no-progress cap only reaps runs that progressed past the spawn boundary", async () => {
-    // The re-anchor cap reaps a run that has PROGRESSED (stepIndex >= 0) and then stalled.
-    // A never-sent run (stepIndex = -1) is the canonical fresh-resumable checkpoint (nothing
-    // sent yet) and MUST survive a restart / repeated boot-sweep re-anchors, never be
-    // false-orphaned — the durable-resume-e2e "never-sent RESUMES, not orphaned" acceptance gate.
-    const record = durableRecord({ rootRunId: "root-neversent-loop", stepIndex: -1, lastHeartbeatAt: 500_000 });
+  it("hits the no-progress cap across repeated real SQLite replacement claims", async () => {
+    const db = new Database(":memory:");
+    try {
+      ensureDurableRunTable(db);
+      ensureOutwardLedgerTable(db);
+      let currentNow = 1_000_000;
+      const durableRuns = createSqliteDurableRunStore(db, { nowMs: () => currentNow });
+      const ledger = createSqliteOutwardSendLedger(db, () => currentNow);
+      const source = durableRecord({
+        checkpointId: "checkpoint-real-no-progress",
+        rootRunId: "root-real-no-progress",
+        lastHeartbeatAt: 500_000,
+        rootBudget: { startedAtMs: 400_000, tokensConsumed: 0, usdConsumed: 0 },
+      });
+      expect(await durableRuns.upsertCheckpoint(source)).toEqual({ ok: true, value: undefined });
+      const resumeRun = vi.fn(async () => ok(undefined));
+      const engine = createDurableResumeEngine(makeEngineDeps({
+        durableRuns,
+        ledger,
+        resumeRun,
+        nowMs: () => currentNow,
+      }));
+
+      for (let pass = 0; pass < 4; pass++) {
+        expect((await engine.resumeAll()).ok).toBe(true);
+        currentNow += 10_000;
+      }
+
+      expect(resumeRun).toHaveBeenCalledTimes(3);
+      const scan = await durableRuns.listResumable();
+      expect(scan.ok && scan.value.records).toHaveLength(0);
+      const statusCounts = await durableRuns.countByStatus(0);
+      expect(statusCounts.ok && statusCounts.value.orphaned).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("tracks no-progress replacement lineages independently for sibling checkpoints under one root", async () => {
+    const db = new Database(":memory:");
+    try {
+      ensureDurableRunTable(db);
+      ensureOutwardLedgerTable(db);
+      let currentNow = 1_000_000;
+      const durableRuns = createSqliteDurableRunStore(db, { nowMs: () => currentNow });
+      const ledger = createSqliteOutwardSendLedger(db, () => currentNow);
+      const first = durableRecord({
+        checkpointId: "checkpoint-sibling-a",
+        rootRunId: "root-shared-lineage",
+        lastHeartbeatAt: 500_000,
+        rootBudget: { startedAtMs: 400_000, tokensConsumed: 0, usdConsumed: 0 },
+      });
+      const second = durableRecord({
+        checkpointId: "checkpoint-sibling-b",
+        rootRunId: "root-shared-lineage",
+        lastHeartbeatAt: 600_000,
+        rootBudget: { startedAtMs: 400_000, tokensConsumed: 0, usdConsumed: 0 },
+      });
+      expect(await durableRuns.upsertCheckpoint(first)).toEqual({ ok: true, value: undefined });
+      expect(await durableRuns.upsertCheckpoint(second)).toEqual({ ok: true, value: undefined });
+      const resumeRun = vi.fn(async () => ok(undefined));
+      const engine = createDurableResumeEngine(makeEngineDeps({
+        durableRuns,
+        ledger,
+        resumeRun,
+        nowMs: () => currentNow,
+      }));
+
+      for (let pass = 0; pass < 4; pass++) {
+        expect((await engine.resumeAll()).ok).toBe(true);
+        currentNow += 10_000;
+      }
+
+      expect(resumeRun).toHaveBeenCalledTimes(6);
+      const statusCounts = await durableRuns.countByStatus(0);
+      expect(statusCounts.ok && statusCounts.value.orphaned).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("applies the no-progress cap uniformly to an execution with no outward sends", async () => {
+    const record = durableRecord({ rootRunId: "root-no-outward", lastHeartbeatAt: 500_000 });
     const durableRuns = makeDurableRuns({
       resumable: [record],
-      byRootRun: new Map([["root-neversent-loop", record]]),
+      byCheckpoint: new Map([[record.checkpointId, record]]),
     });
     const resumeRun = vi.fn(async () => ok(undefined));
     const engine = createDurableResumeEngine(makeEngineDeps({ durableRuns, resumeRun }));
-    // Drive well past MAX_REANCHOR_ATTEMPTS with an UNCHANGED heartbeat (no progress).
-    for (let i = 0; i < 6; i++) await engine.resumeAll();
-    expect(
-      durableRuns.calls.filter((c) => c.method === "markOrphaned" && c.args[0] === "root-neversent-loop"),
-      "a never-sent run must never be reaped by the no-progress cap",
-    ).toHaveLength(0);
+    for (let i = 0; i < 4; i++) await engine.resumeAll();
+    expect(durableRuns.calls.filter(
+      (c) => c.method === "markOrphaned" && c.args[0] === record.checkpointId,
+    )).toHaveLength(1);
   });
 
   it("a heartbeat advance (progress) resets the re-anchor counter — a live run is never false-orphaned", async () => {
@@ -516,15 +943,15 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     expect(durableRuns.calls.filter((c) => c.method === "markOrphaned")).toHaveLength(0);
   });
 
-  it("never-sent-run-resumes-not-orphaned: a status='running' record with stepIndex=-1 RESUMES (remintLease + resumeRun), NOT orphaned", async () => {
-    const neverSent = durableRecord({ rootRunId: "root-neversent", stepIndex: -1 });
+  it("a running execution checkpoint resumes without depending on outward-send state", async () => {
+    const neverSent = durableRecord({ rootRunId: "root-neversent" });
     const remintLease = vi.fn(() => ({ leaseId: "lease-ns", bearer: "b" }));
     const resumeRun = vi.fn(async () => ok(undefined));
     const notify = vi.fn();
     const deps = makeEngineDeps({
       durableRuns: makeDurableRuns({
         resumable: [neverSent],
-        byRootRun: new Map([["root-neversent", neverSent]]),
+        byCheckpoint: new Map([[neverSent.checkpointId, neverSent]]),
       }),
       remintLease,
       resumeRun,
@@ -534,7 +961,6 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     const r = await createDurableResumeEngine(deps).resumeAll();
 
     expect(r.ok).toBe(true);
-    // the cap-tamper guard must NOT reject a legitimate -1 sentinel
     expect(remintLease).toHaveBeenCalledTimes(1);
     expect(resumeRun).toHaveBeenCalledTimes(1);
     const dr = deps.durableRuns as ReturnType<typeof makeDurableRuns>;
@@ -548,7 +974,7 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     const backlog = Array.from({ length: N }, (_, i) =>
       durableRecord({ rootRunId: `root-${i}` }),
     );
-    const byRootRun = new Map(backlog.map((r) => [r.rootRunId, r]));
+    const byCheckpoint = new Map(backlog.map((r) => [r.checkpointId, r]));
 
     // fake clock: start at 0, each resumeRun advances time by 30_000ms; budget 60_000
     // deadline = 0 + 60_000. We check nowMs() > deadline BEFORE each item.
@@ -562,7 +988,7 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     });
     const remintLease = vi.fn(() => ({ leaseId: "x", bearer: "b" }));
     const deps = makeEngineDeps({
-      durableRuns: makeDurableRuns({ resumable: backlog, byRootRun }),
+      durableRuns: makeDurableRuns({ resumable: backlog, byCheckpoint }),
       remintLease,
       resumeRun,
       nowMs,
@@ -591,55 +1017,76 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
 
   it("orphan path: resumeRun returns err → markOrphaned(reason) + notify, never silently dropped", async () => {
     const record = durableRecord({ rootRunId: "root-fail" });
-    const resumeRun = vi.fn(async () => err(new Error("no live channel for pending sends")));
+    const credential = `xoxb-${"s".repeat(32)}`;
+    const resumeRun = vi.fn(async () => err(new Error(`no live channel ${credential}`)));
     const notify = vi.fn();
+    const revokeLease = vi.fn();
     const deps = makeEngineDeps({
       durableRuns: makeDurableRuns({
         resumable: [record],
-        byRootRun: new Map([["root-fail", record]]),
+        byCheckpoint: new Map([[record.checkpointId, record]]),
       }),
       resumeRun,
       notify,
+      revokeLease,
     });
 
     const r = await createDurableResumeEngine(deps).resumeAll();
 
     expect(r.ok).toBe(true);
     const dr = deps.durableRuns as ReturnType<typeof makeDurableRuns>;
-    expect(dr.calls.some((c) => c.method === "markOrphaned" && c.args[0] === "root-fail")).toBe(true);
+    expect(dr.calls.some((c) => c.method === "markOrphaned" && String(c.args[0]).startsWith("resume-"))).toBe(true);
     expect(notify).toHaveBeenCalled();
+    expect(revokeLease).toHaveBeenCalledWith("lease-for-root-fail");
     if (r.ok) expect(r.value.orphaned).toBe(1);
     // an eventBus durable:orphaned event fired
     const bus = deps.eventBus as ReturnType<typeof makeEventBus>;
     expect(bus.events.some((e) => e.event === "durable:orphaned")).toBe(true);
+    const logger = deps.logger as ReturnType<typeof makeLogger>;
+    const failureLog = logger.calls.find((call) =>
+      call.level === "warn" && call.msg === "Durable resume: resumeRun failed → orphaned"
+    );
+    expect(typeof failureLog?.obj.err).toBe("string");
+    expect(String(failureLog?.obj.err)).not.toContain(credential);
+    expect(String(failureLog?.obj.err)).not.toContain("at ");
   });
 
-  it("ledger reconcile integration: each resumable run's unreconciled rows are reconciled BEFORE the run resumes", async () => {
-    const record = durableRecord({ rootRunId: "root-rec" });
-    const row = ledgerRow({ rootRunId: "root-rec", state: "unknown_after_send" });
+  it("parks outward uncertainty even when there is no durable run backlog", async () => {
+    const row = ledgerRow({ rootRunId: "root-without-run", state: "unknown_after_send" });
     const ledger = makeLedger({ unreconciled: [row] });
-    // channel reconciles to "sent" → commit (no replay)
-    const channelFor = vi.fn(() =>
-      makeChannel(async () => ok({ kind: "sent", platformMessageId: "pm-rec" })),
-    );
     const resumeRun = vi.fn(async () => ok(undefined));
     const deps = makeEngineDeps({
-      durableRuns: makeDurableRuns({
-        resumable: [record],
-        byRootRun: new Map([["root-rec", record]]),
-      }),
+      durableRuns: makeDurableRuns(),
       ledger,
-      channelFor,
       resumeRun,
     });
 
     const r = await createDurableResumeEngine(deps).resumeAll();
 
-    expect(r.ok).toBe(true);
-    // the row was reconciled (resolveReconcile + commit) AND the run resumed
-    expect(ledger.calls.some((c) => c.method === "resolveReconcile")).toBe(true);
-    expect(ledger.calls.some((c) => c.method === "commit")).toBe(true);
-    expect(resumeRun).toHaveBeenCalledTimes(1);
+    expect(r).toEqual({ ok: true, value: { resumed: 0, orphaned: 0, deferred: 0 } });
+    expect(ledger.calls.some((c) => c.method === "parkUncertain")).toBe(true);
+    expect(ledger.calls.some((c) => c.method === "commit")).toBe(false);
+    expect(resumeRun).not.toHaveBeenCalled();
+  });
+
+  it("bounds the outward parking sweep and deterministically advances the next pass", async () => {
+    const rows = Array.from({ length: 101 }, (_, stepIndex) =>
+      ledgerRow({
+        id: `root-batch:${stepIndex}`,
+        rootRunId: "root-batch",
+        stepIndex,
+      }),
+    );
+    const ledger = makeLedger({ unreconciled: rows });
+    const engine = createDurableResumeEngine(makeEngineDeps({ ledger }));
+
+    const first = await engine.resumeAll();
+    expect(first).toEqual({ ok: true, value: { resumed: 0, orphaned: 0, deferred: 1 } });
+    expect(ledger.calls.filter((call) => call.method === "parkUncertain")).toHaveLength(100);
+
+    const second = await engine.resumeAll();
+    expect(second).toEqual({ ok: true, value: { resumed: 0, orphaned: 0, deferred: 0 } });
+    expect(ledger.calls.filter((call) => call.method === "parkUncertain")).toHaveLength(101);
   });
 
   it("emits a durable:resumed event on a happy resume", async () => {
@@ -647,7 +1094,7 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     const deps = makeEngineDeps({
       durableRuns: makeDurableRuns({
         resumable: [record],
-        byRootRun: new Map([["root-ev", record]]),
+        byCheckpoint: new Map([[record.checkpointId, record]]),
       }),
     });
 
@@ -665,21 +1112,32 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The closed reason union the durable:orphaned EVENT may carry (events-orchestration.ts). */
-const ORPHAN_ENUM = ["not_resumable", "reread_failed", "invalid_caps", "resume_failed"] as const;
+const ORPHAN_ENUM = [
+  "not_resumable",
+  "reread_failed",
+  "invalid_record",
+  "invalid_caps",
+  "outward_uncertain",
+  "resume_failed",
+] as const;
 
 describe("orphanReasonToEnum content-free reason map, TOTAL over string", () => {
   it("maps each known engine free-text reason to its closed enum member (never echoes the input)", () => {
-    // The four free-text reasons the engine passes to orphan() today.
+    // The known free-text reasons the engine passes to orphan().
     expect(orphanReasonToEnum("re-read failed")).toBe("reread_failed");
     expect(orphanReasonToEnum("not resumable: status=revoked")).toBe("not_resumable");
     expect(orphanReasonToEnum("not resumable: status=missing")).toBe("not_resumable");
+    expect(orphanReasonToEnum("invalid durable record")).toBe("invalid_record");
     expect(orphanReasonToEnum("invalid caps")).toBe("invalid_caps");
+    expect(orphanReasonToEnum("outward delivery uncertain")).toBe("outward_uncertain");
     expect(orphanReasonToEnum("resume failed")).toBe("resume_failed");
     // Each result is a member of the closed union, never the raw free text.
     for (const free of [
       "re-read failed",
       "not resumable: status=revoked",
+      "invalid durable record",
       "invalid caps",
+      "outward delivery uncertain",
       "resume failed",
     ]) {
       expect(ORPHAN_ENUM).toContain(orphanReasonToEnum(free));
@@ -701,7 +1159,7 @@ describe("orphanReasonToEnum content-free reason map, TOTAL over string", () => 
 });
 
 describe("durable:orphaned / durable:resumed event payloads typed, content-free", () => {
-  it("durable:orphaned carries a CLOSED-enum reason (∈ the 4-member union, ≠ the free string) + a numeric timestamp", async () => {
+  it("durable:orphaned carries a closed reason enum instead of the free string plus a numeric timestamp", async () => {
     // A status='revoked' re-read drives the orphan path with the free-text reason
     // `not resumable: status=revoked` — the EVENT must carry the enum, not that string.
     const running = durableRecord({ rootRunId: "root-orphan-ev", status: "running" });
@@ -709,7 +1167,7 @@ describe("durable:orphaned / durable:resumed event payloads typed, content-free"
     const deps = makeEngineDeps({
       durableRuns: makeDurableRuns({
         resumable: [running],
-        byRootRun: new Map([["root-orphan-ev", revoked]]),
+        byCheckpoint: new Map([[running.checkpointId, revoked]]),
       }),
       nowMs: () => 1_234_567,
     });
@@ -738,7 +1196,7 @@ describe("durable:orphaned / durable:resumed event payloads typed, content-free"
     const deps = makeEngineDeps({
       durableRuns: makeDurableRuns({
         resumable: [record],
-        byRootRun: new Map([["root-resfail", record]]),
+        byCheckpoint: new Map([[record.checkpointId, record]]),
       }),
       resumeRun,
       nowMs: () => 42,
@@ -753,12 +1211,12 @@ describe("durable:orphaned / durable:resumed event payloads typed, content-free"
     expect(orphanEvent?.payload.timestamp).toBe(42);
   });
 
-  it("durable:resumed carries a numeric stepIndex + timestamp", async () => {
-    const record = durableRecord({ rootRunId: "root-resumed-ev", stepIndex: 7 });
+  it("durable:resumed carries the execution checkpoint identity and timestamp", async () => {
+    const record = durableRecord({ rootRunId: "root-resumed-ev", checkpointId: "checkpoint-resumed-ev" });
     const deps = makeEngineDeps({
       durableRuns: makeDurableRuns({
         resumable: [record],
-        byRootRun: new Map([["root-resumed-ev", record]]),
+        byCheckpoint: new Map([[record.checkpointId, record]]),
       }),
       nowMs: () => 9_999,
     });
@@ -769,12 +1227,10 @@ describe("durable:orphaned / durable:resumed event payloads typed, content-free"
     const resumedEvent = bus.events.find((e) => e.event === "durable:resumed");
     expect(resumedEvent).toBeDefined();
     const payload = resumedEvent!.payload;
-    expect(payload.stepIndex).toBe(7);
-    expect(typeof payload.stepIndex).toBe("number");
+    expect(payload.checkpointId).toEqual(expect.stringMatching(/^resume-/));
     expect(payload.timestamp).toBe(9_999);
     expect(payload.rootRunId).toBe("root-resumed-ev");
-    // Content-free: exactly {rootRunId, stepIndex, timestamp}.
-    expect(Object.keys(payload).sort()).toEqual(["rootRunId", "stepIndex", "timestamp"]);
+    expect(Object.keys(payload).sort()).toEqual(["checkpointId", "rootRunId", "timestamp"]);
   });
 });
 
@@ -810,9 +1266,18 @@ afterEach(() => {
 function seedArtifacts(ws: string, opts: { script?: string; checkpoint?: string }): void {
   if (opts.script !== undefined) writeFileSync(join(ws, opts.script), "print('pinned')");
   if (opts.checkpoint !== undefined) {
-    mkdirSync(join(ws, "results"), { recursive: true });
-    writeFileSync(join(ws, opts.checkpoint), '{"step":1}');
+    const checkpointPath = join(ws, opts.checkpoint);
+    mkdirSync(dirname(checkpointPath), { recursive: true });
+    writeFileSync(checkpointPath, '{"step":1}');
   }
+}
+
+function isolatedCheckpointRef(checkpointId: string): string {
+  return `results/${safeResultRunId(checkpointId)}/cp.json`;
+}
+
+function isolatedResultsDir(ws: string, checkpointId: string): string {
+  return join(ws, "results", safeResultRunId(checkpointId));
 }
 
 /**
@@ -909,7 +1374,10 @@ function makeTimers(): TimerPort {
 const wallClock: ClockPort = { now: () => Date.now(), nowDate: () => new Date() };
 
 function makeLeaseMgr(): LeaseManager {
-  return { mintLease: vi.fn(() => ({ leaseId: "lease-x", bearer: "bearer-x" })) } as unknown as LeaseManager;
+  return {
+    mintLease: vi.fn(() => ({ leaseId: "lease-x", bearer: "bearer-x" })),
+    revoke: vi.fn(() => ({ revoked: 1 })),
+  } as unknown as LeaseManager;
 }
 
 interface WiringOver {
@@ -924,17 +1392,27 @@ function buildWiring(over: WiringOver): {
 } {
   const events: { event: string; payload: Record<string, unknown> }[] = [];
   const registerRoot = vi.fn();
+  const eventBus = new TypedEventBus();
+  eventBus.on("durable:resumed", (payload) => {
+    events.push({ event: "durable:resumed", payload });
+  });
+  eventBus.on("durable:orphaned", (payload) => {
+    events.push({ event: "durable:orphaned", payload });
+  });
   const wiring = buildDurableResume({
     db: {},
     durabilityCfg: { enabled: true, staleHeartbeatMs: 60_000, keepAliveMs: 30_000, recoveryBudgetMs: 5_000 },
     durableRunStore: over.store,
     outwardLedger: makeLedger(),
-    boundedAutonomy: { registerRoot, leaseIdsForRoot: () => new Set<string>() } as never,
+    boundedAutonomy: {
+      registerRoot,
+      leaseIdsForRoot: () => new Set<string>(),
+      rehydrateBudget: vi.fn(),
+      evictRootIfIdle: vi.fn(),
+      exportBudgetState: () => ({ startedAtMs: 1, tokensConsumed: 0, usdConsumed: 0 }),
+    } as never,
     sharedLeaseManager: makeLeaseMgr(),
-    channelAdaptersRef: new Map(),
-    eventBus: {
-      emit: (e: string, p: Record<string, unknown>) => { events.push({ event: e, payload: p }); },
-    } as unknown as TypedEventBus,
+    eventBus,
     logger: silentLog,
     clock: wallClock,
     timers: makeTimers(),
@@ -949,7 +1427,7 @@ describe("buildDurableResume — orchestrate-kind dispatch (flat + scriptRef != 
     const ws = makeTempWorkspace();
     seedArtifacts(ws, { script: "orch-x.py", checkpoint: "results/cp.json" });
     const record = durableRecord({ rootRunId: "root-orch", scriptRef: "orch-x.py", checkpointRef: "results/cp.json" });
-    const store = makeDurableRuns({ resumable: [record], byRootRun: new Map([["root-orch", record]]) });
+    const store = makeDurableRuns({ resumable: [record], byCheckpoint: new Map([[record.checkpointId, record]]) });
     const resumeGraph = vi.fn(async () => ok(undefined));
     const { wiring, events, registerRoot } = buildWiring({ store, orchestrateResume: orchSeams(ws), resumeGraph });
 
@@ -968,8 +1446,9 @@ describe("buildDurableResume — orchestrate-kind dispatch (flat + scriptRef != 
     const dag = durableRecord({
       rootRunId: "root-dag",
       spawnTree: [{ nodeId: "A", status: "running", runId: "ra" }] as unknown as DurableRunRecord["spawnTree"],
+      checkpointRef: "graph-runs/root-dag/durable-checkpoint.json",
     });
-    const store = makeDurableRuns({ resumable: [dag], byRootRun: new Map([["root-dag", dag]]) });
+    const store = makeDurableRuns({ resumable: [dag], byCheckpoint: new Map([[dag.checkpointId, dag]]) });
     const resumeGraph = vi.fn(async () => ok(undefined));
     const { wiring, registerRoot } = buildWiring({ store, orchestrateResume: orchSeams(ws), resumeGraph });
 
@@ -985,7 +1464,7 @@ describe("buildDurableResume — orchestrate-kind dispatch (flat + scriptRef != 
     const ws = makeTempWorkspace();
     seedArtifacts(ws, { script: "orch-x.py" }); // the checkpoint blob was NOT written (reclaimed/expired)
     const record = durableRecord({ rootRunId: "root-gone", scriptRef: "orch-x.py", checkpointRef: "results/cp.json" });
-    const store = makeDurableRuns({ resumable: [record], byRootRun: new Map([["root-gone", record]]) });
+    const store = makeDurableRuns({ resumable: [record], byCheckpoint: new Map([[record.checkpointId, record]]) });
     const { wiring, events, registerRoot } = buildWiring({ store, orchestrateResume: orchSeams(ws) });
 
     await wiring.startAndResumeDurable();
@@ -1005,7 +1484,7 @@ describe("buildDurableResume — orchestrate-kind dispatch (flat + scriptRef != 
 //
 // A run orphaned on boot (missing checkpoint) or on a lapsed-heartbeat watchdog
 // tick has NO surviving runner to GC its workspace, so the engine's orphan path
-// owns the reclaim (RESUME-04): delete the surviving results/ (the checkpoint blob)
+// owns reclaiming the surviving results directory and checkpoint blob
 // + the pinned <scriptRef>. Composes the EXISTING result-ref-store.cleanupRun +
 // a guarded rmSync (NG4 — no new GC primitive). Scoped to orchestrate-kind rows;
 // idempotent. Proven against a REAL temp workspace (real fs).
@@ -1014,26 +1493,50 @@ describe("buildDurableResume — orchestrate-kind dispatch (flat + scriptRef != 
 describe("reclaimOrphanedOrchestrateRun — the orphan-reclaim hook (real fs, reuses cleanupRun, NG4)", () => {
   it("reclaims a dead resumable orchestrate run's results/ (checkpoint blob) + pinned script — real files gone", async () => {
     const ws = makeTempWorkspace();
-    seedArtifacts(ws, { script: "orch-a.py", checkpoint: "results/cp.json" });
-    writeFileSync(join(ws, "results", "leftover.json"), "{}"); // a surviving materialized result also reclaimed
-    const record = durableRecord({ rootRunId: "root-r1", scriptRef: "orch-a.py", checkpointRef: "results/cp.json" });
+    const checkpointId = "checkpoint-root-r1";
+    const record = durableRecord({
+      checkpointId,
+      rootRunId: "root-r1",
+      scriptRef: "orch-a.py",
+      checkpointRef: isolatedCheckpointRef(checkpointId),
+    });
+    const runDir = isolatedResultsDir(ws, record.checkpointId);
+    const siblingDir = isolatedResultsDir(ws, "checkpoint-concurrent");
+    seedArtifacts(ws, {
+      script: record.scriptRef ?? undefined,
+      checkpoint: isolatedCheckpointRef(checkpointId),
+    });
+    writeFileSync(join(runDir, "leftover.json"), "{}");
+    mkdirSync(siblingDir, { recursive: true });
+    writeFileSync(join(siblingDir, "keep.json"), "{}");
 
     await reclaimOrphanedOrchestrateRun(record, orchSeams(ws));
 
     expect(existsSync(join(ws, "orch-a.py"))).toBe(false);
-    expect(existsSync(join(ws, "results"))).toBe(false);
+    expect(existsSync(runDir)).toBe(false);
+    expect(existsSync(siblingDir)).toBe(true);
   });
 
   it("is idempotent — a second reclaim of the same run is a no-op, never a throw", async () => {
     const ws = makeTempWorkspace();
-    seedArtifacts(ws, { script: "orch-a.py", checkpoint: "results/cp.json" });
-    const record = durableRecord({ rootRunId: "root-r2", scriptRef: "orch-a.py", checkpointRef: "results/cp.json" });
+    const checkpointId = "checkpoint-root-r2";
+    const record = durableRecord({
+      checkpointId,
+      rootRunId: "root-r2",
+      scriptRef: "orch-a.py",
+      checkpointRef: isolatedCheckpointRef(checkpointId),
+    });
+    const runDir = isolatedResultsDir(ws, record.checkpointId);
+    seedArtifacts(ws, {
+      script: record.scriptRef ?? undefined,
+      checkpoint: isolatedCheckpointRef(checkpointId),
+    });
 
     await reclaimOrphanedOrchestrateRun(record, orchSeams(ws));
     // second pass: the files are already gone — resolves without throwing
     await expect(reclaimOrphanedOrchestrateRun(record, orchSeams(ws))).resolves.toBeUndefined();
     expect(existsSync(join(ws, "orch-a.py"))).toBe(false);
-    expect(existsSync(join(ws, "results"))).toBe(false);
+    expect(existsSync(runDir)).toBe(false);
   });
 
   it("is scoped to orchestrate-kind rows — a record with no scriptRef is a no-op (a DAG/flat legacy orphan is unaffected)", async () => {
@@ -1051,12 +1554,12 @@ describe("reclaimOrphanedOrchestrateRun — the orphan-reclaim hook (real fs, re
 });
 
 describe("createDurableResumeEngine — orphan-path reclaim + closed not_resumable reason", () => {
-  it("calls reclaimOrchestrateRun(record) on the orphan path when a resumable orchestrate row's resume fails (RESUME-04)", async () => {
+  it("reclaims a resumable orchestrate run when its resume fails and it is orphaned", async () => {
     const record = durableRecord({ rootRunId: "root-reclaim", scriptRef: "orch-a.py", checkpointRef: "results/cp.json" });
     const resumeRun = vi.fn(async () => err(new Error("orchestrate resume not resumable: the checkpoint blob is gone")));
     const reclaimOrchestrateRun = vi.fn(async () => {});
     const deps = makeEngineDeps({
-      durableRuns: makeDurableRuns({ resumable: [record], byRootRun: new Map([["root-reclaim", record]]) }),
+      durableRuns: makeDurableRuns({ resumable: [record], byCheckpoint: new Map([[record.checkpointId, record]]) }),
       resumeRun,
       reclaimOrchestrateRun,
     });
@@ -1072,7 +1575,7 @@ describe("createDurableResumeEngine — orphan-path reclaim + closed not_resumab
     const record = durableRecord({ rootRunId: "root-nr", scriptRef: "orch-a.py", checkpointRef: "results/cp.json" });
     const resumeRun = vi.fn(async () => err(new Error("orchestrate resume not resumable: the checkpoint blob is gone")));
     const deps = makeEngineDeps({
-      durableRuns: makeDurableRuns({ resumable: [record], byRootRun: new Map([["root-nr", record]]) }),
+      durableRuns: makeDurableRuns({ resumable: [record], byCheckpoint: new Map([[record.checkpointId, record]]) }),
       resumeRun,
       nowMs: () => 555,
     });
@@ -1082,7 +1585,7 @@ describe("createDurableResumeEngine — orphan-path reclaim + closed not_resumab
     const bus = deps.eventBus as ReturnType<typeof makeEventBus>;
     const orphanEvent = bus.events.find((e) => e.event === "durable:orphaned");
     expect(orphanEvent?.payload.reason).toBe("not_resumable");
-    // Content-free (INV-5): the free-text arm reason NEVER crosses onto the event.
+    // The free-text arm reason never crosses onto the content-free event.
     expect(orphanEvent?.payload.reason).not.toBe("orchestrate resume not resumable: the checkpoint blob is gone");
     expect(orphanEvent?.payload.timestamp).toBe(555);
   });
@@ -1091,7 +1594,7 @@ describe("createDurableResumeEngine — orphan-path reclaim + closed not_resumab
     const record = durableRecord({ rootRunId: "root-ok", scriptRef: "orch-a.py" });
     const reclaimOrchestrateRun = vi.fn(async () => {});
     const deps = makeEngineDeps({
-      durableRuns: makeDurableRuns({ resumable: [record], byRootRun: new Map([["root-ok", record]]) }),
+      durableRuns: makeDurableRuns({ resumable: [record], byCheckpoint: new Map([[record.checkpointId, record]]) }),
       resumeRun: vi.fn(async () => ok(undefined)),
       reclaimOrchestrateRun,
     });
@@ -1105,11 +1608,18 @@ describe("createDurableResumeEngine — orphan-path reclaim + closed not_resumab
 describe("buildDurableResume — orphan-reclaim end-to-end (missing checkpoint → orphaned + reclaim, real files gone)", () => {
   it("a flat + scriptRef row whose checkpoint is gone → durable:orphaned(not_resumable) AND its results/ + pinned script are reclaimed", async () => {
     const ws = makeTempWorkspace();
-    seedArtifacts(ws, { script: "orch-x.py" }); // pinned script present
-    mkdirSync(join(ws, "results"), { recursive: true });
-    writeFileSync(join(ws, "results", "leftover.json"), "{}"); // a surviving result, but the checkpoint cp.json is GONE
-    const record = durableRecord({ rootRunId: "root-e2e", scriptRef: "orch-x.py", checkpointRef: "results/cp.json" });
-    const store = makeDurableRuns({ resumable: [record], byRootRun: new Map([["root-e2e", record]]) });
+    const checkpointId = "checkpoint-root-e2e";
+    const record = durableRecord({
+      checkpointId,
+      rootRunId: "root-e2e",
+      scriptRef: "orch-x.py",
+      checkpointRef: isolatedCheckpointRef(checkpointId),
+    });
+    const runDir = isolatedResultsDir(ws, record.checkpointId);
+    seedArtifacts(ws, { script: record.scriptRef ?? undefined });
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, "leftover.json"), "{}"); // a surviving result, but cp.json is gone
+    const store = makeDurableRuns({ resumable: [record], byCheckpoint: new Map([[record.checkpointId, record]]) });
     const { wiring, events } = buildWiring({ store, orchestrateResume: orchSeams(ws) });
 
     await wiring.startAndResumeDurable();
@@ -1117,8 +1627,8 @@ describe("buildDurableResume — orphan-reclaim end-to-end (missing checkpoint �
 
     const orphan = events.find((e) => e.event === "durable:orphaned" && e.payload.rootRunId === "root-e2e");
     expect(orphan?.payload.reason).toBe("not_resumable");
-    // RESUME-04: the dead run's surviving artifacts are reclaimed (no workspace leak).
+    // The dead run's surviving artifacts are reclaimed without a workspace leak.
     expect(existsSync(join(ws, "orch-x.py"))).toBe(false);
-    expect(existsSync(join(ws, "results"))).toBe(false);
+    expect(existsSync(runDir)).toBe(false);
   });
 });

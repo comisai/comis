@@ -1,375 +1,577 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * createSqliteDurableRunStore — SQLite persistence for the durable run
- * checkpoint, implementing the `@comis/core` {@link DurableRunPort}.
- *
- * Factory-function pattern (modeled wholesale on `createVideoJobStore`): prepares
- * fixed SQL statements once in the closure, returns a frozen `DurableRunPort`.
- * Reads go through `createRowMapper(DurableRunDbRowSchema)` so a corrupt row
- * degrades to a `Result.err`, never a throw; the JSON array columns
- * (`spawn_tree`/`caps`/`lease_ids`) are parsed inside a guard so a hand-edited /
- * truncated JSON column ALSO degrades to `err` rather than crashing the boot scan.
- *
- * The row is the durable spine the resume engine rebuilds the in-memory
- * `BoundedAutonomy`/`LeaseManager` FROM across a daemon restart: a row survives
- * the agent turn AND a restart because it lives on disk in the shared `memory.db`
- * (never an own .db). The `caps` column persists the ATTENUATED set (the result
- * of `attenuateCaps`) so a resume rehydrates it verbatim; the
- * `parseDurableRunRecord` Zod union is the gate before any re-mint.
- *
- * The dedicated `outward_step` column is the SOLE monotonic outward-send counter
- * and is owned ENTIRELY by `allocateOutwardStep`. `upsertCheckpoint` NEVER writes
- * it, so a checkpoint between two outward sends cannot reset it and break the
- * exactly-once send guarantee. `DurableRunRecord.stepIndex` maps onto
- * `outward_step` in `rowToRecord`; the column seeds at the -1 'never-sent'
- * sentinel, so a never-allocated run surfaces stepIndex -1 — which the domain
- * schema permits (`.min(-1)`), so it is NOT falsely orphaned. There is no coarse
- * per-step index column — only `outward_step`.
- *
- * SECURITY: the persisted columns carry NO secret — the lease credential is held
- * by the boot-bound adapter and is re-minted FRESH on resume; only the attenuated
- * caps + leaseId correlation are written here.
- *
- * @module
- */
+/** SQLite persistence for resumable execution checkpoints. */
 
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { systemNowMs, type DurableRunPort, type DurableRunRecord } from "@comis/core";
+import {
+  AgentCapabilitySchema,
+  DurableRootBudgetSchema,
+  DeliveryOriginSchema,
+  UserTrustLevelSchema,
+  parseDurableRunRecord,
+  systemNowMs,
+  type DurableRunPort,
+  type DurableRunRecord,
+  type DurableRootBudget,
+  type DurableRunResumeClaim,
+  type DurableRunResumeClaimOutcome,
+  type DurableRunResumeScan,
+  type InvalidDurableRunCheckpoint,
+} from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
 import { DurableRunDbRowSchema, type DurableRunDbRow } from "./durable-run-row-schema.js";
 
-/** Options for the durable-run store (an injectable clock for deterministic tests). */
 export interface DurableRunStoreOptions {
-  /** Wall-clock source for created_at_ms / updated_at_ms; defaults to systemNowMs. */
   readonly nowMs?: () => number;
 }
 
-// ---------------------------------------------------------------------------
-// Row mapper (snake_case -> camelCase) + JSON-column parse guard
-// ---------------------------------------------------------------------------
-
 const durableRunMapper = createRowMapper(DurableRunDbRowSchema);
+const statusCountMapper = createRowMapper(
+  z.strictObject({ status: z.string(), c: z.number() }),
+);
+const durableRunIdentitySchema = z.object({
+  checkpoint_id: z.string(),
+  root_run_id: z.string(),
+});
+const durableRootMapper = createRowMapper(
+  z.strictObject({ revoked_at_ms: z.number().nullable() }),
+);
+const durableCheckpointPayloadSchema = z.strictObject({
+  spawnTree: z.unknown(),
+  rootBudget: DurableRootBudgetSchema,
+});
+const resumeClaimSchema = z.strictObject({
+  checkpointId: z.string().min(1),
+  replacementCheckpointId: z.string().min(1),
+  claimedAtMs: z.number().nonnegative().finite(),
+  principal: z.strictObject({
+    agentId: z.string().min(1),
+    sessionKey: z.string().min(1),
+    ownerTenantId: z.string().min(1),
+    ownerUserId: z.string().min(1),
+    deliveryOrigin: DeliveryOriginSchema.nullable(),
+    trustLevel: UserTrustLevelSchema,
+    caps: z.array(AgentCapabilitySchema),
+  }),
+}).refine((claim) => claim.checkpointId !== claim.replacementCheckpointId, {
+  message: "replacementCheckpointId must differ from checkpointId",
+});
 
-// The GROUP BY status COUNT(*) projection for countByStatus. No raw
-// `as Foo[]` cast (AGENTS §6.8) — a malformed aggregate row degrades to err.
-const statusCountRowSchema = z.strictObject({ status: z.string(), c: z.number() });
-const statusCountMapper = createRowMapper(statusCountRowSchema);
-
-/**
- * Map a validated DB row to the domain `DurableRunRecord`. Returns a `Result`
- * because the JSON array columns may be corrupt: a non-parseable
- * `spawn_tree`/`caps`/`lease_ids` degrades to `err`, never a throw.
- *
- * `record.stepIndex` maps from the `outward_step` column (the sole counter; -1
- * seed surfaces as stepIndex -1 for a never-sent run).
- */
 function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
-  let spawnTree: DurableRunRecord["spawnTree"];
-  let caps: DurableRunRecord["caps"];
-  let leaseIds: DurableRunRecord["leaseIds"];
+  let spawnTree: unknown;
+  let caps: unknown;
+  let leaseIds: unknown;
+  let deliveryOrigin: unknown;
+  let rootBudget: unknown;
   try {
-    // The JSON columns are TEXT on disk; parse them as-is. `spawn_tree` is EITHER
-    // a flat string[] OR a DAG {nodeId,status,runId?}[] — JSON.parse preserves the
-    // shape; the spawnTree union validates both (do not coerce one into the
-    // other). Casts are to the domain field types; the Zod `parseDurableRunRecord`
-    // at the resume boundary is the membership gate.
-    spawnTree = JSON.parse(row.spawn_tree) as DurableRunRecord["spawnTree"];
-    caps = JSON.parse(row.caps) as DurableRunRecord["caps"];
-    leaseIds = JSON.parse(row.lease_ids) as DurableRunRecord["leaseIds"];
-  } catch (e) {
+    const payload = durableCheckpointPayloadSchema.safeParse(JSON.parse(row.spawn_tree));
+    if (!payload.success) {
+      return err(new Error(`durable_run_checkpoints row ${row.checkpoint_id} has an invalid checkpoint payload`));
+    }
+    spawnTree = payload.data.spawnTree;
+    rootBudget = payload.data.rootBudget;
+    caps = JSON.parse(row.caps);
+    leaseIds = JSON.parse(row.lease_ids);
+    deliveryOrigin = row.delivery_origin === null ? null : JSON.parse(row.delivery_origin);
+  } catch (cause) {
     return err(
       new Error(
-        `durable_runs row ${row.root_run_id} has a corrupt JSON column: ${
-          e instanceof Error ? e.message : String(e)
+        `durable_run_checkpoints row ${row.checkpoint_id} has a corrupt JSON column: ${
+          cause instanceof Error ? cause.message : String(cause)
         }`,
       ),
     );
   }
-  return ok({
+
+  const parsed = parseDurableRunRecord({
+    checkpointId: row.checkpoint_id,
     rootRunId: row.root_run_id,
+    agentId: row.agent_id,
+    sessionKey: row.session_key,
+    ownerTenantId: row.owner_tenant_id,
+    ownerUserId: row.owner_user_id,
+    deliveryOrigin,
     spawnTree,
     caps,
     leaseIds,
     budgetConsumed: row.budget_consumed,
+    rootBudget,
     cronOrigin: row.cron_origin,
-    // The idempotency-key field maps from the dedicated counter column.
-    stepIndex: row.outward_step,
-    status: row.status as DurableRunRecord["status"],
+    trustLevel: row.trust_level,
+    status: row.status,
     lastHeartbeatAt: row.last_heartbeat_at,
-    // Additive resumable-orchestrate pointers. SQLite NULL (a pre-migration row or
-    // a non-orchestrate/never-checkpointed run) maps to `undefined` on the optional
-    // domain fields — never surfaced as a spurious null.
-    scriptRef: row.script_ref ?? undefined,
-    checkpointRef: row.checkpoint_ref ?? undefined,
+    scriptRef: row.script_ref,
+    checkpointRef: row.checkpoint_ref,
   });
+  if (!parsed.ok) {
+    return err(new Error(`durable checkpoint validation failed: ${parsed.error.message}`));
+  }
+  return ok(parsed.value);
 }
 
-// ---------------------------------------------------------------------------
-// Factory
-// ---------------------------------------------------------------------------
-
-/**
- * Create a SQLite-backed `DurableRunPort`.
- *
- * Assumes `initSchema()` (which calls `ensureDurableRunTable`) has already been
- * called — the `durable_runs` table exists. Prepares fixed SQL once.
- *
- * @param db - An open better-sqlite3 Database instance
- * @param opts - Optional injectable clock (deterministic tests)
- * @returns DurableRunPort implementation (frozen)
- */
 export function createSqliteDurableRunStore(
   db: Database.Database,
   opts: DurableRunStoreOptions = {},
 ): DurableRunPort {
   const nowMs = opts.nowMs ?? systemNowMs;
 
-  // --- Prepared statements ---
-
-  // Idempotent upsert. The column list and the DO UPDATE SET clause DELIBERATELY
-  // OMIT `outward_step` — the counter is owned solely by allocateOutwardStep. On
-  // a fresh INSERT, outward_step takes the DDL default (-1, the never-sent
-  // sentinel); on CONFLICT, the SET clause leaves it untouched so a concurrent
-  // allocate's value survives. There is no coarse per-step index column to
-  // write — the DDL has only outward_step.
-  //
-  // script_ref / checkpoint_ref use COALESCE(excluded.x, x) on CONFLICT: a bound
-  // NULL PRESERVES the existing value. This lets the checkpoint core set only
-  // checkpoint_ref and the resumable-timeout runner set only script_ref WITHOUT
-  // clobbering each other (the outcome_events COALESCE precedent). On a fresh
-  // INSERT the bound value (or NULL) is written directly.
-  //
-  // status uses a terminal-preserve CASE on CONFLICT: once a row is in a TERMINAL
-  // state ('revoked'/'completed'/'orphaned') a later upsert (every 233 caller binds
-  // status:'running' — the timeout markResumable + the jailed checkpoint()) MUST NOT
-  // resurrect it back to 'running'. Without this a timeout re-mark or a raced
-  // checkpoint landing after invalidateForRevoke would un-revoke the run and the
-  // boot sweep would re-surface/re-anchor a run the operator explicitly revoked. On
-  // a fresh INSERT the bound status is written directly (the CASE is DO-UPDATE-only).
   const upsertStmt = db.prepare(`
-    INSERT INTO durable_runs (
-      root_run_id, spawn_tree, caps, lease_ids, budget_consumed, cron_origin,
-      status, last_heartbeat_at, created_at_ms, updated_at_ms, script_ref, checkpoint_ref
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(root_run_id) DO UPDATE SET
+    INSERT INTO durable_run_checkpoints (
+      checkpoint_id, root_run_id, agent_id, session_key, owner_tenant_id,
+      owner_user_id, delivery_origin, spawn_tree, caps, lease_ids,
+      budget_consumed, cron_origin, trust_level, status, last_heartbeat_at,
+      created_at_ms, updated_at_ms, script_ref, checkpoint_ref
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(checkpoint_id) DO UPDATE SET
       spawn_tree = excluded.spawn_tree,
       caps = excluded.caps,
       lease_ids = excluded.lease_ids,
       budget_consumed = excluded.budget_consumed,
       cron_origin = excluded.cron_origin,
       status = CASE
-        WHEN durable_runs.status IN ('revoked', 'completed', 'orphaned') THEN durable_runs.status
+        WHEN durable_run_checkpoints.status IN ('revoked', 'completed', 'orphaned')
+          THEN durable_run_checkpoints.status
         ELSE excluded.status
       END,
       last_heartbeat_at = excluded.last_heartbeat_at,
       updated_at_ms = excluded.updated_at_ms,
       script_ref = COALESCE(excluded.script_ref, script_ref),
       checkpoint_ref = COALESCE(excluded.checkpoint_ref, checkpoint_ref)
+    WHERE durable_run_checkpoints.root_run_id = excluded.root_run_id
+      AND durable_run_checkpoints.agent_id = excluded.agent_id
+      AND durable_run_checkpoints.session_key = excluded.session_key
+      AND durable_run_checkpoints.owner_tenant_id = excluded.owner_tenant_id
+      AND durable_run_checkpoints.owner_user_id = excluded.owner_user_id
+      AND durable_run_checkpoints.delivery_origin IS excluded.delivery_origin
+      AND durable_run_checkpoints.trust_level = excluded.trust_level
+      AND NOT EXISTS (
+        SELECT 1
+        FROM json_each(excluded.caps) AS requested_cap
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM json_each(durable_run_checkpoints.caps) AS held_cap
+          WHERE held_cap.value = requested_cap.value
+        )
+      )
   `);
-
-  const getStmt = db.prepare(`SELECT * FROM durable_runs WHERE root_run_id = ?`);
-
-  // Boot-resume scan — only status='running' (the partial index serves it).
+  const insertCheckpointStmt = db.prepare(`
+    INSERT INTO durable_run_checkpoints (
+      checkpoint_id, root_run_id, agent_id, session_key, owner_tenant_id,
+      owner_user_id, delivery_origin, spawn_tree, caps, lease_ids,
+      budget_consumed, cron_origin, trust_level, status, last_heartbeat_at,
+      created_at_ms, updated_at_ms, script_ref, checkpoint_ref
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const getStmt = db.prepare(
+    `SELECT * FROM durable_run_checkpoints WHERE checkpoint_id = ?`,
+  );
+  const listByRootStmt = db.prepare(
+    `SELECT * FROM durable_run_checkpoints WHERE root_run_id = ?`,
+  );
+  const ensureRootStmt = db.prepare(`
+    INSERT OR IGNORE INTO durable_run_roots (root_run_id, revoked_at_ms)
+    VALUES (?, NULL)
+  `);
+  const getRootStmt = db.prepare(`
+    SELECT revoked_at_ms FROM durable_run_roots WHERE root_run_id = ?
+  `);
+  const tombstoneRootStmt = db.prepare(`
+    INSERT INTO durable_run_roots (root_run_id, revoked_at_ms)
+    VALUES (?, ?)
+    ON CONFLICT(root_run_id) DO UPDATE SET
+      revoked_at_ms = COALESCE(durable_run_roots.revoked_at_ms, excluded.revoked_at_ms)
+  `);
   const listResumableStmt = db.prepare(`
-    SELECT * FROM durable_runs WHERE status = 'running' ORDER BY last_heartbeat_at ASC
+    SELECT * FROM durable_run_checkpoints
+    WHERE status = 'running'
+    ORDER BY last_heartbeat_at ASC
   `);
-
   const markOrphanedStmt = db.prepare(`
-    UPDATE durable_runs SET status = 'orphaned', orphan_reason = ?, updated_at_ms = ?
-    WHERE root_run_id = ?
+    UPDATE durable_run_checkpoints
+    SET status = 'orphaned', orphan_reason = ?, updated_at_ms = ?
+    WHERE checkpoint_id = ? AND status = 'running'
   `);
-
   const markCompletedStmt = db.prepare(`
-    UPDATE durable_runs SET status = 'completed', updated_at_ms = ? WHERE root_run_id = ?
+    UPDATE durable_run_checkpoints
+    SET status = 'completed', updated_at_ms = ?
+    WHERE checkpoint_id = ? AND status = 'running'
   `);
-
   const touchHeartbeatStmt = db.prepare(`
-    UPDATE durable_runs SET last_heartbeat_at = ?, updated_at_ms = ? WHERE root_run_id = ?
+    UPDATE durable_run_checkpoints
+    SET last_heartbeat_at = ?, updated_at_ms = ?
+    WHERE checkpoint_id = ? AND status = 'running'
   `);
-
-  // A revoke flips the record to the terminal 'revoked' state so
-  // listResumable filters it out and resume can never re-mint pre-revoke caps.
   const invalidateForRevokeStmt = db.prepare(`
-    UPDATE durable_runs SET status = 'revoked', orphan_reason = 'revoked', updated_at_ms = ?
+    UPDATE durable_run_checkpoints
+    SET status = 'revoked', orphan_reason = 'revoked', updated_at_ms = ?
     WHERE root_run_id = ?
   `);
-
-  // The ATOMIC monotonic outward-send counter. A single synchronous
-  // UPDATE ... RETURNING (better-sqlite3 supports RETURNING) so two sequential
-  // calls can never observe the same index. outward_step seeds at -1, so the
-  // first allocate yields 0. This is the SOLE writer of outward_step.
-  const allocateStmt = db.prepare(`
-    UPDATE durable_runs SET outward_step = outward_step + 1, updated_at_ms = ?
-    WHERE root_run_id = ? RETURNING outward_step
-  `);
-  // allocateOutwardStep never errors on a missing row: insert a minimal running
-  // placeholder (outward_step takes the DDL default -1) then run the UPDATE, so a
-  // first send on a not-yet-checkpointed run still gets index 0.
-  const insertPlaceholderStmt = db.prepare(`
-    INSERT OR IGNORE INTO durable_runs (
-      root_run_id, spawn_tree, caps, lease_ids, budget_consumed, cron_origin,
-      status, last_heartbeat_at, created_at_ms, updated_at_ms
-    ) VALUES (?, '[]', '[]', '[]', 0, NULL, 'running', ?, ?, ?)
-  `);
-  const allocCounterSchema = DurableRunDbRowSchema.pick({ outward_step: true });
-  const allocCounterMapper = createRowMapper(allocCounterSchema);
-
-  // Windowed status counts. Mirrors getRollingSpendUsd's `WHERE … >= ?`
-  // windowed aggregate: only rows updated within the fleet window are counted,
-  // grouped by status. Prepared once; folded into the 4-key object (default 0).
   const countByStatusStmt = db.prepare(`
-    SELECT status, COUNT(*) AS c FROM durable_runs WHERE updated_at_ms >= ? GROUP BY status
+    SELECT status, COUNT(*) AS c
+    FROM durable_run_checkpoints
+    WHERE updated_at_ms >= ?
+    GROUP BY status
   `);
 
-  // --- Store implementation ---
+  function checkpointArgs(record: DurableRunRecord, t: number): unknown[] {
+    return [
+      record.checkpointId,
+      record.rootRunId,
+      record.agentId,
+      record.sessionKey,
+      record.ownerTenantId,
+      record.ownerUserId,
+      record.deliveryOrigin === null ? null : JSON.stringify(record.deliveryOrigin),
+      JSON.stringify({
+        spawnTree: record.spawnTree,
+        rootBudget: record.rootBudget,
+      }),
+      JSON.stringify(record.caps),
+      JSON.stringify(record.leaseIds),
+      record.budgetConsumed,
+      record.cronOrigin,
+      record.trustLevel,
+      record.status,
+      record.lastHeartbeatAt,
+      t,
+      t,
+      record.scriptRef ?? null,
+      record.checkpointRef ?? null,
+    ];
+  }
+
+  function rootIsRevoked(rootRunId: string): Result<boolean, Error> {
+    const root = durableRootMapper.parseOptionalRow(getRootStmt.get(rootRunId));
+    if (!root.ok) return err(new Error(`Durable root validation failed: ${root.error.message}`));
+    if (root.value === undefined) return err(new Error(`Durable root ${rootRunId} was not initialized`));
+    return ok(root.value.revoked_at_ms !== null);
+  }
+
+  function readRootBudgetAuthority(rootRunId: string): Result<DurableRootBudget | undefined, Error> {
+    const rows = durableRunMapper.parseRows(listByRootStmt.all(rootRunId));
+    if (!rows.ok) {
+      return err(new Error(`Durable root checkpoint validation failed: ${rows.error.message}`));
+    }
+    let authority: DurableRootBudget | undefined;
+    for (const row of rows.value) {
+      const existing = rowToRecord(row);
+      if (!existing.ok) return err(existing.error);
+      const budget = existing.value.rootBudget;
+      authority = authority === undefined
+        ? budget
+        : {
+            startedAtMs: Math.min(authority.startedAtMs, budget.startedAtMs),
+            tokensConsumed: Math.max(authority.tokensConsumed, budget.tokensConsumed),
+            usdConsumed: Math.max(authority.usdConsumed, budget.usdConsumed),
+          };
+    }
+    return ok(authority);
+  }
+
+  function validateRootBudgetFloor(checkpoint: DurableRunRecord): Result<void, Error> {
+    const authority = readRootBudgetAuthority(checkpoint.rootRunId);
+    if (!authority.ok) return authority;
+    if (
+      authority.value !== undefined
+      && (
+        checkpoint.rootBudget.startedAtMs > authority.value.startedAtMs
+        || checkpoint.rootBudget.tokensConsumed < authority.value.tokensConsumed
+        || checkpoint.rootBudget.usdConsumed < authority.value.usdConsumed
+      )
+    ) {
+      return err(new Error(`durable checkpoint would reset budget authority for ${checkpoint.rootRunId}`));
+    }
+
+    const existingRow = durableRunMapper.parseOptionalRow(getStmt.get(checkpoint.checkpointId));
+    if (!existingRow.ok) {
+      return err(new Error(`Durable checkpoint validation failed: ${existingRow.error.message}`));
+    }
+    if (existingRow.value !== undefined) {
+      const existing = rowToRecord(existingRow.value);
+      if (!existing.ok) return err(existing.error);
+      if (
+        checkpoint.lastHeartbeatAt < existing.value.lastHeartbeatAt
+      ) {
+        return err(new Error(`durable checkpoint would move its heartbeat backward for ${checkpoint.checkpointId}`));
+      }
+    }
+    return ok(undefined);
+  }
+
+  const upsertTransaction = db.transaction(
+    (checkpoint: DurableRunRecord, t: number): Result<void, Error> => {
+      if (checkpoint.status === "revoked") {
+        tombstoneRootStmt.run(checkpoint.rootRunId, t);
+      } else {
+        const budgetFloor = validateRootBudgetFloor(checkpoint);
+        if (!budgetFloor.ok) return budgetFloor;
+        ensureRootStmt.run(checkpoint.rootRunId);
+        const revoked = rootIsRevoked(checkpoint.rootRunId);
+        if (!revoked.ok) return revoked;
+        if (revoked.value) {
+          return err(new Error(`durable root ${checkpoint.rootRunId} is revoked`));
+        }
+      }
+      const written = upsertStmt.run(...checkpointArgs(checkpoint, t));
+      if (written.changes !== 1) {
+        return err(new Error(`durable checkpoint identity mismatch for ${checkpoint.checkpointId}`));
+      }
+      if (checkpoint.status === "revoked") {
+        invalidateForRevokeStmt.run(t, checkpoint.rootRunId);
+      }
+      return ok(undefined);
+    },
+  );
+
+  const claimTransaction = db.transaction(
+    (claim: DurableRunResumeClaim): Result<DurableRunResumeClaimOutcome, Error> => {
+      const rawSource = durableRunMapper.parseOptionalRow(getStmt.get(claim.checkpointId));
+      if (!rawSource.ok) {
+        return err(new Error(`Row validation failed: ${rawSource.error.message}`));
+      }
+      if (rawSource.value === undefined) return ok({ kind: "not_found" });
+      const source = rowToRecord(rawSource.value);
+      if (!source.ok) return err(source.error);
+      const record = source.value;
+
+      // The root comes from the validated persisted record, never from caller
+      // input. Its authority row must already exist from the source write;
+      // absence is corruption and fails closed rather than recreating authority.
+      const revoked = rootIsRevoked(record.rootRunId);
+      if (!revoked.ok) return revoked;
+      if (revoked.value || record.status !== "running") {
+        return ok({ kind: "not_resumable" });
+      }
+      if (claim.claimedAtMs < record.lastHeartbeatAt) {
+        return err(new Error(`durable resume claim would move the heartbeat backward for ${record.checkpointId}`));
+      }
+
+      const principal = claim.principal;
+      if (
+        record.agentId !== principal.agentId
+        || record.sessionKey !== principal.sessionKey
+        || record.ownerTenantId !== principal.ownerTenantId
+        || record.ownerUserId !== principal.ownerUserId
+        || !sameDeliveryOrigin(record.deliveryOrigin, principal.deliveryOrigin)
+        || trustRank(principal.trustLevel) < trustRank(record.trustLevel)
+      ) {
+        return ok({ kind: "authorization_denied" });
+      }
+
+      const target = durableRunMapper.parseOptionalRow(getStmt.get(claim.replacementCheckpointId));
+      if (!target.ok) return err(new Error(`Row validation failed: ${target.error.message}`));
+      if (target.value !== undefined) return ok({ kind: "not_resumable" });
+
+      const rootBudget = readRootBudgetAuthority(record.rootRunId);
+      if (!rootBudget.ok) return rootBudget;
+      if (rootBudget.value === undefined) {
+        return err(new Error(`Durable root ${record.rootRunId} has no checkpoint budget authority`));
+      }
+      const authoritativeRecordResult = parseDurableRunRecord({
+        ...record,
+        budgetConsumed: rootBudget.value.usdConsumed,
+        rootBudget: rootBudget.value,
+      });
+      if (!authoritativeRecordResult.ok) {
+        return err(new Error(`durable budget authority validation failed: ${authoritativeRecordResult.error.message}`));
+      }
+      const authoritativeRecord = authoritativeRecordResult.value;
+      const currentCaps = new Set(principal.caps);
+      const replacementResult = parseDurableRunRecord({
+        ...authoritativeRecord,
+        checkpointId: claim.replacementCheckpointId,
+        caps: authoritativeRecord.caps.filter((capability) => currentCaps.has(capability)),
+        leaseIds: [],
+        status: "running",
+        // Claim time is authority-row metadata, not execution progress. Keep
+        // the source heartbeat until resumed execution writes a real
+        // checkpoint/touch; otherwise every watchdog claim fabricates progress
+        // and the no-progress cap can never fire.
+        lastHeartbeatAt: authoritativeRecord.lastHeartbeatAt,
+      });
+      if (!replacementResult.ok) {
+        return err(new Error(`durable replacement validation failed: ${replacementResult.error.message}`));
+      }
+
+      const completed = markCompletedStmt.run(claim.claimedAtMs, record.checkpointId);
+      if (completed.changes !== 1) return ok({ kind: "not_resumable" });
+      // A constraint failure here throws at the SQLite boundary and rolls the
+      // transaction back, including the source completion.
+      insertCheckpointStmt.run(...checkpointArgs(replacementResult.value, claim.claimedAtMs));
+      return ok({ kind: "claimed", record: replacementResult.value });
+    },
+  );
+
+  const revokeTransaction = db.transaction((rootRunId: string, t: number): void => {
+    tombstoneRootStmt.run(rootRunId, t);
+    invalidateForRevokeStmt.run(t, rootRunId);
+  });
 
   const store: DurableRunPort = {
-    upsertCheckpoint(record: DurableRunRecord): Promise<Result<void, Error>> {
+    upsertCheckpoint(record): Promise<Result<void, Error>> {
       try {
-        const t = nowMs();
-        upsertStmt.run(
-          record.rootRunId,
-          JSON.stringify(record.spawnTree),
-          JSON.stringify(record.caps),
-          JSON.stringify(record.leaseIds),
-          record.budgetConsumed,
-          record.cronOrigin ?? null,
-          record.status,
-          record.lastHeartbeatAt,
-          t, // created_at_ms (ignored on CONFLICT — PK row keeps its original)
-          t, // updated_at_ms
-          // A bound NULL is COALESCE-preserved on CONFLICT (keeps a prior ref);
-          // written directly on a fresh INSERT.
-          record.scriptRef ?? null,
-          record.checkpointRef ?? null,
-        );
-        return Promise.resolve(ok(undefined));
-      } catch (e) {
-        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
-      }
-    },
-
-    listResumable(): Promise<Result<DurableRunRecord[], Error>> {
-      try {
-        const parsed = durableRunMapper.parseRows(listResumableStmt.all());
-        if (!parsed.ok) {
-          return Promise.resolve(err(new Error(`Row validation failed: ${parsed.error.message}`)));
-        }
-        const out: DurableRunRecord[] = [];
-        for (const row of parsed.value) {
-          const rec = rowToRecord(row);
-          if (!rec.ok) return Promise.resolve(err(rec.error)); // early-return on first corrupt row
-          out.push(rec.value);
-        }
-        return Promise.resolve(ok(out));
-      } catch (e) {
-        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
-      }
-    },
-
-    getByRootRun(rootRunId: string): Promise<Result<DurableRunRecord | undefined, Error>> {
-      try {
-        const parsed = durableRunMapper.parseOptionalRow(getStmt.get(rootRunId));
-        if (!parsed.ok) {
-          return Promise.resolve(err(new Error(`Row validation failed: ${parsed.error.message}`)));
-        }
-        if (parsed.value === undefined) return Promise.resolve(ok(undefined));
-        const rec = rowToRecord(parsed.value);
-        if (!rec.ok) return Promise.resolve(err(rec.error));
-        return Promise.resolve(ok(rec.value));
-      } catch (e) {
-        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
-      }
-    },
-
-    markOrphaned(rootRunId: string, reason: string): Promise<Result<void, Error>> {
-      try {
-        markOrphanedStmt.run(reason, nowMs(), rootRunId);
-        return Promise.resolve(ok(undefined));
-      } catch (e) {
-        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
-      }
-    },
-
-    markCompleted(rootRunId: string): Promise<Result<void, Error>> {
-      try {
-        markCompletedStmt.run(nowMs(), rootRunId);
-        return Promise.resolve(ok(undefined));
-      } catch (e) {
-        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
-      }
-    },
-
-    touchHeartbeat(rootRunId: string, atMs: number): Promise<Result<void, Error>> {
-      try {
-        touchHeartbeatStmt.run(atMs, nowMs(), rootRunId);
-        return Promise.resolve(ok(undefined));
-      } catch (e) {
-        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
-      }
-    },
-
-    invalidateForRevoke(rootRunId: string): Promise<Result<void, Error>> {
-      try {
-        invalidateForRevokeStmt.run(nowMs(), rootRunId);
-        return Promise.resolve(ok(undefined));
-      } catch (e) {
-        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
-      }
-    },
-
-    allocateOutwardStep(rootRunId: string): Promise<Result<number, Error>> {
-      try {
-        const t = nowMs();
-        // Ensure a row exists (no-op when present — INSERT OR IGNORE on the PK),
-        // then atomically bump + read the counter in the SAME synchronous turn
-        // (better-sqlite3 is sync + single-connection, so the RETURNING value is
-        // this UPDATE's own). The counter seeds at -1 → first call returns 0.
-        insertPlaceholderStmt.run(rootRunId, t, t, t);
-        const raw = allocateStmt.get(t, rootRunId);
-        const parsed = allocCounterMapper.parseOptionalRow(raw);
-        if (!parsed.ok) {
-          return Promise.resolve(err(new Error(`Row validation failed: ${parsed.error.message}`)));
-        }
-        if (parsed.value === undefined) {
-          // Unreachable in practice — the INSERT OR IGNORE above guarantees a row.
+        const parsedRecord = parseDurableRunRecord(record);
+        if (!parsedRecord.ok) {
           return Promise.resolve(
-            err(new Error(`allocateOutwardStep: no durable_runs row for ${rootRunId}`)),
+            err(new Error(`durable checkpoint validation failed: ${parsedRecord.error.message}`)),
           );
         }
-        return Promise.resolve(ok(parsed.value.outward_step));
-      } catch (e) {
-        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
+        const checkpoint = parsedRecord.value;
+        return Promise.resolve(upsertTransaction.immediate(checkpoint, nowMs()));
+      } catch (cause) {
+        return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));
       }
     },
 
-    countByStatus(
-      sinceMs: number,
-    ): Promise<Result<{ orphaned: number; revoked: number; running: number; completed: number }, Error>> {
+    listResumable(): Promise<Result<DurableRunResumeScan, Error>> {
       try {
-        const parsed = statusCountMapper.parseRows(countByStatusStmt.all(sinceMs));
-        if (!parsed.ok) {
-          return Promise.resolve(err(new Error(`Row validation failed: ${parsed.error.message}`)));
+        const rawRows = listResumableStmt.all();
+        const records: DurableRunRecord[] = [];
+        const invalid: InvalidDurableRunCheckpoint[] = [];
+        for (const rawRow of rawRows) {
+          const identity = durableRunIdentitySchema.safeParse(rawRow);
+          if (!identity.success) {
+            return Promise.resolve(
+              err(new Error("A resumable durable row has no stable checkpoint identity")),
+            );
+          }
+          const parsedRow = durableRunMapper.parseOptionalRow(rawRow);
+          if (!parsedRow.ok || parsedRow.value === undefined) {
+            invalid.push({
+              checkpointId: identity.data.checkpoint_id,
+              rootRunId: identity.data.root_run_id,
+              reason: "record_validation_failed",
+            });
+            continue;
+          }
+          const row = parsedRow.value;
+          const record = rowToRecord(row);
+          if (!record.ok) {
+            invalid.push({
+              checkpointId: identity.data.checkpoint_id,
+              rootRunId: identity.data.root_run_id,
+              reason: "record_validation_failed",
+            });
+            continue;
+          }
+          records.push(record.value);
         }
-        // Default every status key to 0, then fold the grouped rows in. An
-        // unknown status (DDL drift) is simply ignored — the 4 tracked counts
-        // are the fleet-relevant set.
+        return Promise.resolve(ok({ records, invalid }));
+      } catch (cause) {
+        return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));
+      }
+    },
+
+    getByCheckpoint(checkpointId): Promise<Result<DurableRunRecord | undefined, Error>> {
+      try {
+        const row = durableRunMapper.parseOptionalRow(getStmt.get(checkpointId));
+        if (!row.ok) return Promise.resolve(err(new Error(`Row validation failed: ${row.error.message}`)));
+        if (row.value === undefined) return Promise.resolve(ok(undefined));
+        const record = rowToRecord(row.value);
+        return Promise.resolve(record.ok ? ok(record.value) : err(record.error));
+      } catch (cause) {
+        return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));
+      }
+    },
+
+    claimForResume(claim): Promise<Result<DurableRunResumeClaimOutcome, Error>> {
+      try {
+        const parsedClaim = resumeClaimSchema.safeParse(claim);
+        if (!parsedClaim.success) {
+          return Promise.resolve(
+            err(new Error(`durable resume claim validation failed: ${parsedClaim.error.message}`)),
+          );
+        }
+        return Promise.resolve(claimTransaction.immediate(parsedClaim.data));
+      } catch (cause) {
+        return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));
+      }
+    },
+
+    markOrphaned(checkpointId, reason): Promise<Result<void, Error>> {
+      try {
+        markOrphanedStmt.run(reason, nowMs(), checkpointId);
+        return Promise.resolve(ok(undefined));
+      } catch (cause) {
+        return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));
+      }
+    },
+
+    markCompleted(checkpointId): Promise<Result<void, Error>> {
+      try {
+        markCompletedStmt.run(nowMs(), checkpointId);
+        return Promise.resolve(ok(undefined));
+      } catch (cause) {
+        return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));
+      }
+    },
+
+    touchHeartbeat(checkpointId, atMs): Promise<Result<void, Error>> {
+      try {
+        const touched = touchHeartbeatStmt.run(atMs, nowMs(), checkpointId);
+        if (touched.changes !== 1) {
+          return Promise.resolve(err(new Error(`durable checkpoint ${checkpointId} is not running`)));
+        }
+        return Promise.resolve(ok(undefined));
+      } catch (cause) {
+        return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));
+      }
+    },
+
+    invalidateForRevoke(rootRunId): Promise<Result<void, Error>> {
+      try {
+        revokeTransaction.immediate(rootRunId, nowMs());
+        return Promise.resolve(ok(undefined));
+      } catch (cause) {
+        return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));
+      }
+    },
+
+    countByStatus(sinceMs): Promise<
+      Result<{ orphaned: number; revoked: number; running: number; completed: number }, Error>
+    > {
+      try {
+        const rows = statusCountMapper.parseRows(countByStatusStmt.all(sinceMs));
+        if (!rows.ok) return Promise.resolve(err(new Error(`Row validation failed: ${rows.error.message}`)));
         const counts = { orphaned: 0, revoked: 0, running: 0, completed: 0 };
-        for (const row of parsed.value) {
+        for (const row of rows.value) {
           if (row.status === "orphaned") counts.orphaned = row.c;
           else if (row.status === "revoked") counts.revoked = row.c;
           else if (row.status === "running") counts.running = row.c;
           else if (row.status === "completed") counts.completed = row.c;
         }
         return Promise.resolve(ok(counts));
-      } catch (e) {
-        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
+      } catch (cause) {
+        return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));
       }
     },
   };
 
   return Object.freeze(store);
+}
+
+function trustRank(trustLevel: "guest" | "user" | "admin"): number {
+  switch (trustLevel) {
+    case "guest": return 0;
+    case "user": return 1;
+    case "admin": return 2;
+    default: {
+      const _exhaustive: never = trustLevel;
+      return _exhaustive;
+    }
+  }
+}
+
+function sameDeliveryOrigin(
+  first: DurableRunRecord["deliveryOrigin"],
+  second: DurableRunRecord["deliveryOrigin"],
+): boolean {
+  if (first === null || second === null) return first === second;
+  return first.channelType === second.channelType
+    && first.channelId === second.channelId
+    && first.userId === second.userId
+    && first.tenantId === second.tenantId
+    && first.threadId === second.threadId;
 }

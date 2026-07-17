@@ -22,6 +22,7 @@
 
 import type {
   AttachmentPayload,
+  AttachmentSendReceipt,
   ChannelPort,
   ChannelStatus,
   ComisLogger,
@@ -36,7 +37,11 @@ import type {
   SendMessageOptions,
   TimerPort,
 } from "@comis/core";
-import { runWithContext, systemNowMs } from "@comis/core";
+import {
+  createAttachmentSendReceipt,
+  runWithContext,
+  systemNowMs,
+} from "@comis/core";
 import { err, fromPromise, ok, type Result } from "@comis/shared";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -243,7 +248,7 @@ export function createMsTeamsAdapter(
         startedAt: now(),
         channelType: "msteams",
         tenantId: "default",
-        trustLevel: "admin",
+        trustLevel: "user",
       },
       () => {
         for (const handler of reactionHandlers) {
@@ -285,7 +290,7 @@ export function createMsTeamsAdapter(
         startedAt: now(),
         channelType: "msteams",
         tenantId: "default",
-        trustLevel: "admin",
+        trustLevel: "user",
       },
       () => {
         for (const handler of handlers) {
@@ -613,12 +618,20 @@ export function createMsTeamsAdapter(
     return result;
   }
 
+  function recordAttachmentActivity(
+    result: Result<string, Error>,
+  ): Result<AttachmentSendReceipt, Error> {
+    const recorded = recordActivity(result);
+    if (!recorded.ok) return recorded;
+    return ok(createAttachmentSendReceipt(recorded.value));
+  }
+
   /**
    * A send (text or attachment) whose serviceUrl could not be resolved: record +
    * WARN + err. Shared by sendMessage and sendAttachment so the "no usable service
    * url" branch is emitted in exactly one place.
    */
-  function sendContextError(error: Error): Result<string, Error> {
+  function sendContextError<T>(error: Error): Result<T, Error> {
     _lastError = error.message;
     deps.logger.warn(
       {
@@ -752,7 +765,7 @@ export function createMsTeamsAdapter(
       conversationId: string,
       attachment: AttachmentPayload,
       options?: SendMessageOptions,
-    ): Promise<Result<string, Error>> {
+    ): Promise<Result<AttachmentSendReceipt, Error>> {
       // Reuses the sendMessage scaffolding verbatim (routing context → id/serviceUrl
       // safety → token → POST via postConnectorActivity); only the activity body
       // differs. Reply → the caller's serviceUrl; proactive (none) → the store.
@@ -779,7 +792,7 @@ export function createMsTeamsAdapter(
           },
           "Connector attachment delivered by reference (non-image)",
         );
-        return recordActivity(
+        return recordAttachmentActivity(
           await postConnectorActivityWithRetry(
             {
               serviceUrl: ctx.value.serviceUrl,
@@ -817,7 +830,7 @@ export function createMsTeamsAdapter(
 
       const activityBody = buildImageActivityBody(read.value, attachment, replyToId);
 
-      return recordActivity(
+      return recordAttachmentActivity(
         await postConnectorActivityWithRetry(
           {
             serviceUrl: ctx.value.serviceUrl,
@@ -950,9 +963,8 @@ export function createMsTeamsAdapter(
       // interrupted send can never be *proven* to have landed from here —
       // proving delivery would need Microsoft Graph (ChannelMessage.Read,
       // deferred). unresolved is the only honest verdict: the recovery engine
-      // parks it (never a replay → never a double-send), and the exactly-once
-      // guarantee is the outward-send ledger's write-ahead dedup, not this
-      // oracle. Never claim a definitive absence the platform cannot prove.
+      // parks it and never issues a second platform call. Never claim a
+      // definitive delivery or absence the platform cannot prove.
       deps.logger.debug(
         {
           channelType: "msteams" as const,

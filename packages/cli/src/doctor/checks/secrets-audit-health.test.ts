@@ -99,7 +99,7 @@ describe("secretsAuditHealthCheck", () => {
 
   it("returns skip DoctorFinding when auditSecrets throws an error", async () => {
     vi.mocked(core.auditSecrets).mockImplementation(() => {
-      throw new Error("ENOENT: no such file or directory");
+      throw new Error("Authorization: Bearer PRIVATE_AUDIT_SENTINEL");
     });
 
     const findings: DoctorFinding[] = await secretsAuditHealthCheck.run(baseContext);
@@ -107,6 +107,7 @@ describe("secretsAuditHealthCheck", () => {
     expect(findings.length).toBeGreaterThanOrEqual(1);
     expect(findings[0]?.status).toBe("skip");
     expect(findings[0]?.category).toBe("secrets-audit");
+    expect(findings[0]?.message).not.toContain("PRIVATE_AUDIT_SENTINEL");
   });
 
   it("secretsAuditHealthCheck has correct id and name fields", () => {

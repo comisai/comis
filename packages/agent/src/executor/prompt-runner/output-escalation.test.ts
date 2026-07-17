@@ -25,6 +25,10 @@ import { escalateOutput } from "./output-escalation.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const sourcePath = resolve(here, "output-escalation.ts");
 const source = readFileSync(sourcePath, "utf-8");
+const interactiveRecoverySource = readFileSync(
+  resolve(here, "interactive-silent-recovery.ts"),
+  "utf-8",
+);
 
 describe("output-escalation.ts — module surface", () => {
   it("exports an async function `escalateOutput`", () => {
@@ -63,5 +67,24 @@ describe("output-escalation.ts — dependency direction", () => {
   it("delegates failure-path processing to ./failure-path.js", () => {
     expect(source).toMatch(/from\s+"\.\/failure-path\.js"/);
     expect(source).toMatch(/processFailurePath/);
+  });
+});
+
+describe("output-escalation.ts — failure log privacy", () => {
+  it("converts retry and continuation failures to safe message strings", () => {
+    expect(source).toMatch(/toSafeErrorLogString\(escalationError\)/);
+    expect(source).toMatch(/toSafeErrorLogString\(followUpResult\.error\)/);
+    expect(source).toMatch(/toSafeErrorLogString\(continuationResult\.error\.cause\)/);
+    expect(source).not.toMatch(/err:\s*(?:escalationError|followUpResult\.error|continuationResult\.error\.cause)/);
+  });
+});
+
+describe("output-escalation.ts — interactive silent-response boundary", () => {
+  it("checks exact-route delivery evidence before accepting a silent response", () => {
+    expect(source).toMatch(/applyInteractiveSilentRecovery/);
+    expect(interactiveRecoverySource).toMatch(/recoverInteractiveSilentResponse/);
+    expect(interactiveRecoverySource).toMatch(/bridge\.hasOutboundDelivery/);
+    expect(interactiveRecoverySource).toMatch(/execution:recovery_attempted/);
+    expect(interactiveRecoverySource).toMatch(/interactive_silent_sentinel/);
   });
 });

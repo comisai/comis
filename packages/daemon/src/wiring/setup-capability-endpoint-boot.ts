@@ -44,7 +44,7 @@ import {
   type ComisLogger,
   type SessionKey,
   type DurableRunPort,
-  type TypedEventBus,
+  type OutwardSendLedgerPort,
 } from "@comis/core";
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import { createLeaseManager, type LeaseManager, type LeaseManagerDeps } from "@comis/infra";
@@ -63,7 +63,8 @@ import {
   CHECKPOINT_TTL_MS,
   type ResultRefStore,
 } from "@comis/skills/tools";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
   createCapabilityEndpoint,
   createReplayRecorder,
@@ -81,14 +82,14 @@ export interface CapabilityWebSearchKeys {
 }
 
 /**
- * Build the `resolveRootRunId(sessionKey) → rootRunId` resolver over a late-bound
- * budget holder + a session→rootRunId index. The
+ * Build the `resolveRootRunId(agentId, sessionKey) → rootRunId` resolver over a late-bound
+ * budget holder + an authenticated agent/session→rootRunId index. The
  * resolver is a STABLE closure created EARLY (before setupAgents/setupSchedulers,
  * which hold it) and reads `holder.current` at call time — by the time a turn runs,
  * the cap layer has populated it.
  *
  * Resolution: return the session's already-registered root if present; otherwise
- * mint a SYNTHETIC per-session root `root-session-<formattedKey>` and `registerRoot`
+ * mint a SYNTHETIC per-principal root and `registerRoot`
  * it on first use (via the holder). The synthetic fallback is what bounds a
  * TOP-LEVEL (non-spawned) self-spawning loop — the budget's token/wall-clock limbs
  * then key on a stable id for ANY run, not only orchestrate children.
@@ -99,13 +100,14 @@ export interface CapabilityWebSearchKeys {
 export function createRootRunIdResolver(deps: {
   holder: BoundedAutonomyBudgetHolder;
   index: Map<string, string>;
-}): (sessionKey: SessionKey) => string {
-  return (sessionKey: SessionKey): string => {
+}): (agentId: string, sessionKey: SessionKey) => string {
+  return (agentId: string, sessionKey: SessionKey): string => {
     const formatted = formatSessionKey(sessionKey);
-    const existing = deps.index.get(formatted);
+    const principalKey = `${agentId}:${formatted}`;
+    const existing = deps.index.get(principalKey);
     if (existing !== undefined) return existing;
-    const synthetic = `root-session-${formatted}`;
-    deps.index.set(formatted, synthetic);
+    const synthetic = `root-session-${agentId}-${formatted}`;
+    deps.index.set(principalKey, synthetic);
     // Anchor the synthetic root in the budget meter on first use (wall-clock
     // deadline + the rootRunId↔leaseId correlation). No real lease for a top-level
     // run → a synthetic leaseId; absent holder ⇒ skip (the resolver still returns
@@ -197,13 +199,15 @@ export interface CapabilityLayerDeps {
    * chokepoint shares the SAME store the resume engine + message handlers use.
    */
   durableRuns?: DurableRunPort;
+  /** Outward ledger and monotonic sequence allocator used by the capability socket. */
+  outwardLedger?: OutwardSendLedgerPort;
   /**
    * The daemon-wide MCP client manager (constructed unconditionally by `setupMcp`,
    * in daemon.ts scope). Threaded into the tool-invoke executor's `case "mcp"` so a
    * jailed `mcp.<server>.<tool>()` call dispatches through `callTool` on the DAEMON's
    * network (the jail stays `--unshare-net`). NON-optional on purpose: it compile-forces
    * the single daemon.ts caller to thread the shipped manager — an un-threaded manager
-   * ⇒ `executeMcp` honest-degrades to "MCP not available" ⇒ MCP-01 silently dead on a
+   * makes `executeMcp` honestly degrade to "MCP not available" on a
    * green macOS build. (The executor-leg dep stays OPTIONAL for defense-in-depth.)
    */
   mcpClientManager: McpClientManager;
@@ -273,14 +277,14 @@ export interface CapabilityLayerResult {
    */
   namespacePreflightOk: boolean;
   /**
-   * The `resolveRootRunId(sessionKey)` resolver built
-   * over the populated holder + the session→rootRunId index. `undefined` when no
+   * The `resolveRootRunId(agentId, sessionKey)` resolver built
+   * over the populated holder + the authenticated principal index. `undefined` when no
    * autonomy agent (no cap layer). daemon.ts ALSO builds an equivalent resolver
    * early (over the SAME holder + index) for setupAgents, which runs before this
    * call — this returned one is the canonical resolver for any later consumer + the
    * boot-test seam.
    */
-  resolveRootRunId?: (sessionKey: SessionKey) => string;
+  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
 }
 
 /** The shipped web-search provider keys, read from the secret store (or none). */
@@ -350,7 +354,7 @@ function buildToolInvokeExecutor(
     // results/ — the lease (threaded by the executor) gives the agentId.
     materialize: async (payload, toolName, lease): Promise<ResultRef | undefined> => {
       const workspacePath = resolveWorkspace(lease.agentId);
-      const runId = `tinvoke-${now().toString(36)}`;
+      const runId = lease.checkpointId ?? lease.rootRunId ?? `tinvoke-${now().toString(36)}`;
       const result = await resultRefStore.materialize(payload, toolName, {
         workspacePath,
         runId,
@@ -389,7 +393,7 @@ function buildToolInvokeExecutor(
       const agentCfg = Object.entries(deps.agents).find(([id]) => id === agentId)?.[1];
       return agentCfg?.autonomy?.write !== false;
     },
-    // The default-OFF RESUME surface gate (RESUME-01/04, T-233-04): checkpoint/
+    // The resume surface is disabled by default: checkpoint/
     // resume reuse the orch:write/orch:read FLOOR caps, so the cap is NOT the gate —
     // this predicate is (default-off `autonomy.durability.orchestrateResume`).
     // Resolved PER agentId from THAT agent's nested durability toggle
@@ -404,7 +408,8 @@ function buildToolInvokeExecutor(
     // (COALESCE-preserve; the store's upsertCheckpoint never writes outward_step) and
     // resume reads the last checkpointRef back. Absent ⇒ checkpoint/resume degrade.
     ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
-    // The checkpoint materialize bridge (RESUME-05): a distinguished, LONGER-TTL
+    durableBudgetState: (rootRunId) => boundedAutonomy.exportBudgetState(rootRunId),
+    // The checkpoint materialize bridge uses a distinguished, longer-TTL
     // (CHECKPOINT_TTL_MS) kind:json ResultRef, keyed on lease.rootRunId so resume
     // finds it after a restart. The SAME per-file (8 MiB) + per-run aggregate caps
     // apply (the store enforces them regardless of TTL). A non-ResultRef return
@@ -412,7 +417,7 @@ function buildToolInvokeExecutor(
     // the checkpoint content-free.
     materializeCheckpoint: async (stateJson, lease): Promise<ResultRef | undefined> => {
       const workspacePath = resolveWorkspace(lease.agentId);
-      const runId = lease.rootRunId ?? `checkpoint-${now().toString(36)}`;
+      const runId = lease.checkpointId ?? `checkpoint-${now().toString(36)}`;
       const result = await resultRefStore.materialize(stateJson, "orchestrate_checkpoint", {
         workspacePath,
         runId,
@@ -439,43 +444,74 @@ function buildToolInvokeExecutor(
 }
 
 /**
- * Build the content-free replay recorder over the SAME workspace resolver +
- * ResultRef store the tool-invoke executor uses. The recorder is the SOLE writer
- * of `<workspace>/results/replay.jsonl`; injected into the endpoint it appends one
- * content-free `{seq, method, paramsDigest} → pointer` line per SUCCESSFUL cap
- * dispatch (INV-5), so a later deterministic replay has recorded results to serve
- * back. Returns `undefined` when the workspace inputs are absent (the boot-gate
- * unit tests) — the endpoint then records nothing (byte-identical to a run without
- * the resume surface). Recording is ALSO gated per-run on
+ * Build the content-free replay recorder over a daemon-owned recording root and
+ * the ResultRef store. The recorder is the sole writer of
+ * `<dataDir>/replay-recordings/results/<run>/replay.jsonl`; it appends one
+ * content-free `{seq, method, paramsDigest, resultDigest} → pointer` line per successful cap
+ * dispatch, so a later deterministic replay has recorded results to serve
+ * back. Recording is gated per-run on
  * `autonomy.durability.orchestrateResume` (default-off), so a wired-but-disabled
  * agent still records nothing.
  */
 function buildReplayRecorder(
   deps: CapabilityLayerDeps,
   resultRefStore: ResultRefStore,
-): ReplayRecorder | undefined {
-  const { workspaceDirs, defaultWorkspaceDir, daemonLogger } = deps;
-  if (!workspaceDirs || defaultWorkspaceDir === undefined) return undefined;
+): ReplayRecorder {
+  const { daemonLogger } = deps;
   const now = deps.clock.now;
-  const resolveWorkspace = (agentId: string): string =>
-    workspaceDirs.get(agentId) ?? defaultWorkspaceDir;
+  const recordingRootPath = safePath(deps.dataDir, "replay-recordings");
+  const warnedAgents = new Set<string>();
+
+  /** Resolve existing symlink aliases for the bind-vs-recording containment check. */
+  const canonicalPath = (path: string): string => {
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- trusted configured workspace/data root used only for containment comparison.
+      return realpathSync(path);
+    } catch {
+      return resolve(path);
+    }
+  };
+  const canonicalRecordingRoot = safePath(canonicalPath(deps.dataDir), "replay-recordings");
+  const isAtOrUnder = (candidate: string, parent: string): boolean => {
+    const rel = relative(parent, candidate);
+    return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+  };
+
   return createReplayRecorder({
     // Default-OFF per-run gate: record ONLY when orchestrateResume is on for the
     // lease's agent (prototype-safe own-entry lookup, EXACTLY mirroring the
     // executor's orchestrateResumeEnabled predicate). Absent/false ⇒ a full no-op.
     isEnabled: (agentId): boolean => {
       const agentCfg = Object.entries(deps.agents).find(([id]) => id === agentId)?.[1];
-      return agentCfg?.autonomy?.durability?.orchestrateResume === true;
+      if (agentCfg?.autonomy?.durability?.orchestrateResume !== true) return false;
+      const workspacePath = deps.workspaceDirs?.get(agentId) ?? deps.defaultWorkspaceDir;
+      const canonicalWorkspace = workspacePath === undefined ? undefined : canonicalPath(workspacePath);
+      const recordingWouldBeVisible = canonicalWorkspace === undefined ||
+        isAtOrUnder(canonicalRecordingRoot, canonicalWorkspace) ||
+        isAtOrUnder(canonicalWorkspace, canonicalRecordingRoot);
+      if (!recordingWouldBeVisible) return true;
+      if (!warnedAgents.has(agentId)) {
+        warnedAgents.add(agentId);
+        daemonLogger.warn(
+          {
+            agentId,
+            errorKind: "precondition" as const,
+            hint: "Set the agent workspacePath so it does not overlap the daemon replay-recordings directory",
+          },
+          "Replay recording disabled because the agent jail could access its evidence store",
+        );
+      }
+      return false;
     },
-    // The SAME resolver the tool-invoke executor uses — the recorded pointer files +
-    // replay.jsonl live under the offloading agent's jailed workspace results/ dir.
-    resolveWorkspace,
+    // This daemon-owned root is deliberately outside every agent workspace and is
+    // never mounted into the jail, so live scripts cannot forge replay evidence.
+    recordingRootPath,
     // Bind each recorded result to the ResultRef store under a fixed tool name so the
-    // bytes live in the jailed results/ under the same caps/TTL/GC. A ResultRef maps
+    // bytes live in daemon-owned run-isolated storage under the same caps. A ResultRef maps
     // to its pointer; an over-cap { error } / undefined passes through (honest-degrade).
     materialize: async (payload, ctx) => {
       const result = await resultRefStore.materialize(payload, "orchestrate_replay", {
-        workspacePath: ctx.workspacePath,
+        workspacePath: ctx.recordingRootPath,
         runId: ctx.runId,
         nowMs: ctx.nowMs,
         ...(ctx.ttlMs !== undefined ? { ttlMs: ctx.ttlMs } : {}),
@@ -552,10 +588,7 @@ export async function constructCapabilityLayer(
     ...(deps.container !== undefined
       ? {
           onLimbWarning: (w: { rootRunId: string; limb: string; spent: number; cap: number; unit: string }) =>
-            // The container's structural type narrows emit to the audit
-            // events; the budget warning rides the SAME full TypedEventBus the
-            // daemon passes (AppContainer.eventBus) — widen at this one seam.
-            (deps.container!.eventBus.emit as TypedEventBus["emit"])("autonomy:budget_warning", {
+            deps.container!.eventBus.emitSafely("autonomy:budget_warning", {
               rootRunId: w.rootRunId,
               limb: w.limb,
               spent: w.spent,
@@ -653,10 +686,10 @@ export async function constructCapabilityLayer(
       ...(deps.container ? { container: deps.container } : {}),
       // The durable store — the jail leg allocates a monotonic
       // _outwardStepIndex for an outward message method. Absent ⇒ pass-through.
-      ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
-      // The content-free replay recorder (REPLAY-01). Absent (boot-gate tests /
+      ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
+      // The content-free replay recorder. Absent (boot-gate tests /
       // no workspace) ⇒ recordReplay is a no-op, byte-identical to today.
-      ...(replayRecorder ? { replayRecorder } : {}),
+      replayRecorder,
     });
     // Step 2: ACTIVATE — start the daemon-wide 0600 socket ONCE. Construction
     // leaves it DORMANT (no startSocket; active:false). Now the cap surface is LIVE:

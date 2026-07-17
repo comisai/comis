@@ -2,15 +2,10 @@
 /**
  * DeliveryService factory.
  *
- * The single outbound-delivery entry point for channel adapters:
- *  1. Hooks run through `deps.hookRunner` — REQUIRED, injected at
- *     construction, never resolved from global state.
- *  2. Deps are captured in closure at construction (`deps.deliveryQueue` is
- *     REQUIRED; eventBus / retryEngine / abortSignal / maxCharsOverride /
- *     replyMode are optional, so the INNER `?.` on those fields is
- *     deliberate). In-flight outbound `Promise` tracking is owned internally
- *     by the factory and drained via the public `drainInFlight()` method —
- *     callers must NOT inject a tracking Set via deps.
+ * The single outbound-delivery entry point for channel adapters. Hooks and
+ * durable queueing are required construction dependencies; retry, events,
+ * chunk limits, reply behavior, and cancellation are optional. The service
+ * owns and exposes bounded draining for its in-flight sends.
  *
  * Hook execution order, traceId propagation, the suppressError wrap on
  * after_delivery, and all `delivery:*` event emissions are load-bearing
@@ -20,23 +15,31 @@
  */
 
 import type { Result } from "@comis/shared";
-import { ok, err, suppressError, checkAborted } from "@comis/shared";
+import { ok, err, suppressError, checkAborted, tryCatch } from "@comis/shared";
 import { scrubSecretsFromText } from "../security/secret-egress-guard.js";
 
 import type { HookRunner } from "../hooks/hook-runner.js";
 import type { TypedEventBus } from "../event-bus/bus.js";
+import type { EventMap } from "../event-bus/events.js";
+import { emitObservationalEventSafely } from "../event-bus/observational-emission.js";
 import type {
   DeliveryQueuePort,
 } from "../ports/delivery-queue.js";
 import type { SendMessageOptions } from "../ports/channel.js";
 import type { ComisLogger } from "../logging/log-fields.js";
-import { sanitizeLogString } from "../security/log-sanitizer.js";
+import { toSafeErrorLogString } from "../security/log-sanitizer.js";
 import { tryGetContext } from "../context/context.js";
 
 import { formatForChannel } from "./format-for-channel.js";
 import { chunkForDelivery } from "./chunk-for-delivery.js";
 import { chunkBlocks } from "./block-chunker.js";
-import type { RetryEngine } from "./retry-engine.js";
+import {
+  AMBIGUOUS_SEND_OUTCOME_ERROR,
+  classifySendError,
+  EXPLICIT_SEND_REJECTION_ERROR,
+  RETRY_EXHAUSTED_SEND_ERROR,
+  type RetryEngine,
+} from "./retry-engine.js";
 import { isPermanentError } from "./permanent-errors.js";
 import { computeQueueBackoff, resolveChunkLimit } from "./queue-backoff.js";
 
@@ -110,30 +113,25 @@ export interface DeliveryServiceDeps {
   replyMode?: "off" | "first" | "all";
 
   /**
-   * OPTIONAL outbound-message →
-   * trajectory binding for the direct platform-send path. The recurring delivery-queue
-   * DRAIN (setup-delivery.ts:drainDeliveryQueue) already binds; but the PRIMARY
-   * inbound-reply path (setup-and-route → executeAndDeliver → execution-deliver
-   * → this `deliverToChannel`) sends via the direct ack (enqueue in_flight →
-   * adapter.sendMessage → ack). Without this callback it would never bind the
-   * minted reply id → trajectory, so a reaction on a normal agent reply would
-   * map-miss and never drive learning. Threaded here so the direct send
-   * binds the SAME (messageId → scope) the drain does. `undefined` when learning-
-   * outcome is disabled for every agent → the direct send does ZERO extra work
-   * (byte-identity). The same callback instance feeds BOTH the drain and this
-   * path, and `ReactionTrajectoryMap.record` is idempotent by messageId, so a
-   * reply that traverses both (transient-nack → drain retry) cannot double-bind.
-   * Invoked on a successful platform send even when queue enqueue/ack fails:
-   * the minted message ID remains an accurate reaction target, while the queue
-   * failure is reported separately. Requires a non-null traceId AND agentId (the
-   * request ALS) — a null traceId/agentId (a pre-executor / non-
-   * agent send) is a FAIL-CLOSED skip: mis-attributing a reaction to the tenantId
-   * would corrupt cross-agent isolation, so we record nothing.
+   * Optional binding from a successfully minted platform message ID to its
+   * request trajectory. The callback is idempotent because direct delivery and
+   * a later queue retry can observe the same message. It still runs when a queue
+   * transition fails because the platform ID remains authoritative. Missing
+   * trace or agent identity fails closed to prevent cross-agent attribution.
    */
   recordOutboundMessage?: (
     messageId: string,
     scope: { traceId: string; tenantId: string; agentId: string; sessionId: string; participantId?: string },
   ) => void;
+}
+
+function emitDeliveryEvent<K extends keyof EventMap>(
+  deps: Pick<DeliveryServiceDeps, "eventBus" | "logger">,
+  event: K,
+  payload: EventMap[K],
+): void {
+  if (deps.eventBus === undefined) return;
+  emitObservationalEventSafely({ eventBus: deps.eventBus, logger: deps.logger }, event, payload);
 }
 
 function reportQueueTransitionFailure(
@@ -149,11 +147,11 @@ function reportQueueTransitionFailure(
     deliveryId,
     channelId,
     channelType,
-    err: sanitizeLogString(cause.message),
+    err: toSafeErrorLogString(cause),
     errorKind,
     hint: "Check delivery queue storage health and restore writable persistence before retrying",
   }, "Delivery queue transition failed");
-  deps.eventBus?.emit("delivery:queue_transition_failed", {
+  emitDeliveryEvent(deps, "delivery:queue_transition_failed", {
     deliveryId,
     transition,
     errorKind,
@@ -205,16 +203,8 @@ export interface DeliveryService {
  * sessionKey) is resolved INSIDE the method body.
  */
 export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryService {
-  /**
-   * Per-instance set of in-flight outbound sendMessage promises. Each chunk
-   * send is added to the set BEFORE the await (so a SIGUSR2 hitting mid-send
-   * sees the promise in the Set and can drain it) and removed via .finally()
-   * on settle. Drained on shutdown via the public `drainInFlight()` method
-   * with a deadline so SIGUSR2 cannot tear down adapters mid-HTTP-response
-   * (which would orphan the SQLite delivery-queue ack and trigger a
-   * duplicate retry on the next instance). The Set lives entirely inside
-   * the factory closure — callers cannot inject one via deps.
-   */
+  // Register each send before awaiting it so shutdown can drain transport work
+  // before adapter teardown. The set is private to this service instance.
   const inFlightSends = new Set<Promise<unknown>>();
 
   return {
@@ -275,7 +265,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
 
           if (hookResult?.cancel) {
             // Log cancellation at INFO via event
-            deps.eventBus?.emit("delivery:hook_cancelled", {
+            emitDeliveryEvent(deps, "delivery:hook_cancelled", {
               channelId,
               channelType: adapter.channelType,
               reason: hookResult.cancelReason ?? "unknown",
@@ -353,22 +343,11 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         const ctx = tryGetContext();
         const tenantId = ctx?.tenantId ?? "default";
         const traceId = ctx?.traceId ?? null;
-        // The resolved agentId for the turn rides on the
-        // request ALS (executor entry, context.ts:49). It is the partition the
-        // reaction trajectory map + the byte-identity gate key on downstream —
-        // NEVER the tenantId. Persisted into the queue entry's optionsJson below
-        // so the drain (setup-delivery.ts) attributes a reaction on this outbound
-        // to the REAL agent. `null` when absent (pre-executor paths) → the drain
-        // fails closed and does not map the message.
+        // Persist the request-scoped agent identity for queue-drain attribution;
+        // missing identity fails closed instead of substituting the tenant.
         const agentId = ctx?.agentId ?? null;
-        // Group reaction-spoof guard: the conversation PARTICIPANT — the inbound
-        // sender whose message triggered this reply — rides on the request ALS as
-        // ctx.userId (the inbound pipeline sets userId = sessionKey.userId =
-        // msg.senderId). It is threaded onto the reaction trajectory binding so an
-        // unmapped group BYSTANDER cannot inherit defaultTrustLevel and spoof
-        // reaction-learning; only the participant (or an explicitly-mapped reactor)
-        // drives it. `undefined` on pre-resolution paths → the trust resolution fails
-        // safe to the standard defaultTrustLevel-for-unmapped behavior.
+        // Bind reactions to the inbound participant so an unmapped group
+        // bystander cannot inherit the participant's trust.
         const participantId = ctx?.userId;
 
         // Resolve delivery strategy
@@ -387,7 +366,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               aborted = true;
               const reason = abortCheck.error.message;
               // Emit delivery:aborted event
-              deps.eventBus?.emit("delivery:aborted", {
+              emitDeliveryEvent(deps, "delivery:aborted", {
                 channelId,
                 channelType: adapter.channelType,
                 reason,
@@ -406,11 +385,8 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
           // Build SendMessageOptions
           const sendOpts: SendMessageOptions = {};
 
-          // replyTo: respects replyMode. Per-call options.replyMode
-          // supersedes the closure-captured deps.replyMode so callers that
-          // resolve per-channel/per-chat-type variance (execution-deliver
-          // reading streamingConfig.replyModeByChatType) can still override the
-          // service-wide default without constructing a new DeliveryService.
+          // A per-call reply mode overrides the service default for
+          // channel- or chat-specific routing.
           if (options?.replyTo) {
             const replyMode = options?.replyMode ?? deps.replyMode ?? "first";
             if (options.isSystemMessage) {
@@ -529,13 +505,14 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
 
           const tracked: Promise<unknown> = sendPromise;
           inFlightSends.add(tracked);
-          // .finally fires on both fulfillment and rejection -- guarantees
-          // Set cleanup even if sendPromise rejects. We intentionally do
-          // not await this side-effect; the void keeps no-floating-promise
-          // lint quiet without altering the awaited value below.
-          void sendPromise.finally(() => {
+          // Register both settlement branches explicitly. Discarding a
+          // `.finally()` result would create a second rejected promise when
+          // the adapter rejects, even though the authoritative send below is
+          // translated to Result by the outer boundary.
+          const clearTrackedSend = (): void => {
             inFlightSends.delete(tracked);
-          });
+          };
+          void sendPromise.then(clearTrackedSend, clearTrackedSend);
 
           const result: Result<string, Error> = await sendPromise;
 
@@ -552,7 +529,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
             if (entryId) {
               const ackResult = await deps.deliveryQueue.ack(entryId, result.value);
               if (ackResult.ok) {
-                deps.eventBus?.emit("delivery:acked", {
+                emitDeliveryEvent(deps, "delivery:acked", {
                   entryId,
                   channelId,
                   channelType: adapter.channelType,
@@ -568,21 +545,11 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               }
             }
 
-            // --- Bind the minted reply id → trajectory on the
-            // DIRECT platform-send path (the primary inbound-reply path sends HERE, not via
-            // the drain). Mirrors the drain's binding (setup-delivery.ts:287) so a
-            // reaction on this outbound reply resolves its trajectory. Fail-closed:
-            // a null traceId OR a null agentId (a pre-executor / non-agent send) is
-            // a SKIP — mis-attributing a reaction to the tenantId would corrupt
-            // cross-agent isolation. The callback is undefined when
-            // learning-outcome is disabled for all agents → zero extra work
-            // (byte-identity). ReactionTrajectoryMap.record is idempotent by
-            // messageId, so a reply that ALSO traverses the drain (transient-nack →
-            // retry) cannot double-bind. Queue transition failure does not erase
-            // the independently true platform message ID; its dedicated event
-            // distinguishes that case from a durable acknowledgement.
+            // Bind the authoritative platform ID on the direct-send path. Missing
+            // request identity skips the bind; the callback is idempotent when a
+            // queue retry later observes the same message.
             if (deps.recordOutboundMessage !== undefined && traceId !== null && agentId !== null) {
-              deps.recordOutboundMessage(result.value, {
+              const recorded = tryCatch(() => deps.recordOutboundMessage?.(result.value, {
                 traceId,
                 tenantId,
                 agentId,
@@ -591,24 +558,29 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 // reaction from an unmapped group bystander is inert (resolves to
                 // "external"); only the participant inherits defaultTrustLevel.
                 participantId,
-              });
-              // The bind above is otherwise SILENT. Emit a
-              // positive, counts-only `delivery:reply_bound` so the primary-path
-              // attribution is observable — a later reaction map-miss can then be
-              // told apart ("bind fired → entry evicted" vs "bind never fired")
-              // from the event trail in one obs call, with no daemon.log grep.
-              // Same fail-closed branch as the bind. IDS/closed-scalars ONLY —
-              // never a body or a secret (redaction discipline); `agentId` is the REAL
-              // agent (never the tenantId). Only on the learning-enabled path
-              // (recordOutboundMessage defined) → byte-identity when disabled.
-              deps.eventBus?.emit("delivery:reply_bound", {
-                messageId: result.value,
-                channelId,
-                channelType: adapter.channelType,
-                traceId,
-                agentId,
-                timestamp: systemNowMs(),
-              });
+              }));
+              if (!recorded.ok) {
+                void tryCatch(() => deps.logger.warn({
+                  step: "delivery-reply-bind",
+                  channelId,
+                  channelType: adapter.channelType,
+                  err: toSafeErrorLogString(recorded.error),
+                  errorKind: "internal" as const,
+                  hint: "Inspect the outbound trajectory-binding callback; platform delivery succeeded but reaction attribution was not recorded",
+                }, "Outbound reply trajectory binding failed"));
+              }
+              // Emit only closed identifiers so attribution failures can distinguish
+              // a missing bind from later eviction without exposing message content.
+              if (recorded.ok) {
+                emitDeliveryEvent(deps, "delivery:reply_bound", {
+                  messageId: result.value,
+                  channelId,
+                  channelType: adapter.channelType,
+                  traceId,
+                  agentId,
+                  timestamp: systemNowMs(),
+                });
+              }
             }
           } else {
             chunkResult.error = result.error;
@@ -616,20 +588,31 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
             // --- Queue: nack or fail on error ---
             if (entryId) {
               const errorMsg = result.error.message;
-              const failReason = strategy === "best-effort" || isPermanentError(errorMsg)
-                ? "permanent_error" as const
-                : deps.retryEngine
-                  ? "retries_exhausted" as const
-                  : null;
+              const errorClassification = classifySendError(result.error);
+              const uncertainOutcome = errorClassification === "uncertain";
+              const failReason = uncertainOutcome
+                ? "uncertain_outcome" as const
+                : strategy === "best-effort" ||
+                    isPermanentError(errorMsg) ||
+                    errorClassification === "markdown-fallback"
+                  ? "permanent_error" as const
+                  : deps.retryEngine
+                    ? "retries_exhausted" as const
+                    : null;
+              const persistedError = failReason === "uncertain_outcome"
+                ? AMBIGUOUS_SEND_OUTCOME_ERROR
+                : failReason === "retries_exhausted"
+                  ? RETRY_EXHAUSTED_SEND_ERROR
+                  : EXPLICIT_SEND_REJECTION_ERROR;
 
               if (failReason !== null) {
-                const failResult = await deps.deliveryQueue.fail(entryId, errorMsg);
+                const failResult = await deps.deliveryQueue.fail(entryId, persistedError);
                 if (failResult.ok) {
-                  deps.eventBus?.emit("delivery:failed", {
+                  emitDeliveryEvent(deps, "delivery:failed", {
                     entryId,
                     channelId,
                     channelType: adapter.channelType,
-                    error: errorMsg,
+                    error: persistedError,
                     reason: failReason,
                     timestamp: systemNowMs(),
                   });
@@ -642,13 +625,17 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               } else {
                 // No retry engine -- nack for queue-level retry
                 const nextRetryAt = systemNowMs() + computeQueueBackoff(0);
-                const nackResult = await deps.deliveryQueue.nack(entryId, errorMsg, nextRetryAt);
+                const nackResult = await deps.deliveryQueue.nack(
+                  entryId,
+                  EXPLICIT_SEND_REJECTION_ERROR,
+                  nextRetryAt,
+                );
                 if (nackResult.ok) {
-                  deps.eventBus?.emit("delivery:nacked", {
+                  emitDeliveryEvent(deps, "delivery:nacked", {
                     entryId,
                     channelId,
                     channelType: adapter.channelType,
-                    error: errorMsg,
+                    error: EXPLICIT_SEND_REJECTION_ERROR,
                     attemptCount: 1,
                     nextRetryAt,
                     timestamp: systemNowMs(),
@@ -667,7 +654,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
 
             // Emit per-chunk event before potential break
             if (deps.eventBus) {
-              deps.eventBus.emit("delivery:chunk_sent", {
+              emitDeliveryEvent(deps, "delivery:chunk_sent", {
                 channelId,
                 channelType: adapter.channelType,
                 chunkIndex: i,
@@ -693,7 +680,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
 
           // Emit per-chunk event
           if (deps.eventBus) {
-            deps.eventBus.emit("delivery:chunk_sent", {
+            emitDeliveryEvent(deps, "delivery:chunk_sent", {
               channelId,
               channelType: adapter.channelType,
               chunkIndex: i,
@@ -722,7 +709,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
 
         // Emit delivery:complete event (only if NOT aborted -- delivery:aborted was emitted in the loop)
         if (deps.eventBus && !aborted) {
-          deps.eventBus.emit("delivery:complete", {
+          emitDeliveryEvent(deps, "delivery:complete", {
             channelId,
             channelType: adapter.channelType,
             totalChunks: deliveryResult.totalChunks,

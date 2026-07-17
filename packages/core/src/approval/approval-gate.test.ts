@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createApprovalGate } from "./approval-gate.js";
+import { createApprovalGate as createApprovalGateImpl } from "./approval-gate.js";
 import type { ApprovalGate, ApprovalGateDeps } from "./approval-gate.js";
 import { mintApprovalShortId } from "./approval-short-id.js";
 import { TypedEventBus } from "../event-bus/bus.js";
 import type { EventMap } from "../event-bus/events.js";
 import type { ApprovalResolution, SerializedApprovalRequest, SerializedApprovalCacheEntry } from "../domain/approval-request.js";
+import { parseFormattedSessionKey } from "../domain/session-key.js";
 import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -52,22 +54,58 @@ let eventBus: TypedEventBus;
 let gate: ApprovalGate;
 
 const DEFAULT_TIMEOUT_MS = 5000;
+const FINGERPRINT_SECRET = "test-approval-fingerprint-secret-32-bytes";
+
+function createApprovalGate(
+  deps: Omit<ApprovalGateDeps, "fingerprintSecret"> & { fingerprintSecret?: string },
+): ApprovalGate {
+  return createApprovalGateImpl({
+    ...deps,
+    fingerprintSecret: deps.fingerprintSecret ?? FINGERPRINT_SECRET,
+  });
+}
 
 function makeRequest(overrides: Partial<{
   toolName: string;
   action: string;
   params: Record<string, unknown>;
+  fingerprintParams: Record<string, unknown>;
   agentId: string;
   sessionKey: string;
   trustLevel: "admin" | "user" | "guest";
+  callbackOwner: {
+    tenantId: string;
+    userId: string;
+    channelType: string;
+    channelKey: string;
+    threadId?: string;
+  };
 }> = {}) {
+  const params = overrides.params ?? { agentId: "bot-1" };
+  const sessionKey = overrides.sessionKey ?? "default:user1:discord";
+  const parsedSession = parseFormattedSessionKey(sessionKey);
   return {
     toolName: overrides.toolName ?? "agents.restart",
     action: overrides.action ?? "agents.restart",
-    params: overrides.params ?? { agentId: "bot-1" },
+    params,
+    fingerprintParams: overrides.fingerprintParams ?? params,
     agentId: overrides.agentId ?? "agent-1",
-    sessionKey: overrides.sessionKey ?? "default:user1:discord",
+    sessionKey,
     trustLevel: overrides.trustLevel ?? "user" as const,
+    callbackOwner: overrides.callbackOwner ?? (parsedSession === undefined
+      ? {
+          tenantId: "default",
+          userId: "user1",
+          channelType: "discord",
+          channelKey: "discord",
+        }
+      : {
+          tenantId: parsedSession.tenantId,
+          userId: parsedSession.userId,
+          channelType: parsedSession.channelId,
+          channelKey: parsedSession.channelId,
+          ...(parsedSession.threadId === undefined ? {} : { threadId: parsedSession.threadId }),
+        }),
   };
 }
 
@@ -92,6 +130,114 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("request creation", () => {
+  it("snapshots and deeply freezes parameters before event, pending, and persistence exposure", () => {
+    const handler = vi.fn();
+    eventBus.on("approval:requested", handler);
+    const params = { target: { id: "host-1", labels: ["safe"] } };
+    const fingerprintParams = { credential: { ref: "vault-item-1" } };
+
+    gate.requestApproval(makeRequest({ params, fingerprintParams }));
+    params.target.id = "host-2";
+    params.target.labels.push("mutated");
+    fingerprintParams.credential.ref = "vault-item-2";
+
+    const pending = gate.pending()[0]!;
+    const emitted = handler.mock.calls[0]![0] as EventMap["approval:requested"];
+    const serialized = gate.serializePending()[0]!;
+    expect(pending.params.target).toEqual({ id: "host-1", labels: ["safe"] });
+    expect(emitted.params.target).toEqual({ id: "host-1", labels: ["safe"] });
+    expect(serialized.params.target).toEqual({ id: "host-1", labels: ["safe"] });
+    expect(Object.isFrozen(pending.params)).toBe(true);
+    expect(Object.isFrozen(pending.params.target)).toBe(true);
+    expect(Object.isFrozen((pending.params.target as { labels: string[] }).labels)).toBe(true);
+  });
+
+  it("stores an immutable callback owner and preserves it in the restart snapshot", () => {
+    const callbackOwner = {
+      tenantId: "default",
+      userId: "user1",
+      channelType: "telegram",
+      channelKey: "chat-1",
+      threadId: "topic-1",
+    };
+
+    gate.requestApproval(makeRequest({
+      sessionKey: "default:user1:chat-1:thread:topic-1",
+      callbackOwner,
+    }));
+    callbackOwner.userId = "attacker";
+    callbackOwner.threadId = "other-topic";
+
+    expect(gate.pending()[0]!.callbackOwner).toEqual({
+      tenantId: "default",
+      userId: "user1",
+      channelType: "telegram",
+      channelKey: "chat-1",
+      threadId: "topic-1",
+    });
+    expect(Object.isFrozen(gate.pending()[0]!.callbackOwner)).toBe(true);
+    expect(gate.serializePending()[0]!.callbackOwner).toEqual(gate.pending()[0]!.callbackOwner);
+  });
+
+  it("does not expose the plain SHA-256 digest of low-entropy operation parameters", () => {
+    gate.requestApproval(makeRequest({
+      params: { count: 1 },
+      fingerprintParams: { enabled: false },
+    }));
+
+    const fingerprint = gate.pending()[0]!.params.operationFingerprint;
+    const guessableSha = createHash("sha256").update('{"enabled":false}').digest("hex");
+    expect(fingerprint).not.toBe(guessableSha);
+  });
+
+  it("changes externally visible operation and cache identities when the HMAC key changes", async () => {
+    const otherGate = createApprovalGate({
+      eventBus: new TypedEventBus(),
+      clock: testClock,
+      timers: testTimers,
+      getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
+      fingerprintSecret: "different-test-approval-fingerprint-secret",
+    });
+    const first = gate.requestApproval(makeRequest({
+      params: { count: 1 },
+      fingerprintParams: { enabled: false },
+    }));
+    const second = otherGate.requestApproval(makeRequest({
+      params: { count: 1 },
+      fingerprintParams: { enabled: false },
+    }));
+    const firstPending = gate.pending()[0]!;
+    const secondPending = otherGate.pending()[0]!;
+    expect(firstPending.params.operationFingerprint)
+      .not.toBe(secondPending.params.operationFingerprint);
+
+    gate.resolveApproval(firstPending.requestId, true, "operator");
+    otherGate.resolveApproval(secondPending.requestId, true, "operator");
+    await Promise.all([first, second]);
+    expect(gate.serializeApprovalCache()[0]!.cacheKey)
+      .not.toBe(otherGate.serializeApprovalCache()[0]!.cacheKey);
+    otherGate.dispose();
+  });
+
+  it("keeps pending, event, and cache identity bound to the pre-mutation snapshot", async () => {
+    const params = { target: { id: "host-1" } };
+    const fingerprintParams = { enabled: false };
+    const first = gate.requestApproval(makeRequest({ params, fingerprintParams }));
+    params.target.id = "host-2";
+    fingerprintParams.enabled = true;
+    const pending = gate.pending()[0]!;
+    gate.resolveApproval(pending.requestId, true, "operator");
+    await first;
+
+    const cached = await gate.requestApproval(makeRequest({
+      params: { target: { id: "host-1" } },
+      fingerprintParams: { enabled: false },
+    }));
+
+    expect(cached.approvedBy).toBe("system:cached-approval");
+    expect(gate.pending()).toHaveLength(0);
+  });
+
   it("requestApproval adds request to pending list", () => {
     gate.requestApproval(makeRequest());
 
@@ -123,7 +269,10 @@ describe("request creation", () => {
     expect(request).toBeDefined();
     expect(request!.toolName).toBe("system.reboot");
     expect(request!.action).toBe("system.reboot");
-    expect(request!.params).toEqual({ target: "host-1" });
+    expect(request!.params).toEqual(expect.objectContaining({
+      target: "host-1",
+      operationFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+    }));
     expect(request!.agentId).toBe("agent-2");
     expect(request!.sessionKey).toBe("default:admin:telegram");
     expect(request!.trustLevel).toBe("admin");
@@ -179,7 +328,10 @@ describe("approval:requested event", () => {
     expect(payload.requestId).toMatch(/^[0-9a-f-]{36}$/);
     expect(payload.toolName).toBe("config.write");
     expect(payload.action).toBe("config.write");
-    expect(payload.params).toEqual({ section: "agents" });
+    expect(payload.params).toEqual(expect.objectContaining({
+      section: "agents",
+      operationFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+    }));
     expect(payload.agentId).toBe("agent-3");
     expect(payload.sessionKey).toBe("default:op1:slack");
     expect(payload.trustLevel).toBe("admin");
@@ -536,6 +688,40 @@ describe("denial cache", () => {
     expect(gateWithTtl.pending()).toHaveLength(1);
   });
 
+  it.each([
+    ["agent", { agentId: "agent-2" }],
+    ["trust level", { trustLevel: "guest" as const }],
+    ["tool", { toolName: "agents_manage_alternate" }],
+    ["parameters", { params: { agentId: "bot-2" } }],
+  ])("does not reuse a denial across a different %s", async (_dimension, overrides) => {
+    const first = gateWithTtl.requestApproval(makeRequest());
+    const [pending] = gateWithTtl.pending();
+    gateWithTtl.resolveApproval(pending!.requestId, false, "operator", "No");
+    await first;
+
+    gateWithTtl.requestApproval(makeRequest(overrides));
+
+    expect(gateWithTtl.pending()).toHaveLength(1);
+  });
+
+  it("does not reuse a denial for a different hidden operation fingerprint", async () => {
+    const summary = { targetCount: 1 };
+    const first = gateWithTtl.requestApproval(makeRequest({
+      params: summary,
+      fingerprintParams: { target: "first" },
+    }));
+    const [pending] = gateWithTtl.pending();
+    gateWithTtl.resolveApproval(pending!.requestId, false, "operator", "No");
+    await first;
+
+    gateWithTtl.requestApproval(makeRequest({
+      params: summary,
+      fingerprintParams: { target: "second" },
+    }));
+
+    expect(gateWithTtl.pending()).toHaveLength(1);
+  });
+
   it("clearDenialCache(sessionKey) removes entries for that session", async () => {
     const promise1 = gateWithTtl.requestApproval(makeRequest());
     const [pending1] = gateWithTtl.pending();
@@ -698,6 +884,117 @@ describe("batch parallel requests", () => {
     expect(gate.pending()).toHaveLength(2);
   });
 
+  it.each([
+    ["agent", { agentId: "agent-2" }],
+    ["trust level", { trustLevel: "guest" as const }],
+    ["tool", { toolName: "agents_manage_alternate" }],
+    ["parameters", { params: { agentId: "bot-2" } }],
+  ])("does not batch parallel requests from a different %s", (_dimension, overrides) => {
+    gate.requestApproval(makeRequest());
+    gate.requestApproval(makeRequest(overrides));
+
+    expect(gate.pending()).toHaveLength(2);
+  });
+
+  it("batches semantically identical parameters regardless of object insertion order", () => {
+    gate.requestApproval(makeRequest({
+      params: { target: { beta: 2, alpha: 1 }, enabled: true },
+    }));
+    gate.requestApproval(makeRequest({
+      params: { enabled: true, target: { alpha: 1, beta: 2 } },
+    }));
+
+    expect(gate.pending()).toHaveLength(1);
+  });
+
+  it("does not batch safe summaries whose hidden operation fingerprints differ", () => {
+    const summary = { targetCount: 1 };
+    gate.requestApproval(makeRequest({
+      params: summary,
+      fingerprintParams: { target: "first" },
+    }));
+    gate.requestApproval(makeRequest({
+      params: summary,
+      fingerprintParams: { target: "second" },
+    }));
+
+    expect(gate.pending()).toHaveLength(2);
+  });
+
+  it("emits only safe summary parameters plus an opaque operation fingerprint", () => {
+    const handler = vi.fn();
+    eventBus.on("approval:requested", handler);
+
+    gate.requestApproval(makeRequest({
+      params: { targetCount: 1 },
+      fingerprintParams: { credential: "private-test-value" },
+    }));
+
+    const payload = handler.mock.calls[0]![0] as EventMap["approval:requested"];
+    expect(payload.params).toEqual({
+      targetCount: 1,
+      operationFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+    expect(JSON.stringify(payload)).not.toContain("private-test-value");
+  });
+
+  it("fails closed without creating a shared pending bucket when principal identity is missing", async () => {
+    const missingAgent = gate.requestApproval(makeRequest({ agentId: "" }));
+    const missingSession = gate.requestApproval(makeRequest({ sessionKey: "" }));
+
+    expect(gate.pending()).toHaveLength(0);
+    await expect(missingAgent).resolves.toMatchObject({
+      approved: false,
+      approvedBy: "system:invalid-request",
+    });
+    await expect(missingSession).resolves.toMatchObject({
+      approved: false,
+      approvedBy: "system:invalid-request",
+    });
+  });
+
+  it("fails closed when approval parameters cannot be canonicalized safely", async () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+
+    const resolution = await gate.requestApproval(makeRequest({ params: cyclic }));
+
+    expect(resolution).toMatchObject({
+      approved: false,
+      approvedBy: "system:invalid-request",
+    });
+    expect(gate.pending()).toHaveLength(0);
+  });
+
+  it("fails closed when hidden fingerprint parameters cannot be canonicalized safely", async () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+
+    const resolution = await gate.requestApproval(makeRequest({
+      params: { targetCount: 1 },
+      fingerprintParams: cyclic,
+    }));
+
+    expect(resolution).toMatchObject({
+      approved: false,
+      approvedBy: "system:invalid-request",
+    });
+    expect(gate.pending()).toHaveLength(0);
+  });
+
+  it("fails closed when parameter inspection throws", async () => {
+    const { proxy, revoke } = Proxy.revocable<Record<string, unknown>>({}, {});
+    revoke();
+
+    const resolution = await gate.requestApproval(makeRequest({ params: proxy }));
+
+    expect(resolution).toMatchObject({
+      approved: false,
+      approvedBy: "system:invalid-request",
+    });
+    expect(gate.pending()).toHaveLength(0);
+  });
+
   it("approval:requested event emitted only once for batched requests", () => {
     const handler = vi.fn();
     eventBus.on("approval:requested", handler);
@@ -735,7 +1032,7 @@ describe("serialization and restore", () => {
   it("restorePending() restores with correct remaining timeout", async () => {
     const now = Date.now();
     const record: SerializedApprovalRequest = {
-      requestId: "00000000-0000-0000-0000-000000000001",
+      requestId: "00000000-0000-4000-8000-000000000001",
       shortId: "Restore01Abc",
       toolName: "agents_manage",
       action: "agents.create",
@@ -743,6 +1040,7 @@ describe("serialization and restore", () => {
       agentId: "agent-1",
       sessionKey: "default:user1:discord",
       trustLevel: "user",
+      callbackOwner: { tenantId: "default", userId: "user1", channelType: "discord", channelKey: "discord" },
       createdAt: now - 1000, // 1 second ago
       timeoutMs: 5000,       // 5 second timeout -> 4 seconds remaining
     };
@@ -750,7 +1048,7 @@ describe("serialization and restore", () => {
     const restored = gate.restorePending([record]);
     expect(restored).toBe(1);
     expect(gate.pending()).toHaveLength(1);
-    expect(gate.pending()[0]!.requestId).toBe("00000000-0000-0000-0000-000000000001");
+    expect(gate.pending()[0]!.requestId).toBe("00000000-0000-4000-8000-000000000001");
 
     // Advance 3999ms -- should still be pending (4000ms remaining)
     vi.advanceTimersByTime(3999);
@@ -764,7 +1062,7 @@ describe("serialization and restore", () => {
   it("restorePending() skips expired records", () => {
     const now = Date.now();
     const record: SerializedApprovalRequest = {
-      requestId: "00000000-0000-0000-0000-000000000002",
+      requestId: "00000000-0000-4000-8000-000000000002",
       shortId: "Restore02Abc",
       toolName: "agents_manage",
       action: "agents.create",
@@ -772,6 +1070,7 @@ describe("serialization and restore", () => {
       agentId: "agent-1",
       sessionKey: "default:user1:discord",
       trustLevel: "user",
+      callbackOwner: { tenantId: "default", userId: "user1", channelType: "discord", channelKey: "discord" },
       createdAt: now - 10000, // 10 seconds ago
       timeoutMs: 5000,         // 5 second timeout -- already expired
     };
@@ -787,7 +1086,7 @@ describe("serialization and restore", () => {
 
     const now = Date.now();
     const record: SerializedApprovalRequest = {
-      requestId: "00000000-0000-0000-0000-000000000003",
+      requestId: "00000000-0000-4000-8000-000000000003",
       shortId: "Restore03Abc",
       toolName: "agents_manage",
       action: "agents.delete",
@@ -795,6 +1094,7 @@ describe("serialization and restore", () => {
       agentId: "agent-1",
       sessionKey: "default:user1:discord",
       trustLevel: "admin",
+      callbackOwner: { tenantId: "default", userId: "user1", channelType: "discord", channelKey: "discord" },
       createdAt: now - 500,
       timeoutMs: 10000,
     };
@@ -803,10 +1103,43 @@ describe("serialization and restore", () => {
 
     expect(handler).toHaveBeenCalledOnce();
     const payload = handler.mock.calls[0]![0] as EventMap["approval:requested"];
-    expect(payload.requestId).toBe("00000000-0000-0000-0000-000000000003");
+    expect(payload.requestId).toBe("00000000-0000-4000-8000-000000000003");
     expect(payload.shortId).toBe("Restore03Abc");
     expect(payload.action).toBe("agents.delete");
     expect(payload.toolName).toBe("agents_manage");
+  });
+
+  it("restorePending keeps the persisted callback owner immutable after restart", () => {
+    gate.requestApproval(makeRequest({
+      sessionKey: "default:user1:chat-1:thread:topic-1",
+      callbackOwner: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelKey: "chat-1",
+        threadId: "topic-1",
+      },
+    }));
+    const [record] = gate.serializePending();
+    const freshGate = createApprovalGate({
+      eventBus: new TypedEventBus(),
+      clock: testClock,
+      timers: testTimers,
+      getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
+    });
+
+    expect(freshGate.restorePending([record!])).toBe(1);
+    record!.callbackOwner.userId = "attacker";
+
+    expect(freshGate.pending()[0]!.callbackOwner).toEqual({
+      tenantId: "default",
+      userId: "user1",
+      channelType: "telegram",
+      channelKey: "chat-1",
+      threadId: "topic-1",
+    });
+    expect(Object.isFrozen(freshGate.pending()[0]!.callbackOwner)).toBe(true);
+    freshGate.dispose();
   });
 });
 
@@ -824,6 +1157,18 @@ describe("dispose with system:shutdown", () => {
     expect(result.approved).toBe(false);
     expect(result.approvedBy).toBe("system:shutdown");
     expect(result.reason).toBe("Daemon shutting down");
+  });
+
+  it("dispose() resolves every batched follower with system:shutdown denial", async () => {
+    const primary = gate.requestApproval(makeRequest());
+    const follower = gate.requestApproval(makeRequest());
+
+    gate.dispose();
+
+    await expect(Promise.all([primary, follower])).resolves.toEqual([
+      expect.objectContaining({ approved: false, approvedBy: "system:shutdown" }),
+      expect.objectContaining({ approved: false, approvedBy: "system:shutdown" }),
+    ]);
   });
 
   it("system:shutdown denial does NOT populate denial cache", async () => {
@@ -950,6 +1295,56 @@ describe("approval cache", () => {
 
     // Same sessionKey but different action -- should create a real pending entry
     gateWithApprovalCache.requestApproval(makeRequest({ action: "agents.delete" }));
+    expect(gateWithApprovalCache.pending()).toHaveLength(1);
+  });
+
+  it.each([
+    ["agent", { agentId: "agent-2" }],
+    ["trust level", { trustLevel: "guest" as const }],
+    ["tool", { toolName: "agents_manage_alternate" }],
+    ["parameters", { params: { agentId: "bot-2" } }],
+  ])("does not reuse an approval across a different %s", async (_dimension, overrides) => {
+    const first = gateWithApprovalCache.requestApproval(makeRequest());
+    const [pending] = gateWithApprovalCache.pending();
+    gateWithApprovalCache.resolveApproval(pending!.requestId, true, "operator");
+    await first;
+
+    gateWithApprovalCache.requestApproval(makeRequest(overrides));
+
+    expect(gateWithApprovalCache.pending()).toHaveLength(1);
+  });
+
+  it("reuses an approval for semantically identical parameters regardless of insertion order", async () => {
+    const first = gateWithApprovalCache.requestApproval(makeRequest({
+      params: { target: { beta: 2, alpha: 1 }, enabled: true },
+    }));
+    const [pending] = gateWithApprovalCache.pending();
+    gateWithApprovalCache.resolveApproval(pending!.requestId, true, "operator");
+    await first;
+
+    const resolution = await gateWithApprovalCache.requestApproval(makeRequest({
+      params: { enabled: true, target: { alpha: 1, beta: 2 } },
+    }));
+
+    expect(resolution.approvedBy).toBe("system:cached-approval");
+    expect(gateWithApprovalCache.pending()).toHaveLength(0);
+  });
+
+  it("does not reuse an approval for a different hidden operation fingerprint", async () => {
+    const summary = { targetCount: 1 };
+    const first = gateWithApprovalCache.requestApproval(makeRequest({
+      params: summary,
+      fingerprintParams: { target: "first" },
+    }));
+    const [pending] = gateWithApprovalCache.pending();
+    gateWithApprovalCache.resolveApproval(pending!.requestId, true, "operator");
+    await first;
+
+    gateWithApprovalCache.requestApproval(makeRequest({
+      params: summary,
+      fingerprintParams: { target: "second" },
+    }));
+
     expect(gateWithApprovalCache.pending()).toHaveLength(1);
   });
 
@@ -1137,10 +1532,11 @@ describe("approval cache serialization and logging", () => {
 
     const entries = gateWithApprovalCache.serializeApprovalCache();
     expect(entries).toHaveLength(1);
-    expect(entries[0]!.cacheKey).toBe("default:user1:discord::agents.restart");
+    expect(entries[0]!.cacheKey).toMatch(/^h1:21:default:user1:discord:[0-9a-f]{64}$/);
     expect(entries[0]!.resolution.approved).toBe(true);
     expect(entries[0]!.resolution.approvedBy).toBe("operator");
     expect(entries[0]!.expiresAt).toBeGreaterThan(Date.now());
+    expect(entries[0]!.cacheKey).not.toContain("bot-1");
   });
 
   it("serializeApprovalCache skips expired entries", async () => {
@@ -1157,18 +1553,21 @@ describe("approval cache serialization and logging", () => {
   });
 
   it("restoreApprovalCache restores valid entries and auto-approves subsequent requests", async () => {
-    const entry: SerializedApprovalCacheEntry = {
-      cacheKey: "default:user1:discord::agents.restart",
-      resolution: {
-        requestId: "00000000-0000-0000-0000-000000000099",
-        approved: true,
-        approvedBy: "operator",
-        resolvedAt: Date.now(),
-      },
-      expiresAt: Date.now() + 15_000,
-    };
+    const sourceGate = createApprovalGate({
+      eventBus,
+      clock: testClock,
+      timers: testTimers,
+      getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
+      getBatchApprovalTtlMs: () => APPROVAL_CACHE_TTL,
+    });
+    const sourcePromise = sourceGate.requestApproval(makeRequest());
+    const [sourcePending] = sourceGate.pending();
+    sourceGate.resolveApproval(sourcePending!.requestId, true, "operator");
+    await sourcePromise;
+    const [entry] = sourceGate.serializeApprovalCache();
+    expect(entry).toBeDefined();
 
-    const restored = gateWithApprovalCache.restoreApprovalCache([entry]);
+    const restored = gateWithApprovalCache.restoreApprovalCache([entry!]);
     expect(restored).toBe(1);
 
     // Submit same request -- should resolve from cache
@@ -1178,13 +1577,14 @@ describe("approval cache serialization and logging", () => {
     expect(result.approved).toBe(true);
     expect(result.approvedBy).toBe("system:cached-approval");
     expect(gateWithApprovalCache.pending()).toHaveLength(0);
+    sourceGate.dispose();
   });
 
   it("restoreApprovalCache skips entries with expired expiresAt", () => {
     const entry: SerializedApprovalCacheEntry = {
       cacheKey: "default:user1:discord::agents.restart",
       resolution: {
-        requestId: "00000000-0000-0000-0000-000000000098",
+        requestId: "00000000-0000-4000-8000-000000000098",
         approved: true,
         approvedBy: "operator",
         resolvedAt: Date.now() - 20_000,
@@ -1197,6 +1597,42 @@ describe("approval cache serialization and logging", () => {
 
     // Submit request -- should go to pending (not cached)
     gateWithApprovalCache.requestApproval(makeRequest());
+    expect(gateWithApprovalCache.pending()).toHaveLength(1);
+  });
+
+  it("restoreApprovalCache rejects a persisted denial instead of treating its presence as approval", () => {
+    const restored = gateWithApprovalCache.restoreApprovalCache([{
+      cacheKey: "h1:21:default:user1:discord:5c050e59c852954be48fced984af6586aa7133864c5f291a30ed64ab6cfea853",
+      resolution: {
+        requestId: "00000000-0000-4000-8000-000000000097",
+        approved: false,
+        approvedBy: "operator",
+        resolvedAt: Date.now(),
+      },
+      expiresAt: Date.now() + 15_000,
+    } as never]);
+
+    expect(restored).toBe(0);
+    gateWithApprovalCache.requestApproval(makeRequest());
+    expect(gateWithApprovalCache.pending()).toHaveLength(1);
+  });
+
+  it("does not match a guessed cache entry made from a plain low-entropy SHA-256 digest", () => {
+    const guessed = createHash("sha256").update('{"agentId":"bot-1"}').digest("hex");
+    const restored = gateWithApprovalCache.restoreApprovalCache([{
+      cacheKey: `h1:21:default:user1:discord:${guessed}`,
+      resolution: {
+        requestId: "00000000-0000-4000-8000-000000000096",
+        approved: true,
+        approvedBy: "operator",
+        resolvedAt: Date.now(),
+      },
+      expiresAt: Date.now() + 15_000,
+    }]);
+    expect(restored).toBe(1);
+
+    gateWithApprovalCache.requestApproval(makeRequest());
+
     expect(gateWithApprovalCache.pending()).toHaveLength(1);
   });
 
@@ -1232,6 +1668,30 @@ describe("approval cache serialization and logging", () => {
     expect(result2.approvedBy).toBe("system:cached-approval");
 
     newGate.dispose();
+  });
+
+  it("restored approval cache keeps the original absolute expiry", async () => {
+    const first = gateWithApprovalCache.requestApproval(makeRequest());
+    const [pending] = gateWithApprovalCache.pending();
+    gateWithApprovalCache.resolveApproval(pending!.requestId, true, "operator");
+    await first;
+    const entries = gateWithApprovalCache.serializeApprovalCache();
+
+    vi.advanceTimersByTime(APPROVAL_CACHE_TTL - 1_000);
+    const restoredGate = createApprovalGate({
+      eventBus,
+      clock: testClock,
+      timers: testTimers,
+      getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
+      getBatchApprovalTtlMs: () => APPROVAL_CACHE_TTL,
+    });
+    expect(restoredGate.restoreApprovalCache(entries)).toBe(1);
+
+    vi.advanceTimersByTime(1_001);
+    restoredGate.requestApproval(makeRequest());
+
+    expect(restoredGate.pending()).toHaveLength(1);
+    restoredGate.dispose();
   });
 
   // -- Shutdown ordering test --
@@ -1278,7 +1738,7 @@ describe("approval cache serialization and logging", () => {
 
     expect(debugFn).toHaveBeenCalledWith(
       expect.objectContaining({
-        cacheKey: "default:user1:discord::agents.restart",
+        cacheKey: expect.stringMatching(/^h1:21:default:user1:discord:[0-9a-f]{64}$/),
         action: "agents.restart",
       }),
       "Approval cache hit",
@@ -1375,8 +1835,8 @@ describe("shortId minting and emission", () => {
   });
 
   it("two concurrent pending requests receive two different shortIds", () => {
-    gate.requestApproval(makeRequest({ action: "tool-a", toolName: "tool-a", sessionKey: "s:a" }));
-    gate.requestApproval(makeRequest({ action: "tool-b", toolName: "tool-b", sessionKey: "s:b" }));
+    gate.requestApproval(makeRequest({ action: "tool-a", toolName: "tool-a", sessionKey: "default:a:channel-a" }));
+    gate.requestApproval(makeRequest({ action: "tool-b", toolName: "tool-b", sessionKey: "default:b:channel-b" }));
 
     const pending = gate.pending();
     expect(pending).toHaveLength(2);
@@ -1635,5 +2095,169 @@ describe("shortId secondary index + read helpers", () => {
 
     expect(freshGate.getRequestByShortId(original.shortId)).toBeUndefined();
     freshGate.dispose();
+  });
+});
+
+describe("approval lifecycle subscriber isolation", () => {
+  function makeIsolationGate(
+    bus: TypedEventBus,
+    logger?: { debug: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> },
+  ): ApprovalGate {
+    return createApprovalGate({
+      eventBus: bus,
+      clock: testClock,
+      timers: testTimers,
+      getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
+      getBatchApprovalTtlMs: () => 30_000,
+      ...(logger === undefined ? {} : { logger }),
+    });
+  }
+
+  it("keeps a requested approval pending and reaches later observers after sync and async subscriber failures", async () => {
+    const bus = new TypedEventBus();
+    const logger = { debug: vi.fn(), warn: vi.fn() };
+    const laterObserver = vi.fn();
+    bus.on("approval:requested", () => {
+      throw new Error("private approval parameters from sync subscriber");
+    });
+    bus.on("approval:requested", async () => {
+      throw new Error("private approval parameters from async subscriber");
+    });
+    bus.on("approval:requested", laterObserver);
+    const isolatedGate = makeIsolationGate(bus, logger);
+
+    const resolutionPromise = isolatedGate.requestApproval(makeRequest());
+    const [request] = isolatedGate.pending();
+
+    expect(request).toBeDefined();
+    expect(laterObserver).toHaveBeenCalledOnce();
+    isolatedGate.resolveApproval(request!.requestId, true, "operator");
+    await expect(resolutionPromise).resolves.toMatchObject({ approved: true });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("private approval parameters");
+    isolatedGate.dispose();
+  });
+
+  it("unblocks manual resolution and removes every pending index when a resolved subscriber throws", async () => {
+    const bus = new TypedEventBus();
+    const isolatedGate = makeIsolationGate(bus);
+    const resolutionPromise = isolatedGate.requestApproval(makeRequest());
+    const [request] = isolatedGate.pending();
+    const laterObserver = vi.fn();
+    bus.on("approval:resolved", () => {
+      throw new Error("private manual resolution subscriber payload");
+    });
+    bus.on("approval:resolved", laterObserver);
+
+    expect(() => isolatedGate.resolveApproval(
+      request!.requestId,
+      true,
+      "operator",
+    )).not.toThrow();
+
+    await expect(resolutionPromise).resolves.toMatchObject({ approved: true });
+    expect(laterObserver).toHaveBeenCalledOnce();
+    expect(isolatedGate.pending()).toEqual([]);
+    expect(isolatedGate.getRequestByShortId(request!.shortId)).toBeUndefined();
+    isolatedGate.dispose();
+  });
+
+  it("claims a manual resolution before a subscriber can reenter with the opposite decision", async () => {
+    const bus = new TypedEventBus();
+    const isolatedGate = makeIsolationGate(bus);
+    const resolutionPromise = isolatedGate.requestApproval(makeRequest());
+    const [request] = isolatedGate.pending();
+    const laterObserver = vi.fn();
+    bus.on("approval:resolved", () => {
+      isolatedGate.resolveApproval(
+        request!.requestId,
+        false,
+        "subscriber",
+        "attempted reentrant denial",
+      );
+    });
+    bus.on("approval:resolved", laterObserver);
+
+    isolatedGate.resolveApproval(request!.requestId, true, "operator");
+
+    await expect(resolutionPromise).resolves.toMatchObject({
+      approved: true,
+      approvedBy: "operator",
+    });
+    expect(laterObserver).toHaveBeenCalledOnce();
+    expect(laterObserver).toHaveBeenCalledWith(expect.objectContaining({
+      approved: true,
+      approvedBy: "operator",
+    }));
+    expect(isolatedGate.pending()).toEqual([]);
+    expect(isolatedGate.getRequestByShortId(request!.shortId)).toBeUndefined();
+    isolatedGate.dispose();
+  });
+
+  it("completes timeout cleanup and resolves the waiter when a resolved subscriber throws", async () => {
+    const bus = new TypedEventBus();
+    const isolatedGate = makeIsolationGate(bus);
+    const resolutionPromise = isolatedGate.requestApproval(makeRequest());
+    const [request] = isolatedGate.pending();
+    const laterObserver = vi.fn();
+    bus.on("approval:resolved", () => {
+      throw new Error("private timeout subscriber payload");
+    });
+    bus.on("approval:resolved", laterObserver);
+
+    expect(() => vi.advanceTimersByTime(DEFAULT_TIMEOUT_MS)).not.toThrow();
+
+    await expect(resolutionPromise).resolves.toMatchObject({
+      approved: false,
+      approvedBy: "system:timeout",
+    });
+    expect(laterObserver).toHaveBeenCalledOnce();
+    expect(isolatedGate.pending()).toEqual([]);
+    expect(isolatedGate.getRequestByShortId(request!.shortId)).toBeUndefined();
+    isolatedGate.dispose();
+  });
+
+  it("returns a cached resolution when its observational subscriber throws", async () => {
+    const bus = new TypedEventBus();
+    const isolatedGate = makeIsolationGate(bus);
+    const firstPromise = isolatedGate.requestApproval(makeRequest());
+    const [first] = isolatedGate.pending();
+    isolatedGate.resolveApproval(first!.requestId, true, "operator");
+    await firstPromise;
+    const laterObserver = vi.fn();
+    bus.on("approval:resolved", () => {
+      throw new Error("private cached resolution subscriber payload");
+    });
+    bus.on("approval:resolved", laterObserver);
+
+    const cachedPromise = isolatedGate.requestApproval(makeRequest());
+
+    await expect(cachedPromise).resolves.toMatchObject({
+      approved: true,
+      approvedBy: "system:cached-approval",
+    });
+    expect(laterObserver).toHaveBeenCalledOnce();
+    expect(isolatedGate.pending()).toEqual([]);
+    isolatedGate.dispose();
+  });
+
+  it("restores pending state and reaches later prompt observers when the first restore subscriber throws", () => {
+    gate.requestApproval(makeRequest());
+    const records = gate.serializePending();
+    const restoreBus = new TypedEventBus();
+    const laterObserver = vi.fn();
+    restoreBus.on("approval:requested", () => {
+      throw new Error("private restored parameters from subscriber");
+    });
+    restoreBus.on("approval:requested", laterObserver);
+    const restoredGate = makeIsolationGate(restoreBus);
+
+    expect(restoredGate.restorePending(records)).toBe(1);
+
+    expect(restoredGate.pending()).toHaveLength(1);
+    expect(laterObserver).toHaveBeenCalledOnce();
+    restoredGate.dispose();
   });
 });

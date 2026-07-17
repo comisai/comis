@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Mocks (vi.hoisted ensures these are available when vi.mock factories run)
@@ -415,6 +416,26 @@ describe("createLineAdapter", () => {
       if (!result.ok) {
         expect(result.error.message).toContain("Failed to send LINE attachment");
       }
+    });
+
+    it("returns delivered-untracked when pushMessage omits the posted-message ID", async () => {
+      mockPushMessage.mockResolvedValue({ sentMessages: [] });
+      const deps = makeDeps();
+      const adapter = createLineAdapter(deps);
+
+      const result = await adapter.sendAttachment("U1234", {
+        type: "image",
+        url: "https://example.com/photo.jpg",
+      });
+
+      expect(result).toEqual(ok({ kind: "delivered_untracked" }));
+      expect(deps.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hint: expect.stringContaining("Do not retry"),
+          errorKind: "platform",
+        }),
+        "Attachment delivered without platform tracking",
+      );
     });
 
     it("keeps attachment captions and filenames out of outbound logs", async () => {

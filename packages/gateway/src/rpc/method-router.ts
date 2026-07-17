@@ -102,7 +102,10 @@ export interface MethodRouterLogger {
  * @returns A DynamicMethodRouter with registerMethod, hasMethod, and server
  */
 export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?: MethodRouterLogger): DynamicMethodRouter {
-  const server = new JSONRPCServer<RpcContext>();
+  // The library default is console.warn(message, Error), which writes the
+  // handler's free-text message and stack directly to stderr. The trace wrapper
+  // below owns structured failure logging; suppress the duplicate raw sink.
+  const server = new JSONRPCServer<RpcContext>({ errorListener: () => undefined });
   const registeredScopes = new Map<string, string>();
 
   /**
@@ -123,11 +126,10 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
     if (typed) return { errorKind: typed.errorKind, hint: typed.hint };
     // Unrecognized errors keep the gateway's own message-substring fallbacks, then internal.
     const msg = err instanceof Error ? err.message : String(err);
-    const excerpt = msg.length > 120 ? msg.slice(0, 120) + "..." : msg;
-    if (msg.includes("immutable")) return { errorKind: "config", hint: `This config path requires daemon restart: ${excerpt}` };
-    if (msg.includes("Admin access") || msg.includes("Unauthorized")) return { errorKind: "auth", hint: `Insufficient permissions: ${excerpt}` };
-    if (msg.includes("not found") || msg.includes("Unknown") || msg.includes("Invalid")) return { errorKind: "validation", hint: `Invalid request: ${excerpt}` };
-    return { errorKind: "internal", hint: `Handler error: ${excerpt}` };
+    if (msg.includes("immutable")) return { errorKind: "config", hint: "This configuration path requires daemon restart; apply it through a restart-safe operator path" };
+    if (msg.includes("Admin access") || msg.includes("Unauthorized")) return { errorKind: "auth", hint: "Use an authenticated client with the required scope and trust level" };
+    if (msg.includes("not found") || msg.includes("Unknown") || msg.includes("Invalid")) return { errorKind: "validation", hint: "Check the request against the RPC method contract" };
+    return { errorKind: "internal", hint: "Inspect the RPC handler and correlate this failure by trace and client identifiers" };
   }
 
   /**
@@ -160,7 +162,8 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
 
   /**
    * Wrap an RPC handler with debug trace logging.
-   * Logs method name, clientId, duration on success, and err on failure.
+   * Logs method name, clientId, duration on success, and a closed failure class
+   * plus parameter count on failure.
    * Polling methods in SUPPRESS_LOG_METHODS skip trace logging entirely.
    */
   function wrapWithTrace(name: string, handler: RpcMethodHandler): RpcMethodHandler {
@@ -181,6 +184,12 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
       } catch (err) {
         const durationMs = Math.round(performance.now() - startMs);
         const classified = classifyRpcMethodError(err);
+        const typed = classifyTypedRpcError(err);
+        const parameterCount = Array.isArray(params)
+          ? params.length
+          : typeof params === "object" && params !== null
+            ? Object.keys(params as Record<string, unknown>).filter((key) => !key.startsWith("_")).length
+            : 0;
         // A routine operator flow — an admin-trust denial on a read-only obs
         // method the CLI probes-then-falls-back-offline — logs at DEBUG so
         // `comis explain` / `comis fleet` do not spam WARNs into the log an
@@ -197,9 +206,11 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
           logFn(
             {
               method: name,
-              // Expected refusals and internal failures log a bounded message at
-              // this level. Full Error stacks belong on DEBUG-only diagnostics.
-              err: err instanceof Error ? err.message : String(err),
+              parameterCount,
+              errorName:
+                typed !== null && err instanceof Error
+                  ? err.name
+                  : "UnhandledError",
               durationMs,
               clientId: context.clientId,
               hint: classified.hint,
@@ -213,7 +224,6 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
         if (err instanceof JSONRPCErrorException) throw err;
 
         const traceId = tryGetContext()?.traceId;
-        const typed = classifyTypedRpcError(err);
         const data = traceId ? { traceId } : undefined;
 
         if (typed && err instanceof Error) {

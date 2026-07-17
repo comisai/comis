@@ -1,22 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for createSqliteOutwardSendLedger — the three-state exactly-once
- * outward-send ledger.
+ * Tests for createSqliteOutwardSendLedger — the outward-send uncertainty
+ * ledger.
  *
  * Pins the load-bearing invariants:
- *   - the ordered three-state machine (send_attempt_started → unknown_after_send
- *     → committed),
+ *   - the committed branch of the closed five-state lifecycle
+ *     (send_attempt_started → unknown_after_send → committed),
  *   - the UNIQUE (rootRunId, stepIndex) collision that makes a duplicate begin an
  *     err the wrap site treats as "already in flight",
- *   - the no-op replay (a committed row is re-readable so the wrap site
+ *   - the repeated-operation short-circuit (a committed row is re-readable so the wrap site
  *     short-circuits),
- *   - the per-row recovery scan listUnreconciled (NO blind bulk reset),
+ *   - the per-row startup parking scan listUnreconciled (no blind bulk reset),
  *   - content-free (the row carries content_digest, never a body),
  *   - corrupt-row-degrades-to-err (createRowMapper).
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
+import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createSqliteOutwardSendLedger } from "./outward-send-ledger-store.js";
 import { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
 import { initSchema } from "./schema.js";
@@ -28,6 +32,9 @@ let fakeNow = 1_000;
 const nowMs = (): number => fakeNow;
 
 let db: Database.Database;
+const DIGEST_A = "a".repeat(64);
+const DIGEST_B = "b".repeat(64);
+const FINGERPRINT_A = "c".repeat(64);
 
 function makeBegin(over: Partial<OutwardSendBeginInput> = {}): OutwardSendBeginInput {
   return {
@@ -36,7 +43,9 @@ function makeBegin(over: Partial<OutwardSendBeginInput> = {}): OutwardSendBeginI
     agentId: "agent-1",
     channelType: "telegram",
     channelId: "chat-99",
-    contentDigest: "sha256:abc",
+    operationKind: "message_send",
+    operationFingerprint: FINGERPRINT_A,
+    contentDigest: DIGEST_A,
     ...over,
   };
 }
@@ -65,8 +74,11 @@ describe("createSqliteOutwardSendLedger — begin + lookup", () => {
     expect(found.value?.state).toBe("send_attempt_started");
     expect(found.value?.rootRunId).toBe("run-A");
     expect(found.value?.stepIndex).toBe(0);
-    expect(found.value?.contentDigest).toBe("sha256:abc");
+    expect(found.value?.contentDigest).toBe(DIGEST_A);
+    expect(found.value?.operationKind).toBe("message_send");
+    expect(found.value?.operationFingerprint).toBe(FINGERPRINT_A);
     expect(found.value?.attemptCount).toBe(0);
+    expect(found.value?.attemptedAtMs).toBe(1_000);
     // Content-free: there is no body/text field on the record at all.
     expect(found.value).not.toHaveProperty("body");
     expect(found.value).not.toHaveProperty("text");
@@ -81,7 +93,7 @@ describe("createSqliteOutwardSendLedger — begin + lookup", () => {
   });
 });
 
-describe("createSqliteOutwardSendLedger — ordered three-state machine", () => {
+describe("createSqliteOutwardSendLedger — closed five-state lifecycle", () => {
   it("begin → markUnknown → commit transitions state in order and sets platformMessageId", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
 
@@ -95,6 +107,7 @@ describe("createSqliteOutwardSendLedger — ordered three-state machine", () => 
     const afterUnknown = await ledger.lookup("run-A", 0);
     expect(afterUnknown.ok && afterUnknown.value?.state).toBe("unknown_after_send");
     expect(afterUnknown.ok && afterUnknown.value?.platformMessageId).toBeUndefined();
+    expect(afterUnknown.ok && afterUnknown.value?.attemptCount).toBe(1);
 
     fakeNow = 3_000;
     const committed = await ledger.commit("run-A", 0, "tg-msg-555");
@@ -109,19 +122,19 @@ describe("createSqliteOutwardSendLedger — UNIQUE (rootRunId, stepIndex) dedup"
   it("a second begin on the SAME (rootRunId, stepIndex) returns err (UNIQUE collision)", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
 
-    const first = await ledger.begin(makeBegin({ contentDigest: "sha256:first" }));
+    const first = await ledger.begin(makeBegin({ contentDigest: DIGEST_A }));
     expect(first.ok).toBe(true);
 
     // The wrap site treats this err as "already in flight — do NOT
     // double-send". A different contentDigest must NOT bypass the dedup.
-    const second = await ledger.begin(makeBegin({ contentDigest: "sha256:second" }));
+    const second = await ledger.begin(makeBegin({ contentDigest: DIGEST_B }));
     expect(second.ok).toBe(false);
 
     // The dedup key holds: lookup still shows the FIRST row's digest, untouched.
     const found = await ledger.lookup("run-A", 0);
     expect(found.ok).toBe(true);
     if (!found.ok) return;
-    expect(found.value?.contentDigest).toBe("sha256:first");
+    expect(found.value?.contentDigest).toBe(DIGEST_A);
     expect(found.value?.state).toBe("send_attempt_started");
   });
 
@@ -133,26 +146,182 @@ describe("createSqliteOutwardSendLedger — UNIQUE (rootRunId, stepIndex) dedup"
     expect(s1.ok).toBe(true);
   });
 
-  it("after commit, lookup returns the committed row + platformMessageId (no-op replay short-circuit)", async () => {
+  it("after commit, lookup returns the retained receipt for a repeated operation", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
     await ledger.begin(makeBegin());
     await ledger.markUnknown("run-A", 0);
     await ledger.commit("run-A", 0, "tg-msg-777");
 
-    // The wrap site reads this committed row and short-circuits a
-    // replay to a no-op — it never issues a second platform call.
-    const replay = await ledger.lookup("run-A", 0);
-    expect(replay.ok).toBe(true);
-    if (!replay.ok) return;
-    expect(replay.value?.state).toBe("committed");
-    expect(replay.value?.platformMessageId).toBe("tg-msg-777");
+    // The wrap site reads this committed row and returns its retained receipt;
+    // it does not issue another platform call for the same identity.
+    const repeated = await ledger.lookup("run-A", 0);
+    expect(repeated.ok).toBe(true);
+    if (!repeated.ok) return;
+    expect(repeated.value?.state).toBe("committed");
+    expect(repeated.value?.platformMessageId).toBe("tg-msg-777");
   });
 });
 
-describe("createSqliteOutwardSendLedger — failure + reconcile", () => {
+describe("createSqliteOutwardSendLedger — durable outward sequence", () => {
+  it("persists only a full digest of the caller operation identity", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+    const operationId = "user-authored-operation-marker";
+
+    expect(await ledger.allocateStep("run-A", operationId)).toEqual({ ok: true, value: 0 });
+
+    const row = db.prepare(
+      "SELECT operation_id FROM outward_send_operations WHERE root_run_id = ?",
+    ).get("run-A") as { operation_id: string };
+    expect(row.operation_id).toBe(
+      createHash("sha256").update(JSON.stringify(operationId), "utf8").digest("hex"),
+    );
+    expect(row.operation_id).not.toContain(operationId);
+    expect(row.operation_id).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("rejects invalid operation identities before writing an operation mapping", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+
+    expect((await ledger.allocateStep("run-A", "")).ok).toBe(false);
+    expect((await ledger.allocateStep("run-A", "x".repeat(257))).ok).toBe(false);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM outward_send_operations").get())
+      .toEqual({ count: 0 });
+  });
+
+  it("returns one stable step for repeated allocation of the same caller operation", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+
+    const first = await ledger.allocateStep("run-A", "operation-1");
+    const responseLossRetry = await ledger.allocateStep("run-A", "operation-1");
+    const distinctOperation = await ledger.allocateStep("run-A", "operation-2");
+
+    expect(first).toEqual({ ok: true, value: 0 });
+    expect(responseLossRetry).toEqual({ ok: true, value: 0 });
+    expect(distinctOperation).toEqual({ ok: true, value: 1 });
+  });
+
+  it("preserves the operation-to-step mapping across a real SQLite close and reopen", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "comis-outward-ledger-"));
+    const dbPath = join(dir, "memory.db");
+    try {
+      const firstDb = new Database(dbPath);
+      ensureOutwardLedgerTable(firstDb);
+      const firstLedger = createSqliteOutwardSendLedger(firstDb, nowMs);
+      expect(await firstLedger.allocateStep("run-restart", "operation-stable"))
+        .toEqual({ ok: true, value: 0 });
+      firstDb.close();
+
+      const reopenedDb = new Database(dbPath);
+      const reopenedLedger = createSqliteOutwardSendLedger(reopenedDb, nowMs);
+      expect(await reopenedLedger.allocateStep("run-restart", "operation-stable"))
+        .toEqual({ ok: true, value: 0 });
+      expect(await reopenedLedger.allocateStep("run-restart", "operation-next"))
+        .toEqual({ ok: true, value: 1 });
+      reopenedDb.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("allocates after the greatest retained ledger step without creating a resumable checkpoint", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+
+    await ledger.begin(makeBegin({ stepIndex: 0 }));
+    await ledger.begin(makeBegin({ stepIndex: 1 }));
+    await ledger.begin(makeBegin({ stepIndex: 4 }));
+
+    const first = await ledger.allocateStep("run-A", "operation-after-retained");
+    const second = await ledger.allocateStep("run-A", "operation-after-retained-2");
+
+    expect(first).toEqual({ ok: true, value: 5 });
+    expect(second).toEqual({ ok: true, value: 6 });
+    const checkpointTable = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='durable_run_checkpoints'",
+      )
+      .get();
+    expect(checkpointTable).toBeUndefined();
+  });
+
+  it("reconciles a stale sequence row against a higher retained ledger step atomically", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+    expect(await ledger.allocateStep("run-A", "operation-before-stale")).toEqual({ ok: true, value: 0 });
+    await ledger.begin(makeBegin({ stepIndex: 7 }));
+
+    expect(await ledger.allocateStep("run-A", "operation-after-stale")).toEqual({ ok: true, value: 8 });
+  });
+});
+
+describe("createSqliteOutwardSendLedger — failure + uncertainty parking", () => {
+  it("rejects a truncated digest before persisting the send intent", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+
+    const begun = await ledger.begin(makeBegin({ contentDigest: "a".repeat(16) }));
+
+    expect(begun.ok).toBe(false);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM outward_send_ledger").get())
+      .toEqual({ count: 0 });
+  });
+
+  it("every transition returns err when its target row does not exist", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+
+    expect((await ledger.markUnknown("missing", 99)).ok).toBe(false);
+    expect((await ledger.commit("missing", 99, "message-1")).ok).toBe(false);
+    expect((await ledger.markFailed("missing", 99, "permanent")).ok).toBe(false);
+    expect(await ledger.parkUncertain("missing", 99)).toEqual({ ok: true, value: false });
+  });
+
+  it("rejects invalid lifecycle transitions instead of silently rewriting terminal truth", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+    await ledger.begin(makeBegin());
+
+    expect((await ledger.commit("run-A", 0, "too-early")).ok).toBe(false);
+    await ledger.markUnknown("run-A", 0);
+    await ledger.commit("run-A", 0, "committed-message");
+    expect((await ledger.markUnknown("run-A", 0)).ok).toBe(false);
+    expect((await ledger.markFailed("run-A", 0, "late-failure")).ok).toBe(false);
+    expect(await ledger.parkUncertain("run-A", 0)).toEqual({ ok: true, value: false });
+
+    const found = await ledger.lookup("run-A", 0);
+    expect(found.ok && found.value?.state).toBe("committed");
+    expect(found.ok && found.value?.platformMessageId).toBe("committed-message");
+  });
+
+  it("atomically grants one uncertainty parking transition across two SQLite connections", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "comis-ledger-park-"));
+    const dbPath = join(dir, "memory.db");
+    const firstDb = new Database(dbPath);
+    const secondDb = new Database(dbPath);
+    try {
+      ensureOutwardLedgerTable(firstDb);
+      ensureOutwardLedgerTable(secondDb);
+      const first = createSqliteOutwardSendLedger(firstDb, nowMs);
+      const second = createSqliteOutwardSendLedger(secondDb, nowMs);
+      await first.begin(makeBegin());
+      await first.markUnknown("run-A", 0);
+
+      const claims = await Promise.all([
+        first.parkUncertain("run-A", 0),
+        second.parkUncertain("run-A", 0),
+      ]);
+
+      expect(claims.filter((claim) => claim.ok && claim.value)).toHaveLength(1);
+      expect(claims.filter((claim) => claim.ok && !claim.value)).toHaveLength(1);
+      const parked = await first.lookup("run-A", 0);
+      expect(parked.ok && parked.value?.state).toBe("unresolved");
+      expect(parked.ok && parked.value?.reconcileOutcome).toBe("unresolved");
+    } finally {
+      secondDb.close();
+      firstDb.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("markFailed sets state='failed' and records the errorKind", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
     await ledger.begin(makeBegin());
+    await ledger.markUnknown("run-A", 0);
     const failed = await ledger.markFailed("run-A", 0, "rate_limited");
     expect(failed.ok).toBe(true);
 
@@ -163,51 +332,34 @@ describe("createSqliteOutwardSendLedger — failure + reconcile", () => {
     expect(found.value?.lastError).toBe("rate_limited");
   });
 
-  it("commits the ledger row when reconcile resolves to sent", async () => {
+  it("parks an uncertain row and keeps it visible to the root causal gate", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
     await ledger.begin(makeBegin());
     await ledger.markUnknown("run-A", 0);
-    const resolved = await ledger.resolveReconcile("run-A", 0, "sent");
-    expect(resolved.ok).toBe(true);
-
-    const found = await ledger.lookup("run-A", 0);
-    expect(found.ok).toBe(true);
-    if (!found.ok) return;
-    expect(found.value?.reconcileOutcome).toBe("sent");
-    expect(found.value?.state).toBe("committed");
-  });
-
-  it("resolveReconcile 'not_sent' records the verdict but KEEPS the prior state for replay", async () => {
-    const ledger = createSqliteOutwardSendLedger(db, nowMs);
-    await ledger.begin(makeBegin());
-    await ledger.markUnknown("run-A", 0);
-    const resolved = await ledger.resolveReconcile("run-A", 0, "not_sent");
-    expect(resolved.ok).toBe(true);
-
-    const found = await ledger.lookup("run-A", 0);
-    expect(found.ok).toBe(true);
-    if (!found.ok) return;
-    expect(found.value?.reconcileOutcome).toBe("not_sent");
-    // not_sent does NOT flip to committed/failed — the engine may replay it.
-    expect(found.value?.state).toBe("unknown_after_send");
-  });
-
-  it("resolveReconcile 'unresolved' parks the row in the unresolved terminal (no blind replay)", async () => {
-    const ledger = createSqliteOutwardSendLedger(db, nowMs);
-    await ledger.begin(makeBegin());
-    await ledger.markUnknown("run-A", 0);
-    const resolved = await ledger.resolveReconcile("run-A", 0, "unresolved");
-    expect(resolved.ok).toBe(true);
+    const parked = await ledger.parkUncertain("run-A", 0);
+    expect(parked).toEqual({ ok: true, value: true });
 
     const found = await ledger.lookup("run-A", 0);
     expect(found.ok).toBe(true);
     if (!found.ok) return;
     expect(found.value?.reconcileOutcome).toBe("unresolved");
     expect(found.value?.state).toBe("unresolved");
+    expect(await ledger.hasUncertainty("run-A")).toEqual({ ok: true, value: true });
+    expect(await ledger.hasUncertainty("another-run")).toEqual({ ok: true, value: false });
+  });
+
+  it("rejects an empty platform message id instead of fabricating delivery evidence", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+    await ledger.begin(makeBegin());
+    await ledger.markUnknown("run-A", 0);
+
+    expect((await ledger.commit("run-A", 0, "")).ok).toBe(false);
+    const found = await ledger.lookup("run-A", 0);
+    expect(found.ok && found.value?.state).toBe("unknown_after_send");
   });
 });
 
-describe("createSqliteOutwardSendLedger — listUnreconciled per-row recovery scan", () => {
+describe("createSqliteOutwardSendLedger — listUnreconciled startup parking scan", () => {
   it("returns ONLY the unknown_after_send + send_attempt_started rows", async () => {
     const ledger = createSqliteOutwardSendLedger(db, nowMs);
 
@@ -225,9 +377,10 @@ describe("createSqliteOutwardSendLedger — listUnreconciled per-row recovery sc
 
     // failed — must be excluded
     await ledger.begin(makeBegin({ stepIndex: 3 }));
+    await ledger.markUnknown("run-A", 3);
     await ledger.markFailed("run-A", 3, "permanent");
 
-    const scan = await ledger.listUnreconciled();
+    const scan = await ledger.listUnreconciled(100);
     expect(scan.ok).toBe(true);
     if (!scan.ok) return;
 
@@ -244,10 +397,26 @@ describe("createSqliteOutwardSendLedger — listUnreconciled per-row recovery sc
     await ledger.markUnknown("run-A", 0);
     await ledger.commit("run-A", 0, "msg-x");
 
-    const scan = await ledger.listUnreconciled();
+    const scan = await ledger.listUnreconciled(100);
     expect(scan.ok).toBe(true);
     if (!scan.ok) return;
     expect(scan.value).toEqual([]);
+  });
+
+  it("applies a deterministic scan limit and leaves the remainder for the next pass", async () => {
+    const ledger = createSqliteOutwardSendLedger(db, nowMs);
+    await ledger.begin(makeBegin({ rootRunId: "run-B", stepIndex: 1 }));
+    await ledger.begin(makeBegin({ rootRunId: "run-A", stepIndex: 2 }));
+
+    const first = await ledger.listUnreconciled(1);
+    expect(first.ok && first.value).toHaveLength(1);
+    if (!first.ok) return;
+    await ledger.parkUncertain(first.value[0]!.rootRunId, first.value[0]!.stepIndex);
+
+    const second = await ledger.listUnreconciled(1);
+    expect(second.ok && second.value).toHaveLength(1);
+    if (!second.ok) return;
+    expect(second.value[0]?.id).not.toBe(first.value[0]?.id);
   });
 });
 

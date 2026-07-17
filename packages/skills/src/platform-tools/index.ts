@@ -59,7 +59,7 @@ export type { RpcDispatchToolConfig, MultiActionDispatchConfig } from "./messagi
 export { createMessageTool } from "./tools/message-tool.js";
 
 // Scheduling
-export { createCronTool, type RpcCall } from "./tools/cron-tool.js";
+export { createCronTool, type RpcCall, type RpcCallMetadata } from "./tools/cron-tool.js";
 
 // Platform actions
 export { createPlatformActionTool } from "./platform-action-tool.js";

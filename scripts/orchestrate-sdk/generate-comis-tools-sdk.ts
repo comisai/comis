@@ -184,7 +184,7 @@ const CAPABILITY_GROUP_EXAMPLES_PY: Record<string, string> = {
 // TOOL_CAPABILITY_MAP); they are DIRECT RPC methods (HANDLER_CAPABILITY_MAP →
 // orch:message). So the SDK renders them via `callCapSocket(method, args)` (the
 // arbitrary-method wire), NEVER `invoke(...)` (the tool.invoke wire). This render
-// choice is load-bearing: the exactly-once outward-step ledger
+// choice is load-bearing: the at-most-once outward-step ledger + reconciliation
 // (`allocateOutwardStepIfNeeded`) fires ONLY in the endpoint's direct-method
 // branch of `handleCapCall`, so a `tool.invoke` route would silently bypass it
 // (and — since `message.*` is absent from the cap-map — be default-denied anyway).
@@ -327,7 +327,7 @@ export interface ToolDescriptor {
   // ResultRef is never returned — a plain Promise<unknown> ack.
   for (const dm of DIRECT_METHODS) {
     methodLines.push(`  /** ${dm.summary} (capability: ${dm.capability}) */`);
-    methodLines.push(`  ${dm.name}(args?: Record<string, unknown>): Promise<unknown>;`);
+    methodLines.push(`  ${dm.name}(args: Record<string, unknown>, operationId: string): Promise<unknown>;`);
   }
 
   const iface = `
@@ -445,8 +445,8 @@ function emitSdkJs(sortedTools: readonly string[]): string {
   // step ledger (allocateOutwardStepIfNeeded) is preserved (see DIRECT_METHODS).
   for (const dm of DIRECT_METHODS) {
     methodLines.push(
-      `  async ${dm.name}(args) {\n` +
-        `    return callCapSocket(${JSON.stringify(dm.method)}, args);\n` +
+      `  async ${dm.name}(args, operationId) {\n` +
+        `    return callCapSocket(${JSON.stringify(dm.method)}, args, operationId);\n` +
         `  },`,
     );
   }
@@ -506,23 +506,14 @@ import socket
 
 _ENV_SOCK = "COMIS_ORCH_SOCKET"
 _ENV_LEASE = "COMIS_CAP_LEASE"
+_OUTWARD_MESSAGE_METHODS = frozenset(("message.send", "message.reply", "message.react"))
 
 
-def _call_cap_socket(method, params):
-    sock_path = os.environ.get(_ENV_SOCK)
-    bearer = os.environ.get(_ENV_LEASE)
-    if not sock_path or not bearer:
-        raise RuntimeError(
-            "comis-agent / orchestrate runtime requires "
-            "COMIS_ORCH_SOCKET/COMIS_CAP_LEASE — only valid inside an orchestrate jail"
-        )
-    payload = (
-        json.dumps(
-            {"bearer": bearer, "method": method, "params": params},
-            separators=(",", ":"),
-        )
-        + "\\n"
-    )
+class _CapApplicationError(RuntimeError):
+    pass
+
+
+def _call_cap_socket_once(sock_path, payload):
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         sock.connect(sock_path)
@@ -535,11 +526,47 @@ def _call_cap_socket(method, params):
             buf += chunk
     finally:
         sock.close()
-    reply = json.loads(buf.split(b"\\n", 1)[0].decode("utf-8"))
+    try:
+        reply = json.loads(buf.split(b"\\n", 1)[0].decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("malformed response from cap socket") from exc
     if reply.get("error") is not None:
         err = reply["error"]
-        raise RuntimeError(err if isinstance(err, str) else "capability call failed")
+        raise _CapApplicationError(err if isinstance(err, str) else "capability call failed")
     return reply.get("result")
+
+
+def _call_cap_socket(method, params, operation_id=None):
+    sock_path = os.environ.get(_ENV_SOCK)
+    bearer = os.environ.get(_ENV_LEASE)
+    if not sock_path or not bearer:
+        raise RuntimeError(
+            "comis-agent / orchestrate runtime requires "
+            "COMIS_ORCH_SOCKET/COMIS_CAP_LEASE — only valid inside an orchestrate jail"
+        )
+    is_outward_message = method in _OUTWARD_MESSAGE_METHODS
+    if is_outward_message and operation_id is None:
+        raise RuntimeError("outward operation identity is required")
+    if operation_id is not None and (
+        not isinstance(operation_id, str) or len(operation_id) == 0 or len(operation_id) > 256
+    ):
+        raise RuntimeError("outward operation identity must contain 1 to 256 characters")
+    request = {"bearer": bearer, "method": method, "params": params}
+    if operation_id is not None:
+        request["operationId"] = operation_id
+    payload = (
+        json.dumps(request, separators=(",", ":"))
+        + "\\n"
+    )
+    attempts = 2 if is_outward_message else 1
+    for attempt in range(attempts):
+        try:
+            return _call_cap_socket_once(sock_path, payload)
+        except _CapApplicationError:
+            raise
+        except (OSError, RuntimeError):
+            if attempt + 1 == attempts:
+                raise
 
 
 def _invoke(tool, args=None):
@@ -683,7 +710,7 @@ function emitSdkPy(sortedTools: readonly string[]): string {
   // _call_cap_socket (the direct-method wire), NEVER _invoke (the tool.invoke wire),
   // so the endpoint's outward-step ledger is preserved (see DIRECT_METHODS).
   for (const dm of DIRECT_METHODS) {
-    methods.push(`def ${dm.name}(args=None):\n    return _call_cap_socket(${JSON.stringify(dm.method)}, args or {})`);
+    methods.push(`def ${dm.name}(args, operation_id):\n    return _call_cap_socket(${JSON.stringify(dm.method)}, args or {}, operation_id)`);
   }
 
   return (

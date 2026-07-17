@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the operator deterministic-replay path (REPLAY-02):
+ * Tests for the operator deterministic-replay path:
  *   - `runOrchestrateReplaySession` (the socket + pinned-byte re-spawn glue):
  *     validates the runId against a real durable orchestrate row, mints an
  *     ephemeral bearer + OutputGuard-registers it BEFORE use, starts the
  *     SEPARATE replay socket, re-spawns the pinned bytes with `COMIS_ORCH_SOCKET`
- *     pointed at the replay socket (never the production endpoint — INV-1),
+ *     pointed at the replay socket, never the production endpoint,
  *     collects the stdout, and tears the socket down in a `finally`.
- *   - `buildReplayChildEnv` — the INV-1 keystone: the re-spawn env's
+ *   - `buildReplayChildEnv` — the isolation keystone: the re-spawn environment's
  *     `COMIS_ORCH_SOCKET` is the replay socket path + `COMIS_CAP_LEASE` is the
  *     ephemeral bearer.
  *   - Deny-by-origin on the REAL dispatch path: `orchestrate.replay` is
  *     `scopes:["admin"]` → derived `ADMIN_METHODS` → the chokepoint's
  *     `assertNotAgentOrigin` rejects a non-admin `_agentId`-bearing call BEFORE
- *     the handler runs (INV-3); an operator origin (no `_agentId`) reaches it.
+ *     the handler runs; an operator origin with no `_agentId` reaches it.
  *
  * The real jailed byte-identical-stdout round-trip (bwrap) is VPS-gated + covered
  * by a later `.linux` drive; this file proves the RPC/deny-by-origin/socket-glue/
@@ -40,17 +40,24 @@ const RUN_ID = "root-abc";
 const SOCKET_PATH = "/tmp/comis-replay-abc.sock";
 const BEARER = "replay-bearer-xyz";
 const WORKSPACE = "/ws/root-abc";
+const RECORDING_ROOT = "/daemon/replay-recordings";
 
 /** A real-shaped resumable durable row carrying a pinned scriptRef. */
 function durableRow(over: Partial<DurableRunRecord> = {}): DurableRunRecord {
   return {
+    checkpointId: RUN_ID,
     rootRunId: RUN_ID,
+    agentId: "agent-a",
+    sessionKey: "tenant-a:user-a:chat-a",
+    ownerTenantId: "tenant-a",
+    ownerUserId: "user-a",
+    deliveryOrigin: null,
     spawnTree: [],
     caps: [],
     leaseIds: [],
     budgetConsumed: 0,
     cronOrigin: null,
-    stepIndex: -1,
+    trustLevel: "user",
     status: "running",
     lastHeartbeatAt: 0,
     scriptRef: "root-abc.ts",
@@ -65,27 +72,30 @@ const fakeLogger = {
 
 interface Harness {
   deps: OrchestrateReplaySessionDeps;
-  getByRootRun: ReturnType<typeof vi.fn>;
+  getByCheckpoint: ReturnType<typeof vi.fn>;
   registerSecret: ReturnType<typeof vi.fn>;
   respawn: ReturnType<typeof vi.fn>;
   socketStart: ReturnType<typeof vi.fn>;
   socketClose: ReturnType<typeof vi.fn>;
+  createReplaySocket: ReturnType<typeof vi.fn>;
+  resolveWorkspace: ReturnType<typeof vi.fn>;
   callOrder: string[];
 }
 
 function makeHarness(
   over: {
     row?: DurableRunRecord | undefined;
-    getByRootRunResult?: { ok: true; value: DurableRunRecord | undefined } | { ok: false; error: Error };
+    getByCheckpointResult?: { ok: true; value: DurableRunRecord | undefined } | { ok: false; error: Error };
     respawnImpl?: (input: OrchestrateReplayRespawnInput) => Promise<{ stdout: string; diverged?: boolean }>;
     // The sticky divergence the replay SOCKET reports (the production respawn cannot
     // observe a child-side socket divergence, so the session reads it off the socket).
     socketDiverged?: boolean;
+    workspace?: string | undefined;
   } = {},
 ): Harness {
   const callOrder: string[] = [];
-  const getByRootRun = vi.fn().mockResolvedValue(
-    over.getByRootRunResult ??
+  const getByCheckpoint = vi.fn().mockResolvedValue(
+    over.getByCheckpointResult ??
       { ok: true, value: over.row !== undefined ? over.row : durableRow() },
   );
   const registerSecret = vi.fn(() => callOrder.push("registerSecret"));
@@ -103,28 +113,33 @@ function makeHarness(
   const socketClose = vi.fn(async () => {
     callOrder.push("socket.close");
   });
+  const createReplaySocket = vi.fn(() => ({
+    start: socketStart,
+    close: socketClose,
+    diverged: () => over.socketDiverged ?? false,
+  }));
+  const resolveWorkspace = vi.fn(() =>
+    Object.prototype.hasOwnProperty.call(over, "workspace") ? over.workspace : WORKSPACE,
+  );
   const deps: OrchestrateReplaySessionDeps = {
-    durableRuns: { getByRootRun },
-    resolveWorkspace: () => WORKSPACE,
-    createReplaySocket: () => ({
-      start: socketStart,
-      close: socketClose,
-      diverged: () => over.socketDiverged ?? false,
-    }),
+    durableRuns: { getByCheckpoint },
+    resolveWorkspace: resolveWorkspace as OrchestrateReplaySessionDeps["resolveWorkspace"],
+    createReplaySocket,
     respawn: respawn as unknown as OrchestrateReplaySessionDeps["respawn"],
+    recordingRootPath: RECORDING_ROOT,
     outputGuard: { registerSecret },
     mintBearer: () => BEARER,
     resolveReplaySocketPath: () => SOCKET_PATH,
     logger: fakeLogger,
   };
-  return { deps, getByRootRun, registerSecret, respawn, socketStart, socketClose, callOrder };
+  return { deps, getByCheckpoint, registerSecret, respawn, socketStart, socketClose, createReplaySocket, resolveWorkspace, callOrder };
 }
 
 // ---------------------------------------------------------------------------
-// buildReplayChildEnv — INV-1 keystone
+// buildReplayChildEnv isolation
 // ---------------------------------------------------------------------------
 
-describe("buildReplayChildEnv — COMIS_ORCH_SOCKET points at the replay socket (INV-1)", () => {
+describe("buildReplayChildEnv — COMIS_ORCH_SOCKET points at the replay socket", () => {
   it("sets COMIS_ORCH_SOCKET to the replay socket path and COMIS_CAP_LEASE to the ephemeral bearer", () => {
     const env = buildReplayChildEnv(SOCKET_PATH, BEARER);
     expect(env.COMIS_ORCH_SOCKET).toBe(SOCKET_PATH);
@@ -175,11 +190,16 @@ describe("runOrchestrateReplaySession — happy path", () => {
     const h = makeHarness();
     const result = await runOrchestrateReplaySession(h.deps, RUN_ID);
 
-    expect(h.getByRootRun).toHaveBeenCalledWith(RUN_ID);
+    expect(h.getByCheckpoint).toHaveBeenCalledWith(RUN_ID);
     expect(h.registerSecret).toHaveBeenCalledWith(BEARER);
     expect(h.socketStart).toHaveBeenCalledWith(SOCKET_PATH);
+    expect(h.createReplaySocket).toHaveBeenCalledWith(expect.objectContaining({
+      recordingRootPath: RECORDING_ROOT,
+      runId: RUN_ID,
+      expectedBearer: BEARER,
+    }));
 
-    // INV-1: the re-spawn childEnv points COMIS_ORCH_SOCKET at the REPLAY socket
+    // The re-spawn child environment points COMIS_ORCH_SOCKET at the replay socket
     // path (never the production endpoint), authed by the ephemeral bearer.
     const respawnInput = h.respawn.mock.calls[0]![0] as OrchestrateReplayRespawnInput;
     expect(respawnInput.socketPath).toBe(SOCKET_PATH);
@@ -190,6 +210,15 @@ describe("runOrchestrateReplaySession — happy path", () => {
 
     expect(h.socketClose).toHaveBeenCalledTimes(1);
     expect(result).toEqual({ stdout: "RECORDED-STDOUT" });
+  });
+
+  it("resolves the exact persisted agent workspace instead of using the run id or a default workspace", async () => {
+    const h = makeHarness({ row: durableRow({ agentId: "persisted-agent" }) });
+
+    await runOrchestrateReplaySession(h.deps, RUN_ID);
+
+    expect(h.resolveWorkspace).toHaveBeenCalledWith("persisted-agent");
+    expect(h.resolveWorkspace).not.toHaveBeenCalledWith(RUN_ID);
   });
 
   it("registers the ephemeral bearer in OutputGuard BEFORE the re-spawn uses it (Pitfall 6)", async () => {
@@ -220,9 +249,29 @@ describe("runOrchestrateReplaySession — happy path", () => {
   });
 });
 
-describe("runOrchestrateReplaySession — runId validation (T-233-14)", () => {
+describe("runOrchestrateReplaySession — runId validation", () => {
+  it("fails closed before minting or binding when the persisted agent workspace is absent", async () => {
+    const h = makeHarness({ workspace: undefined });
+
+    await expect(runOrchestrateReplaySession(h.deps, RUN_ID)).rejects.toThrow(
+      /workspace is unavailable/,
+    );
+    expect(h.registerSecret).not.toHaveBeenCalled();
+    expect(h.socketStart).not.toHaveBeenCalled();
+    expect(h.respawn).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the persisted agent workspace overlaps the daemon recording root", async () => {
+    const h = makeHarness({ workspace: RECORDING_ROOT });
+
+    await expect(runOrchestrateReplaySession(h.deps, RUN_ID)).rejects.toThrow(/overlaps/);
+    expect(h.registerSecret).not.toHaveBeenCalled();
+    expect(h.socketStart).not.toHaveBeenCalled();
+    expect(h.respawn).not.toHaveBeenCalled();
+  });
+
   it("throws a content-free error and does NOT start a socket or re-spawn when the run is unknown", async () => {
-    const h = makeHarness({ getByRootRunResult: { ok: true, value: undefined } });
+    const h = makeHarness({ getByCheckpointResult: { ok: true, value: undefined } });
     await expect(runOrchestrateReplaySession(h.deps, "root-missing")).rejects.toThrow();
     expect(h.socketStart).not.toHaveBeenCalled();
     expect(h.respawn).not.toHaveBeenCalled();
@@ -237,20 +286,20 @@ describe("runOrchestrateReplaySession — runId validation (T-233-14)", () => {
   });
 
   it("throws when the durable-run lookup itself fails — no re-spawn", async () => {
-    const h = makeHarness({ getByRootRunResult: { ok: false, error: new Error("db down") } });
+    const h = makeHarness({ getByCheckpointResult: { ok: false, error: new Error("db down") } });
     await expect(runOrchestrateReplaySession(h.deps, RUN_ID)).rejects.toThrow();
     expect(h.respawn).not.toHaveBeenCalled();
   });
 
   it("the thrown error is content-free (does not echo the runId)", async () => {
-    const h = makeHarness({ getByRootRunResult: { ok: true, value: undefined } });
+    const h = makeHarness({ getByCheckpointResult: { ok: true, value: undefined } });
     await expect(runOrchestrateReplaySession(h.deps, "SECRET-RUN-ID")).rejects.toThrow(
       /^(?!.*SECRET-RUN-ID).*$/,
     );
   });
 });
 
-describe("runOrchestrateReplaySession — teardown in a finally (T-233-13)", () => {
+describe("runOrchestrateReplaySession — teardown in a finally", () => {
   it("closes the replay socket even when the re-spawn throws", async () => {
     const h = makeHarness({
       respawnImpl: async () => {
@@ -265,7 +314,7 @@ describe("runOrchestrateReplaySession — teardown in a finally (T-233-13)", () 
 });
 
 // ---------------------------------------------------------------------------
-// Deny-by-origin on the REAL dispatch path (INV-3). The method is
+// Deny-by-origin on the real dispatch path. The method is
 // scopes:["admin"] → derived ADMIN_METHODS → the chokepoint's
 // assertNotAgentOrigin denies an _agentId-bearing (non-admin) call BEFORE the
 // handler runs. We mock every handler factory so createRpcDispatch constructs
@@ -308,7 +357,7 @@ vi.mock("../api/video-handlers.js", () => ({ createVideoHandlers: vi.fn(() => ({
 vi.mock("../api/video-status-handlers.js", () => ({ createVideoStatusHandlers: vi.fn(() => ({})) }));
 vi.mock("../api/provider-handlers.js", () => ({ createProviderHandlers: vi.fn(() => ({})) }));
 
-describe("orchestrate.replay — deny-by-origin on the dispatch path (INV-3)", () => {
+describe("orchestrate.replay — deny-by-origin on the dispatch path", () => {
   const mockLogger = {
     debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
     fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(),
@@ -323,11 +372,13 @@ describe("orchestrate.replay — deny-by-origin on the dispatch path (INV-3)", (
     logger: mockLogger,
     container: { eventBus: { emit: vi.fn(), on: vi.fn() }, config: { tenantId: "default", providers: { entries: {} } } },
     defaultWorkspaceDir: WORKSPACE,
+    workspaceDirs: new Map([["agent-a", WORKSPACE]]),
     durableRuns: {
-      getByRootRun: vi.fn().mockResolvedValue({ ok: true, value: durableRow() }),
+      getByCheckpoint: vi.fn().mockResolvedValue({ ok: true, value: durableRow() }),
     },
     orchestrateReplay: {
       outputGuard: { registerSecret: vi.fn() },
+      recordingRootPath: RECORDING_ROOT,
       respawn: vi.fn(async () => ({ stdout: "RECORDED-STDOUT" })),
       createReplaySocket: () => ({ start: socketStart, close: socketClose, diverged: () => false }),
     },

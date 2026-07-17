@@ -221,7 +221,7 @@ describe("toIncidentSignals — log shape (678-like)", () => {
     // 678 is log-shaped: the breaker tripped (a "DO NOT retry" line is
     // present) but there is no structured tool.breaker_opened event. The
     // normalizer synthesizes the open from the log evidence so breakerTimeline
-    // is non-empty (a frozen-fixture must-have).
+    // is non-empty (required by the stable session contract).
     // log503DoNotRetry() is a generic web_fetch "DO NOT retry" log line — the
     // same log shape the 678 fixture carries on its breaker-trip lines.
     const s = toIncidentSignals([log678Success(), log678Failure(), log503DoNotRetry()]);
@@ -934,7 +934,7 @@ describe("toolStats fidelity", () => {
     expect(s.toolStats.web_fetch?.ok).toBe(1);
   });
 
-  it("log-shape success lines without a toolCallId keep per-line counting (frozen-fixture behavior)", () => {
+  it("log-shape success lines without a toolCallId keep per-line counting", () => {
     const s = toIncidentSignals([log678Success(), log678Success()]);
     expect(s.toolStats.web_fetch?.ok).toBe(2);
   });

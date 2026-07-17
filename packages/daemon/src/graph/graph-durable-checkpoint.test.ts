@@ -1,18 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure-function tests for the DAG durable-checkpoint serialization.
- * These functions are I/O-free so the snapshot ↔
- * durable_runs.spawn_tree round trip + the resume incomplete-node selector are
- * exhaustively unit-testable without a graph coordinator or a SQLite store.
+ * DAG durable-checkpoint serialization and real-layout artifact tests. Pure
+ * snapshot/routing helpers are exercised without I/O; artifact tests build the
+ * live `graph-runs/<graphId>/<content-addressed checkpoint>` layout so path
+ * resolution is pinned to the filesystem contract used by resume.
  */
 import { describe, it, expect } from "vitest";
-import type { NodeExecutionState } from "@comis/core";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { DurableGraphCheckpoint, NodeExecutionState } from "@comis/core";
 import type { GraphExecutionSnapshot } from "./graph-state-machine.js";
 import {
   snapshotToSpawnTree,
   incompleteNodes,
   isDagSpawnTree,
+  graphRunIdFromCheckpointRef,
+  readDurableGraphCheckpoint,
   TERMINAL_NODE_STATES,
+  validateGraphCheckpointSummary,
+  writeDurableGraphCheckpoint,
 } from "./graph-durable-checkpoint.js";
 
 // ---------------------------------------------------------------------------
@@ -81,7 +88,7 @@ describe("snapshotToSpawnTree", () => {
     }
   });
 
-  it("produces a JSON-serializable array (survives the durable_runs TEXT column)", () => {
+  it("produces a JSON-serializable array (survives the durable_run_checkpoints TEXT column)", () => {
     const snap = snapshot([
       nodeState("A", "completed"),
       nodeState("B", "running", "run-b"),
@@ -120,7 +127,7 @@ describe("incompleteNodes", () => {
     expect(incompleteNodes(tree)).toEqual(["B", "C"]);
   });
 
-  it("treats a 'running' node (in-flight at crash) as incomplete (re-run on resume; safe via ledger dedup)", () => {
+  it("treats a running node as incomplete so recovery can re-enter it after the outward uncertainty gate clears", () => {
     const tree = [{ nodeId: "B", status: "running", runId: "run-b" }];
 
     expect(incompleteNodes(tree)).toEqual(["B"]);
@@ -165,7 +172,7 @@ describe("incompleteNodes", () => {
 // Round-trip: snapshot → JSON → parse → incompleteNodes
 // ---------------------------------------------------------------------------
 
-describe("round-trip through the durable_runs JSON column", () => {
+describe("round-trip through the durable_run_checkpoints JSON column", () => {
   it("reflects the original incomplete set after JSON.stringify → JSON.parse", () => {
     const snap = snapshot([
       nodeState("A", "completed"),
@@ -178,6 +185,170 @@ describe("round-trip through the durable_runs JSON column", () => {
     const persisted = JSON.parse(JSON.stringify(tree)) as Array<{ nodeId: string; status: string }>;
 
     expect(incompleteNodes(persisted)).toEqual(["B", "C"]);
+  });
+});
+
+describe("protected exact-graph checkpoint artifact", () => {
+  const checkpoint: DurableGraphCheckpoint = {
+    graph: {
+      nodes: [
+        {
+          nodeId: "A",
+          task: "private task sentinel",
+          dependsOn: [],
+          barrierMode: "all",
+          retries: 1,
+          contextMode: "full",
+          mcpServers: [],
+        },
+        {
+          nodeId: "B",
+          task: "consume {{A.result}}",
+          dependsOn: ["A"],
+          barrierMode: "all",
+          retries: 2,
+          contextMode: "full",
+          mcpServers: [],
+        },
+      ],
+      onFailure: "fail-fast",
+      timeoutMs: 60_000,
+    },
+    executionOrder: ["A", "B"],
+    nodes: [
+      { nodeId: "A", status: "completed", output: "private output sentinel", retryAttempt: 1, retriesRemaining: 0 },
+      { nodeId: "B", status: "running", runId: "old-b", retryAttempt: 1, retriesRemaining: 1 },
+    ],
+    startedAtMs: 10_000,
+    cumulativeTokens: 500,
+    cumulativeCost: 1.5,
+    nodeCacheData: [{ nodeId: "A", cacheReadTokens: 10, cacheWriteTokens: 5 }],
+    nodeTokenSpend: [{ nodeId: "A", tokens: 500 }],
+    nodeCost: [{ nodeId: "A", cost: 1.5 }],
+    skippedNodesEmitted: [],
+  };
+
+  it("round-trips exact topology outputs retries and ledgers through an owner-only file", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-graph-checkpoint-"));
+    mkdirSync(join(dataDir, "graph-runs", "graph-a"), { recursive: true, mode: 0o700 });
+    try {
+      const written = writeDurableGraphCheckpoint(dataDir, "graph-a", checkpoint);
+      expect(written.ok).toBe(true);
+      if (!written.ok) return;
+      const read = readDurableGraphCheckpoint(dataDir, written.value);
+      expect(read).toEqual({ ok: true, value: checkpoint });
+      const workspaceIdentity = graphRunIdFromCheckpointRef(written.value);
+      expect(workspaceIdentity).toEqual({
+        ok: true,
+        value: "graph-a",
+      });
+      if (workspaceIdentity.ok) {
+        expect(join(dataDir, "graph-runs", workspaceIdentity.value)).toBe(
+          join(dataDir, "graph-runs", "graph-a"),
+        );
+        expect(join(dataDir, "graph-runs", workspaceIdentity.value)).not.toBe(
+          join(dataDir, "graph-runs", "resume-replacement-authority"),
+        );
+      }
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a checkpoint reference that does not identify one graph-run directory", () => {
+    expect(graphRunIdFromCheckpointRef("results/durable-checkpoint.json").ok).toBe(false);
+    expect(graphRunIdFromCheckpointRef("graph-runs/a/nested/durable-checkpoint.json").ok).toBe(false);
+    expect(graphRunIdFromCheckpointRef("graph-runs/../durable-checkpoint.json").ok).toBe(false);
+    expect(graphRunIdFromCheckpointRef(`graph-runs/%2e%2e/durable-checkpoint-${"a".repeat(64)}.json`).ok).toBe(false);
+    expect(graphRunIdFromCheckpointRef(`graph-runs/graph\\escape/durable-checkpoint-${"a".repeat(64)}.json`).ok).toBe(false);
+    expect(graphRunIdFromCheckpointRef("graph-runs/graph-a/durable-checkpoint.json").ok).toBe(false);
+  });
+
+  it("rejects checkpoint bytes that do not match the content-addressed reference", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-graph-checkpoint-integrity-"));
+    mkdirSync(join(dataDir, "graph-runs", "graph-integrity"), { recursive: true, mode: 0o700 });
+    try {
+      const written = writeDurableGraphCheckpoint(dataDir, "graph-integrity", checkpoint);
+      expect(written.ok).toBe(true);
+      if (!written.ok) return;
+
+      const changed: DurableGraphCheckpoint = {
+        ...checkpoint,
+        cumulativeTokens: checkpoint.cumulativeTokens + 1,
+      };
+      writeFileSync(join(dataDir, ...written.value.split("/")), JSON.stringify(changed), { mode: 0o600 });
+
+      const read = readDurableGraphCheckpoint(dataDir, written.value);
+      expect(read.ok).toBe(false);
+      if (!read.ok) expect(read.error.message).toContain("digest");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the prior artifact until its authority row can advance", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-graph-checkpoint-version-"));
+    mkdirSync(join(dataDir, "graph-runs", "graph-versioned"), { recursive: true, mode: 0o700 });
+    try {
+      const first = writeDurableGraphCheckpoint(dataDir, "graph-versioned", checkpoint);
+      expect(first.ok).toBe(true);
+      if (!first.ok) return;
+      const advanced: DurableGraphCheckpoint = {
+        ...checkpoint,
+        nodes: checkpoint.nodes.map((node) =>
+          node.nodeId === "B"
+            ? { ...node, status: "completed", output: "second checkpoint output" }
+            : node
+        ),
+        cumulativeTokens: 900,
+        cumulativeCost: 2,
+      };
+
+      const second = writeDurableGraphCheckpoint(dataDir, "graph-versioned", advanced);
+      expect(second.ok).toBe(true);
+      if (!second.ok) return;
+
+      expect(second.value).not.toBe(first.value);
+      expect(readDurableGraphCheckpoint(dataDir, first.value)).toEqual({
+        ok: true,
+        value: checkpoint,
+      });
+      expect(readDurableGraphCheckpoint(dataDir, second.value)).toEqual({
+        ok: true,
+        value: advanced,
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a routing summary whose status or run id diverges from the artifact", () => {
+    expect(validateGraphCheckpointSummary([
+      { nodeId: "A", status: "completed" },
+      { nodeId: "B", status: "ready" },
+    ], checkpoint).ok).toBe(false);
+  });
+
+  it("refuses an artifact larger than the bounded restart reader can load", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-graph-checkpoint-cap-"));
+    const graphDir = join(dataDir, "graph-runs", "graph-large");
+    mkdirSync(graphDir, { recursive: true, mode: 0o700 });
+    const oversized: DurableGraphCheckpoint = {
+      ...checkpoint,
+      graph: {
+        ...checkpoint.graph,
+        nodes: checkpoint.graph.nodes.map((node, index) =>
+          index === 0 ? { ...node, task: "x".repeat(8 * 1024 * 1024) } : node
+        ),
+      },
+    };
+    try {
+      const written = writeDurableGraphCheckpoint(dataDir, "graph-large", oversized);
+      expect(written.ok).toBe(false);
+      expect(existsSync(join(graphDir, "durable-checkpoint.json"))).toBe(false);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });
 

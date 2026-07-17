@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for orchestrator channel-manager runWithContext wrap.
+ * Unit tests for channel-manager request-context ownership.
  *
- * Asserts that the adapter.onMessage handler body wraps in runWithContext —
- * defense-in-depth at the orchestrator level. The wrap reuses the traceId
- * minted at adapter ingress via getMessageTraceId, and falls back to
- * randomUUID() if a future adapter bypasses ingress wrapping.
+ * Adapter dispatch owns the normal inbound scope. The manager preserves that
+ * exact object and creates a fallback scope only for an unscoped adapter.
  *
  * @module
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ChannelPort, NormalizedMessage, MessageHandler, DeliveryService } from "@comis/core";
 import { ok } from "@comis/shared";
-import { tryGetContext } from "@comis/core";
+import { runWithContext, tryGetContext } from "@comis/core";
 import { createMockLogger } from "../../../test/support/mock-logger.js";
 import { createChannelManager, type ChannelManagerDeps } from "./channel-manager.js";
 
@@ -76,9 +74,19 @@ function makeDeps(
   processInboundMessage: ChannelManagerDeps["processInboundMessage"],
   overrides?: Partial<ChannelManagerDeps>,
 ): ChannelManagerDeps {
+  const emit = vi.fn(() => true);
   return {
+    tenantId: "default",
     eventBus: {
-      emit: vi.fn(() => true),
+      emit,
+      emitSafely: vi.fn((event, payload) => {
+        emit(event, payload);
+        return {
+          hadListeners: false,
+          failures: [],
+          pendingFailures: Promise.resolve([]),
+        };
+      }),
       on: vi.fn().mockReturnThis(),
       off: vi.fn().mockReturnThis(),
       once: vi.fn().mockReturnThis(),
@@ -116,21 +124,26 @@ function makeDeps(
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("channel-manager -- adapter.onMessage handler runWithContext wrap", () => {
+describe("channel-manager -- adapter.onMessage request context", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("wraps onMessage handler body in runWithContext using adapter-minted traceId (defense-in-depth)", async () => {
+  it("reuses the exact adapter context without shadowing it", async () => {
     const knownTrace = "550e8400-e29b-41d4-a716-446655440001";
+    const ingressStartedAt = 1_700_000_000_000;
     let observedTrace: string | undefined;
     let observedChannelType: string | undefined;
+    let observedStartedAt: number | undefined;
+    let observedContext: ReturnType<typeof tryGetContext>;
 
     // processInboundMessage spy — captures the ALS context observable from inside
     const processSpy = vi.fn(async () => {
       const ctx = tryGetContext();
       observedTrace = ctx?.traceId;
       observedChannelType = ctx?.channelType;
+      observedStartedAt = ctx?.startedAt;
+      observedContext = ctx;
     });
 
     const adapter = makeAdapter();
@@ -140,10 +153,22 @@ describe("channel-manager -- adapter.onMessage handler runWithContext wrap", () 
     await manager.startAll();
 
     // Inject a message with a pre-stamped traceId (simulates adapter ingress wrap)
-    await adapter.triggerMessage(makeMessage({ metadata: { traceId: knownTrace } }));
+    const ingressContext = {
+      traceId: knownTrace,
+      startedAt: ingressStartedAt,
+      channelType: "telegram",
+      tenantId: "default",
+      trustLevel: "user",
+    } as const;
+    await runWithContext(
+      ingressContext,
+      () => adapter.triggerMessage(makeMessage({ metadata: { traceId: knownTrace } })),
+    );
 
+    expect(observedContext).toBe(ingressContext);
     expect(observedTrace).toBe(knownTrace);
     expect(observedChannelType).toBe("telegram");
+    expect(observedStartedAt).toBe(ingressStartedAt);
   });
 
   it("falls back to a minted traceId when msg.metadata.traceId is absent (future-adapter defense)", async () => {
@@ -164,6 +189,184 @@ describe("channel-manager -- adapter.onMessage handler runWithContext wrap", () 
 
     expect(observedTrace).toBeDefined();
     expect(observedTrace).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  });
+
+  it("uses the configured tenant when establishing a fallback ingress scope", async () => {
+    let observedTenantId: string | undefined;
+    const processSpy = vi.fn(async () => {
+      observedTenantId = tryGetContext()?.tenantId;
+    });
+    const adapter = makeAdapter();
+    const manager = createChannelManager(makeDeps(adapter, processSpy as any, {
+      tenantId: "tenant-production",
+    }));
+    await manager.startAll();
+
+    await adapter.triggerMessage(makeMessage({ metadata: {} }));
+
+    expect(observedTenantId).toBe("tenant-production");
+  });
+
+  it("creates a fresh fallback scope for an untraced custom message under unrelated same-channel context", async () => {
+    const ambientContext = {
+      traceId: "550e8400-e29b-41d4-a716-446655440010",
+      startedAt: 1_700_000_000_000,
+      channelType: "telegram",
+      tenantId: "default",
+      trustLevel: "user",
+      agentId: "already-resolved-agent",
+      userId: "other-user",
+      sessionKey: "default:other-user:other-channel:peer:other-user",
+    } as const;
+    let observedContext: ReturnType<typeof tryGetContext>;
+    let observedMessage: NormalizedMessage | undefined;
+    const processSpy = vi.fn(async (_deps, _adapter, msg) => {
+      observedContext = tryGetContext();
+      observedMessage = msg;
+    });
+    const adapter = makeAdapter();
+    const manager = createChannelManager(makeDeps(adapter, processSpy as any));
+    await manager.startAll();
+
+    await runWithContext(
+      ambientContext,
+      () => adapter.triggerMessage(makeMessage({ metadata: {} })),
+    );
+
+    expect(observedContext).not.toBe(ambientContext);
+    expect(observedContext).toMatchObject({
+      channelType: "telegram",
+      tenantId: "default",
+      trustLevel: "user",
+    });
+    expect(observedContext?.traceId).not.toBe(ambientContext.traceId);
+    expect(observedMessage?.metadata.traceId).toBe(observedContext?.traceId);
+    expect(observedContext?.agentId).toBeUndefined();
+    expect(observedContext?.sessionKey).toBeUndefined();
+  });
+
+  it("drops an explicitly traced message when ambient trace correlation conflicts", async () => {
+    const messageTrace = "550e8400-e29b-41d4-a716-446655440011";
+    const ambientContext = {
+      traceId: "550e8400-e29b-41d4-a716-446655440012",
+      startedAt: 1_700_000_000_000,
+      channelType: "telegram",
+      tenantId: "default",
+      trustLevel: "user",
+    } as const;
+    const processSpy = vi.fn(async () => undefined);
+    const adapter = makeAdapter();
+    const deps = makeDeps(adapter, processSpy as any);
+    const manager = createChannelManager(deps);
+    await manager.startAll();
+    const msg = makeMessage({ metadata: { traceId: messageTrace } });
+
+    await runWithContext(ambientContext, () => adapter.triggerMessage(msg));
+
+    expect(processSpy).not.toHaveBeenCalled();
+    const terminals = vi.mocked(deps.eventBus.emit).mock.calls.filter(
+      ([event]) => event === "message:terminal",
+    );
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]?.[1]).toMatchObject({
+      channelType: "telegram",
+      channelId: msg.channelId,
+      sourceMessageId: msg.id,
+      outcome: "error",
+      reason: "inbound_rejected",
+    });
+  });
+
+  it("drops a correlated trace when the ambient context is already resolved", async () => {
+    const knownTrace = "550e8400-e29b-41d4-a716-446655440013";
+    const resolvedContext = {
+      traceId: knownTrace,
+      startedAt: 1_700_000_000_000,
+      channelType: "telegram",
+      tenantId: "default",
+      trustLevel: "user",
+      agentId: "other-agent",
+      userId: "other-user",
+      sessionKey: "default:other-user:other-channel:peer:other-user",
+    } as const;
+    const processSpy = vi.fn(async () => undefined);
+    const adapter = makeAdapter();
+    const deps = makeDeps(adapter, processSpy as any);
+    const manager = createChannelManager(deps);
+    await manager.startAll();
+
+    await runWithContext(
+      resolvedContext,
+      () => adapter.triggerMessage(makeMessage({ metadata: { traceId: knownTrace } })),
+    );
+
+    expect(processSpy).not.toHaveBeenCalled();
+    expect(vi.mocked(deps.eventBus.emit).mock.calls.filter(
+      ([event]) => event === "message:terminal",
+    )).toHaveLength(1);
+  });
+
+  it("drops a correlated trace carrying an unknown unresolved trust value", async () => {
+    const knownTrace = "550e8400-e29b-41d4-a716-446655440014";
+    const malformedContext = {
+      traceId: knownTrace,
+      startedAt: 1_700_000_000_000,
+      channelType: "telegram",
+      tenantId: "default",
+      trustLevel: "operator",
+    } as any;
+    const processSpy = vi.fn(async () => undefined);
+    const adapter = makeAdapter();
+    const deps = makeDeps(adapter, processSpy as any);
+    const manager = createChannelManager(deps);
+    await manager.startAll();
+
+    await runWithContext(
+      malformedContext,
+      () => adapter.triggerMessage(makeMessage({ metadata: { traceId: knownTrace } })),
+    );
+
+    expect(processSpy).not.toHaveBeenCalled();
+    expect(vi.mocked(deps.eventBus.emit).mock.calls.filter(
+      ([event]) => event === "message:terminal",
+    )).toHaveLength(1);
+  });
+
+  it("drops an envelope whose channel does not match the receiving adapter", async () => {
+    const processSpy = vi.fn(async () => undefined);
+    const adapter = makeAdapter();
+    const deps = makeDeps(adapter, processSpy as any);
+    const manager = createChannelManager(deps);
+    await manager.startAll();
+    const msg = makeMessage({ channelType: "discord" });
+
+    await adapter.triggerMessage(msg);
+
+    expect(processSpy).not.toHaveBeenCalled();
+    expect(vi.mocked(deps.eventBus.emit).mock.calls.filter(
+      ([event]) => event === "message:terminal",
+    )).toHaveLength(1);
+  });
+
+  it("publishes the mismatch terminal even when diagnostic logging throws", async () => {
+    const processSpy = vi.fn(async () => undefined);
+    const adapter = makeAdapter();
+    const logger = createMockLogger();
+    vi.mocked(logger.error).mockImplementation(() => {
+      throw new Error("diagnostic sink unavailable");
+    });
+    const deps = makeDeps(adapter, processSpy as any, { logger });
+    const manager = createChannelManager(deps);
+    await manager.startAll();
+
+    await expect(adapter.triggerMessage(
+      makeMessage({ channelType: "discord" }),
+    )).resolves.toBeUndefined();
+
+    expect(processSpy).not.toHaveBeenCalled();
+    expect(vi.mocked(deps.eventBus.emit).mock.calls.filter(
+      ([event]) => event === "message:terminal",
+    )).toHaveLength(1);
   });
 
   it("channelType in runWithContext matches adapter.channelType", async () => {

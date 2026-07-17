@@ -2,6 +2,8 @@
 // @comis/core/security — Security utilities
 
 export { safePath, PathTraversalError } from "./safe-path.js";
+export { redactOutputText } from "./output-redactor.js";
+export type { OutputRedactionResult } from "./output-redactor.js";
 
 // Loopback bind detection — the shared TLS-off-is-benign-on-loopback judgment
 // (gateway boot log, fleet config-posture, gateway-exposure security check).
@@ -84,7 +86,11 @@ export {
 export type { ResultRef } from "./result-ref.js";
 
 // Log sanitizer
-export { sanitizeLogString, redactErrorMessage } from "./log-sanitizer.js";
+export {
+  redactErrorMessage,
+  sanitizeLogString,
+  toSafeErrorLogString,
+} from "./log-sanitizer.js";
 
 // Bounded redaction primitive (activity transparency)
 export { redactValue, REDACT_LIMITS } from "./redact-value.js";

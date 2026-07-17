@@ -9,16 +9,19 @@
  * @module
  */
 
-import { parseFormattedSessionKey, type SessionKey, type TypedEventBus, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout } from "@comis/core";
-import { withTimeout } from "@comis/shared";
+import { parseFormattedSessionKey, scrubSecretsFromText, toSafeErrorLogString, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout } from "@comis/core";
+import { err, fromPromise, ok, TimeoutError, withTimeout, type Result } from "@comis/shared";
 import { createDeliveryDedup, type DeliveryDedup } from "@comis/agent";
+import type { ChannelType } from "./announcement-dead-letter.js";
+import type {
+  AnnouncementOperationIdentity,
+  SendGovernedCompletionAnnouncement,
+} from "./announcement-outward-operation.js";
 
-/** Hard timeout for announceToParent calls (300 seconds / 5 minutes).
- *  Parent agents may call slow tools (image generation at 120s, web search, etc.)
- *  in response to announcements. 30s caused premature fallback + duplicate delivery.
- *  Inlined locally (rather than imported from packages/daemon/src/sub-agent-runner.ts)
- *  to avoid an orchestrator -> daemon back-edge; the daemon-side constant
- *  remains the canonical export for daemon consumers. */
+/** Hard timeout for the text-only parent candidate execution. A timeout leaves
+ *  the durable decision reservation quarantined and never starts another path.
+ *  Defined locally to avoid an orchestrator-to-agent dependency cycle and kept
+ *  aligned with the public agent timeout. */
 const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
 
 // ---------------------------------------------------------------------------
@@ -27,8 +30,9 @@ const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
 
 export interface QueuedAnnouncement {
   announcementText: string;
-  announceChannelType: string;
+  announceChannelType: ChannelType;
   announceChannelId: string;
+  announceThreadId?: string;
   callerAgentId: string;
   callerSessionKey: string;
   runId: string;
@@ -43,44 +47,49 @@ export interface AnnouncementBatcherDeps {
     text: string,
     channelType: string,
     channelId: string,
-  ) => Promise<void>;
-  sendToChannel: (channelType: string, channelId: string, text: string, options?: { extra?: Record<string, unknown> }) => Promise<boolean>;
+    options?: { threadId?: string },
+  ) => Promise<string | undefined>;
+  sendToChannel: (channelType: string, channelId: string, text: string, options?: { threadId?: string; extra?: Record<string, unknown> }) => Promise<boolean>;
   logger?: {
     debug(obj: Record<string, unknown>, msg: string): void;
     warn(obj: Record<string, unknown>, msg: string): void;
   };
   debounceMs?: number;
-  /** Optional dead-letter queue for persisting fallback delivery failures */
+  /** Durable decision reservation and failed-delivery quarantine. */
   deadLetterQueue?: {
     enqueue(entry: {
       announcementText: string;
-      channelType: string;
+      channelType: ChannelType;
       channelId: string;
+      /** Framework-authenticated owner of the persisted outward operation. */
+      agentId: string;
       runId: string;
       failedAt: number;
       attemptCount: number;
       lastError?: string;
+      threadId?: string;
       /** Idempotency key `${callerSessionKey}::${runId}`, carried onto the dead-letter entry. */
       idempotencyKey?: string;
-    }): void;
+      rootRunId?: string;
+      stepIndex?: number;
+    }): Promise<Result<void, Error>>;
+    reserveDecision(entry: {
+      idempotencyKey: string;
+      agentId: string;
+      runId: string;
+      announcementText: string;
+      channelType: ChannelType;
+      channelId: string;
+      failedAt: number;
+      threadId?: string;
+    }): Promise<Result<{ created: boolean }, Error>>;
+    resolveDecision(
+      idempotencyKey: string,
+      outcome: "receipt_committed" | "no_reply",
+    ): Promise<Result<boolean, Error>>;
   };
-  // -------------------------------------------------------------------------
-  // Self-healing retry (all OPTIONAL — injected from the daemon
-  // wiring via DI; absent → the fallback stays single-attempt-then-DLQ,
-  // so construction without these deps is byte-identical).
-  // -------------------------------------------------------------------------
-  /**
-   * Classify a fallback delivery failure as transient (retryable) or permanent.
-   * Narrow structural return so the orchestrator does NOT import the agent type;
-   * the daemon wiring binds `@comis/agent`'s `classifyErrorContext(msg, "failed")`.
-   */
-  classifyErrorContext?: (errorMessage: string) => { retryable: boolean };
-  /** Pure exponential backoff (ms) for retry `attempt` (1-based). Injected from `@comis/daemon`'s `computeRetryBackoff` (orchestrator cannot import daemon). */
-  computeRetryBackoff?: (attempt: number) => number;
-  /** Max retry attempts for a transient failure before dead-lettering (default 3). From `security.agentToAgent.delivery.maxRetries`. */
-  maxRetries?: number;
-  /** Typed event bus for the counts/ids-only delivery_retried / delivery_deadlettered events (§2.7). */
-  eventBus?: Pick<TypedEventBus, "emit">;
+  /** Durable single-attempt sender for the irreversible final delivery. */
+  sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
   /**
    * Shared, BOUNDED delivered-key store. When injected by the
    * daemon wiring, the SAME instance is also handed to the no-batcher success
@@ -92,7 +101,7 @@ export interface AnnouncementBatcherDeps {
 }
 
 export interface AnnouncementBatcher {
-  enqueue(params: QueuedAnnouncement): void;
+  enqueue(params: QueuedAnnouncement): Promise<Result<"queued" | "retained", Error>>;
   flush(): Promise<void>;
   shutdown(): Promise<void>;
   readonly pending: number;
@@ -192,13 +201,15 @@ export function sanitizeForUser(text: string): string {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_DEBOUNCE_MS = 2000;
-/** Default transient-retry cap when `deps.maxRetries` is not injected (matches `security.agentToAgent.delivery.maxRetries` default). */
-const DEFAULT_MAX_RETRIES = 3;
-
 export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): AnnouncementBatcher {
   const debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
   const queues = new Map<string, QueuedAnnouncement[]>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const deliveryTails = new Map<string, Promise<void>>();
+  const pendingAdmissions = new Set<Promise<Result<"queued" | "retained", Error>>>();
+  const admittedDecisionKeys = new Set<string>();
+  let accepting = true;
+  let shutdownPromise: Promise<void> | undefined;
   // Idempotency keys whose delivery has SUCCEEDED. In-memory floor
   // (the documented at-least-once-across-restart boundary — the DLQ bounds
   // cross-restart re-delivery by runId/attemptCount/maxAgeMs). Marked ONLY on a
@@ -207,100 +218,179 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
   // injected shared dedup when present (the no-batcher success
   // branches + DLQ recovery mark the SAME set), else an internal bounded one.
   const deliveredKeys: DeliveryDedup = deps.deliveryDedup ?? createDeliveryDedup();
+  // A timed-out parent execution or an unconfirmed platform attempt remains
+  // reserved. Retrying such a key automatically could duplicate an accepted
+  // side effect whose completion was not observed.
+  const retainedKeys = createDeliveryDedup();
 
   /** Mark a delivered item's key (no-op for undefined-keyed / top-level spawns). Call ONLY after a successful send. */
   function markDeliveredIfKeyed(item: QueuedAnnouncement): void {
     if (item.idempotencyKey) deliveredKeys.mark(item.idempotencyKey);
   }
 
-  /** AGENTS §2.2: no raw setTimeout — sleep via the sanctioned systemScheduleTimeout. */
-  function sleep(ms: number): Promise<void> {
-    if (ms <= 0) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      systemScheduleTimeout(resolve, ms);
-    });
-  }
-
   /**
-   * Send `text` to the item's announce channel, self-healing
-   * transient failures. Used per-item in BOTH the single-item and the
-   * multi-item-batch fallback branches. Returns true on success (and marks the
-   * key delivered), false on terminal failure (the caller enqueues the DLQ).
-   *
-   * - No `classifyErrorContext` injected → single-attempt: try once,
-   *   return false on throw (no retry).
-   * - Classified PERMANENT → emit delivery_deadlettered{transient:false,attempt:0},
-   *   return false immediately (zero retries).
-   * - Classified TRANSIENT → retry up to maxRetries with computeRetryBackoff
-   *   backoff, emitting delivery_retried per attempt; on success mark + return
-   *   true; on exhaustion emit delivery_deadlettered{transient:true} + return false.
-   *
-   * `text` is the already-sanitized announcement (scrubbed by the caller before
-   * the first attempt) — retries reuse it; the scrub is never bypassed.
-   *
-   * Returns `{ delivered, lastError }` — on terminal failure the caller enqueues
-   * the DLQ and uses `lastError` for the entry's diagnostic field.
+   * Make exactly one final platform attempt. DeliveryService owns any retry
+   * policy below this boundary; an opaque throw or false result is uncertain
+   * and must not be repeated here.
    */
-  async function sendWithRetry(item: QueuedAnnouncement, text: string): Promise<{ delivered: boolean; lastError?: string }> {
-    let lastError: string;
-    try {
-      await deps.sendToChannel(item.announceChannelType, item.announceChannelId, text);
-      markDeliveredIfKeyed(item);
-      return { delivered: true };
-    } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err);
-      // No classifier injected → legacy single-attempt path (caller → DLQ).
-      if (!deps.classifyErrorContext) return { delivered: false, lastError };
-
-      const { retryable } = deps.classifyErrorContext(lastError);
-      if (!retryable) {
-        deps.eventBus?.emit("subagent:delivery_deadlettered", {
-          runId: item.runId,
-          channelType: item.announceChannelType,
-          attempt: 0,
-          transient: false,
-          timestamp: systemNowMs(),
-        });
-        return { delivered: false, lastError };
-      }
-
-      const maxRetries = deps.maxRetries ?? DEFAULT_MAX_RETRIES;
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        await sleep(deps.computeRetryBackoff?.(attempt) ?? 0);
-        deps.eventBus?.emit("subagent:delivery_retried", {
-          runId: item.runId,
-          channelType: item.announceChannelType,
-          attempt,
-          transient: true,
-          timestamp: systemNowMs(),
-        });
-        try {
-          await deps.sendToChannel(item.announceChannelType, item.announceChannelId, text);
-          markDeliveredIfKeyed(item);
-          return { delivered: true };
-        } catch (retryErr) {
-          lastError = retryErr instanceof Error ? retryErr.message : String(retryErr);
-          // keep retrying until the cap, then fall through to dead-letter
-        }
-      }
-
-      // Transient but exhausted → dead-letter.
-      deps.eventBus?.emit("subagent:delivery_deadlettered", {
+  async function sendOnce(item: QueuedAnnouncement, text: string): Promise<{
+    delivered: boolean;
+    lastError?: string;
+    identity?: AnnouncementOperationIdentity;
+  }> {
+    if (deps.sendGovernedAnnouncement) {
+      const boundary = await fromPromise(deps.sendGovernedAnnouncement({
+        agentId: item.callerAgentId,
+        callerSessionKey: item.callerSessionKey,
         runId: item.runId,
         channelType: item.announceChannelType,
-        attempt: maxRetries,
-        transient: true,
-        timestamp: systemNowMs(),
-      });
-      return { delivered: false, lastError };
+        channelId: item.announceChannelId,
+        text,
+        ...(item.announceThreadId ? { options: { threadId: item.announceThreadId } } : {}),
+      }));
+      if (!boundary.ok || !boundary.value.ok) {
+        return { delivered: false, lastError: "governed announcement boundary failed" };
+      }
+      const outcome = boundary.value.value;
+      if (outcome.delivered) {
+        return { delivered: true, identity: outcome.identity };
+      }
+      return {
+        delivered: false,
+        lastError: outcome.failure,
+        ...(outcome.identity ? { identity: outcome.identity } : {}),
+      };
     }
+
+    const attemptDirect = async (): Promise<{
+      delivered: boolean;
+      lastError?: string;
+    }> => {
+      const boundary = await fromPromise(deps.sendToChannel(
+        item.announceChannelType,
+        item.announceChannelId,
+        text,
+        item.announceThreadId ? { threadId: item.announceThreadId } : undefined,
+      ));
+      if (!boundary.ok) {
+        return {
+          delivered: false,
+          lastError: toSafeErrorLogString(boundary.error),
+        };
+      }
+      if (!boundary.value) {
+        return {
+          delivered: false,
+          lastError: "sendToChannel returned false",
+        };
+      }
+      return { delivered: true };
+    };
+
+    const firstAttempt = await attemptDirect();
+    return firstAttempt.delivered
+      ? { delivered: true }
+      : {
+          delivered: false,
+          lastError: firstAttempt.lastError ?? "direct channel send failed",
+        };
   }
 
   // -------------------------------------------------------------------------
   // Internal delivery
   // -------------------------------------------------------------------------
 
-  async function deliverBatch(key: string): Promise<void> {
+  function markItemsDelivered(items: readonly QueuedAnnouncement[]): void {
+    for (const item of items) {
+      markDeliveredIfKeyed(item);
+      if (item.idempotencyKey) admittedDecisionKeys.delete(item.idempotencyKey);
+    }
+  }
+
+  function retainItems(items: readonly QueuedAnnouncement[]): void {
+    for (const item of items) {
+      if (item.idempotencyKey) retainedKeys.mark(item.idempotencyKey);
+      if (item.idempotencyKey) admittedDecisionKeys.delete(item.idempotencyKey);
+    }
+  }
+
+  async function resolveDecisions(
+    items: readonly QueuedAnnouncement[],
+    outcome: "receipt_committed" | "no_reply",
+  ): Promise<void> {
+    const resolveDecision = deps.deadLetterQueue?.resolveDecision;
+    if (!resolveDecision) return;
+    for (const item of items) {
+      if (!item.idempotencyKey) continue;
+      const boundary = await fromPromise(resolveDecision(item.idempotencyKey, outcome));
+      if (boundary.ok && boundary.value.ok) continue;
+      deps.logger?.warn(
+        {
+          runId: item.runId,
+          errorKind: "resource" as const,
+          hint: "Repair decision-quarantine storage; the safe retained row suppresses replay",
+        },
+        "Announcement decision reservation could not be resolved",
+      );
+    }
+  }
+
+  async function sendFinal(
+    key: string,
+    items: readonly QueuedAnnouncement[],
+    text: string,
+  ): Promise<boolean> {
+    const first = items[0]!;
+    const { delivered, lastError, identity } = await sendOnce(first, text);
+    if (delivered) {
+      await resolveDecisions(items, "receipt_committed");
+      markItemsDelivered(items);
+      return true;
+    }
+
+    retainItems(items);
+    deps.logger?.warn(
+      {
+        batchKey: key,
+        runId: first.runId,
+        batchSize: items.length,
+        errorKind: "network" as const,
+        hint: "Inspect the retained announcement operation before any retry",
+      },
+      "Announcement final delivery was not confirmed",
+    );
+    if (!deps.deadLetterQueue) return false;
+    const queued = await deps.deadLetterQueue.enqueue({
+      announcementText: text,
+      channelType: first.announceChannelType,
+      channelId: first.announceChannelId,
+      agentId: first.callerAgentId,
+      runId: first.runId,
+      failedAt: systemNowMs(),
+      attemptCount: 0,
+      ...(lastError ? { lastError } : {}),
+      ...(first.announceThreadId ? { threadId: first.announceThreadId } : {}),
+      idempotencyKey: first.idempotencyKey,
+      ...(identity ? {
+        rootRunId: identity.rootRunId,
+        stepIndex: identity.stepIndex,
+      } : {}),
+    });
+    if (!queued?.ok) {
+      deps.logger?.warn(
+        {
+          batchKey: key,
+          runId: first.runId,
+          errorKind: "resource" as const,
+          hint: "Repair dead-letter storage before retrying or claiming the announcement was retained",
+        },
+        "Announcement dead-letter persistence failed",
+      );
+    }
+    return false;
+  }
+
+  async function deliverQueuedBatch(key: string): Promise<void> {
     timers.delete(key);
     const queued = queues.get(key);
     queues.delete(key);
@@ -316,9 +406,9 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     for (const item of queued) {
       const k = item.idempotencyKey;
       if (k !== undefined) {
-        if (deliveredKeys.has(k) || seen.has(k)) { // bounded dedup lookup
+        if (deliveredKeys.has(k) || retainedKeys.has(k) || seen.has(k)) {
           deps.logger?.debug(
-            { runId: item.runId, hint: "duplicate delivery suppressed" },
+            { runId: item.runId, hint: "duplicate or retained delivery suppressed" },
             "Announcement dedup no-op",
           );
           continue;
@@ -342,132 +432,155 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         return;
       }
 
-      if (items.length === 1) {
-        // Single item -- deliver with original text unmodified
-        try {
-          await withTimeout(
-            deps.announceToParent(
-              first.callerAgentId,
-              parsedKey,
-              first.announcementText,
-              first.announceChannelType,
-              first.announceChannelId,
-            ),
-            ANNOUNCE_PARENT_TIMEOUT_MS,
-            systemScheduleTimeout,
-            "announceToParent",
-          );
-          markDeliveredIfKeyed(first); // mark on success only
-          return;
-        } catch (err) {
-          // Batch state fields in timeout WARN for diagnostics
-          deps.logger?.warn(
-            { batchKey: key, err, batchSize: 1, itemsDelivered: 0, itemsRemaining: 1, isPartialDelivery: false, errorKind: "internal" as const, hint: "Parent session injection failed/timed out; falling back to direct send" },
-            "Announcement single-item delivery failed",
-          );
-          // Self-healing fallback — transient retries with backoff,
-          // permanent dead-letters immediately. Scrub the text ONCE, reuse on retries.
-          const sanitizedText = sanitizeForUser(first.announcementText);
-          const { delivered, lastError } = await sendWithRetry(first, sanitizedText);
-          if (!delivered && deps.deadLetterQueue) {
-            deps.logger?.warn(
-              { batchKey: key, runId: first.runId, errorKind: "network" as const, hint: "Single-item fallback direct send failed after retry/classify; dead-lettering" },
-              "Single-item batcher fallback delivery failed",
-            );
-            deps.deadLetterQueue.enqueue({
-              announcementText: sanitizedText,
-              channelType: first.announceChannelType,
-              channelId: first.announceChannelId,
-              runId: first.runId,
-              failedAt: systemNowMs(),
-              attemptCount: 0,
-              ...(lastError ? { lastError } : {}),
-              idempotencyKey: first.idempotencyKey,
-            });
-          }
-          return;
-        }
-      }
-
-      // Multiple items -- build combined message
-      const taskSections = items.map((item, idx) => {
-        const stripped = stripSystemPrefix(item.announcementText);
-        return `### Task ${idx + 1}\n${stripped}`;
-      }).join("\n\n");
-
-      const combinedText =
-        `[System Message]\n` +
-        `${items.length} background tasks have completed.\n\n` +
-        `---\n\n` +
-        `${taskSections}\n\n` +
-        `---\n\n` +
-        `Review these completed tasks and summarize the results for the user in your own voice. If no user notification is needed, respond with NO_REPLY.`;
-
+      const parentInput = items.length === 1
+        ? first.announcementText
+        : (() => {
+            const taskSections = items.map((item, idx) => {
+              const stripped = stripSystemPrefix(item.announcementText);
+              return `### Task ${idx + 1}\n${stripped}`;
+            }).join("\n\n");
+            return `[System Message]\n${items.length} background tasks have completed.\n\n---\n\n${taskSections}\n\n---\n\nReview these completed tasks and summarize the results for the user in your own voice. If no user notification is needed, respond with NO_REPLY.`;
+          })();
       try {
-        await withTimeout(
+        const candidate = await withTimeout(
           deps.announceToParent(
             first.callerAgentId,
             parsedKey,
-            combinedText,
+            parentInput,
             first.announceChannelType,
             first.announceChannelId,
+            first.announceThreadId ? { threadId: first.announceThreadId } : undefined,
           ),
           ANNOUNCE_PARENT_TIMEOUT_MS,
           systemScheduleTimeout,
           "announceToParent",
         );
-        // The combined announce delivered all batch items at once.
-        for (const item of items) markDeliveredIfKeyed(item);
-      } catch (err) {
-        deps.logger?.warn(
-          { batchKey: key, batchSize: items.length, itemsDelivered: 0, itemsRemaining: items.length, isPartialDelivery: false, err, errorKind: "internal" as const, hint: "Parent session injection failed/timed out; falling back to direct send" },
-          "Announcement batched delivery failed",
-        );
-        // Fallback: deliver each item individually via direct channel send.
-        // Each item self-heals through sendWithRetry (transient →
-        // retry-with-backoff; permanent → immediate dead-letter) — the SAME
-        // retry/classify logic as the single-item branch, applied per item.
-        let fallbackDelivered = 0;
-        for (const item of items) {
-          // Scrub ONCE per item, reuse on retries (never bypass the scrub).
-          const sanitizedText = sanitizeForUser(item.announcementText);
-          const { delivered, lastError } = await sendWithRetry(item, sanitizedText);
-          if (delivered) {
-            fallbackDelivered++;
-            continue;
-          }
-          deps.logger?.warn(
-            { batchKey: key, runId: item.runId, batchSize: items.length, itemsDelivered: fallbackDelivered, itemsRemaining: items.length - fallbackDelivered, isPartialDelivery: fallbackDelivered > 0, errorKind: "network" as const, hint: "Fallback direct send failed for batch item after retry/classify; dead-lettering" },
-            "Batch item fallback delivery failed",
-          );
-          if (deps.deadLetterQueue) {
-            deps.deadLetterQueue.enqueue({
-              announcementText: sanitizedText,
-              channelType: item.announceChannelType,
-              channelId: item.announceChannelId,
-              runId: item.runId,
-              failedAt: systemNowMs(),
-              attemptCount: 0,
-              ...(lastError ? { lastError } : {}),
-              idempotencyKey: item.idempotencyKey,
-            });
-          }
+        if (candidate === undefined) {
+          await resolveDecisions(items, "no_reply");
+          markItemsDelivered(items);
+          return;
         }
+        const scrubbedCandidate = scrubSecretsFromText(candidate);
+        if (scrubbedCandidate.redactions > 0) {
+          deps.logger?.warn(
+            {
+              batchKey: key,
+              batchSize: items.length,
+              redactions: scrubbedCandidate.redactions,
+              errorKind: "internal" as const,
+              hint: "Secret found in rewritten announcement — redacted before delivery",
+            },
+            "Egress guard: rewritten announcement scrubbed",
+          );
+        }
+        await sendFinal(key, items, scrubbedCandidate.text);
+      } catch (err) {
+        retainItems(items);
+        deps.logger?.warn(
+          {
+            batchKey: key,
+            batchSize: items.length,
+            err: toSafeErrorLogString(err),
+            errorKind: err instanceof TimeoutError ? "timeout" as const : "internal" as const,
+            hint: "Inspect the quarantined parent decision before deciding whether to retry",
+          },
+          "Announcement parent execution ended without a safe delivery decision",
+        );
+        return;
       }
     } catch (err) {
       deps.logger?.warn(
-        { batchKey: key, batchSize: items.length, err, errorKind: "internal" as const, hint: "Batch announcement delivery failed; individual results are logged separately" },
+        { batchKey: key, batchSize: items.length, err: toSafeErrorLogString(err), errorKind: "internal" as const, hint: "Batch announcement delivery failed; individual results are logged separately" },
         "Announcement batch delivery error",
       );
     }
+  }
+
+  function deliverBatch(key: string): Promise<void> {
+    const prior = deliveryTails.get(key) ?? Promise.resolve();
+    const next = prior.then(() => deliverQueuedBatch(key));
+    const settled: Promise<void> = next.finally(() => {
+      if (deliveryTails.get(key) === settled) deliveryTails.delete(key);
+    });
+    deliveryTails.set(key, settled);
+    return settled;
   }
 
   // -------------------------------------------------------------------------
   // Public API
   // -------------------------------------------------------------------------
 
-  function enqueue(params: QueuedAnnouncement): void {
-    const batchKey = `${params.callerAgentId}:${params.callerSessionKey}`;
+  async function enqueueAccepted(
+    params: QueuedAnnouncement,
+  ): Promise<Result<"queued" | "retained", Error>> {
+    const idempotencyKey = params.idempotencyKey;
+    if (idempotencyKey && (deliveredKeys.has(idempotencyKey) || retainedKeys.has(idempotencyKey))) {
+      return ok("retained");
+    }
+
+    const reserveDecision = deps.deadLetterQueue?.reserveDecision;
+    if (deps.sendGovernedAnnouncement && (!idempotencyKey || !reserveDecision)) {
+      deps.logger?.warn(
+        {
+          runId: params.runId,
+          errorKind: "precondition" as const,
+          hint: "Wire durable keyed decision reservations before enabling governed parent rewriting",
+        },
+        "Governed announcement decision cannot be reserved",
+      );
+      return err(new Error("Governed announcement decision reservation unavailable"));
+    }
+    if (deps.sendGovernedAnnouncement && idempotencyKey && reserveDecision) {
+      const boundary = await fromPromise(reserveDecision({
+        idempotencyKey,
+        agentId: params.callerAgentId,
+        runId: params.runId,
+        announcementText: params.announcementText,
+        channelType: params.announceChannelType,
+        channelId: params.announceChannelId,
+        failedAt: systemNowMs(),
+        ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
+      }));
+      if (!boundary.ok) {
+        deps.logger?.warn(
+          {
+            runId: params.runId,
+            errorKind: "resource" as const,
+            hint: "Restore decision-quarantine storage before retrying the same completion",
+          },
+          "Announcement decision reservation failed",
+        );
+        return err(boundary.error);
+      }
+      if (!boundary.value.ok) {
+        deps.logger?.warn(
+          {
+            runId: params.runId,
+            errorKind: "resource" as const,
+            hint: "Restore decision-quarantine storage before retrying the same completion",
+          },
+          "Announcement decision reservation failed",
+        );
+        return err(boundary.value.error);
+      }
+      if (!boundary.value.value.created) {
+        if (!admittedDecisionKeys.has(idempotencyKey)) retainedKeys.mark(idempotencyKey);
+        deps.logger?.debug(
+          { runId: params.runId, hint: "durable decision reservation already retained" },
+          "Announcement dedup no-op",
+        );
+        return ok("retained");
+      }
+      admittedDecisionKeys.add(idempotencyKey);
+    }
+
+    const batchKey = JSON.stringify([
+      params.callerAgentId,
+      params.callerSessionKey,
+      params.announceChannelType,
+      params.announceChannelId,
+      params.announceThreadId ?? null,
+    ]);
 
     let queue = queues.get(batchKey);
     if (!queue) {
@@ -497,9 +610,26 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       { batchKey, queueSize: queue.length, runId: params.runId },
       "Announcement enqueued for batching",
     );
+    return ok("queued");
+  }
+
+  function enqueue(
+    params: QueuedAnnouncement,
+  ): Promise<Result<"queued" | "retained", Error>> {
+    if (!accepting) {
+      return Promise.resolve(err(new Error("Announcement batcher is shutting down")));
+    }
+    const admission = enqueueAccepted(params);
+    pendingAdmissions.add(admission);
+    void admission.then(
+      () => pendingAdmissions.delete(admission),
+      () => pendingAdmissions.delete(admission),
+    );
+    return admission;
   }
 
   async function flush(): Promise<void> {
+    await Promise.allSettled([...pendingAdmissions]);
     // Clear all debounce timers
     for (const timer of timers.values()) {
       systemClearTimeout(timer);
@@ -509,12 +639,21 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     // Deliver all pending batches
     const keys = [...queues.keys()];
     await Promise.allSettled(keys.map((key) => deliverBatch(key)));
+    await Promise.allSettled([...deliveryTails.values()]);
   }
 
-  async function shutdown(): Promise<void> {
+  async function performShutdown(): Promise<void> {
     await flush();
     queues.clear();
     timers.clear();
+    deliveryTails.clear();
+    admittedDecisionKeys.clear();
+  }
+
+  function shutdown(): Promise<void> {
+    accepting = false;
+    shutdownPromise ??= performShutdown();
+    return shutdownPromise;
   }
 
   return {

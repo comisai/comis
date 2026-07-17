@@ -15,7 +15,11 @@
  * @module
  */
 
-import { formatSessionKey } from "@comis/core";
+import {
+  emitObservationalEventSafely,
+  formatSessionKey,
+  toSafeErrorLogString,
+} from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import { fromPromise } from "@comis/shared";
 
@@ -276,7 +280,6 @@ async function detectSilentFailure(
         llmCalls: earlyBridgeResult.llmCalls,
         stepsExecuted: earlyBridgeResult.stepsExecuted,
         hint: "Model produced no visible text; nudging continuation",
-        errorKind: "transient" as ErrorKind,
       },
       "Attempting continuation after thinking-only final turn",
     );
@@ -284,10 +287,8 @@ async function detectSilentFailure(
       session.followUp("(continued from previous message)"),
     );
     const nudgeRecovered = followUpResult.ok && getVisibleAssistantText(session) !== "";
-    // Announce the continuation nudge (a followUp re-drive on a thinking-only
-    // "stop" turn) so `explain` shows the recovery attempt (previously
-    // log-only, and only on the recovered branch).
-    deps.eventBus.emit("execution:recovery_attempted", {
+    // Announce whether the continuation produced visible text.
+    emitObservationalEventSafely({ eventBus: deps.eventBus, logger: deps.logger }, "execution:recovery_attempted", {
       agentId: agentId ?? "default",
       sessionKey: formatSessionKey(sessionKey),
       reason: "continuation_nudge",
@@ -306,7 +307,7 @@ async function detectSilentFailure(
       }
     } else {
       deps.logger.debug(
-        { err: followUpResult.error },
+        { err: toSafeErrorLogString(followUpResult.error) },
         "followUp call failed; falling through to",
       );
     }
@@ -330,8 +331,8 @@ async function detectSilentFailure(
     }
 
     // Close the gate so this branch cannot be re-entered within the
-    // same runPrompt invocation (defends against future refactors that
-    // might reach this region twice).
+    // same runPrompt invocation even if another control-flow path reaches
+    // this region twice.
     return true;
   } else if (!silent02Recovered) {
     declareSilentTerminalFailure(params, earlyBridgeResult, retryState);

@@ -24,11 +24,15 @@ function makeContext(trustLevel: "admin" | "user" | "guest"): RequestContext {
   return {
     tenantId: "default",
     userId: "test-user",
-    sessionKey: "test-session",
+    agentId: "test-agent",
+    sessionKey: "default:test-user:chat-1",
     traceId: crypto.randomUUID(),
     startedAt: Date.now(),
     trustLevel,
     channelType: "telegram",
+    deliveryOrigin: Object.freeze({
+      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+    }),
   };
 }
 
@@ -211,16 +215,64 @@ describe("createAdminManageTool factory", () => {
       );
 
       await runWithContext(makeContext("admin"), () =>
-        tool.execute("call-g1", { action: "create", name: "new-item" } as never),
+        tool.execute("call-g1", {
+          action: "create",
+          name: "new-item",
+          credential: "private-test-value",
+        } as never),
       );
 
-      expect(gate.requestApproval).toHaveBeenCalledWith(
-        expect.objectContaining({
-          toolName: "test_manage",
-          action: "test.create",
-        }),
-      );
+      const approval = (gate.requestApproval as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+        toolName: string;
+        action: string;
+        agentId: string;
+        params: Record<string, unknown>;
+        fingerprintParams: Record<string, unknown>;
+      };
+      expect(approval).toMatchObject({
+        toolName: "test_manage",
+        action: "test.create",
+        agentId: "test-agent",
+        params: { action: "create" },
+      });
+      expect(approval.fingerprintParams).toMatchObject({
+        action: "create",
+        name: "new-item",
+        credential: "private-test-value",
+      });
+      expect(JSON.stringify(approval.params)).not.toContain("private-test-value");
       expect(mockRpcCall).toHaveBeenCalled();
+    });
+
+    it("fails closed before requesting approval when the resolved agent identity is missing", async () => {
+      const gate = createMockApprovalGate();
+      (gate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
+        approved: true,
+        approvedBy: "operator",
+      });
+      const tool = createAdminManageTool(
+        {
+          name: "test_manage",
+          label: "Test",
+          description: "Test",
+          parameters: TestParams,
+          validActions: ["list", "create", "delete"],
+          rpcPrefix: "test",
+          gatedActions: ["create"],
+        },
+        mockRpcCall,
+        gate,
+      );
+      const context = makeContext("admin");
+      delete context.agentId;
+
+      await expect(
+        runWithContext(context, () =>
+          tool.execute("call-missing-agent", { action: "create" } as never),
+        ),
+      ).rejects.toThrow(/approval.*identity/i);
+      expect(gate.requestApproval).not.toHaveBeenCalled();
+      expect(mockRpcCall).not.toHaveBeenCalled();
     });
 
     it("throws when approval gate denies", async () => {
@@ -295,7 +347,7 @@ describe("createAdminManageTool factory", () => {
           rpcPrefix: "test",
           actionOverrides: {
             async list(_p, _rpcCall, ctx) {
-              return { custom: true, trustLevel: ctx.trustLevel };
+              return { custom: true, trustLevel: ctx.trustLevel, agentId: ctx.agentId };
             },
           },
         },
@@ -306,7 +358,7 @@ describe("createAdminManageTool factory", () => {
         tool.execute("call-o1", { action: "list" } as never),
       );
 
-      expect(result.details).toEqual({ custom: true, trustLevel: "admin" });
+      expect(result.details).toEqual({ custom: true, trustLevel: "admin", agentId: "test-agent" });
       // Default rpcCall should NOT have been called since override handled it
       expect(mockRpcCall).not.toHaveBeenCalled();
     });

@@ -478,6 +478,56 @@ describe("createPiEventBridge", () => {
   // -------------------------------------------------------------------------
 
   describe("tool_execution_end", () => {
+    it("retains successful message delivery identity across the final assistant turn", () => {
+      const bridge = createPiEventBridge(deps);
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "message",
+        toolCallId: "tc-message-1",
+        args: {
+          action: "send",
+          channel_type: "telegram",
+          channel_id: "chat-1",
+          text: "private delivered body",
+        },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent("message", "tc-message-1", false) as any);
+
+      // The SDK starts a new turn before producing the final NO_REPLY token.
+      // Delivery evidence is execution-scoped and must survive that boundary.
+      bridge.listener({ type: "turn_start" } as any);
+
+      expect(bridge.hasOutboundDelivery({
+        channelType: "telegram",
+        channelId: "chat-1",
+      })).toBe(true);
+      expect(bridge.hasOutboundDelivery({
+        channelType: "telegram",
+        channelId: "another-chat",
+      })).toBe(false);
+    });
+
+    it("does not count a failed message tool call as delivered", () => {
+      const bridge = createPiEventBridge(deps);
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "message",
+        toolCallId: "tc-message-failed",
+        args: {
+          action: "reply",
+          channel_type: "telegram",
+          channel_id: "chat-1",
+          text: "private failed body",
+        },
+      } as any);
+      bridge.listener(makeToolExecutionEndEvent("message", "tc-message-failed", true) as any);
+
+      expect(bridge.hasOutboundDelivery({
+        channelType: "telegram",
+        channelId: "chat-1",
+      })).toBe(false);
+    });
+
     it("increments step counter", () => {
       const { listener } = createPiEventBridge(deps);
 

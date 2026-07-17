@@ -14,7 +14,7 @@
  * @module
  */
 
-import { formatSessionKey } from "@comis/core";
+import { formatSessionKey, toSafeErrorLogString } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import { fromPromise } from "@comis/shared";
 
@@ -33,6 +33,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { TurnBudgetTracker } from "../../budget/turn-budget-tracker.js";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
 import { processFailurePath } from "./failure-path.js";
+import { applyInteractiveSilentRecovery } from "./interactive-silent-recovery.js";
 
 /**
  * Compute the final PromptRunResult by running output escalation, success-
@@ -113,7 +114,6 @@ async function maybeEscalateOutput(
       originalMaxTokens,
       escalatedMaxTokens,
       hint: "LLM hit max_tokens; retrying with escalated output budget",
-      errorKind: "transient" as ErrorKind,
     },
     "Output escalation triggered",
   );
@@ -159,9 +159,9 @@ async function maybeEscalateOutput(
   } catch (escalationError) {
     deps.logger.warn(
       {
-        err: escalationError,
+        err: toSafeErrorLogString(escalationError),
         hint: "Output escalation retry failed; using original truncated response",
-        errorKind: "transient" as ErrorKind,
+        errorKind: "dependency" as ErrorKind,
       },
       "Output escalation retry failed",
     );
@@ -231,7 +231,6 @@ async function processSuccessPath(
           stepsExecuted: lateResult.stepsExecuted,
           textEmitted: lateResult.textEmitted,
           hint: "All text was thinking-only; nudging LLM for visible response",
-          errorKind: "transient" as ErrorKind,
         },
         "Attempting continuation after all-thinking execution",
       );
@@ -249,7 +248,7 @@ async function processSuccessPath(
         }
       } else {
         deps.logger.debug(
-          { err: followUpResult.error },
+          { err: toSafeErrorLogString(followUpResult.error) },
           "followUp call failed; downstream handler will return empty response",
         );
       }
@@ -315,6 +314,8 @@ async function processSuccessPath(
     await runBudgetContinuation(params, budgetTracker, budgetCapped, requestedBudget);
   }
 
+  await applyInteractiveSilentRecovery(params);
+
   // Surface discarded pre-tool URLs/short-codes absent from final response.
   // MUST run BEFORE the OutputGuard scan below so the surfaced URL passes through
   // the egress firewall and any embedded credential is redacted.
@@ -374,7 +375,7 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
   } else {
     deps.logger.warn(
       {
-        err: continuationResult.error.cause,
+        err: toSafeErrorLogString(continuationResult.error.cause),
         hint: "Post-batch continuation followUp failed; preserving response collected so far",
         errorKind: "internal" as ErrorKind,
       },
@@ -440,7 +441,7 @@ async function runBudgetContinuation(
     const followUpResult = await fromPromise(session.followUp(budgetNudgeText));
     if (!followUpResult.ok) {
       deps.logger.warn(
-        { err: followUpResult.error, hint: "Budget continuation followUp failed; preserving response collected so far", errorKind: "sdk" as ErrorKind },
+        { err: toSafeErrorLogString(followUpResult.error), hint: "Budget continuation followUp failed; preserving response collected so far", errorKind: "dependency" as ErrorKind },
         "followUp error, stopping budget continuation",
       );
       break;

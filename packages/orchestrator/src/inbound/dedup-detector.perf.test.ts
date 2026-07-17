@@ -56,7 +56,7 @@ describe("dedup-detector load test — 10× expected production throughput", () 
     const start = Date.now();
     for (let i = 0; i < TOTAL_MESSAGES; i++) {
       nowMs = Math.floor(i * INTERVAL_MS);
-      detector.check(`msg-${i}`);
+      detector.reserve(`msg-${i}`);
     }
     const elapsed = Date.now() - start;
 
@@ -79,7 +79,7 @@ describe("dedup-detector load test — 10× expected production throughput", () 
     // Step 1: insert UNIQUE_COUNT distinct messages at 300 msg/s pace
     for (let i = 0; i < UNIQUE_COUNT; i++) {
       nowMs = Math.floor(i * INTERVAL_MS);
-      const result = detector.check(`dup-test-msg-${i}`);
+      const result = detector.reserve(`dup-test-msg-${i}`);
       expect(result.isDuplicate).toBe(false);
     }
 
@@ -87,7 +87,7 @@ describe("dedup-detector load test — 10× expected production throughput", () 
     // (at 300 msg/s, 200 messages = 666ms elapsed, well under 10s)
     for (let i = 0; i < DUPLICATE_COUNT; i++) {
       nowMs = Math.floor((UNIQUE_COUNT + i) * INTERVAL_MS); // slightly later timestamps
-      const result = detector.check(`dup-test-msg-${i}`);
+      const result = detector.reserve(`dup-test-msg-${i}`);
       expect(result.isDuplicate).toBe(true); // within window → duplicate detected
       expect(result.deltaMs).toBeGreaterThanOrEqual(0);
     }
@@ -103,12 +103,12 @@ describe("dedup-detector load test — 10× expected production throughput", () 
     });
 
     // Insert at t=0
-    detector.check("evict-test-msg");
-    expect(detector.check("evict-test-msg")).toMatchObject({ isDuplicate: true }); // within window
+    detector.reserve("evict-test-msg");
+    expect(detector.reserve("evict-test-msg")).toMatchObject({ isDuplicate: true }); // within window
 
     // Advance past the window
     nowMs = WINDOW_MS + 1; // 10001ms
-    const afterWindow = detector.check("evict-test-msg");
+    const afterWindow = detector.reserve("evict-test-msg");
     expect(afterWindow.isDuplicate).toBe(false); // evicted → treated as fresh
   });
 
@@ -122,13 +122,13 @@ describe("dedup-detector load test — 10× expected production throughput", () 
 
     // Insert MAX_ENTRIES + 50 unique IDs
     for (let i = 0; i < MAX_ENTRIES + 50; i++) {
-      detector.check(`cap-msg-${i}`);
+      detector.reserve(`cap-msg-${i}`);
     }
 
     // The first 50 entries (oldest) should have been evicted by FIFO cap policy
     // Re-checking them: they return isDuplicate:false (evicted → treated as fresh)
     for (let i = 0; i < 50; i++) {
-      const r = detector.check(`cap-msg-${i}`);
+      const r = detector.reserve(`cap-msg-${i}`);
       // The evicted IDs get re-inserted here, but the important check is
       // that the ORIGINAL insert was gone → first re-check = not duplicate
       expect(r.isDuplicate).toBe(false);
@@ -139,23 +139,23 @@ describe("dedup-detector load test — 10× expected production throughput", () 
     // (note: after re-inserting 50 evicted IDs above, the cap evicts 50 more from the
     // middle of the range; pick an ID known to survive — near the last inserted)
     const lastInserted = `cap-msg-${MAX_ENTRIES + 49}`;
-    const recent = detector.check(lastInserted);
+    const recent = detector.reserve(lastInserted);
     expect(recent.isDuplicate).toBe(true);
   });
 
-  it("synchronous: every check is a plain DedupCheckResult (not a Promise)", () => {
+  it("synchronous: every reserve is a plain DedupReservationResult (not a Promise)", () => {
     let nowMs = 1000;
     const detector = createDedupDetector({ now: () => nowMs });
 
     // Fresh check
-    const r1 = detector.check("sync-check-msg");
+    const r1 = detector.reserve("sync-reserve-msg");
     expect(r1).not.toBeInstanceOf(Promise);
     expect(typeof r1.isDuplicate).toBe("boolean");
     expect(r1.isDuplicate).toBe(false);
 
     // Duplicate check
     nowMs = 1001;
-    const r2 = detector.check("sync-check-msg");
+    const r2 = detector.reserve("sync-reserve-msg");
     expect(r2).not.toBeInstanceOf(Promise);
     expect(r2.isDuplicate).toBe(true);
     expect(r2.deltaMs).toBe(1);

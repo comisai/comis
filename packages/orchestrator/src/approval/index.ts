@@ -8,8 +8,13 @@
  */
 export {
   createInteractiveCallbackRouter,
+  approvalRequestIsOwnedByInbound,
   type InteractiveCallbackRouter,
   type InteractiveCallbackRouterDeps,
   type InboundCallback,
   type CallbackResolution,
+  type GraphReportCallbackRegistration,
+  type GraphReportRegistrationError,
+  type GraphReportTargetStore,
+  type GraphReportStoreReplaceError,
 } from "./interactive-callback-router.js";

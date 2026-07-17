@@ -5,7 +5,7 @@
  * Covers:
  *   - per-profile JWT-expiry sub-check (pass / warn @ <7d / fail when expired)
  *   - literal `secsUntilExpiry` numeric field on every profile finding
- *   - schema-mismatch surfacing from `port.list()` verbatim
+ *   - content-free schema-mismatch reporting from `port.list()`
  *   - encrypted-mode skip (store-direct, no SecretManager bootstrap)
  *   - ca-certificates probe + distro-aware install hints (5-distro switch)
  *   - HTTPS_PROXY env-var heuristic (warn when set, pass when unset)
@@ -250,10 +250,9 @@ describe("oauthHealthCheck — profile expiry", () => {
 // ---------------------------------------------------------------------------
 
 describe("oauthHealthCheck — schema mismatch", () => {
-  it("surfaces adapter hard-fail message verbatim", async () => {
+  it("reports the schema failure without surfacing adapter error content", async () => {
     const adapterError = new Error(
-      "OAuth profile store version mismatch: expected 1, got 99. " +
-        "Hint: delete ~/.comis/auth-profiles.json and re-run comis auth login",
+      "OAuth profile store version mismatch: expected 1, got PRIVATE_SCHEMA_SENTINEL",
     );
     vi.mocked(agent.selectOAuthCredentialStore).mockReturnValue(
       buildStoreMock({
@@ -266,8 +265,8 @@ describe("oauthHealthCheck — schema mismatch", () => {
     );
     expect(schemaFinding).toBeDefined();
     expect(schemaFinding!.status).toBe("fail");
-    expect(schemaFinding!.message).toContain("version mismatch");
-    expect(schemaFinding!.message).toContain("Hint:");
+    expect(schemaFinding!.message).toContain("schema");
+    expect(schemaFinding!.message).not.toContain("PRIVATE_SCHEMA_SENTINEL");
   });
 });
 
@@ -322,6 +321,20 @@ describe("oauthHealthCheck — encrypted mode routes profile reads through the d
     const findings = await oauthHealthCheck.run(encryptedCtx);
     expect(findings.some((f) => /No OAuth profiles stored/i.test(f.message))).toBe(true);
   });
+
+  it("daemon RPC failure does not surface transport or credential content", async () => {
+    vi.mocked(daemonGuard.isDaemonRunning).mockResolvedValue(true);
+    vi.mocked(rpcClient.withClient).mockRejectedValueOnce(
+      new Error("Authorization: Bearer PRIVATE_RPC_SENTINEL"),
+    );
+
+    const findings = await oauthHealthCheck.run(encryptedCtx);
+    const storeFinding = findings.find((f) => f.check === "Profile store");
+
+    expect(storeFinding?.status).toBe("skip");
+    expect(storeFinding?.message).not.toContain("PRIVATE_RPC_SENTINEL");
+    expect(storeFinding?.suggestion ?? "").not.toContain("PRIVATE_RPC_SENTINEL");
+  });
   // (Token-leakage invariant is covered by the dedicated suite below + the
   // RedactedOAuthProfile RPC projection, which carries no access/refresh fields.)
 });
@@ -372,11 +385,14 @@ describe("oauthHealthCheck — HTTPS_PROXY heuristic", () => {
   });
 
   it("warn when HTTPS_PROXY is set", async () => {
-    process.env["HTTPS_PROXY"] = "http://proxy.example.com:3128";
+    process.env["HTTPS_PROXY"] =
+      "http://PRIVATE_PROXY_USER:PRIVATE_PROXY_PASSWORD@proxy.example.com:3128";
     const findings = await oauthHealthCheck.run(baseContext);
     const proxyFinding = findings.find((f) => f.check === "HTTPS_PROXY");
     expect(proxyFinding!.status).toBe("warn");
     expect(proxyFinding!.message).toContain("ignores it by default");
+    expect(proxyFinding!.message).not.toContain("PRIVATE_PROXY_USER");
+    expect(proxyFinding!.message).not.toContain("PRIVATE_PROXY_PASSWORD");
   });
 });
 
@@ -398,24 +414,26 @@ describe("oauthHealthCheck — TLS preflight", () => {
       ok: false,
       kind: "tls-cert",
       code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-      message: "unable to get local issuer certificate",
+      message: "Authorization: Bearer PRIVATE_TLS_SENTINEL",
     });
     osReleaseDistro('ID=ubuntu\nID_LIKE="debian"\n');
     const findings = await oauthHealthCheck.run(baseContext);
     const tlsFinding = findings.find((f) => f.check === "TLS preflight");
     expect(tlsFinding!.status).toBe("fail");
     expect(tlsFinding!.suggestion).toContain("apt-get install");
+    expect(tlsFinding!.message).not.toContain("PRIVATE_TLS_SENTINEL");
   });
 
   it("warn on network failure with firewall/DNS hint", async () => {
     vi.mocked(agent.runOAuthTlsPreflight).mockResolvedValue({
       ok: false,
       kind: "network",
-      message: "ECONNREFUSED",
+      message: "proxy password PRIVATE_NETWORK_SENTINEL",
     });
     const findings = await oauthHealthCheck.run(baseContext);
     const tlsFinding = findings.find((f) => f.check === "TLS preflight");
     expect(tlsFinding!.status).toBe("warn");
+    expect(tlsFinding!.message).not.toContain("PRIVATE_NETWORK_SENTINEL");
     expect(
       tlsFinding!.suggestion!.toLowerCase().includes("firewall") ||
         tlsFinding!.suggestion!.toLowerCase().includes("dns"),

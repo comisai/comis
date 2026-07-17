@@ -136,7 +136,6 @@ describe("emitOAuthTlsPreflightWarn", () => {
       ok: false,
       kind: "tls-cert",
       code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-      message: "unable to get local issuer certificate",
     };
     mockRunOAuthTlsPreflight.mockResolvedValue(certResult);
     mockReadFile.mockResolvedValue("ID=alpine\nID_LIKE=");
@@ -154,7 +153,6 @@ describe("emitOAuthTlsPreflightWarn", () => {
       errorKind: "network",
       hint: "apk add ca-certificates && update-ca-certificates",
       code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-      message: "unable to get local issuer certificate",
     });
   });
 
@@ -163,7 +161,6 @@ describe("emitOAuthTlsPreflightWarn", () => {
       ok: false,
       kind: "tls-cert",
       code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-      message: "unable to get local issuer certificate",
     } as TlsPreflightResult);
     mockReadFile.mockResolvedValue("ID=ubuntu\nID_LIKE=debian");
 
@@ -182,7 +179,6 @@ describe("emitOAuthTlsPreflightWarn", () => {
       ok: false,
       kind: "tls-cert",
       code: "CERT_HAS_EXPIRED",
-      message: "certificate has expired",
     } as TlsPreflightResult);
     mockReadFile.mockResolvedValue("ID=unknownos\nID_LIKE=");
 
@@ -201,7 +197,6 @@ describe("emitOAuthTlsPreflightWarn", () => {
       ok: false,
       kind: "tls-cert",
       code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-      message: "unable to verify the first certificate",
     } as TlsPreflightResult);
     const enoent = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     mockReadFile.mockRejectedValue(enoent);
@@ -220,7 +215,7 @@ describe("emitOAuthTlsPreflightWarn", () => {
     mockRunOAuthTlsPreflight.mockResolvedValue({
       ok: false,
       kind: "network",
-      message: "ECONNREFUSED",
+      reason: "connection",
     } as TlsPreflightResult);
 
     const { logger, calls } = makeMockLogger();
@@ -232,10 +227,24 @@ describe("emitOAuthTlsPreflightWarn", () => {
     expect(debugs).toHaveLength(1);
     expect(debugs[0]!.payload).toMatchObject({
       submodule: "oauth-tls-preflight",
-      errorKind: "oauth_tls_network",
-      message: "ECONNREFUSED",
+      errorKind: "network",
+      reason: "connection",
     });
     expect(mockReadFile).not.toHaveBeenCalled();
+  });
+
+  it("never logs extra raw error content returned by the preflight boundary", async () => {
+    mockRunOAuthTlsPreflight.mockResolvedValue({
+      ok: false,
+      kind: "network",
+      reason: "other",
+      message: "Authorization: Bearer PRIVATE_DAEMON_PREFLIGHT_SENTINEL",
+    } as unknown as TlsPreflightResult);
+
+    const { logger, calls } = makeMockLogger();
+    await emitOAuthTlsPreflightWarn(logger as never);
+
+    expect(JSON.stringify(calls)).not.toContain("PRIVATE_DAEMON_PREFLIGHT_SENTINEL");
   });
 
   it("emits nothing when the preflight succeeds", async () => {

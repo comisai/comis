@@ -28,8 +28,8 @@ import { join } from "node:path";
 import { EventEmitter } from "node:events";
 
 import { runWithContext } from "@comis/core";
-import type { AgentCapability, ComisLogger, DurableRunRecord, RequestContext } from "@comis/core";
-import { ok, type Result } from "@comis/shared";
+import type { AgentCapability, ComisLogger, DurableRunRecord, DurableRunResumeClaimOutcome, RequestContext } from "@comis/core";
+import { err, ok, type Result } from "@comis/shared";
 
 import {
   createOrchestrateTool,
@@ -61,6 +61,22 @@ function makeLogger(): ComisLogger {
     child: () => logger,
   };
   return logger;
+}
+
+function makeApprovalContext(): RequestContext {
+  return {
+    tenantId: "default",
+    userId: "test-user",
+    agentId: "test-agent",
+    sessionKey: "default:test-user:chat-1",
+    traceId: "10000000-0000-4000-8000-000000000001",
+    startedAt: 1,
+    trustLevel: "guest",
+    channelType: "telegram",
+    deliveryOrigin: Object.freeze({
+      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+    }),
+  };
 }
 
 /**
@@ -120,9 +136,10 @@ describe("orchestrate-tool", () => {
     loadSeccompFdFn?: () => number | null;
     mintRunLease?: (runId: string, timeoutMs: number) => { leaseId: string; bearer: string };
     eventBus?: { emit: (event: string, payload: Record<string, unknown>) => unknown };
-    runAggregate?: (ctx: { workspacePath: string }) => { count: number; bytes: number };
+    runAggregate?: (ctx: { workspacePath: string; runId: string }) => { count: number; bytes: number };
     rootRunId?: string;
     sessionKey?: string;
+    trustLevel?: "admin" | "user" | "guest";
     // Drop the broker lease env so the child gets NO COMIS_CAP_LEASE (the
     // lease_absent run_summary case).
     dropBrokerSpawnEnv?: boolean;
@@ -135,6 +152,7 @@ describe("orchestrate-tool", () => {
         toolName: string;
         action: string;
         params: Record<string, unknown>;
+        fingerprintParams: Record<string, unknown>;
         agentId: string;
         sessionKey: string;
         trustLevel: "admin" | "user" | "guest";
@@ -154,9 +172,12 @@ describe("orchestrate-tool", () => {
     durableRuns?: OrchestrateDurableRuns;
   }) {
     const cleanupRun = over?.cleanupRun ?? vi.fn(async () => {});
+    const durableTrust = over?.trustLevel ?? "user";
+    const durableSessionKey = over?.sessionKey ?? "tenant-a:user-a:chat-a";
     return {
       deps: {
         logger: over?.logger ?? makeLogger(),
+        trustLevel: durableTrust,
         workspaceResolver: () => workspacePath,
         capSocketPath,
         sandbox: new BwrapProvider(),
@@ -200,7 +221,20 @@ describe("orchestrate-tool", () => {
         ...(over?.approvalGate ? { approvalGate: over.approvalGate } : {}),
         ...(over?.capabilityClass !== undefined ? { capabilityClass: over.capabilityClass } : {}),
         ...(over?.repairSeam ? { repairSeam: over.repairSeam } : {}),
-        ...(over?.durableRuns ? { durableRuns: over.durableRuns } : {}),
+        ...(over?.durableRuns
+          ? {
+              durableRuns: over.durableRuns,
+              durablePrincipal: {
+                agentId: "agent-a",
+                sessionKey: durableSessionKey,
+                ownerTenantId: "tenant-a",
+                ownerUserId: "user-a",
+                deliveryOrigin: null,
+                trustLevel: durableTrust,
+                caps: over.allowedCaps ?? [],
+              },
+            }
+          : {}),
       },
       cleanupRun,
     };
@@ -208,26 +242,44 @@ describe("orchestrate-tool", () => {
 
   /**
    * A fake durable-run store: captures every upsert + serves a canned
-   * getByRootRun, so the resumable-row writes + the resume lookup are assertable
+   * getByCheckpoint, so the resumable-row writes + the resume lookup are assertable
    * without a real sqlite store.
    */
   function makeFakeDurableRuns(over?: {
     getRow?: DurableRunRecord;
-  }): OrchestrateDurableRuns & { upserts: DurableRunRecord[]; completed: string[] } {
+    upsertError?: Error;
+  }): OrchestrateDurableRuns & {
+    upserts: DurableRunRecord[];
+    completed: string[];
+    orphaned: Array<{ checkpointId: string; reason: string }>;
+    claimForResume: ReturnType<typeof vi.fn>;
+  } {
     const upserts: DurableRunRecord[] = [];
     const completed: string[] = [];
+    const orphaned: Array<{ checkpointId: string; reason: string }> = [];
     return {
       upserts,
       completed,
+      orphaned,
       upsertCheckpoint: vi.fn(async (record: DurableRunRecord): Promise<Result<void, Error>> => {
         upserts.push(record);
-        return ok(undefined);
+        return over?.upsertError ? err(over.upsertError) : ok(undefined);
       }),
-      getByRootRun: vi.fn(
+      getByCheckpoint: vi.fn(
         async (): Promise<Result<DurableRunRecord | undefined, Error>> => ok(over?.getRow),
       ),
-      markCompleted: vi.fn(async (rootRunId: string): Promise<Result<void, Error>> => {
-        completed.push(rootRunId);
+      claimForResume: vi.fn(
+        async (): Promise<Result<DurableRunResumeClaimOutcome, Error>> =>
+          over?.getRow
+            ? ok({ kind: "claimed", record: over.getRow })
+            : ok({ kind: "not_found" }),
+      ),
+      markCompleted: vi.fn(async (checkpointId: string): Promise<Result<void, Error>> => {
+        completed.push(checkpointId);
+        return ok(undefined);
+      }),
+      markOrphaned: vi.fn(async (checkpointId: string, reason: string): Promise<Result<void, Error>> => {
+        orphaned.push({ checkpointId, reason });
         return ok(undefined);
       }),
     };
@@ -608,11 +660,11 @@ describe("orchestrate-tool", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Per-run child lease (D5, EXPLAIN-01). When the daemon threads a
+  // Per-run child lease. When the daemon threads a
   // `mintRunLease(runId, timeoutMs)` seam, the runner mints a per-run CHILD
   // bearer and injects it as COMIS_CAP_LEASE — OVERRIDING the assembly bearer
   // that rides brokerSpawnEnv.placeholders. Every in-jail cap call for the run
-  // then audits under THAT run's leaseId (INV-1 correlator). Two sequential
+  // then audits under that run's leaseId. Two sequential
   // runs on the same tool instance must mint TWICE (disjoint bearers). Absent
   // the seam (older wiring), the runner falls back to the assembly bearer —
   // never an unauthenticated run.
@@ -720,7 +772,7 @@ describe("orchestrate-tool", () => {
   // feature targets). The runner must SIZE the child-lease TTL to
   // `timeoutMs + repairBudget` when repair is enabled, and keep the tight
   // `timeoutMs` when it is not — minting the lease exactly ONCE (single-leaseId
-  // attribution preserved; INV-1/INV-7 intact), just sized to the real window.
+  // attribution preserved), sized to the real window.
   // -------------------------------------------------------------------------
   describe("child-lease TTL sizing for the one-shot repair window", () => {
     const importError = "ImportError: cannot import name 'foo' from 'comis_tools'";
@@ -899,10 +951,12 @@ describe("orchestrate-tool", () => {
       });
       const tool = createOrchestrateTool(deps);
 
-      await tool.execute("c", {
-        script: "await comis_tools.web_fetch({url:'https://x'});",
-        language: "ts",
-      });
+      await runWithContext(makeApprovalContext(), () =>
+        tool.execute("c", {
+          script: "await comis_tools.web_fetch({url:'https://x'});",
+          language: "ts",
+        }),
+      );
 
       // The approval fires exactly once, on the exact cap footprint.
       expect(requestApproval).toHaveBeenCalledTimes(1);
@@ -910,11 +964,15 @@ describe("orchestrate-tool", () => {
         toolName: string;
         action: string;
         params: { caps?: unknown };
+        fingerprintParams: { caps?: unknown };
       };
       expect(req.toolName).toBe("orchestrate");
       // The action string encodes the exact (sorted) cap set.
       expect(req.action).toContain("orch:web");
       expect(req.params.caps).toEqual(["orch:web"]);
+      expect(req.fingerprintParams.caps).toEqual(["orch:web"]);
+      expect((req as { trustLevel?: string }).trustLevel).toBe("guest");
+      expect((req as { agentId?: string }).agentId).toBe("test-agent");
       // Approved → the run proceeds to spawn.
       expect(spawnFn).toHaveBeenCalledTimes(1);
     });
@@ -929,11 +987,11 @@ describe("orchestrate-tool", () => {
       });
       const tool = createOrchestrateTool(deps);
 
-      const err = await tool
+      const err = await runWithContext(makeApprovalContext(), () => tool
         .execute("c", {
           script: "await comis_tools.web_fetch({url:'https://x'});",
           language: "ts",
-        })
+        }))
         .then(
           () => undefined,
           (e: unknown) => e as Error,
@@ -945,6 +1003,25 @@ describe("orchestrate-tool", () => {
       expect(err!.message).toMatch(/denied by the approval workflow/i);
       expect(err!.message).toContain("operator said no");
       // Denied → fail-fast, no spawn.
+      expect(spawnFn).not.toHaveBeenCalled();
+    });
+
+    it("fails closed before approval submission when the resolved agent identity is absent", async () => {
+      const spawnFn = vi.fn<OrchestrateSpawnFn>(() => makeFakeChild("ok\n"));
+      const requestApproval = vi.fn(async () => ({ approved: true }));
+      const { deps } = makeDeps({
+        spawnFn,
+        allowedCaps: ["orch:web"],
+        approvalGate: { requestApproval },
+      });
+      const tool = createOrchestrateTool(deps);
+
+      await expect(tool.execute("c", {
+        script: "await comis_tools.web_fetch({url:'https://x'});",
+        language: "ts",
+      })).rejects.toThrow(/resolved request identity/i);
+
+      expect(requestApproval).not.toHaveBeenCalled();
       expect(spawnFn).not.toHaveBeenCalled();
     });
 
@@ -1317,15 +1394,16 @@ describe("orchestrate-tool", () => {
 
       await tool.execute("c", { script: "console.log(1)", language: "ts" });
 
-      // The row is registered from the start, keyed on the tree rootRunId, with a
-      // FLAT spawnTree + scriptRef set and no outward-step drift.
+      // The row is registered from the start with a unique checkpoint identity,
+      // tree root, flat spawn tree, and pinned script reference.
       expect(durableRuns.upserts.length).toBeGreaterThanOrEqual(1);
       const row = durableRuns.upserts[0]!;
       expect(row.rootRunId).toBe("root-reg");
       expect(row.status).toBe("running");
       expect(row.spawnTree).toEqual([]);
       expect(row.scriptRef).toMatch(/^orch-.*\.ts$/);
-      expect(row.stepIndex).toBe(-1);
+      expect(row.checkpointId).toMatch(/^orch-/);
+      expect(row.agentId).toBe("agent-a");
     });
 
     it("a durable-registered run that TIMES OUT marks the row resumable and SKIPS cleanupRun", async () => {
@@ -1375,7 +1453,7 @@ describe("orchestrate-tool", () => {
       await tool.execute("c", { script: "console.log(1)", language: "ts" });
 
       // The row is marked terminal (no leaked 'running' row).
-      expect(durableRuns.completed).toContain("root-done");
+      expect(durableRuns.completed).toContain(durableRuns.upserts[0]!.checkpointId);
       // The pinned script at the workspace ROOT is cleaned on a non-resumable
       // completion (only a resumable timeout keeps it — see below).
       const pinnedScriptRef = durableRuns.upserts[0]!.scriptRef!;
@@ -1395,7 +1473,7 @@ describe("orchestrate-tool", () => {
 
       await expect(tool.execute("c", { script: "1", language: "ts" })).rejects.toThrow();
 
-      expect(durableRuns.completed).toContain("root-fail-term");
+      expect(durableRuns.completed).toContain(durableRuns.upserts[0]!.checkpointId);
     });
 
     it("a TIMED-OUT resumable run is NOT marked completed and KEEPS its pinned script (only a genuine timeout stays resumable)", async () => {
@@ -1413,7 +1491,7 @@ describe("orchestrate-tool", () => {
 
       // A resumable timeout must leave the row resumable (never completed) and keep
       // the pinned script for a later resume.
-      expect(durableRuns.completed).not.toContain("root-to");
+      expect(durableRuns.completed).not.toContain(durableRuns.upserts[0]!.checkpointId);
       const pinnedScriptRef = durableRuns.upserts[0]!.scriptRef!;
       expect(existsSync(join(workspacePath, pinnedScriptRef))).toBe(true);
     });
@@ -1443,13 +1521,19 @@ describe("orchestrate-tool", () => {
       writeFileSync(join(workspacePath, scriptRef), pinnedBytes);
       const durableRuns = makeFakeDurableRuns({
         getRow: {
+          checkpointId: "checkpoint-resume",
           rootRunId: "root-resume",
+          agentId: "agent-a",
+          sessionKey: "tenant-a:user-a:chat-a",
+          ownerTenantId: "tenant-a",
+          ownerUserId: "user-a",
+          deliveryOrigin: null,
           spawnTree: [],
           caps: [],
           leaseIds: [],
           budgetConsumed: 0,
           cronOrigin: null,
-          stepIndex: -1,
+          trustLevel: "user",
           status: "running",
           lastHeartbeatAt: 1,
           scriptRef,
@@ -1461,19 +1545,135 @@ describe("orchestrate-tool", () => {
         writtenScript = readFileSync(join(workspacePath, scriptName), "utf8");
         return makeFakeChild("resumed\n");
       };
-      const { deps } = makeDeps({ spawnFn, durableRuns, rootRunId: "root-resume" });
+      const mintRunLease = vi.fn(() => ({ leaseId: "resumed-lease", bearer: "resumed-bearer" }));
+      const { deps } = makeDeps({
+        spawnFn,
+        durableRuns,
+        rootRunId: "root-resume",
+        mintRunLease,
+      });
       const tool = createOrchestrateTool(deps);
 
       await tool.execute("c", {
         script: 'console.log("DIFFERENT-PARAM-BYTES");',
         language: "ts",
-        resumeRunId: "root-resume",
+        resumeRunId: "checkpoint-resume",
       });
 
       // The re-spawned script is the PINNED bytes — never the differing param.
       expect(writtenScript).toBe(pinnedBytes);
       expect(writtenScript).not.toContain("DIFFERENT-PARAM-BYTES");
-      expect(durableRuns.getByRootRun).toHaveBeenCalledWith("root-resume");
+      expect(durableRuns.claimForResume).toHaveBeenCalledWith(
+        expect.objectContaining({
+          checkpointId: "checkpoint-resume",
+          replacementCheckpointId: expect.stringMatching(/^orch-/),
+        }),
+      );
+      expect(durableRuns.getByCheckpoint).not.toHaveBeenCalled();
+      expect(mintRunLease).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Number),
+        expect.objectContaining({
+          rootRunId: "root-resume",
+          sourceCheckpointId: "checkpoint-resume",
+          trustLevel: "user",
+        }),
+      );
+    });
+
+    it("orphans and reclaims a claimed replacement when its checkpoint-scoped lease cannot be minted", async () => {
+      const scriptRef = "orch-claimed-source.ts";
+      writeFileSync(join(workspacePath, scriptRef), "console.log('pinned');\n");
+      const durableRuns = makeFakeDurableRuns({
+        getRow: {
+          checkpointId: "checkpoint-claimed-source",
+          rootRunId: "root-claimed-source",
+          agentId: "agent-a",
+          sessionKey: "tenant-a:user-a:chat-a",
+          ownerTenantId: "tenant-a",
+          ownerUserId: "user-a",
+          deliveryOrigin: null,
+          spawnTree: [],
+          caps: [],
+          leaseIds: [],
+          rootBudget: { startedAtMs: 1, tokensConsumed: 7, usdConsumed: 0.5 },
+          budgetConsumed: 0.5,
+          cronOrigin: null,
+          trustLevel: "user",
+          status: "running",
+          lastHeartbeatAt: 1,
+          scriptRef,
+          checkpointRef: null,
+        },
+      });
+      const cleanupRun = vi.fn(async () => {});
+      const { deps } = makeDeps({
+        durableRuns,
+        rootRunId: "root-claimed-source",
+        cleanupRun,
+        // No mintRunLease: the claim succeeds, then the pre-start requirement fails.
+      });
+
+      await expect(
+        createOrchestrateTool(deps).execute("c", {
+          script: "IGNORED",
+          language: "ts",
+          resumeRunId: "checkpoint-claimed-source",
+        }),
+      ).rejects.toThrow(/checkpoint-scoped lease mint/i);
+
+      const replacementId = durableRuns.claimForResume.mock.calls[0]![0].replacementCheckpointId;
+      expect(durableRuns.orphaned).toContainEqual({
+        checkpointId: replacementId,
+        reason: "resume_prestart_failed",
+      });
+      expect(cleanupRun).toHaveBeenCalledWith({
+        workspacePath,
+        runId: "checkpoint-claimed-source",
+      });
+      expect(existsSync(join(workspacePath, scriptRef))).toBe(false);
+    });
+
+    it("refuses to spawn when the claimed replacement is rejected by a concurrent revoke", async () => {
+      const scriptRef = "orch-revoked-source.ts";
+      writeFileSync(join(workspacePath, scriptRef), "console.log('pinned');\n");
+      const durableRuns = makeFakeDurableRuns({
+        getRow: {
+          checkpointId: "checkpoint-revoked-source",
+          rootRunId: "root-revoked",
+          agentId: "agent-a",
+          sessionKey: "tenant-a:user-a:chat-a",
+          ownerTenantId: "tenant-a",
+          ownerUserId: "user-a",
+          deliveryOrigin: null,
+          spawnTree: [],
+          caps: [],
+          leaseIds: [],
+          budgetConsumed: 0,
+          cronOrigin: null,
+          trustLevel: "user",
+          status: "running",
+          lastHeartbeatAt: 1,
+          scriptRef,
+        },
+        upsertError: new Error("durable root root-revoked is revoked"),
+      });
+      const spawnFn = vi.fn(() => makeFakeChild("must-not-run\n"));
+      const { deps } = makeDeps({
+        spawnFn,
+        durableRuns,
+        rootRunId: "root-revoked",
+        mintRunLease: () => ({ leaseId: "unused-lease", bearer: "unused-bearer" }),
+      });
+
+      await expect(
+        createOrchestrateTool(deps).execute("c", {
+          script: "IGNORED",
+          language: "ts",
+          resumeRunId: "checkpoint-revoked-source",
+        }),
+      ).rejects.toThrow(/replacement/i);
+      expect(spawnFn).not.toHaveBeenCalled();
     });
 
     it("REFUSES a resumeRunId when the durable-resume surface is OFF (fail-closed, never the caller's script)", async () => {
@@ -1706,13 +1906,13 @@ describe("orchestrate-tool", () => {
 
   // ---------------------------------------------------------------------------
   // orchestrate:run_summary emit — the content-free per-run observability signal
-  // (EXPLAIN-02) carrying the SAVE-01 savings numbers + the per-run child leaseId.
+  // carrying saved-context estimates and the per-run child leaseId.
   // ---------------------------------------------------------------------------
 
-  describe("orchestrate:run_summary emit (EXPLAIN-02 + SAVE-01)", () => {
+  describe("orchestrate:run_summary emit", () => {
     // The EXACT content-free key set on a MATERIALIZED-run SUCCESS emit (leaseId +
     // sessionKey present; failureClass ABSENT; savings PRESENT because the run
-    // materialized ResultRefs). NEVER a stderr tail / script / params (INV-5).
+    // materialized ResultRefs), never a stderr tail, script, or params.
     const SUCCESS_KEYS = [
       "durationMs",
       "estSavedTokens",
@@ -1736,7 +1936,7 @@ describe("orchestrate-tool", () => {
       (k) => k !== "estSavedTokens" && k !== "savedRatio",
     );
 
-    it("a SUCCESSFUL run emits exactly one content-free run_summary with the child leaseId + SAVE-01 numbers, BEFORE cleanupRun", async () => {
+    it("a successful run emits one content-free summary with its child lease and savings before cleanup", async () => {
       const { eventBus, emitted } = makeEventBusSpy();
       const runAggregate = vi.fn(() => ({ count: 3, bytes: 122_880 }));
       // cleanupRun asserts the emit ALREADY fired (Pitfall 3 — before results/ is wiped).
@@ -1771,13 +1971,16 @@ describe("orchestrate-tool", () => {
       // stdoutCharsReentered = the POST-bounce char count of "ok-output\n" (10).
       expect(payload.stdoutCharsReentered).toBe(10);
       expect(payload.stdoutBytesRaw).toBe("ok-output\n".length);
-      // SAVE-01: the estimate is EXACTLY estimateSavings(materializedBytes, reentered).
+      // The estimate is exactly estimateSavings(materializedBytes, reentered).
       const expected = estimateSavings(122_880, 10);
       expect(payload.estSavedTokens).toBe(expected.estSavedTokens);
       expect(payload.savedRatio).toBe(expected.savedRatio);
       // runAggregate was consulted (real counts, not 0) — proves capture-before-cleanup.
-      expect(runAggregate).toHaveBeenCalledWith({ workspacePath });
-      // INV-5: the payload key set is EXACTLY the content-free declared fields —
+      expect(runAggregate).toHaveBeenCalledWith({
+        workspacePath,
+        runId: expect.stringMatching(/^orch-/),
+      });
+      // The payload key set is exactly the declared content-free fields —
       // savings PRESENT because this run materialized 3 ResultRefs.
       expect(Object.keys(payload).sort()).toEqual(SUCCESS_KEYS);
       expect("estSavedTokens" in payload).toBe(true);
@@ -1819,7 +2022,7 @@ describe("orchestrate-tool", () => {
       // call-site sequence with jq TWICE (its call count). The descriptor rides the
       // emit as toolSequence (names only). The turn traceId — distinct from
       // runId/rootRunId (the orchestrate-run ids) — rides it so a later learning
-      // ledger can key the descriptor row on the turn trajectory (OQ-2).
+      // ledger can key the descriptor row on the turn trajectory.
       const TURN_TRACE_ID = "7f1c9a2e-3b4d-4c5e-8a6f-0d1e2f3a4b5c";
       const PROC_SCRIPT =
         'await comis_tools.web_search({q:1}); await comis_tools.jq({a:1}); await comis_tools.jq({b:2}); await comis_tools.web_fetch({url:"x"});';
@@ -1850,9 +2053,9 @@ describe("orchestrate-tool", () => {
       // The ordered call-site sequence + counts (repeats preserved), sourced from
       // extractCapabilityFootprint(script).sequence — content-free (names only).
       expect(payload.toolSequence).toEqual(["web_search", "jq", "jq", "web_fetch"]);
-      // The owning turn's trace correlator (OQ-2), distinct from runId/rootRunId.
+      // The owning turn's trace correlator, distinct from runId/rootRunId.
       expect(payload.traceId).toBe(TURN_TRACE_ID);
-      // INV-5: names + counts + a correlator ONLY — never the script body / call args.
+      // Names, counts, and a correlator only — never the script body or call args.
       const json = JSON.stringify(payload);
       expect(json).not.toContain("web_fetch({url");
       expect(json).not.toContain("q:1");
@@ -1872,7 +2075,7 @@ describe("orchestrate-tool", () => {
       expect(emitted).toHaveLength(1);
       expect(emitted[0]!.payload.failureClass).toBe("nonzero_exit");
       expect(emitted[0]!.payload.exitCode).toBe(3);
-      // INV-5: the stderr tail rides the tool-error surface ONLY, never the bus.
+      // The stderr tail rides the tool-error surface only, never the bus.
       const json = JSON.stringify(emitted[0]!.payload);
       expect(json).not.toContain("boom on stderr");
       expect("stderrTail" in emitted[0]!.payload).toBe(false);

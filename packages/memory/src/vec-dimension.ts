@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: Vec-table schema reconciliation runs during database initialization; malformed sqlite_master metadata must abort startup instead of silently keeping an incompatible vector table.
 /**
  * vec0 dimension reconciliation shared by `schema.ts` (vec_memories) and
  * `schema-mental-models.ts` (vec_mental_models).
@@ -12,6 +13,12 @@
  * rest of the daemon looks healthy.
  */
 import type Database from "better-sqlite3";
+import { z } from "zod";
+import { createRowMapper } from "./sqlite-row-mapper.js";
+
+const sqliteMasterTableMapper = createRowMapper(
+  z.strictObject({ sql: z.string().nullable() }),
+);
 
 /** Names of the vec0 twins this module is allowed to drop (closed set — the
  *  table name is interpolated into DDL). */
@@ -49,9 +56,15 @@ export function reconcileVecTableDimension(
   tableName: VecTwinTable,
   embeddingDimensions: number,
 ): number | undefined {
-  const row = db
-    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(tableName) as { sql: string | null } | undefined;
+  const parsed = sqliteMasterTableMapper.parseOptionalRow(
+    db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(tableName),
+  );
+  if (!parsed.ok) {
+    throw new Error(`Vector table schema inspection failed at ${parsed.error.path}`);
+  }
+  const row = parsed.value;
   if (row?.sql == null) return undefined;
   const match = /float\[(\d+)\]/.exec(row.sql);
   if (match === null) return undefined;

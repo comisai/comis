@@ -1143,7 +1143,7 @@ function insertResumedRow(store: ObservabilityStore, ts: number, rootRunId: stri
     category: "health_signal",
     severity: "info",
     message: "durable:resumed",
-    details: JSON.stringify({ signal: "durable_resumed", stepIndex: 3, rootRunId }),
+    details: JSON.stringify({ signal: "durable_resumed", checkpointId: "checkpoint-3", rootRunId }),
   });
 }
 

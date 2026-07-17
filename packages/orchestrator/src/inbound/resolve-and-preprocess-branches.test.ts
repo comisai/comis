@@ -67,6 +67,7 @@ function makeDeps(overrides?: Partial<ResolveAndPreprocessDeps>): ResolveAndPrep
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
   const defaults: ResolveAndPreprocessDeps = {
+    tenantId: "default",
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     logger: makeLogger() as any,
     eventBus: {
@@ -82,6 +83,10 @@ function makeDeps(overrides?: Partial<ResolveAndPreprocessDeps>): ResolveAndPrep
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any,
     createExecutor: vi.fn(() => defaultExecutor),
+    persistInboundMessage: vi.fn(async () => ({
+      ok: true as const,
+      value: { payloads: [], ledgerContent: "" },
+    })),
   };
   return { ...defaults, ...overrides };
 }
@@ -92,19 +97,29 @@ function makeDeps(overrides?: Partial<ResolveAndPreprocessDeps>): ResolveAndPrep
 // ---------------------------------------------------------------------------
 
 describe("resolveAndPreprocess (resolve-side branches)", () => {
-  it("returns undefined when createExecutor returns undefined (no executor configured)", async () => {
+  it("returns a distinct outcome when createExecutor is unavailable after persistence", async () => {
     const deps = makeDeps({ createExecutor: vi.fn(() => undefined) });
 
     const result = await resolveAndPreprocess(deps, makeAdapter(), makeMsg());
 
-    expect(result).toBeUndefined();
+    expect(result).toMatchObject({ kind: "no_executor", agentId: "agent-test" });
   });
 
   it("emits message:received with scoped sessionKey when executor resolved", async () => {
     const emit = vi.fn();
     const deps = makeDeps({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      eventBus: { emit } as any,
+      eventBus: {
+        emit,
+        emitSafely: vi.fn((event, payload) => {
+          emit(event, payload);
+          return {
+            hadListeners: false,
+            failures: [],
+            pendingFailures: Promise.resolve([]),
+          };
+        }),
+      } as any,
     });
 
     await resolveAndPreprocess(deps, makeAdapter(), makeMsg());

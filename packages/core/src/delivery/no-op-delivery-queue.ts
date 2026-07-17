@@ -8,13 +8,14 @@ import type { DeliveryQueuePort, DeliveryQueueEntry } from "../ports/delivery-qu
  * No-op delivery queue for when the queue feature is disabled.
  *
  * All operations succeed immediately with no persistence.
- * enqueue returns a random UUID, ack/nack/fail return void,
+ * enqueue returns a random UUID, claim returns true, ack/nack/fail return void,
  * pendingEntries returns [], pruneExpired/depth return 0.
  */
 export function createNoOpDeliveryQueue(): DeliveryQueuePort {
   return Object.freeze({
     enqueue: () => Promise.resolve(ok(randomUUID())),
     enqueueInFlight: () => Promise.resolve(ok(randomUUID())),
+    claim: () => Promise.resolve(ok(true)),
     ack: () => Promise.resolve(ok(undefined)),
     nack: () => Promise.resolve(ok(undefined)),
     fail: () => Promise.resolve(ok(undefined)),

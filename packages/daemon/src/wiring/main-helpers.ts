@@ -57,6 +57,7 @@ import { registerComisImageProviders } from "../api/pi-image-adapter.js";
 // The provider-following vision bridge — the bundle
 // builds its capability by closing over the cred resolvers + resolveAgentModel.
 import { createMainProviderVision, type MainProviderVision } from "../api/main-provider-vision.js";
+import { restartChannelAdapter } from "./channel-adapter-restart.js";
 
 /** The bounded-autonomy late-bind seam built in
  *  `bootAgents`: the per-root budget holder (populated by the cap layer in bootChannels) +
@@ -66,7 +67,7 @@ import { createMainProviderVision, type MainProviderVision } from "../api/main-p
 export interface BoundedAutonomyWiring {
   boundedAutonomyBudgetHolder: BoundedAutonomyBudgetHolder;
   rootRunIdIndex: Map<string, string>;
-  resolveRootRunId: (sessionKey: SessionKey) => string;
+  resolveRootRunId: (agentId: string, sessionKey: SessionKey) => string;
   sharedLeaseManager: LeaseManager;
 }
 
@@ -165,8 +166,7 @@ export function setupChannelHealthMonitor(deps: {
       const adapter = adaptersByType.get(channelType);
       if (!adapter) return;
       daemonLogger.info({ channelType }, "Health monitor triggering auto-restart for stale adapter");
-      await adapter.stop();
-      await adapter.start();
+      await restartChannelAdapter({ adapter, channelType, logger: daemonLogger });
     },
   });
   const stop = monitor.start(adaptersByType);

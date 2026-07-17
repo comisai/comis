@@ -7,15 +7,32 @@
  * @module
  */
 
-import type { NormalizedMessage, SessionKey, AppContainer, AppConfig, UserTrustLevel, ElevatedReplyConfig } from "@comis/core";
+import type {
+  NormalizedMessage,
+  SessionKey,
+  AppContainer,
+  AppConfig,
+  UserTrustLevel,
+  EventMap,
+  WebhookFailureReason,
+} from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor } from "@comis/agent";
+import type {
+  AgentExecutor,
+  BackgroundSessionResolver,
+} from "@comis/agent";
 import {
   safePath,
+  enrichCurrentContext,
   generateStrongToken,
   systemNowMs,
   runWithContext,
   formatSessionKey,
+  tryGetContext,
+  createDeliveryOrigin,
+  emitObservationalEventSafely,
+  RequestContextSchema,
+  wrapExternalContent,
 } from "@comis/core";
 import {
   extractBearerToken,
@@ -31,50 +48,40 @@ import {
   createTokenStore,
   type GatewayServerHandle,
 } from "@comis/gateway";
-import { Hono } from "hono";
+import { Hono, type Env } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { randomUUID } from "node:crypto";
 // Defer a mid-turn config-change SIGUSR2 until the synchronous
 // chat/responses-API response flushes.
 import { withConfigMutationFence } from "../api/shared/persist-to-config.js";
+import {
+  classifyExecutionAbortReason,
+  classifyExecutionFinishReason,
+} from "@comis/orchestrator";
+import { bindApiExecutionCancellation } from "./api-execution-cancellation.js";
 
-// ---------------------------------------------------------------------------
-// Context trust resolution for the token-authenticated API surfaces
-// (OpenAI chat-completions + responses). The message CONTENT is still user
-// input, so these paths default to the "user" UserTrustLevel — privileged
-// platform tools (memory_manage delete/flush, agents_manage, …) stay gated.
-//
-// An operator can elevate the whole API surface to admin by setting the
-// agent's `elevatedReply.defaultTrustLevel: admin` (the chat API's senderId is
-// a random per-request peerId, so senderTrustMap can never target it — but the
-// senderTrustMap branch is honored too for completeness / the responses path).
-// This reconciles the two trust systems: previously `defaultTrustLevel: admin`
-// only un-deferred the admin tools (made them visible) while the platform-tool
-// execution guard still saw a HARD-CODED "user" and denied them
-// ("permission_denied: requires admin, current level is user") — an incoherent
-// half-state where the agent is handed a tool it cannot run. Mapping: the
-// privileged elevatedReply value "admin" → UserTrustLevel "admin"; everything
-// else (external/learned/system/unset) → "user" (the prior, safe default).
-// ---------------------------------------------------------------------------
+interface OpenaiApiEnv extends Env {
+  Variables: { clientScopes: readonly string[] };
+}
 
 /**
- * Resolve the {@link UserTrustLevel} for a token-authenticated API request from
- * the agent's elevated-reply config. Pure: same inputs → same output.
- *
- * @param elevatedReply - the agent's elevatedReply config (may be undefined)
- * @param senderId - the inbound message senderId (for senderTrustMap lookup)
- * @returns "admin" iff the resolved elevatedReply trust is exactly "admin";
- *          otherwise "user" (never auto-elevates, never downgrades to guest).
+ * Resolve API request trust solely from the authenticated bearer-token scopes.
+ * Agent selection and reply configuration are not authentication signals.
  */
-export function resolveContextTrustLevel(
-  elevatedReply: ElevatedReplyConfig | undefined,
-  senderId: string,
+export function resolveApiTrustLevel(
+  authenticatedScopes: readonly string[],
 ): UserTrustLevel {
-  const resolved =
-    elevatedReply?.senderTrustMap?.[senderId] ??
-    elevatedReply?.defaultTrustLevel ??
-    "external";
-  return resolved === "admin" ? "admin" : "user";
+  return checkScope(authenticatedScopes, "admin") ? "admin" : "user";
+}
+
+function resolveApiTraceId(requestedTraceId: string | undefined): string {
+  if (
+    requestedTraceId !== undefined
+    && RequestContextSchema.shape.traceId.safeParse(requestedTraceId).success
+  ) {
+    return requestedTraceId;
+  }
+  return randomUUID();
 }
 
 // ---------------------------------------------------------------------------
@@ -101,6 +108,8 @@ export interface GatewayRouteDeps {
   tokenStore: ReturnType<typeof createTokenStore>;
   /** Resolver for per-agent executors. */
   getExecutor: (agentId: string) => AgentExecutor;
+  /** Resolves the exact live SDK run for HTTP disconnect cancellation. */
+  sessionResolver: BackgroundSessionResolver;
   /** Assembles the three-tier tool pipeline for an agent. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires complex type parameters from pi-ai SDK
   assembleToolsForAgent: (agentId: string, options?: import("./setup-tools.js").AssembleToolsOptions) => Promise<any[]>;
@@ -120,14 +129,9 @@ export interface GatewayRouteDeps {
    *  caller-backed ingress), the `/channels/msteams` route is mounted; absent
    *  ⇒ no route exists. Presence is the mount signal. */
   msTeamsIngress?: import("hono").Hono;
-  /** Deterministic unattended honest-fail backstop (webhook-claude-cli-tdd-20260701,
-   *  `WEBHOOK-CLAUDE-AGENT-DRIVE-RELIABILITY`): after an unattended (webhook) agent turn, reap the
-   *  LIVE terminal drives the turn created but NEVER tasked (no `send_text`) — the model
-   *  nondeterministically hallucinates "I have no task", launches Claude Code, and ends the turn
-   *  without delivering the task. Reaping ≥1 such drive means the task never ran → the webhook
-   *  delivery is recorded as an HONEST failure (not a silent success with a leaked idle drive). The
-   *  model-independent floor beneath the wait-tool `WAIT_TASK_NOT_DELIVERED_NOTE` best-effort recovery.
-   *  Absent ⇒ inert (byte-identical to today). Wired in the composition root from `terminalRegistries`. */
+  /** After an unattended webhook turn, reap terminal drives that were
+   *  launched but never received a task. Any reap makes delivery a failure.
+   *  Absent means no terminal-drive backstop is configured. */
   reapNeverTaskedDrives?: (agentId: string, owner: { agentId: string; sessionKey: string }) => Promise<{ reaped: string[] }>;
 }
 
@@ -151,6 +155,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
     gatewayLogger,
     tokenStore,
     getExecutor,
+    sessionResolver,
     assembleToolsForAgent,
     preprocessMessageText,
     cachedPort,
@@ -159,6 +164,59 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
     msTeamsIngress,
     reapNeverTaskedDrives,
   } = deps;
+
+  interface ActiveApiExecution {
+    agentId: string;
+    sessionKey: string;
+    abortReason?: EventMap["execution:aborted"]["reason"];
+  }
+  const activeApiExecutions = new Map<string, Set<ActiveApiExecution>>();
+  container.eventBus.on("execution:aborted", (event) => {
+    const traceId = tryGetContext()?.traceId;
+    if (traceId === undefined) return;
+    const activeForTrace = activeApiExecutions.get(traceId);
+    if (!activeForTrace) return;
+    const abortedSessionKey = formatSessionKey(event.sessionKey);
+    for (const active of activeForTrace) {
+      if (
+        active.agentId === event.agentId &&
+        active.sessionKey === abortedSessionKey
+      ) {
+        active.abortReason = event.reason;
+      }
+    }
+  });
+
+  const executeWithLifecycle = async (
+    agentId: string,
+    sessionKey: SessionKey,
+    traceId: string,
+    execute: () => ReturnType<AgentExecutor["execute"]>,
+  ): Promise<{
+    result: Awaited<ReturnType<AgentExecutor["execute"]>>;
+    lifecycle: ReturnType<typeof classifyExecutionFinishReason>;
+  }> => {
+    const active: ActiveApiExecution = {
+      agentId,
+      sessionKey: formatSessionKey(sessionKey),
+    };
+    const activeForTrace = activeApiExecutions.get(traceId) ?? new Set<ActiveApiExecution>();
+    activeForTrace.add(active);
+    activeApiExecutions.set(traceId, activeForTrace);
+    try {
+      const result = await execute();
+      const authoritativeAbortReason = active.abortReason;
+      return {
+        result,
+        lifecycle: authoritativeAbortReason !== undefined
+          ? classifyExecutionAbortReason(authoritativeAbortReason)
+          : classifyExecutionFinishReason(result.finishReason),
+      };
+    } finally {
+      activeForTrace.delete(active);
+      if (activeForTrace.size === 0) activeApiExecutions.delete(traceId);
+    }
+  };
 
   // -------------------------------------------------------------------------
   // Email approval-token route
@@ -232,90 +290,117 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
         onWake: async (_mapping) => {
           const startMs = systemNowMs();
           let success = true;
-          let error: string | undefined;
+          let failureReason: WebhookFailureReason | undefined;
           try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scheduler:wake event type not yet in EventMap
             container.eventBus.emit("scheduler:wake" as any, { source: "webhook" });
             gatewayLogger.info("Webhook triggered wake event");
           } catch (err: unknown) {
             success = false;
-            error = err instanceof Error ? err.message : String(err);
+            failureReason = "handler_error";
             throw err;
           } finally {
-            container.eventBus.emit("diagnostic:webhook_delivered", {
+            emitObservationalEventSafely({ eventBus: container.eventBus, logger: gatewayLogger }, "diagnostic:webhook_delivered", {
               webhookId: _mapping.id ?? "unknown",
               source: _mapping.name ?? "webhook",
               event: "wake",
               statusCode: success ? 200 : 500,
               success,
               durationMs: systemNowMs() - startMs,
-              error,
+              failureReason,
               timestamp: systemNowMs(),
             });
           }
         },
         onAgentAction: async (_mapping, renderedMessage, renderedSessionKey) => {
-          const startMs = systemNowMs();
-          let success = true;
-          let error: string | undefined;
-          try {
-            const execAgentId = _mapping.agentId ?? defaultAgentId;
-            const msg: NormalizedMessage = {
-              id: randomUUID(),
-              channelId: "webhook",
-              channelType: "webhook",
-              senderId: "webhook",
-              text: renderedMessage,
-              timestamp: systemNowMs(),
-              attachments: [],
-              metadata: { webhookMappingId: _mapping.id },
-            };
-            const sk: SessionKey = {
-              tenantId: container.config.tenantId,
-              userId: renderedSessionKey || "webhook",
-              channelId: "webhook",
-            };
-            const tools = await assembleToolsForAgent(execAgentId);
-            await getExecutor(execAgentId).execute(msg, sk, tools, undefined, execAgentId);
-            // Deterministic honest-fail backstop (WEBHOOK-CLAUDE-AGENT-DRIVE-RELIABILITY): if the turn
-            // launched Claude Code but ended WITHOUT delivering the task (a live never-tasked drive —
-            // the "I have no task" flub the wait-tool directive can't reliably fix), reap it and record
-            // an HONEST failure instead of the silent success this branch would otherwise report.
-            // OWNER: the webhook route calls execute() DIRECTLY (it does not run the inbound pipeline's
-            // resolveAndPreprocess that fills ctx.userId/sessionKey), so the RequestContext leaves both
-            // UNSET → the terminal tools' resolveOwner falls back to `{ agentId: deps.agentId (=execAgentId),
-            // sessionKey: "" }`. That fallback is the owner the drive is registered under — confirmed by the
-            // descriptor ground truth ({agentId:"default", sessionKey:""}, webhook-claude-cli-tdd-20260701).
-            if (reapNeverTaskedDrives) {
-              const { reaped } = await reapNeverTaskedDrives(execAgentId, {
+          const execAgentId = _mapping.agentId ?? defaultAgentId;
+          const routeChannelId = renderedSessionKey || "webhook";
+          const sk: SessionKey = {
+            tenantId: container.config.tenantId,
+            userId: "webhook",
+            channelId: routeChannelId,
+          };
+          const deliveryOrigin = createDeliveryOrigin({
+            tenantId: sk.tenantId,
+            userId: sk.userId,
+            channelType: "webhook",
+            channelId: routeChannelId,
+          });
+          return runWithContext({
+            traceId: randomUUID(),
+            startedAt: systemNowMs(),
+            tenantId: sk.tenantId,
+            channelType: "webhook",
+            trustLevel: "guest",
+          }, async () => {
+            const startMs = systemNowMs();
+            let success = true;
+            let failureReason: WebhookFailureReason | undefined;
+            try {
+              const resolvedContext = enrichCurrentContext({
+                tenantId: sk.tenantId,
+                userId: sk.userId,
+                sessionKey: sk,
                 agentId: execAgentId,
-                sessionKey: "",
+                trustLevel: "guest",
+                deliveryOrigin,
               });
-              if (reaped.length > 0) {
-                success = false;
-                error = `agent ended the unattended webhook turn without delivering the task to Claude Code — reaped ${reaped.length} never-tasked terminal drive(s); the task did not run`;
-                gatewayLogger.warn(
-                  { execAgentId, reapedCount: reaped.length, webhookId: _mapping.id ?? "unknown", hint: "the driven coding CLI was launched but the task was never sent (send_text) — the task-delivery precondition for a successful drive was not met; re-fire the webhook or drive it interactively" },
-                  "unattended webhook drive stranded a never-tasked terminal drive — reaped and recorded an honest failure",
-                );
+              if (!resolvedContext.ok) throw resolvedContext.error;
+              const msg: NormalizedMessage = {
+                id: randomUUID(),
+                channelId: routeChannelId,
+                channelType: "webhook",
+                senderId: sk.userId,
+                text: wrapExternalContent(renderedMessage, { source: "webhook" }),
+                timestamp: systemNowMs(),
+                attachments: [],
+                metadata: { webhookMappingId: _mapping.id },
+              };
+              const tools = await assembleToolsForAgent(execAgentId);
+              const executionResult = await getExecutor(execAgentId).execute(
+                msg,
+                sk,
+                tools,
+                undefined,
+                execAgentId,
+              );
+              const outcome = classifyExecutionFinishReason(executionResult.finishReason);
+              if (outcome.status !== "success") {
+                throw new Error(`Webhook agent execution ended with ${executionResult.finishReason}`);
               }
+              // A terminal drive that was launched but never tasked means the
+              // webhook action did not run, even if the agent turn itself ended.
+              if (reapNeverTaskedDrives) {
+                const { reaped } = await reapNeverTaskedDrives(execAgentId, {
+                  agentId: execAgentId,
+                  sessionKey: formatSessionKey(sk),
+                });
+                if (reaped.length > 0) {
+                  success = false;
+                  failureReason = "task_not_delivered";
+                  gatewayLogger.warn(
+                    { execAgentId, reapedCount: reaped.length, webhookId: _mapping.id ?? "unknown", hint: "the driven coding CLI was launched but the task was never sent (send_text) — the task-delivery precondition for a successful drive was not met; re-fire the webhook or drive it interactively", errorKind: "precondition" as const },
+                    "unattended webhook drive stranded a never-tasked terminal drive — reaped and recorded an honest failure",
+                  );
+                }
+              }
+            } catch (err: unknown) {
+              success = false;
+              failureReason = "handler_error";
+              throw err;
+            } finally {
+              emitObservationalEventSafely({ eventBus: container.eventBus, logger: gatewayLogger }, "diagnostic:webhook_delivered", {
+                webhookId: _mapping.id ?? "unknown",
+                source: _mapping.name ?? "webhook",
+                event: "agent_action",
+                statusCode: success ? 200 : 500,
+                success,
+                durationMs: systemNowMs() - startMs,
+                failureReason,
+                timestamp: systemNowMs(),
+              });
             }
-          } catch (err: unknown) {
-            success = false;
-            error = err instanceof Error ? err.message : String(err);
-            throw err;
-          } finally {
-            container.eventBus.emit("diagnostic:webhook_delivered", {
-              webhookId: _mapping.id ?? "unknown",
-              source: _mapping.name ?? "webhook",
-              event: "agent_action",
-              statusCode: success ? 200 : 500,
-              success,
-              durationMs: systemNowMs() - startMs,
-              error,
-              timestamp: systemNowMs(),
-            });
-          }
+          });
         },
       });
 
@@ -342,7 +427,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
   // OpenAI-compatible API routes with Bearer token auth
   // -------------------------------------------------------------------------
 
-  const openaiApi = new Hono();
+  const openaiApi = new Hono<OpenaiApiEnv>();
 
   // Body size limit on OpenAI POST endpoints (default 1MB)
   const bodyLimitMw = bodyLimit({
@@ -388,98 +473,142 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
         },
       }, 403);
     }
+    c.set("clientScopes", Object.freeze([...client.scopes]));
     return next();
   });
 
   // OpenAI /v1/chat/completions
-  // Model validation (live finding 2026-06-11): the route factory's
-  // resolveModel → 404 guard was DEAD because the wiring never passed it —
-  // model: "anything-at-all" returned 200 served by the default agent.
-  // Accepted forms, all resolved against the configured agents (the same
-  // catalog /v1/models advertises): "provider/model", the bare model id,
-  // or an agent id. Anything else → 404 Model not found.
-  const resolveModel = (modelId: string): { provider: string; modelId: string } | undefined => {
-    for (const [agentId, agentCfg] of Object.entries(agents)) {
-      const provider = agentCfg.provider;
-      const model = agentCfg.model;
-      if (
-        modelId === `${provider}/${model}` ||
-        modelId === model ||
-        modelId === agentId
-      ) {
-        return { provider, modelId: model };
-      }
+  // Resolve model aliases against the configured-agent catalog. Unknown or
+  // ambiguous aliases are rejected instead of silently using another agent.
+  const resolveModel = (modelId: string): { provider: string; modelId: string; agentId: string } | undefined => {
+    const exactAgent = Object.hasOwn(agents, modelId) ? agents[modelId] : undefined;
+    if (exactAgent) {
+      return {
+        provider: exactAgent.provider,
+        modelId: exactAgent.model,
+        agentId: modelId,
+      };
     }
-    return undefined;
+    const aliasMatches = Object.entries(agents).filter(([, agentCfg]) => (
+      modelId === `${agentCfg.provider}/${agentCfg.model}` ||
+      modelId === agentCfg.model
+    ));
+    if (aliasMatches.length !== 1) return undefined;
+    const aliasMatch = aliasMatches[0];
+    if (!aliasMatch) return undefined;
+    const [agentId, agentCfg] = aliasMatch;
+    return { provider: agentCfg.provider, modelId: agentCfg.model, agentId };
   };
   const completionsApp = createOpenaiCompletionsRoute({
+    tenantId: container.config.tenantId,
+    agentId: defaultAgentId,
     resolveModel,
-    executeAgent: async ({ message, systemPrompt, sessionKey, onDelta }) => {
-      const enrichedText = await preprocessMessageText(message);
-      const msg: NormalizedMessage = {
-        id: randomUUID(),
-        channelId: sessionKey?.channelId ?? "openai",
-        channelType: "openai",
-        senderId: sessionKey?.peerId ?? "openai-api",
-        text: enrichedText,
-        timestamp: systemNowMs(),
-        attachments: [],
-        metadata: {
-          ...(systemPrompt && { openaiSystemPrompt: systemPrompt }),
-        },
-      };
+    executeAgent: async ({
+      message,
+      systemPrompt,
+      sessionKey,
+      onDelta,
+      traceId: requestedTraceId,
+      agentId: requestedAgentId,
+      authenticatedScopes = [],
+      signal,
+    }) => {
+      const executionAgentId = requestedAgentId ?? defaultAgentId;
+      const turnTraceId = resolveApiTraceId(requestedTraceId);
+      const requestChannelId = sessionKey?.peerId ?? turnTraceId;
       const sk: SessionKey = {
         tenantId: container.config.tenantId,
         userId: sessionKey?.userId ?? "openai-api",
         channelId: sessionKey?.channelId ?? "openai",
+        ...(sessionKey?.peerId !== undefined ? { peerId: sessionKey.peerId } : {}),
       };
-      const tools = await assembleToolsForAgent(defaultAgentId);
-      // §2.6 (live finding 2026-06-10): this route closure IS the channel entry
-      // for the openai-compatible chat API — without runWithContext every executor log line is
-      // traceId-less (no trace stitching) and the degraded reply cannot carry
-      // its incident ref. One context per inbound request, minted here.
-      // The traceId is minted OUTSIDE runWithContext so it can be returned to the route
-      // and carried on the per-turn diagnostic:message_processed emit — the SAME key the
-      // tool:executed observe() writes outcome_events with, so the Verified Learning
-      // resolve loop (setup-learning.ts) finds the rows for this single-agent chat-API
-      // turn (it fires neither graph:completed nor the channel pipeline's emit). Live
-      // finding 2026-06-18: without this, chat-API turn outcomes were observed but NEVER
-      // resolved (no reward/forget/skill-promote) and were invisible to obs.
-      const turnTraceId = randomUUID();
-      // Hold the config-mutation fence across the turn so a
-      // config-mutating tool (heartbeat_manage/config.patch/…) that schedules a
-      // SIGUSR2 restart mid-turn defers it until this synchronous HTTP response
-      // flushes — otherwise the daemon restarts under the in-flight request and
-      // the caller gets "Empty reply from server" even though the config applied.
-      const result = await withConfigMutationFence(() => runWithContext(
+      const senderId = sessionKey?.peerId ?? "openai-api";
+      const trustLevel = resolveApiTrustLevel(authenticatedScopes);
+      const requestStartedAt = systemNowMs();
+      const deliveryOrigin = createDeliveryOrigin({
+        channelType: "openai",
+        channelId: requestChannelId,
+        userId: sk.userId,
+        tenantId: sk.tenantId,
+      });
+      return runWithContext(
         {
           traceId: turnTraceId,
           tenantId: sk.tenantId,
-          userId: sk.userId,
-          sessionKey: formatSessionKey(sk),
-          startedAt: systemNowMs(),
-          // Token-authenticated caller, but the message CONTENT is user input,
-          // so the platform-tool trust defaults to "user". An operator may
-          // elevate the whole chat API to admin via the agent's
-          // elevatedReply.defaultTrustLevel — see resolveContextTrustLevel.
-          trustLevel: resolveContextTrustLevel(agents[defaultAgentId]?.elevatedReply, msg.senderId),
+          startedAt: requestStartedAt,
+          trustLevel,
           channelType: "openai",
         },
-        () => getExecutor(defaultAgentId).execute(msg, sk, tools, onDelta, defaultAgentId),
-      ));
-      return {
-        response: result.response,
-        tokensUsed: result.tokensUsed,
-        finishReason: result.finishReason,
-        stepsExecuted: result.stepsExecuted,
-        llmCalls: result.llmCalls,
-        traceId: turnTraceId,
-        agentId: defaultAgentId,
-        // FORMATTED tenant-qualified key (tenantId:userId:channelId) so the per-turn
-        // diagnostic carries the right tenant — the Verified Learning resolve derives
-        // tenant via deriveTenantFromSessionKey and a 2-part key resolves the wrong pool.
-        sessionKey: formatSessionKey(sk),
-      };
+        async () => {
+          const resolvedContext = enrichCurrentContext({
+            tenantId: sk.tenantId,
+            userId: sk.userId,
+            sessionKey: sk,
+            agentId: executionAgentId,
+            trustLevel,
+            deliveryOrigin,
+          });
+          if (!resolvedContext.ok) throw resolvedContext.error;
+          const cancellation = bindApiExecutionCancellation({
+            signal,
+            traceId: turnTraceId,
+            agentId: executionAgentId,
+            channelType: "openai",
+            channelId: requestChannelId,
+            sessionKey: sk,
+            sessionResolver,
+            eventBus: container.eventBus,
+            logger: gatewayLogger,
+          });
+          try {
+            cancellation.throwIfAborted();
+            const preparation = await cancellation.waitFor((async () => {
+              const enrichedText = await preprocessMessageText(message);
+              cancellation.throwIfAborted();
+              const tools = await assembleToolsForAgent(executionAgentId);
+              return { enrichedText, tools };
+            })());
+            cancellation.throwIfAborted();
+            const msg: NormalizedMessage = {
+              id: randomUUID(),
+              channelId: requestChannelId,
+              channelType: "openai",
+              senderId,
+              text: preparation.enrichedText,
+              timestamp: systemNowMs(),
+              attachments: [],
+              metadata: {
+                ...(systemPrompt && { openaiSystemPrompt: systemPrompt }),
+              },
+            };
+            const { result, lifecycle } = await executeWithLifecycle(
+              executionAgentId,
+              sk,
+              turnTraceId,
+              () => withConfigMutationFence(() => getExecutor(executionAgentId).execute(
+                msg,
+                sk,
+                preparation.tools,
+                onDelta,
+                executionAgentId,
+              )),
+            );
+            return {
+              response: result.response,
+              tokensUsed: result.tokensUsed,
+              finishReason: result.finishReason,
+              stepsExecuted: result.stepsExecuted,
+              llmCalls: result.llmCalls,
+              ...lifecycle,
+              traceId: turnTraceId,
+              agentId: executionAgentId,
+              sessionKey: formatSessionKey(sk),
+            };
+          } finally {
+            await cancellation.dispose();
+          }
+        },
+      );
     },
     eventBus: container.eventBus,
     logger: gatewayLogger,
@@ -489,12 +618,23 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
   // OpenAI /v1/models
   const modelsApp = createOpenaiModelsRoute({
     getCatalogEntries: () => {
-      return Object.values(agents).map((agentCfg) => ({
-        provider: agentCfg.provider,
-        modelId: agentCfg.model,
-        displayName: `${agentCfg.provider}/${agentCfg.model}`,
-        contextWindow: 200000,
-      }));
+      const entries = Object.entries(agents);
+      const aliasCounts = new Map<string, number>();
+      for (const [, agentCfg] of entries) {
+        const alias = `${agentCfg.provider}/${agentCfg.model}`;
+        aliasCounts.set(alias, (aliasCounts.get(alias) ?? 0) + 1);
+      }
+      return entries.map(([agentId, agentCfg]) => {
+        const alias = `${agentCfg.provider}/${agentCfg.model}`;
+        const aliasIsUnambiguous = aliasCounts.get(alias) === 1 && !Object.hasOwn(agents, alias);
+        return {
+          id: aliasIsUnambiguous ? alias : agentId,
+          provider: agentCfg.provider,
+          modelId: agentCfg.model,
+          displayName: alias,
+          contextWindow: 200000,
+        };
+      });
     },
   });
   openaiApi.route("/models", modelsApp);
@@ -509,53 +649,117 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
 
   // OpenResponses /v1/responses
   const responsesApp = createResponsesRoute({
-    executeAgent: async ({ message, sessionKey, onDelta }) => {
-      const enrichedText = await preprocessMessageText(message);
-      const msg: NormalizedMessage = {
-        id: randomUUID(),
-        channelId: sessionKey?.channelId ?? "responses",
-        channelType: "responses",
-        senderId: sessionKey?.peerId ?? "responses-api",
-        text: enrichedText,
-        timestamp: systemNowMs(),
-        attachments: [],
-        metadata: {},
-      };
+    resolveModel,
+    tenantId: container.config.tenantId,
+    agentId: defaultAgentId,
+    executeAgent: async ({
+      message,
+      systemPrompt,
+      sessionKey,
+      onDelta,
+      traceId: requestedTraceId,
+      agentId: requestedAgentId,
+      authenticatedScopes = [],
+      signal,
+    }) => {
+      const executionAgentId = requestedAgentId ?? defaultAgentId;
+      const turnTraceId = resolveApiTraceId(requestedTraceId);
+      const requestChannelId = sessionKey?.peerId ?? turnTraceId;
       const sk: SessionKey = {
         tenantId: container.config.tenantId,
         userId: sessionKey?.userId ?? "responses-api",
         channelId: sessionKey?.channelId ?? "responses",
+        ...(sessionKey?.peerId !== undefined ? { peerId: sessionKey.peerId } : {}),
       };
-      const tools = await assembleToolsForAgent(defaultAgentId);
-      // §2.6 (live finding 2026-06-10): this route closure IS the channel entry
-      // for the OpenResponses API — without runWithContext every executor log line is
-      // traceId-less (no trace stitching) and the degraded reply cannot carry
-      // its incident ref. One context per inbound request, minted here.
-      // Hold the config-mutation fence across the turn (see the
-      // chat-completions path) so a mid-turn config-mutating tool's SIGUSR2
-      // restart defers until this synchronous response flushes.
-      const result = await withConfigMutationFence(() => runWithContext(
+      const senderId = sessionKey?.peerId ?? "responses-api";
+      const trustLevel = resolveApiTrustLevel(authenticatedScopes);
+      const requestStartedAt = systemNowMs();
+      const deliveryOrigin = createDeliveryOrigin({
+        channelType: "responses",
+        channelId: requestChannelId,
+        userId: sk.userId,
+        tenantId: sk.tenantId,
+      });
+      return runWithContext(
         {
-          traceId: randomUUID(),
+          traceId: turnTraceId,
           tenantId: sk.tenantId,
-          userId: sk.userId,
-          sessionKey: formatSessionKey(sk),
-          startedAt: systemNowMs(),
-          // Token-authenticated caller, but the message CONTENT is user input,
-          // so the platform-tool trust defaults to "user". An operator may
-          // elevate via the agent's elevatedReply.defaultTrustLevel —
-          // see resolveContextTrustLevel.
-          trustLevel: resolveContextTrustLevel(agents[defaultAgentId]?.elevatedReply, msg.senderId),
+          startedAt: requestStartedAt,
+          trustLevel,
           channelType: "responses",
         },
-        () => getExecutor(defaultAgentId).execute(msg, sk, tools, onDelta, defaultAgentId),
-      ));
-      return {
-        response: result.response,
-        tokensUsed: result.tokensUsed,
-        finishReason: result.finishReason,
-      };
+        async () => {
+          const resolvedContext = enrichCurrentContext({
+            tenantId: sk.tenantId,
+            userId: sk.userId,
+            sessionKey: sk,
+            agentId: executionAgentId,
+            trustLevel,
+            deliveryOrigin,
+          });
+          if (!resolvedContext.ok) throw resolvedContext.error;
+          const cancellation = bindApiExecutionCancellation({
+            signal,
+            traceId: turnTraceId,
+            agentId: executionAgentId,
+            channelType: "responses",
+            channelId: requestChannelId,
+            sessionKey: sk,
+            sessionResolver,
+            eventBus: container.eventBus,
+            logger: gatewayLogger,
+          });
+          try {
+            cancellation.throwIfAborted();
+            const preparation = await cancellation.waitFor((async () => {
+              const enrichedText = await preprocessMessageText(message);
+              cancellation.throwIfAborted();
+              const tools = await assembleToolsForAgent(executionAgentId);
+              return { enrichedText, tools };
+            })());
+            cancellation.throwIfAborted();
+            const msg: NormalizedMessage = {
+              id: randomUUID(),
+              channelId: requestChannelId,
+              channelType: "responses",
+              senderId,
+              text: preparation.enrichedText,
+              timestamp: systemNowMs(),
+              attachments: [],
+              metadata: {
+                ...(systemPrompt && { openaiSystemPrompt: systemPrompt }),
+              },
+            };
+            const { result, lifecycle } = await executeWithLifecycle(
+              executionAgentId,
+              sk,
+              turnTraceId,
+              () => withConfigMutationFence(() => getExecutor(executionAgentId).execute(
+                msg,
+                sk,
+                preparation.tools,
+                onDelta,
+                executionAgentId,
+              )),
+            );
+            return {
+              response: result.response,
+              tokensUsed: result.tokensUsed,
+              finishReason: result.finishReason,
+              stepsExecuted: result.stepsExecuted,
+              llmCalls: result.llmCalls,
+              ...lifecycle,
+              traceId: turnTraceId,
+              agentId: executionAgentId,
+              sessionKey: formatSessionKey(sk),
+            };
+          } finally {
+            await cancellation.dispose();
+          }
+        },
+      );
     },
+    eventBus: container.eventBus,
     logger: gatewayLogger,
   });
   openaiApi.route("/responses", responsesApp);

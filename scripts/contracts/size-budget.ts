@@ -3,7 +3,7 @@
  * Bundle-size measurement for `packages/web/src/api/contracts.generated.ts`.
  *
  * Budget:
- *   - 138 KB minified  (`BUDGET_MINIFIED_BYTES`)
+ *   - 140 KB minified  (`BUDGET_MINIFIED_BYTES`)
  *   - 38 KB  gzipped   (`BUDGET_GZIPPED_BYTES`)
  *
  * Measurement architecture:
@@ -24,24 +24,14 @@ import { transformSync } from "esbuild";
 import { gzipSync } from "node:zlib";
 
 /**
- * Budget: 138 KB minified.
+ * Budget: 140 KB minified.
  *
- * This cap tracks legitimate additive contract growth — new admin RPCs and
- * bounded, content-free optional sections on the IncidentReport /
- * FleetHealthReport (one request/response pair each) — rather than loosening the
- * wire constraint. The real wire cost is the gzipped total, which stays far under
- * the 38 KB gzipped budget; only the minified cap needs to move as contracts are
- * added. Raise it only when a bounded, additive addition overflows it, after
- * confirming the gzipped total still has ample headroom.
- *
- * Last raised for two additive, content-free report additions that landed
- * together: the `IncidentReport.orchestrate` per-run section, and the cron
- * wake-gate sections — the `cronWakeGate` efficiency block on `FleetHealthReport`
- * (per-agent skip-rate / turns-saved / net-cost) and the `cronWakeGate` fact on
- * `IncidentReport`, plus the cron authoring-contract fields. Gzipped stays
- * ~13.7 KB (far under the 38 KB gzipped budget).
+ * This cap permits bounded additive RPC-schema growth while keeping accidental
+ * validator expansion visible in CI. Raise it only for reviewed contract
+ * additions after confirming that the independently enforced gzipped wire-size
+ * budget still has ample headroom.
  */
-export const BUDGET_MINIFIED_BYTES = 138_000;
+export const BUDGET_MINIFIED_BYTES = 140_000;
 
 /** Budget: 38 KB gzipped. */
 export const BUDGET_GZIPPED_BYTES = 38_912;

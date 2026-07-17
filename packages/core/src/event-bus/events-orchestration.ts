@@ -331,23 +331,29 @@ export interface OrchestrationEvents {
    * (obs-autonomy-rows.ts) so `comis fleet` surfaces an orphaned-run count.
    * Content-free by construction: the `reason` is a CLOSED enum —
    * the engine's free-text reason ("not resumable: status=…", "reread failed",
-   * "invalid caps", "resume failed") is mapped to a member via the TOTAL
+   * "invalid record", "invalid caps", "resume failed") is mapped to a member via the TOTAL
    * `orphanReasonToEnum` BEFORE the emit and stays ONLY on the WARN log / notify.
    * Mirrors `pipeline:authored`'s closed-enum-only discipline (§2.7).
    */
   "durable:orphaned": {
     rootRunId: string;
     /** CLOSED enum — NOT the engine's free text (durable-resume-engine.ts orphan reasons). */
-    reason: "not_resumable" | "reread_failed" | "invalid_caps" | "resume_failed";
+    reason:
+      | "not_resumable"
+      | "reread_failed"
+      | "invalid_record"
+      | "invalid_caps"
+      | "outward_uncertain"
+      | "resume_failed";
     timestamp: number;
   };
 
   /**
    * A durable run resumed in-flight after a restart (the resume pass
    * rehydrated it from its checkpoint). Counts/ids only (§2.7) — the numeric
-   * stepIndex is the resumed checkpoint position, never a body.
+   * checkpointId identifies the resumed execution attempt, never a body.
    */
-  "durable:resumed": { rootRunId: string; stepIndex: number; timestamp: number };
+  "durable:resumed": { rootRunId: string; checkpointId: string; timestamp: number };
 
   /**
    * A capability lease (or a whole spawn tree) was cooperatively

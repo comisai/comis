@@ -50,7 +50,12 @@ export {
   computeExpiresAt,
 } from "../security/index.js";
 export type { ResultRef } from "../security/index.js";
-export { sanitizeLogString, redactErrorMessage } from "../security/index.js";
+export {
+  redactErrorMessage,
+  sanitizeLogString,
+  toSafeErrorLogString,
+} from "../security/index.js";
+export { redactOutputText } from "../security/index.js";
 // Bounded redaction primitive (security/redact-value.ts) — surfaced on the
 // @comis/core barrel for the template engine and emit sites.
 export { redactValue, REDACT_LIMITS } from "../security/index.js";

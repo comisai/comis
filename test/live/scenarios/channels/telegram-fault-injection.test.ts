@@ -97,7 +97,7 @@ async function bootAdapter(): Promise<{
   expect(handle.apiRoot).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 
   const plugin = createTelegramPlugin({
-    botToken: BOT_TOKEN,
+    getBotToken: () => BOT_TOKEN,
     apiRoot: handle.apiRoot,
     logger: createMockLogger(),
   });
@@ -108,7 +108,7 @@ async function bootAdapter(): Promise<{
   });
   const startRes = await adapter.start();
   if (!startRes.ok) throw startRes.error;
-  // Let the grammy runner's first getUpdates poll complete.
+  // Let the grammY polling loop issue its first getUpdates request.
   await new Promise((r) => setTimeout(r, 300));
   return { emu: emulator, adapter, captured };
 }
@@ -294,7 +294,7 @@ describe("FAULT-02 Stage-B — classifyTelegramError classification + 429 auto-r
     const handle = await emulator.start();
     try {
       const plugin = createTelegramPlugin({
-        botToken: BOT_TOKEN,
+        getBotToken: () => BOT_TOKEN,
         apiRoot: handle.apiRoot,
         logger: createMockLogger(),
       });
@@ -320,7 +320,7 @@ describe("FAULT-02 Stage-B — classifyTelegramError classification + 429 auto-r
     const handle = await emulator.start();
     try {
       const plugin = createTelegramPlugin({
-        botToken: BOT_TOKEN,
+        getBotToken: () => BOT_TOKEN,
         apiRoot: handle.apiRoot,
         logger: createMockLogger(),
       });

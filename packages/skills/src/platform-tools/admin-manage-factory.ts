@@ -20,6 +20,7 @@ import {
   throwToolError,
   createTrustGuard,
 } from "./tool-helpers.js";
+import { resolveApprovalRequestContext } from "./approval-request-context.js";
 import type { RpcCall } from "./tools/cron-tool.js";
 
 // ---------------------------------------------------------------------------
@@ -151,15 +152,18 @@ export function createAdminManageTool<T extends TSchema>(
           descriptor.gatedActions?.includes(action) &&
           approvalGate
         ) {
-          const gateCtx = tryGetContext();
+          const approvalContext = resolveApprovalRequestContext();
+          if (!approvalContext.ok) {
+            throwToolError("permission_denied", approvalContext.error.message, {
+              hint: "Retry from a resolved agent request scope",
+            });
+          }
           const resolution = await approvalGate.requestApproval({
             toolName: descriptor.name,
             action: `${descriptor.rpcPrefix}.${action}`,
-            params: p,
-            agentId: gateCtx?.userId ?? "unknown",
-            sessionKey: gateCtx?.sessionKey ?? "unknown",
-            trustLevel: (gateCtx?.trustLevel ?? "guest") as "admin" | "user" | "guest",
-            channelType: gateCtx?.channelType,
+            params: { action },
+            fingerprintParams: p,
+            ...approvalContext.value,
           });
           if (!resolution.approved) {
             throwToolError(
@@ -175,7 +179,7 @@ export function createAdminManageTool<T extends TSchema>(
           const result = await descriptor.actionOverrides[action](
             p,
             rpcCall,
-            { agentId: ctx?.userId, trustLevel: _trustLevel },
+            { agentId: ctx?.agentId, trustLevel: _trustLevel },
           );
           if (result !== undefined) {
             // Pass through pre-built AgentToolResult shapes (e.g. the

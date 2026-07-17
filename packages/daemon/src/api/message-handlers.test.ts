@@ -8,15 +8,20 @@ import type { RpcHandler } from "./types.js";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
 import { ok, err } from "@comis/shared";
 import {
+  createDeliveryService,
+  createNoOpDeliveryQueue,
+  createRetryEngine,
   DeliveryQueueTransitionError,
   formatSessionKey,
   runWithContext,
+  TypedEventBus,
   type AttachmentPayload,
   type ChannelCapability,
   type ChannelPluginPort,
   type ChannelPort,
   type DeliveryService,
   type DeliveryResult,
+  type HookRunner,
   type OutwardSendLedgerPort,
   type SessionKey,
 } from "@comis/core";
@@ -98,7 +103,10 @@ function createMockAdapter(): ChannelPort {
     reactToMessage: vi.fn(async () => ok(undefined)),
     deleteMessage: vi.fn(async () => ok(undefined)),
     fetchMessages: vi.fn(async () => ok([])),
-    sendAttachment: vi.fn(async () => ok("attach-1")),
+    sendAttachment: vi.fn(async () => ok({
+      kind: "tracked",
+      messageId: "attach-1",
+    })),
     platformAction: vi.fn(async () => ok({})),
     onMessage: vi.fn(),
   };
@@ -156,7 +164,10 @@ describe("message.attach handler", () => {
       attachment_type: "file",
     });
 
-    expect(result).toEqual({ messageId: "attach-1", channelId: "123" });
+    expect(result).toEqual({
+      receipt: { kind: "tracked", messageId: "attach-1" },
+      channelId: "123",
+    });
     expect(adapter.sendAttachment).toHaveBeenCalledWith("123", expect.objectContaining({
       url: "https://example.com/file.pdf",
     }));
@@ -175,7 +186,10 @@ describe("message.attach handler", () => {
       attachment_type: "file",
     });
 
-    expect(result).toEqual({ messageId: "attach-1", channelId: "123" });
+    expect(result).toEqual({
+      receipt: { kind: "tracked", messageId: "attach-1" },
+      channelId: "123",
+    });
     expect(adapter.sendAttachment).toHaveBeenCalledWith("123", expect.objectContaining({
       url: filePath,
     }));
@@ -198,7 +212,10 @@ describe("message.attach handler", () => {
       attachment_type: "file",
     });
 
-    expect(result).toEqual({ messageId: "attach-1", channelId: "123" });
+    expect(result).toEqual({
+      receipt: { kind: "tracked", messageId: "attach-1" },
+      channelId: "123",
+    });
     expect(adapter.sendAttachment).toHaveBeenCalledWith("123", expect.objectContaining({
       url: filePath,
     }));
@@ -264,10 +281,58 @@ describe("message.attach handler", () => {
       attachment_type: "file",
     });
 
-    expect(result).toEqual({ messageId: "attach-1", channelId: "123" });
+    expect(result).toEqual({
+      receipt: { kind: "tracked", messageId: "attach-1" },
+      channelId: "123",
+    });
     expect(adapter.sendAttachment).toHaveBeenCalledWith("123", expect.objectContaining({
       url: expectedPath,
     }));
+  });
+
+  it("returns delivered-untracked without throwing after a completed send", async () => {
+    const deps = createMockDeps(workspaceDir);
+    const adapter = deps.adaptersByType.get("telegram")!;
+    vi.mocked(adapter.sendAttachment!).mockResolvedValueOnce(ok({
+      kind: "delivered_untracked",
+    }));
+    const handlers = createMessageHandlers(deps);
+
+    const result = await handlers["message.attach"]({
+      channel_type: "telegram",
+      channel_id: "123",
+      attachment_url: "https://example.com/file.pdf",
+      attachment_type: "file",
+    });
+
+    expect(result).toEqual({
+      receipt: { kind: "delivered_untracked" },
+      channelId: "123",
+    });
+  });
+
+  it("preserves the adapter receiver when invoking a class-style attachment method", async () => {
+    const deps = createMockDeps(workspaceDir);
+    const adapter = deps.adaptersByType.get("telegram")!;
+    adapter.sendAttachment = async function (this: ChannelPort) {
+      return ok({
+        kind: "tracked" as const,
+        messageId: `${this.channelType}-attachment`,
+      });
+    };
+    const handlers = createMessageHandlers(deps);
+
+    const result = await handlers["message.attach"]({
+      channel_type: "telegram",
+      channel_id: "123",
+      attachment_url: "https://example.com/file.pdf",
+      attachment_type: "file",
+    });
+
+    expect(result).toEqual({
+      receipt: { kind: "tracked", messageId: "telegram-attachment" },
+      channelId: "123",
+    });
   });
 });
 
@@ -325,10 +390,12 @@ describe("message.attach gateway channel_type", () => {
         caption: "A nice photo",
       }));
 
-    // Returns mediaId and channelId
-    expect(result).toHaveProperty("messageId");
+    // Returns the gateway media ID as a tracked attachment receipt.
+    expect(result).toHaveProperty("receipt.kind", "tracked");
     expect(result).toHaveProperty("channelId", "web-chat");
-    const messageId = (result as { messageId: string }).messageId;
+    const messageId = (result as {
+      receipt: { kind: "tracked"; messageId: string };
+    }).receipt.messageId;
     expect(messageId).toMatch(/^[a-f0-9]{16}\.png$/);
 
     // File was copied to mediaDir
@@ -491,7 +558,10 @@ describe("message.attach gateway channel_type", () => {
       attachment_type: "file",
     });
 
-    expect(result).toEqual({ messageId: "attach-1", channelId: "123" });
+    expect(result).toEqual({
+      receipt: { kind: "tracked", messageId: "attach-1" },
+      channelId: "123",
+    });
     expect(adapter.sendAttachment).toHaveBeenCalled();
   });
 });
@@ -1021,12 +1091,14 @@ describe("outward quota gate", () => {
       drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
     };
     const ledger: OutwardSendLedgerPort = {
+      allocateStep: vi.fn(async () => ok(7)),
       lookup: vi.fn(async () => ok(undefined)),
       begin: vi.fn(async () => ok(undefined)),
       markUnknown: vi.fn(async () => ok(undefined)),
       commit: vi.fn(async () => ok(undefined)),
       markFailed: vi.fn(async () => ok(undefined)),
-      resolveReconcile: vi.fn(async () => ok(undefined)),
+      parkUncertain: vi.fn(async () => ok(true)),
+      hasUncertainty: vi.fn(async () => ok(false)),
       listUnreconciled: vi.fn(async () => ok([])),
     };
     deps.outwardLedger = ledger;
@@ -1040,6 +1112,7 @@ describe("outward quota gate", () => {
       _agentId: "agent-1",
       _callerChannelId: "ch-A",
       _callerSessionKey: "default:user_a:ch-A",
+      _rootRunId: "root-1",
       _outwardStepIndex: 7,
     });
 
@@ -1047,6 +1120,73 @@ describe("outward quota gate", () => {
     expect(ledger.commit).toHaveBeenCalledWith("root-1", 7, "platform-msg-7");
     expect(ledger.markFailed).not.toHaveBeenCalled();
   });
+
+  it.each(["error result", "thrown exception"])(
+    "invokes the adapter once for an ambiguous ledger-protected send: %s",
+    async (failureKind) => {
+      const deps = createMockDeps(workspaceDir);
+      const adapter = deps.adaptersByType.get("telegram")!;
+      vi.mocked(adapter.sendMessage).mockImplementation(async () => {
+        if (failureKind === "thrown exception") {
+          throw new Error("ETIMEDOUT after request write");
+        }
+        return err(new Error("503 Service Unavailable"));
+      });
+      const hookRunner = {
+        runBeforeDelivery: vi.fn(async () => ({})),
+        runAfterDelivery: vi.fn(async () => undefined),
+      } as unknown as HookRunner;
+      const eventBus = new TypedEventBus();
+      const retryEngine = createRetryEngine(
+        {
+          maxAttempts: 3,
+          minDelayMs: 1,
+          maxDelayMs: 1,
+          jitter: false,
+          respectRetryAfter: true,
+          markdownFallback: true,
+        },
+        eventBus,
+        deps.logger,
+      );
+      deps.deliveryService = createDeliveryService({
+        hookRunner,
+        deliveryQueue: createNoOpDeliveryQueue(),
+        logger: deps.logger,
+        eventBus,
+        retryEngine,
+      });
+      const ledger: OutwardSendLedgerPort = {
+        allocateStep: vi.fn(async () => ok(9)),
+        lookup: vi.fn(async () => ok(undefined)),
+        begin: vi.fn(async () => ok(undefined)),
+        markUnknown: vi.fn(async () => ok(undefined)),
+        commit: vi.fn(async () => ok(undefined)),
+        markFailed: vi.fn(async () => ok(undefined)),
+        parkUncertain: vi.fn(async () => ok(true)),
+        hasUncertainty: vi.fn(async () => ok(false)),
+        listUnreconciled: vi.fn(async () => ok([])),
+      };
+      deps.outwardLedger = ledger;
+      deps.resolveRootRunId = vi.fn(() => "root-ambiguous");
+      const handlers = createMessageHandlers(deps);
+
+      await expect(handlers["message.send"]({
+        channel_type: "telegram",
+        channel_id: "ch-A",
+        text: "hello",
+        _agentId: "agent-1",
+        _callerChannelId: "ch-A",
+        _callerSessionKey: "default:user_a:ch-A",
+        _rootRunId: "root-ambiguous",
+        _outwardStepIndex: 9,
+      })).rejects.toThrow();
+
+      expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
+      expect(ledger.commit).not.toHaveBeenCalled();
+      expect(ledger.parkUncertain).toHaveBeenCalledWith("root-ambiguous", 9);
+    },
+  );
 
   it("allows an origin send within quota, then denies before deliver when tryOutward returns per_hour", async () => {
     const deps = createMockDeps(workspaceDir);

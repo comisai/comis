@@ -11,97 +11,20 @@
  */
 
 import type { Command } from "commander";
-import * as os from "node:os";
-import { existsSync, readFileSync } from "node:fs";
-import { loadConfigFile, validateConfig } from "@comis/core";
-import type { AppConfig } from "@comis/core";
 import chalk from "chalk";
 import { json } from "../output/format.js";
 import { withSpinner } from "../output/spinner.js";
 import { runDoctorChecks } from "../doctor/check-runner.js";
-import { configHealthCheck } from "../doctor/checks/config-health.js";
-import { daemonHealthCheck } from "../doctor/checks/daemon-health.js";
-import { gatewayHealthCheck } from "../doctor/checks/gateway-health.js";
-import { channelHealthCheck } from "../doctor/checks/channel-health.js";
-import { workspaceHealthCheck } from "../doctor/checks/workspace-health.js";
-import type { DoctorContext, DoctorFinding } from "../doctor/types.js";
+import {
+  buildDiagnosticContext,
+  DIAGNOSTIC_CHECKS,
+  resolveDefaultDiagnosticConfigPaths,
+} from "../doctor/diagnostic-suite.js";
+import type { DoctorFinding } from "../doctor/types.js";
 import {
   renderFindings,
   type NormalizedFinding,
 } from "../util/render-findings.js";
-
-/** All doctor checks in execution order (same as doctor command). */
-const ALL_CHECKS = [
-  configHealthCheck,
-  daemonHealthCheck,
-  gatewayHealthCheck,
-  channelHealthCheck,
-  workspaceHealthCheck,
-];
-
-/**
- * Resolve default config paths from COMIS_CONFIG_PATHS env var or standard locations.
- */
-function resolveDefaultConfigPaths(): string[] {
-  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-  const envPaths = process.env["COMIS_CONFIG_PATHS"];
-  if (envPaths) {
-    return envPaths.split(":").filter((p) => p.length > 0);
-  }
-  const candidates = [
-    os.homedir() + "/.comis/config.yaml",
-    os.homedir() + "/.comis/config.local.yaml",
-    "/etc/comis/config.yaml",
-    "/etc/comis/config.local.yaml",
-  ];
-  return candidates.filter((p) => existsSync(p));
-}
-
-/**
- * Build a DoctorContext from CLI config paths.
- *
- * Loads config if paths provided, resolves data directory,
- * daemon PID file path, and gateway URL. Shared logic with
- * the doctor command.
- */
-function buildHealthContext(configPaths: string[]): DoctorContext {
-  let config: AppConfig | undefined;
-
-  if (configPaths.length > 0) {
-    for (const configPath of configPaths) {
-      try {
-        readFileSync(configPath, "utf-8");
-        const loadResult = loadConfigFile(configPath);
-        if (loadResult.ok) {
-          const validateResult = validateConfig(loadResult.value);
-          if (validateResult.ok) {
-            config = validateResult.value;
-            break;
-          }
-        }
-      } catch {
-        // Try next path
-      }
-    }
-  }
-
-  const dataDir = config?.dataDir || os.homedir() + "/.comis";
-  const daemonPidFile = dataDir + "/daemon.pid";
-
-  // gw.host is a *bind* address; remap wildcards to loopback so the
-  // connectivity probe targets a real address.
-  let gatewayUrl: string | undefined;
-  if (config?.gateway) {
-    const gw = config.gateway;
-    const bindHost = gw.host || "127.0.0.1";
-    const host = bindHost === "0.0.0.0" ? "127.0.0.1" : bindHost === "::" ? "::1" : bindHost;
-    const port = gw.port || 4766;
-    const protocol = gw.tls ? "https" : "http";
-    gatewayUrl = `${protocol}://${host}:${port}`;
-  }
-
-  return { config, configPaths, dataDir, daemonPidFile, gatewayUrl };
-}
 
 /**
  * Build a human-readable footer for the health summary line.
@@ -153,11 +76,11 @@ export function registerHealthCommand(program: Command): void {
     .option("--all", "Show all findings including passing checks", false)
     .action(
       async (options: { config?: string[]; format: string; all: boolean }) => {
-        const configPaths = options.config ?? resolveDefaultConfigPaths();
-        const context = buildHealthContext(configPaths);
+        const configPaths = options.config ?? resolveDefaultDiagnosticConfigPaths();
+        const context = buildDiagnosticContext(configPaths);
 
         const result = await withSpinner("Checking health...", () =>
-          runDoctorChecks(ALL_CHECKS, context),
+          runDoctorChecks(DIAGNOSTIC_CHECKS, context),
         );
 
         // Filter findings: by default only fail/warn

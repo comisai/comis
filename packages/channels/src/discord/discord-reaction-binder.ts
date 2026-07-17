@@ -25,6 +25,7 @@
  * @module
  */
 
+import { toSafeErrorLogString } from "@comis/core";
 import type { ComisLogger, NormalizedReaction, ReactionHandler } from "@comis/core";
 import {
   type Client,
@@ -41,7 +42,7 @@ function warnHandlerFailed(logger: ComisLogger, handlerErr: unknown): void {
     {
       channelType: "discord",
       errorKind: "platform" as const,
-      err: handlerErr instanceof Error ? handlerErr : new Error(String(handlerErr)),
+      err: toSafeErrorLogString(handlerErr),
       hint: "Discord reaction handler threw; reaction dropped (non-fatal)",
     },
     "Reaction handler failed",

@@ -283,6 +283,10 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "orchestrate:run_summary": "orchestrate.run_summary",
 
   // ---- Delivery lifecycle ----
+  // Durable outward-send state changes. The translator persists only the
+  // operation identity and closed transition/outcome labels; bodies, digests,
+  // platform errors, and credentials never cross into the trajectory.
+  "delivery:outward_ledger_transition": "delivery.outward_ledger_transition",
   "delivery:enqueued": "delivery.queued",
   "delivery:complete": "delivery.dispatched",
   // Fires when an abort cut delivery short — including the orchestrator

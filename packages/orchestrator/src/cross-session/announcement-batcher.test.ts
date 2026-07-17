@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createAnnouncementBatcher, sanitizeForUser, type AnnouncementBatcherDeps, type QueuedAnnouncement } from "./announcement-batcher.js";
 import { createDeliveryDedup } from "@comis/agent";
+import { err, ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -26,6 +27,15 @@ function makeDeps(overrides: Partial<AnnouncementBatcherDeps> = {}): Announcemen
     sendToChannel: vi.fn().mockResolvedValue(true),
     debounceMs: 2000,
     ...overrides,
+  };
+}
+
+function makeDecisionQueue() {
+  return {
+    enqueue: vi.fn().mockResolvedValue(ok(undefined)),
+    reserveDecision: vi.fn().mockResolvedValue(ok({ created: true })),
+    lookupDecision: vi.fn().mockResolvedValue(ok(undefined)),
+    resolveDecision: vi.fn().mockResolvedValue(ok(true)),
   };
 }
 
@@ -58,6 +68,34 @@ describe("AnnouncementBatcher", () => {
     // Single item delivers with original text unmodified
     expect(deps.announceToParent.mock.calls[0]![2]).toContain("[System Message]");
     expect(deps.announceToParent.mock.calls[0]![2]).toContain("A background task has completed.");
+  });
+
+  it("persists the explicit thread route across the debounce boundary", async () => {
+    const deps = makeDeps();
+    const batcher = createAnnouncementBatcher(deps);
+
+    batcher.enqueue(makeAnnouncement({ announceThreadId: "topic-42" }));
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(deps.announceToParent).toHaveBeenCalledWith(
+      "agent-main",
+      expect.objectContaining({ tenantId: "default", userId: "user1" }),
+      expect.any(String),
+      "discord",
+      "chan-123",
+      { threadId: "topic-42" },
+    );
+  });
+
+  it("does not batch announcements for different destination threads", async () => {
+    const deps = makeDeps();
+    const batcher = createAnnouncementBatcher(deps);
+
+    batcher.enqueue(makeAnnouncement({ runId: "run-a", announceThreadId: "topic-a" }));
+    batcher.enqueue(makeAnnouncement({ runId: "run-b", announceThreadId: "topic-b" }));
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(deps.announceToParent).toHaveBeenCalledTimes(2);
   });
 
   it("multiple announcements for same parent are batched", async () => {
@@ -164,68 +202,231 @@ describe("AnnouncementBatcher", () => {
     expect(combinedText).toContain("2 background tasks have completed.");
   });
 
-  // timeout fallback tests (updated for 300s timeout)
-  it("single-item delivery falls back to sendToChannel when announceToParent hangs", async () => {
+  it("parks a timed-out parent execution without starting a direct channel send", async () => {
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const sendGovernedAnnouncement = vi.fn();
     const deps = makeDeps({
-      announceToParent: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves
+      announceToParent: vi.fn().mockReturnValue(new Promise(() => {})),
+      sendToChannel,
+      sendGovernedAnnouncement,
     });
     const batcher = createAnnouncementBatcher(deps);
 
-    batcher.enqueue(makeAnnouncement());
+    batcher.enqueue(makeAnnouncement({ idempotencyKey: "timeout-key" }));
+    await vi.advanceTimersByTimeAsync(302_000);
 
-    // Advance past debounce
-    await vi.advanceTimersByTimeAsync(2000);
-
-    // announceToParent was called
-    expect(deps.announceToParent).toHaveBeenCalledOnce();
-
-    // Advance past the 300s timeout
-    await vi.advanceTimersByTimeAsync(301_000);
-
-    // sendToChannel should have been called as fallback with sanitized text
-    expect(deps.sendToChannel).toHaveBeenCalledOnce();
-    const fallbackText = deps.sendToChannel.mock.calls[0]![2] as string;
-    // Stripped: no [System Message] prefix
-    expect(fallbackText).not.toContain("[System Message]");
-    // Stripped: no trailing instruction
-    expect(fallbackText).not.toContain("Inform the user about this completed background task.");
-    // Sanitized: no session keys, no runtime stats
-    expect(fallbackText).not.toContain("Session:");
-    expect(fallbackText).not.toMatch(/Runtime:.*Tokens:/);
-    expect(fallbackText).not.toMatch(/\bdefault:\w+:\w+:\d+\b/);
-    // Fallback extracts "Result:" content
-    expect(fallbackText).toContain("done");
+    expect(sendGovernedAnnouncement).not.toHaveBeenCalled();
+    expect(sendToChannel).not.toHaveBeenCalled();
+    expect(batcher.hasDelivered("timeout-key")).toBe(false);
   });
 
-  it("multi-item batched delivery falls back to individual sendToChannel calls when announceToParent hangs", async () => {
+  it("durably reserves a keyed decision before parent execution starts", async () => {
+    let finishReservation!: (value: ReturnType<typeof ok>) => void;
+    const deadLetterQueue = makeDecisionQueue();
+    deadLetterQueue.reserveDecision.mockReturnValue(new Promise((resolve) => {
+      finishReservation = resolve;
+    }));
+    const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement: vi.fn() });
+    const batcher = createAnnouncementBatcher(deps);
+
+    const enqueue = batcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-1" }));
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(deps.announceToParent).not.toHaveBeenCalled();
+
+    finishReservation(ok({ created: true }));
+    await enqueue;
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(deadLetterQueue.reserveDecision).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: "decision-1",
+      agentId: "agent-main",
+      runId: "run-1",
+      channelType: "discord",
+      channelId: "chan-123",
+    }));
+    expect(deps.announceToParent).toHaveBeenCalledOnce();
+  });
+
+  it("suppresses a restarted decision when its durable reservation exists", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    deadLetterQueue.reserveDecision.mockResolvedValue(ok({ created: false }));
     const deps = makeDeps({
-      announceToParent: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves
+      deadLetterQueue,
+      sendGovernedAnnouncement: vi.fn(),
     });
     const batcher = createAnnouncementBatcher(deps);
 
-    batcher.enqueue(makeAnnouncement({ runId: "run-1" }));
-    batcher.enqueue(makeAnnouncement({ runId: "run-2" }));
-    batcher.enqueue(makeAnnouncement({ runId: "run-3" }));
+    const result = await batcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-restart" }));
+    await vi.advanceTimersByTimeAsync(2_000);
 
-    // Advance past debounce
-    await vi.advanceTimersByTimeAsync(2000);
+    expect(result).toEqual(ok("retained"));
+    expect(deps.announceToParent).not.toHaveBeenCalled();
+    expect(deps.sendGovernedAnnouncement).not.toHaveBeenCalled();
+    expect(batcher.pending).toBe(0);
+  });
 
-    // announceToParent was called for the batch
+  it("suppresses a concurrent duplicate without dropping its locally admitted owner", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    deadLetterQueue.reserveDecision
+      .mockResolvedValueOnce(ok({ created: true }))
+      .mockResolvedValueOnce(ok({ created: false }));
+    const sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: true,
+      identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 8 },
+    }));
+    const deps = makeDeps({
+      deadLetterQueue,
+      announceToParent: vi.fn().mockResolvedValue("rewritten"),
+      sendGovernedAnnouncement,
+    });
+    const batcher = createAnnouncementBatcher(deps);
+    const item = makeAnnouncement({ idempotencyKey: "decision-concurrent" });
+
+    const [first, second] = await Promise.all([
+      batcher.enqueue(item),
+      batcher.enqueue(item),
+    ]);
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect([first, second]).toEqual(expect.arrayContaining([ok("queued"), ok("retained")]));
     expect(deps.announceToParent).toHaveBeenCalledOnce();
+    expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
+      "decision-concurrent",
+      "receipt_committed",
+    );
+  });
 
-    // Advance past the 300s timeout
-    await vi.advanceTimersByTimeAsync(301_000);
+  it("blocks parent execution when durable decision reservation fails", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    deadLetterQueue.reserveDecision.mockResolvedValue(err(new Error("disk unavailable")));
+    const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement: vi.fn() });
+    const batcher = createAnnouncementBatcher(deps);
 
-    // sendToChannel should have been called once for each item as fallback
-    expect(deps.sendToChannel).toHaveBeenCalledTimes(3);
-    // Each call uses sanitized text
-    for (let i = 0; i < 3; i++) {
-      const text = deps.sendToChannel.mock.calls[i]![2] as string;
-      expect(text).not.toContain("[System Message]");
-      expect(text).not.toContain("Inform the user about this completed background task.");
-      expect(text).not.toMatch(/Runtime:.*Tokens:/);
-      expect(text).not.toMatch(/\bdefault:\w+:\w+:\d+\b/);
-    }
+    const result = await batcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-failed" }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(result.ok).toBe(false);
+    expect(deps.announceToParent).not.toHaveBeenCalled();
+  });
+
+  it("resolves a durable decision only after NO_REPLY or a committed receipt", async () => {
+    const noReplyQueue = makeDecisionQueue();
+    const noReplyDeps = makeDeps({
+      deadLetterQueue: noReplyQueue,
+      sendGovernedAnnouncement: vi.fn(),
+    });
+    const noReplyBatcher = createAnnouncementBatcher(noReplyDeps);
+    await noReplyBatcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-no-reply" }));
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(noReplyQueue.resolveDecision).toHaveBeenCalledWith("decision-no-reply", "no_reply");
+
+    const deliveredQueue = makeDecisionQueue();
+    const deliveredDeps = makeDeps({
+      deadLetterQueue: deliveredQueue,
+      announceToParent: vi.fn().mockResolvedValue("rewritten"),
+      sendGovernedAnnouncement: vi.fn().mockResolvedValue(ok({
+        delivered: true,
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 2 },
+      })),
+    });
+    const deliveredBatcher = createAnnouncementBatcher(deliveredDeps);
+    await deliveredBatcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-delivered" }));
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(deliveredQueue.resolveDecision).toHaveBeenCalledWith(
+      "decision-delivered",
+      "receipt_committed",
+    );
+  });
+
+  it("leaves the durable decision pending after parent timeout", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const deps = makeDeps({
+      deadLetterQueue,
+      announceToParent: vi.fn().mockReturnValue(new Promise(() => {})),
+      sendGovernedAnnouncement: vi.fn(),
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({ idempotencyKey: "decision-timeout" }));
+    await vi.advanceTimersByTimeAsync(302_000);
+
+    expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalled();
+    expect(deps.sendGovernedAnnouncement).not.toHaveBeenCalled();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("shutdown closes admission and waits for an in-flight reservation before flushing", async () => {
+    let finishReservation!: (value: ReturnType<typeof ok>) => void;
+    const deadLetterQueue = makeDecisionQueue();
+    deadLetterQueue.reserveDecision.mockReturnValue(new Promise((resolve) => {
+      finishReservation = resolve;
+    }));
+    const deps = makeDeps({ deadLetterQueue, sendGovernedAnnouncement: vi.fn() });
+    const batcher = createAnnouncementBatcher(deps);
+
+    const admission = batcher.enqueue(makeAnnouncement({ idempotencyKey: "shutdown-reservation" }));
+    const shutdown = batcher.shutdown();
+    const refused = await batcher.enqueue(makeAnnouncement({ idempotencyKey: "too-late" }));
+    expect(refused.ok).toBe(false);
+    expect(deps.announceToParent).not.toHaveBeenCalled();
+
+    finishReservation(ok({ created: true }));
+    await admission;
+    await shutdown;
+
+    expect(deps.announceToParent).toHaveBeenCalledOnce();
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
+      "shutdown-reservation",
+      "no_reply",
+    );
+  });
+
+  it("sends the parent rewrite through the governed outward operation", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const sendGovernedAnnouncement = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        delivered: true,
+        identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 3 },
+      },
+    });
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue("rewritten for the user"),
+      deadLetterQueue,
+      sendGovernedAnnouncement,
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    batcher.enqueue(makeAnnouncement({ idempotencyKey: "governed-key" }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
+    expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      text: "rewritten for the user",
+      runId: "run-1",
+    }));
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(batcher.hasDelivered("governed-key")).toBe(true);
+  });
+
+  it("serializes a batch key while its parent execution is in flight", async () => {
+    let resolveParent: ((value: string) => void) | undefined;
+    const announceToParent = vi.fn().mockImplementation(() => new Promise<string>((resolve) => {
+      resolveParent = resolve;
+    }));
+    const deps = makeDeps({ announceToParent });
+    const batcher = createAnnouncementBatcher(deps);
+
+    batcher.enqueue(makeAnnouncement({ idempotencyKey: "same-key" }));
+    await vi.advanceTimersByTimeAsync(2_000);
+    batcher.enqueue(makeAnnouncement({ idempotencyKey: "same-key" }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(announceToParent).toHaveBeenCalledOnce();
+    resolveParent?.("rewritten");
+    await vi.runAllTimersAsync();
+    expect(announceToParent).toHaveBeenCalledOnce();
   });
 });
 
@@ -304,21 +505,18 @@ describe("AnnouncementBatcher idempotent delivery", () => {
     expect(batcher.hasDelivered("K")).toBe(true); // marked after success
   });
 
-  it("does NOT mark delivered when BOTH announceToParent and the fallback sendToChannel fail (retry preserved for a later attempt)", async () => {
+  it("does not mark or directly resend a timed-out parent execution", async () => {
     const deps = makeDeps({
-      announceToParent: vi.fn().mockReturnValue(new Promise(() => {})), // hangs → fallback
+      announceToParent: vi.fn().mockReturnValue(new Promise(() => {})),
       sendToChannel: vi.fn().mockRejectedValue(new Error("send failed")),
       deadLetterQueue: { enqueue: vi.fn() },
     });
     const batcher = createAnnouncementBatcher(deps);
 
     batcher.enqueue(makeAnnouncement({ runId: "run-1", idempotencyKey: "K" }));
-    await vi.advanceTimersByTimeAsync(2000);   // debounce → announceToParent
-    await vi.advanceTimersByTimeAsync(301_000); // 300s timeout → fallback sendToChannel (rejects)
+    await vi.advanceTimersByTimeAsync(302_000);
 
-    expect(deps.sendToChannel).toHaveBeenCalledOnce();
-    // A fully-failed delivery must NOT be marked — the key stays open
-    // so a later retry can re-attempt it.
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
     expect(batcher.hasDelivered("K")).toBe(false);
   });
 
@@ -402,9 +600,7 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     vi.useRealTimers();
   });
 
-  it("SINGLE-item transient failure retries with backoff then succeeds (not dead-lettered)", async () => {
-    // announceToParent hangs → fallback; sendToChannel rejects once (ETIMEDOUT)
-    // then resolves; classify says transient.
+  it("does not retry a transient-looking direct failure", async () => {
     const sendToChannel = vi.fn()
       .mockRejectedValueOnce(new Error("ETIMEDOUT"))
       .mockResolvedValueOnce(true);
@@ -413,7 +609,7 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     const emit = vi.fn();
     const enqueue = vi.fn();
     const deps = makeDeps({
-      announceToParent: vi.fn().mockReturnValue(new Promise(() => {})), // hangs → fallback
+      announceToParent: vi.fn().mockResolvedValue("rewritten"),
       sendToChannel,
       classifyErrorContext,
       computeRetryBackoff,
@@ -424,29 +620,23 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     const batcher = createAnnouncementBatcher(deps);
 
     batcher.enqueue(makeAnnouncement({ runId: "run-T", idempotencyKey: "K" }));
-    await vi.advanceTimersByTimeAsync(2000);    // debounce → announceToParent (hangs)
-    await vi.advanceTimersByTimeAsync(301_000); // 300s timeout → fallback sendToChannel (rejects ETIMEDOUT)
-    await vi.advanceTimersByTimeAsync(1000);    // backoff sleep → retry sendToChannel (resolves)
+    await vi.advanceTimersByTimeAsync(10_000);
 
-    expect(sendToChannel).toHaveBeenCalledTimes(2);   // 1 initial + 1 retry
-    expect(computeRetryBackoff).toHaveBeenCalledTimes(1);
-    expect(computeRetryBackoff).toHaveBeenCalledWith(1);
-    expect(enqueue).not.toHaveBeenCalled();           // NOT dead-lettered
-    expect(batcher.hasDelivered("K")).toBe(true);     // marked after retry success
-    // delivery_retried fired (transient:true, attempt:1) with the runId.
-    const retried = emit.mock.calls.find((c) => c[0] === "subagent:delivery_retried");
-    expect(retried).toBeDefined();
-    expect(retried![1]).toMatchObject({ runId: "run-T", transient: true, attempt: 1, channelType: "discord" });
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(computeRetryBackoff).not.toHaveBeenCalled();
+    expect(enqueue).toHaveBeenCalledOnce();
+    expect(batcher.hasDelivered("K")).toBe(false);
+    expect(emit).not.toHaveBeenCalled();
   });
 
-  it("SINGLE-item permanent failure dead-letters IMMEDIATELY with zero retries", async () => {
+  it("makes one attempt for a permanent-looking direct failure", async () => {
     const sendToChannel = vi.fn().mockRejectedValue(new Error("budget exceeded"));
     const classifyErrorContext = vi.fn().mockReturnValue({ retryable: false });
     const computeRetryBackoff = vi.fn().mockReturnValue(1000);
     const emit = vi.fn();
     const enqueue = vi.fn();
     const deps = makeDeps({
-      announceToParent: vi.fn().mockReturnValue(new Promise(() => {})),
+      announceToParent: vi.fn().mockResolvedValue("rewritten"),
       sendToChannel,
       classifyErrorContext,
       computeRetryBackoff,
@@ -457,27 +647,28 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     const batcher = createAnnouncementBatcher(deps);
 
     batcher.enqueue(makeAnnouncement({ runId: "run-P", idempotencyKey: "K" }));
-    await vi.advanceTimersByTimeAsync(2000);
-    await vi.advanceTimersByTimeAsync(301_000);
+    await vi.advanceTimersByTimeAsync(2_000);
 
     expect(sendToChannel).toHaveBeenCalledTimes(1);   // no retry
     expect(computeRetryBackoff).not.toHaveBeenCalled();
     expect(enqueue).toHaveBeenCalledOnce();           // dead-lettered immediately
-    expect(enqueue.mock.calls[0]![0]).toMatchObject({ runId: "run-P", idempotencyKey: "K" });
+    expect(enqueue.mock.calls[0]![0]).toMatchObject({
+      runId: "run-P",
+      agentId: "agent-main",
+      idempotencyKey: "K",
+    });
     expect(batcher.hasDelivered("K")).toBe(false);
-    const dl = emit.mock.calls.find((c) => c[0] === "subagent:delivery_deadlettered");
-    expect(dl).toBeDefined();
-    expect(dl![1]).toMatchObject({ runId: "run-P", transient: false, attempt: 0, channelType: "discord" });
+    expect(emit).not.toHaveBeenCalled();
   });
 
-  it("SINGLE-item exhausted transient dead-letters after maxRetries", async () => {
+  it("does not add retries for an HTTP status-looking direct failure", async () => {
     const sendToChannel = vi.fn().mockRejectedValue(new Error("503"));
     const classifyErrorContext = vi.fn().mockReturnValue({ retryable: true });
     const computeRetryBackoff = vi.fn().mockReturnValue(500);
     const emit = vi.fn();
     const enqueue = vi.fn();
     const deps = makeDeps({
-      announceToParent: vi.fn().mockReturnValue(new Promise(() => {})),
+      announceToParent: vi.fn().mockResolvedValue("rewritten"),
       sendToChannel,
       classifyErrorContext,
       computeRetryBackoff,
@@ -488,22 +679,16 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     const batcher = createAnnouncementBatcher(deps);
 
     batcher.enqueue(makeAnnouncement({ runId: "run-E", idempotencyKey: "K" }));
-    await vi.advanceTimersByTimeAsync(2000);
-    await vi.advanceTimersByTimeAsync(301_000); // fallback → initial send (rejects)
-    await vi.advanceTimersByTimeAsync(500);     // backoff → retry attempt 1 (rejects)
-    await vi.advanceTimersByTimeAsync(500);     // backoff → retry attempt 2 (rejects)
+    await vi.advanceTimersByTimeAsync(10_000);
 
-    expect(sendToChannel).toHaveBeenCalledTimes(3); // 1 initial + 2 retries
-    expect(computeRetryBackoff).toHaveBeenCalledTimes(2);
-    expect(computeRetryBackoff).toHaveBeenNthCalledWith(1, 1);
-    expect(computeRetryBackoff).toHaveBeenNthCalledWith(2, 2);
-    expect(enqueue).toHaveBeenCalledOnce();          // finally dead-lettered
-    expect(batcher.hasDelivered("K")).toBe(false);   // never marked
-    const dl = emit.mock.calls.find((c) => c[0] === "subagent:delivery_deadlettered");
-    expect(dl![1]).toMatchObject({ runId: "run-E", transient: true, attempt: 2 });
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(computeRetryBackoff).not.toHaveBeenCalled();
+    expect(enqueue).toHaveBeenCalledOnce();
+    expect(batcher.hasDelivered("K")).toBe(false);
+    expect(emit).not.toHaveBeenCalled();
   });
 
-  it("MULTI-ITEM BATCH: per-item retry/classify runs in the batch fallback branch (A retries+succeeds, B dead-letters immediately)", async () => {
+  it("uses one final attempt for each destination batch key", async () => {
     // Two items coalesce on one batchKey (same caller, distinct runIds). The
     // combined announceToParent rejects → per-item fallback. Item A: ECONNRESET
     // once then resolves (transient → retry → success). Item B: budget (permanent
@@ -525,7 +710,7 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     const emit = vi.fn();
     const enqueue = vi.fn();
     const deps = makeDeps({
-      announceToParent: vi.fn().mockReturnValue(new Promise(() => {})), // hangs → batch fallback
+      announceToParent: vi.fn().mockResolvedValue("combined rewrite"),
       sendToChannel,
       classifyErrorContext,
       computeRetryBackoff,
@@ -538,27 +723,23 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     // Same caller → same batchKey; distinct runIds + distinct channels + distinct keys.
     batcher.enqueue(makeAnnouncement({ runId: "run-A", idempotencyKey: "KA", announceChannelId: "chan-A" }));
     batcher.enqueue(makeAnnouncement({ runId: "run-B", idempotencyKey: "KB", announceChannelId: "chan-B" }));
-    await vi.advanceTimersByTimeAsync(2000);     // debounce → combined announceToParent (hangs)
-    await vi.advanceTimersByTimeAsync(301_000);  // 300s timeout → per-item fallback
-    await vi.advanceTimersByTimeAsync(1000);     // A's backoff → retry → success
+    await vi.advanceTimersByTimeAsync(10_000);
 
     // A retried + delivered.
     const aCalls = sendToChannel.mock.calls.filter((c) => c[1] === "chan-A").length;
-    expect(aCalls).toBe(2); // 1 initial + 1 retry
-    expect(batcher.hasDelivered("KA")).toBe(true);
-    const aRetried = emit.mock.calls.find((c) => c[0] === "subagent:delivery_retried" && (c[1] as { runId: string }).runId === "run-A");
-    expect(aRetried).toBeDefined();
-    expect(aRetried![1]).toMatchObject({ runId: "run-A", transient: true, attempt: 1 });
+    expect(aCalls).toBe(1);
+    expect(batcher.hasDelivered("KA")).toBe(false);
 
     // B dead-lettered immediately, zero retries.
     const bCalls = sendToChannel.mock.calls.filter((c) => c[1] === "chan-B").length;
     expect(bCalls).toBe(1);
     expect(batcher.hasDelivered("KB")).toBe(false);
-    const bDeadLettered = enqueue.mock.calls.find((c) => (c[0] as { runId: string }).runId === "run-B");
-    expect(bDeadLettered).toBeDefined();
-    expect(bDeadLettered![0]).toMatchObject({ runId: "run-B", idempotencyKey: "KB" });
-    const bDl = emit.mock.calls.find((c) => c[0] === "subagent:delivery_deadlettered" && (c[1] as { runId: string }).runId === "run-B");
-    expect(bDl![1]).toMatchObject({ runId: "run-B", transient: false, attempt: 0 });
+    expect(enqueue).toHaveBeenCalledTimes(2);
+    expect(enqueue.mock.calls.map((call) => call[0])).toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId: "run-A", agentId: "agent-main", idempotencyKey: "KA" }),
+      expect.objectContaining({ runId: "run-B", agentId: "agent-main", idempotencyKey: "KB" }),
+    ]));
+    expect(emit).not.toHaveBeenCalled();
   });
 
   it("without classifyErrorContext/computeRetryBackoff injected the fallback is single-attempt then DLQ (single-item)", async () => {
@@ -567,7 +748,7 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     const sendToChannel = vi.fn().mockRejectedValue(new Error("ETIMEDOUT"));
     const enqueue = vi.fn();
     const deps = makeDeps({
-      announceToParent: vi.fn().mockReturnValue(new Promise(() => {})),
+      announceToParent: vi.fn().mockResolvedValue("rewritten"),
       sendToChannel,
       deadLetterQueue: { enqueue },
       // classifyErrorContext / computeRetryBackoff / eventBus intentionally absent.
@@ -575,8 +756,7 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     const batcher = createAnnouncementBatcher(deps);
 
     batcher.enqueue(makeAnnouncement({ runId: "run-N", idempotencyKey: "K" }));
-    await vi.advanceTimersByTimeAsync(2000);
-    await vi.advanceTimersByTimeAsync(301_000);
+    await vi.advanceTimersByTimeAsync(2_000);
 
     expect(sendToChannel).toHaveBeenCalledOnce(); // single attempt, no retry
     expect(enqueue).toHaveBeenCalledOnce();       // DLQ as today
@@ -587,7 +767,7 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
     const sendToChannel = vi.fn().mockRejectedValue(new Error("ECONNRESET"));
     const enqueue = vi.fn();
     const deps = makeDeps({
-      announceToParent: vi.fn().mockReturnValue(new Promise(() => {})),
+      announceToParent: vi.fn().mockResolvedValue("combined rewrite"),
       sendToChannel,
       deadLetterQueue: { enqueue },
     });
@@ -595,11 +775,99 @@ describe("AnnouncementBatcher transient/permanent retry", () => {
 
     batcher.enqueue(makeAnnouncement({ runId: "run-1", idempotencyKey: "K1" }));
     batcher.enqueue(makeAnnouncement({ runId: "run-2", idempotencyKey: "K2" }));
-    await vi.advanceTimersByTimeAsync(2000);
-    await vi.advanceTimersByTimeAsync(301_000);
+    await vi.advanceTimersByTimeAsync(2_000);
 
-    expect(sendToChannel).toHaveBeenCalledTimes(2); // one per item, no retries
-    expect(enqueue).toHaveBeenCalledTimes(2);       // both dead-lettered
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(enqueue).toHaveBeenCalledOnce();
+  });
+
+  it("treats a resolved false direct fallback as a failed delivery", async () => {
+    const enqueue = vi.fn();
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue("rewritten"),
+      sendToChannel: vi.fn().mockResolvedValue(false),
+      deadLetterQueue: { enqueue },
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    batcher.enqueue(makeAnnouncement({ idempotencyKey: "K-false" }));
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(enqueue).toHaveBeenCalledOnce();
+    expect(batcher.hasDelivered("K-false")).toBe(false);
+  });
+
+  it("does not retry an opaque direct-send failure below DeliveryService", async () => {
+    const sendToChannel = vi.fn().mockRejectedValue(new Error("HTTP 503"));
+    const enqueue = vi.fn();
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue("rewritten once"),
+      sendToChannel,
+      deadLetterQueue: { enqueue },
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    batcher.enqueue(makeAnnouncement({ idempotencyKey: "single-attempt" }));
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(sendToChannel).toHaveBeenCalledOnce();
+    expect(enqueue).toHaveBeenCalledOnce();
+  });
+
+  it("does not send a fallback after an ordinary parent execution rejection", async () => {
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const sendGovernedAnnouncement = vi.fn();
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockRejectedValue(new Error("parent failed after tool activity")),
+      sendToChannel,
+      sendGovernedAnnouncement,
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    batcher.enqueue(makeAnnouncement({ idempotencyKey: "ambiguous-parent" }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(sendGovernedAnnouncement).not.toHaveBeenCalled();
+    expect(sendToChannel).not.toHaveBeenCalled();
+    expect(batcher.hasDelivered("ambiguous-parent")).toBe(false);
+  });
+
+  it("persists the governed operation identity after a blocked direct fallback", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const enqueue = deadLetterQueue.enqueue;
+    const sendGovernedAnnouncement = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        delivered: false,
+        identity: {
+          agentId: "agent-main",
+          rootRunId: "root-run-1",
+          stepIndex: 7,
+        },
+        failure: "operation_retained",
+      },
+    });
+    const deps = makeDeps({
+      announceToParent: vi.fn().mockResolvedValue("rewritten"),
+      sendToChannel: vi.fn().mockResolvedValue(true),
+      deadLetterQueue,
+      sendGovernedAnnouncement,
+    } as Partial<AnnouncementBatcherDeps>);
+    const batcher = createAnnouncementBatcher(deps);
+
+    batcher.enqueue(makeAnnouncement({
+      idempotencyKey: "default:user1:chan1::run-1",
+    }));
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: "agent-main",
+      rootRunId: "root-run-1",
+      stepIndex: 7,
+    }));
+    expect(batcher.hasDelivered("default:user1:chan1::run-1")).toBe(false);
   });
 });
 

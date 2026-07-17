@@ -5,8 +5,8 @@
  * WITHOUT a real spawn (the real bwrap byte-identical round-trip is the
  * `.linux`/VPS tier), these prove the seam's LOGIC:
  *   - the PINNED bytes are loaded from the durable row + re-spawned VERBATIM (the
- *     caller supplies NO script — T-WS4-03);
- *   - INV-1: `buildArgs` binds the SEPARATE replay socket AND the child env's
+ *     caller supplies no script);
+ *   - `buildArgs` binds the separate replay socket and the child environment's
  *     `COMIS_ORCH_SOCKET`/`COMIS_CAP_LEASE` point at the replay socket + ephemeral
  *     bearer (never the production endpoint), with the secret-named base env scrubbed;
  *   - honest-degrade throws (a missing pinned row / an unavailable jail) — never a
@@ -14,7 +14,7 @@
  * @module
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
@@ -25,7 +25,17 @@ import { ok, type Result } from "@comis/shared";
 import { createOrchestrateReplayRespawn } from "./orchestrate-replay-respawn.js";
 import { BwrapProvider } from "../sandbox/bwrap-provider.js";
 import type { OrchestrateSpawnFn, OrchestrateSpawnedChild } from "./orchestrate-repair.js";
-import type { OrchestrateDurableRuns } from "./orchestrate-durable.js";
+import type { OrchestrateDurableRuns, ResumePrincipal } from "./orchestrate-durable.js";
+
+const PRINCIPAL: ResumePrincipal = {
+  agentId: "agent-a",
+  sessionKey: "tenant-a:user-a:chat-a",
+  ownerTenantId: "tenant-a",
+  ownerUserId: "user-a",
+  deliveryOrigin: null,
+  trustLevel: "user",
+  caps: [],
+};
 
 function makeLogger(): ComisLogger {
   const noop = (): void => {};
@@ -59,22 +69,28 @@ function makeFakeChild(stdout: string, exitCode = 0, stderr = ""): OrchestrateSp
   return child;
 }
 
-/** A durable-run store whose getByRootRun returns a row with (or without) a scriptRef. */
+/** A durable-run store whose checkpoint lookup returns a row with (or without) a scriptRef. */
 function makeDurableRuns(scriptRef: string | undefined): OrchestrateDurableRuns {
   return {
     upsertCheckpoint: async () => ok(undefined),
-    getByRootRun: async (): Promise<Result<DurableRunRecord | undefined, Error>> =>
+    getByCheckpoint: async (): Promise<Result<DurableRunRecord | undefined, Error>> =>
       ok(
         scriptRef === undefined
           ? undefined
           : ({
-              rootRunId: "orch-x",
+              checkpointId: "orch-x",
+              rootRunId: "root-x",
+              agentId: PRINCIPAL.agentId,
+              sessionKey: PRINCIPAL.sessionKey,
+              ownerTenantId: PRINCIPAL.ownerTenantId,
+              ownerUserId: PRINCIPAL.ownerUserId,
+              deliveryOrigin: PRINCIPAL.deliveryOrigin,
               spawnTree: [],
               caps: [],
               leaseIds: [],
               budgetConsumed: 0,
               cronOrigin: null,
-              stepIndex: -1,
+              trustLevel: "user",
               status: "running",
               lastHeartbeatAt: 0,
               scriptRef,
@@ -136,13 +152,14 @@ describe("createOrchestrateReplayRespawn", () => {
       socketPath: replaySocket,
       bearer: "ephemeral-bearer",
       childEnv,
+      principal: PRINCIPAL,
     });
     expect(res.stdout).toBe("replayed\n");
     // The PINNED bytes were written to the scriptPath and re-run (never re-supplied).
     expect(readFileSync(join(workspacePath, "orch-x.ts"), "utf8")).toBe(PINNED);
   });
 
-  it("INV-1: binds the SEPARATE replay socket + points COMIS_ORCH_SOCKET/COMIS_CAP_LEASE at it, and scrubs the secret-named base env", async () => {
+  it("binds the separate replay socket and points the scrubbed child environment at it", async () => {
     let capturedArgs: string[] | undefined;
     let capturedEnv: Record<string, string | undefined> | undefined;
     const spawnFn: OrchestrateSpawnFn = (_bin, args, opts) => {
@@ -157,6 +174,7 @@ describe("createOrchestrateReplayRespawn", () => {
       socketPath: replaySocket,
       bearer: "ephemeral-bearer",
       childEnv: { COMIS_ORCH_SOCKET: replaySocket, COMIS_CAP_LEASE: "ephemeral-bearer" },
+      principal: PRINCIPAL,
     });
     expect(capturedArgs).toBeDefined();
     // Network-isolated + the SEPARATE replay socket bound (never the prod endpoint).
@@ -172,10 +190,45 @@ describe("createOrchestrateReplayRespawn", () => {
     expect(capturedArgs![cmdIdx + 1]).toContain("orch-x.ts");
   });
 
-  it("throws (no re-spawn) when the durable run has no pinned script (T-233-14)", async () => {
+  it("stages replay in a throwaway read-only workspace and removes it after the child exits", async () => {
+    let capturedArgs: string[] | undefined;
+    const spawnFn: OrchestrateSpawnFn = (_bin, args) => {
+      capturedArgs = args;
+      return makeFakeChild("x\n");
+    };
+    const respawn = makeRespawn({ spawnFn });
+
+    await respawn({
+      rootRunId: "orch-x",
+      workspacePath,
+      socketPath: replaySocket,
+      bearer: "ephemeral-bearer",
+      childEnv: { COMIS_ORCH_SOCKET: replaySocket, COMIS_CAP_LEASE: "ephemeral-bearer" },
+      principal: PRINCIPAL,
+    });
+
+    const chdir = capturedArgs?.indexOf("--chdir") ?? -1;
+    expect(chdir).toBeGreaterThanOrEqual(0);
+    const throwawayPath = capturedArgs?.[chdir + 1];
+    expect(throwawayPath).toBeDefined();
+    expect(throwawayPath).not.toBe(workspacePath);
+    expect(capturedArgs).not.toContain(workspacePath);
+    expect(capturedArgs).toEqual(expect.arrayContaining(["--ro-bind", throwawayPath, throwawayPath]));
+    expect(existsSync(throwawayPath!)).toBe(false);
+    expect(existsSync(join(workspacePath, "comis_tools.js"))).toBe(false);
+  });
+
+  it("throws without re-spawning when the durable run has no pinned script", async () => {
     const respawn = makeRespawn({ durableRuns: makeDurableRuns(undefined) });
     await expect(
-      respawn({ rootRunId: "missing", workspacePath, socketPath: replaySocket, bearer: "eb", childEnv: {} }),
+      respawn({
+        rootRunId: "missing",
+        workspacePath,
+        socketPath: replaySocket,
+        bearer: "eb",
+        childEnv: {},
+        principal: PRINCIPAL,
+      }),
     ).rejects.toThrow();
   });
 
@@ -184,7 +237,14 @@ describe("createOrchestrateReplayRespawn", () => {
       resolveJailNodeFn: () => ({ mode: "unavailable" as const, hint: "no node in jail" }),
     });
     await expect(
-      respawn({ rootRunId: "orch-x", workspacePath, socketPath: replaySocket, bearer: "eb", childEnv: {} }),
+      respawn({
+        rootRunId: "orch-x",
+        workspacePath,
+        socketPath: replaySocket,
+        bearer: "eb",
+        childEnv: {},
+        principal: PRINCIPAL,
+      }),
     ).rejects.toThrow();
   });
 });

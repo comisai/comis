@@ -6615,15 +6615,46 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "messageId": {
-          "type": "string"
+        "receipt": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "tracked"
+                },
+                "messageId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "messageId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "delivered_untracked"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          ]
         },
         "channelId": {
           "type": "string"
         }
       },
       "required": [
-        "messageId",
+        "receipt",
         "channelId"
       ],
       "additionalProperties": false
@@ -7528,12 +7559,17 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
+        "channelType": {
+          "type": "string",
+          "minLength": 1
+        },
         "channelId": {
           "type": "string",
           "minLength": 1
         }
       },
       "required": [
+        "channelType",
         "channelId"
       ],
       "additionalProperties": false
@@ -7668,9 +7704,14 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "number"
         },
         "limit": {
-          "type": "number"
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
         },
         "channelId": {
+          "type": "string"
+        },
+        "channelType": {
           "type": "string"
         }
       },
@@ -7684,10 +7725,223 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "array",
           "items": {
             "type": "object",
-            "propertyNames": {
-              "type": "string"
+            "properties": {
+              "sourceChannelId": {
+                "type": "string"
+              },
+              "sourceChannelType": {
+                "type": "string"
+              },
+              "targetChannelId": {
+                "type": "string"
+              },
+              "targetChannelType": {
+                "type": "string"
+              },
+              "deliveredAt": {
+                "type": "number"
+              },
+              "latencyMs": {
+                "type": "number"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "success",
+                  "error",
+                  "timeout",
+                  "filtered",
+                  "aborted"
+                ]
+              },
+              "error": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "agentId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sessionKey": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "traceId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "toolCalls": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "llmCalls": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tokensTotal": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "costTotal": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "failureStage": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "execution",
+                      "delivery"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "errorKind": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "config",
+                      "network",
+                      "auth",
+                      "validation",
+                      "precondition",
+                      "timeout",
+                      "resource",
+                      "dependency",
+                      "internal",
+                      "platform",
+                      "sandbox_unavailable"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "steps": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "timestamp": {
+                          "type": "number"
+                        },
+                        "durationMs": {
+                          "type": "number"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "ok",
+                            "error"
+                          ]
+                        },
+                        "error": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "timestamp",
+                        "durationMs",
+                        "status"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "evidence": {
+                "type": "string",
+                "enum": [
+                  "diagnostic",
+                  "message_correlation"
+                ]
+              }
             },
-            "additionalProperties": {}
+            "required": [
+              "sourceChannelId",
+              "sourceChannelType",
+              "targetChannelId",
+              "targetChannelType",
+              "deliveredAt",
+              "latencyMs",
+              "status",
+              "error",
+              "agentId",
+              "sessionKey",
+              "traceId",
+              "toolCalls",
+              "llmCalls",
+              "tokensTotal",
+              "costTotal",
+              "failureStage",
+              "errorKind",
+              "steps",
+              "evidence"
+            ],
+            "additionalProperties": false
           }
         }
       },
@@ -7704,7 +7958,13 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "sinceMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
       "additionalProperties": false
     },
     "response": {
@@ -7714,10 +7974,22 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "total": {
           "type": "number"
         },
-        "successes": {
+        "attempted": {
           "type": "number"
         },
-        "failures": {
+        "success": {
+          "type": "number"
+        },
+        "error": {
+          "type": "number"
+        },
+        "timeout": {
+          "type": "number"
+        },
+        "filtered": {
+          "type": "number"
+        },
+        "aborted": {
           "type": "number"
         },
         "avgLatencyMs": {
@@ -7726,8 +7998,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       },
       "required": [
         "total",
-        "successes",
-        "failures",
+        "attempted",
+        "success",
+        "error",
+        "timeout",
+        "filtered",
+        "aborted",
         "avgLatencyMs"
       ],
       "additionalProperties": false

@@ -12,7 +12,16 @@
 
 import type { EmbeddingPort } from "@comis/core";
 import type Database from "better-sqlite3";
+import { z } from "zod";
+import { createRowMapper } from "./row-mapper.js";
 import { isVecAvailable } from "./schema.js";
+
+const unembeddedMemoryMapper = createRowMapper(
+  z.strictObject({ id: z.string(), content: z.string() }),
+);
+const unembeddedCountMapper = createRowMapper(
+  z.strictObject({ cnt: z.number().int().nonnegative() }),
+);
 
 export interface BatchIndexerOptions {
   /** Number of memories to embed per batch. Default: 100 */
@@ -78,9 +87,24 @@ export function createBatchIndexer(
       let lastBatchError: string | undefined;
 
       while (true) {
-        const rows = db
-          .prepare("SELECT id, content FROM memories WHERE has_embedding = 0 LIMIT ?")
-          .all(batchSize) as { id: string; content: string }[];
+        const parsedRows = unembeddedMemoryMapper.parseRows(
+          db
+            .prepare("SELECT id, content FROM memories WHERE has_embedding = 0 LIMIT ?")
+            .all(batchSize),
+        );
+        if (!parsedRows.ok) {
+          lastBatchError = "Unembedded memory row validation failed";
+          logger?.warn(
+            {
+              rowPath: parsedRows.error.path,
+              errorKind: "validation" as const,
+              hint: "Inspect the memories table schema and repair malformed rows before reindexing",
+            },
+            "Embedding batch row validation failed",
+          );
+          break;
+        }
+        const rows = parsedRows.value;
 
         if (rows.length === 0) break;
 
@@ -151,10 +175,23 @@ export function createBatchIndexer(
     },
 
     unembeddedCount(): number {
-      const row = db
-        .prepare("SELECT COUNT(*) as cnt FROM memories WHERE has_embedding = 0")
-        .get() as { cnt: number };
-      return row.cnt;
+      const parsed = unembeddedCountMapper.parseOptionalRow(
+        db
+          .prepare("SELECT COUNT(*) as cnt FROM memories WHERE has_embedding = 0")
+          .get(),
+      );
+      if (!parsed.ok) {
+        logger?.warn(
+          {
+            rowPath: parsed.error.path,
+            errorKind: "validation" as const,
+            hint: "Inspect the memories table schema before relying on embedding backlog counts",
+          },
+          "Embedding backlog count validation failed",
+        );
+        return 0;
+      }
+      return parsed.value?.cnt ?? 0;
     },
   };
 

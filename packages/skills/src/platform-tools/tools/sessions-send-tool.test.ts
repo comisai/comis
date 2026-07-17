@@ -34,7 +34,7 @@ describe("sessions_send tool", () => {
       mode: "fire-and-forget",
       timeout_ms: undefined,
       max_turns: undefined,
-    });
+    }, { outwardOperationId: "call-1" });
   });
 
   it("passes mode, timeout_ms, and max_turns for ping-pong", async () => {
@@ -55,7 +55,7 @@ describe("sessions_send tool", () => {
       mode: "ping-pong",
       timeout_ms: 30000,
       max_turns: 2,
-    });
+    }, { outwardOperationId: "call-2" });
   });
 
   it("throws when session_key is missing", async () => {

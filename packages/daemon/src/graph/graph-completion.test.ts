@@ -6,6 +6,12 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { err, ok } from "@comis/shared";
+import {
+  createInteractiveCallbackRouter,
+  type CompletionAnnouncementSendRequest,
+  type GraphReportCallbackRegistration,
+} from "@comis/orchestrator";
 import { buildGraphAnnouncement, truncatePreview, extractAnnouncementPreview, handleGraphCompletion, handleBudgetExceeded, computeSubtreeCost } from "./graph-completion.js";
 import {
   type ValidatedGraph,
@@ -14,6 +20,8 @@ import {
 } from "@comis/core";
 import { createGraphStateMachine } from "./graph-state-machine.js";
 import type { GraphRunState } from "./graph-coordinator-state.js";
+
+const SIGNED_REPORT_CALLBACK = "v1.details.abc123XYZ789.deadbeefdeadbeef";
 
 // ---------------------------------------------------------------------------
 // Module mock for node:fs (buildGraphAnnouncement indirectly lives in a
@@ -287,7 +295,7 @@ describe("buildGraphAnnouncement", () => {
     const gs = createMinimalGraphRunState([
       { nodeId: "A", output: "Short result" },
     ]);
-    const result = buildGraphAnnouncement(gs);
+    const result = buildGraphAnnouncement(gs, () => SIGNED_REPORT_CALLBACK);
     expect(result.text).toContain("Short result");
     expect(result.buttons).toBeUndefined();
   });
@@ -302,7 +310,7 @@ describe("buildGraphAnnouncement", () => {
     const gs = createMinimalGraphRunState([
       { nodeId: "A", output: longOutput },
     ]);
-    const result = buildGraphAnnouncement(gs);
+    const result = buildGraphAnnouncement(gs, () => SIGNED_REPORT_CALLBACK);
 
     // Text should be truncated — not contain the full output
     expect(result.text.length).toBeLessThan(longOutput.length);
@@ -314,7 +322,7 @@ describe("buildGraphAnnouncement", () => {
     expect(result.text).toContain("chars");
     // Should have buttons
     expect(result.buttons).toBeDefined();
-    expect(result.buttons![0][0].callback_data).toBe("graph:report:test-graph-id");
+    expect(result.buttons![0][0].callback_data).toBe(SIGNED_REPORT_CALLBACK);
     expect(result.buttons![0][0].text).toContain("Full Report");
   });
 
@@ -329,14 +337,27 @@ describe("buildGraphAnnouncement", () => {
     expect(result.buttons).toBeUndefined();
   });
 
-  it("button callback_data includes correct graphId", () => {
+  it("uses only the callback payload minted by the signed report registry", () => {
     const longOutput = "Analysis ".repeat(500); // ~4500 chars
     const gs = createMinimalGraphRunState([
       { nodeId: "A", output: longOutput },
     ]);
     gs.graphId = "custom-uuid-1234";
+    const result = buildGraphAnnouncement(gs, () => SIGNED_REPORT_CALLBACK);
+    expect(result.buttons![0][0].callback_data).toBe(SIGNED_REPORT_CALLBACK);
+    expect(result.buttons![0][0].callback_data).not.toContain(gs.graphId);
+  });
+
+  it("does not render an unsigned report button when callback registration is unavailable", () => {
+    const gs = createMinimalGraphRunState([
+      { nodeId: "A", output: "Analysis ".repeat(500) },
+    ]);
+
     const result = buildGraphAnnouncement(gs);
-    expect(result.buttons![0][0].callback_data).toBe("graph:report:custom-uuid-1234");
+
+    expect(result.buttons).toBeUndefined();
+    expect(result.text).toContain("Full report is unavailable");
+    expect(result.text).not.toContain("tap below");
   });
 
   it("uses custom maxAnnouncementChars from GraphRunState", () => {
@@ -345,10 +366,302 @@ describe("buildGraphAnnouncement", () => {
       { nodeId: "A", output },
     ]);
     gs.maxAnnouncementChars = 100;
-    const result = buildGraphAnnouncement(gs);
+    const result = buildGraphAnnouncement(gs, () => SIGNED_REPORT_CALLBACK);
     // With threshold of 100, this 200-char output should be truncated
     expect(result.buttons).toBeDefined();
     expect(result.text).toContain("Full report available");
+  });
+});
+
+describe("handleGraphCompletion report ownership and parent identity", () => {
+  function completionDeps(options: { batcher?: { enqueue: ReturnType<typeof vi.fn> } } = {}) {
+    const announceToParent = vi.fn(async () => "rewritten graph result");
+    const sendToChannel = vi.fn(async () => true);
+    const sendGovernedAnnouncement = vi.fn(async () => ok({
+      delivered: true as const,
+      identity: { agentId: "agent-1", rootRunId: "root-1", stepIndex: 1 },
+    }));
+    const registerGraphReportCallback = vi.fn((_registration: GraphReportCallbackRegistration) => ({
+      ok: true as const,
+      value: SIGNED_REPORT_CALLBACK,
+    }));
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+    return {
+      deps: {
+        eventBus: { emit: vi.fn(), on: vi.fn(), off: vi.fn() },
+        announceToParent,
+        sendToChannel,
+        sendGovernedAnnouncement,
+        registerGraphReportCallback,
+        tenantId: "tenant-a",
+        graphRetentionMs: 60_000,
+        activeRunRegistry: { has: vi.fn(() => true) },
+        ...(options.batcher ? { batcher: options.batcher } : {}),
+        logger,
+      } as never,
+      announceToParent,
+      sendToChannel,
+      sendGovernedAnnouncement,
+      registerGraphReportCallback,
+      logger,
+    };
+  }
+
+  it("registers a signed report for the parsed owner and delivers the button to its exact route", async () => {
+    const gs = createMinimalGraphRunState([
+      { nodeId: "final", output: "Analysis ".repeat(500) },
+    ]);
+    gs.completedAt = undefined;
+    gs.callerSessionKey = "tenant-a:user-a:chat-1:thread:topic-1";
+    gs.callerAgentId = "agent-1";
+    gs.announceChannelType = "telegram";
+    gs.announceChannelId = "chat-1";
+    const {
+      deps,
+      registerGraphReportCallback,
+      announceToParent,
+      sendToChannel,
+      sendGovernedAnnouncement,
+    } = completionDeps();
+
+    await handleGraphCompletion({} as never, deps, gs);
+
+    expect(registerGraphReportCallback).toHaveBeenCalledWith(expect.objectContaining({
+      graphId: "test-graph-id",
+      tenantId: "tenant-a",
+      userId: "user-a",
+      sessionKey: "tenant-a:user-a:chat-1:thread:topic-1",
+      agentId: "agent-1",
+      channelType: "telegram",
+      channelKey: "chat-1",
+    }));
+    expect(announceToParent).not.toHaveBeenCalled();
+    expect(sendGovernedAnnouncement).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "agent-1",
+        callerSessionKey: "tenant-a:user-a:chat-1:thread:topic-1",
+        runId: "test-graph-id",
+        channelType: "telegram",
+        channelId: "chat-1",
+        text: expect.any(String),
+        options: {
+        threadId: "topic-1",
+        extra: {
+          buttons: [[{
+            text: expect.stringContaining("Full Report"),
+            callback_data: SIGNED_REPORT_CALLBACK,
+          }]],
+        },
+        },
+      }),
+    );
+    expect(sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds the identical governed report payload after a completion crash", async () => {
+    const sent: CompletionAnnouncementSendRequest[] = [];
+    const makeReportRouter = () => createInteractiveCallbackRouter({
+      gate: { getRequestByShortId: () => undefined } as never,
+      getSecret: () => "test-signing-secret-32-bytes-aaaaaaaaaaaa",
+      clock: { now: () => Date.now() } as never,
+    });
+    const startedAt = Date.now();
+
+    for (const reportRouter of [makeReportRouter(), makeReportRouter()]) {
+      const gs = createMinimalGraphRunState([
+        { nodeId: "final", output: "Analysis ".repeat(500) },
+      ]);
+      gs.completedAt = undefined;
+      gs.startedAt = startedAt;
+      gs.callerSessionKey = "tenant-a:user-a:chat-1:thread:topic-1";
+      gs.callerAgentId = "agent-1";
+      gs.announceChannelType = "telegram";
+      gs.announceChannelId = "chat-1";
+      const {
+        deps,
+        registerGraphReportCallback,
+        sendGovernedAnnouncement,
+      } = completionDeps();
+      registerGraphReportCallback.mockImplementation((registration) =>
+        reportRouter.registerGraphReport(registration)
+      );
+      sendGovernedAnnouncement.mockImplementation(async (request) => {
+        sent.push(request);
+        return ok({
+          delivered: true as const,
+          identity: { agentId: "agent-1", rootRunId: "root-1", stepIndex: 1 },
+        });
+      });
+
+      await expect(handleGraphCompletion({} as never, deps, gs))
+        .resolves.toEqual(ok(undefined));
+    }
+
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toEqual(sent[0]);
+  });
+
+  it("logs a content-safe error when governed report delivery rejects", async () => {
+    const gs = createMinimalGraphRunState([
+      { nodeId: "final", output: "Analysis ".repeat(500) },
+    ]);
+    gs.completedAt = undefined;
+    gs.callerSessionKey = "tenant-a:user-a:chat-1";
+    gs.callerAgentId = "agent-1";
+    gs.announceChannelType = "telegram";
+    gs.announceChannelId = "chat-1";
+    const { deps, sendGovernedAnnouncement, sendToChannel, logger } = completionDeps();
+    sendGovernedAnnouncement.mockResolvedValueOnce(err(
+      new Error("Authorization: Bearer PRIVATE_GRAPH_DELIVERY_SENTINEL"),
+    ));
+
+    const result = await handleGraphCompletion({} as never, deps, gs);
+    expect(result.ok).toBe(false);
+    const failure = logger.error.mock.calls.find((call) =>
+      call[1] === "Graph governed announcement boundary failed"
+    );
+    expect(failure).toBeDefined();
+    expect(JSON.stringify(failure)).not.toContain("PRIVATE_GRAPH_DELIVERY_SENTINEL");
+    expect(sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("governs the deterministic short result without parent or batch execution", async () => {
+    const gs = createMinimalGraphRunState([
+      { nodeId: "final", output: "Short result" },
+    ]);
+    gs.completedAt = undefined;
+    gs.callerSessionKey = "tenant-a:user-a:chat-1:thread:topic-1";
+    gs.callerAgentId = "agent-1";
+    gs.announceChannelType = "telegram";
+    gs.announceChannelId = "chat-1";
+    const batcher = { enqueue: vi.fn(), flush: vi.fn() };
+    const { deps, announceToParent, sendGovernedAnnouncement, sendToChannel } = completionDeps({ batcher });
+
+    const result = await handleGraphCompletion({} as never, deps, gs);
+
+    expect(result).toEqual(ok(undefined));
+    expect(announceToParent).not.toHaveBeenCalled();
+    expect(batcher.enqueue).not.toHaveBeenCalled();
+    expect(batcher.flush).not.toHaveBeenCalled();
+    expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: "agent-1",
+      callerSessionKey: "tenant-a:user-a:chat-1:thread:topic-1",
+      runId: "test-graph-id",
+      channelType: "telegram",
+      channelId: "chat-1",
+      text: expect.stringContaining("Short result"),
+      options: { threadId: "topic-1" },
+    }));
+    expect(sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("keeps plugin channel announcements on the governed extensible path", async () => {
+    const gs = createMinimalGraphRunState([
+      { nodeId: "final", output: "Short result" },
+    ]);
+    gs.completedAt = undefined;
+    gs.callerSessionKey = "tenant-a:user-a:chat-1";
+    gs.callerAgentId = "agent-1";
+    gs.announceChannelType = "custom-plugin";
+    gs.announceChannelId = "chat-1";
+    const batcher = { enqueue: vi.fn() };
+    const { deps, announceToParent, sendGovernedAnnouncement, sendToChannel } = completionDeps({ batcher });
+
+    const result = await handleGraphCompletion({} as never, deps, gs);
+
+    expect(result).toEqual(ok(undefined));
+    expect(batcher.enqueue).not.toHaveBeenCalled();
+    expect(announceToParent).not.toHaveBeenCalled();
+    expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      runId: "test-graph-id",
+      channelType: "custom-plugin",
+      channelId: "chat-1",
+      text: expect.stringContaining("Short result"),
+    }));
+    expect(sendToChannel).not.toHaveBeenCalled();
+  });
+
+  it("does not raw-send or claim delivery when the governed graph send returns false", async () => {
+    const gs = createMinimalGraphRunState([{ nodeId: "final", output: "Short result" }]);
+    gs.completedAt = undefined;
+    gs.callerSessionKey = "tenant-a:user-a:chat-1";
+    gs.callerAgentId = "agent-1";
+    gs.announceChannelType = "telegram";
+    gs.announceChannelId = "chat-1";
+    const { deps, sendGovernedAnnouncement, sendToChannel, logger } = completionDeps();
+    sendGovernedAnnouncement.mockResolvedValueOnce(ok({
+      delivered: false as const,
+      identity: { agentId: "agent-1", rootRunId: "root-1", stepIndex: 1 },
+      failure: "transport_rejected" as const,
+    }));
+
+    const result = await handleGraphCompletion({} as never, deps, gs);
+
+    expect(result).toEqual(ok(undefined));
+    expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
+    expect(sendToChannel).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        graphId: "test-graph-id",
+        failure: "transport_rejected",
+        errorKind: "dependency",
+        hint: expect.any(String),
+      }),
+      "Graph announcement was not receipt-committed",
+    );
+  });
+
+  it("fails closed on an invalid caller key without registering or delivering the report", async () => {
+    const gs = createMinimalGraphRunState([
+      { nodeId: "final", output: "Analysis ".repeat(500) },
+    ]);
+    gs.completedAt = undefined;
+    gs.callerSessionKey = "not-a-formatted-session";
+    gs.callerAgentId = "agent-1";
+    gs.announceChannelType = "telegram";
+    gs.announceChannelId = "chat-1";
+    const {
+      deps,
+      registerGraphReportCallback,
+      announceToParent,
+      sendToChannel,
+      sendGovernedAnnouncement,
+      logger,
+    } = completionDeps();
+
+    const result = await handleGraphCompletion({} as never, deps, gs);
+
+    expect(result.ok).toBe(false);
+    expect(registerGraphReportCallback).not.toHaveBeenCalled();
+    expect(announceToParent).not.toHaveBeenCalled();
+    expect(sendToChannel).not.toHaveBeenCalled();
+    expect(sendGovernedAnnouncement).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "precondition", hint: expect.any(String) }),
+      expect.any(String),
+    );
+  });
+
+  it("fails closed when the declared announcement route differs from the parsed caller session", async () => {
+    const gs = createMinimalGraphRunState([{ nodeId: "final", output: "Short result" }]);
+    gs.completedAt = undefined;
+    gs.callerSessionKey = "tenant-a:user-a:owner-chat";
+    gs.callerAgentId = "agent-1";
+    gs.announceChannelType = "telegram";
+    gs.announceChannelId = "other-chat";
+    const { deps, announceToParent, sendToChannel, sendGovernedAnnouncement } = completionDeps();
+
+    const result = await handleGraphCompletion({} as never, deps, gs);
+
+    expect(result.ok).toBe(false);
+    expect(announceToParent).not.toHaveBeenCalled();
+    expect(sendToChannel).not.toHaveBeenCalled();
+    expect(sendGovernedAnnouncement).not.toHaveBeenCalled();
   });
 });
 

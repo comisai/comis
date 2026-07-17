@@ -80,9 +80,8 @@ import { tgCaps } from "./tg-caps.js";
  * (`webhook-receiver.ts`) enforces it. Exported so the gate's header name is a
  * single source of truth shared by the POST side and the receiver side.
  *
- * ⚠ The PRODUCT does NOT check this header at HEAD — there is no Telegram
- * webhook ingestion route; the gate proven here is the
- * HARNESS-side one. See `webhook-receiver.ts` for the full honest-gap note.
+ * Comis rejects Telegram webhook configuration, so this remains an emulator
+ * fixture contract rather than a product ingress contract.
  */
 export const TELEGRAM_WEBHOOK_SECRET_TOKEN_HEADER = "X-Telegram-Bot-Api-Secret-Token";
 
@@ -96,11 +95,8 @@ export const TELEGRAM_WEBHOOK_SECRET_TOKEN_HEADER = "X-Telegram-Bot-Api-Secret-T
  * trivially unit-testable in isolation (the receiver wraps it with the loopback
  * 200/401 response).
  *
- * This mirrors the discipline a REAL ingestion route must enforce; the product
- * has no such route at HEAD, so this gate lives on the
- * harness side. NOT a timing-safe compare — a test fixture, not production auth
- * (the real grammy `webhookCallback({ secretToken })` owns the production check
- * IF a route is ever added).
+ * This is not a timing-safe comparison because it is a loopback test fixture,
+ * not production authentication.
  */
 export function checkWebhookSecretToken(expected: string, presented: string | undefined): boolean {
   if (presented === undefined) return false;
@@ -386,8 +382,7 @@ export interface TgEmulator extends ChannelEmulator {
    * ⚠ This requires the emulator to be constructed with a `webhook` option (the
    * URL of a {@link createWebhookReceiver}-style target). Calling it without one
    * throws — the webhook-POST mode is opt-in; the default inject path is
-   * unchanged. The PRODUCT has no webhook ingestion route at HEAD — this drives
-   * the harness-side gate, never a real agent delivery.
+   * unchanged. This drives the harness-side gate, never an agent delivery.
    *
    * @param secretOverride when set, POST this token in the header INSTEAD of the
    *   configured `webhook.secret` — so a scenario can drive the WRONG-token and
@@ -522,8 +517,7 @@ export interface TgEmulator extends ChannelEmulator {
  * The webhook-POST configuration. When set, {@link TgEmulator.postWebhookMessage}
  * POSTs the built Update to `url` carrying the `X-Telegram-Bot-Api-Secret-Token:
  * <secret>` header (instead of queuing for `getUpdates`). The `url` is a
- * harness-side receiver (`createWebhookReceiver`), NOT a product ingestion route
- * — Comis has none at HEAD.
+ * harness-side receiver (`createWebhookReceiver`), not a product ingestion route.
  */
 export interface WebhookConfig {
   /** The loopback webhook target the POST mode delivers to (a `createWebhookReceiver` URL). */
@@ -539,7 +533,7 @@ export interface CreateTgEmulatorOptions {
   /**
    * Emulator-side cap on the long-poll block (ms). Defaults to 10s; the
    * scenario's request `timeout` (seconds) is honored but never exceeds this
-   * cap, keeping tests deterministic regardless of the runner's request
+   * cap, keeping tests deterministic regardless of the poller's request
    * timeout.
    */
   readonly maxPollMs?: number;
@@ -556,7 +550,7 @@ export interface CreateTgEmulatorOptions {
 interface PollWaiter {
   /** Resolve the blocked `getUpdates` with the updates now available. */
   resolve: (updates: Update[]) => void;
-  /** The runner's requested `limit` (cap on how many to return). */
+  /** The poller's requested `limit` (cap on how many to return). */
   limit: number;
   /** The ack offset this waiter must respect (serve `update_id >= offset`). */
   offset: number | undefined;
@@ -857,7 +851,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
   // Surfaced via `unimplementedCalls()`.
   const unimplemented: string[] = [];
   // Optionally log the FIRST getUpdates request once
-  // to confirm the offset transport + the runner's timeout by observation. Off
+  // to confirm the offset transport + the poller's timeout by observation. Off
   // by default — only prints when `COMIS_EMULATOR_DEBUG` is set (see
   // serveGetUpdates) — and guarded so it fires at most once per emulator.
   let loggedFirstPoll = false;
@@ -947,8 +941,8 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
     const limit = limitRaw === undefined || limitRaw <= 0 ? 100 : limitRaw;
     const timeoutSec = readNum(body, query, "timeout") ?? 0;
 
-    // One-shot observation of the offset transport + runner timeout so
-    // the REAL grammy runner's transport/timeout can be confirmed by
+    // One-shot observation of the offset transport + polling timeout so
+    // the real grammY polling transport can be confirmed by
     // observation when de-risking. GATED behind `COMIS_EMULATOR_DEBUG`: Node's
     // `console.debug` is NOT suppressed at the default level (it writes to
     // stderr like `console.log`; only the browser console hides `debug`), so an
@@ -1521,7 +1515,7 @@ export function createTgEmulator(opts: CreateTgEmulatorOptions): TgEmulator {
       // the polling inject path is untouched).
       if (webhook === undefined) {
         throw new Error(
-          "postWebhookMessage requires the emulator to be constructed with a `webhook` option (AUTO-05 webhook-POST mode)",
+          "postWebhookMessage requires the emulator to be constructed with a webhook option",
         );
       }
       const messageId = nextMessageId++;

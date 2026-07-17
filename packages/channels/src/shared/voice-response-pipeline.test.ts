@@ -42,7 +42,9 @@ vi.mock("./voice-sender.js", () => ({
 }));
 
 import { prepareVoicePayload } from "./voice-sender.js";
+import { writeFile } from "node:fs/promises";
 const mockPrepareVoicePayload = vi.mocked(prepareVoicePayload);
+const mockWriteFile = vi.mocked(writeFile);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -106,7 +108,10 @@ function createMockCtx(
       attachments: [{ type: "audio", isVoiceNote: true }],
     },
     adapter: {
-      sendAttachment: vi.fn().mockResolvedValue(ok({})),
+      sendAttachment: vi.fn().mockResolvedValue(ok({
+        kind: "tracked",
+        messageId: "voice-message-1",
+      })),
     },
     channelType: "telegram",
     channelId: "chat-123",
@@ -121,6 +126,8 @@ function createMockCtx(
 describe("executeVoiceResponse", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockWriteFile.mockReset().mockResolvedValue(undefined);
+    mockPrepareVoicePayload.mockReset();
     mockPrepareVoicePayload.mockResolvedValue(
       ok({
         oggPath: "/tmp/comis-media/voice-abc.ogg",
@@ -174,6 +181,105 @@ describe("executeVoiceResponse", () => {
     );
   });
 
+  it("stops before temp-file and attachment side effects when aborted during synthesis", async () => {
+    const controller = new AbortController();
+    const deps = createMockDeps({
+      ttsAdapter: {
+        synthesize: vi.fn(async () => {
+          controller.abort("queue_aborted");
+          return ok({ audio: Buffer.from("audio-data"), mimeType: "audio/opus" });
+        }),
+      },
+    });
+    const ctx = createMockCtx({ signal: controller.signal });
+
+    const result = await executeVoiceResponse(deps, ctx);
+
+    expect(result).toEqual(ok({ voiceSent: false }));
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(mockPrepareVoicePayload).not.toHaveBeenCalled();
+    expect(ctx.adapter.sendAttachment).not.toHaveBeenCalled();
+  });
+
+  it("stops before conversion and attachment side effects when aborted during temp write", async () => {
+    const controller = new AbortController();
+    mockWriteFile.mockImplementationOnce(async () => {
+      controller.abort("queue_aborted");
+    });
+    const ctx = createMockCtx({ signal: controller.signal });
+
+    const result = await executeVoiceResponse(createMockDeps(), ctx);
+
+    expect(result).toEqual(ok({ voiceSent: false }));
+    expect(mockPrepareVoicePayload).not.toHaveBeenCalled();
+    expect(ctx.adapter.sendAttachment).not.toHaveBeenCalled();
+  });
+
+  it("stops before attachment send when aborted during voice payload preparation", async () => {
+    const controller = new AbortController();
+    mockPrepareVoicePayload.mockImplementationOnce(async () => {
+      controller.abort("queue_aborted");
+      return ok({
+        oggPath: "/tmp/comis-media/voice-abc.ogg",
+        durationSecs: 5,
+        waveformBase64: "AQID",
+        codecVerified: true,
+      });
+    });
+    const ctx = createMockCtx({ signal: controller.signal });
+
+    const result = await executeVoiceResponse(createMockDeps(), ctx);
+
+    expect(result).toEqual(ok({ voiceSent: false }));
+    expect(ctx.adapter.sendAttachment).not.toHaveBeenCalled();
+  });
+
+  it("returns the real platform attachment message id with a successful voice send", async () => {
+    const deps = createMockDeps();
+    const ctx = createMockCtx({
+      adapter: {
+        sendAttachment: vi.fn().mockResolvedValue(ok({
+          kind: "tracked",
+          messageId: "voice-platform-123",
+        })),
+      },
+    });
+
+    const result = await executeVoiceResponse(deps, ctx);
+
+    expect(result).toEqual(ok({
+      voiceSent: true,
+      receipt: { kind: "tracked", messageId: "voice-platform-123" },
+      cleanedText: undefined,
+    }));
+  });
+
+  it("does not fall back to duplicate text when voice was delivered without tracking", async () => {
+    const deps = createMockDeps();
+    const ctx = createMockCtx({
+      adapter: {
+        sendAttachment: vi.fn().mockResolvedValue(ok({
+          kind: "delivered_untracked",
+        })),
+      },
+    });
+
+    const result = await executeVoiceResponse(deps, ctx);
+
+    expect(result).toEqual(ok({
+      voiceSent: true,
+      receipt: { kind: "delivered_untracked" },
+      cleanedText: undefined,
+    }));
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("Do not retry"),
+        errorKind: "platform",
+      }),
+      "Voice attachment delivered without platform tracking",
+    );
+  });
+
   // Handles TTS synthesis failure gracefully
   it("should return voiceSent:false on TTS synthesis failure (not error)", async () => {
     const deps = createMockDeps({
@@ -196,6 +302,58 @@ describe("executeVoiceResponse", () => {
         errorKind: "dependency",
       }),
       "TTS synthesis failed",
+    );
+  });
+
+  it("falls back to text when TTS synthesis rejects", async () => {
+    const deps = createMockDeps({
+      ttsAdapter: {
+        synthesize: vi.fn().mockRejectedValue(new Error("provider rejected")),
+      },
+    });
+
+    const result = await executeVoiceResponse(deps, createMockCtx());
+
+    expect(result).toEqual(ok({ voiceSent: false, cleanedText: undefined }));
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "dependency",
+        hint: "TTS synthesis failed; falling back to text-only response",
+      }),
+      "TTS synthesis failed",
+    );
+  });
+
+  it("falls back to text when writing synthesized audio rejects", async () => {
+    mockWriteFile.mockRejectedValueOnce(new Error("temp storage rejected"));
+    const deps = createMockDeps();
+
+    const result = await executeVoiceResponse(deps, createMockCtx());
+
+    expect(result).toEqual(ok({ voiceSent: false, cleanedText: undefined }));
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "resource",
+        hint: "Writing synthesized audio failed; falling back to text-only response",
+      }),
+      "TTS temp file write failed",
+    );
+    expect(mockPrepareVoicePayload).not.toHaveBeenCalled();
+  });
+
+  it("falls back to text when voice payload preparation rejects", async () => {
+    mockPrepareVoicePayload.mockRejectedValueOnce(new Error("converter rejected"));
+    const deps = createMockDeps();
+
+    const result = await executeVoiceResponse(deps, createMockCtx());
+
+    expect(result).toEqual(ok({ voiceSent: false, cleanedText: undefined }));
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "dependency",
+        hint: "Voice payload preparation failed; falling back to text-only response",
+      }),
+      "Voice payload preparation failed",
     );
   });
 
@@ -333,9 +491,48 @@ describe("executeVoiceResponse", () => {
     expect(deps.logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         hint: "Voice attachment send failed; falling back to text-only response",
-        errorKind: "network",
+        errorKind: "platform",
       }),
       "Voice attachment send failed",
+    );
+  });
+
+  it("falls back to text when voice attachment sending rejects", async () => {
+    const deps = createMockDeps();
+    const ctx = createMockCtx({
+      adapter: {
+        sendAttachment: vi.fn().mockRejectedValue(new Error("platform rejected")),
+      },
+    });
+
+    const result = await executeVoiceResponse(deps, ctx);
+
+    expect(result).toEqual(ok({ voiceSent: false, cleanedText: undefined }));
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "platform",
+        hint: "Voice attachment send failed; falling back to text-only response",
+      }),
+      "Voice attachment send failed",
+    );
+  });
+
+  it("falls back to text when the media semaphore rejects", async () => {
+    const deps = createMockDeps({
+      mediaSemaphore: {
+        run: vi.fn().mockRejectedValue(new Error("semaphore rejected")),
+      },
+    });
+
+    const result = await executeVoiceResponse(deps, createMockCtx());
+
+    expect(result).toEqual(ok({ voiceSent: false, cleanedText: undefined }));
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "internal",
+        hint: "Voice processing failed unexpectedly; falling back to text-only response",
+      }),
+      "Voice response pipeline failed",
     );
   });
 

@@ -38,6 +38,7 @@ import {
   assembleIncidentReportOffline,
   assembleFleetHealthReportOffline,
   resolveOfflineDataDir,
+  resolveOfflineTrajectoryDir,
   resolveSessionFileOffline,
   readAuditSummaryOffline,
   suggestWorstSessionOffline,
@@ -64,6 +65,53 @@ describe("resolveOfflineDataDir", () => {
   it("falls back to <homedir>/.comis when COMIS_DATA_DIR is unset", () => {
     delete process.env.COMIS_DATA_DIR;
     expect(resolveOfflineDataDir()).toBe(safePath(os.homedir(), ".comis"));
+  });
+});
+
+describe("resolveOfflineTrajectoryDir", () => {
+  const previousConfigPaths = process.env.COMIS_CONFIG_PATHS;
+  const previousTrajectoryDir = process.env.COMIS_TRAJECTORY_DIR;
+
+  afterEach(() => {
+    if (previousConfigPaths === undefined) delete process.env.COMIS_CONFIG_PATHS;
+    else process.env.COMIS_CONFIG_PATHS = previousConfigPaths;
+    if (previousTrajectoryDir === undefined) delete process.env.COMIS_TRAJECTORY_DIR;
+    else process.env.COMIS_TRAJECTORY_DIR = previousTrajectoryDir;
+  });
+
+  it("uses the effective diagnostics trajectory root ahead of the environment fallback", () => {
+    const dataDir = tmpDataDir();
+    const configuredDir = path.join(dataDir, "configured-trajectories");
+    const configPath = path.join(dataDir, "config.yaml");
+    fs.writeFileSync(
+      configPath,
+      `diagnostics:\n  trajectory:\n    dir: ${configuredDir}\n`,
+      "utf8",
+    );
+    process.env.COMIS_CONFIG_PATHS = configPath;
+    process.env.COMIS_TRAJECTORY_DIR = path.join(dataDir, "environment-trajectories");
+
+    expect(resolveOfflineTrajectoryDir(dataDir)).toBe(configuredDir);
+  });
+
+  it("uses the trajectory environment root when no readable config exists", () => {
+    const dataDir = tmpDataDir();
+    const trajectoryDir = path.join(dataDir, "environment-trajectories");
+    process.env.COMIS_CONFIG_PATHS = path.join(dataDir, "missing.yaml");
+    process.env.COMIS_TRAJECTORY_DIR = trajectoryDir;
+
+    expect(resolveOfflineTrajectoryDir(dataDir)).toBe(trajectoryDir);
+  });
+
+  it("treats an empty configured trajectory root like the runtime path resolver", () => {
+    const dataDir = tmpDataDir();
+    const trajectoryDir = path.join(dataDir, "environment-trajectories");
+    const configPath = path.join(dataDir, "config.yaml");
+    fs.writeFileSync(configPath, "diagnostics:\n  trajectory:\n    dir: ''\n", "utf8");
+    process.env.COMIS_CONFIG_PATHS = configPath;
+    process.env.COMIS_TRAJECTORY_DIR = trajectoryDir;
+
+    expect(resolveOfflineTrajectoryDir(dataDir)).toBe(trajectoryDir);
   });
 });
 

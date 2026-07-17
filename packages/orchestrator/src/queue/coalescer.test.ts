@@ -65,6 +65,60 @@ describe("coalesceMessages", () => {
     );
   });
 
+  it("preserves every physical inbound identity and body across nested coalescing", () => {
+    const first = createMockMessage("first exact body", {
+      id: "11111111-1111-4111-8111-111111111111",
+      channelId: "chat-a",
+      channelType: "telegram",
+      senderId: "sender-a",
+      timestamp: 1_750_000_000_001,
+    });
+    const second = createMockMessage("second exact body", {
+      id: "22222222-2222-4222-8222-222222222222",
+      channelId: "chat-a",
+      channelType: "telegram",
+      senderId: "sender-b",
+      timestamp: 1_750_000_000_002,
+    });
+    const third = createMockMessage("third exact body", {
+      id: "33333333-3333-4333-8333-333333333333",
+      channelId: "chat-a",
+      channelType: "telegram",
+      senderId: "sender-c",
+      timestamp: 1_750_000_000_003,
+    });
+
+    const debounceBatch = coalesceMessages([first, second]);
+    const queueBatch = coalesceMessages([debounceBatch, third]);
+
+    expect(queueBatch.originalMessages).toEqual([
+      {
+        id: first.id,
+        channelId: first.channelId,
+        channelType: first.channelType,
+        senderId: first.senderId,
+        text: first.text,
+        timestamp: first.timestamp,
+      },
+      {
+        id: second.id,
+        channelId: second.channelId,
+        channelType: second.channelType,
+        senderId: second.senderId,
+        text: second.text,
+        timestamp: second.timestamp,
+      },
+      {
+        id: third.id,
+        channelId: third.channelId,
+        channelType: third.channelType,
+        senderId: third.senderId,
+        text: third.text,
+        timestamp: third.timestamp,
+      },
+    ]);
+  });
+
   it("merges metadata with later values overriding earlier", () => {
     const msg1 = createMockMessage("first", {
       metadata: { key1: "val1", shared: "old" },

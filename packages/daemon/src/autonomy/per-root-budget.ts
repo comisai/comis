@@ -31,7 +31,7 @@
  *
  * @module
  */
-import type { ClockPort, ComisLogger } from "@comis/core";
+import type { ClockPort, ComisLogger, DurableRootBudget } from "@comis/core";
 import {
   checkSpendCeiling,
   createSpendAccumulator,
@@ -51,6 +51,10 @@ export interface PerRootBudget {
    * deadline measures from the FIRST registration, not the latest call).
    */
   registerRoot(rootRunId: string): void;
+  /** Export the absolute state persisted in every durable sibling row. */
+  exportState(rootRunId: string): DurableRootBudget;
+  /** Merge persisted absolute state without double-adding sibling checkpoints. */
+  rehydrate(rootRunId: string, state: DurableRootBudget): void;
   /**
    * Evict a completed root's accounting: drop its wall-clock anchor and
    * running token total so a `for(;;) spawn()` / cron storm of distinct roots
@@ -147,6 +151,7 @@ export function createPerRootBudget(deps: {
   // Per-root wall-clock anchors + token running totals.
   const rootStartMs = new Map<string, number>();
   const tokenTotals = new Map<string, number>();
+  const usdTotals = new Map<string, number>();
 
   // Pre-trip warn threshold + the once-per-(root,limb) guards. Cleared on
   // evictRoot so a re-registered root warns afresh.
@@ -189,6 +194,39 @@ export function createPerRootBudget(deps: {
     registerRoot(rootRunId): void {
       if (!rootStartMs.has(rootRunId)) {
         rootStartMs.set(rootRunId, clock.now());
+      }
+    },
+
+    exportState(rootRunId): DurableRootBudget {
+      let startedAtMs = rootStartMs.get(rootRunId);
+      if (startedAtMs === undefined) {
+        startedAtMs = clock.now();
+        rootStartMs.set(rootRunId, startedAtMs);
+      }
+      return {
+        startedAtMs,
+        tokensConsumed: tokenTotals.get(rootRunId) ?? 0,
+        usdConsumed: usdTotals.get(rootRunId) ?? 0,
+      };
+    },
+
+    rehydrate(rootRunId, state): void {
+      const currentStart = rootStartMs.get(rootRunId);
+      rootStartMs.set(
+        rootRunId,
+        currentStart === undefined ? state.startedAtMs : Math.min(currentStart, state.startedAtMs),
+      );
+      tokenTotals.set(
+        rootRunId,
+        Math.max(tokenTotals.get(rootRunId) ?? 0, state.tokensConsumed),
+      );
+      const currentUsd = usdTotals.get(rootRunId) ?? 0;
+      if (state.usdConsumed > currentUsd) {
+        perRootUsdAccumulator.recordSpend(
+          { tenantId: "_root", agentId: rootRunId },
+          state.usdConsumed - currentUsd,
+        );
+        usdTotals.set(rootRunId, state.usdConsumed);
       }
     },
 
@@ -263,7 +301,10 @@ export function createPerRootBudget(deps: {
       // The granted-reserve warn from the 3-state gate (post-reserve fraction
       // >= WARN_FRACTION) is the $-limb's pre-trip signal.
       if (outcome.kind === "ok" && outcome.warn !== null && outcome.warn !== undefined) {
+        usdTotals.set(rootRunId, (usdTotals.get(rootRunId) ?? 0) + estUsd);
         warnLimb(rootRunId, "aggregateUsd", outcome.warn.totalUsd, outcome.warn.capUsd, "usd");
+      } else if (outcome.kind === "ok") {
+        usdTotals.set(rootRunId, (usdTotals.get(rootRunId) ?? 0) + estUsd);
       }
       // Brand a $-limb trip with its limb identity. The gate's SpendError is
       // shared with the daemon-wide observability.spend ceiling and carries no
@@ -305,7 +346,7 @@ export function createPerRootBudget(deps: {
       // recorded (priced) spend. The scope key is `_root ${rootRunId}` (the
       // `${tenantId} ${agentId}` format `agentKeyOf` uses, tenantId "_root"). A
       // REAL number, so the read matches the gate.
-      const usedUsd = perRootUsdAccumulator.getSnapshot().perAgent.get(`_root ${rootRunId}`) ?? 0;
+      const usedUsd = usdTotals.get(rootRunId) ?? 0;
       return {
         tokensRemaining: Math.max(0, config.tokens - usedTokens),
         wallClockMsRemaining: Math.max(0, config.wallClockMs - elapsedMs),

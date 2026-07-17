@@ -14,7 +14,7 @@
 
 import type Database from "better-sqlite3";
 import { z } from "zod";
-import { err, tryCatch } from "@comis/shared";
+import { err, ok, tryCatch } from "@comis/shared";
 import type { Result } from "@comis/shared";
 import type {
   SecretStorePort,
@@ -22,7 +22,12 @@ import type {
   SecretsCrypto,
   EncryptedSecret,
 } from "@comis/core";
-import { initSecretSchema, validateCanary, CANARY_NAME } from "./secret-store-schema.js";
+import {
+  initSecretSchema,
+  validateCanary,
+  CANARY_NAME,
+  EncryptedSecretProjectionSchema,
+} from "./secret-store-schema.js";
 import { openSqliteDatabase, chmodDbFiles } from "./sqlite-adapter-base.js";
 import { systemNowMs } from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
@@ -38,6 +43,7 @@ const decryptAllRowMapper = createRowMapper(
     salt: z.instanceof(Buffer),
   }),
 );
+const encryptedSecretProjectionMapper = createRowMapper(EncryptedSecretProjectionSchema);
 // list: returns secret metadata rows.
 const secretListRowMapper = createRowMapper(
   z.strictObject({
@@ -173,30 +179,21 @@ export function createSqliteSecretStore(
     },
 
     getDecrypted(name: string): Result<string | undefined, Error> {
-      return tryCatch(() => {
-        const row = getStmt.get(name) as
-          | { ciphertext: Buffer; iv: Buffer; auth_tag: Buffer; salt: Buffer }
-          | undefined;
+      const readResult = tryCatch(() => getStmt.get(name));
+      if (!readResult.ok) return readResult;
 
-        if (!row) {
-          return undefined;
-        }
+      const parsed = encryptedSecretProjectionMapper.parseOptionalRow(readResult.value);
+      if (!parsed.ok) return err(new Error(`Row validation failed at ${parsed.error.path}`));
+      const row = parsed.value;
+      if (!row) return ok(undefined);
 
-        // Reconstruct EncryptedSecret from BLOB columns
-        const encrypted: EncryptedSecret = {
-          ciphertext: row.ciphertext,
-          iv: row.iv,
-          authTag: row.auth_tag,
-          salt: row.salt,
-        };
-
-        const decryptResult = crypto.decrypt(encrypted);
-        if (!decryptResult.ok) {
-          throw decryptResult.error;
-        }
-
-        return decryptResult.value;
-      });
+      const encrypted: EncryptedSecret = {
+        ciphertext: row.ciphertext,
+        iv: row.iv,
+        authTag: row.auth_tag,
+        salt: row.salt,
+      };
+      return crypto.decrypt(encrypted);
     },
 
     decryptAll(): Result<Map<string, string>, Error> {

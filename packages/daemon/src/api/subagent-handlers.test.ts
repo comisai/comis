@@ -136,6 +136,7 @@ describe("createSubagentHandlers", () => {
     expect(deps.subAgentRunner.spawn).toHaveBeenCalledWith({
       task: "new task description",
       agentId: "researcher",
+      callerType: "agent",
       callerSessionKey: "default:user1:channel1",
       callerAgentId: "parent-agent",
     });
@@ -228,6 +229,7 @@ describe("createSubagentHandlers", () => {
       expect(deps.subAgentRunner.spawn).toHaveBeenCalledWith({
         task: "new task description",
         agentId: "researcher",
+        callerType: "agent",
         callerSessionKey: "default:user1:channel1",
         callerAgentId: "parent-agent",
       });

@@ -67,7 +67,7 @@ import {
   type ExecuteSubAgentDeps,
 } from "./setup-cross-session-graph.js";
 import { createWorktreeRegistry } from "../setup-worktree-sweep.js";
-import { SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+import { runWithContext, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
 
 describe("setup-cross-session-graph", () => {
   it("buildExecuteSubAgent: exported as a callable function", () => {
@@ -243,6 +243,73 @@ describe("setup-cross-session-graph", () => {
 
       expect(executor.execute).toHaveBeenCalledOnce();
       expect(capturedOverrides[0].tokenBudget).toBeUndefined();
+    });
+
+    it("binds child tool assembly to the exact child session and inherited delivery origin", async () => {
+      const { deps } = makeGraphDeps({});
+      const executeSubAgent = buildExecuteSubAgent(deps);
+      const deliveryOrigin = Object.freeze({
+        channelType: "telegram",
+        channelId: "chan-1",
+        userId: "user-1",
+        tenantId: "t-1",
+        threadId: "topic-1",
+      });
+
+      await runWithContext({
+        tenantId: "t-1",
+        userId: "user-1",
+        sessionKey: "t-1:user-1:parent-channel:thread:topic-1",
+        agentId: "parent-agent",
+        traceId: "30000000-0000-4000-8000-000000000003",
+        startedAt: 1_700_000_000_000,
+        trustLevel: "user",
+        channelType: "telegram",
+        deliveryOrigin,
+      }, () => executeSubAgent(
+        "agent-2",
+        { ...sessionKey, threadId: "topic-1" } as Parameters<typeof executeSubAgent>[1],
+        "task",
+      ));
+
+      expect(deps.assembleToolsForAgent).toHaveBeenCalledWith("agent-2", expect.objectContaining({
+        sessionKey: { ...sessionKey, threadId: "topic-1" },
+        requesterOrigin: deliveryOrigin,
+      }));
+    });
+
+    it("threads the authenticated parent lease and capability ceiling into child tool assembly", async () => {
+      const { deps } = makeGraphDeps({});
+      const executeSubAgent = buildExecuteSubAgent(deps);
+      const onAssemblyAuthority = vi.fn();
+
+      await executeSubAgent(
+        "agent-2",
+        sessionKey as Parameters<typeof executeSubAgent>[1],
+        "task",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          rootRunId: "root-parent",
+          parentLeaseId: "lease-parent",
+          parentCaps: ["orch:read"],
+          onAssemblyAuthority,
+        },
+      );
+
+      expect(deps.assembleToolsForAgent).toHaveBeenCalledWith(
+        "agent-2",
+        expect.objectContaining({
+          autonomyParent: {
+            rootRunId: "root-parent",
+            leaseId: "lease-parent",
+            caps: ["orch:read"],
+          },
+          onAutonomyAssembly: onAssemblyAuthority,
+        }),
+      );
     });
   });
 

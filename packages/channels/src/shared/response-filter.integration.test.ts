@@ -20,7 +20,9 @@ import { filterResponse, NO_REPLY_TOKEN, type FilterResult } from "./response-fi
 // ---------------------------------------------------------------------------
 
 interface SuppressionEvent {
+  channelType: string;
   channelId: string;
+  sourceMessageId: string;
   suppressedBy: string;
   timestamp: number;
 }
@@ -35,7 +37,11 @@ interface DeliveredMessage {
  * Simulated delivery pipeline that mirrors channel-manager's response handling.
  * Records delivered messages and suppression events for assertion.
  */
-function createDeliveryPipeline(channelId = "test-channel") {
+function createDeliveryPipeline(
+  channelId = "test-channel",
+  channelType = "telegram",
+  sourceMessageId = "source-message",
+) {
   const delivered: DeliveredMessage[] = [];
   const suppressed: SuppressionEvent[] = [];
   const events: Array<{ type: string; payload: unknown }> = [];
@@ -52,12 +58,16 @@ function createDeliveryPipeline(channelId = "test-channel") {
     if (!filter.shouldDeliver) {
       // Record suppression (mirrors channel-manager event emission)
       suppressed.push({
+        channelType,
         channelId,
+        sourceMessageId,
         suppressedBy: filter.suppressedBy!,
         timestamp: Date.now(),
       });
       eventEmitter.emit("response:filtered", {
+        channelType,
         channelId,
+        sourceMessageId,
         suppressedBy: filter.suppressedBy,
         timestamp: Date.now(),
       });
@@ -236,6 +246,7 @@ describe("response filter integration", () => {
       "response:filtered",
       expect.objectContaining({
         channelId: "ch-events",
+        sourceMessageId: "source-message",
         suppressedBy: "NO_REPLY",
       }),
     );

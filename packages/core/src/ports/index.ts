@@ -12,6 +12,7 @@ export type {
   FetchMessagesOptions,
   FetchedMessage,
   AttachmentPayload,
+  AttachmentSendReceipt,
   ReconcileSendQuery,
   ReconcileSendOutcome,
 } from "./channel.js";

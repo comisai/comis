@@ -353,6 +353,30 @@ describe("connectServer — stdio failure diagnosability", () => {
     expect(result.error.message).toContain("[REDACTED]");
   });
 
+  it("keeps raw SDK errors and child stderr out of the structured failure log", async () => {
+    const state = makeState();
+    const rawSdkMessage = "RAW_SDK_CONNECT_MESSAGE_DO_NOT_LOG";
+    const rawChildStderr = "RAW_CHILD_STDERR_MESSAGE_DO_NOT_LOG";
+    connectImpl = () => {
+      state.lastStderr.set("svc", rawChildStderr);
+      return Promise.reject(new Error(rawSdkMessage));
+    };
+    const logger = makeLogger();
+    const { bus } = makeBus();
+    const deps = { logger, eventBus: bus } as unknown as McpClientManagerDeps;
+
+    await connectServer(state, deps, STDIO_CONFIG);
+
+    expect(logger.error).toHaveBeenCalledOnce();
+    const logged = JSON.stringify(logger.error.mock.calls[0]);
+    expect(logged).not.toContain(rawSdkMessage);
+    expect(logged).not.toContain(rawChildStderr);
+    expect(logger.error.mock.calls[0]![0]).toEqual(expect.objectContaining({
+      reason: "server_exited",
+      stderrBytes: Buffer.byteLength(rawChildStderr),
+    }));
+  });
+
   it("emits mcp:server:connect_failed with reason server_exited on a stdio crash", async () => {
     const state = makeState();
     connectImpl = () => {

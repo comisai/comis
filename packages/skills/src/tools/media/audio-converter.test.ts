@@ -116,9 +116,12 @@ describe("AudioConverter", () => {
       ]);
     });
 
-    it("returns err when ffmpeg fails", async () => {
-      const ffmpegError = new Error("ffmpeg encode failed");
-      (ffmpegError as unknown as { stderr: string }).stderr = "Error: codec not found";
+    it("returns err when ffmpeg fails without logging error or stderr content", async () => {
+      const rawError = "RAW_FFMPEG_ERROR_DO_NOT_LOG";
+      const rawStderr = "RAW_FFMPEG_STDERR_DO_NOT_LOG";
+      const ffmpegError = new Error(rawError);
+      (ffmpegError as unknown as { stderr: string; code: number }).stderr = rawStderr;
+      (ffmpegError as unknown as { code: number }).code = 1;
 
       mockExecFile.mockImplementation(
         (
@@ -136,16 +139,21 @@ describe("AudioConverter", () => {
 
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.error.message).toBe("ffmpeg encode failed");
+      expect(result.error.message).toBe(rawError);
 
       // Verify logger.error was called with hint and errorKind
       expect(logger.error).toHaveBeenCalledWith(
         expect.objectContaining({
           hint: expect.stringContaining("ffmpeg failed to convert audio"),
           errorKind: "dependency",
+          failureClass: "nonzero_exit",
+          stderrBytes: Buffer.byteLength(rawStderr),
         }),
         "ffmpeg process failed",
       );
+      const logged = JSON.stringify(logger.error.mock.calls);
+      expect(logged).not.toContain(rawError);
+      expect(logged).not.toContain(rawStderr);
     });
 
     it("logs conversion details at DEBUG", async () => {

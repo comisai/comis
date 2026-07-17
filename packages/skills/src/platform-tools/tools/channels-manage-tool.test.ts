@@ -23,10 +23,15 @@ function makeContext(trustLevel: "admin" | "user" | "guest"): RequestContext {
   return {
     tenantId: "default",
     userId: "test-user",
-    sessionKey: "test-session",
+    agentId: "test-agent",
+    sessionKey: "default:test-user:chat-1",
     traceId: crypto.randomUUID(),
     startedAt: Date.now(),
     trustLevel,
+    channelType: "telegram",
+    deliveryOrigin: Object.freeze({
+      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+    }),
   };
 }
 
@@ -168,6 +173,7 @@ describe("channels_manage tool", () => {
         expect.objectContaining({
           toolName: "channels_manage",
           action: "channels.enable",
+          agentId: "test-agent",
         }),
       );
       expect(mockRpcCall).toHaveBeenCalledWith("channels.enable", { channel_type: "telegram", _trustLevel: "admin" });
@@ -215,6 +221,7 @@ describe("channels_manage tool", () => {
         expect.objectContaining({
           toolName: "channels_manage",
           action: "channels.disable",
+          agentId: "test-agent",
         }),
       );
       expect(mockRpcCall).toHaveBeenCalledWith("channels.disable", { channel_type: "telegram", _trustLevel: "admin" });
@@ -262,6 +269,7 @@ describe("channels_manage tool", () => {
         expect.objectContaining({
           toolName: "channels_manage",
           action: "channels.restart",
+          agentId: "test-agent",
         }),
       );
       expect(mockRpcCall).toHaveBeenCalledWith("channels.restart", { channel_type: "telegram", _trustLevel: "admin" });
@@ -330,6 +338,7 @@ describe("channels_manage tool", () => {
         expect.objectContaining({
           toolName: "channels_manage",
           action: "channels.configure",
+          agentId: "test-agent",
         }),
       );
       // Verify result

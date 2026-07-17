@@ -11,7 +11,7 @@
  */
 
 import type { ChannelPort, NormalizedMessage, SessionKey, AutoReplyEngineConfig } from "@comis/core";
-import { formatSessionKey, systemNowMs } from "@comis/core";
+import { emitObservationalEventSafely, formatSessionKey, systemNowMs } from "@comis/core";
 // Command parsers/matchers live inside this orchestrator package; use local
 // relative imports so the gate does not pull them via @comis/agent.
 import { parseSlashCommand } from "../commands/index.js";
@@ -21,6 +21,9 @@ import { evaluateAutoReply, isGroupMessage } from "@comis/channels";
 import { matchesResetTrigger } from "./inbound-pipeline.js";
 import type { SendOverrideStore } from "@comis/channels";
 import { handleExportTrajectory } from "../commands/export-trajectory.js";
+import { approvalRequestIsOwnedByInbound } from "../approval/index.js";
+import type { InboundCallback } from "../approval/index.js";
+import type { SourceTerminalScope } from "../source-message-terminal.js";
 
 // ---------------------------------------------------------------------------
 // Deps narrowing
@@ -37,6 +40,7 @@ export type GateDeps = Pick<
   | "getResetTriggers"
   | "approvalGate"
   | "interactiveCallbackRouter"
+  | "onGraphReportRequest"
   | "handleConfigCommand"
   | "handleSlashCommand"
   | "activeRunRegistry"
@@ -62,6 +66,67 @@ export type GateDecision =
   | { action: "handled" }
   | { action: "skip" };
 
+/** Route a signed platform callback after principal resolution but before chat activation policy. */
+async function routeInteractiveCallback(
+  deps: GateDeps,
+  adapter: ChannelPort,
+  msg: NormalizedMessage,
+  sessionKey: SessionKey,
+  agentId: string,
+): Promise<boolean> {
+  if (
+    msg.metadata?.isButtonCallback !== true
+    || typeof msg.metadata.callbackData !== "string"
+    || deps.interactiveCallbackRouter === undefined
+  ) return false;
+
+  const routed = await deps.interactiveCallbackRouter.route({
+    tenantId: sessionKey.tenantId,
+    channelType: adapter.channelType,
+    channelKey: msg.channelId,
+    ...(sessionKey.threadId === undefined ? {} : { threadId: sessionKey.threadId }),
+    agentId,
+    sessionKey: formatSessionKey(sessionKey),
+    rawData: msg.metadata.callbackData,
+    inboundUserId: msg.senderId,
+  });
+  const resolution = routed.ok ? routed.value : { kind: "unknown" as const };
+  switch (resolution.kind) {
+    case "resolved":
+    case "details_requested":
+      break;
+    case "graph_report_requested":
+      if (deps.onGraphReportRequest) {
+        await deps.onGraphReportRequest(
+          resolution.graphId,
+          adapter.channelType,
+          msg.channelId,
+          adapter,
+          sessionKey.threadId,
+        );
+        break;
+      }
+      await deps.deliveryService.deliverToChannel(
+        adapter, msg.channelId,
+        "This report is no longer available.",
+        { skipChunking: true },
+      );
+      break;
+    case "malformed":
+    case "invalid_signature":
+    case "expired":
+    case "unknown":
+    case "ambiguous":
+      await deps.deliveryService.deliverToChannel(
+        adapter, msg.channelId,
+        "This callback is no longer valid (it may have already been resolved or expired).",
+        { skipChunking: true },
+      );
+      break;
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Gate function
 // ---------------------------------------------------------------------------
@@ -82,8 +147,16 @@ export async function evaluateInboundGate(
   sessionKey: SessionKey,
   agentId: string,
   sendOverrides: SendOverrideStore,
+  sourceTerminalScope?: SourceTerminalScope,
 ): Promise<GateDecision> {
   let msg = processedMsg;
+
+  // Sender allowlists and principal/session resolution run in the outer inbound
+  // pipeline before this gate. Callback verification belongs before auto-reply:
+  // a legitimate button in a mention-gated group is control input, not chat history.
+  if (await routeInteractiveCallback(deps, adapter, msg, sessionKey, agentId)) {
+    return { action: "handled" };
+  }
 
   // -------------------------------------------------------------------
   // AUTO-REPLY ENGINE GATE
@@ -105,7 +178,7 @@ export async function evaluateInboundGate(
     const decision = evaluateAutoReply(msg, arConfig, isGroup);
 
     if (decision.action === "activate") {
-      deps.eventBus.emit("autoreply:activated", {
+      emitObservationalEventSafely(deps, "autoreply:activated", {
         channelId: msg.channelId,
         senderId: msg.senderId,
         activationMode: arConfig.groupActivation,
@@ -114,7 +187,7 @@ export async function evaluateInboundGate(
       });
       // Continue to routing + execution below
     } else if (decision.action === "inject-history") {
-      deps.eventBus.emit("autoreply:suppressed", {
+      emitObservationalEventSafely(deps, "autoreply:suppressed", {
         channelId: msg.channelId,
         senderId: msg.senderId,
         reason: decision.reason,
@@ -142,15 +215,21 @@ export async function evaluateInboundGate(
 
       // Route history injection through command queue for serialization
       if (deps.commandQueue) {
-        const historyEnqueueResult = await deps.commandQueue.enqueue(sessionKey, msg, adapter.channelType, async () => {
-          // No-op execution: serialized with concurrent executions via queue.
-          // Lightweight save to append message as history context.
-          const existing = deps.sessionManager.loadOrCreate(sessionKey);
-          deps.sessionManager.save(sessionKey, [
-            ...existing.slice(-(arConfig.maxHistoryInjections - 1)),
-            { role: "user" as const, content: `[${msg.senderId}]: ${msg.text ?? ""}` },
-          ]);
-        });
+        const historyEnqueueResult = await deps.commandQueue.enqueue(
+          sessionKey,
+          msg,
+          adapter.channelType,
+          async () => {
+            // No-op execution: serialized with concurrent executions via queue.
+            // Lightweight save to append message as history context.
+            const existing = deps.sessionManager.loadOrCreate(sessionKey);
+            deps.sessionManager.save(sessionKey, [
+              ...existing.slice(-(arConfig.maxHistoryInjections - 1)),
+              { role: "user" as const, content: `[${msg.senderId}]: ${msg.text ?? ""}` },
+            ]);
+          },
+          sourceTerminalScope,
+        );
         if (!historyEnqueueResult.ok) {
           deps.logger.warn({
             err: historyEnqueueResult.error.message,
@@ -163,7 +242,7 @@ export async function evaluateInboundGate(
       return { action: "skip" }; // Do not route to agent
     } else {
       // "ignore" -- emit suppressed event and return
-      deps.eventBus.emit("autoreply:suppressed", {
+      emitObservationalEventSafely(deps, "autoreply:suppressed", {
         channelId: msg.channelId,
         senderId: msg.senderId,
         reason: decision.reason,
@@ -190,66 +269,6 @@ export async function evaluateInboundGate(
   }
 
   // -------------------------------------------------------------------
-  // BUTTON-CALLBACK INTERCEPT
-  // -------------------------------------------------------------------
-  // A platform button tap arrives as a NormalizedMessage carrying
-  // metadata.isButtonCallback + metadata.callbackData (Telegram callback_query /
-  // Slack block_actions). It MUST be intercepted and forwarded to the
-  // InteractiveCallbackRouter (the verifier) BEFORE any slash-command parsing —
-  // a signed payload must never also be parsed as a chat command, and the
-  // ApprovalGate is never called directly from this inbound path (the router
-  // performs lookup-first + sessionKey-match + HMAC verify). The
-  // orchestrator derives the trusted sessionKey here and forwards only the raw
-  // payload; the wire never carries requestId/sessionKey.
-  if (
-    msg.metadata?.isButtonCallback === true &&
-    typeof msg.metadata.callbackData === "string" &&
-    deps.interactiveCallbackRouter
-  ) {
-    const routed = await deps.interactiveCallbackRouter.route({
-      channelType: adapter.channelType,
-      channelKey: msg.channelId,
-      agentId,
-      sessionKey: formatSessionKey(sessionKey),
-      rawData: msg.metadata.callbackData,
-      inboundUserId: msg.senderId,
-    });
-    // route() is infallible at the Result level (never errors); guard anyway.
-    const resolution = routed.ok ? routed.value : { kind: "unknown" as const };
-    switch (resolution.kind) {
-      case "resolved":
-      case "details_requested":
-        // The router already drove the resolution (resolveApproval) and the
-        // resolution reactor will edit the original prompt — surface no extra
-        // chat line here (§6.4.4) to avoid double feedback.
-        break;
-      case "malformed":
-      case "invalid_signature":
-      case "expired":
-      case "unknown":
-        // A forged/expired/stale/replayed button. Surface a single concise
-        // "no longer valid" line (no UI mutation on replay). Never echo the
-        // payload, the kind detail, or any id.
-        await deps.deliveryService.deliverToChannel(
-          adapter, msg.channelId,
-          "This approval is no longer valid (it may have already been resolved or expired).",
-          { skipChunking: true },
-        );
-        break;
-      case "ambiguous":
-        // A button payload is always shortId-specific, so `ambiguous` is not
-        // expected here; treat it as a no-longer-valid signal rather than crash.
-        await deps.deliveryService.deliverToChannel(
-          adapter, msg.channelId,
-          "This approval is no longer valid (it may have already been resolved or expired).",
-          { skipChunking: true },
-        );
-        break;
-    }
-    return { action: "handled" }; // Do NOT fall through to slash handling.
-  }
-
-  // -------------------------------------------------------------------
   // /send command handler (runtime send policy override)
   // -------------------------------------------------------------------
   if (msg.text && /^\/send\s/i.test(msg.text)) {
@@ -259,7 +278,7 @@ export async function evaluateInboundGate(
       if (msg.senderId === sessionKey.userId) {
         const overrideKey = formatSessionKey(sessionKey);
         sendOverrides.set(overrideKey, arg);
-        deps.eventBus.emit("sendpolicy:override_changed", {
+        emitObservationalEventSafely(deps, "sendpolicy:override_changed", {
           sessionKey,
           override: arg,
           changedBy: msg.senderId,
@@ -281,7 +300,7 @@ export async function evaluateInboundGate(
   // /approve and /deny COMMAND INTERCEPTION
   // -------------------------------------------------------------------
   if (msg.text && deps.approvalGate) {
-    const result = await handleApprovalCommand(deps, adapter, msg, sessionKey);
+    const result = await handleApprovalCommand(deps, adapter, msg, sessionKey, agentId);
     if (result) return { action: "handled" };
   }
 
@@ -317,7 +336,7 @@ export async function evaluateInboundGate(
       if (runHandle) {
         try {
           await runHandle.abort();
-          deps.eventBus.emit("execution:aborted", {
+          emitObservationalEventSafely(deps, "execution:aborted", {
             sessionKey,
             reason: "user_stop",
             agentId,
@@ -413,7 +432,7 @@ export async function evaluateInboundGate(
       channelType: adapter.channelType,
     }, "Reset trigger matched");
     deps.sessionManager.expire(sessionKey);
-    deps.eventBus.emit("session:expired", {
+    emitObservationalEventSafely(deps, "session:expired", {
       sessionKey,
       reason: "auto-reset:trigger-phrase",
     });
@@ -444,9 +463,23 @@ async function handleApprovalCommand(
   adapter: ChannelPort,
   msg: NormalizedMessage,
   sessionKey: SessionKey,
+  agentId: string,
 ): Promise<boolean> {
   const text = msg.text!.trim();
   const gate = deps.approvalGate!;
+  const formattedKey = formatSessionKey(sessionKey);
+  const callbackPrincipal: InboundCallback = {
+    tenantId: sessionKey.tenantId,
+    channelType: adapter.channelType,
+    channelKey: msg.channelId,
+    ...(sessionKey.threadId === undefined ? {} : { threadId: sessionKey.threadId }),
+    agentId,
+    sessionKey: formattedKey,
+    rawData: text,
+    inboundUserId: msg.senderId,
+  };
+  const ownedPending = () => gate.pendingForSession(formattedKey)
+    .filter((request) => approvalRequestIsOwnedByInbound(request, callbackPrincipal));
 
   // Bare command (no arguments) -- auto-resolve if unambiguous
   const bareApproveMatch = /^\/approve\s*$/i.test(text);
@@ -454,9 +487,7 @@ async function handleApprovalCommand(
 
   if (bareApproveMatch || bareDenyMatch) {
     const isApprove = !!bareApproveMatch;
-    const formattedKey = formatSessionKey(sessionKey);
-    const pending = gate.pending();
-    const matches = pending.filter((r) => r.sessionKey === formattedKey);
+    const matches = ownedPending();
 
     if (matches.length === 0) {
       await deps.deliveryService.deliverToChannel(adapter, msg.channelId, "No pending approvals.", { skipChunking: true });
@@ -497,9 +528,7 @@ async function handleApprovalCommand(
 
     if (arg.toLowerCase() === "all") {
       // Batch: resolve all pending approvals matching this session
-      const formattedKey = formatSessionKey(sessionKey);
-      const pending = gate.pending();
-      const matches = pending.filter((r) => r.sessionKey === formattedKey);
+      const matches = ownedPending();
 
       if (matches.length === 0) {
         await deps.deliveryService.deliverToChannel(adapter, msg.channelId, "No pending approvals to resolve.", { skipChunking: true });
@@ -519,8 +548,7 @@ async function handleApprovalCommand(
       // and its prefix never reach the channel, so the chat path no longer
       // accepts a requestId prefix — only the shortId shown in the prompt. The
       // shortId is unique, so an exact match yields at most one request.
-      const pending = gate.pending();
-      const match = pending.find((r) => r.shortId === arg);
+      const match = ownedPending().find((r) => r.shortId === arg);
 
       if (match === undefined) {
         await deps.deliveryService.deliverToChannel(

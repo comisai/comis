@@ -2,6 +2,11 @@
 import type { BackgroundTaskOrigin } from "../domain/background-task-origin.js";
 import type { McpServerEntry } from "../config/schema-integrations.js";
 import type { InjectionRule } from "../security/provider-catalog/index.js";
+import type { DeliveryFailureStage, DeliveryStatus } from "../domain/delivery-status.js";
+import type { ErrorKind } from "../logging/log-fields.js";
+
+/** Content-free reason for a failed outbound webhook delivery. */
+export type WebhookFailureReason = "handler_error" | "task_not_delivered";
 
 /**
  * InfraEvents: Config, plugin, hook, auth, diagnostic,
@@ -164,8 +169,8 @@ export interface InfraEvents {
      * present when a request context is active at emit (the common turn path).
      * Carried on the payload so the Verified Learning correction writer
      * (setup-learning-reactions.ts) can record the prior completed trajectory for
-     * a single-agent turn WITHOUT reading ALS (the emit runs outside the
-     * executor's runWithContext scope).
+     * a single-agent turn without depending on AsyncLocalStorage at subscriber
+     * execution time.
      */
     traceId?: string;
     /** Exact tool executions for completed turns; null when execution did not return a result. */
@@ -178,7 +183,12 @@ export interface InfraEvents {
     totalDurationMs: number;
     tokensUsed: number;
     cost: number;
-    success: boolean;
+    /** Closed full-lifecycle outcome; intentional suppression is filtered, never failure. */
+    status: DeliveryStatus;
+    /** Boundary that failed; present only when failure provenance is known. */
+    failureStage?: DeliveryFailureStage;
+    /** Closed operator-facing classification when the failing boundary provides one. */
+    errorKind?: ErrorKind;
     finishReason: string;
     timestamp: number;
   };
@@ -191,7 +201,7 @@ export interface InfraEvents {
     statusCode: number;
     success: boolean;
     durationMs: number;
-    error: string | undefined;
+    failureReason: WebhookFailureReason | undefined;
     timestamp: number;
   };
 

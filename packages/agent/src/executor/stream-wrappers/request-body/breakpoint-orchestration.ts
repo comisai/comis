@@ -102,8 +102,9 @@ export function runCacheBreakpointPhase(
     );
   }
 
-  // Log first system prompt block hash for prefix-matching debug.
-  // Runs after multi-block injection so the hash reflects the final static prefix.
+  // Log only content-free structural metadata for prefix-matching diagnostics.
+  // This runs after multi-block injection so the hash reflects the final static
+  // prefix; the prompt text itself must never enter a log sink.
   if (Array.isArray(result.system)) {
     const sysBlocks = result.system as Array<Record<string, unknown>>;
     if (sysBlocks.length > 0 && typeof sysBlocks[0]?.text === "string") {
@@ -111,7 +112,6 @@ export function runCacheBreakpointPhase(
       logger.debug(
         {
           firstBlockHash: djb2(text),
-          firstBlockSnippet: text.slice(0, 80).replace(/\n/g, "\\n"),
           blockCount: sysBlocks.length,
           modelId: model.id,
         },

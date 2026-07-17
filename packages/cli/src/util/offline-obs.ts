@@ -25,7 +25,13 @@
 
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { safePath, systemGetEnv, systemNowDate, systemNowMs } from "@comis/core";
+import {
+  parseConfigPaths,
+  safePath,
+  systemGetEnv,
+  systemNowDate,
+  systemNowMs,
+} from "@comis/core";
 import type { ClockPort, FleetHealthReport, IncidentReport } from "@comis/core";
 import type { SessionMessagesFilter, SessionMessagesResult } from "@comis/daemon";
 import type { CostBucketFilter, QuarterHourBucket } from "@comis/memory";
@@ -40,6 +46,7 @@ export type {
 } from "@comis/daemon";
 import { resolveTrajectoryPointerFilePath } from "@comis/observability";
 import type { AuditSummary } from "../support-bundle/types.js";
+import { resolveDoctorConfig } from "../doctor/config-resolve.js";
 import {
   createObservabilityStore,
   openSqliteDatabase,
@@ -56,6 +63,25 @@ import {
  */
 export function resolveOfflineDataDir(): string {
   return systemGetEnv("COMIS_DATA_DIR") ?? safePath(os.homedir(), ".comis");
+}
+
+/** Resolve the trajectory relocation root from the same effective config layers as startup. */
+export function resolveOfflineTrajectoryDir(dataDir: string): string | undefined {
+  const configuredPaths = parseConfigPaths(systemGetEnv("COMIS_CONFIG_PATHS"));
+  const configPaths = configuredPaths.length > 0
+    ? configuredPaths
+    : [
+        safePath(dataDir, "config.yaml"),
+        safePath(dataDir, "config.local.yaml"),
+        safePath("/etc", "comis", "config.yaml"),
+        safePath("/etc", "comis", "config.local.yaml"),
+      ].filter((candidate) => fs.existsSync(candidate));
+  const resolution = resolveDoctorConfig(configPaths, { defaultDataDir: dataDir });
+  const configuredDir = resolution.config?.diagnostics.trajectory.dir ??
+    resolution.config?.observability.trajectory.dirOverride;
+  if (configuredDir !== undefined && configuredDir.length > 0) return configuredDir;
+  const envDir = systemGetEnv("COMIS_TRAJECTORY_DIR")?.trim();
+  return envDir === undefined || envDir.length === 0 ? undefined : envDir;
 }
 
 /** Sanctioned system clock for the fleet window (cli has no infra edge). */
@@ -160,7 +186,12 @@ export async function extractSessionMessagesOffline(
   filter: SessionMessagesFilter,
 ): Promise<SessionMessagesResult> {
   const { extractSessionMessages } = await loadDaemonAssemblers();
-  return extractSessionMessages(dataDir, filter);
+  const trajectoryDir = resolveOfflineTrajectoryDir(dataDir);
+  return extractSessionMessages(
+    dataDir,
+    filter,
+    trajectoryDir === undefined ? {} : { trajectoryDir },
+  );
 }
 
 /**

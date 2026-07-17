@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createHash } from "node:crypto";
 import { createGraphCoordinator, type GraphCoordinatorDeps } from "./graph-coordinator.js";
 import {
   type ExecutionGraph,
   type ValidatedGraph,
   type DurableRunPort,
   type DurableRunRecord,
+  type NodeExecutionState,
   validateAndSortGraph,
   TypedEventBus,
+  runWithContext,
 } from "@comis/core";
-import { ok, type Result } from "@comis/shared";
+import { err, ok, type Result } from "@comis/shared";
 import { createNodeTypeRegistry } from "./node-type-registry.js";
 // The graph-timeout makespan floor raises a too-low requested timeout to at
 // least the DAG's critical-path makespan (graph-timeout-floor.ts). Graphs whose
@@ -99,7 +102,19 @@ vi.mock("@comis/observability", async (importOriginal) => {
           ? opts.content
           : opts.content.toString("utf8"),
       });
+      fsMockFiles.set(String(opts.path), typeof opts.content === "string"
+        ? opts.content
+        : opts.content.toString("utf8"));
       return { ok: true as const, value: { totalBytes: typeof opts.content === "string" ? opts.content.length : opts.content.length } };
+    },
+    readRegularFile: (opts: { path: string }) => {
+      const content = fsMockFiles.get(String(opts.path));
+      if (content === undefined) {
+        const error = new Error("missing graph checkpoint") as NodeJS.ErrnoException;
+        error.code = "ENOENT";
+        return { ok: false as const, error };
+      }
+      return { ok: true as const, value: { content: Buffer.from(content), totalBytes: content.length } };
     },
   };
 });
@@ -169,7 +184,9 @@ function createMockSubAgentRunner(): MockSubAgentRunner {
 
   const runner: MockSubAgentRunner = {
     spawn: vi.fn((params: Record<string, unknown>) => {
-      const runId = `run-${counter++}`;
+      const runId = typeof params.reservedRunId === "string"
+        ? params.reservedRunId
+        : `run-${counter++}`;
       spawnCalls.push({ ...params, _runId: runId });
       runData.set(runId, { status: "running" });
       return runId;
@@ -255,11 +272,32 @@ function createTestDeps(
   const runner = createMockSubAgentRunner();
   const eventBus = new TypedEventBus();
   const sendToChannel = vi.fn(async () => true);
+  const sendGovernedAnnouncement = vi.fn(async (request: {
+    channelType: string;
+    channelId: string;
+    text: string;
+    options?: { threadId?: string; extra?: Record<string, unknown> };
+    agentId: string;
+  }) => {
+    const delivered = await sendToChannel(
+      request.channelType,
+      request.channelId,
+      request.text,
+      request.options,
+    );
+    return delivered
+      ? ok({
+          delivered: true as const,
+          identity: { agentId: request.agentId, rootRunId: "test-root", stepIndex: 1 },
+        })
+      : ok({ delivered: false as const, failure: "transport_rejected" as const });
+  });
 
   const deps: GraphCoordinatorDeps = {
     subAgentRunner: runner,
     eventBus,
     sendToChannel,
+    sendGovernedAnnouncement,
     tenantId: "test-tenant",
     defaultAgentId: "test-agent",
     maxConcurrency: 4,
@@ -315,6 +353,7 @@ describe("createGraphCoordinator", () => {
       const spawnCall = runner._getSpawnCalls()[0]!;
       expect(spawnCall.task).toContain("Task A");
       expect(spawnCall.agentId).toBe("test-agent");
+      expect(spawnCall.callerTrustLevel).toBe("guest");
 
       // Complete the node
       const runId = spawnCall._runId as string;
@@ -325,6 +364,154 @@ describe("createGraphCoordinator", () => {
       const status = coordinator.getStatus(result.value);
       expect(status?.graphStatus).toBe("completed");
       expect(status?.isTerminal).toBe(true);
+
+      await coordinator.shutdown();
+    });
+
+    it("snapshots caller trust for every graph node spawn", async () => {
+      const { deps, runner } = createTestDeps();
+      const coordinator = createGraphCoordinator(deps);
+      const graph = buildGraph([{ nodeId: "A" }]);
+
+      const result = await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000002",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: "test-tenant:user_a:telegram:chat_a",
+        agentId: "parent-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+        resolvedLanguage: "he",
+      }, () => coordinator.run({
+        graph,
+        callerAgentId: "parent-agent",
+        callerSessionKey: "test-tenant:user_a:telegram:chat_a",
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(runner._getSpawnCalls()[0]?.callerTrustLevel).toBe("user");
+      expect(runner._getSpawnCalls()[0]?.task).toContain("## Language");
+
+      await coordinator.shutdown();
+    });
+
+    it("propagates the authenticated origin, lease, and attenuated caps to regular graph nodes", async () => {
+      const { deps, runner } = createTestDeps();
+      const coordinator = createGraphCoordinator(deps);
+      const graph = buildGraph([{ nodeId: "A" }]);
+      const origin = Object.freeze({
+        tenantId: "test-tenant",
+        userId: "user_a",
+        channelType: "telegram",
+        channelId: "chat_a",
+        threadId: "topic_a",
+      });
+
+      const result = await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000006",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: "test-tenant:user_a:telegram:chat_a",
+        agentId: "parent-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+        deliveryOrigin: origin,
+      }, () => coordinator.run({
+        graph,
+        callerAgentId: "parent-agent",
+        callerSessionKey: "test-tenant:user_a:telegram:chat_a",
+        callerCaps: ["orch:read"],
+        callerLeaseId: "lease-parent",
+        callerDeliveryOrigin: origin,
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(runner._getSpawnCalls()[0]).toEqual(expect.objectContaining({
+        requesterOrigin: origin,
+        parentLeaseId: "lease-parent",
+        caps: ["orch:read"],
+      }));
+
+      await coordinator.shutdown();
+    });
+
+    it("rejects a graph when the ambient principal differs from its declared caller", async () => {
+      const { deps, runner } = createTestDeps();
+      const coordinator = createGraphCoordinator(deps);
+      const graph = buildGraph([{ nodeId: "A" }]);
+
+      const result = await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000003",
+        tenantId: "test-tenant",
+        userId: "admin_user",
+        sessionKey: "test-tenant:admin_user:telegram:admin_chat",
+        agentId: "admin-agent",
+        startedAt: Date.now(),
+        trustLevel: "admin",
+        resolvedLanguage: "he",
+      }, () => coordinator.run({
+        graph,
+        callerAgentId: "user-agent",
+        callerSessionKey: "test-tenant:user_a:telegram:user_chat",
+      }));
+
+      expect(result).toEqual({
+        ok: false,
+        error: "Graph caller agent does not match the request context",
+      });
+      expect(runner.spawn).not.toHaveBeenCalled();
+
+      await coordinator.shutdown();
+    });
+
+    it("rejects a graph when only its declared caller session differs", async () => {
+      const { deps, runner } = createTestDeps();
+      const coordinator = createGraphCoordinator(deps);
+      const graph = buildGraph([{ nodeId: "A" }]);
+
+      const result = await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000004",
+        tenantId: "test-tenant",
+        userId: "admin_user",
+        sessionKey: "test-tenant:admin_user:telegram:admin_chat",
+        agentId: "admin-agent",
+        startedAt: Date.now(),
+        trustLevel: "admin",
+        resolvedLanguage: "he",
+      }, () => coordinator.run({
+        graph,
+        callerAgentId: "admin-agent",
+        callerSessionKey: "test-tenant:user_a:telegram:user_chat",
+      }));
+
+      expect(result).toEqual({
+        ok: false,
+        error: "Graph caller session does not match the request context",
+      });
+      expect(runner.spawn).not.toHaveBeenCalled();
+
+      await coordinator.shutdown();
+    });
+
+    it("uses guest trust when an ambient principal has no declared caller identity", async () => {
+      const { deps, runner } = createTestDeps();
+      const coordinator = createGraphCoordinator(deps);
+      const graph = buildGraph([{ nodeId: "A" }]);
+
+      const result = await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000005",
+        tenantId: "test-tenant",
+        userId: "admin_user",
+        sessionKey: "test-tenant:admin_user:telegram:admin_chat",
+        agentId: "admin-agent",
+        startedAt: Date.now(),
+        trustLevel: "admin",
+        resolvedLanguage: "he",
+      }, () => coordinator.run({ graph }));
+
+      expect(result.ok).toBe(true);
+      expect(runner._getSpawnCalls()[0]?.callerTrustLevel).toBe("guest");
+      expect(runner._getSpawnCalls()[0]?.task).not.toContain("## Language");
 
       await coordinator.shutdown();
     });
@@ -675,6 +862,8 @@ describe("createGraphCoordinator", () => {
 
       await coordinator.run({
         graph,
+        callerAgentId: "test-agent",
+        callerSessionKey: "test-tenant:user_a:chan-123",
         announceChannelType: "discord",
         announceChannelId: "chan-123",
         nodeProgress: true,
@@ -713,6 +902,46 @@ describe("createGraphCoordinator", () => {
       await coordinator.shutdown();
     });
 
+    it("sanitizes node progress delivery errors before debug logging", async () => {
+      const debug = vi.fn();
+      const sendToChannel = vi.fn().mockRejectedValue(
+        new Error("Telegram rejected xoxb-sensitive-provider-credential"),
+      );
+      const { deps, runner, eventBus } = createTestDeps({
+        sendToChannel,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug },
+      });
+      const coordinator = createGraphCoordinator(deps);
+      const graph = buildGraph([
+        { nodeId: "A" },
+        { nodeId: "B", dependsOn: ["A"] },
+      ]);
+
+      await coordinator.run({
+        graph,
+        announceChannelType: "telegram",
+        announceChannelId: "chat-a",
+        nodeProgress: true,
+      });
+
+      const runIdA = runner._getSpawnCalls()[0]!._runId as string;
+      runner._completeRun(runIdA, "Result A");
+      simulateCompletion(eventBus, runIdA, true);
+      await waitForMicrotask();
+      await waitForMicrotask();
+
+      const progressFailure = debug.mock.calls.find(
+        ([, message]) => message === "Node progress delivery failed",
+      );
+      expect(progressFailure).toBeDefined();
+      const fields = progressFailure?.[0] as { err?: unknown };
+      expect(typeof fields.err).toBe("string");
+      expect(fields.err).not.toContain("xoxb-sensitive-provider-credential");
+      expect(fields.err).not.toContain("at ");
+
+      await coordinator.shutdown();
+    });
+
     it("does not announce per-node results (suppresses SubAgentRunner announcements)", async () => {
       const { deps, runner } = createTestDeps();
       const coordinator = createGraphCoordinator(deps);
@@ -739,6 +968,8 @@ describe("createGraphCoordinator", () => {
       const graph = buildGraph([{ nodeId: "A" }]);
       const runResult = await coordinator.run({
         graph,
+        callerAgentId: "test-agent",
+        callerSessionKey: "test-tenant:user_a:chan-graphid",
         announceChannelType: "discord",
         announceChannelId: "chan-graphid",
       });
@@ -759,7 +990,7 @@ describe("createGraphCoordinator", () => {
       await coordinator.shutdown();
     });
 
-    it("uses announceToParent when available", async () => {
+    it("uses governed deterministic delivery when parent execution is available", async () => {
       const announceToParent = vi.fn(async () => {});
       const { deps, runner, eventBus, sendToChannel } = createTestDeps({ announceToParent });
       const coordinator = createGraphCoordinator(deps);
@@ -768,7 +999,7 @@ describe("createGraphCoordinator", () => {
       await coordinator.run({
         graph,
         callerAgentId: "parent-agent",
-        callerSessionKey: "parent-session",
+        callerSessionKey: "test-tenant:user_a:chan-123",
         announceChannelType: "discord",
         announceChannelId: "chan-123",
       });
@@ -781,14 +1012,13 @@ describe("createGraphCoordinator", () => {
       // Wait for async announcement delivery
       await vi.advanceTimersByTimeAsync(10);
 
-      // announceToParent should be called instead of sendToChannel
-      expect(announceToParent).toHaveBeenCalledTimes(1);
-      expect(sendToChannel).not.toHaveBeenCalled();
+      expect(announceToParent).not.toHaveBeenCalled();
+      expect(sendToChannel).toHaveBeenCalledTimes(1);
 
       await coordinator.shutdown();
     });
 
-    it("routes through batcher when available instead of direct announceToParent", async () => {
+    it("bypasses parent and batch execution for terminal governed delivery", async () => {
       const announceToParent = vi.fn(async () => {});
       const batcherEnqueue = vi.fn();
       const batcher = { enqueue: batcherEnqueue, flush: vi.fn(), shutdown: vi.fn(), pending: 0 };
@@ -799,7 +1029,7 @@ describe("createGraphCoordinator", () => {
       await coordinator.run({
         graph,
         callerAgentId: "parent-agent",
-        callerSessionKey: "parent-session",
+        callerSessionKey: "test-tenant:user_a:chan-123",
         announceChannelType: "discord",
         announceChannelId: "chan-123",
       });
@@ -811,18 +1041,10 @@ describe("createGraphCoordinator", () => {
 
       await vi.advanceTimersByTimeAsync(10);
 
-      // Batcher should be used; announceToParent and sendToChannel should NOT be called directly
-      expect(batcherEnqueue).toHaveBeenCalledTimes(1);
+      expect(batcherEnqueue).not.toHaveBeenCalled();
       expect(announceToParent).not.toHaveBeenCalled();
-      expect(sendToChannel).not.toHaveBeenCalled();
-
-      // Verify enqueued announcement has correct fields
-      const enqueued = batcherEnqueue.mock.calls[0]![0];
-      expect(enqueued.announceChannelType).toBe("discord");
-      expect(enqueued.announceChannelId).toBe("chan-123");
-      expect(enqueued.callerAgentId).toBe("parent-agent");
-      expect(enqueued.callerSessionKey).toBe("parent-session");
-      expect(enqueued.announcementText).toContain("GraphId:");
+      expect(sendToChannel).toHaveBeenCalledTimes(1);
+      expect(sendToChannel.mock.calls[0]?.[2]).toContain("GraphId:");
 
       await coordinator.shutdown();
     });
@@ -834,6 +1056,8 @@ describe("createGraphCoordinator", () => {
       const graph = buildGraph([{ nodeId: "A" }]);
       await coordinator.run({
         graph,
+        callerAgentId: "test-agent",
+        callerSessionKey: "test-tenant:user_a:chan-trunc",
         announceChannelType: "discord",
         announceChannelId: "chan-trunc",
       });
@@ -1307,6 +1531,8 @@ describe("createGraphCoordinator", () => {
       runner._completeRun(runIdB, "Result B");
       simulateCompletion(eventBus, runIdB, true);
 
+      await coordinator.shutdown();
+
       expect(completedEvents).toHaveLength(1);
       const completed = completedEvents[0]!;
       expect(completed.graphId).toBe(result.value);
@@ -1316,8 +1542,6 @@ describe("createGraphCoordinator", () => {
       expect(completed.nodesCompleted).toBe(2);
       expect(completed.nodesFailed).toBe(0);
       expect(completed.nodesSkipped).toBe(0);
-
-      await coordinator.shutdown();
     });
 
     it("emits graph:completed on timeout with correct status", async () => {
@@ -1338,12 +1562,12 @@ describe("createGraphCoordinator", () => {
       // Advance past the floored graph timeout (see DEFAULT_NODE_TIMEOUT_MS note above).
       vi.advanceTimersByTime(DEFAULT_NODE_TIMEOUT_MS + 100);
 
+      await coordinator.shutdown();
+
       expect(completedEvents).toHaveLength(1);
       const completed = completedEvents[0]!;
       expect(completed.graphId).toBe(result.value);
       expect(completed.nodesFailed).toBeGreaterThanOrEqual(1);
-
-      await coordinator.shutdown();
     });
 
     it("emits graph:completed on cancel", async () => {
@@ -1364,12 +1588,12 @@ describe("createGraphCoordinator", () => {
       // Cancel the graph
       coordinator.cancel(result.value);
 
+      await coordinator.shutdown();
+
       expect(completedEvents).toHaveLength(1);
       const completed = completedEvents[0]!;
       expect(completed.graphId).toBe(result.value);
       expect(completed.durationMs).toBeGreaterThanOrEqual(0);
-
-      await coordinator.shutdown();
     });
   });
 
@@ -1509,11 +1733,11 @@ describe("createGraphCoordinator", () => {
       const status = coordinator.getStatus(result.value);
       expect(status?.graphStatus).toBe("completed");
 
+      await coordinator.shutdown();
+
       // No cancelReason on normal completion
       expect(completedEvents).toHaveLength(1);
       expect(completedEvents[0]!.cancelReason).toBeUndefined();
-
-      await coordinator.shutdown();
     });
 
     it("runs without budget enforcement when no budget set", async () => {
@@ -1541,11 +1765,11 @@ describe("createGraphCoordinator", () => {
       const status = coordinator.getStatus(result.value);
       expect(status?.graphStatus).toBe("completed");
 
+      await coordinator.shutdown();
+
       // No budget-related cancellation
       expect(completedEvents).toHaveLength(1);
       expect(completedEvents[0]!.cancelReason).toBeUndefined();
-
-      await coordinator.shutdown();
     });
   });
 
@@ -1730,10 +1954,10 @@ describe("createGraphCoordinator", () => {
       // Advance past the floored graph timeout (see DEFAULT_NODE_TIMEOUT_MS note above).
       vi.advanceTimersByTime(DEFAULT_NODE_TIMEOUT_MS + 100);
 
+      await coordinator.shutdown();
+
       expect(completedEvents).toHaveLength(1);
       expect(completedEvents[0]!.cancelReason).toBe("timeout");
-
-      await coordinator.shutdown();
     });
 
     it("includes cancelReason 'manual' on cancel()", async () => {
@@ -1754,10 +1978,10 @@ describe("createGraphCoordinator", () => {
       // Cancel the graph
       coordinator.cancel(result.value);
 
+      await coordinator.shutdown();
+
       expect(completedEvents).toHaveLength(1);
       expect(completedEvents[0]!.cancelReason).toBe("manual");
-
-      await coordinator.shutdown();
     });
 
     it("omits cancelReason on normal completion", async () => {
@@ -1776,10 +2000,10 @@ describe("createGraphCoordinator", () => {
       runner._completeRun(runIdA, "Result A");
       simulateCompletion(eventBus, runIdA, true);
 
+      await coordinator.shutdown();
+
       expect(completedEvents).toHaveLength(1);
       expect(completedEvents[0]!).not.toHaveProperty("cancelReason");
-
-      await coordinator.shutdown();
     });
   });
 
@@ -1976,10 +2200,10 @@ describe("createGraphCoordinator", () => {
       expect(status?.isTerminal).toBe(true);
       expect(status?.graphStatus).toBe("failed");
 
+      await coordinator.shutdown();
+
       // graph:completed should be emitted
       expect(completedEvents).toHaveLength(1);
-
-      await coordinator.shutdown();
     });
   });
 
@@ -2433,20 +2657,21 @@ describe("createGraphCoordinator", () => {
   });
 
   // -------------------------------------------------------------------------
-  // announceToParent timeout fallback
+  // Terminal completion excludes parent execution
   // -------------------------------------------------------------------------
 
-  describe("announceToParent timeout fallback", () => {
-    it("falls back to sendToChannel when announceToParent hangs past 300s", async () => {
+  describe("terminal completion excludes parent execution", () => {
+    it("does not invoke or wait for a hanging parent execution", async () => {
       const announceToParent = vi.fn().mockReturnValue(new Promise(() => {})); // never resolves
-      const { deps, runner, eventBus, sendToChannel } = createTestDeps({ announceToParent });
+      const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+      const { deps, runner, eventBus, sendToChannel } = createTestDeps({ announceToParent, logger });
       const coordinator = createGraphCoordinator(deps);
 
       const graph = buildGraph([{ nodeId: "A" }]);
       await coordinator.run({
         graph,
         callerAgentId: "parent-agent",
-        callerSessionKey: "parent-session",
+        callerSessionKey: "test-tenant:user_a:chan-timeout",
         announceChannelType: "discord",
         announceChannelId: "chan-timeout",
       });
@@ -2456,18 +2681,13 @@ describe("createGraphCoordinator", () => {
       runner._completeRun(runIdA, "Result A");
       simulateCompletion(eventBus, runIdA, true);
 
-      // Short wait -- announceToParent was called but is hanging
       await vi.advanceTimersByTimeAsync(100);
-      expect(announceToParent).toHaveBeenCalledTimes(1);
-      expect(sendToChannel).not.toHaveBeenCalled();
-
-      // Advance past the 300s timeout
-      await vi.advanceTimersByTimeAsync(301_000);
-
-      // sendToChannel should have been called as fallback
+      expect(announceToParent).not.toHaveBeenCalled();
       expect(sendToChannel).toHaveBeenCalledTimes(1);
-      expect(sendToChannel.mock.calls[0]![0]).toBe("discord");
-      expect(sendToChannel.mock.calls[0]![1]).toBe("chan-timeout");
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        expect.any(Object),
+        "Graph parent announcement ended without a safe delivery decision",
+      );
 
       await coordinator.shutdown();
     });
@@ -3243,10 +3463,10 @@ describe("createGraphCoordinator", () => {
   });
 
   // -------------------------------------------------------------------------
-  // parent-session-gone announcement fast-path
+  // Parent registry does not participate in terminal delivery
   // -------------------------------------------------------------------------
 
-  describe("parent-session-gone announcement fast-path", () => {
+  describe("parent registry independent terminal delivery", () => {
     /**
      * Helper to create a minimal GraphRunState and CoordinatorSharedState
      * for testing handleGraphCompletion's announcement delivery logic.
@@ -3272,6 +3492,7 @@ describe("createGraphCoordinator", () => {
       const gs: GraphRunState = {
         graphId: "test-graph-1",
         graphTraceId: "trace-1",
+        callerTrustLevel: "guest",
         graph,
         stateMachine: mockStateMachine as unknown as GraphRunState["stateMachine"],
         runIdToNode: new Map(),
@@ -3281,7 +3502,7 @@ describe("createGraphCoordinator", () => {
         graphTimer: undefined,
         startedAt: Date.now() - 1000,
         runningCount: 0,
-        callerSessionKey: "parent-session-key",
+        callerSessionKey: "test-tenant:user_a:chan-1",
         callerAgentId: "agent-1",
         announceChannelType: "telegram",
         announceChannelId: "chan-1",
@@ -3306,13 +3527,17 @@ describe("createGraphCoordinator", () => {
         spawnQueue: [],
       };
 
-      coordinator.shutdown();
+      await coordinator.shutdown();
       return { gs, state };
     }
 
-    it("skips announceToParent and uses sendToChannel when activeRunRegistry.has() returns false", async () => {
+    it("uses governed delivery without consulting an inactive parent registry", async () => {
       const { gs, state } = await createCompletionTestState();
       const sendToChannel = vi.fn(async () => true);
+      const sendGovernedAnnouncement = vi.fn(async (request: { channelType: string; channelId: string; text: string }) => {
+        await sendToChannel(request.channelType, request.channelId, request.text);
+        return ok({ delivered: true as const, identity: { agentId: "agent-1", rootRunId: "root-1", stepIndex: 1 } });
+      });
       const announceToParent = vi.fn(async () => {});
       const mockRegistry = { has: vi.fn(() => false) };
 
@@ -3320,22 +3545,31 @@ describe("createGraphCoordinator", () => {
         eventBus: new TypedEventBus(),
         logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
         sendToChannel,
+        sendGovernedAnnouncement,
         announceToParent,
         batcher: undefined,
         tenantId: "test-tenant",
         activeRunRegistry: mockRegistry,
       };
 
-      handleGraphCompletion(state, deps, gs);
+      await handleGraphCompletion(state, deps, gs);
 
       expect(announceToParent).not.toHaveBeenCalled();
+      expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
       expect(sendToChannel).toHaveBeenCalledTimes(1);
-      expect(mockRegistry.has).toHaveBeenCalledWith("parent-session-key");
+      expect(mockRegistry.has).not.toHaveBeenCalled();
     });
 
-    it("calls announceToParent when activeRunRegistry.has() returns true (existing behavior)", async () => {
+    it("uses governed delivery without consulting an active parent registry", async () => {
       const { gs, state } = await createCompletionTestState();
       const sendToChannel = vi.fn(async () => true);
+      const sendGovernedAnnouncement = vi.fn(async (request: { channelType: string; channelId: string; text: string }) => {
+        await sendToChannel(request.channelType, request.channelId, request.text);
+        return ok({
+          delivered: true as const,
+          identity: { agentId: "agent-1", rootRunId: "root-1", stepIndex: 1 },
+        });
+      });
       const announceToParent = vi.fn(async () => {});
       const mockRegistry = { has: vi.fn(() => true) };
 
@@ -3343,40 +3577,58 @@ describe("createGraphCoordinator", () => {
         eventBus: new TypedEventBus(),
         logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
         sendToChannel,
+        sendGovernedAnnouncement,
         announceToParent,
         batcher: undefined,
         tenantId: "test-tenant",
         activeRunRegistry: mockRegistry,
       };
 
-      handleGraphCompletion(state, deps, gs);
+      await handleGraphCompletion(state, deps, gs);
 
-      expect(announceToParent).toHaveBeenCalled();
+      expect(announceToParent).not.toHaveBeenCalled();
+      expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
+      expect(sendToChannel).toHaveBeenCalledTimes(1);
+      expect(mockRegistry.has).not.toHaveBeenCalled();
     });
 
-    it("calls announceToParent when activeRunRegistry is undefined (backward compat)", async () => {
+    it("uses governed delivery when no parent registry is wired", async () => {
       const { gs, state } = await createCompletionTestState();
       const sendToChannel = vi.fn(async () => true);
+      const sendGovernedAnnouncement = vi.fn(async (request: { channelType: string; channelId: string; text: string }) => {
+        await sendToChannel(request.channelType, request.channelId, request.text);
+        return ok({
+          delivered: true as const,
+          identity: { agentId: "agent-1", rootRunId: "root-1", stepIndex: 1 },
+        });
+      });
       const announceToParent = vi.fn(async () => {});
 
       const deps = {
         eventBus: new TypedEventBus(),
         logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
         sendToChannel,
+        sendGovernedAnnouncement,
         announceToParent,
         batcher: undefined,
         tenantId: "test-tenant",
         activeRunRegistry: undefined,
       };
 
-      handleGraphCompletion(state, deps, gs);
+      await handleGraphCompletion(state, deps, gs);
 
-      expect(announceToParent).toHaveBeenCalled();
+      expect(announceToParent).not.toHaveBeenCalled();
+      expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
+      expect(sendToChannel).toHaveBeenCalledTimes(1);
     });
 
     it("skips batcher and uses sendToChannel when parent is gone", async () => {
       const { gs, state } = await createCompletionTestState();
       const sendToChannel = vi.fn(async () => true);
+      const sendGovernedAnnouncement = vi.fn(async (request: { channelType: string; channelId: string; text: string }) => {
+        await sendToChannel(request.channelType, request.channelId, request.text);
+        return ok({ delivered: true as const, identity: { agentId: "agent-1", rootRunId: "root-1", stepIndex: 1 } });
+      });
       const mockBatcher = { enqueue: vi.fn(), flush: vi.fn(), shutdown: vi.fn() };
       const mockRegistry = { has: vi.fn(() => false) };
 
@@ -3384,16 +3636,19 @@ describe("createGraphCoordinator", () => {
         eventBus: new TypedEventBus(),
         logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
         sendToChannel,
+        sendGovernedAnnouncement,
         announceToParent: undefined,
         batcher: mockBatcher,
         tenantId: "test-tenant",
         activeRunRegistry: mockRegistry,
       };
 
-      handleGraphCompletion(state, deps, gs);
+      await handleGraphCompletion(state, deps, gs);
 
       expect(mockBatcher.enqueue).not.toHaveBeenCalled();
+      expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
       expect(sendToChannel).toHaveBeenCalledTimes(1);
+      expect(mockRegistry.has).not.toHaveBeenCalled();
     });
   });
 
@@ -4030,25 +4285,78 @@ function createRecordingDurableRuns(): DurableRunPort & {
 } {
   const checkpoints: DurableRunRecord[] = [];
   const completed: string[] = [];
-  let counter = -1;
   return {
     upsertCheckpoint: vi.fn(async (record: DurableRunRecord): Promise<Result<void, Error>> => {
       checkpoints.push(JSON.parse(JSON.stringify(record)) as DurableRunRecord);
       return ok(undefined);
     }),
-    listResumable: vi.fn(async () => ok([] as DurableRunRecord[])),
-    getByRootRun: vi.fn(async () => ok(undefined)),
+    listResumable: vi.fn(async () => ok({ records: [], invalid: [] })),
+    getByCheckpoint: vi.fn(async () => ok(undefined)),
     markOrphaned: vi.fn(async () => ok(undefined)),
-    markCompleted: vi.fn(async (rootRunId: string) => {
-      completed.push(rootRunId);
+    markCompleted: vi.fn(async (checkpointId: string) => {
+      completed.push(checkpointId);
       return ok(undefined);
     }),
     touchHeartbeat: vi.fn(async () => ok(undefined)),
     invalidateForRevoke: vi.fn(async () => ok(undefined)),
-    allocateOutwardStep: vi.fn(async () => ok(++counter)),
+    countByStatus: vi.fn(async () => ok({ orphaned: 0, revoked: 0, running: 0, completed: 0 })),
     _checkpoints: () => checkpoints,
     _completed: () => completed,
   };
+}
+
+function makeDurableGraphRecord(
+  overrides: Partial<DurableRunRecord> = {},
+): DurableRunRecord {
+  return {
+    checkpointId: "checkpoint-graph",
+    rootRunId: "root-graph",
+    agentId: "test-agent",
+    sessionKey: "test-tenant:user_a:telegram:chat_a",
+    ownerTenantId: "test-tenant",
+    ownerUserId: "user_a",
+    deliveryOrigin: null,
+    spawnTree: [],
+    caps: [],
+    leaseIds: [],
+    budgetConsumed: 0,
+    rootBudget: { startedAtMs: Date.now(), tokensConsumed: 0, usdConsumed: 0 },
+    cronOrigin: null,
+    trustLevel: "user",
+    status: "running",
+    lastHeartbeatAt: Date.now(),
+    scriptRef: null,
+    checkpointRef: null,
+    ...overrides,
+  };
+}
+
+function seedGraphCheckpoint(
+  refId: string,
+  graph: ValidatedGraph,
+  nodes: NodeExecutionState[],
+  overrides: Partial<{
+    startedAtMs: number;
+    cumulativeTokens: number;
+    cumulativeCost: number;
+  }> = {},
+): string {
+  const content = JSON.stringify({
+    graph: graph.graph,
+    executionOrder: graph.executionOrder,
+    nodes,
+    startedAtMs: overrides.startedAtMs ?? Date.now(),
+    cumulativeTokens: overrides.cumulativeTokens ?? 0,
+    cumulativeCost: overrides.cumulativeCost ?? 0,
+    nodeCacheData: [],
+    nodeTokenSpend: [],
+    nodeCost: [],
+    skippedNodesEmitted: [],
+  });
+  const digest = createHash("sha256").update(content).digest("hex");
+  const ref = `graph-runs/${refId}/durable-checkpoint-${digest}.json`;
+  fsMockFiles.set(`/tmp/test-comis/${ref}`, content);
+  return ref;
 }
 
 describe("createGraphCoordinator — DAG durability across daemon restarts", () => {
@@ -4061,6 +4369,236 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
   });
 
   describe("node-boundary checkpoint", () => {
+    it("does not invoke the sub-agent runner until the running launch claim is durable", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      let releaseRunningCheckpoint = (): void => {};
+      const runningCheckpointGate = new Promise<void>((resolve) => {
+        releaseRunningCheckpoint = resolve;
+      });
+      let sawRunningCheckpoint = (): void => {};
+      const runningCheckpointSeen = new Promise<void>((resolve) => {
+        sawRunningCheckpoint = resolve;
+      });
+      vi.mocked(durableRuns.upsertCheckpoint).mockImplementation(async (record) => {
+        const nodeA = (record.spawnTree as Array<{ nodeId: string; status: string }>).find(
+          (entry) => entry.nodeId === "A",
+        );
+        if (nodeA?.status === "running") {
+          sawRunningCheckpoint();
+          await runningCheckpointGate;
+        }
+        return ok(undefined);
+      });
+      const { deps, runner } = createTestDeps({
+        durableRuns,
+        resolveRootRunId: () => "root-launch-authority",
+      });
+      const coordinator = createGraphCoordinator(deps);
+      const callerSessionKey = "test-tenant:user_a:telegram:chat_a";
+
+      const runPromise = runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000016",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: callerSessionKey,
+        agentId: "test-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+      }, () => coordinator.run({
+        graph: buildGraph([{ nodeId: "A" }]),
+        callerSessionKey,
+        callerAgentId: "test-agent",
+      }));
+
+      await runningCheckpointSeen;
+      expect(runner.spawn).not.toHaveBeenCalled();
+
+      releaseRunningCheckpoint();
+      expect((await runPromise).ok).toBe(true);
+      expect(runner.spawn).toHaveBeenCalledTimes(1);
+
+      await coordinator.shutdown();
+    });
+
+    it("re-enters durable launch authority after a global queue slot opens", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      let gateNodeB = false;
+      let releaseNodeBCheckpoint = (): void => {};
+      const nodeBCheckpointGate = new Promise<void>((resolve) => {
+        releaseNodeBCheckpoint = resolve;
+      });
+      let sawNodeBCheckpoint = (): void => {};
+      const nodeBCheckpointSeen = new Promise<void>((resolve) => {
+        sawNodeBCheckpoint = resolve;
+      });
+      vi.mocked(durableRuns.upsertCheckpoint).mockImplementation(async (record) => {
+        const nodeB = (record.spawnTree as Array<{ nodeId: string; status: string }>).find(
+          (entry) => entry.nodeId === "B",
+        );
+        if (gateNodeB && nodeB?.status === "running") {
+          sawNodeBCheckpoint();
+          await nodeBCheckpointGate;
+        }
+        return ok(undefined);
+      });
+      const { deps, runner, eventBus } = createTestDeps({
+        durableRuns,
+        resolveRootRunId: () => "root-queued-authority",
+        maxGlobalSubAgents: 1,
+        maxConcurrency: 2,
+      });
+      const coordinator = createGraphCoordinator(deps);
+      const callerSessionKey = "test-tenant:user_a:telegram:chat_a";
+      const started = await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000017",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: callerSessionKey,
+        agentId: "test-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+      }, () => coordinator.run({
+        graph: buildGraph([{ nodeId: "A" }, { nodeId: "B" }]),
+        callerSessionKey,
+        callerAgentId: "test-agent",
+      }));
+      expect(started.ok).toBe(true);
+      expect(runner._getSpawnCalls().map((call) => call.nodeId)).toEqual(["A"]);
+
+      gateNodeB = true;
+      const firstRunId = runner._getSpawnCalls()[0]!._runId as string;
+      runner._completeRun(firstRunId, "done A");
+      simulateCompletion(eventBus, firstRunId, true);
+
+      await nodeBCheckpointSeen;
+      expect(runner._getSpawnCalls().map((call) => call.nodeId)).toEqual(["A"]);
+
+      releaseNodeBCheckpoint();
+      await waitForMicrotask();
+      await waitForMicrotask();
+      expect(runner._getSpawnCalls().map((call) => call.nodeId)).toEqual(["A", "B"]);
+
+      await coordinator.shutdown();
+    });
+
+    it("waits for an in-flight authority write and suppresses its launch during shutdown", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      let releaseRunningCheckpoint = (): void => {};
+      const runningCheckpointGate = new Promise<void>((resolve) => {
+        releaseRunningCheckpoint = resolve;
+      });
+      let sawRunningCheckpoint = (): void => {};
+      const runningCheckpointSeen = new Promise<void>((resolve) => {
+        sawRunningCheckpoint = resolve;
+      });
+      vi.mocked(durableRuns.upsertCheckpoint).mockImplementation(async (record) => {
+        const nodeA = (record.spawnTree as Array<{ nodeId: string; status: string }>).find(
+          (entry) => entry.nodeId === "A",
+        );
+        if (nodeA?.status === "running") {
+          sawRunningCheckpoint();
+          await runningCheckpointGate;
+        }
+        return ok(undefined);
+      });
+      const { deps, runner } = createTestDeps({
+        durableRuns,
+        resolveRootRunId: () => "root-shutdown-authority",
+      });
+      const coordinator = createGraphCoordinator(deps);
+      const callerSessionKey = "test-tenant:user_a:telegram:chat_a";
+      const runPromise = runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000019",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: callerSessionKey,
+        agentId: "test-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+      }, () => coordinator.run({
+        graph: buildGraph([{ nodeId: "A" }]),
+        callerSessionKey,
+        callerAgentId: "test-agent",
+      }));
+      await runningCheckpointSeen;
+
+      let shutdownSettled = false;
+      const shutdownPromise = coordinator.shutdown().then(() => {
+        shutdownSettled = true;
+      });
+      await waitForMicrotask();
+      expect(shutdownSettled).toBe(false);
+
+      releaseRunningCheckpoint();
+      await shutdownPromise;
+      expect(runner.spawn).not.toHaveBeenCalled();
+      expect((await runPromise).ok).toBe(false);
+    });
+
+    it("waits for the graph announcement receipt commit during shutdown", async () => {
+      const order: string[] = [];
+      let releaseCommit = (): void => {};
+      const commitGate = new Promise<void>((resolve) => {
+        releaseCommit = resolve;
+      });
+      let reportBegin = (): void => {};
+      const beginSeen = new Promise<void>((resolve) => {
+        reportBegin = resolve;
+      });
+      const sendGovernedAnnouncement = vi.fn(async () => {
+        order.push("begin");
+        reportBegin();
+        await commitGate;
+        order.push("commit");
+        return ok({
+          delivered: true as const,
+          identity: { agentId: "test-agent", rootRunId: "root-graph", stepIndex: 8 },
+        });
+      });
+      const { deps, runner, eventBus } = createTestDeps({ sendGovernedAnnouncement });
+      const coordinator = createGraphCoordinator(deps);
+      const callerSessionKey = "test-tenant:user_a:chat-1";
+      const started = await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000020",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: callerSessionKey,
+        agentId: "test-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+      }, () => coordinator.run({
+        graph: buildGraph([{ nodeId: "A" }]),
+        callerSessionKey,
+        callerAgentId: "test-agent",
+        announceChannelType: "telegram",
+        announceChannelId: "chat-1",
+      }));
+      expect(started.ok).toBe(true);
+
+      const runId = runner._getSpawnCalls()[0]!._runId as string;
+      runner._completeRun(runId, "done");
+      simulateCompletion(eventBus, runId, true);
+      await beginSeen;
+
+      let shutdownSettled = false;
+      const shutdownPromise = coordinator.shutdown().then(() => {
+        shutdownSettled = true;
+      });
+      await waitForMicrotask();
+
+      expect(order).toEqual(["begin"]);
+      expect(shutdownSettled).toBe(false);
+      releaseCommit();
+      await shutdownPromise;
+      expect(order).toEqual(["begin", "commit"]);
+      expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+        callerSessionKey,
+        runId: started.ok ? started.value : "",
+        channelType: "telegram",
+        channelId: "chat-1",
+      }));
+    });
+
     it("checkpoints the snapshot → spawn_tree at node transitions, keyed on the tree-stable rootRunId", async () => {
       const durableRuns = createRecordingDurableRuns();
       const { deps, runner, eventBus } = createTestDeps({
@@ -4071,12 +4609,25 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       const coordinator = createGraphCoordinator(deps);
 
       const graph = buildGraph([{ nodeId: "A" }, { nodeId: "B", dependsOn: ["A"] }]);
-      await coordinator.run({ graph, callerSessionKey: "agent:t:default:c:web:s:sess" });
+      const callerSessionKey = "test-tenant:user_a:telegram:chat_a";
+      await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000011",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: callerSessionKey,
+        agentId: "test-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+      }, () => coordinator.run({ graph, callerSessionKey, callerAgentId: "test-agent" }));
 
       // A spawned (running boundary) → a checkpoint was written.
       const aRun = runner._getSpawnCalls()[0]!._runId as string;
       expect(durableRuns._checkpoints().length).toBeGreaterThan(0);
-      const firstCp = durableRuns._checkpoints()[0]!;
+      const firstCp = durableRuns._checkpoints().find((checkpoint) =>
+        (checkpoint.spawnTree as Array<{ nodeId: string; status: string }>).some(
+          (entry) => entry.nodeId === "A" && entry.status === "running",
+        )
+      )!;
       expect(firstCp.rootRunId).toBe("root-graph-1");
       // spawn_tree is the DAG shape: object entries with a status field.
       expect(Array.isArray(firstCp.spawnTree)).toBe(true);
@@ -4089,6 +4640,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       // Complete A → next checkpoint shows A completed.
       runner._completeRun(aRun, "done A");
       simulateCompletion(eventBus, aRun, true);
+      await waitForMicrotask();
       await waitForMicrotask();
 
       const lastCp = durableRuns._checkpoints()[durableRuns._checkpoints().length - 1]!;
@@ -4124,18 +4676,253 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
 
     it("marks the durable record completed when the graph reaches terminal", async () => {
       const durableRuns = createRecordingDurableRuns();
+      let reportCompleted = (): void => {};
+      const completed = new Promise<void>((resolve) => {
+        reportCompleted = resolve;
+      });
+      vi.mocked(durableRuns.markCompleted).mockImplementation(async () => {
+        reportCompleted();
+        return ok(undefined);
+      });
+      const retainDurableRoot = vi.fn();
+      const releaseDurableRoot = vi.fn();
       const { deps, runner, eventBus } = createTestDeps({
         durableRuns,
         resolveRootRunId: () => "root-done",
+        retainDurableRoot,
+        releaseDurableRoot,
       });
       const coordinator = createGraphCoordinator(deps);
       const graph = buildGraph([{ nodeId: "A" }]);
-      await coordinator.run({ graph, callerSessionKey: "agent:t:default:c:web:s:s" });
+      const callerSessionKey = "test-tenant:user_a:telegram:chat_a";
+      const runResult = await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000012",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: callerSessionKey,
+        agentId: "test-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+      }, () => coordinator.run({ graph, callerSessionKey, callerAgentId: "test-agent" }));
+      expect(runResult.ok).toBe(true);
+      if (!runResult.ok) return;
       const aRun = runner._getSpawnCalls()[0]!._runId as string;
       runner._completeRun(aRun, "done");
       simulateCompletion(eventBus, aRun, true);
+      await completed;
+      await coordinator.shutdown();
+      expect(durableRuns.markCompleted).toHaveBeenCalledWith(runResult.value);
+      const finalCheckpoint = durableRuns._checkpoints().at(-1);
+      expect(finalCheckpoint).toBeDefined();
+      expect(finalCheckpoint?.checkpointId).toBe(runResult.value);
+      expect(finalCheckpoint?.spawnTree).toEqual([
+        expect.objectContaining({ nodeId: "A", status: "completed" }),
+      ]);
+      expect(retainDurableRoot).toHaveBeenCalledWith("root-done");
+      expect(releaseDurableRoot).toHaveBeenCalledWith("root-done");
+      expect(releaseDurableRoot).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not start a dependent node until the completed-node checkpoint is durable", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      const upsert = vi.mocked(durableRuns.upsertCheckpoint);
+      const { deps, runner, eventBus } = createTestDeps({
+        durableRuns,
+        resolveRootRunId: () => "root-ordered-checkpoint",
+      });
+      const coordinator = createGraphCoordinator(deps);
+      const callerSessionKey = "test-tenant:user_a:telegram:chat_a";
+      const graph = buildGraph([{ nodeId: "A" }, { nodeId: "B", dependsOn: ["A"] }]);
+      await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000013",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: callerSessionKey,
+        agentId: "test-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+      }, () => coordinator.run({ graph, callerSessionKey, callerAgentId: "test-agent" }));
       await waitForMicrotask();
-      expect(durableRuns._completed()).toContain("root-done");
+      const aRun = runner._getSpawnCalls()[0]!._runId as string;
+
+      let releaseCheckpoint = (): void => {};
+      const checkpointGate = new Promise<void>((resolve) => {
+        releaseCheckpoint = resolve;
+      });
+      upsert.mockImplementationOnce(async () => {
+        await checkpointGate;
+        return ok(undefined);
+      });
+
+      runner._completeRun(aRun, "done A");
+      simulateCompletion(eventBus, aRun, true);
+      await waitForMicrotask();
+      expect(runner._getSpawnCalls().map((call) => call.nodeId)).toEqual(["A"]);
+
+      releaseCheckpoint();
+      await waitForMicrotask();
+      await waitForMicrotask();
+      await waitForMicrotask();
+      await waitForMicrotask();
+      expect(runner._getSpawnCalls().map((call) => call.nodeId)).toEqual(["A", "B"]);
+
+      await coordinator.shutdown();
+    });
+
+    it("stops graph progression when a completed-node checkpoint cannot advance authority", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      const upsert = vi.mocked(durableRuns.upsertCheckpoint);
+      const { deps, runner, eventBus } = createTestDeps({
+        durableRuns,
+        resolveRootRunId: () => "root-failed-checkpoint",
+      });
+      const coordinator = createGraphCoordinator(deps);
+      const callerSessionKey = "test-tenant:user_a:telegram:chat_a";
+      const graph = buildGraph([{ nodeId: "A" }, { nodeId: "B", dependsOn: ["A"] }]);
+      await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000014",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: callerSessionKey,
+        agentId: "test-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+      }, () => coordinator.run({ graph, callerSessionKey, callerAgentId: "test-agent" }));
+      await waitForMicrotask();
+      const aRun = runner._getSpawnCalls()[0]!._runId as string;
+      upsert.mockImplementationOnce(async () => err(new Error("private database detail")));
+
+      runner._completeRun(aRun, "done A");
+      simulateCompletion(eventBus, aRun, true);
+      await waitForMicrotask();
+      await waitForMicrotask();
+      expect(runner._getSpawnCalls().map((call) => call.nodeId)).toEqual(["A"]);
+
+      await coordinator.shutdown();
+    });
+
+    it("settles terminal delivery before durable authority becomes completed", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      let releaseDelivery = (): void => {};
+      const deliveryGate = new Promise<void>((resolve) => {
+        releaseDelivery = resolve;
+      });
+      let reportDeliveryStarted = (): void => {};
+      const deliveryStarted = new Promise<void>((resolve) => {
+        reportDeliveryStarted = resolve;
+      });
+      let reportAuthorityCompleted = (): void => {};
+      const authorityCompleted = new Promise<void>((resolve) => {
+        reportAuthorityCompleted = resolve;
+      });
+      vi.mocked(durableRuns.markCompleted).mockImplementation(async () => {
+        reportAuthorityCompleted();
+        return ok(undefined);
+      });
+      const sendGovernedAnnouncement = vi.fn(async () => {
+        reportDeliveryStarted();
+        await deliveryGate;
+        return ok({
+          delivered: true as const,
+          identity: { agentId: "test-agent", rootRunId: "root-terminal-order", stepIndex: 1 },
+        });
+      });
+      const { deps, runner, eventBus } = createTestDeps({
+        durableRuns,
+        resolveRootRunId: () => "root-terminal-order",
+        sendGovernedAnnouncement,
+      });
+      const coordinator = createGraphCoordinator(deps);
+      const completedEvents: unknown[] = [];
+      eventBus.on("graph:completed", (event) => completedEvents.push(event));
+      const callerSessionKey = "test-tenant:user_a:chat_a";
+      const runResult = await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000015",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: callerSessionKey,
+        agentId: "test-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+      }, () => coordinator.run({
+        graph: buildGraph([{ nodeId: "A" }]),
+        callerSessionKey,
+        callerAgentId: "test-agent",
+        announceChannelType: "telegram",
+        announceChannelId: "chat_a",
+      }));
+      expect(runResult.ok).toBe(true);
+      await waitForMicrotask();
+      const runId = runner._getSpawnCalls()[0]!._runId as string;
+
+      runner._completeRun(runId, "done");
+      simulateCompletion(eventBus, runId, true);
+      await deliveryStarted;
+      expect(durableRuns.markCompleted).not.toHaveBeenCalled();
+      expect(completedEvents).toHaveLength(1);
+
+      releaseDelivery();
+      await authorityCompleted;
+      expect(durableRuns.markCompleted).toHaveBeenCalledWith(
+        runResult.ok ? runResult.value : "",
+      );
+      expect(sendGovernedAnnouncement).toHaveBeenCalledTimes(1);
+      expect(completedEvents).toHaveLength(1);
+
+      await coordinator.shutdown();
+    });
+
+    it("keeps terminal authority resumable when completion throws unexpectedly", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      const loggerError = vi.fn();
+      const loggerInfo = vi.fn((_fields: Record<string, unknown>, message: string) => {
+        if (message === "Graph execution complete") {
+          throw new Error("unexpected completion failure");
+        }
+      });
+      const { deps, runner, eventBus } = createTestDeps({
+        durableRuns,
+        resolveRootRunId: () => "root-terminal-failed",
+        logger: {
+          info: loggerInfo,
+          warn: vi.fn(),
+          error: loggerError,
+          debug: vi.fn(),
+        },
+      });
+      const coordinator = createGraphCoordinator(deps);
+      const callerSessionKey = "test-tenant:user_a:telegram:chat_a";
+      const runResult = await runWithContext({
+        traceId: "20000000-0000-4000-8000-000000000021",
+        tenantId: "test-tenant",
+        userId: "user_a",
+        sessionKey: callerSessionKey,
+        agentId: "test-agent",
+        startedAt: Date.now(),
+        trustLevel: "user",
+      }, () => coordinator.run({
+        graph: buildGraph([{ nodeId: "A" }]),
+        callerSessionKey,
+        callerAgentId: "test-agent",
+      }));
+      expect(runResult.ok).toBe(true);
+      await waitForMicrotask();
+      const runId = runner._getSpawnCalls()[0]!._runId as string;
+
+      runner._completeRun(runId, "done");
+      simulateCompletion(eventBus, runId, true);
+      await vi.waitFor(() => {
+        expect(loggerError).toHaveBeenCalledWith(
+          expect.objectContaining({ errorKind: "internal" }),
+          "Graph completion task failed",
+        );
+      });
+
+      expect(durableRuns.markCompleted).not.toHaveBeenCalled();
+      expect(durableRuns._checkpoints().at(-1)).toEqual(expect.objectContaining({
+        checkpointId: runResult.ok ? runResult.value : "",
+        status: "running",
+      }));
       await coordinator.shutdown();
     });
   });
@@ -4146,21 +4933,30 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       const { deps, runner } = createTestDeps({ durableRuns });
       const coordinator = createGraphCoordinator(deps);
 
-      // A durable record: A completed, B incomplete (running at crash).
-      const record: DurableRunRecord = {
+      const exactGraph = buildGraph([
+        { nodeId: "A", task: "produce artifact", retries: 1 },
+        { nodeId: "B", task: "consume {{A.result}}", dependsOn: ["A"], retries: 2 },
+      ], { timeoutMs: 60_000 });
+      const checkpointRef = seedGraphCheckpoint(
+        "checkpoint-resume-1",
+        exactGraph,
+        [
+          { nodeId: "A", status: "completed", output: "persisted-output", retryAttempt: 1, retriesRemaining: 0 },
+          { nodeId: "B", status: "running", runId: "old-run-b", retryAttempt: 1, retriesRemaining: 1 },
+        ],
+        { cumulativeTokens: 900, cumulativeCost: 0.4 },
+      );
+      const record = makeDurableGraphRecord({
+        checkpointId: "checkpoint-resume-1",
         rootRunId: "root-resume-1",
         spawnTree: [
-          { nodeId: "A", status: "completed", runId: "old-run-a" },
+          { nodeId: "A", status: "completed" },
           { nodeId: "B", status: "running", runId: "old-run-b" },
         ],
-        caps: [],
-        leaseIds: [],
-        budgetConsumed: 0,
-        cronOrigin: null,
-        stepIndex: -1,
-        status: "running",
-        lastHeartbeatAt: Date.now(),
-      };
+        checkpointRef,
+        budgetConsumed: 0.4,
+        rootBudget: { startedAtMs: Date.now(), tokensConsumed: 900, usdConsumed: 0.4 },
+      });
 
       const res = await coordinator.resumeGraph(record);
       expect(res.ok).toBe(true);
@@ -4171,69 +4967,199 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       expect(spawnCalls[0]!.nodeId).toBe("B");
       // The completed node A was NOT re-executed.
       expect(spawnCalls.some((c) => c.nodeId === "A")).toBe(false);
-      // Re-run node shares the tree-stable root (so the ONCE ledger dedups its sends).
+      // Re-run node shares the tree-stable root used by outward uncertainty checks.
       expect(spawnCalls[0]!.rootRunId).toBe("root-resume-1");
+      // Recovery uses the exact authenticated trust persisted with the durable
+      // row and never guesses from an ambient/default context.
+      expect(spawnCalls[0]!.callerTrustLevel).toBe("user");
+      expect(spawnCalls[0]!.task).toContain("persisted-output");
+      // The replacement authority row gets a fresh checkpointId, but its
+      // protected artifact remains under the original graph-run directory.
+      // Resumed nodes must keep sharing that original workspace.
+      expect(spawnCalls[0]!.graphSharedDir).toBe(
+        "/tmp/test-comis/graph-runs/checkpoint-resume-1",
+      );
 
       await coordinator.shutdown();
     });
 
-    it("drives ALL incomplete nodes (running + pending + ready), excludes terminal (completed/skipped/failed)", async () => {
+    it("keeps the protected graph-run workspace when the replacement checkpoint id changes", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      const { deps, runner } = createTestDeps({ durableRuns });
+      const coordinator = createGraphCoordinator(deps);
+      const exactGraph = buildGraph([{ nodeId: "A" }]);
+      const checkpointRef = seedGraphCheckpoint(
+        "original-graph-run",
+        exactGraph,
+        [{ nodeId: "A", status: "running", runId: "old-run-a" }],
+      );
+      const record = makeDurableGraphRecord({
+        checkpointId: "resume-replacement-authority",
+        rootRunId: "root-original-workspace",
+        spawnTree: [{ nodeId: "A", status: "running", runId: "old-run-a" }],
+        checkpointRef,
+      });
+
+      expect(await coordinator.resumeGraph(record)).toEqual({ ok: true, value: undefined });
+      expect(runner._getSpawnCalls()[0]?.graphSharedDir).toBe(
+        "/tmp/test-comis/graph-runs/original-graph-run",
+      );
+
+      await coordinator.shutdown();
+    });
+
+    it("releases retained root authority when a resumed node cannot persist its launch claim", async () => {
+      const durableRuns = createRecordingDurableRuns();
+      vi.mocked(durableRuns.upsertCheckpoint).mockResolvedValueOnce(
+        err(new Error("checkpoint unavailable")),
+      );
+      const retainDurableRoot = vi.fn();
+      const releaseDurableRoot = vi.fn();
+      const { deps, runner } = createTestDeps({
+        durableRuns,
+        retainDurableRoot,
+        releaseDurableRoot,
+      });
+      const coordinator = createGraphCoordinator(deps);
+      const exactGraph = buildGraph([{ nodeId: "A" }]);
+      const record = makeDurableGraphRecord({
+        checkpointId: "checkpoint-resume-failed-launch",
+        rootRunId: "root-resume-failed-launch",
+        spawnTree: [{ nodeId: "A", status: "running", runId: "old-run-a" }],
+        checkpointRef: seedGraphCheckpoint(
+          "checkpoint-resume-failed-launch",
+          exactGraph,
+          [{ nodeId: "A", status: "running", runId: "old-run-a" }],
+        ),
+      });
+
+      const resumed = await coordinator.resumeGraph(record);
+
+      expect(resumed.ok).toBe(false);
+      expect(runner.spawn).not.toHaveBeenCalled();
+      expect(retainDurableRoot).toHaveBeenCalledWith("root-resume-failed-launch");
+      expect(releaseDurableRoot).toHaveBeenCalledWith("root-resume-failed-launch");
+      expect(releaseDurableRoot).toHaveBeenCalledTimes(1);
+      await coordinator.shutdown();
+    });
+
+    it("resets only interrupted running nodes and preserves pending ready and terminal states", async () => {
       const durableRuns = createRecordingDurableRuns();
       const { deps, runner } = createTestDeps({ durableRuns, maxConcurrency: 10 });
       const coordinator = createGraphCoordinator(deps);
 
-      const record: DurableRunRecord = {
+      const exactGraph = buildGraph([
+        { nodeId: "A" },
+        { nodeId: "B" },
+        { nodeId: "C" },
+        { nodeId: "D" },
+        { nodeId: "E" },
+        { nodeId: "F" },
+      ]);
+      const nodes: NodeExecutionState[] = [
+        { nodeId: "A", status: "completed", output: "a" },
+        { nodeId: "B", status: "skipped" },
+        { nodeId: "C", status: "failed", error: "failed" },
+        { nodeId: "D", status: "running", runId: "r-d" },
+        { nodeId: "E", status: "pending" },
+        { nodeId: "F", status: "ready" },
+      ];
+      const record = makeDurableGraphRecord({
+        checkpointId: "checkpoint-resume-2",
         rootRunId: "root-resume-2",
-        spawnTree: [
-          { nodeId: "A", status: "completed" },
-          { nodeId: "B", status: "skipped" },
-          { nodeId: "C", status: "failed" },
-          { nodeId: "D", status: "running", runId: "r-d" },
-          { nodeId: "E", status: "pending" },
-          { nodeId: "F", status: "ready" },
-        ],
-        caps: [],
-        leaseIds: [],
-        budgetConsumed: 0,
-        cronOrigin: null,
-        stepIndex: -1,
-        status: "running",
-        lastHeartbeatAt: Date.now(),
-      };
+        spawnTree: nodes.map(({ nodeId, status, runId }) => ({
+          nodeId,
+          status,
+          ...(runId !== undefined ? { runId } : {}),
+        })),
+        checkpointRef: seedGraphCheckpoint("checkpoint-resume-2", exactGraph, nodes),
+      });
 
       const res = await coordinator.resumeGraph(record);
       expect(res.ok).toBe(true);
 
       const spawnedNodeIds = runner._getSpawnCalls().map((c) => c.nodeId).sort();
-      expect(spawnedNodeIds).toEqual(["D", "E", "F"]);
+      expect(spawnedNodeIds).toEqual(["D", "F"]);
+
+      await coordinator.shutdown();
+    });
+
+    it("re-arms only the persisted graph timeout remainder after restart", async () => {
+      vi.setSystemTime(100_000);
+      const durableRuns = createRecordingDurableRuns();
+      const { deps, runner, eventBus } = createTestDeps({ durableRuns });
+      const coordinator = createGraphCoordinator(deps);
+      const completedEvents: Array<Record<string, unknown>> = [];
+      eventBus.on("graph:completed", (payload) => {
+        completedEvents.push(payload as unknown as Record<string, unknown>);
+      });
+
+      const exactGraph = buildGraph([{ nodeId: "A" }], { timeoutMs: 10_000 });
+      const record = makeDurableGraphRecord({
+        checkpointId: "checkpoint-resume-timeout",
+        rootRunId: "root-resume-timeout",
+        spawnTree: [{ nodeId: "A", status: "running", runId: "old-run-a" }],
+        checkpointRef: seedGraphCheckpoint(
+          "checkpoint-resume-timeout",
+          exactGraph,
+          [{ nodeId: "A", status: "running", runId: "old-run-a" }],
+          { startedAtMs: 94_000 },
+        ),
+      });
+
+      expect(await coordinator.resumeGraph(record)).toEqual({ ok: true, value: undefined });
+      const resumedRunId = runner._getSpawnCalls()[0]!._runId as string;
+
+      await vi.advanceTimersByTimeAsync(3_999);
+      expect(completedEvents).toHaveLength(0);
+      expect(runner._getKillCalls()).not.toContain(resumedRunId);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(runner._getKillCalls()).toContain(resumedRunId);
+      expect(completedEvents).toHaveLength(1);
+      expect(completedEvents[0]!.cancelReason).toBe("timeout");
 
       await coordinator.shutdown();
     });
 
     it("re-runs nothing and marks the record completed when all nodes are terminal", async () => {
       const durableRuns = createRecordingDurableRuns();
-      const { deps, runner } = createTestDeps({ durableRuns });
+      const retainDurableRoot = vi.fn();
+      const releaseDurableRoot = vi.fn();
+      const { deps, runner, eventBus } = createTestDeps({
+        durableRuns,
+        retainDurableRoot,
+        releaseDurableRoot,
+      });
       const coordinator = createGraphCoordinator(deps);
+      const completedEvents: unknown[] = [];
+      eventBus.on("graph:completed", (event) => completedEvents.push(event));
 
-      const record: DurableRunRecord = {
+      const record = makeDurableGraphRecord({
+        checkpointId: "checkpoint-resume-done",
         rootRunId: "root-resume-done",
         spawnTree: [
           { nodeId: "A", status: "completed" },
           { nodeId: "B", status: "skipped" },
         ],
-        caps: [],
-        leaseIds: [],
-        budgetConsumed: 0,
-        cronOrigin: null,
-        stepIndex: -1,
-        status: "running",
-        lastHeartbeatAt: Date.now(),
-      };
+        checkpointRef: seedGraphCheckpoint(
+          "checkpoint-resume-done",
+          buildGraph([{ nodeId: "A" }, { nodeId: "B" }]),
+          [
+            { nodeId: "A", status: "completed", output: "done" },
+            { nodeId: "B", status: "skipped" },
+          ],
+        ),
+      });
 
       const res = await coordinator.resumeGraph(record);
       expect(res.ok).toBe(true);
       expect(runner._getSpawnCalls().length).toBe(0);
-      expect(durableRuns._completed()).toContain("root-resume-done");
+      expect(durableRuns._completed()).toContain("checkpoint-resume-done");
+      expect(completedEvents).toHaveLength(1);
+      expect(retainDurableRoot).toHaveBeenCalledWith("root-resume-done");
+      expect(releaseDurableRoot).toHaveBeenCalledWith("root-resume-done");
+      expect(releaseDurableRoot).toHaveBeenCalledTimes(1);
 
       await coordinator.shutdown();
     });
@@ -4244,17 +5170,13 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       const coordinator = createGraphCoordinator(deps);
 
       // A foreign capability string fails parseDurableRunRecord.
-      const tampered = {
+      const tampered = makeDurableGraphRecord({
+        checkpointId: "checkpoint-evil",
         rootRunId: "root-evil",
         spawnTree: [{ nodeId: "B", status: "running" }],
-        caps: ["root:everything"],
-        leaseIds: [],
-        budgetConsumed: 0,
-        cronOrigin: null,
-        stepIndex: -1,
-        status: "running",
-        lastHeartbeatAt: Date.now(),
-      } as unknown as DurableRunRecord;
+        checkpointRef: "graph-runs/checkpoint-evil/durable-checkpoint.json",
+        caps: ["root:everything"] as unknown as DurableRunRecord["caps"],
+      });
 
       const res = await coordinator.resumeGraph(tampered);
       expect(res.ok).toBe(false);

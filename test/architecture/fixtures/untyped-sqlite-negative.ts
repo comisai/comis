@@ -47,3 +47,17 @@ const docs = "Don't: stmt.all() as Foo[]";
 // CLEAN: comment containing the forbidden pattern
 // We migrated stmt.all() as Foo[] to mapper.parseRows(stmt.all()).
 function c4() {}
+
+// CLEAN: a multiline mapper call still owns validation.
+function c5() {
+  return tokenMapper.parseRows(
+    db
+      .prepare("SELECT *")
+      .all(),
+  );
+}
+
+// CLEAN: a cast on an unrelated method is outside the SQLite-row rule.
+function c6() {
+  return ["a"].map((id) => ({ id, count: 1 })) as TokenRow[];
+}

@@ -34,7 +34,7 @@
  */
 
 import { suppressError } from "@comis/shared";
-import { systemNowMs } from "@comis/core";
+import { emitObservationalEventSafely, systemNowMs } from "@comis/core";
 import type { TypedEventBus, BackgroundTaskOrigin } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type {
@@ -354,20 +354,16 @@ export function createCompletionDispatcher(
     notified: boolean,
     reason: "no_session" | "hop_cap" | "live_turn_suppressed",
   ): void {
-    try {
-      deps.eventBus.emit("background_task:notified", {
-        agentId: origin.agentId,
-        taskId: task.id,
-        toolName: task.toolName,
-        sessionKey: origin.sessionKey,
-        notified,
-        reason,
-        traceId: origin.traceId ?? null,
-        timestamp: systemNowMs(),
-      });
-    } catch {
-      // A bus emit fault must never abort the completion dispatch.
-    }
+    emitObservationalEventSafely({ eventBus: deps.eventBus, logger: log }, "background_task:notified", {
+      agentId: origin.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      sessionKey: origin.sessionKey,
+      notified,
+      reason,
+      traceId: origin.traceId ?? null,
+      timestamp: systemNowMs(),
+    });
   }
 
   async function fireFallback(task: BackgroundTask, message: string): Promise<void> {

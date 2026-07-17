@@ -67,7 +67,7 @@ function buildSbplProfile(opts: SandboxOptions): string {
   ];
 
   const writePaths = [
-    resolvePath(opts.workspacePath),
+    ...(opts.workspaceReadOnly ? [] : [resolvePath(opts.workspacePath)]),
     ...opts.sharedPaths.map(resolvePath),
     "/private/tmp",
     "/private/var/folders",

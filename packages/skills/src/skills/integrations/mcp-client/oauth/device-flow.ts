@@ -446,7 +446,7 @@ async function pollDeviceCode(args: {
       default:
         logger.warn(
           { submodule: SUBMODULE, serverName, errorKind: "dependency" as const,
-            providerError: errBody.error ?? null,
+            providerErrorPresent: typeof errBody.error === "string" && errBody.error.length > 0,
             hint: "Provider returned unexpected error code; continuing per RFC 8628 §3.5 best-effort" },
           "Device-flow poll: unexpected provider error",
         );

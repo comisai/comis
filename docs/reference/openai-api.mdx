@@ -83,9 +83,13 @@ Each message in the `messages` array follows `ChatMessageSchema`:
 | `role` | `"system"` \| `"user"` \| `"assistant"` | Yes | Message role |
 | `content` | `string` \| `ContentBlock[]` | Yes | Message text content. Accepts a plain string OR the OpenAI multimodal content-block array (`[{ "type": "text", "text": "..." }, ...]`) |
 
-System messages are concatenated (joined with newline) and passed as the system
-prompt. The last `user` message becomes the agent input. If no user message is
-found, the request returns `400`.
+System messages are preserved in their original system-message order and passed
+through the system-prompt path. User and assistant turns are preserved in their
+original order with explicit role boundaries, so a request can supply its full
+conversation history. Caller-supplied context remains untrusted; imported
+system and assistant content receives explicit external-content fences before
+entering the agent prompt. If no non-empty user message is found, the request
+returns `400`.
 
 When `content` is a content-block array, the `text` blocks are flattened (joined
 with newline) into the message text. **Vision input is not yet supported via this
@@ -250,8 +254,9 @@ auto-generated key:
 ```
 
 The `peerId` uses the completion ID, making each request a unique session. This
-means there is no conversation history between requests -- each call is
-stateless from the agent's perspective.
+means there is no server-retained conversation history between requests. Each
+call is stateless, while the complete history supplied in that request remains
+available to the agent.
 
 <Info>
 Source: Session key construction in `packages/gateway/src/openai/openai-completions.ts`

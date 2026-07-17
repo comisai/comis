@@ -146,4 +146,24 @@ describe("EventMap composition", () => {
     expect(payload).not.toHaveProperty("error");
     expect(payload).not.toHaveProperty("text");
   });
+
+  it("round-trips a content-free outward ledger transition", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["delivery:outward_ledger_transition"] = {
+      rootRunId: "root-1",
+      stepIndex: 2,
+      transition: "park",
+      outcome: "parked",
+      timestamp: 123,
+    };
+
+    bus.on("delivery:outward_ledger_transition", handler);
+    bus.emit("delivery:outward_ledger_transition", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    expect(payload).not.toHaveProperty("text");
+    expect(payload).not.toHaveProperty("error");
+    expect(payload).not.toHaveProperty("contentDigest");
+  });
 });

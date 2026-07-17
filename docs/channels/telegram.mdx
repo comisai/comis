@@ -115,7 +115,7 @@ These options go under `channels.telegram` in your `config.yaml`:
 |---|---|---|---|
 | `enabled` | boolean | `false` | Turns on the Telegram adapter |
 | `botToken` | string / SecretRef | (required) | Bot authentication token from BotFather (env: `TELEGRAM_BOT_TOKEN`) |
-| `webhookUrl` | string | (optional) | Public webhook URL. When set, Telegram pushes updates over HTTPS instead of long-polling. |
+| `webhookUrl` | string | (unsupported) | Reserved for webhook ingestion. Setting it fails adapter startup because no webhook receiver is wired. |
 | `allowFrom` | string[] | `[]` (all) | Restrict to specific Telegram user IDs. Empty means all users can talk to the bot. |
 | `mediaProcessing.transcribeAudio` | boolean | `true` | Transcribe voice messages to text before passing to the agent |
 | `mediaProcessing.analyzeImages` | boolean | `true` | Describe images sent to the bot using AI vision |
@@ -123,10 +123,10 @@ These options go under `channels.telegram` in your `config.yaml`:
 | `mediaProcessing.extractDocuments` | boolean | `true` | Extract text from PDFs, DOCX, and other documents |
 | `mediaProcessing.understandLinks` | boolean | `true` | Fetch and summarize URLs included in messages |
 
-By default the adapter uses **long-polling** (Grammy runner with auto-retry on
-HTTP 429). Set `TELEGRAM_WEBHOOK_SECRET` in your `.env` if you switch to
-webhook delivery -- Comis uses it to verify the `X-Telegram-Bot-Api-Secret-Token`
-header on incoming requests.
+The adapter uses **sequential long-polling** with one update per request. Each
+message handler must finish before the next request confirms Telegram's update
+offset, and shutdown drains active handlers before stopping polling. Webhook
+ingestion is not available; configuring `webhookUrl` fails closed at startup.
 
 ## What your agent can do
 

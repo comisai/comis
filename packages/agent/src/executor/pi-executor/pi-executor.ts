@@ -58,14 +58,16 @@ import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import {
   formatSessionKey,
+  emitObservationalEventSafely,
   safePath,
+  toSafeErrorLogString,
   tryGetContext,
   type SessionKey,
   type NormalizedMessage,
   type PerAgentConfig,
 } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { suppressError } from "@comis/shared";
+import { ok, suppressError, type Result } from "@comis/shared";
 import type { AgentTool, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { CommandDirectives } from "../command-directive-types.js";
 import type { StepCounter } from "../step-counter.js";
@@ -76,6 +78,9 @@ import type { RunHandle } from "../active-run-registry.js";
 import { repairOrphanedMessages, scrubPoisonedThinkingBlocks } from "../../session/orphaned-message-repair.js";
 import { scrubRedactedToolCalls } from "../../session/scrub-redacted-tool-calls.js";
 import { scrubForgedContextMarkers } from "../../session/forged-context-markers.js";
+import {
+  appendInboundMessageProvenance,
+} from "../../session/inbound-message-provenance.js";
 import { createPiEventBridge } from "../../bridge/pi-event-bridge.js";
 import { assertThinkingBlocksUnchanged, restoreCanonicalThinkingBlocks } from "../../bridge/thinking-block-hash-invariant.js";
 import type { AdaptiveCacheRetention } from "../adaptive-cache-retention.js";
@@ -227,6 +232,52 @@ export function createPiExecutor(
       _prevTimestamp?: number,
       overrides?: ExecutionOverrides,
     ): Promise<ExecutionResult> {
+      // Resolved request identity is write-once. An executor selected for a
+      // different agent/session must not relabel the live ALS object and retain
+      // the original principal's trust or delivery origin. Reject before OAuth,
+      // model, tool, or session work. An unresolved agentId remains unresolved
+      // here; only the inbound boundary may enrich authorization identity.
+      const alsCtx = tryGetContext();
+      const contextAgentMismatch = alsCtx?.agentId !== undefined
+        && agentId !== undefined
+        && alsCtx.agentId !== agentId;
+      const contextSessionMismatch = alsCtx?.sessionKey !== undefined
+        && alsCtx.sessionKey !== formatSessionKey(sessionKey);
+      if (contextAgentMismatch || contextSessionMismatch) {
+        const rejectedAgentId = agentId ?? alsCtx?.agentId ?? "unknown";
+        deps.logger.warn(
+          {
+            step: "request-context-identity",
+            agentId: rejectedAgentId,
+            agentMismatch: contextAgentMismatch,
+            sessionMismatch: contextSessionMismatch,
+            hint: "Reject the execution and verify the inbound resolver and executor selection use the same agent and session",
+            errorKind: "precondition" as ErrorKind,
+          },
+          "Agent execution rejected due to request context identity mismatch",
+        );
+        emitObservationalEventSafely({ eventBus: deps.eventBus, logger: deps.logger }, "security:warn", {
+          category: "request_context_identity_mismatch",
+          agentId: rejectedAgentId,
+          message: "Agent execution rejected because request context identity did not match the selected execution identity",
+          timestamp: deps.clock.now(),
+        });
+        return {
+          response: "The request could not be executed safely because its identity context was inconsistent.",
+          sessionKey,
+          tokensUsed: { input: 0, output: 0, total: 0 },
+          cost: { total: 0 },
+          stepsExecuted: 0,
+          llmCalls: 0,
+          finishReason: "error",
+          errorContext: {
+            errorType: "RequestContextIdentityMismatch",
+            retryable: false,
+            originalError: "Resolved request context identity did not match execution identity",
+          },
+        };
+      }
+
       // 1. Bootstrap: OAuth pre-resolve + ExecutionResult init + SEP plan ref
       //    (closure-extracted)
       const { executionStartMs, result, sepEnabled, executionPlanRef } = await bootstrapSession(
@@ -364,19 +415,8 @@ export function createPiExecutor(
       }
 
       // Store resolved model on ALS context for sub-agent parent inheritance
-      const alsCtx = tryGetContext();
       if (alsCtx && resolvedModel) {
         (alsCtx as Record<string, unknown>).resolvedModel = `${resolvedModel.provider}:${resolvedModel.id}`;
-      }
-      // Populate the turn's agentId onto the LIVE RequestContext so
-      // the in-session ctx_* tools scope LCD reads by THIS agent per-call.
-      // The agentId arrives as a positional execute() arg (not in the context set
-      // at the channel/RPC boundary); mirror the resolvedModel mutation above. The
-      // tools read `tryGetContext().agentId` — a wiring-time closure would be
-      // unsafe when one wiring serves multiple agents (the exact cross-agent
-      // scoping threat this guards against).
-      if (alsCtx && agentId) {
-        (alsCtx as Record<string, unknown>).agentId = agentId;
       }
       // Tag the resolved reply language on ALS for the sub-agent leg
       // (config-then-inbound resolution order; set only when non-en so the en path is untouched).
@@ -606,6 +646,46 @@ async function runSessionLocked(
   const executionCacheRetentionClear = () => { cacheRetentionRef.set(undefined); };
   const adaptiveRetentionClear = () => { adaptiveRetentionRef.set(undefined); };
   const executionMinTokensOverrideClear = () => { minTokensOverrideRef.set(undefined); };
+  const recordProvenanceFailure = (error: Error, errorKind: ErrorKind): void => {
+    const safeErrorMessage = toSafeErrorLogString(error);
+    deps.logger.error(
+      {
+        step: "session-provenance",
+        agentId,
+        durationMs: Math.max(0, deps.clock.now() - executionStartMs),
+        err: safeErrorMessage,
+        hint: "Check session-storage limits, ownership, and free space, then resend the message; model dispatch was stopped.",
+        errorKind,
+      },
+      "Inbound message provenance persistence failed",
+    );
+    result.finishReason = "error";
+    result.response = "The message could not be saved safely. Please try again.";
+    result.errorContext = {
+      errorType: "SessionPersistenceError",
+      retryable: true,
+      originalError: "Inbound message provenance persistence failed",
+    };
+  };
+
+  // Ingress already committed these immutable occurrence plans to the
+  // dedicated ledger. Reuse the exact payloads for every SDK mirror; never
+  // reconstruct them from the processed model-facing message.
+  const inboundProvenancePlans = executionOverrides?.inboundProvenancePlans ?? [];
+  const appendInboundProvenancePlans = (): Result<string, Error> => {
+    let finalEntryId = "";
+    for (const plan of inboundProvenancePlans) {
+      const appended = appendInboundMessageProvenance(sm, plan);
+      if (!appended.ok) return appended;
+      finalEntryId = appended.value;
+    }
+    return ok(finalEntryId);
+  };
+  const provenanceWrite = appendInboundProvenancePlans();
+  if (!provenanceWrite.ok) {
+    recordProvenanceFailure(provenanceWrite.error, "resource");
+    return result;
+  }
 
   // One-time scrub for sessions poisoned by an earlier on-disk thinking-signature stripper.
   // Must run before buildSessionContext so the context pipeline sees the clean fileEntries.
@@ -1795,56 +1875,66 @@ async function runSessionLocked(
   // Prompt execution: envelope, preamble, images, budget, retry, escalation, recovery
   // Extracted to prompt-runner/.
   try {
-    const promptRunResult = await runPrompt({
-      msg, session, config, sessionKey, formattedKey, agentId, result,
-      executionOverrides, executionStartMs, effectiveTimeout, executionId,
-      bridge, dynamicPreamble, deferredContext, capabilityIndexResult, inlineMemory,
-      systemPrompt,
-      mergedCustomTools,
-      cmdResult, sepEnabled, executionPlanRef,
-      _directives, _prevTimestamp, resolvedModel, modelProfile,
-      deps: {
-        eventBus: deps.eventBus,
-        logger: deps.logger,
-        // This run's execution-local window (precheck + envelope snapshot).
-        budgetGuard: budgetWindow,
-        costTracker: deps.costTracker,
-        authRotation: deps.authRotation,
-        fallbackModels: deps.fallbackModels,
-        modelRegistry: deps.modelRegistry,
-        providerHealth: deps.providerHealth,
-        lastKnownModel: deps.lastKnownModel,
-        envelopeConfig: deps.envelopeConfig,
-        outputGuard: deps.outputGuard,
-        canaryToken: deps.canaryToken,
-        clock: deps.clock,
-        timers: deps.timers,
-        // The canonical system-tokens estimate the pre-flight throws on, so
-        // wrapEnvelope can size the tight-window residual and drop the heavy
-        // tool-discovery preamble before it overflows (same S → no drift).
-        getSystemTokensEstimate: () => cachedSystemTokensEstimate,
-      },
-      onResetTimer: (fn) => { currentResetTimer = fn; },
-      getLastCacheWriteTokens: () => bridge.getResult().tokensUsed?.cacheWrite ?? 0,
-      budgetWarningRef,
-    });
-    // Aggregate ghost cost from timed-out request into bridge metrics
-    if (promptRunResult.ghostCost) {
-      bridge.addGhostCost(promptRunResult.ghostCost);
-    }
+    // Repeat the marker directly at the model-dispatch boundary. The early
+    // marker above protects setup failures; this adjacent marker lets a
+    // bounded tail reader recover provenance when the 5,000-record boundary
+    // falls between setup history and the SDK user record. The offline reader
+    // deduplicates the shared physical identities.
+    const dispatchProvenanceWrite = appendInboundProvenancePlans();
+    if (!dispatchProvenanceWrite.ok) {
+      recordProvenanceFailure(dispatchProvenanceWrite.error, "resource");
+    } else {
+      const promptRunResult = await runPrompt({
+        msg, session, config, sessionKey, formattedKey, agentId, result,
+        executionOverrides, executionStartMs, effectiveTimeout, executionId,
+        bridge, dynamicPreamble, deferredContext, capabilityIndexResult, inlineMemory,
+        systemPrompt,
+        mergedCustomTools,
+        cmdResult, sepEnabled, executionPlanRef,
+        _directives, _prevTimestamp, resolvedModel, modelProfile,
+        deps: {
+          eventBus: deps.eventBus,
+          logger: deps.logger,
+          // This run's execution-local window (precheck + envelope snapshot).
+          budgetGuard: budgetWindow,
+          costTracker: deps.costTracker,
+          authRotation: deps.authRotation,
+          fallbackModels: deps.fallbackModels,
+          modelRegistry: deps.modelRegistry,
+          providerHealth: deps.providerHealth,
+          lastKnownModel: deps.lastKnownModel,
+          envelopeConfig: deps.envelopeConfig,
+          outputGuard: deps.outputGuard,
+          canaryToken: deps.canaryToken,
+          clock: deps.clock,
+          timers: deps.timers,
+          // The canonical system-tokens estimate the pre-flight throws on, so
+          // wrapEnvelope can size the tight-window residual and drop the heavy
+          // tool-discovery preamble before it overflows (same S → no drift).
+          getSystemTokensEstimate: () => cachedSystemTokensEstimate,
+        },
+        onResetTimer: (fn) => { currentResetTimer = fn; },
+        getLastCacheWriteTokens: () => bridge.getResult().tokensUsed?.cacheWrite ?? 0,
+        budgetWarningRef,
+      });
+      // Aggregate ghost cost from timed-out request into bridge metrics
+      if (promptRunResult.ghostCost) {
+        bridge.addGhostCost(promptRunResult.ghostCost);
+      }
 
-    // Apply stuck-session outcome (closure-extracted).
-    applyPromptRunOutcome(
-      { result },
-      {
-        eventBus: deps.eventBus,
-        logger: deps.logger,
-        clock: deps.clock,
-        outputGuard: deps.outputGuard,
-        canaryToken: deps.canaryToken,
-      },
-      { promptRunResult, agentId, formattedKey },
-    );
+      // Apply stuck-session outcome (closure-extracted).
+      applyPromptRunOutcome(
+        { result },
+        {
+          eventBus: deps.eventBus,
+          logger: deps.logger,
+          clock: deps.clock,
+          outputGuard: deps.outputGuard,
+          canaryToken: deps.canaryToken,
+        },
+        { promptRunResult, agentId, formattedKey },
+      );
+    }
   } catch (error) {
     // Translate exception into ExecutionResult (closure-extracted).
     handleEnvelopeException(

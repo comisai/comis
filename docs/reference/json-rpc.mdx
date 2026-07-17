@@ -67,7 +67,7 @@ The most common end-to-end flow: open a connection, ping for liveness, kick off 
   </Step>
 </Steps>
 
-That same pattern works whether you call over WebSocket or `POST /rpc`. For streaming token deltas use the SSE endpoint `GET /api/chat/stream` documented in [HTTP Gateway](/reference/http-gateway#sse-endpoints).
+That same pattern works whether you call over WebSocket or `POST /rpc`. For streaming token deltas use the SSE endpoint `POST /api/chat/stream` documented in [HTTP Gateway](/reference/http-gateway#sse-endpoints).
 
 ## Scopes
 
@@ -225,7 +225,7 @@ Agent execution for processing user messages through the LLM pipeline, cache sta
 
 ### `agent.stream`
 
-Same parameters as `agent.execute`. Token-delta streaming over JSON-RPC is not currently implemented -- the gateway logs a warning and falls back to a non-streaming response. For real-time streaming use the SSE endpoint `GET /api/chat/stream` documented in [HTTP Gateway](/reference/http-gateway#sse-endpoints).
+Same parameters as `agent.execute`. Token-delta streaming over JSON-RPC is not currently implemented -- the gateway logs a warning and falls back to a non-streaming response. For real-time streaming use the SSE endpoint `POST /api/chat/stream` documented in [HTTP Gateway](/reference/http-gateway#sse-endpoints).
 
 ### `agent.getOperationModels`
 
@@ -608,7 +608,7 @@ Get activity data for all channels, merging live in-memory data with historical 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ channelId: string }` (required) |
+| **Parameters** | `{ channelType: string, channelId: string }` (both required) |
 | **Returns** | `{ channel: ChannelActivity \| null }` |
 
 ### `obs.delivery.recent`
@@ -616,24 +616,25 @@ Get activity data for all channels, merging live in-memory data with historical 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ sinceMs?: number, limit?: number, channelId?: string }` |
-| **Returns** | `{ deliveries: DeliveryTrace[] }` |
+| **Parameters** | `{ sinceMs?: number, limit?: number, channelId?: string, channelType?: string }` |
+| **Returns** | `{ deliveries: DeliveryTrace[] }` where every trace carries required source and target channel types and IDs |
 
 ### `obs.delivery.stats`
 
-Get aggregate delivery statistics: total messages attempted, successes, failures, and average delivery latency. Combines in-memory counters with the SQLite observability store for a complete picture across daemon restarts.
+Get aggregate message-lifecycle statistics across daemon restarts. `total` includes every completed lifecycle, while `attempted` is the delivery-health denominator (`success + error + timeout`). Intentional filtering and user cancellation are reported separately and do not depress the success rate. Average latency uses attempted deliveries only. Pass `sinceMs` as a duration-ago window; omit it for the complete retained history.
 
 | Property | Value |
 |----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | None |
-| **Returns** | `{ total: number, successes: number, failures: number, avgLatencyMs: number }` |
+| **Parameters** | `{ sinceMs?: number }` (non-negative integer duration in milliseconds) |
+| **Returns** | `{ total: number, attempted: number, success: number, error: number, timeout: number, filtered: number, aborted: number, avgLatencyMs: number }` |
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "obs.delivery.stats",
+  "params": { "sinceMs": 86400000 },
   "id": 1
 }
 ```
@@ -641,9 +642,13 @@ Get aggregate delivery statistics: total messages attempted, successes, failures
 {
   "jsonrpc": "2.0",
   "result": {
-    "total": 1204,
-    "successes": 1198,
-    "failures": 6,
+    "total": 1212,
+    "attempted": 1204,
+    "success": 1198,
+    "error": 4,
+    "timeout": 2,
+    "filtered": 7,
+    "aborted": 1,
     "avgLatencyMs": 142
   },
   "id": 1
@@ -865,7 +870,7 @@ This finding is the metric behind a **pre-committed, measure-first decision rule
 
 When the daemon ran [`orchestrate`](/agent-tools/orchestrate) scripts over the window, `findings[]` gains an **`orchestrate_efficiency`** code — the **measured token savings** from those runs materializing high-volume tool results as ResultRefs instead of re-entering them into context. It rolls up the content-free `orchestrate_efficiency` `health_signal` rows the daemon emits from each `orchestrate:run_summary` event: the `detail` names the run count and the summed **estimated** tokens saved (plus a degraded-run count when any run recorded a `failureClass`), and the `count` is the run count. Like every fleet finding it carries **counts + a short code + token estimates + a static hint only — no script body, stdout, or secret, safe to paste**; the hint points at `comis explain` for the per-run savings breakdown. A completed run — success or a classified failure — is standing efficiency signal, not a fleet degrade, so it rides `info` severity and never inflates the degraded count; the finding fires only when at least one orchestrate run ran in the window.
 
-When the daemon runs **unattended/durable** runs, the report carries an optional **`autonomy`** block -- the cross-run autonomy-health slice: `{ runs: { total, degraded, degradedRate }, orphaned, resumed, revoked, killed, breakerTrips, denialBreakerTrips, budgetBreaches, costUsd, worstRootRunId? }` (**counts + the worst run's id only** -- never a lease bearer, an orphan reason body, or any secret; safe to paste). The run counts + degraded rate come from the **crash-surviving** `durable_runs` table (`countByStatus` -- autonomy runs *are* durable runs by construction, so this survives a hard crash that would lose an in-process event), where `degraded = orphaned + revoked`. `resumed` (healthy crash-recovery) and `killed` are recovered from the event-sourced `health_signal` rows -- `killed` is separable from `revoked` *only* because a hard `run.kill` and a cooperative `lease.revoke` (which both flip the durable status to `revoked` indistinguishably in the table) emit **distinct** events. `breakerTrips` is the **tool-failure** breaker count (the synthetic-excluded `breakerTripTotal` read-back -- summed per-session `breakerTripCount`). `denialBreakerTrips` is the distinct **capability-denial** breaker count -- N consecutive capability/quota floor-blocks aborted + killed a run tree. It is **event-sourced** from the content-free `autonomy_denial_breaker` `health_signal` rows, NOT a session rollup: a denial-breaker abort is never a session `endReason` and never a `breakerTripCount`, so `breakerTrips` can never see it, and the aborted run lands in durable status `completed` (so it is also 0 in `orphaned`/`revoked`/`killed`) -- this separable count is its **only** fleet surface. `budgetBreaches` is the per-node token-budget breach count; `costUsd` is the window's autonomy-inclusive cost. `worstRootRunId` is the highest-severity degraded run (orphaned > denial-breaker > killed > revoked) -- paste it into [`comis explain`](#obs-explain) for its spawn-tree. The same labels also surface as dedicated `findings[]` codes (`durable_orphaned` / `autonomy_revoked` / `autonomy_killed` / `autonomy_denial_breaker`). The block is **absent** when the durable store is unwired -- e.g. the daemon-less `comis fleet --offline` CLI, or a non-durability boot -- an honest coverage degradation, not a silent zero.
+When the daemon runs **unattended/durable** runs, the report carries an optional **`autonomy`** block -- the cross-run autonomy-health slice: `{ runs: { total, degraded, degradedRate }, orphaned, resumed, revoked, killed, breakerTrips, denialBreakerTrips, budgetBreaches, costUsd, worstRootRunId? }` (**counts + the worst run's id only** -- never a lease bearer, an orphan reason body, or any secret; safe to paste). The run counts + degraded rate come from the **crash-surviving** `durable_run_checkpoints` table (`countByStatus` -- autonomy runs *are* durable runs by construction, so this survives a hard crash that would lose an in-process event), where `degraded = orphaned + revoked`. `resumed` (healthy crash-recovery) and `killed` are recovered from the event-sourced `health_signal` rows -- `killed` is separable from `revoked` *only* because a hard `run.kill` and a cooperative `lease.revoke` (which both flip the durable status to `revoked` indistinguishably in the table) emit **distinct** events. `breakerTrips` is the **tool-failure** breaker count (the synthetic-excluded `breakerTripTotal` read-back -- summed per-session `breakerTripCount`). `denialBreakerTrips` is the distinct **capability-denial** breaker count -- N consecutive capability/quota floor-blocks aborted + killed a run tree. It is **event-sourced** from the content-free `autonomy_denial_breaker` `health_signal` rows, NOT a session rollup: a denial-breaker abort is never a session `endReason` and never a `breakerTripCount`, so `breakerTrips` can never see it, and the aborted run lands in durable status `completed` (so it is also 0 in `orphaned`/`revoked`/`killed`) -- this separable count is its **only** fleet surface. `budgetBreaches` is the per-node token-budget breach count; `costUsd` is the window's autonomy-inclusive cost. `worstRootRunId` is the highest-severity degraded run (orphaned > denial-breaker > killed > revoked) -- paste it into [`comis explain`](#obs-explain) for its spawn-tree. The same labels also surface as dedicated `findings[]` codes (`durable_orphaned` / `autonomy_revoked` / `autonomy_killed` / `autonomy_denial_breaker`). The block is **absent** when the durable store is unwired -- e.g. the daemon-less `comis fleet --offline` CLI, or a non-durability boot -- an honest coverage degradation, not a silent zero.
 
 When cron jobs ran a [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) over the window, the report carries an optional **`cronWakeGate`** efficiency block -- `{ fires: { total, skipped, skipRate, failedOpen, failOpenRate }, turnsSaved, toolCalls, perAgent: [{ agentId, fires, skipped, skipRate, failedOpen, failOpenRate, turnsSaved, toolCalls }] }` (**counts + agent ids only** -- never the gate's gathered finding, its script source, or a secret; safe to paste) -- rolled up from the content-free `cron_wake_gate` diagnostic rows one gated fire writes each. It carries three legibility properties: **suppression** (a `perAgent[].skipRate` of `1.0` is a gate that never wakes the model -- either working hard or silently poisoned, visible either way); **broken-gate** (`failOpenRate` -- the share of fires that FAILED OPEN, i.e. the gate crashed / timed out / over-capped / mint-faulted and the model was woken defensively; a gate failing open every fire saves nothing and costs its own run, yet otherwise reads `skipRate 0` like a busy monitor -- the signal symmetric to a 100% skip-rate); and **net cost** (`toolCalls`, the gate's own cap-call cost, sits beside `turnsSaved`, the avoided model turns, so a gate that costs more than it saves is legible). The same rollup drives the `cron_wake_gate_efficiency` `findings[]` code, whose hint names `cron.runs jobName "<job>"` for the per-fire decisions and flags a 100% skip-rate on an expected monitor, a high `failedOpen` count, or `toolCalls` exceeding `turnsSaved`, as the signals to inspect. The block is **absent** when no gated fire ran in the window (an honest omit, not a zero).
 
@@ -3679,17 +3684,18 @@ Media processing test methods and provider inspection. All methods require `admi
 Cross-channel message operations: send, reply, edit, delete, fetch, react, and attach files. All methods require `admin` scope and a `channel_type` + `channel_id` to identify the target channel.
 
 <Note>
-**Exactly-once across a daemon restart (autonomy-originated sends).** When
+**Durable duplicate suppression for autonomy-originated sends.** When
 [`autonomy.durability.enabled`](/reference/config-yaml#autonomy-agentsautonomy)
 is on, an outward `message.send` / `message.reply` / `message.react` issued by an
-autonomy run (a run with a `rootRunId`) is durably ledgered and delivered
-**exactly once across a daemon restart**: a replayed step whose send already
-committed is a **no-op** (it returns the prior result, it does not re-send), and
-a step that crashed *between* the send attempt and the platform acknowledgement
-is **reconciled** on recovery (the channel is asked "did this send?") rather than
-blind-replayed. See [Durability & Resume](/agents/autonomy#durability-resume) for
-the guarantee and its honest per-channel coverage. Operator-issued sends (no
-`rootRunId`) are unchanged at-least-once.
+autonomy run (a run with a `rootRunId`) uses one stable logical operation
+identity. While its ledger row is retained, a committed repeat returns the prior
+platform receipt without another send, and every non-committed existing state
+blocks another execution. A call whose platform outcome may be ambiguous is
+parked `unresolved` and escalated; startup applies that rule to every interrupted
+row without a channel-history query or replay. This is not a universal
+exactly-once guarantee. See [Durability & Resume](/agents/autonomy#durability-resume)
+for the uncertainty model. Operator-issued sends (no `rootRunId`) remain
+best-effort pass-through operations.
 </Note>
 
 | Method | Scope | Description |
@@ -3708,7 +3714,7 @@ the guarantee and its honest per-channel coverage. Operator-issued sends (no
 |----------|-------|
 | **Scope** | `admin` |
 | **Parameters** | `{ channel_type: string, channel_id: string, text: string, buttons?: object[], cards?: object[], effects?: object[], thread_reply?: string }` |
-| **Returns** | `{ messageId: string, channelId: string }` |
+| **Returns** | `{ receipt: { kind: "tracked", messageId: string } \| { kind: "delivered_untracked" }, channelId: string }` |
 
 <CodeGroup>
 ```json Request

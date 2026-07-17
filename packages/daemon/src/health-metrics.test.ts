@@ -134,7 +134,7 @@ describe("deadLetterQueueSize metric", () => {
     expect(dlq.size()).toBe(0);
   });
 
-  it("size() returns correct count after enqueue", () => {
+  it("size() returns correct count after durable enqueue", async () => {
     const dlq = createAnnouncementDeadLetterQueue({
       filePath: join(tempDir, "dlq.jsonl"),
       maxRetries: 5,
@@ -144,18 +144,22 @@ describe("deadLetterQueueSize metric", () => {
       eventBus: createMockEventBus(),
     });
 
-    dlq.enqueue({
+    await dlq.enqueue({
       runId: "run-1",
       channelType: "telegram",
       channelId: "chat-1",
       announcementText: "test message",
+      failedAt: 1,
+      attemptCount: 0,
     });
 
-    dlq.enqueue({
+    await dlq.enqueue({
       runId: "run-2",
       channelType: "discord",
       channelId: "chan-2",
       announcementText: "test message 2",
+      failedAt: 1,
+      attemptCount: 0,
     });
 
     expect(dlq.size()).toBe(2);

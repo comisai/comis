@@ -326,5 +326,128 @@ describe("SessionKey", () => {
       expect(key!.agentId).toBeUndefined();
       expect(key!.threadId).toBeUndefined();
     });
+
+    it.each([
+      {
+        name: "colon-bearing sub-agent channel",
+        key: { tenantId: "tenant-a", userId: "user-a", channelId: "sub-agent:run-1" },
+      },
+      {
+        name: "peer and topic suffixes on a colon-bearing channel",
+        key: {
+          tenantId: "tenant-a",
+          userId: "user-a",
+          channelId: "telegram:chat-1",
+          peerId: "member-1",
+          threadId: "topic-42",
+        },
+      },
+      {
+        name: "every canonical optional suffix",
+        key: {
+          tenantId: "tenant-a",
+          userId: "user-a",
+          channelId: "channel-a",
+          peerId: "member-1",
+          guildId: "guild-1",
+          threadId: "topic-42",
+        },
+      },
+      {
+        name: "Teams-style colon-bearing suffix identifiers",
+        key: {
+          tenantId: "tenant-a",
+          userId: "user-a",
+          channelId: "19:channel-root",
+          peerId: "29:member-1",
+          guildId: "19:guild-1",
+          threadId: "19:channel_root_activity",
+        },
+      },
+      {
+        name: "non-empty identifiers containing adjacent colons",
+        key: {
+          tenantId: "tenant-a",
+          userId: "user-a",
+          channelId: "channel::root",
+          peerId: "member::one",
+          guildId: "group::one",
+          threadId: "topic::one",
+        },
+      },
+    ] satisfies ReadonlyArray<{ name: string; key: SessionKey }>)(
+      "round-trips the canonical formatter shape: $name",
+      ({ key }) => {
+        expect(parseFormattedSessionKey(formatSessionKey(key))).toEqual(key);
+      },
+    );
+
+    it.each([
+      ["empty tenant", ":user-a:channel-a"],
+      ["empty user", "tenant-a::channel-a"],
+      ["empty channel", "tenant-a:user-a:"],
+      ["empty channel before a suffix", "tenant-a:user-a::peer:member-1"],
+      ["missing channel before peer", "tenant-a:user-a:peer:member-1"],
+      ["missing channel before guild", "tenant-a:user-a:guild:guild-1"],
+      ["missing channel before thread", "tenant-a:user-a:thread:topic-1"],
+      ["empty peer value", "tenant-a:user-a:channel-a:peer:"],
+      ["empty guild value", "tenant-a:user-a:channel-a:guild:"],
+      ["empty thread value", "tenant-a:user-a:channel-a:thread:"],
+    ])("rejects a formatted key with an %s", (_name, formatted) => {
+      expect(parseFormattedSessionKey(formatted)).toBeUndefined();
+    });
+
+    it.each([
+      ["peer", "tenant-a:user-a:channel-a:peer:member-1:peer:member-2"],
+      ["guild", "tenant-a:user-a:channel-a:guild:guild-1:guild:guild-2"],
+      ["thread", "tenant-a:user-a:channel-a:thread:topic-1:thread:topic-2"],
+    ])("rejects a duplicate %s suffix", (_name, formatted) => {
+      expect(parseFormattedSessionKey(formatted)).toBeUndefined();
+    });
+
+    it.each([
+      ["peer after guild", "tenant-a:user-a:channel-a:guild:guild-1:peer:member-1"],
+      ["peer after thread", "tenant-a:user-a:channel-a:thread:topic-1:peer:member-1"],
+      ["guild after thread", "tenant-a:user-a:channel-a:thread:topic-1:guild:guild-1"],
+    ])("rejects non-canonical suffix ordering: %s", (_name, formatted) => {
+      expect(parseFormattedSessionKey(formatted)).toBeUndefined();
+    });
+
+    it.each([
+      ["trailing peer marker", "tenant-a:user-a:channel-a:peer"],
+      ["trailing guild marker", "tenant-a:user-a:channel-a:guild"],
+      ["trailing thread marker", "tenant-a:user-a:channel-a:thread"],
+      ["marker used as a value", "tenant-a:user-a:channel-a:peer:guild:guild-1"],
+    ])("rejects malformed trailing grammar: %s", (_name, formatted) => {
+      expect(parseFormattedSessionKey(formatted)).toBeUndefined();
+    });
+
+    it("preserves colon-bearing suffix values rather than treating their tail as grammar", () => {
+      expect(parseFormattedSessionKey(
+        "tenant-a:user-a:channel-a:peer:member-1:role:admin",
+      )).toEqual({
+        tenantId: "tenant-a",
+        userId: "user-a",
+        channelId: "channel-a",
+        peerId: "member-1:role:admin",
+      });
+    });
+
+    it("assigns the first two unescaped segments to tenant and user identity", () => {
+      const producerKey: SessionKey = {
+        tenantId: "default",
+        userId: "hook:devtask:wh1",
+        channelId: "webhook",
+      };
+      const formatted = formatSessionKey(producerKey);
+
+      expect(formatted).toBe("default:hook:devtask:wh1:webhook");
+      expect(parseFormattedSessionKey(formatted)).toEqual({
+        tenantId: "default",
+        userId: "hook",
+        channelId: "devtask:wh1:webhook",
+      });
+      expect(parseFormattedSessionKey(formatted)).not.toEqual(producerKey);
+    });
   });
 });

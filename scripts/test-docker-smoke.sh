@@ -110,9 +110,10 @@ echo "    reply: $content"
 hdr "6. SSE streaming: /api/chat/stream"
 # ---------------------------------------------------------------------------
 SSE_OUT=$(curl -sS --max-time 60 \
+  -X POST "$GW/api/chat/stream" \
   -H "Authorization: Bearer $KEY" \
-  -G "$GW/api/chat/stream" \
-  --data-urlencode "message=Reply with exactly: stream-ok")
+  -H "Content-Type: application/json" \
+  --data '{"message":"Reply with exactly: stream-ok"}')
 
 echo "$SSE_OUT" | grep -q '^event: token' && ok "SSE: 'token' events emitted" || fail "no token events in stream"
 echo "$SSE_OUT" | grep -q '^event: done'  && ok "SSE: 'done' event emitted"   || fail "no done event in stream"

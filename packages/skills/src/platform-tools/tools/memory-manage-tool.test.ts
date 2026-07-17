@@ -23,11 +23,15 @@ function makeContext(trustLevel: "admin" | "user" | "guest"): RequestContext {
   return {
     tenantId: "default",
     userId: "test-user",
-    sessionKey: "test-session",
+    agentId: "test-agent",
+    sessionKey: "default:test-user:chat-1",
     traceId: crypto.randomUUID(),
     startedAt: Date.now(),
     trustLevel,
     channelType: "telegram",
+    deliveryOrigin: Object.freeze({
+      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+    }),
   };
 }
 
@@ -179,6 +183,7 @@ describe("memory_manage tool", () => {
         tool.execute("call-del1", {
           action: "delete",
           ids: ["mem-1", "mem-2"],
+          tenant_id: "tenant-a",
         } as never),
       );
 
@@ -186,11 +191,19 @@ describe("memory_manage tool", () => {
         expect.objectContaining({
           toolName: "memory_manage",
           action: "memory.delete",
-          channelType: "telegram",
+          agentId: "test-agent",
+          callbackOwner: {
+            tenantId: "default", userId: "test-user", channelType: "telegram", channelKey: "chat-1",
+          },
+          fingerprintParams: {
+            ids: ["mem-1", "mem-2"],
+            tenant_id: "tenant-a",
+          },
         }),
       );
       expect(mockRpcCall).toHaveBeenCalledWith("memory.delete", expect.objectContaining({
         ids: ["mem-1", "mem-2"],
+        tenant_id: "tenant-a",
         _trustLevel: "admin",
       }));
       expect(result.details).toEqual(
@@ -265,7 +278,14 @@ describe("memory_manage tool", () => {
         expect.objectContaining({
           toolName: "memory_manage",
           action: "memory.flush",
-          channelType: "telegram",
+          agentId: "test-agent",
+          callbackOwner: {
+            tenantId: "default", userId: "test-user", channelType: "telegram", channelKey: "chat-1",
+          },
+          fingerprintParams: {
+            tenant_id: "my-tenant",
+            agent_id: "my-agent",
+          },
         }),
       );
       expect(mockRpcCall).toHaveBeenCalledWith("memory.flush", {

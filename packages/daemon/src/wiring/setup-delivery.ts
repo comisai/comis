@@ -6,7 +6,7 @@
  * Queue two-phase lifecycle resolves the circular dependency between the
  * queue and channel adapters:
  *   1. setupDeliveryQueue() creates the adapter immediately (before setupChannels).
- *   2. drainAndStart() recovers in_flight rows, runs startup drain, then starts
+ *   2. drainAndStart() parks stale in_flight rows, runs startup drain, then starts
  *      both the recurring drain timer and the prune timer AFTER
  *      setupChannels populates channelAdapters.
  * Crash-Safe Delivery Queue.
@@ -19,20 +19,28 @@ import {
   createNoOpDeliveryQueue,
   createNoOpDeliveryMirror,
   isPermanentError,
+  isSafeToRetrySendError,
+  AMBIGUOUS_SEND_OUTCOME_ERROR,
+  EXPLICIT_SEND_REJECTION_ERROR,
+  RETRY_EXHAUSTED_SEND_ERROR,
   computeQueueBackoff,
+  emitObservationalEventSafely,
+  toSafeErrorLogString,
   systemNowMs,
   systemSetInterval,
   systemClearInterval,
 } from "@comis/core";
 import { createSqliteDeliveryQueue, createSqliteDeliveryMirror } from "@comis/memory";
 import type { ComisLogger } from "@comis/infra";
-import { ok, suppressError } from "@comis/shared";
+import { err, fromPromise, ok, suppressError } from "@comis/shared";
 import { createHash } from "node:crypto";
 import type { PluginRegistry } from "@comis/core";
 
 // ===========================================================================
 // Delivery Queue
 // ===========================================================================
+
+const DELIVERY_ADAPTER_UNAVAILABLE_ERROR = "delivery adapter unavailable";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -41,7 +49,7 @@ import type { PluginRegistry } from "@comis/core";
 export interface DeliveryQueueResult {
   /** The delivery queue adapter (real or no-op), available immediately. */
   deliveryQueue: DeliveryQueuePort;
-  /** Recovers in_flight rows, runs startup drain, then starts the recurring drain + prune timers. Call AFTER setupChannels. */
+  /** Parks stale in_flight rows, runs startup drain, then starts the recurring drain + prune timers. Call AFTER setupChannels. */
   drainAndStart: () => Promise<void>;
   /** Clears the recurring drain interval AND the prune interval (call on shutdown). */
   shutdown: () => void;
@@ -121,17 +129,23 @@ export async function setupDeliveryQueue(deps: {
 
   // 2. Startup drain + recurring drain timer + prune timer (deferred until channelAdapters populated)
   const drainAndStart = async (): Promise<void> => {
-    // --- Step 1: Recover in_flight rows. ---
-    // Runs UNCONDITIONALLY -- independent of drainOnStartup policy. An 'in_flight'
-    // row from a prior crash is a correctness bug regardless of the drain policy.
+    // A stale in-flight row may already exist on the platform. Park it before
+    // any startup drain instead of converting uncertainty into a duplicate.
     const recoverResult = await deliveryQueue.recoverInFlight();
     if (!recoverResult.ok) {
       logger.warn(
-        { err: recoverResult.error, hint: "Could not recover in_flight rows on startup; messages may stall until next restart", errorKind: "internal" as const },
+        { hint: "Restore delivery queue storage and verify all in-flight platform effects manually before restarting", errorKind: "internal" as const },
         "Delivery queue: recoverInFlight failed",
       );
     } else if (recoverResult.value > 0) {
-      logger.info({ recovered: recoverResult.value }, "Delivery queue: recovered in_flight rows to pending");
+      logger.warn(
+        {
+          parked: recoverResult.value,
+          hint: "Verify the parked platform effects manually; do not re-enqueue them without authoritative receipts",
+          errorKind: "precondition" as const,
+        },
+        "Delivery queue parked interrupted in-flight rows",
+      );
     }
 
     // --- Step 2: Startup drain (existing behavior, unchanged). ---
@@ -219,7 +233,7 @@ export async function drainDeliveryQueue(deps: {
   const pendingResult = await deliveryQueue.pendingEntries();
   if (!pendingResult.ok) {
     logger.warn(
-      { err: pendingResult.error, hint: "Could not fetch pending entries for drain cycle", errorKind: "internal" as const },
+      { err: toSafeErrorLogString(pendingResult.error), hint: "Could not fetch pending entries for drain cycle", errorKind: "internal" as const },
       "Delivery queue drain: failed to fetch pending entries",
     );
     // Treat as "no entries observed" — runOneDrainPass uses this to gate
@@ -249,11 +263,39 @@ export async function drainDeliveryQueue(deps: {
       break;
     }
 
+    // pendingEntries() is only a snapshot. Compare-and-swap ownership before
+    // touching the platform so concurrent drainers cannot send the same row.
+    const claimResult = await deliveryQueue.claim(entry.id);
+    if (!claimResult.ok) {
+      logger.warn(
+        {
+          entryId: entry.id,
+          channelType: entry.channelType,
+          hint: "Restore delivery queue storage; the unclaimed row was not sent and remains pending",
+          errorKind: "internal" as const,
+        },
+        "Delivery queue drain could not claim a pending row",
+      );
+      continue;
+    }
+    if (!claimResult.value) continue;
+
     attempted++;
 
     const adapter = channelAdapters.get(entry.channelType);
     if (!adapter) {
-      await deliveryQueue.fail(entry.id, `No adapter for channel type: ${entry.channelType}`);
+      const error = DELIVERY_ADAPTER_UNAVAILABLE_ERROR;
+      const failResult = await deliveryQueue.fail(entry.id, error);
+      if (failResult.ok) {
+        emitObservationalEventSafely({ eventBus, logger }, "delivery:failed", {
+          entryId: entry.id,
+          channelId: entry.channelId,
+          channelType: entry.channelType,
+          error,
+          reason: "permanent_error",
+          timestamp: systemNowMs(),
+        });
+      }
       failed++;
       continue;
     }
@@ -265,10 +307,57 @@ export async function drainDeliveryQueue(deps: {
       // Invalid JSON -- send without options
     }
 
-    const sendResult = await adapter.sendMessage(entry.channelId, entry.text, options);
+    // Promise.resolve().then(...) captures both a synchronous SDK throw and a
+    // rejected send promise at the platform boundary.
+    const sendBoundary = await fromPromise(
+      Promise.resolve().then(() => adapter.sendMessage(entry.channelId, entry.text, options)),
+    );
+    const sendResult = sendBoundary.ok ? sendBoundary.value : err(sendBoundary.error);
 
     if (sendResult.ok) {
-      await deliveryQueue.ack(entry.id, sendResult.value);
+      const ackResult = await deliveryQueue.ack(entry.id, sendResult.value);
+      if (!ackResult.ok) {
+        const parkResult = await deliveryQueue.fail(entry.id, AMBIGUOUS_SEND_OUTCOME_ERROR);
+        if (parkResult.ok) {
+          emitObservationalEventSafely({ eventBus, logger }, "delivery:failed", {
+            entryId: entry.id,
+            channelId: entry.channelId,
+            channelType: entry.channelType,
+            error: AMBIGUOUS_SEND_OUTCOME_ERROR,
+            reason: "uncertain_outcome",
+            timestamp: systemNowMs(),
+          });
+        }
+        emitObservationalEventSafely({ eventBus, logger }, "delivery:queue_transition_failed", {
+          deliveryId: entry.id,
+          transition: "ack",
+          errorKind: "dependency",
+          channelId: entry.channelId,
+          channelType: entry.channelType,
+          timestamp: systemNowMs(),
+        });
+        logger.warn(
+          {
+            entryId: entry.id,
+            channelType: entry.channelType,
+            err: toSafeErrorLogString(ackResult.error),
+            hint: "Verify the platform receipt manually; the queue parked this row and will not replay it",
+            errorKind: "dependency" as const,
+          },
+          "Delivery queue could not persist a platform acknowledgement",
+        );
+        failed++;
+        continue;
+      }
+
+      emitObservationalEventSafely({ eventBus, logger }, "delivery:acked", {
+          entryId: entry.id,
+          channelId: entry.channelId,
+          channelType: entry.channelType,
+          messageId: sendResult.value,
+          durationMs: systemNowMs() - drainStart,
+          timestamp: systemNowMs(),
+      });
       delivered++;
 
       // Capture (platform messageId → trajectory scope) for
@@ -302,7 +391,7 @@ export async function drainDeliveryQueue(deps: {
 
       // Emit notification:delivered for notification-origin entries
       if (options.origin === "notification") {
-        eventBus.emit("notification:delivered", {
+        emitObservationalEventSafely({ eventBus, logger }, "notification:delivered", {
           agentId: (options.agentId as string) ?? entry.tenantId ?? "unknown",
           channelType: entry.channelType,
           channelId: entry.channelId,
@@ -312,14 +401,72 @@ export async function drainDeliveryQueue(deps: {
         });
       }
     } else {
-      const errorMsg = sendResult.error.message;
-
-      if (isPermanentError(errorMsg) || entry.attemptCount >= (entry.maxAttempts || defaultMaxAttempts)) {
-        await deliveryQueue.fail(entry.id, errorMsg);
+      const maxAttempts = entry.maxAttempts || defaultMaxAttempts;
+      if (isPermanentError(sendResult.error.message)) {
+        const error = EXPLICIT_SEND_REJECTION_ERROR;
+        const failResult = await deliveryQueue.fail(entry.id, error);
+        if (failResult.ok) {
+          emitObservationalEventSafely({ eventBus, logger }, "delivery:failed", {
+            entryId: entry.id,
+            channelId: entry.channelId,
+            channelType: entry.channelType,
+            error,
+            reason: "permanent_error",
+            timestamp: systemNowMs(),
+          });
+        }
+        failed++;
+      } else if (!isSafeToRetrySendError(sendResult.error)) {
+        const failResult = await deliveryQueue.fail(entry.id, AMBIGUOUS_SEND_OUTCOME_ERROR);
+        if (failResult.ok) {
+          emitObservationalEventSafely({ eventBus, logger }, "delivery:failed", {
+            entryId: entry.id,
+            channelId: entry.channelId,
+            channelType: entry.channelType,
+            error: AMBIGUOUS_SEND_OUTCOME_ERROR,
+            reason: "uncertain_outcome",
+            timestamp: systemNowMs(),
+          });
+        }
+        logger.warn(
+          {
+            entryId: entry.id,
+            channelType: entry.channelType,
+            hint: "Verify the platform effect manually; the queue parked this row and will not replay it",
+            errorKind: "platform" as const,
+          },
+          "Delivery queue parked a send with an uncertain platform outcome",
+        );
+        failed++;
+      } else if (entry.attemptCount + 1 >= maxAttempts) {
+        const error = RETRY_EXHAUSTED_SEND_ERROR;
+        const failResult = await deliveryQueue.fail(entry.id, error);
+        if (failResult.ok) {
+          emitObservationalEventSafely({ eventBus, logger }, "delivery:failed", {
+            entryId: entry.id,
+            channelId: entry.channelId,
+            channelType: entry.channelType,
+            error,
+            reason: "retries_exhausted",
+            timestamp: systemNowMs(),
+          });
+        }
         failed++;
       } else {
         const nextRetryAt = systemNowMs() + computeQueueBackoff(entry.attemptCount);
-        await deliveryQueue.nack(entry.id, errorMsg, nextRetryAt);
+        const error = EXPLICIT_SEND_REJECTION_ERROR;
+        const nackResult = await deliveryQueue.nack(entry.id, error, nextRetryAt);
+        if (nackResult.ok) {
+          emitObservationalEventSafely({ eventBus, logger }, "delivery:nacked", {
+            entryId: entry.id,
+            channelId: entry.channelId,
+            channelType: entry.channelType,
+            error,
+            attemptCount: entry.attemptCount + 1,
+            nextRetryAt,
+            timestamp: systemNowMs(),
+          });
+        }
         failed++;
       }
     }
@@ -327,7 +474,7 @@ export async function drainDeliveryQueue(deps: {
 
   const durationMs = systemNowMs() - drainStart;
 
-  eventBus.emit("delivery:queue_drained", {
+  emitObservationalEventSafely({ eventBus, logger }, "delivery:queue_drained", {
     entriesAttempted: attempted,
     entriesDelivered: delivered,
     entriesFailed: failed,

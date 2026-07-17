@@ -181,7 +181,9 @@ describe("createVideoHandlers (inline→submit)", () => {
 
   // ─── persist + track (job-store fields) ───
   it("on submit inserts the job-store row + tracks the job; does NOT persist/deliver inline", async () => {
-    const sendAttachment = vi.fn().mockResolvedValue(ok("msg"));
+    const sendAttachment = vi.fn().mockResolvedValue(
+      ok({ kind: "tracked", messageId: "msg" }),
+    );
     const deps = createMockDeps({ getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment }) });
     const handlers = createVideoHandlers(deps);
     await handlers["video.generate"]!({

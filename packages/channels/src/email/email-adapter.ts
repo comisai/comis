@@ -17,6 +17,7 @@
 
 import type {
   AttachmentPayload,
+  AttachmentSendReceipt,
   ChannelPort,
   ChannelStatus,
   MessageHandler,
@@ -32,7 +33,12 @@ import { createImapLifecycle } from "./imap-lifecycle.js";
 import { buildThreadingHeaders } from "./threading.js";
 import { isAllowedSender, isAutomatedSender } from "./sender-filter.js";
 import { mapEmailToNormalized } from "./message-mapper.js";
-import { systemNowMs, runWithContext } from "@comis/core";
+import {
+  createAttachmentSendReceipt,
+  systemNowMs,
+  runWithContext,
+  tryGetContext,
+} from "@comis/core";
 import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -180,10 +186,25 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
 
       lastActivity = systemNowMs();
 
-      // Mint traceId at ingress, stamp into metadata.
+      const ingressContext = tryGetContext();
+      if (
+        ingressContext !== undefined
+        && ingressContext.channelType !== channelType
+      ) {
+        deps.logger.error({
+          channelType,
+          actualChannelType: ingressContext.channelType,
+          hint: "Ensure the IMAP lifecycle dispatches email only inside its email ingress context",
+          errorKind: "precondition" as const,
+        }, "Email ingress context does not match the normalized message");
+        return;
+      }
+
+      // Preserve the IMAP ingress identity through normalization. Direct test
+      // and custom lifecycle calls without a scope receive one fallback scope.
       // The "Inbound message" INFO log gives operators the same fleet-wide
       // grep target (messageId=<id>) that exists for all other adapters.
-      const traceId = randomUUID();
+      const traceId = ingressContext?.traceId ?? randomUUID();
       normalized.metadata.traceId = traceId;
       deps.logger.info(
         {
@@ -197,14 +218,18 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
         "Inbound message",
       );
 
-      await runWithContext(
-        { traceId, startedAt: systemNowMs(), channelType, tenantId: "default", trustLevel: "admin" },
-        async () => {
-          for (const handler of handlers) {
-            await handler(normalized);
-          }
-        },
-      );
+      const dispatchInScope = ingressContext !== undefined
+        ? dispatch
+        : () => runWithContext(
+            { traceId, startedAt: systemNowMs(), channelType, tenantId: "default", trustLevel: "user" },
+            dispatch,
+          );
+      async function dispatch(): Promise<void> {
+        for (const handler of handlers) {
+          await handler(normalized);
+        }
+      }
+      await dispatchInScope();
     } catch (e) {
       deps.logger.warn(
         { err: e, channelType, submodule: "email", hint: "Failed to process inbound email", errorKind: "validation" as const },
@@ -321,7 +346,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
     recipient: string,
     attachment: AttachmentPayload,
     options?: SendMessageOptions,
-  ): Promise<Result<string, Error>> {
+  ): Promise<Result<AttachmentSendReceipt, Error>> {
     if (!transport) {
       return err(new Error("Email adapter not started — call start() first"));
     }
@@ -370,9 +395,22 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
       return err(error);
     }
 
-    const messageId = (mailResult.value as { messageId?: string }).messageId ?? "";
+    const receipt = createAttachmentSendReceipt(
+      (mailResult.value as { messageId?: string }).messageId,
+    );
+    if (receipt.kind === "delivered_untracked") {
+      deps.logger.warn(
+        {
+          channelType,
+          submodule: "email",
+          hint: "Nodemailer completed the attachment send without messageId. Do not retry; the SMTP delivery may already be queued",
+          errorKind: "platform" as const,
+        },
+        "Attachment delivered without platform tracking",
+      );
+    }
     lastActivity = systemNowMs();
-    return ok(messageId);
+    return ok(receipt);
   }
 
   function getStatus(): ChannelStatus {

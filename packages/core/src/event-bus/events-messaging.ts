@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { NormalizedMessage } from "../domain/normalized-message.js";
+import type { DeliveryStatus } from "../domain/delivery-status.js";
 import type { SessionKey } from "../domain/session-key.js";
 import type { ScriptClass } from "../text/script-classes.js";
 import type {
@@ -19,8 +20,39 @@ export interface MessagingEvents {
   /** Incoming message received from a channel adapter */
   "message:received": { message: NormalizedMessage; sessionKey: SessionKey };
 
-  /** Outgoing message sent through a channel */
-  "message:sent": { channelId: string; messageId: string; content: string };
+  /**
+   * Canonical terminal outcome for one physical inbound channel message.
+   * Content-free and identity-complete so lifecycle consumers never guess by
+   * newest chat activity or by an outbound receipt that may be untracked.
+   */
+  "message:terminal": {
+    channelType: string;
+    channelId: string;
+    sourceMessageId: string;
+    outcome: DeliveryStatus;
+    reason:
+      | "gate_handled"
+      | "gate_skipped"
+      | "inbound_rejected"
+      | "queue_dropped"
+      | "queue_rejected"
+      | "queue_aborted"
+      | "forwarded"
+      | "execution_completed";
+    timestamp: number;
+  };
+
+  /** Outgoing message sent through a channel. */
+  "message:sent": {
+    channelType: string;
+    channelId: string;
+    messageId: string;
+    content: string;
+    /** Exact normalized inbound endpoint that caused this reply. */
+    sourceChannelType: string;
+    sourceChannelId: string;
+    sourceMessageId: string;
+  };
 
   /** Streaming token delta from an agent response */
   "message:streaming": {
@@ -529,7 +561,10 @@ export interface MessagingEvents {
 
   /** Response filtered from channel delivery */
   "response:filtered": {
+    channelType: string;
     channelId: string;
+    /** Normalized inbound message whose response was suppressed. */
+    sourceMessageId: string;
     suppressedBy: "NO_REPLY" | "HEARTBEAT_OK" | "SILENT" | "empty";
     timestamp: number;
   };
@@ -619,16 +654,19 @@ export interface MessagingEvents {
 
   /** A silent-failure recovery path fired — the runner re-entered the model
    *  after an empty/thinking-only turn. `reason` is the closed recovery class:
-   *  `silent_retry` (strip empty turn + re-enter — the budget incident's
-   *  re-drive path), `lkw_fallback` (retry on the last-known-working model
+   *  `silent_retry` (strip empty turn + re-enter), `lkw_fallback` (retry on the last-known-working model
    *  after a silent auth failure), `continuation_nudge` (a single followUp on a
-   *  thinking-only "stop" turn). These paths mutate the run (re-prompt / model
-   *  swap) and were previously log-only — the event lets `explain` show a
-   *  session re-entered the model. Content-free: a closed reason + a boolean. */
+   *  thinking-only "stop" turn), `interactive_silent_sentinel` (an interactive
+   *  request returned a silent-control token without exact-route delivery).
+   *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
     sessionKey: string;
-    reason: "silent_retry" | "lkw_fallback" | "continuation_nudge";
+    reason:
+      | "silent_retry"
+      | "lkw_fallback"
+      | "continuation_nudge"
+      | "interactive_silent_sentinel";
     succeeded: boolean;
     timestamp: number;
   };

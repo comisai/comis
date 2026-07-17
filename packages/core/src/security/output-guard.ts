@@ -20,6 +20,7 @@ import {
   SYSTEM_PROMPT_LABEL,
   INSTRUCTIONS_LABEL,
 } from "./injection-patterns.js";
+import { redactPrivateKeyMaterial } from "./output-redactor.js";
 
 /** Common secret patterns to detect in LLM output. */
 const SECRET_PATTERNS: ReadonlyArray<{ name: string; regex: RegExp; severity: "critical" | "warning" }> = [
@@ -83,7 +84,10 @@ export function createOutputGuard(opts?: { knownSecrets?: readonly string[] }): 
   return {
     scan(response: string, context?: { canaryToken?: string }): Result<OutputGuardResult, Error> {
       const findings: OutputGuardFinding[] = [];
-      let sanitized = response;
+      let sanitized = redactPrivateKeyMaterial(
+        response,
+        "[REDACTED:private_key_header]",
+      ).text;
 
       // 1. Check secret patterns -- redact critical, detect-only for warnings
       for (const pattern of SECRET_PATTERNS) {

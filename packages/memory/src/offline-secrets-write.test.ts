@@ -15,7 +15,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { generateMasterKey } from "@comis/core";
-import { offlineSecretGet, offlineSecretSet, offlineSecretsList } from "./offline-secrets-write.js";
+import {
+  offlineSecretGet,
+  offlineSecretGetForMode,
+  offlineSecretSet,
+  offlineSecretsList,
+} from "./offline-secrets-write.js";
 import { setupSecrets } from "./setup-secrets.js";
 import { createSqliteSecretStore } from "./sqlite-secret-store.js";
 
@@ -234,5 +239,45 @@ describe("offlineSecretGet", () => {
     const got = offlineSecretGet({ name: "ANYTHING", dataDir, envFilePath });
     expect(got.ok).toBe(false);
     if (!got.ok) expect(got.error.message).toContain("SECRETS_MASTER_KEY");
+  });
+
+  it("reads the plaintext file backend selected by file mode", () => {
+    const { dataDir, envFilePath } = makeTmpDir();
+    fs.writeFileSync(
+      path.join(dataDir, "secrets.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        secrets: {
+          GATEWAY_TOKEN_TEST: {
+            value: "file-mode-value",
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        },
+      }),
+      { mode: 0o600 },
+    );
+
+    const got = offlineSecretGetForMode({
+      name: "GATEWAY_TOKEN_TEST",
+      mode: "file",
+      dataDir,
+      envFilePath,
+    });
+
+    expect(got).toEqual({ ok: true, value: "file-mode-value" });
+  });
+
+  it("does not open a persisted store when env mode is selected", () => {
+    const { dataDir, envFilePath } = makeTmpDir();
+
+    const got = offlineSecretGetForMode({
+      name: "GATEWAY_TOKEN_TEST",
+      mode: "env",
+      dataDir,
+      envFilePath,
+    });
+
+    expect(got).toEqual({ ok: true, value: undefined });
   });
 });

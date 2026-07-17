@@ -18,17 +18,17 @@
  * store's own upsertCheckpoint.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type {
-  ChannelPort,
-  ClockPort,
-  TimerPort,
-  TimerHandle,
-  DurableRunRecord,
-  OutwardSendRecord,
-  DurableRunPort,
+import {
+  TypedEventBus,
+  type ClockPort,
+  type TimerPort,
+  type TimerHandle,
+  type DurableRunRecord,
+  type DurableRunPort,
 } from "@comis/core";
-import { ok } from "@comis/shared";
+import { ok, type Result } from "@comis/shared";
 import type { ComisLogger, LeaseManager } from "@comis/infra";
+import { safeResultRunId } from "@comis/skills/tools";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,6 +36,7 @@ import {
   setupDurableResume,
   buildDurableResume,
   buildOrchestrateResumeWiring,
+  verifyOrchestrateResumable,
   type SetupDurableResumeDeps,
 } from "./setup-durable-resume.js";
 import type { DurableRunRecord as DRR } from "@comis/core";
@@ -78,17 +79,30 @@ async function makeDb(): Promise<unknown> {
 }
 
 /** Seed a resumable `running` checkpoint through the store's own upsert. */
-async function seedRunningRun(store: DurableRunPort, rootRunId: string): Promise<void> {
+async function seedRunningRun(
+  store: DurableRunPort,
+  rootRunId: string,
+  lastHeartbeatAt = testClock.now(),
+): Promise<void> {
   const r = await store.upsertCheckpoint({
+    checkpointId: `checkpoint-${rootRunId}`,
     rootRunId,
+    agentId: "agent-a",
+    sessionKey: "tenant-a:user-a:chat-a",
+    ownerTenantId: "tenant-a",
+    ownerUserId: "user-a",
+    deliveryOrigin: null,
     spawnTree: [rootRunId],
     caps: ["orch:read"],
     leaseIds: ["lease-x"],
     budgetConsumed: 0,
+    rootBudget: { startedAtMs: lastHeartbeatAt, tokensConsumed: 0, usdConsumed: 0 },
     cronOrigin: null,
-    stepIndex: -1,
+    trustLevel: "user",
     status: "running",
-    lastHeartbeatAt: testClock.now(),
+    lastHeartbeatAt,
+    scriptRef: null,
+    checkpointRef: null,
   });
   if (!r.ok) throw r.error;
 }
@@ -97,12 +111,10 @@ function baseDeps(db: unknown, over: Partial<SetupDurableResumeDeps> = {}): Setu
   return {
     db,
     config: { enabled: true, staleHeartbeatMs: 1_000, recoveryBudgetMs: 5_000 },
-    eventBus: { emit: vi.fn() },
+    eventBus: new TypedEventBus(),
     logger: silentLogger,
-    channelAdapters: (_t: string): ChannelPort | undefined => undefined,
     remintLease: vi.fn(() => ({ leaseId: "lease-1", bearer: "bearer-1" })),
-    resumeRun: vi.fn(async (_record: DurableRunRecord, _leaseId: string) => ok(undefined)),
-    replaySend: vi.fn(async (_row: OutwardSendRecord) => ok({ platformMessageId: "pm-1" })),
+    resumeRun: vi.fn(async (_record: DurableRunRecord, _lease: { leaseId: string; bearer: string }) => ok(undefined)),
     notify: vi.fn(),
     clock: testClock,
     timers: testTimers,
@@ -161,24 +173,108 @@ describe("setupDurableResume (stores + resume engine + watchdog)", () => {
     // A run whose heartbeat is already far in the past — the watchdog must detect
     // it as stale and feed the engine (which resumes it).
     await result.durableRunStore!.upsertCheckpoint({
+      checkpointId: "checkpoint-root-stale",
       rootRunId: "root-stale",
+      agentId: "agent-a",
+      sessionKey: "tenant-a:user-a:chat-a",
+      ownerTenantId: "tenant-a",
+      ownerUserId: "user-a",
+      deliveryOrigin: null,
       spawnTree: ["root-stale"],
       caps: ["orch:read"],
       leaseIds: ["lease-y"],
       budgetConsumed: 0,
+      rootBudget: {
+        startedAtMs: testClock.now() - 10_000,
+        tokensConsumed: 0,
+        usdConsumed: 0,
+      },
       cronOrigin: null,
-      stepIndex: -1,
+      trustLevel: "user",
       status: "running",
       lastHeartbeatAt: testClock.now() - 10_000, // 10s ago, well past the 1s threshold
+      scriptRef: null,
+      checkpointRef: null,
     });
 
     await result.resumeAndStart();
     const afterBoot = (deps.resumeRun as ReturnType<typeof vi.fn>).mock.calls.length;
 
     // Advance past a watchdog interval — the tick detects the stale run + resumes.
-    await vi.advanceTimersByTimeAsync(1_100);
+    // The first tick lands exactly on the strict stale boundary and must not
+    // duplicate recovery. The second tick is the first one past the boundary.
+    await vi.advanceTimersByTimeAsync(2_100);
     expect((deps.resumeRun as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(afterBoot);
 
+    result.shutdown();
+  });
+
+  it("the watchdog claims only the stale checkpoint and leaves a fresh sibling running", async () => {
+    const db = await makeDb();
+    const deps = baseDeps(db, {
+      config: { enabled: true, staleHeartbeatMs: 1_000, recoveryBudgetMs: 5_000 },
+    });
+    const result = setupDurableResume(deps);
+    await result.resumeAndStart();
+
+    const now = testClock.now();
+    await seedRunningRun(result.durableRunStore!, "root-watchdog-stale", now - 10_000);
+    await seedRunningRun(result.durableRunStore!, "root-watchdog-fresh", now);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    const resumedRoots = (deps.resumeRun as ReturnType<typeof vi.fn>).mock.calls.map(
+      (call) => (call[0] as DurableRunRecord).rootRunId,
+    );
+    expect(resumedRoots).toEqual(["root-watchdog-stale"]);
+    const fresh = await result.durableRunStore!.getByCheckpoint("checkpoint-root-watchdog-fresh");
+    expect(fresh.ok && fresh.value?.status).toBe("running");
+    result.shutdown();
+  });
+
+  it("the watchdog parks outward uncertainty even when the durable run backlog is empty", async () => {
+    const db = await makeDb();
+    const result = setupDurableResume(baseDeps(db));
+    await result.resumeAndStart();
+
+    expect(await result.outwardLedger!.begin({
+      rootRunId: "root-outward-only",
+      stepIndex: 0,
+      agentId: "agent-a",
+      channelType: "telegram",
+      channelId: "chat-a",
+      operationKind: "message_send",
+      operationFingerprint: "b".repeat(64),
+      contentDigest: "a".repeat(64),
+    })).toEqual({ ok: true, value: undefined });
+
+    await vi.advanceTimersByTimeAsync(1_100);
+
+    const parked = await result.outwardLedger!.lookup("root-outward-only", 0);
+    expect(parked.ok && parked.value?.state).toBe("unresolved");
+    result.shutdown();
+  });
+
+  it("overlapping watchdog ticks share one in-flight recovery pass", async () => {
+    const db = await makeDb();
+    let finishResume: ((result: Result<void, Error>) => void) | undefined;
+    const resumeRun = vi.fn(() => new Promise<Result<void, Error>>(
+      (resolve) => { finishResume = resolve; },
+    ));
+    const deps = baseDeps(db, { resumeRun });
+    const result = setupDurableResume(deps);
+    await result.resumeAndStart();
+    await seedRunningRun(
+      result.durableRunStore!,
+      "root-overlap",
+      testClock.now() - 10_000,
+    );
+
+    await vi.advanceTimersByTimeAsync(3_100);
+
+    expect(resumeRun).toHaveBeenCalledTimes(1);
+    finishResume?.(ok(undefined));
+    await vi.advanceTimersByTimeAsync(0);
     result.shutdown();
   });
 
@@ -217,15 +313,26 @@ describe("buildDurableResume resumeGraph dispatch", () => {
   /** Seed a resumable `running` checkpoint with the given spawnTree shape. */
   async function seed(store: DurableRunPort, rootRunId: string, spawnTree: DRR["spawnTree"]): Promise<void> {
     const r = await store.upsertCheckpoint({
+      checkpointId: `checkpoint-${rootRunId}`,
       rootRunId,
+      agentId: "agent-a",
+      sessionKey: "tenant-a:user-a:chat-a",
+      ownerTenantId: "tenant-a",
+      ownerUserId: "user-a",
+      deliveryOrigin: null,
       spawnTree,
       caps: ["orch:read"],
       leaseIds: [`lease-${rootRunId}`],
       budgetConsumed: 0,
+      rootBudget: { startedAtMs: testClock.now(), tokensConsumed: 0, usdConsumed: 0 },
       cronOrigin: null,
-      stepIndex: -1,
+      trustLevel: "user",
       status: "running",
       lastHeartbeatAt: testClock.now(),
+      scriptRef: null,
+      checkpointRef: spawnTree.length > 0 && typeof spawnTree[0] === "object"
+        ? `graph-runs/${rootRunId}/durable-checkpoint.json`
+        : null,
     });
     if (!r.ok) throw r.error;
   }
@@ -234,12 +341,20 @@ describe("buildDurableResume resumeGraph dispatch", () => {
     return {
       registerRoot: vi.fn(),
       leaseIdsForRoot: vi.fn(() => new Set<string>()),
+      rehydrateBudget: vi.fn(),
+      evictRootIfIdle: vi.fn(),
+      exportBudgetState: vi.fn(() => ({
+        startedAtMs: testClock.now(),
+        tokensConsumed: 0,
+        usdConsumed: 0,
+      })),
     };
   }
 
   function makeLeaseManager(): LeaseManager {
     return {
       mintLease: vi.fn(() => ({ leaseId: "lease-x", bearer: "bearer-x" })),
+      revoke: vi.fn(() => ({ revoked: 1 })),
     } as unknown as LeaseManager;
   }
 
@@ -252,8 +367,7 @@ describe("buildDurableResume resumeGraph dispatch", () => {
       durabilityCfg: { enabled: true, staleHeartbeatMs: 1_000, keepAliveMs: 250, recoveryBudgetMs: 5_000 },
       boundedAutonomy: boundedAutonomy as never,
       sharedLeaseManager: makeLeaseManager(),
-      channelAdaptersRef: new Map(),
-      eventBus: { emit: vi.fn() } as never,
+      eventBus: new TypedEventBus(),
       logger: silentLogger,
       clock: testClock,
       timers: testTimers,
@@ -285,8 +399,7 @@ describe("buildDurableResume resumeGraph dispatch", () => {
       durabilityCfg: { enabled: true, staleHeartbeatMs: 1_000, keepAliveMs: 250, recoveryBudgetMs: 5_000 },
       boundedAutonomy: boundedAutonomy as never,
       sharedLeaseManager: makeLeaseManager(),
-      channelAdaptersRef: new Map(),
-      eventBus: { emit: vi.fn() } as never,
+      eventBus: new TypedEventBus(),
       logger: silentLogger,
       clock: testClock,
       timers: testTimers,
@@ -304,15 +417,42 @@ describe("buildDurableResume resumeGraph dispatch", () => {
     expect(boundedAutonomy.registerRoot.mock.calls[0]![0]).toBe("root-flat");
     expect(resumeGraph).not.toHaveBeenCalled();
   });
+
+  it("orphans a DAG checkpoint when graph recovery is not wired", async () => {
+    const db = await makeDb();
+    const boundedAutonomy = makeBoundedAutonomy();
+    const leaseManager = makeLeaseManager();
+    const wiring = buildDurableResume({
+      db,
+      durabilityCfg: { enabled: true, staleHeartbeatMs: 1_000, keepAliveMs: 250, recoveryBudgetMs: 5_000 },
+      boundedAutonomy: boundedAutonomy as never,
+      sharedLeaseManager: leaseManager,
+      eventBus: new TypedEventBus(),
+      logger: silentLogger,
+      clock: testClock,
+      timers: testTimers,
+    });
+
+    await seed(wiring.durableResume.durableRunStore!, "root-dag-unwired", [
+      { nodeId: "A", status: "running", runId: "run-a" },
+    ]);
+    await wiring.startAndResumeDurable();
+    wiring.durableResume.shutdown();
+
+    expect(boundedAutonomy.registerRoot).not.toHaveBeenCalled();
+    expect(boundedAutonomy.evictRootIfIdle).toHaveBeenCalledWith("root-dag-unwired");
+    expect(leaseManager.revoke).toHaveBeenCalledWith("lease-x");
+    const resumable = await wiring.durableResume.durableRunStore!.listResumable();
+    expect(resumable.ok && resumable.value.records).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
 // buildOrchestrateResumeWiring — the production OrchestrateResumeWiring cluster
 // the composition root threads into buildDurableResume so the boot-sweep arm
 // VERIFIES a resumable orchestrate row's pinned script + checkpoint on disk and
-// the orphan path RECLAIMS a dead run's artifacts. The seams are REAL fs ops
-// (existsSync / result-ref-store.cleanupRun / a safePath-guarded rmSync), proven
-// against a REAL temp workspace — never a mock (design §4.5).
+// the orphan path RECLAIMS a dead run's artifacts. The seams are real fs ops
+// exercised against a temporary workspace.
 // ---------------------------------------------------------------------------
 describe("buildOrchestrateResumeWiring (the composition-root cluster)", () => {
   function makeWiringLogger(): ComisLogger {
@@ -330,33 +470,82 @@ describe("buildOrchestrateResumeWiring (the composition-root cluster)", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("resolves workspaceFor to the default-agent workspace (a bare durable row carries no agentId)", () => {
-    const wiring = buildOrchestrateResumeWiring({ defaultWorkspaceDir: tmp, logger: makeWiringLogger() });
-    // The record has no agentId; the single-agent default workspace is the target.
-    const record = { rootRunId: "orch-x", scriptRef: "orch-x.ts" } as unknown as DurableRunRecord;
+  it("resolves workspaceFor by the durable record's persisted agentId", () => {
+    const wiring = buildOrchestrateResumeWiring({
+      workspaceDirs: new Map([["agent-a", tmp]]),
+      logger: makeWiringLogger(),
+    });
+    const record = { agentId: "agent-a", rootRunId: "orch-x", scriptRef: "orch-x.ts" } as unknown as DurableRunRecord;
     expect(wiring.workspaceFor(record)).toBe(tmp);
   });
 
+  it("verifies a recovered record only in the workspace persisted for its agentId", () => {
+    const defaultWorkspace = join(tmp, "workspace");
+    const researcherWorkspace = join(tmp, "workspace-researcher");
+    mkdirSync(defaultWorkspace, { recursive: true });
+    mkdirSync(researcherWorkspace, { recursive: true });
+    writeFileSync(join(researcherWorkspace, "orch-research.ts"), "console.log('research');");
+    const wiring = buildOrchestrateResumeWiring({
+      workspaceDirs: new Map([
+        ["default", defaultWorkspace],
+        ["researcher", researcherWorkspace],
+      ]),
+      logger: makeWiringLogger(),
+    });
+    const record = {
+      checkpointId: "checkpoint-research",
+      rootRunId: "root-research",
+      agentId: "researcher",
+      sessionKey: "tenant-a:user-a:telegram:chat-a",
+      ownerTenantId: "tenant-a",
+      ownerUserId: "user-a",
+      deliveryOrigin: {
+        tenantId: "tenant-a",
+        userId: "user-a",
+        channelType: "telegram",
+        channelId: "chat-a",
+      },
+      spawnTree: [],
+      caps: [],
+      leaseIds: [],
+      budgetConsumed: 0,
+      rootBudget: { startedAtMs: 1, tokensConsumed: 0, usdConsumed: 0 },
+      cronOrigin: null,
+      trustLevel: "user",
+      status: "running",
+      lastHeartbeatAt: 1,
+      scriptRef: "orch-research.ts",
+      checkpointRef: null,
+    } satisfies DurableRunRecord;
+
+    expect(wiring.workspaceFor(record)).toBe(researcherWorkspace);
+    expect(verifyOrchestrateResumable(record, wiring)).toEqual({ ok: true, value: undefined });
+  });
+
   it("fileExists reflects the real existsSync (present → true, absent → false)", () => {
-    const wiring = buildOrchestrateResumeWiring({ defaultWorkspaceDir: tmp, logger: makeWiringLogger() });
+    const wiring = buildOrchestrateResumeWiring({ workspaceDirs: new Map([["agent-a", tmp]]), logger: makeWiringLogger() });
     const present = join(tmp, "orch-x.ts");
     writeFileSync(present, "console.log(1)");
     expect(wiring.fileExists(present)).toBe(true);
     expect(wiring.fileExists(join(tmp, "gone.ts"))).toBe(false);
   });
 
-  it("cleanupResults wipes the run's results/ dir (reuses the real result-ref-store.cleanupRun)", async () => {
-    const wiring = buildOrchestrateResumeWiring({ defaultWorkspaceDir: tmp, logger: makeWiringLogger() });
-    const resultsDir = join(tmp, "results");
+  it("cleanupResults deletes only the selected run's isolated results directory", async () => {
+    const wiring = buildOrchestrateResumeWiring({ workspaceDirs: new Map([["agent-a", tmp]]), logger: makeWiringLogger() });
+    const resultsRoot = join(tmp, "results");
+    const resultsDir = join(resultsRoot, safeResultRunId("orch-x"));
+    const siblingDir = join(resultsRoot, safeResultRunId("orch-y"));
     mkdirSync(resultsDir, { recursive: true });
+    mkdirSync(siblingDir, { recursive: true });
     writeFileSync(join(resultsDir, "checkpoint.json"), "{}");
-    expect(existsSync(resultsDir)).toBe(true);
+    writeFileSync(join(siblingDir, "checkpoint.json"), "{}");
     await wiring.cleanupResults(tmp, "orch-x");
     expect(existsSync(resultsDir)).toBe(false);
+    expect(existsSync(siblingDir)).toBe(true);
   });
 
   it("removePinnedScript deletes the workspace-root pinned script and is idempotent", () => {
-    const wiring = buildOrchestrateResumeWiring({ defaultWorkspaceDir: tmp, logger: makeWiringLogger() });
+    const wiring = buildOrchestrateResumeWiring({ workspaceDirs: new Map([["agent-a", tmp]]), logger: makeWiringLogger() });
     const pinned = join(tmp, "orch-x.ts");
     writeFileSync(pinned, "console.log(1)");
     wiring.removePinnedScript(tmp, "orch-x.ts");
@@ -366,7 +555,7 @@ describe("buildOrchestrateResumeWiring (the composition-root cluster)", () => {
   });
 
   it("removePinnedScript refuses a traversal scriptRef — never deletes outside the workspace", () => {
-    const wiring = buildOrchestrateResumeWiring({ defaultWorkspaceDir: tmp, logger: makeWiringLogger() });
+    const wiring = buildOrchestrateResumeWiring({ workspaceDirs: new Map([["agent-a", tmp]]), logger: makeWiringLogger() });
     // A sibling file OUTSIDE the workspace that a `../` scriptRef would target.
     const outsideDir = mkdtempSync(join(tmpdir(), "comis-outside-"));
     const victim = join(outsideDir, "victim.ts");

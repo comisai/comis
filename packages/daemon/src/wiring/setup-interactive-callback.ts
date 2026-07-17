@@ -34,6 +34,7 @@ import {
   signCallbackData,
   generateStrongToken,
   INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME,
+  parseFormattedSessionKey,
 } from "@comis/core";
 import type {
   SecretStorePort,
@@ -45,7 +46,7 @@ import type {
 } from "@comis/core";
 import type { SignCallbackData, MintApprovalLink } from "@comis/channels";
 import { createInteractiveCallbackRouter } from "@comis/orchestrator";
-import type { InteractiveCallbackRouter } from "@comis/orchestrator";
+import type { GraphReportTargetStore, InteractiveCallbackRouter } from "@comis/orchestrator";
 import {
   insertPendingApprovalToken,
   type PendingApprovalToken,
@@ -181,34 +182,35 @@ export interface InteractiveCallbackWiring {
 
 /**
  * Build the full interactive-callback wiring at the daemon composition root.
- * Resolves the signing secret (store or in-memory
- * fallback), binds the renderer signer, constructs the InteractiveCallbackRouter
+ * Accepts the signing secret resolved before approval-gate construction, binds
+ * the renderer signer, constructs the InteractiveCallbackRouter
  * over the SAME gate + secret + clock, and produces the Email single-use link
  * minter + the gateway-route `resolveApproval` that consumes a minted token.
  *
  * The minted email link carries an OPAQUE `generateStrongToken()` (384-bit) — NOT
  * the signed HMAC wire format (which would leak into a mail body). The token map
- * entry records the shortId + choice; on the first GET the gateway route hands the
+ * entry records the shortId, choice, and immutable callback owner; on the first GET the gateway route hands the
  * consumed entry to `resolveApproval`, which re-renders the signed payload
  * server-side and routes it through the router (lookup → session → expiry → verify
  * → dispatch). Both the email-link path and the chat-button path resolve through
  * the one router + one gate — no duplicate resolution authority.
  */
 export function createInteractiveCallbackWiring(deps: {
-  secretStore: SecretStorePort | undefined;
+  signingSecret: string;
   approvalGate: ApprovalGate;
   clock: ClockPort;
   config: AppConfig;
   logger: ComisLogger;
+  graphReportStore?: GraphReportTargetStore;
 }): InteractiveCallbackWiring {
-  const { secretStore, approvalGate, clock, config, logger } = deps;
-  const secret = resolveInteractiveCallbackSigningSecret(secretStore, logger);
+  const { signingSecret: secret, approvalGate, clock, config, logger, graphReportStore } = deps;
   const sign = bindSignCallbackData(secret);
 
   const router = createInteractiveCallbackRouter({
     gate: approvalGate,
     getSecret: () => secret,
     clock,
+    ...(graphReportStore === undefined ? {} : { graphReportStore }),
   });
 
   const tokens = new Map<string, PendingApprovalToken>();
@@ -222,6 +224,12 @@ export function createInteractiveCallbackWiring(deps: {
   const mintApprovalLink: MintApprovalLink = (event: ActivityEvent) => {
     const approval = event.approval;
     if (approval === undefined) return undefined;
+    const request = approvalGate.getRequestByShortId(approval.shortId);
+    if (
+      request === undefined
+      || request.sessionKey !== event.sessionKey
+      || request.agentId !== event.agentId
+    ) return undefined;
     const choice: ApprovalLinkChoice = "approve";
     const token = generateStrongToken();
     insertPendingApprovalToken(
@@ -230,10 +238,10 @@ export function createInteractiveCallbackWiring(deps: {
       {
         shortId: approval.shortId,
         choice,
-        sessionKey: event.sessionKey,
-        channelType: "email",
-        channelKey: event.sessionKey,
-        agentId: event.agentId,
+        sessionKey: request.sessionKey,
+        channelType: request.callbackOwner.channelType,
+        channelKey: request.callbackOwner.channelKey,
+        agentId: request.agentId,
       },
       // ComisLogger is structurally assignable to the gateway's GatewayLogger
       // (same trace/debug/info/warn/error shape).
@@ -249,15 +257,22 @@ export function createInteractiveCallbackWiring(deps: {
   // the gateway route before this is called (single-use), so a failure here never
   // re-arms it. Returns true iff the router resolved the approval.
   const resolveApproval = async (entry: PendingApprovalToken): Promise<boolean> => {
+    const ownerSession = parseFormattedSessionKey(entry.sessionKey);
+    if (
+      ownerSession === undefined
+      || ownerSession.channelId !== entry.channelKey
+    ) return false;
     const rendered = router.render(entry.choice, entry.shortId);
     if (!rendered.ok) return false;
     const result = await router.route({
+      tenantId: ownerSession.tenantId,
       channelType: entry.channelType,
       channelKey: entry.channelKey,
+      ...(ownerSession.threadId === undefined ? {} : { threadId: ownerSession.threadId }),
       agentId: entry.agentId,
       sessionKey: entry.sessionKey,
       rawData: rendered.value,
-      inboundUserId: `email:${entry.channelKey}`,
+      inboundUserId: ownerSession.userId,
     });
     // route() is Result<_, never> — always ok; inspect the resolution kind.
     return result.ok && result.value.kind === "resolved";

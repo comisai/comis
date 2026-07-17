@@ -415,7 +415,7 @@ describe("obs_query tool", () => {
       });
     });
 
-    it("channels/get calls rpcCall('obs.channels.get') with channelId", async () => {
+    it("channels/get calls rpcCall with the complete channel identity", async () => {
       mockRpcCall.mockResolvedValue({ channelId: "ch-1", active: true });
 
       const tool = createObsQueryTool(mockRpcCall);
@@ -424,14 +424,19 @@ describe("obs_query tool", () => {
         tool.execute("call-ch5", {
           action: "channels",
           sub_action: "get",
+          channel_type: "telegram",
           channel_id: "ch-1",
         } as never),
       );
 
-      expect(mockRpcCall).toHaveBeenCalledWith("obs.channels.get", { channelId: "ch-1", _trustLevel: "admin" });
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.channels.get", {
+        channelType: "telegram",
+        channelId: "ch-1",
+        _trustLevel: "admin",
+      });
     });
 
-    it("channels/get throws when channel_id missing", async () => {
+    it("channels/get throws when either channel identity field is missing", async () => {
       const tool = createObsQueryTool(mockRpcCall);
 
       await expect(
@@ -442,6 +447,16 @@ describe("obs_query tool", () => {
           } as never),
         ),
       ).rejects.toThrow(/channel_id/);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-ch7", {
+            action: "channels",
+            sub_action: "get",
+            channel_id: "ch-1",
+          } as never),
+        ),
+      ).rejects.toThrow(/channel_type/);
       expect(mockRpcCall).not.toHaveBeenCalled();
     });
   });

@@ -29,7 +29,16 @@ import {
  *
  * Maps a namespaced method (e.g., "cron.add") to an in-process service call.
  */
-export type RpcCall = (method: string, params: Record<string, unknown>) => Promise<unknown>;
+export interface RpcCallMetadata {
+  /** Stable identity of one logical outward operation, usually the tool-call id. */
+  outwardOperationId?: string;
+}
+
+export type RpcCall = (
+  method: string,
+  params: Record<string, unknown>,
+  metadata?: RpcCallMetadata,
+) => Promise<unknown>;
 
 // ---------------------------------------------------------------------------
 // Parameter schema

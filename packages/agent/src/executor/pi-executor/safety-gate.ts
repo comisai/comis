@@ -93,7 +93,7 @@ export function runSafetyGates(
     clock: deps.clock,
   });
   if (!inputGuardResult.passed) {
-    state.result.finishReason = (inputGuardResult.earlyFinishReason ?? "error") as ExecutionResult["finishReason"];
+    state.result.finishReason = inputGuardResult.earlyFinishReason ?? "error";
     state.result.response = inputGuardResult.earlyResponse ?? "";
     return { passed: false };
   }

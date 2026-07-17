@@ -14,7 +14,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseFormattedSessionKey } from "@comis/core";
-import { scanWorkspaceSessions } from "./session-helpers.js";
+import { scanJsonlSessions, scanWorkspaceSessions } from "./session-helpers.js";
 
 describe("scanWorkspaceSessions — canonical tenant:user:channel sessionKey", () => {
   let dir: string;
@@ -68,5 +68,51 @@ describe("scanWorkspaceSessions — canonical tenant:user:channel sessionKey", (
     expect(parsed!.peerId).toBe("111");
     // userId must be the decoded user, not the hardcoded "unknown"
     expect(s.userId).toBe("111");
+  });
+
+  it("excludes the inbound provenance ledger from workspace session listings and counts", () => {
+    writeSession("default", "424242", "111~peer~111.jsonl");
+    writeSession("default", "424242", "111~peer~111~ledger~inbound.jsonl");
+
+    const sessions = scanWorkspaceSessions(dir);
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionKey: "default:111:424242:peer:111",
+      messageCount: 1,
+    });
+  });
+});
+
+describe("scanJsonlSessions — live transcript classification", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "comis-agent-sessions-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("excludes the inbound provenance ledger from agent-data session listings and counts", () => {
+    const sessionsDir = join(dir, "default", "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(
+      join(sessionsDir, "111~peer~111.jsonl"),
+      JSON.stringify({ role: "user", content: "hi" }) + "\n",
+    );
+    writeFileSync(
+      join(sessionsDir, "111~peer~111~ledger~inbound.jsonl"),
+      JSON.stringify({ type: "comis.inbound.message", text: "hi" }) + "\n",
+    );
+
+    const sessions = scanJsonlSessions(dir, { default: {} });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      sessionKey: "111~peer~111",
+      messageCount: 1,
+    });
   });
 });

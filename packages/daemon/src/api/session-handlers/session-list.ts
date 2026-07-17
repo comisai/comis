@@ -111,20 +111,14 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
         });
       }
 
-      // AgentId self-scope: an agent-origin caller may enumerate ONLY
-      // its own sessions. Mirror session.search's `_agentId` filter exactly
-      // (the predicate `parseFormattedSessionKey(s.sessionKey)?.agentId ===
-      // callerAgentId`) so a jailed orch:read script cannot harvest the
-      // directory of every agent's/user's sessions (the keys that would turn
-      // a single-session read into a turnkey cross-tenant exfiltration,
-      // plus a userId/channelId enumeration leak in its own right). Fail CLOSED
-      // (filter to the caller's own) — composes with the sub-agent narrowing
-      // below. When `callerAgentId` is undefined (admin / operator / CLI) the
-      // full directory is preserved, as before.
+      // Formatted session keys intentionally omit agentId, so ownership cannot
+      // be reconstructed by parsing them. Agent-origin reads are therefore
+      // bound to the exact caller session injected from the live request. A
+      // lease-only call without a session fails closed to an empty directory.
       if (callerAgentId) {
-        sessions = sessions.filter(
-          (s) => parseFormattedSessionKey(s.sessionKey)?.agentId === callerAgentId,
-        );
+        sessions = callerSessionKey === undefined
+          ? []
+          : sessions.filter((s) => s.sessionKey === callerSessionKey);
       }
 
       // Sandboxed visibility: sub-agents only see sessions they spawned
@@ -146,7 +140,9 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
 
           return {
             sessionKey: s.sessionKey,
-            agentId: parsed?.agentId ?? "default",
+            agentId: callerAgentId && s.sessionKey === callerSessionKey
+              ? callerAgentId
+              : parsed?.agentId ?? "default",
             userId: s.userId,
             channelId: s.channelId,
             kind: s.metadata.parentSessionKey
@@ -169,6 +165,7 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
     [SessionSearchContract.method]: async (rawParams) => {
       // Internal-field reads BEFORE strip (caller-scoping)
       const callerAgentId = rawParams._agentId as string | undefined;
+      const callerSessionKey = rawParams._callerSessionKey as string | undefined;
       const tenantId = rawParams._tenantId as string | undefined;
 
       const userParams = stripInternalFields(rawParams);
@@ -180,12 +177,12 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
 
       let sessions = enumerateListableSessions(deps, tenantId);
 
-      // AgentId scoping: when _agentId is provided, filter to caller's sessions
+      // Agent-origin search is exact-session scoped because agentId is not part
+      // of the formatted session-key wire representation.
       if (callerAgentId) {
-        sessions = sessions.filter((s) => {
-          const parsed = parseFormattedSessionKey(s.sessionKey);
-          return parsed?.agentId === callerAgentId;
-        });
+        sessions = callerSessionKey === undefined
+          ? []
+          : sessions.filter((s) => s.sessionKey === callerSessionKey);
       }
 
       // Recent-sessions mode: no query provided
@@ -195,7 +192,9 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
           const parsed = parseFormattedSessionKey(s.sessionKey);
           return {
             sessionKey: s.sessionKey,
-            agentId: parsed?.agentId ?? "default",
+            agentId: callerAgentId && s.sessionKey === callerSessionKey
+              ? callerAgentId
+              : parsed?.agentId ?? "default",
             channelType: s.metadata.parentSessionKey !== undefined
               ? "sub-agent"
               : parsed?.guildId
@@ -329,7 +328,9 @@ export function bindSessionListHandlers(deps: SessionHandlerDeps): Record<string
 
           results.push({
             sessionKey: session.sessionKey,
-            agentId: parsed?.agentId ?? "default",
+            agentId: callerAgentId && session.sessionKey === callerSessionKey
+              ? callerAgentId
+              : parsed?.agentId ?? "default",
             channelType,
             snippet: bestMatch.snippet,
             score: bestMatch.score,

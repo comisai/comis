@@ -24,17 +24,13 @@
  * hard `err`, carrying an `errorKind` + operator `hint` so the boundary can log
  * an actionable failure.
  *
- * The nine checks are composed here from the individually-exported check consts,
- * and the doctor context is built locally (mirroring the doctor command's
- * derivation, including the wildcard-bind → loopback remap): the command's
- * `ALL_CHECKS` array and context builder are non-exported locals, and extracting
- * them would rewire the unrelated health command — out of scope. Only the
- * store-aware config resolver is reused.
+ * The nine daemon-down checks are composed here, while context construction is
+ * shared with `doctor` and `health` so path, env, TLS, and bind-address semantics
+ * cannot drift between diagnostic surfaces.
  *
  * @module
  */
 
-import { safePath } from "@comis/core";
 import type { FleetHealthReport } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { exportTrajectoryBundle } from "@comis/observability";
@@ -49,9 +45,8 @@ import { workspaceHealthCheck } from "../doctor/checks/workspace-health.js";
 import { oauthHealthCheck } from "../doctor/checks/oauth-health.js";
 import { secretsAuditHealthCheck } from "../doctor/checks/secrets-audit-health.js";
 import { lcdHealthCheck } from "../doctor/checks/lcd-health.js";
-import { resolveDoctorConfig } from "../doctor/config-resolve.js";
+import { buildDiagnosticContext } from "../doctor/diagnostic-suite.js";
 import { buildDoctorJson } from "../doctor/output.js";
-import { readCliVersion } from "../util/cli-version.js";
 import {
   assembleFleetHealthReportOffline,
   readAuditSummaryOffline,
@@ -186,52 +181,21 @@ function describeError(error: unknown): string {
 }
 
 /**
- * Build the doctor context locally: resolve the config through the shared
- * store-aware path, then derive the data dir, PID-file path, and gateway URL.
- *
- * The gateway URL derivation mirrors the doctor command's: `gw.host` is a bind
- * address, so the wildcard forms are remapped to loopback (`0.0.0.0` →
- * `127.0.0.1`, `::` → `::1`) before the connectivity probe targets them, and
- * `tls` selects the scheme. Exported so the remap is unit-pinned.
+ * Build the support-bundle doctor context through the same resolver and runtime
+ * path derivation used by the interactive diagnostic commands.
  *
  * @param configPaths - config file paths to resolve.
  * @param deps - the data-dir fallback and an optional config-read seam.
- * @returns the diagnostic context the nine checks consume.
+ * @returns the diagnostic context the daemon-down checks consume.
  */
 export function buildSupportDoctorContext(
   configPaths: string[],
   deps: { dataDir: string; readFile?: (path: string) => string },
 ): DoctorContext {
-  const configResolution = resolveDoctorConfig(
-    configPaths,
-    deps.readFile !== undefined ? { readFile: deps.readFile } : {},
-  );
-  const config = configResolution.config;
-
-  // An unset `dataDir` defaults to "" in the schema, so `||` falls through to
-  // the injected root rather than an empty path.
-  const dataDir = config?.dataDir || deps.dataDir;
-  const daemonPidFile = safePath(dataDir, "daemon.pid");
-
-  let gatewayUrl: string | undefined;
-  if (config?.gateway) {
-    const gw = config.gateway;
-    const bindHost = gw.host || "127.0.0.1";
-    const host = bindHost === "0.0.0.0" ? "127.0.0.1" : bindHost === "::" ? "::1" : bindHost;
-    const port = gw.port || 4766;
-    const protocol = gw.tls ? "https" : "http";
-    gatewayUrl = `${protocol}://${host}:${port}`;
-  }
-
-  return {
-    config,
-    configResolution,
-    configPaths,
-    dataDir,
-    daemonPidFile,
-    gatewayUrl,
-    cliVersion: readCliVersion(),
-  };
+  return buildDiagnosticContext(configPaths, {
+    defaultDataDir: deps.dataDir,
+    ...(deps.readFile !== undefined ? { readFile: deps.readFile } : {}),
+  });
 }
 
 /**

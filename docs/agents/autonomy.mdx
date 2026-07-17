@@ -297,7 +297,8 @@ daemon mid-pipeline and that run is gone. Turn on
 [`autonomy.durability.enabled`](/reference/config-yaml#autonomy-agents-autonomy)
 (**off by default** -- a default install builds no durable stores and is
 byte-identical) and a long-running run becomes **resumable across a restart**,
-with an **exactly-once** guarantee on everything it sends outward.
+with durable duplicate suppression and explicit uncertainty parking for
+outward sends.
 
 ```yaml title="~/.comis/config.yaml -- make a cron-fired pipeline survive a restart"
 agents:
@@ -317,24 +318,28 @@ agents:
   it and **notifies the operator** out-of-band. A run is never left in limbo. A
   daemon-wide watchdog sweeps any run whose heartbeat has lapsed past
   `staleHeartbeatMs` (the same fate: resume or orphan-and-notify).
-- **Exactly-once outward sends -- a crash never re-DMs or re-posts.** Every
-  agent-originated outward send is wrapped in a durable three-state ledger
-  (`send_attempt_started` → `unknown_after_send` → `committed`) keyed on a unique
-  `(rootRunId, step-index)` pair. A send that already committed is a no-op on
-  replay; a send that crashed *between* the attempt and the platform
-  acknowledgement is **reconciled** on recovery -- the owning channel is asked
-  "did this actually send?" -- rather than blind-replayed. This is security
-  invariant #12: **a restart mid-pipeline never double-sends.** It covers **both**
+- **Duplicate suppression with honest crash uncertainty.** Every
+  agent-originated outward send is wrapped in a durable, closed five-state
+  ledger (`send_attempt_started`, `unknown_after_send`, `committed`, `failed`,
+  or `unresolved`) keyed by one stable logical operation identity and its
+  `(rootRunId, step-index)` pair. Repeating a retained committed operation
+  returns its prior platform receipt without another send; every other existing
+  state blocks another execution. If a call may have crossed the platform
+  boundary but no durable receipt proves its outcome, the row is atomically
+  parked `unresolved` and escalated. Startup applies that same rule to every
+  `send_attempt_started` or `unknown_after_send` row: it does not query channel
+  history and does not replay the operation. This covers **both**
   the direct [`message.send`/`reply`/`react`](/reference/json-rpc#message-send)
   path **and** the sub-agent completion-announcement path -- the announcement
-  dead-letter queue consults the same ledger on restart, so a recovered
-  announcement is never delivered twice. The typed
+  dead-letter queue uses the same retained operation identity and ledger. The typed
   [`comis_tools.message_send`/`reply`/`react`](/agent-tools/orchestrate#the-typed-mutation-surface-write-and-message)
   outward methods dispatch that same `message.*` path, so they ride the same
-  ledger. **This dedup is active only under durability.** With durability off
+  protection. **This protection is active only under durability.** With durability off
   (the default), an outward send is a best-effort pass-through -- still delivered,
-  just not deduped across a crash; the exactly-once guarantee attaches only once
-  `autonomy.durability.enabled` is on.
+  but without a retained operation record across a crash. Even with durability
+  enabled, Comis does not claim universal exactly-once delivery: an ambiguous
+  platform outcome requires operator verification before the operation can be
+  attempted again.
 - **A resumed run never broadens its authority.** On resume the lease is
   re-minted from the run's **persisted, already-attenuated** capabilities -- never
   re-attenuated from a live parent (which could be broader), and never a superset
@@ -344,8 +349,9 @@ agents:
   resume, not re-minted.
 - **DAGs resume at node-boundary granularity.** A cron-fired multi-node
   execution graph interrupted by a restart resumes its **incomplete** nodes;
-  already-completed nodes are **not** re-run, and any outward send a re-run node
-  repeats is deduped by the same ledger. (Intra-node LLM/tool state is not
+  already-completed nodes are **not** re-run. An outward operation repeated with
+  the same retained identity is short-circuited when committed and blocked when
+  uncertain; it is not blindly replayed. (Intra-node LLM/tool state is not
   checkpointed -- resume is per node, not mid-node.)
 
 **The config knobs** (all under `autonomy.durability`):
@@ -358,28 +364,25 @@ agents:
 | `recoveryBudgetMs` | `30000` | Wall-clock budget for one recovery pass. A backlog larger than the budget is partially recovered and the remainder deferred to the next pass -- no thundering herd on a large crash backlog. |
 
 <Note>
-**Honest per-channel coverage of the exactly-once guarantee.** The "was this
-actually sent?" reconciliation needs a channel that can be **queried** for its
-recent sends. **Discord** and **Slack** can (they fetch recent history and match
-the bot's message), so a crashed-mid-send on those resolves cleanly to
-*sent* (acknowledge once, no replay) or *not-sent* (replay once). **iMessage,
-IRC, and Email cannot** be queried for their sent history -- so a crashed-mid-send
-on those resolves to **unresolved**, which Comis handles by **parking the send
-and escalating to the operator** rather than guessing. That is the safe,
-surfaced outcome: never a silent double-send, and never a silent drop -- you are
-told to decide. This is the truthful shape of invariant #12: the guarantee is
-*full and automatic* on queryable channels, and *parked-and-surfaced* on the
-ones that cannot answer.
+**The uncertainty rule is channel-independent.** Comis does not treat a content
+and time-window match in platform history as proof that one unique operation was
+sent, and absence from a history window does not prove it was not sent. Recovery
+therefore never converts an interrupted send into a `sent` or `not_sent`
+verdict. It parks the operation `unresolved`, blocks automatic replay, and
+escalates with content-free identifiers so an operator can verify the platform
+effect. This is deliberately narrower than exactly-once delivery.
 </Note>
 
 <Note>
 **Resume scope.** A resumed run is re-anchored under the bounded-autonomy
-meter (bounded, killable, and with its outward ledger reconciled across the
+meter (bounded, killable, and with uncertain outward rows parked across the
 restart) from its persisted checkpoint -- it is **not** re-entered into the agent
 loop from the exact step it was on. Resuming the model turn itself from a
 mid-run step needs a wider checkpoint and is a later enhancement; today's
-guarantee is "the run survives, stays bounded, and never double-sends," not "the
-model picks up its half-finished thought."
+contract is "the run survives, stays bounded, suppresses a repeated retained
+operation, and stops for operator review on send ambiguity," not "the model
+picks up its half-finished thought" or "every platform side effect is exactly
+once."
 </Note>
 
 ## Legible Boot Logging

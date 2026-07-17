@@ -1,10 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
 import type { InboundPipelineDeps } from "./inbound-pipeline.js";
-import type { ChannelPort, NormalizedMessage, DeliveryService } from "@comis/core";
+import type { ApprovalRequest, ChannelPort, NormalizedMessage, DeliveryService, RequestContext } from "@comis/core";
+import { runWithContext, tryGetContext } from "@comis/core";
 import { ok } from "@comis/shared";
+import { randomUUID } from "node:crypto";
 
-import { matchesResetTrigger, processInboundMessage } from "./inbound-pipeline.js";
+import {
+  matchesResetTrigger,
+  processInboundMessage as processInboundMessageWithoutScope,
+} from "./inbound-pipeline.js";
+
+/** Unit tests enter through the same unresolved ingress boundary as adapters. */
+async function processInboundMessage(
+  ...args: Parameters<typeof processInboundMessageWithoutScope>
+): Promise<void> {
+  if (tryGetContext() !== undefined) {
+    return processInboundMessageWithoutScope(...args);
+  }
+  const adapter = args[1];
+  return runWithContext({
+    traceId: randomUUID(),
+    startedAt: Date.now(),
+    channelType: adapter.channelType,
+    tenantId: "default",
+    trustLevel: "user",
+  }, () => processInboundMessageWithoutScope(...args));
+}
 
 // DeliveryService is injected as a per-test fake (rather than via
 // vi.mock("./deliver-to-channel.js")). The fake's deliverToChannel delegates
@@ -133,6 +155,159 @@ describe("allowFrom sender filtering", () => {
 
     expect(deps.createExecutor).toHaveBeenCalled();
   });
+
+  it("terminalizes the source when inbound preparation rejects after reception", async () => {
+    const deps = makeMinimalDeps();
+    vi.mocked(deps.sessionManager.loadOrCreate).mockImplementation(() => {
+      throw new Error("session store unavailable");
+    });
+    const msg = makeMsg({ id: "00000000-0000-0000-0000-000000000202" });
+
+    await expect(processInboundMessage(
+      deps,
+      makeAdapterForTest(),
+      msg,
+      new Set(),
+      new Map() as any,
+    )).rejects.toThrow("session store unavailable");
+
+    expect(deps.eventBus.emit).toHaveBeenCalledWith("message:terminal", {
+      channelType: "telegram",
+      channelId: "chat-1",
+      sourceMessageId: msg.id,
+      outcome: "error",
+      reason: "inbound_rejected",
+      timestamp: expect.any(Number),
+    });
+  });
+
+  it("terminalizes the source when the sender filter dependency throws", async () => {
+    const primary = new Error("allowFrom lookup failed");
+    const deps = makeMinimalDeps({
+      getAllowFrom: vi.fn(() => {
+        throw primary;
+      }),
+    });
+    const msg = makeMsg({ id: "00000000-0000-0000-0000-000000000204" });
+
+    await expect(processInboundMessage(
+      deps,
+      makeAdapterForTest(),
+      msg,
+      new Set(),
+      new Map() as any,
+    )).rejects.toBe(primary);
+
+    const terminals = vi.mocked(deps.eventBus.emit).mock.calls
+      .filter(([event]) => event === "message:terminal")
+      .map(([, payload]) => payload);
+    expect(terminals).toEqual([
+      expect.objectContaining({
+        sourceMessageId: msg.id,
+        outcome: "error",
+        reason: "inbound_rejected",
+      }),
+    ]);
+  });
+
+  it("terminalizes a blocked sender when the observational emitter throws", async () => {
+    const deps = makeMinimalDeps({ getAllowFrom: () => ["admin-1"] });
+    const primary = new Error("sender observer fan-out failed");
+    vi.mocked(deps.eventBus.emitSafely).mockImplementation((event, payload) => {
+      if (event === "sender:blocked") throw primary;
+      deps.eventBus.emit(event, payload);
+      return {
+        hadListeners: false,
+        failures: [],
+        pendingFailures: Promise.resolve([]),
+      };
+    });
+    const msg = makeMsg({ id: "00000000-0000-0000-0000-000000000207" });
+
+    await expect(processInboundMessage(
+      deps,
+      makeAdapterForTest(),
+      msg,
+      new Set(),
+      new Map() as any,
+    )).resolves.toBeUndefined();
+
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "message:terminal",
+      expect.objectContaining({
+        sourceMessageId: msg.id,
+        outcome: "filtered",
+        reason: "gate_skipped",
+      }),
+    );
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ eventName: "sender:blocked", firstListenerIndex: -1 }),
+      "Observational event subscriber failed",
+    );
+  });
+
+  it("does not duplicate a terminal published before executor rejection rethrows", async () => {
+    const primary = new Error("executor rejected");
+    const deps = makeMinimalDeps({
+      createExecutor: vi.fn(() => ({
+        execute: vi.fn(async () => Promise.reject(primary)),
+      })),
+    });
+    const msg = makeMsg({ id: "00000000-0000-0000-0000-000000000203" });
+
+    await expect(processInboundMessage(
+      deps,
+      makeAdapterForTest(),
+      msg,
+      new Set(),
+      new Map() as any,
+    )).rejects.toBe(primary);
+
+    const terminals = vi.mocked(deps.eventBus.emit).mock.calls
+      .filter(([event]) => event === "message:terminal")
+      .map(([, payload]) => payload);
+    expect(terminals).toEqual([
+      expect.objectContaining({
+        sourceMessageId: msg.id,
+        outcome: "error",
+        reason: "execution_completed",
+      }),
+    ]);
+  });
+
+  it("terminalizes distinct ingresses that reject with the same Error object", async () => {
+    const primary = new Error("shared executor failure");
+    const deps = makeMinimalDeps({
+      createExecutor: vi.fn(() => ({
+        execute: vi.fn(async () => Promise.reject(primary)),
+      })),
+    });
+    const first = makeMsg({ id: "00000000-0000-0000-0000-000000000205" });
+    const second = makeMsg({ id: "00000000-0000-0000-0000-000000000206" });
+
+    await expect(processInboundMessage(
+      deps,
+      makeAdapterForTest(),
+      first,
+      new Set(),
+      new Map() as any,
+    )).rejects.toBe(primary);
+    await expect(processInboundMessage(
+      deps,
+      makeAdapterForTest(),
+      second,
+      new Set(),
+      new Map() as any,
+    )).rejects.toBe(primary);
+
+    const terminals = vi.mocked(deps.eventBus.emit).mock.calls
+      .filter(([event]) => event === "message:terminal")
+      .map(([, payload]) => payload as { sourceMessageId: string });
+    expect(terminals.map((event) => event.sourceMessageId)).toEqual([
+      first.id,
+      second.id,
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -140,9 +315,15 @@ describe("allowFrom sender filtering", () => {
 // ---------------------------------------------------------------------------
 
 function makeMinimalDeps(overrides?: Partial<InboundPipelineDeps>): InboundPipelineDeps {
+  const emit = vi.fn(() => true);
   return {
+    tenantId: "default",
     eventBus: {
-      emit: vi.fn(() => true),
+      emit,
+      emitSafely: vi.fn((event, payload) => {
+        emit(event, payload);
+        return { hadListeners: false, failures: [] };
+      }),
       on: vi.fn().mockReturnThis(),
       off: vi.fn().mockReturnThis(),
       once: vi.fn().mockReturnThis(),
@@ -180,6 +361,10 @@ function makeMinimalDeps(overrides?: Partial<InboundPipelineDeps>): InboundPipel
         finishReason: "stop" as const,
       })),
     })),
+    persistInboundMessage: vi.fn(async () => ({
+      ok: true as const,
+      value: { payloads: [], ledgerContent: "" },
+    })),
     // Per-test injected DeliveryService fake (see the helper at file top).
     deliveryService: makeFakeDeliveryService(),
     ...overrides,
@@ -213,17 +398,123 @@ function makeAdapterForTest(): ChannelPort {
     removeReaction: vi.fn(async () => ok(undefined)),
     deleteMessage: vi.fn(async () => ok(undefined)),
     fetchMessages: vi.fn(async () => ok([])),
-    sendAttachment: vi.fn(async () => ok("att-1")),
+    sendAttachment: vi.fn(async () => ok({ kind: "tracked" as const, messageId: "att-1" })),
     platformAction: vi.fn(async () => ok(undefined)),
   };
 }
+
+describe("resolved inbound request context", () => {
+  it("rejects and terminalizes an inbound turn that has no request scope", async () => {
+    const deps = makeMinimalDeps();
+    const msg = makeMsg({ id: "missing-context-source" });
+
+    await expect(processInboundMessageWithoutScope(
+      deps,
+      makeAdapterForTest(),
+      msg,
+      new Set(),
+      new Map() as any,
+    )).rejects.toThrow("request context");
+
+    expect(deps.createExecutor).not.toHaveBeenCalled();
+    const terminals = vi.mocked(deps.eventBus.emit).mock.calls.filter(
+      ([event]) => event === "message:terminal",
+    );
+    expect(terminals).toHaveLength(1);
+    expect(terminals[0]?.[1]).toMatchObject({
+      channelType: "telegram",
+      channelId: "chat-1",
+      sourceMessageId: msg.id,
+      outcome: "error",
+      reason: "inbound_rejected",
+    });
+  });
+
+  it("keeps one context object from ingress through resolved execution and delivery", async () => {
+    const ingressContext = {
+      tenantId: "default",
+      traceId: "00000000-0000-4000-8000-000000000001",
+      startedAt: Date.now(),
+      trustLevel: "user",
+      channelType: "telegram",
+    } satisfies RequestContext;
+    let executorContext: RequestContext | undefined;
+    let deliveryContext: RequestContext | undefined;
+    const executor = vi.fn(async () => {
+      executorContext = tryGetContext();
+      return {
+        response: "ok",
+        sessionKey: { tenantId: "default", userId: "user-1", channelId: "chat-1" },
+        tokensUsed: { input: 10, output: 5, total: 15 },
+        cost: { total: 0.001 },
+        stepsExecuted: 0,
+        finishReason: "stop" as const,
+      };
+    });
+    const deliveryService = makeFakeDeliveryService();
+    vi.mocked(deliveryService.deliverToChannel).mockImplementation(
+      async (adapter, channelId, text) => {
+        deliveryContext = tryGetContext();
+        await adapter.sendMessage(channelId, text);
+        return ok({
+          ok: true,
+          totalChunks: 1,
+          deliveredChunks: 1,
+          failedChunks: 0,
+          chunks: [{
+            ok: true,
+            messageId: "m1",
+            charCount: text.length,
+            retried: false,
+          }],
+          totalChars: text.length,
+        });
+      },
+    );
+    const deps = makeMinimalDeps({
+      createExecutor: vi.fn(() => ({ execute: executor })),
+      deliveryService,
+      getElevatedReplyConfig: () => ({
+        enabled: true,
+        senderTrustMap: { "user-1": "admin" },
+        defaultTrustLevel: "guest",
+        trustModelRoutes: {},
+        trustPromptOverrides: {},
+      }),
+    });
+
+    await runWithContext(ingressContext, () => processInboundMessage(
+      deps,
+      makeAdapterForTest(),
+      makeMsg(),
+      new Set(),
+      new Map() as any,
+    ));
+
+    expect(executorContext).toBe(ingressContext);
+    expect(deliveryContext).toBe(ingressContext);
+    expect(ingressContext).toMatchObject({
+      tenantId: "default",
+      userId: "user-1",
+      sessionKey: "default:user-1:chat-1:peer:user-1",
+      agentId: "agent-default",
+      trustLevel: "admin",
+      deliveryOrigin: {
+        channelType: "telegram",
+        channelId: "chat-1",
+        userId: "user-1",
+        tenantId: "default",
+      },
+    });
+  });
+});
 
 // ---------------------------------------------------------------------------
 // /approve and /deny chat command interception
 // ---------------------------------------------------------------------------
 
 function makeMockApprovalGate(
-  pendingRequests: Array<{ requestId: string; shortId: string; sessionKey: string; action: string; toolName: string }> = [],
+  pendingRequests: ApprovalRequest[] = [],
 ) {
   return {
     resolveApproval: vi.fn(),
@@ -240,12 +531,23 @@ describe("/approve and /deny command interception", () => {
   // buildScopedSessionKey (DM, per-channel-peer) produces { tenantId: "default", userId: "user-1", channelId: "chat-1", peerId: "user-1" }
   // formatSessionKey produces "default:user-1:chat-1:peer:user-1"
   const TEST_SESSION_KEY = "default:user-1:chat-1:peer:user-1";
-  const PENDING_REQUEST = {
+  const PENDING_REQUEST: ApprovalRequest = {
     requestId: "aaaa1234-bbbb-cccc-dddd-eeeeeeeeeeee",
     shortId: "AAAA1234bbbb",
     sessionKey: TEST_SESSION_KEY,
     action: "agents.delete",
     toolName: "agents_manage",
+    params: {},
+    agentId: "agent-default",
+    trustLevel: "admin",
+    callbackOwner: {
+      tenantId: "default",
+      userId: "user-1",
+      channelType: "telegram",
+      channelKey: "chat-1",
+    },
+    createdAt: 1,
+    timeoutMs: 60_000,
   };
 
   it("/approve <id> resolves matching pending approval as approved", async () => {
@@ -298,10 +600,17 @@ describe("/approve and /deny command interception", () => {
     const req1 = { ...PENDING_REQUEST, requestId: "11111111-1111-1111-1111-111111111111" };
     const req2 = { ...PENDING_REQUEST, requestId: "22222222-2222-2222-2222-222222222222" };
     const req3 = {
+      ...PENDING_REQUEST,
       requestId: "33333333-3333-3333-3333-333333333333",
       sessionKey: "other:tenant:key",
       action: "files.write",
       toolName: "file_ops",
+      callbackOwner: {
+        tenantId: "other",
+        userId: "tenant",
+        channelType: "telegram",
+        channelKey: "key",
+      },
     };
     const gate = makeMockApprovalGate([req1, req2, req3]);
     const adapter = makeAdapterForTest();
@@ -352,6 +661,29 @@ describe("/approve and /deny command interception", () => {
     );
   });
 
+  it("/approve rejects a same-session request owned by another channel", async () => {
+    const wrongOwner = {
+      ...PENDING_REQUEST,
+      callbackOwner: {
+        ...PENDING_REQUEST.callbackOwner,
+        channelType: "discord",
+      },
+    };
+    const gate = makeMockApprovalGate([wrongOwner]);
+    const adapter = makeAdapterForTest();
+    const deps = makeMinimalDeps({ approvalGate: gate });
+
+    await processInboundMessage(
+      deps, adapter, makeMsg({ text: "/approve AAAA1234bbbb" }), new Set(), new Map() as any,
+    );
+
+    expect(gate.resolveApproval).not.toHaveBeenCalled();
+    expect(adapter.sendMessage).toHaveBeenCalledWith(
+      "chat-1",
+      expect.stringContaining("No pending approval found"),
+    );
+  });
+
   // -----------------------------------------------------------------------
   // Ambiguous prefix -> warn, do not resolve. The gate uses a filter+length
   // check (not first-match lookup): on >1 match, deliver an "Ambiguous
@@ -360,6 +692,7 @@ describe("/approve and /deny command interception", () => {
   // -----------------------------------------------------------------------
   it("/approve <requestId-prefix> matches NO shortId and resolves nothing (chat speaks shortId only)", async () => {
     const reqA = {
+      ...PENDING_REQUEST,
       requestId: "ambig0001-aaaa-bbbb-cccc-111111111111",
       shortId: "AMBIG001aaaa",
       sessionKey: TEST_SESSION_KEY,
@@ -367,6 +700,7 @@ describe("/approve and /deny command interception", () => {
       toolName: "agents_manage",
     };
     const reqB = {
+      ...PENDING_REQUEST,
       requestId: "ambig0002-aaaa-bbbb-cccc-222222222222",
       shortId: "AMBIG002bbbb",
       sessionKey: TEST_SESSION_KEY,
@@ -406,6 +740,7 @@ describe("/approve and /deny command interception", () => {
 
   it("/deny <requestId-prefix> matches NO shortId and resolves nothing", async () => {
     const reqA = {
+      ...PENDING_REQUEST,
       requestId: "denyamb01-aaaa-bbbb-cccc-333333333333",
       shortId: "DENYAMB1cccc",
       sessionKey: TEST_SESSION_KEY,
@@ -413,6 +748,7 @@ describe("/approve and /deny command interception", () => {
       toolName: "agents_manage",
     };
     const reqB = {
+      ...PENDING_REQUEST,
       requestId: "denyamb02-aaaa-bbbb-cccc-444444444444",
       shortId: "DENYAMB2dddd",
       sessionKey: TEST_SESSION_KEY,
@@ -641,6 +977,111 @@ describe("/approve and /deny command interception", () => {
 // ---------------------------------------------------------------------------
 
 describe("general slash command interception", () => {
+  it("durably records the resolved physical message before a handled command and reception event", async () => {
+    const callOrder: string[] = [];
+    const persistInboundMessage = vi.fn(async () => {
+      callOrder.push("persist");
+      return {
+        ok: true as const,
+        value: { payloads: [], ledgerContent: "" },
+      };
+    });
+    const handleSlashCommand = vi.fn(async () => {
+      callOrder.push("gate");
+      return { handled: true, response: "ready" };
+    });
+    const deps = makeMinimalDeps({ persistInboundMessage, handleSlashCommand });
+    vi.mocked(deps.eventBus.emit).mockImplementation((event) => {
+      if (event === "message:received") callOrder.push("received");
+      return true;
+    });
+    const message = makeMsg({
+      id: "00000000-0000-4000-8000-000000000301",
+      text: "/status",
+      originalMessages: [{
+        id: "00000000-0000-4000-8000-000000000301",
+        channelId: "chat-1",
+        channelType: "telegram",
+        senderId: "user-1",
+        text: "/status",
+        timestamp: 1_789_000_000_000,
+      }],
+    });
+
+    await processInboundMessage(
+      deps,
+      makeAdapterForTest(),
+      message,
+      new Set(),
+      new Map() as any,
+    );
+
+    expect(persistInboundMessage).toHaveBeenCalledOnce();
+    expect(persistInboundMessage).toHaveBeenCalledWith(
+      "agent-default",
+      message,
+      expect.objectContaining({
+        tenantId: "default",
+        userId: "user-1",
+        channelId: "chat-1",
+      }),
+    );
+    expect(callOrder).toEqual(["persist", "received", "gate"]);
+  });
+
+  it("terminalizes and stops gates when durable inbound persistence fails", async () => {
+    const persistenceError = new Error("ledger storage unavailable");
+    const persistInboundMessage = vi.fn(async () => ({
+      ok: false as const,
+      error: {
+        error: persistenceError,
+        errorKind: "resource" as const,
+      },
+    }));
+    const handleSlashCommand = vi.fn();
+    const executor = vi.fn();
+    const deps = makeMinimalDeps({
+      persistInboundMessage,
+      handleSlashCommand,
+      createExecutor: vi.fn(() => ({ execute: executor })),
+    });
+    const message = makeMsg({
+      id: "00000000-0000-4000-8000-000000000302",
+      text: "/status",
+    });
+
+    await expect(processInboundMessage(
+      deps,
+      makeAdapterForTest(),
+      message,
+      new Set(),
+      new Map() as any,
+    )).rejects.toBe(persistenceError);
+
+    expect(handleSlashCommand).not.toHaveBeenCalled();
+    expect(executor).not.toHaveBeenCalled();
+    expect(deps.eventBus.emit).not.toHaveBeenCalledWith(
+      "message:received",
+      expect.anything(),
+    );
+    expect(deps.eventBus.emit).toHaveBeenCalledWith("message:terminal", {
+      channelType: "telegram",
+      channelId: "chat-1",
+      sourceMessageId: message.id,
+      outcome: "error",
+      reason: "inbound_rejected",
+      timestamp: expect.any(Number),
+    });
+    expect(deps.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "session-provenance",
+        errorKind: "resource",
+        hint: expect.stringContaining("session storage"),
+      }),
+      "Inbound message provenance persistence failed",
+    );
+  });
+
   it("handled command returns response and skips executor", async () => {
     const executorFn = vi.fn();
     const adapter = makeAdapterForTest();
@@ -664,6 +1105,38 @@ describe("general slash command interception", () => {
     );
     expect(adapter.sendMessage).toHaveBeenCalledWith("chat-1", "Session Status: 5 messages");
     expect(executorFn).not.toHaveBeenCalled();
+  });
+
+  it("terminalizes the exact source after a handled gate command", async () => {
+    const adapter = makeAdapterForTest();
+    const msg = makeMsg({
+      id: "00000000-0000-0000-0000-000000000201",
+      channelId: "chat:one",
+      text: "/status",
+    });
+    const deps = makeMinimalDeps({
+      handleSlashCommand: vi.fn(async () => ({
+        handled: true,
+        response: "ready",
+      })),
+    });
+
+    await processInboundMessage(
+      deps,
+      adapter,
+      msg,
+      new Set(),
+      new Map() as any,
+    );
+
+    expect(deps.eventBus.emit).toHaveBeenCalledWith("message:terminal", {
+      channelType: "telegram",
+      channelId: "chat:one",
+      sourceMessageId: msg.id,
+      outcome: "success",
+      reason: "gate_handled",
+      timestamp: expect.any(Number),
+    });
   });
 
   it("directive command passes directives through to execution", async () => {
@@ -782,6 +1255,106 @@ describe("general slash command interception", () => {
 import { createDedupDetector } from "./dedup-detector.js";
 
 describe("dedup-detector wiring in processInboundMessage", () => {
+  it("admits a retry when the first attempt fails before durable provenance commits", async () => {
+    const dedupDetector = createDedupDetector({ windowMs: 10_000, now: () => 1000 });
+    const persistInboundMessage = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false as const,
+        error: {
+          error: new Error("ledger unavailable"),
+          errorKind: "resource" as const,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true as const,
+        value: { payloads: [], ledgerContent: "" },
+      });
+    const deps = makeMinimalDeps({ dedupDetector, persistInboundMessage });
+    const adapter = makeAdapterForTest();
+    const msg = makeMsg({ id: "retry-after-provenance-failure" });
+
+    await expect(processInboundMessage(
+      deps,
+      adapter,
+      msg,
+      new Set(),
+      new Map() as any,
+    )).rejects.toThrow("ledger unavailable");
+    await processInboundMessage(deps, adapter, msg, new Set(), new Map() as any);
+
+    expect(persistInboundMessage).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(deps.eventBus.emit).mock.calls.filter(
+      ([event]) => event === "message:received",
+    )).toHaveLength(1);
+    expect(vi.mocked(deps.eventBus.emit).mock.calls.some(
+      ([event]) => event === "dedup:duplicate_inbound",
+    )).toBe(false);
+  });
+
+  it("admits a retry when execution fails after durable provenance commits", async () => {
+    const dedupDetector = createDedupDetector({ windowMs: 10_000, now: () => 1000 });
+    const execute = vi.fn()
+      .mockRejectedValueOnce(new Error("execution unavailable after persistence"))
+      .mockResolvedValueOnce({
+        response: "ok",
+        sessionKey: { tenantId: "default", userId: "user-1", channelId: "chat-1" },
+        tokensUsed: { input: 1, output: 1, total: 2 },
+        cost: { total: 0 },
+        stepsExecuted: 0,
+        finishReason: "stop" as const,
+      });
+    const deps = makeMinimalDeps({
+      dedupDetector,
+      createExecutor: vi.fn(() => ({ execute })),
+    });
+    const adapter = makeAdapterForTest();
+    const msg = makeMsg({ id: "retry-after-execution-failure" });
+
+    await expect(processInboundMessage(
+      deps,
+      adapter,
+      msg,
+      new Set(),
+      new Map() as any,
+    )).rejects.toThrow("execution unavailable after persistence");
+    await processInboundMessage(deps, adapter, msg, new Set(), new Map() as any);
+
+    expect(deps.persistInboundMessage).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(deps.eventBus.emit).mock.calls.some(
+      ([event]) => event === "dedup:duplicate_inbound",
+    )).toBe(false);
+  });
+
+  it("terminalizes the source when duplicate detection throws", async () => {
+    const primary = new Error("dedup state unavailable");
+    const deps = makeMinimalDeps({
+      dedupDetector: {
+        reserve: vi.fn(() => {
+          throw primary;
+        }),
+      },
+    });
+    const msg = makeMsg({ id: "dedup-check-error" });
+
+    await expect(processInboundMessage(
+      deps,
+      makeAdapterForTest(),
+      msg,
+      new Set(),
+      new Map() as any,
+    )).rejects.toBe(primary);
+
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "message:terminal",
+      expect.objectContaining({
+        sourceMessageId: msg.id,
+        outcome: "error",
+        reason: "inbound_rejected",
+      }),
+    );
+  });
+
   it("duplicate_messageId_emits_dedup:duplicate_inbound_with_correct_fields_and_source_pipeline", async () => {
     const dedupDetector = createDedupDetector({ windowMs: 10_000, now: () => 1000 });
     const deps = makeMinimalDeps({ dedupDetector });
@@ -832,7 +1405,7 @@ describe("dedup-detector wiring in processInboundMessage", () => {
     );
   });
 
-  it("duplicate_messageId_does_NOT_suppress_processing_Phase1_still_reached", async () => {
+  it("duplicate messageId is processed and terminalized exactly once", async () => {
     const dedupDetector = createDedupDetector({ windowMs: 10_000, now: () => 1000 });
     const deps = makeMinimalDeps({ dedupDetector });
     const adapter = makeAdapterForTest();
@@ -846,9 +1419,35 @@ describe("dedup-detector wiring in processInboundMessage", () => {
 
     await processInboundMessage(deps, adapter, msg, new Set(), sendOverrides);
 
-    // createExecutor called again — processing NOT suppressed on duplicate
+    // The second delivery is the same physical source, so it must not start a
+    // second execution or publish the same terminal tuple again.
     const secondCallCount = (deps.createExecutor as ReturnType<typeof vi.fn>).mock.calls.length;
-    expect(secondCallCount).toBe(2);
+    expect(secondCallCount).toBe(1);
+    const terminals = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls
+      .filter((call: unknown[]) => call[0] === "message:terminal")
+      .map((call: unknown[]) => call[1] as { sourceMessageId: string });
+    expect(terminals.filter((event) => event.sourceMessageId === msg.id)).toHaveLength(1);
+  });
+
+  it("keeps identical local ids in different channels as distinct source tuples", async () => {
+    const dedupDetector = createDedupDetector({ windowMs: 10_000, now: () => 1000 });
+    const deps = makeMinimalDeps({ dedupDetector });
+    const adapter = makeAdapterForTest();
+    const first = makeMsg({ id: "shared-local-id", channelId: "chat-1" });
+    const second = makeMsg({ id: "shared-local-id", channelId: "chat-2" });
+    const sendOverrides = new Map() as any;
+
+    await processInboundMessage(deps, adapter, first, new Set(), sendOverrides);
+    await processInboundMessage(deps, adapter, second, new Set(), sendOverrides);
+
+    expect(deps.createExecutor).toHaveBeenCalledTimes(2);
+    const terminals = vi.mocked(deps.eventBus.emit).mock.calls
+      .filter(([event]) => event === "message:terminal")
+      .map(([, payload]) => payload as { channelId: string; sourceMessageId: string });
+    expect(terminals).toEqual(expect.arrayContaining([
+      expect.objectContaining({ channelId: "chat-1", sourceMessageId: "shared-local-id" }),
+      expect.objectContaining({ channelId: "chat-2", sourceMessageId: "shared-local-id" }),
+    ]));
   });
 
   it("no_dedupDetector_in_deps_skips_dedup_check_entirely_no_emit", async () => {

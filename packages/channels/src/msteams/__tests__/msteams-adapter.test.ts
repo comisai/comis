@@ -14,6 +14,7 @@ import type {
   ReactionHandler,
 } from "@comis/core";
 import { ok } from "@comis/shared";
+import { tryGetContext } from "@comis/core";
 import { createMsTeamsAdapter, type MsTeamsAdapterDeps } from "../msteams-adapter.js";
 import { createMsTeamsPlugin } from "../msteams-plugin.js";
 import type { TeamsActivity } from "../message-mapper.js";
@@ -260,6 +261,28 @@ describe("createMsTeamsAdapter — route-driven lifecycle (start/stop/getStatus)
 });
 
 describe("createMsTeamsAdapter — inbound handleWebhookEvents → processEvent fanout", () => {
+  it("dispatches inbound messages with unresolved user trust", () => {
+    const { deps } = makeAdapterDeps();
+    const adapter = createMsTeamsAdapter(deps);
+    let observed = tryGetContext();
+    let delivered: NormalizedMessage | undefined;
+    adapter.onMessage((msg) => {
+      observed = tryGetContext();
+      delivered = msg;
+    });
+
+    adapter.handleWebhookEvents([messageActivity()]);
+
+    expect(observed).toMatchObject({
+      traceId: delivered?.metadata.traceId,
+      channelType: "msteams",
+      tenantId: "default",
+      trustLevel: "user",
+    });
+    expect(observed?.agentId).toBeUndefined();
+    expect(observed?.sessionKey).toBeUndefined();
+  });
+
   it("drives an allowlisted message activity into the registered onMessage handler", () => {
     const { deps, loggerSpy } = makeAdapterDeps();
     const adapter = createMsTeamsAdapter(deps);
@@ -969,7 +992,9 @@ describe("createMsTeamsAdapter — outbound sendAttachment (base64-inline image)
     );
 
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value).toBe("sent-1");
+    if (result.ok) {
+      expect(result.value).toEqual({ kind: "tracked", messageId: "sent-1" });
+    }
 
     const sendCall = findSendCall(spy);
     expect(sendCall).toBeDefined();
@@ -1957,7 +1982,7 @@ describe("createMsTeamsPlugin — capability parity metadata", () => {
   });
 });
 
-describe("createMsTeamsAdapter — reconcileSend exactly-once oracle", () => {
+describe("createMsTeamsAdapter — conservative reconcile diagnostic", () => {
   const reconcileQuery = (contentDigest: string) => ({
     channelId: "19:channel-convo@thread.tacv2",
     contentDigest,
@@ -1989,7 +2014,7 @@ describe("createMsTeamsAdapter — reconcileSend exactly-once oracle", () => {
     const adapter = createMsTeamsAdapter(deps);
 
     // A tiny in-memory model of the outward-send ledger — digest → lifecycle
-    // state. The LEDGER (not reconcileSend) is the exactly-once authority.
+    // state. The ledger, not message history, owns uncertainty state.
     type LedgerStatus = "committed" | "unknown_after_send";
     const ledger = new Map<string, LedgerStatus>([
       ["digest-committed", "committed"],

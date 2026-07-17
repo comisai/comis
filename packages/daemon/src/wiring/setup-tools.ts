@@ -7,7 +7,7 @@
 
 import { resolve } from "node:path";
 import { resolveSkillDiscoveryPaths } from "./setup-agents/skill-discovery-paths.js";
-import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry, TimerPort, ContextStorePort, DurableRunPort } from "@comis/core";
+import type { AgentCapability, AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, DeliveryOrigin, ToolCapabilityPort, McpServerEntry, TimerPort, ContextStorePort, DurableRunPort, OutwardSendLedgerPort } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -110,11 +110,13 @@ import { selectEffectiveToolGroups, expandToolGroupsToNames } from "./setup-tool
 export interface ToolsDeps {
   /** In-process RPC dispatcher. */
   rpcCall: RpcCall;
-  /** Durable store + rootRunId resolver → the agent
+  /** Outward ledger + rootRunId resolver → the agent
    *  rpcCall factory so an in-process OUTWARD send gets a monotonic `_outwardStepIndex`.
    *  Both optional; absent ⇒ no index → the outward-send wrap is a pass-through. */
+  outwardLedger?: OutwardSendLedgerPort;
+  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
+  /** Durable checkpoint store used by orchestrate resume. */
   durableRuns?: DurableRunPort;
-  resolveRootRunId?: (sessionKey: SessionKey) => string;
   /** Per-agent config map (container.config.agents). */
   agents: Record<string, PerAgentConfig>;
   /** Resolve a provider's operator capabilityClass override (providers.entries.<id>.capabilities.capabilityClass) for ctx_expand's walk depth. */
@@ -228,6 +230,20 @@ export interface AssembleToolsOptions {
    *  session's persistent FileStateTracker via sessionTrackerRegistry. Absent for
    *  heartbeat/startup/subagent paths that supply fileStateTracker directly. */
   sessionKey?: SessionKey;
+  /** Resolved requester route for a synthetic child tool assembly. */
+  requesterOrigin?: DeliveryOrigin;
+  /** Authenticated parent lease/cap ceiling for a sub-agent assembly. */
+  autonomyParent?: {
+    rootRunId: string;
+    leaseId?: string;
+    caps: readonly AgentCapability[];
+  };
+  /** Records the exact child assembly authority back onto its live run. */
+  onAutonomyAssembly?: (authority: {
+    rootRunId: string;
+    leaseId: string;
+    caps: readonly AgentCapability[];
+  }) => void;
 }
 
 /** All services produced by the tools setup phase. */
@@ -337,8 +353,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
   // is the per-agent builder; behavior is byte-identical to the prior inline form.
   const createAgentRpcCall = makeCreateAgentRpcCall({
     rpcCall, agents, defaultAgentId,
-    // Durable store + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
-    ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
+    logger: skillsLogger,
+    // Outward ledger + resolver → in-process outward send gets _outwardStepIndex (off ⇒ pass-through).
+    ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
     ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
   });
 
@@ -447,7 +464,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
     }
 
     // Create per-agent rpcCall that injects _agentId.
-    const agentRpc = createAgentRpcCall(agentId);
+    const agentRpc = createAgentRpcCall(agentId, options?.autonomyParent?.caps);
     // Per-agent build context for the descriptor registry. The platform-tool
     // factory calls live in packages/skills/src/platform-tools/registry.ts.
     // The 4 truly-conditional tools (background_tasks, image_generate,
@@ -606,10 +623,30 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
       // Dormancy activation (setup-tools-autonomy.ts): the per-spawn lease + the
       // orchestrate tool minted ONCE (SAME env for exec+orchestrate; both off w/o autonomy/handle/sandbox).
-      const { brokerSpawnEnv, orchestrateTool } = buildAutonomyToolWiring({
+      const requestContext = tryGetContext();
+      // A tool assembly outside an exact same-agent request context is a
+      // synthetic control-plane root. Its authoritative policy is guest; it may
+      // inspect its own state but cannot inherit user/admin authority by guess.
+      const assemblyTrustLevel = requestContext?.agentId === agentId
+        ? requestContext.trustLevel
+        : "guest" as const;
+      const ambientSessionKey = requestContext?.agentId === agentId && requestContext.sessionKey
+        ? parseFormattedSessionKey(requestContext.sessionKey)
+        : undefined;
+      const { brokerSpawnEnv, orchestrateTool, assemblyAuthority } = buildAutonomyToolWiring({
         agentConfig, agentId, agentWorkspaceDir, capEndpointHandle: deps.capEndpointHandle,
         brokerContext: deps.brokerContext, sandboxProvider, namespacePreflightOk: deps.namespacePreflightOk,
-        sessionKey: options?.sessionKey, logger: skillsLogger, baseEnv: subprocessEnv,
+        sessionKey: options?.sessionKey ?? ambientSessionKey,
+        trustLevel: assemblyTrustLevel,
+        ...(options?.requesterOrigin !== undefined
+          ? { requesterOrigin: options.requesterOrigin }
+          : requestContext?.deliveryOrigin !== undefined
+            ? { requesterOrigin: requestContext.deliveryOrigin }
+            : {}),
+        ...(options?.autonomyParent !== undefined
+          ? { parentAuthority: options.autonomyParent }
+          : {}),
+        logger: skillsLogger, baseEnv: subprocessEnv,
         eventBus, // the run_summary emit channel (reaches the live per-session trajectory bridge)
         approvalGate, // the orchestrate pre-flight approval seam — undefined unless config.approvals.enabled
         capabilityClass, // the one-shot auto-repair class-gate (pure class-gate off the model profile; no toggle)
@@ -619,6 +656,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         // agent's autonomy.durability.orchestrateResume is on (the surface gate).
         ...(deps.durableRuns !== undefined ? { durableRuns: deps.durableRuns } : {}),
       });
+      if (assemblyAuthority !== undefined) {
+        options?.onAutonomyAssembly?.(assemblyAuthority);
+      }
       // Exec tool -- always instantiated; builtinTools ceiling applied after profile filtering.
       // (agentWorkspaceDir + getToolResultsDir are HOISTED above — shared with the ctx_* wiring.)
       {

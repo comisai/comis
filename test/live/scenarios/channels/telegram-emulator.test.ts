@@ -104,7 +104,7 @@ describe("RIG/TEST-01 Stage-B — real grammy adapter ↔ TgEmulator contract ro
     expect(handle.apiRoot).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 
     const plugin = createTelegramPlugin({
-      botToken: "12345:test",
+      getBotToken: () => "12345:test",
       apiRoot: handle.apiRoot,
       logger: createMockLogger(),
     });
@@ -114,9 +114,9 @@ describe("RIG/TEST-01 Stage-B — real grammy adapter ↔ TgEmulator contract ro
     a.onMessage(async (m: NormalizedMessage) => {
       await a.sendMessage(m.channelId, `ack: ${m.text}`);
     });
-    const startRes = await a.start(); // exercises getMe + setMyCommands + run() vs the emulator
+    const startRes = await a.start(); // exercises getMe, setMyCommands, and polling against the emulator
     if (!startRes.ok) throw startRes.error;
-    // Let the grammy runner's first getUpdates poll complete.
+    // Let the grammY polling loop issue its first getUpdates request.
     await new Promise((r) => setTimeout(r, 300));
     return { emu: emulator, adapter: a };
   }
@@ -132,7 +132,7 @@ describe("RIG/TEST-01 Stage-B — real grammy adapter ↔ TgEmulator contract ro
     // chat — but the load-bearing contract is the inbound→onMessage→sendMessage
     // round-trip below.
 
-    // Inject an inbound DM → the grammy runner long-polls getUpdates → onMessage
+    // Inject an inbound DM → the grammY loop long-polls getUpdates → onMessage
     // fires → the adapter sendMessage lands a RecordedOutbound in outbound().
     const injectedId = emu.injectMessage(
       TEST_CHAT,

@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Value } from "typebox/value";
 import { createMcpManageTool } from "./mcp-manage-tool.js";
-import { runWithContext } from "@comis/core";
+import { createDeliveryOrigin, runWithContext } from "@comis/core";
 import type { RequestContext, ApprovalGate } from "@comis/core";
 
 // Note: mcp-manage-tool.ts does not call safePath, so no @comis/core mock is needed.
@@ -19,10 +19,18 @@ function makeContext(trustLevel: "admin" | "user" | "guest"): RequestContext {
   return {
     tenantId: "default",
     userId: "test-user",
-    sessionKey: "test-session",
+    agentId: "test-agent",
+    sessionKey: "default:test-user:chat-1",
     traceId: crypto.randomUUID(),
     startedAt: Date.now(),
     trustLevel,
+    channelType: "telegram",
+    deliveryOrigin: createDeliveryOrigin({
+      tenantId: "default",
+      userId: "test-user",
+      channelType: "telegram",
+      channelId: "chat-1",
+    }),
   };
 }
 
@@ -281,15 +289,28 @@ describe("mcp_manage tool", () => {
           server_name: "test-mcp",
           transport: "stdio",
           command: "npx",
+          headers: { Authorization: "Bearer private-test-value" },
+          env: { SERVICE_PASSWORD: "private-env-value" },
         } as never),
       );
 
-      expect(gate.requestApproval).toHaveBeenCalledWith(
-        expect.objectContaining({
-          toolName: "mcp_manage",
-          action: "mcp.connect",
-        }),
-      );
+      const approval = (gate.requestApproval as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+        toolName: string;
+        action: string;
+        params: Record<string, unknown>;
+        fingerprintParams: Record<string, unknown>;
+      };
+      expect(approval).toMatchObject({
+        toolName: "mcp_manage",
+        action: "mcp.connect",
+        params: { action: "connect" },
+      });
+      expect(approval.fingerprintParams).toMatchObject({
+        headers: { Authorization: "Bearer private-test-value" },
+        env: { SERVICE_PASSWORD: "private-env-value" },
+      });
+      expect(JSON.stringify(approval.params)).not.toContain("private-test-value");
+      expect(JSON.stringify(approval.params)).not.toContain("private-env-value");
       expect(mockRpcCall).toHaveBeenCalled();
       expect(result.details).toEqual(expect.objectContaining({ connected: true }));
     });

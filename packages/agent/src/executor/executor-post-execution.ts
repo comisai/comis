@@ -657,6 +657,7 @@ export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["session
   // PromptTimeoutError terminals get their own NAMED cause. HARD_FAILURE_END_REASONS
   // and the fleet degradedByCause record carry "timeout".
   prompt_timeout: "timeout",
+  input_too_large: "error",
   // The dollars kill-switch abort (bridge-safety-controls sets
   // finishReason:"spend_exceeded") gets its OWN named cause instead of the `?? "error"`
   // catch-all — so obs.explain / obs.fleet.health can tell a spend-killed session from

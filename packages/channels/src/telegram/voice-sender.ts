@@ -3,8 +3,9 @@
  * Telegram voice sender: sends OGG/Opus voice messages via the Bot API.
  *
  * Uses bot.api.sendVoice for native Telegram voice bubble display.
- * VOICE_MESSAGES_FORBIDDEN / CHAT_SEND_VOICES_FORBIDDEN errors trigger graceful
- * fallback to sendDocument so the audio still reaches the user.
+ * Definitive Telegram 400 VOICE_MESSAGES_FORBIDDEN and
+ * CHAT_SEND_VOICES_FORBIDDEN rejections trigger fallback to sendDocument so
+ * the audio still reaches the user.
  *
  * @module
  */
@@ -12,6 +13,12 @@
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { type Bot, InputFile } from "grammy";
+import {
+  createAttachmentSendReceipt,
+  toSafeErrorLogString,
+  type AttachmentSendReceipt,
+} from "@comis/core";
+import { getTelegramBadRequest } from "./telegram-api-error.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,7 +46,34 @@ export interface TelegramVoiceSender {
     filePath: string,
     durationSecs: number,
     options?: TelegramVoiceSendOptions,
-  ): Promise<Result<string, Error>>;
+  ): Promise<Result<AttachmentSendReceipt, Error>>;
+}
+
+function createTelegramVoiceReceipt(messageId: unknown): AttachmentSendReceipt {
+  const validMessageId = typeof messageId === "number" &&
+    Number.isSafeInteger(messageId) &&
+    messageId > 0
+    ? String(messageId)
+    : undefined;
+  return createAttachmentSendReceipt(validMessageId);
+}
+
+function warnIfUntracked(
+  logger: VoiceSenderLogger,
+  chatId: string,
+  receipt: AttachmentSendReceipt,
+): void {
+  if (receipt.kind === "tracked") return;
+
+  logger.warn(
+    {
+      channelType: "telegram",
+      chatId,
+      hint: "The send completed without a valid Telegram message ID. Do not retry; inspect the Telegram API response",
+      errorKind: "platform" as const,
+    },
+    "Voice sent without platform tracking",
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -47,8 +81,8 @@ export interface TelegramVoiceSender {
 // ---------------------------------------------------------------------------
 
 /**
- * Create a Telegram voice sender that wraps bot.api.sendVoice with
- * VOICE_MESSAGES_FORBIDDEN fallback to sendDocument.
+ * Create a Telegram voice sender that wraps bot.api.sendVoice with a
+ * definitive Telegram voice-forbidden fallback to sendDocument.
  */
 export function createTelegramVoiceSender(deps: TelegramVoiceSenderDeps): TelegramVoiceSender {
   const { bot, logger } = deps;
@@ -59,7 +93,7 @@ export function createTelegramVoiceSender(deps: TelegramVoiceSenderDeps): Telegr
       filePath: string,
       durationSecs: number,
       options?: TelegramVoiceSendOptions,
-    ): Promise<Result<string, Error>> {
+    ): Promise<Result<AttachmentSendReceipt, Error>> {
       logger.info(
         { channelType: "telegram", chatId, durationSecs },
         "Voice send started",
@@ -77,21 +111,28 @@ export function createTelegramVoiceSender(deps: TelegramVoiceSenderDeps): Telegr
           ...options?.threadParams,
         });
 
-        const messageId = String(sent.message_id);
+        const receipt = createTelegramVoiceReceipt(sent.message_id);
+        warnIfUntracked(logger, chatId, receipt);
         logger.info(
-          { channelType: "telegram", messageId, chatId, durationSecs },
+          {
+            channelType: "telegram",
+            chatId,
+            durationSecs,
+            tracking: receipt.kind,
+            ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
+          },
           "Voice send complete",
         );
 
-        return ok(messageId);
+        return ok(receipt);
       } catch (error) {
         const sendErr = error instanceof Error ? error : new Error(String(error));
-        const message = sendErr.message;
+        const telegramDescription = getTelegramBadRequest(error)?.description;
 
-        // Graceful fallback for VOICE_MESSAGES_FORBIDDEN
+        // A Telegram 400 proves the voice was rejected before changing delivery method.
         if (
-          message.includes("VOICE_MESSAGES_FORBIDDEN") ||
-          message.includes("CHAT_SEND_VOICES_FORBIDDEN")
+          telegramDescription === "Bad Request: VOICE_MESSAGES_FORBIDDEN" ||
+          telegramDescription === "Bad Request: CHAT_SEND_VOICES_FORBIDDEN"
         ) {
           logger.warn(
             {
@@ -109,10 +150,14 @@ export function createTelegramVoiceSender(deps: TelegramVoiceSenderDeps): Telegr
               caption: "Voice message (sent as file)",
             });
 
-            return ok(String(docSent.message_id));
+            const receipt = createTelegramVoiceReceipt(docSent.message_id);
+            warnIfUntracked(logger, chatId, receipt);
+            return ok(receipt);
           } catch (docError) {
-            const docErr = docError instanceof Error ? docError : new Error(String(docError));
-            return err(new Error(`Voice fallback to document failed: ${docErr.message}`));
+            return err(new Error(
+              `Voice fallback to document failed: ${toSafeErrorLogString(docError)}`,
+              { cause: docError },
+            ));
           }
         }
 
@@ -121,14 +166,17 @@ export function createTelegramVoiceSender(deps: TelegramVoiceSenderDeps): Telegr
           {
             channelType: "telegram",
             chatId,
-            err: sendErr,
+            err: toSafeErrorLogString(sendErr),
             hint: "Check Telegram bot token permissions",
             errorKind: "platform" as const,
           },
           "Voice send failed",
         );
 
-        return err(new Error(`Failed to send voice: ${sendErr.message}`));
+        return err(new Error(
+          `Failed to send voice: ${toSafeErrorLogString(sendErr)}`,
+          { cause: error },
+        ));
       }
     },
   };

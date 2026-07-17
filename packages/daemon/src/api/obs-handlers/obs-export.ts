@@ -57,6 +57,7 @@ export function bindObsExportHandlers(deps: ObsHandlerDeps): Record<string, RpcH
 
       // Reset SQLite if available
       let sqliteResult = { tokenUsage: 0, delivery: 0, diagnostics: 0, channels: 0 };
+      deps.obsPersistence?.discardPending("all");
       if (obsStore) {
         sqliteResult = obsStore.resetAll();
       }
@@ -102,6 +103,7 @@ export function bindObsExportHandlers(deps: ObsHandlerDeps): Record<string, RpcH
 
       // Reset SQLite table
       let rowsDeleted = 0;
+      deps.obsPersistence?.discardPending(table);
       if (obsStore) {
         rowsDeleted = obsStore.resetTable(table);
       }

@@ -118,4 +118,17 @@ describe("createTTLCache: nowMs required", () => {
     cache.set("k", "v");
     expect(stamps.length).toBeGreaterThanOrEqual(1);
   });
+
+  it("honors a shorter per-entry TTL without extending it to the cache default", () => {
+    let synthetic = 1_000;
+    const cache = createTTLCache<string>({
+      ttlMs: 10_000,
+      nowMs: () => synthetic,
+    });
+
+    cache.set("restored", "value", 500);
+    synthetic = 1_501;
+
+    expect(cache.get("restored")).toBeUndefined();
+  });
 });

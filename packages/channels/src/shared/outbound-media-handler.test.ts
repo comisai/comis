@@ -40,7 +40,10 @@ function createMockDeps(overrides?: Partial<OutboundMediaDeps>): OutboundMediaDe
   return {
     fetchUrl: vi.fn(),
     adapter: {
-      sendAttachment: vi.fn(async () => ok("msg-123")),
+      sendAttachment: vi.fn(async () => ok({
+        kind: "tracked",
+        messageId: "msg-123",
+      })),
     },
     channelId: "test-channel-42",
     logger: {
@@ -58,6 +61,9 @@ function createMockDeps(overrides?: Partial<OutboundMediaDeps>): OutboundMediaDe
 describe("deliverOutboundMedia", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockWriteFile.mockReset().mockResolvedValue(undefined);
+    mockUnlink.mockReset().mockResolvedValue(undefined);
+    mockFileTypeFromBuffer.mockReset().mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -77,13 +83,197 @@ describe("deliverOutboundMedia", () => {
       deps,
     );
 
-    expect(result).toEqual({ delivered: 1, failed: 0 });
+    expect(result).toEqual({
+      delivered: 1,
+      failed: 0,
+      lastReceipt: { kind: "tracked", messageId: "msg-123" },
+    });
     expect(mockFetch).toHaveBeenCalledWith("https://example.com/image.png");
     expect(deps.adapter.sendAttachment).toHaveBeenCalledOnce();
     const payload = vi.mocked(deps.adapter.sendAttachment).mock.calls[0][1];
     expect(payload.type).toBe("image");
     expect(payload.mimeType).toBe("image/png");
     expect(payload.fileName).toBe("image.png");
+  });
+
+  it("stops before temp-file and attachment side effects when aborted during fetch", async () => {
+    const controller = new AbortController();
+    const deps = createMockDeps({
+      signal: controller.signal,
+      fetchUrl: vi.fn(async () => {
+        controller.abort("queue_aborted");
+        return ok({
+          buffer: Buffer.from("fake-png-data"),
+          mimeType: "image/png",
+        });
+      }),
+    });
+
+    const result = await deliverOutboundMedia(
+      ["https://example.com/image.png"],
+      deps,
+    );
+
+    expect(result).toEqual({ delivered: 0, failed: 0 });
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(deps.adapter.sendAttachment).not.toHaveBeenCalled();
+  });
+
+  it("cleans a written temp file and skips attachment send when aborted before send", async () => {
+    const controller = new AbortController();
+    mockWriteFile.mockImplementationOnce(async () => {
+      controller.abort("queue_aborted");
+    });
+    const deps = createMockDeps({
+      signal: controller.signal,
+      fetchUrl: vi.fn(async () => ok({
+        buffer: Buffer.from("fake-png-data"),
+        mimeType: "image/png",
+      })),
+    });
+
+    const result = await deliverOutboundMedia(
+      ["https://example.com/image.png"],
+      deps,
+    );
+
+    expect(result).toEqual({ delivered: 0, failed: 0 });
+    expect(deps.adapter.sendAttachment).not.toHaveBeenCalled();
+    expect(mockUnlink).toHaveBeenCalledOnce();
+  });
+
+  it("does not start another media item after abort settles an in-flight send", async () => {
+    const controller = new AbortController();
+    const sendAttachment = vi.fn(async () => {
+      controller.abort("queue_aborted");
+      return ok({ kind: "tracked" as const, messageId: "first-media" });
+    });
+    const deps = createMockDeps({
+      signal: controller.signal,
+      fetchUrl: vi.fn(async () => ok({
+        buffer: Buffer.from("fake-png-data"),
+        mimeType: "image/png",
+      })),
+      adapter: { sendAttachment },
+    });
+
+    const result = await deliverOutboundMedia(
+      [
+        "https://example.com/first.png",
+        "https://example.com/second.png",
+      ],
+      deps,
+    );
+
+    expect(result).toEqual({
+      delivered: 1,
+      failed: 0,
+      lastReceipt: { kind: "tracked", messageId: "first-media" },
+    });
+    expect(sendAttachment).toHaveBeenCalledOnce();
+    expect(deps.fetchUrl).toHaveBeenCalledOnce();
+  });
+
+  it("retains the last successful platform id across multiple media sends", async () => {
+    const deps = createMockDeps({
+      adapter: {
+        sendAttachment: vi.fn()
+          .mockResolvedValueOnce(ok({ kind: "tracked", messageId: "media-platform-1" }))
+          .mockResolvedValueOnce(ok({ kind: "tracked", messageId: "media-platform-2" })),
+      },
+    });
+    vi.mocked(deps.fetchUrl).mockResolvedValue(ok({
+      buffer: Buffer.from("media-data"),
+      mimeType: "image/png",
+    }));
+
+    const result = await deliverOutboundMedia(
+      ["https://example.com/one.png", "https://example.com/two.png"],
+      deps,
+    );
+
+    expect(result).toEqual({
+      delivered: 2,
+      failed: 0,
+      lastReceipt: { kind: "tracked", messageId: "media-platform-2" },
+    });
+  });
+
+  it("counts delivered-untracked media as delivered without inventing an ID", async () => {
+    const deps = createMockDeps({
+      adapter: {
+        sendAttachment: vi.fn().mockResolvedValue(ok({
+          kind: "delivered_untracked",
+        })),
+      },
+    });
+    vi.mocked(deps.fetchUrl).mockResolvedValue(ok({
+      buffer: Buffer.from("media-data"),
+      mimeType: "image/png",
+    }));
+
+    const result = await deliverOutboundMedia(
+      ["https://example.com/image.png"],
+      deps,
+    );
+
+    expect(result).toEqual({
+      delivered: 1,
+      failed: 0,
+      lastReceipt: { kind: "delivered_untracked" },
+    });
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("Do not retry"),
+        errorKind: "platform",
+      }),
+      "Outbound media delivered without platform tracking",
+    );
+  });
+
+  it("never includes credential-bearing media URLs in warning payloads", async () => {
+    const signedUrl = "https://example.com/media.png?X-Amz-Credential=SECRET-CREDENTIAL";
+    const warn = vi.fn();
+    const fetched = ok({ buffer: Buffer.from("media-data"), mimeType: "image/png" });
+
+    await deliverOutboundMedia([signedUrl], createMockDeps({
+      fetchUrl: vi.fn().mockResolvedValue(err(new Error("download failed"))),
+      logger: { warn },
+    }));
+
+    mockWriteFile.mockRejectedValueOnce(new Error("write failed"));
+    await deliverOutboundMedia([signedUrl], createMockDeps({
+      fetchUrl: vi.fn().mockResolvedValue(fetched),
+      logger: { warn },
+    }));
+
+    await deliverOutboundMedia([signedUrl], createMockDeps({
+      fetchUrl: vi.fn().mockResolvedValue(fetched),
+      adapter: {} as OutboundMediaDeps["adapter"],
+      logger: { warn },
+    }));
+
+    await deliverOutboundMedia([signedUrl], createMockDeps({
+      fetchUrl: vi.fn().mockResolvedValue(fetched),
+      adapter: { sendAttachment: vi.fn().mockResolvedValue(err(new Error("send failed"))) },
+      logger: { warn },
+    }));
+
+    await deliverOutboundMedia([signedUrl], createMockDeps({
+      fetchUrl: vi.fn().mockResolvedValue(fetched),
+      adapter: {
+        sendAttachment: vi.fn().mockResolvedValue(ok({ kind: "delivered_untracked" })),
+      },
+      logger: { warn },
+    }));
+
+    expect(warn).toHaveBeenCalledTimes(5);
+    for (const [payload] of warn.mock.calls) {
+      expect(payload).toEqual(expect.objectContaining({ mediaIndex: 0 }));
+    }
+    const serializedWarnings = JSON.stringify(warn.mock.calls);
+    expect(serializedWarnings).not.toContain(signedUrl);
+    expect(serializedWarnings).not.toContain("SECRET-CREDENTIAL");
   });
 
   it("returns delivered:0 failed:1 when fetchUrl returns err", async () => {
@@ -99,7 +289,7 @@ describe("deliverOutboundMedia", () => {
     expect(result).toEqual({ delivered: 0, failed: 1 });
     expect(deps.logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
-        url: "https://evil.example.com/payload",
+        mediaIndex: 0,
         hint: "Check URL accessibility and SSRF guard rules",
         errorKind: "network",
       }),
@@ -127,9 +317,9 @@ describe("deliverOutboundMedia", () => {
     expect(result).toEqual({ delivered: 0, failed: 1 });
     expect(deps.logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
-        url: "https://example.com/photo.jpg",
+        mediaIndex: 0,
         hint: "Check channel adapter sendAttachment implementation",
-        errorKind: "network",
+        errorKind: "platform",
       }),
       "Outbound media send failed",
     );
@@ -162,8 +352,95 @@ describe("deliverOutboundMedia", () => {
       deps,
     );
 
-    expect(result).toEqual({ delivered: 2, failed: 1 });
+    expect(result).toEqual({
+      delivered: 2,
+      failed: 1,
+      lastReceipt: { kind: "tracked", messageId: "msg-123" },
+    });
     expect(deps.adapter.sendAttachment).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves an earlier receipt and continues when a later fetch rejects", async () => {
+    const deps = createMockDeps({
+      fetchUrl: vi.fn()
+        .mockResolvedValueOnce(ok({ buffer: Buffer.from("first"), mimeType: "image/png" }))
+        .mockRejectedValueOnce(new Error("fetch transport rejected")),
+      adapter: {
+        sendAttachment: vi.fn().mockResolvedValue(ok({
+          kind: "tracked",
+          messageId: "first-platform-id",
+        })),
+      },
+    });
+
+    const result = await deliverOutboundMedia([
+      "https://example.com/first.png",
+      "https://example.com/second.png",
+    ], deps);
+
+    expect(result).toEqual({
+      delivered: 1,
+      failed: 1,
+      lastReceipt: { kind: "tracked", messageId: "first-platform-id" },
+    });
+    expect(deps.adapter.sendAttachment).toHaveBeenCalledOnce();
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaIndex: 1, errorKind: "network" }),
+      "Outbound media download failed",
+    );
+  });
+
+  it("skips rejected MIME detection and delivers the remaining media", async () => {
+    const deps = createMockDeps();
+    vi.mocked(deps.fetchUrl).mockResolvedValue(ok({ buffer: Buffer.from("unknown") }));
+    mockFileTypeFromBuffer
+      .mockRejectedValueOnce(new Error("sniffer rejected"))
+      .mockResolvedValueOnce({ ext: "png", mime: "image/png" });
+
+    const result = await deliverOutboundMedia([
+      "https://example.com/first",
+      "https://example.com/second",
+    ], deps);
+
+    expect(result).toEqual({
+      delivered: 1,
+      failed: 1,
+      lastReceipt: { kind: "tracked", messageId: "msg-123" },
+    });
+    expect(deps.adapter.sendAttachment).toHaveBeenCalledOnce();
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaIndex: 0, errorKind: "dependency" }),
+      "Outbound media MIME detection failed",
+    );
+  });
+
+  it("preserves an earlier receipt when a later attachment send rejects", async () => {
+    const deps = createMockDeps({
+      fetchUrl: vi.fn().mockResolvedValue(ok({
+        buffer: Buffer.from("media"),
+        mimeType: "image/png",
+      })),
+      adapter: {
+        sendAttachment: vi.fn()
+          .mockResolvedValueOnce(ok({ kind: "tracked", messageId: "first-platform-id" }))
+          .mockRejectedValueOnce(new Error("platform transport rejected")),
+      },
+    });
+
+    const result = await deliverOutboundMedia([
+      "https://example.com/first.png",
+      "https://example.com/second.png",
+    ], deps);
+
+    expect(result).toEqual({
+      delivered: 1,
+      failed: 1,
+      lastReceipt: { kind: "tracked", messageId: "first-platform-id" },
+    });
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaIndex: 1, errorKind: "platform" }),
+      "Outbound media send failed",
+    );
   });
 
   it("returns delivered:0 failed:0 for empty mediaUrls array", async () => {

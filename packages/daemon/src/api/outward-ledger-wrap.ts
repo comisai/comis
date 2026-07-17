@@ -5,13 +5,12 @@
 // markUnknown and commit) so the post-restart recovery faces a genuine
 // `unknown_after_send` row written by the REAL code path. A `Result.err(...)` cannot
 // model this: the function would return normally and `commit` would NOT be skipped the
-// way an actual mid-send crash skips it, so the chaos test's double-send RED state
-// would never reproduce. INERT in production (__crashHook is never armed). The throws
+// way an actual mid-send crash skips it, so the chaos test would not exercise
+// the real duplicate-send risk. INERT in production (__crashHook is never armed). The throws
 // unwind to the chaos test's `.rejects.toThrow(OUTWARD_SEND_CRASH_SENTINEL)` assertion.
 /**
- * wrapOutwardSend — the three-state outward-send ledger wrapper. It turns an
- * irreversible chat-platform send into an
- * exactly-once side effect by keying every attempt on the `(rootRunId,
+ * wrapOutwardSend — the outward-send ledger wrapper. It binds an irreversible
+ * chat-platform operation to the `(rootRunId,
  * stepIndex)` idempotency pair the RPC chokepoint allocated.
  *
  * It wraps the EXISTING `deliveryService.deliverToChannel` call at
@@ -24,8 +23,14 @@
  *   begin (send_attempt_started) → markUnknown (unknown_after_send) → doSend →
  *   commit(platformMessageId).
  * The crash window is BETWEEN markUnknown and commit: a crash there leaves an
- * `unknown_after_send` row the recovery scan finds and reconciles —
- * never a blind replay.
+ * `unknown_after_send` row the recovery scan atomically parks — never a blind
+ * replay or a content-history guess.
+ *
+ * This wrapper suppresses another execution only when the caller reuses one
+ * retained operation identity. A committed row returns its prior receipt; an
+ * in-flight, failed, or unresolved row blocks. If the platform outcome may be
+ * ambiguous, the row is parked `unresolved` and escalated. No channel query can
+ * turn that ambiguity into a universal exactly-once guarantee.
  *
  * SECURITY: only a sha256 `contentDigest` reaches the ledger; the raw
  * `text` goes to `createHash` + `doSend` only — never to any ledger method.
@@ -38,26 +43,103 @@
  */
 
 import { createHash } from "node:crypto";
-import { ok, type Result } from "@comis/shared";
-import { isPermanentError, systemNowMs, type OutwardSendLedgerPort } from "@comis/core";
-import type { ComisLogger } from "@comis/infra";
+import { err, ok, type Result } from "@comis/shared";
+import {
+  isPermanentError,
+  systemNowMs,
+  type ComisLogger,
+  type OutwardOperationKind,
+  type OutwardSendLedgerPort,
+} from "@comis/core";
+
+type CanonicalValue =
+  | null
+  | boolean
+  | number
+  | string
+  | CanonicalValue[]
+  | { readonly [key: string]: CanonicalValue };
+
+function canonicalize(
+  value: unknown,
+  seen: Set<object> = new Set<object>(),
+): Result<CanonicalValue, Error> {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return ok(value);
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value)
+      ? ok(value)
+      : err(new Error("outward operation options contain a non-finite number"));
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return err(new Error("outward operation options are cyclic"));
+    seen.add(value);
+    const result: CanonicalValue[] = [];
+    for (const item of value) {
+      const canonical = canonicalize(item === undefined ? null : item, seen);
+      if (!canonical.ok) return canonical;
+      result.push(canonical.value);
+    }
+    seen.delete(value);
+    return ok(result);
+  }
+  if (typeof value === "object") {
+    if (seen.has(value)) return err(new Error("outward operation options are cyclic"));
+    seen.add(value);
+    const entries: Array<[string, CanonicalValue]> = [];
+    for (const [key, item] of Object.entries(value).sort(([left], [right]) =>
+      left.localeCompare(right),
+    )) {
+      if (item === undefined) continue;
+      const canonical = canonicalize(item, seen);
+      if (!canonical.ok) return canonical;
+      entries.push([key, canonical.value]);
+    }
+    seen.delete(value);
+    return ok(Object.fromEntries(entries));
+  }
+  return err(new Error("outward operation options contain an unsupported value"));
+}
+
+function computeOperationFingerprint(args: {
+  operationKind: OutwardOperationKind;
+  channelType: string;
+  channelId: string;
+  targetMessageId?: string;
+  text: string;
+  operationOptions?: unknown;
+}): Result<string, Error> {
+  const envelope = canonicalize({
+    kind: args.operationKind,
+    channelType: args.channelType,
+    channelId: args.channelId,
+    targetMessageId: args.targetMessageId ?? null,
+    text: args.text,
+    options: args.operationOptions ?? null,
+  });
+  if (!envelope.ok) return envelope;
+  return ok(
+    createHash("sha256")
+      .update(JSON.stringify(envelope.value))
+      .digest("hex"),
+  );
+}
 
 /**
- * TEST-ONLY crash-injection seam. The exactly-once
+ * TEST-ONLY crash-injection seam. The crash-safety
  * chaos test (`test/integration/durable-resume-e2e.test.ts`) drives a REAL
  * autonomy-originated outward send through this wrap and crashes the daemon in
  * the exact crash window — BETWEEN `markUnknown`
  * (state=unknown_after_send) and `commit` — so the post-restart recovery faces a
  * genuine `unknown_after_send` row written by the REAL code path (not a
- * direct-DB-seed). That makes the RED state a real double-send, not a "no such
- * table" miss.
+ * direct-DB-seed). That exercises the real interrupted-send uncertainty rather
+ * than a missing-table setup failure.
  *
- *   - `"before_send"`: throw AFTER markUnknown but BEFORE `doSend` runs. The
- *     platform (Echo) NEVER records the message ⇒ platform truth = not_sent ⇒ on
- *     restart `reconcileSend` returns not_sent.
- *   - `"after_send"`: run `doSend` (the platform DOES record it ⇒ platform truth =
- *     sent) THEN throw before `commit`. On restart `reconcileSend` returns sent ⇒
- *     ack once, NO replay (a blind replay would be the double-send the test forbids).
+ *   - `"before_send"`: throw AFTER markUnknown but BEFORE `doSend` runs.
+ *   - `"after_send"`: run `doSend` and throw before `commit`.
+ * In both cases recovery must conservatively park the row; it cannot infer the
+ * platform outcome from local process state.
  *
  * This is the `_resetSigusr1Timer` test-seam precedent: a module-scoped hook with
  * an exported setter, INERT in production (never set) and re-exported from the
@@ -80,7 +162,7 @@ export const OUTWARD_SEND_CRASH_SENTINEL = "outward-send crash hook (test-only):
 
 /** The arguments to {@link wrapOutwardSend}. */
 export interface WrapOutwardSendArgs {
-  /** The three-state ledger, or `undefined` on an older/non-autonomy daemon (⇒ pass-through). */
+  /** The ledger, or `undefined` when durability is disabled (⇒ pass-through). */
   ledger: OutwardSendLedgerPort | undefined;
   /** The owning run — half the idempotency key. `undefined` for an interactive send (⇒ pass-through). */
   rootRunId: string | undefined;
@@ -96,6 +178,12 @@ export interface WrapOutwardSendArgs {
   channelType: string;
   /** The channel/chat/room identifier. */
   channelId: string;
+  /** The immutable outward operation discriminator. */
+  operationKind: OutwardOperationKind;
+  /** Reply/reaction target, when the operation addresses an existing message. */
+  targetMessageId?: string;
+  /** Validated buttons/cards/effects/thread options included in operation identity. */
+  operationOptions?: unknown;
   /** The message content — hashed for the digest + handed to `doSend`; NEVER persisted. */
   text: string;
   /** The wrapped platform call (the existing `deliverToChannel`). */
@@ -105,15 +193,27 @@ export interface WrapOutwardSendArgs {
 }
 
 /**
- * Wrap an outward send with the three-state ledger. Result-returning; never
+ * Wrap an outward send with the five-state ledger. Result-returning; never
  * throws. See the module doc for the lifecycle, the crash window, and the two
  * pass-through guards.
  */
 export async function wrapOutwardSend(
   args: WrapOutwardSendArgs,
 ): Promise<Result<{ messageId: string }, Error>> {
-  const { ledger, rootRunId, outwardStepIndex, agentId, channelType, channelId, text, doSend, logger } =
-    args;
+  const {
+    ledger,
+    rootRunId,
+    outwardStepIndex,
+    agentId,
+    channelType,
+    channelId,
+    operationKind,
+    targetMessageId,
+    operationOptions,
+    text,
+    doSend,
+    logger,
+  } = args;
 
   // A missing ledger / rootRunId / outwardStepIndex is a PASS-THROUGH —
   // an interactive send, a non-autonomy daemon, or no allocated index. NEVER
@@ -124,45 +224,115 @@ export async function wrapOutwardSend(
   }
   const stepIndex = outwardStepIndex; // defined past the guard
 
-  // Dedup read: a committed row short-circuits a replay to a no-op,
+  const contentDigest = createHash("sha256").update(text).digest("hex");
+  const fingerprint = computeOperationFingerprint({
+    operationKind,
+    channelType,
+    channelId,
+    ...(targetMessageId !== undefined ? { targetMessageId } : {}),
+    text,
+    ...(operationOptions !== undefined ? { operationOptions } : {}),
+  });
+  if (!fingerprint.ok) return fingerprint;
+
+  // Duplicate-suppression read: a committed row short-circuits a repeated call,
   // returning the prior platformMessageId — doSend is never reached.
   const existing = await ledger.lookup(rootRunId, stepIndex);
-  if (existing.ok && existing.value?.state === "committed") {
-    logger.debug({ rootRunId, stepIndex, step: "ledger-dedup-hit" }, "Outward send dedup: committed row");
-    return ok({ messageId: existing.value.platformMessageId ?? "delivered" });
-  }
-
-  const startedAt = systemNowMs();
-  // Content-free key: only the sha256 slice — never the body.
-  const contentDigest = createHash("sha256").update(text).digest("hex").slice(0, 16);
-
-  // Write send_attempt_started BEFORE the platform call. The UNIQUE
-  // (rootRunId, stepIndex) constraint makes a duplicate begin an err the wrap
-  // treats as "already in flight" — another attempt owns this send, so we do
-  // NOT issue a second platform call (no double send).
-  const begun = await ledger.begin({ rootRunId, stepIndex, agentId, channelType, channelId, contentDigest });
-  if (!begun.ok) {
-    logger.warn(
+  if (!existing.ok) {
+    logger.error(
       {
         rootRunId,
         stepIndex,
-        errorKind: "precondition" as const,
-        hint: "outward-send begin collided (UNIQUE) — another attempt owns this (rootRunId, stepIndex); treating as already-in-flight, NOT issuing a second platform call",
+        errorKind: "dependency" as const,
+        hint: "the send was blocked before delivery; restore outward-ledger reads and retry with the same operation identity",
       },
-      "Outward send already in flight",
+      "Outward send ledger lookup failed",
     );
-    return ok({ messageId: existing.ok ? (existing.value?.platformMessageId ?? "in-flight") : "in-flight" });
+    return err(existing.error);
+  }
+  if (existing.value !== undefined) {
+    const sameOperation =
+      existing.value.agentId === agentId &&
+      existing.value.channelType === channelType &&
+      existing.value.channelId === channelId &&
+      existing.value.operationKind === operationKind &&
+      existing.value.operationFingerprint === fingerprint.value &&
+      existing.value.contentDigest === contentDigest;
+    if (!sameOperation) {
+      const identityError = new Error("outward operation identity does not match its ledger row");
+      logger.error(
+        {
+          rootRunId,
+          stepIndex,
+          errorKind: "validation" as const,
+          hint: "reuse an operation identity only with the exact original destination, target, payload, and options",
+        },
+        "Outward send operation identity mismatch",
+      );
+      return err(identityError);
+    }
+  }
+  if (existing.value?.state === "committed") {
+    if (existing.value.platformMessageId === undefined || existing.value.platformMessageId.length === 0) {
+      return err(new Error("committed outward operation has no platform receipt"));
+    }
+    logger.debug({ rootRunId, stepIndex, step: "ledger-dedup-hit" }, "Outward send dedup: committed row");
+    return ok({ messageId: existing.value.platformMessageId });
+  }
+  if (existing.value !== undefined) {
+    return err(new Error("outward operation is already in flight or unresolved"));
+  }
+
+  const startedAt = systemNowMs();
+  // Content-free key: the full SHA-256 digest, never the body. The full digest
+  // is a content-free identity; truncation would silently reduce it to a
+  // collision-prone 64-bit key.
+  // Write send_attempt_started BEFORE the platform call. The UNIQUE
+  // (rootRunId, stepIndex) constraint makes a duplicate begin an err the wrap
+  // treats as "already in flight" — another attempt owns this retained
+  // operation identity, so this call does not reach the platform.
+  const begun = await ledger.begin({
+    rootRunId,
+    stepIndex,
+    agentId,
+    channelType,
+    channelId,
+    operationKind,
+    operationFingerprint: fingerprint.value,
+    contentDigest,
+  });
+  if (!begun.ok) {
+    logger.error(
+      {
+        rootRunId,
+        stepIndex,
+        errorKind: "dependency" as const,
+        hint: "the send was blocked because its durable begin was not recorded; inspect the existing ledger row and retry with the same operation identity",
+      },
+      "Outward send ledger begin failed",
+    );
+    return err(begun.error);
   }
 
   // unknown_after_send — written BEFORE the platform-call window closes, so a
-  // crash mid-send leaves a durable row the recovery scan reconciles.
-  await ledger.markUnknown(rootRunId, stepIndex);
+  // crash mid-send leaves a durable row the recovery scan parks.
+  const markedUnknown = await ledger.markUnknown(rootRunId, stepIndex);
+  if (!markedUnknown.ok) {
+    logger.error(
+      {
+        rootRunId,
+        stepIndex,
+        errorKind: "dependency" as const,
+        hint: "the send was blocked before delivery because the uncertain-send state was not durable; repair ledger writes and retry with the same operation identity",
+      },
+      "Outward send ledger mark-unknown failed",
+    );
+    return err(markedUnknown.error);
+  }
 
-  // TEST-ONLY: crash in the exact crash window. "before_send"
-  // crashes with the platform NOT having recorded the message (truth=not_sent);
-  // "after_send" runs the real platform call (truth=sent) THEN crashes before
-  // commit. Either way the row is left unknown_after_send for the post-restart
-  // recovery to reconcile. INERT in production (__crashHook is never armed).
+  // TEST-ONLY: crash in the exact crash window. Either way the row is left
+  // unknown_after_send for post-restart recovery to park. INERT in production
+  // (__crashHook is never armed).
   if (__crashHook === "before_send") {
     throw new Error(OUTWARD_SEND_CRASH_SENTINEL);
   }
@@ -174,7 +344,39 @@ export async function wrapOutwardSend(
   const sent = await doSend();
 
   if (sent.ok) {
-    await ledger.commit(rootRunId, stepIndex, sent.value.messageId);
+    if (sent.value.messageId.length === 0) {
+      const parked = await ledger.parkUncertain(rootRunId, stepIndex);
+      if (!parked.ok) return err(parked.error);
+      return err(new Error("platform send returned no durable receipt"));
+    }
+    const committed = await ledger.commit(rootRunId, stepIndex, sent.value.messageId);
+    if (!committed.ok) {
+      const parked = await ledger.parkUncertain(rootRunId, stepIndex);
+      if (!parked.ok) {
+        logger.error(
+          {
+            rootRunId,
+            stepIndex,
+            errorKind: "dependency" as const,
+            hint: "both commit and uncertainty parking failed; repair the outward ledger before any retry",
+          },
+          "Outward send ledger persistence failed after delivery",
+        );
+        return err(parked.error);
+      }
+      if (parked.value) {
+        logger.error(
+          {
+            rootRunId,
+            stepIndex,
+            errorKind: "dependency" as const,
+            hint: "the delivery is parked as uncertain; verify the platform manually before any retry",
+          },
+          "Outward send commit failed after delivery",
+        );
+      }
+      return err(committed.error);
+    }
     logger.info(
       { rootRunId, stepIndex, durationMs: systemNowMs() - startedAt },
       "Outward send committed",
@@ -185,7 +387,21 @@ export async function wrapOutwardSend(
   // A permanent failure (chat not found / blocked / forbidden) is
   // terminal — markFailed and return, skipping the retry budget (no loop).
   if (isPermanentError(sent.error.message)) {
-    await ledger.markFailed(rootRunId, stepIndex, "permanent");
+    const markedFailed = await ledger.markFailed(rootRunId, stepIndex, "permanent");
+    if (!markedFailed.ok) {
+      const parked = await ledger.parkUncertain(rootRunId, stepIndex);
+      if (!parked.ok) return err(parked.error);
+      logger.error(
+        {
+          rootRunId,
+          stepIndex,
+          errorKind: "dependency" as const,
+          hint: "the platform rejected the send permanently but the terminal ledger state was not recorded; repair ledger writes before retrying",
+        },
+        "Outward send ledger mark-failed failed",
+      );
+      return err(markedFailed.error);
+    }
     logger.error(
       {
         rootRunId,
@@ -198,16 +414,18 @@ export async function wrapOutwardSend(
     return sent;
   }
 
-  // A transient failure leaves the row in unknown_after_send: recovery
-  // reconciles it against the channel's reconcileSend? — NOT committed, NOT failed.
-  logger.warn(
-    {
-      rootRunId,
-      stepIndex,
-      errorKind: "dependency" as const,
-      hint: "transient send failure — will reconcile on recovery",
-    },
-    "Outward send transient failure (left for recovery)",
-  );
+  const parked = await ledger.parkUncertain(rootRunId, stepIndex);
+  if (!parked.ok) return err(parked.error);
+  if (parked.value) {
+    logger.warn(
+      {
+        rootRunId,
+        stepIndex,
+        errorKind: "dependency" as const,
+        hint: "the delivery outcome is uncertain; verify the platform manually before any retry",
+      },
+      "Outward send failure parked for manual verification",
+    );
+  }
   return sent;
 }

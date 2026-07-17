@@ -17,7 +17,7 @@
  * @module
  */
 
-/** The 18 dispatcher-injected internal-field names (sorted alphabetically). */
+/** Dispatcher-injected internal-field names (sorted alphabetically). */
 export const INTERNAL_FIELD_NAMES = [
   "_agentId",
   // The trusted autonomy mode signal. Injected by createAgentRpcCall
@@ -40,11 +40,16 @@ export const INTERNAL_FIELD_NAMES = [
   "_capabilities",
   "_channelType",
   "_chatType",
+  "_checkpointId",
   "_context",
   "_deliveryTarget",
+  "_leaseId",
   "_originChannelId",
+  // Caller-created logical identity preserved across response-loss retries.
+  // The trusted boundary strips any forged value before re-injecting it.
+  "_outwardOperationId",
   // The monotonic outward-send index. Allocated by
-  // durableRuns.allocateOutwardStep at the TRUSTED cap chokepoint (the jail leg
+  // outwardLedger.allocateStep at the trusted cap chokepoint (the jail leg
   // in setup-capability-endpoint.ts + the in-process leg in
   // setup-tools-capabilities.ts) and injected as `_outwardStepIndex` for the
   // outward message methods. Listed here so stripInternalFields STRIPS a forged
@@ -54,6 +59,8 @@ export const INTERNAL_FIELD_NAMES = [
   // send ledger's idempotency-key dedup) or perturb outward ordering.
   // Agent-origin-only by construction.
   "_outwardStepIndex",
+  "_parentLeaseId",
+  "_rootRunId",
   "_sessionKey",
   "_tenantId",
   "_traceId",

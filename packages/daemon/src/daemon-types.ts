@@ -525,7 +525,7 @@ export interface BootContext {
   execToolEnv?: Record<string, string>;
   // The LATE-BOUND bounded-autonomy seam (bootAgents → boot → cap layer populates/shares it).
   boundedAutonomyBudgetHolder?: BoundedAutonomyBudgetHolder;
-  resolveRootRunId?: (sessionKey: SessionKey) => string;
+  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
   sharedLeaseManager?: LeaseManager;
   // Schedulers
   systemEventQueue?: ReturnType<typeof createSystemEventQueue>;

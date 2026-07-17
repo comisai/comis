@@ -24,6 +24,7 @@ import {
 } from "@comis/core";
 
 import { jsonResult, throwToolError } from "../../../platform-tools/tool-helpers.js";
+import { resolveApprovalRequestContext } from "../../../platform-tools/approval-request-context.js";
 import type {
   TerminalInputNeededEvent,
   TerminalStuckEvent,
@@ -287,16 +288,28 @@ function readOptInt(p: Record<string, unknown>, key: string): number | undefined
 
 // Origin-keying: derive the (agentId, sessionKey) owner per call
 
-/**
- * Derive the calling origin `(agentId, sessionKey)` for the owner-scoped registry calls from
- * the AsyncLocalStorage `RequestContext` (`tryGetContext()`), the SAME way the create approval
- * gate does: `agentId = ctx.userId ?? deps.agentId`, `sessionKey = ctx.sessionKey ?? ""`. Two
- * subagent runs of one parent get distinct owners (each subagent `channelId` is
- * `"sub-agent:<uuid>"`, session-key.ts:78-79), so siblings are mutually invisible.
- */
+/** Derive the exact resolved origin for owner-scoped registry calls. */
 export function resolveOwner(deps: TerminalToolDeps): SessionOwner {
   const ctx = tryGetContext();
-  return { agentId: ctx?.userId ?? deps.agentId, sessionKey: ctx?.sessionKey ?? "" };
+  if (ctx === undefined) {
+    if (deps.agentId.length === 0) {
+      throwToolError("permission_denied", "Terminal session access requires a resolved request identity", {
+        hint: "Retry from a resolved agent request scope",
+      });
+    }
+    return { agentId: deps.agentId, sessionKey: "" };
+  }
+  if (
+    typeof ctx.agentId !== "string"
+    || ctx.agentId.length === 0
+    || typeof ctx.sessionKey !== "string"
+    || ctx.sessionKey.length === 0
+  ) {
+    throwToolError("permission_denied", "Terminal session access requires a resolved request identity", {
+      hint: "Retry from a resolved agent request scope",
+    });
+  }
+  return { agentId: ctx.agentId, sessionKey: ctx.sessionKey };
 }
 
 /** The degraded `{screen,cursor}` snapshot a send_text/send_key returns when the turn signal already aborted. */
@@ -365,11 +378,24 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         );
       }
 
+      const { bin, argv } = buildDirectSpawn(matched.entry, matched.requestedReal, args);
+      const createRequest = {
+        allowId,
+        bin,
+        argv,
+        cols,
+        rows,
+        scrollback: DEFAULT_SCROLLBACK,
+        scope: matched.entry.scope,
+        ...(cwd !== undefined ? { cwd } : {}),
+        ...(project !== undefined ? { project } : {}),
+        ...(deps.durable ? { durable: true } : {}),
+      };
+
       // (2b) CONSENT GATE. A high-risk entry (`approveOnCreate`)
       // pauses for the OPERATOR — not the prompt-injectable agent — BEFORE any
-      // spawn. Mirrors the exec-tool precedent (exec-shared.ts:410-438): identity
-      // from tryGetContext() with the documented fallbacks; params are SECRET-FREE
-      // (allowId + command only — `args` may carry secrets, so they are omitted).
+      // spawn. Identity comes from the resolved request scope. Display params
+      // omit argv while the gate fingerprints the exact spawn request privately.
       // FAIL-CLOSED: an entry that demands approval with NO gate wired rejects —
       // it must NEVER run unauthorized (no silent-degrade).
       if (matched.entry.approveOnCreate) {
@@ -380,15 +406,18 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
             { hint: "wire the daemon ApprovalGate into the terminal tools, or unset approveOnCreate for this entry" },
           );
         }
-        const ctx = tryGetContext();
+        const approvalContext = resolveApprovalRequestContext();
+        if (!approvalContext.ok) {
+          throwToolError("permission_denied", approvalContext.error.message, {
+            hint: "Retry from a resolved agent request scope",
+          });
+        }
         const resolution = await deps.approvalGate.requestApproval({
           toolName: "terminal_session_create",
           action: `terminal.session_create:${allowId}`,
-          params: { allowId, command }, // sanitized — no secrets; args omitted
-          agentId: ctx?.userId ?? deps.agentId,
-          sessionKey: ctx?.sessionKey ?? "",
-          trustLevel: (ctx?.trustLevel ?? "admin") as "admin" | "user" | "guest",
-          channelType: ctx?.channelType,
+          params: { allowId, command, argumentCount: argv.length },
+          fingerprintParams: createRequest,
+          ...approvalContext.value,
         });
         if (!resolution.approved) {
           throwToolError("permission_denied", "session_create not approved", {
@@ -402,8 +431,6 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       // prepends the operator's argsPrefix ahead of the agent args. We forward
       // {bin,argv} — NOT the raw command — so the worker spawns the verified
       // canonical inode verbatim.
-      const { bin, argv } = buildDirectSpawn(matched.entry, matched.requestedReal, args);
-
       // (4) REGISTER + OBSERVE. A spawn failure logs hint+errorKind and
       // emits terminal:spawn_failed before rethrowing.
       const start = deps.nowMs();
@@ -419,20 +446,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         // no `scope` create param (CreateParams is closed), so it cannot set or
         // widen the jail; scope rides the create frame to the worker.
         result = await deps.registry.create(
-          {
-            allowId,
-            bin,
-            argv,
-            cols,
-            rows,
-            scrollback: DEFAULT_SCROLLBACK,
-            scope: matched.entry.scope,
-            // Agent-supplied working dir / project folder (resolveCreateWorkspace clamps cwd within
-            // the workspace + sanitizes project → <agent-workspace>/projects/<slug>, auto-created).
-            ...(cwd !== undefined ? { cwd } : {}),
-            ...(project !== undefined ? { project } : {}),
-            ...(deps.durable ? { durable: true } : {}), // drive.durable → req.durable → the registry derives the tmux name + selects the tmux backend.
-          },
+          createRequest,
           // Stamp the origin so this session is visible ONLY to its owner.
           resolveOwner(deps),
         );

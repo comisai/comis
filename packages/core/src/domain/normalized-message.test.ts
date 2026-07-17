@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, expectTypeOf } from "vitest";
-import { parseMessage, AttachmentSchema, type NormalizedMessage } from "./normalized-message.js";
+import {
+  AttachmentSchema,
+  getOriginalInboundMessages,
+  parseInboundMessageProvenanceBatch,
+  parseMessage,
+  type NormalizedMessage,
+} from "./normalized-message.js";
 
 const VALID_UUID = "550e8400-e29b-41d4-a716-446655440000";
 const VALID_UUID_2 = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
@@ -130,9 +136,120 @@ describe("NormalizedMessage", () => {
         expect(result.value.metadata).toEqual({ priority: 1, urgent: true });
       }
     });
+
+    it("validates and preserves structured physical inbound provenance", () => {
+      const originalMessages = [{
+        id: VALID_UUID_2,
+        channelId: "chat-2",
+        channelType: "telegram",
+        senderId: "user-2",
+        text: "physical body",
+        timestamp: 1_700_000_001,
+      }];
+
+      const result = parseMessage(validMessage({ originalMessages }));
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(getOriginalInboundMessages(result.value)).toEqual(originalMessages);
+    });
+
+    it("projects an uncoalesced message into one physical inbound record", () => {
+      const result = parseMessage(validMessage());
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      expect(getOriginalInboundMessages(result.value)).toEqual([{
+        id: VALID_UUID,
+        channelId: "general",
+        channelType: "telegram",
+        senderId: "user-123",
+        text: "Hello, world!",
+        timestamp: 1_700_000_000,
+      }]);
+    });
+
+    it("parses the strict session provenance payload contract", () => {
+      const result = parseInboundMessageProvenanceBatch({
+        schemaVersion: 1,
+        batchId: VALID_UUID,
+        chunkIndex: 0,
+        chunkCount: 1,
+        recordedAt: 1_750_000_000_100,
+        messages: [{
+          id: VALID_UUID,
+          channelId: "general",
+          channelType: "telegram",
+          senderId: "user-123",
+          text: "Hello, world!",
+          timestamp: 1_700_000_000,
+        }],
+      });
+
+      expect(result.ok).toBe(true);
+    });
   });
 
   describe("invalid data", () => {
+    it("rejects provenance timestamps outside the runtime Date range", () => {
+      const result = parseInboundMessageProvenanceBatch({
+        schemaVersion: 1,
+        batchId: VALID_UUID,
+        chunkIndex: 0,
+        chunkCount: 1,
+        recordedAt: 1_750_000_000_100,
+        messages: [{
+          id: VALID_UUID,
+          channelId: "general",
+          channelType: "telegram",
+          senderId: "user-123",
+          text: "Hello, world!",
+          timestamp: 8_640_000_000_000_001,
+        }],
+      });
+
+      expect(result.ok).toBe(false);
+    });
+
+    it("rejects provenance chunk indices outside their bounded batch", () => {
+      const result = parseInboundMessageProvenanceBatch({
+        schemaVersion: 1,
+        batchId: VALID_UUID,
+        chunkIndex: 2,
+        chunkCount: 2,
+        recordedAt: 1_750_000_000_100,
+        messages: [{
+          id: VALID_UUID,
+          channelId: "general",
+          channelType: "telegram",
+          senderId: "user-123",
+          text: "Hello, world!",
+          timestamp: 1_700_000_000,
+        }],
+      });
+
+      expect(result.ok).toBe(false);
+    });
+
+    it("rejects provenance batches beyond the reader predecessor runway", () => {
+      const result = parseInboundMessageProvenanceBatch({
+        schemaVersion: 1,
+        batchId: VALID_UUID,
+        chunkIndex: 0,
+        chunkCount: 33,
+        recordedAt: 1_750_000_000_100,
+        messages: [{
+          id: VALID_UUID,
+          channelId: "general",
+          channelType: "telegram",
+          senderId: "user-123",
+          text: "Hello, world!",
+          timestamp: 1_700_000_000,
+        }],
+      });
+
+      expect(result.ok).toBe(false);
+    });
+
     it("rejects missing required fields", () => {
       const result = parseMessage({});
       expect(result.ok).toBe(false);
@@ -198,6 +315,21 @@ describe("NormalizedMessage", () => {
       expect(result.ok).toBe(false);
     });
 
+    it("rejects malformed original inbound identities", () => {
+      const result = parseMessage(validMessage({
+        originalMessages: [{
+          id: "not-a-message-id",
+          channelId: "general",
+          channelType: "telegram",
+          senderId: "user-123",
+          text: "body",
+          timestamp: 1_700_000_000,
+        }],
+      }));
+
+      expect(result.ok).toBe(false);
+    });
+
     it("strips extra/unknown fields", () => {
       const result = parseMessage(validMessage({ extraField: "sneaky" }));
       expect(result.ok).toBe(false);
@@ -208,7 +340,7 @@ describe("NormalizedMessage", () => {
       expect(result.ok).toBe(false);
     });
 
-    it("rejects null input", () => {
+    it("rejects null as a message input", () => {
       const result = parseMessage(null);
       expect(result.ok).toBe(false);
     });

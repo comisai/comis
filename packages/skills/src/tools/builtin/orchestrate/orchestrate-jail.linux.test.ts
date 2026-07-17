@@ -220,6 +220,7 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
   function makeTool() {
     return createOrchestrateTool({
       logger: makeLogger(),
+      trustLevel: "user",
       workspaceResolver: () => workspacePath,
       capSocketPath: socketPath,
       sandbox: new BwrapProvider(),
@@ -408,6 +409,7 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
       budgetRef: LEASE_BUDGET_REF,
       sessionKey: LEASE_SESSION_KEY,
       rootRunId,
+      trustLevel: "user",
       ttlMs: ASSEMBLY_TTL_MS,
       maxTtlMs: ASSEMBLY_TTL_MS,
     });
@@ -433,6 +435,7 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
           caps,
           budgetRef: LEASE_BUDGET_REF,
           sessionKey: LEASE_SESSION_KEY,
+          trustLevel: "user",
           rootRunId,
           parentLeaseId: assembly.leaseId,
           ttlMs: timeoutMs,
@@ -448,6 +451,7 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
       },
       rootRunId,
       sessionKey: LEASE_SESSION_KEY,
+      trustLevel: "user",
     });
     return { leaseManager, rootRunId, assembly, minted, runSummaries, tool };
   }
@@ -1019,17 +1023,14 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
   // These extend the containment suite with the orch:mcp inbound surface
   // (`comis_tools.mcp.<server>.<tool>()`) and the typed outward surface
   // (`comis_tools.message_send`). As with EVERY drive in this file, the fake cap
-  // server stands in for the daemon capability endpoint: the REAL executor
-  // allowlist gate + sanitize/wrap/offload (orch:mcp) and the REAL exactly-once
-  // outward-step ledger (`allocateOutwardStepIfNeeded`, keyed (rootRunId,
-  // stepIndex) on durableRuns) are unit-proven against the real code on the macOS
-  // floor. What ONLY the real bwrap jail proves — and what these add — is that a
+  // server stands in for the daemon capability endpoint: executor allowlisting,
+  // sanitize/wrap/offload, and retained-operation outward-ledger behavior have
+  // their own unit tests. What the real bwrap jail proves here is that a
   // jailed `comis_tools.mcp.<server>.<tool>()` / `comis_tools.message_send()` call
   // crosses the --unshare-net jail over the real cap socket, an unlisted server is
-  // denied, direct net egress stays cut, and a duplicated outward step commits
-  // once. They SKIP on the macOS floor (the outer describe.skipIf) and run on
-  // comisvps via `pnpm validate:full`; a macOS run is NOT a pass and the real-jail
-  // proof stays owed to that VPS run (never claimed green from macOS).
+  // denied, direct net egress stays cut, and a repeated outward identity returns
+  // without another test-server delivery. The suite skips where bwrap is
+  // unavailable; only a Linux run exercises this jail boundary.
   // -------------------------------------------------------------------------
 
   it(
@@ -1092,15 +1093,13 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
   );
 
   it(
-    "in-jail message: a fetch→transform→message_send chain delivers over the jail; a duplicated outward step commits once",
+    "in-jail message: a fetch→transform→message_send chain delivers over the jail and suppresses a repeated operation identity",
     { timeout: 20_000 },
     async () => {
       // The fake endpoint returns a small web_fetch result and records each outward
-      // message.send. A re-submitted identical outward step commits EXACTLY ONCE — a
-      // stand-in for the endpoint's allocateOutwardStepIfNeeded ledger (keyed
-      // (rootRunId, stepIndex) on durableRuns), which is unit-proven against the REAL
-      // allocator on the macOS floor and owed to the VPS live drive with durableRuns
-      // wired. This drive proves the JAILED transport: the fetch→transform→send chain
+      // message.send. It models the retained-identity committed short-circuit so
+      // the same operation produces one test-server delivery. This proves the
+      // jailed transport, not universal exactly-once platform delivery: the fetch→transform→send chain
       // runs in one --unshare-net turn over the real cap socket, and the outward send
       // is a DIRECT message.send (not a tool.invoke).
       const deliveries: string[] = [];
@@ -1128,10 +1127,10 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
         // fetch (daemon-side) → transform in-jail → send outward (orch:message).
         'const report = await comis_tools.web_fetch({ url: "https://example.com/r.json" });',
         "const total = report.total;",
-        'const send1 = await comis_tools.message_send({ channel_type: "test", channel_id: "c1", text: "total=" + total });',
-        // A duplicated outward step (a retry of the SAME logical send) — the ledger
-        // stand-in commits it exactly once (same messageId, no second delivery).
-        'const send2 = await comis_tools.message_send({ channel_type: "test", channel_id: "c1", text: "total=" + total });',
+        'const send1 = await comis_tools.message_send({ channel_type: "test", channel_id: "c1", text: "total=" + total }, "report-send");',
+        // Repeat the same logical operation identity; the stand-in returns the
+        // retained messageId without recording another delivery.
+        'const send2 = await comis_tools.message_send({ channel_type: "test", channel_id: "c1", text: "total=" + total }, "report-send");',
         'console.log("TOTAL=" + total);',
         'console.log("SEND1=" + JSON.stringify(send1));',
         'console.log("SEND2=" + JSON.stringify(send2));',
@@ -1146,7 +1145,7 @@ describe.skipIf(!jailAvailable)("orchestrate jail containment (real bwrap, Linux
       expect(text).toContain("TOTAL=42");
       expect(text).toContain("SEND1=");
       expect(text).toMatch(/"messageId":"m-1"/);
-      // Exactly-once (transport half): the duplicated outward step committed once.
+      // The repeated retained identity did not produce another test-server delivery.
       expect(deliveries).toHaveLength(1);
     },
   );

@@ -116,16 +116,11 @@ export function createImapLifecycle(opts: ImapLifecycleOpts): ImapLifecycleHandl
         const source = msg.source as Buffer;
         const uid = msg.uid;
         const envelope = msg.envelope;
-        // Wrap the raw-IMAP handler dispatch in runWithContext.
-        // This is a pre-normalization dispatch (handlers receive Buffer, uid,
-        // envelope — not NormalizedMessage). The email-adapter handler that
-        // runs inside this wrap will mint a proper traceId after normalization
-        // and override the context with a second runWithContext call. The wrap
-        // ensures every `for (const handler of handlers)` dispatch site runs
-        // inside runWithContext.
-        const preTraceId = randomUUID();
+        // IMAP receipt is the email request boundary. Normalization and the
+        // channel handler retain this exact context and ingress timestamp.
+        const traceId = randomUUID();
         void runWithContext(
-          { traceId: preTraceId, startedAt: systemNowMs(), channelType: "email", tenantId: "default", trustLevel: "admin" },
+          { traceId, startedAt: systemNowMs(), channelType: "email", tenantId: "default", trustLevel: "user" },
           () => {
             for (const handler of handlers) {
               handler(source, uid, envelope);

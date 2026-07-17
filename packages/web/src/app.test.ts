@@ -47,24 +47,6 @@ class MockWebSocket {
 }
 vi.stubGlobal("WebSocket", MockWebSocket);
 
-// Mock EventSource for SSE event dispatcher
-class MockEventSource {
-  url: string;
-  onopen: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  onmessage: ((ev: MessageEvent) => void) | null = null;
-  close = vi.fn();
-  addEventListener = vi.fn();
-  static lastInstance: MockEventSource | null = null;
-  static instances: MockEventSource[] = [];
-  constructor(url: string) {
-    this.url = url;
-    MockEventSource.lastInstance = this;
-    MockEventSource.instances.push(this);
-  }
-}
-vi.stubGlobal("EventSource", MockEventSource);
-
 // Mock window.location for createApiClient
 if (!window.location.protocol) {
   Object.defineProperty(window, "location", {
@@ -116,9 +98,6 @@ describe("IcApp", () => {
     vi.clearAllMocks();
     MockWebSocket.lastInstance = null;
     MockWebSocket.instances = [];
-    MockEventSource.lastInstance = null;
-    MockEventSource.instances = [];
-
     el = document.createElement("ic-app") as IcApp;
   });
 
@@ -389,7 +368,7 @@ describe("IcApp", () => {
       expect(priv(el)._authenticated).toBe(false);
     });
 
-    it("opens one RPC and event stream when restoring a saved token", async () => {
+    it("opens one RPC and header-authenticated event stream when restoring a saved token", async () => {
       mockStorage["comis_token"] = "saved-token";
       mockFetch.mockResolvedValue({
         ok: true,
@@ -402,7 +381,16 @@ describe("IcApp", () => {
         expect(priv(el)._authenticated).toBe(true);
       });
       expect(MockWebSocket.instances).toHaveLength(1);
-      expect(MockEventSource.instances).toHaveLength(1);
+      const eventCall = mockFetch.mock.calls.find(
+        ([url]) => String(url).endsWith("/api/events"),
+      );
+      expect(eventCall).toBeDefined();
+      expect(eventCall?.[0]).not.toContain("saved-token");
+      expect(eventCall?.[1]).toMatchObject({
+        headers: {
+          Authorization: "Bearer saved-token",
+        },
+      });
     });
   });
 

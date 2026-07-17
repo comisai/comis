@@ -16,7 +16,6 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import type { ApprovalGate } from "@comis/core";
-import { tryGetContext } from "@comis/core";
 // The deterministic intent → ExecutionGraph
 // synthesizer. It RETURNS a validated graph; the from_intent action below
 // dispatches it through the EXISTING graph.execute path (so governance applies
@@ -31,6 +30,7 @@ import {
   throwToolError,
   createActionGate,
 } from "../tool-helpers.js";
+import { resolveApprovalRequestContext } from "../approval-request-context.js";
 import type { RpcCall } from "./cron-tool.js";
 
 // ---------------------------------------------------------------------------
@@ -534,29 +534,8 @@ export function createPipelineTool(rpcCall: RpcCall, logger?: ToolLogger, approv
               hint: "Provide nodes directly or reference a saved pipeline by id.",
             });
           }
-          // Approval gate check for execute
-          if (approvalGate) {
-            const ctx = tryGetContext();
-            const resolution = await approvalGate.requestApproval({
-              toolName: "pipeline",
-              action: "graph.execute",
-              params: { nodeCount: nodes.length, label },
-              agentId: ctx?.userId ?? "unknown",
-              sessionKey: ctx?.sessionKey ?? "unknown",
-              trustLevel: (ctx?.trustLevel ?? "guest") as "admin" | "user" | "guest",
-              channelType: ctx?.channelType,
-            });
-            if (!resolution.approved) {
-              throwToolError(
-                "permission_denied",
-                `Action denied: graph.execute was not approved.`,
-                { hint: resolution.reason ?? "no reason given" },
-              );
-            }
-          }
-          logger?.debug({ toolName: "pipeline", action: "execute", nodeCount: nodes.length }, "Pipeline graph executing");
           const execEdges = params.edges ? normalizeEdges(params.edges) : [];
-          const result = await rpcCall("graph.execute", {
+          const executionParams = {
             nodes: transformNodes(nodes),
             ...(label !== undefined && { label }),
             ...(params.on_failure !== undefined && { onFailure: params.on_failure }),
@@ -570,7 +549,32 @@ export function createPipelineTool(rpcCall: RpcCall, logger?: ToolLogger, approv
             ...(execEdges.length > 0 && { edges: execEdges }),
             ...(params.variables !== undefined && { variables: params.variables }),
             node_progress: false,
-          });
+          };
+          // Approval gate check for execute
+          if (approvalGate) {
+            const approvalContext = resolveApprovalRequestContext();
+            if (!approvalContext.ok) {
+              throwToolError("permission_denied", approvalContext.error.message, {
+                hint: "Retry from a resolved agent request scope",
+              });
+            }
+            const resolution = await approvalGate.requestApproval({
+              toolName: "pipeline",
+              action: "graph.execute",
+              params: { nodeCount: nodes.length, hasLabel: label !== undefined },
+              fingerprintParams: executionParams,
+              ...approvalContext.value,
+            });
+            if (!resolution.approved) {
+              throwToolError(
+                "permission_denied",
+                `Action denied: graph.execute was not approved.`,
+                { hint: resolution.reason ?? "no reason given" },
+              );
+            }
+          }
+          logger?.debug({ toolName: "pipeline", action: "execute", nodeCount: nodes.length }, "Pipeline graph executing");
+          const result = await rpcCall("graph.execute", executionParams);
           // Cache the graph so save can reference it
           lastDefinedGraph = {
             nodes,
@@ -630,26 +634,6 @@ export function createPipelineTool(rpcCall: RpcCall, logger?: ToolLogger, approv
               hint: "Provide a human-readable label for the saved pipeline.",
             });
           }
-          // Approval gate check for save
-          if (approvalGate) {
-            const ctx = tryGetContext();
-            const resolution = await approvalGate.requestApproval({
-              toolName: "pipeline",
-              action: "graph.save",
-              params: { label, nodeCount: nodes.length },
-              agentId: ctx?.userId ?? "unknown",
-              sessionKey: ctx?.sessionKey ?? "unknown",
-              trustLevel: (ctx?.trustLevel ?? "guest") as "admin" | "user" | "guest",
-              channelType: ctx?.channelType,
-            });
-            if (!resolution.approved) {
-              throwToolError(
-                "permission_denied",
-                `Action denied: graph.save was not approved.`,
-                { hint: resolution.reason ?? "no reason given" },
-              );
-            }
-          }
           const id = readStringParam(p, "id", false);
           const explicitEdges = normalizeEdges((params.edges ?? []) as Static<typeof PipelineParams>["edges"] & object);
           const cachedEdges = lastDefinedGraph?.edges ?? [];
@@ -659,14 +643,38 @@ export function createPipelineTool(rpcCall: RpcCall, logger?: ToolLogger, approv
               ? cachedEdges
               : deriveEdgesFromDependsOn(nodes);
           const settings = params.settings ?? {};
-          logger?.debug({ toolName: "pipeline", action: "save", label, fromCache: !params.nodes }, "Pipeline graph saved");
-          const result = await rpcCall("graph.save", {
+          const saveParams = {
             label,
             nodes: transformNodes(nodes),
             ...(id !== undefined && { id }),
             edges: finalEdges,
             settings,
-          });
+          };
+          // Approval gate check for save
+          if (approvalGate) {
+            const approvalContext = resolveApprovalRequestContext();
+            if (!approvalContext.ok) {
+              throwToolError("permission_denied", approvalContext.error.message, {
+                hint: "Retry from a resolved agent request scope",
+              });
+            }
+            const resolution = await approvalGate.requestApproval({
+              toolName: "pipeline",
+              action: "graph.save",
+              params: { nodeCount: nodes.length, edgeCount: finalEdges.length },
+              fingerprintParams: saveParams,
+              ...approvalContext.value,
+            });
+            if (!resolution.approved) {
+              throwToolError(
+                "permission_denied",
+                `Action denied: graph.save was not approved.`,
+                { hint: resolution.reason ?? "no reason given" },
+              );
+            }
+          }
+          logger?.debug({ toolName: "pipeline", action: "save", label, fromCache: !params.nodes }, "Pipeline graph saved");
+          const result = await rpcCall("graph.save", saveParams);
           return jsonResult(result);
         }
 

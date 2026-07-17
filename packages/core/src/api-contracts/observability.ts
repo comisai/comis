@@ -33,6 +33,8 @@
  */
 import { z } from "zod";
 import { defineContract } from "./types.js";
+import { DeliveryFailureStageSchema, DeliveryStatusSchema } from "../domain/delivery-status.js";
+import { ERROR_KINDS } from "../logging/log-fields.js";
 // obs.explain contract surface (IncidentReport wire schema + shape types + the
 // contract) lives in the sibling `incident-report.ts` (file-size split). Import
 // for the OBSERVABILITY_CONTRACTS array below; re-export so the `@comis/core`
@@ -173,7 +175,8 @@ export const ObsDiagnosticsContract = defineContract({
  * authoritative + SQLite historical). Admin-only (in-handler gate;
  * handler:343).
  *
- * Request: `{}`.
+ * Request: `{ sinceMs? }`; the optional non-negative integer is a duration-ago
+ * window applied to every lifecycle count and the attempted-latency average.
  *
  * Response: `{ channels: ChannelActivity[] }`. Each row carries
  * `{ channelId, channelType, lastActiveAt, messagesSent,
@@ -219,10 +222,10 @@ export const ObsChannelsStaleContract = defineContract({
 
 /**
  * `obs.channels.get` — Single channel activity lookup. Admin-only
- * (in-handler gate; handler:388). `channelId` required (handler:392
- * throws `"Invalid request: channelId parameter is required"`).
+ * (in-handler gate; handler:388). Both `channelType` and `channelId` are
+ * required because platform-local IDs can collide across channel adapters.
  *
- * Request: `{ channelId }`.
+ * Request: `{ channelType, channelId }`.
  *
  * Response: `{ channel: ChannelActivity | null }` (handler:393). The
  * `null` branch fires when no channel matches the id. Modeled via
@@ -232,6 +235,7 @@ export const ObsChannelsStaleContract = defineContract({
 export const ObsChannelsGetContract = defineContract({
   method: "obs.channels.get",
   request: z.object({
+    channelType: z.string().min(1),
     channelId: z.string().min(1),
   }),
   response: z.object({
@@ -249,23 +253,54 @@ export const ObsChannelsGetContract = defineContract({
  * SQLite + in-memory, sorted by `deliveredAt` desc). Admin-only
  * (in-handler gate; handler:401).
  *
- * Request: `{ sinceMs?, limit?, channelId? }`. `limit` defaults to
- * 50 (handler:418, 445); `channelId` filters historical rows
- * (handler:438-440).
+ * Request: `{ sinceMs?, limit?, channelId?, channelType? }`. `limit` is an
+ * integer from 1 through 10,000 and defaults to 50. Channel filters are applied
+ * by both the live tracer and durable store before limiting.
  *
- * Response: `{ deliveries: DeliveryContext[] }` (handler:447). Each
- * row carries 11+ fields including a nested `steps` array and
- * `metadata` record — modeled loose.
+ * Response: `{ deliveries: DeliveryContext[] }` with an exact normalized
+ * shape shared by live diagnostic, persisted diagnostic, and correlation
+ * fallback evidence.
  */
+const DeliveryStepSchema = z.strictObject({
+  name: z.string(),
+  timestamp: z.number(),
+  durationMs: z.number(),
+  status: z.enum(["ok", "error"]),
+  error: z.string().optional(),
+});
+
+const DeliveryRecordSchema = z.strictObject({
+  sourceChannelId: z.string(),
+  sourceChannelType: z.string(),
+  targetChannelId: z.string(),
+  targetChannelType: z.string(),
+  deliveredAt: z.number(),
+  latencyMs: z.number(),
+  status: DeliveryStatusSchema,
+  error: z.string().nullable(),
+  agentId: z.string().nullable(),
+  sessionKey: z.string().nullable(),
+  traceId: z.string().nullable(),
+  toolCalls: z.number().nullable(),
+  llmCalls: z.number().nullable(),
+  tokensTotal: z.number().nullable(),
+  costTotal: z.number().nullable(),
+  failureStage: DeliveryFailureStageSchema.nullable(),
+  errorKind: z.enum(ERROR_KINDS).nullable(),
+  steps: z.array(DeliveryStepSchema).nullable(),
+  evidence: z.enum(["diagnostic", "message_correlation"]),
+});
+
 export const ObsDeliveryRecentContract = defineContract({
   method: "obs.delivery.recent",
   request: z.object({
     sinceMs: z.number().optional(),
-    limit: z.number().optional(),
+    limit: z.number().int().min(1).max(10_000).optional(),
     channelId: z.string().optional(),
+    channelType: z.string().optional(),
   }),
   response: z.object({
-    deliveries: ObsRecordArray,
+    deliveries: z.array(DeliveryRecordSchema),
   }),
   scopes: ["admin"] as const,
 });
@@ -275,22 +310,29 @@ export const ObsDeliveryRecentContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `obs.delivery.stats` — Delivery statistics summary (merged
- * SQLite + in-memory). Admin-only (in-handler gate; handler:455).
+ * `obs.delivery.stats` — Delivery statistics summary from the durable store
+ * after pending delivery rows are flushed, with an in-memory fallback when
+ * persistence is unavailable. Admin-only (in-handler gate; handler:455).
  *
  * Request: `{}`.
  *
- * Response: `{ total, successes, failures, avgLatencyMs }`
- * (handler:467-478). The handler computes weighted-average latency
- * across the two sources.
+ * Response carries the five closed lifecycle categories. `attempted` is
+ * success + error + timeout; filtered and user-aborted turns are excluded
+ * from the delivery-health denominator.
  */
 export const ObsDeliveryStatsContract = defineContract({
   method: "obs.delivery.stats",
-  request: z.object({}),
+  request: z.object({
+    sinceMs: z.number().int().nonnegative().finite().optional(),
+  }),
   response: z.object({
     total: z.number(),
-    successes: z.number(),
-    failures: z.number(),
+    attempted: z.number(),
+    success: z.number(),
+    error: z.number(),
+    timeout: z.number(),
+    filtered: z.number(),
+    aborted: z.number(),
     avgLatencyMs: z.number(),
   }),
   scopes: ["admin"] as const,

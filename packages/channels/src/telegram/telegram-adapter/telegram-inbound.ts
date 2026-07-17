@@ -17,16 +17,65 @@
  * @module
  */
 
-import { runWithContext, systemNowMs } from "@comis/core";
+import {
+  runWithContext,
+  systemClearTimeout,
+  systemNowMs,
+  systemSetTimeout,
+  toSafeErrorLogString,
+} from "@comis/core";
 import type { NormalizedMessage, NormalizedReaction } from "@comis/core";
-import { randomUUID } from "node:crypto";
-import { mapGrammyToNormalized } from "../message-mapper.js";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  mapGrammyToNormalized,
+  type TelegramBotIdentity,
+  type TelegramInboundUpdateKind,
+} from "../message-mapper.js";
 import { normalizeTelegramPollResult } from "../../shared/poll-normalizer.js";
 import { resolveTelegramThreadContext } from "../thread-context.js";
 import type {
   TelegramAdapterDeps,
   TelegramAdapterState,
 } from "./telegram-adapter-types.js";
+
+const CALLBACK_ACK_TIMEOUT_MS = 1_000;
+const CALLBACK_FALLBACK_EPOCH_MS = 1_600_000_000_000;
+
+/** Expected polling rejection used to leave a post-stop update unconfirmed. */
+export class TelegramAdapterStoppingError extends Error {
+  override readonly name = "TelegramAdapterStoppingError";
+}
+
+/** Deterministic GUID for a bot-account-scoped Telegram callback query. */
+function telegramCallbackGuid(botAccountId: number, callbackQueryId: string): string {
+  const bytes = createHash("sha256")
+    .update(`comis:telegram-callback:${botAccountId}:${callbackQueryId}`, "utf8")
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** Preserve callback replay identity when Telegram provides no event timestamp. */
+function telegramCallbackTimestamp(
+  botAccountId: number,
+  callbackQueryId: string,
+  sourceDateSeconds: number | undefined,
+): number {
+  if (
+    typeof sourceDateSeconds === "number"
+    && Number.isSafeInteger(sourceDateSeconds)
+    && sourceDateSeconds > 0
+  ) return sourceDateSeconds * 1_000;
+
+  const identityOffset = createHash("sha256")
+    .update(`comis:telegram-callback-time:${botAccountId}:${callbackQueryId}`, "utf8")
+    .digest()
+    .readUInt32BE(0);
+  return CALLBACK_FALLBACK_EPOCH_MS + identityOffset;
+}
 
 // ---------------------------------------------------------------------------
 // Single-message ingestion (shared by message + edited_message handlers)
@@ -36,16 +85,18 @@ import type {
  * Shared message handler for both new and edited messages.
  *
  * Filters forum-topic service messages, updates state.lastMessageAt, maps
- * grammy to NormalizedMessage, and dispatches to every registered handler
- * with fire-and-forget semantics so a slow handler cannot block grammy's
- * middleware chain.
+ * grammy to NormalizedMessage, and waits for every registered handler. The
+ * middleware must not resolve until the durable inbound pipeline has accepted
+ * the update, otherwise Telegram may advance its polling offset first.
  */
-export function handleInboundMessage(
+export async function handleInboundMessage(
   state: TelegramAdapterState,
   deps: TelegramAdapterDeps,
   msg: import("grammy/types").Message,
   chatId: number,
-): void {
+  updateKind: TelegramInboundUpdateKind,
+  botIdentity: TelegramBotIdentity,
+): Promise<void> {
   // Filter forum topic service messages before they reach the agent
   if (msg.forum_topic_created || msg.forum_topic_edited ||
       msg.forum_topic_closed || msg.forum_topic_reopened ||
@@ -58,7 +109,12 @@ export function handleInboundMessage(
   }
 
   state.lastMessageAt = systemNowMs();
-  const normalized = mapGrammyToNormalized(msg, chatId, state.botIdentity);
+  const normalized = mapGrammyToNormalized(
+    msg,
+    chatId,
+    updateKind,
+    botIdentity,
+  );
 
   // Mint traceId at ingress, stamp into metadata so the orchestrator's
   // adapter.onMessage wrap can reuse it. The Pino mixin reads ALS
@@ -71,23 +127,49 @@ export function handleInboundMessage(
     { step: "channels-inbound", channelType: "telegram", messageId: normalized.id, chatId: String(chatId), previewLen: (normalized.text ?? "").length, traceId },
     "Inbound message",
   );
-  runWithContext(
+  await dispatchMessageHandlers(
+    state,
+    deps,
+    normalized,
+    traceId,
+    String(chatId),
+  );
+}
+
+/** Dispatch one normalized update inside its ingress context and propagate failure. */
+async function dispatchMessageHandlers(
+  state: TelegramAdapterState,
+  deps: TelegramAdapterDeps,
+  normalized: NormalizedMessage,
+  traceId: string,
+  chatId: string,
+): Promise<void> {
+  const trustLevel = normalized.senderId.startsWith("chat:") || normalized.senderId.startsWith("unknown:")
+    ? "guest" as const
+    : "user" as const;
+  await runWithContext(
     {
       traceId,
       startedAt: systemNowMs(),
       channelType: "telegram",
       tenantId: "default",
-      trustLevel: "admin",
+      trustLevel,
     },
-    () => {
+    async () => {
       for (const handler of state.handlers) {
-        // Fire-and-forget: don't block Grammy middleware
         try {
-          Promise.resolve(handler(normalized)).catch((handlerErr) => {
-            deps.logger.error({ err: handlerErr, chatId: String(chatId), hint: "Check Telegram message handler logic", errorKind: "internal" as const }, "Message handler error");
-          });
+          await handler(normalized);
         } catch (handlerErr) {
-          deps.logger.error({ err: handlerErr, chatId: String(chatId), hint: "Check Telegram message handler logic", errorKind: "internal" as const }, "Message handler error");
+          deps.logger.error(
+            {
+              err: toSafeErrorLogString(handlerErr),
+              chatId,
+              hint: "Check Telegram message handler logic before restarting polling",
+              errorKind: "internal" as const,
+            },
+            "Message handler error",
+          );
+          return Promise.reject(handlerErr);
         }
       }
     },
@@ -106,23 +188,38 @@ export function handleInboundMessage(
 export function bindInboundHandlers(
   state: TelegramAdapterState,
   deps: TelegramAdapterDeps,
+  botIdentity: TelegramBotIdentity,
 ): void {
   // Set up Grammy middleware for incoming messages
   state.bot.on("message", (ctx) => {
     if (ctx.message) {
-      handleInboundMessage(state, deps, ctx.message, ctx.message.chat.id);
+      return trackInboundUpdate(state, () => handleInboundMessage(
+        state,
+        deps,
+        ctx.message,
+        ctx.message.chat.id,
+        "message",
+        botIdentity,
+      ));
     }
   });
 
   state.bot.on("edited_message", (ctx) => {
     if (ctx.editedMessage) {
-      handleInboundMessage(state, deps, ctx.editedMessage, ctx.editedMessage.chat.id);
+      return trackInboundUpdate(state, () => handleInboundMessage(
+        state,
+        deps,
+        ctx.editedMessage,
+        ctx.editedMessage.chat.id,
+        "edited_message",
+        botIdentity,
+      ));
     }
   });
 
   // Poll events bypass runWithContext — they are aggregated votes via
   // deps.onPollResult, not per-user inbound messages. No traceId semantic.
-  state.bot.on("poll", (ctx) => {
+  state.bot.on("poll", (ctx) => trackInboundUpdate(state, async () => {
     if (!ctx.poll) return;
     const poll = ctx.poll;
     try {
@@ -152,122 +249,109 @@ export function bindInboundHandlers(
       deps.logger.warn(
         {
           channelType: "telegram",
-          err: pollErr instanceof Error ? pollErr : new Error(String(pollErr)),
+          err: toSafeErrorLogString(pollErr),
           hint: "Check poll data structure from Telegram API",
           errorKind: "platform" as const,
         },
         "Poll normalization failed",
       );
     }
-  });
+  }));
 
   // Button callback query listener
-  state.bot.on("callback_query:data", async (ctx) => {
-    try {
-      // Immediate ack: removes loading animation
-      await ctx.answerCallbackQuery();
+  state.bot.on("callback_query:data", (ctx) => trackInboundUpdate(state, async () => {
+    // The acknowledgement only clears Telegram's loading animation. It must
+    // never delay durable callback dispatch or hold the polling offset open.
+    const acknowledgementController = new AbortController();
+    const acknowledgementTimer = systemSetTimeout(
+      () => acknowledgementController.abort(),
+      CALLBACK_ACK_TIMEOUT_MS,
+    );
+    acknowledgementTimer.unref();
+    // grammY's declaration resolves AbortSignal through its polyfill package;
+    // Node's runtime signal is API-compatible but not nominally assignable.
+    const acknowledgementSignal = acknowledgementController.signal as unknown as
+      Parameters<typeof ctx.answerCallbackQuery>[1];
+    void Promise.resolve()
+      .then(() => ctx.answerCallbackQuery(undefined, acknowledgementSignal))
+      .catch((error) => {
+        deps.logger.warn(
+          {
+            channelType: "telegram",
+            err: toSafeErrorLogString(error),
+            hint: "Check Telegram callback acknowledgement connectivity; forwarding continues",
+            errorKind: "platform" as const,
+          },
+          "Callback query acknowledgement failed",
+        );
+      })
+      .finally(() => systemClearTimeout(acknowledgementTimer));
 
-      const normalized: NormalizedMessage = {
-        id: randomUUID(),
-        channelType: "telegram",
-        channelId: String(ctx.callbackQuery.message?.chat.id ?? ctx.from.id),
-        senderId: String(ctx.from.id),
-        text: ctx.callbackQuery.data,
-        timestamp: systemNowMs(),
-        attachments: [],
-        metadata: {
-          isButtonCallback: true,
-          callbackData: ctx.callbackQuery.data,
-          messageId: ctx.callbackQuery.message
-            ? String(ctx.callbackQuery.message.message_id)
-            : undefined,
-          senderName: ctx.from.username ?? ctx.from.first_name ?? "unknown",
-        },
-      };
+    const normalized: NormalizedMessage = {
+      id: telegramCallbackGuid(botIdentity.id, ctx.callbackQuery.id),
+      channelType: "telegram",
+      channelId: String(ctx.callbackQuery.message?.chat.id ?? ctx.from.id),
+      senderId: String(ctx.from.id),
+      text: ctx.callbackQuery.data,
+      timestamp: telegramCallbackTimestamp(
+        botIdentity.id,
+        ctx.callbackQuery.id,
+        ctx.callbackQuery.message?.date,
+      ),
+      attachments: [],
+      metadata: {
+        isButtonCallback: true,
+        callbackData: ctx.callbackQuery.data,
+        messageId: ctx.callbackQuery.message
+          ? String(ctx.callbackQuery.message.message_id)
+          : undefined,
+        senderName: ctx.from.username ?? ctx.from.first_name ?? "unknown",
+      },
+    };
 
-      // Extract thread metadata from callback query source message
-      const cbMsg = ctx.callbackQuery.message;
-      if (cbMsg && "message_thread_id" in cbMsg) {
-        const cbChat = cbMsg.chat;
-        const cbIsForum = "is_forum" in cbChat && cbChat.is_forum === true;
-        const cbIsGroup = cbChat.type === "group" || cbChat.type === "supergroup";
-        const cbRawThreadId = (cbMsg as { message_thread_id?: number }).message_thread_id;
-        const cbThread = resolveTelegramThreadContext({ isForum: cbIsForum, isGroup: cbIsGroup, rawThreadId: cbRawThreadId });
-        if (cbThread.threadId !== undefined) {
-          normalized.metadata.telegramThreadId = cbThread.threadId;
-          normalized.metadata.threadId = String(cbThread.threadId);
-        }
-        if (cbThread.scope !== "none") {
-          normalized.metadata.telegramIsForum = cbIsForum;
-          normalized.metadata.telegramThreadScope = cbThread.scope;
-        }
+    // Extract thread metadata from callback query source message
+    const cbMsg = ctx.callbackQuery.message;
+    if (cbMsg && "message_thread_id" in cbMsg) {
+      const cbChat = cbMsg.chat;
+      const cbIsForum = "is_forum" in cbChat && cbChat.is_forum === true;
+      const cbIsGroup = cbChat.type === "group" || cbChat.type === "supergroup";
+      const cbRawThreadId = (cbMsg as { message_thread_id?: number }).message_thread_id;
+      const cbThread = resolveTelegramThreadContext({
+        isForum: cbIsForum,
+        isGroup: cbIsGroup,
+        rawThreadId: cbRawThreadId,
+      });
+      if (cbThread.threadId !== undefined) {
+        normalized.metadata.telegramThreadId = cbThread.threadId;
+        normalized.metadata.threadId = String(cbThread.threadId);
       }
-
-      // Mint traceId at ingress for callback_query dispatch.
-      const traceId = randomUUID();
-      normalized.metadata.traceId = traceId;
-      runWithContext(
-        {
-          traceId,
-          startedAt: systemNowMs(),
-          channelType: "telegram",
-          tenantId: "default",
-          trustLevel: "admin",
-        },
-        () => {
-          for (const handler of state.handlers) {
-            try {
-              Promise.resolve(handler(normalized)).catch((handlerErr) => {
-                deps.logger.error(
-                  {
-                    err: handlerErr,
-                    chatId: String(ctx.from.id),
-                    hint: "Check Telegram callback handler for unhandled errors",
-                    errorKind: "internal" as const,
-                  },
-                  "Callback query handler error",
-                );
-              });
-            } catch (handlerErr) {
-              deps.logger.error(
-                {
-                  err: handlerErr,
-                  chatId: String(ctx.from.id),
-                  hint: "Check Telegram callback handler for unhandled errors",
-                  errorKind: "internal" as const,
-                },
-                "Callback query handler error",
-              );
-            }
-          }
-        },
-      );
-    } catch (error) {
-      deps.logger.warn(
-        {
-          channelType: "telegram",
-          err: error instanceof Error ? error : new Error(String(error)),
-          hint: "Callback query acknowledgement or forwarding failed",
-          errorKind: "platform" as const,
-        },
-        "Callback query failed",
-      );
+      if (cbThread.scope !== "none") {
+        normalized.metadata.telegramIsForum = cbIsForum;
+        normalized.metadata.telegramThreadScope = cbThread.scope;
+      }
     }
-  });
 
-  // Inbound reaction-add capture. Requires the runner allowed_updates
-  // opt-in to include "message_reaction" (telegram-lifecycle.ts) — without it
-  // Telegram never delivers this update. A reaction-ADD = an emoji present in
-  // new_reaction but NOT in old_reaction; a removal-only update is skipped.
-  // NOTE (webhook mode): telegram-webhook.ts picks runner vs webhook via
-  // shouldUseRunner; the allowed_updates opt-in covers the runner (polling)
-  // path. A webhook deployment must pass the same allowed_updates list to
-  // setWebhook (operator-side config) — out of scope for this binder.
-  state.bot.on("message_reaction", (ctx) => {
+    // Mint traceId at ingress for callback_query dispatch.
+    const traceId = randomUUID();
+    normalized.metadata.traceId = traceId;
+    await dispatchMessageHandlers(
+      state,
+      deps,
+      normalized,
+      traceId,
+      String(ctx.from.id),
+    );
+  }));
+
+  // Inbound reaction-add capture. Sequential polling explicitly opts into
+  // "message_reaction" because Telegram excludes it from the default update
+  // set. A reaction-ADD = an emoji present in new_reaction but NOT in
+  // old_reaction; a removal-only update is skipped.
+  state.bot.on("message_reaction", (ctx) => trackInboundUpdate(state, async () => {
     const mr = ctx.messageReaction;
     if (!mr || !mr.user) return; // anonymous channel reaction → no reactor id
     // Bot-own filter — never count the bot's own reactions.
-    if (state.botIdentity && mr.user.id === state.botIdentity.id) return;
+    if (mr.user.id === botIdentity.id) return;
 
     const oldEmojis = new Set(emojiNames(mr.old_reaction));
     const added = emojiNames(mr.new_reaction).filter((emoji) => !oldEmojis.has(emoji));
@@ -282,17 +366,32 @@ export function bindInboundHandlers(
         channelId: String(mr.chat.id),
       };
       for (const handler of state.reactionHandlers) {
-        // try/catch + .catch so a sync OR async handler throw is non-fatal.
         try {
-          Promise.resolve(handler(normalized)).catch((handlerErr) =>
-            warnReactionHandlerFailed(deps, handlerErr),
-          );
+          await handler(normalized);
         } catch (handlerErr) {
           warnReactionHandlerFailed(deps, handlerErr);
         }
       }
     }
-  });
+  }));
+}
+
+/** Register middleware work so shutdown cannot confirm its update prematurely. */
+function trackInboundUpdate(
+  state: TelegramAdapterState,
+  run: () => Promise<void>,
+): Promise<void> {
+  if (!state.acceptingUpdates) {
+    state.stopGateTriggered = true;
+    return Promise.reject(new TelegramAdapterStoppingError(
+      "Telegram adapter is stopping and cannot accept another update",
+    ));
+  }
+  const task = Promise.resolve().then(run);
+  state.inFlightUpdates.add(task);
+  const remove = (): void => { state.inFlightUpdates.delete(task); };
+  void task.then(remove, remove);
+  return task;
 }
 
 /**
@@ -314,7 +413,7 @@ function warnReactionHandlerFailed(deps: TelegramAdapterDeps, handlerErr: unknow
   deps.logger.warn(
     {
       channelType: "telegram",
-      err: handlerErr instanceof Error ? handlerErr : new Error(String(handlerErr)),
+      err: toSafeErrorLogString(handlerErr),
       hint: "Telegram reaction handler threw; reaction dropped (non-fatal)",
       errorKind: "platform" as const,
     },

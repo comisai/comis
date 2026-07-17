@@ -264,7 +264,7 @@ describe("tokenUsageEventToRow", () => {
 // ---------------------------------------------------------------------------
 
 describe("deliveryEventToRow", () => {
-  it("maps success=true to status 'success' with no errorMessage", () => {
+  it("preserves success status with no failure metadata", () => {
     const payload: EventMap["diagnostic:message_processed"] = {
       messageId: "msg-1",
       channelId: "chan-1",
@@ -280,7 +280,7 @@ describe("deliveryEventToRow", () => {
       totalDurationMs: 100,
       tokensUsed: 300,
       cost: 0.02,
-      success: true,
+      status: "success",
       finishReason: "end_turn",
       timestamp: 1000,
     };
@@ -299,7 +299,7 @@ describe("deliveryEventToRow", () => {
     expect(row.sessionKey).toBe("sk-1");
   });
 
-  it("maps success=false to status 'error' with finishReason as errorMessage", () => {
+  it("preserves error status, failure stage, kind, and finish reason", () => {
     const payload: EventMap["diagnostic:message_processed"] = {
       messageId: "msg-2",
       channelId: "chan-2",
@@ -315,7 +315,9 @@ describe("deliveryEventToRow", () => {
       totalDurationMs: 200,
       tokensUsed: 0,
       cost: 0,
-      success: false,
+      status: "error",
+      failureStage: "execution",
+      errorKind: "dependency",
       finishReason: "rate_limited",
       timestamp: 1000,
     };
@@ -324,9 +326,87 @@ describe("deliveryEventToRow", () => {
 
     expect(row.status).toBe("error");
     expect(row.errorMessage).toBe("rate_limited");
+    expect(row.failureStage).toBe("execution");
+    expect(row.errorKind).toBe("dependency");
     expect(row.latencyMs).toBe(200);
     expect(row.toolCalls).toBeNull();
     expect(row.llmCalls).toBeNull();
+  });
+
+  it("stores a stable delivery failure reason instead of the successful executor reason", () => {
+    const payload: EventMap["diagnostic:message_processed"] = {
+      messageId: "msg-delivery-error",
+      channelId: "chan-2",
+      channelType: "telegram",
+      agentId: "agent-1",
+      sessionKey: "sk-1",
+      receivedAt: 900,
+      toolCalls: 1,
+      llmCalls: 2,
+      executionDurationMs: 80,
+      deliveryDurationMs: 20,
+      totalDurationMs: 100,
+      tokensUsed: 50,
+      cost: 0.01,
+      status: "error",
+      failureStage: "delivery",
+      errorKind: "platform",
+      finishReason: "stop",
+      timestamp: 1000,
+    };
+
+    expect(deliveryEventToRow(payload)).toMatchObject({
+      status: "error",
+      errorMessage: "delivery_failed",
+      failureStage: "delivery",
+      errorKind: "platform",
+    });
+  });
+
+  it("stores stable late-abort reasons instead of the executor stop reason", () => {
+    const aborted = deliveryEventToRow({
+      messageId: "msg-aborted",
+      channelId: "chat-a",
+      channelType: "telegram",
+      agentId: "agent-a",
+      sessionKey: "default:user-a:chat-a",
+      traceId: "trace-aborted",
+      toolCalls: 0,
+      llmCalls: 1,
+      receivedAt: 900,
+      executionDurationMs: 50,
+      deliveryDurationMs: 50,
+      totalDurationMs: 100,
+      tokensUsed: 10,
+      cost: 0.001,
+      status: "aborted",
+      finishReason: "stop",
+      timestamp: 1_000,
+    });
+    const denied = deliveryEventToRow({
+      messageId: "msg-denied",
+      channelId: "chat-a",
+      channelType: "telegram",
+      agentId: "agent-a",
+      sessionKey: "default:user-a:chat-a",
+      traceId: "trace-denied",
+      toolCalls: 0,
+      llmCalls: 1,
+      receivedAt: 900,
+      executionDurationMs: 100,
+      deliveryDurationMs: 0,
+      totalDurationMs: 100,
+      tokensUsed: 10,
+      cost: 0.001,
+      status: "error",
+      failureStage: "execution",
+      errorKind: "precondition",
+      finishReason: "stop",
+      timestamp: 1_000,
+    });
+
+    expect(aborted.errorMessage).toBe("aborted");
+    expect(denied.errorMessage).toBe("execution_failed");
   });
 });
 
@@ -1409,8 +1489,14 @@ describe("durableOrphanedEventToRow", () => {
     ]);
   });
 
-  it("carries each closed reason enum verbatim (4-member union)", () => {
-    for (const reason of ["not_resumable", "reread_failed", "invalid_caps", "resume_failed"] as const) {
+  it("carries each closed durable orphan reason enum verbatim", () => {
+    for (const reason of [
+      "not_resumable",
+      "reread_failed",
+      "invalid_record",
+      "invalid_caps",
+      "resume_failed",
+    ] as const) {
       const row = durableOrphanedEventToRow({ rootRunId: "r", reason, timestamp: 1 });
       expect(JSON.parse(row.details ?? "{}").reason).toBe(reason);
     }
@@ -1418,10 +1504,10 @@ describe("durableOrphanedEventToRow", () => {
 });
 
 describe("durableResumedEventToRow", () => {
-  it("maps a durable:resumed payload to an info health_signal row (stepIndex + rootRunId, no body)", () => {
+  it("maps a durable:resumed payload to an info health_signal row with checkpoint identity", () => {
     const row = durableResumedEventToRow({
       rootRunId: "root-resumed",
-      stepIndex: 4,
+      checkpointId: "checkpoint-4",
       timestamp: 6000,
     });
 
@@ -1433,9 +1519,9 @@ describe("durableResumedEventToRow", () => {
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details.signal).toBe("durable_resumed");
-    expect(details.stepIndex).toBe(4);
+    expect(details.checkpointId).toBe("checkpoint-4");
     expect(details.rootRunId).toBe("root-resumed");
-    expect(Object.keys(details).sort()).toEqual(["rootRunId", "signal", "stepIndex"]);
+    expect(Object.keys(details).sort()).toEqual(["checkpointId", "rootRunId", "signal"]);
   });
 });
 
@@ -1768,7 +1854,7 @@ describe("setupObsPersistence", () => {
     });
     // j-m. The four autonomy/durable lifecycle signals.
     eventBus.emit("durable:orphaned", { rootRunId: "root-1", reason: "not_resumable", timestamp: 1009 });
-    eventBus.emit("durable:resumed", { rootRunId: "root-2", stepIndex: 3, timestamp: 1010 });
+    eventBus.emit("durable:resumed", { rootRunId: "root-2", checkpointId: "checkpoint-3", timestamp: 1010 });
     eventBus.emit("autonomy:revoked", { rootRunId: "root-3", revoked: 2, timestamp: 1011 });
     eventBus.emit("autonomy:killed", { rootRunId: "root-4", killed: 1, timestamp: 1012 });
     eventBus.emit("autonomy:denial_breaker_tripped", { rootRunId: "root-5", timestamp: 1013 });
@@ -2038,7 +2124,7 @@ describe("setupObsPersistence", () => {
       totalDurationMs: 100,
       tokensUsed: 300,
       cost: 0.02,
-      success: true,
+      status: "success",
       finishReason: "end_turn",
       timestamp: 1000,
     });
@@ -2111,7 +2197,7 @@ describe("setupObsPersistence", () => {
       agentId: "a1", sessionKey: "sk-1", receivedAt: 900,
       toolCalls: null, llmCalls: null,
       executionDurationMs: 80, deliveryDurationMs: 20, totalDurationMs: 100,
-      tokensUsed: 0, cost: 0, success: true, finishReason: "end_turn",
+      tokensUsed: 0, cost: 0, status: "success", finishReason: "end_turn",
       timestamp: 1000,
     });
 
@@ -2507,12 +2593,15 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     }
   });
 
-  it("the subscriber logs a scrubbed record via .audit() (level 35)", () => {
+  it("the subscriber logs a content-free summary via .audit() without serialized refs", () => {
     const { deps, eventBus, auditLines } = realDeps();
     const result = setupObsPersistence(deps as never);
     eventBus.emit("audit:event", {
       timestamp: 1000, agentId: "a1", tenantId: "t1", actionType: "file.delete",
-      kind: "audit", outcome: "success", metadata: { apiKey: "sk-PLANTED-SECRET" },
+      kind: "audit", outcome: "success", metadata: {
+        apiKey: "sk-PLANTED-SECRET",
+        note: "RAW_AUDIT_METADATA_DO_NOT_LOG",
+      },
     });
     result.drainAll();
 
@@ -2520,6 +2609,9 @@ describe("setupObsPersistence — audit sink (real store + tmp JSONL)", () => {
     const logged = JSON.stringify(auditLines);
     expect(logged).toContain("audit");
     expect(logged).not.toContain("sk-PLANTED-SECRET");
+    expect(logged).not.toContain("RAW_AUDIT_METADATA_DO_NOT_LOG");
+    expect(auditLines[0]).toEqual(expect.objectContaining({ hasRefs: true }));
+    expect(auditLines[0]).not.toHaveProperty("refs");
   });
 
   it("a tenant-less event persists tenant_id='' when no trace context; uses the trace tenant when present", () => {

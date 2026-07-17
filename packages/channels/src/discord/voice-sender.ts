@@ -19,6 +19,10 @@
 import * as fs from "node:fs/promises";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
+import {
+  createAttachmentSendReceipt,
+  type AttachmentSendReceipt,
+} from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -42,7 +46,7 @@ export interface DiscordVoiceSender {
     filePath: string,
     durationSecs: number,
     waveformBase64: string,
-  ): Promise<Result<string, Error>>;
+  ): Promise<Result<AttachmentSendReceipt, Error>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +102,7 @@ export function createDiscordVoiceSender(deps: DiscordVoiceSenderDeps): DiscordV
       filePath: string,
       durationSecs: number,
       waveformBase64: string,
-    ): Promise<Result<string, Error>> {
+    ): Promise<Result<AttachmentSendReceipt, Error>> {
       // Read file buffer
       let fileBuffer: Buffer;
       try {
@@ -217,7 +221,18 @@ export function createDiscordVoiceSender(deps: DiscordVoiceSenderDeps): DiscordV
         }
 
         const step3Data = (await step3Res.json()) as { id?: string };
-        const messageId = step3Data.id ?? "";
+        const receipt = createAttachmentSendReceipt(step3Data.id);
+        if (receipt.kind === "delivered_untracked") {
+          logger.warn(
+            {
+              channelType: "discord",
+              chatId: channelId,
+              hint: "Discord accepted the voice message without returning its ID. Do not retry; wait for platform reconciliation",
+              errorKind: "platform" as const,
+            },
+            "Voice sent without platform tracking",
+          );
+        }
 
         logger.debug(
           { step: 3, flags: VOICE_MESSAGE_FLAG },
@@ -225,11 +240,17 @@ export function createDiscordVoiceSender(deps: DiscordVoiceSenderDeps): DiscordV
         );
 
         logger.info(
-          { channelType: "discord", messageId, chatId: channelId, durationSecs },
+          {
+            channelType: "discord",
+            chatId: channelId,
+            durationSecs,
+            tracking: receipt.kind,
+            ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
+          },
           "Voice send complete",
         );
 
-        return ok(messageId);
+        return ok(receipt);
       } catch (step3Err) {
         const step3Error = step3Err instanceof Error ? step3Err : new Error(String(step3Err));
         return err(new Error(`Step 3 message post request failed: ${step3Error.message}`));

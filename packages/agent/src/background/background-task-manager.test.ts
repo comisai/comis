@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { safePath } from "@comis/core";
+import { safePath, TypedEventBus } from "@comis/core";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
 import { persistTaskSync } from "./background-task-persistence.js";
 import type { BackgroundTaskOrigin, PersistedTaskState } from "./background-task-types.js";
@@ -43,7 +43,14 @@ const testTimers: TimerPort = {
 };
 
 function createMockEventBus() {
-  return { emit: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
+  const emit = vi.fn();
+  return {
+    emit,
+    emitSafely: vi.fn((event: string, payload: unknown) => {
+      emit(event, payload);
+      return { hadListeners: false, failures: [], pendingFailures: Promise.resolve([]) };
+    }),
+  } as unknown as import("@comis/core").TypedEventBus;
 }
 
 function createMockLogger() {
@@ -509,5 +516,60 @@ describe("BackgroundTaskManager", () => {
         rmSync(testDir, { recursive: true, force: true });
       }
     });
+  });
+
+  it("preserves every lifecycle result and later observer when subscribers throw or reject", async () => {
+    const isolatedBus = new TypedEventBus();
+    const laterPromoted = vi.fn();
+    const laterCompleted = vi.fn();
+    const laterFailed = vi.fn();
+    const laterCancelled = vi.fn();
+    isolatedBus.on("background_task:promoted", () => {
+      throw new Error("private promoted subscriber content");
+    });
+    isolatedBus.on("background_task:promoted", laterPromoted);
+    isolatedBus.on("background_task:completed", async () => {
+      throw new Error("private completed subscriber content");
+    });
+    isolatedBus.on("background_task:completed", laterCompleted);
+    isolatedBus.on("background_task:failed", () => {
+      throw new Error("private failed subscriber content");
+    });
+    isolatedBus.on("background_task:failed", laterFailed);
+    isolatedBus.on("background_task:cancelled", () => {
+      throw new Error("private cancelled subscriber content");
+    });
+    isolatedBus.on("background_task:cancelled", laterCancelled);
+    manager = createBackgroundTaskManager({
+      dataDir,
+      eventBus: isolatedBus,
+      logger,
+      clock: testClock,
+      timers: testTimers,
+      maxPerAgent: 5,
+      maxTotal: 5,
+    });
+
+    const completed = manager.promote("complete_tool", new Promise(() => {}), new AbortController(), buildOrigin());
+    expect(completed.ok).toBe(true);
+    expect(laterPromoted).toHaveBeenCalledOnce();
+    if (!completed.ok) return;
+    expect(() => manager.complete(completed.value, "done")).not.toThrow();
+    expect(manager.getTask(completed.value)?.status).toBe("completed");
+    expect(laterCompleted).toHaveBeenCalledOnce();
+
+    const failed = manager.promote("fail_tool", new Promise(() => {}), new AbortController(), buildOrigin());
+    if (!failed.ok) return;
+    expect(() => manager.fail(failed.value, new Error("authoritative failure"))).not.toThrow();
+    expect(manager.getTask(failed.value)?.status).toBe("failed");
+    expect(laterFailed).toHaveBeenCalledOnce();
+
+    const cancelled = manager.promote("cancel_tool", new Promise(() => {}), new AbortController(), buildOrigin());
+    if (!cancelled.ok) return;
+    expect(manager.cancel(cancelled.value)).toMatchObject({ ok: true });
+    expect(manager.getTask(cancelled.value)?.status).toBe("cancelled");
+    expect(laterCancelled).toHaveBeenCalledOnce();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("private completed subscriber content");
   });
 });

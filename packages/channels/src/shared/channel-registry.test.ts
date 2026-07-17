@@ -29,7 +29,9 @@ function createMockAdapter(
     reactToMessage: overrides.reactToMessage ?? (async () => ok(undefined)),
     deleteMessage: overrides.deleteMessage ?? (async () => ok(undefined)),
     fetchMessages: overrides.fetchMessages ?? (async () => ok([])),
-    sendAttachment: overrides.sendAttachment ?? (async () => ok("mock-attach-id")),
+    sendAttachment: overrides.sendAttachment ?? (async () =>
+      ok({ kind: "tracked" as const, messageId: "mock-attach-id" })
+    ),
     platformAction: overrides.platformAction ?? (async () => ok({ echoed: true })),
   };
 }

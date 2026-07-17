@@ -394,7 +394,7 @@ export interface PiEventBridgeDeps {
    * resolver registers on first use (so a top-level, non-spawned loop is bounded
    * too). Required whenever {@link boundedAutonomyBudget} is present.
    */
-  resolveRootRunId?: (sessionKey: SessionKey) => string;
+  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
   /** Callback to record cache reads for adaptive retention escalation. */
   onCacheReads?: (tokens: number) => void;
   /** Callback to record a completed turn with cache write token count.
@@ -559,6 +559,13 @@ export interface PiEventBridgeResult {
    * getThinkingBlockStores. Empty when no skill was attributed.
    */
   getUsedSkillIds: () => ReadonlySet<string>;
+  /** Whether this execution successfully delivered through the message tool
+   *  to the exact channel route. Used to authorize a final silent sentinel
+   *  only when the user has already received the response out of band. */
+  hasOutboundDelivery: (target: {
+    channelType: string;
+    channelId: string;
+  }) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -1443,10 +1450,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // LLM turn about to start (pre-serialize hook for assert+restore)
         // -----------------------------------------------------------------
         case "turn_start": {
-          // Reset per-turn outbound capture. The log accumulates
-          // message(send/reply/attach) calls across the turn so the
-          // post-execution gate can make sentinel-aware decisions.
-          m.outboundLog.length = 0;
+          // Keep outbound delivery evidence for the full execution. A message
+          // tool call is normally followed by another model turn whose final
+          // assistant text is NO_REPLY; clearing here would erase the proof
+          // that the exact channel route already received a response.
 
           // Run the executor-supplied pre-call closure once per turn, before
           // pi-ai reads `session.agent.state.messages` to serialize the next
@@ -2182,7 +2189,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // routes an `exceeded` outcome through the SAME m.aborted spend-abort path.
             const perRoot = deps.boundedAutonomyBudget?.current;
             if (perRoot && deps.resolveRootRunId && !m.aborted) {
-              const rootRunId = deps.resolveRootRunId(deps.sessionKey);
+              const rootRunId = deps.resolveRootRunId(deps.agentId, deps.sessionKey);
               // Re-anchor the per-root wall-clock + token limbs ONCE per
               // turn (this metrics state is per-turn, so the flag fires on the turn's
               // FIRST per-root reserve). An interactive session root (`root-session-*`)
@@ -2812,5 +2819,21 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
     return new Set<string>([...m.turnUsedSkillIds, ...topicMatched]);
   };
 
-  return { listener, getResult, addGhostCost, getThinkingBlockStores, getDrainState, getUsedSkillIds };
+  const hasOutboundDelivery = (target: {
+    channelType: string;
+    channelId: string;
+  }): boolean => m.outboundLog.some(
+    (delivery) => delivery.channelType === target.channelType
+      && delivery.channelId === target.channelId,
+  );
+
+  return {
+    listener,
+    getResult,
+    addGhostCost,
+    getThinkingBlockStores,
+    getDrainState,
+    getUsedSkillIds,
+    hasOutboundDelivery,
+  };
 }

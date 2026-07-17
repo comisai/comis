@@ -2,7 +2,12 @@
 import { describe, it, expect } from "vitest";
 import { PathTraversalError } from "@comis/core";
 import type { SessionKey } from "@comis/core";
-import { sessionKeyToPath, pathToSessionKey } from "./session-key-mapper.js";
+import {
+  inboundMessageLedgerPathToSessionKey,
+  pathToSessionKey,
+  sessionKeyToInboundMessageLedgerPath,
+  sessionKeyToPath,
+} from "./session-key-mapper.js";
 
 const BASE_DIR = "/home/comis/agents/bot1/sessions";
 
@@ -201,6 +206,62 @@ describe("SessionKeyMapper", () => {
       expect(path).toContain("~guild~");
       expect(path).toContain("~thread~");
       expect(path).toMatch(/alice~peer~bob~guild~srv~thread~th1\.jsonl$/);
+    });
+  });
+
+  describe("inbound message ledger path", () => {
+    it("round-trips a full SessionKey through the reserved ledger suffix", () => {
+      const key: SessionKey = {
+        tenantId: "tenant-a",
+        userId: "user~ledger~inbound",
+        channelId: "telegram/chat-a",
+        peerId: "peer-a",
+        guildId: "guild-a",
+        threadId: "thread-a",
+      };
+
+      const ledgerPath = sessionKeyToInboundMessageLedgerPath(key, BASE_DIR);
+
+      expect(ledgerPath).toMatch(/~ledger~inbound\.jsonl$/);
+      expect(pathToSessionKey(ledgerPath, BASE_DIR)).toBeUndefined();
+      expect(inboundMessageLedgerPathToSessionKey(ledgerPath, BASE_DIR)).toEqual(key);
+      expect(inboundMessageLedgerPathToSessionKey(ledgerPath, BASE_DIR, "agent-a"))
+        .toEqual({ ...key, agentId: "agent-a" });
+    });
+
+    it("cannot collide with a transcript whose SessionKey contains the reserved suffix text", () => {
+      const ordinaryKey: SessionKey = {
+        tenantId: "default",
+        userId: "user",
+        channelId: "telegram",
+      };
+      const suffixInUserKey: SessionKey = {
+        ...ordinaryKey,
+        userId: "user~ledger~inbound",
+      };
+
+      const ledgerPath = sessionKeyToInboundMessageLedgerPath(ordinaryKey, BASE_DIR);
+      const suffixInUserTranscriptPath = sessionKeyToPath(suffixInUserKey, BASE_DIR);
+
+      expect(ledgerPath).not.toBe(suffixInUserTranscriptPath);
+      expect(suffixInUserTranscriptPath).toContain("user@7eledger@7einbound.jsonl");
+      expect(inboundMessageLedgerPathToSessionKey(suffixInUserTranscriptPath, BASE_DIR))
+        .toBeUndefined();
+    });
+
+    it("rejects ordinary transcripts and nested lookalike ledger paths", () => {
+      const key: SessionKey = {
+        tenantId: "default",
+        userId: "user",
+        channelId: "telegram",
+      };
+      const transcriptPath = sessionKeyToPath(key, BASE_DIR);
+      const nestedLookalike = `${BASE_DIR}/default/telegram/nested/user~ledger~inbound.jsonl`;
+      const traversalLookalike = `${BASE_DIR}/../telegram/user~ledger~inbound.jsonl`;
+
+      expect(inboundMessageLedgerPathToSessionKey(transcriptPath, BASE_DIR)).toBeUndefined();
+      expect(inboundMessageLedgerPathToSessionKey(nestedLookalike, BASE_DIR)).toBeUndefined();
+      expect(inboundMessageLedgerPathToSessionKey(traversalLookalike, BASE_DIR)).toBeUndefined();
     });
   });
 

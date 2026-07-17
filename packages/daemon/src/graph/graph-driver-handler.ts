@@ -13,6 +13,7 @@ import {
   type NormalizedMessage,
   parseFormattedSessionKey,
   safePath,
+  toSafeErrorLogString,
   systemNowMs,
   systemSetTimeout,
   systemClearTimeout,
@@ -492,7 +493,7 @@ export function handleWaitForInput(
   // 2. Send the prompt to the channel
   deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, action.message).catch((sendErr: unknown) => {
     deps.logger?.warn(
-      { graphId: gs.graphId, nodeId, err: sendErr, hint: "Failed to send wait_for_input prompt", errorKind: "network" as const },
+      { graphId: gs.graphId, nodeId, err: toSafeErrorLogString(sendErr), hint: "Failed to send wait_for_input prompt", errorKind: "network" as const },
       "wait_for_input prompt delivery failed",
     );
   });
@@ -611,8 +612,14 @@ export function executeDriverAction(
           callerSessionKey: gs.callerSessionKey,
           callerAgentId: gs.callerAgentId,
           callerType: "graph",
+          callerTrustLevel: gs.callerTrustLevel,
           // Share the graph run's tree root (killByRootRun reach).
           ...(gs.rootRunId !== undefined ? { rootRunId: gs.rootRunId } : {}),
+          ...(gs.parentLeaseId !== undefined ? { parentLeaseId: gs.parentLeaseId } : {}),
+          caps: [...gs.callerCaps],
+          ...(gs.callerDeliveryOrigin !== undefined
+            ? { requesterOrigin: gs.callerDeliveryOrigin }
+            : {}),
           graphSharedDir: gs.sharedDir,
           graphTraceId: gs.graphTraceId,
           graphId: gs.graphId,
@@ -667,8 +674,14 @@ export function executeDriverAction(
             callerSessionKey: gs.callerSessionKey,
             callerAgentId: gs.callerAgentId,
             callerType: "graph",
+            callerTrustLevel: gs.callerTrustLevel,
             // Share the graph run's tree root (killByRootRun reach).
             ...(gs.rootRunId !== undefined ? { rootRunId: gs.rootRunId } : {}),
+            ...(gs.parentLeaseId !== undefined ? { parentLeaseId: gs.parentLeaseId } : {}),
+            caps: [...gs.callerCaps],
+            ...(gs.callerDeliveryOrigin !== undefined
+              ? { requesterOrigin: gs.callerDeliveryOrigin }
+              : {}),
             graphSharedDir: gs.sharedDir,
             graphTraceId: gs.graphTraceId,
             graphId: gs.graphId,
@@ -780,7 +793,7 @@ export function executeDriverAction(
       if (gs.announceChannelType && gs.announceChannelId) {
         deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, progressMsg).catch((sendErr: unknown) => {
           deps.logger?.warn(
-            { graphId: gs.graphId, nodeId, err: sendErr, hint: "Progress message delivery failed", errorKind: "network" as const },
+            { graphId: gs.graphId, nodeId, err: toSafeErrorLogString(sendErr), hint: "Progress message delivery failed", errorKind: "network" as const },
             "Driver progress delivery failed",
           );
         });

@@ -3,25 +3,12 @@
 /**
  * Daemon Entry Point: composition root for the entire daemon process.
  *
- * Structure: (1) imports; (2) DEFAULT_CONFIG_PATHS + applyInspectDefaultsForLogging;
- * (3) hardenDataDirPermissions; (4) runPreflightDoctor; (5) process.env scrub helpers;
- * (6) agents-stage helpers; (7) channels-stage helpers (buildChannelManagerDeps,
- * buildGraphCoordinatorDeps, wirePostChannelsLifecycle); (8) gateway-stage helpers
- * (resolveGatewayTokens, createHotAdd/Remove, buildRpcDispatchDeps,
- * replayContinuationsIfAny); (9) shutdown-stage helpers; (10) bootFoundation /
- * bootAgents / bootChannels / bootGateway / bootShutdown; (11) main(); (12) direct-run guard.
- *
- * The 4-handle chain (Foundation → Agents → Channels → Gateway) is collapsed into ONE
- * BootContext (`./daemon-types.ts`): each boot* helper takes `boot: BootContext` and
- * mutates it via Object.assign; main() chains the 5 helpers. The 6 true forward-ref
- * slots (channelPluginsRef, bgNotifyRef, cronWakeCallbackRef, gatewaySendRef,
- * shutdownRef, channelAdaptersRef) persist on BootContext. Larger one-shot helpers are
- * top-level functions here; trivial ones are inlined at their single call site. Some
- * helpers live in wiring/main-helpers.ts (image/video bundles, durability, etc.).
+ * `main()` advances one `BootContext` through the foundation, agents, channels,
+ * gateway, and shutdown stages. Stage-local composition helpers stay here;
+ * reusable wiring lives under `./wiring/`.
  *
  * @module
  */
-
 import {
   bootstrap,
   loadEnvFile,
@@ -29,6 +16,7 @@ import {
   createAuditAggregator,
   createConfigGitManager,
   parseFormattedSessionKey,
+  parseConfigPaths,
   envSubset,
   createInjectionRateLimiter,
   checkApprovalsConfig,
@@ -45,9 +33,7 @@ import {
   type PerAgentConfig,
   type WrapExternalContentOptions,
 } from "@comis/core";
-// Runtime adapter factories — constructed at the composition root and
-// threaded through wiring helpers that retarget Date.now / process.env /
-// setTimeout / setInterval. Sanctioned construction site.
+// Runtime adapter factories are constructed at this composition root.
 import { createSystemClock, createSystemEnv, createSystemTimers } from "@comis/infra";
 import {
   setupSecrets as _setupSecretsImpl,
@@ -65,7 +51,8 @@ import {
   setupAgents,
   setupSchedulers,
   setupChannels,
-  createInteractiveCallbackWiring,
+  createInteractiveCallbackWiring, createGraphReportTargetStore,
+  resolveInteractiveCallbackSigningSecret,
   setupMedia,
   setupCrossSession,
   setupTools,
@@ -117,10 +104,6 @@ import {
   type ServedWindowComparison,
   type SessionTrackerRegistry,
 } from "@comis/agent";
-// resolveAgentMainProvider is the handler-side accessor that delegates to the
-// EXACT completion-path resolveAgentModel (so both surfaces resolve the same
-// model, never a parallel re-implementation). Imported
-// directly (not via the wiring barrel) to avoid widening the barrel surface.
 import { resolveAgentMainProvider } from "./wiring/setup-agents/setup-agents-tooling.js";
 import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-bundled-skills.js";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
@@ -217,14 +200,7 @@ export { runPreflightDoctor };
 // ---------------------------------------------------------------------------
 // Agents helpers
 // ---------------------------------------------------------------------------
-// Helpers consumed by `bootAgents`. `wirePostAgentsCleanup` (eventBus.on
-// subscriber wiring for session:expired → registry release + Gemini cache
-// cleanup + MCP disconnect cleanup; returns the per-session FileStateTracker
-// pool) is kept here as a top-level function (large body, single call site).
-// `restoreApprovalState` (file I/O against the approvals JSON snapshot left by
-// graceful shutdown) lives in `wiring/main-helpers.ts` to keep this file under
-// its architecture line cap. Three other helpers (setupMcpManager,
-// buildAuditBundle, buildDeferredCronWakeCallback) were inlined into bootAgents.
+// Agent-stage helpers assemble session-scoped cleanup and state registries.
 // ---------------------------------------------------------------------------
 
 /**
@@ -268,29 +244,8 @@ function wirePostAgentsCleanup(deps: {
 // ---------------------------------------------------------------------------
 // Channels helpers
 // ---------------------------------------------------------------------------
-// Helpers consumed by `bootChannels`. Top-level functions:
-//   - buildChannelManagerDeps — assembles the wide `setupChannels` deps
-//     literal. The 3 deferred-ref slots that used to live here are gone;
-//     the lambda payload (onMessageReceived / onMessageProcessed)
-//     now reads its dynamic deps via accessor closures supplied by the
-//     caller (bootChannels owns the local `let` slots and refreshes them
-//     after setupChannels returns).
-//   - buildGraphCoordinatorDeps — assembles the createGraphCoordinator
-//     deps literal. Inlines the small `buildGraphPreWarm` (Anthropic
-//     pre-warm cache config; undefined when no API key resolvable).
-//   - setupChannelHealthMonitor — wraps createChannelHealthMonitor +
-//     monitor.start so both let bindings (monitor, stop) move out of the
-//     stage body into a single helper return value. Lives in
-//     wiring/main-helpers.ts (extracted to keep this file under the
-//     architecture line cap).
-//   - wirePostChannelsLifecycle — populates the delivery-queue
-//     channelAdapters map, drains + starts prune timer, mirrors prune
-//     lifecycle, wires delivery-queue logging, and starts the output
-//     retention housekeeper (when defaultWorkspaceDir is present).
-// Inlined helpers: createCapabilityPortResolver (the resolver factory
-// becomes a direct `const get… = (agentId) => …` at the call site) and
-// buildImageGenBundle (provider + rate limiter + config triplet wired
-// inline in bootChannels before setupTools needs them).
+// Channel-stage helpers assemble channel, graph, delivery, retention, and
+// health wiring. Accessor closures resolve late-bound state at message time.
 // ---------------------------------------------------------------------------
 
 /**
@@ -368,7 +323,7 @@ function buildChannelManagerDeps(deps: {
     return { bundlePath: result.value.bundlePath };
   };
   return {
-    container, executors, defaultAgentId, sessionManager, sessionStore,
+    container, dataDir, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, clock, timers,
     // Live EnvPort → bootstrapAdapters → createMsTeamsPlugin (managed-identity
     // App-Service IDENTITY_ENDPOINT/IDENTITY_HEADER read live per mint).
@@ -465,6 +420,7 @@ function buildGraphCoordinatorDeps(deps: {
   channels: {
     subAgentRunner: ReturnType<typeof setupCrossSession>["subAgentRunner"];
     sendToChannel: ReturnType<typeof setupCrossSession>["sendToChannel"];
+    sendGovernedAnnouncement: ReturnType<typeof setupCrossSession>["sendGovernedAnnouncement"];
     announceToParent: ReturnType<typeof setupCrossSession>["announceToParent"];
     announcementBatcher: ReturnType<typeof setupCrossSession>["announcementBatcher"];
     commandQueue: Awaited<ReturnType<typeof setupChannels>>["commandQueue"];
@@ -473,6 +429,10 @@ function buildGraphCoordinatorDeps(deps: {
   };
   // The durable run store → GraphCoordinatorDeps.durableRuns so the coordinator checkpoints node state at each markNode* boundary (off ⇒ no-op).
   durableRunStore?: import("@comis/core").DurableRunPort;
+  // The live tree meter is the authority for absolute restart-continuous budget facts.
+  durableBudgetState?: (rootRunId: string) => import("@comis/core").DurableRootBudget;
+  retainDurableRoot?: (rootRunId: string) => void;
+  releaseDurableRoot?: (rootRunId: string) => void;
 }): Parameters<typeof createGraphCoordinator>[0] {
   const { agents, channels } = deps;
   const { container, defaultAgentId, dataDir, agentLogger, activeRunRegistry, agentsConfig } = agents;
@@ -511,9 +471,14 @@ function buildGraphCoordinatorDeps(deps: {
     { provider: defaultProvider, modelId: defaultModel },
     capabilityOverride,
   );
+  const graphReportRouter = agents.interactiveCallbackWiring?.router;
   return {
     subAgentRunner: channels.subAgentRunner, eventBus: container.eventBus,
-    sendToChannel: channels.sendToChannel, announceToParent: channels.announceToParent,
+    sendToChannel: channels.sendToChannel,
+    ...(channels.sendGovernedAnnouncement
+      ? { sendGovernedAnnouncement: channels.sendGovernedAnnouncement }
+      : {}),
+    announceToParent: channels.announceToParent,
     batcher: channels.announcementBatcher, tenantId: container.config.tenantId, defaultAgentId,
     maxConcurrency: (a2aSec.graphMaxConcurrency as number | undefined) ?? graphDefaults.maxConcurrency,
     maxResultLength: a2aSec.graphMaxResultLength as number | undefined, maxGlobalSubAgents: a2aSec.graphMaxGlobalSubAgents as number | undefined,
@@ -521,6 +486,12 @@ function buildGraphCoordinatorDeps(deps: {
     subAgentTokenBudget: (a2aSec.tokenBudget as number | null | undefined) ?? null,
     logger: agentLogger?.child?.({ submodule: "graph-coordinator" }),
     dataDir: container.config.dataDir || dataDir,
+    ...(graphReportRouter
+      ? {
+          registerGraphReportCallback: (registration: import("@comis/orchestrator").GraphReportCallbackRegistration) =>
+            graphReportRouter.registerGraphReport(registration),
+        }
+      : {}),
     nodeTypeRegistry: channels.nodeTypeRegistry, activeRunRegistry,
     assembleToolsForAgent: async (agentId: string) => {
       const tools = await channels.assembleToolsForAgent(agentId);
@@ -533,6 +504,15 @@ function buildGraphCoordinatorDeps(deps: {
       : undefined,
     ...(agents.resolveRootRunId ? { resolveRootRunId: agents.resolveRootRunId } : {}), // graph nodes share one tree root (killByRootRun reach).
     ...(deps.durableRunStore ? { durableRuns: deps.durableRunStore } : {}), // node-boundary DAG checkpointing → the live durable store (off ⇒ no-op).
+    ...(deps.durableBudgetState
+      ? { durableBudgetState: deps.durableBudgetState }
+      : {}),
+    ...(deps.retainDurableRoot
+      ? { retainDurableRoot: deps.retainDurableRoot }
+      : {}),
+    ...(deps.releaseDurableRoot
+      ? { releaseDurableRoot: deps.releaseDurableRoot }
+      : {}),
     preWarm,
   };
 }
@@ -551,7 +531,7 @@ async function wirePostChannelsLifecycle(deps: {
    *  channelAdaptersRef.set loop below — the channel registry is now populated, so
    *  the poller's announce-on-complete reaches a LIVE adapter outside a turn. */
   startAndResumeVideoPoller?: () => Promise<void>;
-  /** Durable boot recovery + watchdog start. Runs AFTER channels (the engine's reconcile/replay need LIVE adapters) — the boot-order constraint, like the video poller. */
+  /** Durable boot recovery + watchdog start. Runs after graph recovery wiring is ready. */
   startAndResumeDurable?: () => Promise<void>;
   startMirrorPrune: BootContext["startMirrorPrune"];
   shutdownMirror: BootContext["shutdownMirror"];
@@ -570,9 +550,8 @@ async function wirePostChannelsLifecycle(deps: {
   // render's finished clip announces to the recorded channel outside any turn,
   // exactly like the delivery queue's drainAndStart above.
   await startAndResumeVideoPoller?.();
-  // Run the durable resume engine AFTER the video poller — i.e. after the
-  // channel registry is populated — so its reconcile (reconcileSend) + replay resolve
-  // a LIVE adapter (a crashed-mid-send row is otherwise mis-resolved). Boot-order.
+  // Run durable recovery after the graph coordinator is ready. Outward recovery
+  // only parks uncertain effects; it never queries or replays through adapters.
   await startAndResumeDurable?.();
   // eventBus.on("system:shutdown", ...) subscribers deleted —
   // shutdownDeliveryQueue, shutdownMirror, and outputRetentionHandle.shutdown
@@ -606,7 +585,7 @@ type PostChannelsBootContext = BootContext & Required<Pick<BootContext,
   | "executors" | "workspaceDirs" | "costTrackers" | "budgetGuards" | "stepCounters"
   | "piSessionAdapters" | "skillWatcherHandles" | "skillRegistries" | "toolCapabilityPorts"
   | "singleAgentDeps" | "providerHealth" | "oauthCredentialStore"
-  | "activeRunRegistry" | "mcpClientManager"
+  | "activeRunRegistry" | "sessionResolver" | "mcpClientManager"
   | "subAgentRunner" | "crossSessionSender" | "channelManager" | "deliveryService"
   | "adaptersByType" | "channelPlugins" | "inboundMessageIdResolver"
   | "graphCoordinator" | "namedGraphStore" | "nodeTypeRegistry"
@@ -801,6 +780,10 @@ function buildRpcDispatchDeps(deps: {
       ? {
           orchestrateReplay: {
             outputGuard: c.capEndpointHandle.outputGuard,
+            recordingRootPath: safePath(
+              c.container.config.dataDir ?? safePath(os.homedir(), ".comis"),
+              "replay-recordings",
+            ),
             respawn: createOrchestrateReplayRespawn({
               sandbox: c.sandboxProvider,
               durableRuns: c.durableRunStore,
@@ -853,7 +836,7 @@ function buildRpcDispatchDeps(deps: {
     mcpClientManager: c.mcpClientManager,
     // ObservabilityApiDeps.clock = the SAME boot ClockPort (one createSystemClock()
     // at the composition root) so the obs.fleet.health assembler has a clock (asserts deps.clock!).
-    obsStore: c.obsStore, clock: c.clock, startupTimestamp: startupStartMs, sharedCostTracker: c.sharedCostTracker,
+    obsStore: c.obsStore, obsPersistence: c.obsPersistence, clock: c.clock, startupTimestamp: startupStartMs, sharedCostTracker: c.sharedCostTracker,
     // obs.getCacheStats reads deps.tokenTracker for the in-memory hit-rate/effectiveness;
     // without this it falls to the `!deps.tokenTracker` branch and returns a silent 0/0
     // forever, even at a high live hit rate.
@@ -1128,7 +1111,8 @@ async function bootFoundation(
   // mergedEnv, which depends on whether the encrypted store opened.
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution + VITEST guard
   const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"]; if (process.env["VITEST"] === "true" && !rawConfigPaths) throw new Error("VITEST=true and COMIS_CONFIG_PATHS unset — refusing to read ~/.comis/config.yaml from a test process. Set COMIS_CONFIG_PATHS to a sandbox path in your test setup, or import test/support/vitest-process-listeners.ts.");
-  const requestedConfigPaths = rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS;
+  const parsedConfigPaths = parseConfigPaths(rawConfigPaths);
+  const requestedConfigPaths = parsedConfigPaths.length > 0 ? parsedConfigPaths : DEFAULT_CONFIG_PATHS;
 
   // Boot gate: ensure file/env first boot creates no key material.
   //
@@ -1390,7 +1374,7 @@ async function bootFoundation(
   const obsConfig = container.config.observability;
   const obsBundle = obsConfig.persistence.enabled
     ? (() => {
-        const store = createObservabilityStore(db);
+        const store = createObservabilityStore(db, { logger: daemonLogger });
         const pruneResult = store.prune(obsConfig.persistence.retentionDays);
         daemonLogger.info({
           retentionDays: obsConfig.persistence.retentionDays,
@@ -1900,6 +1884,10 @@ async function bootAgents(
   // can be threaded into channel config command handling.
   const { rpcCall, wireDispatch } = setupRpcBridge({ gatewayLogger });
 
+  // Resolve the shared stable secret before gate construction. Callback tags,
+  // operation fingerprints, and cache identities use separate HMAC domains.
+  const interactiveCallbackSigningSecret = resolveInteractiveCallbackSigningSecret(secretStore, daemonLogger);
+
   // 6.6.8.6. Approval gate (moved before channels for chat command interception)
   const approvalGate = createApprovalGate({
     eventBus: container.eventBus,
@@ -1908,6 +1896,7 @@ async function bootAgents(
     getBatchApprovalTtlMs: () => container.config.approvals?.batchApprovalTtlMs ?? 30_000,
     clock,                // wall-clock reads
     timers,               // setTimeout scheduling
+    fingerprintSecret: interactiveCallbackSigningSecret,
     logger: daemonLogger, // Approval cache hit/miss debug logging
   });
 
@@ -1919,18 +1908,18 @@ async function bootAgents(
     daemonLogger,
   });
 
-  // 6.6.8.6.3. Interactive-callback wiring: resolve
-  // the signing secret (store or in-memory fallback), bind the renderer signer,
+  // 6.6.8.6.3. Interactive-callback wiring: reuse the resolved signing secret,
+  // bind the renderer signer,
   // construct the InteractiveCallbackRouter over the SAME gate + secret, and build
   // the Email single-use link minter + the gateway approval-token map/resolver.
-  // Built here (gate + secretStore + clock all available) and consumed by both
+  // Built here (gate + resolved secret + clock all available) and consumed by both
   // bootChannels (signer + minter) and bootGateway (token map + resolveApproval).
   const interactiveCallbackWiring = createInteractiveCallbackWiring({
-    secretStore,
+    signingSecret: interactiveCallbackSigningSecret,
     approvalGate,
     clock,
     config: container.config,
-    logger: daemonLogger,
+    logger: daemonLogger, graphReportStore: createGraphReportTargetStore({ dataDir: container.config.dataDir || dataDir }),
   });
 
   // 6.6.7.8. Delivery queue: create adapter BEFORE setupChannels.
@@ -2078,7 +2067,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const msTeamsConversationStore = createSqliteMsTeamsConversationStore(db); // shared memory.db → createMsTeamsPlugin (capture + proactive recovery)
 
   // 7.9. Capability-lease layer + ACTIVATION — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. cronJobCount binds the bounded-autonomy rate count to the per-agent CronScheduler. durableRuns threads into the jail-leg chokepoint for the _outwardStepIndex allocation.
-  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container, mcpClientManager, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}) }); // POPULATES the late-bound budget holder (read by the bridge at turn time) + shares the SAME LeaseManager as the cron-fire mint; the container is passed so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
+  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container, mcpClientManager, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}), ...(outwardLedgerEarly ? { outwardLedger: outwardLedgerEarly } : {}) }); // POPULATES the late-bound budget holder (read by the bridge at turn time) + shares the SAME LeaseManager as the cron-fire mint; the container is passed so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
   Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
 
   if (capEndpointHandle && sandboxProvider) { // pre-payload wake-gate runner: built after the cap layer (deps from capEndpointHandle), read at fire time
@@ -2087,15 +2076,18 @@ async function bootChannels(boot: BootContext): Promise<void> {
 
   // 7.9.1. The durable-resume engine built AFTER the cap layer (BoundedAutonomy reachable); its closures resolve at resumeAndStart() (AFTER channels — boot-order). See buildDurableResume.
   // Late-bound holder for coordinator.resumeGraph — the coordinator is built later (after channels) but resumeRun only fires at resumeAndStart() (also after channels), so it is set by then. A DAG record routes here.
-  const graphResumeHolder: { ref?: (record: import("@comis/core").DurableRunRecord) => Promise<import("@comis/shared").Result<void, Error>> } = {};
+  const graphResumeHolder: { ref?: (
+    record: import("@comis/core").DurableRunRecord,
+    lease: import("./autonomy/durable-resume-engine.js").IssuedLease,
+  ) => Promise<import("@comis/shared").Result<void, Error>> } = {};
   const { durableResume, startAndResumeDurable, durableRunFacts } = buildDurableResume({
     db, durabilityCfg, durableRunStore: durableRunStoreEarly, outwardLedger: outwardLedgerEarly,
     boundedAutonomy: capEndpointHandle?.boundedAutonomy, sharedLeaseManager: handle.sharedLeaseManager!,
-    channelAdaptersRef: handle.channelAdaptersRef, eventBus: container.eventBus, logger: daemonLogger, clock: handle.clock, timers: handle.timers,
+    eventBus: container.eventBus, logger: daemonLogger, clock: handle.clock, timers: handle.timers,
     // Route a DAG record (spawn_tree objects w/ status) to coordinator.resumeGraph via the late-bound holder.
-    resumeGraph: (record) => graphResumeHolder.ref ? graphResumeHolder.ref(record) : Promise.resolve(err(new Error("resumeGraph holder unpopulated (coordinator not built)"))),
+    resumeGraph: (record, lease) => graphResumeHolder.ref ? graphResumeHolder.ref(record, lease) : Promise.resolve(err(new Error("resumeGraph holder unpopulated (coordinator not built)"))),
     // The orchestrate-kind resume + orphan-reclaim seams (workspace resolver + real existsSync + result-ref-store.cleanupRun + a safePath-guarded rmSync). Populated ONLY when durability is enabled (a default install builds no unused store) so a resumable orchestrate row's pinned script + checkpoint are VERIFIED on boot and a dead run's artifacts are RECLAIMED on orphan; absent ⇒ a scriptRef row degrades to the plain flat re-anchor (deny-by-absence — the runner only writes scriptRef rows under orchestrateResume).
-    ...(durabilityCfg.enabled ? { orchestrateResume: buildOrchestrateResumeWiring({ defaultWorkspaceDir, logger: daemonLogger }) } : {}),
+    ...(durabilityCfg.enabled ? { orchestrateResume: buildOrchestrateResumeWiring({ workspaceDirs, logger: daemonLogger }) } : {}),
   });
   Object.assign(boot, { durableRunStore: durableResume.durableRunStore, outwardLedger: durableResume.outwardLedger, durableResumeShutdown: durableResume.shutdown });
 
@@ -2208,7 +2200,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
     // registry is populated (the local videoPoller from buildVideoGenBundle above;
     // undefined when video is disabled → the optional call no-ops).
     ...(videoPoller ? { startAndResumeVideoPoller: () => videoPoller.startAndResume() } : {}),
-    // Run the durable resume engine after channels (boot-order — reconcile/replay need LIVE adapters); inert no-op when durability is off.
+    // Run durable recovery after channels so uncertainty escalations have live
+    // notification routes; inert no-op when durability is off.
     startAndResumeDurable,
     startMirrorPrune: handle.startMirrorPrune,
     shutdownMirror: handle.shutdownMirror,
@@ -2286,7 +2279,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // shutdown — modeled on the durable-resume two-phase boot hook.
   const worktreeRegistry = createWorktreeRegistry();
   const worktreeGitExec = toLifecycleGitExec(handle.execGit);
-  const { crossSessionSender, subAgentRunner, sendToChannel, announceToParent, deadLetterQueue, announcementBatcher, proxyTypingCleanup } = setupCrossSession({
+  const { crossSessionSender, subAgentRunner, sendToChannel, sendGovernedAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, proxyTypingCleanup } = setupCrossSession({
     sessionStore, container, assembleToolsForAgent, getExecutor: handle.getExecutor, adaptersByType,
     logger: agentLogger, memoryAdapter, gatewaySend: gatewaySendRef,
     activeRunRegistry, sessionResolver, deliveryQueue, deliveryService,
@@ -2301,7 +2294,8 @@ async function bootChannels(boot: BootContext): Promise<void> {
     ...(durableRunFacts ? { durableRunFacts } : {}),
     // Trajectory-recorder release on sub-agent terminal settle — without it a dead child's recorder stays bus-subscribed and ingests other sessions' events.
     closeTrajectory: (formattedSessionKey: string) => handle.trajectoryRegistry.close(formattedSessionKey),
-    // The SAME outward ledger + rootRunId resolver → announce() + the DLQ drain route through the exactly-once ledger (off ⇒ pass-through).
+    // The same outward ledger + rootRunId resolver gives announce() and DLQ
+    // drain one retained operation identity (off ⇒ pass-through).
     ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
     ...(handle.resolveRootRunId ? { resolveRootRunId: handle.resolveRootRunId } : {}),
   });
@@ -2355,13 +2349,23 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const nodeTypeRegistry = createNodeTypeRegistry();
   const graphCoordinator = createGraphCoordinator(buildGraphCoordinatorDeps({
     agents: handle,
-    channels: { subAgentRunner, sendToChannel, announceToParent, announcementBatcher, commandQueue, assembleToolsForAgent, nodeTypeRegistry },
+    channels: { subAgentRunner, sendToChannel, sendGovernedAnnouncement, announceToParent, announcementBatcher, commandQueue, assembleToolsForAgent, nodeTypeRegistry },
     // Thread the live durable store so the coordinator checkpoints node state (DAG durability).
     ...(durableResume.durableRunStore ? { durableRunStore: durableResume.durableRunStore } : {}),
+    ...(capEndpointHandle
+      ? {
+          durableBudgetState: (rootRunId: string) =>
+            capEndpointHandle.boundedAutonomy.exportBudgetState(rootRunId),
+          retainDurableRoot: (rootRunId: string) =>
+            capEndpointHandle.boundedAutonomy.retainDurableRoot(rootRunId),
+          releaseDurableRoot: (rootRunId: string) =>
+            capEndpointHandle.boundedAutonomy.releaseDurableRoot(rootRunId),
+        }
+      : {}),
   }));
   subAgentRunner.setGraphCoordinator(graphCoordinator);
   // Populate the late-bound holder so resumeRun (fires at resumeAndStart, after channels) routes a DAG record to coordinator.resumeGraph (incomplete-node re-entry).
-  graphResumeHolder.ref = (record) => graphCoordinator.resumeGraph(record);
+  graphResumeHolder.ref = (record, lease) => graphCoordinator.resumeGraph(record, lease);
   const namedGraphStore = createNamedGraphStore(db);
   // Seed the four canonical small-model DAG templates into the named-graph store. Idempotent (INSERT-OR-IGNORE in the seeder), so operator-customized templates survive restarts and re-running on every boot is safe.
   seedDefaultDagTemplates(namedGraphStore);
@@ -2448,7 +2452,7 @@ async function bootGateway(
     defaultAgentId, defaultWorkspaceDir,
     agentsConfig: agents,
     costTrackers, workspaceDirs, piSessionAdapters,
-    getExecutor, rpcCall, wireDispatch,
+    getExecutor, sessionResolver, rpcCall, wireDispatch,
     assembleToolsForAgent, preprocessMessageText,
     suspendedAgents, gatewaySendRef,
     interactiveCallbackWiring,
@@ -2523,6 +2527,7 @@ async function bootGateway(
     container, gwConfig, webhooksConfig: container.config.webhooks, agents, defaultAgentId,
     configPaths, defaultConfigPaths: DEFAULT_CONFIG_PATHS, gatewayLogger,
     embeddingQueue, memoryAdapter, memoryApi, cachedPort, sessionStore, getExecutor,
+    sessionResolver,
     // Deterministic honest-fail backstop: reap a webhook turn's LIVE never-tasked drives so it records an honest failure, not a silent success.
     reapNeverTaskedDrives: (agentId, owner) => { const r = channels.terminalRegistries?.get(agentId); return r ? reapNeverTaskedDrivesInRegistry(r, owner) : Promise.resolve({ reaped: [] }); },
     assembleToolsForAgent, preprocessMessageText, rpcCall,
@@ -2963,7 +2968,8 @@ if (isDirectRun) {
   if (process.argv.includes("--restore-last-good")) {
     // eslint-disable-next-line no-restricted-syntax -- process.env access needed for config path resolution
     const rawPaths = process.env["COMIS_CONFIG_PATHS"];
-    const paths = (rawPaths ? rawPaths.split(":") : DEFAULT_CONFIG_PATHS).filter((p) => existsSync(p));
+    const parsedPaths = parseConfigPaths(rawPaths);
+    const paths = (parsedPaths.length > 0 ? parsedPaths : DEFAULT_CONFIG_PATHS).filter((p) => existsSync(p));
     handleRestoreFlag(paths, (code) => process.exit(code));
   } else {
     main().catch((error: unknown) => {
@@ -2974,7 +2980,8 @@ if (isDirectRun) {
       // Suggest rollback from last-known-good config
       // eslint-disable-next-line no-restricted-syntax -- process.env access needed for config path resolution
       const rawPaths = process.env["COMIS_CONFIG_PATHS"];
-      const paths = (rawPaths ? rawPaths.split(":") : DEFAULT_CONFIG_PATHS).filter((p) => existsSync(p));
+      const parsedPaths = parseConfigPaths(rawPaths);
+      const paths = (parsedPaths.length > 0 ? parsedPaths : DEFAULT_CONFIG_PATHS).filter((p) => existsSync(p));
       if (paths.length > 0) {
         const suggestion = buildRollbackSuggestion(paths[paths.length - 1]!);
         if (suggestion) {

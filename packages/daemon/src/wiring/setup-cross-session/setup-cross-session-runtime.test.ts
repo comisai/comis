@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import os from "node:os";
+import { mkdirSync } from "node:fs";
 import { MIN_SUB_AGENT_STEPS, resolveGraphCacheRetention } from "./index.js";
-import { DeliveryQueueTransitionError, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+import {
+  createDeliveryOrigin,
+  DeliveryQueueTransitionError,
+  getContext,
+  runWithContext,
+  SUB_AGENT_TOOL_DENYLIST,
+  type RequestContext,
+} from "@comis/core";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------
@@ -17,7 +25,7 @@ const mockCreateSubAgentRunner = vi.hoisted(() => vi.fn(() => ({
   spawn: vi.fn(),
   shutdown: vi.fn(async () => {}),
 })));
-const mockRandomUUID = vi.hoisted(() => vi.fn(() => "test-uuid-1234"));
+const mockRandomUUID = vi.hoisted(() => vi.fn(() => "30000000-0000-4000-8000-000000000003"));
 const mockDeliverToChannel = vi.hoisted(() => vi.fn(async () => ({
   ok: true as const,
   value: {
@@ -52,7 +60,7 @@ const mockCreateStepCounter = vi.hoisted(() => vi.fn(() => ({ ...mockStepCounter
 // The ResultRef store (from @comis/skills/tools). The
 // wiring constructs it and injects a materializeFullOutput callback into the
 // runner; the spy lets the test invoke that callback and assert it targets the
-// CHILD's resolved jailed workspace (T-218-08) and returns the union unchanged.
+// child's resolved jailed workspace and returns the union unchanged.
 const mockResultRefMaterialize = vi.hoisted(() =>
   vi.fn(async () => ({
     ref: "results/child.json",
@@ -91,7 +99,8 @@ vi.mock("@comis/orchestrator", async () => {
 // imported from "@comis/agent" — the mock entry is added to the @comis/agent
 // vi.mock block below.
 
-vi.mock("node:crypto", () => ({
+vi.mock("node:crypto", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:crypto")>()),
   randomUUID: mockRandomUUID,
 }));
 
@@ -198,7 +207,6 @@ vi.mock("@comis/agent", async (importOriginal) => {
     // Shared bounded delivered-key store, constructed eagerly in the
     // wiring and handed to both the batcher and the runner. A minimal real-shaped
     // stub (has/mark/size) so the wiring can pass it through opaquely.
-    classifyErrorContext: vi.fn(() => ({ errorType: "Unknown", retryable: false })),
     createDeliveryDedup: vi.fn(() => {
       const keys = new Set<string>();
       return {
@@ -369,6 +377,180 @@ describe("setupCrossSession", () => {
     });
   });
 
+  it("runs cross-session execution in a fresh guest target context without source identity leakage", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const observedContexts: RequestContext[] = [];
+    const identityMutationAttempts: boolean[] = [];
+    const execute = vi.fn(async () => {
+      observedContexts.push(getContext());
+      return {
+        response: "Target response",
+        tokensUsed: { total: 12 },
+        cost: { total: 0.002 },
+        finishReason: "stop" as const,
+      };
+    });
+    const assembleToolsForAgent = vi.fn(async () => {
+      const context = getContext();
+      observedContexts.push(context);
+      identityMutationAttempts.push(
+        Reflect.set(context, "trustLevel", "admin"),
+        Reflect.set(context, "agentId", "source-agent"),
+        Reflect.set(context, "sessionKey", "source-tenant:source-user:source-channel"),
+      );
+      return [{ name: "tool-1" }];
+    });
+    const deps = createMinimalDeps({
+      assembleToolsForAgent,
+      getExecutor: vi.fn(() => ({ execute })),
+      clock: { now: () => 5_000, nowDate: () => new Date(5_000) },
+    });
+    setupCrossSession(deps);
+
+    const executeInSession = mockCreateCrossSessionSender.mock.calls[0][0].executeInSession;
+    const sourceContext: RequestContext = {
+      tenantId: "source-tenant",
+      userId: "source-user",
+      sessionKey: "source-tenant:source-user:source-channel",
+      agentId: "source-agent",
+      clientId: "source-client",
+      traceId: "10000000-0000-4000-8000-000000000001",
+      startedAt: 1_000,
+      trustLevel: "admin",
+      channelType: "telegram",
+      deliveryOrigin: createDeliveryOrigin({
+        channelType: "telegram",
+        channelId: "source-channel",
+        userId: "source-user",
+        tenantId: "source-tenant",
+        threadId: "source-thread",
+      }),
+      resolvedModel: "provider:source-model",
+      resolvedLanguage: "he",
+    };
+    const targetSessionKey = {
+      tenantId: "target-tenant",
+      userId: "target-user",
+      channelId: "target-channel",
+      threadId: "target-thread",
+    };
+
+    await runWithContext(sourceContext, () => (
+      executeInSession("target-agent", targetSessionKey, "Run target task")
+    ));
+
+    expect(observedContexts).toHaveLength(2);
+    expect(identityMutationAttempts).toEqual([false, false, false]);
+    expect(observedContexts[0]).toBe(observedContexts[1]);
+    expect(observedContexts[0]).not.toBe(sourceContext);
+    expect(observedContexts[0]).toEqual({
+      tenantId: "target-tenant",
+      userId: "target-user",
+      sessionKey: "target-tenant:target-user:target-channel:thread:target-thread",
+      agentId: "target-agent",
+      traceId: "30000000-0000-4000-8000-000000000003",
+      startedAt: 5_000,
+      trustLevel: "guest",
+    });
+    expect(sourceContext.trustLevel).toBe("admin");
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: "target-channel",
+        channelType: "cross-session",
+        senderId: "cross-session-relay",
+      }),
+      targetSessionKey,
+      [{ name: "tool-1" }],
+      undefined,
+      "target-agent",
+    );
+  });
+
+  it("preserves an ambient route only when it exactly identifies the target session", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    let observedContext: RequestContext | undefined;
+    const targetOrigin = createDeliveryOrigin({
+      channelType: "telegram",
+      channelId: "target-channel",
+      userId: "target-user",
+      tenantId: "target-tenant",
+      threadId: "target-thread",
+    });
+    const deps = createMinimalDeps({
+      assembleToolsForAgent: vi.fn(async () => []),
+      getExecutor: vi.fn(() => ({
+        execute: vi.fn(async () => {
+          observedContext = getContext();
+          return {
+            response: "Target response",
+            tokensUsed: { total: 12 },
+            cost: { total: 0.002 },
+            finishReason: "stop" as const,
+          };
+        }),
+      })),
+      clock: { now: () => 6_000, nowDate: () => new Date(6_000) },
+    });
+    setupCrossSession(deps);
+
+    const executeInSession = mockCreateCrossSessionSender.mock.calls[0][0].executeInSession;
+    const targetSessionKey = {
+      tenantId: "target-tenant",
+      userId: "target-user",
+      channelId: "target-channel",
+      threadId: "target-thread",
+    };
+    const ambient: RequestContext = {
+      tenantId: "target-tenant",
+      userId: "target-user",
+      sessionKey: "target-tenant:target-user:target-channel:thread:target-thread",
+      agentId: "source-agent",
+      traceId: "20000000-0000-4000-8000-000000000002",
+      startedAt: 2_000,
+      trustLevel: "admin",
+      channelType: "telegram",
+      deliveryOrigin: targetOrigin,
+    };
+
+    await runWithContext(ambient, () => (
+      executeInSession("target-agent", targetSessionKey, "Run target task")
+    ));
+
+    expect(observedContext?.trustLevel).toBe("guest");
+    expect(observedContext?.agentId).toBe("target-agent");
+    expect(observedContext?.deliveryOrigin).toEqual(targetOrigin);
+    expect(observedContext?.deliveryOrigin).not.toBe(targetOrigin);
+    expect(Object.isFrozen(observedContext?.deliveryOrigin)).toBe(true);
+    expect(observedContext?.channelType).toBe("telegram");
+  });
+
+  it("rejects a terminal cross-session executor failure instead of returning a successful response", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const deps = createMinimalDeps({
+      getExecutor: vi.fn(() => ({
+        execute: vi.fn(async () => ({
+          response: "The request could not be executed safely.",
+          tokensUsed: { total: 0 },
+          cost: { total: 0 },
+          finishReason: "error" as const,
+          errorContext: {
+            errorType: "RequestContextIdentityMismatch",
+            retryable: false,
+          },
+        })),
+      })),
+    });
+    setupCrossSession(deps);
+
+    const executeInSession = mockCreateCrossSessionSender.mock.calls[0][0].executeInSession;
+
+    await expect(executeInSession(
+      "target-agent",
+      { tenantId: "target-tenant", userId: "target-user", channelId: "target-channel" },
+      "Run target task",
+    )).rejects.toThrow("Cross-session target execution ended with error");
+  });
+
   // -------------------------------------------------------------------------
   // 3. sendToChannel looks up adapter and sends message
   // -------------------------------------------------------------------------
@@ -514,11 +696,12 @@ describe("setupCrossSession", () => {
     const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
     await executeAgent("agent-2", sessionKey, "Execute this task");
 
-    expect(deps.assembleToolsForAgent).toHaveBeenCalledWith("agent-2", {
+    expect(deps.assembleToolsForAgent).toHaveBeenCalledWith("agent-2", expect.objectContaining({
       includePlatformTools: true,
       toolGroups: ["coding"],
       includeMcpTools: true,
-    });
+      sessionKey,
+    }));
   });
 
   // -------------------------------------------------------------------------
@@ -579,11 +762,25 @@ describe("setupCrossSession", () => {
     );
   });
 
+  it("wires persisted session ownership lookup into the sub-agent runner", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const deps = createMinimalDeps();
+    const persisted = { messages: [], metadata: { agentId: "agent-2" } };
+    deps.sessionStore.loadByFormattedKey.mockReturnValue(persisted);
+    setupCrossSession(deps);
+
+    const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
+    expect(runnerArgs.sessionStore.loadByFormattedKey("test-tenant:user_a:chat_a"))
+      .toBe(persisted);
+    expect(deps.sessionStore.loadByFormattedKey)
+      .toHaveBeenCalledWith("test-tenant:user_a:chat_a");
+  });
+
   // -------------------------------------------------------------------------
   // 7. announceToParent delivers to channel when response is non-empty
   // -------------------------------------------------------------------------
 
-  it("announceToParent delivers to channel when response is non-empty and not NO_REPLY", async () => {
+  it("announceToParent returns non-NO_REPLY text without delivering it", async () => {
     const setupCrossSession = await getSetupCrossSession();
     const deps = createMinimalDeps();
     setupCrossSession(deps);
@@ -593,15 +790,9 @@ describe("setupCrossSession", () => {
     const announceToParent = runnerArgs.announceToParent;
 
     const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
-    await announceToParent("agent-1", sessionKey, "Sub-agent done", "telegram", "chat-123");
-
-    // Should have called deliveryService.deliverToChannel (via sendToChannel
-    // delegation) with the response. No optional 5th-arg deps record —
-    // captured in closure at composition.
-    const adapter = deps.adaptersByType.get("telegram");
-    expect(mockDeliverToChannel).toHaveBeenCalledWith(
-      adapter, "chat-123", "Agent response", undefined,
-    );
+    const candidate = await announceToParent("agent-1", sessionKey, "Sub-agent done", "telegram", "chat-123");
+    expect(candidate).toBe("Agent response");
+    expect(mockDeliverToChannel).not.toHaveBeenCalled();
 
     // Verify proxy typing events emitted around announcement
     const emitCalls = deps.container.eventBus.emit.mock.calls;
@@ -629,6 +820,92 @@ describe("setupCrossSession", () => {
     const startIdx = emitCalls.indexOf(proxyStartCall);
     const stopIdx = emitCalls.indexOf(proxyStopCall);
     expect(startIdx).toBeLessThan(stopIdx);
+  });
+
+  it("announceToParent returns a candidate without performing the platform send", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const deps = createMinimalDeps();
+    setupCrossSession(deps);
+    const announceToParent = mockCreateSubAgentRunner.mock.calls[0][0].announceToParent;
+
+    const candidate = await announceToParent(
+      "agent-1",
+      { channelId: "chan-1", userId: "user-1", tenantId: "t-1" },
+      "Sub-agent done",
+      "telegram",
+      "chat-123",
+    );
+
+    expect(candidate).toBe("Agent response");
+    expect(mockDeliverToChannel).not.toHaveBeenCalled();
+  });
+
+  it("announceToParent executes the candidate boundary without any tools", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const deps = createMinimalDeps();
+    const execute = vi.fn(async () => ({
+      response: "Safe candidate",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+    }));
+    deps.getExecutor = vi.fn(() => ({ execute }));
+    setupCrossSession(deps);
+    const announceToParent = mockCreateSubAgentRunner.mock.calls[0][0].announceToParent;
+
+    await announceToParent(
+      "agent-1",
+      { channelId: "chan-1", userId: "user-1", tenantId: "t-1" },
+      "Rewrite this completion",
+      "telegram",
+      "chat-123",
+    );
+
+    expect(deps.assembleToolsForAgent).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.any(Object),
+      [],
+      undefined,
+      "agent-1",
+    );
+  });
+
+  it("announceToParent does not send through an unrelated ambient route", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const deps = createMinimalDeps();
+    setupCrossSession(deps);
+    const announceToParent = mockCreateSubAgentRunner.mock.calls[0][0].announceToParent;
+    const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
+    const unrelatedContext: RequestContext = {
+      traceId: "550e8400-e29b-41d4-a716-446655440090",
+      startedAt: 1,
+      tenantId: "other-tenant",
+      userId: "other-user",
+      sessionKey: "other-tenant:other-user:other-channel",
+      agentId: "other-agent",
+      channelType: "telegram",
+      trustLevel: "admin",
+      deliveryOrigin: createDeliveryOrigin({
+        tenantId: "other-tenant",
+        userId: "other-user",
+        channelType: "telegram",
+        channelId: "other-channel",
+        threadId: "wrong-topic",
+      }),
+    };
+
+    const candidate = await runWithContext(unrelatedContext, () => announceToParent(
+      "agent-1",
+      sessionKey,
+      "Sub-agent done",
+      "telegram",
+      "chat-123",
+      { threadId: "target-topic" },
+    ));
+
+    expect(candidate).toBe("Agent response");
+    expect(mockDeliverToChannel).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
@@ -841,11 +1118,12 @@ describe("setupCrossSession", () => {
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
 
-      expect(deps.assembleToolsForAgent).toHaveBeenCalledWith("agent-2", {
+      expect(deps.assembleToolsForAgent).toHaveBeenCalledWith("agent-2", expect.objectContaining({
         includePlatformTools: true,
         toolGroups: ["coding"],
         includeMcpTools: true,
-      });
+        sessionKey,
+      }));
     });
 
     it("threads stepsExecuted in executeSubAgent result", async () => {
@@ -1388,11 +1666,12 @@ describe("setupCrossSession", () => {
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
 
-      expect(deps.assembleToolsForAgent).toHaveBeenCalledWith("agent-2", {
+      expect(deps.assembleToolsForAgent).toHaveBeenCalledWith("agent-2", expect.objectContaining({
         includePlatformTools: true,
         toolGroups: ["coding"],
         includeMcpTools: false,
-      });
+        sessionKey,
+      }));
     });
 
     it("SUB_AGENT_TOOL_DENYLIST contains expected tools", () => {
@@ -3168,7 +3447,7 @@ describe("setupCrossSession", () => {
       });
 
       // The target workspace is resolved from the CHILD's agent id — agent-1's
-      // own jailed workspace, NOT the lead/default's (T-218-08).
+      // own jailed workspace, not the lead/default's.
       expect(mockResolveWorkspaceDir).toHaveBeenCalledWith(
         expect.objectContaining({ name: "Agent 1" }),
         "agent-1",
@@ -3217,7 +3496,7 @@ describe("setupCrossSession", () => {
 // ---------------------------------------------------------------------------
 // The durable-store deps are INJECTED into the
 // cross-session/announcement path — NOT dead code. setupCrossSession must
-// thread the SAME `outwardLedger` / `durableRuns` / `resolveRootRunId` it
+// thread the same `outwardLedger` / `resolveRootRunId` it
 // receives into BOTH createCrossSessionSender AND the
 // announcement dead-letter queue. Without this wiring the
 // announce ledgering is a runtime pass-through (the deps are undefined), so
@@ -3235,9 +3514,10 @@ describe("setupCrossSession durable-store injection", () => {
     return mod.setupCrossSession;
   }
 
-  it("threads outwardLedger + durableRuns + resolveRootRunId into createCrossSessionSender (non-undefined ⇒ not dead code)", async () => {
+  it("threads the receipt-aware announcement sender into createCrossSessionSender", async () => {
     const setupCrossSession = await getSetupCrossSession();
     const outwardLedger = {
+      allocateStep: vi.fn(async () => ({ ok: true as const, value: 0 })),
       lookup: vi.fn(async () => undefined),
       begin: vi.fn(async () => ({ ok: true as const, value: undefined })),
       markUnknown: vi.fn(async () => {}),
@@ -3245,20 +3525,203 @@ describe("setupCrossSession durable-store injection", () => {
       markFailed: vi.fn(async () => {}),
       listUnreconciled: vi.fn(async () => []),
     };
-    const durableRuns = { allocateOutwardStep: vi.fn(async () => 0) };
     const resolveRootRunId = vi.fn(() => "root-xyz");
 
-    setupCrossSession(createMinimalDeps({ outwardLedger, durableRuns, resolveRootRunId }));
+    setupCrossSession(createMinimalDeps({ outwardLedger, resolveRootRunId }));
 
-    // The SAME instances must reach the sender (the announce-ledger seam).
     const senderArgs = mockCreateCrossSessionSender.mock.calls[0][0];
-    expect(senderArgs.outwardLedger).toBe(outwardLedger);
-    expect(senderArgs.durableRuns).toBe(durableRuns);
-    expect(senderArgs.resolveRootRunId).toBe(resolveRootRunId);
+    expect(senderArgs.sendGovernedAnnouncement).toEqual(expect.any(Function));
+    expect(senderArgs.outwardLedger).toBeUndefined();
+    expect(senderArgs.resolveRootRunId).toBeUndefined();
+  });
+
+  it("records a completion operation before the first direct fallback and commits its platform receipt", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const order: string[] = [];
+    const outwardLedger = {
+      allocateStep: vi.fn(async () => {
+        order.push("allocate");
+        return { ok: true as const, value: 4 };
+      }),
+      lookup: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      begin: vi.fn(async () => {
+        order.push("begin");
+        return { ok: true as const, value: undefined };
+      }),
+      markUnknown: vi.fn(async () => {
+        order.push("mark-unknown");
+        return { ok: true as const, value: undefined };
+      }),
+      commit: vi.fn(async () => {
+        order.push("commit");
+        return { ok: true as const, value: undefined };
+      }),
+      markFailed: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      parkUncertain: vi.fn(async () => ({ ok: true as const, value: true })),
+      hasUncertainty: vi.fn(async () => ({ ok: true as const, value: false })),
+      listUnreconciled: vi.fn(async () => ({ ok: true as const, value: [] })),
+    };
+    const deliverToChannel = vi.fn(async () => {
+      order.push("platform");
+      return {
+        ok: true as const,
+        value: {
+          ok: true,
+          totalChunks: 1,
+          deliveredChunks: 1,
+          failedChunks: 0,
+          chunks: [{
+            ok: true,
+            messageId: "telegram-receipt-4",
+            charCount: 20,
+            retried: false,
+          }],
+          totalChars: 20,
+        },
+      };
+    });
+    const deps = createMinimalDeps({
+      outwardLedger,
+      resolveRootRunId: vi.fn(() => "root-completion"),
+      deliveryService: { deliverToChannel },
+      getExecutor: vi.fn(() => ({
+        execute: vi.fn().mockResolvedValue({
+          response: "completion announcement",
+          tokensUsed: { total: 1 },
+          cost: { total: 0 },
+          finishReason: "stop",
+        }),
+      })),
+    });
+    const result = setupCrossSession(deps);
+
+    result.announcementBatcher.enqueue({
+      announcementText: "[System Message]\nResult: completed",
+      announceChannelType: "telegram",
+      announceChannelId: "chat-1",
+      callerAgentId: "agent-1",
+      callerSessionKey: "default:user1:chan1",
+      runId: "completion-run-1",
+      idempotencyKey: "default:user1:chan1::completion-run-1",
+    });
+    await result.announcementBatcher.flush();
+
+    expect(order).toEqual(["allocate", "begin", "mark-unknown", "platform", "commit"]);
+    expect(outwardLedger.commit).toHaveBeenCalledWith(
+      "root-completion",
+      4,
+      "telegram-receipt-4",
+    );
+    expect(deliverToChannel).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["resolved false without a no-send proof", "resolved-false"],
+    ["transport response loss", "response-loss"],
+  ] as const)("retains %s for operator review and never replays it from the DLQ", async (_label, mode) => {
+    const setupCrossSession = await getSetupCrossSession();
+    let row: Record<string, unknown> | undefined;
+    const outwardLedger = {
+      allocateStep: vi.fn(async () => ({ ok: true as const, value: 6 })),
+      lookup: vi.fn(async () => ({ ok: true as const, value: row })),
+      begin: vi.fn(async (input: Record<string, unknown>) => {
+        row = {
+          id: "root-retained:6",
+          ...input,
+          state: "send_attempt_started",
+          attemptCount: 0,
+          attemptedAtMs: 1,
+        };
+        return { ok: true as const, value: undefined };
+      }),
+      markUnknown: vi.fn(async () => {
+        row = row ? { ...row, state: "unknown_after_send", attemptCount: 1 } : row;
+        return { ok: true as const, value: undefined };
+      }),
+      commit: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      markFailed: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      parkUncertain: vi.fn(async () => {
+        row = row ? { ...row, state: "unresolved", reconcileOutcome: "unresolved" } : row;
+        return { ok: true as const, value: true };
+      }),
+      hasUncertainty: vi.fn(async () => ({ ok: true as const, value: true })),
+      listUnreconciled: vi.fn(async () => ({ ok: true as const, value: [] })),
+    };
+    const deliverToChannel = mode === "response-loss"
+      ? vi.fn().mockRejectedValue(new Error("response lost after platform call"))
+      : vi.fn(async () => ({
+          ok: true as const,
+          value: {
+            ok: false,
+            totalChunks: 1,
+            deliveredChunks: 0,
+            failedChunks: 1,
+            chunks: [{
+              ok: false,
+              error: new Error("transport rejected"),
+              charCount: 20,
+              retried: false,
+            }],
+            totalChars: 20,
+          },
+        }));
+    const deps = createMinimalDeps({
+      outwardLedger,
+      resolveRootRunId: vi.fn(() => "root-retained"),
+      deliveryService: { deliverToChannel },
+      getExecutor: vi.fn(() => ({
+        execute: vi.fn().mockResolvedValue({
+          response: "retained completion",
+          tokensUsed: { total: 1 },
+          cost: { total: 0 },
+          finishReason: "stop",
+        }),
+      })),
+    });
+    deps.container.config.dataDir = `${os.tmpdir()}/comis-governed-dlq-${mode}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    mkdirSync(deps.container.config.dataDir, { recursive: true });
+    const result = setupCrossSession(deps);
+
+    result.announcementBatcher.enqueue({
+      announcementText: "[System Message]\nResult: retained",
+      announceChannelType: "telegram",
+      announceChannelId: "chat-retained",
+      callerAgentId: "agent-1",
+      callerSessionKey: "default:user1:chan1",
+      runId: `completion-${mode}`,
+      idempotencyKey: `default:user1:chan1::completion-${mode}`,
+    });
+    await result.announcementBatcher.flush();
+
+    expect(deliverToChannel).toHaveBeenCalledOnce();
+    expect(outwardLedger.parkUncertain).toHaveBeenCalledWith("root-retained", 6);
+    expect(row).toMatchObject({ state: "unresolved" });
+    expect(result.deadLetterQueue?.size()).toBe(1);
+
+    const replaySend = vi.fn(async () => true);
+    vi.useFakeTimers({ now: Date.now() + 61_000 });
+    try {
+      await result.deadLetterQueue?.drain(replaySend as never);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(replaySend).not.toHaveBeenCalled();
+    expect(deliverToChannel).toHaveBeenCalledOnce();
+    expect(result.deadLetterQueue?.size()).toBe(1);
   });
 
   it("the injected ledger reaches the dead-letter queue: a committed row makes drain SKIP the re-send", async () => {
     const setupCrossSession = await getSetupCrossSession();
+    const { createAnnouncementOperationDigests } = await import("@comis/orchestrator");
+    const announcementText = "completion announcement";
+    const digests = createAnnouncementOperationDigests({
+      channelType: "telegram",
+      channelId: "chat-1",
+      text: announcementText,
+    });
+    expect(digests.ok).toBe(true);
+    if (!digests.ok) throw digests.error;
     // A ledger whose lookup reports the announce already committed (delivered) —
     // the DLQ must consult it BEFORE re-delivering and skip the send. If the DLQ
     // never received the ledger (dead-code wiring), it would re-send. lookup
@@ -3267,23 +3730,35 @@ describe("setupCrossSession durable-store injection", () => {
       lookup: vi.fn(async () => ({
         ok: true as const,
         value: {
+          id: "root-dlq:3",
           rootRunId: "root-dlq",
           stepIndex: 3,
+          agentId: "parent-agent",
+          channelType: "telegram",
+          channelId: "chat-1",
           state: "committed" as const,
-          contentDigest: "abc",
+          operationKind: "cross_session_announcement" as const,
+          operationFingerprint: digests.value.operationFingerprint,
+          contentDigest: digests.value.contentDigest,
           platformMessageId: "delivered",
+          attemptCount: 1,
+          attemptedAtMs: 1,
         },
       })),
+      allocateStep: vi.fn(async () => ({ ok: true as const, value: 3 })),
       begin: vi.fn(async () => ({ ok: true as const, value: undefined })),
-      markUnknown: vi.fn(async () => {}),
-      commit: vi.fn(async () => {}),
-      markFailed: vi.fn(async () => {}),
-      listUnreconciled: vi.fn(async () => []),
+      markUnknown: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      commit: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      markFailed: vi.fn(async () => ({ ok: true as const, value: undefined })),
+      parkUncertain: vi.fn(async () => ({ ok: true as const, value: true })),
+      hasUncertainty: vi.fn(async () => ({ ok: true as const, value: false })),
+      listUnreconciled: vi.fn(async () => ({ ok: true as const, value: [] })),
     };
     // Isolate the DLQ JSONL onto a unique temp dataDir so no stray
     // process.cwd()/dead-letters.jsonl leaks pre-existing entries into drain.
     const deps = createMinimalDeps({ outwardLedger });
     deps.container.config.dataDir = `${os.tmpdir()}/comis-dlq-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    mkdirSync(deps.container.config.dataDir, { recursive: true });
     const result = setupCrossSession(deps);
 
     const dlq = result.deadLetterQueue;
@@ -3294,10 +3769,12 @@ describe("setupCrossSession durable-store injection", () => {
     // Prime the lazy disk-load first (the file does not exist ⇒ empty + loaded=true)
     // so the subsequent in-memory enqueue is not clobbered by a re-read on drain.
     await dlq!.drain(sendSpy as any);
-    dlq!.enqueue({
-      announcementText: "completion announcement",
+    const onDelivered = vi.fn();
+    await dlq!.enqueue({
+      announcementText,
       channelType: "telegram",
       channelId: "chat-1",
+      agentId: "parent-agent",
       runId: "run-dlq",
       failedAt: Date.now(),
       attemptCount: 0,
@@ -3311,7 +3788,7 @@ describe("setupCrossSession durable-store injection", () => {
     // the entry is retry-eligible and the committed-skip lookup actually fires.
     vi.useFakeTimers({ now: Date.now() + 61_000 });
     try {
-      await dlq!.drain(sendSpy as any);
+      await dlq!.drain(sendSpy as any, onDelivered);
     } finally {
       vi.useRealTimers();
     }
@@ -3319,6 +3796,8 @@ describe("setupCrossSession durable-store injection", () => {
     // The ledger was consulted and reported committed ⇒ the re-send was skipped.
     expect(outwardLedger.lookup).toHaveBeenCalledWith("root-dlq", 3);
     expect(sendSpy).not.toHaveBeenCalled();
+    expect(onDelivered).toHaveBeenCalledWith("default:u1:c1::run-dlq");
+    expect(dlq!.size()).toBe(0);
   });
 });
 

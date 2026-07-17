@@ -6,22 +6,20 @@
  *   1. `setupDurableResume()` constructs the two SQLite stores (against the SHARED
  *      `memory.db`) + the resume engine immediately, and returns them alongside a
  *      deferred `resumeAndStart()` + a `shutdown()`.
- *   2. `resumeAndStart()` is called AFTER `setupChannels` populates the channel
- *      adapters (the boot-order constraint — the engine's reconcile + replay need
- *      LIVE adapters), exactly like the delivery queue's `drainAndStart()`. It
- *      runs the bounded boot recovery (`engine.resumeAll()`) THEN starts a single
+ *   2. `resumeAndStart()` runs after graph recovery wiring is ready. It runs the
+ *      bounded boot recovery (`engine.resumeAll()`) and then starts a single
  *      daemon-wide watchdog interval that sweeps lapsed heartbeats.
  *   3. `shutdown()` cancels the watchdog interval — no leaked timer.
  *
  * GATING: when `config.enabled` is false (the default, OR no autonomy-bearing
  * agent is configured — the daemon folds both into `enabled`), the function
  * returns inert stubs (no stores constructed, `resumeAndStart`/`shutdown` no-ops,
- * NO watchdog timer) so a default install is byte-identical — mirroring
- * `setup-delivery.ts`'s inert-when-disabled return.
+ * NO watchdog timer), matching `setup-delivery.ts`'s inert-when-disabled return.
  *
  * The engine itself is PURE / I/O-free; this wiring binds it to the
- * real stores + the injected LeaseManager re-mint / run-resume / send-replay /
- * channel-adapter / notify closures. The watchdog uses
+ * real stores plus the injected LeaseManager re-mint, run-resume, and operator
+ * notification closures. Crash-uncertain sends are parked without a platform
+ * lookup or replay. The watchdog uses
  * the INJECTED TimerPort (never the interval-scheduler global — the
  * globals.test.ts arch-gate).
  *
@@ -29,8 +27,8 @@
  */
 
 import { existsSync, rmSync } from "node:fs";
-import type { ChannelPort, ClockPort, TimerPort, TimerHandle, DurableRunPort, OutwardSendLedgerPort, OutwardSendRecord, DurableRunRecord, PerAgentConfig, AgentCapability, DeliveryAdapter, TypedEventBus } from "@comis/core";
-import { resolveAutonomy, DurabilityConfigSchema, safePath } from "@comis/core";
+import type { ClockPort, TimerPort, TimerHandle, DurableRunPort, OutwardSendLedgerPort, DurableRunRecord, PerAgentConfig, AgentCapability, TypedEventBus } from "@comis/core";
+import { resolveAutonomy, DurabilityConfigSchema, safePath, toSafeErrorLogString } from "@comis/core";
 import { createSqliteDurableRunStore, createSqliteOutwardSendLedger } from "@comis/memory";
 import { createResultRefStore } from "@comis/skills/tools";
 import type { ComisLogger, LeaseManager } from "@comis/infra";
@@ -42,6 +40,7 @@ import {
   type IssuedLease,
   type NotifyFn,
   type DurableEventEmitter,
+  type DurableResumeEngine,
 } from "../autonomy/durable-resume-engine.js";
 import { detectStaleRuns } from "../autonomy/durable-watchdog.js";
 import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
@@ -52,7 +51,7 @@ import { isDagSpawnTree } from "../graph/graph-durable-checkpoint.js";
 // AND a pinned `scriptRef` is a RE-RUNNABLE orchestrate row (the runner writes
 // it). On boot the sweep dispatches it to THIS arm (never resumeGraph) to VERIFY
 // its pinned script + checkpoint survived the crash — surface-only; the byte
-// re-execution is the explicit `orchestrate({resumeRunId})` (A2).
+// re-execution is the explicit `orchestrate({resumeRunId})` path.
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
@@ -78,11 +77,11 @@ export interface OrchestrateResumeSeams {
  * ResultRef), `safePath`-confined BEFORE any fs touch (a `..`/absolute escape is
  * refused, never resumed). PRESENT → `ok` (the closure re-anchors + the engine
  * surfaces `durable:resumed` — SURFACE-ONLY on boot; the byte re-execution is the
- * explicit `orchestrate({resumeRunId})`, A2); MISSING → `err` (the engine's
+ * explicit `orchestrate({resumeRunId})`); MISSING → `err` (the engine's
  * existing orphan path turns it into a `durable:orphaned` + reclaim). Every `err`
  * message NAMES why AND contains "not resumable" so `orphanReasonToEnum` maps it
  * to the closed `not_resumable` member — the free text stays on the WARN
- * log / notify only (INV-5). Pure over the injected seams.
+ * log and notify only. Pure over the injected seams.
  */
 export function verifyOrchestrateResumable(
   record: DurableRunRecord,
@@ -130,7 +129,7 @@ export function verifyOrchestrateResumable(
  * The full orchestrate-resume wiring cluster `buildDurableResume` binds: the arm
  * seams ({@link OrchestrateResumeSeams}) PLUS the orphan-reclaim seams. ONE
  * optional cluster (not N loose fields — optional-field-bloat honesty): the arm
- * + the RESUME-04 reclaim are wired TOGETHER (both need the workspace resolver).
+ * and orphan reclaim are wired together because both need the workspace resolver.
  * Structurally a superset of both the arm's {@link OrchestrateResumeSeams} and the
  * engine's `OrchestrateReclaimSeams`, so the SAME object passes to
  * `verifyOrchestrateResumable` (the arm) and `reclaimOrphanedOrchestrateRun` (the
@@ -145,19 +144,19 @@ export interface OrchestrateResumeWiring extends OrchestrateResumeSeams {
 
 /**
  * Build the production {@link OrchestrateResumeWiring} cluster for the composition
- * root — the LIVE seams the boot-sweep arm + the RESUME-04 orphan reclaim run
- * against. A `DurableRunRecord` carries no `agentId` (an orchestrate row's
- * caps/leaseIds/spawnTree are all `[]`), so `workspaceFor` resolves to the
- * default-agent workspace — the correct target for the common single-agent case;
- * the resolver is the multi-agent extension point. The reclaim REUSES the existing
+ * root — the live seams the boot sweep and orphan reclaim run
+ * against. The durable record's persisted `agentId` is the authoritative
+ * workspace key. A missing mapping returns undefined and the recovery path
+ * honestly orphans the record; it never probes the default agent's files. The
+ * reclaim REUSES the existing
  * `result-ref-store.cleanupRun` (rmSync-recursive of `results/`) for the checkpoint
  * blob + a `safePath`-guarded `rmSync` for the pinned `<runId>.<language>` script at
- * the workspace root — no new GC primitive (NG4), scoped, and idempotent (a missing
+ * the workspace root. Reclamation is run-scoped and idempotent (a missing
  * file / a traversal-escape scriptRef is a no-op, never a throw that aborts the sweep).
  */
 export function buildOrchestrateResumeWiring(deps: {
-  /** The default-agent jailed workspace root (a bare durable row's resume target). */
-  defaultWorkspaceDir: string;
+  /** Live per-agent jailed workspace roots, keyed by persisted agentId. */
+  workspaceDirs: ReadonlyMap<string, string>;
   /** Logger for the reused result-ref store (its cleanupRun path). */
   logger: ComisLogger;
 }): OrchestrateResumeWiring {
@@ -165,7 +164,7 @@ export function buildOrchestrateResumeWiring(deps: {
   // hand-rolled results-dir resolver that could drift from the store's layout.
   const resultStore = createResultRefStore({ logger: deps.logger });
   return {
-    workspaceFor: () => deps.defaultWorkspaceDir,
+    workspaceFor: (record) => deps.workspaceDirs.get(record.agentId),
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- absPath is safePath-confined by the caller (the boot-sweep arm resolves scriptRef/checkpointRef via safePath before probing).
     fileExists: (absPath) => existsSync(absPath),
     cleanupResults: (workspacePath, runId) => resultStore.cleanupRun({ workspacePath, runId }),
@@ -210,17 +209,15 @@ export interface SetupDurableResumeDeps {
   /** Narrow content-free event emitter (adapts the real TypedEventBus). */
   eventBus: DurableEventEmitter;
   logger: ComisLogger;
-  /** Resolve a LIVE channel adapter by channel type (undefined when none) — populated post-setupChannels. */
-  channelAdapters: (type: string) => ChannelPort | undefined;
   /** Re-mint a lease from the persisted attenuated caps VERBATIM (the LeaseManager closure). */
   remintLease: (input: MintLeaseInput) => IssuedLease;
+  /** Revoke a newly minted lease when recovered execution is not accepted. */
+  revokeLease?: (leaseId: string) => void;
   /** Resume a run from its checkpoint under the re-minted lease. */
-  resumeRun: (record: DurableRunRecord, leaseId: string) => Promise<Result<void, Error>>;
-  /** Reclaim a dead resumable orchestrate run's artifacts on the orphan path (RESUME-04); threaded into the engine. Absent ⇒ no reclaim. */
+  resumeRun: (record: DurableRunRecord, lease: IssuedLease) => Promise<Result<void, Error>>;
+  /** Reclaim a dead resumable orchestrate run's artifacts on the orphan path. */
   reclaimOrchestrateRun?: (record: DurableRunRecord) => Promise<void>;
-  /** Re-deliver a not_sent ledger row exactly once. */
-  replaySend: (row: OutwardSendRecord) => Promise<Result<{ platformMessageId: string }, Error>>;
-  /** Content-free operator notification for an orphan / unresolved reconcile. */
+  /** Content-free operator notification for an orphan or parked outward operation. */
   notify: NotifyFn;
   clock: ClockPort;
   timers: TimerPort;
@@ -230,7 +227,7 @@ export interface SetupDurableResumeDeps {
 export interface DurableResumeResult {
   /** The durable-run checkpoint store (undefined when disabled). */
   durableRunStore: DurableRunPort | undefined;
-  /** The outward-send exactly-once ledger (undefined when disabled). */
+  /** The outward-send uncertainty ledger (undefined when disabled). */
   outwardLedger: OutwardSendLedgerPort | undefined;
   /** Boot recovery (engine.resumeAll) THEN start the watchdog interval. Call AFTER setupChannels. */
   resumeAndStart: () => Promise<void>;
@@ -239,7 +236,7 @@ export interface DurableResumeResult {
 }
 
 export function setupDurableResume(deps: SetupDurableResumeDeps): DurableResumeResult {
-  const { db, config, eventBus, logger, channelAdapters, remintLease, resumeRun, replaySend, notify, clock, timers } = deps;
+  const { db, config, eventBus, logger, remintLease, resumeRun, notify, clock, timers } = deps;
 
   // GATING: disabled (default, or no autonomy agent) ⇒ inert. No stores, no
   // engine, no timer — a default install is byte-identical (mirrors
@@ -266,29 +263,44 @@ export function setupDurableResume(deps: SetupDurableResumeDeps): DurableResumeR
   const engine = createDurableResumeEngine({
     durableRuns: durableRunStore,
     ledger: outwardLedger,
-    channelFor: channelAdapters,
     remintLease,
+    ...(deps.revokeLease ? { revokeLease: deps.revokeLease } : {}),
     resumeRun,
-    replaySend,
     notify,
     nowMs: () => clock.now(),
     recoveryBudgetMs: config.recoveryBudgetMs,
     logger,
     eventBus,
-    // RESUME-04: the engine calls this on the orphan path to reclaim a dead
+    // The engine calls this on the orphan path to reclaim a dead
     // resumable orchestrate run's artifacts (scoped + idempotent). Absent ⇒ no reclaim.
     ...(deps.reclaimOrchestrateRun ? { reclaimOrchestrateRun: deps.reclaimOrchestrateRun } : {}),
   });
 
-  // ONE daemon-wide watchdog interval (Open Question 2 — NOT per-run). Cancelled
+  // One daemon-wide watchdog interval, never one timer per run. Cancelled
   // on shutdown so there is no leaked timer across a restart.
   let watchdog: TimerHandle | undefined;
+  let recoveryInFlight: ReturnType<DurableResumeEngine["resumeAll"]> | undefined;
+
+  const runRecovery = (
+    eligibleCheckpointIds?: readonly string[],
+  ): ReturnType<DurableResumeEngine["resumeAll"]> => {
+    if (recoveryInFlight !== undefined) return recoveryInFlight;
+    const active = engine.resumeAll(
+      eligibleCheckpointIds === undefined ? undefined : { eligibleCheckpointIds },
+    );
+    recoveryInFlight = active;
+    const clear = (): void => {
+      if (recoveryInFlight === active) recoveryInFlight = undefined;
+    };
+    void active.then(clear, clear);
+    return active;
+  };
 
   const resumeAndStart = async (): Promise<void> => {
     // 1. Boot recovery: reconcile crashed-mid-send rows + resume-or-orphan, bounded
     //    by recoveryBudgetMs (a backlog larger than the budget is deferred).
     const startMs = clock.now();
-    const result = await engine.resumeAll();
+    const result = await runRecovery();
     if (result.ok) {
       logger.info(
         { resumed: result.value.resumed, orphaned: result.value.orphaned, deferred: result.value.deferred, durationMs: clock.now() - startMs },
@@ -296,7 +308,7 @@ export function setupDurableResume(deps: SetupDurableResumeDeps): DurableResumeR
       );
     } else {
       logger.warn(
-        { err: result.error, hint: "boot recovery failed — the watchdog/next boot retries; no runs were resumed this pass", errorKind: "dependency" as const, durationMs: clock.now() - startMs },
+        { err: toSafeErrorLogString(result.error), hint: "boot recovery failed — the watchdog/next boot retries; no runs were resumed this pass", errorKind: "dependency" as const, durationMs: clock.now() - startMs },
         "Durable resume: boot recovery failed",
       );
     }
@@ -306,18 +318,44 @@ export function setupDurableResume(deps: SetupDurableResumeDeps): DurableResumeR
     //    .unref() so it never blocks event-loop exit (mirrors the delivery drain timer).
     watchdog = timers.setInterval(() => {
       void (async () => {
+        const outward = await outwardLedger.listUnreconciled(1);
+        if (!outward.ok) {
+          logger.warn(
+            {
+              err: toSafeErrorLogString(outward.error),
+              hint: "outward watchdog scan failed; the bounded recovery pass will fail closed",
+              errorKind: "dependency" as const,
+            },
+            "Durable watchdog: outward scan failed",
+          );
+          return;
+        }
         const runs = await durableRunStore.listResumable();
         if (!runs.ok) {
           logger.debug(
-            { err: runs.error, hint: "watchdog listResumable failed; the next tick retries", errorKind: "dependency" as const },
+            { err: toSafeErrorLogString(runs.error), hint: "watchdog listResumable failed; the next tick retries", errorKind: "dependency" as const },
             "Durable watchdog: listResumable failed",
           );
           return;
         }
-        const stale = detectStaleRuns(runs.value, clock.now(), config.staleHeartbeatMs);
-        if (stale.length > 0) {
-          logger.info({ staleCount: stale.length }, "Durable watchdog: lapsed-heartbeat runs detected, sweeping");
-          await engine.resumeAll();
+        const stale = detectStaleRuns(
+          runs.value.records,
+          clock.now(),
+          config.staleHeartbeatMs,
+        );
+        if (outward.value.length > 0 || stale.length > 0 || runs.value.invalid.length > 0) {
+          logger.info(
+            {
+              outwardPendingCount: outward.value.length,
+              staleCount: stale.length,
+              invalidCount: runs.value.invalid.length,
+            },
+            "Durable watchdog: recoverable checkpoints detected, sweeping",
+          );
+          await runRecovery([
+            ...stale.map((record) => record.checkpointId),
+            ...runs.value.invalid.map((record) => record.checkpointId),
+          ]);
         }
       })();
     }, config.staleHeartbeatMs);
@@ -387,15 +425,18 @@ export interface DurableResumeWiring {
   durableRunFacts?: (
     rootRunId: string,
     agentId: string,
-  ) => { caps: readonly AgentCapability[]; leaseIds: readonly string[]; budgetConsumed: number } | undefined;
+  ) => {
+    caps: readonly AgentCapability[];
+    leaseIds: readonly string[];
+    rootBudget: import("@comis/core").DurableRootBudget;
+  } | undefined;
 }
 
 /**
  * Build the durable-resume engine (after the cap layer so BoundedAutonomy is
  * reachable) reusing the EARLY-built stores. Wires the LeaseManager re-mint, the
- * resume re-anchor (registerRoot), the content-free replay-park, the operator
- * notify, and the late-bound channel-adapter lookup (resolved at resumeAndStart
- * time — after channels). Returns the handle + the boot seam + the facts resolver.
+ * resume re-anchor (registerRoot), conservative outward parking, and operator
+ * notification. Returns the handle, boot seam, and facts resolver.
  */
 export function buildDurableResume(deps: {
   db: unknown;
@@ -404,7 +445,6 @@ export function buildDurableResume(deps: {
   outwardLedger?: OutwardSendLedgerPort | undefined;
   boundedAutonomy: BoundedAutonomy | undefined;
   sharedLeaseManager: LeaseManager;
-  channelAdaptersRef: Map<string, DeliveryAdapter> | undefined;
   eventBus: TypedEventBus;
   logger: ComisLogger;
   clock: ClockPort;
@@ -416,24 +456,25 @@ export function buildDurableResume(deps: {
    * to this for node re-entry; a flat run (string[] spawn_tree) takes the flat re-anchor.
    * Late-bound: the daemon constructs the coordinator AFTER buildDurableResume, so it is
    * passed as a holder whose `.ref` is populated post-construction (read at resumeAndStart
-   * time — after channels + after the coordinator exists). Absent ⇒ a DAG record degrades
-   * to the flat re-anchor (no crash; node re-entry is simply unavailable).
+   * time — after channels + after the coordinator exists). An absent handler
+   * makes a DAG checkpoint non-resumable; it must never be reported as resumed
+   * without node re-entry.
    */
-  resumeGraph?: (record: DurableRunRecord) => Promise<Result<void, Error>>;
+  resumeGraph?: (record: DurableRunRecord, lease: IssuedLease) => Promise<Result<void, Error>>;
   /**
    * The orchestrate-kind resume + orphan-reclaim seams (workspace resolver +
    * fs-exists probe + cleanupRun/rmSync reclaim). When present: a flat row with
    * `scriptRef != null` routes to the orchestrate arm — VERIFY the pinned script +
    * checkpoint on disk (surface-only on boot; explicit `orchestrate({resumeRunId})`
-   * re-executes — A2) — and a dead resumable run's artifacts are reclaimed on the
-   * orphan path (RESUME-04). Absent ⇒ a scriptRef row degrades to the plain flat
+   * re-executes) — and a dead resumable run's artifacts are reclaimed on the
+   * orphan path. Absent means a scriptRef row degrades to the plain flat
    * re-anchor (no disk verification, no reclaim) — the gated, deny-by-absence
    * posture: the runner only writes scriptRef rows when `orchestrateResume` is on.
    */
   orchestrateResume?: OrchestrateResumeWiring;
 }): DurableResumeWiring {
-  const { durabilityCfg, durableRunStore, outwardLedger, boundedAutonomy, sharedLeaseManager, channelAdaptersRef, eventBus, logger, clock, timers, resumeGraph, orchestrateResume } = deps;
-  // RESUME-04 orphan-reclaim: bind the engine's reclaim hook to the wiring's
+  const { durabilityCfg, durableRunStore, outwardLedger, boundedAutonomy, sharedLeaseManager, eventBus, logger, clock, timers, resumeGraph, orchestrateResume } = deps;
+  // Bind the engine's orphan-reclaim hook to the wiring's
   // reclaim seams (workspace + cleanupRun + guarded rmSync). The bound helper is
   // scoped (a non-orchestrate row is a no-op) + idempotent. Absent ⇒ no reclaim.
   const reclaimOrchestrateRun = orchestrateResume
@@ -444,19 +485,21 @@ export function buildDurableResume(deps: {
     ...(durableRunStore ? { durableRunStore } : {}),
     ...(outwardLedger ? { outwardLedger } : {}),
     config: { enabled: durabilityCfg.enabled, staleHeartbeatMs: durabilityCfg.staleHeartbeatMs, recoveryBudgetMs: durabilityCfg.recoveryBudgetMs },
-    // Narrow content-free emitter over the real TypedEventBus (the closed EventMap
-    // does not type durable:* events; the engine emits through this adapter).
-    eventBus: { emit: (event, payload) => eventBus.emit(event as never, payload as never) },
+    // The engine uses isolated observational fan-out so subscriber failures
+    // cannot alter recovery after a durable authority transition.
+    eventBus,
     logger,
-    // channelFor reads the LIVE registry (populated by reference post-setupChannels).
-    channelAdapters: (type: string) => channelAdaptersRef?.get(type) as ChannelPort | undefined,
     // remintLease: re-mint from the persisted attenuated caps VERBATIM.
     remintLease: (input) => sharedLeaseManager.mintLease(input),
+    revokeLease: (leaseId) => {
+      sharedLeaseManager.revoke(leaseId);
+    },
     // resumeRun: re-anchor the root with BoundedAutonomy so the re-minted lease is
     // bounded (budget/kill reach). The checkpoint carries caps/tree/budget, not a
     // full re-spawnable task spec, so a run resumes-as-anchored (a richer re-spawn
     // from the checkpoint is a future enhancement).
-    resumeRun: async (record: DurableRunRecord, leaseId: string): Promise<Result<void, Error>> => {
+    resumeRun: async (record: DurableRunRecord, lease: IssuedLease): Promise<Result<void, Error>> => {
+      boundedAutonomy?.rehydrateBudget(record.rootRunId, record.rootBudget);
       // DAG-vs-flat-vs-orchestrate dispatch — all explicit discriminators, never a
       // heuristic, so a flat run can NEVER mis-route:
       //   - a DAG record (spawn_tree entries are OBJECTS with a `status` field →
@@ -466,56 +509,58 @@ export function buildDurableResume(deps: {
       //     `scriptRef`, with the orchestrateResume seams wired) takes the
       //     orchestrate arm — VERIFY the pinned script + checkpoint are on disk
       //     (SURFACE-ONLY on boot; the byte re-execution is the explicit
-      //     `orchestrate({resumeRunId})` — A2). A MISSING artifact returns err so the
+      //     `orchestrate({resumeRunId})`). A missing artifact returns err so the
       //     engine's orphan path emits `durable:orphaned` + reclaims (no silent loss);
       //   - a plain flat sub-agent run (no scriptRef, or the seams unwired) takes the
       //     flat re-anchor below.
-      if (isDagSpawnTree(record.spawnTree)) {
-        if (resumeGraph) return resumeGraph(record);
-        // resumeGraph not wired (e.g. coordinator absent) ⇒ degrade to the flat
-        // re-anchor so the run is still bounded/killable across restart (no crash).
-        logger.warn(
-          { rootRunId: record.rootRunId, hint: "DAG record but resumeGraph is unwired; falling back to the flat re-anchor (no node re-entry)", errorKind: "internal" as const },
-          "Durable resume: DAG resume unavailable",
-        );
-      } else if (record.scriptRef != null && orchestrateResume) {
-        // Orchestrate-kind arm: verify the pinned script + checkpoint on disk. On a
-        // MISSING artifact the engine's existing orphan path turns this err into a
-        // durable:orphaned (closed-enum) + reclaim — do NOT emit orphaned here.
-        const verified = verifyOrchestrateResumable(record, orchestrateResume);
-        if (!verified.ok) return verified;
-        // PRESENT → fall through to the re-anchor (surface-only; no re-spawn on boot).
-      }
-      try {
-        boundedAutonomy?.registerRoot(record.rootRunId, leaseId);
-        return ok(undefined);
-      } catch (e) {
-        return err(e instanceof Error ? e : new Error(String(e)));
-      }
+      const attempt = async (): Promise<Result<void, Error>> => {
+        if (isDagSpawnTree(record.spawnTree)) {
+          if (resumeGraph) return resumeGraph(record, lease);
+          return err(new Error("DAG checkpoint cannot resume because graph recovery is unavailable"));
+        }
+        if (record.scriptRef != null && orchestrateResume) {
+          // Orchestrate-kind arm: verify the pinned script + checkpoint on disk. On a
+          // MISSING artifact the engine's existing orphan path turns this err into a
+          // durable:orphaned (closed-enum) + reclaim — do NOT emit orphaned here.
+          const verified = verifyOrchestrateResumable(record, orchestrateResume);
+          if (!verified.ok) return verified;
+          // PRESENT → fall through to the re-anchor (surface-only; no re-spawn on boot).
+        }
+        try {
+          boundedAutonomy?.registerRoot(record.rootRunId, lease.leaseId);
+          return ok(undefined);
+        } catch (cause) {
+          return err(cause instanceof Error ? cause : new Error(String(cause)));
+        }
+      };
+      const outcome = await attempt();
+      if (!outcome.ok) boundedAutonomy?.evictRootIfIdle(record.rootRunId);
+      return outcome;
     },
     // reclaimOrchestrateRun: the engine calls this on the orphan path to reclaim a
-    // dead resumable orchestrate run's results/ + pinned script (RESUME-04). Absent
+    // dead resumable orchestrate run's results/ and pinned script. Absent
     // ⇒ no reclaim (the seams unwired / orchestrateResume off).
     ...(reclaimOrchestrateRun ? { reclaimOrchestrateRun } : {}),
-    // replaySend: the content-free ledger row has no body, so a replay that lacks
-    // the original message is an err — the engine parks it unresolved rather than
-    // double-sending a wrong body (honesty over a fabricated replay).
-    replaySend: async (_row: OutwardSendRecord) =>
-      err(new Error("durable replay requires the original message body, which the content-free ledger does not retain; parked unresolved")),
     // notify: content-free operator escalation. The engine also emits durable:orphaned.
-    notify: (opts) => logger.warn({ kind: opts.kind, rootRunId: opts.rootRunId, hint: opts.hint, errorKind: "internal" as const }, `Durable resume: ${opts.reason}`),
+    notify: (opts) => logger.warn(
+      { kind: opts.kind, rootRunId: opts.rootRunId, hint: opts.hint, errorKind: "internal" as const },
+      "Durable resume operator notification",
+    ),
     clock,
     timers,
   });
   const startAndResumeDurable = (): Promise<void> => durableResume.resumeAndStart();
-  // durableRunFacts: the runner's checkpoint reads the correlated leaseIds
-  // from BoundedAutonomy (caps come from the spawn param; budgetConsumed is
-  // informational — the meter exposes remaining, not consumed, so 0 here).
+  // durableRunFacts: checkpoint the correlated leases and the meter's absolute
+  // tree-wide state so every heartbeat preserves restart continuity.
   const durableRunFacts = durableResume.durableRunStore
     ? (rootRunId: string, _agentId: string) => ({
         caps: [] as readonly AgentCapability[],
         leaseIds: boundedAutonomy ? [...boundedAutonomy.leaseIdsForRoot(rootRunId)] : [],
-        budgetConsumed: 0,
+        rootBudget: boundedAutonomy?.exportBudgetState(rootRunId) ?? {
+          startedAtMs: clock.now(),
+          tokensConsumed: 0,
+          usdConsumed: 0,
+        },
       })
     : undefined;
   return { durableResume, startAndResumeDurable, ...(durableRunFacts ? { durableRunFacts } : {}) };

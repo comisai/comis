@@ -261,6 +261,20 @@ describe("msteamsHealthCheck", () => {
     expect(rpcClient.withClient).not.toHaveBeenCalled();
   });
 
+  it("does not surface channel-status RPC error content", async () => {
+    vi.mocked(rpcClient.withClient).mockRejectedValueOnce(
+      new Error("Authorization: Bearer PRIVATE_TEAMS_SENTINEL"),
+    );
+
+    const findings = await msteamsHealthCheck.run(
+      contextWith({ enabled: true, tenantId: "tenant-1", appPassword: "pw" }),
+    );
+    const inbound = find(findings, "Teams recent inbound");
+
+    expect(inbound?.status).toBe("skip");
+    expect(inbound?.message).not.toContain("PRIVATE_TEAMS_SENTINEL");
+  });
+
   // -------------------------------------------------------------------------
   // Probe 4: tenant-present
   // -------------------------------------------------------------------------

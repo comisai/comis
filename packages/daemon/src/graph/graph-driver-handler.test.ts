@@ -94,6 +94,8 @@ function createMinimalGraphRunState(overrides?: Partial<GraphRunState>): GraphRu
   return {
     graphId: "graph-1",
     graphTraceId: "trace-1",
+    callerTrustLevel: "guest",
+    callerCaps: [],
     graph: {
       graph: {
         nodes: [{ nodeId: "debate-node", task: "Debate", dependsOn: [], retries: 0 }],
@@ -249,6 +251,14 @@ describe("executeDriverAction passes reuseSessionKey to spawn", () => {
     const gs = createMinimalGraphRunState({
       callerSessionKey: "default:user1:channel1",
       callerAgentId: "parent-agent",
+      callerCaps: ["orch:read"],
+      parentLeaseId: "lease-parent",
+      callerDeliveryOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "channel1",
+      },
     });
     gs.driverStates.set("debate-node", ds);
 
@@ -275,6 +285,15 @@ describe("executeDriverAction passes reuseSessionKey to spawn", () => {
         task: "round 2 argument",
         agentId: "bull",
         callerType: "graph",
+        callerTrustLevel: "guest",
+        caps: ["orch:read"],
+        parentLeaseId: "lease-parent",
+        requesterOrigin: {
+          tenantId: "default",
+          userId: "user1",
+          channelType: "telegram",
+          channelId: "channel1",
+        },
       }),
     );
 
@@ -347,6 +366,14 @@ describe("executeDriverAction passes discoveredDeferredTools for mcpServers node
     };
     const gs = createMinimalGraphRunState({
       graphToolNames: ["mcp__yfinance--get_price", "mcp__context7--query"],
+      callerCaps: ["orch:analyze"],
+      parentLeaseId: "lease-driver-parent",
+      callerDeliveryOrigin: {
+        tenantId: "default",
+        userId: "user1",
+        channelType: "telegram",
+        channelId: "channel1",
+      },
       graph: {
         graph: {
           nodes: [
@@ -378,11 +405,17 @@ describe("executeDriverAction passes discoveredDeferredTools for mcpServers node
     expect(deps.subAgentRunner.spawn).toHaveBeenNthCalledWith(1,
       expect.objectContaining({
         discoveredDeferredTools: ["mcp__yfinance--get_price"],
+        caps: ["orch:analyze"],
+        parentLeaseId: "lease-driver-parent",
+        requesterOrigin: expect.objectContaining({ channelId: "channel1" }),
       }),
     );
     expect(deps.subAgentRunner.spawn).toHaveBeenNthCalledWith(2,
       expect.objectContaining({
         discoveredDeferredTools: ["mcp__yfinance--get_price"],
+        caps: ["orch:analyze"],
+        parentLeaseId: "lease-driver-parent",
+        requesterOrigin: expect.objectContaining({ channelId: "channel1" }),
       }),
     );
   });

@@ -7,7 +7,13 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ok, err } from "@comis/shared";
-import type { DeliveryQueuePort, DeliveryQueueEntry, DeliveryAdapter } from "@comis/core";
+import {
+  AMBIGUOUS_SEND_OUTCOME_ERROR,
+  EXPLICIT_SEND_REJECTION_ERROR,
+  type DeliveryQueuePort,
+  type DeliveryQueueEntry,
+  type DeliveryAdapter,
+} from "@comis/core";
 import type { DeliveryMirrorPort, DeliveryMirrorEntry, PluginPort, PluginRegistryApi } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
@@ -54,6 +60,7 @@ function createMockQueue(): DeliveryQueuePort & {
     nackCalls,
     enqueue: vi.fn(async () => ok("new-id")),
     enqueueInFlight: vi.fn(async () => ok("new-id")),
+    claim: vi.fn(async () => ok(true)),
     ack: vi.fn(async (id: string, messageId: string) => { ackCalls.push({ id, messageId }); return ok(undefined); }),
     nack: vi.fn(async (id: string, error: string, nextRetryAt: number) => { nackCalls.push({ id, error, nextRetryAt }); return ok(undefined); }),
     fail: vi.fn(async (id: string, error: string) => { failCalls.push({ id, error }); return ok(undefined); }),
@@ -335,19 +342,19 @@ describe("setupDeliveryQueue", () => {
       await result.drainAndStart();
 
       expect(mockSqliteQueue.failCalls).toHaveLength(1);
-      expect(mockSqliteQueue.failCalls[0]?.error).toContain("No adapter for channel type");
+      expect(mockSqliteQueue.failCalls[0]?.error).toBe("delivery adapter unavailable");
 
       result.shutdown();
     });
 
-    it("nacks transient errors with backoff", async () => {
+    it("parks a network error instead of scheduling a duplicate-prone retry", async () => {
       const entries = [
         makeEntry({ id: "e1", channelType: "telegram", attemptCount: 1 }),
       ];
       vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValueOnce(ok(entries));
 
       const adapter = createMockAdapter("telegram", [
-        { ok: false, error: new Error("network timeout") }, // transient
+        { ok: false, error: new Error("network timeout") },
       ]);
       const adapters = new Map<string, DeliveryAdapter>([["telegram", adapter]]);
       const eventBus = createMockEventBus();
@@ -362,10 +369,83 @@ describe("setupDeliveryQueue", () => {
 
       await result.drainAndStart();
 
+      expect(mockSqliteQueue.nackCalls).toHaveLength(0);
+      expect(mockSqliteQueue.failCalls).toEqual([
+        { id: "e1", error: AMBIGUOUS_SEND_OUTCOME_ERROR },
+      ]);
+
+      result.shutdown();
+    });
+
+    it("nacks an explicit platform rate-limit rejection with backoff", async () => {
+      const entries = [
+        makeEntry({ id: "e1", channelType: "telegram", attemptCount: 1 }),
+      ];
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValueOnce(ok(entries));
+
+      const adapter = createMockAdapter("telegram", [
+        { ok: false, error: new Error("429 too many requests") },
+      ]);
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig(),
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        channelAdapters: new Map([["telegram", adapter]]),
+      });
+
+      await result.drainAndStart();
+
       expect(mockSqliteQueue.nackCalls).toHaveLength(1);
       expect(mockSqliteQueue.nackCalls[0]?.id).toBe("e1");
+      expect(mockSqliteQueue.nackCalls[0]?.error).toBe(EXPLICIT_SEND_REJECTION_ERROR);
       expect(mockSqliteQueue.nackCalls[0]?.nextRetryAt).toBeGreaterThan(Date.now() - 1000);
 
+      result.shutdown();
+    });
+
+    it("sanitizes a pending-row storage error before logging it", async () => {
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValueOnce(
+        err(new Error("Bearer secret-value")),
+      );
+      const logger = createMockLogger();
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig(),
+        eventBus: createMockEventBus(),
+        logger,
+        channelAdapters: new Map(),
+      });
+
+      await result.drainAndStart();
+
+      const serializedWarnings = JSON.stringify(
+        (logger.warn as ReturnType<typeof vi.fn>).mock.calls,
+      );
+      expect(serializedWarnings).not.toContain("secret-value");
+      expect(serializedWarnings).toContain("[REDACTED]");
+      result.shutdown();
+    });
+
+    it("does not call the platform when another drainer already claimed the row", async () => {
+      const entry = makeEntry({ id: "claimed-elsewhere", channelType: "telegram" });
+      vi.mocked(mockSqliteQueue.pendingEntries).mockResolvedValueOnce(ok([entry]));
+      vi.mocked(mockSqliteQueue.claim).mockResolvedValueOnce(ok(false));
+      const adapter = createMockAdapter("telegram");
+      const result = await setupDeliveryQueue({
+        db: {} as any,
+        config: createMockConfig(),
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        channelAdapters: new Map([["telegram", adapter]]),
+      });
+
+      await result.drainAndStart();
+
+      expect(adapter.sendMessage).not.toHaveBeenCalled();
+      expect(mockSqliteQueue.ackCalls).toHaveLength(0);
+      expect(mockSqliteQueue.nackCalls).toHaveLength(0);
+      expect(mockSqliteQueue.failCalls).toHaveLength(0);
       result.shutdown();
     });
 

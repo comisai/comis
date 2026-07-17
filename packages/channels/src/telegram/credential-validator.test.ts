@@ -65,6 +65,19 @@ describe("credential-validator", () => {
       }
     });
 
+    it("redacts credentials embedded in Telegram SDK failures", async () => {
+      const credential = `xoxb-${"s".repeat(32)}`;
+      mockGetMe.mockRejectedValueOnce(new Error(`request failed with ${credential}`));
+
+      const result = await validateBotToken("123456:test-token");
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toContain("Invalid Telegram bot token");
+        expect(result.error.message).not.toContain(credential);
+      }
+    });
+
     it("returns err for empty string token without making API call", async () => {
       const result = await validateBotToken("");
 

@@ -82,6 +82,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       // from external callers at the gateway). Admin/operator/CLI calls arrive
       // with NO _agentId and keep full access.
       const callerAgentId = rawParams._agentId as string | undefined;
+      const callerSessionKey = rawParams._callerSessionKey as string | undefined;
 
       const userParams = stripInternalFields(rawParams);
       const params = SessionHistoryContract.request.parse(userParams);
@@ -90,21 +91,11 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 20;
 
-      // Agent self-scope: an agent-origin caller may read ONLY its own
-      // session. Mirror session.search's `_agentId` filter exactly
-      // (session-list.ts:163-168) — the session belongs to the caller iff
-      // `parseFormattedSessionKey(sessionKey)?.agentId === callerAgentId`.
-      // Fail CLOSED with a content-free "not found" (do not confirm the
-      // session exists for another agent) so a jailed orch:read script can
-      // never exfiltrate another agent's/user's transcript. Because this gate
-      // lives in the handler it closes the orchestrate path AND any other
-      // agent-origin path. When `callerAgentId` is undefined (admin / operator
-      // / CLI) the read is unrestricted, as before.
-      if (callerAgentId) {
-        const owner = parseFormattedSessionKey(sessionKey)?.agentId;
-        if (owner !== callerAgentId) {
-          throw new PreconditionError(`Session not found: ${sessionKey}`);
-        }
+      // Formatted session keys omit agentId. Bind an agent-origin read to the
+      // exact caller session injected from the live context; a lease-only call
+      // without that session cannot establish ownership and fails closed.
+      if (callerAgentId && callerSessionKey !== sessionKey) {
+        throw new PreconditionError(`Session not found: ${sessionKey}`);
       }
 
       // Snapshot the DeliveryQueuePort once per request and build the join
@@ -137,7 +128,9 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
 
       // Parse session key for metadata
       const parsed = parseFormattedSessionKey(sessionKey);
-      const agentId = parsed?.agentId ?? "default";
+      const agentId = callerAgentId && callerSessionKey === sessionKey
+        ? callerAgentId
+        : parsed?.agentId ?? "default";
       const isSubAgent = data.metadata.parentSessionKey !== undefined;
       const channelType = isSubAgent
         ? "sub-agent"

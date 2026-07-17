@@ -16,6 +16,7 @@ import type { MemoryEntry, MemorySearchResult, MemoryConfig, SessionKey, Session
 import type { Result } from "@comis/shared";
 import { fromPromise } from "@comis/shared";
 import type Database from "better-sqlite3";
+import { z } from "zod";
 import type { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
 import { rowToEntry, buildFilterClause, countRows, groupCountRows, createRowMapper } from "./row-mapper.js";
 import { MemoryRowSchema, IdProjectionRowSchema } from "./row-schemas.js";
@@ -24,6 +25,15 @@ import { systemNowMs } from "@comis/core";
 // Row mappers
 const memoryRowMapper = createRowMapper(MemoryRowSchema);
 const idProjectionMapper = createRowMapper(IdProjectionRowSchema);
+const oldestTimestampMapper = createRowMapper(
+  z.strictObject({ oldest: z.number().nullable() }),
+);
+const pageCountMapper = createRowMapper(
+  z.strictObject({ page_count: z.number().int().nonnegative() }),
+);
+const pageSizeMapper = createRowMapper(
+  z.strictObject({ page_size: z.number().int().nonnegative() }),
+);
 
 // ── Filter & Scope Types ─────────────────────────────────────────────
 
@@ -348,7 +358,10 @@ export function createMemoryApi(
       const oldestClause = hasFilters
         ? `SELECT MIN(created_at) as oldest FROM memories ${filterClause}`
         : "SELECT MIN(created_at) as oldest FROM memories";
-      const oldestRow = db.prepare(oldestClause).get(...(hasFilters ? filterParams : [])) as { oldest: number | null };
+      const oldestParsed = oldestTimestampMapper.parseOptionalRow(
+        db.prepare(oldestClause).get(...(hasFilters ? filterParams : [])),
+      );
+      const oldestCreatedAt = oldestParsed.ok ? (oldestParsed.value?.oldest ?? null) : null;
 
       // Embedded entries
       const embeddedClause = hasFilters
@@ -357,8 +370,14 @@ export function createMemoryApi(
       const embeddedEntries = countRows(db, "memories", embeddedClause, filterParams);
 
       // Database size (page_count * page_size)
-      const pageCount = db.prepare("PRAGMA page_count").get() as { page_count: number };
-      const pageSize = db.prepare("PRAGMA page_size").get() as { page_size: number };
+      const pageCountParsed = pageCountMapper.parseOptionalRow(
+        db.prepare("PRAGMA page_count").get(),
+      );
+      const pageSizeParsed = pageSizeMapper.parseOptionalRow(
+        db.prepare("PRAGMA page_size").get(),
+      );
+      const pageCount = pageCountParsed.ok ? (pageCountParsed.value?.page_count ?? 0) : 0;
+      const pageSize = pageSizeParsed.ok ? (pageSizeParsed.value?.page_size ?? 0) : 0;
 
       return {
         totalEntries: total,
@@ -367,8 +386,8 @@ export function createMemoryApi(
         byAgent,
         totalSessions,
         embeddedEntries,
-        dbSizeBytes: pageCount.page_count * pageSize.page_size,
-        oldestCreatedAt: oldestRow.oldest,
+        dbSizeBytes: pageCount * pageSize,
+        oldestCreatedAt,
       };
     },
 

@@ -17,6 +17,7 @@ function createMockDeliveryQueue(): DeliveryQueuePort {
   return {
     enqueue: vi.fn(async (_entry: DeliveryQueueEnqueueInput) => ok("entry-123")),
     enqueueInFlight: vi.fn(async (_entry: DeliveryQueueEnqueueInput) => ok("entry-123")),
+    claim: vi.fn(async () => ok(true)),
     ack: vi.fn(async () => ok(undefined)),
     nack: vi.fn(async () => ok(undefined)),
     fail: vi.fn(async () => ok(undefined)),

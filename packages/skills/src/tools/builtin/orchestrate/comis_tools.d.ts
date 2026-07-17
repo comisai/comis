@@ -102,11 +102,11 @@ export interface ComisTools {
   /** Write a file into the jailed run workspace (path-confined, run-ephemeral). (capability: orch:write) Example: await comis_tools.write({ path: 'summary.md', content: '# Findings' }); */
   write(args?: Record<string, unknown>): Promise<unknown>;
   /** Send a message to a channel (outward). (capability: orch:message) */
-  message_send(args?: Record<string, unknown>): Promise<unknown>;
+  message_send(args: Record<string, unknown>, operationId: string): Promise<unknown>;
   /** Reply to a message in a channel (outward). (capability: orch:message) */
-  message_reply(args?: Record<string, unknown>): Promise<unknown>;
+  message_reply(args: Record<string, unknown>, operationId: string): Promise<unknown>;
   /** React to a message with an emoji (outward). (capability: orch:message) */
-  message_react(args?: Record<string, unknown>): Promise<unknown>;
+  message_react(args: Record<string, unknown>, operationId: string): Promise<unknown>;
 }
 
 /** The singleton typed SDK the jailed script imports. */

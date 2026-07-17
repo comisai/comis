@@ -1,17 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Gateway RPC bridge + adapter wiring.
- * Hosts setupRpcBridge (deferred dispatch), buildRpcAdapterDeps (the 7-method
- * adapter struct consumed by createDynamicMethodRouter), and
- * buildDynamicRouterAndRegister.
- * @module
- */
-
+/** Gateway RPC bridge, adapter wiring, and dynamic router registration. */
 import type { NormalizedMessage, SessionKey, MemoryEntry, AppContainer, AppConfig } from "@comis/core";
 import {
+  createResolvedRequestContext,
   formatSessionKey,
+  getOriginalInboundMessages,
   runWithContext,
   createDeliveryOrigin,
+  emitObservationalEventSafely,
   sanitizeLogString,
   systemNowMs,
 } from "@comis/core";
@@ -27,6 +23,7 @@ import {
   type RpcAdapterDeps,
 } from "@comis/gateway";
 import { randomUUID } from "node:crypto";
+import { tryCatch } from "@comis/shared";
 import type { ApiDispatchDeps } from "../../api/rpc-dispatch.js";
 import { createRpcDispatch, classifyRpcError } from "../../api/rpc-dispatch.js";
 import { registerRpcMethods } from "../setup-gateway-api.js";
@@ -40,19 +37,17 @@ import {
   handleConfigChatCommand,
   resolveExecAgentId,
 } from "./setup-gateway-admin.js";
-
+import { gatewaySessionOwnershipError, resolveGatewaySessionKey } from "./gateway-session-principal.js";
+import { persistGatewayInboundMessage, type GatewaySessionAdapter } from "./gateway-inbound-provenance.js";
 /**
  * Non-secret section allowlist for the `getConfig` RPC (a security
  * sign-off). Exactly the scalar/projected fields the safe default object
  * emits — sections carrying credentials (`agents` auth/model profiles,
- * `security.secrets`, `channels` tokens, `providers` keys, raw `gateway.tokens`)
- * are intentionally absent and never returned verbatim.
+ * `security.secrets`, `channels` tokens, `providers` keys, raw `gateway.tokens`) are absent.
  */
 const NON_SECRET_SECTIONS = ["tenantId", "logLevel", "gateway"] as const;
 type NonSecretSection = (typeof NON_SECRET_SECTIONS)[number];
-
 // RPC Bridge (deferred dispatch wiring) ----------------------------------
-
 /** All services produced by the RPC bridge setup. */
 export interface RpcBridgeResult {
   /** rpcCall — delegates to inner dispatch once wired. */
@@ -118,19 +113,7 @@ export interface RpcAdapterBuilderDeps {
   rpcCall: RpcCall;
   costTrackers: Map<string, CostTracker>;
   workspaceDirs: Map<string, string>;
-  piSessionAdapters?: Map<string, {
-    destroySession(key: SessionKey): Promise<void>;
-    getSessionStats(key: SessionKey): {
-      messageCount: number;
-      createdAt?: number;
-      tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
-      cost?: number;
-      userMessages?: number;
-      assistantMessages?: number;
-      toolCalls?: number;
-      toolResults?: number;
-    } | undefined;
-  }>;
+  piSessionAdapters?: Map<string, GatewaySessionAdapter>;
   greetingGenerator?: GreetingGenerator;
   /** Active executions map; mutated inside executeAgent + consumed by shutdown observability. */
   activeExecutions: Map<string, { agentId: string; startedAt: number }>;
@@ -191,43 +174,93 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
         "Agent execution requested",
       );
 
-      // Link understanding preprocessing: enrich message text with fetched URL content
-      const enrichedText = await preprocessMessageText(params.message);
-
-      const msg: NormalizedMessage = {
-        id: randomUUID(),
-        channelId: params.sessionKey?.channelId ?? "gateway",
-        channelType: "gateway",
-        senderId: params.sessionKey?.peerId ?? "rpc-client",
-        text: enrichedText,
-        timestamp: systemNowMs(),
-        attachments: [],
-        metadata: {},
-      };
-      const sk: SessionKey = {
+      const sk = resolveGatewaySessionKey({
         tenantId: container.config.tenantId,
-        userId: params.sessionKey?.userId ?? "rpc-client",
-        channelId: params.sessionKey?.channelId ?? "gateway",
-      };
-
-      // Wrap in runWithContext so traceId propagates to all downstream logs
-      return runWithContext(
-        {
-          traceId: randomUUID(),
-          tenantId: sk.tenantId,
+        clientId: params.clientId,
+        sessionKey: params.sessionKey,
+      });
+      const requestStartedAt = systemNowMs();
+      const requestContext = createResolvedRequestContext({
+        traceId: randomUUID(),
+        tenantId: sk.tenantId,
+        userId: sk.userId,
+        agentId: execAgentId,
+        sessionKey: sk,
+        ...(params.clientId && { clientId: params.clientId }),
+        startedAt: requestStartedAt,
+        trustLevel,
+        channelType: "gateway",
+        deliveryOrigin: createDeliveryOrigin({
+          channelType: "gateway",
+          channelId: sk.channelId,
           userId: sk.userId,
-          sessionKey: formatSessionKey(sk),
-          ...(params.clientId && { clientId: params.clientId }),
-          startedAt: systemNowMs(),
-          trustLevel,
-          deliveryOrigin: createDeliveryOrigin({
-            channelType: "gateway",
-            channelId: sk.channelId,
-            userId: sk.userId,
-            tenantId: sk.tenantId,
-          }),
-        },
+          tenantId: sk.tenantId,
+        }),
+      });
+      if (!requestContext.ok) {
+        gatewayLogger.error({
+          agentId: execAgentId,
+          hint: "Verify the authenticated gateway session tenant and user identity",
+          errorKind: "internal" as const,
+        }, "Gateway RPC request context validation failed");
+        emitObservationalEventSafely(
+          { eventBus: container.eventBus, logger: gatewayLogger }, "system:error",
+          { error: requestContext.error, source: "gateway-rpc-context" },
+        );
+        return Promise.reject(requestContext.error);
+      }
+      const existingSession = tryCatch(() => sessionStore.load(sk));
+      const ownershipError = gatewaySessionOwnershipError(
+        existingSession,
+        execAgentId,
+        params.clientId,
+      );
+      if (ownershipError !== undefined) {
+        gatewayLogger.error({
+          agentId: execAgentId,
+          hint: "Use a new gateway session key for this agent or inspect the session store",
+          errorKind: "precondition" as const,
+        }, "Gateway RPC session ownership rejected");
+        emitObservationalEventSafely(
+          { eventBus: container.eventBus, logger: gatewayLogger }, "system:error",
+          { error: ownershipError, source: "gateway-rpc-session-owner" },
+        );
+        return Promise.reject(ownershipError);
+      }
+
+      return runWithContext(
+        requestContext.value,
         async () => {
+          const receivedAt = systemNowMs();
+          const receivedMessage: NormalizedMessage = {
+            id: randomUUID(),
+            channelId: sk.channelId,
+            channelType: "gateway",
+            senderId: params.sessionKey?.peerId ?? "rpc-client",
+            text: params.message,
+            timestamp: receivedAt,
+            attachments: [],
+            metadata: {},
+          };
+          const persisted = await persistGatewayInboundMessage({
+            agentId: execAgentId,
+            defaultAgentId,
+            message: receivedMessage,
+            sessionKey: sk,
+            recordedAt: receivedAt,
+            sessionAdapters: piSessionAdapters,
+            eventBus: container.eventBus,
+            logger: gatewayLogger,
+          });
+          if (!persisted.ok) return Promise.reject(persisted.error.error);
+
+          // Link understanding preprocessing: enrich message text with fetched URL content.
+          const enrichedText = await preprocessMessageText(params.message);
+          const msg: NormalizedMessage = {
+            ...receivedMessage,
+            text: enrichedText,
+            originalMessages: getOriginalInboundMessages(receivedMessage),
+          };
           // Assemble per-agent tools via three-tier pipeline (builtin + platform + skills)
           const tools = await assembleToolsForAgent(execAgentId);
           gatewayLogger.debug(
@@ -239,7 +272,13 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
           try {
             const existingSession = sessionStore.load(sk);
             const messages: unknown[] = [...(existingSession?.messages ?? []), userHistoryMessage];
-            sessionStore.save(sk, messages, existingSession?.metadata);
+            sessionStore.save(sk, messages, {
+              ...(existingSession?.metadata ?? {}),
+              agentId: execAgentId,
+              ...(params.clientId !== undefined
+                ? { gatewayClientId: params.clientId }
+                : {}),
+            });
             userHistoryPersisted = true;
             gatewayLogger.debug(
               { agentId: execAgentId, sessionKey: formatSessionKey(sk), messageCount: messages.length },
@@ -253,7 +292,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
               hint: "Check SQLite session storage health and available disk space",
               errorKind: "resource" as const,
             }, "Gateway session history persistence failed");
-            container.eventBus.emit("system:error", {
+            emitObservationalEventSafely({ eventBus: container.eventBus, logger: gatewayLogger }, "system:error", {
               error: new Error("Gateway session history persistence failed"),
               source: "gateway-session-history",
             });
@@ -305,7 +344,13 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
                 if (!hasUserMessage) messages.unshift(userHistoryMessage);
               }
               messages.push({ role: "assistant", content: result.response, timestamp: systemNowMs() });
-              sessionStore.save(sk, messages, existingSession?.metadata);
+              sessionStore.save(sk, messages, {
+                ...(existingSession?.metadata ?? {}),
+                agentId: execAgentId,
+                ...(params.clientId !== undefined
+                  ? { gatewayClientId: params.clientId }
+                  : {}),
+              });
               gatewayLogger.debug(
                 { agentId: execAgentId, sessionKey: formatSessionKey(sk), messageCount: messages.length },
                 "Gateway response history persisted",
@@ -318,7 +363,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
                 hint: "Check SQLite session storage health and available disk space",
                 errorKind: "resource" as const,
               }, "Gateway session history persistence failed");
-              container.eventBus.emit("system:error", {
+              emitObservationalEventSafely({ eventBus: container.eventBus, logger: gatewayLogger }, "system:error", {
                 error: new Error("Gateway session history persistence failed"),
                 source: "gateway-session-history",
               });
@@ -327,13 +372,15 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
 
           // Token usage captured via PiEventBridge observability:token_usage → tokenTracker bus.
           // Conversation memory persistence handled by PiExecutor.
-          // Emit message events for activity tracking (REST/WebSocket parity with channels).
-          container.eventBus.emit("message:received", { message: msg, sessionKey: sk });
           if (result.response) {
-            container.eventBus.emit("message:sent", {
+            emitObservationalEventSafely({ eventBus: container.eventBus, logger: gatewayLogger }, "message:sent", {
+              channelType: "gateway",
               channelId: sk.channelId,
               messageId: randomUUID(),
               content: result.response,
+              sourceChannelType: msg.channelType,
+              sourceChannelId: msg.channelId,
+              sourceMessageId: msg.id,
             });
           }
 
@@ -341,7 +388,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
             response: result.response,
             tokensUsed: result.tokensUsed,
             finishReason: result.finishReason,
-            sessionKey: params.sessionKey?.channelId ?? "gateway",
+            sessionKey: formatSessionKey(sk),
           };
         },
       );
@@ -420,11 +467,16 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
     listAgentSummaries: () => agentSummaries(container.config.agents),
     listChannelSummaries: () => channelSummaries(container.config.channels),
     getSessionHistory: async (params) => {
-      const sk: SessionKey = {
+      const sk = resolveGatewaySessionKey({
         tenantId: container.config.tenantId,
-        userId: "rpc-client",
-        channelId: params.channelId ?? "gateway",
-      };
+        clientId: params.clientId,
+        sessionKey: params.channelId === undefined
+          ? undefined
+          : {
+              channelId: params.channelId,
+              peerId: params.peerId,
+            },
+      });
       const data = sessionStore.load(sk);
       if (!data) {
         return { messages: [] };
@@ -469,11 +521,11 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
     handleSlashCommand: async (params) => {
       const execAgentId = params.agentId ?? defaultAgentId;
       const execAgentConfig = agents[execAgentId] ?? agents[defaultAgentId];
-      const sk: SessionKey = {
+      const sk = resolveGatewaySessionKey({
         tenantId: container.config.tenantId,
-        userId: params.sessionKey?.userId ?? "rpc-client",
-        channelId: params.sessionKey?.channelId ?? "gateway",
-      };
+        clientId: params.clientId,
+        sessionKey: params.sessionKey,
+      });
 
       const parsed = parseSlashCommand(params.message);
       if (!parsed.found) return { handled: false };
@@ -491,6 +543,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
         container,
         costTrackers,
         workspaceDirs,
+        logger: gatewayLogger,
         piSessionAdapters,
         destroyConversation,
       });
@@ -519,7 +572,6 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
     logger: gatewayLogger,
   };
 }
-
 // Dynamic router construction + RPC method registration -------------------
 
 /**

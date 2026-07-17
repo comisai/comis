@@ -16,6 +16,7 @@
 
 import type {
   AttachmentPayload,
+  AttachmentSendReceipt,
   ChannelPort,
   ChannelStatus,
   FetchedMessage,
@@ -23,21 +24,24 @@ import type {
   MessageHandler,
   NormalizedMessage,
   ReactionHandler,
-  ReconcileSendQuery,
-  ReconcileSendOutcome,
   SendMessageOptions,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { SlackMessageEvent } from "./message-mapper.js";
 import { validateSlackCredentials } from "./credential-validator.js";
 import { mapSlackToNormalized } from "./message-mapper.js";
 import { bindSlackReactions } from "./slack-reaction-binder.js";
 import { renderSlackButtons, renderSlackCards } from "./rich-renderer.js";
 import { executeSlackAction } from "./slack-actions.js";
-import { runWithContext, systemNowMs } from "@comis/core";
+import {
+  createAttachmentSendReceipt,
+  runWithContext,
+  systemNowMs,
+  toSafeErrorLogString,
+} from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -64,6 +68,42 @@ export interface SlackAdapterDeps {
    * by setting mode='http'.
    */
   apiRoot?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/** Extract the chat-message timestamp created when files.uploadV2 shares a file. */
+function findSlackPostedMessageId(result: unknown, channelId: string): unknown {
+  if (!isRecord(result)) return undefined;
+
+  const uploadedFiles: unknown[] = [];
+  if (Array.isArray(result.files)) {
+    for (const completion of result.files) {
+      if (isRecord(completion) && Array.isArray(completion.files)) {
+        uploadedFiles.push(...completion.files);
+      } else {
+        uploadedFiles.push(completion);
+      }
+    }
+  }
+  if (isRecord(result.file)) uploadedFiles.push(result.file);
+
+  for (const file of uploadedFiles) {
+    if (!isRecord(file) || !isRecord(file.shares)) continue;
+    const shareGroups = [file.shares.public, file.shares.private];
+    for (const group of shareGroups) {
+      if (!isRecord(group)) continue;
+      const channelShares = Object.entries(group).find(([key]) => key === channelId)?.[1];
+      if (!Array.isArray(channelShares)) continue;
+      for (const share of channelShares) {
+        if (isRecord(share) && typeof share.ts === "string") return share.ts;
+      }
+    }
+  }
+
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,7 +161,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         deps.logger.error(
           {
             channelType: "slack",
-            err: credResult.error,
+            err: toSafeErrorLogString(credResult.error),
             hint: isAppTokenError
               ? "Socket Mode requires SLACK_APP_TOKEN starting with xapp-"
               : "Verify SLACK_BOT_TOKEN starts with xoxb- and has required scopes",
@@ -202,7 +242,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
               startedAt: systemNowMs(),
               channelType: "slack",
               tenantId: "default",
-              trustLevel: "admin",
+              trustLevel: "user",
             },
             () => {
               for (const handler of handlers) {
@@ -210,7 +250,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
                   Promise.resolve(handler(normalized)).catch((handlerErr) => {
                     deps.logger.error(
                       {
-                        err: handlerErr,
+                        err: toSafeErrorLogString(handlerErr),
                         channel: event.channel,
                         hint: "Check Slack message handler logic",
                         errorKind: "internal" as const,
@@ -221,7 +261,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
                 } catch (handlerErr) {
                   deps.logger.error(
                     {
-                      err: handlerErr,
+                      err: toSafeErrorLogString(handlerErr),
                       channel: event.channel,
                       hint: "Check Slack message handler logic",
                       errorKind: "internal" as const,
@@ -277,7 +317,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
                 startedAt: systemNowMs(),
                 channelType: "slack",
                 tenantId: "default",
-                trustLevel: "admin",
+                trustLevel: "user",
               },
               () => {
                 for (const handler of handlers) {
@@ -285,7 +325,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
                     Promise.resolve(handler(normalized)).catch((handlerErr) => {
                       deps.logger.error(
                         {
-                          err: handlerErr,
+                          err: toSafeErrorLogString(handlerErr),
                           channel: normalized.channelId,
                           hint: "Check Slack callback handler for unhandled errors",
                           errorKind: "internal" as const,
@@ -296,7 +336,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
                   } catch (handlerErr) {
                     deps.logger.error(
                       {
-                        err: handlerErr,
+                        err: toSafeErrorLogString(handlerErr),
                         channel: normalized.channelId,
                         hint: "Check Slack callback handler for unhandled errors",
                         errorKind: "internal" as const,
@@ -311,7 +351,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
             deps.logger.warn(
               {
                 channelType: "slack",
-                err: error instanceof Error ? error : new Error(String(error)),
+                err: toSafeErrorLogString(error),
                 hint: "Block action acknowledgement or forwarding failed",
                 errorKind: "platform" as const,
               },
@@ -341,7 +381,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         deps.logger.error(
           {
             channelType: "slack",
-            err: error instanceof Error ? error : new Error(String(error)),
+            err: toSafeErrorLogString(error),
             hint: "Verify SLACK_BOT_TOKEN starts with xoxb- and has required scopes",
             errorKind: "auth" as const,
           },
@@ -408,7 +448,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
           {
             channelType: "slack",
             chatId: channelId,
-            err: sendErr,
+            err: toSafeErrorLogString(sendErr),
             hint: "Verify Slack bot token scopes include chat:write for the target channel",
             errorKind: "platform" as const,
           },
@@ -537,7 +577,7 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
       attachment: AttachmentPayload,
        
       _options?: SendMessageOptions,
-    ): Promise<Result<string, Error>> {
+    ): Promise<Result<AttachmentSendReceipt, Error>> {
       // Voice send bookend logging
       const isVoice = !!attachment.isVoiceNote;
       if (isVoice) {
@@ -558,11 +598,29 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
           filename,
           initial_comment: attachment.caption,
         });
-        const attachmentId = String(result.file?.id ?? "");
+        const receipt = createAttachmentSendReceipt(
+          findSlackPostedMessageId(result, channelId),
+        );
+        if (receipt.kind === "delivered_untracked") {
+          deps.logger.warn(
+            {
+              channelType: "slack",
+              chatId: channelId,
+              hint: "Slack completed files.uploadV2 without a posted-message timestamp. Do not retry; the file share is delivered but ID-based attribution is unavailable",
+              errorKind: "platform" as const,
+            },
+            "Attachment delivered without platform tracking",
+          );
+        }
 
         if (isVoice) {
           deps.logger.info(
-            { channelType: "slack", messageId: attachmentId, chatId: channelId },
+            {
+              channelType: "slack",
+              chatId: channelId,
+              tracking: receipt.kind,
+              ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
+            },
             "Voice send complete",
           );
           deps.logger.debug(
@@ -574,22 +632,23 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
         deps.logger.debug(
           {
             channelType: "slack",
-            messageId: attachmentId,
             chatId: channelId,
+            tracking: receipt.kind,
+            ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
             attachmentType: attachment.type,
             captionLength: attachment.caption?.length ?? 0,
             hasFileName: attachment.fileName !== undefined,
           },
           "Outbound attachment",
         );
-        return ok(attachmentId);
+        return ok(receipt);
       } catch (error) {
         const sendErr = error instanceof Error ? error : new Error(String(error));
         deps.logger.warn(
           {
             channelType: "slack",
             chatId: channelId,
-            err: sendErr,
+            err: toSafeErrorLogString(sendErr),
             hint: "Verify Slack bot token scopes include files:write",
             errorKind: "platform" as const,
           },
@@ -612,71 +671,6 @@ export function createSlackAdapter(deps: SlackAdapterDeps): ChannelPort {
 
     onReaction(handler: ReactionHandler): void {
       reactionHandlers.push(handler);
-    },
-
-    async reconcileSend(query: ReconcileSendQuery): Promise<Result<ReconcileSendOutcome, Error>> {
-      // The bolt client throws OR returns {ok:false} on failure. Either way a
-      // failed/partial fetch can NEVER prove the message is absent — return
-      // unresolved, never not_sent.
-      let result: {
-        ok?: boolean;
-        has_more?: boolean;
-        messages?: Array<{ ts?: string; user?: string; bot_id?: string; text?: string }>;
-      };
-      try {
-        // Slack ts is `seconds.micro`; the query window is epoch ms. Convert
-        // the bounds to whole-second strings for oldest/latest.
-        result = await app.client.conversations.history({
-          channel: query.channelId,
-          oldest: String(Math.floor(query.sentAfterMs / 1000)),
-          latest: String(Math.floor(query.sentBeforeMs / 1000)),
-          limit: 100,
-          inclusive: true,
-        });
-      } catch (error) {
-        deps.logger.warn(
-          {
-            channelType: "slack",
-            chatId: query.channelId,
-            err: error instanceof Error ? error : new Error(String(error)),
-            hint: "conversations.history failed; reconcile cannot prove absence",
-            errorKind: "platform" as const,
-          },
-          "reconcileSend unresolved",
-        );
-        return ok({ kind: "unresolved" });
-      }
-
-      if (result.ok === false) {
-        // An API-level failure cannot prove absence -> unresolved.
-        return ok({ kind: "unresolved" });
-      }
-
-      if (result.has_more === true) {
-        // The window was truncated: we did not see the full window, so we
-        // cannot prove the message is absent -> unresolved (NOT not_sent).
-        deps.logger.debug(
-          { channelType: "slack", chatId: query.channelId, hint: "history truncated (has_more); window not fully covered" },
-          "reconcileSend unresolved",
-        );
-        return ok({ kind: "unresolved" });
-      }
-
-      for (const m of result.messages ?? []) {
-        // author=bot required (spoofing guard): a bot_id is set on bot
-        // messages, or the message was posted under our own user id — a human
-        // message sharing the digest must never count as our send.
-        const isBotAuthored = (m.bot_id !== undefined && m.bot_id !== "") || m.user === _ownUserId;
-        if (!isBotAuthored) continue;
-        const digest = createHash("sha256").update(m.text ?? "").digest("hex").slice(0, 16);
-        if (digest === query.contentDigest) {
-          return ok({ kind: "sent", platformMessageId: m.ts ?? "" });
-        }
-      }
-
-      // Full non-truncated scan, no bot-authored digest match: definitively
-      // absent from the queried window.
-      return ok({ kind: "not_sent" });
     },
 
     getStatus(): ChannelStatus {

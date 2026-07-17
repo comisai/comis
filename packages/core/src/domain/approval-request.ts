@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
+import { err, ok, type Result } from "@comis/shared";
 
 /**
  * ApprovalRequest: A pending approval for a privileged agent action.
@@ -19,6 +20,14 @@ import { z } from "zod";
  * Fields capture the full context needed for an operator to make an
  * informed approve/deny decision.
  */
+export const ApprovalCallbackOwnerSchema = z.strictObject({
+  tenantId: z.string().min(1),
+  userId: z.string().min(1),
+  channelType: z.string().min(1),
+  channelKey: z.string().min(1),
+  threadId: z.string().min(1).optional(),
+});
+
 export const ApprovalRequestSchema = z.strictObject({
   /** Unique identifier for this approval request */
   requestId: z.string().uuid(),
@@ -36,6 +45,8 @@ export const ApprovalRequestSchema = z.strictObject({
   sessionKey: z.string(),
   /** Trust level of the requesting user */
   trustLevel: z.enum(["admin", "user", "guest"]),
+  /** Immutable principal allowed to answer this request through a channel callback. */
+  callbackOwner: ApprovalCallbackOwnerSchema,
   /** Timestamp when the request was created (epoch ms) */
   createdAt: z.number(),
   /** How long before auto-deny (ms) */
@@ -44,6 +55,9 @@ export const ApprovalRequestSchema = z.strictObject({
 
 /** An approval request awaiting operator decision. */
 export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>;
+
+/** Exact channel principal allowed to answer an approval callback. */
+export type ApprovalCallbackOwner = ApprovalRequest["callbackOwner"];
 
 /**
  * Schema for the resolution of an approval request.
@@ -77,6 +91,7 @@ export const SerializedApprovalRequestSchema = z.strictObject({
   agentId: z.string(),
   sessionKey: z.string(),
   trustLevel: z.enum(["admin", "user", "guest"]),
+  callbackOwner: ApprovalRequestSchema.shape.callbackOwner,
   createdAt: z.number(),
   timeoutMs: z.number().int().positive(),
 });
@@ -84,21 +99,40 @@ export const SerializedApprovalRequestSchema = z.strictObject({
 /** A serialized approval request for persistence across restarts. */
 export type SerializedApprovalRequest = z.infer<typeof SerializedApprovalRequestSchema>;
 
+/** Validate an untrusted pending-approval restart record without throwing. */
+export function parseSerializedApprovalRequest(
+  raw: unknown,
+): Result<SerializedApprovalRequest, z.ZodError> {
+  const parsed = SerializedApprovalRequestSchema.safeParse(raw);
+  return parsed.success ? ok(parsed.data) : err(parsed.error);
+}
+
 /** Schema for a serialized approval cache entry (for restart persistence of cached approvals). */
 export const SerializedApprovalCacheEntrySchema = z.strictObject({
-  /** The cache key: "${sessionKey}::${action}" */
-  cacheKey: z.string(),
+  /** Opaque key for the exact session, principal, tool, action, and parameter digest. */
+  cacheKey: z.string().startsWith("h1:").min(1),
   /** The cached approval resolution */
   resolution: z.strictObject({
     requestId: z.string().uuid(),
-    approved: z.boolean(),
-    approvedBy: z.string(),
+    approved: z.literal(true),
+    approvedBy: z.string().min(1),
     reason: z.string().optional(),
-    resolvedAt: z.number(),
+    resolvedAt: z.number().int().nonnegative(),
   }),
   /** Absolute expiry timestamp (epoch ms) */
-  expiresAt: z.number(),
+  expiresAt: z.number().int().positive(),
+}).refine((entry) => entry.resolution.resolvedAt < entry.expiresAt, {
+  path: ["expiresAt"],
+  message: "Approval cache expiry must be after its resolution",
 });
 
 /** A serialized approval cache entry for persistence across restarts. */
 export type SerializedApprovalCacheEntry = z.infer<typeof SerializedApprovalCacheEntrySchema>;
+
+/** Validate an untrusted restart-cache record without throwing. */
+export function parseSerializedApprovalCacheEntry(
+  raw: unknown,
+): Result<SerializedApprovalCacheEntry, z.ZodError> {
+  const parsed = SerializedApprovalCacheEntrySchema.safeParse(raw);
+  return parsed.success ? ok(parsed.data) : err(parsed.error);
+}

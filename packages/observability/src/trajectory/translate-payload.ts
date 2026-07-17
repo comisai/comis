@@ -377,6 +377,14 @@ export function translatePayload(
       // (the recorder envelope carries the agent session) — never echoed.
       return { reason: payload.reason, durationMs: payload.durationMs };
 
+    case "delivery:outward_ledger_transition":
+      return {
+        rootRunId: payload.rootRunId,
+        stepIndex: payload.stepIndex,
+        transition: payload.transition,
+        outcome: payload.outcome,
+      };
+
     case "delivery:enqueued":
       return {
         entryId: payload.entryId,

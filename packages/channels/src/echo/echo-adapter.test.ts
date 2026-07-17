@@ -1,14 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach } from "vitest";
-import { createHash } from "node:crypto";
 import type { NormalizedMessage } from "@comis/core";
 import { EchoChannelAdapter } from "./echo-adapter.js";
 
 /** Mirror the send-wrap content_digest: sha256(body).slice(0,16). */
-function digestOf(text: string): string {
-  return createHash("sha256").update(text).digest("hex").slice(0, 16);
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -196,7 +191,7 @@ describe("EchoChannelAdapter", () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value).toBe("echo-msg-0");
+        expect(result.value).toEqual({ kind: "tracked", messageId: "echo-msg-0" });
       }
 
       const sent = adapter.getSentMessages();
@@ -230,100 +225,8 @@ describe("EchoChannelAdapter", () => {
     });
   });
 
-  describe("reconcileSend", () => {
-    it("returns sent with the stored platformMessageId when a digest+window match exists", async () => {
-      const text = "the crash-interrupted body";
-      const sendResult = await adapter.sendMessage("ch-1", text);
-      expect(sendResult.ok).toBe(true);
-      const expectedId = sendResult.ok ? sendResult.value : "";
-
-      // Read the actual stored timestamp so the window deterministically brackets it.
-      const stored = adapter.getSentMessages().find((m) => m.text === text)!;
-
-      const result = await adapter.reconcileSend({
-        channelId: "ch-1",
-        contentDigest: digestOf(text),
-        sentAfterMs: stored.timestamp - 1,
-        sentBeforeMs: stored.timestamp + 1,
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toEqual({ kind: "sent", platformMessageId: expectedId });
-      }
-    });
-
-    it("returns not_sent when no stored message matches the digest (Echo has full deterministic visibility)", async () => {
-      const stored = await adapter.sendMessage("ch-1", "something else entirely");
-      expect(stored.ok).toBe(true);
-      const t = adapter.getSentMessages()[0]!.timestamp;
-
-      const result = await adapter.reconcileSend({
-        channelId: "ch-1",
-        contentDigest: digestOf("a body that was never sent"),
-        sentAfterMs: t - 1,
-        sentBeforeMs: t + 1,
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toEqual({ kind: "not_sent" });
-      }
-    });
-
-    it("does NOT match a stored message whose timestamp falls outside the window -> not_sent", async () => {
-      const text = "in store but out of window";
-      await adapter.sendMessage("ch-1", text);
-      const t = adapter.getSentMessages()[0]!.timestamp;
-
-      // Window is entirely in the future relative to the stored message.
-      const result = await adapter.reconcileSend({
-        channelId: "ch-1",
-        contentDigest: digestOf(text),
-        sentAfterMs: t + 1000,
-        sentBeforeMs: t + 2000,
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toEqual({ kind: "not_sent" });
-      }
-    });
-
-    it("does NOT match a stored message in the window with a different text (digest mismatch) -> not_sent", async () => {
-      await adapter.sendMessage("ch-1", "stored body A");
-      const t = adapter.getSentMessages()[0]!.timestamp;
-
-      const result = await adapter.reconcileSend({
-        channelId: "ch-1",
-        contentDigest: digestOf("DIFFERENT body B"),
-        sentAfterMs: t - 1,
-        sentBeforeMs: t + 1,
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toEqual({ kind: "not_sent" });
-      }
-    });
-
-    it("does NOT match a message sent to a different channelId -> not_sent", async () => {
-      const text = "right body wrong channel";
-      await adapter.sendMessage("ch-OTHER", text);
-      const t = adapter.getSentMessages()[0]!.timestamp;
-
-      const result = await adapter.reconcileSend({
-        channelId: "ch-1",
-        contentDigest: digestOf(text),
-        sentAfterMs: t - 1,
-        sentBeforeMs: t + 1,
-      });
-
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value).toEqual({ kind: "not_sent" });
-      }
-    });
+  it("does not expose a content-history recovery oracle", () => {
+    expect("reconcileSend" in adapter).toBe(false);
   });
 
   describe("onMessage + injectMessage", () => {

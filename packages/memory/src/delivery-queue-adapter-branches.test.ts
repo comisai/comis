@@ -3,7 +3,7 @@
  * Branch-gap coverage for delivery-queue-adapter.ts.
  *
  * Targets the uncovered error-path branches in every Result-returning method
- * (enqueue/enqueueInFlight/ack/nack/fail/pendingEntries/pruneExpired/depth/
+ * (enqueue/enqueueInFlight/claim/ack/nack/fail/pendingEntries/pruneExpired/depth/
  * statusCounts/recoverInFlight) plus the per-status branches in statusCounts'
  * switch statement and the nullish-traceId branch in enqueue/enqueueInFlight.
  *
@@ -19,8 +19,18 @@ import { initSchema } from "./schema.js";
 import { createSqliteDeliveryQueue } from "./delivery-queue-adapter.js";
 import type { DeliveryQueuePort } from "@comis/core";
 
-function createMockEventBus(): { emit: ReturnType<typeof vi.fn> } {
-  return { emit: vi.fn() };
+function createMockEventBus(): {
+  emit: ReturnType<typeof vi.fn>;
+  emitSafely: ReturnType<typeof vi.fn>;
+} {
+  const emit = vi.fn();
+  return {
+    emit,
+    emitSafely: vi.fn((event, payload) => {
+      emit(event, payload);
+      return { hadListeners: false, failures: [], pendingFailures: Promise.resolve([]) };
+    }),
+  };
 }
 
 describe("SqliteDeliveryQueueAdapter — branch-gap coverage", () => {
@@ -97,6 +107,15 @@ describe("SqliteDeliveryQueueAdapter — branch-gap coverage", () => {
     it("returns err result when ack runs against a closed database", async () => {
       db.close();
       const result = await queue.ack("missing-id", "msg-x");
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBeInstanceOf(Error);
+      }
+    });
+
+    it("returns err result when claim runs against a closed database", async () => {
+      db.close();
+      const result = await queue.claim("missing-id");
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error).toBeInstanceOf(Error);

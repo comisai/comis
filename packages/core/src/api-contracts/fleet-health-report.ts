@@ -163,7 +163,7 @@ export const FleetHealthReportSchema = z.object({
    * strips any extra field). Optional (schemaVersion stays 1) —
    * additive; pre-existing constructors omit it.
    *
-   * Sourced from `DurableRunPort.countByStatus` (autonomy runs ARE durable_runs
+   * Sourced from `DurableRunPort.countByStatus` (autonomy runs are durable checkpoints
    * by construction — no synthetic notion, no session-rollup schema change) +
    * the synthetic-excluded `reduceFleetWindow` breaker/cost read-back. The block
    * is ABSENT when the durable store is unwired (e.g. the daemon-less offline

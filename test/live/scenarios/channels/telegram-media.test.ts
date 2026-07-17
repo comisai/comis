@@ -182,7 +182,11 @@ describe("MEDIA-03 Stage-B — spoiler / location / venue map to metadata via th
       fileUniqueId: "uniq_spoiler_1",
       spoiler: true,
     });
-    const normalized = mapGrammyToNormalized(update.message as Message, CHAT_ID);
+    const normalized = mapGrammyToNormalized(
+      update.message as Message,
+      CHAT_ID,
+      "message",
+    );
     // has_media_spoiler → metadata.hasSpoiler (message-mapper.ts:142).
     expect(normalized.metadata.hasSpoiler).toBe(true);
   });
@@ -195,7 +199,11 @@ describe("MEDIA-03 Stage-B — spoiler / location / venue map to metadata via th
       from: makeUser({ id: FROM.id, firstName: FROM.firstName }),
       location: { latitude: 51.5, longitude: -0.12, horizontalAccuracy: 10 },
     });
-    const normalized = mapGrammyToNormalized(update.message as Message, CHAT_ID);
+    const normalized = mapGrammyToNormalized(
+      update.message as Message,
+      CHAT_ID,
+      "message",
+    );
     const loc = normalized.metadata.location as { latitude?: number; longitude?: number } | undefined;
     expect(loc, "metadata.location is set for a location message").toBeDefined();
     expect(loc!.latitude).toBe(51.5);
@@ -210,7 +218,11 @@ describe("MEDIA-03 Stage-B — spoiler / location / venue map to metadata via th
       from: makeUser({ id: FROM.id, firstName: FROM.firstName }),
       venue: { latitude: 40.0, longitude: -74.0, title: "The Office", address: "1 Main St" },
     });
-    const normalized = mapGrammyToNormalized(update.message as Message, CHAT_ID);
+    const normalized = mapGrammyToNormalized(
+      update.message as Message,
+      CHAT_ID,
+      "message",
+    );
     const loc = normalized.metadata.location as { latitude?: number; longitude?: number; name?: string } | undefined;
     expect(loc, "metadata.location is set for a venue message").toBeDefined();
     expect(loc!.latitude).toBe(40.0);

@@ -59,18 +59,21 @@ export function isValidLogLevel(level: string): boolean {
  *
  * Closed 11-member union.
  */
-export type ErrorKind =
-  | "config"
-  | "network"
-  | "auth"
-  | "validation"
-  | "precondition"
-  | "timeout"
-  | "resource"
-  | "dependency"
-  | "internal"
-  | "platform"
-  | "sandbox_unavailable";
+export const ERROR_KINDS = [
+  "config",
+  "network",
+  "auth",
+  "validation",
+  "precondition",
+  "timeout",
+  "resource",
+  "dependency",
+  "internal",
+  "platform",
+  "sandbox_unavailable",
+] as const;
+
+export type ErrorKind = (typeof ERROR_KINDS)[number];
 
 /**
  * Structural log-method signature.

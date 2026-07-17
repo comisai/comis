@@ -16,7 +16,7 @@
 import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, MsTeamsConversationStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, EnvPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
+import type { AgentExecutor, ComisSessionManager, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { createSessionStore, MemoryApi } from "@comis/memory";
 import type { CommandQueue } from "@comis/orchestrator";
 import type { VoiceResponsePipelineDeps, LifecycleReactor } from "@comis/channels";
@@ -79,6 +79,8 @@ export interface ChannelsResult {
 export interface ChannelsDeps {
   /** Bootstrap output: config, event bus, secret manager. */
   container: AppContainer;
+  /** Absolute Comis data root resolved by the daemon composition root. */
+  dataDir: string;
   /** Per-agent executor instances keyed by agentId. */
   executors: Map<string, AgentExecutor>;
   /** Default agent ID from routing config. */
@@ -287,7 +289,7 @@ export interface ChannelsDeps {
    * Optional callback fired BEFORE each inbound message is dispatched to the
    * executor. Used by the restart continuation tracker so the session is
    * visible in tracker state before any tool call could trigger SIGUSR2.
-   * Bypassed for early-return paths (no-adapter, graph-report intercept).
+   * Bypassed for the no-adapter early return.
    */
   onMessageReceived?: (msg: NormalizedMessage, channelType: string) => void;
   /** Optional callback fired AFTER each successful inbound message processing. Used by post-processing state (e.g. notification session activity recording). */
@@ -295,10 +297,10 @@ export interface ChannelsDeps {
   /** Optional approval gate for /approve and /deny chat commands in inbound pipeline. */
   approvalGate?: import("@comis/core").ApprovalGate;
   /** Per-agent PI session adapters for session stats/destroy in slash commands. */
-  piSessionAdapters?: Map<string, {
-    getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
-    destroySession(key: SessionKey): Promise<void>;
-  }>;
+  piSessionAdapters?: Map<string, Pick<
+    ComisSessionManager,
+    "getSessionStats" | "destroySession" | "persistInboundMessage"
+  >>;
   /** Complete three-layer conversation forget for slash /new + /reset
    *  (createConversationReset — runtime-only destroy
    *  leaves the LCD context the DAG re-presents on the next turn). */
@@ -451,6 +453,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   const { channelManager, lifecycleReactors, commandQueue } =
     await buildAndStartChannelManager({
       container,
+      dataDir: deps.dataDir,
       executors,
       defaultAgentId,
       sessionManager,

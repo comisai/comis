@@ -153,6 +153,7 @@ describe("createCronHandlers", () => {
         payload_kind: "agent_turn",
         payload_text: "hello",
         _agentId: "agent-2",
+        _deliveryTarget: { channelId: "chat-2", userId: "user-2", tenantId: "tenant-2", channelType: "telegram" },
       });
 
       expect(deps.getAgentCronScheduler).toHaveBeenCalledWith("agent-2");
@@ -182,29 +183,34 @@ describe("createCronHandlers", () => {
       );
     });
 
-    it("the context-injected _deliveryTarget WINS over an explicit deliveryTarget (agent cannot redirect)", async () => {
+    it("rejects an agent redirect when the explicit target differs from the trusted delivery target", async () => {
       // Security invariant: for an agent-origin call the daemon injects the trusted
       // _deliveryTarget from the turn's session; an agent-supplied explicit
       // deliveryTarget must NOT override it (no cron delivery-redirect).
       const deps = makeDeps();
       const handlers = createCronHandlers(deps);
-      const scheduler = (deps.getAgentCronScheduler as ReturnType<typeof vi.fn>)();
-
-      await handlers["cron.add"]!({
+      await expect(handlers["cron.add"]!({
         name: "agent-cron",
         schedule_kind: "every",
         schedule_every_ms: 60000,
         payload_kind: "agent_turn",
         payload_text: "status",
+        _agentId: "agent-a",
         _deliveryTarget: { channelId: "TRUSTED-origin", userId: "u", tenantId: "default", channelType: "telegram" },
         deliveryTarget: { channelId: "ATTACKER-redirect", userId: "u", tenantId: "default", channelType: "telegram" },
-      });
+      })).rejects.toThrow(/deliveryTarget/i);
+    });
 
-      expect(scheduler.addJob).toHaveBeenCalledWith(
-        expect.objectContaining({
-          deliveryTarget: expect.objectContaining({ channelId: "TRUSTED-origin" }),
-        }),
-      );
+    it("rejects an agent-authored cron without a trusted delivery target", async () => {
+      const handlers = createCronHandlers(makeDeps());
+      await expect(handlers["cron.add"]!({
+        name: "agent-cron",
+        schedule_kind: "every",
+        schedule_every_ms: 60000,
+        payload_kind: "agent_turn",
+        payload_text: "status",
+        _agentId: "agent-a",
+      })).rejects.toThrow(/trusted deliveryTarget/i);
     });
 
     it("rejects an invalid explicit deliveryTarget (validated like cron.update)", async () => {
@@ -677,6 +683,32 @@ describe("createCronHandlers", () => {
   // -------------------------------------------------------------------------
 
   describe("cron.update", () => {
+    it("rejects an agent update without a trusted delivery target", async () => {
+      const handlers = createCronHandlers(makeDeps());
+      await expect(handlers["cron.update"]!({
+        jobName: "test-job",
+        enabled: false,
+        _agentId: "agent-a",
+      })).rejects.toThrow(/trusted deliveryTarget/i);
+    });
+
+    it("rejects an agent attempt to clear or redirect the trusted delivery target", async () => {
+      const trusted = { channelType: "telegram", channelId: "chat-a", userId: "user-a", tenantId: "tenant-a" };
+      const handlers = createCronHandlers(makeDeps());
+
+      await expect(handlers["cron.update"]!({
+        jobName: "test-job",
+        _agentId: "agent-a",
+        _deliveryTarget: trusted,
+        deliveryTarget: null,
+      })).rejects.toThrow(/deliveryTarget/i);
+      await expect(handlers["cron.update"]!({
+        jobName: "test-job",
+        _agentId: "agent-a",
+        _deliveryTarget: trusted,
+        deliveryTarget: { ...trusted, channelId: "other-chat" },
+      })).rejects.toThrow(/deliveryTarget/i);
+    });
     it("updates job enabled field and returns success", async () => {
       const deps = makeDeps();
       const handlers = createCronHandlers(deps);

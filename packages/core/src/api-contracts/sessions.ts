@@ -313,9 +313,11 @@ export const SessionHistoryContract = defineContract({
 
 /**
  * `session.send` — Send a message into another session under the
- * agent-to-agent policy gate. Three delivery modes: `fire-and-forget`,
- * `wait`, `ping-pong`.
- * Handler path: session-handlers.ts:711-730.
+ * agent-to-agent policy and principal-isolation gates. Agent-origin calls are
+ * confined to the caller's tenant and user. The target must be owned by the
+ * same agent or be the exact child session delegated by that caller session.
+ * Three delivery modes: `fire-and-forget`, `wait`, `ping-pong`.
+ * Handler path: `packages/daemon/src/api/session-handlers/session-mutate.ts`.
  *
  * Bespoke pre-Zod:
  *   - `!deps.securityConfig.agentToAgent?.enabled` →
@@ -323,6 +325,8 @@ export const SessionHistoryContract = defineContract({
  *     security.agentToAgent.enabled in config."`
  *
  * Request: `{ session_key, text, mode?, timeout_ms?, max_turns?, agent_id? }`.
+ * On an agent-origin call, `agent_id` is only an ownership assertion; the
+ * handler resolves the execution agent from authoritative target metadata.
  * The dispatcher injects `_callerSessionKey`, `_callerChannelType`,
  * `_callerChannelId` — NOT declared in the contract here.
  *

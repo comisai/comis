@@ -1442,10 +1442,6 @@ describe("createSessionHandlers - session management", () => {
 
       const response = (await handlers["session.spawn"]!({
         task: "T",
-        _agentId: "default",
-        _callerSessionKey: "K",
-        _callerChannelType: "telegram",
-        _callerChannelId: "123",
       })) as Record<string, unknown>;
 
       expect(response.runId).toBe("test-run-id-001");
@@ -1460,10 +1456,6 @@ describe("createSessionHandlers - session management", () => {
 
       const response = await handlers["session.spawn"]!({
         task: "T",
-        _agentId: "default",
-        _callerSessionKey: "K",
-        _callerChannelType: "telegram",
-        _callerChannelId: "123",
       });
 
       expect(JSON.stringify(response).includes("Spawn timed out, check run_status later")).toBe(false);
@@ -1495,10 +1487,6 @@ describe("createSessionHandlers - session management", () => {
 
       const response = (await handlers["session.spawn"]!({
         task: "T",
-        _agentId: "default",
-        _callerSessionKey: "K",
-        _callerChannelType: "telegram",
-        _callerChannelId: "123",
       })) as Record<string, unknown>;
 
       expect(response.deduped).toBe(true);
@@ -1515,10 +1503,6 @@ describe("createSessionHandlers - session management", () => {
 
       const response = (await handlers["session.spawn"]!({
         task: "T",
-        _agentId: "default",
-        _callerSessionKey: "K",
-        _callerChannelType: "telegram",
-        _callerChannelId: "123",
       })) as Record<string, unknown>;
 
       expect("deduped" in response).toBe(false);

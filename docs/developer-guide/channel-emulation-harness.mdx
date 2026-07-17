@@ -152,23 +152,17 @@ hook is fire-and-forget, so a synchronous read right after send races it.
 
 ## The webhook flag
 
-The emulator supports a **webhook-POST mode**: instead of queuing an inbound `Update` for the
-adapter's `getUpdates` long-poll, it POSTs the grammy `Update` to a configured `webhookUrl`
-carrying the `X-Telegram-Bot-Api-Secret-Token` header. The scenario asserts the harness-side
-secret-token gate (a wrong or absent token is rejected) plus the product's boot-time secret
-**format** validator and the polling-off switch (`shouldUseRunner` returns false when a
-`webhookUrl` is set).
+The emulator has a **webhook-POST mode** for testing its own secret-token gate,
+but the product does not expose a Telegram webhook receiver. Product tests assert
+that setting `webhookUrl` fails adapter startup before polling or external token
+validation begins.
 
 <Warning>
-**Honest gap — webhook ingestion is not wired in the product at HEAD.** Comis validates the
-webhook secret's *format* at boot and skips the polling runner when `webhookUrl` is set, but
-**no daemon route ingests a POSTed `Update` or checks `X-Telegram-Bot-Api-Secret-Token`** — the
-host process is expected to drive `bot.handleUpdate` externally, and nothing does. So at HEAD
-Comis is effectively **polling-only**: a webhook update does **not** reach the agent. The
-harness can POST the update and assert its own gate, but there is no product endpoint to
-receive it. Closing this is a deliberate, test-first product change (mount grammy's
-`webhookCallback` with the secret token) — until that ships, this doc makes **no** claim that a
-webhook update reaches the agent.
+Comis is polling-only. A webhook update does not reach the agent, and adapter
+startup rejects webhook configuration instead of reporting a connection that
+cannot receive messages. A future webhook receiver must mount the platform
+callback with secret-token verification before this harness mode can become a
+product scenario.
 </Warning>
 
 ## Driving from a cold shell (shell-only, unattended)

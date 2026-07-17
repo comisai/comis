@@ -25,7 +25,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PER_FILE_CAP_BYTES } from "@comis/core";
-import { buildPreview, CHECKPOINT_TTL_MS, createResultRefStore, inferKind } from "./result-ref-store.js";
+import {
+  buildPreview,
+  CHECKPOINT_TTL_MS,
+  createResultRefStore,
+  inferKind,
+  safeResultRunId,
+} from "./result-ref-store.js";
 
 // Spy on execFile so the slice-only guarantee test can drive the `sql` core's
 // daemon-side duckdb with a controlled tiny row-slice stdout — proving ONLY the
@@ -75,6 +81,10 @@ describe("result-ref-store", () => {
 
   function makeStore(): ReturnType<typeof createResultRefStore> {
     return createResultRefStore({ logger: makeLogger() });
+  }
+
+  function runResultsDir(id = runId): string {
+    return join(workspacePath, "results", safeResultRunId(id));
   }
 
   it("materializes a payload to <workspace>/results/<id> and returns a workspace-relative ResultRef", async () => {
@@ -218,7 +228,7 @@ describe("result-ref-store", () => {
     expect(ref !== undefined && "error" in ref).toBe(true);
 
     // ... and NOTHING is written under results/ (no partial/clamped file).
-    const resultsDir = join(workspacePath, "results");
+    const resultsDir = runResultsDir();
     const entries = existsSync(resultsDir) ? readdirSync(resultsDir) : [];
     expect(entries.length).toBe(0);
   });
@@ -239,7 +249,7 @@ describe("result-ref-store", () => {
       refs.push(ref);
     }
 
-    const resultsDir = join(workspacePath, "results");
+    const resultsDir = runResultsDir();
     expect(readdirSync(resultsDir).length).toBe(3);
 
     // Aggregate cap that only fits ONE ~4-byte file → evict the two oldest.
@@ -253,7 +263,7 @@ describe("result-ref-store", () => {
     const survivors = readdirSync(resultsDir);
     expect(survivors.length).toBe(1);
     // The newest (refs[2]) survives; the two older are gone.
-    const newestFile = refs[2]!.ref.replace(/^results\//, "");
+    const newestFile = refs[2]!.ref.split("/").at(-1)!;
     expect(survivors).toContain(newestFile);
     expect(existsSync(join(workspacePath, refs[0]!.ref))).toBe(false);
     expect(existsSync(join(workspacePath, refs[1]!.ref))).toBe(false);
@@ -289,7 +299,7 @@ describe("result-ref-store", () => {
     await store.materialize("a".repeat(100), "read", { workspacePath, runId, nowMs });
     await store.materialize("b".repeat(100), "read", { workspacePath, runId, nowMs });
 
-    const resultsDir = join(workspacePath, "results");
+    const resultsDir = runResultsDir();
     expect(readdirSync(resultsDir).length).toBe(2);
 
     await store.cleanupRun({ workspacePath, runId });
@@ -297,6 +307,43 @@ describe("result-ref-store", () => {
     // The run's results are gone (the dir is emptied or removed).
     const remaining = existsSync(resultsDir) ? readdirSync(resultsDir) : [];
     expect(remaining.length).toBe(0);
+  });
+
+  it("isolates concurrent runs so one run's GC and cleanup cannot remove another run's artifacts", async () => {
+    const store = makeStore();
+    const runA = "run-a";
+    const runB = "run-b";
+
+    const refA = await store.materialize("expired-a", "read", {
+      workspacePath,
+      runId: runA,
+      nowMs,
+      ttlMs: 1,
+    });
+    const refB = await store.materialize("live-b", "read", {
+      workspacePath,
+      runId: runB,
+      nowMs,
+      ttlMs: 60_000,
+    });
+    if (refA === undefined || "error" in refA || refB === undefined || "error" in refB) {
+      throw new Error("expected isolated ResultRefs");
+    }
+
+    expect(refA.ref.split("/").slice(0, -1)).not.toEqual(
+      refB.ref.split("/").slice(0, -1),
+    );
+    await store.gcRun({
+      workspacePath,
+      runId: runA,
+      aggregateCapBytes: 0,
+      nowMs: nowMs + 10,
+    });
+    expect(existsSync(join(workspacePath, refA.ref))).toBe(false);
+    expect(existsSync(join(workspacePath, refB.ref))).toBe(true);
+
+    await store.cleanupRun({ workspacePath, runId: runA });
+    expect(existsSync(join(workspacePath, refB.ref))).toBe(true);
   });
 
   it("rejects a traversal in the run/id and never writes outside <workspace>/results (path containment)", async () => {
@@ -323,7 +370,7 @@ describe("result-ref-store", () => {
       expect(existsSync(sentinel)).toBe(false);
 
       // No results/ file may have escaped the workspace root.
-      const resultsDir = join(workspacePath, "results");
+      const resultsDir = runResultsDir();
       if (existsSync(resultsDir)) {
         for (const entry of readdirSync(resultsDir)) {
           expect(join(resultsDir, entry).startsWith(resultsDir)).toBe(true);
@@ -375,7 +422,7 @@ describe("result-ref-store", () => {
     // A file in results/ that does NOT match the store's `<c36>-<s36>-<e36>`
     // basename scheme → parseStamps falls back (never TTL-expired). With a huge
     // aggregate cap, a TTL sweep must NOT evict it.
-    const resultsDir = join(workspacePath, "results");
+    const resultsDir = runResultsDir();
     mkdirSync(resultsDir, { recursive: true });
     const foreign = join(resultsDir, "not-a-store-file.txt");
     writeFileSync(foreign, "hand-placed");
@@ -414,11 +461,11 @@ describe("result-ref-store", () => {
         if (ref === undefined || "error" in ref) throw new Error("materialize failed");
       }
 
-      const resultsDir = join(workspacePath, "results");
+      const resultsDir = runResultsDir();
       expect(readdirSync(resultsDir).length).toBe(3);
 
       // The aggregate the runner captures BEFORE cleanup wipes results/: Σ file sizes.
-      const agg = store.runAggregate?.({ workspacePath });
+      const agg = store.runAggregate?.({ workspacePath, runId });
       expect(agg).toEqual({ count: 3, bytes: 3 * size }); // 122880
 
       // Read-only: the call evicts nothing — all three files remain on disk.
@@ -428,7 +475,7 @@ describe("result-ref-store", () => {
     it("returns a zero aggregate (no throw) when the run has no results dir", () => {
       const store = makeStore();
       // Fresh workspace, nothing materialized → an empty aggregate, never a throw.
-      const agg = store.runAggregate?.({ workspacePath });
+      const agg = store.runAggregate?.({ workspacePath, runId });
       expect(agg).toEqual({ count: 0, bytes: 0 });
     });
   });
@@ -499,7 +546,7 @@ describe("result-ref-store", () => {
       });
       // Content-free refusal (NOT a ResultRef) — the longer TTL does not exempt the cap.
       expect(ref !== undefined && "error" in ref).toBe(true);
-      const resultsDir = join(workspacePath, "results");
+      const resultsDir = runResultsDir();
       expect(existsSync(resultsDir) ? readdirSync(resultsDir).length : 0).toBe(0);
     });
 
@@ -514,7 +561,7 @@ describe("result-ref-store", () => {
         });
         if (r === undefined || "error" in r) throw new Error("materialize failed");
       }
-      const resultsDir = join(workspacePath, "results");
+      const resultsDir = runResultsDir();
       expect(readdirSync(resultsDir).length).toBe(3);
       // A tiny aggregate cap forces oldest-first eviction even though the TTL is long
       // (the aggregate cap bounds a checkpoint the same as any ResultRef).

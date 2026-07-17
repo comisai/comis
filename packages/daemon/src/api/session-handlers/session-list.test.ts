@@ -85,6 +85,50 @@ function makeDeps(): SessionHandlerDeps {
 }
 
 describe("session.list agent-origin self-scoping", () => {
+  it("session.list returns the exact caller session even though formatted keys omit agent identity", async () => {
+    const handlers = bindSessionListHandlers(makeDeps());
+    const r = (await handlers["session.list"]!({
+      _agentId: "jailed-agent",
+      _callerSessionKey: OTHER_KEY,
+    })) as {
+      sessions: Array<{ sessionKey: string; agentId: string }>;
+      total: number;
+    };
+
+    expect(r.sessions).toEqual([
+      expect.objectContaining({ sessionKey: OTHER_KEY, agentId: "jailed-agent" }),
+    ]);
+    expect(r.total).toBe(1);
+  });
+
+  it("session.search searches the exact caller session without relying on an unserialized agent field", async () => {
+    const deps = makeDeps();
+    deps.sessionStore.loadByFormattedKey = vi.fn((key: string) => key === OTHER_KEY
+      ? {
+          messages: [{ role: "user", content: "caller-owned marker", timestamp: 10 }],
+          metadata: {},
+          createdAt: 1,
+          updatedAt: 10,
+        }
+      : undefined);
+    const handlers = bindSessionListHandlers(deps);
+
+    const r = (await handlers["session.search"]!({
+      query: "caller-owned",
+      summarize: false,
+      _agentId: "jailed-agent",
+      _callerSessionKey: OTHER_KEY,
+    })) as {
+      results: Array<{ sessionKey: string; agentId: string }>;
+      total: number;
+    };
+
+    expect(r.results).toEqual([
+      expect.objectContaining({ sessionKey: OTHER_KEY, agentId: "jailed-agent" }),
+    ]);
+    expect(r.total).toBe(1);
+  });
+
   it("session.list does NOT return other agents' sessions to an agent-origin caller (_agentId injected)", async () => {
     // An agent-origin caller (the orchestrate rpc route injects `_agentId`)
     // must never receive the cross-tenant directory. With agent-scoping the

@@ -28,7 +28,7 @@ import {
 import { openAuthenticatedWebSocket, sendJsonRpc } from "../support/ws-helpers.js";
 import { RPC_FAST_MS } from "../support/timeouts.js";
 import type { ApprovalGate } from "@comis/core";
-import { runWithContext } from "@comis/core";
+import { createResolvedRequestContext, runWithContext } from "@comis/core";
 // Platform-tool factories live on the `./platform-tools` subpath; daemon
 // consumes them via the registry. Integration tests that exercise
 // individual factories must import from this subpath — the `.` subpath
@@ -51,6 +51,38 @@ const SOURCE_CONFIG_PATH = resolve(
 // YAML. To keep the checked-in fixture pristine across runs, the test copies
 // the source config to a tmp path and starts the daemon against that copy.
 const CONFIG_PATH = "/tmp/comis-test-approval-gate-e2e-config.yaml";
+const DIRECT_APPROVAL_IDENTITY = {
+  agentId: "test-user",
+  sessionKey: "test:test-user:test-chan",
+  trustLevel: "admin" as const,
+  callbackOwner: Object.freeze({
+    tenantId: "test",
+    userId: "test-user",
+    channelType: "echo",
+    channelKey: "test-chan",
+  }),
+};
+
+function makeToolApprovalContext(channelId: string) {
+  const context = createResolvedRequestContext({
+    tenantId: "test",
+    userId: "admin-operator",
+    sessionKey: { tenantId: "test", userId: "admin-operator", channelId },
+    agentId: "default",
+    traceId: randomUUID(),
+    startedAt: Date.now(),
+    trustLevel: "admin",
+    channelType: "echo",
+    deliveryOrigin: {
+      tenantId: "test",
+      userId: "admin-operator",
+      channelType: "echo",
+      channelId,
+    },
+  });
+  if (!context.ok) throw context.error;
+  return context.value;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -227,9 +259,8 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
           toolName: "agents_manage",
           action: "agents.create",
           params: { agent_id: "test-agent" },
-          agentId: "test-user",
-          sessionKey: "test:test-user:test-chan",
-          trustLevel: "admin",
+          fingerprintParams: { agent_id: "test-agent" },
+          ...DIRECT_APPROVAL_IDENTITY,
         });
 
         // 2. Wait briefly for the event bus to fire
@@ -293,9 +324,8 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
           toolName: "channels_manage",
           action: "channels.disable",
           params: { channel: "discord" },
-          agentId: "test-user",
-          sessionKey: "test:test-user:test-chan",
-          trustLevel: "admin",
+          fingerprintParams: { channel: "discord" },
+          ...DIRECT_APPROVAL_IDENTITY,
         });
 
         // Wait for event bus
@@ -349,9 +379,8 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
           toolName: "tokens_manage",
           action: "tokens.revoke",
           params: { token_id: "old-token" },
-          agentId: "test-user",
-          sessionKey: "test:test-user:test-chan",
-          trustLevel: "admin",
+          fingerprintParams: { token_id: "old-token" },
+          ...DIRECT_APPROVAL_IDENTITY,
         });
 
         const elapsedMs = Date.now() - startMs;
@@ -397,9 +426,8 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
             toolName: "agents_manage",
             action: "agents.suspend",
             params: { agent_id: "helper" },
-            agentId: "test-user",
-            sessionKey: "test:test-user:test-chan",
-            trustLevel: "admin",
+            fingerprintParams: { agent_id: "helper" },
+            ...DIRECT_APPROVAL_IDENTITY,
           });
 
           // 3. Wait briefly for event to be emitted
@@ -461,9 +489,8 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
           toolName: "memory_manage",
           action: "memory.flush",
           params: {},
-          agentId: "test-user",
-          sessionKey: "test:test-user:test-chan",
-          trustLevel: "admin",
+          fingerprintParams: {},
+          ...DIRECT_APPROVAL_IDENTITY,
         });
 
         await new Promise((resolve) => setTimeout(resolve, 50));
@@ -528,9 +555,8 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
             toolName: "sessions_manage",
             action: "sessions.delete",
             params: { session_key: "test:user:chan" },
-            agentId: "test-user",
-            sessionKey: "test:test-user:test-chan",
-            trustLevel: "admin",
+            fingerprintParams: { session_key: "test:user:chan" },
+            ...DIRECT_APPROVAL_IDENTITY,
           });
 
           await new Promise((resolve) => setTimeout(resolve, 100));
@@ -619,14 +645,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
 
         // 2. Start tool execute in a runWithContext scope with admin trust level
         const executePromise = runWithContext(
-          {
-            tenantId: "test",
-            userId: "admin-operator",
-            sessionKey: "test:admin-operator:e2e-channel",
-            traceId: randomUUID(),
-            startedAt: Date.now(),
-            trustLevel: "admin",
-          },
+          makeToolApprovalContext("e2e-channel"),
           () =>
             tool.execute("call-approve-1", {
               action: "create",
@@ -706,14 +725,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
         // batch-approval cache (keyed by `${sessionKey}::${action}`) auto-
         // approving this request.
         const executePromise = runWithContext(
-          {
-            tenantId: "test",
-            userId: "admin-operator",
-            sessionKey: "test:admin-operator:e2e-deny-channel",
-            traceId: randomUUID(),
-            startedAt: Date.now(),
-            trustLevel: "admin",
-          },
+          makeToolApprovalContext("e2e-deny-channel"),
           () =>
             tool.execute("call-deny-1", {
               action: "create",

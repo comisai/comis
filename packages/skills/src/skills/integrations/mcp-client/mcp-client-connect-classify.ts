@@ -33,7 +33,7 @@ interface ClassifiedConnectFailure {
   readonly hint: string;
   /** Enriched message for the caller + the error-state entry (folds in stderr). */
   readonly message: string;
-  /** Bounded stderr tail for the log `stderr` field (empty when none captured). */
+  /** Bounded stderr tail for the caller-facing error state; never written to logs. */
   readonly stderrTail: string;
 }
 
@@ -47,6 +47,26 @@ const STDERR_TAIL_MAX = 1500;
  * values (`"1"`, `"true"`, a short flag) from nuking legitimate diagnostic text.
  */
 const MIN_KNOWN_SECRET_LEN = 4;
+
+/** Content-free operator guidance for the structured log sink. */
+function connectFailureLogHint(
+  reason: ClassifiedConnectFailure["reason"],
+): string {
+  switch (reason) {
+    case "command_not_found":
+      return "Install the configured MCP command and ensure it is on the daemon PATH";
+    case "server_exited":
+      return "Check the MCP server configuration and required environment references, then retry";
+    case "handshake_timeout":
+      return "Check MCP server startup health and increase the configured connect timeout only if startup is expected to be slow";
+    case "transport_error":
+      return "Verify the MCP endpoint is reachable and its configured authentication is valid";
+    default: {
+      const exhaustive: never = reason;
+      return exhaustive;
+    }
+  }
+}
 
 /**
  * Redact the server's KNOWN configured secret values (env + header values) out of a
@@ -82,10 +102,10 @@ export function classifyConnectFailure(
 ): ClassifiedConnectFailure {
   // Fold in the child's stderr, but SANITIZE it first: a credentialed server can
   // echo a connection string / API key on the way down, and this tail flows into
-  // the returned error, the mcp.list/status error-state, AND the failure log (its
-  // `stderr` field is unstructured free-text, not a Pino-redacted key). Truncate
-  // before sanitizing so the redaction input is always bounded under the ReDoS
-  // cap, then scrub exactly what we expose.
+  // the returned error and the mcp.list/status error-state. Truncate before
+  // sanitizing so the redaction input is always bounded under the ReDoS cap,
+  // then scrub exactly what those caller-facing surfaces expose. Logs receive
+  // only the closed reason and stderr byte count below.
   const rawTail =
     stderrTail.length > STDERR_TAIL_MAX ? `…${stderrTail.slice(-STDERR_TAIL_MAX)}` : stderrTail;
   // Two-layer scrub: strip this server's KNOWN configured secret values (catches
@@ -146,7 +166,7 @@ export function classifyConnectFailure(
 /**
  * Record a generic (non-OAuth) connect failure: classify, write the error-state
  * connection entry (the ENRICHED message so mcp.list/status shows the real
- * cause), log the ERROR (reason + hint + sanitized stderr), emit
+ * cause), log the ERROR (closed reason + content-free stderr counters), emit
  * mcp:server:connect_failed (so a failed install is diagnosable via
  * `comis fleet`/`explain`, not only a raw daemon.log grep), and return the
  * enriched err (original error kept as `cause` for stack context).
@@ -177,10 +197,11 @@ export function recordConnectFailure(
   deps.logger.error(
     {
       serverName: config.name,
-      err: rawMessage,
-      ...(classified.stderrTail ? { stderr: classified.stderrTail } : {}),
       reason: classified.reason,
-      hint: classified.hint,
+      stderrBytes: Buffer.byteLength(stderrTail, "utf8"),
+      stderrCaptured: stderrTail.length > 0,
+      stderrTruncated: stderrTail.length > STDERR_TAIL_MAX,
+      hint: connectFailureLogHint(classified.reason),
       errorKind: "dependency" as const,
     },
     "MCP server connection failed",
@@ -207,7 +228,8 @@ export function recordConnectFailure(
  * otherwise a healthy server's banner reads like a fault every restart (e.g. a
  * read-only server whose startup banner says "Mutations are DISABLED" would
  * otherwise log WARN "Review stderr output for crash diagnostics"). Content-only
- * heuristic — the caller already sanitizes the text before logging.
+ * heuristic — callers retain the text only for bounded classification and
+ * caller-facing error state; structured logs receive counters and classes.
  */
 export function mcpStderrLooksLikeError(text: string): boolean {
   if (!text || text.trim().length === 0) return false;

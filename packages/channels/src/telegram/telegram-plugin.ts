@@ -87,8 +87,7 @@ export function createTelegramPlugin(deps: TelegramAdapterDeps): TelegramPluginH
 
     createResolver({ ssrfFetcher, maxBytes, logger }) {
       return createTelegramResolver({
-        bot: adapter.bot,
-        botToken: deps.botToken,
+        getBot: () => adapter.getStatus?.().connected === true ? adapter.bot : undefined,
         ssrfFetcher,
         maxBytes,
         logger,

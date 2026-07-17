@@ -4,6 +4,7 @@ import {
   ApprovalRequestSchema,
   SerializedApprovalRequestSchema,
   ApprovalResolutionSchema,
+  SerializedApprovalCacheEntrySchema,
 } from "./approval-request.js";
 
 // ApprovalRequestSchema AND SerializedApprovalRequestSchema
@@ -23,6 +24,13 @@ function baseRequest(): Record<string, unknown> {
     agentId: "agent-1",
     sessionKey: "default:user1:discord",
     trustLevel: "user",
+    callbackOwner: {
+      tenantId: "default",
+      userId: "user1",
+      channelType: "discord",
+      channelKey: "discord",
+      threadId: "thread-1",
+    },
     createdAt: 1_700_000_000_000,
     timeoutMs: 5000,
   };
@@ -36,6 +44,11 @@ function without(obj: Record<string, unknown>, key: string): Record<string, unkn
 }
 
 describe("ApprovalRequestSchema shortId", () => {
+  it("requires the full callback owner principal", () => {
+    const result = ApprovalRequestSchema.safeParse(without(baseRequest(), "callbackOwner"));
+    expect(result.success).toBe(false);
+  });
+
   it("rejects a request that omits shortId (shortId is required)", () => {
     const result = ApprovalRequestSchema.safeParse(without(baseRequest(), "shortId"));
     expect(result.success).toBe(false);
@@ -76,6 +89,11 @@ describe("ApprovalRequestSchema shortId", () => {
 });
 
 describe("SerializedApprovalRequestSchema shortId", () => {
+  it("requires the full callback owner principal after restart", () => {
+    const result = SerializedApprovalRequestSchema.safeParse(without(baseRequest(), "callbackOwner"));
+    expect(result.success).toBe(false);
+  });
+
   it("rejects a serialized record that omits shortId (shortId is required)", () => {
     const result = SerializedApprovalRequestSchema.safeParse(without(baseRequest(), "shortId"));
     expect(result.success).toBe(false);
@@ -114,5 +132,22 @@ describe("ApprovalResolutionSchema carries no shortId field", () => {
       resolvedAt: 1_700_000_000_000,
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("SerializedApprovalCacheEntrySchema", () => {
+  it("rejects a denial record because a restored cache entry can only authorize approvals", () => {
+    const result = SerializedApprovalCacheEntrySchema.safeParse({
+      cacheKey: "h1:21:default:user1:discord:b135ece7b7e511c7657b3d770110a8b94a030ba8a3cdf3ac2d1e691d4b576b20",
+      resolution: {
+        requestId: VALID_REQUEST_ID,
+        approved: false,
+        approvedBy: "operator",
+        resolvedAt: 1_700_000_000_000,
+      },
+      expiresAt: 1_700_000_015_000,
+    });
+
+    expect(result.success).toBe(false);
   });
 });

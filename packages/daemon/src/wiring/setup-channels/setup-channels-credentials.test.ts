@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { formatSessionKey, NormalizedMessageSchema, tryGetContext } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks. registerCronEventListeners imports concrete symbols from
@@ -381,9 +382,11 @@ describe("setup-channels-credentials", () => {
       timeoutSource: "operation_default",
     } as any);
 
+    const capturedMessages: unknown[] = [];
     const capturedOverrides: any[] = [];
     const executor = {
       execute: vi.fn(async (...args: any[]) => {
+        capturedMessages.push(args[0]);
         capturedOverrides.push(args[7]);
         return {
           response: "cron done",
@@ -423,6 +426,7 @@ describe("setup-channels-credentials", () => {
     });
 
     expect(executor.execute).toHaveBeenCalledOnce();
+    expect(NormalizedMessageSchema.safeParse(capturedMessages[0]).success).toBe(true);
     // The full promptTimeout shape pins BOTH the value and the carried
     // provenance — the bare { promptTimeoutMs } shape is the collapse bug.
     expect(capturedOverrides[0].promptTimeout).toEqual({
@@ -430,5 +434,99 @@ describe("setup-channels-credentials", () => {
       source: "operation_default",
     });
     expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
+  });
+
+  it("cron agent turn keeps one resolved context through tools execution and delivery", async () => {
+    const observed: Array<ReturnType<typeof tryGetContext>> = [];
+    const executor = {
+      execute: vi.fn(async () => {
+        observed.push(tryGetContext());
+        return {
+          response: "cron done",
+          sessionKey: {},
+          tokensUsed: { input: 0, output: 0, total: 10 },
+          cost: { total: 0.001 },
+          stepsExecuted: 1,
+          llmCalls: 1,
+          finishReason: "stop",
+        };
+      }),
+    };
+    const deps = makeDeps({
+      agents: {
+        "agent-1": {
+          name: "Agent 1",
+          provider: "anthropic",
+          model: "claude-sonnet-4-5",
+          operationModels: {},
+        },
+      },
+    });
+    (deps as any).executors = new Map([["agent-1", executor]]);
+    (deps as any).adaptersByType = new Map([["telegram", { channelType: "telegram" }]]);
+    (deps as any).sessionManager = {
+      expire: vi.fn(),
+      loadOrCreate: vi.fn(() => []),
+      save: vi.fn(),
+    };
+    (deps as any).assembleToolsForAgent = vi.fn(async () => {
+      observed.push(tryGetContext());
+      return [];
+    });
+    (deps as any).deliveryService = {
+      deliverToChannel: vi.fn(async () => {
+        observed.push(tryGetContext());
+        return {
+          ok: true as const,
+          value: {
+            ok: true,
+            totalChunks: 1,
+            deliveredChunks: 1,
+            failedChunks: 0,
+            chunks: [],
+            totalChars: 9,
+          },
+        };
+      }),
+    };
+    registerCronEventListeners(deps);
+
+    await deps.__eventBus.fire("scheduler:job_result", {
+      result: "ping the user",
+      payloadKind: "agent_turn",
+      agentId: "agent-1",
+      jobId: "job-context",
+      jobName: "context-ping",
+      deliveryTarget: {
+        channelType: "telegram",
+        channelId: "chat-1",
+        userId: "user_a",
+        tenantId: "tenant-a",
+      },
+    });
+
+    const expectedSessionKey = formatSessionKey({
+      tenantId: "tenant-a",
+      userId: "user_a",
+      channelId: "cron:job-context",
+    });
+    expect(observed).toHaveLength(3);
+    expect(observed[0]).toBeDefined();
+    expect(observed.every((context) => context === observed[0])).toBe(true);
+    expect(observed[0]).toMatchObject({
+      agentId: "agent-1",
+      tenantId: "tenant-a",
+      userId: "user_a",
+      sessionKey: expectedSessionKey,
+      channelType: "telegram",
+      deliveryOrigin: {
+        channelType: "telegram",
+        channelId: "chat-1",
+        userId: "user_a",
+        tenantId: "tenant-a",
+      },
+    });
+    expect(Reflect.set(observed[0]!, "trustLevel", "admin")).toBe(false);
+    expect(Reflect.set(observed[0]!, "agentId", "forged-agent")).toBe(false);
   });
 });

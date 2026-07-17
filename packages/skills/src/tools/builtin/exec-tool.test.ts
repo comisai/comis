@@ -2224,10 +2224,15 @@ function makeApprovalContext(): RequestContext {
   return {
     tenantId: "default",
     userId: "test-user",
-    sessionKey: "test-session",
+    agentId: "test-agent",
+    sessionKey: "default:test-user:chat-1",
     traceId: crypto.randomUUID(),
     startedAt: Date.now(),
     trustLevel: "admin",
+    channelType: "telegram",
+    deliveryOrigin: Object.freeze({
+      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+    }),
   };
 }
 
@@ -2315,14 +2320,7 @@ describe("install-detour mode: observe", () => {
     );
   }, 30_000);
 
-  it("install-detour event payload populates agentId from ctx.userId, not ctx.sessionKey", async () => {
-    // Regression: buildInstallDetourEventPayload previously set
-    // `agentId: ctx.sessionKey` — meaning downstream consumers (audit
-    // aggregators, per-agent install-detour rate limits) would see a
-    // formatted session key instead of an agent identifier. The two are
-    // distinct: sessionKey is e.g. "telegram:chan:user:tenant"; agentId is
-    // the agent's user-facing identifier (matches `ctx.userId` per the
-    // existing evaluateInstallDetourGate precedent at exec-shared.ts:448).
+  it("install-detour event attributes the resolved agent instead of the human user", async () => {
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const eventBus = makeMockEventBus(events);
     const port = createCapabilityPortStub({
@@ -2349,11 +2347,9 @@ describe("install-detour mode: observe", () => {
 
     const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
     expect(installEvents).toHaveLength(1);
-    // ctx.userId === "test-user", ctx.sessionKey === "test-session"
-    // Before the fix: agentId would be "test-session" (the bug).
-    // After the fix: agentId is "test-user".
-    expect(installEvents[0]!.payload.agentId).toBe("test-user");
-    expect(installEvents[0]!.payload.sessionKey).toBe("test-session");
+    expect(installEvents[0]!.payload.agentId).toBe("test-agent");
+    expect(installEvents[0]!.payload.agentId).not.toBe("test-user");
+    expect(installEvents[0]!.payload.sessionKey).toBe("default:test-user:chat-1");
   }, 30_000);
 });
 
@@ -2607,15 +2603,8 @@ describe("install-detour mode: soft-stop", () => {
   });
 
   it("approval for one commandDigest does NOT auto-approve a different digest in same session (cache aliasing)", async () => {
-    // The existing ApprovalGate keys its caches by `${sessionKey}::${action}`
-    // (verified at packages/core/src/approval/approval-gate.ts:135 and :194).
-    // The executor must NOT extend the gate. Instead the action string itself
-    // includes the commandDigest suffix, ensuring two distinct commands in
-    // the same session produce DIFFERENT cache keys.
-    //
-    // This test verifies the executor builds DIFFERENT action strings for
-    // two distinct command digests — the precondition that makes the
-    // gate's existing cache behavior safe under install-detour overrides.
+    // The action string carries the command digest so the operator-facing
+    // request and its exact approval key both identify the command decision.
 
     const requestApprovalMock = vi.fn().mockResolvedValue({
       approved: true,
@@ -2693,6 +2682,10 @@ describe("install-detour mode: soft-stop", () => {
     expect(digestA).toMatch(/^[0-9a-f]{16}$/);
     expect(digestB).toMatch(/^[0-9a-f]{16}$/);
     expect(digestA).not.toBe(digestB);
+    for (const [request] of requestApprovalMock.mock.calls) {
+      expect(request).toMatchObject({ agentId: "test-agent" });
+      expect(request).not.toMatchObject({ agentId: "test-user" });
+    }
   }, 30_000);
 
   it("missing approvalGate → fail-closed pre-submission (exactly 1 event: override_denied; no spawn)", async () => {
@@ -2725,7 +2718,7 @@ describe("install-detour mode: soft-stop", () => {
     expect(registry.size()).toBe(0);
   });
 
-  it("denied approval → 2-event submission pair, action sequence = ['override_requested','override_denied']", async () => {
+  it("missing resolved trust fails closed before approval submission", async () => {
     const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const eventBus = makeMockEventBus(events);
     const port = makeSoftStopPort();
@@ -2747,16 +2740,18 @@ describe("install-detour mode: soft-stop", () => {
       approvalGate: denyGate,
     });
     await expect(
-      runWithContext(makeApprovalContext(), () =>
+      runWithContext({
+        ...makeApprovalContext(),
+        trustLevel: undefined,
+      }, () =>
         tool.execute("tc11", { command: "pip install market-data-lib", allowInstallDetour: true }),
       ),
     ).rejects.toThrow();
+    expect(denyGate.requestApproval).not.toHaveBeenCalled();
     const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
-    // EXACTLY 2 events.
-    expect(installEvents).toHaveLength(2);
-    // Action sequence assertion (order matters per the event-pair contract).
+    expect(installEvents).toHaveLength(1);
     const actionSequence = installEvents.map((e) => e.payload.action);
-    expect(actionSequence).toEqual(["override_requested", "override_denied"]);
+    expect(actionSequence).toEqual(["override_denied"]);
     // No subprocess spawned.
     expect(registry.size()).toBe(0);
   });

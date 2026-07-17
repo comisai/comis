@@ -27,8 +27,17 @@ import { NormalizedMessageSchema } from "@comis/core";
 // ---------------------------------------------------------------------------
 
 function makeEventBus() {
+  const emit = vi.fn(() => true);
   return {
-    emit: vi.fn(() => true),
+    emit,
+    emitSafely: vi.fn((event, payload) => {
+      emit(event, payload);
+      return {
+        hadListeners: false,
+        failures: [],
+        pendingFailures: Promise.resolve([]),
+      };
+    }),
     on: vi.fn().mockReturnThis(),
     off: vi.fn().mockReturnThis(),
     once: vi.fn().mockReturnThis(),
@@ -54,7 +63,7 @@ function makeAdapter(sendMessageMock?: ChannelPort["sendMessage"]): ChannelPort 
     reactToMessage: vi.fn(async () => ok(undefined)),
     deleteMessage: vi.fn(async () => ok(undefined)),
     fetchMessages: vi.fn(async () => ok([])),
-    sendAttachment: vi.fn(async () => ok("att-1")),
+    sendAttachment: vi.fn(async () => ok({ kind: "tracked" as const, messageId: "att-1" })),
     platformAction: vi.fn(async () => ok(undefined)),
   } as any;
 }
@@ -88,7 +97,7 @@ describe("integration: retry engine", () => {
     let callCount = 0;
     const adapter = makeAdapter(vi.fn(async () => {
       callCount++;
-      if (callCount === 1) return err(new Error("503 Service Unavailable"));
+      if (callCount === 1) return err(new Error("429 Too Many Requests"));
       return ok("msg-ok");
     }));
 

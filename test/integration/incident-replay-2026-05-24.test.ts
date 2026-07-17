@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * 2026-05-24 Duplicate-Adapter Incident Replay
+ * Duplicate-adapter replay
  *
- * Synthesizes the duplicate-adapter wiring that caused the 2026-05-24
- * Telegram regression at the orchestrator layer (no full daemon spin-up).
+ * Synthesizes duplicate Telegram-adapter wiring at the orchestrator layer
+ * without a full daemon spin-up.
  * Proves the bug is now visible at all three independent layers:
  *
  *   Layer 1 (boot):   emitStartupInvariants fires WARN with errorKind:"config"
@@ -11,17 +11,16 @@
  *   Layer 2 (message): createDedupDetector fires dedup:duplicate_inbound event
  *                      with deltaMs ≈ 1 (controlled clock) when the same
  *                      messageId arrives twice.
- *   Layer 3 (queue):   queue:enqueued fires twice with the same messageId when
- *                      a duplicate message is not suppressed (dedup does NOT
- *                      suppress — processing continues).
+ *   Layer 3 (queue):   queue:enqueued fires once for a repeated physical
+ *                      source because duplicate processing is suppressed.
  *
  * Construction approach:
  *   - Mirror channel-resilience.test.ts import block + EchoChannelAdapter setup
  *   - createChannelManager with SAME adapter in both deps.adapters AND
  *     channelRegistry to reproduce pre-fix wiring (rawHandlerCounts → 2)
  *   - createDedupDetector with injectable clock for deterministic deltaMs
- *   - processInboundMessage wired with real createCommandQueue so queue:enqueued
- *     events are real (dedup does NOT suppress, both messages hit the queue)
+ *   - processInboundMessage wired with real createCommandQueue so the single
+ *     queue:enqueued event is produced by the real routing path
  *
  * @module
  */
@@ -37,7 +36,7 @@ import {
   type InboundPipelineDeps,
   createCommandQueue,
 } from "@comis/orchestrator";
-import { TypedEventBus, QueueConfigSchema } from "@comis/core";
+import { QueueConfigSchema, runWithContext, TypedEventBus } from "@comis/core";
 import type { NormalizedMessage, ChannelPort } from "@comis/core";
 import { ok } from "@comis/shared";
 import { emitStartupInvariants } from "@comis/daemon";
@@ -84,16 +83,37 @@ function makeAdapterStub(channelType = "telegram"): ChannelPort {
     reactToMessage: async () => ok(undefined),
     deleteMessage: async () => ok(undefined),
     fetchMessages: async () => ok([]),
-    sendAttachment: async () => ok("attach"),
+    sendAttachment: async () => ok({ kind: "tracked" as const, messageId: "attach" }),
     platformAction: async () => ok({}),
   };
+}
+
+function dispatchInbound(
+  deps: InboundPipelineDeps,
+  adapter: ChannelPort,
+  msg: NormalizedMessage,
+  sendOverrides: Parameters<typeof processInboundMessage>[4],
+): Promise<void> {
+  return runWithContext({
+    tenantId: "default",
+    traceId: randomUUID(),
+    startedAt: Date.now(),
+    trustLevel: "user",
+    channelType: adapter.channelType,
+  }, () => processInboundMessage(
+    deps,
+    adapter,
+    msg,
+    new Set(),
+    sendOverrides,
+  ));
 }
 
 // ---------------------------------------------------------------------------
 // LAYER 1: Boot WARN — duplicate-adapter wiring surfaced before traffic
 // ---------------------------------------------------------------------------
 
-describe("2026-05-24 duplicate-adapter incident replay — Layer 1 (boot WARN)", () => {
+describe("duplicate-adapter replay — boot warning", () => {
   it("emitStartupInvariants emits WARN with errorKind:config when rawHandlerCounts shows telegram:2", async () => {
     // Reproduce the pre-fix wiring: same EchoChannelAdapter passed in both
     // deps.adapters and channelRegistry.getChannelPlugins(). channelManager
@@ -139,7 +159,7 @@ describe("2026-05-24 duplicate-adapter incident replay — Layer 1 (boot WARN)",
     const cm = createChannelManager(deps);
     await cm.startAll();
 
-    // Confirm rawHandlerCounts shows 2 (regression wiring) while activeCount = 1 (deduped)
+    // The raw count exposes both handlers while the active count is deduplicated.
     const rawCounts = cm.getRawHandlerCounts();
     expect(rawCounts.get("telegram")).toBe(2);
     expect(cm.activeCount).toBe(1);
@@ -189,7 +209,7 @@ describe("2026-05-24 duplicate-adapter incident replay — Layer 1 (boot WARN)",
 // LAYER 2: Dedup event fires with deltaMs:1 on second arrival
 // ---------------------------------------------------------------------------
 
-describe("2026-05-24 duplicate-adapter incident replay — Layer 2 (dedup event)", () => {
+describe("duplicate-adapter replay — deduplication event", () => {
   it("dedup:duplicate_inbound fires once with deltaMs:1 and WARN errorKind:internal when same messageId arrives twice", async () => {
     // Controlled clock: first call = 1000 ms, second (duplicate check) = 1001 ms
     let nowVal = 1000;
@@ -205,8 +225,8 @@ describe("2026-05-24 duplicate-adapter incident replay — Layer 2 (dedup event)
     });
 
     // Build minimal InboundPipelineDeps that hits the dedup check and exits early
-    // after (messageRouter returns undefined → no executor → early return at Phase 1).
-    // The dedup check in Phase 0 still fires before Phase 1 returns.
+    // messageRouter returns undefined, so execution exits before invoking an executor.
+    // The deduplication check still fires before that routing exit.
     const minimalDeps: InboundPipelineDeps = {
       eventBus,
       logger: logger as any,
@@ -235,9 +255,9 @@ describe("2026-05-24 duplicate-adapter incident replay — Layer 2 (dedup event)
     const sendOverrides = { get: () => undefined, set: () => {}, delete: () => {} } as any;
 
     // First call at nowVal=1000: recorded (not duplicate)
-    await processInboundMessage(minimalDeps, adapter, msg1, new Set(), sendOverrides);
+    await dispatchInbound(minimalDeps, adapter, msg1, sendOverrides);
     // Second call at nowVal=1001: duplicate — fires dedup:duplicate_inbound
-    await processInboundMessage(minimalDeps, adapter, msg2, new Set(), sendOverrides);
+    await dispatchInbound(minimalDeps, adapter, msg2, sendOverrides);
 
     // --- Layer 2 assertion: dedup event fired exactly once ---
     expect(dedupEvents).toHaveLength(1);
@@ -269,13 +289,11 @@ describe("2026-05-24 duplicate-adapter incident replay — Layer 2 (dedup event)
 });
 
 // ---------------------------------------------------------------------------
-// LAYER 3: queue:enqueued fires twice — dedup does NOT suppress
+// LAYER 3: one physical source owns one queue entry
 // ---------------------------------------------------------------------------
 
-describe("2026-05-24 duplicate-adapter incident replay — Layer 3 (queue double-enqueue)", () => {
-  it("queue:enqueued fires twice with same channelType when duplicate message is NOT suppressed", async () => {
-    // The dedup detector logs + emits but does NOT return early — processing continues
-    // for BOTH messages. Both reach the commandQueue and emit queue:enqueued.
+describe("duplicate-adapter replay — queue ownership", () => {
+  it("enqueues one turn when the same physical message arrives twice", async () => {
     const eventBus = new TypedEventBus();
     const logger = makeLogger();
 
@@ -287,7 +305,7 @@ describe("2026-05-24 duplicate-adapter incident replay — Layer 3 (queue double
       queueEvents.push(ev as Record<string, unknown>);
     });
 
-    // Dedup detector — will log + emit but NOT suppress
+    // The detector observes the second ingress and suppresses its processing.
     let nowVal = 1000;
     const dedupDetector = createDedupDetector({ now: () => nowVal++ });
 
@@ -295,7 +313,7 @@ describe("2026-05-24 duplicate-adapter incident replay — Layer 3 (queue double
     const queueConfig = QueueConfigSchema.parse({ cleanupIdleMs: 60_000 });
     const commandQueue = createCommandQueue({ eventBus, config: queueConfig, logger: logger as any });
 
-    // Minimal executor stub: returns a valid ExecutionResult so Phase 1 succeeds
+    // Minimal executor stub returns a valid ExecutionResult so routing succeeds.
     const executorStub = {
       execute: vi.fn(async () => ({
         response: "echo response",
@@ -332,17 +350,14 @@ describe("2026-05-24 duplicate-adapter incident replay — Layer 3 (queue double
     const adapter = makeAdapterStub("telegram");
 
     const msg1 = makeMessage({ id: sharedMsgId });
-    const msg2 = makeMessage({ id: sharedMsgId }); // same id — duplicate, NOT suppressed
+    const msg2 = makeMessage({ id: sharedMsgId });
 
     const sendOverrides = { get: () => undefined, set: () => {}, delete: () => {} } as any;
 
-    // Inject both messages — dedup fires WARN + event on msg2 but does NOT block enqueue
-    await processInboundMessage(pipelineDeps, adapter, msg1, new Set(), sendOverrides);
-    await processInboundMessage(pipelineDeps, adapter, msg2, new Set(), sendOverrides);
+    await dispatchInbound(pipelineDeps, adapter, msg1, sendOverrides);
+    await dispatchInbound(pipelineDeps, adapter, msg2, sendOverrides);
 
-    // --- Layer 3 assertion: queue:enqueued fired twice ---
-    // Both messages arrive at the queue because dedup does NOT suppress.
-    expect(queueEvents).toHaveLength(2);
+    expect(queueEvents).toHaveLength(1);
     for (const ev of queueEvents) {
       expect(ev["channelType"]).toBe("telegram");
     }

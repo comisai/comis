@@ -5,9 +5,8 @@
  * Every adapter inbound dispatch site (the `for (const handler of …)`
  * fanout loop) must run inside a `runWithContext(…)` call, so the
  * traceId minted at ingress propagates through the entire handler
- * chain via AsyncLocalStorage. The orchestrator's `adapter.onMessage(
- * async msg => …)` registration body at channel-manager.ts:269 is
- * the second wrap site (defense-in-depth).
+ * chain via AsyncLocalStorage. Downstream orchestration inherits that
+ * scope and may create a fallback only when an adapter omitted it.
  *
  * Shrink-only: this test has NO allowlist. The only way to comply
  * is to add `runWithContext` around the dispatch loop.
@@ -41,7 +40,6 @@ const DISPATCH_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
   { kind: "telegram", re: /for\s*\(\s*const\s+handler\s+of\s+state\.handlers\s*\)/ },
   { kind: "echo", re: /for\s*\(\s*const\s+handler\s+of\s+this\.messageHandlers\s*\)/ },
   { kind: "fanout", re: /for\s*\(\s*const\s+handler\s+of\s+handlers\s*\)/ },
-  { kind: "orchestrator-onMessage", re: /adapter\.onMessage\s*\(\s*async\s+\w+/ },
 ];
 
 const WRAP_TOKEN = /runWithContext\s*\(/;
@@ -128,10 +126,8 @@ function repoRelative(absPath: string): string {
 
 describe("trace-propagation -- every adapter inbound dispatch runs inside runWithContext", () => {
   const channelsRoot = resolve(REPO_ROOT, "packages/channels/src");
-  const orchestratorChannelManager = resolve(REPO_ROOT, "packages/orchestrator/src/channel-manager.ts");
   const channelFiles = walkProductionFiles(channelsRoot);
-  const scannedFiles = [...channelFiles, orchestratorChannelManager];
-  const sites = collectDispatchSites(scannedFiles);
+  const sites = collectDispatchSites(channelFiles);
 
   it("walker found at least one dispatch site (sanity)", () => {
     expect(sites.length).toBeGreaterThan(0);
@@ -158,8 +154,27 @@ describe("trace-propagation -- every adapter inbound dispatch runs inside runWit
         suggestedFix:
           "Wrap the dispatch loop body in runWithContext({ traceId: randomUUID(), channelType, channelId? }, () => { /* existing for-handler loop */ }). The wrap must appear within 50 lines BEFORE the dispatch loop, in the same file.",
         designRef:
-          "TraceId at channel ingress (defense-in-depth trace propagation)",
+          "TraceId at channel ingress",
       }),
     ).toEqual([]);
+  });
+});
+
+describe("trace-propagation -- execution stages inherit the inbound context", () => {
+  const businessStageFiles = [
+    "packages/orchestrator/src/execution/execution-execute.ts",
+    "packages/orchestrator/src/execution/execution-pipeline.ts",
+    "packages/orchestrator/src/execution/execution-policy.ts",
+  ];
+
+  it("does not shadow the request context inside execution business logic", () => {
+    const violations = businessStageFiles.flatMap((relativePath) => {
+      const lines = stripCommentLines(readFileSync(resolve(REPO_ROOT, relativePath), "utf8"));
+      return lines.flatMap((line, index) => WRAP_TOKEN.test(line)
+        ? [{ file: relativePath, line: index + 1, snippet: line.trim() }]
+        : []);
+    });
+
+    expect(violations).toEqual([]);
   });
 });

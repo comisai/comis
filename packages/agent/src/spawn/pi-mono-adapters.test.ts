@@ -28,10 +28,21 @@ import { createEphemeralComisSessionManager } from "./pi-mono-adapters.js";
 // ---------------------------------------------------------------------------
 
 describe("createEphemeralComisSessionManager", () => {
+  it("accepts inbound ledger content without creating persistence for an ephemeral session", () => {
+    const adapter = createEphemeralComisSessionManager("/tmp/test");
+
+    expect(adapter.appendInboundMessageLedger({
+      tenantId: "default",
+      userId: "sub-agent:test",
+      channelId: "sub-agent:test",
+    }, "provenance\n")).toEqual({ ok: true, value: undefined });
+  });
+
   it("returns an object implementing ComisSessionManager interface", () => {
     const adapter = createEphemeralComisSessionManager("/tmp/test");
     expect(typeof adapter.withSession).toBe("function");
     expect(typeof adapter.destroySession).toBe("function");
+    expect(typeof adapter.persistInboundMessage).toBe("function");
     expect(typeof adapter.getSessionStats).toBe("function");
     expect(typeof adapter.writeSessionMetadata).toBe("function");
   });

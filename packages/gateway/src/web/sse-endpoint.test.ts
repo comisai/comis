@@ -30,6 +30,7 @@ function createSseDeps(overrides?: Partial<SseEndpointDeps>): SseEndpointDeps {
       { id: "test-client", secret: "sse-token-123-padded-to-meet-32-chars", scopes: ["rpc", "admin"] },
     ]),
     rpcAdapterDeps: createMockRpcDeps(),
+    bodyLimitBytes: 1_048_576,
     ...overrides,
   };
 }
@@ -54,8 +55,51 @@ describe("createSseEndpoint", () => {
 
     it("rejects unauthenticated requests to /api/chat/stream", async () => {
       const sse = createSseEndpoint(createSseDeps());
-      const res = await sse.request("/api/chat/stream?message=hello");
+      const res = await sse.request("/api/chat/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello" }),
+      });
       expect(res.status).toBe(401);
+    });
+
+    it("rejects a valid token supplied through the event-stream query string", async () => {
+      const deps = createSseDeps();
+      const sse = createSseEndpoint(deps);
+      const res = await sse.request(
+        "/api/events?token=sse-token-123-padded-to-meet-32-chars",
+      );
+
+      expect(res.status).toBe(401);
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
+    });
+
+    it("rejects a valid token supplied through the chat-stream query string", async () => {
+      const deps = createSseDeps();
+      const sse = createSseEndpoint(deps);
+      const res = await sse.request(
+        "/api/chat/stream?token=sse-token-123-padded-to-meet-32-chars",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: "hello" }),
+        },
+      );
+
+      expect(res.status).toBe(401);
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
+    });
+
+    it("rejects query-token credentials even when a valid bearer header is also present", async () => {
+      const deps = createSseDeps();
+      const sse = createSseEndpoint(deps);
+      const res = await sse.request(
+        "/api/events?token=sse-token-123-padded-to-meet-32-chars",
+        { headers: authHeaders() },
+      );
+
+      expect(res.status).toBe(401);
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
     });
 
     it("accepts bearer token for /api/events", async () => {
@@ -92,7 +136,11 @@ describe("createSseEndpoint", () => {
     it("rejects an mcp-client scoped token on /api/chat/stream with 403", async () => {
       const deps = mcpClientDeps();
       const sse = createSseEndpoint(deps);
-      const res = await sse.request("/api/chat/stream?message=hello", { headers: mcpHeaders });
+      const res = await sse.request("/api/chat/stream", {
+        method: "POST",
+        headers: { ...mcpHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello" }),
+      });
       expect(res.status).toBe(403);
       // The agent must never run for an out-of-scope token.
       expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
@@ -122,21 +170,192 @@ describe("createSseEndpoint", () => {
       const res = await sse.request("/api/events", { headers: authHeaders() });
       expect(res.status).toBe(200);
     });
+
+    it("projects event payloads before streaming them to authenticated clients", async () => {
+      const deps = createSseDeps();
+      const sse = createSseEndpoint(deps);
+      const res = await sse.request("/api/events", { headers: authHeaders() });
+      const reader = res.body?.getReader();
+      expect(reader).toBeDefined();
+
+      const decoder = new TextDecoder();
+      let received = "";
+      const first = await reader!.read();
+      received += decoder.decode(first.value, { stream: true });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      deps.eventBus.emit("message:received", {
+        message: {
+          id: "message-1",
+          channelType: "telegram",
+          channelId: "chat-1",
+          senderId: "user-1",
+          text: "private inbound body",
+          attachments: [{ name: "private.pdf" }],
+          metadata: { token: "credential" },
+          timestamp: 42,
+        },
+        sessionKey: { userId: "user-1", channelId: "chat-1", peerId: "peer-1" },
+      } as never);
+
+      while (!received.includes("message-1")) {
+        const chunk = await reader!.read();
+        if (chunk.done) break;
+        received += decoder.decode(chunk.value, { stream: true });
+      }
+      await reader!.cancel();
+
+      expect(received).toContain("message-1");
+      expect(received).not.toContain("private inbound body");
+      expect(received).not.toContain("private.pdf");
+      expect(received).not.toContain("credential");
+    });
   });
 
-  describe("GET /api/chat/stream", () => {
-    it("returns 400 when message is missing", async () => {
+  describe("POST /api/chat/stream", () => {
+    it("never executes a message supplied through a GET query string", async () => {
+      const deps = createSseDeps();
+      const sse = createSseEndpoint(deps);
+      const res = await sse.request("/api/chat/stream?message=private-prompt", {
+        headers: authHeaders(),
+      });
+
+      expect(res.status).toBe(404);
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
+    });
+
+    it("rejects query parameters on POST before reading or executing the body", async () => {
+      const deps = createSseDeps();
+      const sse = createSseEndpoint(deps);
+      const res = await sse.request("/api/chat/stream?message=private-prompt", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "safe-body" }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
+    });
+
+    it("returns 400 when the JSON body omits message", async () => {
       const sse = createSseEndpoint(createSseDeps());
-      const res = await sse.request("/api/chat/stream", { headers: authHeaders() });
+      const res = await sse.request("/api/chat/stream", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
       expect(res.status).toBe(400);
       const body = await res.json();
       expect(body.error).toMatch(/message/);
     });
 
+    it("returns 415 unless the request body is application/json", async () => {
+      const deps = createSseDeps();
+      const sse = createSseEndpoint(deps);
+      const res = await sse.request("/api/chat/stream", {
+        method: "POST",
+        headers: authHeaders(),
+        body: "private-prompt",
+      });
+
+      expect(res.status).toBe(415);
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
+    });
+
+    it("rejects media types that merely contain the application/json text", async () => {
+      const deps = createSseDeps();
+      const sse = createSseEndpoint(deps);
+      const res = await sse.request("/api/chat/stream", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/jsonp" },
+        body: JSON.stringify({ message: "private-prompt" }),
+      });
+
+      expect(res.status).toBe(415);
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
+    });
+
+    it("returns 413 before parsing a body larger than the configured limit", async () => {
+      const deps = createSseDeps({ bodyLimitBytes: 128 });
+      const sse = createSseEndpoint(deps);
+      const body = JSON.stringify({ message: "x".repeat(512) });
+      const res = await sse.request("/api/chat/stream", {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+          "Content-Length": String(Buffer.byteLength(body)),
+        },
+        body,
+      });
+
+      expect(res.status).toBe(413);
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
+    });
+
+    it("returns 413 for an oversized streamed body without a content-length header", async () => {
+      const deps = createSseDeps({ bodyLimitBytes: 128 });
+      const sse = createSseEndpoint(deps);
+      const res = await sse.request("/api/chat/stream", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "x".repeat(512) }),
+      });
+
+      expect(res.status).toBe(413);
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
+    });
+
+    it("counts actual bytes and rejects an oversized body with a misleading content-length", async () => {
+      const deps = createSseDeps({ bodyLimitBytes: 128 });
+      const sse = createSseEndpoint(deps);
+      const body = JSON.stringify({ message: "x".repeat(512) });
+      const res = await sse.request("/api/chat/stream", {
+        method: "POST",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+          "Content-Length": "1",
+        },
+        body,
+      });
+
+      expect(res.status).toBe(413);
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
+    });
+
+    it("cancels an oversized request stream before returning 413", async () => {
+      const deps = createSseDeps({ bodyLimitBytes: 128 });
+      const sse = createSseEndpoint(deps);
+      const cancel = vi.fn();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ message: "x".repeat(512) })));
+        },
+        cancel() {
+          cancel();
+        },
+      });
+      const request = new Request("http://localhost/api/chat/stream", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: stream,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" });
+
+      const res = await sse.request(request);
+
+      expect(res.status).toBe(413);
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
+    });
+
     it("returns text/event-stream for valid chat stream request", async () => {
       const sse = createSseEndpoint(createSseDeps());
-      const res = await sse.request("/api/chat/stream?message=hello", {
-        headers: authHeaders(),
+      const res = await sse.request("/api/chat/stream", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello" }),
       });
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toContain("text/event-stream");
@@ -146,8 +365,10 @@ describe("createSseEndpoint", () => {
       const deps = createSseDeps();
       const sse = createSseEndpoint(deps);
 
-      const res = await sse.request("/api/chat/stream?message=hello&agentId=bot-1", {
-        headers: authHeaders(),
+      const res = await sse.request("/api/chat/stream", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello", agentId: "bot-1" }),
       });
 
       // Read the response body to trigger execution
@@ -170,8 +391,10 @@ describe("createSseEndpoint", () => {
       });
       const sse = createSseEndpoint(deps);
 
-      const res = await sse.request("/api/chat/stream?message=hello", {
-        headers: authHeaders(),
+      const res = await sse.request("/api/chat/stream", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "hello" }),
       });
 
       const text = await res.text();
@@ -182,11 +405,6 @@ describe("createSseEndpoint", () => {
       expect(text).not.toContain("/secret/path");
     });
 
-    it("accepts token via query parameter", async () => {
-      const sse = createSseEndpoint(createSseDeps());
-      const res = await sse.request("/api/chat/stream?message=hello&token=sse-token-123-padded-to-meet-32-chars");
-      expect(res.status).toBe(200);
-    });
   });
 
   describe("Last-Event-ID reconnection", () => {
@@ -209,11 +427,14 @@ describe("createSseEndpoint", () => {
 
     it("chat stream accepts Last-Event-ID header gracefully", async () => {
       const sse = createSseEndpoint(createSseDeps());
-      const res = await sse.request("/api/chat/stream?message=hello", {
+      const res = await sse.request("/api/chat/stream", {
+        method: "POST",
         headers: {
           ...authHeaders(),
           "Last-Event-ID": "5",
+          "Content-Type": "application/json",
         },
+        body: JSON.stringify({ message: "hello" }),
       });
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toContain("text/event-stream");

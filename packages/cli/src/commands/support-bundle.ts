@@ -23,7 +23,7 @@ import type { Command } from "commander";
 import * as os from "node:os";
 import { existsSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import { systemGetEnv, systemNowMs } from "@comis/core";
+import { parseConfigPaths, systemGetEnv, systemNowMs } from "@comis/core";
 import { info, warn, error, json } from "../output/format.js";
 import { ExitCode } from "../util/exit-codes.js";
 import { resolveOfflineDataDir } from "../util/offline-obs.js";
@@ -33,15 +33,14 @@ import { generateSupportBundle } from "../support-bundle/generate.js";
  * Resolve default config paths from COMIS_CONFIG_PATHS or the standard
  * locations. The environment is read via `systemGetEnv` (the sanctioned env
  * reader — never a raw env global) so the globals architecture test passes, and
- * the value is split on ":" exactly as the daemon and the doctor command split
+ * the value is parsed exactly as the daemon and doctor commands parse
  * it. When the variable is unset, the standard candidate files that exist on
  * disk are used.
  */
 function resolveDefaultConfigPaths(): string[] {
   const envPaths = systemGetEnv("COMIS_CONFIG_PATHS");
-  if (envPaths) {
-    return envPaths.split(":").filter((p) => p.length > 0);
-  }
+  const configuredPaths = parseConfigPaths(envPaths);
+  if (configuredPaths.length > 0) return configuredPaths;
   const candidates = [
     os.homedir() + "/.comis/config.yaml",
     os.homedir() + "/.comis/config.local.yaml",

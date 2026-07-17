@@ -123,7 +123,14 @@ export async function bootstrapAdapters(deps: {
 
   // Telegram
   if (channelConfig.telegram.enabled) {
-    const token = (channelConfig.telegram.botToken as string | undefined) || getSecret("TELEGRAM_BOT_TOKEN");
+    const configuredTelegramToken = channelConfig.telegram.botToken as string | undefined;
+    const initialCanonicalTelegramToken = getSecret("TELEGRAM_BOT_TOKEN");
+    const followsCanonicalTelegramSecret = configuredTelegramToken === undefined
+      || configuredTelegramToken === initialCanonicalTelegramToken;
+    const getTelegramBotToken = (): string => followsCanonicalTelegramSecret
+      ? getSecret("TELEGRAM_BOT_TOKEN") ?? configuredTelegramToken ?? ""
+      : configuredTelegramToken ?? "";
+    const token = getTelegramBotToken();
     if (token) {
       // E2E redirection seam: when channels.telegram.apiRoot is set,
       // point grammy's Bot constructor at the override URL. Production
@@ -134,7 +141,7 @@ export async function bootstrapAdapters(deps: {
       const validation = await validateBotToken(token, telegramApiRoot);
       if (validation.ok) {
         const plugin = createTelegramPlugin({
-          botToken: token,
+          getBotToken: getTelegramBotToken,
           webhookSecret: channelConfig.telegram.webhookUrl ? (getSecret("TELEGRAM_WEBHOOK_SECRET") ?? undefined) : undefined,
           webhookUrl: channelConfig.telegram.webhookUrl,
           logger: channelsLogger,

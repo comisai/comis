@@ -18,8 +18,8 @@
 
 import * as crypto from "node:crypto";
 import type { Result } from "@comis/shared";
-import { ok, err } from "@comis/shared";
-import { safePath } from "@comis/core";
+import { fromPromise, ok, err } from "@comis/shared";
+import { redactErrorMessage, safePath } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Structural interfaces (avoids circular dep on @comis/skills)
@@ -91,13 +91,25 @@ export async function prepareVoicePayload(
   const outputPath = safePath(deps.tempDir, `voice-${crypto.randomUUID()}.ogg`);
 
   // 2. Convert to OGG/Opus
-  const conversionResult = await deps.audioConverter.toOggOpus(inputPath, outputPath);
+  const converted = await fromPromise(Promise.resolve().then(
+    () => deps.audioConverter.toOggOpus(inputPath, outputPath),
+  ));
+  if (!converted.ok) {
+    return err(converted.error);
+  }
+  const conversionResult = converted.value;
   if (!conversionResult.ok) {
     return err(conversionResult.error);
   }
 
   // 3. Verify Opus codec
-  const verifyResult = await deps.audioConverter.verifyOpusCodec(outputPath);
+  const verified = await fromPromise(Promise.resolve().then(
+    () => deps.audioConverter.verifyOpusCodec(outputPath),
+  ));
+  if (!verified.ok) {
+    return err(verified.error);
+  }
+  const verifyResult = verified.value;
   if (!verifyResult.ok) {
     return err(verifyResult.error);
   }
@@ -107,13 +119,16 @@ export async function prepareVoicePayload(
 
   // 4. Extract waveform (cosmetic -- graceful degradation on failure)
   let waveformBase64 = "";
-  const waveformResult = await deps.audioConverter.extractWaveform(outputPath, deps.tempDir);
+  const extracted = await fromPromise(Promise.resolve().then(
+    () => deps.audioConverter.extractWaveform(outputPath, deps.tempDir),
+  ));
+  const waveformResult = extracted.ok ? extracted.value : err(extracted.error);
   if (waveformResult.ok) {
     waveformBase64 = waveformResult.value.waveformBase64;
   } else {
     deps.logger.warn(
       {
-        err: waveformResult.error.message,
+        err: redactErrorMessage(waveformResult.error.message),
         hint: "Waveform extraction failed; voice will be sent without waveform preview",
         errorKind: "dependency" as const,
       },

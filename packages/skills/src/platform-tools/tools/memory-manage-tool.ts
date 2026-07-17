@@ -20,6 +20,7 @@ import {
   readEnumParam,
   createTrustGuard,
 } from "../tool-helpers.js";
+import { resolveApprovalRequestContext } from "../approval-request-context.js";
 import type { RpcCall } from "./cron-tool.js";
 
 // Activity label spec. Descriptor name == emitted name.
@@ -189,17 +190,21 @@ export function createMemoryManageTool(
 
           case "delete": {
             const ids = p.ids;
+            const deleteParams = { ids, tenant_id: p.tenant_id };
             // Approval gate check for delete
             if (approvalGate) {
-              const ctx = tryGetContext();
+              const approvalContext = resolveApprovalRequestContext();
+              if (!approvalContext.ok) {
+                throwToolError("permission_denied", approvalContext.error.message, {
+                  hint: "Retry from a resolved agent request scope",
+                });
+              }
               const resolution = await approvalGate.requestApproval({
                 toolName: "memory_manage",
                 action: "memory.delete",
                 params: { ids },
-                agentId: ctx?.userId ?? "unknown",
-                sessionKey: ctx?.sessionKey ?? "unknown",
-                trustLevel: (ctx?.trustLevel ?? "guest") as "admin" | "user" | "guest",
-                channelType: ctx?.channelType,
+                fingerprintParams: deleteParams,
+                ...approvalContext.value,
               });
               if (!resolution.approved) {
                 throwToolError("permission_denied", `Action denied: memory.delete was not approved`, {
@@ -208,25 +213,28 @@ export function createMemoryManageTool(
               }
             }
             const result = await rpcCall("memory.delete", {
-              ids: p.ids,
-              tenant_id: p.tenant_id,
+              ...deleteParams,
               _trustLevel,
             });
             return jsonResult(result);
           }
 
           case "flush": {
+            const flushParams = { tenant_id: p.tenant_id, agent_id: p.agent_id };
             // Approval gate check for flush
             if (approvalGate) {
-              const ctx = tryGetContext();
+              const approvalContext = resolveApprovalRequestContext();
+              if (!approvalContext.ok) {
+                throwToolError("permission_denied", approvalContext.error.message, {
+                  hint: "Retry from a resolved agent request scope",
+                });
+              }
               const resolution = await approvalGate.requestApproval({
                 toolName: "memory_manage",
                 action: "memory.flush",
-                params: { tenant_id: p.tenant_id, agent_id: p.agent_id },
-                agentId: ctx?.userId ?? "unknown",
-                sessionKey: ctx?.sessionKey ?? "unknown",
-                trustLevel: (ctx?.trustLevel ?? "guest") as "admin" | "user" | "guest",
-                channelType: ctx?.channelType,
+                params: flushParams,
+                fingerprintParams: flushParams,
+                ...approvalContext.value,
               });
               if (!resolution.approved) {
                 throwToolError("permission_denied", `Action denied: memory.flush was not approved`, {
@@ -235,8 +243,7 @@ export function createMemoryManageTool(
               }
             }
             const result = await rpcCall("memory.flush", {
-              tenant_id: p.tenant_id,
-              agent_id: p.agent_id,
+              ...flushParams,
               _trustLevel,
             });
             return jsonResult(result);

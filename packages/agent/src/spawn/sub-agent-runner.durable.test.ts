@@ -7,8 +7,8 @@
  *   - a cron-fired spawn (isCronAgentTurn + jobId) writes a checkpoint whose
  *     cronOrigin is the jobId (derived from the REAL cron signal);
  *   - a non-cron spawn writes cronOrigin = null;
- *   - the initial checkpoint is at stepIndex -1 (the never-sent sentinel — the
- *     outward counter is owned by allocateOutwardStep, NOT the checkpoint);
+ *   - the execution checkpoint is keyed by the unique run id, independently of
+ *     the outward-send sequence;
  *   - a keep-alive heartbeat fires on the injected timer at the keepAlive cadence
  *     (independent of step/spawn completion);
  *   - the run is marked completed + the heartbeat cleared on terminal settle (no
@@ -29,7 +29,7 @@ import type {
   DurableRunPort,
   DurableRunRecord,
 } from "@comis/core";
-import { ok, type Result } from "@comis/shared";
+import { err, ok, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Port wrappers delegating to globals so vi.useFakeTimers() intercepts them.
@@ -56,32 +56,32 @@ const testTimers: TimerPort = {
 
 interface RecordingStore extends DurableRunPort {
   readonly checkpoints: DurableRunRecord[];
-  readonly heartbeats: Array<{ rootRunId: string; atMs: number }>;
+  readonly heartbeats: Array<{ checkpointId: string; atMs: number }>;
   readonly completed: string[];
 }
 
 function createRecordingStore(): RecordingStore {
   const checkpoints: DurableRunRecord[] = [];
-  const heartbeats: Array<{ rootRunId: string; atMs: number }> = [];
+  const heartbeats: Array<{ checkpointId: string; atMs: number }> = [];
   const completed: string[] = [];
   return {
     checkpoints,
     heartbeats,
     completed,
     upsertCheckpoint: (record): Promise<Result<void, Error>> => { checkpoints.push(record); return Promise.resolve(ok(undefined)); },
-    touchHeartbeat: (rootRunId, atMs): Promise<Result<void, Error>> => { heartbeats.push({ rootRunId, atMs }); return Promise.resolve(ok(undefined)); },
-    markCompleted: (rootRunId): Promise<Result<void, Error>> => { completed.push(rootRunId); return Promise.resolve(ok(undefined)); },
-    listResumable: () => Promise.resolve(ok([])),
-    getByRootRun: () => Promise.resolve(ok(undefined)),
+    touchHeartbeat: (checkpointId, atMs): Promise<Result<void, Error>> => { heartbeats.push({ checkpointId, atMs }); return Promise.resolve(ok(undefined)); },
+    markCompleted: (checkpointId): Promise<Result<void, Error>> => { completed.push(checkpointId); return Promise.resolve(ok(undefined)); },
+    listResumable: () => Promise.resolve(ok({ records: [], invalid: [] })),
+    getByCheckpoint: () => Promise.resolve(ok(undefined)),
     markOrphaned: () => Promise.resolve(ok(undefined)),
     invalidateForRevoke: () => Promise.resolve(ok(undefined)),
-    allocateOutwardStep: () => Promise.resolve(ok(0)),
+    countByStatus: () => Promise.resolve(ok({ orphaned: 0, revoked: 0, running: 0, completed: 0 })),
   };
 }
 
 function createDeps(over: Partial<SubAgentRunnerDeps> = {}): SubAgentRunnerDeps {
   return {
-    sessionStore: { save: vi.fn(), delete: vi.fn() },
+    sessionStore: { save: vi.fn(), delete: vi.fn(), loadByFormattedKey: vi.fn() },
     // A never-resolving executeAgent keeps the run RUNNING so the heartbeat can
     // tick before terminal settle (each test that needs completion overrides it).
     executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
@@ -107,17 +107,52 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it("writes an initial checkpoint at the spawn boundary (stepIndex -1, status running)", async () => {
+  it("writes an initial execution checkpoint at the spawn boundary", async () => {
     const store = createRecordingStore();
     const runner = createSubAgentRunner(createDeps({ durableRuns: store }));
-    runner.spawn({ task: "long task", agentId: "worker", rootRunId: "root-A" });
+    const runId = runner.spawn({ task: "long task", agentId: "worker", rootRunId: "root-A" });
     await vi.advanceTimersByTimeAsync(0);
 
     expect(store.checkpoints.length).toBe(1);
     const cp = store.checkpoints[0]!;
     expect(cp.rootRunId).toBe("root-A");
-    expect(cp.stepIndex).toBe(-1); // the never-sent sentinel — NOT the outward counter
+    expect(cp.checkpointId).toBe(runId);
     expect(cp.status).toBe("running");
+    expect(cp.scriptRef).toBeNull();
+    expect(cp.checkpointRef).toBeNull();
+  });
+
+  it("sanitizes a credential-bearing durable store failure before warning", async () => {
+    const credential = `xoxb-${"s".repeat(32)}`;
+    const store = createRecordingStore();
+    store.upsertCheckpoint = vi.fn(async () => err(new Error(`write failed ${credential}`)));
+    const warn = vi.fn();
+    const log = vi.fn();
+    const logger = {
+      level: "info",
+      trace: log,
+      debug: log,
+      info: log,
+      warn,
+      error: log,
+      fatal: log,
+      audit: log,
+      child() { return this; },
+    } as unknown as NonNullable<SubAgentRunnerDeps["logger"]>;
+    const runner = createSubAgentRunner(createDeps({ durableRuns: store, logger }));
+
+    runner.spawn({ task: "long task", agentId: "worker", rootRunId: "root-safe-log" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(warn).toHaveBeenCalled();
+    const failure = warn.mock.calls.find((call) =>
+      call[1] === "Durable checkpoint: upsert failed (run continues)"
+    );
+    expect(failure).toBeDefined();
+    const fields = failure![0] as Record<string, unknown>;
+    expect(typeof fields.err).toBe("string");
+    expect(String(fields.err)).not.toContain(credential);
+    expect(String(fields.err)).not.toContain("at ");
   });
 
   it("a cron-fired spawn records cronOrigin = the jobId (derived from isCronAgentTurn + jobId)", async () => {
@@ -158,21 +193,65 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     expect(store.checkpoints[0]!.caps).toEqual(["orch:read", "orch:message"]);
   });
 
-  it("emits a keep-alive heartbeat on the injected timer at the keepAlive cadence", async () => {
+  it("records the child assembly lease and further-attenuated capabilities for descendants", async () => {
+    const store = createRecordingStore();
+    let receivedContext: Parameters<SubAgentRunnerDeps["executeAgent"]>[7];
+    const executeAgent: SubAgentRunnerDeps["executeAgent"] = vi.fn(async (...args) => {
+      receivedContext = args[7];
+      receivedContext?.onAssemblyAuthority({
+        rootRunId: "root-child",
+        leaseId: "lease-child",
+        caps: ["orch:read"],
+      });
+      return {
+        response: "done",
+        tokensUsed: { total: 1 },
+        cost: { total: 0 },
+        finishReason: "stop",
+        stepsExecuted: 1,
+      };
+    });
+    const runner = createSubAgentRunner(createDeps({ durableRuns: store, executeAgent }));
+    const runId = runner.spawn({
+      task: "scoped child",
+      agentId: "worker",
+      rootRunId: "root-child",
+      parentLeaseId: "lease-parent",
+      caps: ["orch:read", "orch:message"],
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(receivedContext).toEqual(expect.objectContaining({
+      rootRunId: "root-child",
+      parentLeaseId: "lease-parent",
+      parentCaps: ["orch:read", "orch:message"],
+    }));
+    expect(runner.getRunStatus(runId)).toEqual(expect.objectContaining({
+      leaseId: "lease-child",
+      caps: ["orch:read"],
+    }));
+    expect(store.checkpoints.at(-1)).toEqual(expect.objectContaining({
+      checkpointId: runId,
+      caps: ["orch:read"],
+    }));
+  });
+
+  it("persists keep-alive checkpoints on the injected timer at the keepAlive cadence", async () => {
     const store = createRecordingStore();
     const runner = createSubAgentRunner(
       createDeps({ durableRuns: store, durability: { keepAliveMs: 1_000, staleHeartbeatMs: 4_000 } }),
     );
     runner.spawn({ task: "long task", agentId: "worker", rootRunId: "root-HB" });
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.heartbeats.length).toBe(0); // not yet — interval has not fired
+    expect(store.checkpoints.length).toBe(1); // initial boundary only
 
     // Advance past three keep-alive intervals — the run is still running
     // (never-resolving executeAgent), so the heartbeat must fire independent of
     // step/spawn completion.
     await vi.advanceTimersByTimeAsync(3_500);
-    expect(store.heartbeats.length).toBe(3);
-    expect(store.heartbeats.every((h) => h.rootRunId === "root-HB")).toBe(true);
+    expect(store.checkpoints.length).toBe(4);
+    const checkpointId = store.checkpoints[0]!.checkpointId;
+    expect(store.checkpoints.every((checkpoint) => checkpoint.checkpointId === checkpointId)).toBe(true);
   });
 
   it("marks the run completed + clears the heartbeat on terminal settle (no leaked timer)", async () => {
@@ -187,16 +266,16 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
         }),
       }),
     );
-    runner.spawn({ task: "quick task", agentId: "worker", rootRunId: "root-DONE" });
+    const runId = runner.spawn({ task: "quick task", agentId: "worker", rootRunId: "root-DONE" });
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(store.completed).toContain("root-DONE");
+    expect(store.completed).toContain(runId);
 
     // After completion the heartbeat interval is cancelled — advancing the clock
     // produces NO further heartbeats (the leaked-timer guard).
-    const before = store.heartbeats.length;
+    const before = store.checkpoints.length;
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(store.heartbeats.length).toBe(before);
+    expect(store.checkpoints.length).toBe(before);
   });
 
   it("no durableRuns store wired ⇒ zero checkpoint/heartbeat work (default install)", async () => {

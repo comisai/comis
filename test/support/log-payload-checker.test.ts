@@ -92,6 +92,14 @@ describe("checkLogPayloads -- closed errorKind via TS TypeChecker", () => {
     ).toBeGreaterThan(0);
   });
 
+  it("detects an off-union literal hidden by an ErrorKind assertion", () => {
+    clearCache();
+    const violations = checkLogPayloads([
+      resolve(FIXTURES_ROOT, "asserted-off-union.ts"),
+    ]);
+    expect(violations.some((violation) => violation.literal === "transient")).toBe(true);
+  });
+
   it("returns zero violations for clean files (errorKind in closed union)", () => {
     clearCache();
     const violations = checkLogPayloads([

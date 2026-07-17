@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ok } from "@comis/shared";
 import type { ImsgNotification } from "./imessage-client.js";
 import type { ImsgMessageParams } from "./message-mapper.js";
 
@@ -270,11 +271,54 @@ describe("createIMessageAdapter", () => {
   });
 
   describe("sendAttachment log privacy", () => {
+    it("returns the real posted-message ID from the imsg response", async () => {
+      mockRequest.mockResolvedValue({
+        ok: true,
+        value: { messageId: "attachment-msg-123" },
+      });
+      const adapter = createIMessageAdapter({ logger: mockLogger });
+      await adapter.start();
+
+      const result = await adapter.sendAttachment("chat-42", {
+        url: "/tmp/report.pdf",
+        type: "file",
+      });
+
+      expect(result).toEqual(ok({
+        kind: "tracked",
+        messageId: "attachment-msg-123",
+      }));
+    });
+
+    it("returns delivered-untracked when imsg omits the posted-message ID", async () => {
+      mockRequest.mockResolvedValue({ ok: true, value: {} });
+      const adapter = createIMessageAdapter({ logger: mockLogger });
+      await adapter.start();
+
+      const result = await adapter.sendAttachment("chat-42", {
+        url: "/tmp/report.pdf",
+        type: "file",
+      });
+
+      expect(result).toEqual(ok({ kind: "delivered_untracked" }));
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hint: expect.stringContaining("Do not retry"),
+          errorKind: "platform",
+        }),
+        "Attachment delivered without platform tracking",
+      );
+    });
+
     it("keeps attachment captions and filenames out of outbound logs", async () => {
       const privateCaption = "PRIVATE-IMESSAGE-CAPTION-DO-NOT-LOG";
       const privateFileName = "PRIVATE-IMESSAGE-FILENAME-DO-NOT-LOG.xlsx";
       const adapter = createIMessageAdapter({ logger: mockLogger });
       await adapter.start();
+
+      mockRequest
+        .mockResolvedValueOnce({ ok: true, value: { messageId: "attachment-private-1" } })
+        .mockResolvedValueOnce({ ok: true, value: { messageId: "attachment-private-2" } });
 
       await adapter.sendAttachment("chat-42", {
         url: "/tmp/private-caption.xlsx",

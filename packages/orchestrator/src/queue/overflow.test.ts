@@ -8,11 +8,11 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import type {
-  NormalizedMessage,
-  SessionKey,
+import {
   TypedEventBus,
-  OverflowConfig,
+  type NormalizedMessage,
+  type SessionKey,
+  type OverflowConfig,
 } from "@comis/core";
 import { applyOverflowPolicy } from "./overflow.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
@@ -167,6 +167,32 @@ describe("applyOverflowPolicy", () => {
     );
   });
 
+  it("reports rejected async overflow observers after preserving mutation", async () => {
+    const eventBus = new TypedEventBus();
+    const onEventError = vi.fn();
+    eventBus.on("queue:overflow", async () => {
+      await Promise.resolve();
+      throw new Error("async overflow observer failed");
+    });
+    const messages = [createMockMessage("one"), createMockMessage("two")];
+
+    const result = applyOverflowPolicy(
+      messages,
+      { maxDepth: 1, policy: "drop-new" },
+      eventBus,
+      SESSION_KEY,
+      "telegram",
+      onEventError,
+    );
+
+    expect(result.messages).toEqual([messages[0]]);
+    await vi.waitFor(() => {
+      expect(onEventError).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "async overflow observer failed" }),
+      );
+    });
+  });
+
   it("does not emit event when no overflow occurs", () => {
     const messages = [createMockMessage("hello")];
     const config: OverflowConfig = { maxDepth: 20, policy: "drop-old" };
@@ -212,26 +238,51 @@ describe("applyOverflowPolicy", () => {
     expect(synthetic.attachments).toHaveLength(2);
   });
 
-  it("handles exact maxDepth boundary (equal count triggers overflow)", () => {
-    // The implementation uses < (not <=), so exactly maxDepth triggers overflow
-    const messages = Array.from({ length: 20 }, (_, i) =>
-      createMockMessage(`msg-${i}`),
-    );
-    const config: OverflowConfig = { maxDepth: 20, policy: "drop-old" };
+  it("summarize preserves physical inbound provenance instead of the synthetic body", () => {
+    const first = createMockMessage("first exact body", {
+      id: "11111111-1111-4111-8111-111111111111",
+      timestamp: 1_750_000_000_001,
+    });
+    const second = createMockMessage("second exact body", {
+      id: "22222222-2222-4222-8222-222222222222",
+      timestamp: 1_750_000_000_002,
+    });
     const eventBus = createMockEventBus();
 
     const result = applyOverflowPolicy(
-      messages,
-      config,
+      [first, second],
+      { maxDepth: 1, policy: "summarize" },
       eventBus,
       SESSION_KEY,
       "telegram",
     );
 
-    // length === maxDepth is NOT less than maxDepth, so overflow triggers
-    expect(result.dropped).toBe(0); // 20 - 20 = 0 excess
-    expect(result.messages).toHaveLength(20);
-    // Event still emits because the condition was met (even if dropped=0)
-    expect(eventBus.emit).toHaveBeenCalledOnce();
+    expect(result.messages[0]!.originalMessages?.map(({ id, text, timestamp }) => ({
+      id,
+      text,
+      timestamp,
+    }))).toEqual([
+      { id: first.id, text: first.text, timestamp: first.timestamp },
+      { id: second.id, text: second.text, timestamp: second.timestamp },
+    ]);
+  });
+
+  it("keeps exactly maxDepth messages without invoking any overflow policy", () => {
+    const messages = Array.from({ length: 20 }, (_, i) =>
+      createMockMessage(`msg-${i}`),
+    );
+    for (const policy of ["drop-old", "drop-new", "summarize"] as const) {
+      const eventBus = createMockEventBus();
+      const result = applyOverflowPolicy(
+        messages,
+        { maxDepth: 20, policy },
+        eventBus,
+        SESSION_KEY,
+        "telegram",
+      );
+
+      expect(result).toEqual({ dropped: 0, messages });
+      expect(eventBus.emit).not.toHaveBeenCalled();
+    }
   });
 });

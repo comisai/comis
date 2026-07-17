@@ -62,14 +62,78 @@ describe("createDiagnosticCollector", () => {
     });
 
     bus.emit("message:sent", {
+      channelType: "telegram",
       channelId: "ch-2",
       messageId: "msg-2",
       content: "reply",
+      sourceChannelType: "telegram",
+      sourceChannelId: "ch-2",
+      sourceMessageId: "source-2",
     });
 
     const recent = collector.getRecent({ category: "message" });
     expect(recent).toHaveLength(2);
     expect(recent.every((e) => e.category === "message")).toBe(true);
+  });
+
+  it("stores content-free projections for every subscribed external payload", () => {
+    bus.emit("message:received", {
+      message: {
+        id: "00000000-0000-4000-8000-000000000001",
+        channelId: "chat-a",
+        channelType: "telegram",
+        senderId: "user-a",
+        text: "PRIVATE_MESSAGE_BODY",
+        timestamp: Date.now(),
+        attachments: [{
+          type: "file",
+          url: "https://example.com/PRIVATE_ATTACHMENT_TOKEN",
+          fileName: "PRIVATE_FILE_NAME",
+        }],
+        metadata: { apiKey: "PRIVATE_CREDENTIAL_VALUE" },
+      },
+      sessionKey: { tenantId: "default", userId: "user-a", channelId: "chat-a" },
+    });
+    bus.emit("message:sent", {
+      channelType: "telegram",
+      channelId: "chat-a",
+      messageId: "outbound-a",
+      content: "PRIVATE_OUTBOUND_BODY",
+      sourceChannelType: "telegram",
+      sourceChannelId: "chat-a",
+      sourceMessageId: "00000000-0000-4000-8000-000000000001",
+    });
+    bus.emit("retry:attempted", {
+      channelId: "telegram",
+      chatId: "chat-a",
+      attempt: 1,
+      maxAttempts: 3,
+      delayMs: 100,
+      error: "PRIVATE_RETRY_ERROR",
+      timestamp: Date.now(),
+    });
+    bus.emit("diagnostic:webhook_delivered", {
+      webhookId: "hook-a",
+      source: "telegram",
+      event: "message",
+      statusCode: 500,
+      success: false,
+      durationMs: 20,
+      failureReason: "handler_error",
+      timestamp: Date.now(),
+    });
+
+    const serialized = JSON.stringify(collector.getRecent({ limit: 20 }));
+    for (const forbidden of [
+      "PRIVATE_MESSAGE_BODY",
+      "PRIVATE_ATTACHMENT_TOKEN",
+      "PRIVATE_FILE_NAME",
+      "PRIVATE_CREDENTIAL_VALUE",
+      "PRIVATE_OUTBOUND_BODY",
+      "PRIVATE_RETRY_ERROR",
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
   });
 
   it("categorizes session events correctly", () => {
@@ -135,9 +199,13 @@ describe("createDiagnosticCollector", () => {
     });
 
     bus.emit("message:sent", {
+      channelType: "telegram",
       channelId: "ch-2",
       messageId: "msg-1",
       content: "hello",
+      sourceChannelType: "telegram",
+      sourceChannelId: "ch-2",
+      sourceMessageId: "source-1",
     });
 
     bus.emit("session:created", {
@@ -239,9 +307,13 @@ describe("createDiagnosticCollector", () => {
     // 3 message events
     for (let i = 0; i < 3; i++) {
       bus.emit("message:sent", {
+        channelType: "telegram",
         channelId: `ch-${i}`,
         messageId: `msg-${i}`,
         content: "hi",
+        sourceChannelType: "telegram",
+        sourceChannelId: `ch-${i}`,
+        sourceMessageId: `source-${i}`,
       });
     }
 
@@ -389,9 +461,13 @@ describe("createDiagnosticCollector", () => {
     });
 
     bus.emit("message:sent", {
+      channelType: "telegram",
       channelId: "ch-1",
       messageId: "msg-1",
       content: "hi",
+      sourceChannelType: "telegram",
+      sourceChannelId: "ch-1",
+      sourceMessageId: "source-1",
     });
 
     // Still only 1 event from before dispose

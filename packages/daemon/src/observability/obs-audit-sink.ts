@@ -300,9 +300,9 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
 
   /**
    * The three audit sinks per event: the SQLite buffer, the
-   * 0600 security-audit.jsonl line, and the `.audit()` (level 35) log. The row
-   * is ALREADY scrubbed (the metadata free-map was routed through
-   * `sanitizeForPersistence` in the row-builder). The JSONL append is try/caught
+   * 0600 security-audit.jsonl line, and a content-free `.audit()` (level 35)
+   * summary. The row is ALREADY scrubbed (the metadata free-map was routed
+   * through `sanitizeForPersistence` in the row-builder). The JSONL append is try/caught
    * (AGENTS §2.7): a sink failure logs ERROR with hint+errorKind and
    * NEVER throws past the subscriber — the SQLite half still drains, and a
    * tenant-less event is persisted system-scoped, never dropped.
@@ -330,7 +330,8 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
         );
       }
     }
-    // The level-35 audit line (scrubbed row).
+    // The level-35 audit line is a summary only. Durable refs stay in SQLite /
+    // security-audit.jsonl and never enter the ordinary daemon log.
     // `.audit()` is a CUSTOM Pino level registered ONLY by the @comis/infra
     // logger factory — `logger?.audit?.(...)` (method optional-chain, not just
     // the null-guard `logger?.`) so a logger BUILT WITHOUT that factory (a test
@@ -339,7 +340,16 @@ export function wireAuditSink(deps: WireAuditSinkDeps): void {
     // The DURABLE audit (the obs_audit_events row + security-audit.jsonl above)
     // already fired, so the audit trail stays intact; production uses the infra
     // logger (has `.audit()`) → the line still fires.
-    logger?.audit?.({ kind: row.kind, outcome: row.outcome, agentId: row.agentId, traceId: row.traceId, refs: row.refs }, row.kind);
+    logger?.audit?.(
+      {
+        kind: row.kind,
+        outcome: row.outcome,
+        agentId: row.agentId,
+        traceId: row.traceId,
+        hasRefs: row.refs !== null,
+      },
+      row.kind,
+    );
   }
 
   // audit:event carries its own tenantId/agentId; fall back to the trace ctx /

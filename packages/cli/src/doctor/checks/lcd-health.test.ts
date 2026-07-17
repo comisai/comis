@@ -18,6 +18,8 @@ import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ContextStoreScope } from "@comis/core";
+import { createLcdStore, initSchema } from "@comis/memory";
 import type { DoctorContext } from "../types.js";
 import { lcdHealthCheck } from "./lcd-health.js";
 
@@ -86,6 +88,12 @@ function seedLcdSchema(db: Database.Database): void {
       summary_id TEXT NOT NULL REFERENCES lcd_summaries(summary_id) ON DELETE CASCADE,
       message_id TEXT NOT NULL REFERENCES lcd_messages(id) ON DELETE RESTRICT,
       PRIMARY KEY (summary_id, message_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS lcd_summary_parents (
+      parent_summary_id TEXT NOT NULL REFERENCES lcd_summaries(summary_id) ON DELETE CASCADE,
+      child_summary_id  TEXT NOT NULL REFERENCES lcd_summaries(summary_id) ON DELETE RESTRICT,
+      PRIMARY KEY (parent_summary_id, child_summary_id)
     );
 
     CREATE TABLE IF NOT EXISTS lcd_context_items (
@@ -160,15 +168,23 @@ function seedSummary(
 /** Seed a valid context_item row. */
 function seedContextItem(
   db: Database.Database,
-  opts: { id?: string; refId?: string; refKind?: string; ordinal?: number } = {},
+  opts: {
+    id?: string;
+    refId?: string;
+    refKind?: string;
+    ordinal?: number;
+    conversationId?: string;
+    tenantId?: string;
+    agentId?: string;
+  } = {},
 ): void {
   db.prepare(`INSERT INTO lcd_context_items
     (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
     opts.id ?? "ci-001",
-    "conv-001",
-    "tenant-001",
-    "agent-001",
+    opts.conversationId ?? "conv-001",
+    opts.tenantId ?? "tenant-001",
+    opts.agentId ?? "agent-001",
     "session-001",
     opts.ordinal ?? 0,
     opts.refKind ?? "message",
@@ -195,6 +211,24 @@ describe("lcdHealthCheck", () => {
     const ctx = makeCtx("/tmp/comis-nonexistent-dir-xyzzy-" + Date.now());
     const findings = await lcdHealthCheck.run(ctx);
     expect(findings).toHaveLength(0);
+  });
+
+  it("scans the configured memory database path outside the data directory", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-test-lcd-data-"));
+    const databaseDir = mkdtempSync(join(tmpdir(), "comis-test-lcd-database-"));
+    tempDirs.push(dataDir, databaseDir);
+    const dbPath = join(databaseDir, "custom-memory.sqlite");
+    const db = new Database(dbPath);
+    seedLcdSchema(db);
+    db.close();
+
+    const findings = await lcdHealthCheck.run({
+      ...makeCtx(dataDir),
+      memoryDbPath: dbPath,
+    });
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.status).toBe("pass");
   });
 
   // Clean DB → exactly 1 pass finding
@@ -230,6 +264,130 @@ describe("lcdHealthCheck", () => {
     expect(f!.repairable).toBe(false);
   });
 
+  it("does not classify a retained condensed-summary child as an orphan", async () => {
+    const { dataDir, db } = makeTempDb();
+    seedSummary(db, { summaryId: "child-sum" });
+    seedSummary(db, { summaryId: "parent-sum" });
+    db.prepare(
+      "INSERT INTO lcd_summary_parents(parent_summary_id, child_summary_id) VALUES (?, ?)",
+    ).run("parent-sum", "child-sum");
+    seedContextItem(db, { id: "ci-parent", refKind: "summary", refId: "parent-sum" });
+    db.close();
+
+    const findings = await lcdHealthCheck.run(makeCtx(dataDir));
+    expect(findings.find((finding) => finding.check === "Orphaned summaries")).toBeUndefined();
+  });
+
+  it("counts an unreachable condensed parent and its child as two orphaned summaries", async () => {
+    const { dataDir, db } = makeTempDb();
+    seedSummary(db, { summaryId: "unreachable-child" });
+    seedSummary(db, { summaryId: "unreachable-parent" });
+    db.prepare(
+      "INSERT INTO lcd_summary_parents(parent_summary_id, child_summary_id) VALUES (?, ?)",
+    ).run("unreachable-parent", "unreachable-child");
+    db.close();
+
+    const findings = await lcdHealthCheck.run(makeCtx(dataDir));
+    const finding = findings.find((candidate) => candidate.check === "Orphaned summaries");
+    expect(finding?.message).toContain("2 orphaned lcd_summaries");
+  });
+
+  it("follows a multi-level condensed DAG from its active context root", async () => {
+    const { dataDir, db } = makeTempDb();
+    seedSummary(db, { summaryId: "leaf" });
+    seedSummary(db, { summaryId: "middle" });
+    seedSummary(db, { summaryId: "root" });
+    const insertEdge = db.prepare(
+      "INSERT INTO lcd_summary_parents(parent_summary_id, child_summary_id) VALUES (?, ?)",
+    );
+    insertEdge.run("middle", "leaf");
+    insertEdge.run("root", "middle");
+    seedContextItem(db, { id: "ci-root", refKind: "summary", refId: "root" });
+    db.close();
+
+    const findings = await lcdHealthCheck.run(makeCtx(dataDir));
+    expect(findings.find((finding) => finding.check === "Orphaned summaries")).toBeUndefined();
+  });
+
+  it("accepts the real schema and condensed-writer DAG as reachable", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-test-lcd-real-"));
+    tempDirs.push(dataDir);
+    const db = new Database(join(dataDir, "memory.db"));
+    db.pragma("foreign_keys = ON");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const scope: ContextStoreScope = {
+      conversationId: "real-conversation",
+      tenantId: "tenant-real",
+      agentId: "agent-real",
+      sessionKey: "tenant-real:telegram:user-real",
+    };
+    for (let index = 0; index < 4; index += 1) {
+      store.append({
+        scope,
+        seq: index,
+        role: "user",
+        tokenCount: 10,
+        createdAt: 1_000 + index,
+        parts: [{
+          kind: "text",
+          metadata: { raw: { type: "text", text: `message-${index}` }, rawType: "text" },
+        }],
+      });
+    }
+    store.getContextItems(scope);
+    const commonSummary = {
+      scope,
+      tokenCount: 5,
+      descendantCount: 0,
+      earliestAt: 0,
+      latestAt: 0,
+      fileIds: [],
+      fallback: false,
+      taint: false,
+      createdAt: 2_000,
+    };
+    const firstLeaf = store.appendLeafSummary({
+      ...commonSummary,
+      content: "first leaf",
+      startOrdinal: 0,
+      endOrdinal: 1,
+    });
+    const secondLeaf = store.appendLeafSummary({
+      ...commonSummary,
+      content: "second leaf",
+      startOrdinal: 1,
+      endOrdinal: 2,
+    });
+    store.appendCondensedSummary({
+      ...commonSummary,
+      content: "condensed root",
+      startOrdinal: 0,
+      endOrdinal: 1,
+      childSummaryIds: [firstLeaf, secondLeaf],
+      depth: 1,
+    });
+    db.close();
+
+    const findings = await lcdHealthCheck.run(makeCtx(dataDir));
+    expect(findings.find((finding) => finding.check === "Orphaned summaries")).toBeUndefined();
+    expect(findings).toEqual([
+      expect.objectContaining({ check: "LCD Store", status: "pass" }),
+    ]);
+  });
+
+  it("reports the complete orphan count instead of truncating the diagnostic at fifty", async () => {
+    const { dataDir, db } = makeTempDb();
+    for (let index = 0; index < 51; index += 1) {
+      seedSummary(db, { summaryId: `orphan-${index}` });
+    }
+    db.close();
+
+    const findings = await lcdHealthCheck.run(makeCtx(dataDir));
+    const finding = findings.find((candidate) => candidate.check === "Orphaned summaries");
+    expect(finding?.message).toContain("51 orphaned lcd_summaries");
+  });
+
   // Scan class 2 — dangling context_item refs
   it("detects dangling context_items refs when ref_id points to a non-existent message", async () => {
     const { dataDir, db } = makeTempDb();
@@ -246,20 +404,74 @@ describe("lcdHealthCheck", () => {
     expect(f!.repairable).toBe(true);
   });
 
+  it("treats a cross-scope summary reference as dangling and leaves the summary orphaned", async () => {
+    const { dataDir, db } = makeTempDb();
+    seedSummary(db, { summaryId: "scoped-summary", tenantId: "tenant-a" });
+    seedContextItem(db, {
+      id: "ci-cross-scope",
+      refKind: "summary",
+      refId: "scoped-summary",
+      tenantId: "tenant-b",
+    });
+    db.close();
+
+    const findings = await lcdHealthCheck.run(makeCtx(dataDir));
+    expect(findings.find((finding) => finding.check === "Dangling context refs")?.message)
+      .toContain("1 dangling context_items ref");
+    expect(findings.find((finding) => finding.check === "Orphaned summaries")?.message)
+      .toContain("1 orphaned lcd_summaries");
+  });
+
+  it("reports the complete dangling-reference count instead of truncating at fifty", async () => {
+    const { dataDir, db } = makeTempDb();
+    for (let index = 0; index < 51; index += 1) {
+      seedContextItem(db, {
+        id: `dangling-${index}`,
+        refKind: "message",
+        refId: `missing-${index}`,
+        ordinal: index,
+      });
+    }
+    db.close();
+
+    const findings = await lcdHealthCheck.run(makeCtx(dataDir));
+    expect(findings.find((finding) => finding.check === "Dangling context refs")?.message)
+      .toContain("51 dangling context_items refs");
+  });
+
   // Scan class 3 — fallback-marker summaries
   it("detects fallback-marker lcd_summaries with status warn (repairable:false — offline impossible)", async () => {
     const { dataDir, db } = makeTempDb();
     seedSummary(db, { summaryId: "fallback-sum", fallback: 1 });
+    seedContextItem(db, { id: "ci-fallback", refKind: "summary", refId: "fallback-sum" });
     db.close();
 
     const findings = await lcdHealthCheck.run(makeCtx(dataDir));
     const f = findings.find((x) => x.message.includes("fallback"));
     expect(f).toBeDefined();
     expect(f!.status).toBe("warn");
-    // Fallback-marker repair requires the LLM summarizer, which is unavailable
-    // when the daemon is stopped — not repairable offline. The daemon
-    // re-summarizes fallback-marker summaries during normal compaction.
     expect(f!.repairable).toBe(false);
+    expect(f!.message).toContain("1 active root");
+    expect(f!.suggestion).toContain("does not rewrite them");
+    expect(f!.suggestion).toContain("underlying messages remain available");
+    expect(f!.suggestion).not.toContain("replace them");
+  });
+
+  it("distinguishes retained fallback children from active fallback context refs", async () => {
+    const { dataDir, db } = makeTempDb();
+    seedSummary(db, { summaryId: "fallback-child", fallback: 1 });
+    seedSummary(db, { summaryId: "active-parent", fallback: 0 });
+    db.prepare(
+      "INSERT INTO lcd_summary_parents(parent_summary_id, child_summary_id) VALUES (?, ?)",
+    ).run("active-parent", "fallback-child");
+    seedContextItem(db, { id: "ci-active-parent", refKind: "summary", refId: "active-parent" });
+    db.close();
+
+    const findings = await lcdHealthCheck.run(makeCtx(dataDir));
+    const finding = findings.find((candidate) => candidate.check === "Fallback summaries");
+    expect(finding?.message).toContain("0 active roots");
+    expect(finding?.message).toContain("1 reachable ancestor");
+    expect(finding?.message).toContain("0 unreachable");
   });
 
   // Scan class 6 — lcd_ingest_cursor over-count. The scan flags ONLY
@@ -280,6 +492,19 @@ describe("lcdHealthCheck", () => {
     expect(f).toBeDefined();
     expect(f!.status).toBe("warn");
     expect(f!.repairable).toBe(false);
+  });
+
+  it("reports the complete cursor over-count instead of truncating at twenty", async () => {
+    const { dataDir, db } = makeTempDb();
+    const insertCursor = db.prepare(`INSERT INTO lcd_ingest_cursor
+      (conversation_id, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)
+      VALUES (?, 'agent-001', 'tenant-001', 'user:1000000:abc', 1, 1000000)`);
+    for (let index = 0; index < 21; index += 1) insertCursor.run(`conv-${index}`);
+    db.close();
+
+    const findings = await lcdHealthCheck.run(makeCtx(dataDir));
+    expect(findings.find((finding) => finding.check === "Cursor over-count")?.message)
+      .toContain("21 lcd_ingest_cursor rows");
   });
 
   // A fresh-epoch cursor (ingested_live_len=0 with durable messages) is
@@ -382,6 +607,40 @@ describe("lcdHealthCheck", () => {
       "LCD scope integrity failure: 1 message + 0 summaries have a missing tenant_id or agent_id",
     );
     expect(f!.repairable).toBe(false);
+  });
+
+  it("reports a cross-scope condensed-summary edge and does not use it for reachability", async () => {
+    const { dataDir, db } = makeTempDb();
+    seedSummary(db, { summaryId: "parent-a", tenantId: "tenant-a" });
+    seedSummary(db, { summaryId: "child-b", tenantId: "tenant-b" });
+    db.prepare(
+      "INSERT INTO lcd_summary_parents(parent_summary_id, child_summary_id) VALUES (?, ?)",
+    ).run("parent-a", "child-b");
+    seedContextItem(db, {
+      id: "ci-parent-a",
+      refKind: "summary",
+      refId: "parent-a",
+      tenantId: "tenant-a",
+    });
+    db.close();
+
+    const findings = await lcdHealthCheck.run(makeCtx(dataDir));
+    expect(findings.find((finding) => finding.check === "LCD scope integrity")?.message)
+      .toContain("1 cross-scope summary edge");
+    expect(findings.find((finding) => finding.check === "Orphaned summaries")?.message)
+      .toContain("1 orphaned lcd_summaries");
+  });
+
+  it("reports a missing required LCD table as schema initialization failure", async () => {
+    const { dataDir, db } = makeTempDb();
+    db.exec("DROP TABLE lcd_summary_parents");
+    db.close();
+
+    const findings = await lcdHealthCheck.run(makeCtx(dataDir));
+    const finding = findings.find((candidate) => candidate.check === "LCD schema");
+    expect(finding?.status).toBe("fail");
+    expect(finding?.message).toContain("lcd_summary_parents");
+    expect(findings.find((candidate) => candidate.check === "LCD Store open")).toBeUndefined();
   });
 
   // Content-free discipline — no finding message contains seeded message content

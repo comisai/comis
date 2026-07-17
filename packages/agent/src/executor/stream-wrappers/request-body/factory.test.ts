@@ -3914,7 +3914,7 @@ describe("Per-model kill switch strips ALL cache_control markers", () => {
 });
 
 describe("First-block system prompt hash logging", () => {
-  it("logs firstBlockHash and firstBlockSnippet on Anthropic API call", async () => {
+  it("logs structural hash metadata without any system-prompt snippet", async () => {
     const debugCalls: Array<Record<string, unknown>> = [];
     const mockLogger = {
       debug: vi.fn((...args: unknown[]) => {
@@ -3947,7 +3947,7 @@ describe("First-block system prompt hash logging", () => {
 
     await onPayload({
       system: [
-        { type: "text", text: "You are a helpful assistant." },
+        { type: "text", text: "private system instruction must remain content-free" },
       ],
       tools: [],
       messages: [
@@ -3958,7 +3958,7 @@ describe("First-block system prompt hash logging", () => {
     expect(debugCalls.length).toBeGreaterThanOrEqual(1);
     const hashLog = debugCalls[0]!;
     expect(hashLog.firstBlockHash).toBeTypeOf("number");
-    expect(hashLog.firstBlockSnippet).toBeTypeOf("string");
+    expect(hashLog).not.toHaveProperty("firstBlockSnippet");
     expect(hashLog.blockCount).toBeTypeOf("number");
   });
 

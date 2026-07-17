@@ -7,13 +7,22 @@ import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 // under ESM (vi.spyOn cannot redefine non-configurable namespace
 // properties on `node:fs`). Default false → real chmod runs everywhere
 // else in this file (existing tests rely on real chmod behavior).
-const { chmodSyncThrowsEperm, fchmodSyncMode } = vi.hoisted(() => ({
-  chmodSyncThrowsEperm: { value: false },
-  // "real" → run real fchmod; "permission-model" → throw the --permission
-  // refusal (must be swallowed, file already opened 0o600); "eio" → throw a
-  // genuine I/O error (must propagate). Drives the fchmod-disabled guard.
-  fchmodSyncMode: { value: "real" as "real" | "permission-model" | "eio" },
-}));
+const { chmodSyncThrowsEperm, fchmodSyncMode, fsyncSyncCalls, writeSyncBehavior } = vi.hoisted(
+  () => ({
+    chmodSyncThrowsEperm: { value: false },
+    // "real" → run real fchmod; "permission-model" → throw the --permission
+    // refusal (must be swallowed, file already opened 0o600); "eio" → throw a
+    // genuine I/O error (must propagate). Drives the fchmod-disabled guard.
+    fchmodSyncMode: { value: "real" as "real" | "permission-model" | "eio" },
+    fsyncSyncCalls: { value: 0 },
+    writeSyncBehavior: {
+      maxBytesPerCall: undefined as number | undefined,
+      returnZero: false,
+      callCount: 0,
+      offsets: [] as number[],
+    },
+  }),
+);
 
 vi.mock("node:fs", async (importOriginal) => {
   const real = await importOriginal<typeof import("node:fs")>();
@@ -38,6 +47,34 @@ vi.mock("node:fs", async (importOriginal) => {
       }
       return real.fchmodSync(...args);
     },
+    fsyncSync: (...args: Parameters<typeof real.fsyncSync>) => {
+      fsyncSyncCalls.value += 1;
+      return real.fsyncSync(...args);
+    },
+    writeSync: (
+      fd: number,
+      buffer: Buffer,
+      offset?: number,
+      length?: number,
+      position?: number | null,
+    ): number => {
+      if (writeSyncBehavior.maxBytesPerCall === undefined) {
+        return real.writeSync(fd, buffer, offset, length, position);
+      }
+      writeSyncBehavior.callCount += 1;
+      const effectiveOffset = offset ?? 0;
+      writeSyncBehavior.offsets.push(effectiveOffset);
+      if (writeSyncBehavior.returnZero) return 0;
+
+      const effectiveLength = length ?? buffer.length - effectiveOffset;
+      return real.writeSync(
+        fd,
+        buffer,
+        effectiveOffset,
+        Math.min(effectiveLength, writeSyncBehavior.maxBytesPerCall),
+        position,
+      );
+    },
   };
 });
 
@@ -58,6 +95,11 @@ import {
 let tmpDir: string;
 
 afterEach(() => {
+  writeSyncBehavior.maxBytesPerCall = undefined;
+  writeSyncBehavior.returnZero = false;
+  writeSyncBehavior.callCount = 0;
+  writeSyncBehavior.offsets.length = 0;
+  fsyncSyncCalls.value = 0;
   if (tmpDir) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -147,6 +189,38 @@ describe("appendRegularFile — happy path", () => {
     const r2 = appendRegularFile({ path: target, content: "defg" });
     expect(r2.ok).toBe(true);
     if (r2.ok) expect(r2.value.totalBytes).toBe(7);
+  });
+
+  it("retries partial writes until every requested byte is persisted", () => {
+    writeSyncBehavior.maxBytesPerCall = 2;
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-partial-write-"));
+    const target = path.join(tmpDir, "out.jsonl");
+
+    const result = appendRegularFile({
+      path: target,
+      content: "complete\n",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fs.readFileSync(target, "utf8")).toBe("complete\n");
+    expect(writeSyncBehavior.callCount).toBeGreaterThan(1);
+    expect(writeSyncBehavior.offsets).toEqual([0, 2, 4, 6, 8]);
+  });
+
+  it("returns an error when a write makes no forward progress", () => {
+    writeSyncBehavior.maxBytesPerCall = 2;
+    writeSyncBehavior.returnZero = true;
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-zero-write-"));
+    const target = path.join(tmpDir, "out.jsonl");
+
+    const result = appendRegularFile({ path: target, content: "pending\n" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("made no forward progress");
+    }
+    expect(writeSyncBehavior.callCount).toBe(1);
+    expect(fs.readFileSync(target, "utf8")).toBe("");
   });
 });
 
@@ -358,6 +432,20 @@ describe("writeRegularFile — happy path", () => {
     expect(fs.statSync(target).mode & 0o777).toBe(0o600);
   });
 
+  it("flushes truncate-written bytes before success when requested", () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-write-fsync-"));
+    const target = path.join(tmpDir, "out.tmp");
+
+    const result = writeRegularFile({
+      path: target,
+      content: "durable",
+      fsyncBeforeSuccess: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fsyncSyncCalls.value).toBe(1);
+  });
+
   it("truncates on rewrite (does NOT append)", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-write-truncate-"));
     const target = path.join(tmpDir, "out.tmp");
@@ -411,6 +499,34 @@ describe("writeRegularFile — happy path", () => {
     const result = writeRegularFile({ path: target, content: "x" });
     expect(result.ok).toBe(true);
     expect(fs.readFileSync(target, "utf8")).toBe("x");
+  });
+
+  it("retries partial writes at advancing buffer offsets until complete", () => {
+    writeSyncBehavior.maxBytesPerCall = 2;
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-write-partial-"));
+    const target = path.join(tmpDir, "out.tmp");
+
+    const result = writeRegularFile({ path: target, content: "truncate" });
+
+    expect(result.ok).toBe(true);
+    expect(fs.readFileSync(target, "utf8")).toBe("truncate");
+    expect(writeSyncBehavior.offsets).toEqual([0, 2, 4, 6]);
+  });
+
+  it("returns an error when a truncate write makes no forward progress", () => {
+    writeSyncBehavior.maxBytesPerCall = 2;
+    writeSyncBehavior.returnZero = true;
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-write-zero-"));
+    const target = path.join(tmpDir, "out.tmp");
+
+    const result = writeRegularFile({ path: target, content: "pending" });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain("made no forward progress");
+    }
+    expect(writeSyncBehavior.callCount).toBe(1);
+    expect(fs.readFileSync(target, "utf8")).toBe("");
   });
 });
 

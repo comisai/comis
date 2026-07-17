@@ -4,15 +4,19 @@
 
 import { InputFile } from "grammy";
 import { ok, err } from "@comis/shared";
-import { systemNowMs } from "@comis/core";
+import {
+  createAttachmentSendReceipt,
+  systemNowMs,
+  toSafeErrorLogString,
+} from "@comis/core";
 import type { Result } from "@comis/shared";
 import type {
   AttachmentPayload,
+  AttachmentSendReceipt,
   SendMessageOptions,
 } from "@comis/core";
 import { renderTelegramButtons, renderTelegramCards } from "../rich-renderer.js";
 import {
-  buildTypingThreadParams,
   resolveOutboundThreadParams,
 } from "../thread-context.js";
 import { createTelegramVoiceSender } from "../voice-sender.js";
@@ -20,6 +24,7 @@ import type {
   TelegramAdapterDeps,
   TelegramAdapterState,
 } from "./telegram-adapter-types.js";
+import { getActiveBot } from "./telegram-active-bot.js";
 import {
   isTelegramHtmlParseError,
   sanitizeTelegramHtml,
@@ -37,6 +42,9 @@ export async function sendMessage(
   text: string,
   options?: SendMessageOptions,
 ): Promise<Result<string, Error>> {
+  const activeBot = getActiveBot(state);
+  if (!activeBot.ok) return activeBot;
+  const bot = activeBot.value;
   try {
     // Apply effects
     const isSpoiler = options?.effects?.includes("spoiler");
@@ -84,14 +92,14 @@ export async function sendMessage(
     const doSend = async (tp?: { message_thread_id: number }) => {
       const opts = { ...baseOpts, ...(tp ?? {}) };
       try {
-        return await state.bot.api.sendMessage(Number(chatId), finalText, { parse_mode: "HTML", ...opts });
+        return await bot.api.sendMessage(Number(chatId), finalText, { parse_mode: "HTML", ...opts });
       } catch (htmlErr) {
         if (isTelegramHtmlParseError(htmlErr)) {
           deps.logger.warn(
-            { channelType: "telegram", chatId, err: htmlErr instanceof Error ? htmlErr : new Error(String(htmlErr)), hint: "HTML parse failed, retrying as plain text", errorKind: "platform" as const },
+            { channelType: "telegram", chatId, err: toSafeErrorLogString(htmlErr), hint: "HTML parse failed, retrying as plain text", errorKind: "platform" as const },
             "HTML parse fallback triggered",
           );
-          return await state.bot.api.sendMessage(Number(chatId), finalText, opts);
+          return await bot.api.sendMessage(Number(chatId), finalText, opts);
         }
         throw htmlErr;
       }
@@ -107,12 +115,13 @@ export async function sendMessage(
     return ok(String(sent.message_id));
   } catch (error) {
     const sendErr = error instanceof Error ? error : new Error(String(error));
-    state.lastError = sendErr.message;
+    const safeSendError = toSafeErrorLogString(sendErr);
+    state.lastError = safeSendError;
     deps.logger.warn(
       {
         channelType: "telegram",
         chatId,
-        err: sendErr,
+        err: safeSendError,
         hint: "Check Telegram bot token permissions and chat accessibility",
         errorKind: "platform" as const,
       },
@@ -121,7 +130,7 @@ export async function sendMessage(
     // Preserve the typed GrammyError (error_code/parameters) as `cause` so an
     // activity render-actions adapter can classify it STRUCTURALLY —
     // it must never parse this generic message string.
-    return err(new Error(`Failed to send message: ${sendErr.message}`, { cause: error }));
+    return err(new Error(`Failed to send message: ${safeSendError}`, { cause: error }));
   }
 }
 
@@ -136,19 +145,22 @@ export async function editMessage(
   messageId: string,
   text: string,
 ): Promise<Result<void, Error>> {
+  const activeBot = getActiveBot(state);
+  if (!activeBot.ok) return activeBot;
+  const bot = activeBot.value;
   try {
     const sanitizedText = sanitizeTelegramHtml(text);
     try {
-      await state.bot.api.editMessageText(Number(chatId), Number(messageId), sanitizedText, {
+      await bot.api.editMessageText(Number(chatId), Number(messageId), sanitizedText, {
         parse_mode: "HTML",
       });
     } catch (htmlErr) {
       if (isTelegramHtmlParseError(htmlErr)) {
         deps.logger.warn(
-          { channelType: "telegram", chatId, messageId, err: htmlErr instanceof Error ? htmlErr : new Error(String(htmlErr)), hint: "HTML parse failed on edit, retrying as plain text", errorKind: "platform" as const },
+          { channelType: "telegram", chatId, messageId, err: toSafeErrorLogString(htmlErr), hint: "HTML parse failed on edit, retrying as plain text", errorKind: "platform" as const },
           "HTML parse fallback triggered (edit)",
         );
-        await state.bot.api.editMessageText(Number(chatId), Number(messageId), text);
+        await bot.api.editMessageText(Number(chatId), Number(messageId), text);
       } else {
         throw htmlErr;
       }
@@ -159,7 +171,7 @@ export async function editMessage(
     );
     return ok(undefined);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = toSafeErrorLogString(error);
     // Preserve the typed GrammyError as `cause` for structural classification
     // (429 → rate_limited, message-not-found → not_supported).
     return err(new Error(`Failed to edit message: ${message}`, { cause: error }));
@@ -177,13 +189,16 @@ export async function reactToMessage(
   messageId: string,
   emoji: string,
 ): Promise<Result<void, Error>> {
+  const activeBot = getActiveBot(state);
+  if (!activeBot.ok) return activeBot;
+  const bot = activeBot.value;
   try {
-    await state.bot.api.setMessageReaction(Number(chatId), Number(messageId), [
+    await bot.api.setMessageReaction(Number(chatId), Number(messageId), [
       { type: "emoji", emoji } as import("grammy/types").ReactionTypeEmoji,
     ]);
     return ok(undefined);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = toSafeErrorLogString(error);
     return err(new Error(`Failed to react to message: ${message}`));
   }
 }
@@ -195,11 +210,14 @@ export async function removeReaction(
   messageId: string,
   _emoji: string,
 ): Promise<Result<void, Error>> {
+  const activeBot = getActiveBot(state);
+  if (!activeBot.ok) return activeBot;
+  const bot = activeBot.value;
   try {
-    await state.bot.api.setMessageReaction(Number(chatId), Number(messageId), []);
+    await bot.api.setMessageReaction(Number(chatId), Number(messageId), []);
     return ok(undefined);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = toSafeErrorLogString(error);
     return err(new Error(`Failed to remove reaction: ${message}`));
   }
 }
@@ -210,11 +228,14 @@ export async function deleteMessage(
   chatId: string,
   messageId: string,
 ): Promise<Result<void, Error>> {
+  const activeBot = getActiveBot(state);
+  if (!activeBot.ok) return activeBot;
+  const bot = activeBot.value;
   try {
-    await state.bot.api.deleteMessage(Number(chatId), Number(messageId));
+    await bot.api.deleteMessage(Number(chatId), Number(messageId));
     return ok(undefined);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = toSafeErrorLogString(error);
     // Preserve the typed GrammyError as `cause` for structural classification.
     return err(new Error(`Failed to delete message: ${message}`, { cause: error }));
   }
@@ -230,10 +251,13 @@ export async function sendAttachment(
   chatId: string,
   attachment: AttachmentPayload,
   options?: SendMessageOptions,
-): Promise<Result<string, Error>> {
+): Promise<Result<AttachmentSendReceipt, Error>> {
+  const activeBot = getActiveBot(state);
+  if (!activeBot.ok) return activeBot;
+  const bot = activeBot.value;
   // Voice note dispatch: use voice-specific API for native voice bubbles
   if (attachment.isVoiceNote && attachment.type === "audio") {
-    const voiceSender = createTelegramVoiceSender({ bot: state.bot, logger: deps.logger });
+    const voiceSender = createTelegramVoiceSender({ bot, logger: deps.logger });
     const threadParams = resolveOutboundThreadParams(options);
     return voiceSender.sendVoice(
       chatId,
@@ -259,23 +283,17 @@ export async function sendAttachment(
     const doSend = async (tp?: { message_thread_id: number }) => {
       const opts = { caption: attachment.caption, ...replyParams, ...(tp ?? {}) };
       switch (attachment.type) {
-        case "image": return state.bot.api.sendPhoto(Number(chatId), file, opts);
-        case "audio": return state.bot.api.sendAudio(Number(chatId), file, opts);
-        case "video": return state.bot.api.sendVideo(Number(chatId), file, opts);
-        default:      return state.bot.api.sendDocument(Number(chatId), file, opts);
+        case "image": return bot.api.sendPhoto(Number(chatId), file, opts);
+        case "audio": return bot.api.sendAudio(Number(chatId), file, opts);
+        case "video": return bot.api.sendVideo(Number(chatId), file, opts);
+        default:      return bot.api.sendDocument(Number(chatId), file, opts);
       }
     };
 
     const sent = await sendWithThreadFallback(doSend, threadParams, deps.logger);
 
-    // A successful Telegram send ALWAYS returns a numeric message_id. A missing id
-    // means the platform did not accept the media — returning ok(String(undefined))
-    // === "undefined" is a false success that hides a real delivery failure
-    // (generated media can produce real artifacts that are never delivered while
-    // the adapter logs "attachment sent" with messageId:"undefined"). Fail
-    // honestly + name the knob instead of a silent false-success.
     const sentMessageId = (sent as { message_id?: number } | undefined)?.message_id;
-    if (sentMessageId == null) {
+    if (!Number.isSafeInteger(sentMessageId) || (sentMessageId ?? 0) <= 0) {
       deps.logger.warn(
         {
           channelType: "telegram",
@@ -283,23 +301,21 @@ export async function sendAttachment(
           attachmentType: attachment.type,
           captionLength: attachment.caption?.length ?? 0,
           hasFileName: attachment.fileName !== undefined,
-          hint: "Telegram media send returned no message_id — the send was not accepted (a non-standard/empty response or a dropped upload); verify the chat exists and that the Bot API method supports this media type",
+          hint: "Verify the Telegram Bot API response and that the selected media method returns a positive numeric message_id",
           errorKind: "platform" as const,
         },
         "Media attachment send returned no message_id",
       );
-      return err(
-        new Error(
-          `Telegram ${attachment.type} send returned no message_id (send not accepted)`,
-        ),
-      );
+      return err(new Error(`Telegram ${attachment.type} send returned no valid message_id`));
     }
+    const receipt = createAttachmentSendReceipt(String(sentMessageId));
 
     if (isLocalPath) {
       deps.logger.info(
         {
           channelType: "telegram",
-          messageId: String(sentMessageId),
+          ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
+          tracking: receipt.kind,
           chatId,
           attachmentType: attachment.type,
           captionLength: attachment.caption?.length ?? 0,
@@ -311,7 +327,8 @@ export async function sendAttachment(
     deps.logger.debug(
       {
         channelType: "telegram",
-        messageId: String(sentMessageId),
+        ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
+        tracking: receipt.kind,
         chatId,
         attachmentType: attachment.type,
         captionLength: attachment.caption?.length ?? 0,
@@ -319,174 +336,19 @@ export async function sendAttachment(
       },
       "Outbound attachment",
     );
-    return ok(String(sent.message_id));
+    return ok(receipt);
   } catch (error) {
-    const sendErr = error instanceof Error ? error : new Error(String(error));
+    const safeSendError = toSafeErrorLogString(error);
     deps.logger.warn(
       {
         channelType: "telegram",
         chatId,
-        err: sendErr,
+        err: safeSendError,
         hint: "Check Telegram bot token permissions and file accessibility",
         errorKind: "platform" as const,
       },
       "Send attachment failed",
     );
-    return err(new Error(`Failed to send attachment: ${sendErr.message}`));
-  }
-}
-
-// ---------------------------------------------------------------------------
-// platformAction
-// ---------------------------------------------------------------------------
-
-export async function platformAction(
-  state: TelegramAdapterState,
-  deps: TelegramAdapterDeps,
-  action: string,
-  params: Record<string, unknown>,
-): Promise<Result<unknown, Error>> {
-  try {
-    // Telegram chat IDs can be numeric or string; convert appropriately
-    const resolveChatId = (raw: unknown): number | string => {
-      const s = String(raw);
-      return /^-?\d+$/.test(s) ? Number(s) : s;
-    };
-
-    switch (action) {
-      case "pin": {
-        const chatId = resolveChatId(params.chat_id);
-        const messageId = Number(params.message_id);
-        await state.bot.api.pinChatMessage(chatId, messageId);
-        return ok({ pinned: true });
-      }
-      case "unpin": {
-        const chatId = resolveChatId(params.chat_id);
-        const messageId = params.message_id ? Number(params.message_id) : undefined;
-        await state.bot.api.unpinChatMessage(chatId, messageId);
-        return ok({ unpinned: true });
-      }
-      case "poll": {
-        const chatId = resolveChatId(params.chat_id);
-        const question = String(params.question);
-        const options = params.options as string[];
-        const result = await state.bot.api.sendPoll(chatId, question, options);
-        return ok({ pollSent: true, chatId, messageId: result.message_id });
-      }
-      case "sticker": {
-        const chatId = resolveChatId(params.chat_id);
-        const stickerId = String(params.sticker_id);
-        await state.bot.api.sendSticker(chatId, stickerId);
-        return ok({ stickerSent: true, chatId });
-      }
-      case "chat_info": {
-        const chatId = resolveChatId(params.chat_id);
-        const chat = await state.bot.api.getChat(chatId);
-        return ok(chat);
-      }
-      case "member_count": {
-        const chatId = resolveChatId(params.chat_id);
-        const count = await state.bot.api.getChatMemberCount(chatId);
-        return ok({ count });
-      }
-      case "get_admins": {
-        const chatId = resolveChatId(params.chat_id);
-        const admins = await state.bot.api.getChatAdministrators(chatId);
-        return ok({
-          admins: admins.map((a) => ({
-            userId: a.user.id,
-            firstName: a.user.first_name,
-            isBot: a.user.is_bot,
-            status: a.status,
-          })),
-        });
-      }
-      case "sendTyping": {
-        const chatId = resolveChatId(params.chatId ?? params.chat_id);
-        const threadId = params.threadId != null ? Number(params.threadId) : undefined;
-        const typingParams = buildTypingThreadParams(threadId);
-        await state.bot.api.sendChatAction(chatId, "typing", typingParams ?? {});
-        return ok({ typing: true });
-      }
-      case "set_title": {
-        const chatId = resolveChatId(params.chat_id);
-        const title = String(params.title);
-        await state.bot.api.setChatTitle(chatId, title);
-        return ok({ titleSet: true });
-      }
-      case "set_description": {
-        const chatId = resolveChatId(params.chat_id);
-        const description = String(params.description);
-        await state.bot.api.setChatDescription(chatId, description);
-        return ok({ descriptionSet: true });
-      }
-      case "ban": {
-        const chatId = resolveChatId(params.chat_id);
-        const userId = Number(params.user_id);
-        await state.bot.api.banChatMember(chatId, userId);
-        return ok({ banned: true, chatId, userId });
-      }
-      case "unban": {
-        const chatId = resolveChatId(params.chat_id);
-        const userId = Number(params.user_id);
-        await state.bot.api.unbanChatMember(chatId, userId, { only_if_banned: true });
-        return ok({ unbanned: true });
-      }
-      case "promote": {
-        const chatId = resolveChatId(params.chat_id);
-        const userId = Number(params.user_id);
-        const rights = (params.rights as object | undefined) ?? {};
-        await state.bot.api.promoteChatMember(chatId, userId, rights);
-        return ok({ promoted: true });
-      }
-      case "createForumTopic": {
-        const chatId = resolveChatId(params.chat_id);
-        const name = String(params.name);
-        const iconColor = params.icon_color != null ? Number(params.icon_color) : undefined;
-        const iconCustomEmojiId = params.icon_custom_emoji_id ? String(params.icon_custom_emoji_id) : undefined;
-        const result = await state.bot.api.createForumTopic(chatId, name, {
-          icon_color: iconColor as 0x6FB9F0 | 0xFFD67E | 0xCB86DB | 0x8EEE98 | 0xFF93B2 | 0xFB6F5F | undefined,
-          icon_custom_emoji_id: iconCustomEmojiId,
-        });
-        return ok({ topicId: result.message_thread_id, name: result.name });
-      }
-      case "editForumTopic": {
-        const chatId = resolveChatId(params.chat_id);
-        const threadId = Number(params.message_thread_id);
-        await state.bot.api.editForumTopic(chatId, threadId, {
-          name: params.name ? String(params.name) : undefined,
-          icon_custom_emoji_id: params.icon_custom_emoji_id ? String(params.icon_custom_emoji_id) : undefined,
-        });
-        return ok({ edited: true });
-      }
-      case "closeForumTopic": {
-        const chatId = resolveChatId(params.chat_id);
-        const threadId = Number(params.message_thread_id);
-        await state.bot.api.closeForumTopic(chatId, threadId);
-        return ok({ closed: true });
-      }
-      case "reopenForumTopic": {
-        const chatId = resolveChatId(params.chat_id);
-        const threadId = Number(params.message_thread_id);
-        await state.bot.api.reopenForumTopic(chatId, threadId);
-        return ok({ reopened: true });
-      }
-      default: {
-        const unsupportedErr = new Error(`Unsupported action: ${action} on telegram`);
-        deps.logger.warn(
-          {
-            channelType: "telegram",
-            err: unsupportedErr,
-            hint: `Action '${action}' is not supported by the Telegram adapter`,
-            errorKind: "validation" as const,
-          },
-          "Unsupported platform action",
-        );
-        return err(unsupportedErr);
-      }
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return err(new Error(`Telegram action '${action}' failed: ${message}`));
+    return err(new Error(`Failed to send attachment: ${safeSendError}`, { cause: error }));
   }
 }

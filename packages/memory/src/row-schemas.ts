@@ -22,6 +22,7 @@
  */
 
 import { z } from "zod";
+import { DeliveryFailureStageSchema, DeliveryStatusSchema, ERROR_KINDS } from "@comis/core";
 
 // ─── 1. Memory-package-local public rows (paired with packages/memory/src/types.ts) ───
 
@@ -505,21 +506,23 @@ export const TokenUsageDbRowSchema = z.strictObject({
  * SSOT for the file-internal `DeliveryDbRow` interface in observability-store.ts.
  */
 export const DeliveryDbRowSchema = z.strictObject({
-  id: z.number(),
-  timestamp: z.number(),
+  id: z.number().int().nonnegative(),
+  timestamp: z.number().int().nonnegative(),
   trace_id: z.string(),
   agent_id: z.string(),
   channel_type: z.string(),
   channel_id: z.string(),
   session_key: z.string(),
-  status: z.string(),
-  latency_ms: z.number(),
+  status: DeliveryStatusSchema,
+  latency_ms: z.number().nonnegative().max(Number.MAX_SAFE_INTEGER),
   error_message: z.string(),
+  failure_stage: DeliveryFailureStageSchema.nullable(),
+  error_kind: z.enum(ERROR_KINDS).nullable(),
   message_preview: z.string(),
-  tool_calls: z.number().nullable(),
-  llm_calls: z.number().nullable(),
-  tokens_total: z.number(),
-  cost_total: z.number(),
+  tool_calls: z.number().int().nonnegative().nullable(),
+  llm_calls: z.number().int().nonnegative().nullable(),
+  tokens_total: z.number().int().nonnegative(),
+  cost_total: z.number().nonnegative(),
 });
 
 /**
@@ -608,11 +611,15 @@ export const HourlyBucketDbRowSchema = z.strictObject({
  */
 export const DeliveryStatsDbRowSchema = z.strictObject({
   total: z.number(),
+  attempted: z.number(),
   success: z.number(),
   error: z.number(),
   timeout: z.number(),
   filtered: z.number(),
+  aborted: z.number(),
+  attempted_latency_ms: z.number(),
   avg_latency_ms: z.number(),
+  invalid_rows: z.number(),
 });
 
 /**

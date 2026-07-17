@@ -3,15 +3,25 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import Database from "better-sqlite3";
 import { initSchema } from "./schema.js";
 import { createSqliteDeliveryQueue } from "./delivery-queue-adapter.js";
-import type { DeliveryQueuePort } from "@comis/core";
+import { AMBIGUOUS_SEND_OUTCOME_ERROR, TypedEventBus, type DeliveryQueuePort } from "@comis/core";
 
 // Inline mock event bus -- adapter only needs Pick<TypedEventBus, "emit">,
 // so an 8-line spy is sufficient. Mirrors the local-mock pattern used in
 // delivery-queue-logger.test.ts in the daemon package (in-package tests do
 // NOT reach into repo-root test/support/ -- that path is reserved for
 // integration tests per AGENTS section 2.5).
-function createMockEventBus(): { emit: ReturnType<typeof vi.fn> } {
-  return { emit: vi.fn() };
+function createMockEventBus(): {
+  emit: ReturnType<typeof vi.fn>;
+  emitSafely: ReturnType<typeof vi.fn>;
+} {
+  const emit = vi.fn();
+  return {
+    emit,
+    emitSafely: vi.fn((event, payload) => {
+      emit(event, payload);
+      return { hadListeners: false, failures: [], pendingFailures: Promise.resolve([]) };
+    }),
+  };
 }
 
 describe("SqliteDeliveryQueueAdapter", () => {
@@ -226,6 +236,46 @@ describe("SqliteDeliveryQueueAdapter", () => {
         expect(result.value).toHaveLength(0);
       }
     });
+
+    it("does not return a nacked row before its retry deadline", async () => {
+      const enqResult = await queue.enqueue(makeEntry());
+      expect(enqResult.ok).toBe(true);
+      if (!enqResult.ok) return;
+
+      await queue.nack(enqResult.value, "rate limited", now + 60_000);
+
+      const result = await queue.pendingEntries();
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value).toHaveLength(0);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // claim (atomic drainer ownership)
+  // -----------------------------------------------------------------------
+
+  describe("claim", () => {
+    it("allows exactly one atomic pending-to-in-flight claimant", async () => {
+      const enqResult = await queue.enqueue(makeEntry());
+      expect(enqResult.ok).toBe(true);
+      if (!enqResult.ok) return;
+
+      const claimable = queue as unknown as {
+        claim(id: string): Promise<{ ok: true; value: boolean } | { ok: false; error: Error }>;
+      };
+      const [first, second] = await Promise.all([
+        claimable.claim(enqResult.value),
+        claimable.claim(enqResult.value),
+      ]);
+
+      expect(first.ok && first.value).toBe(true);
+      expect(second.ok && second.value).toBe(false);
+      const row = db
+        .prepare("SELECT status, last_attempt_at FROM delivery_queue WHERE id = ?")
+        .get(enqResult.value) as { status: string; last_attempt_at: number | null };
+      expect(row.status).toBe("in_flight");
+      expect(row.last_attempt_at).toBeTypeOf("number");
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -304,6 +354,24 @@ describe("SqliteDeliveryQueueAdapter", () => {
       const result = await queue.enqueue(makeEntry());
       expect(result.ok).toBe(false);
       expect(eventBus.emit).not.toHaveBeenCalled();
+    });
+
+    it("keeps the persisted entry id and reaches later listeners when one subscriber throws", async () => {
+      const realBus = new TypedEventBus();
+      const laterListener = vi.fn();
+      realBus.on("delivery:enqueued", () => {
+        throw new Error("subscriber failed");
+      });
+      realBus.on("delivery:enqueued", laterListener);
+      const isolatedQueue = createSqliteDeliveryQueue(db, realBus);
+
+      const result = await isolatedQueue.enqueueInFlight(makeEntry());
+
+      expect(result.ok).toBe(true);
+      expect(laterListener).toHaveBeenCalledTimes(1);
+      const count = db.prepare("SELECT COUNT(*) AS count FROM delivery_queue")
+        .get() as { count: number };
+      expect(count.count).toBe(1);
     });
   });
 
@@ -396,7 +464,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
   // -----------------------------------------------------------------------
 
   describe("recoverInFlight", () => {
-    it("resets all in_flight rows to pending AND clears last_error", async () => {
+    it("parks all stale in_flight rows as failed with a content-free uncertainty reason", async () => {
       // Two crashed rows directly via raw SQL
       db.prepare(
         `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
@@ -417,19 +485,21 @@ describe("SqliteDeliveryQueueAdapter", () => {
       expect(recovered.ok).toBe(true);
       if (recovered.ok) expect(recovered.value).toBe(2);
 
-      // Both crashed rows now pending with NULL last_error
+      // A crash can happen after the platform accepted the message but before
+      // the acknowledgement was stored. Recovery must preserve that ambiguity
+      // instead of replaying the body.
       const rows = db
         .prepare(`SELECT id, status, last_error FROM delivery_queue WHERE id IN ('crashed-1', 'crashed-2')`)
         .all() as Array<{ id: string; status: string; last_error: string | null }>;
       for (const row of rows) {
-        expect(row.status).toBe("pending");
-        expect(row.last_error).toBeNull();
+        expect(row.status).toBe("failed");
+        expect(row.last_error).toBe(AMBIGUOUS_SEND_OUTCOME_ERROR);
       }
 
-      // pendingEntries now sees all 3
+      // Only the genuinely pending row remains drainable.
       const pending = await queue.pendingEntries();
       expect(pending.ok).toBe(true);
-      if (pending.ok) expect(pending.value).toHaveLength(3);
+      if (pending.ok) expect(pending.value.map((entry) => entry.text)).toEqual(["fresh"]);
     });
 
     it("returns 0 when no in_flight rows exist", async () => {

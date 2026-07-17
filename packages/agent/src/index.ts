@@ -399,7 +399,15 @@ export { createModelRegistryAdapter, registerCustomProviders, resolveInitialMode
 export type { CustomProviderRegistration, CustomProviderLogger, RegisterCustomProvidersResult } from "./model/model-registry-adapter.js";
 
 // Session key mapper (SessionKey to/from filesystem path)
-export { sessionKeyToPath, pathToSessionKey } from "./session/session-key-mapper.js";
+export {
+  INBOUND_MESSAGE_LEDGER_SUFFIX,
+  inboundMessageLedgerPathToSessionKey,
+  pathToSessionKey,
+  sessionKeyToPath,
+} from "./session/session-key-mapper.js";
+export type {
+  InboundMessageProvenancePlan,
+} from "./session/inbound-message-provenance.js";
 
 // ---------------------------------------------------------------------------
 // LLM prompting improvements
@@ -448,9 +456,9 @@ export type { NarrativeCasterConfig, CastParams } from "./spawn/index.js";
 export { createLifecycleHooks, deriveSubagentContextEngineConfig } from "./spawn/index.js";
 export type { LifecycleHooksDeps } from "./spawn/index.js";
 export { createEphemeralComisSessionManager } from "./spawn/index.js";
-export { createSubAgentRunner, ANNOUNCE_PARENT_TIMEOUT_MS } from "./spawn/index.js";
+export { createSubAgentRunner } from "./spawn/index.js";
 export type { SubAgentRunnerDeps, SubAgentRun, SpawnParams, SubAgentRunnerLogger } from "./spawn/index.js";
-export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification, classifyErrorContext } from "./spawn/index.js";
+export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification } from "./spawn/index.js";
 export { createDeliveryDedup } from "./spawn/index.js";
 export type { DeliveryDedup } from "./spawn/index.js";
 export { comparePosture, resolvePostureFromSkills } from "./spawn/index.js";

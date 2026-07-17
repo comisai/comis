@@ -22,8 +22,8 @@ export interface ChannelActivityTracker {
   /** Get all tracked channels. */
   getAll(): ChannelActivity[];
 
-  /** Get a specific channel by ID. */
-  get(channelId: string): ChannelActivity | undefined;
+  /** Get a specific channel by its platform type and platform-local ID. */
+  get(channelType: string, channelId: string): ChannelActivity | undefined;
 
   /** Get channels inactive beyond thresholdMs. */
   getStale(thresholdMs: number): ChannelActivity[];
@@ -39,6 +39,7 @@ export interface ChannelActivityTracker {
 }
 
 interface InternalEntry {
+  channelId: string;
   channelType: string;
   lastActiveAt: number;
   sent: number;
@@ -56,20 +57,23 @@ export function createChannelActivityTracker(deps: {
   const channels = new Map<string, InternalEntry>();
   const handlers: HandlerRef[] = [];
 
+  function channelKey(channelType: string, channelId: string): string {
+    return JSON.stringify([channelType, channelId]);
+  }
+
   function recordActivity(channelId: string, channelType: string, direction: "sent" | "received"): void {
-    const existing = channels.get(channelId);
+    const key = channelKey(channelType, channelId);
+    const existing = channels.get(key);
     if (existing) {
       existing.lastActiveAt = systemNowMs();
-      if (channelType !== "unknown") {
-        existing.channelType = channelType;
-      }
       if (direction === "sent") {
         existing.sent++;
       } else {
         existing.received++;
       }
     } else {
-      channels.set(channelId, {
+      channels.set(key, {
+        channelId,
         channelType,
         lastActiveAt: systemNowMs(),
         sent: direction === "sent" ? 1 : 0,
@@ -78,9 +82,9 @@ export function createChannelActivityTracker(deps: {
     }
   }
 
-  function toActivity(channelId: string, entry: InternalEntry): ChannelActivity {
+  function toActivity(entry: InternalEntry): ChannelActivity {
     return {
-      channelId,
+      channelId: entry.channelId,
       channelType: entry.channelType,
       lastActiveAt: entry.lastActiveAt,
       messagesSent: entry.sent,
@@ -93,7 +97,7 @@ export function createChannelActivityTracker(deps: {
     const { message } = payload;
     recordActivity(
       message.channelId,
-      message.channelType ?? "unknown",
+      message.channelType,
       "received",
     );
   }) as EventHandler<"message:received">;
@@ -104,11 +108,9 @@ export function createChannelActivityTracker(deps: {
     handler: receivedHandler as EventHandler<keyof EventMap>,
   });
 
-  // Subscribe to message:sent -- channelType is not in the sent event payload
+  // Subscribe to message:sent using its complete channel identity.
   const sentHandler = ((payload: EventMap["message:sent"]) => {
-    const existing = channels.get(payload.channelId);
-    const channelType = existing?.channelType ?? "unknown";
-    recordActivity(payload.channelId, channelType, "sent");
+    recordActivity(payload.channelId, payload.channelType, "sent");
   }) as EventHandler<"message:sent">;
 
   eventBus.on("message:sent", sentHandler);
@@ -120,24 +122,24 @@ export function createChannelActivityTracker(deps: {
   return {
     getAll(): ChannelActivity[] {
       const result: ChannelActivity[] = [];
-      for (const [channelId, entry] of channels) {
-        result.push(toActivity(channelId, entry));
+      for (const entry of channels.values()) {
+        result.push(toActivity(entry));
       }
       return result;
     },
 
-    get(channelId: string): ChannelActivity | undefined {
-      const entry = channels.get(channelId);
+    get(channelType: string, channelId: string): ChannelActivity | undefined {
+      const entry = channels.get(channelKey(channelType, channelId));
       if (!entry) return undefined;
-      return toActivity(channelId, entry);
+      return toActivity(entry);
     },
 
     getStale(thresholdMs: number): ChannelActivity[] {
       const cutoff = systemNowMs() - thresholdMs;
       const result: ChannelActivity[] = [];
-      for (const [channelId, entry] of channels) {
+      for (const entry of channels.values()) {
         if (entry.lastActiveAt < cutoff) {
-          result.push(toActivity(channelId, entry));
+          result.push(toActivity(entry));
         }
       }
       return result;

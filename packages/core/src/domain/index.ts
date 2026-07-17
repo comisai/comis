@@ -1,8 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 // Domain types - Zod schemas as single source of truth
 
-export { AttachmentSchema, VoiceMetaSchema, NormalizedMessageSchema, parseMessage, getMessageTraceId } from "./normalized-message.js";
-export type { Attachment, VoiceMeta, NormalizedMessage } from "./normalized-message.js";
+export {
+  AttachmentSchema,
+  VoiceMetaSchema,
+  INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
+  NormalizedMessageSchema,
+  parseMessage,
+  parseInboundMessageProvenanceBatch,
+  getOriginalInboundMessages,
+  getMessageTraceId,
+} from "./normalized-message.js";
+export type {
+  Attachment,
+  VoiceMeta,
+  OriginalInboundMessage,
+  NormalizedMessage,
+} from "./normalized-message.js";
 export { NormalizedReactionSchema, parseReaction } from "./normalized-reaction.js";
 export type { NormalizedReaction } from "./normalized-reaction.js";
 
@@ -59,7 +73,7 @@ export {
 export type { RichButton, RichCard, RichEffect } from "./rich-message.js";
 
 export { ApprovalRequestSchema, ApprovalResolutionSchema, SerializedApprovalRequestSchema, SerializedApprovalCacheEntrySchema } from "./approval-request.js";
-export type { ApprovalRequest, ApprovalResolution, SerializedApprovalRequest, SerializedApprovalCacheEntry } from "./approval-request.js";
+export type { ApprovalCallbackOwner, ApprovalRequest, ApprovalResolution, SerializedApprovalRequest, SerializedApprovalCacheEntry } from "./approval-request.js";
 
 export {
   InjectionTypeSchema,
@@ -80,6 +94,14 @@ export type { MemoryExportEnvelope, MemoryExportEntry } from "./memory-export-en
 
 export { DeliveryOriginSchema, createDeliveryOrigin } from "./delivery-origin.js";
 export type { DeliveryOrigin } from "./delivery-origin.js";
+
+export {
+  DeliveryStatusSchema,
+  DeliveryFailureStageSchema,
+  parseDeliveryFailureStage,
+  parseDeliveryStatus,
+} from "./delivery-status.js";
+export type { DeliveryStatus, DeliveryFailureStage } from "./delivery-status.js";
 
 export {
   NodeStatusSchema,

@@ -8,12 +8,12 @@
  *
  *   1. parseCallbackData (strict regex)            → malformed
  *   2. gate.getRequestByShortId(shortId) FIRST     → unknown (covers replays)
- *   3. req.sessionKey !== inbound.sessionKey       → unknown (cross-session guard)
+ *   3. request session/agent ≠ inbound principal   → unknown (cross-principal guard)
  *   4. clock.now() >= createdAt + timeoutMs        → expired (derived expiresAt, injected clock)
  *   5. !verifyCallbackData(...)                     → invalid_signature (constant-time, no throw)
  *   6. details → details_requested (no resolve); approve/deny → resolveApproval + resolved
  *
- * Plain-text branch: pendingForSession + case-insensitive verb (+ optional shortId
+ * Plain-text branch: pendingForSession + agent filter + case-insensitive verb (+ optional shortId
  * suffix); exactly-one → resolve; multiple-no-suffix → ambiguous; none → unknown. HMAC skipped
  * for this branch only; replay protection still from pending-table removal.
  */
@@ -23,13 +23,14 @@ import type { ApprovalRequest, ApprovalGate, ClockPort } from "@comis/core";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import {
   createInteractiveCallbackRouter,
+  type GraphReportTargetStore,
   type InboundCallback,
 } from "./interactive-callback-router.js";
 
 const SECRET = "test-signing-secret-32-bytes-aaaaaaaaaaaa";
 const SHORT_ID = "abc123XYZ789"; // 12 base62 chars
 const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
-const SESSION_K = "telegram:123:456";
+const SESSION_K = "tenant-a:user-a:chat-1:thread:thread-1";
 const CREATED_AT = 1_000_000;
 const TIMEOUT_MS = 300_000; // expiresAt = 1_300_000
 
@@ -98,10 +99,17 @@ function makeRequest(over: Partial<ApprovalRequest> = {}): ApprovalRequest {
     agentId: "agent-1",
     sessionKey: SESSION_K,
     trustLevel: "untrusted",
+    callbackOwner: {
+      tenantId: "tenant-a",
+      userId: "user-a",
+      channelType: "telegram",
+      channelKey: "chat-1",
+      threadId: "thread-1",
+    },
     createdAt: CREATED_AT,
     timeoutMs: TIMEOUT_MS,
     ...over,
-  };
+  } as ApprovalRequest;
 }
 
 /** Compose a valid signed wire payload for the seeded request. */
@@ -113,21 +121,28 @@ function signedPayload(choice: "approve" | "deny" | "details", shortId = SHORT_I
 function inbound(rawData: string, over: Partial<InboundCallback> = {}): InboundCallback {
   return {
     channelType: "telegram",
-    channelKey: "telegram:123:456",
+    channelKey: "chat-1",
     agentId: "agent-1",
     sessionKey: SESSION_K,
     rawData,
-    inboundUserId: "chat:operator",
+    inboundUserId: "user-a",
+    tenantId: "tenant-a",
+    threadId: "thread-1",
     ...over,
-  };
+  } as InboundCallback;
 }
 
-function makeRouter(seed: ApprovalRequest[], clock?: ClockPort) {
+function makeRouter(
+  seed: ApprovalRequest[],
+  clock?: ClockPort,
+  graphReportStore?: GraphReportTargetStore,
+) {
   const { gate, resolveCalls } = makeFakeGate(seed);
   const router = createInteractiveCallbackRouter({
     gate,
     getSecret: () => SECRET,
     clock: clock ?? createFakeClock(CREATED_AT), // before expiry
+    ...(graphReportStore === undefined ? {} : { graphReportStore }),
   });
   return { router, resolveCalls, gate };
 }
@@ -174,6 +189,39 @@ describe("InteractiveCallbackRouter — signed branch", () => {
     const res = await router.route(
       inbound(signedPayload("approve"), { sessionKey: "telegram:999:888" }),
     );
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value).toEqual({ kind: "unknown" });
+    expect(resolveCalls).toHaveLength(0);
+  });
+
+  it("cross-agent: a signed callback cannot resolve another agent's request in the same session", async () => {
+    const { router, resolveCalls } = makeRouter([makeRequest({ agentId: "agent-1" })]);
+
+    const res = await router.route(inbound(signedPayload("approve"), { agentId: "agent-2" }));
+
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value).toEqual({ kind: "unknown" });
+    expect(resolveCalls).toHaveLength(0);
+  });
+
+  it("cross-user: a signed callback cannot resolve another user's request in the same channel", async () => {
+    const { router, resolveCalls } = makeRouter([makeRequest()]);
+
+    const res = await router.route(inbound(signedPayload("approve"), { inboundUserId: "user-b" }));
+
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value).toEqual({ kind: "unknown" });
+    expect(resolveCalls).toHaveLength(0);
+  });
+
+  it("cross-thread: a signed callback cannot resolve another thread's request", async () => {
+    const { router, resolveCalls } = makeRouter([makeRequest()]);
+
+    const res = await router.route(inbound(signedPayload("approve"), {
+      threadId: "thread-2",
+      sessionKey: "tenant-a:user-a:chat-1:thread:thread-2",
+    } as Partial<InboundCallback>));
+
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toEqual({ kind: "unknown" });
     expect(resolveCalls).toHaveLength(0);
@@ -239,7 +287,7 @@ describe("InteractiveCallbackRouter — signed branch", () => {
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toEqual({ kind: "resolved", requestId: REQUEST_ID, choice: "approve" });
     expect(resolveCalls).toEqual([
-      { requestId: REQUEST_ID, approved: true, approvedBy: "chat:operator", reason: undefined },
+      { requestId: REQUEST_ID, approved: true, approvedBy: "user-a", reason: undefined },
     ]);
   });
 
@@ -249,16 +297,19 @@ describe("InteractiveCallbackRouter — signed branch", () => {
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toEqual({ kind: "resolved", requestId: REQUEST_ID, choice: "deny" });
     expect(resolveCalls).toEqual([
-      { requestId: REQUEST_ID, approved: false, approvedBy: "chat:operator", reason: undefined },
+      { requestId: REQUEST_ID, approved: false, approvedBy: "user-a", reason: undefined },
     ]);
   });
 
-  it("resolved: falls back to 'chat:unknown' approvedBy when inboundUserId is absent", async () => {
+  it("fails closed when the inbound callback has no user principal", async () => {
     const { router, resolveCalls } = makeRouter([makeRequest()]);
-    const res = await router.route(inbound(signedPayload("approve"), { inboundUserId: undefined }));
+    const res = await router.route(inbound(
+      signedPayload("approve"),
+      { inboundUserId: undefined } as unknown as Partial<InboundCallback>,
+    ));
     expect(res.ok).toBe(true);
-    if (res.ok) expect(res.value).toEqual({ kind: "resolved", requestId: REQUEST_ID, choice: "approve" });
-    expect(resolveCalls[0]?.approvedBy).toBe("chat:unknown");
+    if (res.ok) expect(res.value).toEqual({ kind: "unknown" });
+    expect(resolveCalls).toHaveLength(0);
   });
 
   it("details: valid v1.details.<shortId>.<hmac> → {kind:'details_requested', requestId}; pending entry intact; NOT resolved", async () => {
@@ -288,14 +339,287 @@ describe("InteractiveCallbackRouter — signed branch", () => {
   });
 });
 
+describe("InteractiveCallbackRouter — graph report callbacks", () => {
+  const reportOwner = {
+    graphId: "11111111-2222-4333-8444-555555555555",
+    tenantId: "tenant-a",
+    userId: "user-a",
+    sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+    agentId: "agent-1",
+    channelType: "telegram",
+    channelKey: "chat-1",
+    expiresAt: CREATED_AT + TIMEOUT_MS,
+  };
+
+  it("recreates the same signed report callback after router restart", () => {
+    const first = makeRouter([]).router.registerGraphReport(reportOwner);
+    const restarted = makeRouter([]).router.registerGraphReport(reportOwner);
+
+    expect(first.ok).toBe(true);
+    expect(restarted.ok).toBe(true);
+    if (!first.ok || !restarted.ok) return;
+    expect(restarted.value).toBe(first.value);
+  });
+
+  it("restores and durably consumes a report callback across router restarts", async () => {
+    let records: readonly unknown[] = [];
+    const store = {
+      load: () => ({ ok: true as const, value: records }),
+      replace: (next: readonly unknown[]) => {
+        records = structuredClone(next);
+        return { ok: true as const, value: undefined };
+      },
+    };
+    const first = makeRouter([], undefined, store).router;
+    const registered = first.registerGraphReport(reportOwner);
+    expect(registered.ok).toBe(true);
+    if (!registered.ok) return;
+
+    const restarted = makeRouter([], undefined, store).router;
+    const delivered = await restarted.route(inbound(registered.value, {
+      channelType: "telegram",
+      channelKey: "chat-1",
+      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      agentId: "agent-1",
+      inboundUserId: "user-a",
+    }));
+    expect(delivered).toEqual({
+      ok: true,
+      value: { kind: "graph_report_requested", graphId: reportOwner.graphId },
+    });
+
+    const afterConsumptionRestart = makeRouter([], undefined, store).router;
+    const replay = await afterConsumptionRestart.route(inbound(registered.value, {
+      channelType: "telegram",
+      channelKey: "chat-1",
+      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      agentId: "agent-1",
+      inboundUserId: "user-a",
+    }));
+    expect(replay).toEqual({ ok: true, value: { kind: "unknown" } });
+  });
+
+  it("blocks report registration when the restored durable snapshot is malformed", () => {
+    const store: GraphReportTargetStore = {
+      load: () => ({ ok: true, value: [{ graphId: "missing-owner-fields" }] }),
+      replace: () => ({ ok: true, value: undefined }),
+    };
+
+    const registered = makeRouter([], undefined, store).router.registerGraphReport(reportOwner);
+
+    expect(registered).toEqual({ ok: false, error: { kind: "unavailable" } });
+  });
+
+  it("adopts a visible consumption snapshot without delivering before durability", async () => {
+    let records: readonly unknown[] = [];
+    let failConsumption = false;
+    const store: GraphReportTargetStore = {
+      load: () => ({ ok: true, value: records }),
+      replace: (next) => {
+        records = structuredClone(next);
+        if (failConsumption && next.length === 0) {
+          return {
+            ok: false,
+            error: { cause: new Error("directory fsync failed"), snapshot: "visible" },
+          };
+        }
+        return { ok: true, value: undefined };
+      },
+    };
+    const router = makeRouter([], undefined, store).router;
+    const registered = router.registerGraphReport(reportOwner);
+    expect(registered.ok).toBe(true);
+    if (!registered.ok) return;
+    failConsumption = true;
+
+    const unresolved = await router.route(inbound(registered.value, {
+      channelType: "telegram",
+      channelKey: "chat-1",
+      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      agentId: "agent-1",
+      inboundUserId: "user-a",
+    }));
+    expect(unresolved).toEqual({ ok: true, value: { kind: "unknown" } });
+
+    const replayAfterRestart = await makeRouter([], undefined, store).router.route(inbound(registered.value, {
+      channelType: "telegram",
+      channelKey: "chat-1",
+      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      agentId: "agent-1",
+      inboundUserId: "user-a",
+    }));
+    expect(replayAfterRestart).toEqual({ ok: true, value: { kind: "unknown" } });
+  });
+
+  it("idempotently refreshes an identical report target without changing its callback", async () => {
+    const clock = createFakeClock(CREATED_AT);
+    const { router } = makeRouter([], clock);
+    const first = router.registerGraphReport(reportOwner);
+    const refreshed = router.registerGraphReport({
+      ...reportOwner,
+      expiresAt: reportOwner.expiresAt + TIMEOUT_MS,
+    });
+
+    expect(first.ok).toBe(true);
+    expect(refreshed.ok).toBe(true);
+    if (!first.ok || !refreshed.ok) return;
+    expect(refreshed.value).toBe(first.value);
+
+    clock.advance(TIMEOUT_MS + 1);
+    const routed = await router.route(inbound(refreshed.value, {
+      channelType: "telegram",
+      channelKey: "chat-1",
+      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      agentId: "agent-1",
+      inboundUserId: "user-a",
+    }));
+    expect(routed).toEqual({
+      ok: true,
+      value: {
+        kind: "graph_report_requested",
+        graphId: reportOwner.graphId,
+      },
+    });
+  });
+
+  it("fails closed when the deterministic report id conflicts with an approval id", () => {
+    const first = makeRouter([]).router.registerGraphReport(reportOwner);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const shortId = first.value.split(".").at(2);
+    expect(shortId).toMatch(/^[0-9A-Za-z]{12}$/);
+    if (shortId === undefined) return;
+    const { router } = makeRouter([makeRequest({ shortId })]);
+
+    const conflicted = router.registerGraphReport(reportOwner);
+
+    expect(conflicted).toEqual({ ok: false, error: { kind: "collision" } });
+  });
+
+  it("routes a registered signed report callback only for its exact owner and consumes it", async () => {
+    const { router } = makeRouter([]);
+    const registered = router.registerGraphReport(reportOwner);
+
+    expect(registered.ok).toBe(true);
+    if (!registered.ok) return;
+    expect(registered.value).toMatch(/^v1\.details\.[0-9A-Za-z]{12}\.[A-Za-z0-9_-]{16}$/);
+
+    const first = await router.route(inbound(registered.value, {
+      channelType: "telegram",
+      channelKey: "chat-1",
+      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      agentId: "agent-1",
+      inboundUserId: "user-a",
+    }));
+    expect(first.ok).toBe(true);
+    if (first.ok) {
+      expect(first.value).toEqual({
+        kind: "graph_report_requested",
+        graphId: reportOwner.graphId,
+      });
+    }
+
+    const replay = await router.route(inbound(registered.value, {
+      channelType: "telegram",
+      channelKey: "chat-1",
+      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      agentId: "agent-1",
+    }));
+    expect(replay.ok).toBe(true);
+    if (replay.ok) expect(replay.value).toEqual({ kind: "unknown" });
+  });
+
+  it.each([
+    ["sender", {
+      sessionKey: "tenant-a:other-user:chat-1:thread:thread-1",
+      inboundUserId: "other-user",
+    }],
+    ["agent", { agentId: "agent-2" }],
+    ["channel type", { channelType: "discord" }],
+    ["channel route", {
+      channelKey: "chat-2",
+      sessionKey: "tenant-a:user-a:chat-2:thread:thread-1",
+    }],
+    ["thread", {
+      threadId: "thread-2",
+      sessionKey: "tenant-a:user-a:chat-1:thread:thread-2",
+    }],
+  ])("rejects an otherwise valid report callback from the wrong %s", async (_label, override) => {
+    const { router } = makeRouter([]);
+    const registered = router.registerGraphReport(reportOwner);
+    expect(registered.ok).toBe(true);
+    if (!registered.ok) return;
+
+    const rejected = await router.route(inbound(registered.value, {
+      channelType: "telegram",
+      channelKey: "chat-1",
+      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      agentId: "agent-1",
+      ...override,
+    }));
+
+    expect(rejected.ok).toBe(true);
+    if (rejected.ok) expect(rejected.value).toEqual({ kind: "unknown" });
+
+    const ownerRetry = await router.route(inbound(registered.value, {
+      channelType: "telegram",
+      channelKey: "chat-1",
+      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      agentId: "agent-1",
+    }));
+    expect(ownerRetry.ok).toBe(true);
+    if (ownerRetry.ok) expect(ownerRetry.value.kind).toBe("graph_report_requested");
+  });
+
+  it("expires a registered report target using the injected clock", async () => {
+    const clock = createFakeClock(CREATED_AT);
+    const { router } = makeRouter([], clock);
+    const registered = router.registerGraphReport(reportOwner);
+    expect(registered.ok).toBe(true);
+    if (!registered.ok) return;
+    clock.advance(TIMEOUT_MS);
+
+    const result = await router.route(inbound(registered.value, {
+      channelType: "telegram",
+      channelKey: "chat-1",
+      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      agentId: "agent-1",
+    }));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toEqual({ kind: "expired" });
+  });
+
+  it("rejects registration when the route differs from the canonical owner session", () => {
+    const { router } = makeRouter([]);
+
+    const result = router.registerGraphReport({
+      ...reportOwner,
+      channelKey: "other-chat",
+    });
+
+    expect(result).toEqual({ ok: false, error: { kind: "invalid_owner" } });
+  });
+});
+
 describe("InteractiveCallbackRouter — plain-text branch", () => {
+  it("plain text cannot resolve a request owned by another user in the same channel", async () => {
+    const { router, resolveCalls } = makeRouter([makeRequest()]);
+
+    const res = await router.route(inbound("approve", { inboundUserId: "user-b" }));
+
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value).toEqual({ kind: "unknown" });
+    expect(resolveCalls).toHaveLength(0);
+  });
+
   it("exactly-one pending in session + 'approve' → resolved (HMAC skipped)", async () => {
     const { router, resolveCalls } = makeRouter([makeRequest()]);
     const res = await router.route(inbound("approve"));
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toEqual({ kind: "resolved", requestId: REQUEST_ID, choice: "approve" });
     expect(resolveCalls).toEqual([
-      { requestId: REQUEST_ID, approved: true, approvedBy: "chat:operator", reason: undefined },
+      { requestId: REQUEST_ID, approved: true, approvedBy: "user-a", reason: undefined },
     ]);
   });
 
@@ -331,7 +655,7 @@ describe("InteractiveCallbackRouter — plain-text branch", () => {
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toEqual({ kind: "resolved", requestId: REQUEST_ID, choice: "approve" });
     expect(resolveCalls).toEqual([
-      { requestId: REQUEST_ID, approved: true, approvedBy: "chat:operator", reason: undefined },
+      { requestId: REQUEST_ID, approved: true, approvedBy: "user-a", reason: undefined },
     ]);
   });
 
@@ -367,6 +691,32 @@ describe("InteractiveCallbackRouter — plain-text branch", () => {
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toEqual({ kind: "unknown" });
     expect(resolveCalls).toHaveLength(0);
+  });
+
+  it("plain-text scoping excludes another agent's sole request in the same session", async () => {
+    const { router, resolveCalls } = makeRouter([makeRequest({ agentId: "agent-2" })]);
+
+    const res = await router.route(inbound("approve", { agentId: "agent-1" }));
+
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value).toEqual({ kind: "unknown" });
+    expect(resolveCalls).toHaveLength(0);
+  });
+
+  it("plain-text ambiguity counts only requests owned by the inbound agent", async () => {
+    const otherAgent = makeRequest({
+      requestId: "22222222-2222-4222-8222-222222222222",
+      shortId: "second000000",
+      agentId: "agent-2",
+    });
+    const { router, resolveCalls } = makeRouter([makeRequest({ agentId: "agent-1" }), otherAgent]);
+
+    const res = await router.route(inbound("approve", { agentId: "agent-1" }));
+
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value).toEqual({ kind: "resolved", requestId: REQUEST_ID, choice: "approve" });
+    expect(resolveCalls).toHaveLength(1);
+    expect(resolveCalls[0]?.requestId).toBe(REQUEST_ID);
   });
 
   it("rejects an unrecognized plain-text verb → {kind:'unknown'} (not a command)", async () => {

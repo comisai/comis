@@ -12,8 +12,7 @@
  *
  * @module
  */
-
-import type { NormalizedMessage, SessionKey, SpawnPacket, AppContainer, AgentConfig, FileLockPort } from "@comis/core";
+import type { AgentCapability, NormalizedMessage, SessionKey, SpawnPacket, AppContainer, AgentConfig, FileLockPort } from "@comis/core";
 import { tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -29,42 +28,12 @@ import {
 import { randomUUID } from "node:crypto";
 import type { GitExec } from "@comis/skills/tools";
 import type { WorktreeRegistry } from "../setup-worktree-sweep.js";
+import { resolveGraphCacheRetention } from "./graph-cache-retention.js";
 import { maybePrepareWorktreeForSpawn } from "./worktree-spawn-run.js";
-
-// ---------------------------------------------------------------------------
-// Depth-aware graph cache retention
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve cache retention for a graph sub-agent.
- *
- * Default "long" (1h TTL) — depth-aware "short" for root nodes was tried and
- * caused regressions: final pipeline nodes running 10-15 min after root nodes
- * got 0 cache reads because the shared prefix expired. The 1h write premium
- * is far cheaper than the cache misses it prevents.
- *
- * Exception: **leaf nodes** (no downstream dependents) use "short". Their
- * cache prefix has no consumers — no later node will read from it — so the
- * 1h write premium is pure waste. Observed in NVDA trade-desk pipeline: the
- * head-trader node wrote 16,663 1h tokens (~$0.17) that were never reused
- * because the pipeline ends at that node.
- *
- * @param _graphNodeDepth unused — kept for interface stability
- * @param isLeafNode true when no other graph node depends on this one
- * @returns "short" for leaf nodes, "long" otherwise
- */
-export function resolveGraphCacheRetention(
-  _graphNodeDepth: number | undefined,
-  isLeafNode?: boolean,
-): "short" | "long" {
-  if (isLeafNode === true) return "short";
-  return "long";
-}
-
+export { resolveGraphCacheRetention } from "./graph-cache-retention.js";
 // ---------------------------------------------------------------------------
 // Sub-agent step floor
 // ---------------------------------------------------------------------------
-
 /** Minimum step budget for sub-agent spawns — prevents boot sequence from consuming all steps. */
 export const MIN_SUB_AGENT_STEPS = 30;
 
@@ -112,6 +81,16 @@ export type ExecuteSubAgentFn = (
   /** Per-spawn token budget — rides executionOverrides into the child's
    *  BudgetGuard per-execution cap. Absent ⇒ no per-execution cap. */
   tokenBudget?: number,
+  autonomyContext?: {
+    rootRunId: string;
+    parentLeaseId?: string;
+    parentCaps: readonly AgentCapability[];
+    onAssemblyAuthority(authority: {
+      rootRunId: string;
+      leaseId: string;
+      caps: readonly AgentCapability[];
+    }): void;
+  },
 ) => Promise<{ response: string; tokensUsed: { total: number; cacheRead?: number; cacheWrite?: number }; cost: { total: number; cacheSaved?: number }; finishReason: string; stepsExecuted: number; toolCallHistory?: string[] }>;
 
 /**
@@ -135,6 +114,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
     callerAgentId,
     graphOverrides,
     tokenBudget,
+    autonomyContext,
   ) => {
     deps.logger?.debug({
       agentId,
@@ -250,6 +230,22 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       toolGroups: effectiveToolGroups,
       includeMcpTools: mcpPolicy === "inherit",
       sharedPaths: graphSharedDir ? [graphSharedDir] : undefined,
+      sessionKey,
+      ...(ctx?.deliveryOrigin !== undefined
+        ? { requesterOrigin: ctx.deliveryOrigin }
+        : {}),
+      ...(autonomyContext !== undefined
+        ? {
+            autonomyParent: {
+              rootRunId: autonomyContext.rootRunId,
+              ...(autonomyContext.parentLeaseId !== undefined
+                ? { leaseId: autonomyContext.parentLeaseId }
+                : {}),
+              caps: autonomyContext.parentCaps,
+            },
+            onAutonomyAssembly: autonomyContext.onAssemblyAuthority,
+          }
+        : {}),
     });
 
     // Intersect sub-agent tools with parent's resolved tool set.

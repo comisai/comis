@@ -18,7 +18,12 @@ export * from "./inbound/inbound-gate.js";
 // and the perf test can import createDedupDetector from @comis/orchestrator.
 // Consumer: test/integration/incident-replay-2026-05-24.test.ts
 export { createDedupDetector } from "./inbound/dedup-detector.js";
-export type { DedupDetector, DedupDetectorOptions, DedupCheckResult } from "./inbound/dedup-detector.js";
+export type {
+  DedupDetector,
+  DedupDetectorOptions,
+  DedupReservation,
+  DedupReservationResult,
+} from "./inbound/dedup-detector.js";
 
 // Execution coordination — execution-deliver travels with
 // execution-pipeline (same ownership bucket). The former
@@ -106,6 +111,8 @@ export {
 export type {
   CommandQueue,
   CommandQueueDeps,
+  QueueExecutionContext,
+  QueueMessageHandler,
   QueueStats,
   SessionLane,
   OverflowResult,
@@ -124,6 +131,12 @@ export type {
 export { buildScopedSessionKey, extractThreadId } from "./session-key/session-key-builder.js";
 export type { DmScopeMode, ScopedSessionKeyParams } from "./session-key/session-key-builder.js";
 
+export {
+  classifyExecutionAbortReason,
+  classifyExecutionFinishReason,
+} from "./execution/execution-lifecycle-outcome.js";
+export type { LifecycleOutcome } from "./execution/execution-lifecycle-outcome.js";
+
 // Cross-session orchestration. These helpers are orchestration over
 // channels, not daemon-internal composition: the cross-session sender
 // drives fire-and-forget / wait / ping-pong agent-to-agent messaging;
@@ -140,6 +153,7 @@ export type { DmScopeMode, ScopedSessionKeyParams } from "./session-key/session-
 export * from "./cross-session/cross-session-sender.js";
 export * from "./cross-session/announcement-batcher.js";
 export * from "./cross-session/announcement-dead-letter.js";
+export * from "./cross-session/announcement-outward-operation.js";
 
 // Interactive approval router. The single server-side authority
 // that parses signed button callbacks (lookup-FIRST-then-verify), rejects

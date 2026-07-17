@@ -625,15 +625,13 @@ describe("diffToolLists — tools/list_changed diff", () => {
 });
 
 // ---------------------------------------------------------------------------
-// wireStderrCapture — credential redaction in the LOGGED stderr. A credentialed
-// stdio child can echo a connection string / API key on the way down; the
-// per-line DEBUG + the end-of-stream INFO buffer are unstructured free-text (NOT
-// Pino-redacted keys), so they must be sanitized before they hit the log — the
-// same scrub the connect-failure fold applies.
+// wireStderrCapture — child output remains available to the bounded failure
+// classifier, but logs carry structural metadata only. Sanitizing free text does
+// not make arbitrary child output safe for durable logs.
 // ---------------------------------------------------------------------------
 
-describe("wireStderrCapture — credential redaction in logged stderr", () => {
-  it("sanitizes a leaked credential before the DEBUG line + the INFO buffer are logged", () => {
+describe("wireStderrCapture — content-free stderr logging", () => {
+  it("retains bounded diagnostics in memory without logging child output", () => {
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const stderr = new EventEmitter();
     const state = { lastStderr: new Map<string, string>() } as unknown as McpClientManagerState;
@@ -648,12 +646,15 @@ describe("wireStderrCapture — credential redaction in logged stderr", () => {
     stderr.emit("end");
 
     const logged = JSON.stringify([...logger.debug.mock.calls, ...logger.info.mock.calls]);
-    // The raw secret NEVER reaches the log …
+    expect(state.lastStderr.get("svc")).toContain("FATAL: could not connect");
+    expect(logged).not.toContain("FATAL: could not connect");
+    expect(logged).not.toContain("db.internal");
     expect(logged).not.toContain("s3cr3tPassw0rd");
     expect(logged).not.toContain("sk-abcdefghij1234567890klmnop");
-    // … it is REDACTED, not merely dropped (the diagnostic shape survives).
-    expect(logged).toContain("[REDACTED_CONN_STRING]");
-    expect(logged).toContain("sk-[REDACTED]");
+    expect(logged).not.toContain("[REDACTED_CONN_STRING]");
+    for (const [fields] of [...logger.debug.mock.calls, ...logger.info.mock.calls]) {
+      expect(fields).not.toHaveProperty("stderr");
+    }
   });
 });
 

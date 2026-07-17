@@ -27,6 +27,7 @@ import {
   createTerminalSessionSendKeyTool,
   createTerminalSessionResizeTool,
   createTerminalSessionWaitTool,
+  resolveOwner,
   type TerminalToolDeps,
   type TerminalEventBus,
   type TerminalInputNeededEvent,
@@ -52,7 +53,7 @@ import type { ReadOptions } from "./terminal-render.js";
 import { createSessionCaps, type SessionCaps, type SessionLimits } from "./terminal-caps.js";
 import type { EvictReason } from "./terminal-reaper.js";
 import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
-import { runWithContext } from "@comis/core";
+import { runWithContext, type RequestContext } from "@comis/core";
 
 /** The least-privilege default scope (mirrors the config schema defaults). */
 const DEFAULT_SCOPE: TerminalScope = {
@@ -295,6 +296,45 @@ function baseDeps(
     ...overrides,
   };
 }
+
+describe("terminal session owner identity", () => {
+  it("uses the resolved agent instead of the human user", () => {
+    const deps = baseDeps(makeFakeRegistry());
+    const owner = runWithContext(
+      {
+        tenantId: "default",
+        userId: "human-user",
+        agentId: "resolved-agent",
+        sessionKey: "default:human-user:telegram",
+        traceId: "30000000-0000-4000-8000-000000000003",
+        startedAt: 1,
+        trustLevel: "admin",
+      },
+      () => resolveOwner(deps),
+    );
+
+    expect(owner).toEqual({
+      agentId: "resolved-agent",
+      sessionKey: "default:human-user:telegram",
+    });
+  });
+
+  it("fails closed when an active request has no resolved agent", () => {
+    const deps = baseDeps(makeFakeRegistry());
+
+    expect(() => runWithContext(
+      {
+        tenantId: "default",
+        userId: "human-user",
+        sessionKey: "default:human-user:telegram",
+        traceId: "30000000-0000-4000-8000-000000000003",
+        startedAt: 1,
+        trustLevel: "admin",
+      },
+      () => resolveOwner(deps),
+    )).toThrow(/resolved request identity/i);
+  });
+});
 
 /**
  * A SessionCaps SPY double so a cap test can both inject a fixed breach and
@@ -1074,23 +1114,16 @@ describe("terminal-tools — the wait tool emits terminal:drive_promoted (auto/a
     expect(promoted[0]!.payload).toMatchObject({ sessionId: "s1", agentId: "agent-1", reason: "producing" });
   });
 
-  it("promotion agentId is the REAL agentId (deps.agentId), NOT ctx.userId — journal + owner routing (RED on pre-patch)", async () => {
-    // Regression: a chat-API drive
-    // (sessionKey "default:openai-api:openai") promoted with agentId="openai-api" —
-    // the USERID, not the agent "default". The daemon keys the per-agent durable
-    // journal dir (`terminal-drive/<agentId>/journals/`) AND the detached
-    // drive-owner's inherited allow-entry on the REAL agentId. The
-    // owner-KEY is userId-based for registry owner-scoping ONLY; the content-free
-    // terminal:drive_promoted event must carry deps.agentId, never ctx.userId.
+  it("promotion carries the configured agent identity", async () => {
     const registry = makeFakeRegistry({ waitImpl: async () => PRODUCING_TIMEOUT });
     const bus = makeCapturingBus();
     const tool = createTerminalSessionWaitTool(baseDeps(registry, { eventBus: bus, driveMode: "auto" }));
 
-    // A live RequestContext whose userId ("openai-api") DIFFERS from the agent ("agent-1").
     await runWithContext(
       {
         tenantId: "default",
         userId: "openai-api",
+        agentId: "agent-1",
         sessionKey: "default:openai-api:openai",
         traceId: "00000000-0000-4000-8000-000000000000",
         startedAt: 1,
@@ -1102,8 +1135,8 @@ describe("terminal-tools — the wait tool emits terminal:drive_promoted (auto/a
     const promoted = drivePromotedEvents(bus);
     expect(promoted).toHaveLength(1);
     const agentId = (promoted[0]!.payload as TerminalDrivePromotedEvent).agentId;
-    expect(agentId).toBe("agent-1"); // the REAL agent — routes journal + drive-owner allow-entry
-    expect(agentId).not.toBe("openai-api"); // never the userId/owner-key
+    expect(agentId).toBe("agent-1");
+    expect(agentId).not.toBe("openai-api");
   });
 
   it("auto + {isComplete:true} → NO emit (short-drive byte-identical)", async () => {
@@ -1412,9 +1445,33 @@ interface ApprovalCall {
   toolName: string;
   action: string;
   params: Record<string, unknown>;
+  fingerprintParams: Record<string, unknown>;
   agentId: string;
   sessionKey: string;
   trustLevel: string;
+  callbackOwner: {
+    tenantId: string;
+    userId: string;
+    channelType: string;
+    channelKey: string;
+    threadId?: string;
+  };
+}
+
+function makeTerminalApprovalContext(): RequestContext {
+  return {
+    tenantId: "default",
+    userId: "test-user",
+    agentId: "agent-1",
+    sessionKey: "default:test-user:chat-1",
+    traceId: "20000000-0000-4000-8000-000000000002",
+    startedAt: 1,
+    trustLevel: "guest",
+    channelType: "telegram",
+    deliveryOrigin: Object.freeze({
+      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+    }),
+  };
 }
 
 /** A capturing ApprovalGate fake — records each requestApproval call + returns a canned resolution. */
@@ -1453,7 +1510,9 @@ describe("terminal-tools — approveOnCreate gates session_create on the approva
     const tool = createTerminalSessionCreateTool(deps);
 
     await expect(
-      tool.execute("call-1", { allowId: "bash", command: realBashPath() }),
+      runWithContext(makeTerminalApprovalContext(), () =>
+        tool.execute("call-1", { allowId: "bash", command: realBashPath() }),
+      ),
     ).rejects.toThrow(/\[permission_denied\]/);
     // reject-before-spawn: the registry was never asked to create.
     expect(registry.createCalls).toHaveLength(0);
@@ -1470,7 +1529,9 @@ describe("terminal-tools — approveOnCreate gates session_create on the approva
     });
     const tool = createTerminalSessionCreateTool(deps);
 
-    await tool.execute("call-1", { allowId: "bash", command: realBashPath() });
+    await runWithContext(makeTerminalApprovalContext(), () =>
+      tool.execute("call-1", { allowId: "bash", command: realBashPath() }),
+    );
     expect(registry.createCalls).toHaveLength(1);
     expect(gate.calls).toHaveLength(1);
   });
@@ -1504,6 +1565,22 @@ describe("terminal-tools — approveOnCreate gates session_create on the approva
     expect(registry.createCalls).toHaveLength(0);
   });
 
+  it("fails closed without consulting the gate when resolved approval identity is absent", async () => {
+    const registry = makeFakeRegistry();
+    const gate = makeApprovalGate({ approved: true });
+    const deps = baseDeps(registry, {
+      allowEntries: [approveOnCreateEntry()],
+      approvalGate: gate as unknown as TerminalToolDeps["approvalGate"],
+    });
+    const tool = createTerminalSessionCreateTool(deps);
+
+    await expect(
+      tool.execute("call-1", { allowId: "bash", command: realBashPath() }),
+    ).rejects.toThrow(/resolved request identity/i);
+    expect(gate.calls).toHaveLength(0);
+    expect(registry.createCalls).toHaveLength(0);
+  });
+
   it("the requestApproval call is secret-free with the right toolName/action/identity", async () => {
     const registry = makeFakeRegistry();
     const gate = makeApprovalGate({ approved: true });
@@ -1513,7 +1590,15 @@ describe("terminal-tools — approveOnCreate gates session_create on the approva
     });
     const tool = createTerminalSessionCreateTool(deps);
 
-    await tool.execute("call-1", { allowId: "bash", command: realBashPath(), args: ["--secret-flag", "sk-ant-shhh"] });
+    await runWithContext(makeTerminalApprovalContext(), () =>
+      tool.execute("call-1", {
+        allowId: "bash",
+        command: realBashPath(),
+        args: ["--secret-flag", "sk-ant-shhh"],
+        cwd: "workspace/subdir",
+        project: "sample-project",
+      }),
+    );
     expect(gate.calls).toHaveLength(1);
     const call = gate.calls[0];
     expect(call.toolName).toBe("terminal_session_create");
@@ -1521,10 +1606,14 @@ describe("terminal-tools — approveOnCreate gates session_create on the approva
     // params carry allowId + command only — NO args (which could hold secrets)
     expect(call.params.allowId).toBe("bash");
     expect(Object.keys(call.params)).not.toContain("args");
-    // identity fields are present (tryGetContext fallbacks outside a request ctx)
-    expect(typeof call.agentId).toBe("string");
-    expect(typeof call.sessionKey).toBe("string");
-    expect(["admin", "user", "guest"]).toContain(call.trustLevel);
+    expect(call.fingerprintParams).toEqual(registry.createCalls[0]);
+    expect(call.agentId).toBe("agent-1");
+    expect(call.agentId).not.toBe("test-user");
+    expect(call.sessionKey).toBe("default:test-user:chat-1");
+    expect(call.callbackOwner).toEqual({
+      tenantId: "default", userId: "test-user", channelType: "telegram", channelKey: "chat-1",
+    });
+    expect(call.trustLevel).toBe("guest");
   });
 
   it("audit: the approved+created path still emits terminal:session_state (unchanged)", async () => {
@@ -1538,7 +1627,9 @@ describe("terminal-tools — approveOnCreate gates session_create on the approva
     });
     const tool = createTerminalSessionCreateTool(deps);
 
-    await tool.execute("call-1", { allowId: "bash", command: realBashPath() });
+    await runWithContext(makeTerminalApprovalContext(), () =>
+      tool.execute("call-1", { allowId: "bash", command: realBashPath() }),
+    );
     const stateEvent = eventBus.events.find((e) => e.event === "terminal:session_state");
     expect(stateEvent).toBeDefined();
     expect(stateEvent?.payload.state).toBe("created");
@@ -1551,12 +1642,10 @@ describe("terminal-tools — approveOnCreate gates session_create on the approva
 // END the call, but NEVER calls registry.kill — the session stays alive in the
 // registry for the next turn (session lifetime ⟂ turn lifetime).
 //
-// The tools derive the owner from tryGetContext() (userId ?? deps.agentId,
-// sessionKey ?? ""); since these tests run with NO RequestContext, the owner is
+// With no request context, the tools use the injected agent and an empty
+// session key; these tests therefore use
 // { agentId: deps.agentId, sessionKey: "" }. The owner-aware fake below mirrors
-// the new registry interface (get/kill/read/send* take an owner), so the
-// pre-patch tools (which call registry.get(sessionId) with no owner, and ignore
-// arg 3) FAIL these assertions at runtime — the RED.
+// the registry interface: get/kill/read/send* all take an owner.
 // ===========================================================================
 
 /** The owner the tools derive with no RequestContext on the stack. */

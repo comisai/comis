@@ -19,7 +19,10 @@ import type {
   TypedEventBus,
   SessionKey,
 } from "@comis/core";
-import { systemNowMs } from "@comis/core";
+import { getOriginalInboundMessages, systemNowMs } from "@comis/core";
+import { fromPromise, tryCatch } from "@comis/shared";
+import type { QueuedMessageEntry } from "./lane.js";
+import { mergeSourceTerminalScopes } from "../source-message-terminal.js";
 
 /**
  * Result of applying an overflow policy to pending messages.
@@ -29,6 +32,130 @@ export interface OverflowResult {
   dropped: number;
   /** The resulting messages after policy application */
   messages: NormalizedMessage[];
+}
+
+export interface QueueEntryOverflowResult {
+  /** Number of queued messages dropped or consolidated. */
+  dropped: number;
+  /** Atomic queue entries retained after applying the policy. */
+  entries: QueuedMessageEntry[];
+}
+
+interface InternalOverflowResult<T> {
+  dropped: number;
+  items: T[];
+}
+
+type OverflowEventErrorHandler = (error: Error) => void;
+
+function summarizeMessages(messages: NormalizedMessage[]): NormalizedMessage {
+  const lastMsg = messages[messages.length - 1]!;
+  const concatenated =
+    `[Summarized from ${messages.length} messages]:\n` +
+    messages.map((message) => message.text).join("\n---\n");
+
+  const mergedMetadata: Record<string, unknown> = {};
+  for (const message of messages) {
+    if (message.metadata) {
+      Object.assign(mergedMetadata, message.metadata);
+    }
+  }
+
+  return {
+    id: lastMsg.id,
+    channelId: lastMsg.channelId,
+    channelType: lastMsg.channelType,
+    senderId: lastMsg.senderId,
+    text: concatenated,
+    timestamp: lastMsg.timestamp,
+    attachments: messages.flatMap((message) => message.attachments ?? []),
+    metadata: mergedMetadata,
+    originalMessages: messages.flatMap(getOriginalInboundMessages),
+  };
+}
+
+function applyOverflowPolicyToItems<T>(
+  pendingItems: T[],
+  config: OverflowConfig,
+  eventBus: TypedEventBus,
+  sessionKey: SessionKey,
+  channelType: string,
+  getMessage: (item: T) => NormalizedMessage,
+  createSummary: (items: T[], message: NormalizedMessage) => T,
+  onEventError?: OverflowEventErrorHandler,
+): InternalOverflowResult<T> {
+  if (pendingItems.length <= config.maxDepth) {
+    return { dropped: 0, items: pendingItems };
+  }
+
+  let result: InternalOverflowResult<T>;
+
+  switch (config.policy) {
+    case "drop-old": {
+      const excess = pendingItems.length - config.maxDepth;
+      result = {
+        dropped: excess,
+        items: pendingItems.slice(excess),
+      };
+      break;
+    }
+
+    case "drop-new": {
+      result = {
+        dropped: 1,
+        items: pendingItems.slice(0, -1),
+      };
+      break;
+    }
+
+    case "summarize": {
+      const summary = summarizeMessages(pendingItems.map(getMessage));
+      result = {
+        dropped: pendingItems.length - 1,
+        items: [createSummary(pendingItems, summary)],
+      };
+      break;
+    }
+
+    default: {
+      const _exhaustive: never = config.policy;
+      void _exhaustive;
+      result = {
+        dropped: 1,
+        items: pendingItems.slice(0, -1),
+      };
+    }
+  }
+
+  const emission = eventBus.emitSafely("queue:overflow", {
+    sessionKey,
+    channelType,
+    policy: config.policy,
+    droppedCount: result.dropped,
+    timestamp: systemNowMs(),
+  });
+  if (onEventError) {
+    const reportFailure = (error: Error): void => {
+      void tryCatch(() => onEventError(error));
+    };
+    for (const failure of emission.failures) {
+      reportFailure(failure.error);
+    }
+    const pendingFailures = (emission as {
+      pendingFailures?: Promise<readonly { error: Error }[]>;
+    }).pendingFailures;
+    if (pendingFailures !== undefined) {
+      void fromPromise(pendingFailures).then((settled) => {
+        if (!settled.ok) {
+          reportFailure(settled.error);
+          return;
+        }
+        for (const failure of settled.value) reportFailure(failure.error);
+      });
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -47,88 +174,51 @@ export function applyOverflowPolicy(
   eventBus: TypedEventBus,
   sessionKey: SessionKey,
   channelType: string,
+  onEventError?: OverflowEventErrorHandler,
 ): OverflowResult {
-  // No overflow — within limits
-  if (pendingMessages.length < config.maxDepth) {
-    return { dropped: 0, messages: pendingMessages };
-  }
-
-  let result: OverflowResult;
-
-  switch (config.policy) {
-    case "drop-old": {
-      const excess = pendingMessages.length - config.maxDepth;
-      result = {
-        dropped: excess,
-        messages: pendingMessages.slice(excess),
-      };
-      break;
-    }
-
-    case "drop-new": {
-      // Caller should not have pushed the new message; return original
-      // minus the last element (the new one that triggered overflow).
-      result = {
-        dropped: 1,
-        messages: pendingMessages.slice(0, -1),
-      };
-      break;
-    }
-
-    case "summarize": {
-      // Cheap concatenation fallback (actual LLM summarization is a future enhancement)
-      const lastMsg = pendingMessages[pendingMessages.length - 1]!;
-      const concatenated =
-        `[Summarized from ${pendingMessages.length} messages]:\n` +
-        pendingMessages.map((m) => m.text).join("\n---\n");
-
-      // Merge all metadata (later overrides earlier)
-      const mergedMetadata: Record<string, unknown> = {};
-      for (const m of pendingMessages) {
-        if (m.metadata) {
-          Object.assign(mergedMetadata, m.metadata);
-        }
-      }
-
-      // Concatenate all attachments
-      const allAttachments = pendingMessages.flatMap((m) => m.attachments ?? []);
-
-      const synthetic: NormalizedMessage = {
-        id: lastMsg.id,
-        channelId: lastMsg.channelId,
-        channelType: lastMsg.channelType,
-        senderId: lastMsg.senderId,
-        text: concatenated,
-        timestamp: lastMsg.timestamp,
-        attachments: allAttachments,
-        metadata: mergedMetadata,
-      };
-
-      result = {
-        dropped: pendingMessages.length - 1,
-        messages: [synthetic],
-      };
-      break;
-    }
-
-    default: {
-      // Unknown policy — treat as drop-new for safety
-      result = {
-        dropped: 1,
-        messages: pendingMessages.slice(0, -1),
-      };
-      break;
-    }
-  }
-
-  // Emit overflow event for observability
-  eventBus.emit("queue:overflow", {
+  const result = applyOverflowPolicyToItems(
+    pendingMessages,
+    config,
+    eventBus,
     sessionKey,
     channelType,
-    policy: config.policy,
-    droppedCount: result.dropped,
-    timestamp: systemNowMs(),
-  });
+    (message) => message,
+    (_messages, summary) => summary,
+    onEventError,
+  );
+  return { dropped: result.dropped, messages: result.items };
+}
 
-  return result;
+/** Apply overflow without separating a message from its captured turn owner. */
+export function applyOverflowPolicyToQueueEntries(
+  pendingEntries: QueuedMessageEntry[],
+  config: OverflowConfig,
+  eventBus: TypedEventBus,
+  sessionKey: SessionKey,
+  channelType: string,
+  onEventError?: OverflowEventErrorHandler,
+): QueueEntryOverflowResult {
+  const result = applyOverflowPolicyToItems(
+    pendingEntries,
+    config,
+    eventBus,
+    sessionKey,
+    channelType,
+    (entry) => entry.message,
+    (entries, summary) => {
+      const lastEntry = entries[entries.length - 1]!;
+      return {
+        ...lastEntry,
+        message: summary,
+        enqueuedAt: Math.min(...entries.map((entry) => entry.enqueuedAt)),
+        receivedAt: Math.min(...entries.map((entry) => entry.receivedAt)),
+        logicalCount: 1,
+        sourceTerminalScope: mergeSourceTerminalScopes(
+          entries.map((entry) => entry.sourceTerminalScope),
+        ),
+      };
+    },
+    onEventError,
+  );
+  return { dropped: result.dropped, entries: result.items };
 }

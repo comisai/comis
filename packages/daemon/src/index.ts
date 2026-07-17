@@ -88,12 +88,10 @@ export {
 // Consumer: test/integration/mcp-config-refresh.test.ts.
 export { _resetConfigMutatedCoalescer } from "./api/mcp-config-mutated-coalescer.js";
 
-// Test seam for the exactly-once chaos test
-// (test/integration/durable-resume-e2e.test.ts) arms a crash-injection hook in
-// the REAL wrapOutwardSend so a live autonomy-originated send crashes in the
-// invariant-#12 window (between markUnknown and commit), leaving a genuine
-// unknown_after_send row for the post-restart recovery to reconcile. INERT in
-// production (never armed); mirrors the _resetSigusr1Timer test-seam pattern.
+// Test seam for interrupted-send recovery. The durable-resume integration test
+// arms a crash-injection hook in the real wrapOutwardSend so a live
+// autonomy-originated send stops between markUnknown and commit, leaving a
+// genuine unknown_after_send row for startup to park. Inert in production.
 export {
   __setOutwardSendCrashHookForTest,
   OUTWARD_SEND_CRASH_SENTINEL,

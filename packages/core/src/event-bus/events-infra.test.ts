@@ -189,7 +189,7 @@ describe("InfraEvents payload structure", () => {
     expect(received.expiresAtMs).toBe(expiresAt);
   });
 
-  it("diagnostic:message_processed delivers timing, cost, finish reason, and exact call counts", () => {
+  it("diagnostic:message_processed delivers closed lifecycle status and exact call counts", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const now = Date.now();
@@ -208,7 +208,7 @@ describe("InfraEvents payload structure", () => {
       totalDurationMs: 2700,
       tokensUsed: 1500,
       cost: 0.018,
-      success: true,
+      status: "success",
       finishReason: "end_turn",
       timestamp: now,
     };
@@ -227,6 +227,7 @@ describe("InfraEvents payload structure", () => {
     expect(received.traceId).toBe("trace-1");
     expect(received.toolCalls).toBe(2);
     expect(received.llmCalls).toBe(3);
+    expect(received.status).toBe("success");
     expect(received.finishReason).toBe("end_turn");
   });
 

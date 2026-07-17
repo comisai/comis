@@ -85,7 +85,7 @@ function htmlResponse(html: string, status = 200): unknown {
   };
 }
 
-const LEASE = { agentId: "agent-7", caps: ["orch:read", "orch:web"] as const };
+const LEASE = { agentId: "agent-7", caps: ["orch:read", "orch:web"] as const, trustLevel: "user" as const };
 
 function makeDeps(over: Record<string, unknown> = {}) {
   return {
@@ -304,13 +304,29 @@ describe("createToolInvokeExecutor — file builtins run workspace-scoped", () =
     const deps = makeDeps({ writeSurfaceEnabled: () => true });
     const exec = createToolInvokeExecutor(deps);
 
-    await exec("write", { path: "note.txt", content: "hi" }, LEASE);
+    await exec(
+      "write",
+      { path: "note.txt", content: "hi" },
+      { ...LEASE, checkpointId: "checkpoint-7" },
+    );
 
     expect(deps.resolveWorkspace).toHaveBeenCalledWith("agent-7");
     expect(deps.fileExecutors.write).toHaveBeenCalledTimes(1);
     const [writeArgs, writeCtx] = deps.fileExecutors.write.mock.calls[0];
     expect(writeArgs).toMatchObject({ path: "note.txt", content: "hi" });
-    expect((writeCtx as { workspaceDir: string }).workspaceDir).toBe("/ws/agent-7");
+    expect(writeCtx).toMatchObject({ workspaceDir: "/ws/agent-7", runId: "checkpoint-7" });
+  });
+
+  it("refuses a write when the validated lease has no run identity", async () => {
+    const deps = makeDeps({ writeSurfaceEnabled: () => true });
+    const exec = createToolInvokeExecutor(deps);
+
+    const result = (await exec("write", { path: "note.txt", content: "hi" }, LEASE)) as {
+      error?: string;
+    };
+
+    expect(result.error).toMatch(/run identity/i);
+    expect(deps.fileExecutors.write).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
@@ -332,7 +348,7 @@ describe("createToolInvokeExecutor — file builtins run workspace-scoped", () =
     const result = (await exec(
       "write",
       { path: "note.txt", content: "hi" },
-      { agentId: "agent-7", caps: ["orch:read", "orch:web", "orch:write"] as const },
+      { agentId: "agent-7", caps: ["orch:read", "orch:web", "orch:write"] as const, trustLevel: "user" as const },
     )) as { error?: string };
 
     // A content-free, error-SHAPED deny (never a throw) — and the core is NEVER reached.
@@ -348,7 +364,12 @@ describe("createToolInvokeExecutor — file builtins run workspace-scoped", () =
     await exec(
       "write",
       { path: "note.txt", content: "hi" },
-      { agentId: "agent-7", caps: ["orch:read", "orch:write"] as const },
+      {
+        agentId: "agent-7",
+        caps: ["orch:read", "orch:write"] as const,
+        trustLevel: "user" as const,
+        checkpointId: "checkpoint-7",
+      },
     );
 
     // The surface predicate was consulted for THIS lease's agentId, then the core ran.
@@ -384,7 +405,7 @@ describe("createToolInvokeExecutor — file builtins run workspace-scoped", () =
 // NOT a bare-JSON mock.
 // ---------------------------------------------------------------------------
 describe("createToolInvokeExecutor — case \"mcp\" (daemon-side MCP dispatch)", () => {
-  const MCP_LEASE = { agentId: "agent-7", caps: ["orch:read", "orch:mcp"] as const };
+  const MCP_LEASE = { agentId: "agent-7", caps: ["orch:read", "orch:mcp"] as const, trustLevel: "user" as const };
 
   /** A fake McpClientManager whose ONLY exercised method is callTool (the seam). */
   function fakeMcpManager(callTool: ReturnType<typeof vi.fn>): McpClientManager {
@@ -554,9 +575,13 @@ describe("createToolInvokeExecutor — case \"mcp\" (daemon-side MCP dispatch)",
 // ---------------------------------------------------------------------------
 describe("createToolInvokeExecutor — checkpoint/resume (durable specialized writing core)", () => {
   const RESUME_LEASE = {
+    leaseId: "lease-7",
     agentId: "agent-7",
     caps: ["orch:read", "orch:write"] as const,
+    sessionKey: "tenant-7:user-7:sub-agent:run-7",
+    trustLevel: "admin" as const,
     rootRunId: "root-abc",
+    checkpointId: "checkpoint-abc",
   };
   let ws: string;
 
@@ -591,31 +616,42 @@ describe("createToolInvokeExecutor — checkpoint/resume (durable specialized wr
   }
 
   /**
-   * A faithful in-memory DurableRunPort (only upsertCheckpoint + getByRootRun are
+   * A faithful in-memory durable-store slice (only upsertCheckpoint + getByCheckpoint are
    * used). COALESCE-preserve on checkpointRef so a partial upsert never clobbers a
-   * prior ref (the plan-01 store semantics; the real sqlite round-trip is proven
+   * prior ref (the real SQLite round-trip is proven
    * in durable-run-store.test.ts).
    */
   function memDurableRuns() {
     const rows = new Map<string, Record<string, unknown>>();
     const upsertCheckpoint = vi.fn(async (record: Record<string, unknown>) => {
-      const key = record.rootRunId as string;
+      const key = record.checkpointId as string;
       const prev = rows.get(key) ?? {};
       rows.set(key, { ...prev, ...record, checkpointRef: record.checkpointRef ?? prev.checkpointRef });
       return { ok: true as const, value: undefined };
     });
-    const getByRootRun = vi.fn(async (rootRunId: string) => ({
+    const getByCheckpoint = vi.fn(async (checkpointId: string) => ({
       ok: true as const,
-      value: rows.get(rootRunId),
+      value: rows.get(checkpointId),
     }));
-    return { upsertCheckpoint, getByRootRun, rows };
+    return { upsertCheckpoint, getByCheckpoint, rows };
   }
 
   it("checkpoint persists ONLY checkpointRef on the durable row; resume returns the last state WRAPPED (real fs round-trip)", async () => {
     const { materializeCheckpoint, loadCheckpoint } = realFsSeams();
     const durableRuns = memDurableRuns();
+    const durableBudgetState = vi.fn(() => ({
+      startedAtMs: 123,
+      tokensConsumed: 456,
+      usdConsumed: 0.75,
+    }));
     const exec = createToolInvokeExecutor(
-      makeDeps({ orchestrateResumeEnabled: () => true, materializeCheckpoint, loadCheckpoint, durableRuns }),
+      makeDeps({
+        orchestrateResumeEnabled: () => true,
+        materializeCheckpoint,
+        loadCheckpoint,
+        durableRuns,
+        durableBudgetState,
+      }),
     );
 
     const ack = await exec("checkpoint", { step: 3, cursor: "abc" }, RESUME_LEASE);
@@ -628,12 +664,21 @@ describe("createToolInvokeExecutor — checkpoint/resume (durable specialized wr
     // The durable row carries checkpointRef, keyed on rootRunId, status running.
     expect(durableRuns.upsertCheckpoint).toHaveBeenCalledTimes(1);
     const record = durableRuns.upsertCheckpoint.mock.calls[0][0] as Record<string, unknown>;
+    expect(record.checkpointId).toBe("checkpoint-abc");
     expect(record.rootRunId).toBe("root-abc");
     expect(record.checkpointRef).toBe("results/ckpt-0.json");
+    expect(record.trustLevel).toBe("admin");
     expect(record.status).toBe("running");
-    // The outward-send ledger is NEVER reset by a checkpoint — stepIndex stays at the
-    // -1 'never-sent' sentinel (upsertCheckpoint omits outward_step, plan 01).
-    expect(record.stepIndex).toBe(-1);
+    expect(record.rootBudget).toEqual({
+      startedAtMs: 123,
+      tokensConsumed: 456,
+      usdConsumed: 0.75,
+    });
+    expect(record.budgetConsumed).toBe(0.75);
+    expect(record.scriptRef).toBeNull();
+    expect(durableBudgetState).toHaveBeenCalledWith("root-abc");
+    // The outward-send ledger is never reset by a checkpoint.
+    expect(record).not.toHaveProperty("stepIndex");
 
     // resume reads the last checkpointRef, loads the REAL bytes, wraps as untrusted DATA.
     const resumed = (await exec("resume", {}, RESUME_LEASE)) as string;
@@ -674,7 +719,7 @@ describe("createToolInvokeExecutor — checkpoint/resume (durable specialized wr
     expect(materializeCheckpoint).not.toHaveBeenCalled();
     expect(loadCheckpoint).not.toHaveBeenCalled();
     expect(durableRuns.upsertCheckpoint).not.toHaveBeenCalled();
-    expect(durableRuns.getByRootRun).not.toHaveBeenCalled();
+    expect(durableRuns.getByCheckpoint).not.toHaveBeenCalled();
   });
 
   it("DENIES both when orchestrateResumeEnabled returns false, consulting the lease agentId", async () => {

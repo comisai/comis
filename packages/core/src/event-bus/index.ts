@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 export { TypedEventBus } from "./bus.js";
 export type { EventHandler } from "./bus.js";
+export { emitObservationalEventSafely } from "./observational-emission.js";
+export type { ObservationalEmissionDeps } from "./observational-emission.js";
 export type { EventMap } from "./events.js";
 export type { MessagingEvents } from "./events-messaging.js";
 export type { AgentEvents } from "./events-agent.js";
@@ -14,7 +16,7 @@ export type { SpendScopeKind } from "./events-agent.js";
 export type { ModelEvents } from "./events-model.js";
 export type { OrchestrationEvents } from "./events-orchestration.js";
 export type { ChannelEvents } from "./events-channel.js";
-export type { InfraEvents } from "./events-infra.js";
+export type { InfraEvents, WebhookFailureReason } from "./events-infra.js";
 // ReflectAdmissionOutcome — the closed content-free verdict enum on
 // reflect:funnel.admissionOutcome. Canonical in events-learning.ts
 // (the event that carries it) since core cannot import @comis/agent; re-exported

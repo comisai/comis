@@ -13,24 +13,30 @@
  * @module
  */
 
-import type { NormalizedMessage, SessionKey, DeliveryService, DeliverToChannelOptions, ClockPort, TimerPort, AppContainer, FileLockPort, ChannelPort, DurableRunPort, OutwardSendLedgerPort, AgentCapability, AgentConfig } from "@comis/core";
-import { tryGetContext, safePath, systemNowMs, resolveWorkspaceDir, resolvePlatformDeliveryResult } from "@comis/core";
+import type {
+  AgentCapability, AgentConfig, AppContainer, ChannelPort, ClockPort,
+  DeliveryOrigin, DeliveryService, DeliverToChannelOptions, DurableRunPort,
+  FileLockPort, NormalizedMessage, OutwardSendLedgerPort, RequestContext,
+  SessionKey, TimerPort,
+} from "@comis/core";
+import {
+  DeliveryOriginSchema, formatSessionKey,
+  resolveWorkspaceDir, runWithContext, safePath, systemNowMs, tryGetContext,
+} from "@comis/core";
 import { createResultRefStore } from "@comis/skills/tools";
 import type { ComisLogger } from "@comis/infra";
-import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, classifyErrorContext, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
+import type { ExecutionResult } from "@comis/agent";
+import { createResultCondenser, createNarrativeCaster, createLifecycleHooks, resolveOperationModel, resolveProviderFamily, createSubAgentRunner, createDeliveryDedup, resolvePostureFromSkills } from "@comis/agent";
 import {
   createCrossSessionSender,
   createAnnouncementBatcher,
   createAnnouncementDeadLetterQueue,
+  type SendGovernedCompletionAnnouncement,
 } from "@comis/orchestrator";
 import { randomUUID } from "node:crypto";
-import { computeRetryBackoff } from "../../graph/graph-node-lifecycle.js";
 import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
-
-// ---------------------------------------------------------------------------
-// No-op logger fallback
-// ---------------------------------------------------------------------------
+import { createAnnouncementDelivery } from "./governed-announcement-delivery.js";
 
 /**
  * A silent {@link ComisLogger} used only when the optional `deps.logger` is
@@ -50,10 +56,6 @@ const NOOP_LOGGER: ComisLogger = {
   child: () => NOOP_LOGGER,
 };
 
-// ---------------------------------------------------------------------------
-// Result type
-// ---------------------------------------------------------------------------
-
 /** All services produced by the cross-session messaging setup. */
 export interface CrossSessionResult {
   /** Cross-session message sender for agent-to-agent communication. */
@@ -62,8 +64,10 @@ export interface CrossSessionResult {
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
   /** Channel message sender for graph completion announcements */
   sendToChannel: (channelType: string, channelId: string, text: string, options?: DeliverToChannelOptions) => Promise<boolean>;
+  /** Receipt-aware retained-operation boundary for completion announcements. */
+  sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
   /** Parent session announcement for graph results */
-  announceToParent: (callerAgentId: string, callerSessionKey: SessionKey, text: string, channelType: string, channelId: string) => Promise<void>;
+  announceToParent: (callerAgentId: string, callerSessionKey: SessionKey, text: string, channelType: string, channelId: string, options?: { threadId?: string }) => Promise<string | undefined>;
   /** Dead-letter queue for failed announcement persistence. */
   deadLetterQueue?: ReturnType<typeof createAnnouncementDeadLetterQueue>;
   /** Announcement batcher for coalescing concurrent graph/sub-agent completions. */
@@ -97,7 +101,7 @@ export function setupCrossSession(deps: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires complex type parameters from pi-ai SDK
   assembleToolsForAgent: (agentId: string, options?: import("../setup-tools.js").AssembleToolsOptions) => Promise<any[]>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentExecutor.execute has complex signature crossing package boundaries
-  getExecutor: (agentId: string) => { execute: (...args: any[]) => Promise<any> };
+  getExecutor: (agentId: string) => { execute: (...args: any[]) => Promise<ExecutionResult> };
   adaptersByType: Map<string, { sendMessage(channelId: string, text: string, options?: import("@comis/core").SendMessageOptions): Promise<import("@comis/shared").Result<string, Error>>; channelType: string; platformAction?(action: string, params: Record<string, unknown>): Promise<import("@comis/shared").Result<unknown, Error>> }>;
   /** Optional structured logger for cross-session subsystem. */
   logger?: ComisLogger;
@@ -159,31 +163,35 @@ export function setupCrossSession(deps: {
    * The durable-run store + its keep-alive thresholds
    * + the leaseId/budget facts resolver, threaded into the sub-agent runner so it
    * writes a per-root checkpoint at the spawn boundary + a heartbeat on the
-   * injected timer. All optional; absent ⇒ the runner's durable path is inert (the
-   * byte-identical default). The daemon wires them ONLY when durability is enabled.
+   * injected timer. All optional; absent means the runner's durable path is inert.
    */
   durableRuns?: DurableRunPort;
   durability?: { keepAliveMs: number; staleHeartbeatMs: number };
   durableRunFacts?: (
     rootRunId: string,
     agentId: string,
-  ) => { caps: readonly AgentCapability[]; leaseIds: readonly string[]; budgetConsumed: number } | undefined;
+  ) => {
+    caps: readonly AgentCapability[];
+    leaseIds: readonly string[];
+    rootBudget: import("@comis/core").DurableRootBudget;
+  } | undefined;
   /**
-   * The three-state outward-send ledger + the
+   * The closed five-state outward-send uncertainty ledger + the
    * announce-origin rootRunId resolver, threaded into BOTH `createCrossSessionSender`
    * (the announce() ledger wrap) AND the announcement dead-letter
    * queue (the drain committed-skip) so the completion-announcement
-   * outward path is ledgered exactly-once (no restart double-notify). All optional;
-   * absent ⇒ both paths are pure pass-throughs (the byte-identical default). The
+   * outward path has one durable operation identity. An ambiguous send parks
+   * unresolved and is not replayed. All optional;
+   * absent means both paths are pure pass-throughs. The
    * daemon wires them ONLY when durability is on, reusing the SAME store
    * instances built at composition (one ledger, one durable store).
    */
   outwardLedger?: OutwardSendLedgerPort;
-  resolveRootRunId?: (sessionKey: SessionKey) => string;
+  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
   /**
    * Release a child session's trajectory recorder when its run settles
    * (bound to `SessionTrajectoryHandleRegistry.close` by the daemon).
-   * Absent ⇒ the runner's teardown is inert (older test wiring); without it
+   * Absent means the runner's teardown is inert; without it
    * a terminal child's recorder stays bus-subscribed for the daemon's
    * lifetime and keeps ingesting events into the dead child's trajectory.
    */
@@ -196,59 +204,82 @@ export function setupCrossSession(deps: {
     agentId: string,
     sessionKey: SessionKey,
     text: string,
+    fixedTools?: Awaited<ReturnType<typeof assembleToolsForAgent>>,
   ): Promise<{ response: string; tokensUsed: { total: number }; cost: { total: number } }> => {
-    const msg: NormalizedMessage = {
-      id: randomUUID(),
-      channelId: sessionKey.channelId,
-      channelType: "cross-session",
-      senderId: "cross-session-relay",
-      text,
-      timestamp: systemNowMs(),
-      attachments: [],
-      metadata: { crossSession: true },
+    const formattedTargetSessionKey = formatSessionKey(sessionKey);
+    const ambientContext = tryGetContext();
+    const parsedOrigin = DeliveryOriginSchema.safeParse(ambientContext?.deliveryOrigin);
+    const candidateOrigin = parsedOrigin.success ? parsedOrigin.data : undefined;
+    const targetOrigin: DeliveryOrigin | undefined = candidateOrigin !== undefined
+      && ambientContext?.tenantId === sessionKey.tenantId
+      && ambientContext.userId === sessionKey.userId
+      && ambientContext.sessionKey === formattedTargetSessionKey
+      && ambientContext.channelType === candidateOrigin.channelType
+      && candidateOrigin.tenantId === sessionKey.tenantId
+      && candidateOrigin.userId === sessionKey.userId
+      && candidateOrigin.channelId === sessionKey.channelId
+      && candidateOrigin.threadId === sessionKey.threadId
+      ? Object.freeze(candidateOrigin)
+      : undefined;
+    const targetContext: RequestContext = {
+      tenantId: sessionKey.tenantId,
+      userId: sessionKey.userId,
+      sessionKey: formattedTargetSessionKey,
+      agentId,
+      traceId: randomUUID(),
+      startedAt: deps.clock.now(),
+      trustLevel: "guest",
+      resolvedModel: undefined,
+      resolvedLanguage: undefined,
+      ...(targetOrigin !== undefined
+        ? { channelType: targetOrigin.channelType, deliveryOrigin: targetOrigin }
+        : {}),
     };
-    const tools = await assembleToolsForAgent(agentId);
-    const result = await getExecutor(agentId).execute(msg, sessionKey, tools, undefined, agentId);
-    return { response: result.response, tokensUsed: result.tokensUsed, cost: result.cost };
-  };
+    Object.defineProperties(targetContext, Object.fromEntries(
+      Object.keys(targetContext)
+        .filter((field) => field !== "resolvedModel" && field !== "resolvedLanguage")
+        .map((field) => [field, { writable: false, configurable: false }]),
+    ));
+    Object.preventExtensions(targetContext);
 
-  const sendToChannel = async (
-    channelType: string,
-    channelId: string,
-    text: string,
-    options?: DeliverToChannelOptions,
-  ): Promise<boolean> => {
-    deps.logger?.debug({
-      channelType,
-      channelId,
-      textLength: text.length,
-      hasOptions: !!options,
-    }, "sendToChannel delivery attempt");
-
-    // Gateway messages route through WebSocket push, not adapter lookup
-    if (channelType === "gateway" && deps.gatewaySend?.ref) {
-      try {
-        const ok = deps.gatewaySend.ref(channelId, text);
-        deps.logger?.debug({ channelType, channelId, success: ok, gateway: true }, "sendToChannel delivery outcome");
-        return ok;
-      } catch {
-        deps.logger?.debug({ channelType, channelId, success: false, gateway: true }, "sendToChannel delivery outcome");
-        return false;
+    return runWithContext(targetContext, async () => {
+      const msg: NormalizedMessage = {
+        id: randomUUID(),
+        channelId: sessionKey.channelId,
+        channelType: "cross-session",
+        senderId: "cross-session-relay",
+        text,
+        timestamp: systemNowMs(),
+        attachments: [],
+        metadata: { crossSession: true },
+      };
+      const tools = fixedTools ?? await assembleToolsForAgent(agentId);
+      const result = await getExecutor(agentId).execute(msg, sessionKey, tools, undefined, agentId);
+      if (result.finishReason !== "stop") {
+        // The sender already treats a rejected execute callback as a failed RPC
+        // operation. Rejecting here preserves the executor's terminal outcome
+        // instead of converting its safety/error response into `sent: true`.
+        return Promise.reject(
+          new Error(`Cross-session target execution ended with ${String(result.finishReason)}`),
+        );
       }
-    }
-    const adapter = adaptersByType.get(channelType);
-    if (!adapter) {
-      deps.logger?.debug({ channelType, channelId, success: false, gateway: false }, "sendToChannel delivery outcome: no adapter");
-      return false;
-    }
-    // Delegate to the DeliveryService method form for format + chunk + retry + events.
-    const result = await deps.deliveryService.deliverToChannel(adapter, channelId, text, options);
-    const platformDelivery = resolvePlatformDeliveryResult(result);
-    const success = platformDelivery.ok && platformDelivery.value.ok;
-    deps.logger?.debug({ channelType, channelId, success, gateway: false }, "sendToChannel delivery outcome");
-    if (!platformDelivery.ok) return false;
-    return platformDelivery.value.ok;
+      return { response: result.response, tokensUsed: result.tokensUsed, cost: result.cost };
+    });
   };
+
+  const {
+    sendToChannelWithReceipt,
+    sendToChannel,
+    sendGovernedAnnouncement,
+  } = createAnnouncementDelivery({
+    adaptersByType,
+    deliveryService: deps.deliveryService,
+    eventBus: container.eventBus,
+    ...(deps.gatewaySend ? { gatewaySend: deps.gatewaySend } : {}),
+    ...(deps.logger ? { logger: deps.logger } : {}),
+    ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
+    ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
+  });
 
   // executeSubAgent built via setup-cross-session-graph.ts.
   const executeSubAgent = buildExecuteSubAgent({
@@ -260,7 +291,7 @@ export function setupCrossSession(deps: {
     logger: deps.logger,
     // Thread the git-worktree seam + registry so a `worktree:true` child
     // runs in an isolated worktree (auto-clean-if-unchanged). Both absent ⇒ the
-    // request is honestly skipped (no git seam) — byte-identical default.
+    // request is honestly skipped when there is no git seam.
     ...(deps.worktreeGitExec ? { worktreeGitExec: deps.worktreeGitExec } : {}),
     ...(deps.worktreeRegistry ? { worktreeRegistry: deps.worktreeRegistry } : {}),
   });
@@ -276,23 +307,20 @@ export function setupCrossSession(deps: {
     sendToChannel,
     eventBus: container.eventBus,
     config: container.config.security.agentToAgent,
-    // The announce() send is routed through the
-    // SAME three-state exactly-once ledger as message.send when the durable
-    // store + a resolvable rootRunId are wired — a restart-driven re-announce of
-    // an already-committed announcement is then a no-op. Absent ⇒ pass-through.
-    ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
-    ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
-    ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
+    logger: deps.logger,
+    ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
   });
 
-  // Announce to parent session by injecting [System Message] and executing parent agent.
+  // Ask the parent agent to rewrite an announcement. The irreversible platform
+  // send remains at the receipt-aware announcement-delivery boundary.
   const announceToParent = async (
     callerAgentId: string,
     callerSessionKey: SessionKey,
     text: string,
     channelType: string,
     channelId: string,
-  ): Promise<void> => {
+    _options?: { threadId?: string },
+  ): Promise<string | undefined> => {
     deps.logger?.debug({
       callerAgentId,
       channelId: callerSessionKey.channelId,
@@ -314,7 +342,10 @@ export function setupCrossSession(deps: {
       timestamp: systemNowMs(),
     });
     try {
-      const result = await executeInSession(callerAgentId, callerSessionKey, text);
+      // Candidate rewriting is a text-only boundary. An explicit empty tool
+      // set prevents the parent execution from producing platform/tool side
+      // effects before the governed delivery decision is durable.
+      const result = await executeInSession(callerAgentId, callerSessionKey, text, []);
       const trimmed = result.response.trim();
       const isNoReply = !trimmed || trimmed === "NO_REPLY" || trimmed.startsWith("NO_REPLY");
       deps.logger?.debug({
@@ -323,13 +354,7 @@ export function setupCrossSession(deps: {
         willDeliver: !isNoReply,
         isNoReply,
       }, "announceToParent execution result");
-      if (!isNoReply) {
-        // Extract thread context from ALS delivery origin so announcements
-        // land in the correct Telegram topic / thread.
-        const ctx = tryGetContext();
-        const threadId = ctx?.deliveryOrigin?.threadId;
-        await sendToChannel(channelType, channelId, trimmed, threadId ? { threadId } : undefined);
-      }
+      return isNoReply ? undefined : trimmed;
     } finally {
       container.eventBus.emit("typing:proxy_stop", {
         runId: proxyId,
@@ -343,8 +368,7 @@ export function setupCrossSession(deps: {
   };
 
   // Dead-letter queue (created before batcher so batcher can reference it).
-  // AGENTS §2.2: paths via safePath; safePath requires absolute base; fall back to
-  // process.cwd() (not banned — only process.env + node:path's join/resolve are).
+  // safePath requires an absolute base; process.cwd() is the fallback.
   const deadLetterFilePath = safePath(container.config.dataDir || process.cwd(), "dead-letters.jsonl");
   const deadLetterQueue = createAnnouncementDeadLetterQueue({
     filePath: deadLetterFilePath,
@@ -359,6 +383,7 @@ export function setupCrossSession(deps: {
     // (the in-memory deliveredKeys set rebuilds empty on boot; the durable ledger
     // is the authoritative no-double-notify signal). Absent ⇒ at-least-once delivery.
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
+    ...(deps.outwardLedger ? { governedSendToChannel: sendToChannelWithReceipt } : {}),
   });
 
   // ONE bounded delivered-key store shared across every
@@ -376,17 +401,7 @@ export function setupCrossSession(deps: {
     logger: deps.logger?.child({ submodule: "announcement-batcher" }),
     deadLetterQueue,
     deliveryDedup,
-    // Inject the transient/permanent classifier + backoff so the
-    // batcher self-heals transient fallback failures (retry-with-backoff) and
-    // fast-paths permanent ones to the DLQ. computeRetryBackoff is an
-    // intra-package import (daemon owns it); classifyErrorContext comes from
-    // @comis/agent — both injected here so the orchestrator never imports either
-    // (no dependency inversion). The batcher only ever classifies transport
-    // errors, so endReason is bound to "failed".
-    classifyErrorContext: (msg: string) => classifyErrorContext(msg, "failed"),
-    computeRetryBackoff,
-    maxRetries: container.config.security.agentToAgent.delivery.maxRetries,
-    eventBus: container.eventBus,
+    ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
   });
 
   // Resolve condensation model via 5-level priority chain
@@ -474,6 +489,8 @@ export function setupCrossSession(deps: {
       save: (key: SessionKey, messages: unknown[], metadata: Record<string, unknown>) =>
         sessionStore.save(key, messages, metadata),
       delete: (key: SessionKey) => sessionStore.delete(key),
+      loadByFormattedKey: (formattedKey: string) =>
+        sessionStore.loadByFormattedKey(formattedKey),
     },
     executeAgent: executeSubAgent,
     sendToChannel,
@@ -513,6 +530,7 @@ export function setupCrossSession(deps: {
     lifecycleHooks,
     deadLetterQueue,
     deliveryDedup,
+    ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
     clock: deps.clock,
     timers: deps.timers,
     // The tree-wide spawn ceiling (bound to
@@ -522,7 +540,7 @@ export function setupCrossSession(deps: {
     ...(deps.releaseSpawnCeiling ? { releaseSpawnCeiling: deps.releaseSpawnCeiling } : {}),
     // The durable checkpoint store + thresholds + facts
     // resolver (the runner writes a per-root checkpoint + heartbeat). Inert when
-    // absent (the byte-identical default; the daemon wires these only when on).
+    // absent; the daemon wires these only when durability is enabled.
     ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
     ...(deps.durability ? { durability: deps.durability } : {}),
     ...(deps.durableRunFacts ? { durableRunFacts: deps.durableRunFacts } : {}),
@@ -540,5 +558,14 @@ export function setupCrossSession(deps: {
     logger: deps.logger,
   });
 
-  return { crossSessionSender, subAgentRunner, sendToChannel, announceToParent, deadLetterQueue, announcementBatcher, proxyTypingCleanup };
+  return {
+    crossSessionSender,
+    subAgentRunner,
+    sendToChannel,
+    ...(sendGovernedAnnouncement ? { sendGovernedAnnouncement } : {}),
+    announceToParent,
+    deadLetterQueue,
+    announcementBatcher,
+    proxyTypingCleanup,
+  };
 }

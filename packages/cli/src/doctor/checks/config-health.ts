@@ -7,8 +7,8 @@
  * (`config-resolve.ts`) the rest of doctor uses, so this check and the
  * gateway/channel checks can never disagree about whether the config
  * loaded. Reports repairable findings for missing or corrupt config files,
- * and names any `${VAR}` references that neither env, `~/.comis/.env`, nor
- * the encrypted secret store resolved (the usual root cause of
+ * and names any `${VAR}` references that the process environment, active
+ * data-dir `.env`, and configured store all missed (the usual root cause of
  * placeholder-shaped validation noise).
  *
  * @module
@@ -23,8 +23,7 @@ const CATEGORY = "config";
  * Doctor check: config file health.
  *
  * Checks if config files exist, can be parsed as YAML, and validate
- * against the AppConfigSchema after `${VAR}` substitution (env ->
- * ~/.comis/.env -> encrypted secret store — mirroring daemon startup).
+ * against the AppConfigSchema after daemon-equivalent `${VAR}` substitution.
  */
 export const configHealthCheck: DoctorCheck = {
   id: "config-health",
@@ -75,7 +74,7 @@ export const configHealthCheck: DoctorCheck = {
         category: CATEGORY,
         check: "Secret references",
         status: "warn",
-        message: `Unresolved secret reference(s): ${refs} — not in env, ~/.comis/.env, or the encrypted secret store`,
+        message: `Unresolved secret reference(s): ${refs} — not in the process environment, active data-dir .env, or configured secret store`,
         suggestion: "Set the variable in the environment or store it via comis secrets set",
         repairable: false,
       });

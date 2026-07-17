@@ -26,7 +26,7 @@ import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import WebSocket from "ws";
 import type { z, ZodTypeAny } from "zod";
-import { loadEnvFile, systemClearTimeout, systemGetEnv, systemSetTimeout, type ApiContract } from "@comis/core";
+import { loadEnvFile, parseConfigPaths, systemClearTimeout, systemGetEnv, systemSetTimeout, type ApiContract } from "@comis/core";
 import { offlineSecretGet } from "../util/offline-secrets-store.js";
 
 /**
@@ -116,7 +116,7 @@ function resolveEnvRef(value: string): string {
  */
 /**
  * The config file the CLI reads to discover the gateway URL/token. Honors
- * `COMIS_CONFIG_PATHS` (the first `":"`-separated entry, matching the daemon's
+ * `COMIS_CONFIG_PATHS` (the first comma-separated entry, matching the daemon's
  * own parsing) so the CLI targets the SAME daemon a non-default `COMIS_CONFIG_PATHS`
  * pointed at — e.g. a test/second daemon on another port. Falls back to the
  * standard `~/.comis/config.yaml` when unset or blank.
@@ -127,10 +127,8 @@ function resolveEnvRef(value: string): string {
  */
 export function resolveGatewayConfigPath(): string {
   const fromEnv = systemGetEnv("COMIS_CONFIG_PATHS");
-  if (fromEnv) {
-    const first = fromEnv.split(":")[0]?.trim();
-    if (first) return first;
-  }
+  const first = parseConfigPaths(fromEnv)[0];
+  if (first !== undefined) return first;
   return os.homedir() + "/.comis/config.yaml";
 }
 

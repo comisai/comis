@@ -33,7 +33,6 @@
   "dependencies": {
     "@grammyjs/auto-retry": "2.0.2",
     "@grammyjs/files": "1.2.0",
-    "@grammyjs/runner": "2.0.3",
     "@hapi/boom": "10.0.1",
     "@comis/core": "workspace:*",
     "@comis/shared": "workspace:*",

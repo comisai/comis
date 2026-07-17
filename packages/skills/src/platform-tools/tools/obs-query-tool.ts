@@ -64,6 +64,9 @@ const ObsQueryToolParams = Type.Object({
   channel_id: Type.Optional(
     Type.String({ description: "Channel identifier (for channels.get, delivery.recent)" }),
   ),
+  channel_type: Type.Optional(
+    Type.String({ description: "Channel adapter type (required with channel_id for channels.get)" }),
+  ),
   since_ms: Type.Optional(
     Type.Integer({ description: "Time filter: only include data since this epoch timestamp (ms)" }),
   ),
@@ -256,7 +259,8 @@ export function createObsQueryTool(rpcCall: RpcCall): AgentTool<typeof ObsQueryT
           }
           // subAction === "get"
           const channelId = readStringParam(p, "channel_id");
-          const result = await rpcCall("obs.channels.get", { channelId, _trustLevel: tl });
+          const channelType = readStringParam(p, "channel_type");
+          const result = await rpcCall("obs.channels.get", { channelType, channelId, _trustLevel: tl });
           return jsonResult(result);
         }
 

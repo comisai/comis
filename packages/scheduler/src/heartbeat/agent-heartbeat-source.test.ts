@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { NormalizedMessageSchema, tryGetContext } from "@comis/core";
 import type { SystemEventEntry } from "../system-events/system-event-types.js";
 import type { EffectiveHeartbeatConfig } from "./heartbeat-config.js";
 import {
@@ -160,7 +161,7 @@ describe("createAgentHeartbeatSource", () => {
     const [msg, sessionKey, tools, agentId, overrides] = executor.execute.mock.calls[0]!;
 
     // NormalizedMessage shape
-    expect(msg.id).toMatch(/^heartbeat-/);
+    expect(NormalizedMessageSchema.safeParse(msg).success).toBe(true);
     expect(msg.senderId).toBe("system");
     expect(msg.metadata.trigger).toBe("heartbeat");
     expect(msg.metadata.isScheduled).toBe(true);
@@ -174,6 +175,63 @@ describe("createAgentHeartbeatSource", () => {
       model: "claude-sonnet",
       operationType: "heartbeat",
     });
+  });
+
+  it("keeps one resolved request context through tools execution and delivery", async () => {
+    const observed: Array<ReturnType<typeof tryGetContext>> = [];
+    const execute = vi.fn(async () => {
+      observed.push(tryGetContext());
+      return {
+        response: "Alert: heartbeat requires attention.",
+        sessionKey: { tenantId: "default", userId: "heartbeat", channelId: "chat-123" },
+        tokensUsed: { input: 100, output: 50, total: 150 },
+        cost: { total: 0.001 },
+        stepsExecuted: 1,
+        llmCalls: 1,
+        finishReason: "stop",
+      };
+    });
+    const adapter = {
+      sendMessage: vi.fn(async () => {
+        observed.push(tryGetContext());
+        return { ok: true, value: "msg-id" };
+      }),
+      getStatus: vi.fn(() => ({ connected: true })),
+    };
+    const deps = createMockDeps({
+      getEffectiveConfig: vi.fn(() => mockConfig({
+        target: { channelType: "telegram", channelId: "ch-1", chatId: "chat-123", isDm: true },
+        allowDm: true,
+      })),
+      getExecutor: vi.fn(() => ({ execute })),
+      assembleToolsForAgent: vi.fn(async () => {
+        observed.push(tryGetContext());
+        return [];
+      }),
+    });
+    deps.deliveryBridge.adaptersByType = new Map([["telegram", adapter as any]]);
+
+    await createAgentHeartbeatSource(deps).onTick("agent1");
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(observed).toHaveLength(3);
+    expect(observed[0]).toBeDefined();
+    expect(observed.every((context) => context === observed[0])).toBe(true);
+    expect(observed[0]).toMatchObject({
+      agentId: "agent1",
+      tenantId: "default",
+      userId: "heartbeat",
+      sessionKey: "default:heartbeat:chat-123",
+      channelType: "telegram",
+      deliveryOrigin: {
+        channelType: "telegram",
+        channelId: "chat-123",
+        userId: "heartbeat",
+        tenantId: "default",
+      },
+    });
+    expect(Reflect.set(observed[0]!, "trustLevel", "admin")).toBe(false);
+    expect(Reflect.set(observed[0]!, "agentId", "forged-agent")).toBe(false);
   });
 
   it("skips execution when queue is busy", async () => {

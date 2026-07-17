@@ -52,5 +52,7 @@ export { runOAuthTlsPreflight } from "./oauth-tls-preflight.js";
 export type {
   TlsPreflightResult,
   TlsPreflightFailureKind,
+  TlsCertificateErrorCode,
+  TlsPreflightNetworkReason,
   RunOAuthTlsPreflightOptions,
 } from "./oauth-tls-preflight.js";

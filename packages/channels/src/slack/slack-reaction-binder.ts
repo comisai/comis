@@ -24,6 +24,7 @@
  * @module
  */
 
+import { toSafeErrorLogString } from "@comis/core";
 import type { ComisLogger, NormalizedReaction, ReactionHandler } from "@comis/core";
 
 /**
@@ -59,7 +60,7 @@ function warnHandlerFailed(logger: ComisLogger, handlerErr: unknown): void {
     {
       channelType: "slack",
       errorKind: "platform" as const,
-      err: handlerErr instanceof Error ? handlerErr : new Error(String(handlerErr)),
+      err: toSafeErrorLogString(handlerErr),
       hint: "Slack reaction handler threw; reaction dropped (non-fatal)",
     },
     "Reaction handler failed",

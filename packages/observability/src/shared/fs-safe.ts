@@ -1,43 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Symlink-safe file-append helper for diagnostic artifact writers.
+ * Symlink-safe filesystem primitives for diagnostic artifact writers.
  *
- * `appendRegularFile()` is the runtime-side primitive that the
- * `@comis/observability` writer chassis calls under the hood. It
- * guarantees three properties at the actual `open()` boundary that no
- * path-string check can guarantee on its own:
+ * The write helpers enforce three properties at the `open()` boundary:
  *
- *   1. **O_NOFOLLOW** — the kernel refuses to traverse a final
- *      component that is itself a symlink. POSIX-only flag; conditionally
- *      OR'd in via the same probe pattern as `@comis/observability`'s
- *      `resolveSafeOpenFlags`.
+ *   1. `O_NOFOLLOW` rejects a symlinked final path component.
+ *   2. Parent `lstat` rejects a symlinked immediate directory.
+ *   3. Descriptor `fchmodSync(fd, 0o600)` enforces owner-only access
+ *      without acting on a path that can be swapped after opening.
  *
- *   2. **`lstat` on the immediate parent** — refuses to write into a
- *      directory whose final component is a symlink. Catches the
- *      `evil-link → /elsewhere` case that O_NOFOLLOW alone cannot
- *      (O_NOFOLLOW only inspects the FINAL component of the path; the
- *      `dirname()` slot is opened as a regular path-walk by the kernel).
- *
- *   3. **`fchmodSync(fd, 0o600)`** — forces owner-only permissions on
- *      every successful open, even when the file already existed with
- *      wider permissions. The chmod is defensive against an earlier
- *      buggy writer that left a diagnostics file world-readable; the
- *      chmod-by-fd variant guarantees we never chmod a file that was
- *      swapped after we opened it.
- *
- * Returns `Result<{ totalBytes }, SymlinkParentRejected |
- * FileSizeLimitExceeded | Error>`. The size cap
- * (`maxFileBytes`) is optional; when set, the helper rejects an append
- * that would push the cumulative size past the cap (strict greater-than
- * — an append landing exactly at the cap is allowed).
- *
- * The implementation is intentionally synchronous (`fs.openSync` /
- * `fs.writeSync` / `fs.fstatSync`) — the observability writer chassis
- * (queued-file-writer) runs each open() inside a Promise.resolve() chain
- * so the synchronous I/O does not pin the event loop, and the open() +
- * fchmod + write + close sequence MUST be atomic w.r.t. surrounding
- * concurrent callers in the same writer (the queued promise chain
- * enforces sequencing; this helper enforces correctness of each step).
+ * Optional real-path confinement closes ancestor-symlink escapes, and
+ * optional byte caps bound reads and appends. Callers serialize these
+ * synchronous descriptor operations when concurrent writes are possible.
  *
  * @module
  */
@@ -46,7 +20,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { safePath } from "@comis/core";
-import { ok, err, isFsyncDisabledByPermissionModel, type Result } from "@comis/shared";
+import {
+  ok,
+  err,
+  tryCatch,
+  isFsyncDisabledByPermissionModel,
+  type Result,
+} from "@comis/shared";
 
 /**
  * Returned when the immediate parent of the target is a symbolic link.
@@ -69,19 +49,9 @@ export class SymlinkParentRejected extends Error {
 }
 
 /**
- * Returned when the resolved real path of the target (or its parent
- * when the target doesn't yet exist) escapes the configured
- * `confinedBaseDir`.
- *
- * The existing `SymlinkParentRejected` check only `lstat`s the IMMEDIATE
- * parent — an attacker controlling a grandparent (or any higher ancestor)
- * can pre-stage a symlink there which the kernel follows during normal
- * path-walk (O_NOFOLLOW inspects only the final component). When the
- * caller supplies `confinedBaseDir`, the helpers run
- * `fs.realpathSync(target_or_parent)` and assert the resolved path is
- * inside `fs.realpathSync(confinedBaseDir)`, closing the ancestor gap.
- * The option is opt-in so non-observability callers that write outside
- * `~/.comis/` continue to work.
+ * Returned when a target's resolved path escapes `confinedBaseDir`.
+ * Resolving the target or its parent closes the ancestor-symlink gap that
+ * final-component `O_NOFOLLOW` and immediate-parent `lstat` cannot cover.
  */
 export class PathEscapesConfinementError extends Error {
   public readonly name = "PathEscapesConfinementError" as const;
@@ -141,20 +111,25 @@ export interface AppendRegularFileOptions {
   /** Maximum cumulative file size (bytes); omit for no cap. */
   readonly maxFileBytes?: number;
   /**
-   * Opt-in real-path confinement base.
-   *
-   * When supplied, after the existing parent-`lstat` check passes the
-   * helper runs `fs.realpathSync` on `target` (or its parent when the
-   * target doesn't yet exist) and on `confinedBaseDir`, then asserts
-   * the resolved target stays inside the resolved base. Returns
-   * `PathEscapesConfinementError` on mismatch.
-   *
-   * The option closes the ancestor-symlink gap that O_NOFOLLOW +
-   * parent-`lstat` together do NOT cover. Observability callers pass
-   * `~/.comis/` here; non-observability callers (daemon scratchpads,
-   * etc.) may legitimately omit it.
+   * Optional resolved-path confinement base. A target outside the resolved
+   * base returns `PathEscapesConfinementError`.
    */
   readonly confinedBaseDir?: string;
+  /**
+   * Opt in to truncating the descriptor back to its pre-append size when a
+   * short write is followed by an error. This is safe only while the caller
+   * holds exclusive ownership of the file for the complete call; otherwise a
+   * rollback could remove another writer's bytes. Ordinary append callers
+   * therefore remain non-transactional by default.
+   */
+  readonly rollbackOnError?: "caller-holds-exclusive-lock";
+  /**
+   * Remove an incomplete final line before appending. Safe only while the
+   * caller owns the complete file through an exclusive lock.
+   */
+  readonly repairIncompleteFinalLine?: "caller-holds-exclusive-lock";
+  /** Flush appended bytes to the backing file before reporting success. */
+  readonly fsyncBeforeSuccess?: true;
 }
 
 /** Result payload on success — total size of the file post-append. */
@@ -172,28 +147,11 @@ export type AppendRegularFileError =
  * Assert `target`'s resolved real path stays inside `confinedBaseDir`'s
  * resolved real path.
  *
- * Behaviour:
- *   - `fs.realpathSync(confinedBaseDir)` — must exist (callers pass
- *     `~/.comis/` which is always pre-created by the daemon bootstrap).
- *   - `fs.realpathSync(target)` — when `target` doesn't yet exist
- *     (the typical first-write case for append), the ENOENT path
- *     resolves the parent and joins the basename. Other errors
- *     propagate to the caller's outer try/catch which converts to
- *     `Result.err`.
- *   - Boundary safety: matches `resolvedBase === resolvedTarget` OR
- *     `resolvedTarget.startsWith(resolvedBase + path.sep)`. The
- *     `+ path.sep` guard prevents a sibling-prefix path like
- *     `/tmp/base-evil/x` from sneaking past a naive `startsWith(base)`.
- *
- * Returns the rejection error when the check fails, `undefined` on
- * pass. Caller wraps in a `Result.err(...)` at the call site.
+ * A missing target resolves through its parent. The separator-aware prefix
+ * check rejects sibling paths that merely share the base path's text prefix.
  *
  * @allow-throw: helper throws unexpected fs errors (non-ENOENT realpath)
- *   for the caller's outer try/catch to convert to `Result.err`. The
- *   surrounding callers (`appendRegularFile` step 1b, `writeRegularFile`
- *   step 1b) already wrap this in a try/catch that returns
- *   `Result.err`, preserving the package-wide Result invariant at the
- *   public boundary.
+ *   for each public caller to convert to `Result.err`.
  */
 function assertConfinedPath(
   target: string,
@@ -205,13 +163,8 @@ function assertConfinedPath(
     targetResolved = fs.realpathSync(target);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      // Target doesn't exist yet (first-write case). Resolve the parent
-      // and join the basename — the ENOENT path can still surface an
-      // escaping ancestor symlink via the parent's realpath. We use
-      // `safePath(parentResolved, basename)` to satisfy the workspace
-      // safePath rule; the basename is a single non-traversal segment
-      // so the safePath check trivially passes (and ENOENT inside its
-      // symlink-walk is swallowed — the target doesn't exist yet).
+      // Resolve a missing target through its real parent; safePath validates
+      // the basename as a single confined segment.
       const parentResolved = fs.realpathSync(path.dirname(target));
       targetResolved = safePath(parentResolved, path.basename(target));
     } else {
@@ -231,13 +184,39 @@ function assertConfinedPath(
 }
 
 /** O_NOFOLLOW probe — POSIX-only constant, undefined on Windows. */
-function resolveOpenFlags(): number {
-  let flags = fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_WRONLY;
+function resolveOpenFlags(readable: boolean): number {
+  let flags = fs.constants.O_APPEND | fs.constants.O_CREAT |
+    (readable ? fs.constants.O_RDWR : fs.constants.O_WRONLY);
   const nofollow = (fs.constants as Record<string, number | undefined>)[
     "O_NOFOLLOW"
   ];
   if (typeof nofollow === "number") flags |= nofollow;
   return flags;
+}
+
+/** Truncate bytes after the last complete newline-delimited record. */
+function repairIncompleteFinalLine(fd: number, currentSize: number): number {
+  if (currentSize === 0) return 0;
+  const finalByte = Buffer.allocUnsafe(1);
+  fs.readSync(fd, finalByte, 0, 1, currentSize - 1);
+  if (finalByte[0] === 0x0a) return currentSize;
+
+  const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, currentSize));
+  let end = currentSize;
+  while (end > 0) {
+    const start = Math.max(0, end - chunk.length);
+    const length = end - start;
+    fs.readSync(fd, chunk, 0, length, start);
+    for (let index = length - 1; index >= 0; index -= 1) {
+      if (chunk[index] !== 0x0a) continue;
+      const repairedSize = start + index + 1;
+      fs.ftruncateSync(fd, repairedSize);
+      return repairedSize;
+    }
+    end = start;
+  }
+  fs.ftruncateSync(fd, 0);
+  return 0;
 }
 
 /** Resolve read-only flags with conditional O_NOFOLLOW. */
@@ -255,9 +234,34 @@ function resolveReadOpenFlags(): number {
 }
 
 /**
+ * Persist the complete buffer while honoring each short write's next offset.
+ * An error after a short write can leave a prefix on disk; success guarantees
+ * the whole buffer, while failure cannot roll back bytes already persisted.
+ */
+function writeBufferFully(fd: number, buffer: Buffer): Result<void, Error> {
+  let writtenBytes = 0;
+  while (writtenBytes < buffer.length) {
+    const remainingBytes = buffer.length - writtenBytes;
+    const writeResult = tryCatch(() =>
+      fs.writeSync(fd, buffer, writtenBytes, remainingBytes),
+    );
+    if (!writeResult.ok) return writeResult;
+    if (writeResult.value <= 0) {
+      return err(
+        new Error(
+          "File write made no forward progress before all content was persisted",
+        ),
+      );
+    }
+    writtenBytes += writeResult.value;
+  }
+  return ok(undefined);
+}
+
+/**
  * Append `content` to `path` under symlink-safe semantics.
  *
- * Steps (all-or-nothing — fd is closed in every exit path):
+ * Steps (the fd is closed in every exit path):
  *   1. `lstat` the immediate parent; reject `SymlinkParentRejected`
  *      when it's a symlink.
  *   2. `openSync` with `O_APPEND | O_CREAT | O_WRONLY | O_NOFOLLOW`,
@@ -266,7 +270,8 @@ function resolveReadOpenFlags(): number {
  *   4. `fstatSync(fd)` — read current size. If `maxFileBytes` is set
  *      and `current + content > max`, close fd and return
  *      `FileSizeLimitExceeded`.
- *   5. `writeSync(fd, contentBuffer)`.
+ *   5. Repeat `writeSync` until every byte is persisted; reject a
+ *      zero-byte write because it cannot make forward progress.
  *   6. `closeSync(fd)`.
  *   7. Return `ok({ totalBytes })`.
  *
@@ -296,8 +301,8 @@ export function appendRegularFile(
 
   // Step 1b: opt-in confinement-base check. Closes the ancestor-symlink
   // gap that step 1 misses (lstat only inspects the immediate parent).
-  // When `confinedBaseDir` is undefined the check is skipped —
-  // back-compat for non-observability callers.
+  // Omission deliberately leaves confinement disabled for callers whose
+  // targets do not live below one managed base directory.
   if (options.confinedBaseDir !== undefined) {
     try {
       const rejection = assertConfinedPath(target, options.confinedBaseDir);
@@ -309,8 +314,26 @@ export function appendRegularFile(
 
   // Step 2: open under symlink-safe flags.
   let fd: number;
+  let initialSize: number | undefined;
+  const rollback = (cause: Error): Error => {
+    if (
+      options.rollbackOnError !== "caller-holds-exclusive-lock" ||
+      initialSize === undefined
+    ) return cause;
+    const rollbackResult = tryCatch(() => fs.ftruncateSync(fd, initialSize));
+    if (rollbackResult.ok) return cause;
+    return new AggregateError(
+      [cause, rollbackResult.error],
+      "Append failed and the partial-write rollback also failed",
+    );
+  };
+
   try {
-    fd = fs.openSync(target, resolveOpenFlags(), 0o600);
+    fd = fs.openSync(
+      target,
+      resolveOpenFlags(options.repairIncompleteFinalLine !== undefined),
+      0o600,
+    );
   } catch (e) {
     return err(e instanceof Error ? e : new Error(String(e)));
   }
@@ -327,7 +350,11 @@ export function appendRegularFile(
 
     // Step 4: size-cap check.
     const stat = fs.fstatSync(fd);
-    const projected = stat.size + buf.length;
+    const repairedSize = options.repairIncompleteFinalLine === "caller-holds-exclusive-lock"
+      ? repairIncompleteFinalLine(fd, stat.size)
+      : stat.size;
+    initialSize = repairedSize;
+    const projected = repairedSize + buf.length;
     if (
       typeof options.maxFileBytes === "number" &&
       projected > options.maxFileBytes
@@ -335,15 +362,27 @@ export function appendRegularFile(
       return err(new FileSizeLimitExceeded(projected, options.maxFileBytes));
     }
 
-    // Step 5: write.
-    fs.writeSync(fd, buf);
+    // Step 5: write every byte. Synchronous writes may legally complete
+    // only part of the requested buffer, so the shared helper advances by
+    // each returned byte count and rejects a write that cannot make progress.
+    const writeResult = writeBufferFully(fd, buf);
+    if (!writeResult.ok) return err(rollback(writeResult.error));
+
+    if (options.fsyncBeforeSuccess === true) {
+      try {
+        fs.fsyncSync(fd);
+      } catch (syncError) {
+        if (!isFsyncDisabledByPermissionModel(syncError)) throw syncError;
+      }
+    }
 
     // Step 6: re-stat for the new total (post-write).
     const newSize = fs.fstatSync(fd).size;
 
     return ok({ totalBytes: newSize });
   } catch (e) {
-    return err(e instanceof Error ? e : new Error(String(e)));
+    const cause = e instanceof Error ? e : new Error(String(e));
+    return err(rollback(cause));
   } finally {
     // Step 7: always close the fd, even on error.
     try {
@@ -495,6 +534,8 @@ export interface WriteRegularFileOptions {
    * may legitimately omit it.
    */
   readonly confinedBaseDir?: string;
+  /** Flush written bytes to the backing file before reporting success. */
+  readonly fsyncBeforeSuccess?: true;
 }
 
 /** Result payload on success — total size of the file post-write. */
@@ -523,7 +564,7 @@ function resolveWriteOpenFlags(useExcl: boolean): number {
 /**
  * Write-truncate `content` to `path` under symlink-safe semantics.
  *
- * Steps (all-or-nothing — fd is closed in every exit path):
+ * Steps (the fd is closed in every exit path):
  *   1. `lstat` the immediate parent; reject `SymlinkParentRejected`
  *      when it's a symlink.
  *   2. If `unlinkExisting !== false` (default true): `unlinkSync(path)`;
@@ -534,10 +575,12 @@ function resolveWriteOpenFlags(useExcl: boolean): number {
  *      TOCTOU race re-creation; O_TRUNC handles the explicit non-unlink
  *      truncate case.
  *   4. `fchmodSync(fd, 0o600)` — defensive owner-only enforcement.
- *   5. `writeSync(fd, contentBuffer)`.
- *   6. `fstatSync(fd)` — read final size.
- *   7. `closeSync(fd)`.
- *   8. Return `ok({ totalBytes })`.
+ *   5. Repeat `writeSync` until every byte is persisted; reject a
+ *      zero-byte write because it cannot make forward progress.
+ *   6. Optionally `fsyncSync(fd)` before success.
+ *   7. `fstatSync(fd)` — read final size.
+ *   8. `closeSync(fd)`.
+ *   9. Return `ok({ totalBytes })`.
  *
  * @param options - target path, content, optional unlinkExisting flag
  * @returns Result with `{ totalBytes }` on success, or one of the
@@ -567,7 +610,8 @@ export function writeRegularFile(
   // Step 1b: opt-in confinement-base check. Mirrors the same gate
   // added to `appendRegularFile`. Closes the ancestor-symlink gap that
   // step 1 misses (lstat only inspects the immediate parent).
-  // Back-compat: when `confinedBaseDir` is undefined the check is skipped.
+  // Omission deliberately leaves confinement disabled for callers whose
+  // targets do not live below one managed base directory.
   if (options.confinedBaseDir !== undefined) {
     try {
       const rejection = assertConfinedPath(target, options.confinedBaseDir);
@@ -608,17 +652,27 @@ export function writeRegularFile(
       if (!isFsyncDisabledByPermissionModel(chmodErr)) throw chmodErr;
     }
 
-    // Step 5: write.
-    fs.writeSync(fd, buf);
+    // Step 5: write every byte, advancing the buffer offset after a short
+    // write and rejecting a zero-byte write instead of spinning forever.
+    const writeResult = writeBufferFully(fd, buf);
+    if (!writeResult.ok) return writeResult;
 
-    // Step 6: re-stat for the final total.
+    if (options.fsyncBeforeSuccess === true) {
+      try {
+        fs.fsyncSync(fd);
+      } catch (syncError) {
+        if (!isFsyncDisabledByPermissionModel(syncError)) throw syncError;
+      }
+    }
+
+    // Step 7: re-stat for the final total.
     const finalSize = fs.fstatSync(fd).size;
 
     return ok({ totalBytes: finalSize });
   } catch (e) {
     return err(e instanceof Error ? e : new Error(String(e)));
   } finally {
-    // Step 7: always close the fd.
+    // Step 8: always close the fd.
     try {
       fs.closeSync(fd);
     } catch {
@@ -628,15 +682,7 @@ export function writeRegularFile(
 }
 
 // ---------------------------------------------------------------------------
-// ensureContainedDir — shared substrate primitive for parent-dir creation
-// + defensive chmod.
-//
-// Replaces the open-coded `mkdir + lstat-gated chmod` pattern duplicated
-// across `queued-file-writer.ts:ensureParentDir` and
-// `config-audit/append.ts:ensureConfigAuditParentDir`. The migration
-// routes ~10 sibling writers through this helper so every artifact-dir
-// under `~/.comis/` honors the `0o700` invariant via ONE canonical
-// primitive.
+// ensureContainedDir — confined parent creation with defensive chmod.
 // ---------------------------------------------------------------------------
 
 /** Options for `ensureContainedDir`. */

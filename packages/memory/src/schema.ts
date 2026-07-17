@@ -9,6 +9,7 @@
  */
 import type Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
+import { z } from "zod";
 import { ensureLcdTables } from "./schema-lcd.js";
 import { ensurePinnedColumn } from "./schema-pinned.js";
 import { ensureVideoJobTable } from "./schema-video-jobs.js";
@@ -20,9 +21,13 @@ import { ensureMentalModelsTable } from "./schema-mental-models.js";
 import { reconcileVecTableDimension, type VecTableRebuild } from "./vec-dimension.js";
 import { ensureUsefulnessFailureColumn } from "./schema-usefulness.js";
 import { ensureObsTokenColumns, ensureObsAuditTable } from "./schema-obs-token.js";
+import { ensureObsDeliveryColumns } from "./schema-obs-delivery.js";
+import { requireTableInfoRows } from "./schema-introspection.js";
+import { createRowMapper } from "./sqlite-row-mapper.js";
 
 /** Module-level flag tracking whether sqlite-vec loaded successfully. */
 let vecAvailable = false;
+const vecVersionMapper = createRowMapper(z.strictObject({ v: z.string() }));
 
 /**
  * Check whether the sqlite-vec extension was loaded successfully
@@ -51,9 +56,10 @@ export function isVecAvailable(): boolean {
  * @param db - An open better-sqlite3 Database whose `memories` table already exists.
  */
 export function ensureMemoryColumns(db: Database.Database): void {
-  // Object-literal cast (the vec_version() probe style below); the untyped-sqlite rule targets `as Foo[]`, not an object-literal cast.
   const cols = new Set(
-    (db.prepare(`PRAGMA table_info(memories)`).all() as { name: string }[]).map((r) => r.name),
+    requireTableInfoRows(db.prepare(`PRAGMA table_info(memories)`).all(), "memories").map(
+      (row) => row.name,
+    ),
   );
   // Nullable add → O(1), no table rewrite, no destructive rewrite.
   if (!cols.has("occurred_at")) db.exec(`ALTER TABLE memories ADD COLUMN occurred_at INTEGER`);
@@ -187,9 +193,11 @@ export function ensureUsefulnessTable(db: Database.Database): void {
       PRIMARY KEY (tenant_id, agent_id, memory_id, intent)
     );
   `);
-  // Detect a pre-intent (or partially-migrated) table by its PK shape (`pk>0` marks a
-  // PK member). The object-literal cast is the sanctioned PRAGMA idiom, NOT `as Foo[]`.
-  const tableInfo = db.prepare(`PRAGMA table_info(memory_usefulness)`).all() as { name: string; pk: number }[];
+  // Detect a table that still lacks `intent` in its primary-key shape.
+  const tableInfo = requireTableInfoRows(
+    db.prepare(`PRAGMA table_info(memory_usefulness)`).all(),
+    "memory_usefulness",
+  );
   const pkHasIntent = tableInfo.some((c) => c.pk > 0 && c.name === "intent");
   if (!pkHasIntent) {
     // EXISTING (pre-intent) DB: REBUILD to genuinely widen the PK to 4-col (ADD COLUMN
@@ -387,7 +395,10 @@ export function initSchema(
   try {
     sqliteVec.load(db);
     // Verify the extension actually works
-    const row = db.prepare("SELECT vec_version() as v").get() as { v: string } | undefined;
+    const parsed = vecVersionMapper.parseOptionalRow(
+      db.prepare("SELECT vec_version() as v").get(),
+    );
+    const row = parsed.ok ? parsed.value : undefined;
     if (row) {
       localVecAvailable = true;
     }
@@ -530,7 +541,7 @@ export function initSchema(
   ensurePinnedColumn(db); // pinned-memory column + partial index (forward-only)
   ensureVideoJobTable(db); // durable async video-job store
   ensureDurableRunTable(db); // durable run checkpoint store
-  ensureOutwardLedgerTable(db); // exactly-once outward send ledger
+  ensureOutwardLedgerTable(db); // outward-send duplicate-suppression and uncertainty ledger
   ensureMsTeamsConversationTable(db); // conversation-id → routing-tuple map (proactive send)
   ensureOutcomeEventsTable(db); // outcome_events ledger — no FK, (tenant,agent)-scoped
   const mentalModels = ensureMentalModelsTable(db, embeddingDimensions, localVecAvailable); // mental_models doc store + FTS/vec/trigram twins (generalized from the learned_skills store) — trust CHECK IN ('learned'), (tenant,agent)-scoped; copies a pre-existing learned_skills table forward as kind='skill'
@@ -607,6 +618,8 @@ export function initSchema(
       status TEXT NOT NULL,
       latency_ms INTEGER NOT NULL,
       error_message TEXT DEFAULT '',
+      failure_stage TEXT,
+      error_kind TEXT,
       message_preview TEXT DEFAULT '',
       tool_calls INTEGER,
       llm_calls INTEGER,
@@ -636,7 +649,7 @@ export function initSchema(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       timestamp INTEGER NOT NULL,
       channel_type TEXT NOT NULL,
-      channel_id TEXT DEFAULT '',
+      channel_id TEXT NOT NULL,
       status TEXT NOT NULL,
       messages_sent INTEGER DEFAULT 0,
       messages_received INTEGER DEFAULT 0,
@@ -644,6 +657,7 @@ export function initSchema(
     );
     CREATE INDEX IF NOT EXISTS idx_obs_channel_timestamp ON obs_channel_snapshots(timestamp);
     CREATE INDEX IF NOT EXISTS idx_obs_channel_type ON obs_channel_snapshots(channel_type, timestamp);
+    CREATE INDEX IF NOT EXISTS idx_obs_channel_identity_latest ON obs_channel_snapshots(channel_type, channel_id, timestamp, id);
 
     -- SystemPromptReport persistence.
     -- Full JSON payload stored after sanitizeForPersistence pipeline.
@@ -665,6 +679,7 @@ export function initSchema(
     CREATE INDEX IF NOT EXISTS idx_spr_session
       ON system_prompt_reports(agent_id, session_id, generated_at);
   `);
+  ensureObsDeliveryColumns(db);
 
   // --- Delivery queue table ---
   db.exec(`

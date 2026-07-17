@@ -23,35 +23,87 @@ import { existsSync } from "node:fs";
 import type { DoctorCheck, DoctorFinding } from "../types.js";
 
 const CATEGORY = "lcd";
+const REQUIRED_LCD_TABLES = [
+  "lcd_messages",
+  "lcd_summaries",
+  "lcd_summary_parents",
+  "lcd_context_items",
+  "lcd_ingest_cursor",
+] as const;
+
+function scanRequiredSchema(db: Database.Database): DoctorFinding[] {
+  const rows = db.prepare(`
+    SELECT name FROM sqlite_master
+    WHERE type = 'table' AND name IN (
+      'lcd_messages',
+      'lcd_summaries',
+      'lcd_summary_parents',
+      'lcd_context_items',
+      'lcd_ingest_cursor'
+    )
+  `).all() as Array<{ name: string }>;
+  const present = new Set(rows.map((row) => row.name));
+  const missing = REQUIRED_LCD_TABLES.filter((table) => !present.has(table));
+  if (missing.length === 0) return [];
+  return [{
+    category: CATEGORY,
+    check: "LCD schema",
+    status: "fail",
+    message: `LCD schema initialization is incomplete; missing table(s): ${missing.join(", ")}`,
+    suggestion: "Restart the daemon to initialize the LCD schema, then rerun comis doctor",
+    repairable: false,
+  }];
+}
 
 // ── Scan class 1: orphaned lcd_summaries ────────────────────────────────────
 
 /**
- * Detect lcd_summaries rows with no matching lcd_context_items entry.
+ * Detect lcd_summaries rows that are not reachable from a same-scope active
+ * context root through same-scope condensed-summary edges.
  *
- * An orphaned summary was compacted but never linked into the model-facing
- * context view — it wastes storage and indicates a partial write.
+ * Condensation intentionally removes child summaries from the model-facing
+ * context while retaining them behind `lcd_summary_parents` for losslessness.
+ * An edge below an unreachable parent does not make its child reachable.
  */
 function scanOrphanedSummaries(db: Database.Database): DoctorFinding[] {
-  const rows = db
+  const row = db
     .prepare(`
-      SELECT summary_id FROM lcd_summaries s
-      WHERE NOT EXISTS (
-        SELECT 1 FROM lcd_context_items ci
-        WHERE ci.ref_id = s.summary_id AND ci.ref_kind = 'summary'
-      ) LIMIT 50
+      WITH RECURSIVE reachable(summary_id, conversation_id, tenant_id, agent_id) AS (
+        SELECT DISTINCT s.summary_id, s.conversation_id, s.tenant_id, s.agent_id
+        FROM lcd_summaries s
+        JOIN lcd_context_items ci
+          ON ci.ref_kind = 'summary'
+         AND ci.ref_id = s.summary_id
+         AND ci.conversation_id = s.conversation_id
+         AND ci.tenant_id = s.tenant_id
+         AND ci.agent_id = s.agent_id
+        UNION
+        SELECT child.summary_id, child.conversation_id, child.tenant_id, child.agent_id
+        FROM reachable parent
+        JOIN lcd_summary_parents sp ON sp.parent_summary_id = parent.summary_id
+        JOIN lcd_summaries child
+          ON child.summary_id = sp.child_summary_id
+         AND child.conversation_id = parent.conversation_id
+         AND child.tenant_id = parent.tenant_id
+         AND child.agent_id = parent.agent_id
+      )
+      SELECT COUNT(*) AS c
+      FROM lcd_summaries s
+      WHERE NOT EXISTS (SELECT 1 FROM reachable r WHERE r.summary_id = s.summary_id)
     `)
-    .all() as Array<{ summary_id: string }>;
+    .get() as { c: number } | undefined;
 
-  if (rows.length === 0) return [];
+  const count = row?.c ?? 0;
+  if (count === 0) return [];
 
   return [
     {
       category: CATEGORY,
       check: "Orphaned summaries",
       status: "warn",
-      message: `${rows.length} orphaned lcd_summaries found (errorKind: lcd_orphaned_summary)`,
-      suggestion: "Run lcd compaction repair or rebuild the context-item view",
+      message: `${count} orphaned lcd_summaries found (errorKind: lcd_orphaned_summary)`,
+      suggestion:
+        "Inspect the LCD write transaction; every summary must be reachable from a same-scope active context root",
       repairable: false,
     },
   ];
@@ -67,25 +119,38 @@ function scanOrphanedSummaries(db: Database.Database): DoctorFinding[] {
  * never-written record — the assembler will fail silently on that turn.
  */
 function scanDanglingRefs(db: Database.Database): DoctorFinding[] {
-  const rows = db
+  const row = db
     .prepare(`
-      SELECT ci.id, ci.ref_kind, ci.ref_id FROM lcd_context_items ci
+      SELECT COUNT(*) AS c FROM lcd_context_items ci
       WHERE (ci.ref_kind = 'message'
-             AND NOT EXISTS (SELECT 1 FROM lcd_messages m WHERE m.id = ci.ref_id))
+             AND NOT EXISTS (
+               SELECT 1 FROM lcd_messages m
+               WHERE m.id = ci.ref_id
+                 AND m.conversation_id = ci.conversation_id
+                 AND m.tenant_id = ci.tenant_id
+                 AND m.agent_id = ci.agent_id
+             ))
          OR (ci.ref_kind = 'summary'
-             AND NOT EXISTS (SELECT 1 FROM lcd_summaries s WHERE s.summary_id = ci.ref_id))
-      LIMIT 50
+             AND NOT EXISTS (
+               SELECT 1 FROM lcd_summaries s
+               WHERE s.summary_id = ci.ref_id
+                 AND s.conversation_id = ci.conversation_id
+                 AND s.tenant_id = ci.tenant_id
+                 AND s.agent_id = ci.agent_id
+             ))
     `)
-    .all() as Array<{ id: string; ref_kind: string; ref_id: string }>;
+    .get() as { c: number } | undefined;
 
-  if (rows.length === 0) return [];
+  const count = row?.c ?? 0;
+  if (count === 0) return [];
+  const label = count === 1 ? "ref" : "refs";
 
   return [
     {
       category: CATEGORY,
       check: "Dangling context refs",
       status: "warn",
-      message: `${rows.length} dangling context_items refs found`,
+      message: `${count} dangling context_items ${label} found`,
       suggestion: "Run lcd context-item repair to remove stale refs",
       repairable: true,
     },
@@ -97,27 +162,78 @@ function scanDanglingRefs(db: Database.Database): DoctorFinding[] {
 /**
  * Detect lcd_summaries with fallback=1.
  *
- * A fallback marker indicates the model used deterministic truncation
- * rather than an LLM summary — quality debt that accumulates silently.
+ * A fallback marker indicates deterministic emergency truncation was used
+ * after summarization failed to produce a smaller result. Child rows remain in
+ * the DAG permanently even after a later condensed summary replaces their
+ * context refs, so report active roots, reachable ancestry, and unreachable
+ * rows separately.
  */
 function scanFallbackMarkers(db: Database.Database): DoctorFinding[] {
   const row = db
-    .prepare(`SELECT COUNT(*) AS c FROM lcd_summaries WHERE fallback = 1`)
-    .get() as { c: number } | undefined;
+    .prepare(`
+      WITH RECURSIVE
+      active_roots(summary_id, conversation_id, tenant_id, agent_id) AS (
+        SELECT DISTINCT s.summary_id, s.conversation_id, s.tenant_id, s.agent_id
+        FROM lcd_summaries s
+        JOIN lcd_context_items ci
+          ON ci.ref_kind = 'summary'
+         AND ci.ref_id = s.summary_id
+         AND ci.conversation_id = s.conversation_id
+         AND ci.tenant_id = s.tenant_id
+         AND ci.agent_id = s.agent_id
+      ),
+      reachable(summary_id, conversation_id, tenant_id, agent_id) AS (
+        SELECT summary_id, conversation_id, tenant_id, agent_id FROM active_roots
+        UNION
+        SELECT child.summary_id, child.conversation_id, child.tenant_id, child.agent_id
+        FROM reachable parent
+        JOIN lcd_summary_parents sp ON sp.parent_summary_id = parent.summary_id
+        JOIN lcd_summaries child
+          ON child.summary_id = sp.child_summary_id
+         AND child.conversation_id = parent.conversation_id
+         AND child.tenant_id = parent.tenant_id
+         AND child.agent_id = parent.agent_id
+      )
+      SELECT
+        COUNT(*) AS total,
+        COALESCE(SUM(CASE WHEN EXISTS (
+          SELECT 1 FROM active_roots root WHERE root.summary_id = s.summary_id
+        ) THEN 1 ELSE 0 END), 0) AS active,
+        COALESCE(SUM(CASE WHEN NOT EXISTS (
+          SELECT 1 FROM active_roots root WHERE root.summary_id = s.summary_id
+        ) AND EXISTS (
+          SELECT 1 FROM reachable r WHERE r.summary_id = s.summary_id
+        ) THEN 1 ELSE 0 END), 0) AS reachable_ancestor,
+        COALESCE(SUM(CASE WHEN NOT EXISTS (
+          SELECT 1 FROM reachable r WHERE r.summary_id = s.summary_id
+        ) THEN 1 ELSE 0 END), 0) AS unlinked
+      FROM lcd_summaries s
+      WHERE s.fallback = 1
+    `)
+    .get() as { total: number; active: number; reachable_ancestor: number; unlinked: number } | undefined;
 
-  const c = row?.c ?? 0;
-  if (c === 0) return [];
+  const total = row?.total ?? 0;
+  if (total === 0) return [];
+
+  const active = row?.active ?? 0;
+  const reachableAncestor = row?.reachable_ancestor ?? 0;
+  const unlinked = row?.unlinked ?? 0;
+  const activeLabel = active === 1 ? "root" : "roots";
+  const ancestorLabel = reachableAncestor === 1 ? "ancestor" : "ancestors";
 
   return [
     {
       category: CATEGORY,
       check: "Fallback summaries",
       status: "warn",
-      message: `${c} fallback-marker lcd_summaries (quality debt — model truncated without LLM)`,
+      message:
+        `${total} fallback-marker lcd_summaries ` +
+        `(${active} active ${activeLabel}, ${reachableAncestor} reachable ${ancestorLabel}, ${unlinked} unreachable); ` +
+        "deterministic emergency truncation was used after summarization failed to produce a smaller result",
       suggestion:
-        "Fallback summaries are re-summarized by the daemon during normal compaction. " +
-        "No offline repair is possible (requires the LLM summarizer, which is unavailable " +
-        "when the daemon is stopped). Run the daemon to allow normal compaction to replace them.",
+        "Fallback markers are immutable DAG history; normal compaction may nest them but does not rewrite them. " +
+        "Inspect summarizer provider failures and compaction budgets to prevent new markers; " +
+        "underlying messages remain available through LCD retrieval.",
       repairable: false,
     },
   ];
@@ -184,24 +300,42 @@ function scanScopeAnomalies(db: Database.Database): DoctorFinding[] {
     .prepare(`
       SELECT
         (SELECT COUNT(*) FROM lcd_messages WHERE tenant_id IS NULL OR agent_id IS NULL) AS msg_nulls,
-        (SELECT COUNT(*) FROM lcd_summaries WHERE tenant_id IS NULL OR agent_id IS NULL) AS sum_nulls
+        (SELECT COUNT(*) FROM lcd_summaries WHERE tenant_id IS NULL OR agent_id IS NULL) AS sum_nulls,
+        (SELECT COUNT(*)
+         FROM lcd_summary_parents sp
+         JOIN lcd_summaries parent ON parent.summary_id = sp.parent_summary_id
+         JOIN lcd_summaries child ON child.summary_id = sp.child_summary_id
+         WHERE parent.conversation_id <> child.conversation_id
+            OR parent.tenant_id <> child.tenant_id
+            OR parent.agent_id <> child.agent_id) AS edge_scope_mismatches
     `)
-    .get() as { msg_nulls: number; sum_nulls: number } | undefined;
+    .get() as { msg_nulls: number; sum_nulls: number; edge_scope_mismatches: number } | undefined;
 
   const msgNulls = row?.msg_nulls ?? 0;
   const sumNulls = row?.sum_nulls ?? 0;
+  const edgeScopeMismatches = row?.edge_scope_mismatches ?? 0;
 
-  if (msgNulls + sumNulls === 0) return [];
+  if (msgNulls + sumNulls + edgeScopeMismatches === 0) return [];
 
   const messageLabel = msgNulls === 1 ? "message" : "messages";
   const summaryLabel = sumNulls === 1 ? "summary" : "summaries";
+
+  const missingScopeMessage =
+    `LCD scope integrity failure: ${msgNulls} ${messageLabel} + ${sumNulls} ${summaryLabel} ` +
+    "have a missing tenant_id or agent_id";
+  const edgeLabel = edgeScopeMismatches === 1 ? "edge" : "edges";
+  const message = edgeScopeMismatches === 0
+    ? missingScopeMessage
+    : msgNulls + sumNulls === 0
+      ? `LCD scope integrity failure: ${edgeScopeMismatches} cross-scope summary ${edgeLabel}`
+      : `${missingScopeMessage}; ${edgeScopeMismatches} cross-scope summary ${edgeLabel}`;
 
   return [
     {
       category: CATEGORY,
       check: "LCD scope integrity",
       status: "fail",
-      message: `LCD scope integrity failure: ${msgNulls} ${messageLabel} + ${sumNulls} ${summaryLabel} have a missing tenant_id or agent_id`,
+      message,
       suggestion: "Investigate write paths that omit tenant_id/agent_id scoping",
       repairable: false,
     },
@@ -226,9 +360,9 @@ function scanScopeAnomalies(db: Database.Database): DoctorFinding[] {
  * Content-free: counts only.
  */
 function scanCursorInconsistencies(db: Database.Database): DoctorFinding[] {
-  const rows = db
+  const row = db
     .prepare(`
-      SELECT c.conversation_id
+      SELECT COUNT(*) AS c
       FROM lcd_ingest_cursor c
       WHERE c.ingested_live_len > (
         SELECT COUNT(*) FROM lcd_messages m
@@ -236,18 +370,18 @@ function scanCursorInconsistencies(db: Database.Database): DoctorFinding[] {
           AND m.agent_id = c.agent_id
           AND m.tenant_id = c.tenant_id
       )
-      LIMIT 20
     `)
-    .all() as Array<{ conversation_id: string }>;
+    .get() as { c: number } | undefined;
 
-  if (rows.length === 0) return [];
+  const count = row?.c ?? 0;
+  if (count === 0) return [];
 
   return [
     {
       category: CATEGORY,
       check: "Cursor over-count",
       status: "warn",
-      message: `${rows.length} lcd_ingest_cursor rows with ingested_live_len exceeding the persisted message count`,
+      message: `${count} lcd_ingest_cursor rows with ingested_live_len exceeding the persisted message count`,
       suggestion: "Recalculate the affected cursor(s) — ingested_live_len must not exceed COUNT(lcd_messages) for the scope",
       repairable: false,
     },
@@ -260,8 +394,8 @@ function scanCursorInconsistencies(db: Database.Database): DoctorFinding[] {
  * Doctor check: LCD store integrity.
  *
  * Runs six read-only SQL scans against memory.db:
- *   1. Orphaned lcd_summaries (no context_item back-link)
- *   2. Dangling context_item refs (ref_id points nowhere)
+ *   1. Orphaned lcd_summaries (not reachable from a same-scope active root)
+ *   2. Dangling context_item refs (ref_id points nowhere in the same scope)
  *   3. Fallback-marker summaries (fallback=1, quality debt)
  *   4. FTS row-count drift (when FTS5 tables are present)
  *   5. Tenant and agent scope integrity (NULL tenant_id or agent_id)
@@ -275,7 +409,7 @@ export const lcdHealthCheck: DoctorCheck = {
   name: "LCD Store",
   run: async (context): Promise<DoctorFinding[]> => {
     const findings: DoctorFinding[] = [];
-    const dbPath = context.dataDir + "/memory.db";
+    const dbPath = context.memoryDbPath ?? context.dataDir + "/memory.db";
 
     // New install — no memory.db yet. Skip silently.
     if (!existsSync(dbPath)) return findings;
@@ -283,9 +417,23 @@ export const lcdHealthCheck: DoctorCheck = {
     let db: Database.Database | undefined;
     try {
       db = new Database(dbPath, { readonly: true });
-      // Short timeout — treat BUSY as a "scan could not acquire read lock"
-      // degradation rather than hanging the CLI.
+    } catch {
+      findings.push({
+        category: CATEGORY,
+        check: "LCD Store open",
+        status: "fail",
+        message: "Failed to open memory.db for LCD scan",
+        suggestion: "Check file permissions on " + dbPath,
+        repairable: false,
+      });
+      return findings;
+    }
+
+    try {
       db.pragma("busy_timeout = 100");
+
+      const schemaFindings = scanRequiredSchema(db);
+      if (schemaFindings.length > 0) return schemaFindings;
 
       findings.push(...scanOrphanedSummaries(db));
       findings.push(...scanDanglingRefs(db));
@@ -307,10 +455,10 @@ export const lcdHealthCheck: DoctorCheck = {
     } catch {
       findings.push({
         category: CATEGORY,
-        check: "LCD Store open",
+        check: "LCD Store scan",
         status: "fail",
-        message: "Failed to open memory.db for LCD scan",
-        suggestion: "Check file permissions on " + dbPath,
+        message: "LCD store opened but an integrity scan could not complete",
+        suggestion: "Inspect daemon logs for SQLite lock or schema errors, then rerun comis doctor",
         repairable: false,
       });
     } finally {

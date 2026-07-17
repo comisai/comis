@@ -1,22 +1,58 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Source-grep regression tests for silent-failure-handlers.ts.
+ * Source-level contract tests for silent-failure-handlers.ts.
  *
  * Why source-grep: building runner-level behavioral test infrastructure
  * (mocking AgentSession, PromptRunnerBridge, runWithModelRetry, the full
  * deps surface) is significant scope; this file pins structural invariants
- * for the rate_limited short-circuit branch and the pre-existing
- * client_request branch. Behavioral tests should be added alongside any
- * future refactor that introduces the required mocking infrastructure.
+ * for the rate_limited short-circuit branch and the client_request branch.
+ * Behavioral tests belong here once the module exposes a smaller dependency
+ * seam.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import {
+  handleClientRequest,
+  handleRateLimited,
+  type RetryState,
+} from "./silent-failure-handlers.js";
+import type { RunPromptParams } from "./prompt-runner-types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const sourcePath = resolve(here, "silent-failure-handlers.ts");
 const source = readFileSync(sourcePath, "utf-8");
+
+function makePrivacyParams(warn: ReturnType<typeof vi.fn>): RunPromptParams {
+  return {
+    deps: { logger: { warn } },
+  } as unknown as RunPromptParams;
+}
+
+function makeRetryState(): RetryState {
+  return { promptSucceeded: true, promptError: undefined };
+}
+
+describe("silent-failure provider diagnostics", () => {
+  it.each([
+    ["rate limited", handleRateLimited],
+    ["client request", handleClientRequest],
+  ])("does not log the raw provider body for %s failures", (_name, handler) => {
+    const warn = vi.fn();
+    const providerBody = "Authorization: Bearer PRIVATE_SILENT_PROVIDER_SENTINEL";
+
+    handler(
+      makePrivacyParams(warn),
+      { llmCalls: 1, finishReason: "error", lastLlmErrorMessage: providerBody },
+      makeRetryState(),
+    );
+
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(
+      "PRIVATE_SILENT_PROVIDER_SENTINEL",
+    );
+  });
+});
 
 describe("silent-failure-handlers.ts — rate_limited branch", () => {
   it("exports a `handleRateLimited` function", () => {
@@ -68,9 +104,9 @@ describe("silent-failure-handlers.ts — rate_limited branch", () => {
     expect(branchBody).toMatch(/Rate-limit error/);
   });
 
-  // Pin the existing client_request branch wording so a future refactor that
-  // inadvertently edits it while doing rate_limited work would be caught.
-  it("client_request branch wording remains untouched (byte-identical pin)", () => {
+  // Pin the client_request branch wording so classification stays generic and
+  // does not expose provider bodies.
+  it("keeps the client_request branch user-facing wording generic", () => {
     expect(source).toMatch(/Anthropic returned a client-side validation error/);
     expect(source).toMatch(/Client request rejected by provider:/);
     expect(source).toMatch(/Client-request error — skipping silent-retry and declaring terminal failure/);

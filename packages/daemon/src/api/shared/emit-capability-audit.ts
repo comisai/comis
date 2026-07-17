@@ -35,8 +35,8 @@
  *
  * @module
  */
-import { systemNowMs } from "@comis/core";
-import type { AgentCapability, EventMap } from "@comis/core";
+import { emitObservationalEventSafely, systemNowMs } from "@comis/core";
+import type { AgentCapability, ComisLogger, TypedEventBus } from "@comis/core";
 
 /**
  * The minimal structural deps the emitter reads. `ApiDispatchDeps` /
@@ -47,14 +47,10 @@ import type { AgentCapability, EventMap } from "@comis/core";
  */
 export interface EmitCapabilityAuditDeps {
   container: {
-    eventBus: {
-      emit: (
-        event: "audit:event" | "capability:audited",
-        payload: EventMap["audit:event"] | EventMap["capability:audited"],
-      ) => unknown;
-    };
+    eventBus: Pick<TypedEventBus, "emitSafely">;
     config: { tenantId?: string };
   };
+  logger?: Pick<ComisLogger, "warn">;
 }
 
 /** The content-free per-cap audit fact (ids/caps/tool-NAME/method/decision ONLY). */
@@ -156,7 +152,7 @@ export function emitCapabilityAudit(
   //    security trail is NOT coupled to tree-root resolution). The per-cap
   //    tuple rides the content-free `metadata` free-map; optional ids (incl.
   //    rootRunId) are present only when known (honest absence in-process).
-  deps.container.eventBus.emit("audit:event", {
+  emitObservationalEventSafely({ eventBus: deps.container.eventBus, logger: deps.logger }, "audit:event", {
     timestamp,
     agentId: record.agentId,
     tenantId,
@@ -183,7 +179,7 @@ export function emitCapabilityAudit(
   //    (translate-orchestration-payload.ts) strips the envelope; this carries the
   //    typed content-free tuple.
   if (record.rootRunId !== undefined) {
-    deps.container.eventBus.emit("capability:audited", {
+    emitObservationalEventSafely({ eventBus: deps.container.eventBus, logger: deps.logger }, "capability:audited", {
       timestamp,
       agentId: record.agentId,
       capability: record.capability,

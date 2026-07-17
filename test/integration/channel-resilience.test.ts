@@ -65,19 +65,19 @@ const CRASH_CONFIG_PATH = resolve(
 );
 
 // ---------------------------------------------------------------------------
-// Transient-failure adapter for retry engine tests
+// Explicit-rejection adapter for retry engine tests
 // ---------------------------------------------------------------------------
 
 /**
- * Creates a ChannelPort stub that fails N times with a retryable error
- * message (503 Service Unavailable) then succeeds. The RetryEngine's
- * classifySendError recognizes "503" as a transient error eligible for retry.
+ * Creates a ChannelPort stub that fails N times with an explicit rate-limit
+ * rejection then succeeds. The retry engine only repeats outcomes that prove
+ * the platform did not accept the preceding message.
  *
  * ChaosEchoAdapter's error messages ("Chaos: deterministic failure") are
- * classified as "abort" by the retry engine, so we need this wrapper to
+ * classified as uncertain by the retry engine, so we need this wrapper to
  * produce errors the engine will actually retry.
  */
-function createTransientFailureAdapter(failCount: number): {
+function createRateLimitRejectionAdapter(failCount: number): {
   adapter: ChannelPort;
   callLog: Array<{ result: "success" | "failure" }>;
 } {
@@ -97,7 +97,7 @@ function createTransientFailureAdapter(failCount: number): {
       if (remaining > 0) {
         remaining--;
         callLog.push({ result: "failure" });
-        return err(new Error("503 Service Unavailable"));
+        return err(new Error("429 Too Many Requests"));
       }
       callLog.push({ result: "success" });
       return ok("msg-ok-1");
@@ -106,7 +106,7 @@ function createTransientFailureAdapter(failCount: number): {
     reactToMessage: async () => ok(undefined),
     deleteMessage: async () => ok(undefined),
     fetchMessages: async () => ok([]),
-    sendAttachment: async () => ok("attach-ok"),
+    sendAttachment: async () => ok({ kind: "tracked" as const, messageId: "attach-ok" }),
     platformAction: async () => ok({}),
   };
 
@@ -132,8 +132,9 @@ function makeMessage(overrides?: Partial<NormalizedMessage>): NormalizedMessage 
 
 function makeEventBus(): TypedEventBus {
   const bus = new TypedEventBus();
-  // Spy on emit for assertion
+  // Assert both authoritative and failure-isolated observational fan-out.
   vi.spyOn(bus, "emit");
+  vi.spyOn(bus, "emitSafely");
   return bus;
 }
 
@@ -207,9 +208,8 @@ function makeMinimalDeps(
 // ---------------------------------------------------------------------------
 
 describe("Retry engine recovery from adapter failure", () => {
-  it("retries after transient failures and eventually succeeds", async () => {
-    // Use transient failure adapter (503 errors are classified as retryable)
-    const { adapter, callLog } = createTransientFailureAdapter(2);
+  it("retries after explicit rate-limit rejections and eventually succeeds", async () => {
+    const { adapter, callLog } = createRateLimitRejectionAdapter(2);
 
     const retryConfig = RetryConfigSchema.parse({
       maxAttempts: 5,
@@ -237,7 +237,7 @@ describe("Retry engine recovery from adapter failure", () => {
   });
 
   it("exhausts retries when failures exceed maxAttempts", async () => {
-    const { adapter, callLog } = createTransientFailureAdapter(10);
+    const { adapter, callLog } = createRateLimitRejectionAdapter(10);
 
     const retryConfig = RetryConfigSchema.parse({
       maxAttempts: 3,
@@ -265,7 +265,7 @@ describe("Retry engine recovery from adapter failure", () => {
   });
 
   it("retry engine emits retry:attempted events for each retry", async () => {
-    const { adapter } = createTransientFailureAdapter(2);
+    const { adapter } = createRateLimitRejectionAdapter(2);
 
     const eventBus = makeEventBus();
 
@@ -281,7 +281,7 @@ describe("Retry engine recovery from adapter failure", () => {
     await retryEngine.sendWithRetry(adapter, "ch-events", "Hello events");
 
     // Verify retry:attempted events were emitted
-    const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    const emitCalls = (eventBus.emitSafely as ReturnType<typeof vi.fn>).mock.calls;
     const retryEvents = emitCalls.filter(
       (call: unknown[]) => call[0] === "retry:attempted",
     );
@@ -502,7 +502,7 @@ describe("Queue overflow policy drop-old", () => {
 
     applyOverflowPolicy(messages, config, eventBus, sessionKey, "echo");
 
-    const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    const emitCalls = (eventBus.emitSafely as ReturnType<typeof vi.fn>).mock.calls;
     const overflowEvents = emitCalls.filter(
       (call: unknown[]) => call[0] === "queue:overflow",
     );
@@ -513,7 +513,7 @@ describe("Queue overflow policy drop-old", () => {
     expect(payload.droppedCount).toBe(1); // 4 - 3 = 1
   });
 
-  it("at exactly maxDepth, triggers overflow (boundary test)", () => {
+  it("at exactly maxDepth, retains the queue without an overflow event", () => {
     const messages = Array.from({ length: 3 }, (_, i) =>
       makeMessage({ text: `msg-${i}` }),
     );
@@ -536,17 +536,14 @@ describe("Queue overflow policy drop-old", () => {
       "echo",
     );
 
-    // length === maxDepth IS overflow (source: pendingMessages.length < config.maxDepth)
-    // But excess = 3 - 3 = 0 for drop-old, so no messages actually dropped
     expect(result.dropped).toBe(0);
     expect(result.messages).toHaveLength(3);
 
-    // Overflow event should still fire (condition >= maxDepth triggers emit)
-    const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    const emitCalls = (eventBus.emitSafely as ReturnType<typeof vi.fn>).mock.calls;
     const overflowEvents = emitCalls.filter(
       (call: unknown[]) => call[0] === "queue:overflow",
     );
-    expect(overflowEvents.length).toBe(1);
+    expect(overflowEvents.length).toBe(0);
   });
 
   it("below maxDepth, no overflow", () => {
@@ -576,7 +573,7 @@ describe("Queue overflow policy drop-old", () => {
     expect(result.messages).toHaveLength(2);
 
     // No overflow event
-    const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    const emitCalls = (eventBus.emitSafely as ReturnType<typeof vi.fn>).mock.calls;
     const overflowEvents = emitCalls.filter(
       (call: unknown[]) => call[0] === "queue:overflow",
     );
@@ -637,7 +634,7 @@ describe("Queue overflow policy drop-new", () => {
 
     applyOverflowPolicy(messages, config, eventBus, sessionKey, "echo");
 
-    const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    const emitCalls = (eventBus.emitSafely as ReturnType<typeof vi.fn>).mock.calls;
     const overflowEvents = emitCalls.filter(
       (call: unknown[]) => call[0] === "queue:overflow",
     );
@@ -648,7 +645,7 @@ describe("Queue overflow policy drop-new", () => {
     expect(payload.droppedCount).toBe(1);
   });
 
-  it("at exactly maxDepth, triggers overflow and drops last message", () => {
+  it("at exactly maxDepth, retains the newest message without an overflow event", () => {
     const messages = Array.from({ length: 3 }, (_, i) =>
       makeMessage({ text: `msg-${i}` }),
     );
@@ -671,17 +668,14 @@ describe("Queue overflow policy drop-new", () => {
       "echo",
     );
 
-    // length >= maxDepth: overflow triggers
-    // drop-new: slice(0, -1) removes last
-    expect(result.dropped).toBe(1);
-    expect(result.messages).toHaveLength(2);
+    expect(result.dropped).toBe(0);
+    expect(result.messages).toHaveLength(3);
 
-    // Overflow event fires
-    const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    const emitCalls = (eventBus.emitSafely as ReturnType<typeof vi.fn>).mock.calls;
     const overflowEvents = emitCalls.filter(
       (call: unknown[]) => call[0] === "queue:overflow",
     );
-    expect(overflowEvents.length).toBe(1);
+    expect(overflowEvents.length).toBe(0);
   });
 
   it("below maxDepth, no overflow", () => {
@@ -711,7 +705,7 @@ describe("Queue overflow policy drop-new", () => {
     expect(result.messages).toHaveLength(2);
 
     // No overflow event
-    const emitCalls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    const emitCalls = (eventBus.emitSafely as ReturnType<typeof vi.fn>).mock.calls;
     const overflowEvents = emitCalls.filter(
       (call: unknown[]) => call[0] === "queue:overflow",
     );

@@ -53,12 +53,12 @@ describe("runDoctorChecks", () => {
     expect(result.failCount).toBe(0);
   });
 
-  it("produces skip finding when a check throws (not crash)", async () => {
+  it("produces a content-free skip finding when a check throws", async () => {
     const throwingCheck: DoctorCheck = {
       id: "broken-check",
       name: "Broken Check",
       run: async () => {
-        throw new Error("Something went wrong");
+        throw new Error("Authorization: Bearer private-credential-value");
       },
     };
 
@@ -67,7 +67,10 @@ describe("runDoctorChecks", () => {
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].status).toBe("skip");
     expect(result.findings[0].category).toBe("broken-check");
-    expect(result.findings[0].message).toContain("Something went wrong");
+    expect(result.findings[0].message).toBe("Check could not complete");
+    expect(result.findings[0].message).not.toContain("private-credential-value");
+    expect(result.findings[0].suggestion).toContain("broken-check");
+    expect(result.findings[0].suggestion).not.toContain("logs");
     expect(result.findings[0].repairable).toBe(false);
     expect(result.skipCount).toBe(1);
   });

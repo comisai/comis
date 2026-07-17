@@ -15,7 +15,7 @@
  * @module
  */
 
-import type { AgentExecutor } from "@comis/agent";
+import type { AgentExecutor, InboundMessageProvenancePlan } from "@comis/agent";
 // MessageRouter lives in orchestrator. Relative path used because the
 // orchestrator package cannot import its own published name.
 import type { MessageRouter } from "./routing/message-router.js";
@@ -25,7 +25,7 @@ import type { SessionLifecycle } from "@comis/agent";
 import type { CommandQueue } from "./queue/command-queue.js";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { InteractiveCallbackRouter } from "./approval/index.js";
-import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, NormalizedReaction, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
+import type { ApprovalRequest, ChannelPort, DeliveryQueuePort, EventMap, NormalizedMessage, NormalizedReaction, RequestContext, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 // Orchestrator imports ONLY the @comis/core activity port + ctx type
 // (never the observability impl — hexagonal boundary). The
 // ActivityTurnCoordinator is a local execution type.
@@ -33,10 +33,18 @@ import type { ActivityStreamPort, TurnActivityContext } from "@comis/core";
 import type { ActivityTurnCoordinator } from "./execution/activity-turn-coordinator.js";
 import type { StreamingConfig } from "@comis/core";
 import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig } from "@comis/core";
-import { formatSessionKey, runWithContext, getMessageTraceId, systemNowMs, parseReaction } from "@comis/core";
+import {
+  formatSessionKey,
+  runWithContext,
+  getMessageTraceId,
+  systemNowMs,
+  parseReaction,
+  toSafeErrorLogString,
+  tryGetContext,
+} from "@comis/core";
 import { randomUUID } from "node:crypto";
 import type { ComisLogger } from "@comis/core";
-import type { Result } from "@comis/shared";
+import { tryCatch, type Result } from "@comis/shared";
 
 // channel-manager.ts lives in @comis/orchestrator, so the six imports below
 // reach into the @comis/channels public surface — block-pacer,
@@ -50,6 +58,7 @@ import type { SendOverrideStore } from "@comis/channels";
 import type { PreflightResult } from "@comis/channels";
 import type { RetryEngine } from "@comis/core";
 import type { VoiceResponsePipelineDeps } from "@comis/channels";
+import { createSourceTerminalScope } from "./source-message-terminal.js";
 
 // inbound-pipeline.ts lives in @comis/orchestrator. Channels cannot import
 // from orchestrator (forbidden direction — channels is downstream of
@@ -70,6 +79,55 @@ function seedMetadataTraceId(msg: NormalizedMessage, traceId: string): void {
   if (typeof msg.metadata.traceId === "string") return;
   if (Object.isFrozen(msg.metadata) || !Object.isExtensible(msg.metadata)) return;
   msg.metadata.traceId = traceId;
+}
+
+/** Preserve adapter ingress time only when it belongs to the same trace. */
+function resolveInboundStartedAt(traceId: string): number {
+  const now = systemNowMs();
+  const context = tryGetContext();
+  return context?.traceId === traceId &&
+    Number.isSafeInteger(context.startedAt) &&
+    context.startedAt > 0
+    ? Math.min(context.startedAt, now)
+    : now;
+}
+
+/** True only for a channel-owned context that has not entered resolution. */
+function isUnresolvedIngressContext(context: RequestContext): boolean {
+  return (context.trustLevel === "user" || context.trustLevel === "guest")
+    && typeof context.tenantId === "string"
+    && context.tenantId.length > 0
+    && Number.isSafeInteger(context.startedAt)
+    && context.startedAt > 0
+    && context.userId === undefined
+    && context.sessionKey === undefined
+    && context.agentId === undefined
+    && context.clientId === undefined
+    && context.contentDelimiter === undefined
+    && context.deliveryOrigin === undefined
+    && context.resolvedModel === undefined
+    && context.resolvedLanguage === undefined;
+}
+
+/** Drop a malformed ingress before execution and publish its sole terminal. */
+function rejectInboundDispatch(
+  deps: Pick<ChannelManagerDeps, "eventBus" | "logger">,
+  adapter: ChannelPort,
+  msg: NormalizedMessage,
+  hint: string,
+): void {
+  void tryCatch(() => deps.logger.error({
+    channelId: msg.channelId,
+    channelType: adapter.channelType,
+    messageChannelType: msg.channelType,
+    errorKind: "precondition" as const,
+    hint,
+  }, "Inbound adapter context does not match the dispatched message"));
+  createSourceTerminalScope(
+    deps,
+    msg,
+    msg.channelType,
+  ).publish("error", "inbound_rejected", systemNowMs());
 }
 
 /**
@@ -93,10 +151,21 @@ export type ProcessInboundMessageFn = (
 // ---------------------------------------------------------------------------
 
 export interface ChannelManagerDeps {
+  /** Configured tenant authority for every channel-originated turn. */
+  tenantId: string;
   eventBus: TypedEventBus;
   messageRouter: MessageRouter;
   sessionManager: SessionLifecycle;
   createExecutor: (agentId: string) => AgentExecutor | undefined;
+  /** Durable physical-inbound ledger boundary used before gates and queues. */
+  persistInboundMessage: (
+    agentId: string,
+    message: NormalizedMessage,
+    sessionKey: SessionKey,
+  ) => Promise<Result<InboundMessageProvenancePlan, {
+    error: Error;
+    errorKind: "validation" | "precondition" | "resource" | "config";
+  }>>;
   /** Direct adapter list. Optional when channelRegistry provides plugin-registered adapters. */
   adapters?: ChannelPort[];
   logger: ComisLogger;
@@ -155,15 +224,14 @@ export interface ChannelManagerDeps {
    * Optional hook fired BEFORE the inbound message is dispatched to the executor.
    * Use this for state that must be visible during processing (e.g. continuation
    * tracker for SIGUSR2 capture). Fires for both real adapter inbounds and
-   * synthetic injected messages. Does NOT fire for early-return paths
-   * (no-adapter warning, graph-report intercept).
+   * synthetic injected messages. Does NOT fire for the no-adapter early return.
    */
   onMessageReceived?: (msg: NormalizedMessage, channelType: string) => void;
   /** Optional callback fired AFTER each successful inbound message processing. Used by post-processing state (e.g. notification session activity recording). */
   onMessageProcessed?: (msg: NormalizedMessage, channelType: string) => void;
   /** When true, lifecycle reactor handles queued/thinking reactions -- skip ack reaction in inbound pipeline. */
   lifecycleReactionsEnabled?: boolean;
-  /** Pre-agent intercept for graph report button callbacks. When present, "graph:report:{graphId}" callbacks bypass the agent and deliver the full report as a file attachment. */
+  /** Deliver a graph report only after the inbound signed-callback router validates its owner. */
   onGraphReportRequest?: (graphId: string, channelType: string, channelId: string, adapter: ChannelPort, threadId?: string) => Promise<void>;
   /** Response prefix config for template-based prefix/suffix on agent responses. */
   responsePrefixConfig?: { template: string; position: "prepend" | "append" };
@@ -177,7 +245,7 @@ export interface ChannelManagerDeps {
     /** Resolve a minted 12-char shortId to its pending request. Gate-internal; channels never call this. */
     getRequestByShortId(shortId: string): { requestId: string; shortId: string; sessionKey: string; action: string; toolName: string } | undefined;
     /** Pending requests scoped to a session (the plain-text/button resolution source). */
-    pendingForSession(sessionKey: string): Array<{ requestId: string; shortId: string; sessionKey: string; action: string; toolName: string }>;
+    pendingForSession(sessionKey: string): ApprovalRequest[];
   };
   /**
    * Optional server-side interactive-callback router. When present, an inbound
@@ -227,10 +295,10 @@ export interface ChannelManagerDeps {
    */
   exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
   /**
-   * Credential-to-channelType mapping for targeted reconnect on secret rotation.
+   * Credential-to-channelType mapping for targeted adapter lifecycle updates.
    * Maps credential name (e.g. "TELEGRAM_BOT_TOKEN") to channelType (e.g. "telegram").
-   * When present, a secret:changed event with action="upserted" triggers stop()+start()
-   * on the adapter whose channelType matches the mapped value.
+   * An upserted credential restarts its adapter; a removed credential stops its
+   * adapter and immediately removes it from the active set.
    * When absent, no channel reconnect is attempted on credential rotation.
    */
   channelCredentialMap?: Map<string, string>;
@@ -273,7 +341,7 @@ export interface ChannelManager {
  * message routing, agent execution, and real-time streaming.
  */
 export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
-  let _activeCount = 0;
+  const activeChannelTypes = new Set<string>();
 
   /** Active block pacers tracked for graceful shutdown cancellation. */
   const activePacers = new Set<BlockPacer>();
@@ -294,6 +362,13 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
    */
   const rawHandlerCounts = new Map<string, number>();
 
+  /** Per-channel reconnect tail prevents overlapping stop/start pairs. */
+  const credentialReconnectTails = new Map<string, Promise<void>>();
+  /** A removed credential makes its adapter unavailable even while stop is pending. */
+  const credentialRemovedChannelTypes = new Set<string>();
+  let stopping = false;
+  let secretChangedListener: ((event: EventMap["secret:changed"]) => void) | undefined;
+
   /**
    * Pipeline deps for processInboundMessage at all three call sites
    * (debounce flush handler, normal onMessage handler, injectMessage).
@@ -308,33 +383,83 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
     sendOverrides.delete(formatSessionKey(ev.sessionKey));
   });
 
-  // Targeted channel adapter reconnect on credential rotation.
-  // When a channel credential is rotated (action="upserted"), stop() the specific
-  // adapter and start() it again so it picks up the new credential value from the
-  // live secretManager. Only fires when channelCredentialMap is configured.
-  // action="removed" is NOT handled here — deletion is the responsibility of the
-  // credential-deletion plan (the adapter stops, it does not restart with nothing).
+  // Targeted channel adapter lifecycle updates when credentials change.
   if (deps.channelCredentialMap && deps.channelCredentialMap.size > 0) {
-    deps.eventBus.on("secret:changed", ({ name, action }) => {
-      if (action !== "upserted") return;
+    secretChangedListener = ({ name, action }) => {
+      if (stopping) return;
       const channelType = deps.channelCredentialMap!.get(name);
       if (!channelType) return;
+      if (action === "removed") {
+        credentialRemovedChannelTypes.add(channelType);
+        activeChannelTypes.delete(channelType);
+      } else {
+        credentialRemovedChannelTypes.delete(channelType);
+      }
       const adapter = adaptersByType.get(channelType);
       if (!adapter) return;
-      // Fire-and-forget with explicit error capture: the event bus is void-typed
-      // and does not observe the returned Promise, so an unhandled async throw
-      // would produce an unhandled rejection. The void-IIFE ensures rejections
-      // are always caught here.
-      void (async () => {
+      const prior = credentialReconnectTails.get(channelType) ?? Promise.resolve();
+      const reconnect = prior.then(async () => {
+        if (stopping) return;
+        const startedAt = systemNowMs();
         try {
-          await adapter.stop();
-          await adapter.start();
+          const stopped = await adapter.stop();
+          if (!stopped.ok) {
+            deps.logger.warn(
+              {
+                submodule: "credential-rotation-reconnect",
+                err: toSafeErrorLogString(stopped.error),
+                channelType,
+                credentialName: name,
+                hint: action === "removed"
+                  ? "Resolve the adapter shutdown failure and retry credential removal"
+                  : "Resolve the adapter shutdown failure before retrying credential rotation",
+                errorKind: "platform" as const,
+              },
+              action === "removed"
+                ? "Channel adapter stop failed after credential removal"
+                : "Channel adapter reconnect failed after credential rotation",
+            );
+            return;
+          }
+          activeChannelTypes.delete(channelType);
+          if (action === "removed") {
+            deps.logger.info(
+              {
+                submodule: "credential-rotation-reconnect",
+                step: "credential-removal-stop",
+                channelType,
+                credentialName: name,
+                durationMs: systemNowMs() - startedAt,
+              },
+              "Channel adapter stopped after credential removal",
+            );
+            return;
+          }
+          if (stopping || credentialRemovedChannelTypes.has(channelType)) return;
+          const started = await adapter.start();
+          if (!started.ok) {
+            deps.logger.warn(
+              {
+                submodule: "credential-rotation-reconnect",
+                err: toSafeErrorLogString(started.error),
+                channelType,
+                credentialName: name,
+                hint: "Verify the rotated credential and restart the channel adapter",
+                errorKind: "platform" as const,
+              },
+              "Channel adapter reconnect failed after credential rotation",
+            );
+            return;
+          }
+          if (stopping || credentialRemovedChannelTypes.has(channelType)) return;
+          activeChannelTypes.add(channelType);
           deps.logger.info(
             {
               submodule: "credential-rotation-reconnect",
               step: "credential-rotation-reconnect",
               channelType,
               credentialName: name,
+              durationMs: systemNowMs() - startedAt,
             },
             "Channel adapter reconnected after credential rotation",
           );
@@ -342,17 +467,28 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
           deps.logger.warn(
             {
               submodule: "credential-rotation-reconnect",
-              err: err instanceof Error ? err : new Error(String(err)),
+              err: toSafeErrorLogString(err),
               channelType,
               credentialName: name,
-              hint: "Channel adapter reconnect failed after credential rotation; adapter may be in stopped state",
+              hint: action === "removed"
+                ? "Retry credential removal after resolving the adapter shutdown failure"
+                : "Channel adapter reconnect failed after credential rotation; adapter may be in stopped state",
               errorKind: "platform" as const,
             },
-            "Channel adapter reconnect failed after credential rotation",
+            action === "removed"
+              ? "Channel adapter stop failed after credential removal"
+              : "Channel adapter reconnect failed after credential rotation",
           );
         }
-      })();
-    });
+      });
+      credentialReconnectTails.set(channelType, reconnect);
+      void reconnect.then(() => {
+        if (credentialReconnectTails.get(channelType) === reconnect) {
+          credentialReconnectTails.delete(channelType);
+        }
+      });
+    };
+    deps.eventBus.on("secret:changed", secretChangedListener);
   }
 
   return {
@@ -400,62 +536,70 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       for (const adapter of adaptersByType.values()) {
         // Register message handler before starting
         adapter.onMessage(async (msg: NormalizedMessage) => {
-          // Defense-in-depth wrap. Reuse the traceId minted at adapter
-          // ingress via getMessageTraceId; fall back to randomUUID() if a
-          // future adapter bypasses ingress wrap (catches regressions —
-          // channel→queue→agent correlation is preserved even without the
-          // adapter-level wrap).
-          const traceId = getMessageTraceId(msg) ?? randomUUID();
+          const processMessage = async (): Promise<void> => {
+            try {
+              // Fire onMessageReceived BEFORE await processInboundMessage so any
+              // mid-processing SIGUSR2 still sees the session in continuation
+              // tracker state.
+              deps.onMessageReceived?.(msg, adapter.channelType);
+              await deps.processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
+              deps.onMessageProcessed?.(msg, adapter.channelType);
+            } catch (error) {
+              deps.logger.error(
+                {
+                  err: toSafeErrorLogString(error),
+                  channelId: adapter.channelId,
+                  hint: "Check inbound pipeline for unhandled errors in message processing",
+                  errorKind: "internal" as const,
+                },
+                "Unhandled error in message handler",
+              );
+              return Promise.reject(error);
+            }
+          };
+
+          if (msg.channelType !== adapter.channelType) {
+            rejectInboundDispatch(
+              deps,
+              adapter,
+              msg,
+              "Ensure normalized message channelType matches the receiving adapter before dispatch",
+            );
+            return;
+          }
+
+          const ingressContext = tryGetContext();
+          const messageTraceId = getMessageTraceId(msg);
+          if (ingressContext !== undefined && messageTraceId !== undefined) {
+            const matchesAdapterScope = ingressContext.channelType === adapter.channelType
+              && messageTraceId === ingressContext.traceId
+              && isUnresolvedIngressContext(ingressContext);
+            if (!matchesAdapterScope) {
+              rejectInboundDispatch(
+                deps,
+                adapter,
+                msg,
+                "Ensure each traced message is dispatched inside its matching unresolved adapter ingress context",
+              );
+              return;
+            }
+            seedMetadataTraceId(msg, ingressContext.traceId);
+            await processMessage();
+            return;
+          }
+
+          // A custom adapter may invoke the handler without an ingress scope.
+          // Establish one fallback boundary for that entire turn.
+          const traceId = messageTraceId ?? randomUUID();
+          const startedAt = resolveInboundStartedAt(traceId);
           seedMetadataTraceId(msg, traceId);
-          await runWithContext(
-            {
-              traceId,
-              startedAt: systemNowMs(),
-              channelType: adapter.channelType,
-              tenantId: "default",
-              trustLevel: "admin",
-            },
-            async () => {
-              try {
-                // Pre-agent intercept: graph report button callbacks
-                if (
-                  deps.onGraphReportRequest
-                  && msg.metadata?.isButtonCallback === true
-                  && typeof msg.text === "string"
-                  && msg.text.startsWith("graph:report:")
-                ) {
-                  const graphId = msg.text.slice("graph:report:".length);
-                  if (graphId.length > 0) {
-                    await deps.onGraphReportRequest(
-                      graphId,
-                      adapter.channelType,
-                      msg.channelId,
-                      adapter,
-                      msg.metadata?.threadId as string | undefined,
-                    );
-                    return; // Handled -- do not forward to agent
-                  }
-                }
-                // Fire onMessageReceived BEFORE await processInboundMessage so any
-                // mid-processing SIGUSR2 still sees the session in continuation
-                // tracker state. The graph-report intercept above must remain BEFORE
-                // this call so control-plane callbacks bypass both hooks.
-                deps.onMessageReceived?.(msg, adapter.channelType);
-                await deps.processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
-                deps.onMessageProcessed?.(msg, adapter.channelType);
-              } catch (error) {
-                deps.logger.error(
-                  {
-                    err: error instanceof Error ? error : new Error(String(error)),
-                    channelId: adapter.channelId,
-                    hint: "Check inbound pipeline for unhandled errors in message processing",
-                    errorKind: "internal" as const,
-                  },
-                  "Unhandled error in message handler",
-                );
-              }
-            },
-          );
+          await runWithContext({
+            traceId,
+            startedAt,
+            channelType: adapter.channelType,
+            tenantId: deps.tenantId,
+            trustLevel: "user",
+          }, processMessage);
         });
 
         // Register the inbound-reaction fanout if the adapter exposes
@@ -495,6 +639,19 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
           });
         });
 
+        if (credentialRemovedChannelTypes.has(adapter.channelType)) {
+          deps.logger.warn(
+            {
+              adapterId: adapter.channelId,
+              channelType: adapter.channelType,
+              hint: "Restore the channel credential before starting this adapter",
+              errorKind: "config" as const,
+            },
+            "Skipped adapter start because its credential was removed",
+          );
+          continue;
+        }
+
         // Start the adapter
         const result = await adapter.start();
         if (!result.ok) {
@@ -510,7 +667,9 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
           continue;
         }
 
-        _activeCount++;
+        if (!credentialRemovedChannelTypes.has(adapter.channelType)) {
+          activeChannelTypes.add(adapter.channelType);
+        }
         deps.logger.info(
           { step: "channel-registry", adapterId: adapter.channelId, channelType: adapter.channelType },
           "Adapter registered",
@@ -519,6 +678,11 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
     },
 
     async stopAll(): Promise<void> {
+      stopping = true;
+      if (secretChangedListener) {
+        deps.eventBus.off("secret:changed", secretChangedListener);
+      }
+      await Promise.all([...credentialReconnectTails.values()]);
       // Drain command queue before stopping adapters (if queue is provided)
       if (deps.commandQueue) {
         await deps.commandQueue.shutdown();
@@ -566,11 +730,11 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
           );
         }
       }
-      _activeCount = 0;
+      activeChannelTypes.clear();
     },
 
     get activeCount(): number {
-      return _activeCount;
+      return activeChannelTypes.size;
     },
 
     async injectMessage(channelType: string, msg: NormalizedMessage): Promise<void> {
@@ -584,18 +748,14 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
         );
         return;
       }
-      // Pre-agent intercept for injected messages too
-      if (
-        deps.onGraphReportRequest
-        && msg.metadata?.isButtonCallback === true
-        && typeof msg.text === "string"
-        && msg.text.startsWith("graph:report:")
-      ) {
-        const graphId = msg.text.slice("graph:report:".length);
-        if (graphId.length > 0) {
-          await deps.onGraphReportRequest(graphId, channelType, msg.channelId, adapter, msg.metadata?.threadId as string | undefined);
-          return;
-        }
+      if (adapter.channelType !== channelType || msg.channelType !== channelType) {
+        rejectInboundDispatch(
+          deps,
+          adapter,
+          msg,
+          "Ensure injected channelType, adapter channelType, and message channelType are identical",
+        );
+        return;
       }
       // Two-callback contract (symmetric with the normal inbound path):
       //   onMessageReceived fires BEFORE processInboundMessage so any
@@ -603,10 +763,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       //     state. Daemon wires this to continuationTracker.track(...).
       //   onMessageProcessed fires AFTER processing for post-processing state
       //     that depends on deferred refs (e.g. sessionTrackerRef.recordActivity).
-      // Both early-return branches above (no-adapter warn, graph-report intercept)
-      // intentionally bypass both callbacks because they represent control-plane
-      // events, not real session activity.
-      deps.onMessageReceived?.(msg, channelType);
+      // Adapter-missing paths intentionally bypass both callbacks.
       // Establish the per-turn request context (traceId) BEFORE processing, mirroring
       // the normal onMessage path (above). Without this wrap the injected turn runs
       // with no AsyncLocalStorage context, so the inbound activity coordinator
@@ -616,20 +773,22 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       // renderer.apply never fires. Sharing one traceId across the pipeline +
       // the agent run makes the coordinator's subscription observe the turn's tool:*/model:* events.
       const traceId = getMessageTraceId(msg) ?? randomUUID();
+      const startedAt = resolveInboundStartedAt(traceId);
       seedMetadataTraceId(msg, traceId);
       await runWithContext(
         {
           traceId,
-          startedAt: systemNowMs(),
+          startedAt,
           channelType: adapter.channelType,
-          tenantId: "default",
-          trustLevel: "admin",
+          tenantId: deps.tenantId,
+          trustLevel: "user",
         },
         async () => {
+          deps.onMessageReceived?.(msg, channelType);
           await deps.processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
+          deps.onMessageProcessed?.(msg, channelType);
         },
       );
-      deps.onMessageProcessed?.(msg, channelType);
     },
 
     getRawHandlerCounts(): ReadonlyMap<string, number> {

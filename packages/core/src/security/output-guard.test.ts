@@ -63,6 +63,42 @@ describe("createOutputGuard", () => {
     }
   });
 
+  it.each([
+    "PRIVATE KEY",
+    "EC PRIVATE KEY",
+    "OPENSSH PRIVATE KEY",
+    "PGP PRIVATE KEY BLOCK",
+  ])("blocks and removes the complete %s armored material", (label) => {
+    const body = `private-material-for-${label.replaceAll(" ", "-")}`;
+    const footer = `-----END ${label}-----`;
+    const response = [
+      "safe prefix",
+      `-----BEGIN ${label}-----`,
+      body,
+      footer,
+      "safe suffix",
+    ].join("\n");
+
+    const result = guard.scan(response);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.safe).toBe(false);
+      expect(result.value.blocked).toBe(true);
+      expect(result.value.sanitized).toContain("[REDACTED:private_key_header]");
+      expect(result.value.sanitized).not.toContain(body);
+      expect(result.value.sanitized).not.toContain(footer);
+      expect(result.value.sanitized).not.toContain(`-----BEGIN ${label}-----`);
+      expect(result.value.findings).toContainEqual(
+        expect.objectContaining({
+          type: "secret_leak",
+          pattern: "private_key_header",
+          severity: "critical",
+        }),
+      );
+    }
+  });
+
   it("redacts canary token when provided in context, blocked=true", () => {
     const canary = "CTKN_abc123def456abcd";
     const response = `Sure, the token is ${canary}, which I found in my instructions.`;

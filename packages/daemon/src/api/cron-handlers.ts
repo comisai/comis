@@ -63,6 +63,53 @@ const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 import type { OrchestratorApiDeps as CronHandlerDeps } from "./types.js";
 export type { CronHandlerDeps };
 
+type CronDeliveryTarget = {
+  channelId: string;
+  userId: string;
+  tenantId: string;
+  channelType?: string;
+};
+
+function parseDeliveryTarget(value: unknown): CronDeliveryTarget {
+  const parsed = CronDeliveryTargetSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error(
+      `Invalid deliveryTarget: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+        .join("; ")}. Required: channelId, userId, tenantId (channelType optional).`,
+    );
+  }
+  return parsed.data;
+}
+
+function sameDeliveryTarget(a: CronDeliveryTarget, b: CronDeliveryTarget): boolean {
+  return a.channelId === b.channelId
+    && a.userId === b.userId
+    && a.tenantId === b.tenantId
+    && a.channelType === b.channelType;
+}
+
+/** Resolve the immutable route of an agent-authored cron mutation. */
+function resolveAgentDeliveryTarget(
+  rawParams: Record<string, unknown>,
+): CronDeliveryTarget | undefined {
+  if (typeof rawParams._agentId !== "string") return undefined;
+  if (rawParams._deliveryTarget === undefined) {
+    throw new Error("Agent-authored cron mutations require a trusted deliveryTarget");
+  }
+  const trusted = parseDeliveryTarget(rawParams._deliveryTarget);
+  if (rawParams.deliveryTarget !== undefined) {
+    if (rawParams.deliveryTarget === null) {
+      throw new Error("Agent-authored cron mutations cannot clear the trusted deliveryTarget");
+    }
+    const requested = parseDeliveryTarget(rawParams.deliveryTarget);
+    if (!sameDeliveryTarget(trusted, requested)) {
+      throw new Error("Agent-authored cron deliveryTarget must exactly match the trusted request route");
+    }
+  }
+  return trusted;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -213,22 +260,13 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       // payload TEXT). Language falls back to the store schema value.
       const wakeGateScript = normalized.wake_gate_script as string | undefined;
       const wakeGateLanguage = normalized.wake_gate_language as "js" | "ts" | undefined;
-      // Resolve the cron's delivery target: trusted context-injected
-      // `_deliveryTarget` first (agent-origin, cannot be forged/redirected), then an
-      // explicit `deliveryTarget` param as an operator-RPC fallback (validated like
-      // cron.update). See the field comment below.
-      let resolvedDeliveryTarget = rawParams._deliveryTarget as
-        | { channelId: string; userId: string; tenantId: string; channelType?: string }
-        | undefined;
-      if (resolvedDeliveryTarget === undefined && rawParams.deliveryTarget != null) {
-        const parsed = CronDeliveryTargetSchema.safeParse(rawParams.deliveryTarget);
-        if (!parsed.success) {
-          throw new Error(
-            `Invalid deliveryTarget: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
-          );
-        }
-        resolvedDeliveryTarget = parsed.data;
-      }
+      // Agent-authored jobs are permanently bound to the authenticated request
+      // route. Operator RPCs may instead supply an independently validated target.
+      const agentDeliveryTarget = resolveAgentDeliveryTarget(rawParams);
+      const resolvedDeliveryTarget = agentDeliveryTarget
+        ?? (rawParams.deliveryTarget != null
+          ? parseDeliveryTarget(rawParams.deliveryTarget)
+          : undefined);
       const job = {
         id: randomUUID(),
         name,
@@ -338,6 +376,9 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       const matched = resolveJob(agentScheduler, rawParams);
       const jobs = agentScheduler.getJobs();
       const job = jobs.find((j) => j.id === matched.id)!;
+      // Validate the agent's immutable route before mutating any in-memory job
+      // fields, so a rejected redirect cannot leave a partial update behind.
+      const agentDeliveryTarget = resolveAgentDeliveryTarget(rawParams);
       if (rawParams.enabled !== undefined) job.enabled = rawParams.enabled as boolean;
       if (rawParams.name !== undefined) job.name = rawParams.name as string;
       if (rawParams.sessionTarget !== undefined) job.sessionTarget = rawParams.sessionTarget as "main" | "isolated";
@@ -389,19 +430,13 @@ export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHan
       // invalid job made the store "return empty job list" on the next reload,
       // silently dropping every cron on a restart. Reject at the API boundary
       // instead (mirrors the wake-gate empty-clear guard above).
-      if (rawParams.deliveryTarget !== undefined) {
+      if (agentDeliveryTarget !== undefined) {
+        job.deliveryTarget = agentDeliveryTarget;
+      } else if (rawParams.deliveryTarget !== undefined) {
         if (rawParams.deliveryTarget === null) {
           job.deliveryTarget = undefined;
         } else {
-          const parsed = CronDeliveryTargetSchema.safeParse(rawParams.deliveryTarget);
-          if (!parsed.success) {
-            throw new Error(
-              `Invalid deliveryTarget: ${parsed.error.issues
-                .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
-                .join("; ")}. Required: channelId, userId, tenantId (channelType optional).`,
-            );
-          }
-          job.deliveryTarget = parsed.data;
+          job.deliveryTarget = parseDeliveryTarget(rawParams.deliveryTarget);
         }
       }
       // Persist the in-place mutations NOW. The field-by-field updates above mutate

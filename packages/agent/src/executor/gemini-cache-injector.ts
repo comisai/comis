@@ -147,7 +147,7 @@ export function createGeminiCacheInjector(
                 err: cacheResult.error,
                 sessionKey: config.sessionKey,
                 hint: "Cache injection failed, passing through uncached",
-                errorKind: "provider" as ErrorKind,
+                errorKind: "dependency" as ErrorKind,
               },
               "Gemini cache injector: getOrCreate failed",
             );

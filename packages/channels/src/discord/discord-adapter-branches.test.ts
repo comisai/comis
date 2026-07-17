@@ -66,7 +66,7 @@ vi.mock("./format-discord.js", () => ({
 
 vi.mock("./voice-sender.js", () => ({
   createDiscordVoiceSender: vi.fn(() => ({
-    sendVoice: vi.fn(async () => ok("voice-msg-1")),
+    sendVoice: vi.fn(async () => ok({ kind: "tracked" as const, messageId: "voice-msg-1" })),
   })),
 }));
 
@@ -513,7 +513,7 @@ describe("createDiscordAdapter sendAttachment", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value).toBe("voice-msg-1");
+      expect(result.value).toEqual({ kind: "tracked", messageId: "voice-msg-1" });
     }
   });
 
@@ -558,6 +558,32 @@ describe("createDiscordAdapter sendAttachment", () => {
         hint: expect.stringContaining("Attach Files"),
       }),
       "Send attachment failed",
+    );
+  });
+
+  it("returns delivered-untracked when a regular attachment send has no platform message ID", async () => {
+    const deps = makeDeps();
+    const adapter = createDiscordAdapter(deps);
+    await adapter.start();
+    mockChannelsFetch.mockResolvedValue({
+      isTextBased: () => true,
+      send: vi.fn(async () => ({ id: "   " })),
+    });
+
+    const result = await adapter.sendAttachment("C123", {
+      url: "https://example.com/img.png",
+      type: "image",
+      mimeType: "image/png",
+      fileName: "img.png",
+    } as never);
+
+    expect(result).toEqual(ok({ kind: "delivered_untracked" }));
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("Do not retry"),
+        errorKind: "platform",
+      }),
+      "Attachment delivered without platform tracking",
     );
   });
 

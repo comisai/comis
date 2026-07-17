@@ -18,7 +18,7 @@
  * @module
  */
 
-import { formatSessionKey } from "@comis/core";
+import { emitObservationalEventSafely, formatSessionKey } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 
 import { isAuthError, type ModelRetryResult } from "../model-retry.js";
@@ -80,9 +80,7 @@ export async function handleSignedReplay(
     {
       blocksRemoved,
       thoughtSignaturesStripped,
-      providerError: llmErrSource,
-      hint: "Signed-replay rejection detected; scrubbing thinking state and retrying once",
-      errorKind: "transient" as ErrorKind,
+      providerErrorPresent: llmErrSource.length > 0,
     },
     "Signed-replay self-heal: scrubbing and retrying",
   );
@@ -117,7 +115,7 @@ export async function handleSignedReplay(
     }
   }
 
-  deps.eventBus.emit("execution:signed_replay_recovered", {
+  emitObservationalEventSafely({ eventBus: deps.eventBus, logger: deps.logger }, "execution:signed_replay_recovered", {
     agentId: agentId ?? "default",
     sessionKey: formatSessionKey(sessionKey),
     blocksRemoved,
@@ -169,9 +167,9 @@ export function handleRateLimited(
     {
       llmCalls: earlyBridgeResult.llmCalls,
       finishReason: earlyBridgeResult.finishReason,
-      providerError: llmErrSource,
+      providerErrorPresent: llmErrSource.length > 0,
       hint: "Provider returned a rate-limit error; retrying within the same window cannot succeed — surfacing terminal failure to caller",
-      errorKind: "rate_limited" as ErrorKind,
+      errorKind: "dependency" as ErrorKind,
     },
     "Rate-limit error — skipping silent-retry and declaring terminal failure",
   );
@@ -199,9 +197,9 @@ export function handleClientRequest(
     {
       llmCalls: earlyBridgeResult.llmCalls,
       finishReason: earlyBridgeResult.finishReason,
-      providerError: llmErrSource,
+      providerErrorPresent: llmErrSource.length > 0,
       hint: "Anthropic returned a client-side validation error; retrying would reproduce the same failure",
-      errorKind: "client_request" as ErrorKind,
+      errorKind: "validation" as ErrorKind,
     },
     "Client-request error — skipping silent-retry and declaring terminal failure",
   );
@@ -232,7 +230,6 @@ export async function handleSilentRetryDefault(
       llmCalls: earlyBridgeResult.llmCalls,
       finishReason: earlyBridgeResult.finishReason,
       hint: "Stripping empty assistant turn and re-entering model retry",
-      errorKind: "transient" as ErrorKind,
     },
     "Silent failure retry: stripping empty turn and re-entering model retry",
   );
@@ -247,13 +244,10 @@ export async function handleSilentRetryDefault(
   retryState.promptSucceeded = retryResult.succeeded;
   retryState.promptError = retryResult.error;
 
-  // Announce the re-drive so `explain` can show the session re-entered the
-  // model on a silent failure (previously log-only — the budget incident's
-  // re-drive was findable only by a debug-log grep). `succeeded` reflects the
-  // post-retry visible-text recovery re-checked just below.
+  // Announce whether the silent-failure retry produced visible text.
   const silentRecovered =
     retryState.promptSucceeded && (session.getLastAssistantText?.() ?? "") !== "";
-  deps.eventBus.emit("execution:recovery_attempted", {
+  emitObservationalEventSafely({ eventBus: deps.eventBus, logger: deps.logger }, "execution:recovery_attempted", {
     agentId: params.agentId ?? "default",
     sessionKey: formatSessionKey(params.sessionKey),
     reason: "silent_retry",
@@ -399,9 +393,8 @@ async function attemptLkwFallback(
     );
 
     const lkwText = getVisibleAssistantText(session);
-    // Announce the model-swap re-drive (previously log-only) so `explain`
-    // shows the fallback attempt + whether it recovered.
-    deps.eventBus.emit("execution:recovery_attempted", {
+    // Announce whether the model fallback produced visible text.
+    emitObservationalEventSafely({ eventBus: deps.eventBus, logger: deps.logger }, "execution:recovery_attempted", {
       agentId: agentId ?? "default",
       sessionKey: formatSessionKey(params.sessionKey),
       reason: "lkw_fallback",

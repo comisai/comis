@@ -3,7 +3,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { safePath, type BackgroundTaskOrigin, type ClockPort, type TimerPort, type TimerHandle } from "@comis/core";
+import {
+  safePath,
+  type BackgroundTaskOrigin,
+  type ClockPort,
+  type TimerPort,
+  type TimerHandle,
+} from "@comis/core";
 import { createBackgroundTaskManager } from "@comis/agent";
 import { setupBackgroundCompletionRunner } from "./setup-background-completion-runner.js";
 
@@ -310,11 +316,14 @@ describe("setupBackgroundCompletionRunner", () => {
       // Build a manager with a recording event bus.
       const recordedEmits: Array<{ event: string; data: unknown }> = [];
       const eventBus = {
-        emit: vi.fn((event: string, data: unknown) => {
+        emitSafely: vi.fn((event: string, data: unknown) => {
           recordedEmits.push({ event, data });
+          return {
+            hadListeners: false,
+            failures: [],
+            pendingFailures: Promise.resolve([]),
+          };
         }),
-        on: vi.fn(),
-        off: vi.fn(),
       } as unknown as import("@comis/core").TypedEventBus;
 
       const manager = createBackgroundTaskManager({
@@ -368,11 +377,14 @@ describe("setupBackgroundCompletionRunner", () => {
 
       const recordedEmits: Array<{ event: string; data: unknown }> = [];
       const eventBus = {
-        emit: vi.fn((event: string, data: unknown) => {
+        emitSafely: vi.fn((event: string, data: unknown) => {
           recordedEmits.push({ event, data });
+          return {
+            hadListeners: false,
+            failures: [],
+            pendingFailures: Promise.resolve([]),
+          };
         }),
-        on: vi.fn(),
-        off: vi.fn(),
       } as unknown as import("@comis/core").TypedEventBus;
 
       const manager = createBackgroundTaskManager({

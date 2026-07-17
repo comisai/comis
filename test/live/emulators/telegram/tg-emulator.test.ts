@@ -301,7 +301,7 @@ describe("TgEmulator — Tier-1 Bot API on the http-backend base", () => {
     // MULTI-WAITER / divergent-offset: a non-head waiter's ack must
     // NOT corrupt the shared queue or starve another entitled waiter.
     //
-    // The live grammy runner long-polls sequentially (waiters.length ≤ 1), so
+    // The live grammY loop polls sequentially (waiters.length ≤ 1), so
     // this is defensive-code correctness, not a live bug. But `tg-emulator.ts`
     // is the channel-agnostic FOUNDATION the Signal emulator reuses, and the unit tests
     // already issue manual concurrent `getUpdates` — so the documented "no dup
@@ -1308,18 +1308,10 @@ describe("TgEmulator — group/forum chats + addressing inject", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The webhook-POST mode + the HARNESS-SIDE secret-token
-// gate. Instead of queuing for getUpdates, postWebhookMessage POSTs the built
-// grammy Update to a configured webhook target carrying
-// X-Telegram-Bot-Api-Secret-Token; a tiny loopback receiver enforces the gate
-// (correct token → accepted, wrong/absent → rejected).
-//
-// ⚠ HONEST GAP: Comis has NO Telegram
-// webhook INGESTION route — shouldUseRunner merely skips polling when webhookUrl
-// is set, with nothing replacing it; no product code checks this header. So this
-// gate is the HARNESS-side one; it never asserts "a webhook update reached the
-// agent" (there is no route to receive it). The product gap is documented in
-// webhook-receiver.ts + the telegram-webhook.test.ts scenario.
+// The emulator's webhook-POST mode sends a grammY Update to a loopback fixture
+// carrying X-Telegram-Bot-Api-Secret-Token. Comis rejects Telegram webhook
+// configuration, so these tests cover the emulator fixture rather than product
+// ingestion.
 // ---------------------------------------------------------------------------
 
 describe("TgEmulator — webhook-POST mode + the harness-side secret-token gate", () => {
@@ -1380,8 +1372,7 @@ describe("TgEmulator — webhook-POST mode + the harness-side secret-token gate"
     // untrusted.
     const absentStatus = await emu.postWebhookMessage(WEBHOOK_CHAT, FROM, "forged update", "");
     // The ABSENT-token POST is REJECTED (401) by the harness gate — a
-    // forged Update without the shared secret is blocked (the secret-token gate
-    // proven on the harness side; the product has no such route).
+    // forged Update without the shared secret is blocked by the fixture gate.
     expect(absentStatus).toBe(401);
 
     // Neither forged POST was recorded as delivered; both were counted rejected.

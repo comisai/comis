@@ -1,17 +1,39 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Graph coordinator: thin composition layer wiring 5 focused modules
- * (concurrency, node-lifecycle, driver-handler, completion, cleanup)
- * into a single factory that executes DAG-based execution graphs.
- * @module
- */
+/** Composition layer for durable DAG execution and terminal delivery. */
 
-import { createGraphStateMachine, type GraphExecutionSnapshot } from "./graph-state-machine.js";
-import { safePath, type GraphStatus, type ValidatedGraph, type DurableRunRecord, systemNowMs, systemSetInterval, systemClearInterval, systemSetTimeout, tryGetContext, parseFormattedSessionKey, validateAndSortGraph, parseDurableRunRecord, ExecutionGraphSchema } from "@comis/core";
+import {
+  createGraphStateMachine,
+  restoreGraphStateMachine,
+  type GraphExecutionSnapshot,
+} from "./graph-state-machine.js";
+import {
+  safePath,
+  type AgentCapability,
+  type DeliveryOrigin,
+  type GraphStatus,
+  type ValidatedGraph,
+  type DurableRunRecord,
+  systemNowMs,
+  systemSetInterval,
+  systemClearInterval,
+  systemSetTimeout,
+  tryGetContext,
+  parseFormattedSessionKey,
+  validateAndSortGraph,
+  parseDurableRunRecord,
+  toSafeErrorLogString,
+} from "@comis/core";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { ok, err, type Result } from "@comis/shared";
-import { snapshotToSpawnTree, incompleteNodes } from "./graph-durable-checkpoint.js";
+import {
+  createDurableGraphCheckpoint,
+  graphRunIdFromCheckpointRef,
+  readDurableGraphCheckpoint,
+  snapshotToSpawnTree,
+  validateGraphCheckpointSummary,
+  writeDurableGraphCheckpoint,
+} from "./graph-durable-checkpoint.js";
 import { computeGraphToolSuperset } from "./graph-tool-superset.js";
 import { preWarmGraphCache, type PreWarmSdk } from "./graph-prewarm.js";
 import { getModel, completeSimple } from "@earendil-works/pi-ai/compat";
@@ -35,9 +57,10 @@ import {
   handleBudgetExceeded as handleBudgetExceededFn,
   handleGraphTimeout as handleGraphTimeoutFn,
 } from "./graph-completion.js";
-import { clearAllTimers, sweepExpiredGraphs } from "./graph-cleanup.js";
+import { clearAllTimers, discardGraphState, sweepExpiredGraphs } from "./graph-cleanup.js";
 import { computeGraphTimeoutFloorMs } from "./graph-timeout-floor.js";
-
+import { createGraphDurableTransitions } from "./graph-durable-transitions.js";
+import { createGraphCompletionTracker } from "./graph-completion-tracker.js";
 export type { GraphCoordinatorDeps, GraphRunState, CoordinatorSharedState, CoordinatorConfig } from "./graph-coordinator-state.js";
 import type {
   CoordinatorSharedState,
@@ -50,6 +73,14 @@ export interface GraphRunParams {
   graph: import("@comis/core").ValidatedGraph;
   callerSessionKey?: string;
   callerAgentId?: string;
+  /** Authenticated capability ceiling supplied by the RPC boundary. */
+  callerCaps?: readonly AgentCapability[];
+  /** Authenticated lease authorizing this graph submission. */
+  callerLeaseId?: string;
+  /** Authenticated tree root supplied by the RPC boundary. */
+  callerRootRunId?: string;
+  /** Authenticated delivery origin supplied by the RPC boundary. */
+  callerDeliveryOrigin?: DeliveryOrigin;
   announceChannelType?: string;
   announceChannelId?: string;
   /** Send per-node completion progress messages to the channel. Default: false. */
@@ -75,23 +106,20 @@ export interface GraphCoordinator {
    *  Bypasses event bus for reliability during session cleanup. Idempotent. */
   notifyNodeFailed(graphId: string, nodeId: string, runId: string, error: string): void;
   /**
-   * Resume a DAG run from its durable
-   * checkpoint after a daemon restart. Re-enters ONLY the nodes that were NOT
-   * terminal at crash time (`incompleteNodes(record.spawnTree)`) and DRIVES them
-   * to execution via the node-lifecycle path (`spawnReadyNodes` → `spawnNode`),
-   * so the re-entered node's sub-agent spawn actually fires — it does not merely
-   * re-mark the node ready. Completed/skipped/failed nodes are NOT re-run; a
-   * re-run node's outward sends are deduped by the ONCE ledger, so
-   * node-boundary resume is exactly-once-safe without persisting intra-node
-   * state. The durable resume engine routes a DAG-shaped record here via its
-   * resume dispatch.
+   * Resume a DAG run from its durable checkpoint after a daemon restart.
+   * Non-terminal nodes re-enter through the normal node-lifecycle path;
+   * completed, skipped, and failed nodes retain their exact persisted state.
+   * The durable resume engine calls this only after its root-wide outward-effect
+   * uncertainty gate has allowed execution to continue.
    */
-  resumeGraph(record: DurableRunRecord): Promise<Result<void, Error>>;
+  resumeGraph(
+    record: DurableRunRecord,
+    authority?: { leaseId: string; bearer: string },
+  ): Promise<Result<void, Error>>;
 }
 
 /** Create a graph coordinator that executes validated graphs end-to-end. */
 export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordinator {
-  // Resolve configuration from deps
   const config: CoordinatorConfig = {
     maxConcurrency: deps.maxConcurrency ?? 4,
     maxResultLength: deps.maxResultLength ?? 12000,
@@ -106,71 +134,146 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     maxAnnouncementChars: deps.maxAnnouncementChars ?? 3000,
   };
 
-  // Create shared mutable state
   const state: CoordinatorSharedState = {
     graphs: new Map(),
     globalActiveSubAgents: 0,
     spawnQueue: [],
   };
+  const graphCompletions = createGraphCompletionTracker(
+    (gs) => handleGraphCompletionFn(state, deps, gs), deps.logger,
+  );
 
-  /**
-   * Checkpoint the graph's per-node
-   * completion state to the durable run store at a NODE boundary. Persists the
-   * GraphExecutionSnapshot → `spawn_tree` keyed on the graph's tree-stable
-   * `rootRunId`. A no-op when no store is wired or the run has no stable
-   * root (the durable key). On a terminal graph it flips the record to
-   * `completed` so resume skips it. Store errors are logged (WARN, hint +
-   * errorKind) but NEVER crash the graph — durability is best-effort overlay on
-   * the live run, never a blocker for it.
-   */
-  function checkpointGraph(gs: GraphRunState): void {
-    if (!deps.durableRuns || gs.rootRunId === undefined) return;
+  /** Persist node state before releasing work; terminal writes await notification delivery. */
+  async function checkpointGraph(gs: GraphRunState): Promise<boolean> {
+    if (
+      !deps.durableRuns
+      || gs.rootRunId === undefined
+      || gs.callerSessionKey === undefined
+      || gs.callerAgentId === undefined
+    ) return true;
     const store = deps.durableRuns;
     const rootRunId = gs.rootRunId;
-    const terminal = gs.stateMachine.isTerminal();
-    if (terminal) {
-      void store.markCompleted(rootRunId).then((res) => {
-        if (!res.ok) {
-          deps.logger?.warn(
-            { graphId: gs.graphId, rootRunId, err: res.error, hint: "durable markCompleted failed; the run stays resumable and will be re-scanned on next boot", errorKind: "resource" as const },
-            "Graph durable markCompleted failed",
-          );
-        }
-      });
-      return;
+    const owner = parseFormattedSessionKey(gs.callerSessionKey);
+    if (owner === undefined) {
+      deps.logger?.warn(
+        {
+          graphId: gs.graphId,
+          rootRunId,
+          hint: "Reject the durable transition and verify the caller session key is canonical",
+          errorKind: "precondition" as const,
+        },
+        "Graph durable checkpoint has no canonical owner",
+      );
+      return false;
     }
+    const terminal = gs.stateMachine.isTerminal();
+    const graphCheckpoint = createDurableGraphCheckpoint(gs);
+    const checkpointArtifact = writeDurableGraphCheckpoint(
+      deps.dataDir,
+      gs.durableArtifactGraphId ?? gs.graphId,
+      graphCheckpoint,
+    );
+    if (!checkpointArtifact.ok) {
+      deps.logger?.warn(
+        {
+          graphId: gs.graphId,
+          rootRunId,
+          err: toSafeErrorLogString(checkpointArtifact.error),
+          hint: "Verify the graph-runs directory is writable; the authority row was not advanced",
+          errorKind: "resource" as const,
+        },
+        "Graph durable checkpoint artifact write failed",
+      );
+      return false;
+    }
+    const rootBudget = deps.durableBudgetState?.(rootRunId) ?? {
+      startedAtMs: gs.startedAt,
+      tokensConsumed: gs.cumulativeTokens,
+      usdConsumed: gs.cumulativeCost,
+    };
     // Source the run context the same way the flat-run checkpoint path does. The
     // graph run carries no per-node lease/caps record here (those are minted per
     // node), so the checkpoint persists the node-completion snapshot + the stable
     // root; the caps/leaseIds the resumed run rehydrates come from the run record
-    // the outward-send path already wrote (outward_step is owned by
-    // allocateOutwardStep — this upsert deliberately never touches it).
+    // the outward-send path already wrote. Outward sequencing belongs to the
+    // separate ledger, so this checkpoint upsert never touches it.
     const record: DurableRunRecord = {
+      checkpointId: gs.graphId,
       rootRunId,
+      agentId: gs.callerAgentId,
+      sessionKey: gs.callerSessionKey,
+      ownerTenantId: owner.tenantId,
+      ownerUserId: owner.userId,
+      deliveryOrigin: gs.callerDeliveryOrigin ?? null,
       spawnTree: snapshotToSpawnTree(gs.stateMachine.snapshot()),
-      caps: [],
+      caps: [...gs.callerCaps],
       leaseIds: [],
-      budgetConsumed: gs.cumulativeCost,
+      budgetConsumed: rootBudget.usdConsumed,
+      rootBudget,
       cronOrigin: null,
-      stepIndex: -1,
+      trustLevel: gs.callerTrustLevel,
       status: "running",
       lastHeartbeatAt: systemNowMs(),
+      scriptRef: null,
+      checkpointRef: checkpointArtifact.value,
     };
-    void store.upsertCheckpoint(record).then((res) => {
-      if (!res.ok) {
+    const persisted = await store.upsertCheckpoint(record);
+    if (!persisted.ok) {
+      deps.logger?.warn(
+        { graphId: gs.graphId, rootRunId, err: toSafeErrorLogString(persisted.error), hint: "Repair the durable authority store; dependent graph work remains parked", errorKind: "resource" as const },
+        "Graph durable checkpoint failed",
+      );
+      return false;
+    }
+    if (terminal) {
+      const completion = await graphCompletions.run(gs);
+      if (!completion.ok) return false;
+      const completed = await store.markCompleted(gs.graphId);
+      if (!completed.ok) {
         deps.logger?.warn(
-          { graphId: gs.graphId, rootRunId, err: res.error, hint: "durable upsertCheckpoint failed; this node transition is not persisted, resume may re-run more nodes than necessary", errorKind: "resource" as const },
-          "Graph durable checkpoint failed",
+          { graphId: gs.graphId, rootRunId, err: toSafeErrorLogString(completed.error), hint: "Repair the durable authority store; graph completion remains parked and resumable", errorKind: "resource" as const },
+          "Graph durable markCompleted failed",
         );
+        return false;
       }
-    });
+      releaseDurableRetention(gs);
+    }
+    return true;
   }
 
-  // Callback wiring: bind module functions with closed-over state/deps/config.
-  // The node-transition entry points (spawnNode →
-  // markNodeRunning; handleSubAgentCompleted → markNodeCompleted/markNodeFailed;
-  // markNodeFailed) each `checkpointGraph(gs)` AFTER the transition so the
-  // durable spawn_tree tracks node completion at every boundary.
+  function requiresDurableBoundary(gs: GraphRunState): boolean {
+    return deps.durableRuns !== undefined
+      && gs.rootRunId !== undefined
+      && gs.callerSessionKey !== undefined
+      && gs.callerAgentId !== undefined;
+  }
+
+  function releaseDurableRetention(gs: GraphRunState): void {
+    if (gs.rootRunId === undefined || gs.durableRetentionReleased === true) return;
+    gs.durableRetentionReleased = true;
+    deps.releaseDurableRoot?.(gs.rootRunId);
+  }
+  const durableTransitions = createGraphDurableTransitions({
+    requiresBoundary: requiresDurableBoundary,
+    checkpoint: checkpointGraph,
+    logger: deps.logger,
+  });
+  const runDurableTransition = durableTransitions.run;
+  const persistThen = durableTransitions.persistThen;
+  const awaitDurableTransitions = durableTransitions.awaitGraph;
+
+  function completeAfterPersistence(
+    gs: GraphRunState,
+    afterPersistence: (action: () => void) => void,
+  ): void {
+    if (!requiresDurableBoundary(gs)) {
+      afterPersistence(() => {
+        void graphCompletions.run(gs);
+      });
+    }
+  }
+
+  // Continuations release only after crossing the durable authority boundary.
   const callbacks = {
     spawnReadyNodes: (gs: GraphRunState) =>
       spawnReadyNodesFn(state, deps, config, gs, {
@@ -181,58 +284,93 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     spawnNode: (gs: GraphRunState, nodeId: string) => {
       spawnNodeFn(state, deps, config, gs, nodeId, {
         markNodeFailed: (gs2, nid, error) => callbacks.markNodeFailed(gs2, nid, error),
-        startDriverNode: (gs2, nid, node, driver, task) =>
-          startDriverNodeFn(state, deps, gs2, nid, node, driver, task, {
-            markNodeFailed: (gs3, nid2, error) => callbacks.markNodeFailed(gs3, nid2, error),
-            executeDriverAction: (gs3, nid2, action) =>
-              executeDriverActionFn(state, deps, config, gs3, nid2, action, driverCallbacks),
-            handleDriverTimeout: (gs3, nid2) =>
-              handleDriverTimeoutFn(state, deps, config, gs3, nid2, driverCallbacks),
-          }),
+        admitRegularNode: (gs2, _nid, launch) => {
+          const reservedRunId = randomUUID();
+          void runDurableTransition(gs2, (afterPersistence) => {
+            if (!launch.reserve(reservedRunId)) {
+              launch.cancel();
+              return;
+            }
+            afterPersistence(() => launch.start(reservedRunId));
+          }).then((succeeded) => {
+            if (!succeeded) launch.cancel(reservedRunId);
+          });
+        },
+        startDriverNode: (gs2, nid, node, driver, task) => {
+          void runDurableTransition(gs2, (afterPersistence) => {
+            startDriverNodeFn(state, deps, gs2, nid, node, driver, task, {
+              markNodeFailed: (gs3, nid2, error) => callbacks.markNodeFailed(gs3, nid2, error),
+              executeDriverAction: (gs3, nid2, action) =>
+                afterPersistence(() => executeDriverActionFn(state, deps, config, gs3, nid2, action, driverCallbacks)),
+              handleDriverTimeout: (gs3, nid2) =>
+                handleDriverTimeoutFn(state, deps, config, gs3, nid2, driverCallbacks),
+            });
+          });
+        },
         spawnReadyNodes: (gs2) => callbacks.spawnReadyNodes(gs2),
       });
-      // markNodeRunning fired inside spawnNodeFn (running boundary) — persist it.
-      checkpointGraph(gs);
     },
 
     markNodeFailed: (gs: GraphRunState, nodeId: string, error: string) => {
-      markNodeFailedFn(state, deps, gs, nodeId, error, {
-        spawnReadyNodes: (gs2) => callbacks.spawnReadyNodes(gs2),
-        handleGraphCompletion: (gs2) => callbacks.handleGraphCompletion(gs2),
+      runDurableTransition(gs, (afterPersistence) => {
+        markNodeFailedFn(state, deps, gs, nodeId, error, {
+          spawnReadyNodes: (gs2) => afterPersistence(() => callbacks.spawnReadyNodes(gs2)),
+          handleGraphCompletion: (gs2) => completeAfterPersistence(gs2, afterPersistence),
+        });
       });
-      checkpointGraph(gs);
     },
 
-    handleGraphCompletion: (gs: GraphRunState) =>
-      handleGraphCompletionFn(state, deps, gs),
+    handleGraphCompletion: (gs: GraphRunState) => {
+      void runDurableTransition(gs, (afterPersistence) => {
+        completeAfterPersistence(gs, afterPersistence);
+      });
+    },
 
-    handleBudgetExceeded: (gs: GraphRunState, reason: string) =>
-      handleBudgetExceededFn(state, deps, gs, reason),
+    handleBudgetExceeded: (gs: GraphRunState, reason: string) => {
+      runDurableTransition(gs, (afterPersistence) => {
+        handleBudgetExceededFn(
+          state,
+          deps,
+          gs,
+          reason,
+          () => completeAfterPersistence(gs, afterPersistence),
+        );
+      });
+    },
+
+    handleGraphTimeout: (gs: GraphRunState) => {
+      runDurableTransition(gs, (afterPersistence) => {
+        handleGraphTimeoutFn(
+          state,
+          deps,
+          gs,
+          () => completeAfterPersistence(gs, afterPersistence),
+        );
+      });
+    },
 
     handleSubAgentCompleted: (gs: GraphRunState, event: { runId: string; success: boolean; tokensUsed?: number; cost?: number; cacheReadTokens?: number; cacheWriteTokens?: number }) => {
-      handleSubAgentCompletedFn(state, deps, config, gs, event, {
-        spawnReadyNodes: (gs2) => callbacks.spawnReadyNodes(gs2),
-        handleGraphCompletion: (gs2) => callbacks.handleGraphCompletion(gs2),
-        handleBudgetExceeded: (gs2, reason) => callbacks.handleBudgetExceeded(gs2, reason),
+      runDurableTransition(gs, (afterPersistence) => {
+        handleSubAgentCompletedFn(state, deps, config, gs, event, {
+          spawnReadyNodes: (gs2) => afterPersistence(() => callbacks.spawnReadyNodes(gs2)),
+          handleGraphCompletion: (gs2) => completeAfterPersistence(gs2, afterPersistence),
+          handleBudgetExceeded: (gs2, reason) => afterPersistence(() => callbacks.handleBudgetExceeded(gs2, reason)),
+        });
       });
-      // markNodeCompleted / markNodeFailed fired inside — persist the boundary.
-      checkpointGraph(gs);
     },
   };
 
-  // Driver-specific callbacks (shared between driver handler functions)
   const driverCallbacks = {
     markNodeFailed: (gs: GraphRunState, nodeId: string, error: string) =>
       callbacks.markNodeFailed(gs, nodeId, error),
     handleBudgetExceeded: (gs: GraphRunState, reason: string) =>
       callbacks.handleBudgetExceeded(gs, reason),
     spawnReadyNodes: (gs: GraphRunState) =>
-      callbacks.spawnReadyNodes(gs),
+      persistThen(gs, () => callbacks.spawnReadyNodes(gs)),
     handleGraphCompletion: (gs: GraphRunState) =>
       callbacks.handleGraphCompletion(gs),
   };
 
-  // Global event listener (single handler, no per-graph listener growth)
   function onSubAgentCompleted(event: { runId: string; success: boolean; tokensUsed?: number; cost?: number; cacheReadTokens?: number; cacheWriteTokens?: number }): void {
     globalCompletionHandler(state, config, event, {
       handleDriverTurnCompleted: (gs, nodeId, evt) =>
@@ -244,14 +382,47 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
 
   deps.eventBus.on("session:sub_agent_completed", onSubAgentCompleted);
 
-  // Sweep interval: remove expired completed graphs
   const sweepInterval = systemSetInterval(() => {
     sweepExpiredGraphs(state, config);
+    const activeGraphIds = new Set(state.graphs.keys());
+    durableTransitions.prune(activeGraphIds);
+    graphCompletions.prune(activeGraphIds);
   }, config.sweepIntervalMs);
   sweepInterval.unref();
 
-  // Public API
   async function run(params: GraphRunParams): Promise<Result<string, string>> {
+    const callerContext = tryGetContext();
+    if (
+      callerContext !== undefined
+      && params.callerAgentId !== undefined
+      && callerContext.agentId !== params.callerAgentId
+    ) {
+      deps.logger?.warn({
+        method: "graph.run",
+        mismatchField: "agent",
+        hint: "Reject the graph and verify the in-process RPC injector preserves the active request principal",
+        errorKind: "precondition" as const,
+      }, "Graph caller context mismatch");
+      return err("Graph caller agent does not match the request context");
+    }
+    if (
+      callerContext !== undefined
+      && params.callerSessionKey !== undefined
+      && callerContext.sessionKey !== params.callerSessionKey
+    ) {
+      deps.logger?.warn({
+        method: "graph.run",
+        mismatchField: "session",
+        hint: "Reject the graph and verify the in-process RPC injector preserves the active request principal",
+        errorKind: "precondition" as const,
+      }, "Graph caller context mismatch");
+      return err("Graph caller session does not match the request context");
+    }
+    const callerPrincipalMatches = callerContext !== undefined
+      && params.callerAgentId !== undefined
+      && params.callerSessionKey !== undefined
+      && callerContext.agentId === params.callerAgentId
+      && callerContext.sessionKey === params.callerSessionKey;
     const graphId = randomUUID();
     const graphTraceId = randomUUID();
 
@@ -267,26 +438,38 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
 
     const stateMachine = createGraphStateMachine(params.graph);
 
-    // Resolve ONE tree-stable rootRunId for the whole graph run
-    // so every node spawn shares it (the tree-wide ceiling + killByRootRun see
-    // one tree, not a fresh root per node). A graph submitted BY a sub-agent
-    // (its session key maps to a live run) inherits that run's root; a top-level
-    // submission resolves the caller session's stable root. Undefined when no
-    // resolver is wired (nodes mint per-spawn — graph fan-out is
-    // still bounded by the graph concurrency gate).
+    // Every node shares one tree-stable root for budget and kill authority.
     const graphParentRun = params.callerSessionKey
       ? deps.subAgentRunner.getRunBySessionKey?.(params.callerSessionKey)
       : undefined;
     const graphParsedCaller = params.callerSessionKey
       ? parseFormattedSessionKey(params.callerSessionKey)
       : undefined;
-    const graphRootRunId =
-      graphParentRun?.rootRunId
-      ?? (graphParsedCaller ? deps.resolveRootRunId?.(graphParsedCaller) : undefined);
+    const graphRootRunId = callerPrincipalMatches
+      ? params.callerRootRunId
+        ?? graphParentRun?.rootRunId
+        ?? (
+          graphParsedCaller && params.callerAgentId
+            ? deps.resolveRootRunId?.(params.callerAgentId, graphParsedCaller)
+            : undefined
+        )
+      : undefined;
 
     const gs: GraphRunState = {
       graphId,
       graphTraceId,
+      // Capture once at submission. Dependent/queued nodes may start under a
+      // child completion callback, so consulting ambient ALS later would read
+      // the wrong principal. Only an exact declared caller match can carry
+      // authorization or request annotations into the graph.
+      callerTrustLevel: callerPrincipalMatches ? callerContext.trustLevel : "guest",
+      callerCaps: callerPrincipalMatches ? [...(params.callerCaps ?? [])] : [],
+      ...(callerPrincipalMatches && params.callerLeaseId !== undefined
+        ? { parentLeaseId: params.callerLeaseId }
+        : {}),
+      ...(callerPrincipalMatches && params.callerDeliveryOrigin !== undefined
+        ? { callerDeliveryOrigin: params.callerDeliveryOrigin }
+        : {}),
       ...(graphRootRunId !== undefined ? { rootRunId: graphRootRunId } : {}),
       graph: params.graph,
       stateMachine,
@@ -302,7 +485,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       // Graph submission carries no inbound NormalizedMessage, so resolve
       // the reply language once from the caller's RequestContext.resolvedLanguage — set by the
       // parent executor — and thread it to every node envelope via buildContextEnvelope.
-      resolvedLanguage: tryGetContext()?.resolvedLanguage,
+      resolvedLanguage: callerPrincipalMatches ? callerContext.resolvedLanguage : undefined,
       announceChannelType: params.announceChannelType,
       announceChannelId: params.announceChannelId,
       nodeProgress: params.nodeProgress ?? false,
@@ -322,9 +505,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
 
     state.graphs.set(graphId, gs);
 
-    // Compute graph-wide tool superset. Stored as awaitable promise
-    // so pre-warm can wait for tools before making the API call.
-    // Also captures full tool definitions (description + inputSchema) for prewarm.
+    // Pre-warm awaits the graph-wide tool names and full definitions.
     if (deps.assembleToolsForAgent) {
       const assembleToolsFn = deps.assembleToolsForAgent;
       gs.toolSupersetPromise = (async () => {
@@ -374,18 +555,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       "Graph run assigned traceId for sub-agent correlation",
     );
 
-    // Enforce a makespan floor on the graph timeout. A weak model routinely
-    // sets it too low for the DAG it just decomposed — observed live: a 6-node NVDA
-    // pipeline given 10 min, where the 4 analysts (small-model concurrency = 2)
-    // consumed the whole budget and the debate + head-trader were starved. The floor
-    // is the critical-path makespan if every node ran to its timeout, accounting for
-    // concurrency waves. max(requested, floor) lets the model decompose freely but
-    // never starve later phases. See graph-timeout-floor.ts. `gs.graph === params.graph`
-    // (state init), so updating timeoutMs keeps the completion-path timeout report accurate.
-    // Only RAISE an existing positive timeout — never invent one. A graph with no
-    // timeout (timeoutMs undefined/0) keeps the original "no graph-level timer, rely
-    // on node timeouts" behavior. In production the schema default (1.5M = 25 min) is
-    // always present, so the floor is max(1.5M, makespan) and never shortens anything.
+    // Raise only configured timeouts to the critical-path makespan; never invent one.
     const requestedGraphTimeoutMs = params.graph.graph.timeoutMs ?? 0;
     if (requestedGraphTimeoutMs > 0) {
       const graphTimeoutFloorMs = computeGraphTimeoutFloorMs(
@@ -409,13 +579,12 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         );
         params.graph.graph.timeoutMs = effectiveGraphTimeoutMs;
       }
-      gs.graphTimer = systemSetTimeout(() => handleGraphTimeoutFn(state, deps, gs), effectiveGraphTimeoutMs);
+      gs.graphTimer = systemSetTimeout(() => callbacks.handleGraphTimeout(gs), effectiveGraphTimeoutMs);
       if (typeof gs.graphTimer === "object" && "unref" in gs.graphTimer) {
         gs.graphTimer.unref();
       }
     }
 
-    // Optional pre-warm API call to seed cache before node spawns
     if (deps.preWarm && gs.toolSupersetPromise) {
       const toolNames = await gs.toolSupersetPromise;
       if (toolNames.length > 0) {
@@ -423,10 +592,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
           getModel: getModel as PreWarmSdk["getModel"],
           completeSimple: completeSimple as PreWarmSdk["completeSimple"],
         };
-        // Use full tool definitions from graphToolDefs (with description + inputSchema).
-        // Bare names produce minimal tool schemas that may be below the minimum cacheable tokens.
-        // Full definitions ensure the prewarm prefix is large enough to cache AND byte-identical
-        // to what sub-agents will send, maximizing cache hit rates.
+        // Full definitions preserve the exact cache prefix used by sub-agents.
         const preWarmTools: Array<{ name: string; description?: string; inputSchema?: unknown }> =
           gs.graphToolDefs && gs.graphToolDefs.length > 0
             ? gs.graphToolDefs.filter(t => toolNames.includes(t.name))
@@ -455,7 +621,27 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       }
     }
 
+    if (
+      deps.durableRuns !== undefined
+      && gs.rootRunId !== undefined
+      && gs.callerSessionKey !== undefined
+      && gs.callerAgentId !== undefined
+    ) {
+      deps.retainDurableRoot?.(gs.rootRunId);
+      const initialCheckpoint = await checkpointGraph(gs);
+      if (!initialCheckpoint) {
+        releaseDurableRetention(gs);
+        state.graphs.delete(graphId);
+        clearAllTimers(deps, gs);
+        return err("Graph could not establish durable authority");
+      }
+    }
+
     callbacks.spawnReadyNodes(gs);
+    if (!(await awaitDurableTransitions(gs))) {
+      discardGraphState(state, deps, gs, releaseDurableRetention);
+      return err("Graph durable launch authority failed");
+    }
 
     return ok(graphId);
   }
@@ -547,6 +733,13 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
   async function shutdown(): Promise<void> {
     deps.eventBus.off("session:sub_agent_completed", onSubAgentCompleted);
 
+    // Stop every queued/in-flight durable transition from releasing a new
+    // continuation, then wait for authority writes already in progress. Clearing
+    // the tails before they settle could let a post-checkpoint runner launch race
+    // with teardown and could drop the write itself on process exit.
+    await durableTransitions.blockAllAndDrain(state.graphs.keys());
+    await graphCompletions.drain();
+
     for (const gs of state.graphs.values()) {
       if (!gs.stateMachine.isTerminal()) {
         // Clean up event-driven spawn gate on shutdown
@@ -578,11 +771,14 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         clearAllTimers(deps, gs);
         gs.completedAt = systemNowMs();
       }
+      releaseDurableRetention(gs);
     }
 
     // Clear spawn queue and reset global counter
     state.spawnQueue.length = 0;
     state.globalActiveSubAgents = 0;
+    durableTransitions.clear();
+    graphCompletions.clear();
 
     systemClearInterval(sweepInterval);
   }
@@ -614,107 +810,117 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
    * checkpoint after a restart. Re-enters ONLY the incomplete nodes and DRIVES
    * them via the node-lifecycle path so each re-entered node's sub-agent spawn
    * actually fires — not a bare re-mark-ready. Completed nodes are not
-   * re-run; a re-run node's outward sends dedupe via the ONCE ledger.
+   * re-run; outward uncertainty remains governed by the durable send ledger.
    *
-   * The durable record carries node-completion STATE (`spawn_tree`) but not the
-   * original graph topology/tasks (full mid-node DAG
-   * state persistence is deliberately not attempted). So resume reconstructs a reduced graph from
-   * the incomplete frontier: each incomplete node becomes an independent root
-   * (dependsOn=[]), immediately `ready`, and is driven to re-execute. Already-
-   * terminal nodes (completed/skipped/failed) are excluded from the reconstructed
-   * graph, so they are provably not re-run (DoS bound — resume work is the
-   * unfinished frontier, not the whole DAG).
+   * The authority row contains only routing metadata; `checkpointRef` points to
+   * the protected exact-graph artifact. Resume refuses any missing, malformed,
+   * or summary-divergent pair rather than fabricating work.
    */
-  async function resumeGraph(record: DurableRunRecord): Promise<Result<void, Error>> {
+  async function resumeGraph(
+    record: DurableRunRecord,
+    authority?: { leaseId: string; bearer: string },
+  ): Promise<Result<void, Error>> {
     // Cap/shape guard: a tampered or column-drifted record must not rehydrate.
-    // parseDurableRunRecord permits the stepIndex=-1 never-sent
-    // sentinel, so a legitimate not-yet-sent DAG checkpoint passes.
     const parsed = parseDurableRunRecord(record);
     if (!parsed.ok) {
       return err(new Error(`resumeGraph: record failed parse (cap/shape guard): ${parsed.error.message}`));
     }
     const validRecord = parsed.value;
     const rootRunId = validRecord.rootRunId;
-
-    const toResume = incompleteNodes(validRecord.spawnTree as Array<{ nodeId: string; status: string }>);
-
-    // Nothing incomplete ⇒ the graph already finished; flip it to completed so a
-    // later boot scan skips it (markCompleted territory — no nodes to re-run).
-    if (toResume.length === 0) {
-      if (deps.durableRuns) {
-        const res = await deps.durableRuns.markCompleted(rootRunId);
-        if (!res.ok) return err(res.error);
-      }
-      deps.logger?.info(
-        { rootRunId, hint: "DAG resume: no incomplete nodes — already complete" },
-        "Graph durable resume: nothing to re-enter",
-      );
-      return ok(undefined);
+    const checkpointRef = validRecord.checkpointRef;
+    if (checkpointRef === null) {
+      return err(new Error("resumeGraph: protected graph checkpoint reference is missing"));
     }
-
-    // Reconstruct a reduced graph from the incomplete frontier (each node a
-    // root). Parse a minimal raw input through ExecutionGraphSchema first to
-    // apply node + graph-level defaults (retries=0 here so a re-run does not
-    // re-multiply attempts), then topo-sort. validateAndSortGraph does NOT apply
-    // defaults — it only sorts — so the parse step is required.
-    const parsedGraph = ExecutionGraphSchema.safeParse({
-      nodes: toResume.map((nodeId) => ({
-        nodeId,
-        task: `Resume graph node "${nodeId}" (rootRunId ${rootRunId}) after daemon restart`,
-        dependsOn: [],
-        retries: 0,
-      })),
-      onFailure: "continue",
-    });
-    if (!parsedGraph.success) {
-      return err(new Error(`resumeGraph: could not build resume graph: ${parsedGraph.error.message}`));
+    const loaded = readDurableGraphCheckpoint(deps.dataDir, checkpointRef);
+    if (!loaded.ok) return err(loaded.error);
+    const durableArtifactGraphId = graphRunIdFromCheckpointRef(checkpointRef);
+    if (!durableArtifactGraphId.ok) return durableArtifactGraphId;
+    const spawnTree = validRecord.spawnTree as Array<{
+      nodeId: string;
+      status: import("@comis/core").NodeStatus;
+      runId?: string;
+    }>;
+    const summary = validateGraphCheckpointSummary(spawnTree, loaded.value);
+    if (!summary.ok) return summary;
+    const validatedResult = validateAndSortGraph(loaded.value.graph);
+    if (!validatedResult.ok) {
+      return err(new Error("resumeGraph: protected graph topology validation failed"));
     }
-    const reducedGraph = validateAndSortGraph(parsedGraph.data);
-    if (!reducedGraph.ok) {
-      return err(new Error(`resumeGraph: could not sort resume graph: ${reducedGraph.error.message}`));
+    const validated: ValidatedGraph = validatedResult.value;
+    if (
+      validated.executionOrder.length !== loaded.value.executionOrder.length
+      || validated.executionOrder.some((nodeId, index) => nodeId !== loaded.value.executionOrder[index])
+    ) {
+      return err(new Error("resumeGraph: protected graph execution order diverges from topology"));
     }
-    const validated: ValidatedGraph = reducedGraph.value;
+    const restored = restoreGraphStateMachine(validated, loaded.value.nodes);
+    if (!restored.ok) return err(new Error(`resumeGraph: ${restored.error}`));
 
-    const graphId = randomUUID();
+    const graphId = validRecord.checkpointId;
     const graphTraceId = randomUUID();
-    const sharedDir = safePath(deps.dataDir, "graph-runs", graphId);
+    const sharedDir = safePath(
+      deps.dataDir,
+      "graph-runs",
+      durableArtifactGraphId.value,
+    );
     mkdirSync(sharedDir, { recursive: true, mode: 0o700 });
 
-    const stateMachine = createGraphStateMachine(validated);
+    const stateMachine = restored.value;
 
     const gs: GraphRunState = {
       graphId,
       graphTraceId,
-      rootRunId, // the tree-stable durable key — re-run nodes share it so the ONCE ledger dedups their outward sends
+      callerTrustLevel: validRecord.trustLevel,
+      callerCaps: [...validRecord.caps],
+      ...(authority !== undefined ? { parentLeaseId: authority.leaseId } : {}),
+      ...(validRecord.deliveryOrigin !== null
+        ? { callerDeliveryOrigin: validRecord.deliveryOrigin }
+        : {}),
+      callerSessionKey: validRecord.sessionKey,
+      callerAgentId: validRecord.agentId,
+      rootRunId, // tree-stable durable key shared by recovered node attempts
+      ...(validRecord.deliveryOrigin !== null
+        ? {
+            announceChannelType: validRecord.deliveryOrigin.channelType,
+            announceChannelId: validRecord.deliveryOrigin.channelId,
+          }
+        : {}),
       graph: validated,
       stateMachine,
       runIdToNode: new Map(),
-      nodeOutputs: new Map(),
+      nodeOutputs: new Map(loaded.value.nodes.map((node) => [node.nodeId, node.output])),
       nodeTimers: new Map(),
       retryTimers: new Map(),
       graphTimer: undefined,
-      startedAt: systemNowMs(),
+      startedAt: loaded.value.startedAtMs,
       runningCount: 0,
       resolvedLanguage: tryGetContext()?.resolvedLanguage,
       nodeProgress: false,
-      skippedNodesEmitted: new Set(),
-      cumulativeTokens: 0,
-      cumulativeCost: validRecord.budgetConsumed,
+      skippedNodesEmitted: new Set(loaded.value.skippedNodesEmitted),
+      cumulativeTokens: loaded.value.cumulativeTokens,
+      cumulativeCost: loaded.value.cumulativeCost,
       sharedDir,
+      durableArtifactGraphId: durableArtifactGraphId.value,
       driverStates: new Map(),
       driverRunIdMap: new Map(),
       waitHandlers: new Map(),
       syntheticRunResults: new Map(),
-      nodeCacheData: new Map(),
-      nodeTokenSpend: new Map(),
-      nodeCost: new Map(),
+      nodeCacheData: new Map(loaded.value.nodeCacheData.map(({ nodeId, ...data }) => [nodeId, data])),
+      nodeTokenSpend: new Map(loaded.value.nodeTokenSpend.map(({ nodeId, tokens }) => [nodeId, tokens])),
+      nodeCost: new Map(loaded.value.nodeCost.map(({ nodeId, cost }) => [nodeId, cost])),
       maxAnnouncementChars: config.maxAnnouncementChars,
     };
 
     state.graphs.set(graphId, gs);
+    deps.retainDurableRoot?.(rootRunId);
 
     deps.logger?.info(
-      { graphId, rootRunId, resumedNodeCount: toResume.length, totalNodeCount: validRecord.spawnTree.length },
+      {
+        graphId,
+        rootRunId,
+        resumedNodeCount: stateMachine.getReadyNodes().length,
+        totalNodeCount: validated.graph.nodes.length,
+      },
       "Graph durable resume: re-entering incomplete nodes",
     );
     deps.eventBus.emit("graph:started", {
@@ -724,10 +930,42 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       timestamp: systemNowMs(),
     });
 
-    // DRIVE the incomplete nodes: spawnReadyNodes → spawnNode →
-    // subAgentRunner.spawn + markNodeRunning. The re-entered node actually
-    // re-executes; it is NOT merely set ready.
+    if (stateMachine.isTerminal()) {
+      const completed = await checkpointGraph(gs);
+      if (!completed) {
+        discardGraphState(state, deps, gs, releaseDurableRetention);
+        return err(new Error("resumeGraph: terminal authority could not be persisted"));
+      }
+      return ok(undefined);
+    }
+
+    const timeoutMs = validated.graph.timeoutMs ?? 0;
+    if (timeoutMs > 0) {
+      const remainingMs = timeoutMs - (systemNowMs() - loaded.value.startedAtMs);
+      if (remainingMs <= 0) {
+        callbacks.handleGraphTimeout(gs);
+        if (!(await awaitDurableTransitions(gs))) {
+          discardGraphState(state, deps, gs, releaseDurableRetention);
+          return err(new Error("resumeGraph: timeout authority could not be persisted"));
+        }
+        return ok(undefined);
+      }
+      gs.graphTimer = systemSetTimeout(
+        () => callbacks.handleGraphTimeout(gs),
+        remainingMs,
+      );
+      if (typeof gs.graphTimer === "object" && "unref" in gs.graphTimer) {
+        gs.graphTimer.unref();
+      }
+    }
+
+    // DRIVE only persisted ready nodes. Restored pending nodes keep their exact
+    // barriers; completed/skipped/failed nodes retain their terminal state.
     callbacks.spawnReadyNodes(gs);
+    if (!(await awaitDurableTransitions(gs))) {
+      discardGraphState(state, deps, gs, releaseDurableRetention);
+      return err(new Error("resumeGraph: durable launch authority failed"));
+    }
 
     return ok(undefined);
   }

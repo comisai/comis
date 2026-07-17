@@ -30,14 +30,13 @@
  * injected `toolInvokeExecutor`. The lease audience binds tool.invoke to
  * TOOL_CAPABILITY_MAP[innerTool] — a captured lease cannot dispatch a
  * tool whose cap it lacks. An OUTWARD message method gets a
- * monotonic `_outwardStepIndex` allocated here (the exactly-once ledger key).
+ * stable `_outwardStepIndex` allocated here (the retained-operation ledger key).
  *
  * @module
  */
 
 import net from "node:net";
-import { chmodSync, unlinkSync, appendFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { chmodSync, unlinkSync } from "node:fs";
 import {
   SUB_AGENT_TOOL_DENYLIST,
   stripInternalFields,
@@ -46,11 +45,10 @@ import {
   HANDLER_CAPABILITY_MAP,
   requireCapability,
   CapabilityDeniedError,
-  safePath,
+  toSafeErrorLogString,
   type ResolvedAutonomy,
-  type DurableRunPort,
+  type OutwardSendLedgerPort,
 } from "@comis/core";
-import { stableStringify } from "@comis/observability";
 import type { LeaseManager, LeaseInfo, ComisLogger } from "@comis/infra";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import { capabilityDenyReason, type ExecuteToolInvoke } from "./setup-tool-invoke-executor.js";
@@ -58,9 +56,20 @@ import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 // The per-cap audit emitter — the socket chokepoint has
 // the REAL lease, so it emits the FULL tuple (leaseId + parentLeaseId present)
 // for an allowed AND a denied tool.invoke (handleToolInvoke) + direct cap-gated
-// method (dispatchAudited). Reuses the shared helper (no asymmetry vs the
-// in-process leg, which omits leaseId).
+// method (dispatchAudited). The in-process leg omits leaseId.
 import { emitCapabilityAudit, type EmitCapabilityAuditDeps } from "../api/shared/emit-capability-audit.js";
+import {
+  dispatchValidatedLeaseRpc,
+  runWithValidatedLeaseContext,
+} from "./setup-capability-session-spawn.js";
+import type { ReplayRecorder } from "./capability-replay-recorder.js";
+export {
+  createReplayRecorder,
+  replayParamsDigest,
+  type ReplayRecorder,
+  type ReplayRecorderDeps,
+  type ReplayResultMaterialize,
+} from "./capability-replay-recorder.js";
 
 /**
  * Max bytes a single connection may buffer before a newline-terminated request
@@ -269,15 +278,14 @@ export interface CapabilityEndpointDeps {
    *  `_outwardStepIndex` (allocateOutwardStep). For an OUTWARD message method the
    *  endpoint allocates a UNIQUE per-root index + injects it beside `_agentId` so the
    *  outward-send wrap reads distinct `(rootRunId, stepIndex)` per send. Optional; absent ⇒
-   *  no index injected → the wrap is a pass-through (no exactly-once ledger). */
-  durableRuns?: DurableRunPort;
+   *  no index injected → the wrap is a pass-through without retained-operation protection. */
+  outwardLedger?: OutwardSendLedgerPort;
   /**
-   * The content-free replay recorder (REPLAY-01). After a SUCCESSFUL dispatch the
+   * The content-free replay recorder. After a successful dispatch the
    * chokepoint hands it `(lease, method, wireParams, result)` → it appends ONE
-   * `{seq, method, paramsDigest} → pointer` line to the run's `results/replay.jsonl`
-   * (digests + pointers ONLY — INV-5). Optional + default-OFF: absent ⇒ NOTHING is
-   * recorded (the deny-matrix tests + every run without orchestrateResume are
-   * byte-identical to today); the recorder is ALSO gated per-run. Never alters the
+   * `{seq, method, paramsDigest, resultDigest} → pointer` line to the daemon-owned
+   * run recording (digests and pointers only). Optional and disabled by default: absent means nothing is
+   * recorded; the recorder is also gated per run. Never alters the
    * dispatch it observes.
    */
   replayRecorder?: ReplayRecorder;
@@ -288,6 +296,7 @@ interface CapCallRequest {
   bearer: string;
   method: string;
   params?: Record<string, unknown>;
+  operationId?: string;
 }
 
 /** The capability endpoint handle: the dispatch fn + the 0600 socket lifecycle. */
@@ -300,165 +309,12 @@ export interface CapabilityEndpoint {
     bearer: string,
     method: string,
     params: Record<string, unknown>,
+    operationId?: string,
   ): Promise<unknown>;
   /** Start the 0600 owner-only unix socket server at `socketPath`. */
   startSocket(socketPath: string): Promise<void>;
   /** Stop the socket server and unlink the socket file. Idempotent. */
   stopSocket(): Promise<void>;
-}
-
-// ---------------------------------------------------------------------------
-// REPLAY-01 — the content-free replay recorder (records what a re-run replays).
-// ---------------------------------------------------------------------------
-
-/** The fixed subdir + basename of the run's content-free replay log (under the
- *  jailed workspace's `results/`, mirroring the ResultRef store). */
-const REPLAY_RESULTS_DIR = "results";
-const REPLAY_LOG_NAME = "replay.jsonl";
-
-/**
- * The content-free params digest BOTH the recorder and the separate replay socket
- * key on: the platform sha256 (never hand-rolled — V6) over the CANONICAL
- * (sorted-key) serialization of the params. Exported so `orchestrate-replay-socket.ts`
- * digests the re-spawned script's params IDENTICALLY — the in-order match is only
- * sound if both sides hash the same bytes. Keyed on the ORIGINAL wire params (what
- * the jailed script sent), never the stripped/injected ones.
- */
-export function replayParamsDigest(params: Record<string, unknown>): string {
-  return createHash("sha256").update(stableStringify(params)).digest("hex");
-}
-
-/** One content-free line per successful call: `seq` = per-root dispatch order;
- *  `paramsDigest` = sha256(canonical(params)); `result` = a `ResultRef.ref` POINTER
- *  — digests + pointers ONLY, NEVER raw params or the body (INV-5). */
-interface ReplayLine {
-  seq: number;
-  method: string;
-  paramsDigest: string;
-  result: string;
-}
-
-/**
- * The minimal materialize seam the recorder writes each result through — a
- * structural subset of `ResultRefStore.materialize` bound to a fixed tool name.
- * Returns the pointer (`ResultRef.ref`), a content-free `{error}` on over-cap refuse,
- * or `undefined` on a failed write. The boot layer binds it to the real result-ref
- * store, so recorded bytes live in the jailed `results/` under the same caps/TTL/GC.
- */
-export type ReplayResultMaterialize = (
-  payload: string,
-  ctx: { workspacePath: string; runId: string; nowMs: number; ttlMs?: number },
-) => Promise<{ ref: string } | { error: string } | undefined>;
-
-/** Deps for {@link createReplayRecorder}. */
-export interface ReplayRecorderDeps {
-  /** Default-OFF per-run gate: record ONLY when `autonomy.durability.orchestrateResume`
-   *  is on for the lease's agent (the plan-02 predicate). Absent/false ⇒ a full no-op. */
-  isEnabled: (agentId: string) => boolean;
-  /** Resolve the agent's jailed workspace — where `results/replay.jsonl` + the pointer
-   *  files live (the SAME resolver the tool-invoke executor + checkpoint use). */
-  resolveWorkspace: (agentId: string) => string;
-  /** Materialize each recorded result to a workspace-confined pointer (the ResultRef
-   *  contained-write) — never inline the body, even for small results (A3). */
-  materialize: ReplayResultMaterialize;
-  /** Injected wall clock (§2.8) — no ambient-clock read. */
-  nowMs: () => number;
-  /** TTL (ms) for the recorded-result pointer files; absent ⇒ the store default. The
-   *  boot layer passes a checkpoint-length TTL so a resumable run stays replayable. */
-  ttlMs?: number;
-  /** Boundary logger — a materialize/append failure WARNs with the canonical fields. */
-  logger?: ComisLogger;
-}
-
-/** Records each side-effecting cap-socket call to a content-free `replay.jsonl`. */
-export interface ReplayRecorder {
-  /** Append ONE content-free `{seq, method, paramsDigest} → pointer` line for a
-   *  SUCCESSFUL dispatch. A no-op when recording is off for the run. Best-effort: a
-   *  materialize refuse / append failure WARNs and returns — recording MUST NEVER
-   *  break the live dispatch it observes. */
-  record(
-    lease: LeaseInfo,
-    method: string,
-    params: Record<string, unknown>,
-    result: unknown,
-  ): Promise<void>;
-}
-
-/** Build the content-free replay recorder over the injected gate + workspace resolver
- *  + materialize seam. Keeps a monotonic per-`rootRunId` seq (dispatch order — the
- *  recorded order the separate replay socket serves back). */
-export function createReplayRecorder(deps: ReplayRecorderDeps): ReplayRecorder {
-  const log = deps.logger?.child({ submodule: "replay-recorder" });
-  const seqByRoot = new Map<string, number>();
-
-  function nextSeq(rootRunId: string): number {
-    const n = seqByRoot.get(rootRunId) ?? 0;
-    seqByRoot.set(rootRunId, n + 1);
-    return n;
-  }
-
-  async function record(
-    lease: LeaseInfo,
-    method: string,
-    params: Record<string, unknown>,
-    result: unknown,
-  ): Promise<void> {
-    if (!deps.isEnabled(lease.agentId)) return; // default-off — inert unless on for the run.
-
-    // Materialize EVERY result (even a small inline one) to an on-disk pointer so
-    // byte-identical replay works while the log stays content-free (A3) — never inline.
-    const payload = JSON.stringify(result ?? null) ?? "null";
-    const workspacePath = deps.resolveWorkspace(lease.agentId);
-    const materialized = await deps.materialize(payload, {
-      workspacePath,
-      runId: lease.rootRunId,
-      nowMs: deps.nowMs(),
-      ...(deps.ttlMs !== undefined ? { ttlMs: deps.ttlMs } : {}),
-    });
-    if (materialized === undefined || !("ref" in materialized)) {
-      // Over-cap refuse / failed write — do NOT append a line pointing at a blob
-      // that isn't there (that would be a replay divergence). Honest-degrade.
-      log?.warn(
-        {
-          submodule: "replay-recorder",
-          method,
-          errorKind: "resource" as const,
-          hint: "replay result could not be materialized (over-cap or write failure) — this call is not recorded; a later replay would diverge here",
-        },
-        "Replay recorder: result not materialized (skipping the line)",
-      );
-      return;
-    }
-
-    // The content-free line: the platform-sha256 params digest + the pointer.
-    const line: ReplayLine = {
-      seq: nextSeq(lease.rootRunId),
-      method,
-      paramsDigest: replayParamsDigest(params),
-      result: materialized.ref,
-    };
-
-    // Append it to <workspace>/results/replay.jsonl (safePath-confined). A path
-    // escape (safePath throws) or an I/O failure (appendFileSync throws) both
-    // honest-degrade content-free — never break the dispatch this observes.
-    try {
-      const logPath = safePath(workspacePath, REPLAY_RESULTS_DIR, REPLAY_LOG_NAME);
-      // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath-confined to the agent's workspace results/ dir; the basename is a fixed literal
-      appendFileSync(logPath, JSON.stringify(line) + "\n", "utf8");
-    } catch (e) {
-      log?.warn(
-        {
-          submodule: "replay-recorder",
-          err: e,
-          errorKind: "internal" as const,
-          hint: "writing the content-free replay line failed (path escape or I/O) — a later replay of this run may be incomplete",
-        },
-        "Replay recorder: failed to write the replay line",
-      );
-    }
-  }
-
-  return { record };
 }
 
 /**
@@ -552,33 +408,36 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     const route = TOOL_ROUTE_MAP[tool as keyof typeof TOOL_ROUTE_MAP];
     const result =
       route.kind === "rpc"
-        ? // Strip-then-inject: the inner args are FULLY attacker-controlled
-          // (the jailed script). Strip every forged `_X` BEFORE injecting the trusted
-          // lease-derived identity, so the lease's `_agentId` is the ONLY one the sink
-          // sees (self-scoping) and deny-by-origin is sound for any ADMIN_METHODS.
-          // No `_autonomyMode` here — the chokepoint server-resolves the jail-leg mode (see the general dispatch below).
-          await rpcCall(route.method, {
-            ...stripInternalFields(args),
-            _agentId: lease.agentId,
-            _capabilities: lease.caps,
+        ? await dispatchValidatedLeaseRpc({
+            lease,
+            params: args,
+            dispatch: (trustedParams) => rpcCall(route.method, trustedParams),
+            ...(log !== undefined ? { logger: log } : {}),
           })
         : // Executor route: the in-process builtins + the daemon-side web pair.
           // The executor is injected by the daemon wiring; a legitimately-authorized call
           // must NOT silently no-op if it is absent — throw a clear wiring error.
-          await (async () => {
+          await runWithValidatedLeaseContext(lease, async () => {
             if (deps.toolInvokeExecutor === undefined) {
               throw new Error(
                 `tool.invoke executor route for "${tool}" requires a toolInvokeExecutor (not wired)`,
               );
             }
-            return deps.toolInvokeExecutor(tool, args, {
+            return deps.toolInvokeExecutor(tool, stripInternalFields(args), {
+              leaseId: lease.leaseId,
               agentId: lease.agentId,
               caps: lease.caps,
+              sessionKey: lease.sessionKey,
+              trustLevel: lease.trustLevel,
+              ...(lease.deliveryOrigin !== undefined
+                ? { deliveryOrigin: lease.deliveryOrigin }
+                : {}),
               // Thread the tree-stable rootRunId so the budgetHook charges the flat web
               // call against the right per-root meter.
               rootRunId: lease.rootRunId,
+              ...(lease.checkpointId !== undefined ? { checkpointId: lease.checkpointId } : {}),
             });
-          })();
+          }, log);
     // A daemon-side SURFACE gate (MCP allowlist / write / resume) can DENY an authorized orch:* call
     // AFTER the cap check; audit the FINAL decision so an in-jail deny shows decision:"deny" (no args).
     if (deps.container !== undefined) {
@@ -653,7 +512,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
 
   /**
    * Record a SUCCESSFUL cap-socket call to the content-free `replay.jsonl`
-   * (REPLAY-01). A no-op when no recorder is wired (default) OR recording is off for
+   * for deterministic replay. A no-op when no recorder is wired or recording is off for
    * the run. `method`/`params` are the ORIGINAL wire values (pre-strip) so the digest
    * keys on exactly what the re-spawned script re-sends. Best-effort — never throws.
    */
@@ -664,18 +523,37 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     result: unknown,
   ): Promise<void> {
     if (!deps.replayRecorder) return;
-    await deps.replayRecorder.record(lease, method, params, result);
+    try {
+      await deps.replayRecorder.record(lease, method, params, result);
+    } catch (error) {
+      log?.warn(
+        {
+          method,
+          err: toSafeErrorLogString(error),
+          errorKind: "internal" as const,
+          hint: "the replay recorder rejected after the live call completed; the live result is preserved and a later replay may diverge",
+        },
+        "Capability replay recording failed after dispatch",
+      );
+    }
   }
 
   async function handleCapCall(
     bearer: string,
     method: string,
     params: Record<string, unknown>,
+    operationId?: string,
     // A per-connection id from the socket handler (monotonic counter).
     // Defaults to a single shared key so the deny-matrix unit tests (which call
     // handleCapCall directly) still exercise the per-root limb.
     socketId = "default",
   ): Promise<unknown> {
+    if (
+      operationId !== undefined
+      && (operationId.length === 0 || operationId.length > 256)
+    ) {
+      throw new Error("outward operation identity must contain 1 to 256 characters");
+    }
     // Denylist pre-check: a *_manage / gateway tool is never
     // delegatable, independent of the lease's caps. Denied BEFORE validate so a
     // valid lease can never reach a management surface.
@@ -724,7 +602,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
       consultRateLimit(toolLease, socketId);
       const toolInvokeResult = await handleToolInvoke(toolLease, tool, cap, innerArgs);
       // Record the SUCCESSFUL call under the WIRE method (tool.invoke) with the
-      // ORIGINAL wire params ({tool, args}) — a deny threw above (REPLAY-01).
+      // original wire params ({tool, args}); a denial threw above.
       await recordReplay(toolLease, method, params, toolInvokeResult);
       return toolInvokeResult;
     }
@@ -779,18 +657,15 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
         throw new CapabilityDeniedError("orch:cron");
       }
       // Via dispatchAudited so the socket cron mutation emits the per-cap audit.
-      const cronResult = await dispatchAudited(
-        method,
-        {
-          ...stripInternalFields(params),
-          // FORCE the lease's identity on BOTH fields (cron-handlers.ts reads both).
-          agentId: lease.agentId,
-          _agentId: lease.agentId,
-          _capabilities: lease.caps,
-        },
+      const cronResult = await dispatchValidatedLeaseRpc({
         lease,
-      );
-      await recordReplay(lease, method, params, cronResult); // REPLAY-01 (original wire params)
+        params,
+        ...(operationId !== undefined ? { outwardOperationId: operationId } : {}),
+        trustedPublicParams: { agentId: lease.agentId },
+        dispatch: (trustedParams) => dispatchAudited(method, trustedParams, lease),
+        ...(log !== undefined ? { logger: log } : {}),
+      });
+      await recordReplay(lease, method, params, cronResult);
       return cronResult;
     }
 
@@ -808,51 +683,56 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
     // because its params are typed in-process tool args, never raw wire bytes —
     // this boundary does NOT share that property, so it must strip here.
     //
-    // Inject _agentId + _capabilities and dispatch through the shipped sink.
-    // _agentId: makes assertNotAgentOrigin fire for admin methods.
-    // _capabilities: makes each handler's requireCapability fire (no second gate
-    // here — the endpoint passes the lease caps through verbatim and lets the
-    // shipped per-handler gate decide). Via dispatchAudited so a
-    // direct cap-gated method (session.spawn/graph.execute/message.send/skills.*)
-    // emits the per-cap audit (allow + a downstream cap-deny) with the real lease
-    // tuple — without it the dispatch-closure audit is unreachable (no
-    // _callerSessionKey), silently dropping the spawn-tree's most important edges.
-    // For an OUTWARD message method, allocate a UNIQUE monotonic
-    // `_outwardStepIndex` (the SOLE source) + inject it beside `_agentId` (strip-then-
-    // inject — stripInternalFields above dropped any forged inbound value). Two
-    // sends in one run get 0 then 1; absent store / non-outward method ⇒ no index.
-    const outwardStep = await allocateOutwardStepIfNeeded(method, lease.rootRunId);
-    // The jail leg injects NO `_autonomyMode` — the
-    // Lease carries caps/agentId/rootRunId but not mode. The rpc-dispatch chokepoint
-    // server-resolves THIS leg's mode from deps.agents[agentOrigin].autonomy
-    // (absent ⇒ server resolve ⇒ fail-closed "default"), kept in lockstep with the
-    // in-process leg's INJECTED mode there — NOT by widening the Lease schema (wrong layer).
-    const directResult = await dispatchAudited(
+    // Inject the lease identity/caps and dispatch through the shipped sink, so
+    // deny-by-origin, the handler capability gate, and socket audit all apply.
+    // Outward methods receive the sole server-allocated monotonic step index.
+    const outwardStep = await allocateOutwardStepIfNeeded(
       method,
-      {
-        ...stripInternalFields(params),
-        _agentId: lease.agentId,
-        _capabilities: lease.caps,
-        ...(outwardStep !== undefined ? { _outwardStepIndex: outwardStep } : {}),
-      },
-      lease,
+      lease.rootRunId,
+      operationId,
     );
-    await recordReplay(lease, method, params, directResult); // REPLAY-01 (original wire params)
+    const directResult = await dispatchValidatedLeaseRpc({
+      lease,
+      params,
+      ...(operationId !== undefined ? { outwardOperationId: operationId } : {}),
+      ...(method === "session.spawn" ? { requireDeliveryOrigin: true } : {}),
+      ...(outwardStep !== undefined ? { outwardStepIndex: outwardStep } : {}),
+      dispatch: (trustedParams) => dispatchAudited(method, trustedParams, lease),
+      ...(log !== undefined ? { logger: log } : {}),
+    });
+    await recordReplay(lease, method, params, directResult);
     return directResult;
   }
 
   /** Allocate the monotonic outward-send index for an OUTWARD message method,
-   *  else `undefined` (no index → pass-through). Best-effort — an allocation error
-   *  WARN-logs + returns undefined (never blocks the send, never substitutes a colliding 0). */
-  async function allocateOutwardStepIfNeeded(method: string, rootRunId: string): Promise<number | undefined> {
-    if (!deps.durableRuns || !OUTWARD_MESSAGE_METHODS.has(method)) return undefined;
-    const allocated = await deps.durableRuns.allocateOutwardStep(rootRunId);
-    if (!allocated.ok) {
-      log?.warn(
-        { submodule: "capability-endpoint", method, err: allocated.error, hint: "outward-step allocation failed — the send proceeds un-ledgered", errorKind: "dependency" as const },
-        "Capability endpoint: allocateOutwardStep failed (degrading to pass-through)",
+   *  else `undefined` when durability is intentionally absent. A wired-store
+   *  failure rejects before dispatch; an outward side effect must never escape
+   *  without the stable operation identity it was configured to require. */
+  async function allocateOutwardStepIfNeeded(
+    method: string,
+    rootRunId: string,
+    operationId: string | undefined,
+  ): Promise<number | undefined> {
+    if (!deps.outwardLedger || !OUTWARD_MESSAGE_METHODS.has(method)) return undefined;
+    if (operationId === undefined || operationId.length === 0 || operationId.length > 256) {
+      log?.error(
+        {
+          submodule: "capability-endpoint",
+          method,
+          hint: "the durable outward call was blocked; retry with the same bounded caller operation identity",
+          errorKind: "precondition" as const,
+        },
+        "Capability endpoint: outward operation identity missing",
       );
-      return undefined;
+      throw new Error("durable outward call requires a valid caller operation identity");
+    }
+    const allocated = await deps.outwardLedger.allocateStep(rootRunId, operationId);
+    if (!allocated.ok) {
+      log?.error(
+        { submodule: "capability-endpoint", method, err: toSafeErrorLogString(allocated.error), hint: "outward-step allocation failed; the outward call was blocked before dispatch — repair the durable operation store and retry with the same identity", errorKind: "dependency" as const },
+        "Capability endpoint: outward-step allocation failed",
+      );
+      throw allocated.error;
     }
     return allocated.value;
   }
@@ -906,7 +786,13 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
             socket.end(JSON.stringify({ error: "malformed request" }) + "\n");
             return;
           }
-          void handleCapCall(req.bearer, req.method, req.params ?? {}, socketId)
+          void handleCapCall(
+            req.bearer,
+            req.method,
+            req.params ?? {},
+            typeof req.operationId === "string" ? req.operationId : undefined,
+            socketId,
+          )
             .then((result) => {
               socket.end(JSON.stringify({ result }) + "\n");
             })

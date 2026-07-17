@@ -13,6 +13,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { CommandDirectives } from "./command-directive-types.js";
 import type { StepCounter } from "./step-counter.js";
 import type { ComisSessionManager } from "../session/comis-session-manager.js";
+import type { InboundMessageProvenancePlan } from "../session/inbound-message-provenance.js";
 import type { TimeoutSource } from "../model/operation-model-resolver.js";
 
 // ---------------------------------------------------------------------------
@@ -53,7 +54,7 @@ export interface ExecutionResult {
   // a DEDICATED member (not a reuse of budget_exceeded, which is the token cap)
   // so the dollars-vs-tokens cause stays distinct. SafetyCheckResult.finishReason
   // (bridge-safety-controls.ts) is typed off this; checkSpendLimit returns it.
-  finishReason: "stop" | "max_steps" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "context_loop" | "context_exhausted" | "output_starved" | "session_reset" | "loop_detected" | "prompt_timeout" | "spend_exceeded" | "error";
+  finishReason: "stop" | "max_steps" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "context_loop" | "context_exhausted" | "output_starved" | "session_reset" | "loop_detected" | "prompt_timeout" | "spend_exceeded" | "input_too_large" | "error";
   /** Ordered list of tool names invoked during execution (for post-mortem analysis). */
   toolCallHistory?: string[];
   /** Narrate-without-emit nudge outcome (small/nano only). A fired-but-
@@ -103,7 +104,7 @@ export interface ExecutionResult {
 }
 
 /** Optional overrides for per-execution behavior (e.g., sub-agent isolation). */
-// @optional-field-count: 13 — ExecutionOverrides is the per-EXECUTION override bag;
+// @optional-field-count: 14 — ExecutionOverrides is the per-EXECUTION override bag;
 // every `?` field is an independent per-run knob the caller MAY set (stepCounter/
 // tokenBudget for sub-agent isolation, spawnPacket/model/cacheRetention/skipRag/
 // graphId/nodeId/activeToolGroups for graph nodes, ephemeralSessionAdapter/skipSep/
@@ -111,6 +112,8 @@ export interface ExecutionResult {
 // not a cluster-split candidate — each describes ONE execution's override surface,
 // applied at distinct executor chokepoints; `operationType` is the only required field.
 export interface ExecutionOverrides {
+  /** Immutable physical inbound occurrences already committed by ingress. */
+  inboundProvenancePlans?: readonly InboundMessageProvenancePlan[];
   /** Override the shared StepCounter with a fresh instance.
    *  When provided, this counter is used instead of the deps.stepCounter. */
   stepCounter?: StepCounter;

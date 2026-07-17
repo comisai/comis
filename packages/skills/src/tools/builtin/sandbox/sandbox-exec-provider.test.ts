@@ -192,6 +192,14 @@ describe("SandboxExecProvider", () => {
       );
     });
 
+    it("keeps a replay workspace readable but removes its write grant", () => {
+      const provider = new SandboxExecProvider();
+      const profile = provider.buildArgs(makeOpts({ workspaceReadOnly: true }))[2]!;
+
+      expect(profile).toContain('(allow file-read* (subpath "/Users/agent/workspace"))');
+      expect(profile).not.toContain('(allow file-write* (subpath "/Users/agent/workspace"))');
+    });
+
     it("SBPL profile properly quotes paths containing backslashes", () => {
       const provider = new SandboxExecProvider();
       const args = provider.buildArgs(

@@ -11,7 +11,7 @@ import { systemClearTimeout, systemDateFrom, systemNowMs, systemSetTimeout } fro
 // Canonical DTOs from the api-types barrel — reusing them in the view
 // surfaces a compile error if the daemon contract evolves rather than
 // allowing the view's inline literal to silently drift.
-import type { DeliveryQueueStatus, PlatformCapabilities } from "../api/types/index.js";
+import type { ChannelObsResponse, DeliveryQueueStatus, PlatformCapabilities } from "../api/types/index.js";
 
 // Side-effect registrations for sub-components
 import "../components/nav/ic-breadcrumb.js";
@@ -32,14 +32,35 @@ interface FieldDef {
   placeholder?: string;
 }
 
-/** Delivery trace entry from obs.delivery.recent RPC. */
+type DeliveryStatus = "success" | "error" | "timeout" | "filtered" | "aborted";
+
+/** Canonical delivery record fields consumed from obs.delivery.recent. */
 interface DeliveryTraceEntry {
-  messageId?: string;
+  sourceChannelType: string;
+  targetChannelType: string;
+  traceId: string | null;
   latencyMs: number;
-  timestamp?: number;
-  deliveredAt?: number;
-  status?: string;
-  success?: boolean;
+  deliveredAt: number;
+  status: DeliveryStatus;
+}
+
+function deliveryStatusPresentation(status: DeliveryStatus): { variant: string; label: string } {
+  switch (status) {
+    case "success":
+      return { variant: "success", label: "Success" };
+    case "error":
+      return { variant: "error", label: "Error" };
+    case "timeout":
+      return { variant: "warning", label: "Timeout" };
+    case "filtered":
+      return { variant: "default", label: "Filtered" };
+    case "aborted":
+      return { variant: "warning", label: "Aborted" };
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
 }
 
 /** Media processing toggle definitions. */
@@ -55,7 +76,6 @@ const MEDIA_PROCESSING_FIELDS: Array<{ key: string; label: string; description: 
 const PLATFORM_FIELDS: Record<string, FieldDef[]> = {
   telegram: [
     { key: "botToken", label: "Bot Token", type: "secret" },
-    { key: "webhookUrl", label: "Webhook URL", type: "text", placeholder: "https://..." },
     { key: "ackReaction.enabled", label: "Ack Reaction", type: "toggle" },
     { key: "ackReaction.emoji", label: "Ack Emoji", type: "text", placeholder: "\u{1F440}" },
   ],
@@ -673,8 +693,11 @@ export class IcChannelDetail extends LitElement {
       // Fire all optional data loads in parallel
       const [mediaResult, deliveryResult, activityResult, queueResult, capabilitiesResult] = await Promise.allSettled([
         rpc.call<Record<string, Record<string, unknown>>>("config.read", { section: "channels" }),
-        rpc.call<{ entries?: DeliveryTraceEntry[]; deliveries?: DeliveryTraceEntry[] }>("obs.delivery.recent", { type: this.channelType, limit: 10 }),
-        rpc.call<{ channel: { channelId: string; channelType: string; lastActiveAt: number; messagesSent: number; messagesReceived: number } | null }>("obs.channels.get", { channelId: this.channelType }),
+        rpc.call<{ deliveries: DeliveryTraceEntry[] }>("obs.delivery.recent", {
+          channelType: this.channelType,
+          limit: 10,
+        }),
+        rpc.call<ChannelObsResponse>("obs.channels.all"),
         rpc.call<DeliveryQueueStatus>("delivery.queue.status", { channel_type: this.channelType }),
         rpc.call<{ channelType: string; features: PlatformCapabilities }>("channels.capabilities", { channel_type: this.channelType }),
       ]);
@@ -694,21 +717,31 @@ export class IcChannelDetail extends LitElement {
         }
       }
 
-      // Delivery trace - RPC returns { deliveries: [...] } or { entries: [...] }
+      // The server applies the platform filter before its SQL/ring-buffer limit.
       if (deliveryResult.status === "fulfilled") {
-        const raw = deliveryResult.value as Record<string, unknown>;
-        this._deliveryTrace = (raw?.deliveries ?? raw?.entries ?? []) as DeliveryTraceEntry[];
+        this._deliveryTrace = deliveryResult.value.deliveries.filter(
+          (delivery) => delivery.targetChannelType === this.channelType,
+        );
       } else {
         this._deliveryTrace = [];
       }
 
-      // Channel obs stats from obs.channels.get
-      if (activityResult.status === "fulfilled" && activityResult.value?.channel) {
-        const ch = activityResult.value.channel;
-        this._channelLastActiveAt = ch.lastActiveAt ?? 0;
-        this._channelMessagesSent = ch.messagesSent ?? 0;
-        this._channelMessagesReceived = ch.messagesReceived ?? 0;
-      }
+      // A platform detail page spans every concrete channel id for that type.
+      const matchingActivity = activityResult.status === "fulfilled"
+        ? activityResult.value.channels.filter((channel) => channel.channelType === this.channelType)
+        : [];
+      this._channelLastActiveAt = matchingActivity.reduce(
+        (latest, channel) => Math.max(latest, channel.lastActiveAt),
+        0,
+      );
+      this._channelMessagesSent = matchingActivity.reduce(
+        (total, channel) => total + channel.messagesSent,
+        0,
+      );
+      this._channelMessagesReceived = matchingActivity.reduce(
+        (total, channel) => total + channel.messagesReceived,
+        0,
+      );
 
       // Delivery queue status
       if (queueResult.status === "fulfilled" && queueResult.value) {
@@ -1006,7 +1039,7 @@ export class IcChannelDetail extends LitElement {
     const now = systemNowMs();
     const buckets = new Array<number>(24).fill(0);
     for (const t of traces) {
-      const ts = t.timestamp ?? t.deliveredAt ?? 0;
+      const ts = t.deliveredAt;
       const hoursAgo = Math.floor((now - ts) / 3_600_000);
       if (hoursAgo >= 0 && hoursAgo < 24) {
         buckets[23 - hoursAgo]++;
@@ -1091,13 +1124,16 @@ export class IcChannelDetail extends LitElement {
                   <div role="columnheader">Latency</div>
                 </div>
                 ${this._deliveryTrace.map(
-                  (d, i) => html`
-                    <div role="row" class="${i % 2 === 1 ? "trace-row-even" : ""}" style="display:contents">
-                      <div role="cell"><ic-relative-time .timestamp=${d.timestamp ?? d.deliveredAt ?? 0}></ic-relative-time></div>
-                      <div role="cell"><ic-tag variant=${(d.success ?? d.status === "delivered") ? "success" : "error"}>${d.success !== undefined ? (d.success ? "delivered" : "failed") : (d.status ?? "unknown")}</ic-tag></div>
-                      <div role="cell">${d.latencyMs}ms</div>
-                    </div>
-                  `,
+                  (d, i) => {
+                    const presentation = deliveryStatusPresentation(d.status);
+                    return html`
+                      <div role="row" class="${i % 2 === 1 ? "trace-row-even" : ""}" style="display:contents">
+                        <div role="cell"><ic-relative-time .timestamp=${d.deliveredAt}></ic-relative-time></div>
+                        <div role="cell"><ic-tag variant=${presentation.variant}>${presentation.label}</ic-tag></div>
+                        <div role="cell">${d.latencyMs}ms</div>
+                      </div>
+                    `;
+                  },
                 )}
               </div>
             `}

@@ -266,7 +266,9 @@ describe("createImageHandlers", () => {
   });
 
   it("delivers image via adapter.sendAttachment on success", async () => {
-    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-123"));
+    const mockSendAttachment = vi.fn().mockResolvedValue(
+      ok({ kind: "tracked", messageId: "msg-123" }),
+    );
     const deps = createMockDeps({
       getChannelAdapter: vi.fn().mockReturnValue({
         sendAttachment: mockSendAttachment,
@@ -292,7 +294,9 @@ describe("createImageHandlers", () => {
   });
 
   it("returns { success: true, delivered: true } after successful channel delivery", async () => {
-    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-456"));
+    const mockSendAttachment = vi.fn().mockResolvedValue(
+      ok({ kind: "tracked", messageId: "msg-456" }),
+    );
     const deps = createMockDeps({
       getChannelAdapter: vi.fn().mockReturnValue({
         sendAttachment: mockSendAttachment,
@@ -348,7 +352,9 @@ describe("createImageHandlers", () => {
   // ─── Durable persistence replaces the tmpdir write+delete ──────────────────
 
   it("persists the image and hands sendAttachment the PERSISTED filePath (not a tmpdir path)", async () => {
-    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-del01"));
+    const mockSendAttachment = vi.fn().mockResolvedValue(
+      ok({ kind: "tracked", messageId: "msg-del01" }),
+    );
     const persist = vi.fn().mockResolvedValue(ok(PERSISTED_OK));
     const deps = createMockDeps({
       getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
@@ -382,7 +388,9 @@ describe("createImageHandlers", () => {
   });
 
   it("a persistence failure WARNs and falls through to base64 (no crash, no sendAttachment)", async () => {
-    const mockSendAttachment = vi.fn().mockResolvedValue(ok("should-not-be-called"));
+    const mockSendAttachment = vi.fn().mockResolvedValue(
+      ok({ kind: "tracked", messageId: "should-not-be-called" }),
+    );
     const persist = vi.fn().mockResolvedValue(err(new Error("disk full")));
     const deps = createMockDeps({
       getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
@@ -502,7 +510,9 @@ describe("createImageHandlers", () => {
   // ─── §2.7: INFO completion line with durationMs on success ─────────────────
 
   it("emits an INFO completion line with durationMs on the channel-delivered success path", async () => {
-    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-789"));
+    const mockSendAttachment = vi.fn().mockResolvedValue(
+      ok({ kind: "tracked", messageId: "msg-789" }),
+    );
     const deps = createMockDeps({
       getChannelAdapter: vi.fn().mockReturnValue({ sendAttachment: mockSendAttachment }),
     });
@@ -579,7 +589,9 @@ describe("createImageHandlers", () => {
   }
 
   it("the channel-delivered INFO line carries imageProvider/model/costUsd/sizeBytes", async () => {
-    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-obs01"));
+    const mockSendAttachment = vi.fn().mockResolvedValue(
+      ok({ kind: "tracked", messageId: "msg-obs01" }),
+    );
     const deps = createMockDeps({
       provider: {
         id: "openai",
@@ -1286,7 +1298,9 @@ describe("createImageHandlers — trajectory direct-emit", () => {
   const SESSION_KEY = "default:u1:telegram:c1";
 
   it("happy path records image.requested then image.generated (with costUsd) then image.delivered", async () => {
-    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-1"));
+    const mockSendAttachment = vi.fn().mockResolvedValue(
+      ok({ kind: "tracked", messageId: "msg-1" }),
+    );
     const { trajectoryRegistry, recordEvent, getRecorder } = makeMockTrajectoryRegistry();
     const deps = createMockDeps({
       trajectoryRegistry,
@@ -1564,7 +1578,9 @@ describe("createImageHandlers — trajectory direct-emit", () => {
   it("still bills observability:token_usage on the persisted-ok delivered path", async () => {
     const { trajectoryRegistry } = makeMockTrajectoryRegistry();
     const eventBus = { emit: vi.fn() } as unknown as NonNullable<ImageHandlerDeps["eventBus"]>;
-    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-1"));
+    const mockSendAttachment = vi.fn().mockResolvedValue(
+      ok({ kind: "tracked", messageId: "msg-1" }),
+    );
     const deps = createMockDeps({
       trajectoryRegistry,
       eventBus,
@@ -1955,7 +1971,9 @@ describe("createImageHandlers — no secret in any log line", () => {
   });
 
   it("the happy/delivered path logs only ids/labels (no secret even if the provider id were one)", async () => {
-    const mockSendAttachment = vi.fn().mockResolvedValue(ok("msg-sec03"));
+    const mockSendAttachment = vi.fn().mockResolvedValue(
+      ok({ kind: "tracked", messageId: "msg-sec03" }),
+    );
     const deps = createMockDeps({
       logger: createMockLogger(),
       provider: {

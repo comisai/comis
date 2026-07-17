@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createResponsesRoute, type ResponsesEndpointDeps } from "./responses-endpoint.js";
 import type { ResponseObject, ResponseStreamEvent } from "./responses-types.js";
+import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 
 function createMockDeps(
   overrides: Partial<ResponsesEndpointDeps> = {},
@@ -11,6 +12,9 @@ function createMockDeps(
       response: "Hello from Comis!",
       tokensUsed: { input: 10, output: 20, total: 30 },
       finishReason: "stop",
+      stepsExecuted: 0,
+      llmCalls: 1,
+      status: "success",
     })),
     logger: { info: vi.fn(), error: vi.fn() },
     ...overrides,
@@ -19,6 +23,108 @@ function createMockDeps(
 
 describe("createResponsesRoute", () => {
   describe("non-streaming", () => {
+    it("forwards a non-stream request disconnect to the executing turn", async () => {
+      let markExecutionStarted!: () => void;
+      const executionStarted = new Promise<void>((resolve) => {
+        markExecutionStarted = resolve;
+      });
+      let executionSignal: AbortSignal | undefined;
+      const emit = vi.fn();
+      const deps = createMockDeps({
+        executeAgent: vi.fn((params) => {
+          executionSignal = params.signal;
+          markExecutionStarted();
+          return new Promise((_, reject) => {
+            params.signal.addEventListener(
+              "abort",
+              () => reject(new Error("request cancelled")),
+              { once: true },
+            );
+          });
+        }),
+        eventBus: createMockEventBus({ emit }),
+      });
+      const app = createResponsesRoute(deps);
+      const controller = new AbortController();
+      const pendingResponse = app.request(new Request("http://localhost/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "gpt-4", input: "Hello" }),
+        signal: controller.signal,
+      }));
+      await executionStarted;
+
+      controller.abort("client disconnected");
+
+      expect(executionSignal?.aborted).toBe(true);
+      await expect(pendingResponse).resolves.toMatchObject({ status: 500 });
+      const diagnostic = emit.mock.calls.find(
+        (call) => call[0] === "diagnostic:message_processed",
+      );
+      expect(diagnostic?.[1]).toMatchObject({
+        status: "error",
+        failureStage: "delivery",
+        errorKind: "platform",
+      });
+    });
+
+    it("records a resolved non-stream response as undeliverable after disconnect", async () => {
+      let markExecutionStarted!: () => void;
+      const executionStarted = new Promise<void>((resolve) => {
+        markExecutionStarted = resolve;
+      });
+      let resolveExecution!: (value: {
+        response: string;
+        tokensUsed: { input: number; output: number; total: number };
+        finishReason: string;
+        stepsExecuted: number;
+        llmCalls: number;
+        status: "success";
+      }) => void;
+      const execution = new Promise<Parameters<typeof resolveExecution>[0]>((resolve) => {
+        resolveExecution = resolve;
+      });
+      const emit = vi.fn();
+      const deps = createMockDeps({
+        executeAgent: vi.fn(() => {
+          markExecutionStarted();
+          return execution;
+        }),
+        eventBus: createMockEventBus({ emit }),
+      });
+      const app = createResponsesRoute(deps);
+      const controller = new AbortController();
+      const pendingResponse = app.request(new Request("http://localhost/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "gpt-4", input: "Hello" }),
+        signal: controller.signal,
+      }));
+      await executionStarted;
+
+      controller.abort("client disconnected");
+      resolveExecution({
+        response: "late response",
+        tokensUsed: { input: 2, output: 3, total: 5 },
+        finishReason: "stop",
+        stepsExecuted: 1,
+        llmCalls: 1,
+        status: "success",
+      });
+
+      await expect(pendingResponse).resolves.toMatchObject({ status: 500 });
+      const diagnostic = emit.mock.calls.find(
+        (call) => call[0] === "diagnostic:message_processed",
+      );
+      expect(diagnostic?.[1]).toMatchObject({
+        status: "error",
+        failureStage: "delivery",
+        errorKind: "platform",
+        toolCalls: 1,
+        llmCalls: 1,
+      });
+    });
+
     it("returns a complete ResponseObject", async () => {
       const deps = createMockDeps();
       const app = createResponsesRoute(deps);
@@ -65,7 +171,7 @@ describe("createResponsesRoute", () => {
 
       expect(deps.executeAgent).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: "Hi",
+          message: expect.stringMatching(/Subject: Conversation turn 1; role=user/),
           sessionKey: expect.objectContaining({
             userId: "responses-api",
             channelId: "responses",
@@ -74,8 +180,9 @@ describe("createResponsesRoute", () => {
       );
     });
 
-    it("extracts user messages from array input", async () => {
-      const deps = createMockDeps();
+    it("preserves exact interleaved role order across the complete response input", async () => {
+      const logger = { info: vi.fn(), error: vi.fn() };
+      const deps = createMockDeps({ logger });
       const app = createResponsesRoute(deps);
 
       await app.request("/", {
@@ -84,18 +191,39 @@ describe("createResponsesRoute", () => {
         body: JSON.stringify({
           model: "gpt-4",
           input: [
-            { role: "system", content: "You are helpful." },
-            { role: "user", content: "What is 2+2?" },
-            { role: "user", content: "Tell me more." },
+            { role: "system", content: "First response instruction" },
+            { role: "user", content: "PRIVATE_RESPONSE_QUESTION" },
+            { role: "assistant", content: "PRIVATE_RESPONSE_ANSWER" },
+            { role: "system", content: "Second response instruction" },
+            { role: "user", content: "PRIVATE_RESPONSE_FOLLOWUP" },
           ],
         }),
       });
 
-      expect(deps.executeAgent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: "What is 2+2?\nTell me more.",
-        }),
+      const call = vi.mocked(deps.executeAgent).mock.calls[0]![0];
+      expect(call.systemPrompt).toContain("Subject: Conversation turn 1; role=system");
+      expect(call.message).toContain("Subject: Conversation turn 2; role=user");
+      expect(call.message).toContain("Subject: Conversation turn 3; role=assistant");
+      expect(call.message).toContain("Subject: Conversation turn 4; role=system");
+      expect(call.message).toContain("Subject: Conversation turn 5; role=user");
+      const completeConversation = `${call.systemPrompt}\n\n${call.message}`;
+      expect(completeConversation.indexOf("First response instruction")).toBeLessThan(
+        completeConversation.indexOf("PRIVATE_RESPONSE_QUESTION"),
       );
+      expect(completeConversation.indexOf("PRIVATE_RESPONSE_QUESTION")).toBeLessThan(
+        completeConversation.indexOf("PRIVATE_RESPONSE_ANSWER"),
+      );
+      expect(completeConversation.indexOf("PRIVATE_RESPONSE_ANSWER")).toBeLessThan(
+        completeConversation.indexOf("Second response instruction"),
+      );
+      expect(completeConversation.indexOf("Second response instruction")).toBeLessThan(
+        completeConversation.indexOf("PRIVATE_RESPONSE_FOLLOWUP"),
+      );
+      expect(completeConversation.match(/<<<UNTRUSTED_[a-f0-9]+>>>/g)).toHaveLength(5);
+      expect(JSON.stringify([
+        ...logger.info.mock.calls,
+        ...logger.error.mock.calls,
+      ])).not.toContain("PRIVATE_RESPONSE_QUESTION");
     });
 
     it("returns 500 on executeAgent error", async () => {
@@ -183,6 +311,9 @@ describe("createResponsesRoute", () => {
             response: "Hello world!",
             tokensUsed: { input: 5, output: 15, total: 20 },
             finishReason: "stop",
+            stepsExecuted: 0,
+            llmCalls: 1,
+            status: "success" as const,
           };
         }),
       });
@@ -313,6 +444,9 @@ describe("createResponsesRoute", () => {
             response: "Hi",
             tokensUsed: { input: 1, output: 1, total: 2 },
             finishReason: "stop",
+            stepsExecuted: 0,
+            llmCalls: 1,
+            status: "success" as const,
           };
         }),
       });

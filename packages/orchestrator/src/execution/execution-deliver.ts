@@ -29,6 +29,7 @@ import { ok, err } from "@comis/shared";
 
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";
 import { buildThreadSendOpts } from "./execution-pipeline.js";
+import { emitObservationalEvent } from "./execution-event-emitter.js";
 import { createBlockPacer, coalesceBlocks } from "@comis/channels";
 import type { BlockPacer, TypingLifecycleController } from "@comis/channels";
 
@@ -71,7 +72,6 @@ const MAX_LAST_ERROR_CHARS = 200;
 const SUPPRESSED_RECEIPT: FinalDeliveryReceipt = {
   ok: true,
   deliveredChunks: 0,
-  lastChunkMessageId: "",
   deliveredAtMs: 0,
 };
 
@@ -151,7 +151,7 @@ export async function deliverExecutionResponse(
 
   // Emit coalesce:flushed events
   for (const evt of flushEvents) {
-    deps.eventBus.emit("coalesce:flushed", {
+    emitObservationalEvent(deps, "coalesce:flushed", {
       channelId: adapter.channelId,
       chatId: effectiveMsg.channelId,
       blockCount: evt.blockCount,
@@ -164,7 +164,7 @@ export async function deliverExecutionResponse(
   // 'message' mode: start typing just before block delivery
   if (blockStreamCfg.typingMode === "message" && typingLifecycle?.controller && !typingLifecycle.controller.isActive) {
     typingLifecycle.controller.start(effectiveMsg.channelId);
-    deps.eventBus.emit("typing:started", {
+    emitObservationalEvent(deps, "typing:started", {
       channelId: adapter.channelId,
       chatId: effectiveMsg.channelId,
       mode: blockStreamCfg.typingMode,
@@ -268,7 +268,7 @@ export async function deliverExecutionResponse(
       }
 
       // Pipeline-specific UX event: block index tracking for streaming progress.
-      deps.eventBus.emit("streaming:block_sent", {
+      emitObservationalEvent(deps, "streaming:block_sent", {
         channelId: adapter.channelId,
         chatId: effectiveMsg.channelId,
         blockIndex,
@@ -316,7 +316,7 @@ export async function deliverExecutionResponse(
     // reply was never sent. Announce the skip on the existing
     // delivery:aborted event (chunksDelivered counts what DID go out before
     // the signal fired) so `explain` shows the undelivered turn.
-    deps.eventBus.emit("delivery:aborted", {
+    emitObservationalEvent(deps, "delivery:aborted", {
       channelId: effectiveMsg.channelId,
       channelType: effectiveMsg.channelType ?? "unknown",
       reason: typeof deliverySignal.reason === "string" ? deliverySignal.reason : "aborted",
@@ -365,6 +365,7 @@ export async function deliverExecutionResponse(
     const lastError = sanitizeLogString(rawError).slice(0, MAX_LAST_ERROR_CHARS);
     return err({
       ok: false,
+      totalChunks: deliveredChunks + failedChunks,
       deliveredChunks,
       failedChunks,
       errorKind: firstFailure?.errorKind ?? "platform",
@@ -376,7 +377,7 @@ export async function deliverExecutionResponse(
   return ok({
     ok: true,
     deliveredChunks,
-    lastChunkMessageId,
+    ...(lastChunkMessageId ? { lastChunkMessageId } : {}),
     deliveredAtMs: settledAtMs,
   });
 }

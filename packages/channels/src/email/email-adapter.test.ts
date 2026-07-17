@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+import { ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Mocks — all module-level so vi.mock hoisting works
@@ -271,6 +272,30 @@ describe("createEmailAdapter", () => {
           }),
         ]),
       }),
+    );
+  });
+
+  it("sendAttachment returns delivered-untracked when SMTP omits the platform message ID", async () => {
+    transportMock.sendMail.mockResolvedValue({});
+    const { createEmailAdapter } = await getModule();
+    const deps = makeDeps();
+    const adapter = createEmailAdapter(deps);
+    await adapter.start();
+
+    const result = await adapter.sendAttachment("recipient@example.com", {
+      type: "file",
+      url: "/tmp/report.pdf",
+      mimeType: "application/pdf",
+      fileName: "report.pdf",
+    });
+
+    expect(result).toEqual(ok({ kind: "delivered_untracked" }));
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("Do not retry"),
+        errorKind: "platform",
+      }),
+      "Attachment delivered without platform tracking",
     );
   });
 });

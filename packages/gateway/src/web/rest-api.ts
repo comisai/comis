@@ -7,6 +7,7 @@ import { cors } from "hono/cors";
 import type { TokenStore } from "../auth/token-auth.js";
 import type { RpcAdapterDeps } from "../rpc/rpc-adapters.js";
 import { extractBearerToken, checkScope } from "../auth/token-auth.js";
+import { projectActivityPayload } from "./activity-projection.js";
 
 interface RestApiEnv extends Env {
   Variables: { clientScopes: string[]; clientId: string };
@@ -36,7 +37,7 @@ export class ActivityRingBuffer {
     this.entries.push({
       id: this.nextId++,
       event,
-      payload,
+      payload: projectActivityPayload(event, payload),
       timestamp: systemNowMs(),
     });
 
@@ -191,7 +192,8 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
     if (c.req.path.endsWith("/health")) {
       return next();
     }
-    // Skip auth for paths handled by SSE endpoint (has its own auth with query param support)
+    // Skip auth for paths handled by the SSE endpoint, which enforces its own
+    // Authorization bearer-header and scope checks.
     if (
       c.req.path.includes("/chat/stream") ||
       c.req.path.endsWith("/events")
@@ -310,7 +312,12 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
   api.get("/chat/history", async (c) => {
     try {
       const channelId = c.req.query("channelId") ?? undefined;
-      const result = await rpcAdapterDeps.getSessionHistory({ channelId });
+      const peerId = c.req.query("peerId") ?? undefined;
+      const result = await rpcAdapterDeps.getSessionHistory({
+        channelId,
+        peerId,
+        clientId: c.get("clientId"),
+      });
       return c.json(result);
     } catch (err) {
       deps.logger?.error({ err, hint: "Check session history adapter and channel ID validity", errorKind: "internal" as const }, "GET /chat/history error");
@@ -366,7 +373,13 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
     const scopes = c.get("clientScopes") as readonly string[] | undefined;
     const clientId = c.get("clientId");
 
-    const cmdResult = await rpcAdapterDeps.handleSlashCommand?.({ message, agentId, scopes });
+    const cmdResult = await rpcAdapterDeps.handleSlashCommand?.({
+      message,
+      agentId,
+      sessionKey,
+      clientId,
+      scopes,
+    });
     if (cmdResult?.handled && cmdResult.response) {
       return c.json({ response: cmdResult.response, tokensUsed: { input: 0, output: 0, total: 0 }, finishReason: "command" });
     }

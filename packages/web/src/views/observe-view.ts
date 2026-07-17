@@ -14,6 +14,7 @@ import {
 import type {
   BillingTotal,
   DeliveryStats,
+  DeliveryStep,
   DeliveryTrace,
   BillingByProvider,
   BillingByAgent,
@@ -327,6 +328,14 @@ export class IcObserveView extends LitElement {
         color: var(--ic-text);
       }
 
+      .trace-failure-meta {
+        display: flex;
+        gap: var(--ic-space-md);
+        margin-bottom: var(--ic-space-sm);
+        color: var(--ic-text-dim);
+        font-size: var(--ic-text-xs);
+      }
+
       .step-list {
         display: flex;
         flex-direction: column;
@@ -572,7 +581,7 @@ export class IcObserveView extends LitElement {
   @state() private _error = "";
 
   // Overview data
-  @state() private _requestsToday = 0;
+  @state() private _lifecycles24h = 0;
   @state() private _tokensToday = 0;
   @state() private _costToday = 0;
   @state() private _errorsToday = 0;
@@ -589,6 +598,7 @@ export class IcObserveView extends LitElement {
   // Delivery data
   @state() private _deliveryTraces: DeliveryTrace[] = [];
   @state() private _deliveryStats: DeliveryStats | null = null;
+  @state() private _deliveryWindowStats: DeliveryStats | null = null;
 
   // Channel data
   @state() private _channelActivity: ChannelActivity[] = [];
@@ -703,10 +713,12 @@ export class IcObserveView extends LitElement {
     }
 
     const rpc = this.rpcClient;
+    const deliveryWindowMs = this._getTimeRangeMs();
 
     // Fire all independent RPC calls in parallel
     const [
       deliveryResult,
+      deliveryWindowResult,
       billingResult,
       usage24hResult,
       byProviderResult,
@@ -716,12 +728,13 @@ export class IcObserveView extends LitElement {
       agentListResult,
       channelListResult,
     ] = await Promise.allSettled([
-      rpc.call<Record<string, unknown>>("obs.delivery.stats"),
+      rpc.call<Record<string, unknown>>("obs.delivery.stats", { sinceMs: 86_400_000 }),
+      rpc.call<Record<string, unknown>>("obs.delivery.stats", { sinceMs: deliveryWindowMs }),
       rpc.call<Record<string, unknown>>("obs.billing.total"),
       rpc.call<unknown>("obs.billing.usage24h"),
       rpc.call<unknown>("obs.billing.byProvider"),
       rpc.call<unknown>("obs.diagnostics"),
-      rpc.call<unknown>("obs.delivery.recent"),
+      rpc.call<unknown>("obs.delivery.recent", { sinceMs: 604_800_000, limit: 200 }),
       rpc.call<unknown>("obs.channels.all"),
       rpc.call<Record<string, unknown>>("agents.list"),
       rpc.call<Record<string, unknown>>("channels.list"),
@@ -732,22 +745,21 @@ export class IcObserveView extends LitElement {
 
     // Overview: delivery stats
     if (deliveryResult.status === "fulfilled") {
-      const raw = deliveryResult.value;
-      const total = Number(raw.total ?? raw.totalDelivered ?? 0);
-      const failures = Number(raw.failures ?? raw.failed ?? 0);
-      let successRate = 0;
-      if (raw.successRate !== undefined) {
-        successRate = Number(raw.successRate);
-      } else if (total > 0) {
-        const successes = Number(raw.successes ?? 0);
-        successRate = (successes / total) * 100;
-      }
-      this._deliveryStats = { successRate, avgLatencyMs: Number(raw.avgLatencyMs ?? 0), totalDelivered: total, failed: failures };
-      this._requestsToday = total;
-      this._errorsToday = failures;
+      this._deliveryStats = this._normalizeDeliveryStats(deliveryResult.value);
+      this._lifecycles24h = this._deliveryStats.total;
+      this._errorsToday = this._deliveryStats.error + this._deliveryStats.timeout;
       anySuccess = true;
     } else {
       lastError = deliveryResult.reason instanceof Error ? deliveryResult.reason.message : "Failed to load delivery stats";
+    }
+
+    if (deliveryWindowMs === this._getTimeRangeMs()) {
+      if (deliveryWindowResult.status === "fulfilled") {
+        this._deliveryWindowStats = this._normalizeDeliveryStats(deliveryWindowResult.value);
+        anySuccess = true;
+      } else {
+        this._deliveryWindowStats = null;
+      }
     }
 
     // Overview: billing total
@@ -794,13 +806,11 @@ export class IcObserveView extends LitElement {
 
     // Delivery: recent traces
     if (deliveryRecentResult.status === "fulfilled") {
-      const raw = deliveryRecentResult.value;
-      if (Array.isArray(raw)) {
-        this._deliveryTraces = raw;
-      } else {
-        const wrapped = raw as Record<string, unknown>;
-        this._deliveryTraces = Array.isArray(wrapped.deliveries) ? wrapped.deliveries : [];
-      }
+      const wrapped = deliveryRecentResult.value as Record<string, unknown>;
+      const deliveries = Array.isArray(wrapped.deliveries) ? wrapped.deliveries : [];
+      this._deliveryTraces = deliveries
+        .map((delivery) => this._normalizeDeliveryTrace(delivery))
+        .filter((trace): trace is DeliveryTrace => trace !== null);
       anySuccess = true;
     }
 
@@ -887,8 +897,8 @@ export class IcObserveView extends LitElement {
 
   /** Compute error rate as percentage from delivery stats. */
   private _getErrorRate(): number {
-    if (!this._deliveryStats || this._deliveryStats.totalDelivered === 0) return 0;
-    return (this._deliveryStats.failed / this._deliveryStats.totalDelivered) * 100;
+    if (!this._deliveryStats || this._deliveryStats.attempted === 0) return 0;
+    return ((this._deliveryStats.error + this._deliveryStats.timeout) / this._deliveryStats.attempted) * 100;
   }
 
   /** Determine color class for error rate. */
@@ -950,9 +960,9 @@ export class IcObserveView extends LitElement {
     // Compute overview stat values
     const errorRate = this._getErrorRate();
     const errorRateStr = hasRpc
-      ? this._deliveryStats && this._deliveryStats.totalDelivered > 0
+      ? this._deliveryStats && this._deliveryStats.attempted > 0
         ? `${errorRate.toFixed(1)}%`
-        : "0%"
+        : "N/A"
       : "---";
     const avgLatency = hasRpc
       ? this._deliveryStats
@@ -965,8 +975,8 @@ export class IcObserveView extends LitElement {
       <!-- 6 Stat Cards -->
       <div class="stats-grid">
         <ic-stat-card
-          label="Requests/min"
-          .value=${hasRpc ? this._formatNumber(this._requestsToday) : "---"}
+          label="Lifecycles (24h)"
+          .value=${hasRpc ? this._formatNumber(this._lifecycles24h) : "---"}
         ></ic-stat-card>
         <ic-stat-card
           label="Error Rate"
@@ -1313,7 +1323,7 @@ export class IcObserveView extends LitElement {
     const rangeMs = this._getTimeRangeMs();
     return this._deliveryTraces
       .filter((t) => {
-        if (this._deliveryChannelFilter !== "all" && t.channelType !== this._deliveryChannelFilter) return false;
+        if (this._deliveryChannelFilter !== "all" && t.targetChannelType !== this._deliveryChannelFilter) return false;
         if (this._deliveryStatusFilter !== "all" && t.status !== this._deliveryStatusFilter) return false;
         if (t.timestamp < now - rangeMs) return false;
         return true;
@@ -1331,6 +1341,33 @@ export class IcObserveView extends LitElement {
 
   private _onDeliveryTimeRange(e: Event): void {
     this._deliveryTimeRange = (e.target as HTMLSelectElement).value;
+    void this._loadDeliveryWindowStats();
+  }
+
+  private _normalizeDeliveryStats(raw: Record<string, unknown>): DeliveryStats {
+    return {
+      total: Number(raw.total ?? 0),
+      attempted: Number(raw.attempted ?? 0),
+      success: Number(raw.success ?? 0),
+      error: Number(raw.error ?? 0),
+      timeout: Number(raw.timeout ?? 0),
+      filtered: Number(raw.filtered ?? 0),
+      aborted: Number(raw.aborted ?? 0),
+      avgLatencyMs: Number(raw.avgLatencyMs ?? 0),
+    };
+  }
+
+  private async _loadDeliveryWindowStats(): Promise<void> {
+    if (!this.rpcClient || this.rpcClient.status !== "connected") return;
+    const sinceMs = this._getTimeRangeMs();
+    const [result] = await Promise.allSettled([
+      this.rpcClient.call<Record<string, unknown>>("obs.delivery.stats", { sinceMs }),
+    ]);
+    if (sinceMs === this._getTimeRangeMs()) {
+      this._deliveryWindowStats = result?.status === "fulfilled"
+        ? this._normalizeDeliveryStats(result.value)
+        : null;
+    }
   }
 
   private _onTraceClick(e: CustomEvent<string>): void {
@@ -1338,28 +1375,78 @@ export class IcObserveView extends LitElement {
     this._expandedTraceId = this._expandedTraceId === traceId ? null : traceId;
   }
 
+  private _normalizeDeliveryTrace(raw: unknown): DeliveryTrace | null {
+    if (typeof raw !== "object" || raw === null) return null;
+    const delivery = raw as Record<string, unknown>;
+    const deliveredAt = delivery.deliveredAt;
+    const sourceChannelType = delivery.sourceChannelType;
+    const targetChannelType = delivery.targetChannelType;
+    const sourceChannelId = delivery.sourceChannelId;
+    const status = delivery.status;
+    if (
+      typeof deliveredAt !== "number"
+      || !Number.isFinite(deliveredAt)
+      || typeof sourceChannelType !== "string"
+      || typeof targetChannelType !== "string"
+      || typeof sourceChannelId !== "string"
+      || (status !== "success" && status !== "error" && status !== "timeout" && status !== "filtered" && status !== "aborted")
+    ) {
+      return null;
+    }
+
+    const steps = Array.isArray(delivery.steps) ? delivery.steps as DeliveryStep[] : undefined;
+    const traceId = typeof delivery.traceId === "string" && delivery.traceId.length > 0
+      ? delivery.traceId
+      : `${sourceChannelId}-${deliveredAt}`;
+    return {
+      traceId,
+      timestamp: deliveredAt,
+      sourceChannelType,
+      targetChannelType,
+      status,
+      latencyMs: typeof delivery.latencyMs === "number" ? delivery.latencyMs : null,
+      error: typeof delivery.error === "string" ? delivery.error : null,
+      failureStage: delivery.failureStage === "execution" || delivery.failureStage === "delivery"
+        ? delivery.failureStage
+        : null,
+      errorKind: typeof delivery.errorKind === "string" ? delivery.errorKind : null,
+      stepCount: steps?.length ?? 0,
+      steps,
+    };
+  }
+
   private _renderDeliveryStats() {
-    if (!this._deliveryStats) return nothing;
-    const stats = this._deliveryStats;
-    // When there are no deliveries, don't color the rate - it's not meaningful
-    const hasData = stats.totalDelivered > 0;
+    if (!this._deliveryWindowStats) return nothing;
+    const stats = this._deliveryWindowStats;
+    const hasData = stats.attempted > 0;
+    const successRate = hasData ? (stats.success / stats.attempted) * 100 : 0;
     const rateClass = hasData
-      ? stats.successRate >= 99 ? "rate-green" : stats.successRate >= 95 ? "rate-yellow" : "rate-red"
+      ? successRate >= 99 ? "rate-green" : successRate >= 95 ? "rate-yellow" : "rate-red"
       : "";
 
     return html`
       <div class="stats-summary">
-        <span>Success <span class="stat-value ${rateClass}">${hasData ? `${stats.successRate.toFixed(1)}%` : "N/A"}</span></span>
+        <span>Success <span class="stat-value ${rateClass}">${hasData ? `${successRate.toFixed(1)}%` : "N/A"}</span></span>
         <span>Avg <span class="stat-value">${hasData ? `${stats.avgLatencyMs}ms` : "N/A"}</span></span>
-        <span>Total <span class="stat-value">${this._formatNumber(stats.totalDelivered)}</span></span>
+        <span>Total <span class="stat-value">${this._formatNumber(stats.total)}</span></span>
       </div>
     `;
   }
 
   private _renderTraceDetail(trace: DeliveryTrace) {
+    const failureMetadata = trace.failureStage !== null || trace.errorKind !== null || trace.error !== null
+      ? html`
+          <div class="trace-failure-meta">
+            <span>Failure stage: ${trace.failureStage ?? "--"}</span>
+            <span>Error kind: ${trace.errorKind ?? "--"}</span>
+            <span>Error: ${trace.error ?? "--"}</span>
+          </div>
+        `
+      : nothing;
     if (!trace.steps || trace.steps.length === 0) {
       return html`
         <div class="trace-detail">
+          ${failureMetadata}
           <div class="trace-detail-title">Delivery Steps</div>
           <div style="color: var(--ic-text-dim); font-size: var(--ic-text-sm); margin-top: var(--ic-space-sm);">
             No step details available
@@ -1370,6 +1457,7 @@ export class IcObserveView extends LitElement {
 
     return html`
       <div class="trace-detail">
+        ${failureMetadata}
         <div class="trace-detail-title">Delivery Steps</div>
         <div class="step-list">
           ${trace.steps.map(
@@ -1388,10 +1476,10 @@ export class IcObserveView extends LitElement {
 
   /** Render channel filter select (separate method to avoid Lit+happy-dom duplicate attribute binding on options). */
   private _renderChannelFilterSelect() {
-    const channelTypes = [...new Set(this._deliveryTraces.map((t) => t.channelType))];
+    const channelTypes = [...new Set(this._deliveryTraces.map((t) => t.targetChannelType))];
     return html`
       <select class="filter-select" @change=${this._onDeliveryChannelFilter}>
-        <option value="all">All Channels</option>
+        <option value="all">All Destinations</option>
         ${channelTypes.map((ch) => html`<option value=${ch}>${ch}</option>`)}
       </select>
     `;
@@ -1403,8 +1491,10 @@ export class IcObserveView extends LitElement {
       <select class="filter-select" @change=${this._onDeliveryStatusFilter}>
         <option value="all">All Statuses</option>
         <option value="success">Success</option>
-        <option value="failed">Failed</option>
+        <option value="error">Error</option>
         <option value="timeout">Timeout</option>
+        <option value="filtered">Filtered</option>
+        <option value="aborted">Aborted</option>
       </select>
     `;
   }
@@ -1451,8 +1541,8 @@ export class IcObserveView extends LitElement {
               <div class="grid-table delivery-table" role="table" aria-label="Delivery traces">
                 <div class="grid-header" role="row">
                   <div class="cell" role="columnheader">Time</div>
-                  <div class="cell" role="columnheader">Channel</div>
-                  <div class="cell" role="columnheader">Message</div>
+                  <div class="cell" role="columnheader">Destination</div>
+                  <div class="cell" role="columnheader">Trace</div>
                   <div class="cell" role="columnheader">Status</div>
                   <div class="cell" role="columnheader">Latency</div>
                   <div class="cell" role="columnheader">Steps</div>

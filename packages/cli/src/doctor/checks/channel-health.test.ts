@@ -5,7 +5,7 @@
  * Tests channel-health check against the resolution-driven contract:
  * enabled channels pass when their
  * `${VAR}` credential references resolved (env, ~/.comis/.env, or the
- * encrypted secret store), fail naming the exact unresolved reference,
+ * configured secret store), fail naming the exact unresolved reference,
  * and the no-config skip names the resolution failure instead of
  * claiming nothing is configured.
  *
@@ -107,7 +107,7 @@ describe("channelHealthCheck", () => {
     expect(findings[0]?.status).toBe("fail");
     expect(findings[0]?.message).toContain("TELEGRAM_BOT_TOKEN");
     expect(findings[0]?.message).toContain("channels.telegram.botToken");
-    expect(findings[0]?.message).toContain("encrypted secret store");
+    expect(findings[0]?.message).toContain("configured secret store");
     expect(findings[0]?.suggestion).toContain("comis secrets set");
   });
 

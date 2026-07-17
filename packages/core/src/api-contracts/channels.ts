@@ -571,7 +571,8 @@ export const MessageFetchContract = defineContract({
  *
  * Request: `{ channel_type, channel_id, attachment_url, attachment_type?,
  * mime_type?, file_name?, caption? }`.
- * Response: `{ messageId, channelId }`.
+ * Response: `{ receipt, channelId }`. Both receipt variants mean delivered;
+ * `delivered_untracked` carries no synthetic platform ID.
  */
 export const MessageAttachContract = defineContract({
   method: "message.attach",
@@ -585,7 +586,10 @@ export const MessageAttachContract = defineContract({
     caption: z.string().optional(),
   }),
   response: z.object({
-    messageId: z.string(),
+    receipt: z.discriminatedUnion("kind", [
+      z.strictObject({ kind: z.literal("tracked"), messageId: z.string() }),
+      z.strictObject({ kind: z.literal("delivered_untracked") }),
+    ]),
     channelId: z.string(),
   }),
   scopes: ["admin"] as const,

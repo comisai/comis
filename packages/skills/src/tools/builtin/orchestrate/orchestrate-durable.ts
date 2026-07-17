@@ -18,7 +18,7 @@
  *      a resume NEVER accepts new script bytes.
  *
  * Everything here is pure over TWO injected seams — a narrow durable-run store
- * port (`upsertCheckpoint`/`getByRootRun`) and an fs read seam — so the whole
+ * port (`upsertCheckpoint`/`getByCheckpoint`) and an fs read seam — so the whole
  * lifecycle is macOS-unit-testable with no real sqlite or spawn. The store port
  * is a structural subset of the daemon's durable-run store, so the daemon threads
  * the real store directly and @comis/skills never imports it concretely (the
@@ -28,9 +28,8 @@
  * id pointer, never the script bytes or the checkpoint body. The build mirrors
  * the graph coordinator's checkpoint row but with a FLAT `spawnTree` (a
  * `string[]`, so the DAG-vs-flat discriminator routes it to the flat arm) and
- * NEVER writes the outward-send counter (`stepIndex` maps to `outward_step`,
- * owned solely by the store's `allocateOutwardStep`; `upsertCheckpoint` omits
- * the column, so a checkpoint between two outward sends cannot reset it).
+ * never writes outward-send sequencing, which belongs to the separate outward
+ * ledger store.
  *
  * @module
  */
@@ -40,8 +39,15 @@ import {
   safePath,
   systemSetInterval,
   systemClearInterval,
+  toSafeErrorLogString,
   type ComisLogger,
   type DurableRunRecord,
+  type DurableRunResumeClaim,
+  type DurableRunResumeClaimOutcome,
+  type DurableRootBudget,
+  type DeliveryOrigin,
+  type AgentCapability,
+  type UserTrustLevel,
 } from "@comis/core";
 import { ok, err, suppressError, type Result } from "@comis/shared";
 
@@ -55,10 +61,14 @@ import { ok, err, suppressError, type Result } from "@comis/shared";
  * the daemon threads the real store directly and @comis/skills never imports it.
  */
 export interface OrchestrateDurableRuns {
-  /** Idempotent upsert keyed on `rootRunId`; COALESCE-preserves a prior checkpointRef/scriptRef. */
+  /** Idempotent upsert keyed on `checkpointId`. */
   upsertCheckpoint(record: DurableRunRecord): Promise<Result<void, Error>>;
-  /** Read the durable row for a root run id (the resume lookup). */
-  getByRootRun(rootRunId: string): Promise<Result<DurableRunRecord | undefined, Error>>;
+  /** Read a durable execution checkpoint. */
+  getByCheckpoint(checkpointId: string): Promise<Result<DurableRunRecord | undefined, Error>>;
+  /** Atomically consume a source checkpoint and create its running replacement. */
+  claimForResume?(
+    claim: DurableRunResumeClaim,
+  ): Promise<Result<DurableRunResumeClaimOutcome, Error>>;
   /**
    * Mark the row terminal on a NON-resumable completion (success or a non-timeout
    * failure) so `listResumable` stops re-surfacing a finished run on every boot and
@@ -67,7 +77,9 @@ export interface OrchestrateDurableRuns {
    * `DurableRunPort.markCompleted`; optional so a minimal store stub compiles (the
    * concrete store always provides it, and the runner skips it on a resumable timeout).
    */
-  markCompleted?(rootRunId: string): Promise<Result<void, Error>>;
+  markCompleted?(checkpointId: string): Promise<Result<void, Error>>;
+  /** Quarantine a replacement whose pinned artifact cannot be loaded. */
+  markOrphaned?(checkpointId: string, reason: string): Promise<Result<void, Error>>;
   /**
    * Advance the run's `lastHeartbeatAt` while its process is alive — the keep-alive
    * the durable watchdog's whole premise depends on ("a long-running run stamps its
@@ -76,7 +88,7 @@ export interface OrchestrateDurableRuns {
    * concrete store always provides it). Absent ⇒ no keep-alive (a live no-checkpoint
    * run degrades to the prior at-risk behavior, never worse).
    */
-  touchHeartbeat?(rootRunId: string, atMs: number): Promise<Result<void, Error>>;
+  touchHeartbeat?(checkpointId: string, atMs: number): Promise<Result<void, Error>>;
 }
 
 /**
@@ -120,13 +132,13 @@ export const defaultKeepAliveScheduler: KeepAliveScheduler = (cb, ms) => {
  */
 export function startDurableKeepAlive(input: {
   runs: OrchestrateDurableRuns;
-  rootRunId: string;
+  checkpointId: string;
   now: () => number;
   keepAliveMs: number;
   scheduler?: KeepAliveScheduler;
   logger?: ComisLogger;
 }): () => void {
-  const { runs, rootRunId, now, keepAliveMs, logger } = input;
+  const { runs, checkpointId, now, keepAliveMs, logger } = input;
   const touch = runs.touchHeartbeat?.bind(runs);
   if (!touch) return () => {};
   const scheduler = input.scheduler ?? defaultKeepAliveScheduler;
@@ -134,12 +146,12 @@ export function startDurableKeepAlive(input: {
     // Best-effort: a failed/throwing touch never disrupts the run; the watchdog only
     // reaps if the lapse persists past the cap. suppressError replaces an empty .catch.
     suppressError(
-      touch(rootRunId, now()).then((r) => {
+      touch(checkpointId, now()).then((r) => {
         if (!r.ok) {
           logger?.debug(
             {
-              rootRunId,
-              err: r.error,
+              checkpointId,
+              err: toSafeErrorLogString(r.error),
               errorKind: "internal" as const,
               hint: "durable keep-alive touch failed; the watchdog may orphan-sweep this run if it persists",
             },
@@ -163,7 +175,7 @@ export function startDurableKeepAlive(input: {
  */
 export async function withDurableKeepAlive<T>(
   runs: OrchestrateDurableRuns | undefined,
-  rootRunId: string,
+  checkpointId: string,
   opts: { now: () => number; logger?: ComisLogger; keepAliveMs?: number; scheduler?: KeepAliveScheduler },
   fn: () => Promise<T>,
 ): Promise<T> {
@@ -172,7 +184,7 @@ export async function withDurableKeepAlive<T>(
       ? () => {}
       : startDurableKeepAlive({
           runs,
-          rootRunId,
+          checkpointId,
           now: opts.now,
           keepAliveMs: opts.keepAliveMs ?? DEFAULT_DURABLE_KEEPALIVE_MS,
           ...(opts.scheduler ? { scheduler: opts.scheduler } : {}),
@@ -218,18 +230,48 @@ export interface ResumeSpec {
    * ref resolves in the new run.
    */
   readonly checkpointRef?: string;
+  /** Persisted authority ceiling carried onto the replacement attempt. */
+  readonly authority: ResumeAuthority;
+}
+
+export interface ResumePrincipal {
+  readonly agentId: string;
+  readonly sessionKey: string;
+  readonly ownerTenantId: string;
+  readonly ownerUserId: string;
+  readonly deliveryOrigin: DeliveryOrigin | null;
+  readonly trustLevel: UserTrustLevel;
+  readonly caps: readonly AgentCapability[];
+}
+
+export interface ResumeAuthority extends ResumePrincipal {
+  readonly rootRunId: string;
+  readonly sourceCheckpointId: string;
 }
 
 /** Inputs shared by the row builders (the content-free durable pointers + clock). */
 export interface DurableRowInput {
-  /** The tree-stable root run id — the durable row's idempotency key. */
+  /** Unique identity of this orchestrate execution. */
+  readonly checkpointId: string;
+  /** Tree-stable root used for budget and revocation. */
   readonly rootRunId: string;
+  readonly agentId: string;
+  readonly sessionKey: string;
+  readonly ownerTenantId: string;
+  readonly ownerUserId: string;
+  readonly deliveryOrigin: DeliveryOrigin | null;
+  readonly caps: readonly AgentCapability[];
+  readonly leaseIds: readonly string[];
+  /** Absolute tree-wide budget state; restart and sibling rows preserve it exactly. */
+  readonly rootBudget: DurableRootBudget;
   /** The pinned script path relative to the workspace (`<runId>.<language>`). */
   readonly scriptRef: string;
   /** The last checkpoint ref, when one exists (omitted at run start). */
   readonly checkpointRef?: string;
   /** The injected wall clock (no ambient-clock read). */
   readonly nowMs: number;
+  /** Exact authenticated trust inherited by a restart re-minted lease. */
+  readonly trustLevel: UserTrustLevel;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,17 +287,24 @@ export interface DurableRowInput {
  */
 export function buildResumableRow(input: DurableRowInput): DurableRunRecord {
   return {
+    checkpointId: input.checkpointId,
     rootRunId: input.rootRunId,
+    agentId: input.agentId,
+    sessionKey: input.sessionKey,
+    ownerTenantId: input.ownerTenantId,
+    ownerUserId: input.ownerUserId,
+    deliveryOrigin: input.deliveryOrigin,
     spawnTree: [],
-    caps: [],
-    leaseIds: [],
-    budgetConsumed: 0,
+    caps: [...input.caps],
+    leaseIds: [...input.leaseIds],
+    budgetConsumed: input.rootBudget.usdConsumed,
+    rootBudget: input.rootBudget,
     cronOrigin: null,
-    stepIndex: -1,
+    trustLevel: input.trustLevel,
     status: "running",
     lastHeartbeatAt: input.nowMs,
     scriptRef: input.scriptRef,
-    ...(input.checkpointRef !== undefined ? { checkpointRef: input.checkpointRef } : {}),
+    checkpointRef: input.checkpointRef ?? null,
   };
 }
 
@@ -301,14 +350,20 @@ export async function markResumable(
  */
 export async function finalizeCompletedRun(
   runs: OrchestrateDurableRuns | undefined,
-  input: { rootRunId: string; scriptRef: string; workspacePath: string; runId: string },
+  input: {
+    checkpointId: string;
+    rootRunId: string;
+    scriptRef: string;
+    workspacePath: string;
+    runId: string;
+  },
   logger?: ComisLogger,
 ): Promise<void> {
   if (runs === undefined) return; // resume surface off — nothing durable to finalize.
-  const done = await runs.markCompleted?.(input.rootRunId);
+  const done = await runs.markCompleted?.(input.checkpointId);
   if (done !== undefined && !done.ok) {
     logger?.warn(
-      { runId: input.runId, rootRunId: input.rootRunId, err: done.error, errorKind: "internal" as const, hint: "the durable row could not be marked completed — the watchdog re-anchor cap eventually orphans the stale 'running' row after repeated no-progress attempts (no live impact)" },
+      { runId: input.runId, rootRunId: input.rootRunId, err: toSafeErrorLogString(done.error), errorKind: "internal" as const, hint: "the durable row could not be marked completed — the watchdog re-anchor cap eventually orphans the stale 'running' row after repeated no-progress attempts (no live impact)" },
       "orchestrate durable markCompleted failed (non-fatal)",
     );
   }
@@ -317,8 +372,80 @@ export async function finalizeCompletedRun(
     unlinkSync(safePath(input.workspacePath, input.scriptRef));
   } catch (e) {
     logger?.debug(
-      { runId: input.runId, err: e instanceof Error ? e : undefined, hint: "best-effort unlink of the pinned script failed; a later workspace teardown reclaims it" },
+      { runId: input.runId, err: toSafeErrorLogString(e), hint: "best-effort unlink of the pinned script failed; a later workspace teardown reclaims it" },
       "orchestrate pinned-script cleanup failed (non-fatal)",
+    );
+  }
+}
+
+/**
+ * Settle a resume claim that failed before its replacement reached the jailed
+ * child. The source has already been atomically consumed, so quarantine the
+ * replacement and reclaim only the source run's isolated results plus pinned
+ * script. Every cleanup limb is best-effort and content-safe; the caller keeps
+ * the original pre-start error as the authoritative failure.
+ */
+export async function settleClaimedResumeFailure(
+  runs: OrchestrateDurableRuns,
+  input: {
+    replacementCheckpointId: string;
+    sourceCheckpointId: string;
+    workspacePath: string;
+    scriptRef: string;
+    cleanupSourceResults: () => Promise<void>;
+  },
+  logger?: ComisLogger,
+): Promise<void> {
+  try {
+    const orphaned = await runs.markOrphaned?.(
+      input.replacementCheckpointId,
+      "resume_prestart_failed",
+    );
+    if (orphaned !== undefined && !orphaned.ok) {
+      logger?.warn(
+        {
+          err: toSafeErrorLogString(orphaned.error),
+          errorKind: "internal" as const,
+          hint: "the claimed replay replacement could not be quarantined; the durable watchdog must reclaim it",
+        },
+        "orchestrate resume replacement quarantine failed",
+      );
+    }
+  } catch (error) {
+    logger?.warn(
+      {
+        err: toSafeErrorLogString(error),
+        errorKind: "internal" as const,
+        hint: "the claimed replay replacement quarantine threw; the durable watchdog must reclaim it",
+      },
+      "orchestrate resume replacement quarantine threw",
+    );
+  }
+
+  try {
+    await input.cleanupSourceResults();
+  } catch (error) {
+    logger?.warn(
+      {
+        err: toSafeErrorLogString(error),
+        errorKind: "internal" as const,
+        hint: "source-run results cleanup failed after a claimed resume was refused; a later workspace sweep must reclaim them",
+      },
+      "orchestrate claimed-resume results cleanup failed",
+    );
+  }
+
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- safePath confines the persisted script pointer to its exact agent workspace
+    unlinkSync(safePath(input.workspacePath, input.scriptRef));
+  } catch (error) {
+    logger?.warn(
+      {
+        err: toSafeErrorLogString(error),
+        errorKind: "internal" as const,
+        hint: "pinned-script cleanup failed after a claimed resume was refused; a later workspace sweep must reclaim it",
+      },
+      "orchestrate claimed-resume script cleanup failed",
     );
   }
 }
@@ -330,7 +457,7 @@ export async function finalizeCompletedRun(
 /** A refusal class resolveScriptSource surfaces to the runner (mapped to a tool error). */
 export interface ResumeInputRefusal {
   /** The tool-error code the runner throws (a subset of the tool-error codes). */
-  readonly code: "not_implemented" | "not_found";
+  readonly code: "not_implemented" | "not_found" | "permission_denied";
   readonly message: string;
   readonly hint: string;
 }
@@ -347,6 +474,7 @@ export interface ResolvedScriptSource {
    * run's checkpoint. `undefined` for a fresh run or a resumed run that never checkpointed.
    */
   readonly checkpointRef?: string;
+  readonly resumeAuthority?: ResumeAuthority;
 }
 
 /**
@@ -361,7 +489,7 @@ export async function resolveScriptSource(
   params: { script: string; language: "ts" | "js" | "py"; resumeRunId?: string },
   runs: OrchestrateDurableRuns | undefined,
   fs: OrchestrateDurableFs,
-  ctx: { workspacePath: string; runId: string },
+  ctx: { workspacePath: string; runId: string; claimedAtMs: number; principal?: ResumePrincipal },
 ): Promise<Result<ResolvedScriptSource, ResumeInputRefusal>> {
   const scriptName = `${ctx.runId}.${params.language}`;
   if (params.resumeRunId === undefined) {
@@ -375,18 +503,36 @@ export async function resolveScriptSource(
       hint: "Enable orchestrateResume for this agent, or omit resumeRunId to run a fresh script.",
     });
   }
+  if (ctx.principal === undefined) {
+    return err({
+      code: "permission_denied",
+      message: "Resume requires an authenticated execution principal.",
+      hint: "Retry from the original owning session.",
+    });
+  }
   const loaded = await loadResumeSpec(runs, fs, {
     resumeRunId: params.resumeRunId,
     workspacePath: ctx.workspacePath,
+    principal: ctx.principal,
+    replacementCheckpointId: ctx.runId,
+    claimedAtMs: ctx.claimedAtMs,
   });
   if (!loaded.ok) {
-    return err({ code: "not_found", message: "The orchestrate run to resume could not be loaded.", hint: loaded.error });
+    const authorizationDenied = loaded.error.startsWith("resume authorization denied");
+    return err({
+      code: authorizationDenied ? "permission_denied" : "not_found",
+      message: authorizationDenied
+        ? "The current principal is not authorized to resume this run."
+        : "The orchestrate run to resume could not be loaded.",
+      hint: loaded.error,
+    });
   }
   return ok({
     script: loaded.value.scriptBytes,
     language: loaded.value.language,
     scriptName: loaded.value.scriptRef,
     checkpointRef: loaded.value.checkpointRef,
+    resumeAuthority: loaded.value.authority,
   });
 }
 
@@ -402,30 +548,132 @@ export async function resolveScriptSource(
 export async function loadResumeSpec(
   runs: OrchestrateDurableRuns,
   fs: OrchestrateDurableFs,
-  input: { resumeRunId: string; workspacePath: string },
+  input: {
+    resumeRunId: string;
+    workspacePath: string;
+    principal: ResumePrincipal;
+    replacementCheckpointId?: string;
+    claimedAtMs?: number;
+  },
 ): Promise<Result<ResumeSpec, string>> {
-  const rowResult = await runs.getByRootRun(input.resumeRunId);
-  if (!rowResult.ok) return err("the durable run lookup failed");
-  const row = rowResult.value;
-  if (row === undefined) return err("no durable run found to resume");
+  let row: DurableRunRecord | undefined;
+  let claimedReplacementId: string | undefined;
+  const failAfterClaim = async (message: string): Promise<Result<never, string>> => {
+    if (claimedReplacementId !== undefined && runs.markOrphaned !== undefined) {
+      try {
+        await runs.markOrphaned(claimedReplacementId, "resume_artifact_validation_failed");
+      } catch {
+        // The original validation error remains authoritative. The durable
+        // resume engine will retry the orphan write during its failure path.
+      }
+    }
+    return err(message);
+  };
+  if (input.replacementCheckpointId !== undefined) {
+    const claim = runs.claimForResume;
+    if (claim === undefined || input.claimedAtMs === undefined) {
+      return err("the durable resume claim surface is unavailable");
+    }
+    const claimed = await claim({
+      checkpointId: input.resumeRunId,
+      replacementCheckpointId: input.replacementCheckpointId,
+      principal: input.principal,
+      claimedAtMs: input.claimedAtMs,
+    });
+    if (!claimed.ok) return err("the durable resume claim failed");
+    switch (claimed.value.kind) {
+      case "claimed":
+        row = claimed.value.record;
+        claimedReplacementId = input.replacementCheckpointId;
+        break;
+      case "not_found":
+        return err("no durable run found to resume");
+      case "not_resumable":
+        return err("the durable run is no longer resumable");
+      case "authorization_denied":
+        return err("resume authorization denied: execution owner mismatch");
+      default: {
+        const _exhaustive: never = claimed.value;
+        return _exhaustive;
+      }
+    }
+  } else {
+    const rowResult = await runs.getByCheckpoint(input.resumeRunId);
+    if (!rowResult.ok) return err("the durable run lookup failed");
+    row = rowResult.value;
+    if (row === undefined) return err("no durable run found to resume");
+  }
+  if (row.status !== "running") return failAfterClaim("the durable run is no longer resumable");
+  const principal = input.principal;
+  if (
+    row.agentId !== principal.agentId
+    || row.sessionKey !== principal.sessionKey
+    || row.ownerTenantId !== principal.ownerTenantId
+    || row.ownerUserId !== principal.ownerUserId
+    || !sameDeliveryOrigin(row.deliveryOrigin, principal.deliveryOrigin)
+  ) {
+    return failAfterClaim("resume authorization denied: execution owner mismatch");
+  }
+  if (trustRank(principal.trustLevel) < trustRank(row.trustLevel)) {
+    return failAfterClaim("resume authorization denied: the current principal was demoted below the persisted trust ceiling");
+  }
+  const currentCaps = new Set(principal.caps);
+  const effectiveCaps = row.caps.filter((capability) => currentCaps.has(capability));
   const scriptRef = row.scriptRef;
-  if (!scriptRef) return err("the durable run has no pinned script — not a resumable run");
+  if (!scriptRef) return failAfterClaim("the durable run has no pinned script — not a resumable run");
   const language = languageFromScriptRef(scriptRef);
-  if (language === undefined) return err("the pinned script has no recognized language extension");
+  if (language === undefined) return failAfterClaim("the pinned script has no recognized language extension");
   let absPath: string;
   try {
     absPath = safePath(input.workspacePath, scriptRef);
   } catch {
-    return err("the pinned script path escapes the workspace");
+    return failAfterClaim("the pinned script path escapes the workspace");
   }
-  if (!fs.exists(absPath)) return err("the pinned script is gone (checkpoint reclaimed)");
+  if (!fs.exists(absPath)) return failAfterClaim("the pinned script is gone (checkpoint reclaimed)");
   let scriptBytes: string;
   try {
     scriptBytes = fs.read(absPath);
   } catch {
-    return err("the pinned script could not be read");
+    return failAfterClaim("the pinned script could not be read");
   }
-  return ok({ scriptRef, scriptBytes, language, checkpointRef: row.checkpointRef ?? undefined });
+  return ok({
+    scriptRef,
+    scriptBytes,
+    language,
+    checkpointRef: row.checkpointRef ?? undefined,
+    authority: {
+      agentId: row.agentId,
+      sessionKey: row.sessionKey,
+      ownerTenantId: row.ownerTenantId,
+      ownerUserId: row.ownerUserId,
+      deliveryOrigin: row.deliveryOrigin,
+      trustLevel: row.trustLevel,
+      caps: effectiveCaps,
+      rootRunId: row.rootRunId,
+      sourceCheckpointId: row.checkpointId,
+    },
+  });
+}
+
+function trustRank(trustLevel: UserTrustLevel): number {
+  switch (trustLevel) {
+    case "guest": return 0;
+    case "user": return 1;
+    case "admin": return 2;
+    default: {
+      const _exhaustive: never = trustLevel;
+      return _exhaustive;
+    }
+  }
+}
+
+function sameDeliveryOrigin(a: DeliveryOrigin | null, b: DeliveryOrigin | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.channelType === b.channelType
+    && a.channelId === b.channelId
+    && a.userId === b.userId
+    && a.tenantId === b.tenantId
+    && a.threadId === b.threadId;
 }
 
 /** Derive the interpreter language from a `<runId>.<language>` scriptRef extension. */

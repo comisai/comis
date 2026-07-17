@@ -2,13 +2,9 @@
 /**
  * sendAttachment — media-send observability.
  *
- * A successful Telegram send ALWAYS returns a numeric message_id. When the
- * platform returns no id (a non-standard/empty envelope or a dropped upload),
- * the adapter must not log "attachment sent" with messageId:"undefined" and
- * return ok(String(undefined)) === "undefined" — a SILENT false success that
- * hides a real delivery failure (generated media can look delivered while the
- * channel never received it, diagnosable only by a multi-hop daemon-log
- * hand-join).
+ * A successful Telegram media request returns a numeric message_id. An empty
+ * response is not delivery evidence, so it must fail honestly instead of
+ * manufacturing an untracked success that suppresses retry and observability.
  */
 import { describe, it, expect, vi } from "vitest";
 import { sendAttachment } from "./telegram-outbound.js";
@@ -25,6 +21,15 @@ function makeLogger() {
 function makeState(sendResult: unknown): TelegramAdapterState {
   const send = vi.fn().mockResolvedValue(sendResult);
   return {
+    connected: true,
+    bot: { api: { sendPhoto: send, sendAudio: send, sendVideo: send, sendDocument: send } },
+  } as unknown as TelegramAdapterState;
+}
+
+function makeRejectedState(error: Error): TelegramAdapterState {
+  const send = vi.fn().mockRejectedValue(error);
+  return {
+    connected: true,
     bot: { api: { sendPhoto: send, sendAudio: send, sendVideo: send, sendDocument: send } },
   } as unknown as TelegramAdapterState;
 }
@@ -39,7 +44,7 @@ const PRIVATE_CAPTION = "PRIVATE-CAPTION-DO-NOT-LOG";
 const PRIVATE_FILE_NAME = "PRIVATE-FILENAME-DO-NOT-LOG.xlsx";
 
 describe("sendAttachment — media-send message_id guard", () => {
-  it("WARNs + returns err when the platform returns no message_id (no silent ok('undefined'))", async () => {
+  it("WARNs and returns err when Telegram returns no message_id", async () => {
     const state = makeState({}); // <- no message_id (the emulator/unsupported-method shape)
     const logger = makeLogger();
     const deps = { logger } as unknown as TelegramAdapterDeps;
@@ -48,17 +53,20 @@ describe("sendAttachment — media-send message_id guard", () => {
 
     expect(res.ok).toBe(false);
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ errorKind: "platform", attachmentType: "image" }),
-      expect.stringContaining("no message_id"),
+      expect.objectContaining({
+        errorKind: "platform",
+        attachmentType: "image",
+        hint: expect.stringContaining("Bot API"),
+      }),
+      "Media attachment send returned no message_id",
     );
-    // The false-success info line must NOT fire when the send was not accepted.
     expect(logger.info).not.toHaveBeenCalledWith(
       expect.anything(),
       "Local file attachment sent",
     );
   });
 
-  it("returns ok(message_id) on a normal accepted send", async () => {
+  it("returns a tracked receipt on a normal accepted send", async () => {
     const state = makeState({ message_id: 4242 });
     const logger = makeLogger();
     const deps = { logger } as unknown as TelegramAdapterDeps;
@@ -66,7 +74,7 @@ describe("sendAttachment — media-send message_id guard", () => {
     const res = await sendAttachment(state, deps, "678314278", IMG);
 
     expect(res.ok).toBe(true);
-    if (res.ok) expect(res.value).toBe("4242");
+    if (res.ok) expect(res.value).toEqual({ kind: "tracked", messageId: "4242" });
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
@@ -113,5 +121,26 @@ describe("sendAttachment — media-send message_id guard", () => {
       }),
       "Outbound attachment",
     );
+  });
+
+  it("redacts credentials from attachment failures in logs and returned errors", async () => {
+    const credential = `xoxb-${"s".repeat(32)}`;
+    const logger = makeLogger();
+
+    const result = await sendAttachment(
+      makeRejectedState(new Error(`media request failed with ${credential}`)),
+      { logger } as unknown as TelegramAdapterDeps,
+      "678314278",
+      IMG,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).not.toContain(credential);
+    const warning = logger.warn.mock.calls.find(
+      (call) => call[1] === "Send attachment failed",
+    );
+    const payload = warning?.[0] as { err?: unknown };
+    expect(typeof payload.err).toBe("string");
+    expect(String(payload.err)).not.toContain(credential);
   });
 });

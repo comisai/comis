@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { NormalizedMessage } from "@comis/core";
+import type { Attachment, NormalizedMessage } from "@comis/core";
 import type { Message, MessageEntity } from "grammy/types";
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { buildAttachments } from "./media-handler.js";
 import { normalizeLocation } from "../shared/location-normalizer.js";
 import { resolveTelegramThreadContext } from "./thread-context.js";
@@ -17,11 +17,52 @@ export interface TelegramBotIdentity {
   username: string;
 }
 
+export type TelegramInboundUpdateKind = "message" | "edited_message";
+
 /** Result of inspecting a Telegram message for bot addressing. */
 interface BotAddressing {
   isBotMentioned: boolean;
   replyToBot: boolean;
   isBotCommand: boolean;
+}
+
+/** Deterministic GUID for Telegram's bot-account-scoped platform message identity. */
+function telegramMessageGuid(
+  botAccountId: number,
+  chatId: number,
+  messageId: number,
+  editRevision: string | undefined,
+): string {
+  const sourceIdentity = editRevision === undefined
+    ? `comis:telegram-message:${botAccountId}:${chatId}:${messageId}`
+    : `comis:telegram-message:${botAccountId}:${chatId}:${messageId}:edit:${editRevision}`;
+  const bytes = createHash("sha256")
+    .update(sourceIdentity, "utf8")
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function editableContentDigest(
+  text: string,
+  attachments: readonly Attachment[],
+  location: unknown,
+): string {
+  const attachmentIdentity = attachments.map((attachment) => [
+    attachment.type,
+    attachment.url,
+    attachment.mimeType ?? null,
+    attachment.fileName ?? null,
+    attachment.sizeBytes ?? null,
+    attachment.durationMs ?? null,
+    attachment.isVoiceNote ?? null,
+  ]);
+  return createHash("sha256")
+    .update(JSON.stringify({ text, attachments: attachmentIdentity, location }), "utf8")
+    .digest("hex");
 }
 
 /**
@@ -113,30 +154,45 @@ function detectBotAddressing(msg: Message, bot: TelegramBotIdentity): BotAddress
  * Key conversions:
  * - `msg.date` (Unix seconds) -> `timestamp` (milliseconds)
  * - `msg.text ?? msg.caption` -> `text` (photos/docs use caption)
- * - `msg.from?.id` -> `senderId` (string)
+ * - `msg.sender_chat` -> isolated non-user identity; otherwise `msg.from.id`
  * - Media -> attachments via `buildAttachments()`
  * - Platform metadata preserved in `metadata` field
  *
- * When `bot` is provided, message entities and `reply_to_message` are
- * inspected to populate `metadata.isBotMentioned`, `metadata.replyToBot`,
- * and `metadata.isBotCommand` so that the inbound gate's mention-gated
- * activation policy can correctly route addressed group messages to the
- * agent. Omitting `bot` preserves prior behavior (no addressing flags).
+ * Message entities and `reply_to_message` are inspected against the receiving
+ * bot account to populate `metadata.isBotMentioned`, `metadata.replyToBot`,
+ * and `metadata.isBotCommand`. The stable numeric bot id also scopes the
+ * normalized message id because Telegram chat/message ids can repeat across
+ * different bot accounts.
  *
  * @param msg - A plain Telegram Message object
  * @param chatId - The chat ID (used as channelId)
- * @param bot - Optional bot identity for addressing detection
+ * @param bot - Receiving bot identity for id scoping and addressing detection
  * @returns A fully populated NormalizedMessage
  */
 export function mapGrammyToNormalized(
   msg: Message,
   chatId: number,
-  bot?: TelegramBotIdentity,
+  updateKind: TelegramInboundUpdateKind,
+  bot: TelegramBotIdentity,
 ): NormalizedMessage {
   const metadata: Record<string, unknown> = {
     telegramMessageId: msg.message_id,
     telegramChatType: msg.chat.type,
+    telegramUpdateKind: updateKind,
   };
+  const senderId = msg.sender_chat !== undefined
+    ? `chat:${msg.sender_chat.id}`
+    : msg.from !== undefined
+      ? String(msg.from.id)
+      : `unknown:${chatId}:${msg.message_id}`;
+  metadata.telegramSenderOrigin = msg.sender_chat !== undefined
+    ? "chat"
+    : msg.from !== undefined
+      ? "user"
+      : "unknown";
+  if (updateKind === "edited_message" && msg.edit_date !== undefined) {
+    metadata.telegramEditDate = msg.edit_date;
+  }
 
   // Platform enrichment -- preserve spoiler flag
   if (msg.has_media_spoiler) {
@@ -158,15 +214,10 @@ export function mapGrammyToNormalized(
     metadata.telegramThreadScope = threadCtx.scope;
   }
 
-  // Bot addressing detection — only when bot identity is supplied. The
-  // adapter populates `bot` after token validation; tests that exercise
-  // the pure mapper without a bot identity continue to omit these flags.
-  if (bot) {
-    const addressing = detectBotAddressing(msg, bot);
-    if (addressing.isBotMentioned) metadata.isBotMentioned = true;
-    if (addressing.replyToBot) metadata.replyToBot = true;
-    if (addressing.isBotCommand) metadata.isBotCommand = true;
-  }
+  const addressing = detectBotAddressing(msg, bot);
+  if (addressing.isBotMentioned) metadata.isBotMentioned = true;
+  if (addressing.replyToBot) metadata.replyToBot = true;
+  if (addressing.isBotCommand) metadata.isBotCommand = true;
 
   // Extract text from message body or caption
   let text = msg.text ?? msg.caption ?? "";
@@ -196,16 +247,24 @@ export function mapGrammyToNormalized(
     : msg.chat.type === "group" || msg.chat.type === "supergroup" ? "group" as const
     : msg.chat.type === "channel" ? "channel" as const
     : "dm" as const;
+  const attachments = buildAttachments(msg);
+  const editRevision = updateKind === "edited_message"
+    ? `${msg.edit_date ?? "unknown"}:${editableContentDigest(
+        text,
+        attachments,
+        metadata.location,
+      )}`
+    : undefined;
 
   return {
-    id: randomUUID(),
+    id: telegramMessageGuid(bot.id, chatId, msg.message_id, editRevision),
     channelId: String(chatId),
     channelType: "telegram",
-    senderId: String(msg.from?.id ?? "unknown"),
+    senderId,
     text,
     // CRITICAL: Telegram uses Unix seconds, we use milliseconds
-    timestamp: msg.date * 1000,
-    attachments: buildAttachments(msg),
+    timestamp: (updateKind === "edited_message" ? msg.edit_date ?? msg.date : msg.date) * 1000,
+    attachments,
     chatType,
     metadata,
   };

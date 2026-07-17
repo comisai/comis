@@ -21,7 +21,7 @@ interface JsonRpcRequest {
  *
  * Values match the TypeScript interfaces consumed by web components:
  * - gateway.status -> GatewayStatus (uptime, memoryUsage as fraction, eventLoopDelay, nodeVersion)
- * - obs.delivery.stats -> DeliveryStats (successRate, avgLatencyMs, totalDelivered, failed)
+ * - obs.delivery.stats -> DeliveryStats lifecycle totals and latency
  * - obs.billing.total -> BillingTotal (totalTokens, totalCost)
  */
 export const DEFAULT_RPC_HANDLERS: Record<string, unknown> = {
@@ -35,10 +35,14 @@ export const DEFAULT_RPC_HANDLERS: Record<string, unknown> = {
     totalCost: 1.25,
   },
   "obs.delivery.stats": {
-    successRate: 98.0,
+    total: 500,
+    attempted: 500,
+    success: 490,
+    error: 8,
+    timeout: 2,
+    filtered: 0,
+    aborted: 0,
     avgLatencyMs: 150,
-    totalDelivered: 490,
-    failed: 10,
   },
   "config.read": {
     sections: {},

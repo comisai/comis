@@ -79,7 +79,7 @@ export interface SessionsApiDeps {
     saveByFormattedKey: (sessionKey: string, messages: unknown[], metadata?: Record<string, unknown>) => void;
   };
   crossSessionSender: ReturnType<typeof createCrossSessionSender>; subAgentRunner: ReturnType<typeof createSubAgentRunner>;
-  resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string; // Tree-stable rootRunId resolver — session.spawn propagates ONE tree root so the spawn ceiling/killByRootRun work (see AUDIT-sessions.md). Absent ⇒ runner mints.
+  resolveRootRunId?: (agentId: string, sessionKey: import("@comis/core").SessionKey) => string;
   securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[]; steerInject?: boolean } };
   tenantId: string;
   /** Structured logger threaded through every cluster slice (DaemonApiDeps
@@ -274,8 +274,8 @@ export interface ChannelsApiDeps {
   /** The bounded-autonomy service. message.send/reply/react consult `tryOutward` (origin/grant/per-hour/volume) before deliver. Optional; absent ⇒ inert. A daemon-initiated send (no `_agentId`) is never gated. */
   boundedAutonomy?: import("../autonomy/bounded-autonomy.js").BoundedAutonomy;
   /** Tree-stable rootRunId resolver (same as SessionsApiDeps.resolveRootRunId, already spread into the flat dispatch deps). message.send/reply/react derive the outward-ledger idempotency key from it; absent ⇒ the wrap is a pass-through. */
-  resolveRootRunId?: (sessionKey: import("@comis/core").SessionKey) => string;
-  /** The three-state outward ledger; absent ⇒ no exactly-once wrap (non-autonomy daemon) */
+  resolveRootRunId?: (agentId: string, sessionKey: import("@comis/core").SessionKey) => string;
+  /** The closed five-state outward duplicate-suppression and uncertainty ledger; absent ⇒ message.send/reply/react pass through without retained-operation protection. */
   outwardLedger?: import("@comis/core").OutwardSendLedgerPort;
 }
 
@@ -708,7 +708,7 @@ export interface MediaApiDeps {
 
 /**
  * Dependencies for obs-handlers (obs.usage/billing/diagnostics/budget/spend).
- * @optional-field-count: 14 — a composition-root deps bag; each optional field is a
+ * @optional-field-count: 15 — a composition-root deps bag; each optional field is a
  * distinct obs source present iff wired (absent ⇒ honest-degrade). +1 per new source.
  */
 export interface ObservabilityApiDeps {
@@ -727,6 +727,10 @@ export interface ObservabilityApiDeps {
   };
   // Observability persistence deps
   obsStore?: import("@comis/memory").ObservabilityStore;
+  obsPersistence?: Pick<
+    import("../observability/obs-persistence-wiring.js").ObsPersistenceResult,
+    "discardPending" | "flushPending"
+  >;
   startupTimestamp?: number;
   sharedCostTracker?: { reset(): number };
   // Context pipeline collector deps

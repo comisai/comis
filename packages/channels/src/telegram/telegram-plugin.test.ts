@@ -6,12 +6,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 const mockConfigUse = vi.fn();
+const mockGetFile = vi.fn();
 
 vi.mock("grammy", () => {
   class MockBot {
     api = {
       config: { use: mockConfigUse },
-      getFile: vi.fn(),
+      getFile: mockGetFile,
     };
     on() {}
   }
@@ -24,10 +25,6 @@ vi.mock("@grammyjs/auto-retry", () => ({
 
 vi.mock("@grammyjs/files", () => ({
   hydrateFiles: vi.fn(() => "hydrate-files-transformer"),
-}));
-
-vi.mock("@grammyjs/runner", () => ({
-  run: vi.fn(() => ({ isRunning: vi.fn(() => false), stop: vi.fn() })),
 }));
 
 vi.mock("./credential-validator.js", () => ({
@@ -48,6 +45,8 @@ vi.mock("./voice-sender.js", () => ({
 // ---------------------------------------------------------------------------
 
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { err } from "@comis/shared";
+import { validateBotToken } from "./credential-validator.js";
 import { createTelegramPlugin } from "./telegram-plugin.js";
 import type { TelegramAdapterDeps } from "./telegram-adapter/index.js";
 
@@ -57,7 +56,7 @@ import type { TelegramAdapterDeps } from "./telegram-adapter/index.js";
 
 function makeDeps(overrides?: Partial<TelegramAdapterDeps>): TelegramAdapterDeps {
   return {
-    botToken: "123456:ABC-DEF",
+    getBotToken: () => "123456:ABC-DEF",
     logger: createMockLogger(),
     ...overrides,
   };
@@ -120,6 +119,28 @@ describe("createTelegramPlugin", () => {
 
     expect(resolver1).not.toBe(resolver2);
     expect(resolver1.schemes).toEqual(resolver2.schemes);
+  });
+
+  it("keeps media resolution unavailable after credential validation fails", async () => {
+    vi.mocked(validateBotToken).mockResolvedValue(err(new Error("invalid rotated token")));
+    mockGetFile.mockResolvedValue({
+      file_id: "file-id",
+      file_unique_id: "unique-id",
+      file_path: "photos/file.jpg",
+    });
+    const plugin = createTelegramPlugin(makeDeps());
+    const resolver = plugin.createResolver({
+      ssrfFetcher: { fetch: vi.fn() },
+      maxBytes: 10 * 1024 * 1024,
+      logger: { debug: vi.fn(), warn: vi.fn() },
+    });
+
+    const started = await plugin.adapter.start();
+    const resolved = await resolver.resolve({ type: "image", url: "tg-file://file-id" });
+
+    expect(started.ok).toBe(false);
+    expect(resolved.ok).toBe(false);
+    expect(mockGetFile).not.toHaveBeenCalled();
   });
 
   it("exposes adapter as ChannelPort on plugin", () => {

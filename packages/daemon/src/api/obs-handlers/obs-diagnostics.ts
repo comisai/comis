@@ -88,7 +88,10 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
           channelId: undefined as string | undefined,
           sessionKey: r.sessionKey || undefined,
           traceId: r.traceId || undefined,
-          data: { message: r.message, details: r.details, severity: r.severity },
+          data: {
+            severity: r.severity,
+            hasDetails: (r.details?.length ?? 0) > 0,
+          },
         }));
 
         // Merge: concat, sort by timestamp desc, apply limit
@@ -125,11 +128,16 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
 
         // In-memory is authoritative for currently-active channels.
         // SQLite provides snapshots for channels not in current session.
-        const activeIds = new Set(inMemoryChannels.map((c) => c.channelId));
+        const activeIdentities = new Set(inMemoryChannels.map(
+          (channel) => JSON.stringify([channel.channelType, channel.channelId]),
+        ));
         const historicalChannels = sqliteSnapshots
-          .filter((s) => !activeIds.has(s.channelId ?? s.channelType))
+          .filter((snapshot) => !activeIdentities.has(JSON.stringify([
+            snapshot.channelType,
+            snapshot.channelId,
+          ])))
           .map((s) => ({
-            channelId: s.channelId ?? s.channelType,
+            channelId: s.channelId,
             channelType: s.channelType,
             lastActiveAt: s.timestamp,
             messagesSent: s.messagesSent ?? 0,
@@ -170,16 +178,18 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
         throw new AuthorizationError("Admin access required for channel activity");
       }
 
-      // Bespoke pre-Zod guard preserves the exact error message
-      // ("Invalid request: channelId parameter is required").
+      // Bespoke pre-Zod guards keep missing identity errors concise at the RPC boundary.
       const channelIdRaw = rawParams.channelId as string | undefined;
       if (!channelIdRaw) throw new ValidationError("Invalid request: channelId parameter is required");
+      const channelTypeRaw = rawParams.channelType as string | undefined;
+      if (!channelTypeRaw) throw new ValidationError("Invalid request: channelType parameter is required");
 
       const userParams = stripInternalFields(rawParams);
       const params = ObsChannelsGetContract.request.parse(userParams);
+      const channelType = params.channelType;
       const channelId = params.channelId;
 
-      const result = { channel: deps.channelActivityTracker.get(channelId) ?? null };
+      const result = { channel: deps.channelActivityTracker.get(channelType, channelId) ?? null };
       if (IS_DEV) ObsChannelsGetContract.response.parse(result);
       return result;
     },
@@ -198,52 +208,99 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
       const sinceMs = params.sinceMs;
       const limit = params.limit;
       const channelId = params.channelId;
+      const channelType = params.channelType;
+      const requestedLimit = limit ?? 50;
 
-      const inMemoryRecords = deps.deliveryTracer.getRecent({ sinceMs, limit, channelId });
+      const inMemoryRecords = deps.deliveryTracer.getRecent({ sinceMs, limit, channelId, channelType });
 
       let result: { deliveries: unknown[] };
-      if (!obsStore || startupTimestamp == null) {
+      if (!obsStore) {
         result = { deliveries: inMemoryRecords };
       } else {
-        // Query SQLite for historical records
+        // SQLite is canonical for every flushed diagnostic, including rows from
+        // this process that have already left the bounded live ring. Fetch enough
+        // rows to backfill any live/durable overlap removed below.
         const sqliteRows = obsStore.queryDelivery({
           sinceMs: sinceMs != null ? systemNowMs() - sinceMs : undefined,
-          limit: limit ?? 50,
+          channelId,
+          channelType,
+          limit: requestedLimit + inMemoryRecords.length,
         });
 
-        // Filter SQLite rows to only those before startup (avoid overlap)
-        const historicalRows = sqliteRows.filter((r) => r.timestamp < startupTimestamp);
-
         // Map SQLite DeliveryRow to DeliveryContext-like shape
-        const historicalRecords = historicalRows.map((r) => ({
+        type DeliveryRecord = ReturnType<typeof deps.deliveryTracer.getRecent>[number];
+        const historicalRecords: DeliveryRecord[] = sqliteRows.map((r) => ({
           sourceChannelId: r.channelId,
           sourceChannelType: r.channelType,
           targetChannelId: r.channelId,
           targetChannelType: r.channelType,
           deliveredAt: r.timestamp,
           latencyMs: r.latencyMs,
-          success: r.status === "success",
-          error: r.errorMessage || undefined,
-          agentId: r.agentId,
-          sessionKey: r.sessionKey || undefined,
-          traceId: r.traceId || undefined,
-          toolCalls: r.toolCalls,
-          llmCalls: r.llmCalls,
-          tokensTotal: r.tokensTotal,
-          costTotal: r.costTotal,
+          status: r.status,
+          error: r.errorMessage || null,
+          agentId: r.agentId || null,
+          sessionKey: r.sessionKey || null,
+          traceId: r.traceId || null,
+          toolCalls: r.toolCalls ?? null,
+          llmCalls: r.llmCalls ?? null,
+          tokensTotal: r.tokensTotal ?? null,
+          costTotal: r.costTotal ?? null,
+          failureStage: r.failureStage ?? null,
+          errorKind: r.errorKind ?? null,
+          steps: null,
+          evidence: "diagnostic" as const,
         }));
 
-        // Filter by channelId if specified
-        const filteredHistorical = channelId
-          ? historicalRecords.filter((r) => r.sourceChannelId === channelId || r.targetChannelId === channelId)
-          : historicalRecords;
+        const identity = (record: DeliveryRecord): string =>
+          record.traceId !== null && record.traceId.length > 0
+            ? JSON.stringify([
+                "trace",
+                record.sourceChannelType,
+                record.sourceChannelId,
+                record.targetChannelType,
+                record.targetChannelId,
+                record.traceId,
+              ])
+            : JSON.stringify([
+                "row",
+                record.sourceChannelType,
+                record.sourceChannelId,
+                record.targetChannelType,
+                record.targetChannelId,
+                record.deliveredAt,
+                record.sessionKey ?? "",
+                record.agentId ?? "",
+                record.status,
+                record.latencyMs,
+                record.toolCalls ?? "",
+                record.llmCalls ?? "",
+              ]);
+        const merged = [...historicalRecords];
+        const historicalIndices = new Map<string, number[]>();
+        for (const [index, record] of historicalRecords.entries()) {
+          const key = identity(record);
+          const indices = historicalIndices.get(key) ?? [];
+          indices.push(index);
+          historicalIndices.set(key, indices);
+        }
+        for (const record of inMemoryRecords) {
+          const key = identity(record);
+          const durableIndex = historicalIndices.get(key)?.shift();
+          if (durableIndex === undefined) {
+            merged.push(record);
+          } else if (record.evidence === "diagnostic") {
+            // Pair live and durable evidence one-to-one. A trace can contain
+            // repeated delivery attempts, so identity must not collapse every
+            // durable row into a single map entry.
+            merged.splice(durableIndex, 1, record);
+          }
+        }
 
-        // Merge: concat, sort by timestamp desc, apply limit
-        const merged = [...inMemoryRecords, ...filteredHistorical]
+        const recent = merged
           .sort((a, b) => b.deliveredAt - a.deliveredAt)
-          .slice(0, limit ?? 50);
+          .slice(0, requestedLimit);
 
-        result = { deliveries: merged };
+        result = { deliveries: recent };
       }
 
       if (IS_DEV) ObsDeliveryRecentContract.response.parse(result);
@@ -251,7 +308,7 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
     },
 
     // -----------------------------------------------------------------------
-    // obs.delivery.stats — dual-source: sum SQLite + in-memory stats
+    // obs.delivery.stats — canonical durable read with an in-memory fallback
     // -----------------------------------------------------------------------
     [ObsDeliveryStatsContract.method]: async (rawParams) => {
       const trustLevel = rawParams._trustLevel as string | undefined;
@@ -260,28 +317,131 @@ export function bindObsDiagnosticsHandlers(deps: ObsHandlerDeps): Record<string,
       }
 
       const userParams = stripInternalFields(rawParams);
-      ObsDeliveryStatsContract.request.parse(userParams);
+      const params = ObsDeliveryStatsContract.request.parse(userParams);
 
-      const inMemoryStats = deps.deliveryTracer.getStats();
-
-      let result: { total: number; successes: number; failures: number; avgLatencyMs: number };
-      if (!obsStore || startupTimestamp == null) {
-        result = inMemoryStats;
-      } else {
-        const sqliteStats = obsStore.deliveryStats();
-
+      let result: {
+        total: number;
+        attempted: number;
+        success: number;
+        error: number;
+        timeout: number;
+        filtered: number;
+        aborted: number;
+        avgLatencyMs: number;
+      };
+      const flushResult = obsStore && deps.obsPersistence
+        ? deps.obsPersistence.flushPending("delivery")
+        : undefined;
+      if (obsStore && flushResult?.ok === true) {
+        // Make SQLite canonical for the read. Flushing first includes every
+        // current-process diagnostic exactly once and avoids timestamp-based
+        // live/durable overlap heuristics when the wall clock moves backward.
+        const sqliteStats = obsStore.deliveryStats(
+          params.sinceMs === undefined
+            ? undefined
+            : { sinceMs: systemNowMs() - params.sinceMs },
+        );
+        const liveOnly = {
+          total: 0,
+          attempted: 0,
+          success: 0,
+          error: 0,
+          timeout: 0,
+          filtered: 0,
+          aborted: 0,
+          attemptedLatencyMs: 0,
+        };
+        for (const record of deps.deliveryTracer.getRecent({
+          ...(params.sinceMs === undefined ? {} : { sinceMs: params.sinceMs }),
+          limit: 10_000,
+        })) {
+          if (record.evidence === "diagnostic") continue;
+          liveOnly.total++;
+          switch (record.status) {
+            case "success":
+              liveOnly.attempted++;
+              liveOnly.success++;
+              liveOnly.attemptedLatencyMs += record.latencyMs;
+              break;
+            case "error":
+              liveOnly.attempted++;
+              liveOnly.error++;
+              liveOnly.attemptedLatencyMs += record.latencyMs;
+              break;
+            case "timeout":
+              liveOnly.attempted++;
+              liveOnly.timeout++;
+              liveOnly.attemptedLatencyMs += record.latencyMs;
+              break;
+            case "filtered":
+              liveOnly.filtered++;
+              break;
+            case "aborted":
+              liveOnly.aborted++;
+              break;
+            default: {
+              const _exhaustive: never = record.status;
+              void _exhaustive;
+            }
+          }
+        }
+        const attempted = sqliteStats.attempted + liveOnly.attempted;
         result = {
-          total: inMemoryStats.total + sqliteStats.total,
-          successes: inMemoryStats.successes + sqliteStats.success,
-          failures: inMemoryStats.failures + sqliteStats.error,
-          avgLatencyMs: inMemoryStats.total + sqliteStats.total > 0
+          total: sqliteStats.total + liveOnly.total,
+          attempted,
+          success: sqliteStats.success + liveOnly.success,
+          error: sqliteStats.error + liveOnly.error,
+          timeout: sqliteStats.timeout + liveOnly.timeout,
+          filtered: sqliteStats.filtered + liveOnly.filtered,
+          aborted: sqliteStats.aborted + liveOnly.aborted,
+          avgLatencyMs: attempted > 0
             ? Math.round(
-                (inMemoryStats.avgLatencyMs * inMemoryStats.total +
-                  sqliteStats.avgLatencyMs * sqliteStats.total) /
-                (inMemoryStats.total + sqliteStats.total),
+                (sqliteStats.attemptedLatencyMs + liveOnly.attemptedLatencyMs) /
+                attempted,
               )
             : 0,
         };
+      } else {
+        const inMemoryStats = deps.deliveryTracer.getStats(
+          params.sinceMs === undefined ? undefined : { sinceMs: params.sinceMs },
+        );
+        if (!obsStore || startupTimestamp == null) {
+          result = {
+            total: inMemoryStats.total,
+            attempted: inMemoryStats.attempted,
+            success: inMemoryStats.successes,
+            error: inMemoryStats.failures,
+            timeout: inMemoryStats.timeouts,
+            filtered: inMemoryStats.filtered,
+            aborted: inMemoryStats.aborted,
+            avgLatencyMs: inMemoryStats.avgLatencyMs,
+          };
+        } else {
+          const sqliteStats = obsStore.deliveryStats({
+            ...(params.sinceMs === undefined
+              ? {}
+              : { sinceMs: systemNowMs() - params.sinceMs }),
+            beforeMs: startupTimestamp,
+          });
+          const attempted = inMemoryStats.attempted + sqliteStats.attempted;
+
+          result = {
+            total: inMemoryStats.total + sqliteStats.total,
+            attempted,
+            success: inMemoryStats.successes + sqliteStats.success,
+            error: inMemoryStats.failures + sqliteStats.error,
+            timeout: inMemoryStats.timeouts + sqliteStats.timeout,
+            filtered: inMemoryStats.filtered + sqliteStats.filtered,
+            aborted: inMemoryStats.aborted + sqliteStats.aborted,
+            avgLatencyMs: attempted > 0
+              ? Math.round(
+                  (inMemoryStats.attemptedLatencyMs +
+                    sqliteStats.attemptedLatencyMs) /
+                  attempted,
+                )
+              : 0,
+          };
+        }
       }
 
       if (IS_DEV) ObsDeliveryStatsContract.response.parse(result);

@@ -8,6 +8,7 @@ import { prepareVoicePayload, type VoicePrepareDeps } from "./voice-sender.js";
 // ---------------------------------------------------------------------------
 vi.mock("@comis/core", () => ({
   safePath: vi.fn((...segments: string[]) => segments.join("/")),
+  redactErrorMessage: vi.fn((message: string) => message),
 }));
 
 import { safePath } from "@comis/core";
@@ -88,6 +89,18 @@ describe("prepareVoicePayload", () => {
     expect(converter.extractWaveform).not.toHaveBeenCalled();
   });
 
+  it("returns a Result error when audio conversion rejects", async () => {
+    const deps = createDeps();
+    const converter = deps.audioConverter as ReturnType<typeof createMockAudioConverter>;
+    converter.toOggOpus.mockRejectedValue(new Error("ffmpeg process rejected"));
+
+    const result = await prepareVoicePayload("/input/test.wav", deps);
+
+    expect(result).toEqual(err(new Error("ffmpeg process rejected")));
+    expect(converter.verifyOpusCodec).not.toHaveBeenCalled();
+    expect(converter.extractWaveform).not.toHaveBeenCalled();
+  });
+
   it("should return error when verifyOpusCodec returns false", async () => {
     const deps = createDeps();
     const converter = deps.audioConverter as ReturnType<typeof createMockAudioConverter>;
@@ -119,6 +132,18 @@ describe("prepareVoicePayload", () => {
     expect(result.error.message).toBe("ffprobe not found");
   });
 
+  it("returns a Result error when codec verification rejects", async () => {
+    const deps = createDeps();
+    const converter = deps.audioConverter as ReturnType<typeof createMockAudioConverter>;
+    converter.toOggOpus.mockResolvedValue(ok({ durationMs: 3000 }));
+    converter.verifyOpusCodec.mockRejectedValue(new Error("ffprobe process rejected"));
+
+    const result = await prepareVoicePayload("/input/test.wav", deps);
+
+    expect(result).toEqual(err(new Error("ffprobe process rejected")));
+    expect(converter.extractWaveform).not.toHaveBeenCalled();
+  });
+
   it("should degrade gracefully when extractWaveform fails", async () => {
     const deps = createDeps();
     const converter = deps.audioConverter as ReturnType<typeof createMockAudioConverter>;
@@ -138,6 +163,31 @@ describe("prepareVoicePayload", () => {
     expect(result.value.codecVerified).toBe(true);
 
     // logger.warn should be called for waveform failure
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: "Waveform extraction failed; voice will be sent without waveform preview",
+        errorKind: "dependency",
+      }),
+      "Waveform extraction failed",
+    );
+  });
+
+  it("degrades gracefully when waveform extraction rejects", async () => {
+    const deps = createDeps();
+    const converter = deps.audioConverter as ReturnType<typeof createMockAudioConverter>;
+    const logger = deps.logger as ReturnType<typeof createMockLogger>;
+    converter.toOggOpus.mockResolvedValue(ok({ durationMs: 7000 }));
+    converter.verifyOpusCodec.mockResolvedValue(ok(true));
+    converter.extractWaveform.mockRejectedValue(new Error("waveform process rejected"));
+
+    const result = await prepareVoicePayload("/input/test.wav", deps);
+
+    expect(result).toEqual(ok({
+      oggPath: expect.stringContaining("voice-"),
+      durationSecs: 7,
+      waveformBase64: "",
+      codecVerified: true,
+    }));
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         hint: "Waveform extraction failed; voice will be sent without waveform preview",

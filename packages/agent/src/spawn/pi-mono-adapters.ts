@@ -16,6 +16,7 @@
 import { SessionManager as SdkSessionManager } from "@earendil-works/pi-coding-agent";
 import { ok, err } from "@comis/shared";
 import type { ComisSessionManager } from "../session/comis-session-manager.js";
+import { planInboundMessageProvenance } from "../session/inbound-message-provenance.js";
 
 /**
  * Create an ephemeral ComisSessionManager for sub-agent sessions.
@@ -25,6 +26,9 @@ import type { ComisSessionManager } from "../session/comis-session-manager.js";
  *   callback, returns the result wrapped in `ok()`. No write lock (no file
  *   contention), no `sanitizeSessionSecrets` (no file to sanitize).
  * - `destroySession`: No-op (nothing to destroy for in-memory sessions).
+ * - `appendInboundMessageLedger`: No-op success (internal ephemeral turns are
+ *   intentionally absent from the persistent channel-message ledger).
+ * - `persistInboundMessage`: Returns a validated in-memory plan without a disk append.
  * - `getSessionStats`: Returns `undefined` (ephemeral sessions have no persistent stats).
  * - `writeSessionMetadata`: No-op (no companion file for in-memory sessions).
  *
@@ -45,6 +49,17 @@ export function createEphemeralComisSessionManager(cwd: string): ComisSessionMan
 
     async destroySession() {
       // No-op: in-memory sessions have nothing to destroy
+    },
+
+    appendInboundMessageLedger() {
+      // Internal ephemeral turns are excluded from offline channel retrieval.
+      return ok(undefined);
+    },
+
+    async persistInboundMessage(_sessionKey, message, recordedAt) {
+      // Internal ephemeral turns are excluded from offline channel retrieval.
+      const planned = planInboundMessageProvenance(message, recordedAt);
+      return planned.ok ? ok(planned.value) : planned;
     },
 
     getSessionStats() {

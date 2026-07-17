@@ -38,17 +38,27 @@
 import { timingSafeEqual, randomUUID } from "node:crypto";
 import {
   generateStrongToken,
+  AGENT_CAPABILITIES,
   HANDLER_CAPABILITY_MAP,
   TOOL_CAPABILITY_MAP,
   SELF_SCOPED_AGENT_READS,
+  API_CONTRACTS_ORDERED,
   type ClockPort,
   type AgentCapability,
+  type DeliveryOrigin,
+  type UserTrustLevel,
 } from "@comis/core";
 
 // O(1) membership for the self-scoped-read audience exception. The
 // const is the single auditable source in @comis/core; building the Set once at
 // module load keeps the per-validate check small.
 const SELF_SCOPED_AGENT_READ_SET = new Set<string>(SELF_SCOPED_AGENT_READS);
+const AGENT_CAPABILITY_SET = new Set<string>(AGENT_CAPABILITIES);
+const ADMIN_SCOPED_RPC_METHODS = new Set(
+  API_CONTRACTS_ORDERED
+    .filter((contract) => contract.scopes.includes("admin"))
+    .map((contract) => contract.method),
+);
 
 /** Internal lease entry — not exported. */
 interface LeaseEntry {
@@ -58,7 +68,10 @@ interface LeaseEntry {
   caps: readonly AgentCapability[];
   budgetRef: string;
   sessionKey: string;
+  trustLevel: UserTrustLevel;
+  deliveryOrigin?: DeliveryOrigin;
   rootRunId: string;
+  checkpointId?: string;
   parentLeaseId?: string;
   expiresAtMs: number;
   maxExpiresAtMs: number;
@@ -71,7 +84,13 @@ export interface MintLeaseInput {
   caps: readonly AgentCapability[];
   budgetRef: string;
   sessionKey: string;
+  /** Exact framework-authenticated trust captured at the mint boundary. */
+  trustLevel: UserTrustLevel;
+  /** Immutable requester route captured when this lease is minted. */
+  deliveryOrigin?: DeliveryOrigin;
   rootRunId: string;
+  /** Unique execution checkpoint authorized by this lease, when applicable. */
+  checkpointId?: string;
   parentLeaseId?: string;
   /** Soft TTL — the per-use validity window. Defaults to `defaultTtlMs`. */
   ttlMs?: number;
@@ -93,7 +112,12 @@ export interface LeaseInfo {
   caps: readonly AgentCapability[];
   budgetRef: string;
   sessionKey: string;
+  /** Exact framework-authenticated trust captured at the mint boundary. */
+  trustLevel: UserTrustLevel;
+  /** Immutable requester route used to reconstruct a synthetic request boundary. */
+  deliveryOrigin?: DeliveryOrigin;
   rootRunId: string;
+  checkpointId?: string;
   parentLeaseId?: string;
 }
 
@@ -209,14 +233,26 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
       const maxExpiresAtMs = now + (input.maxTtlMs ?? defaultTtlMs);
       // The soft expiry can never start beyond the hard ceiling.
       const expiresAtMs = Math.min(now + (input.ttlMs ?? defaultTtlMs), maxExpiresAtMs);
+      const deliveryOrigin = input.deliveryOrigin === undefined
+        ? undefined
+        : Object.freeze({ ...input.deliveryOrigin });
+      // Mint-time defensive validation + copy: callers retain no mutable
+      // reference to the authority held by the lease, and a runtime claim that
+      // escaped the TypeScript union is dropped rather than broadened.
+      const caps = Object.freeze(
+        input.caps.filter((cap): cap is AgentCapability => AGENT_CAPABILITY_SET.has(cap)),
+      );
       leases.set(leaseId, {
         tokenBuf,
         leaseId,
         agentId: input.agentId,
-        caps: input.caps,
+        caps,
         budgetRef: input.budgetRef,
         sessionKey: input.sessionKey,
+        trustLevel: input.trustLevel,
+        ...(deliveryOrigin !== undefined ? { deliveryOrigin } : {}),
         rootRunId: input.rootRunId,
+        ...(input.checkpointId !== undefined ? { checkpointId: input.checkpointId } : {}),
         ...(input.parentLeaseId !== undefined ? { parentLeaseId: input.parentLeaseId } : {}),
         expiresAtMs,
         maxExpiresAtMs,
@@ -263,10 +299,13 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
         const leaseInfo: LeaseInfo = {
           leaseId: entry.leaseId,
           agentId: entry.agentId,
-          caps: entry.caps,
+          caps: Object.freeze([...entry.caps]),
           budgetRef: entry.budgetRef,
           sessionKey: entry.sessionKey,
+          trustLevel: entry.trustLevel,
+          ...(entry.deliveryOrigin !== undefined ? { deliveryOrigin: entry.deliveryOrigin } : {}),
           rootRunId: entry.rootRunId,
+          ...(entry.checkpointId !== undefined ? { checkpointId: entry.checkpointId } : {}),
           ...(entry.parentLeaseId !== undefined ? { parentLeaseId: entry.parentLeaseId } : {}),
         };
         // Self-scoped-read audience exception (whoami/status).
@@ -284,6 +323,12 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
         // pinned), so the exception cannot drift from the classification.
         if (SELF_SCOPED_AGENT_READ_SET.has(requestedMethod)) {
           return leaseInfo;
+        }
+        // Admin is a trust audience, not an orch:* capability. The endpoint
+        // applies its absolute management denylist before this check, while
+        // non-management admin RPCs inherit only an exact admin-trust lease.
+        if (ADMIN_SCOPED_RPC_METHODS.has(requestedMethod)) {
+          return entry.trustLevel === "admin" ? leaseInfo : null;
         }
         // Audience binding (RFC 8707): the requested method's required cap must
         // be one the lease holds. A non-cap method ("deny-by-origin"/"ungated")

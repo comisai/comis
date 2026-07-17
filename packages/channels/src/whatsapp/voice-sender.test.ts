@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ok } from "@comis/shared";
 import { createWhatsAppVoiceSender, type WhatsAppVoiceSenderDeps } from "./voice-sender.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
@@ -45,7 +46,7 @@ describe("createWhatsAppVoiceSender", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value).toBe("msg-abc");
+    expect(result.value).toEqual({ kind: "tracked", messageId: "msg-abc" });
 
     expect(deps._sock.sendMessage).toHaveBeenCalledWith("user@s.whatsapp.net", {
       audio: { url: "/tmp/voice.ogg" },
@@ -86,7 +87,13 @@ describe("createWhatsAppVoiceSender", () => {
       "Voice send started",
     );
     expect(deps._logger.info).toHaveBeenCalledWith(
-      { channelType: "whatsapp", messageId: "msg-123", chatId: "group@g.us", durationSecs: 12 },
+      {
+        channelType: "whatsapp",
+        messageId: "msg-123",
+        chatId: "group@g.us",
+        durationSecs: 12,
+        tracking: "tracked",
+      },
       "Voice send complete",
     );
   });
@@ -104,20 +111,31 @@ describe("createWhatsAppVoiceSender", () => {
       "Voice send started",
     );
     expect(deps._logger.info).toHaveBeenCalledWith(
-      { channelType: "whatsapp", messageId: "msg-456", chatId: "user@s.whatsapp.net", durationSecs: 0 },
+      {
+        channelType: "whatsapp",
+        messageId: "msg-456",
+        chatId: "user@s.whatsapp.net",
+        durationSecs: 0,
+        tracking: "tracked",
+      },
       "Voice send complete",
     );
   });
 
-  it("should return empty string when sendMessage returns no message ID", async () => {
+  it("returns delivered-untracked when sendMessage completes without a platform message ID", async () => {
     const deps = createDeps();
     deps._sock.sendMessage.mockResolvedValue(undefined);
 
     const sender = createWhatsAppVoiceSender(deps);
     const result = await sender.sendVoice("user@s.whatsapp.net", "/tmp/voice.ogg", 3);
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value).toBe("");
+    expect(result).toEqual(ok({ kind: "delivered_untracked" }));
+    expect(deps._logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("Do not retry"),
+        errorKind: "platform",
+      }),
+      "Voice sent without platform tracking",
+    );
   });
 });

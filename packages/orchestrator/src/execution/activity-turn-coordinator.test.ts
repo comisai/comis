@@ -351,8 +351,12 @@ describe("createActivityTurnCoordinator — delete gate", () => {
     // user-visible terminal surface reconstructable from the trajectory.
     const clock = createFakeClock(5_000);
     const { deps, timer, stream } = makeCoordinatorDeps({ clock });
-    const emit = vi.fn();
-    const coord = createActivityTurnCoordinator({ ...deps, eventBus: { emit } as never });
+    const emit = vi.fn((_event: string, _payload: unknown) => true);
+    const emitSafely = vi.fn((event: string, payload: unknown) => ({
+      hadListeners: emit(event, payload),
+      failures: [],
+    }));
+    const coord = createActivityTurnCoordinator({ ...deps, eventBus: { emit, emitSafely } as never });
     coord.start(makeCtx());
 
     stream.emit(makeEvent({ status: "failed", errorKind: "validation", phase: "end" }));
@@ -379,8 +383,12 @@ describe("createActivityTurnCoordinator — delete gate", () => {
   it("emits activity:turn_finalized with reclassified:false for an unmodified failure outcome (e.g. a resource abort)", async () => {
     const clock = createFakeClock(5_000);
     const { deps } = makeCoordinatorDeps({ clock });
-    const emit = vi.fn();
-    const coord = createActivityTurnCoordinator({ ...deps, eventBus: { emit } as never });
+    const emit = vi.fn((_event: string, _payload: unknown) => true);
+    const emitSafely = vi.fn((event: string, payload: unknown) => ({
+      hadListeners: emit(event, payload),
+      failures: [],
+    }));
+    const coord = createActivityTurnCoordinator({ ...deps, eventBus: { emit, emitSafely } as never });
     coord.start(makeCtx());
 
     await coord.finalize({ kind: "failure", errorKind: "resource", failedEvents: [], reason: "stopped — spend limit reached" });
@@ -640,6 +648,118 @@ describe("createActivityTurnCoordinator — error mapping + counters", () => {
     const warnArg = vi.mocked(logger.warn).mock.calls.at(-1)?.[0] as Record<string, unknown>;
     expect(warnArg).toMatchObject({ step: "finalize", errorKind: "internal" });
     coord.dispose();
+  });
+
+  it("contains a rejected renderer finalization as an internal render error", async () => {
+    const clock = createFakeClock(0);
+    const renderer = makeRenderer(clock);
+    vi.spyOn(renderer, "finalize").mockRejectedValue(
+      new Error("renderer finalization rejected"),
+    );
+    const logger = createMockLogger();
+    const { deps, stream } = makeCoordinatorDeps({ clock, renderer, logger });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    await expect(
+      coord.finalize({ kind: "failure", errorKind: "platform", failedEvents: [] }),
+    ).resolves.toBeUndefined();
+
+    expect(stream.unsubscribeCalls()).toBe(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "finalize",
+        errorKind: "internal",
+        renderErrorKind: "internal",
+        hint: expect.any(String),
+      }),
+      "Activity renderer reported an error",
+    );
+  });
+
+  it("contains a synchronous renderer finalization throw as an internal render error", async () => {
+    const clock = createFakeClock(0);
+    const renderer = makeRenderer(clock);
+    vi.spyOn(renderer, "finalize").mockImplementation(() => {
+      throw new Error("renderer finalization threw synchronously");
+    });
+    const logger = createMockLogger();
+    const { deps, stream } = makeCoordinatorDeps({ clock, renderer, logger });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    await expect(
+      coord.finalize({ kind: "failure", errorKind: "platform", failedEvents: [] }),
+    ).resolves.toBeUndefined();
+
+    expect(stream.unsubscribeCalls()).toBe(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "finalize",
+        errorKind: "internal",
+        renderErrorKind: "internal",
+        hint: expect.any(String),
+      }),
+      "Activity renderer reported an error",
+    );
+  });
+
+  it("runs every subscription cleanup when one throws without masking the render outcome", async () => {
+    const credential = `xoxb-${"c".repeat(32)}`;
+    let emit: (event: ActivityEvent) => void = () => undefined;
+    const unsubscribe = vi.fn(() => {
+      throw new Error(`activity subscription cleanup failed ${credential}`);
+    });
+    const activityStreamPort: ActivityStreamPort = {
+      subscribeForTurn(_ctx, onEvent) {
+        emit = onEvent;
+        return { unsubscribe };
+      },
+    };
+    const planUnsubscribe = vi.fn();
+    const planStream: PlanStream = {
+      subscribe: vi.fn(() => planUnsubscribe),
+    };
+    const clock = createFakeClock(0);
+    const renderer = makeRenderer(clock, {
+      finalizeError: { kind: "permission", detail: "denied" },
+    });
+    const logger = createMockLogger();
+    const { deps, timer } = makeCoordinatorDeps({ clock, renderer, logger });
+    const coord = createActivityTurnCoordinator({
+      ...deps,
+      activityStreamPort,
+      planStream,
+    });
+    coord.start(makeCtx());
+    emit(makeEvent());
+
+    await expect(
+      coord.finalize({ kind: "failure", errorKind: "platform", failedEvents: [] }),
+    ).resolves.toBeUndefined();
+
+    expect(renderer.finalizeCalls).toHaveLength(1);
+    expect(timer.unrefRecord().find((entry) => entry.delay === 800)?.cancelled).toBe(true);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(planUnsubscribe).toHaveBeenCalledOnce();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "finalize",
+        errorKind: "auth",
+        renderErrorKind: "permission",
+      }),
+      "Activity renderer reported an error",
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "cleanup",
+        cleanupStep: "activity_subscription",
+        errorKind: "internal",
+        hint: expect.any(String),
+      }),
+      "Activity coordinator cleanup failed",
+    );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(credential);
   });
 
   it("guards the debounced apply against an unexpected reject (projection throws) with a WARN", async () => {

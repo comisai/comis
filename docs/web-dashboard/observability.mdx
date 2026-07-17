@@ -38,7 +38,7 @@ Route: `/observe/overview` (also the default when clicking "Overview" in the sid
 
 The Overview is your at-a-glance summary. At the top, six stat cards show recent activity numbers:
 
-- **Requests/min** -- agent request rate (recent throughput)
+- **Lifecycles (24h)** -- completed message lifecycles in the last 24 hours, including attempted, filtered, and aborted outcomes
 - **Error Rate** -- percentage of failed deliveries, color-coded green/yellow/red
 - **Avg Latency** -- average delivery latency in milliseconds
 - **Active Agents** -- count of agents that are currently running (not suspended)
@@ -99,19 +99,19 @@ split across its tools, not measured per tool.
 
 Route: `/observe/delivery` (standalone sub-view)
 
-The Delivery view tracks whether messages are actually reaching their destinations. At the top, you will see three summary numbers:
+The Delivery view tracks whether messages are actually reaching their destinations. Its summary and trace list use the same selected time window. At the top, you will see five summary numbers:
 
 - **Success rate** -- the percentage of messages delivered successfully (green if 99%+, yellow if 95-99%, red below 95%)
-- **Average latency** -- how long deliveries take on average
+- **P50, P95, and P99 latency** -- nearest-rank percentile latency across attempted deliveries (success, error, and timeout); filtered and aborted turns are excluded, and `~` marks a percentile computed from a capped recent-trace sample
 - **Total deliveries** -- the total count in the selected time window
 
 Below the summary, a **filter row** lets you narrow results by:
 
 - **Channel type** -- filter to a specific platform (Telegram, Discord, etc.)
-- **Status** -- show only successful, failed, or timed-out deliveries
+- **Status** -- show successful, failed, timed-out, filtered, or aborted lifecycles
 - **Time range** -- choose between 1 hour, 6 hours, 24 hours, or 7 days
 
-The trace table below shows each delivery with its timestamp, channel, a short message preview, status, latency, and number of steps. Click any row to expand it and see the full **delivery step waterfall** -- a step-by-step breakdown showing exactly where in the process a delivery succeeded or failed.
+The trace table below shows each delivery with its timestamp, destination, status, latency, and number of steps. Click any row to expand it and see the failure stage, error kind, terminal error label, and full **delivery step waterfall** -- a step-by-step breakdown showing exactly where in the process a delivery succeeded or failed. Delivery observability remains content-free; message bodies are not returned by these RPCs.
 
 ### Diagnostics
 

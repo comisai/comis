@@ -8,6 +8,7 @@ import { SandboxDowngradeError } from "./sandbox-posture.js";
 import { mkdtemp, writeFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Module-level mocks
@@ -84,6 +85,7 @@ function createMockDeps(): SubAgentRunnerDeps {
     sessionStore: {
       save: vi.fn(),
       delete: vi.fn(),
+      loadByFormattedKey: vi.fn(),
     },
     executeAgent: vi.fn().mockResolvedValue({
       response: "task completed successfully",
@@ -477,6 +479,205 @@ describe("createSubAgentRunner", () => {
     expect(shutdownResolved).toBe(true);
   });
 
+  it("shutdown drains announcements only after active completions enqueue", async () => {
+    const lifecycle: string[] = [];
+    let resolveExec!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExec = resolve;
+    }));
+    deps.batcher = {
+      enqueue: vi.fn(() => { lifecycle.push("enqueue"); }),
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn(async () => { lifecycle.push("batcher.shutdown"); }),
+      pending: 0,
+      hasDelivered: vi.fn().mockReturnValue(false),
+      markDelivered: vi.fn(),
+    };
+
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "complete during shutdown",
+      agentId: "child-agent",
+      callerAgentId: "parent-agent",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+
+    const shutdownPromise = runner.shutdown();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.batcher.shutdown).not.toHaveBeenCalled();
+
+    resolveExec({
+      response: "completed while shutdown was waiting",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await shutdownPromise;
+
+    expect(lifecycle).toEqual(["enqueue", "batcher.shutdown"]);
+  });
+
+  it("shutdown closes spawn admission before waiting for active runs", async () => {
+    const runner = createSubAgentRunner(deps);
+
+    await runner.shutdown();
+
+    expect(() => runner.spawn({
+      task: "must not start after shutdown",
+      agentId: "child-agent",
+    })).toThrow("Sub-agent runner is shutting down");
+    expect(deps.executeAgent).not.toHaveBeenCalled();
+  });
+
+  it("shutdown waits for a governed stop notice before the final batch drain", async () => {
+    let resolveExec!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
+    let resolveNotice!: (value: ReturnType<typeof ok>) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExec = resolve;
+    }));
+    deps.sendGovernedAnnouncement = vi.fn().mockReturnValue(new Promise((resolve) => {
+      resolveNotice = resolve;
+    }));
+    deps.batcher = {
+      enqueue: vi.fn().mockResolvedValue(ok("queued")),
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      pending: 0,
+      hasDelivered: vi.fn().mockReturnValue(false),
+      markDelivered: vi.fn(),
+    };
+
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "hang until bounded shutdown",
+      agentId: "child-agent",
+      callerAgentId: "parent-agent",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+
+    const shutdown = runner.shutdown();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(deps.sendGovernedAnnouncement).toHaveBeenCalledOnce();
+    expect(deps.batcher.shutdown).not.toHaveBeenCalled();
+
+    resolveNotice(ok({
+      delivered: true as const,
+      identity: { agentId: "parent-agent", rootRunId: "root-1", stepIndex: 1 },
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    await shutdown;
+    expect(deps.batcher.shutdown).toHaveBeenCalledOnce();
+
+    resolveExec({
+      response: "late success",
+      tokensUsed: { total: 1 },
+      cost: { total: 0 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.batcher.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("shutdown remains bounded when a governed stop notice never settles", async () => {
+    let resolveExec!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExec = resolve;
+    }));
+    deps.sendGovernedAnnouncement = vi.fn().mockReturnValue(new Promise(() => {}));
+    deps.batcher = {
+      enqueue: vi.fn().mockResolvedValue(ok("queued")),
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      pending: 0,
+      hasDelivered: vi.fn().mockReturnValue(false),
+      markDelivered: vi.fn(),
+    };
+
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "hang through shutdown notice grace",
+      agentId: "child-agent",
+      callerAgentId: "parent-agent",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+    let resolved = false;
+    const shutdown = runner.shutdown().then(() => { resolved = true; });
+
+    await vi.advanceTimersByTimeAsync(34_999);
+    expect(resolved).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await shutdown;
+    expect(resolved).toBe(true);
+    expect(deps.batcher.shutdown).toHaveBeenCalledOnce();
+
+    resolveExec({
+      response: "late success",
+      tokensUsed: { total: 1 },
+      cost: { total: 0 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.batcher.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("shutdown suppresses a late success without reversing its completed event", async () => {
+    let releaseMemory!: (value: { ok: boolean }) => void;
+    deps.memoryAdapter = {
+      store: vi.fn().mockReturnValue(new Promise((resolve) => {
+        releaseMemory = resolve;
+      })),
+    };
+    deps.sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: true as const,
+      identity: { agentId: "parent-agent", rootRunId: "root-1", stepIndex: 2 },
+    }));
+    deps.batcher = {
+      enqueue: vi.fn().mockResolvedValue(ok("queued")),
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      pending: 0,
+      hasDelivered: vi.fn().mockReturnValue(false),
+      markDelivered: vi.fn(),
+    };
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "complete before post-processing stalls",
+      agentId: "child-agent",
+      callerAgentId: "parent-agent",
+      callerSessionKey: "default:user1:channel1",
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.memoryAdapter.store).toHaveBeenCalledOnce();
+
+    const shutdown = runner.shutdown();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await shutdown;
+
+    const completionEvents = vi.mocked(deps.eventBus.emit).mock.calls.filter(
+      (call) => call[0] === "session:sub_agent_completed",
+    );
+    expect(completionEvents).toHaveLength(1);
+    expect(completionEvents[0]?.[1]).toEqual(expect.objectContaining({ success: true }));
+    expect(deps.sendGovernedAnnouncement).toHaveBeenCalledOnce();
+    expect(deps.batcher.enqueue).not.toHaveBeenCalled();
+
+    releaseMemory({ ok: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.batcher.enqueue).not.toHaveBeenCalled();
+  });
+
   // -----------------------------------------------------------------------
   // getRunStatus returns undefined for unknown runId
   // -----------------------------------------------------------------------
@@ -536,6 +737,7 @@ describe("createSubAgentRunner", () => {
     expect(deps.sessionStore.save).toHaveBeenCalledTimes(1);
     const saveCall = vi.mocked(deps.sessionStore.save).mock.calls[0]!;
     const metadata = saveCall[2] as Record<string, unknown>;
+    expect(metadata.agentId).toBe("researcher");
     expect(metadata.parentSessionKey).toBe("default:user1:channel1");
     expect(metadata.spawnedByAgent).toBe("orchestrator");
     expect(metadata.taskDescription).toBe("metadata test");
@@ -707,9 +909,9 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Spawn falls back to sendToChannel when announceToParent throws
+  // Parent ambiguity never triggers a second delivery path
   // -----------------------------------------------------------------------
-  it("spawn falls back to sendToChannel when announceToParent throws", async () => {
+  it("spawn does not raw-fallback when announceToParent throws", async () => {
     const announceToParent = vi.fn().mockRejectedValue(new Error("Parent session unavailable"));
     deps.announceToParent = announceToParent;
 
@@ -727,10 +929,7 @@ describe("createSubAgentRunner", () => {
 
     // announceToParent was attempted
     expect(announceToParent).toHaveBeenCalledTimes(1);
-    // Fell back to sendToChannel
-    expect(deps.sendToChannel).toHaveBeenCalledTimes(1);
-    const text = vi.mocked(deps.sendToChannel).mock.calls[0]![2];
-    expect(text).toContain("[System Message]");
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 
   // -----------------------------------------------------------------------
@@ -1193,7 +1392,7 @@ describe("createSubAgentRunner", () => {
   // -----------------------------------------------------------------------
   // max_steps is passed to executeAgent
   // -----------------------------------------------------------------------
-  it("max_steps is passed to executeAgent as 5th argument", async () => {
+  it("max_steps and spawn authority are passed to executeAgent", async () => {
     const runner = createSubAgentRunner(deps);
     runner.spawn({
       task: "limited steps task",
@@ -1211,13 +1410,17 @@ describe("createSubAgentRunner", () => {
       undefined,
       undefined,  // graphOverrides (undefined for non-graph spawns)
       undefined,  // tokenBudget (undefined when no per-spawn budget set)
+      expect.objectContaining({
+        rootRunId: expect.any(String),
+        parentCaps: [],
+        onAssemblyAuthority: expect.any(Function),
+      }),
     );
   });
 
-  // A per-spawn tokenBudget is threaded to executeAgent as the 7th
-  // arg, where the daemon wiring lands it on executionOverrides → the child's
-  // BudgetGuard per-execution cap.
-  it("tokenBudget is passed to executeAgent as the 7th argument when set on SpawnParams", async () => {
+  // A per-spawn tokenBudget is threaded to executeAgent, where the daemon wiring
+  // lands it on executionOverrides → the child's BudgetGuard per-execution cap.
+  it("tokenBudget and spawn authority are passed to executeAgent", async () => {
     const runner = createSubAgentRunner(deps);
     runner.spawn({
       task: "budgeted task",
@@ -1235,6 +1438,11 @@ describe("createSubAgentRunner", () => {
       undefined,
       undefined,
       5_000,
+      expect.objectContaining({
+        rootRunId: expect.any(String),
+        parentCaps: [],
+        onAssemblyAuthority: expect.any(Function),
+      }),
     );
   });
 
@@ -1308,6 +1516,7 @@ describe("createSubAgentRunner", () => {
         sessionStore: {
           save: vi.fn(),
           delete: vi.fn(),
+          loadByFormattedKey: vi.fn(),
         },
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves -- keeps children "running"
         sendToChannel: vi.fn().mockResolvedValue(true),
@@ -1435,6 +1644,34 @@ describe("createSubAgentRunner", () => {
       expect(run!.status).toBe("running");
     });
 
+    it("uses the graph coordinator reserved run identity for the launched attempt", () => {
+      const limitDeps = createLimitDeps();
+      const runner = createSubAgentRunner(limitDeps);
+      const reservedRunId = "20000000-0000-4000-8000-000000000018";
+
+      const runId = runner.spawn({
+        task: "graph node with durable launch claim",
+        agentId: "agent-a",
+        callerSessionKey: "default:user1:ch1",
+        depth: 0,
+        maxDepth: 3,
+        callerType: "graph",
+        reservedRunId,
+      });
+
+      expect(runId).toBe(reservedRunId);
+      expect(runner.getRunStatus(reservedRunId)?.status).toBe("running");
+      expect(() => runner.spawn({
+        task: "duplicate graph launch claim",
+        agentId: "agent-a",
+        callerSessionKey: "default:user1:ch1",
+        depth: 0,
+        maxDepth: 3,
+        callerType: "graph",
+        reservedRunId,
+      })).toThrow(/already active/i);
+    });
+
     it("depth check still applies to graph spawns", () => {
       const limitDeps = createLimitDeps();
       const runner = createSubAgentRunner(limitDeps);
@@ -1518,7 +1755,7 @@ describe("createSubAgentRunner", () => {
       // Use maxChildrenPerAgent: 1 for simplicity
       let resolveExec1!: (v: unknown) => void;
       const limitDeps: SubAgentRunnerDeps = {
-        sessionStore: { save: vi.fn(), delete: vi.fn() },
+        sessionStore: { save: vi.fn(), delete: vi.fn(), loadByFormattedKey: vi.fn() },
         executeAgent: vi.fn().mockReturnValueOnce(
           new Promise((resolve) => { resolveExec1 = resolve; }),
         ).mockResolvedValue({
@@ -1571,7 +1808,7 @@ describe("createSubAgentRunner", () => {
 
     it("throws when queue is full (maxQueuedPerAgent exceeded)", () => {
       const limitDeps: SubAgentRunnerDeps = {
-        sessionStore: { save: vi.fn(), delete: vi.fn() },
+        sessionStore: { save: vi.fn(), delete: vi.fn(), loadByFormattedKey: vi.fn() },
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
         sendToChannel: vi.fn().mockResolvedValue(true),
         eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
@@ -1609,7 +1846,7 @@ describe("createSubAgentRunner", () => {
 
     it("maxQueuedPerAgent: 0 preserves old throw behavior", () => {
       const limitDeps: SubAgentRunnerDeps = {
-        sessionStore: { save: vi.fn(), delete: vi.fn() },
+        sessionStore: { save: vi.fn(), delete: vi.fn(), loadByFormattedKey: vi.fn() },
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
         sendToChannel: vi.fn().mockResolvedValue(true),
         eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
@@ -1644,7 +1881,7 @@ describe("createSubAgentRunner", () => {
     it("queued spawns timeout after queueTimeoutMs", () => {
       vi.useFakeTimers();
       const limitDeps: SubAgentRunnerDeps = {
-        sessionStore: { save: vi.fn(), delete: vi.fn() },
+        sessionStore: { save: vi.fn(), delete: vi.fn(), loadByFormattedKey: vi.fn() },
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
         sendToChannel: vi.fn().mockResolvedValue(true),
         eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
@@ -1894,6 +2131,7 @@ describe("createSubAgentRunner", () => {
         sessionStore: {
           save: vi.fn(),
           delete: vi.fn(),
+          loadByFormattedKey: vi.fn(),
         },
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves -- keeps children "running"
         sendToChannel: vi.fn().mockResolvedValue(true),
@@ -2295,6 +2533,13 @@ describe("createSubAgentRunner", () => {
         agentId: "default",
         announceChannelType: "ghost-test",
         announceChannelId: "ch2",
+        requesterOrigin: {
+          tenantId: "default",
+          userId: "user-1",
+          channelType: "ghost-test",
+          channelId: "ch2",
+          threadId: "topic-42",
+        },
       });
 
       // Grace period = 10_000_000 + 120_000 = 10_120_000ms
@@ -2314,7 +2559,12 @@ describe("createSubAgentRunner", () => {
       expect(runner.getRunStatus(runId)!.error).toContain("Ghost run");
 
       // Failure notification delivered via stored announce channel
-      expect(deps.sendToChannel).toHaveBeenCalled();
+      expect(deps.sendToChannel).toHaveBeenCalledWith(
+        "ghost-test",
+        "ch2",
+        expect.any(String),
+        { threadId: "topic-42" },
+      );
     });
 
     it("ghost sweep skips runs that are already completed or failed", async () => {
@@ -3268,6 +3518,7 @@ describe("spawn rejection WARN logs", () => {
       sessionStore: {
         save: vi.fn(),
         delete: vi.fn(),
+        loadByFormattedKey: vi.fn(),
       },
       executeAgent: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves
       sendToChannel: vi.fn().mockResolvedValue(true),
@@ -3766,7 +4017,7 @@ describe("ANNOUNCE_PARENT_TIMEOUT_MS", () => {
 // deliverAnnouncement timeout fallback
 // ---------------------------------------------------------------------------
 
-describe("deliverAnnouncement timeout fallback", () => {
+describe("deliverAnnouncement timeout quarantine", () => {
   let deps: SubAgentRunnerDeps;
 
   beforeEach(() => {
@@ -3778,7 +4029,7 @@ describe("deliverAnnouncement timeout fallback", () => {
     vi.useRealTimers();
   });
 
-  it("falls back to sendToChannel when announceToParent hangs past timeout", async () => {
+  it("does not raw-fallback when announceToParent hangs past timeout", async () => {
     // announceToParent that never resolves (simulates hang)
     const hangingAnnounce = vi.fn().mockReturnValue(new Promise(() => {}));
     deps.announceToParent = hangingAnnounce;
@@ -3800,11 +4051,10 @@ describe("deliverAnnouncement timeout fallback", () => {
     // announceToParent was called
     expect(hangingAnnounce).toHaveBeenCalled();
 
-    // Advance past the timeout (30 seconds)
+    // Advance past the parent candidate timeout.
     await vi.advanceTimersByTimeAsync(ANNOUNCE_PARENT_TIMEOUT_MS + 100);
 
-    // sendToChannel should have been called as fallback
-    expect(deps.sendToChannel).toHaveBeenCalled();
+    expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 });
 
@@ -3888,7 +4138,12 @@ describe("persistent session reuse", () => {
   });
 
   it("reuseSessionKey skips sessionStore.save and uses provided session key", async () => {
-    const reuseKey = "default:debate-node1:debategraph1node1";
+    const reuseKey = "default:debate-node1:debate:graph:node:peer:room:zone:guild:room:zone:thread:topic:zone";
+    const loadByFormattedKey = vi.fn().mockReturnValue({
+      messages: [],
+      metadata: { agentId: "bull" },
+    });
+    Reflect.set(deps.sessionStore, "loadByFormattedKey", loadByFormattedKey);
     const runner = createSubAgentRunner(deps);
     const runId = runner.spawn({
       task: "round 2 debate",
@@ -3898,6 +4153,7 @@ describe("persistent session reuse", () => {
 
     // sessionStore.save should NOT be called -- session already exists
     expect(deps.sessionStore.save).not.toHaveBeenCalled();
+    expect(loadByFormattedKey).toHaveBeenCalledWith(reuseKey);
 
     // The run's sessionKey should match the reuse key
     const run = runner.getRunStatus(runId);
@@ -3912,12 +4168,20 @@ describe("persistent session reuse", () => {
     expect(callArgs[1]).toEqual({
       tenantId: "default",
       userId: "debate-node1",
-      channelId: "debategraph1node1",
+      channelId: "debate:graph:node",
+      peerId: "room:zone",
+      guildId: "room:zone",
+      threadId: "topic:zone",
+      agentId: "bull",
     });
   });
 
   it("reuseSessionKey threads to executeAgent overrides with graphId/nodeId", async () => {
     const reuseKey = "default:debate-node1:debategraph1node1";
+    Reflect.set(deps.sessionStore, "loadByFormattedKey", vi.fn().mockReturnValue({
+      messages: [],
+      metadata: { agentId: "bull" },
+    }));
     const runner = createSubAgentRunner(deps);
     runner.spawn({
       task: "round 2 debate",
@@ -3937,6 +4201,58 @@ describe("persistent session reuse", () => {
     });
   });
 
+  it("rejects reuse when persisted session ownership differs from the requested agent", async () => {
+    const reuseKey = "default:debate-node1:debategraph1node1";
+    Reflect.set(deps.sessionStore, "loadByFormattedKey", vi.fn().mockReturnValue({
+      messages: [],
+      metadata: { agentId: "bear" },
+    }));
+    const runner = createSubAgentRunner(deps);
+
+    expect(() => runner.spawn({
+      task: "round 2 debate",
+      agentId: "bull",
+      reuseSessionKey: reuseKey,
+    })).toThrow(/session ownership/i);
+
+    expect(deps.executeAgent).not.toHaveBeenCalled();
+    expect(deps.sessionStore.save).not.toHaveBeenCalled();
+  });
+
+  it("rejects reuse when persisted session ownership is absent", async () => {
+    const reuseKey = "default:debate-node1:debategraph1node1";
+    Reflect.set(deps.sessionStore, "loadByFormattedKey", vi.fn().mockReturnValue({
+      messages: [],
+      metadata: {},
+    }));
+    const runner = createSubAgentRunner(deps);
+
+    expect(() => runner.spawn({
+      task: "round 2 debate",
+      agentId: "bull",
+      reuseSessionKey: reuseKey,
+    })).toThrow(/session ownership/i);
+
+    expect(deps.executeAgent).not.toHaveBeenCalled();
+  });
+
+  it("rejects reuse of a persisted session from another tenant", async () => {
+    const reuseKey = "other_tenant:debate-node1:debategraph1node1";
+    Reflect.set(deps.sessionStore, "loadByFormattedKey", vi.fn().mockReturnValue({
+      messages: [],
+      metadata: { agentId: "bull" },
+    }));
+    const runner = createSubAgentRunner(deps);
+
+    expect(() => runner.spawn({
+      task: "round 2 debate",
+      agentId: "bull",
+      reuseSessionKey: reuseKey,
+    })).toThrow(/tenant/i);
+
+    expect(deps.executeAgent).not.toHaveBeenCalled();
+  });
+
   it("invalid reuseSessionKey falls back to normal session creation", async () => {
     deps.logger = {
       info: vi.fn(),
@@ -3953,6 +4269,8 @@ describe("persistent session reuse", () => {
 
     // sessionStore.save SHOULD be called (fallback to normal session)
     expect(deps.sessionStore.save).toHaveBeenCalledTimes(1);
+    const saveCall = vi.mocked(deps.sessionStore.save).mock.calls[0]!;
+    expect((saveCall[2] as Record<string, unknown>).agentId).toBe("bull");
 
     // logger.error should have been called with reuseSessionKey parse failure
     expect(deps.logger.error).toHaveBeenCalledWith(
@@ -4324,7 +4642,7 @@ describe("sandbox no-downgrade gate", () => {
     overrides: Partial<SubAgentRunnerDeps> = {},
   ): SubAgentRunnerDeps {
     return {
-      sessionStore: { save: vi.fn(), delete: vi.fn() },
+      sessionStore: { save: vi.fn(), delete: vi.fn(), loadByFormattedKey: vi.fn() },
       // never resolves -- keeps children "running" so the children-limit path is reachable
       executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
       sendToChannel: vi.fn().mockResolvedValue(true),

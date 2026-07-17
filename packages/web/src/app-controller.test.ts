@@ -70,22 +70,6 @@ class MockWebSocket {
 }
 vi.stubGlobal("WebSocket", MockWebSocket);
 
-// Mock EventSource for the event-dispatcher.
-class MockEventSource {
-  url: string;
-  onopen: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  onmessage: ((ev: MessageEvent) => void) | null = null;
-  close = vi.fn();
-  addEventListener = vi.fn();
-  static lastInstance: MockEventSource | null = null;
-  constructor(url: string) {
-    this.url = url;
-    MockEventSource.lastInstance = this;
-  }
-}
-vi.stubGlobal("EventSource", MockEventSource);
-
 // Ensure window.location has the protocol + host shape api-client expects.
 if (!window.location.protocol) {
   Object.defineProperty(window, "location", {
@@ -169,7 +153,6 @@ beforeEach(() => {
   mockFetch.mockReset();
   vi.clearAllMocks();
   MockWebSocket.lastInstance = null;
-  MockEventSource.lastInstance = null;
 });
 
 describe("AppController", () => {

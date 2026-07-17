@@ -11,8 +11,8 @@
  */
 
 import { readFileSync } from "node:fs";
-import { fingerprint, formatSessionKey, safePath, systemDateFrom } from "@comis/core";
-import type { AppConfig, AppContainer, SessionKey } from "@comis/core";
+import { emitObservationalEventSafely, fingerprint, formatSessionKey, safePath, systemDateFrom } from "@comis/core";
+import type { AppConfig, AppContainer, ComisLogger, SessionKey } from "@comis/core";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import { createGreetingGenerator, type GreetingGenerator, type GreetingTrigger, type CostTracker } from "@comis/agent";
 import { createCommandHandler, type CommandHandlerDeps } from "@comis/orchestrator";
@@ -274,6 +274,7 @@ export interface SlashCommandDepsInput {
   container: AppContainer;
   costTrackers: Map<string, CostTracker>;
   workspaceDirs: Map<string, string>;
+  logger: ComisLogger;
   piSessionAdapters?: Map<string, {
     destroySession(key: SessionKey): Promise<void>;
     getSessionStats(key: SessionKey): {
@@ -301,7 +302,7 @@ export interface SlashCommandDepsInput {
  * per-command behavior contract.
  */
 export function buildSlashCommandDeps(input: SlashCommandDepsInput): CommandHandlerDeps {
-  const { execAgentId, defaultAgentId, execAgentConfig, container, costTrackers, workspaceDirs, piSessionAdapters, destroyConversation } = input;
+  const { execAgentId, defaultAgentId, execAgentConfig, container, costTrackers, workspaceDirs, piSessionAdapters, destroyConversation, logger } = input;
   return {
     getSessionInfo: (key) => {
       const adapter = piSessionAdapters?.get(execAgentId);
@@ -326,13 +327,13 @@ export function buildSlashCommandDeps(input: SlashCommandDepsInput): CommandHand
       // runtime-only destroy left LCD context items the DAG re-presented).
       if (destroyConversation) {
         suppressError(destroyConversation(execAgentId, key), "fire-and-forget conversation destroy");
-        container.eventBus.emit("session:expired", { sessionKey: key, reason: "gateway-reset" });
+        emitObservationalEventSafely({ eventBus: container.eventBus, logger }, "session:expired", { sessionKey: key, reason: "gateway-reset" });
         return;
       }
       const adapter = piSessionAdapters?.get(execAgentId);
       if (adapter) {
         suppressError(adapter.destroySession(key), "fire-and-forget session destroy");
-        container.eventBus.emit("session:expired", { sessionKey: key, reason: "gateway-reset" });
+        emitObservationalEventSafely({ eventBus: container.eventBus, logger }, "session:expired", { sessionKey: key, reason: "gateway-reset" });
         return;
       }
     },

@@ -388,7 +388,12 @@ export type { SenderTrustDisplayConfig } from "./schema-sender-trust-display.js"
 export type { TelegramFileRefGuardConfig } from "./schema-telegram-file-guard.js";
 
 // Loader (file loading + validation)
-export { loadConfigFile, validateConfig } from "./loader.js";
+export {
+  findConfigUnresolvedEnvRefs,
+  loadConfigFile,
+  substituteConfigEnvVars,
+  validateConfig,
+} from "./loader.js";
 export type { ConfigLoadOptions } from "./loader.js";
 
 // Include resolver ($include directive processing)
@@ -408,6 +413,12 @@ export {
 
 // Layered merge
 export { deepMerge, mergeLayered, loadLayered } from "./layered.js";
+
+// COMIS_CONFIG_PATHS parser
+export { parseConfigPaths } from "./config-paths.js";
+
+// Operational environment projection shared by bootstrap and diagnostics.
+export { buildGatewayEnvLayer } from "./env-layer.js";
 
 // Immutable key guard (runtime config mutation protection)
 export { IMMUTABLE_CONFIG_PREFIXES, MUTABLE_CONFIG_OVERRIDES, isImmutableConfigPath, matchesOverridePattern, getMutableOverridesForSection, findOperatorOnlyAgentPaths } from "./immutable-keys.js";

@@ -66,51 +66,75 @@ export function formatSessionKey(key: SessionKey): string {
  * Symmetric inverse of `formatSessionKey`.
  *
  * Accepted format: `{tenantId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]`
+ * The first two unescaped segments are always tenantId and userId. channelId
+ * may contain colons and consumes segments before the first reserved suffix
+ * marker. Suffix markers are unique and ordered peer → guild → thread; each
+ * value consumes colon-bearing segments until the next marker. Those marker
+ * words are therefore reserved when they occur as whole colon-delimited
+ * segments inside channel or suffix values.
+ *
+ * Because the wire format is unescaped, a producer that embeds a colon in
+ * tenantId or userId cannot be inverted unambiguously. Such producers must keep
+ * their structured identity outside those first two segments.
  *
  * @returns SessionKey if the format is valid, undefined otherwise
  */
 export function parseFormattedSessionKey(formatted: string): SessionKey | undefined {
   if (!formatted || typeof formatted !== "string") return undefined;
   const parts = formatted.split(":");
-
   if (parts.length < 3) return undefined;
+  const tenantId = parts.at(0);
+  const userId = parts.at(1);
+  if (!tenantId || !userId) return undefined;
 
-  // channelId may itself contain ":" (e.g. sub-agent runner emits
-  // "sub-agent:<uuid>"). formatSessionKey puts channelId in parts[2+] before
-  // any peer/guild/thread markers, so we greedily join consecutive parts into
-  // channelId until we hit a known marker or run out. This makes the format
-  // round-trip-safe when channelId has colons; for simple channelIds (no
-  // colons) the greedy join consumes exactly one part.
-  let idx = 2;
-  const channelIdParts: string[] = [];
-  while (
-    idx < parts.length &&
-    parts[idx] !== "peer" &&
-    parts[idx] !== "guild" &&
-    parts[idx] !== "thread"
-  ) {
-    channelIdParts.push(parts[idx]!);
-    idx++;
-  }
-  if (channelIdParts.length === 0) return undefined;
-
-  const key: SessionKey = {
-    tenantId: parts[0]!,
-    userId: parts[1]!,
-    channelId: channelIdParts.join(":"),
+  const suffixOrder = (part: string): 0 | 1 | 2 | undefined => {
+    if (part === "peer") return 0;
+    if (part === "guild") return 1;
+    if (part === "thread") return 2;
+    return undefined;
   };
 
-  // Parse optional peer:, guild:, and thread: segments starting where
-  // channelId ended.
-  for (let i = idx; i < parts.length; i++) {
-    if (parts[i] === "peer" && i + 1 < parts.length) {
-      key.peerId = parts[++i];
-    } else if (parts[i] === "guild" && i + 1 < parts.length) {
-      key.guildId = parts[++i];
-    } else if (parts[i] === "thread" && i + 1 < parts.length) {
-      key.threadId = parts[++i];
+  // Suffix marker tokens are reserved after tenant/user. A marker before any
+  // channel segment therefore fails the required non-empty channel invariant.
+  let suffixStart = parts.length;
+  for (let i = 2; i < parts.length; i++) {
+    if (suffixOrder(parts.at(i)!) !== undefined) {
+      suffixStart = i;
+      break;
     }
   }
 
-  return key;
+  const channelId = parts.slice(2, suffixStart).join(":");
+  if (channelId.length === 0) return undefined;
+
+  const key: SessionKey = { tenantId, userId, channelId };
+
+  let cursor = suffixStart;
+  let previousOrder = -1;
+  while (cursor < parts.length) {
+    const marker = parts.at(cursor)!;
+    const order = suffixOrder(marker);
+    if (order === undefined || order <= previousOrder) return undefined;
+
+    let nextMarker = cursor + 1;
+    while (
+      nextMarker < parts.length
+      && suffixOrder(parts.at(nextMarker)!) === undefined
+    ) {
+      nextMarker++;
+    }
+    if (nextMarker === cursor + 1) return undefined;
+
+    const value = parts.slice(cursor + 1, nextMarker).join(":");
+    if (value.length === 0) return undefined;
+    if (marker === "peer") key.peerId = value;
+    else if (marker === "guild") key.guildId = value;
+    else key.threadId = value;
+    previousOrder = order;
+    cursor = nextMarker;
+  }
+
+  const parsed = parseSessionKey(key);
+  if (!parsed.ok || formatSessionKey(parsed.value) !== formatted) return undefined;
+  return parsed.value;
 }

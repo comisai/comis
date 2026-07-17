@@ -197,10 +197,18 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
       const newRunId = deps.subAgentRunner.spawn({
         task: message,
         agentId: run.agentId,
+        callerType: rawParams._agentId !== undefined || rawParams._callerSessionKey !== undefined
+          ? "agent"
+          : "control-plane",
         callerSessionKey: rawParams._callerSessionKey as string | undefined,
         callerAgentId: rawParams._agentId as string | undefined,
         ...(run.rootRunId !== undefined ? { rootRunId: run.rootRunId } : {}),
-        ...(run.parentLeaseId !== undefined ? { parentLeaseId: run.parentLeaseId } : {}),
+        ...(run.leaseId !== undefined
+          ? { parentLeaseId: run.leaseId }
+          : run.parentLeaseId !== undefined
+            ? { parentLeaseId: run.parentLeaseId }
+            : {}),
+        caps: run.caps,
       });
 
       deps.logger?.info(

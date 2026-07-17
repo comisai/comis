@@ -24,7 +24,7 @@ import type { DoctorCheck, DoctorContext, DoctorResult } from "./types.js";
  * @returns Aggregated doctor result with findings and summary counts
  */
 export async function runDoctorChecks(
-  checks: DoctorCheck[],
+  checks: readonly DoctorCheck[],
   context: DoctorContext,
 ): Promise<DoctorResult> {
   const allFindings: DoctorResult["findings"][number][] = [];
@@ -34,13 +34,13 @@ export async function runDoctorChecks(
     try {
       const findings = await check.run(context);
       allFindings.push(...findings);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+    } catch {
       allFindings.push({
         category: check.id,
         check: check.name,
         status: "skip",
-        message: `Check failed: ${message}`,
+        message: "Check could not complete",
+        suggestion: `Retry diagnostic check ${check.id} after verifying its prerequisites`,
         repairable: false,
       });
     }

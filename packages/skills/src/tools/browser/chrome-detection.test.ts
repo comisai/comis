@@ -553,18 +553,17 @@ describe("launchChrome", () => {
     vi.useRealTimers();
   });
 
-  it("surfaces chrome's exit signal + stderr in the failure error (obs: no silent launch death)", async () => {
+  it("surfaces content-free Chrome exit diagnostics without exposing stderr", async () => {
     // Regression: a silent Chrome death (e.g. seccomp SIGSYS under a hardened
-    // systemd sandbox) previously surfaced only as an opaque downstream
-    // connectOverCDP ECONNREFUSED, needing hand-reproduction. launchChrome now
-    // captures Chrome's stderr + exit and puts them in the thrown error, which
-    // flows to the browser tool.result — diagnosable from the trajectory alone.
+    // systemd sandbox) must carry a closed failure class and byte count on the
+    // thrown error so tool telemetry remains useful without child output.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     setPlatform("linux");
     fetchMock.mockRejectedValue(new Error("ECONNREFUSED"));
 
     const promise = launchChrome({ enabled: true }).catch((e: Error) => e);
-    (mockProc.stderr as unknown as EventEmitter).emit("data", Buffer.from("Bad system call (core dumped)\n"));
+    const rawStderr = "Bad system call (core dumped) RAW_CHROME_STDERR_DO_NOT_LOG\n";
+    (mockProc.stderr as unknown as EventEmitter).emit("data", Buffer.from(rawStderr));
     (mockProc as unknown as EventEmitter).emit("exit", null, "SIGSYS");
 
     for (let i = 0; i < 80; i++) {
@@ -573,8 +572,11 @@ describe("launchChrome", () => {
 
     const msg = ((await promise) as Error).message;
     expect(msg).toContain("Failed to start Chrome CDP");
-    expect(msg).toContain("killed by signal SIGSYS");
-    expect(msg).toContain("Bad system call");
+    expect(msg).toContain("exitSignal=SIGSYS");
+    expect(msg).toContain("stderrClass=sandbox_denied");
+    expect(msg).toContain(`stderrBytes=${Buffer.byteLength(rawStderr)}`);
+    expect(msg).not.toContain("Bad system call");
+    expect(msg).not.toContain("RAW_CHROME_STDERR_DO_NOT_LOG");
 
     vi.useRealTimers();
   });

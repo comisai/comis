@@ -8,24 +8,10 @@
 // `task.dispatchState` before firing the notify fallback.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { BackgroundTask } from "./background-task-types.js";
-import type { BackgroundTaskOrigin } from "@comis/core";
+import { TypedEventBus, type BackgroundTaskOrigin } from "@comis/core";
 
 function createFakeEventBus() {
-  const handlers = new Map<string, Set<(data: unknown) => void>>();
-  return {
-    on(event: string, handler: (data: unknown) => void) {
-      if (!handlers.has(event)) handlers.set(event, new Set());
-      handlers.get(event)!.add(handler);
-      return this;
-    },
-    off(event: string, handler: (data: unknown) => void) {
-      handlers.get(event)?.delete(handler);
-      return this;
-    },
-    emit(event: string, data: unknown) {
-      for (const h of handlers.get(event) ?? []) h(data);
-    },
-  } as unknown as import("@comis/core").TypedEventBus;
+  return new TypedEventBus();
 }
 
 function buildOrigin(over: Partial<BackgroundTaskOrigin> = {}): BackgroundTaskOrigin {
@@ -250,6 +236,45 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
     expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "notified");
     expect(notifiedEvents).toHaveLength(1);
     expect(notifiedEvents[0]).toMatchObject({ notified: true, reason: "no_session" });
+    await dispatcher.shutdown();
+  });
+
+  it("preserves fallback dispatch and later notified observers after sync and async subscriber failures", async () => {
+    const mod = await loadDispatcher();
+    expect(mod).toBeDefined();
+    if (!mod) return;
+    const task = buildTask({ dispatchState: "pending" });
+    taskManager.getTask.mockReturnValue(task);
+    const logger = makeLogger();
+    const laterObserver = vi.fn();
+    eventBus.on("background_task:notified", () => {
+      throw new Error("private sync notified content");
+    });
+    eventBus.on("background_task:notified", async () => {
+      throw new Error("private async notified content");
+    });
+    eventBus.on("background_task:notified", laterObserver);
+    const dispatcher = mod.createCompletionDispatcher({
+      eventBus,
+      taskManager,
+      fallbackNotifyFn,
+      sessionStore: { loadByFormattedKey: () => undefined },
+      logger,
+    });
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(task.dispatchState).toBe("notified");
+    expect(fallbackNotifyFn).toHaveBeenCalledOnce();
+    expect(laterObserver).toHaveBeenCalledOnce();
     await dispatcher.shutdown();
   });
 });

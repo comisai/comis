@@ -10,6 +10,7 @@
  */
 
 import { Hono } from "hono";
+import { tryCatch } from "@comis/shared";
 import { createOpenAIError } from "./openai-types.js";
 
 // ---------------------------------------------------------------------------
@@ -18,6 +19,8 @@ import { createOpenAIError } from "./openai-types.js";
 
 /** Catalog entry shape expected by the models route. */
 export interface ModelsCatalogEntry {
+  /** Canonical request ID accepted by the completion and response routes. */
+  id: string;
   provider: string;
   modelId: string;
   displayName: string;
@@ -47,7 +50,7 @@ function toOpenAIModel(entry: ModelsCatalogEntry): {
   owned_by: string;
 } {
   return {
-    id: `${entry.provider}/${entry.modelId}`,
+    id: entry.id,
     object: "model" as const,
     created: 0,
     owned_by: entry.provider,
@@ -63,7 +66,7 @@ function toOpenAIModel(entry: ModelsCatalogEntry): {
  *
  * Returns a Hono app with:
  * - GET / -- list all models in OpenAI format
- * - GET /:model_id -- retrieve a single model by provider/modelId
+ * - GET /:model_id -- retrieve a single model by its canonical catalog ID
  *
  * Mount at `/v1/models` in the parent router.
  */
@@ -80,8 +83,8 @@ export function createOpenaiModelsRoute(deps: OpenaiModelsDeps): Hono {
   });
 
   // GET /:model_id -- single model lookup
-  // Model IDs use "provider/modelId" format (a slash), so a `/*` wildcard is
-  // required. Read the id from the ROUTING wildcard param — NOT c.req.path,
+  // Canonical model IDs may contain a slash, so a `/*` wildcard is required.
+  // Read the id from the routing path rather than assuming one segment.
   // which is the FULL original path (e.g. "/v1/models/openai-codex/gpt-5.5"
   // when this sub-app is mounted at /v1/models). The previous `path.slice(1)`
   // kept the "v1/models/" mount prefix, so it never matched the catalog's
@@ -89,16 +92,19 @@ export function createOpenaiModelsRoute(deps: OpenaiModelsDeps): Hono {
   // straight out of GET /v1/models (live VPS incident 2026-06-19). Hono strips
   // the mount prefix for routing, so `param("*")` is the correct relative id.
   app.get("/*", (c) => {
-    // c.req.path is the FULL original path; when mounted at /v1/models it is
-    // e.g. "/v1/models/openai-codex/gpt-5.5". We can't know the mount prefix in
-    // here, so match the catalog id as the trailing "/provider/modelId" segment
-    // (works whether mounted or standalone). decodeURIComponent handles a
-    // percent-encoded slash in the id.
-    const reqPath = decodeURIComponent(c.req.path);
+    const wildcardIndex = c.req.routePath.lastIndexOf("*");
+    const routePrefix = wildcardIndex >= 0
+      ? c.req.routePath.slice(0, wildcardIndex)
+      : c.req.routePath;
+    if (!c.req.path.startsWith(routePrefix)) {
+      return c.json(createOpenAIError(404, "Model not found"), 404);
+    }
+    const decodedId = tryCatch(() => decodeURIComponent(c.req.path.slice(routePrefix.length)));
+    if (!decodedId.ok) {
+      return c.json(createOpenAIError(404, "Model not found"), 404);
+    }
     const entries = deps.getCatalogEntries();
-    const entry = entries.find(
-      (e) => reqPath.endsWith(`/${e.provider}/${e.modelId}`),
-    );
+    const entry = entries.find((candidate) => candidate.id === decodedId.value);
 
     if (!entry) {
       return c.json(createOpenAIError(404, "Model not found"), 404);

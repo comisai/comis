@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ok, type Result } from "@comis/shared";
-import { systemNowMs, runWithContext, getMessageTraceId } from "@comis/core";
-import { randomUUID, createHash } from "node:crypto";
+import {
+  createAttachmentSendReceipt,
+  systemNowMs,
+  runWithContext,
+  getMessageTraceId,
+} from "@comis/core";
+import { randomUUID } from "node:crypto";
 import type {
   ChannelPort,
   ChannelStatus,
@@ -10,9 +15,8 @@ import type {
   FetchMessagesOptions,
   FetchedMessage,
   AttachmentPayload,
+  AttachmentSendReceipt,
   NormalizedMessage,
-  ReconcileSendQuery,
-  ReconcileSendOutcome,
 } from "@comis/core";
 
 /**
@@ -157,11 +161,13 @@ export class EchoChannelAdapter implements ChannelPort {
     channelId: string,
     attachment: AttachmentPayload,
     options?: SendMessageOptions,
-  ): Promise<Result<string, Error>> {
+  ): Promise<Result<AttachmentSendReceipt, Error>> {
     const caption = attachment.caption ?? "";
     const label = `[${attachment.type}:${attachment.fileName ?? attachment.url}]`;
     const text = caption ? `${label} ${caption}` : label;
-    return this.sendMessage(channelId, text, options);
+    const result = await this.sendMessage(channelId, text, options);
+    if (!result.ok) return result;
+    return ok(createAttachmentSendReceipt(result.value));
   }
 
   async platformAction(
@@ -169,31 +175,6 @@ export class EchoChannelAdapter implements ChannelPort {
     params: Record<string, unknown>,
   ): Promise<Result<unknown, Error>> {
     return ok({ action, params, echoed: true });
-  }
-
-  /**
-   * Reconcile a crash-interrupted outward send.
-   *
-   * Echo is the deterministic test channel — it has perfect, in-memory
-   * visibility of every send, so a confirmed absence IS `not_sent` (it can
-   * never return `unresolved`). This is the channel the chaos tests drive:
-   * a controllable reconcile oracle.
-   *
-   * Matches by channelId + send-window + recomputed content digest
-   * (sha256(text).slice(0,16)) — the same content_digest the send-wrap stored.
-   * The body itself never leaves the store; only the digest is compared.
-   */
-  async reconcileSend(query: ReconcileSendQuery): Promise<Result<ReconcileSendOutcome, Error>> {
-    for (const [id, stored] of this.sentMessages) {
-      if (stored.channelId !== query.channelId) continue;
-      if (stored.timestamp < query.sentAfterMs || stored.timestamp > query.sentBeforeMs) continue;
-      const digest = createHash("sha256").update(stored.text).digest("hex").slice(0, 16);
-      if (digest === query.contentDigest) {
-        return ok({ kind: "sent", platformMessageId: id });
-      }
-    }
-    // Full deterministic scan with no match: definitively not sent.
-    return ok({ kind: "not_sent" });
   }
 
   getStatus(): ChannelStatus {
@@ -232,7 +213,7 @@ export class EchoChannelAdapter implements ChannelPort {
       msg.metadata.traceId = traceId;
     }
     await runWithContext(
-      { traceId, startedAt: systemNowMs(), channelType: "echo", tenantId: "default", trustLevel: "admin" },
+      { traceId, startedAt: systemNowMs(), channelType: "echo", tenantId: "default", trustLevel: "user" },
       async () => {
         for (const handler of this.messageHandlers) {
           await handler(msg);

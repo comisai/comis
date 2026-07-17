@@ -30,20 +30,19 @@ curl -H "Authorization: Bearer your-token" http://localhost:4766/api/agents
 
 Tokens are configured with scopes that determine which endpoints and JSON-RPC methods the client can access.
 
-### Query Parameter
+### WebSocket Query Parameter
 
-For SSE and WebSocket clients that cannot set custom headers, pass the token as a query parameter.
+WebSocket clients that cannot set custom headers may pass the token as a query parameter.
+SSE endpoints require the `Authorization` header and reject `?token=` credentials.
 
 ```bash
-# SSE stream
-curl "http://localhost:4766/api/events?token=your-token"
-
 # WebSocket
 wscat -c "ws://localhost:4766/ws?token=your-token"
 ```
 
 <Warning>
-Query parameter tokens appear in server access logs. Use the `Authorization` header in production.
+Query parameter tokens can appear in server access logs. Prefer a WebSocket client that supports
+the `Authorization` header.
 </Warning>
 
 ### HMAC Signature
@@ -129,12 +128,28 @@ Execute an agent turn with the following request body.
 
 ## SSE Endpoints
 
-Server-Sent Events (SSE) endpoints provide real-time streaming. Both endpoints accept authentication via `Authorization` header or `?token=` query parameter, and — like the REST API — require at least the `rpc` scope. A narrowly-scoped `mcp-client` token is rejected with `403` (the event stream carries cross-session data and can drive agent turns, so it is out of bounds for the contained MCP credential).
+Server-Sent Events (SSE) endpoints provide real-time streaming. Both endpoints require an
+`Authorization: Bearer ...` header and at least the `rpc` scope. Query-string credentials are
+rejected so tokens never need to enter a URL. A narrowly-scoped `mcp-client` token is rejected
+with `403` because the event stream carries cross-session data and can drive agent turns.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/events` | Bearer (`rpc`) | SSE stream of system events (messages, sessions, skills, scheduler, approvals, graphs). |
-| GET | `/api/chat/stream` | Bearer (`rpc`) | Streaming chat via SSE. Requires `?message=`. Accepts `?agentId=`. |
+| POST | `/api/chat/stream` | Bearer (`rpc`) | Streaming chat via SSE. Requires an application/json body with `message` and optional `agentId`. |
+
+```bash
+# System event stream
+curl -N -H "Authorization: Bearer your-token" \
+  http://localhost:4766/api/events
+
+# Streaming chat without placing the prompt in the URL
+curl -N -X POST \
+  -H "Authorization: Bearer your-token" \
+  -H "Content-Type: application/json" \
+  --data '{"message":"Hello","agentId":"default"}' \
+  http://localhost:4766/api/chat/stream
+```
 
 ### SSE Connection Lifecycle
 
@@ -174,7 +189,10 @@ Event types are organized by category:
 
 ### SSE Chat Streaming
 
-The `/api/chat/stream` endpoint sends incremental token deltas as `token` events, followed by a final `done` event with the complete response.
+The `/api/chat/stream` endpoint accepts `{ "message": string, "agentId"?: string }` as its JSON
+request body. It sends incremental token deltas as `token` events, followed by a final `done`
+event with the complete response. The same configured HTTP body-size ceiling used by other chat
+POST endpoints is enforced before JSON parsing.
 
 ```
 event: token

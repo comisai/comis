@@ -3,10 +3,9 @@
  * OAuth health check for `comis doctor`.
  *
  * Per-profile diagnostics: JWT decode → expiry + numeric `secsUntilExpiry`;
- * flag profiles expiring < 7 days as warn, expired as fail; surface
- * schema-version mismatch from the file adapter's hard-fail verbatim
- * (`port.list()` returns `err()` whose message already contains the version
- * + remediation hint). Environmental sub-checks: ca-certificates bundle
+ * flag profiles expiring < 7 days as warn, expired as fail; report
+ * profile-store failures without copying adapter error content.
+ * Environmental sub-checks: ca-certificates bundle
  * existence with distro-aware install hint, HTTPS_PROXY env-var heuristic
  * (Node's built-in fetch ignores HTTPS_PROXY by default), TLS preflight
  * against `auth.openai.com` (delegates to `runOAuthTlsPreflight`).
@@ -148,13 +147,14 @@ async function checkProfiles(
       return result.profiles.map((p) =>
         profileExpiryFinding(p as unknown as OAuthProfile),
       );
-    } catch (e) {
+    } catch {
       return [
         {
           category: CATEGORY,
           check: "Profile store",
           status: "skip",
-          message: `OAuth storage is 'encrypted'; reading profiles via the daemon failed: ${e instanceof Error ? e.message : String(e)}`,
+          message:
+            "OAuth storage is 'encrypted'; profile inventory could not be read through the daemon",
           suggestion:
             "Ensure the daemon is healthy and the gateway token is valid, " +
             "or set security.storage to 'file' in config.yaml.",
@@ -189,27 +189,29 @@ async function checkProfiles(
       dataDir: context.dataDir,
       fileLock: createFileLock(),
     });
-  } catch (e) {
+  } catch {
     return [
       {
         category: CATEGORY,
         check: "Profile store",
         status: "fail",
-        message: `Failed to open OAuth store: ${e instanceof Error ? e.message : String(e)}`,
+        message: "OAuth profile store could not be opened",
+        suggestion:
+          "Verify the Comis data-directory permissions and retry the diagnostic.",
         repairable: false,
       },
     ];
   }
 
-  // port.list() returns err() with the version-mismatch hint baked into
-  // the error message — surface verbatim. NO migration logic.
   const listResult = await store.list();
   if (!listResult.ok) {
     findings.push({
       category: CATEGORY,
       check: "Profile schema",
       status: "fail",
-      message: listResult.error.message, // e.g. "version mismatch: ... Hint: delete X and re-run comis auth login"
+      message: "OAuth profile schema could not be read or validated",
+      suggestion:
+        "Inspect the profile-store permissions and schema, then re-authenticate if the store is invalid.",
       repairable: false,
     });
     return findings; // can't iterate profiles after schema-mismatch
@@ -333,6 +335,17 @@ async function refreshTestFinding(
       const classifyMessage =
         parsed.error_description ?? parsed.error ?? `HTTP ${response.status}`;
       const rewritten = rewriteOAuthError(new Error(classifyMessage));
+      if (rewritten.code === "callback_timeout") {
+        return {
+          category: CATEGORY,
+          check: `Profile ${profile.profileId} refresh test`,
+          status: "fail",
+          message: `Refresh test for ${identityLabel} failed: OAuth token endpoint returned HTTP ${response.status}`,
+          suggestion:
+            "Check auth.openai.com reachability and retry; re-authenticate if the endpoint continues to reject the refresh.",
+          repairable: false,
+        };
+      }
       return {
         category: CATEGORY,
         check: `Profile ${profile.profileId} refresh test`,
@@ -358,12 +371,12 @@ async function refreshTestFinding(
         "is now stale; the next LLM call will trigger a real refresh.",
       repairable: false,
     };
-  } catch (e) {
+  } catch {
     return {
       category: CATEGORY,
       check: `Profile ${profile.profileId} refresh test`,
       status: "fail",
-      message: `Refresh test for ${identityLabel} threw: ${e instanceof Error ? e.message : String(e)}`,
+      message: `Refresh test for ${identityLabel} could not complete`,
       suggestion:
         "Check network reachability to auth.openai.com and retry without " +
         "--refresh-test for a pure-local check.",
@@ -472,7 +485,7 @@ function checkHttpsProxyHeuristic(): DoctorFinding {
     category: CATEGORY,
     check: "HTTPS_PROXY",
     status: "warn",
-    message: `HTTPS_PROXY is set (${httpsProxy}) but Node's built-in fetch ignores it by default`,
+    message: "HTTPS_PROXY is set, but Node's built-in fetch ignores it by default",
     suggestion:
       "Either install undici and call setGlobalDispatcher(new EnvHttpProxyAgent()) at startup, " +
       "or rely on a system-wide proxy. See docs/operations/proxy.md.",
@@ -502,7 +515,7 @@ async function checkTlsPreflight(): Promise<DoctorFinding> {
       category: CATEGORY,
       check: "TLS preflight",
       status: "fail",
-      message: `TLS certificate validation failed: ${result.code ?? "unknown"} (${result.message})`,
+      message: `TLS certificate validation failed (${result.code ?? "unclassified certificate error"})`,
       suggestion: caCertificatesInstallHint(await readOsRelease()),
       repairable: false,
     };
@@ -511,7 +524,7 @@ async function checkTlsPreflight(): Promise<DoctorFinding> {
     category: CATEGORY,
     check: "TLS preflight",
     status: "warn",
-    message: `Network probe to auth.openai.com failed: ${result.message}`,
+    message: `Network probe to auth.openai.com failed (${result.reason})`,
     suggestion:
       "Verify DNS, firewall, and proxy settings. Doctor cannot distinguish " +
       "transient failures from persistent network failures.",

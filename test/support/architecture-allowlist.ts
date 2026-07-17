@@ -1299,73 +1299,9 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
     removedIn: "permanent",
   },
 ] as const;
-export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [
-  // ============================================================================
-  // TypeScript hygiene — closed via RowMapper<TRow>
-  // ============================================================================
-  // Every entry below records one `{file, symbol}` cast site in
-  // packages/memory/src/ that currently uses the unsafe
-  // `.all(...) as Type[]` / `.get(...) as Type` form. The hygiene work
-  // introduces the typed `RowMapper<TRow>` factory and retargets every
-  // site to `mapper.parseRows(...)` / `mapper.parseOptionalRow(...)`;
-  // each retarget closes one entry in this list atomically.
-  //
-  // The `symbol` field captures the FIRST `\w+` after `as ` per the rule's
-  // regex (e.g. `.get(...) as Row | undefined` records symbol "Row"; the
-  // union pipe truncation is intentional). For `as Array<{...}>` casts the
-  // symbol is "Array" (the angle-bracketed generic body does not match
-  // `\w+`).
-  //
-  // The allowlist key is `{file, symbol}`: multiple raw cast sites in the same
-  // file that target the same `symbol` collapse into one entry. The live grep
-  // yielded 61 raw cast sites collapsing to 35 unique pairs across 14 files.
-
-  // context-store.ts — DRAINED.
-  // Previously held 8 `{file, symbol}` entries for {Array (inline id-projection
-  // and FTS hit shapes), CtxConversationRow, CtxMessageRow, CtxMessagePartRow,
-  // CtxSummaryRow, CtxContextItemRow, CtxLargeFileRow, CtxExpansionGrantRow}.
-  // All 17 cast sites retargeted to mapper.parseRows / parseOptionalRow with
-  // degrade-on-validation-error semantics (preserves ContextStorePort plain-
-  // return contract for the 16 production-file consumers in agent + daemon).
-
-  // credential-mapping-store.ts — DRAINED.
-
-  // delivery-mirror-adapter.ts — DRAINED.
-  // Result-returning port; mapper failure flows through err() to the
-  // existing try/catch wrapper.
-
-  // delivery-queue-adapter.ts — DRAINED.
-
-  // embedding-cache-sqlite.ts — DRAINED.
-
-  // hybrid-search.ts — DRAINED.
-
-  // identity-link-store.ts — DRAINED.
-
-  // memory-api.ts — DRAINED.
-
-  // named-graph-store.ts — DRAINED.
-
-  // oauth-profile-store-encrypted.ts — DRAINED.
-
-  // observability-store.ts — DRAINED.
-  // Previously held 9 `{file, symbol}` entries for {TokenUsageDbRow,
-  // DeliveryDbRow, DiagnosticDbRow, ChannelSnapshotDbRow, ProviderAggDbRow,
-  // AgentAggDbRow, SessionAggDbRow, HourlyBucketDbRow, DeliveryStatsDbRow}.
-  // Every site retargets to mapper.parseRows / parseOptionalRow with
-  // degrade-on-validation-error (observability metrics are non-fatal —
-  // see file header for the chosen Option 2 rationale).
-
-  // row-mapper.ts — DRAINED.
-  // The mapper module's own internal countRows / groupCountRows projections
-  // now go through local schemas + createRowMapper (self-closing).
-
-  // session-store.ts — DRAINED.
-
-  // sqlite-memory-adapter.ts — DRAINED.
-
-  // sqlite-secret-store.ts — DRAINED.
-] as const;
+// Raw `.all()`/`.get()` row assertions have no exceptions in memory production
+// source. Every SQLite read validates through a RowMapper before consumption.
+export const untypedSqliteAllowlist: readonly UntypedSqliteAllowlistEntry[] = [] as const;
 export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
   // ============================================================================
   // Per-declaration audit (final state)

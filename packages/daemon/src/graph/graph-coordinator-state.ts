@@ -16,8 +16,17 @@ import type {
   NodeDriverContext,
   NormalizedMessage,
   DurableRunPort,
+  UserTrustLevel,
+  AgentCapability,
+  DeliveryOrigin,
 } from "@comis/core";
-import type { AnnouncementBatcher } from "@comis/orchestrator";
+import type {
+  AnnouncementBatcher,
+  GraphReportCallbackRegistration,
+  GraphReportRegistrationError,
+  SendGovernedCompletionAnnouncement,
+} from "@comis/orchestrator";
+import type { Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Per-graph mutable state
@@ -33,6 +42,14 @@ export interface GraphRunState {
   graphId: string;
   /** Trace ID shared by all sub-agent spawns within this graph run. */
   graphTraceId: string;
+  /** Caller authorization captured once when the graph was submitted. */
+  callerTrustLevel: UserTrustLevel;
+  /** Capability ceiling captured from the authenticated graph submission. */
+  callerCaps: readonly AgentCapability[];
+  /** Lease authorizing this graph attempt; child nodes attenuate beneath it. */
+  parentLeaseId?: string;
+  /** Channel origin captured from the authenticated graph submission. */
+  callerDeliveryOrigin?: DeliveryOrigin;
   graph: ValidatedGraph;
   stateMachine: GraphStateMachine;
   runIdToNode: Map<string, string>;    // runId -> nodeId
@@ -64,6 +81,14 @@ export interface GraphRunState {
   resolvedLanguage?: string;
   /** Shared directory path for inter-node data sharing. */
   sharedDir: string;
+  /**
+   * Stable graph-run directory identity sourced from the protected checkpoint
+   * reference. It differs from `graphId` after an authority row is replaced on
+   * resume and keeps subsequent checkpoints beside the original workspace.
+   */
+  durableArtifactGraphId?: string;
+  /** Guards the tree-budget retention release against duplicate terminal transitions. */
+  durableRetentionReleased?: boolean;
   /** Active driver states keyed by nodeId. */
   driverStates: Map<string, DriverNodeState>;
   /** Maps runId to {nodeId, agentId} for driver turn completion routing. */
@@ -150,6 +175,8 @@ export interface GraphCoordinatorDeps {
       /** Per-spawn token budget — the child's own per-execution cap. */
       tokenBudget?: number;
       callerType?: "agent" | "graph";
+      /** Submission-time caller trust; required for every graph-owned spawn. */
+      callerTrustLevel: UserTrustLevel;
       graphSharedDir?: string;
       graphTraceId?: string;
       graphId?: string;
@@ -158,6 +185,8 @@ export interface GraphCoordinatorDeps {
       rootRunId?: string;
       /** The lease that authorized the graph run (cascade correlation). */
       parentLeaseId?: string;
+      /** Attenuated capability ceiling inherited by this graph node. */
+      caps?: readonly AgentCapability[];
       /** Sorted tool name superset for graph sub-agent cache prefix sharing. */
       graphToolNames?: string[];
       /** Reuse an existing session key for multi-round driver spawns. */
@@ -169,6 +198,8 @@ export interface GraphCoordinatorDeps {
       /** True when this graph node is a leaf (no other node depends on it).
        *  Leaf nodes use "short" cache retention — their prefix has no consumers. */
       isLeafNode?: boolean;
+      /** Coordinator-reserved attempt identity persisted before runner launch. */
+      reservedRunId?: string;
     }): string;
     killRun(runId: string): { killed: boolean; error?: string };
     getRunStatus(runId: string): { status: string; result?: { response: string; finishReason?: string }; error?: string; sessionKey?: string } | undefined;
@@ -184,7 +215,7 @@ export interface GraphCoordinatorDeps {
    * absent ⇒ each node mints its own root (graph fan-out is
    * still bounded by the graph concurrency gate).
    */
-  resolveRootRunId?: (sessionKey: SessionKey) => string;
+  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
   /**
    * The durable run-checkpoint store. When
    * present AND the graph run has a resolved tree-stable `rootRunId`, the
@@ -197,15 +228,29 @@ export interface GraphCoordinatorDeps {
    * dep definition and the consumption logic.
    */
   durableRuns?: DurableRunPort;
+  /** Absolute tree-wide budget state persisted alongside graph routing metadata. */
+  durableBudgetState?: (rootRunId: string) => import("@comis/core").DurableRootBudget;
+  /** Retain budget authority across zero-active dependency waves. */
+  retainDurableRoot?: (rootRunId: string) => void;
+  /** Release retained budget authority after terminal persistence or revoke. */
+  releaseDurableRoot?: (rootRunId: string) => void;
   eventBus: TypedEventBus;
-  sendToChannel: (channelType: string, channelId: string, text: string, options?: { extra?: Record<string, unknown> }) => Promise<boolean>;
+  sendToChannel: (
+    channelType: string,
+    channelId: string,
+    text: string,
+    options?: { threadId?: string; extra?: Record<string, unknown> },
+  ) => Promise<boolean>;
+  /** Receipt-aware retained-operation boundary for terminal graph notifications. */
+  sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
   announceToParent?: (
     callerAgentId: string,
     callerSessionKey: SessionKey,
     text: string,
     channelType: string,
     channelId: string,
-  ) => Promise<void>;
+    options?: { threadId?: string },
+  ) => Promise<string | undefined>;
   tenantId: string;
   defaultAgentId: string;
   maxConcurrency?: number;       // default 4
@@ -263,6 +308,10 @@ export interface GraphCoordinatorDeps {
   touchParentSession?: (sessionKey: string) => void;
   /** Maximum chars for announcement text before truncation + Full Report button. Default: 3000. */
   maxAnnouncementChars?: number;
+  /** Register an expiring owner-bound report target and return its signed one-use callback. */
+  registerGraphReportCallback?: (
+    registration: GraphReportCallbackRegistration,
+  ) => Result<string, GraphReportRegistrationError>;
 }
 
 // ---------------------------------------------------------------------------

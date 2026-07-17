@@ -30,7 +30,7 @@
  *      here.
  *   3. tool_schema_unsupported — an acute, deterministic
  *      provider-schema rejection: upstream of any terminal state (out-ranks
- *      context_exhausted/output_starved) but downstream of the two frozen-fixture
+ *      context_exhausted/output_starved) but downstream of the two established
  *      codes, whose fixtures carry no schema-rejection records (cannot
  *      regress them). Fires only when the one-shot strip-retry did NOT
  *      recover — a recovered repair is evidence, not a verdict.
@@ -49,10 +49,10 @@
  *      "spend_exceeded". Same terminal band as #5 (the endReason keys are mutually
  *      exclusive); every tool-failure cause out-ranks them. prompt_timeout is
  *      numbers-backed from the enriched signal when present; spend_exceeded lives
- *      in the sibling obs-explain-spend-verdict.ts. The frozen 678/503 fixtures
+ *      in the sibling obs-explain-spend-verdict.ts. The established cost and breaker fixtures
  *      carry neither endReason — cannot regress them.
  *
- * The frozen 678/503 fixtures pin codes #1 and #2; every later rule must leave
+ * The established cost and breaker fixtures pin the first two verdicts; every later rule must leave
  * their verdicts unchanged.
  *
  * @module
@@ -130,7 +130,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //    noise masking the acute kill that now blocks EVERY new turn. So it
   //    out-ranks the breaker/dependency/timeout/degradation heuristics below, but
   //    stays BELOW #1, the frozen misclassification verdict. Keyed strictly on
-  //    endReason "spend_exceeded" (frozen 678/503 fixtures carry it not).
+  //    endReason "spend_exceeded" (the established fixtures do not carry it).
   spendExceededVerdict,
 
   // 2b) subagent_stuck_killed (the health monitor's ADMINISTRATIVE
@@ -138,7 +138,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     autonomous kill must out-rank the chronic breaker/degradation symptoms
   //     below, and the kill can even race the run's own completion so the
   //     rollup reads clean. Keyed strictly on the bridged subagentKilled signal
-  //     with killedBy health_monitor (absent on the frozen 678/503 fixtures —
+  //     with killedBy health_monitor (absent on the established fixtures —
   //     cannot regress them; deliberate parent/operator kills return null).
   subagentStuckKilledVerdict,
 
@@ -371,7 +371,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //    table (never re-templated here — templating a non-key source name would
   //    render a nonsense knob; the only local
   //    templating is the agents.<id>.promptTimeout.* fallback, a REAL key
-  //    family). Cannot regress the frozen 678/503 fixtures (no prompt_timeout
+  //    family). Cannot regress the established cost and breaker fixtures (no prompt_timeout
   //    records, no endReason "timeout" in them).
   (s) => {
     if (s.endReason !== "timeout") return null;
@@ -429,7 +429,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     // name the cause, suggest the knob FAMILY, invent no numbers.
     return {
       code: "prompt_timeout",
-      detail: "prompt timed out (no enriched timeout record — pre-extension session)",
+      detail: "prompt timed out; no enriched timeout record was captured",
       suggestedNextSteps: [
         `raise agents.${s.agentId ?? "<id>"}.promptTimeout.promptTimeoutMs`,
         "obs.explain depth=full",
@@ -468,7 +468,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     jail was denied by the run's attenuated lease. ABOVE the
   //     completed_with_tool_errors catch-all: a failed run is a specific terminal
   //     cause, more root than "some tools errored" (a stray failure during the run is
-  //     incidental). Keys only on s.orchestrate (absent on the frozen 678/503
+  //     incidental). Keys only on s.orchestrate (absent on the established
   //     fixtures — they carry no orchestrate records), so it cannot regress them.
   //     Sibling file.
   orchestrateFailedVerdict,

@@ -9,8 +9,9 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import type { AppConfig } from "@comis/core";
+import { TypedEventBus, type AppConfig } from "@comis/core";
 import {
+  buildSlashCommandDeps,
   buildExecutionRequestedLogFields,
   deriveTrustLevel,
   detectGreetingTrigger,
@@ -197,8 +198,40 @@ describe("buildSlashCommandDeps destroySession emits session:expired", () => {
       new URL("./setup-gateway-admin.ts", import.meta.url).pathname,
       "utf-8",
     );
-    expect(source).toContain('container.eventBus.emit("session:expired"');
+    expect(source).toContain('emitObservationalEventSafely({ eventBus: container.eventBus');
     expect(source).toContain('"gateway-reset"');
+  });
+
+  it("preserves reset dispatch and reaches later observers when subscribers throw or reject", async () => {
+    const eventBus = new TypedEventBus();
+    const laterObserver = vi.fn();
+    eventBus.on("session:expired", () => {
+      throw new Error("private gateway reset subscriber content");
+    });
+    eventBus.on("session:expired", async () => {
+      throw new Error("private async gateway reset subscriber content");
+    });
+    eventBus.on("session:expired", laterObserver);
+    const destroyConversation = vi.fn(async () => undefined);
+    const logger = {
+      warn: vi.fn(), debug: vi.fn(), info: vi.fn(), error: vi.fn(), fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(),
+    };
+    const deps = buildSlashCommandDeps({
+      execAgentId: "agent_a",
+      defaultAgentId: "agent_a",
+      execAgentConfig: configuredAgent(),
+      container: { eventBus, config: { tenantId: "default" } } as never,
+      costTrackers: new Map(),
+      workspaceDirs: new Map(),
+      destroyConversation,
+      logger: logger as never,
+    });
+    const key = { tenantId: "default", userId: "user_a", channelId: "gateway" };
+
+    expect(() => deps.destroySession(key)).not.toThrow();
+    expect(destroyConversation).toHaveBeenCalledWith("agent_a", key);
+    expect(laterObserver).toHaveBeenCalledOnce();
+    await new Promise((resolve) => setImmediate(resolve));
   });
 });
 

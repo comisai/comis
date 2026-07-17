@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ok, err, type Result } from "@comis/shared";
+import { toSafeErrorLogString } from "@comis/core";
 import { Bot } from "grammy";
 
 /**
@@ -47,7 +48,7 @@ export async function validateBotToken(
       isBot: me.is_bot,
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = toSafeErrorLogString(error);
     return err(new Error(`Invalid Telegram bot token: ${message}`));
   }
 }

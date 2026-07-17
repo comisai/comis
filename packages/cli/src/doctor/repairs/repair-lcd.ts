@@ -11,11 +11,12 @@
  *                     trigram-searchable
  *   - repairContextItems: remove dangling lcd_context_items refs (summary/message not in store)
  *
- * Deliberately NO repairFallbackSummaries — LLM re-summarization is IMPOSSIBLE offline
- * (the daemon is stopped during --repair and cli↛agent is a forbidden import cut).
- * Fallback-marker summaries (fallback=1) are quality debt re-summarized by the daemon
- * during normal compaction — not repairable by doctor --repair. The fallback-summary
- * finding in lcd-health.ts is repairable:false.
+ * Deliberately NO repairFallbackSummaries. Fallback-marker rows are retained as
+ * immutable nodes in the lossless summary DAG; later compaction can nest them
+ * under a new parent but does not rewrite them. Doctor reports their reachability
+ * and directs operators to prevent new markers by correcting summarizer failures
+ * or compaction budgets. The underlying messages remain recoverable, and the
+ * fallback-summary finding in lcd-health.ts is repairable:false.
  *
  * ABSOLUTE CONSTRAINT: lcd_messages is NEVER written by any repair path.
  * Repairs operate strictly above the lossless verbatim raw store.

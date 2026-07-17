@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Inbound Pipeline Phase 3: Pre-Execution Setup + Message Routing.
+ * Inbound Pipeline: Pre-Execution Setup + Message Routing.
  *
  * Resolves typing lifecycle + streaming config, then routes through
  * steer/followup, queue, or direct execution.
@@ -10,12 +10,25 @@
 
 import type {
   ChannelPort,
+  EventMap,
   NormalizedMessage,
   SessionKey,
   PerChannelStreamingConfig,
 } from "@comis/core";
-import { formatSessionKey, systemNowMs } from "@comis/core";
-import type { AgentExecutor } from "@comis/agent";
+import {
+  formatSessionKey,
+  toSafeErrorLogString,
+  systemClearTimeout,
+  systemNowMs,
+  systemSetTimeout,
+  tryGetContext,
+} from "@comis/core";
+import type {
+  AgentExecutor,
+  InboundMessageProvenancePlan,
+  RunHandle,
+} from "@comis/agent";
+import { fromPromise, tryCatch } from "@comis/shared";
 
 import type { InboundPipelineDeps } from "./inbound-pipeline.js";
 import {
@@ -31,6 +44,11 @@ import type {
   SendOverrideStore,
 } from "@comis/channels";
 import { resolveStreamingConfig, executeAndDeliver } from "../execution/execution-pipeline.js";
+import { emitObservationalEvent } from "../execution/execution-event-emitter.js";
+import {
+  createSourceTerminalScope,
+  type SourceTerminalScope,
+} from "../source-message-terminal.js";
 
 // ---------------------------------------------------------------------------
 // Per-platform typing refresh defaults
@@ -49,6 +67,8 @@ export const PLATFORM_TYPING_DEFAULTS: Record<string, number> = {
   line:     15000,  // 20s expiry (showLoadingAnimation)
   imessage: 4000,   // ~5s process-based expiry
 };
+
+const SDK_ABORT_SETTLE_TIMEOUT_MS = 1_000;
 
 // ---------------------------------------------------------------------------
 // Deps narrowing
@@ -112,18 +132,27 @@ function isHeartbeatExecution(msg: NormalizedMessage): boolean {
   return msg.metadata?.isHeartbeat === true;
 }
 
+/** Resolve a finite channel-ingress timestamp without allowing future time. */
+function resolveIngressReceivedAt(): number {
+  const now = systemNowMs();
+  const startedAt = tryGetContext()?.startedAt;
+  return startedAt !== undefined &&
+    Number.isSafeInteger(startedAt) &&
+    startedAt > 0
+    ? Math.min(startedAt, now)
+    : now;
+}
+
 // ---------------------------------------------------------------------------
-// Phase function
+// Setup and routing
 // ---------------------------------------------------------------------------
 
 /**
  * Resolve typing lifecycle + streaming config, then route the inbound message
  * through steer/followup, queue, or direct execution.
  *
- * This function is Phase 3 of the inbound pipeline. The two sub-phases are
- * sequential: Phase 3A computes streamCfg + typingLifecycle from the
- * processed message; Phase 3B uses both to route through the appropriate
- * execution path.
+ * Typing and streaming setup runs first. Routing then uses the resulting
+ * controllers and configuration for the selected execution path.
  */
 export async function setupAndRoute(
   deps: SetupAndRouteDeps,
@@ -136,10 +165,16 @@ export async function setupAndRoute(
   activePacers: Set<BlockPacer>,
   sendOverrides: SendOverrideStore,
   directives: Record<string, unknown> | undefined,
+  inboundProvenancePlan: InboundMessageProvenancePlan,
+  sourceTerminalScope?: SourceTerminalScope,
 ): Promise<void> {
-  // ===== Phase 3A: Resolve typing lifecycle + streaming config =====
-  // The local vars `streamCfg` and `typingLifecycle` flow into Phase 3B below
-  // instead of being returned.
+  const terminalScope = sourceTerminalScope ?? createSourceTerminalScope(
+    deps,
+    originalMsg,
+    adapter.channelType,
+  );
+  // Resolve typing lifecycle + streaming config. The local values flow into
+  // routing below instead of being returned.
   //
   // Ack reactions are handled by the lifecycle reactor (when enabled); the
   // ackReactionConfig deps slot was removed since no ack reactions were sent
@@ -187,16 +222,27 @@ export async function setupAndRoute(
 
   // Wrap the raw TypingController in a lifecycle controller
   let typingLifecycle: TypingLifecycleController | undefined;
+  let typingDisposed = false;
   if (typingCtrl) {
-    typingLifecycle = createTypingLifecycleController(typingCtrl, {
+    const createdTypingLifecycle = createTypingLifecycleController(typingCtrl, {
       graceMs: 10_000,
       logger: { warn: (obj, message) => deps.logger.warn(obj, message) },
     });
+    typingLifecycle = {
+      controller: createdTypingLifecycle.controller,
+      markRunComplete: () => createdTypingLifecycle.markRunComplete(),
+      markDispatchIdle: () => createdTypingLifecycle.markDispatchIdle(),
+      dispose: () => {
+        if (typingDisposed) return;
+        typingDisposed = true;
+        createdTypingLifecycle.dispose();
+      },
+    };
 
     // 'instant' mode: start typing immediately before queue/execution
     if (streamCfg.typingMode === "instant") {
       typingLifecycle.controller.start(processedMsg.channelId);
-      deps.eventBus.emit("typing:started", {
+      emitObservationalEvent(deps, "typing:started", {
         channelId: adapter.channelId,
         chatId: processedMsg.channelId,
         mode: streamCfg.typingMode,
@@ -205,174 +251,416 @@ export async function setupAndRoute(
     }
   }
 
-  // ===== Phase 3B: Route via steer/followup, queue, or direct execution =====
-  // The parameters `streamCfg` and `typingLifecycle` are locals from Phase 3A
-  // above instead of incoming function parameters.
-
-  const msg = processedMsg;
-
-  // Debounce buffer + group history injection deps slots (debounceBuffer,
-  // groupHistoryBuffer, sessionLabelStore) were never wired by the daemon;
-  // their absent-mode (direct routing without coalescing or history injection)
-  // IS the production code path. They have been removed.
-
-  // Build narrow execution pipeline deps from the inbound pipeline deps
-  const execDeps = {
-    eventBus: deps.eventBus,
-    logger: deps.logger,
-    streamingConfig: deps.streamingConfig,
-    sendPolicyConfig: deps.sendPolicyConfig,
-    getElevatedReplyConfig: deps.getElevatedReplyConfig,
-    channelRegistry: deps.channelRegistry,
-    retryEngine: deps.retryEngine,
-    deliveryQueue: deps.deliveryQueue,
-    deliveryService: deps.deliveryService,
-    commandQueue: deps.commandQueue,
-    assembleToolsForAgent: deps.assembleToolsForAgent,
-    voiceResponsePipeline: deps.voiceResponsePipeline,
-    parseOutboundMedia: deps.parseOutboundMedia,
-    outboundMediaFetch: deps.outboundMediaFetch,
-    responsePrefixConfig: deps.responsePrefixConfig,
-    buildTemplateContext: deps.buildTemplateContext,
-    enforceFinalTag: deps.getEnforceFinalTag?.(agentId),
-    activityStreamPort: deps.activityStreamPort,
-    coordinatorFactory: deps.coordinatorFactory,
+  const releaseTypingOwnership = (): void => {
+    if (!typingLifecycle || typingDisposed) return;
+    const state = tryCatch(() => ({
+      isActive: typingLifecycle?.controller.isActive === true,
+      startedAt: typingLifecycle?.controller.startedAt ?? 0,
+    }));
+    const disposed = tryCatch(() => typingLifecycle?.dispose());
+    if (!disposed.ok) {
+      void tryCatch(() => deps.logger.warn({
+        step: "typing-dispose",
+        channelType: adapter.channelType,
+        err: toSafeErrorLogString(disposed.error),
+        errorKind: "internal" as const,
+        hint: "Fix typing lifecycle disposal; the non-executed queue entry was still terminalized.",
+      }, "Typing lifecycle discard cleanup failed"));
+      return;
+    }
+    if (state.ok && state.value.isActive) {
+      const timestamp = systemNowMs();
+      emitObservationalEvent(deps, "typing:stopped", {
+        channelId: adapter.channelId,
+        chatId: processedMsg.channelId,
+        durationMs: Math.max(0, timestamp - state.value.startedAt),
+        timestamp,
+      });
+    }
   };
 
-  // -------------------------------------------------------------------
-  // STEER+FOLLOWUP ROUTING
-  // -------------------------------------------------------------------
-  // Active-session lookup goes through BackgroundSessionResolver:
-  // composite (agentId, channelType, channelId) supersedes the single-arg
-  // formatted-key lookup so multi-agent / multi-channel sessions are
-  // distinguishable. The original
-  // `formattedKey = formatSessionKey(sessionKey)` is retained ONLY for
-  // diagnostic log fields (the SessionKey may itself be richer than the
-  // resolver's composite triple).
-  if (deps.sessionResolver && deps.queueConfig) {
-    const channelQueueConfig = deps.queueConfig.perChannel[adapter.channelType];
-    const effectiveMode = channelQueueConfig?.mode ?? deps.queueConfig.defaultMode;
+  // Route via steer/followup, queue, or direct execution using the streaming
+  // and typing values resolved above.
 
-    if (effectiveMode === "steer+followup") {
-      const formattedKey = formatSessionKey(sessionKey);
-      const runHandle = deps.sessionResolver.resolveActiveSession({
-        agentId,
-        channelType: adapter.channelType,
-        channelId: msg.channelId,
-      });
+  let typingOwnershipTransferred = false;
+  try {
+    const msg = processedMsg;
 
-      if (runHandle) {
-        const messageText = msg.text ?? "";
+    // Debounce buffer + group history injection deps slots (debounceBuffer,
+    // groupHistoryBuffer, sessionLabelStore) were never wired by the daemon;
+    // their absent-mode (direct routing without coalescing or history injection)
+    // IS the production code path. They have been removed.
 
-        if (runHandle.isStreaming() && !runHandle.isCompacting()) {
-          // Session is streaming -- inject via SDK steer
-          try {
-            await runHandle.steer(messageText);
-            deps.eventBus.emit("steer:injected", {
+    // Build narrow execution pipeline deps from the inbound pipeline deps
+    const execDeps = {
+      eventBus: deps.eventBus,
+      logger: deps.logger,
+      streamingConfig: deps.streamingConfig,
+      sendPolicyConfig: deps.sendPolicyConfig,
+      getElevatedReplyConfig: deps.getElevatedReplyConfig,
+      channelRegistry: deps.channelRegistry,
+      retryEngine: deps.retryEngine,
+      deliveryQueue: deps.deliveryQueue,
+      deliveryService: deps.deliveryService,
+      commandQueue: deps.commandQueue,
+      assembleToolsForAgent: deps.assembleToolsForAgent,
+      voiceResponsePipeline: deps.voiceResponsePipeline,
+      parseOutboundMedia: deps.parseOutboundMedia,
+      outboundMediaFetch: deps.outboundMediaFetch,
+      responsePrefixConfig: deps.responsePrefixConfig,
+      buildTemplateContext: deps.buildTemplateContext,
+      enforceFinalTag: deps.getEnforceFinalTag?.(agentId),
+      activityStreamPort: deps.activityStreamPort,
+      coordinatorFactory: deps.coordinatorFactory,
+    };
+
+    // -------------------------------------------------------------------
+    // STEER+FOLLOWUP ROUTING
+    // -------------------------------------------------------------------
+    // Active-session lookup goes through BackgroundSessionResolver:
+    // composite (agentId, channelType, channelId) supersedes the single-arg
+    // formatted-key lookup so multi-agent / multi-channel sessions are
+    // distinguishable. The original
+    // `formattedKey = formatSessionKey(sessionKey)` is retained ONLY for
+    // diagnostic log fields (the SessionKey may itself be richer than the
+    // resolver's composite triple).
+    if (deps.sessionResolver && deps.queueConfig) {
+      const channelQueueConfig = deps.queueConfig.perChannel[adapter.channelType];
+      const effectiveMode = channelQueueConfig?.mode ?? deps.queueConfig.defaultMode;
+
+      if (effectiveMode === "steer+followup") {
+        const formattedKey = formatSessionKey(sessionKey);
+        const runHandle = deps.sessionResolver.resolveActiveSession({
+          agentId,
+          channelType: adapter.channelType,
+          channelId: msg.channelId,
+        });
+
+        if (runHandle) {
+          const messageText = msg.text ?? "";
+
+          if (runHandle.isStreaming() && !runHandle.isCompacting()) {
+            // Session is streaming -- inject via SDK steer
+            try {
+              await runHandle.steer(messageText);
+              emitObservationalEvent(deps, "steer:injected", {
+                sessionKey,
+                channelType: adapter.channelType,
+                agentId,
+                timestamp: systemNowMs(),
+              });
+              deps.logger.debug(
+                { agentId, channelType: adapter.channelType, sessionKey: formattedKey },
+                "Steer message injected into active session",
+              );
+              terminalScope.publish(
+                "success",
+                "forwarded",
+                systemNowMs(),
+              );
+              return; // Message handled via steer -- do not enqueue
+            } catch (steerErr) {
+              deps.logger.warn(
+                {
+                  agentId,
+                  err: toSafeErrorLogString(steerErr),
+                  hint: "SDK session.steer() failed; message will be queued as follow-up",
+                  errorKind: "internal" as const,
+                },
+                "Steer injection failed",
+              );
+              // Fall through to follow-up below
+            }
+          }
+
+          if (runHandle.isCompacting()) {
+            emitObservationalEvent(deps, "steer:rejected", {
               sessionKey,
               channelType: adapter.channelType,
               agentId,
+              reason: "compacting",
               timestamp: systemNowMs(),
             });
             deps.logger.debug(
               { agentId, channelType: adapter.channelType, sessionKey: formattedKey },
-              "Steer message injected into active session",
+              "Steer rejected: session compacting",
             );
-            return; // Message handled via steer -- do not enqueue
-          } catch (steerErr) {
+          } else {
+            emitObservationalEvent(deps, "steer:rejected", {
+              sessionKey,
+              channelType: adapter.channelType,
+              agentId,
+              reason: "not_streaming",
+              timestamp: systemNowMs(),
+            });
+            deps.logger.debug(
+              { agentId, channelType: adapter.channelType, sessionKey: formattedKey },
+              "Steer rejected: session not streaming",
+            );
+          }
+
+          // Queue as follow-up (session exists but steer not possible)
+          try {
+            await runHandle.followUp(messageText);
+            emitObservationalEvent(deps, "steer:followup_queued", {
+              sessionKey,
+              channelType: adapter.channelType,
+              agentId,
+              reason: runHandle.isCompacting() ? "compacting" : "not_streaming",
+              timestamp: systemNowMs(),
+            });
+            deps.logger.debug(
+              { agentId, channelType: adapter.channelType, sessionKey: formattedKey },
+              "Message queued as follow-up via SDK",
+            );
+            terminalScope.publish(
+              "success",
+              "forwarded",
+              systemNowMs(),
+            );
+            return; // Message handled via follow-up -- do not enqueue
+          } catch (followUpErr) {
             deps.logger.warn(
               {
                 agentId,
-                err: steerErr instanceof Error ? steerErr : new Error(String(steerErr)),
-                hint: "SDK session.steer() failed; message will be queued as follow-up",
+                err: toSafeErrorLogString(followUpErr),
+                hint: "SDK session.followUp() failed; falling through to CommandQueue",
                 errorKind: "internal" as const,
               },
-              "Steer injection failed",
+              "Follow-up queue failed",
             );
-            // Fall through to follow-up below
+            // Fall through to normal CommandQueue routing
           }
         }
-
-        if (runHandle.isCompacting()) {
-          deps.eventBus.emit("steer:rejected", {
-            sessionKey,
-            channelType: adapter.channelType,
-            agentId,
-            reason: "compacting",
-            timestamp: systemNowMs(),
-          });
-          deps.logger.debug(
-            { agentId, channelType: adapter.channelType, sessionKey: formattedKey },
-            "Steer rejected: session compacting",
-          );
-        } else {
-          deps.eventBus.emit("steer:rejected", {
-            sessionKey,
-            channelType: adapter.channelType,
-            agentId,
-            reason: "not_streaming",
-            timestamp: systemNowMs(),
-          });
-          deps.logger.debug(
-            { agentId, channelType: adapter.channelType, sessionKey: formattedKey },
-            "Steer rejected: session not streaming",
-          );
-        }
-
-        // Queue as follow-up (session exists but steer not possible)
-        try {
-          await runHandle.followUp(messageText);
-          deps.eventBus.emit("steer:followup_queued", {
-            sessionKey,
-            channelType: adapter.channelType,
-            agentId,
-            reason: runHandle.isCompacting() ? "compacting" : "not_streaming",
-            timestamp: systemNowMs(),
-          });
-          deps.logger.debug(
-            { agentId, channelType: adapter.channelType, sessionKey: formattedKey },
-            "Message queued as follow-up via SDK",
-          );
-          return; // Message handled via follow-up -- do not enqueue
-        } catch (followUpErr) {
-          deps.logger.warn(
-            {
-              agentId,
-              err: followUpErr instanceof Error ? followUpErr : new Error(String(followUpErr)),
-              hint: "SDK session.followUp() failed; falling through to CommandQueue",
-              errorKind: "internal" as const,
-            },
-            "Follow-up queue failed",
-          );
-          // Fall through to normal CommandQueue routing
-        }
+        // No active run -- fall through to CommandQueue (first message for session)
       }
-      // No active run -- fall through to CommandQueue (first message for session)
-    }
-  }
-
-  // -----------------------------------------------------------------------
-  // Queue-mediated path: route through CommandQueue for serialization
-  // -----------------------------------------------------------------------
-  if (deps.commandQueue) {
-    const enqueueResult = await deps.commandQueue.enqueue(sessionKey, msg, adapter.channelType, async (messages) => {
-      const effectiveMsg = messages[0]!;
-      await executeAndDeliver(execDeps, adapter, effectiveMsg, originalMsg, executor, sessionKey, agentId, streamCfg, activePacers, sendOverrides, typingLifecycle, directives);
-    });
-    if (!enqueueResult.ok) {
-      deps.logger.warn({
-        err: enqueueResult.error.message,
-        hint: "Check if command queue is shut down or overflow policy rejected the message",
-        errorKind: "resource" as const,
-        channelType: adapter.channelType,
-      }, "Message enqueue failed");
     }
 
-    return;
-  }
+    // -----------------------------------------------------------------------
+    // Queue-mediated path: route through CommandQueue for serialization
+    // -----------------------------------------------------------------------
+    if (deps.commandQueue) {
+      const enqueueResult = await deps.commandQueue.enqueue(sessionKey, msg, adapter.channelType, async (messages, execution) => {
+        const effectiveMsg = messages[0]!;
+        const executionTraceId = tryGetContext()?.traceId;
+        const executionSessionKey = formatSessionKey(sessionKey);
+        let cancellationStarted = false;
+        let activeAbort: Promise<void> | undefined;
+        let promptSubmittedListener:
+          | ((event: EventMap["prompt:submitted"]) => void)
+          | undefined;
 
-  // -----------------------------------------------------------------------
-  // Direct execution path (fallback when commandQueue is not provided)
-  // -----------------------------------------------------------------------
-  await executeAndDeliver(execDeps, adapter, msg, originalMsg, executor, sessionKey, agentId, streamCfg, activePacers, sendOverrides, typingLifecycle, directives);
+        const logCancellationFailure = (
+          error: Error,
+          hint: string,
+          message: string,
+        ): void => {
+          void tryCatch(() => deps.logger.warn({
+            agentId,
+            channelType: adapter.channelType,
+            err: toSafeErrorLogString(error),
+            hint,
+            errorKind: "internal" as const,
+          }, message));
+        };
+
+        const resolveActiveRun = (): RunHandle | undefined => {
+          const sessionResolver = deps.sessionResolver;
+          if (!sessionResolver) return undefined;
+          const resolved = tryCatch(() => sessionResolver.resolveActiveSession({
+            agentId,
+            channelType: adapter.channelType,
+            channelId: effectiveMsg.channelId,
+          }));
+          if (!resolved.ok) {
+            logCancellationFailure(
+              resolved.error,
+              "Fix active-session resolution; queue cancellation could not reach the running SDK session",
+              "Queue cancellation could not resolve the active session",
+            );
+            return undefined;
+          }
+          return resolved.value;
+        };
+
+        const abortResolvedRun = async (runHandle: RunHandle): Promise<void> => {
+          const started = tryCatch(() => runHandle.abort());
+          if (!started.ok) {
+            logCancellationFailure(
+              started.error,
+              "Inspect the SDK session abort failure; the queue cancellation signal was still delivered to the handler",
+              "Active SDK session abort failed",
+            );
+            return;
+          }
+          let timeout: ReturnType<typeof setTimeout> | undefined;
+          const settled = await Promise.race([
+            fromPromise(started.value).then((result) => ({
+              kind: "settled" as const,
+              result,
+            })),
+            new Promise<{ kind: "timeout" }>((resolve) => {
+              timeout = systemSetTimeout(
+                () => resolve({ kind: "timeout" }),
+                SDK_ABORT_SETTLE_TIMEOUT_MS,
+              );
+            }),
+          ]);
+          if (timeout !== undefined) systemClearTimeout(timeout);
+          if (settled.kind === "timeout") {
+            void tryCatch(() => deps.logger.warn({
+              agentId,
+              channelType: adapter.channelType,
+              durationMs: SDK_ABORT_SETTLE_TIMEOUT_MS,
+              hint: "Inspect the SDK session abort implementation; queue cancellation continued after the bounded wait",
+              errorKind: "timeout" as const,
+            }, "Active SDK session abort timed out"));
+            return;
+          }
+          if (!settled.result.ok) {
+            logCancellationFailure(
+              settled.result.error,
+              "Inspect the SDK session abort failure; the queue cancellation signal was still delivered to the handler",
+              "Active SDK session abort failed",
+            );
+          }
+        };
+
+        const removePromptSubmittedListener = (): void => {
+          if (!promptSubmittedListener) return;
+          const listener = promptSubmittedListener;
+          promptSubmittedListener = undefined;
+          const removed = tryCatch(() => deps.eventBus.off(
+            "prompt:submitted",
+            listener,
+          ));
+          if (!removed.ok) {
+            logCancellationFailure(
+              removed.error,
+              "Fix EventBus listener cleanup; the completed queue turn no longer needs the cancellation fallback",
+              "Queue cancellation listener cleanup failed",
+            );
+          }
+        };
+
+        const beginCancellation = (): void => {
+          if (cancellationStarted) return;
+          cancellationStarted = true;
+          const activeRun = resolveActiveRun();
+          if (activeRun) {
+            activeAbort = abortResolvedRun(activeRun);
+            return;
+          }
+          if (!deps.sessionResolver || !executionTraceId) return;
+
+          const listener = (event: EventMap["prompt:submitted"]): void => {
+            if (
+              tryGetContext()?.traceId !== executionTraceId ||
+              event.agentId !== agentId ||
+              event.sessionKey !== executionSessionKey
+            ) return;
+            removePromptSubmittedListener();
+            const registeredRun = resolveActiveRun();
+            if (registeredRun) {
+              activeAbort = abortResolvedRun(registeredRun);
+            }
+          };
+          promptSubmittedListener = listener;
+          const registered = tryCatch(() => deps.eventBus.on(
+            "prompt:submitted",
+            listener,
+          ));
+          if (!registered.ok) {
+            promptSubmittedListener = undefined;
+            logCancellationFailure(
+              registered.error,
+              "Fix EventBus listener registration; early queue cancellation could not wait for SDK run registration",
+              "Queue cancellation fallback registration failed",
+            );
+          }
+        };
+
+        const onAbort = (): void => {
+          beginCancellation();
+        };
+
+        execution.signal.addEventListener("abort", onAbort, { once: true });
+        if (execution.signal.aborted) onAbort();
+        let executionOwnsTyping = false;
+        try {
+          if (execution.signal.aborted) {
+            releaseTypingOwnership();
+            execution.sourceTerminalScope.publish(
+              "aborted",
+              "execution_completed",
+              systemNowMs(),
+            );
+            return;
+          }
+          executionOwnsTyping = true;
+          await executeAndDeliver(
+            execDeps,
+            adapter,
+            effectiveMsg,
+            originalMsg,
+            executor,
+            sessionKey,
+            agentId,
+            streamCfg,
+            activePacers,
+            sendOverrides,
+            typingLifecycle,
+            directives,
+            execution.receivedAt,
+            execution.sourceTerminalScope,
+            execution.signal,
+            execution.inboundProvenancePlans,
+          );
+        } finally {
+          execution.signal.removeEventListener("abort", onAbort);
+          removePromptSubmittedListener();
+          if (activeAbort) await activeAbort;
+          if (!executionOwnsTyping) releaseTypingOwnership();
+        }
+      }, terminalScope, releaseTypingOwnership, inboundProvenancePlan);
+      if (!enqueueResult.ok) {
+        deps.logger.warn({
+          err: toSafeErrorLogString(enqueueResult.error),
+          hint: "Check if command queue is shut down or overflow policy rejected the message",
+          errorKind: "resource" as const,
+          channelType: adapter.channelType,
+        }, "Message enqueue failed");
+        terminalScope.publish("error", "queue_rejected", systemNowMs());
+      } else {
+        typingOwnershipTransferred = true;
+      }
+
+      return;
+    }
+
+    // -----------------------------------------------------------------------
+    // Direct execution path (fallback when commandQueue is not provided)
+    // -----------------------------------------------------------------------
+    typingOwnershipTransferred = true;
+    await executeAndDeliver(
+      execDeps,
+      adapter,
+      msg,
+      originalMsg,
+      executor,
+      sessionKey,
+      agentId,
+      streamCfg,
+      activePacers,
+      sendOverrides,
+      typingLifecycle,
+      directives,
+      resolveIngressReceivedAt(),
+      terminalScope,
+      undefined,
+      [inboundProvenancePlan],
+    );
+  } finally {
+    if (!typingOwnershipTransferred) releaseTypingOwnership();
+  }
 }

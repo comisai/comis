@@ -53,6 +53,10 @@ export interface PromptRunnerBridge {
     /** Abort redirect message set at bridge abort sites; undefined for normal completions. */
     abortResponse?: string;
   };
+  hasOutboundDelivery(target: {
+    channelType: string;
+    channelId: string;
+  }): boolean;
 }
 
 /** Parameters for runPrompt(). */

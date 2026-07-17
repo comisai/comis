@@ -43,3 +43,31 @@ function v5() {
   const stmt = db.prepare("SELECT *");
   return stmt.all() as TokenRow[];
 }
+
+// VIOLATION: multiline call and named cast
+function v6() {
+  return db
+    .prepare("SELECT *")
+    .all(
+      "a",
+    ) as TokenRow[];
+}
+
+// VIOLATION: inline object array cast
+function v7() {
+  return db.prepare("SELECT id FROM tokens").all() as { id: string }[];
+}
+
+// VIOLATION: multiline inline object cast
+function v8() {
+  return db
+    .prepare("SELECT count FROM tokens")
+    .get() as {
+      count: number;
+    };
+}
+
+// VIOLATION: Array<inline object> cast
+function v9() {
+  return db.prepare("SELECT id FROM tokens").all() as Array<{ id: string }>;
+}

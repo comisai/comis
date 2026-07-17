@@ -92,6 +92,7 @@ function makeFakeDeliveryService(): DeliveryService {
 
 function makeDeps(adapter: ChannelPort, overrides?: Partial<ChannelManagerDeps>): ChannelManagerDeps {
   return {
+    tenantId: "default",
     eventBus: {
       emit: vi.fn(() => true),
       on: vi.fn().mockReturnThis(),

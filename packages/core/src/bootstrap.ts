@@ -40,11 +40,12 @@ export const INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME =
  *   pointing at a temp dir).
  * - memory.dbPath resolves relative to dataDir if not absolute
  */
-function resolveConfigPaths(
+export function resolveConfigRuntimePaths(
   config: AppConfig,
   env: Record<string, string | undefined>,
+  defaultDataDir: string = DEFAULT_DATA_DIR,
 ): AppConfig {
-  const dataDir = config.dataDir || env["COMIS_DATA_DIR"] || DEFAULT_DATA_DIR;
+  const dataDir = config.dataDir || env["COMIS_DATA_DIR"] || defaultDataDir;
   const dbPath = path.isAbsolute(config.memory.dbPath)
     ? config.memory.dbPath
     : safePath(dataDir, config.memory.dbPath);
@@ -196,7 +197,7 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
   }
 
   // Resolve runtime paths
-  const config = resolveConfigPaths(configResult.value, env);
+  const config = resolveConfigRuntimePaths(configResult.value, env);
 
   // Provider entries name secrets indirectly through apiKeyName rather than
   // `${VAR}` substitution. They are still platform credentials and must share

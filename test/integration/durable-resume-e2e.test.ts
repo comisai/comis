@@ -36,7 +36,7 @@
  *   - Two outward sends with a CHECKPOINT WRITE interleaved → the checkpoint does
  *     NOT reset the outward_step counter (send #2 keeps index 1) → exactly 2
  *     deliveries, two committed ledger rows at (root,0)+(root,1).
- *   - A never-sent run (stepIndex = -1) RESUMES after a restart, NOT orphaned.
+ *   - A checkpoint with no outward-ledger rows RESUMES after a restart.
  *   - A lapsed-heartbeat run is detected + recovered, not left hung.
  *   - A revoked run is NOT resumed (no re-mint) + orphaned on boot.
  *   - A multi-node DAG killed mid-flight resumes its incomplete frontier; the
@@ -106,7 +106,7 @@ function dbPathOf(handle: TestDaemonHandle): string {
  * Open the daemon's memory.db read/write (the daemon is stopped between stages,
  * so a direct seed is safe) and run `fn` against a real DurableRunPort +
  * OutwardSendLedgerPort built on the SAME db. Used to (a) seed the never-sent /
- * lapsed-heartbeat / revoked STRUCTURAL cases and (b) seed a durable_runs row
+ * lapsed-heartbeat / revoked structural cases and (b) seed a durable checkpoint row
  * whose rootRunId matches the live crash seam's ledger row so boot recovery
  * reconciles it.
  */
@@ -134,12 +134,18 @@ async function withStores<T>(
 /** A minimal running DurableRunRecord for the structural cases. */
 function runningRecord(overrides: Partial<DurableRunRecord> & { rootRunId: string }): DurableRunRecord {
   return {
+    checkpointId: overrides.checkpointId ?? overrides.rootRunId,
+    agentId: "default",
+    sessionKey: "test:chaos-user:durable-checkpoint",
+    ownerTenantId: "test",
+    ownerUserId: "chaos-user",
+    deliveryOrigin: null,
     spawnTree: [`lease-${overrides.rootRunId}`],
     caps: [],
     leaseIds: [`lease-${overrides.rootRunId}`],
     budgetConsumed: 0,
     cronOrigin: null,
-    stepIndex: -1,
+    trustLevel: "user",
     status: "running",
     lastHeartbeatAt: Date.now(),
     ...overrides,
@@ -305,7 +311,7 @@ describe("exactly-once chaos restart acceptance gate for the outward-send durabi
       await restartedEcho.sendMessage(channelId, content); // 1 pre-existing delivery = the landed message
       registerEcho(handle, channelId, restartedEcho);
 
-      // Seed the durable_runs row NOW (after Echo is registered) with a STALE
+      // Seed the durable checkpoint row now (after Echo is registered) with a stale
       // heartbeat: the boot resumeAll already ran (found no run), so it did NOT
       // touch the ledger row; the next watchdog tick (staleHeartbeatMs=500ms)
       // detects this stale run and runs resumeAll → reconciles the
@@ -408,26 +414,25 @@ describe("exactly-once chaos restart acceptance gate for the outward-send durabi
       await echo.start();
       const dbAbs = dbPathOf(handle);
 
-      // Use the REAL durable-run store's allocateOutwardStep so the invariant that
-      // upsertCheckpoint MUST NOT reset outward_step is exercised end-to-end.
-      const step0 = await withStores(dbAbs, async ({ durableRuns }) => {
-        // Register the run first so allocateOutwardStep + upsertCheckpoint share a row.
+      // Use the real outward-ledger sequence allocator so checkpoint writes and
+      // message ordering are exercised together.
+      const step0 = await withStores(dbAbs, async ({ durableRuns, ledger }) => {
         await durableRuns.upsertCheckpoint(runningRecord({ rootRunId }));
-        return durableRuns.allocateOutwardStep(rootRunId);
+        return ledger.allocateStep(rootRunId);
       });
-      expect(step0.ok && step0.value).toBe(0); // first allocate yields 0 (seeded at -1)
+      expect(step0.ok && step0.value).toBe(0);
 
       // Outward send #1 at step 0 (commits).
       await driveAutonomySend(handle, { channelId, text: "send-one", outwardStepIndex: 0 });
 
       // CHECKPOINT WRITE INTERLEAVED between the two sends (a child spawn / DAG node
       // transition does exactly this via upsertCheckpoint). If upsertCheckpoint
-      // clobbered outward_step, the next allocate would re-yield 0 (the counter-reset bug).
-      const step1 = await withStores(dbAbs, async ({ durableRuns }) => {
+      // interfered with the separate sequence, the next allocate would re-yield 0.
+      const step1 = await withStores(dbAbs, async ({ durableRuns, ledger }) => {
         await durableRuns.upsertCheckpoint(
           runningRecord({ rootRunId, spawnTree: [`lease-${rootRunId}`, "child-1"] }),
         );
-        return durableRuns.allocateOutwardStep(rootRunId);
+        return ledger.allocateStep(rootRunId);
       });
       // The checkpoint did NOT reset the counter — the next index is 1, not 0.
       expect(step1.ok && step1.value, "an interleaved checkpoint must not reset outward_step").toBe(1);
@@ -449,21 +454,21 @@ describe("exactly-once chaos restart acceptance gate for the outward-send durabi
   });
 
   // =========================================================================
-  // A never-sent run (stepIndex = -1) RESUMES after a restart, NOT orphaned
+  // A checkpoint with no outward send resumes after a restart
   // =========================================================================
-  describe("a run checkpointed at spawn with NO outward send yet (stepIndex = -1) RESUMES, not orphaned", () => {
+  describe("a run checkpointed at spawn with no outward send resumes instead of being orphaned", () => {
     let handle: TestDaemonHandle | undefined;
 
-    it("the -1 never-sent sentinel passes parseDurableRunRecord and is resumed (not falsely orphaned with 'invalid caps')", async () => {
+    it("the checkpoint is resumed without depending on an outward-ledger row", async () => {
       const rootRunId = `root-never-sent-newm5-${randomUUID().slice(0, 8)}`;
       // Boot once to create the db, then stop + seed the never-sent run.
       handle = await boot();
       const dbAbs = dbPathOf(handle);
       await stop(handle);
       handle = undefined;
-      // A run checkpointed at the spawn boundary: stepIndex = -1, no outward send yet.
+      // A run checkpointed at the spawn boundary with no outward send yet.
       await withStores(dbAbs, ({ durableRuns }) =>
-        durableRuns.upsertCheckpoint(runningRecord({ rootRunId, stepIndex: -1 })),
+        durableRuns.upsertCheckpoint(runningRecord({ rootRunId })),
       );
 
       // ---- Restart → boot recovery resumes the run (-1 is a legitimate sentinel). ----
@@ -482,10 +487,13 @@ describe("exactly-once chaos restart acceptance gate for the outward-send durabi
       });
 
       const finalRun = handle.getDurableRun(rootRunId);
-      expect(finalRun, "the never-sent run must still exist in durable_runs after restart").toBeDefined();
+      expect(
+        finalRun,
+        "the never-sent run must still exist in durable_run_checkpoints after restart",
+      ).toBeDefined();
       expect(
         finalRun?.status,
-        "a never-sent run (stepIndex=-1) must RESUME, never be orphaned with 'invalid caps'",
+        "a never-sent run must resume instead of being orphaned with invalid authority",
       ).not.toBe("orphaned");
       // Belt: the orphan reason must NOT be the false-orphan signature.
       expect(finalRun?.orphanReason ?? "").not.toContain("invalid caps");
@@ -556,7 +564,9 @@ describe("exactly-once chaos restart acceptance gate for the outward-send durabi
         return durableRuns.invalidateForRevoke(rootRunId);
       });
       // Confirm the seed left it revoked.
-      const seeded = await withStores(dbAbs, ({ durableRuns }) => durableRuns.getByRootRun(rootRunId));
+      const seeded = await withStores(dbAbs, ({ durableRuns }) =>
+        durableRuns.getByCheckpoint(rootRunId),
+      );
       expect(seeded.ok && seeded.value?.status).toBe("revoked");
 
       // ---- Restart → boot recovery must NOT resume a revoked run. ----
@@ -595,20 +605,14 @@ describe("exactly-once chaos restart acceptance gate for the outward-send durabi
       await withStores(dbAbs, async ({ durableRuns, ledger }) => {
         // A DAG-shaped record: node A completed, node B mid-flight (running). The
         // object-with-`status` spawn_tree is the DAG discriminator.
-        const dagRecord: DurableRunRecord = {
+        const dagRecord = runningRecord({
           rootRunId,
           spawnTree: [
             { nodeId: "A", status: "completed", runId: "run-A" },
             { nodeId: "B", status: "running", runId: "run-B" },
           ],
-          caps: [],
-          leaseIds: [`lease-${rootRunId}`],
-          budgetConsumed: 0,
           cronOrigin: "cron-dag-job",
-          stepIndex: 0,
-          status: "running",
-          lastHeartbeatAt: Date.now(),
-        };
+        });
         await durableRuns.upsertCheckpoint(dagRecord);
         // Node A's committed outward-send ledger row (already delivered).
         await ledger.begin({

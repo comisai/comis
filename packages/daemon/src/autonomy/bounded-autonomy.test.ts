@@ -254,12 +254,12 @@ describe("createBoundedAutonomy — the single composite chokepoint", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 3d: releaseSpawn to zero evicts ALL per-root state at the
+  // Test 3d: releaseSpawn to zero evicts an unretained root's state at the
   // composite — the semaphore slot, the budget token/wall-clock anchor, AND the
   // leaseId correlation index — so a storm of completed roots does not grow any
   // sibling map without bound.
   // -------------------------------------------------------------------------
-  it("releaseSpawn to zero evicts the per-root budget + lease-index state at the composite", () => {
+  it("releaseSpawn to zero evicts an unretained per-root budget + lease-index state", () => {
     const config: ResolvedAutonomy = {
       ...resolveAutonomy(),
       spawn: { maxConcurrentSelfAgents: 4, maxSpawnDepth: 3, maxChildrenPerAgent: 5 },
@@ -284,6 +284,76 @@ describe("createBoundedAutonomy — the single composite chokepoint", () => {
     service.registerRoot("root-EV", "lease-EV2");
     expect(service.reserveBudget("root-EV", "ollama", "llama3", 0, 900).kind).not.toBe("exceeded");
 
+    service.destroy();
+  });
+
+  it("retains a durable DAG root budget across sequential zero-active waves until terminal cleanup", () => {
+    const config: ResolvedAutonomy = {
+      ...resolveAutonomy(),
+      spawn: { maxConcurrentSelfAgents: 4, maxSpawnDepth: 3, maxChildrenPerAgent: 5 },
+      budget: { aggregateUsd: 100, tokens: 1_000, wallClockMs: 3_600_000 },
+    };
+    const { service } = makeService({ config });
+    const rootRunId = "root-durable-sequential";
+    service.retainDurableRoot(rootRunId);
+
+    expect(service.tryAcquireSpawn(rootRunId, 1, 0)).toEqual({ ok: true });
+    service.registerRoot(rootRunId, "lease-wave-a");
+    expect(service.reserveBudget(rootRunId, FREE_PROVIDER, FREE_MODEL, 0, 600).kind).not.toBe("exceeded");
+    service.releaseSpawn(rootRunId);
+
+    // A dependent wave starts after activeCount returned to zero. Its reserve
+    // must see wave A's spend rather than receiving a fresh budget.
+    expect(service.tryAcquireSpawn(rootRunId, 1, 0)).toEqual({ ok: true });
+    service.registerRoot(rootRunId, "lease-wave-b");
+    expect(service.reserveBudget(rootRunId, FREE_PROVIDER, FREE_MODEL, 0, 500).kind).toBe("exceeded");
+    service.releaseSpawn(rootRunId);
+
+    // Terminal/revoke cleanup explicitly releases retained authority.
+    service.releaseDurableRoot(rootRunId);
+    service.registerRoot(rootRunId, "lease-new-run");
+    expect(service.reserveBudget(rootRunId, FREE_PROVIDER, FREE_MODEL, 0, 900).kind).not.toBe("exceeded");
+
+    service.destroy();
+  });
+
+  it("keeps root authority until every overlapping durable DAG releases its retention", () => {
+    const config: ResolvedAutonomy = {
+      ...resolveAutonomy(),
+      spawn: { maxConcurrentSelfAgents: 4, maxSpawnDepth: 3, maxChildrenPerAgent: 5 },
+      budget: { aggregateUsd: 100, tokens: 1_000, wallClockMs: 3_600_000 },
+    };
+    const { service } = makeService({ config });
+    const rootRunId = "root-overlapping-dags";
+    service.retainDurableRoot(rootRunId);
+    service.retainDurableRoot(rootRunId);
+    service.registerRoot(rootRunId, "lease-first");
+    expect(service.reserveBudget(rootRunId, FREE_PROVIDER, FREE_MODEL, 0, 600).kind).not.toBe("exceeded");
+
+    service.releaseDurableRoot(rootRunId);
+    expect(service.reserveBudget(rootRunId, FREE_PROVIDER, FREE_MODEL, 0, 500).kind).toBe("exceeded");
+
+    service.releaseDurableRoot(rootRunId);
+    service.registerRoot(rootRunId, "lease-after-both-terminal");
+    expect(service.reserveBudget(rootRunId, FREE_PROVIDER, FREE_MODEL, 0, 900).kind).not.toBe("exceeded");
+    service.destroy();
+  });
+
+  it("clears every durable retention when the root authority is revoked", () => {
+    const config: ResolvedAutonomy = {
+      ...resolveAutonomy(),
+      budget: { aggregateUsd: 100, tokens: 1_000, wallClockMs: 3_600_000 },
+    };
+    const { service } = makeService({ config });
+    const rootRunId = "root-revoked-overlap";
+    service.retainDurableRoot(rootRunId);
+    service.retainDurableRoot(rootRunId);
+    service.registerRoot(rootRunId, "lease-before-revoke");
+    expect(service.reserveBudget(rootRunId, FREE_PROVIDER, FREE_MODEL, 0, 900).kind).not.toBe("exceeded");
+
+    service.revokeDurableRoot(rootRunId);
+    service.registerRoot(rootRunId, "lease-after-revoke-test");
+    expect(service.reserveBudget(rootRunId, FREE_PROVIDER, FREE_MODEL, 0, 900).kind).not.toBe("exceeded");
     service.destroy();
   });
 

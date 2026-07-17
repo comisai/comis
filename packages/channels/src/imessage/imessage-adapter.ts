@@ -16,6 +16,7 @@
 
 import type {
   AttachmentPayload,
+  AttachmentSendReceipt,
   ChannelPort,
   ChannelStatus,
   FetchedMessage,
@@ -29,7 +30,11 @@ import { ok, err } from "@comis/shared";
 import { createImsgClient, type ImsgClient } from "./imessage-client.js";
 import { validateIMessageConnection } from "./credential-validator.js";
 import { mapImsgToNormalized, type ImsgMessageParams } from "./message-mapper.js";
-import { systemNowMs, runWithContext } from "@comis/core";
+import {
+  createAttachmentSendReceipt,
+  systemNowMs,
+  runWithContext,
+} from "@comis/core";
 import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -43,6 +48,16 @@ export interface IMessageAdapterDeps {
   account?: string;
   /** Logger interface. */
   logger: ComisLogger;
+}
+
+function findIMessagePlatformMessageId(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  const response = value as Record<string, unknown>;
+  if (typeof response.messageId === "string") return response.messageId;
+  if (typeof response.message_id === "string") return response.message_id;
+  if (typeof response.id === "string") return response.id;
+  if (typeof response.guid === "string") return response.guid;
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,7 +160,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
           );
 
           void runWithContext(
-            { traceId, startedAt: systemNowMs(), channelType: "imessage", tenantId: "default", trustLevel: "admin" },
+            { traceId, startedAt: systemNowMs(), channelType: "imessage", tenantId: "default", trustLevel: "user" },
             () => {
               for (const handler of handlers) {
                 try {
@@ -314,7 +329,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
       attachment: AttachmentPayload,
        
       _options?: SendMessageOptions,
-    ): Promise<Result<string, Error>> {
+    ): Promise<Result<AttachmentSendReceipt, Error>> {
       if (!client) {
         const notStartedErr = new Error("iMessage adapter not started");
         deps.logger.warn(
@@ -359,9 +374,29 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
         return err(new Error(`Failed to send iMessage attachment: ${result.error.message}`));
       }
 
+      const receipt = createAttachmentSendReceipt(
+        findIMessagePlatformMessageId(result.value),
+      );
+      if (receipt.kind === "delivered_untracked") {
+        deps.logger.warn(
+          {
+            channelType: "imessage",
+            chatId,
+            hint: "imsg accepted the attachment without an observable message ID. Do not retry; attachment-only IDs are best-effort",
+            errorKind: "platform" as const,
+          },
+          "Attachment delivered without platform tracking",
+        );
+      }
+
       if (attachment.isVoiceNote) {
         deps.logger.info(
-          { channelType: "imessage", chatId },
+          {
+            channelType: "imessage",
+            chatId,
+            tracking: receipt.kind,
+            ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
+          },
           "Voice send complete",
         );
         deps.logger.debug(
@@ -373,8 +408,9 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
       deps.logger.debug(
         {
           channelType: "imessage" as const,
-          messageId: "ok",
           chatId,
+          tracking: receipt.kind,
+          ...(receipt.kind === "tracked" ? { messageId: receipt.messageId } : {}),
           attachmentType: attachment.type,
           captionLength: attachment.caption?.length ?? 0,
           hasFileName: attachment.fileName !== undefined,
@@ -382,7 +418,7 @@ export function createIMessageAdapter(deps: IMessageAdapterDeps): ChannelPort {
         "Outbound attachment",
       );
 
-      return ok("ok");
+      return ok(receipt);
     },
 
     async platformAction(

@@ -429,6 +429,20 @@ export interface ChannelEvents {
   };
 
   /**
+   * A durable outward-send ledger transition completed or was blocked. The
+   * payload is deliberately content-free: durable identities, a closed
+   * transition/outcome pair, and time only. It never carries the message body,
+   * digest, platform error text, or credentials.
+   */
+  "delivery:outward_ledger_transition": {
+    rootRunId: string;
+    stepIndex: number;
+    transition: "lookup" | "begin" | "mark_unknown" | "commit" | "mark_failed" | "park";
+    outcome: "blocked" | "in_flight" | "committed" | "failed" | "parked";
+    timestamp: number;
+  };
+
+  /**
    * A minted agent-reply
    * messageId was bound to its trajectory scope on the PRIMARY inbound-reply
    * (direct-ack) path — the positive proof that the reaction->trajectory
@@ -462,13 +476,13 @@ export interface ChannelEvents {
     timestamp: number;
   };
 
-  /** Queue entry permanently failed -- no more retries. */
+  /** Queue entry terminally stopped -- no automatic retries. */
   "delivery:failed": {
     entryId: string;
     channelId: string;
     channelType: string;
     error: string;
-    reason: "permanent_error" | "retries_exhausted";
+    reason: "permanent_error" | "retries_exhausted" | "uncertain_outcome";
     timestamp: number;
   };
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import type { SessionKey } from "@comis/core";
+import { NormalizedMessageSchema, type SessionKey } from "@comis/core";
 import { createFollowupTrigger } from "./followup-trigger.js";
 
 const testSessionKey: SessionKey = {
@@ -42,7 +42,7 @@ describe("createFollowupTrigger", () => {
       2,
     );
 
-    expect(msg.id).toBe("followup-chain-abc-2");
+    expect(NormalizedMessageSchema.safeParse(msg).success).toBe(true);
     expect(msg.channelId).toBe("chan-1");
     expect(msg.channelType).toBe("telegram");
     expect(msg.senderId).toBe("system");

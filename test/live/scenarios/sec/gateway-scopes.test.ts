@@ -122,15 +122,23 @@ describe("SEC-05 Stage-B — approval gate pause → resolve", () => {
       getTimeoutMs: () => 60_000,
       clock: testClock,
       timers: testTimers,
+      fingerprintSecret: "test-approval-fingerprint-secret",
     });
 
     const pending = gate.requestApproval({
       toolName: "agents.delete",
       action: "agents.delete",
       params: {},
+      fingerprintParams: {},
       agentId: "agent-1",
-      sessionKey: "session-1",
+      sessionKey: "default:user-1:channel-1",
       trustLevel: "user",
+      callbackOwner: {
+        tenantId: "default",
+        userId: "user-1",
+        channelType: "echo",
+        channelKey: "channel-1",
+      },
     });
 
     // Paused: one pending request + approval:requested emitted.

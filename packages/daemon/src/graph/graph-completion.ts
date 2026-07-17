@@ -3,16 +3,16 @@
  * Graph completion, announcement, budget, and timeout handling.
  * Manages the final processing when a graph reaches terminal state:
  * timer cleanup, event emission, metadata persistence, announcement
- * delivery (with batcher/parent/direct channel fallbacks), budget
+ * receipt-aware governed delivery, budget
  * exceeded handling, and graph-level timeout cancellation.
  * @module
  */
 
-import { safePath, type SessionKey, systemNowMs, systemDateFrom, systemScheduleTimeout } from "@comis/core";
-import { withTimeout } from "@comis/shared";
+import { parseFormattedSessionKey, safePath, systemNowMs, systemDateFrom, toSafeErrorLogString } from "@comis/core";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { writeRegularFile } from "@comis/observability";
-import { ANNOUNCE_PARENT_TIMEOUT_MS } from "@comis/agent";
 import { clearAllTimers } from "./graph-cleanup.js";
+import { deliverGovernedGraphAnnouncement } from "./graph-announcement-delivery.js";
 import type {
   CoordinatorSharedState,
   GraphCoordinatorDeps,
@@ -86,13 +86,13 @@ export function computeSubtreeCost(gs: GraphRunState, nodeId: string): number {
  * Handle graph completion: mark time, clear timers, emit events,
  * write metadata, build and deliver announcement.
  */
-export function handleGraphCompletion(
+export async function handleGraphCompletion(
   state: CoordinatorSharedState,
-  deps: Pick<GraphCoordinatorDeps, "eventBus" | "logger" | "sendToChannel" | "announceToParent" | "batcher" | "tenantId" | "activeRunRegistry" | "touchParentSession">,
+  deps: Pick<GraphCoordinatorDeps, "eventBus" | "logger" | "sendGovernedAnnouncement" | "tenantId" | "touchParentSession" | "graphRetentionMs" | "registerGraphReportCallback">,
   gs: GraphRunState,
-): void {
+): Promise<Result<void, Error>> {
   // Prevent double-completion
-  if (gs.completedAt !== undefined) return;
+  if (gs.completedAt !== undefined) return ok(undefined);
 
   // Touch parent lane one final time before announcement delivery
   if (gs.callerSessionKey) {
@@ -177,86 +177,110 @@ export function handleGraphCompletion(
   // 2c. Write _run-metadata.json to disk
   writeRunMetadata(deps, gs);
 
-  // 3. Build announcement text (structured: text + optional buttons for long outputs)
-  const { text: announcement, buttons: announcementButtons } = buildGraphAnnouncement(gs);
-  const buttonOpts = announcementButtons ? { extra: { buttons: announcementButtons } } : undefined;
+  const parsedCaller = gs.callerSessionKey === undefined
+    ? undefined
+    : parseFormattedSessionKey(gs.callerSessionKey);
+  const hasCallerIdentity = gs.callerSessionKey !== undefined || gs.callerAgentId !== undefined;
+  const hasDeclaredParent = gs.callerSessionKey !== undefined && gs.callerAgentId !== undefined;
+  const parentIdentityValid = !hasCallerIdentity || (hasDeclaredParent
+    && parsedCaller !== undefined
+    && parsedCaller.tenantId === deps.tenantId
+    && (gs.announceChannelId === undefined || parsedCaller.channelId === gs.announceChannelId)
+  );
+  const hasAnyAnnouncementRoute = gs.announceChannelType !== undefined
+    || gs.announceChannelId !== undefined;
+  const hasCompleteAnnouncementRoute = gs.announceChannelType !== undefined
+    && gs.announceChannelId !== undefined;
+  const announcementIdentityValid = !hasAnyAnnouncementRoute || (
+    hasCompleteAnnouncementRoute
+    && hasDeclaredParent
+    && parentIdentityValid
+  );
+  if (!announcementIdentityValid) {
+    deps.logger?.warn({
+      graphId: gs.graphId,
+      errorKind: "precondition" as const,
+      hint: "Reject delivery and verify the caller session is canonical, complete, and matches the announcement route",
+    }, "Graph parent identity is invalid");
+  }
 
-  // 4. Deliver announcement (fire-and-forget, errors logged)
-  if (gs.announceChannelType && gs.announceChannelId) {
-    if (gs.callerAgentId && gs.callerSessionKey) {
-      // Check if parent session is still active before expensive announceToParent.
-      // When parent is gone, skip batcher and announceToParent (avoids 5-min timeout),
-      // go directly to sendToChannel.
-      const parentActive = deps.activeRunRegistry?.has(gs.callerSessionKey) ?? true;
-      if (!parentActive) {
-        deps.logger?.info(
-          { graphId: gs.graphId, callerSessionKey: gs.callerSessionKey },
-          "Graph announcement: parent session unavailable, using direct channel send",
-        );
-        deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, announcement, buttonOpts).catch((sendErr: unknown) => {
-          deps.logger?.warn(
-            { graphId: gs.graphId, err: sendErr, hint: "Failed to announce graph result to channel after parent-gone detection", errorKind: "network" as const },
-            "Graph announcement delivery failed",
-          );
-        });
-      } else {
-        // Parent is active -- use existing 3-tier flow: batcher -> announceToParent -> sendToChannel
-        // When buttons are present, bypass batcher (batcher only supports plain text)
-        if (deps.batcher && !announcementButtons) {
-          deps.batcher.enqueue({
-            announcementText: announcement,
-            announceChannelType: gs.announceChannelType,
-            announceChannelId: gs.announceChannelId,
-            callerAgentId: gs.callerAgentId,
-            callerSessionKey: gs.callerSessionKey,
-            runId: gs.graphId,
-          });
-        } else if (deps.announceToParent) {
-          const sessionKey: SessionKey = {
-            tenantId: deps.tenantId,
-            userId: gs.callerAgentId,
-            channelId: gs.callerSessionKey,
-          };
-          withTimeout(
-            deps.announceToParent(
-              gs.callerAgentId,
-              sessionKey,
-              announcement,
-              gs.announceChannelType,
-              gs.announceChannelId,
-            ),
-            ANNOUNCE_PARENT_TIMEOUT_MS,
-            systemScheduleTimeout,
-            "graph announceToParent",
-          ).catch((announceErr: unknown) => {
-            deps.logger?.warn(
-              { graphId: gs.graphId, err: announceErr, hint: "Parent announcement failed; falling back to direct channel send", errorKind: "internal" as const },
-              "Graph parent announcement failed",
-            );
-            deps.sendToChannel(gs.announceChannelType!, gs.announceChannelId!, announcement, buttonOpts).catch((sendErr: unknown) => {
-              deps.logger?.warn(
-                { graphId: gs.graphId, err: sendErr, hint: "Failed to announce graph result to channel", errorKind: "network" as const },
-                "Graph announcement delivery failed",
-              );
-            });
-          });
-        } else {
-          deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, announcement, buttonOpts).catch((sendErr: unknown) => {
-            deps.logger?.warn(
-              { graphId: gs.graphId, err: sendErr, hint: "Failed to announce graph result to channel", errorKind: "network" as const },
-              "Graph announcement delivery failed",
-            );
-          });
-        }
-      }
-    } else {
-      deps.sendToChannel(gs.announceChannelType, gs.announceChannelId, announcement, buttonOpts).catch((sendErr: unknown) => {
-        deps.logger?.warn(
-          { graphId: gs.graphId, err: sendErr, hint: "Failed to announce graph result to channel", errorKind: "network" as const },
-          "Graph announcement delivery failed",
-        );
-      });
+  // 3. Build announcement text. The callback factory is invoked only for a
+  // truncated report, so short outputs do not allocate unused callback targets.
+  const callerSessionKey = gs.callerSessionKey;
+  const callerAgentId = gs.callerAgentId;
+  const announceChannelType = gs.announceChannelType;
+  const announceChannelId = gs.announceChannelId;
+  const registerGraphReportCallback = deps.registerGraphReportCallback;
+  const reportExpiresAt = gs.completedAt + (deps.graphRetentionMs ?? 3_600_000);
+  const registerReportCallback = (): string | undefined => {
+    if (
+      !parentIdentityValid
+      || parsedCaller === undefined
+      || callerSessionKey === undefined
+      || callerAgentId === undefined
+      || announceChannelType === undefined
+      || announceChannelId === undefined
+      || registerGraphReportCallback === undefined
+    ) return undefined;
+
+    const registered = tryCatch(() => registerGraphReportCallback({
+      graphId: gs.graphId,
+      tenantId: parsedCaller.tenantId,
+      userId: parsedCaller.userId,
+      sessionKey: callerSessionKey,
+      agentId: callerAgentId,
+      channelType: announceChannelType,
+      channelKey: announceChannelId,
+      expiresAt: reportExpiresAt,
+    }));
+    if (!registered.ok || !registered.value.ok) {
+      deps.logger?.warn({
+        graphId: gs.graphId,
+        errorKind: "resource" as const,
+        hint: "Retry the graph if a signed report callback is required; the inline preview remains available",
+      }, "Graph report callback registration failed");
+      return undefined;
     }
+    return registered.value.value;
+  };
+  const { text: announcement, buttons: announcementButtons } = buildGraphAnnouncement(
+    gs,
+    registerReportCallback,
+  );
+  const deliveryOptions = parsedCaller?.threadId !== undefined || announcementButtons !== undefined
+    ? {
+        ...(parsedCaller?.threadId ? { threadId: parsedCaller.threadId } : {}),
+        ...(announcementButtons
+          ? { extra: { buttons: announcementButtons } }
+          : {}),
+      }
+    : undefined;
+
+  const sendGoverned = async (
+    finalText: string,
+    options?: { threadId?: string; extra?: Record<string, unknown> },
+  ) => deliverGovernedGraphAnnouncement(
+    { send: deps.sendGovernedAnnouncement, logger: deps.logger },
+    {
+      graphId: gs.graphId,
+      agentId: callerAgentId,
+      callerSessionKey,
+      channelType: announceChannelType,
+      channelId: announceChannelId,
+      text: finalText,
+      ...(options ? { options } : {}),
+    },
+  );
+
+  // 4. Deliver deterministic graph output through one stable, receipt-aware
+  // outward operation. Parent execution is intentionally outside this terminal
+  // boundary because replaying it could repeat arbitrary tool effects.
+  if (hasAnyAnnouncementRoute) {
+    if (!announcementIdentityValid) {
+      return err(new Error("Graph announcement identity or route is invalid"));
+    }
+    const delivery = await sendGoverned(announcement, deliveryOptions);
+    if (!delivery.ok) return delivery;
   }
 
   // 5. Log at INFO level
@@ -276,6 +300,7 @@ export function handleGraphCompletion(
     },
     "Graph execution complete",
   );
+  return ok(undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -367,7 +392,10 @@ export function extractAnnouncementPreview(text: string, maxLen: number): string
  * user sees the actual result (e.g. trading decision). Intermediate nodes get
  * truncated previews to keep the message concise.
  */
-export function buildGraphAnnouncement(gs: GraphRunState): GraphAnnouncement {
+export function buildGraphAnnouncement(
+  gs: GraphRunState,
+  createReportCallback?: () => string | undefined,
+): GraphAnnouncement {
   const maxAnnouncementChars = gs.maxAnnouncementChars ?? 3000;
   const snap = gs.stateMachine.snapshot();
   const label = gs.graph.graph.label ?? gs.graphId;
@@ -442,16 +470,22 @@ export function buildGraphAnnouncement(gs: GraphRunState): GraphAnnouncement {
       extractAnnouncementPreview(raw, previewLimit),
     );
 
+    const callbackData = createReportCallback?.();
+    const reportAvailability = callbackData === undefined
+      ? `\uD83D\uDCC4 Full report is unavailable for attachment delivery (${totalLeafChars.toLocaleString()} chars).`
+      : `\uD83D\uDCC4 Full report available (${totalLeafChars.toLocaleString()} chars) \u2014 tap below to receive as document.`;
     const truncatedParts: string[] = [
       ...truncatedLeafOutputs,
       "",
-      `\uD83D\uDCC4 Full report available (${totalLeafChars.toLocaleString()} chars) \u2014 tap below to receive as document.`,
+      reportAvailability,
       ...footerParts,
     ];
 
     return {
       text: truncatedParts.join("\n"),
-      buttons: [[{ text: "\uD83D\uDCC4 Full Report", callback_data: `graph:report:${gs.graphId}` }]],
+      ...(callbackData === undefined
+        ? {}
+        : { buttons: [[{ text: "\uD83D\uDCC4 Full Report", callback_data: callbackData }]] }),
     };
   }
 
@@ -468,9 +502,10 @@ export function buildGraphAnnouncement(gs: GraphRunState): GraphAnnouncement {
  */
 export function handleBudgetExceeded(
   state: CoordinatorSharedState,
-  deps: Pick<GraphCoordinatorDeps, "subAgentRunner" | "eventBus" | "logger" | "sendToChannel" | "announceToParent" | "batcher" | "tenantId" | "activeRunRegistry" | "touchParentSession">,
+  deps: Pick<GraphCoordinatorDeps, "subAgentRunner" | "eventBus" | "logger" | "sendGovernedAnnouncement" | "tenantId" | "touchParentSession" | "graphRetentionMs" | "registerGraphReportCallback">,
   gs: GraphRunState,
   reason: string,
+  complete: () => void = () => handleGraphCompletion(state, deps, gs),
 ): void {
   gs.cancelReason = "budget";
   // Kill all running nodes
@@ -503,7 +538,7 @@ export function handleBudgetExceeded(
     gs.stateMachine.cancel();
   }
 
-  handleGraphCompletion(state, deps, gs);
+  complete();
 
   // The graph cumulative-budget seam (this function) interoperates with the
   // daemon-wide spend kill-switch via the OPEN `reason` param — a
@@ -534,8 +569,9 @@ export function handleBudgetExceeded(
  */
 export function handleGraphTimeout(
   state: CoordinatorSharedState,
-  deps: Pick<GraphCoordinatorDeps, "subAgentRunner" | "eventBus" | "logger" | "sendToChannel" | "announceToParent" | "batcher" | "tenantId" | "activeRunRegistry" | "touchParentSession">,
+  deps: Pick<GraphCoordinatorDeps, "subAgentRunner" | "eventBus" | "logger" | "sendGovernedAnnouncement" | "tenantId" | "touchParentSession" | "graphRetentionMs" | "registerGraphReportCallback">,
   gs: GraphRunState,
+  complete: () => void = () => handleGraphCompletion(state, deps, gs),
 ): void {
   gs.cancelReason = "timeout";
   for (const [runId, nodeId] of gs.runIdToNode) {
@@ -567,7 +603,7 @@ export function handleGraphTimeout(
     gs.stateMachine.cancel();
   }
 
-  handleGraphCompletion(state, deps, gs);
+  complete();
 
   deps.logger?.warn(
     { graphId: gs.graphId, timeoutMs: gs.graph.graph.timeoutMs, hint: "Graph timeout is configurable via graph.timeoutMs", errorKind: "timeout" as const },
@@ -688,13 +724,13 @@ export function writeRunMetadata(
     const writeResult = writeRegularFile({ path: safePath(gs.sharedDir, "_run-metadata.json"), content: JSON.stringify(metadata, null, 2), confinedBaseDir: gs.sharedDir });
     if (!writeResult.ok) {
       deps.logger?.debug(
-        { graphId: gs.graphId, err: writeResult.error, hint: "Run metadata write failed; downstream artifact consumers will see no _run-metadata.json", errorKind: "resource" as const },
+        { graphId: gs.graphId, err: toSafeErrorLogString(writeResult.error), hint: "Run metadata write failed; downstream artifact consumers will see no _run-metadata.json", errorKind: "resource" as const },
         "Failed to write _run-metadata.json (non-critical)",
       );
     }
   } catch (writeErr) {
     deps.logger?.debug(
-      { graphId: gs.graphId, err: writeErr },
+      { graphId: gs.graphId, err: toSafeErrorLogString(writeErr) },
       "Failed to write _run-metadata.json (non-critical)",
     );
   }

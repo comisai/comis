@@ -234,6 +234,9 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
           resolvedCaps: resolved.capabilities,
           budgetRef: `run-wakegate-${ctx.jobId}-${ts}`,
           sessionKey: ctx.sessionKey,
+          // Wake gates are scheduler-owned synthetic cron roots and share the
+          // cron agent-turn policy: ordinary user authority, never admin.
+          trustLevel: "user",
           rootRunId,
           registerRoot: deps.registerRoot,
         };

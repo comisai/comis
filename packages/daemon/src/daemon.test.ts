@@ -477,7 +477,7 @@ describe("daemon main()", () => {
   });
 
   it("uses COMIS_CONFIG_PATHS when set (filtered to existing files)", async () => {
-    process.env["COMIS_CONFIG_PATHS"] = "/custom/a.yaml:/custom/b.yaml";
+    process.env["COMIS_CONFIG_PATHS"] = "/custom/a.yaml,/custom/b.yaml";
     const { overrides } = buildOverrides();
 
     instances.push(await main(overrides));

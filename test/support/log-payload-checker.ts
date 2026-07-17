@@ -75,15 +75,11 @@ interface CacheEntry {
 /**
  * Cache file shape. `version: 1` is the schema-version field; mismatch (or
  * corrupted JSON) drops the cache and recomputes every entry — guards against
- * cache poisoning.
+ * cache poisoning. Version 4 includes syntax-level literal checks so a type
+ * assertion cannot disguise an off-union string.
  */
 interface CacheFile {
-  // Bumped 1 → 2 when `precondition` joined the closed ErrorKind union;
-  // 2 → 3 when `sandbox_unavailable` joined.
-  // Older caches contain stale flags for files that legitimately use the
-  // new literal — drop them on read so the next walker pass recomputes
-  // against the updated VALID_ERROR_KINDS.
-  readonly version: 3;
+  readonly version: 4;
   readonly entries: Record<string, CacheEntry>;
 }
 
@@ -97,15 +93,15 @@ let cache: CacheFile | null = null;
 function loadCache(): CacheFile {
   if (cache) return cache;
   if (!existsSync(CACHE_PATH)) {
-    cache = { version: 3, entries: {} };
+    cache = { version: 4, entries: {} };
     return cache;
   }
   try {
     const raw = JSON.parse(readFileSync(CACHE_PATH, "utf8")) as CacheFile;
-    cache = raw.version === 3 ? raw : { version: 3, entries: {} };
+    cache = raw.version === 4 ? raw : { version: 4, entries: {} };
   } catch {
     // Corrupted JSON or unreadable file — drop cache and recompute.
-    cache = { version: 3, entries: {} };
+    cache = { version: 4, entries: {} };
   }
   return cache;
 }
@@ -156,6 +152,19 @@ export interface LogPayloadViolation {
   readonly character: number;
   readonly literal: string;
   readonly snippet: string;
+}
+
+function literalHiddenByAssertions(expression: ts.Expression): string | undefined {
+  let current = expression;
+  while (
+    ts.isAsExpression(current)
+    || ts.isTypeAssertionExpression(current)
+    || ts.isSatisfiesExpression(current)
+    || ts.isParenthesizedExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return ts.isStringLiteralLike(current) ? current.text : undefined;
 }
 
 /**
@@ -223,6 +232,19 @@ export function checkLogPayloads(
       character: number;
       literal: string;
     }> = [];
+    const violationKeys = new Set<string>();
+
+    const recordViolation = (node: ts.Node, literal: string): void => {
+      const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+      const key = `${line}:${character}:${literal}`;
+      if (violationKeys.has(key)) return;
+      violationKeys.add(key);
+      fileViolations.push({
+        line: line + 1,
+        character: character + 1,
+        literal,
+      });
+    };
 
     ts.forEachChild(sourceFile, function visit(node) {
       if (ts.isCallExpression(node) && isLoggerWarnOrError(node)) {
@@ -234,6 +256,13 @@ export function checkLogPayloads(
           const payloadType = checker.getTypeAtLocation(payloadArg);
           const errorKindProp = payloadType.getProperty("errorKind");
           if (errorKindProp) {
+            for (const declaration of errorKindProp.getDeclarations() ?? []) {
+              if (!ts.isPropertyAssignment(declaration)) continue;
+              const literal = literalHiddenByAssertions(declaration.initializer);
+              if (literal !== undefined && !VALID_ERROR_KINDS.has(literal)) {
+                recordViolation(declaration.initializer, literal);
+              }
+            }
             const errorKindType = checker.getTypeOfSymbolAtLocation(
               errorKindProp,
               payloadArg,
@@ -246,29 +275,13 @@ export function checkLogPayloads(
             for (const t of constituents) {
               if (t.isStringLiteral()) {
                 if (!VALID_ERROR_KINDS.has(t.value)) {
-                  const { line, character } =
-                    sourceFile.getLineAndCharacterOfPosition(
-                      payloadArg.getStart(),
-                    );
-                  fileViolations.push({
-                    line: line + 1,
-                    character: character + 1,
-                    literal: t.value,
-                  });
+                  recordViolation(payloadArg, t.value);
                 }
               } else {
                 // Open `string` (or any non-literal type) at this position
                 // is itself a violation — the TypeChecker proved the value
                 // is not narrowed to the closed union.
-                const { line, character } =
-                  sourceFile.getLineAndCharacterOfPosition(
-                    payloadArg.getStart(),
-                  );
-                fileViolations.push({
-                  line: line + 1,
-                  character: character + 1,
-                  literal: "<unresolved type>",
-                });
+                recordViolation(payloadArg, "<unresolved type>");
               }
             }
           }

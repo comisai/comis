@@ -272,7 +272,17 @@ describe("buildSupportDoctorContext gateway URL derivation", () => {
 
   it("remaps the :: wildcard bind address to the loopback IPv6 address", () => {
     const ctx = contextFrom("gateway:\n  host: '::'\n  port: 4766\n");
-    expect(ctx.gatewayUrl).toBe("http://::1:4766");
+    expect(ctx.gatewayUrl).toBe("http://[::1]:4766");
+  });
+
+  it("does not probe a gateway that is explicitly disabled", () => {
+    const ctx = contextFrom("gateway:\n  enabled: false\n");
+    expect(ctx.gatewayUrl).toBeUndefined();
+  });
+
+  it("resolves the memory database beneath the support bundle data dir", () => {
+    const ctx = contextFrom("memory:\n  dbPath: stores/support.db\n");
+    expect(ctx.memoryDbPath).toBe("/tmp/does-not-matter/stores/support.db");
   });
 
   it("selects the https scheme when a tls block is present on the gateway", () => {

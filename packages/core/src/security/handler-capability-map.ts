@@ -60,7 +60,8 @@ export type HandlerCapabilityClassification = AgentCapability | "deny-by-origin"
  */
 export const HANDLER_CAPABILITY_MAP = {
   // ── session ── only session.spawn is an orch cap; session.send is governed by
-  // the agentToAgent policy gate. The read/lifecycle ops split two
+  // the agentToAgent policy plus its handler's caller/target principal gate. The
+  // read/lifecycle ops split two
   // ways: list/compact/reset/history/run_status/search/status are
   // "ungated" (agent-reachable self-scoped reads, rpc-scoped contracts), while
   // delete/export/reset_conversation are "deny-by-origin" — they carry an

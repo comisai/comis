@@ -9,11 +9,16 @@
  * @module credential-log
  */
 
+import { DB_CONNECTION_STRING } from "./secret-formats.js";
+
 /** OpenAI/Anthropic API key: sk-... */
 export const SK_API_KEY = /\bsk-[A-Za-z0-9_-]{20,}\b/g;
 
 /** Bearer token in log text */
 export const BEARER_TOKEN_LOG = /Bearer\s+[A-Za-z0-9._~+/=-]{10,}/gi;
+
+/** Bare authorization schemes that may appear outside a named header. */
+export const AUTH_SCHEME_TOKEN_LOG = /\b(?:Bearer|Token|Basic|Digest)\s+[A-Za-z0-9._~+/=:-]{10,}/gi;
 
 /** Telegram bot token: digits:alphanumeric */
 export const TELEGRAM_BOT_TOKEN = /\b\d{6,}:[A-Za-z0-9_-]{20,}\b/g;
@@ -55,13 +60,14 @@ export const HEX_SECRET_LONG = /\b[0-9a-f]{40,}\b/gi;
  * is hex + hyphens (a uuid) so a plain word before the colon does not match. */
 export const FAL_KEY = /\b[0-9a-fA-F][0-9a-fA-F-]{7,}:[0-9a-fA-F]{24,}\b/g;
 
-/** GitHub token (all prefixes: ghp, gho, ghu, ghs, ghr) */
-export const GITHUB_TOKEN_FULL = /\bgh[pousr]_[A-Za-z0-9_]{36,}\b/g;
+/** GitHub token (all prefixes: ghp, gho, ghu, ghs, ghr; includes test credentials). */
+export const GITHUB_TOKEN_FULL = /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g;
 
 /** All credential log patterns. */
 export const CREDENTIAL_LOG_PATTERNS: readonly RegExp[] = [
   SK_API_KEY,
   BEARER_TOKEN_LOG,
+  AUTH_SCHEME_TOKEN_LOG,
   TELEGRAM_BOT_TOKEN,
   AWS_KEY_ID_BOUNDED,
   AWS_SECRET_KEY,
@@ -70,6 +76,7 @@ export const CREDENTIAL_LOG_PATTERNS: readonly RegExp[] = [
   SLACK_APP_TOKEN,
   SENDGRID_KEY,
   JWT_PATTERN,
+  DB_CONNECTION_STRING,
   URL_PASSWORD,
   HEX_SECRET_LONG,
   FAL_KEY,

@@ -5,24 +5,24 @@
 // socket down in a finally — the throw IS the JSON-RPC error path (rpc-dispatch's
 // catch logs + re-throws it, mirroring the admin *-handlers.ts throws).
 /**
- * `runOrchestrateReplaySession` — the operator deterministic-replay glue (REPLAY-02).
+ * `runOrchestrateReplaySession` — the operator deterministic-replay glue.
  *
  * Drives one `comis orchestrate replay <runId>` invocation end to end:
  *   1. Validate `runId` against a REAL durable orchestrate row (a row carrying a
  *      pinned `scriptRef`) — an unknown/non-orchestrate run throws a content-free
- *      error BEFORE any socket bind or re-spawn (T-233-14).
+ *      error before any socket bind or re-spawn.
  *   2. Mint an EPHEMERAL replay bearer and `outputGuard.registerSecret` it BEFORE
  *      it leaves this closure (Pitfall 6 — a new bearer that isn't registered can
  *      leak via a log/model echo). The bearer + socket are per-replay + ephemeral.
  *   3. Start the SEPARATE replay socket (plan-05 `createOrchestrateReplaySocket`)
- *      on a fresh 0600 path — NEVER the production capability endpoint (INV-1).
+ *      on a fresh 0600 path — never the production capability endpoint.
  *   4. Re-spawn the PINNED bytes with `COMIS_ORCH_SOCKET` pointed at the replay
- *      socket (INV-1) via the injected `respawn` seam; the operator supplies NO
- *      script (T-WS4-03 — the pinned `scriptRef` bytes are the sole source).
+ *      socket via the injected `respawn` seam; the operator supplies no script
+ *      because the pinned `scriptRef` bytes are the sole source.
  *   5. Collect the stdout (byte-identical to the original for a faithful run).
- *   6. Tear the socket down in a `finally` (T-233-13) regardless of outcome.
+ *   6. Tear the socket down in a `finally` regardless of outcome.
  *
- * INV-1 is enforced by construction: the handler starts a physically separate
+ * Isolation is enforced by construction: the handler starts a physically separate
  * socket and points the re-spawn's egress env at it; the production gate is never
  * invoked. The `respawn` seam is INJECTED — the sandbox-backed production closure
  * (the plan-03 `loadResumeSpec` + `runScriptWithOneShotRepair` envelope, pointed
@@ -35,11 +35,13 @@
  * @module
  */
 import { randomBytes } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
-import type { DurableRunPort } from "@comis/core";
+import { toSafeErrorLogString, type DurableRunPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
+import type { ResumePrincipal } from "@comis/skills/tools";
 
 import {
   createOrchestrateReplaySocket,
@@ -65,9 +67,9 @@ const ENV_CAP_LEASE = "COMIS_CAP_LEASE";
 export interface OrchestrateReplayRespawnInput {
   /** The validated durable root run id being replayed. */
   readonly rootRunId: string;
-  /** The run's jailed workspace (`<workspacePath>/results/replay.jsonl` lives here). */
+  /** The original agent workspace used only to load the durable pinned script. */
   readonly workspacePath: string;
-  /** The bound replay socket path — the re-spawn's `COMIS_ORCH_SOCKET` target (INV-1). */
+  /** The bound replay socket path used as the re-spawn's `COMIS_ORCH_SOCKET`. */
   readonly socketPath: string;
   /** The ephemeral replay bearer — the re-spawn's `COMIS_CAP_LEASE`. */
   readonly bearer: string;
@@ -77,6 +79,8 @@ export interface OrchestrateReplayRespawnInput {
    * production seam merges it over the sandbox base before spawning.
    */
   readonly childEnv: Record<string, string | undefined>;
+  /** Persisted execution identity already validated by this operator control-plane handler. */
+  readonly principal: ResumePrincipal;
 }
 
 /**
@@ -103,28 +107,36 @@ export interface OrchestrateReplayWiring {
   readonly outputGuard: { registerSecret(secret: string): void };
   /** The sandbox-backed pinned-byte re-spawn (points COMIS_ORCH_SOCKET at the replay socket). */
   readonly respawn: OrchestrateReplayRespawn;
+  /** Daemon-owned replay evidence root, never mounted into an agent jail. */
+  readonly recordingRootPath: string;
   /** Optional replay-socket factory override (defaults to `createOrchestrateReplaySocket`). */
   readonly createReplaySocket?: (deps: {
-    workspacePath: string;
+    recordingRootPath: string;
+    runId: string;
+    expectedBearer: string;
     logger?: ComisLogger;
   }) => OrchestrateReplaySocket;
 }
 
 /** Everything {@link runOrchestrateReplaySession} needs, with seams for the macOS tests. */
 export interface OrchestrateReplaySessionDeps {
-  /** The durable-run store — `getByRootRun` validates the runId to a real row. */
-  readonly durableRuns: Pick<DurableRunPort, "getByRootRun">;
-  /** Resolve the run's jailed workspace path (the replay socket reads under it). */
-  readonly resolveWorkspace: (rootRunId: string) => string;
+  /** The durable-run store validates the execution id to a real checkpoint. */
+  readonly durableRuns: Pick<DurableRunPort, "getByCheckpoint">;
+  /** Resolve the persisted agent's exact jailed workspace; absence fails closed. */
+  readonly resolveWorkspace: (agentId: string) => string | undefined;
   /** The sandbox-backed pinned-byte re-spawn seam. */
   readonly respawn: OrchestrateReplayRespawn;
+  /** Daemon-owned replay evidence root, never mounted into an agent jail. */
+  readonly recordingRootPath: string;
   /** The daemon-wide OutputGuard the ephemeral bearer registers in (Pitfall 6). */
   readonly outputGuard: { registerSecret(secret: string): void };
   /** Structured logger for the content-free §2.7 instrumentation. */
   readonly logger: ComisLogger;
   /** Replay-socket factory (defaults to the plan-05 `createOrchestrateReplaySocket`). */
   readonly createReplaySocket?: (deps: {
-    workspacePath: string;
+    recordingRootPath: string;
+    runId: string;
+    expectedBearer: string;
     logger?: ComisLogger;
   }) => OrchestrateReplaySocket;
   /** Ephemeral-bearer minter (defaults to a 256-bit random hex). */
@@ -181,13 +193,13 @@ export function resolveReplaySocketPathIn(baseTmpDir: string, _rootRunId: string
 }
 
 // ---------------------------------------------------------------------------
-// The INV-1 keystone: the re-spawn env points at the replay socket.
+// The re-spawn environment points only at the replay socket.
 // ---------------------------------------------------------------------------
 
 /**
  * Build the re-spawn child env: the SAME `COMIS_ORCH_SOCKET`/`COMIS_CAP_LEASE`
  * names a production run uses, but `COMIS_ORCH_SOCKET` is the SEPARATE replay
- * socket path and `COMIS_CAP_LEASE` is the ephemeral replay bearer (INV-1). The
+ * socket path and `COMIS_CAP_LEASE` is the ephemeral replay bearer. The
  * two replay keys ALWAYS win over any inherited base env, so a base carrying the
  * production socket/bearer can never leak into the re-spawn.
  */
@@ -201,6 +213,25 @@ export function buildReplayChildEnv(
     [ENV_ORCH_SOCKET]: socketPath,
     [ENV_CAP_LEASE]: bearer,
   };
+}
+
+/** Fail-closed overlap check between the agent bind and daemon evidence root. */
+function replayPathsOverlap(first: string, second: string): boolean {
+  const canonical = (path: string): string => {
+    try {
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- trusted configured roots used only for containment comparison.
+      return realpathSync(path);
+    } catch {
+      return resolve(path);
+    }
+  };
+  const firstPath = canonical(first);
+  const secondPath = canonical(second);
+  const atOrUnder = (candidate: string, parent: string): boolean => {
+    const rel = relative(parent, candidate);
+    return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+  };
+  return atOrUnder(firstPath, secondPath) || atOrUnder(secondPath, firstPath);
 }
 
 // ---------------------------------------------------------------------------
@@ -219,13 +250,13 @@ export async function runOrchestrateReplaySession(
 ): Promise<{ stdout: string; diverged?: boolean }> {
   const log = deps.logger.child({ submodule: "orchestrate-replay" });
 
-  // 1. Validate the runId against a REAL durable orchestrate row (T-233-14).
+  // 1. Validate the runId against a durable orchestrate row.
   //    Content-free refusals: the message names the failure CLASS, never the
   //    runId (an operator-supplied id we do not echo back into a log/error).
-  const rowResult = await deps.durableRuns.getByRootRun(runId);
+  const rowResult = await deps.durableRuns.getByCheckpoint(runId);
   if (!rowResult.ok) {
     log.warn(
-      { method: "orchestrate.replay", err: rowResult.error, errorKind: "dependency" as const, hint: "the durable-run lookup failed; cannot replay" },
+      { method: "orchestrate.replay", err: toSafeErrorLogString(rowResult.error), errorKind: "dependency" as const, hint: "the durable-run lookup failed; cannot replay" },
       "orchestrate.replay durable-run lookup failed",
     );
     throw new Error("the durable-run lookup failed — cannot replay");
@@ -238,23 +269,35 @@ export async function runOrchestrateReplaySession(
     throw new Error("the durable run has no pinned script — not a replayable orchestrate run");
   }
 
+  const workspacePath = deps.resolveWorkspace(row.agentId);
+  if (workspacePath === undefined) {
+    throw new Error("the durable run workspace is unavailable — cannot replay");
+  }
+  if (replayPathsOverlap(workspacePath, deps.recordingRootPath)) {
+    throw new Error("the durable run workspace overlaps the replay evidence store — cannot replay");
+  }
+
   // 2. Mint an EPHEMERAL replay bearer + register it in OutputGuard BEFORE it
   //    leaves this closure (Pitfall 6). Per-replay + ephemeral; torn down below.
   const bearer = (deps.mintBearer ?? defaultMintReplayBearer)();
   deps.outputGuard.registerSecret(bearer);
 
   // 3. Resolve a fresh 0600 socket path + the run workspace, and start the
-  //    SEPARATE replay socket (never the production endpoint — INV-1).
+  //    separate replay socket, never the production endpoint.
   const socketPath = (deps.resolveReplaySocketPath ?? defaultResolveReplaySocketPath)(runId);
-  const workspacePath = deps.resolveWorkspace(runId);
   const createReplaySocket =
     deps.createReplaySocket ?? ((d) => createOrchestrateReplaySocket(d));
-  const socket = createReplaySocket({ workspacePath, logger: deps.logger });
+  const socket = createReplaySocket({
+    recordingRootPath: deps.recordingRootPath,
+    runId: row.checkpointId,
+    expectedBearer: bearer,
+    logger: deps.logger,
+  });
   await socket.start(socketPath);
 
   try {
     // 4. Re-spawn the PINNED bytes with COMIS_ORCH_SOCKET pointed at the replay
-    //    socket (INV-1). The operator supplies NO script (T-WS4-03).
+    //    socket. The operator supplies no script.
     const childEnv = buildReplayChildEnv(socketPath, bearer);
     const respawnResult = await deps.respawn({
       rootRunId: runId,
@@ -262,6 +305,15 @@ export async function runOrchestrateReplaySession(
       socketPath,
       bearer,
       childEnv,
+      principal: {
+        agentId: row.agentId,
+        sessionKey: row.sessionKey,
+        ownerTenantId: row.ownerTenantId,
+        ownerUserId: row.ownerUserId,
+        deliveryOrigin: row.deliveryOrigin,
+        trustLevel: row.trustLevel,
+        caps: row.caps,
+      },
     });
     const stdout = respawnResult.stdout;
     // The production respawn only captures stdout — a child-side cap-call
@@ -284,7 +336,7 @@ export async function runOrchestrateReplaySession(
     return diverged ? { stdout, diverged: true } : { stdout };
   } finally {
     // 5. Tear the ephemeral socket down regardless of the re-spawn outcome
-    //    (T-233-13) — the bearer + socket live only for this single replay.
+    //    so the bearer and socket live only for this single replay.
     await socket.close();
   }
 }

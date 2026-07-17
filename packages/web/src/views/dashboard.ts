@@ -689,10 +689,9 @@ export class IcDashboard extends LitElement {
   private _initSse(): void {
     if (!this.eventDispatcher || this._sse) return;
     this._sse = new SseController(this, this.eventDispatcher, {
-      "message:received": () => { this._messagesToday++; },
-      "message:sent": () => { this._messagesToday++; },
+      "message:received": () => { this._scheduleReload(); },
+      "message:sent": () => { this._scheduleReload(); },
       "session:created": () => { this._sessionCount++; },
-      "system:error": () => { this._errorCount++; },
       "observability:token_usage": () => { this._scheduleReload(); },
       "diagnostic:channel_health": () => { this._scheduleReload(500); },
       "diagnostic:billing_snapshot": () => { this._scheduleReload(); },
@@ -775,6 +774,7 @@ export class IcDashboard extends LitElement {
     const [
       gatewayResult,
       deliveryResult,
+      delivery2DayResult,
       billingTodayResult,
       billing2DayResult,
       sessionResult,
@@ -783,7 +783,8 @@ export class IcDashboard extends LitElement {
       sparklineTokenResult,
     ] = await Promise.allSettled([
       rpc.call<GatewayStatus>("gateway.status"),
-      rpc.call<Record<string, unknown>>("obs.delivery.stats"),
+      rpc.call<Record<string, unknown>>("obs.delivery.stats", { sinceMs: 86_400_000 }),
+      rpc.call<Record<string, unknown>>("obs.delivery.stats", { sinceMs: 172_800_000 }),
       rpc.call<Record<string, unknown>>("obs.billing.total", { sinceMs: 86_400_000 }),
       rpc.call<Record<string, unknown>>("obs.billing.total", { sinceMs: 172_800_000 }),
       rpc.call<Record<string, unknown>>("session.list", {}),
@@ -800,18 +801,22 @@ export class IcDashboard extends LitElement {
     // 2. Delivery stats -> message count + error count baseline
     if (deliveryResult.status === "fulfilled") {
       const raw = deliveryResult.value;
-      const total = Number(raw.total ?? raw.totalDelivered ?? 0);
-      const successes = Number(raw.successes ?? 0);
-      const failures = Number(raw.failures ?? raw.failed ?? 0);
-      const avgLatencyMs = Number(raw.avgLatencyMs ?? 0);
-      this._deliveryStats = {
-        successRate: total > 0 ? (successes / total) * 100 : 0,
-        avgLatencyMs,
-        totalDelivered: total,
-        failed: failures,
+      const stats: DeliveryStats = {
+        total: Number(raw.total ?? 0),
+        attempted: Number(raw.attempted ?? 0),
+        success: Number(raw.success ?? 0),
+        error: Number(raw.error ?? 0),
+        timeout: Number(raw.timeout ?? 0),
+        filtered: Number(raw.filtered ?? 0),
+        aborted: Number(raw.aborted ?? 0),
+        avgLatencyMs: Number(raw.avgLatencyMs ?? 0),
       };
-      this._messagesToday = total;
-      this._errorCount = failures;
+      this._deliveryStats = stats;
+      this._messagesToday = stats.total;
+      this._errorCount = stats.error + stats.timeout;
+      this._prevMessages = delivery2DayResult.status === "fulfilled"
+        ? Math.max(0, Number(delivery2DayResult.value.total ?? 0) - stats.total)
+        : 0;
     }
 
     // 3. Billing totals (today) + deltas vs previous day
@@ -827,8 +832,6 @@ export class IcDashboard extends LitElement {
         this._prevTokens = Math.max(0, twoDayTokens - todayTokens);
         this._prevCost = Math.max(0, twoDayCost - todayCost);
       }
-      // No previous-period message data available from obs.delivery.stats
-      this._prevMessages = 0;
     }
 
     // 4. Session count
@@ -1001,7 +1004,8 @@ export class IcDashboard extends LitElement {
   //
   // Multiplexes `<ic-activity-feed>`'s per-handler `(event, data)` contract
   // over `EventDispatcher.addEventListener(type, handler)`. The dispatcher
-  // already opens ONE EventSource per page (started in `app-controller.ts`);
+  // already opens ONE authenticated fetch stream per page (started in
+  // `app-controller.ts`);
   // this adapter just bridges per-type listeners to the single-handler shape
   // expected by `activity-feed.ts:267`.
   //
@@ -1249,7 +1253,7 @@ export class IcDashboard extends LitElement {
             aria-label="View error diagnostics"
           >
             <ic-stat-card
-              label="Errors"
+              label="Delivery Errors (24h)"
               .value=${hasRpc ? formatNumber(this._errorCount) : "---"}
               .threshold=${this._errorCount > 10 ? "critical" : this._errorCount > 3 ? "warning" : "normal"}
             ></ic-stat-card>

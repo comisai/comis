@@ -3,19 +3,16 @@
  * Durable resume engine. On boot (and on
  * each watchdog tick) it turns persisted state back into live runs:
  *
- *   1. RECONCILE crashed-mid-send rows. An `unknown_after_send`
- *      ledger row is NEVER blind-replayed — the owning channel's `reconcileSend?`
- *      resolves it three ways: `sent` → ack once (commit, no replay), `not_sent`
- *      → replay exactly once, `unresolved` (or a channel that cannot reconcile)
- *      → park + escalate. A channel with no `reconcileSend` is treated as
- *      `unresolved` (never a double-send dressed as a reconcile).
+ *   1. PARK crashed-mid-send rows. Every `unknown_after_send` or
+ *      `send_attempt_started` row is atomically parked and escalated. Recovery
+ *      never infers platform truth from content history and never issues a
+ *      second platform call.
  *   2. RESUME-OR-ORPHAN. For each resumable run the engine
  *      re-mints a lease from the PERSISTED attenuated caps VERBATIM (never
  *      re-attenuating from a live parent — the persisted caps ARE the attenuated
  *      result). A `revoked` re-read, a caps-parse failure (a tampered superset),
  *      or an un-resumable run is ORPHANED + the operator is notified — never
- *      silently re-minted and never silently dropped. A legitimate never-sent run
- *      (stepIndex = -1, the never-sent sentinel) PASSES the guard and is resumed.
+ *      silently re-minted and never silently dropped.
  *   3. BOUNDED RECOVERY. The whole pass is bounded by a wall-clock
  *      `recoveryBudgetMs`; a backlog larger than the budget is partially
  *      recovered and the remainder DEFERRED (status stays `running`, so the
@@ -25,9 +22,8 @@
  *      silently vanished.
  *
  * The engine is deliberately PURE / I/O-free: every dependency (the stores, the
- * LeaseManager re-mint, the channel lookup, the replay closure, the operator
- * notify, the clock, the event bus) is INJECTED so it is exhaustively
- * unit-testable with a fake clock + stub stores + a stub channel. The
+ * LeaseManager re-mint, the operator notify, the clock, the event bus) is
+ * INJECTED so it is exhaustively unit-testable with a fake clock + stub stores. The
  * wiring binds it to the real stores / LeaseManager / channel adapters and calls
  * `resumeAll()` on boot. No callable-global time/timer reads here (the
  * globals.test.ts arch-gate forbids the wall-clock and interval-scheduler
@@ -43,27 +39,21 @@
  */
 
 import { ok, err, type Result } from "@comis/shared";
+import { randomUUID } from "node:crypto";
 import {
-  isPermanentError,
-  attenuateCaps,
+  emitObservationalEventSafely,
   parseDurableRunRecord,
+  toSafeErrorLogString,
   type OutwardSendLedgerPort,
   type OutwardSendRecord,
-  type ReconcileSendOutcome,
-  type ChannelPort,
   type DurableRunPort,
   type DurableRunRecord,
+  type InvalidDurableRunCheckpoint,
   type AgentCapability,
   type ComisLogger,
+  type TypedEventBus,
+  type UserTrustLevel,
 } from "@comis/core";
-
-// `attenuateCaps` is imported ONLY to anchor this doc reference — it is the mint
-// trust boundary at SPAWN time (capability.ts:92). On RESUME the engine does NOT
-// call it: `record.caps` is already the persisted attenuated result, and
-// re-attenuating from a (possibly stale or broadened) live parent would be the
-// elevation-of-privilege hole. The `void` keeps the import live without
-// invoking it.
-void attenuateCaps;
 
 /**
  * The content-free operator notification. Reuses the background-task
@@ -83,7 +73,10 @@ export interface MintLeaseInput {
   readonly caps: readonly AgentCapability[];
   readonly budgetRef: string;
   readonly sessionKey: string;
+  readonly trustLevel: UserTrustLevel;
+  readonly deliveryOrigin?: import("@comis/core").DeliveryOrigin;
   readonly rootRunId: string;
+  readonly checkpointId: string;
   readonly parentLeaseId?: string;
   readonly ttlMs?: number;
   readonly maxTtlMs?: number;
@@ -100,9 +93,7 @@ export interface IssuedLease {
  * The wiring binds a real TypedEventBus adapter; the engine stays I/O-free
  * and the closed EventMap (owned at the wiring layer) is not coupled here.
  */
-export interface DurableEventEmitter {
-  emit(event: string, payload: Record<string, unknown>): void;
-}
+export type DurableEventEmitter = Pick<TypedEventBus, "emitSafely">;
 
 /**
  * Map the engine's free-text orphan reason to the CLOSED enum the
@@ -116,19 +107,29 @@ export interface DurableEventEmitter {
  */
 export function orphanReasonToEnum(
   freeText: string,
-): "not_resumable" | "reread_failed" | "invalid_caps" | "resume_failed" {
+):
+  | "not_resumable"
+  | "reread_failed"
+  | "invalid_record"
+  | "invalid_caps"
+  | "outward_uncertain"
+  | "resume_failed" {
   // Match against the engine's known orphan() call-site reasons (durable-resume-engine
   // orphan() invocations). Order matters only where substrings overlap; they do not here.
   if (/not resumable|status=/i.test(freeText)) return "not_resumable";
   if (/re-?read|reconcile|query failed/i.test(freeText)) return "reread_failed";
+  if (/invalid durable record/i.test(freeText)) return "invalid_record";
   if (/invalid caps|caps/i.test(freeText)) return "invalid_caps";
+  if (/outward.*uncertain|outward effect unresolved/i.test(freeText)) {
+    return "outward_uncertain";
+  }
   // The default arm makes the function TOTAL — "resume failed" AND any unmatched
   // input collapse to resume_failed, so a free-text reason can never leak through.
   return "resume_failed";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Orphan-reclaim hook (RESUME-04)
+// Orphan-reclaim hook
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -150,7 +151,7 @@ export interface OrchestrateReclaimSeams {
  * Reclaim a dead resumable orchestrate run's artifacts: its surviving `results/`
  * (the checkpoint blob + any materialized results) + the pinned `<scriptRef>`.
  *
- * The RESUME-04 orphan sweep. A run orphaned on boot (its checkpoint gone) or on a
+ * The orphan sweep. A run orphaned on boot (its checkpoint gone) or on a
  * lapsed-heartbeat watchdog tick has NO surviving runner to GC its workspace (the
  * runner's own run-end cleanup never fired — the process crashed mid-pipeline), so
  * the orphan path is the OWNER of the reclaim. SCOPED to orchestrate-kind rows
@@ -170,7 +171,7 @@ export async function reclaimOrphanedOrchestrateRun(
   const workspacePath = seams.workspaceFor(record);
   if (workspacePath === undefined) return; // unresolvable workspace ⇒ nothing to reclaim
   // 1. results/ — the checkpoint blob (+ any surviving materialized results) live here.
-  await seams.cleanupResults(workspacePath, record.rootRunId);
+  await seams.cleanupResults(workspacePath, record.checkpointId);
   // 2. the pinned script at the workspace ROOT (cleanupRun is results/-only).
   seams.removePinnedScript(workspacePath, scriptRef);
 }
@@ -178,161 +179,81 @@ export async function reclaimOrphanedOrchestrateRun(
 /** Dependencies for {@link reconcileLedgerRow}. */
 export interface ReconcileLedgerDeps {
   readonly ledger: OutwardSendLedgerPort;
-  /** The owning channel adapter, or `undefined` when no live adapter exists. */
-  readonly channel: ChannelPort | undefined;
-  /** Re-deliver a not_sent row exactly once. Returns the platform message id. */
-  readonly replaySend: (row: OutwardSendRecord) => Promise<Result<{ platformMessageId: string }, Error>>;
   readonly notify: NotifyFn;
   readonly nowMs: () => number;
   readonly logger: ComisLogger;
+  readonly eventBus?: DurableEventEmitter;
 }
 
 /**
- * The reconcile-window half-width (ms) the query brackets around the row. A
- * crashed send's true platform timestamp is near the row's recovery time; a
- * generous window (well past any single send's latency) avoids a false
- * `not_sent` from too-tight a bracket (the same conservative-threshold spirit as
- * the watchdog).
- */
-const RECONCILE_WINDOW_MS = 600_000; // 10 min
-
-/**
- * Reconcile ONE crashed-mid-send ledger row. The exactly-once
- * core: it asks the channel "was this sent?" and resolves the row accordingly —
- * it NEVER blind-replays.
- *
- *   - `committed` row → no-op (already terminal-success).
- *   - channel has no `reconcileSend` → treated as `unresolved` → park + escalate,
- *     NO replay (an un-queryable channel must never double-send).
- *   - `sent`       → resolveReconcile("sent") + commit(platformMessageId); NO replay.
- *   - `not_sent`   → resolveReconcile("not_sent") + replay ONCE; on ok → commit;
- *                    on a PERMANENT error → markFailed("permanent") (retry
- *                    budget skipped); on a TRANSIENT error → leave for the next tick.
- *   - `unresolved` → resolveReconcile("unresolved") + notify escalation; NO replay,
- *                    NO commit.
- *
- * Returns `ok` for every RESOLVED outcome (including a parked unresolved or a
- * permanent failure — those are resolved rows, not engine errors). Returns `err`
- * only when a ledger write itself fails (a real dependency error).
+ * Atomically park ONE crashed-mid-send ledger row. Recovery has no authoritative
+ * platform operation receipt, so it never queries message history and never
+ * issues another platform call. Only the atomic transition winner escalates.
  */
 export async function reconcileLedgerRow(
   row: OutwardSendRecord,
   deps: ReconcileLedgerDeps,
-): Promise<Result<void, Error>> {
-  const { ledger, channel, replaySend, notify, nowMs, logger } = deps;
+): Promise<Result<"cleared" | "parked", Error>> {
+  const { ledger, notify, nowMs, logger, eventBus } = deps;
   const { rootRunId, stepIndex } = row;
+  const emitState = (
+    transition: "park",
+    outcome: "parked",
+  ): void => {
+    if (eventBus === undefined) return;
+    emitObservationalEventSafely({ eventBus, logger }, "delivery:outward_ledger_transition", {
+      rootRunId,
+      stepIndex,
+      transition,
+      outcome,
+      timestamp: nowMs(),
+    });
+  };
 
   // An already-committed row is a pure no-op (a re-scan must not
   // re-query or re-send a confirmed send).
   if (row.state === "committed") {
-    return ok(undefined);
+    return ok("cleared");
   }
 
-  // Build the content-free reconcile query — a contentDigest + a time window
-  // bracketed around the recovery time (never the body).
-  const now = nowMs();
-  const query = {
-    channelId: row.channelId,
-    contentDigest: row.contentDigest,
-    sentAfterMs: now - RECONCILE_WINDOW_MS,
-    sentBeforeMs: now + RECONCILE_WINDOW_MS,
-  };
+  const parked = await ledger.parkUncertain(rootRunId, stepIndex);
+  if (!parked.ok) {
+    return failLedger(logger, parked.error, "parkUncertain", rootRunId, stepIndex);
+  }
+  if (!parked.value) {
+    return ok("parked");
+  }
 
-  // ABSENCE of reconcileSend = unresolved. A channel that cannot tell
-  // is parked + escalated, NEVER replayed.
-  // prettier-ignore
-  const outcomeResult: Result<ReconcileSendOutcome, Error> = channel?.reconcileSend ? await channel.reconcileSend(query) : ok({ kind: "unresolved" } as ReconcileSendOutcome);
-
-  if (!outcomeResult.ok) {
-    // The reconcile query itself errored (a platform/dependency failure). Park
-    // the row as unresolved + escalate rather than guessing — a query error is
-    // NOT evidence the send did not land.
-    const resolved = await ledger.resolveReconcile(rootRunId, stepIndex, "unresolved");
-    if (!resolved.ok) return failLedger(logger, resolved.error, "resolveReconcile", rootRunId, stepIndex);
-    notify({
-      kind: "send_reconcile_error",
+  notify({
+    kind: "send_unresolved",
+    rootRunId,
+    reason: "outward delivery outcome is uncertain",
+    hint: "verify the platform manually before re-launching the run",
+  });
+  logger.warn(
+    {
       rootRunId,
-      reason: "reconcile query failed; row parked unresolved",
-      hint: "verify the platform manually; the run is parked",
-    });
-    logger.warn(
-      { rootRunId, stepIndex, reconcileOutcome: "unresolved", errorKind: "platform" as const, err: outcomeResult.error, hint: "reconcile query errored — parked + escalated, never replayed" },
-      "Durable reconcile: query failed, parked unresolved",
-    );
-    return ok(undefined);
-  }
-
-  const outcome = outcomeResult.value;
-  switch (outcome.kind) {
-    case "sent": {
-      // The platform HAS the message — record the verdict and commit once. NO replay.
-      const resolved = await ledger.resolveReconcile(rootRunId, stepIndex, "sent");
-      if (!resolved.ok) return failLedger(logger, resolved.error, "resolveReconcile", rootRunId, stepIndex);
-      const committed = await ledger.commit(rootRunId, stepIndex, outcome.platformMessageId);
-      if (!committed.ok) return failLedger(logger, committed.error, "commit", rootRunId, stepIndex);
-      logger.info({ rootRunId, stepIndex, reconcileOutcome: "sent" }, "Durable reconcile: sent (ack once)");
-      return ok(undefined);
-    }
-    case "not_sent": {
-      // The platform did NOT receive it — replay EXACTLY ONCE.
-      const resolved = await ledger.resolveReconcile(rootRunId, stepIndex, "not_sent");
-      if (!resolved.ok) return failLedger(logger, resolved.error, "resolveReconcile", rootRunId, stepIndex);
-      const replayed = await replaySend(row);
-      if (replayed.ok) {
-        const committed = await ledger.commit(rootRunId, stepIndex, replayed.value.platformMessageId);
-        if (!committed.ok) return failLedger(logger, committed.error, "commit", rootRunId, stepIndex);
-        logger.info({ rootRunId, stepIndex, reconcileOutcome: "not_sent" }, "Durable reconcile: not_sent → replayed once");
-        return ok(undefined);
-      }
-      // A permanent error is terminal — markFailed, skip the retry budget.
-      if (isPermanentError(replayed.error.message)) {
-        const failed = await ledger.markFailed(rootRunId, stepIndex, "permanent");
-        if (!failed.ok) return failLedger(logger, failed.error, "markFailed", rootRunId, stepIndex);
-        logger.warn(
-          { rootRunId, stepIndex, reconcileOutcome: "not_sent", errorKind: "precondition" as const, hint: "permanent send error — marked failed, retry budget skipped" },
-          "Durable reconcile: not_sent replay hit a permanent error → failed",
-        );
-        return ok(undefined);
-      }
-      // Transient — leave the row in place; the next tick/boot retries it.
-      logger.warn(
-        { rootRunId, stepIndex, reconcileOutcome: "not_sent", errorKind: "platform" as const, err: replayed.error, hint: "transient send error — left for the next recovery tick" },
-        "Durable reconcile: not_sent replay transiently failed → deferred",
-      );
-      return ok(undefined);
-    }
-    case "unresolved": {
-      // The honest "cannot tell" — park + escalate. NO replay, NO commit.
-      const resolved = await ledger.resolveReconcile(rootRunId, stepIndex, "unresolved");
-      if (!resolved.ok) return failLedger(logger, resolved.error, "resolveReconcile", rootRunId, stepIndex);
-      notify({
-        kind: "send_unresolved",
-        rootRunId,
-        reason: "reconcile unresolved",
-        hint: "verify the platform manually; the run is parked",
-      });
-      logger.info({ rootRunId, stepIndex, reconcileOutcome: "unresolved" }, "Durable reconcile: unresolved → parked + escalated");
-      return ok(undefined);
-    }
-    default: {
-      // Exhaustive switch on the closed ReconcileSendOutcome union — a new member
-      // is a compile error here, never a silent fall-through.
-      const _exhaustive: never = outcome;
-      return _exhaustive;
-    }
-  }
+      stepIndex,
+      reconcileOutcome: "unresolved",
+      errorKind: "precondition" as const,
+      hint: "verify the platform manually before re-launching the run",
+    },
+    "Durable recovery parked an uncertain outward delivery",
+  );
+  emitState("park", "parked");
+  return ok("parked");
 }
 
 /** Helper: a ledger-write failure is a real dependency error (vs a resolved row). */
-function failLedger(
+function failLedger<T = never>(
   logger: ComisLogger,
   cause: Error,
   method: string,
   rootRunId: string,
   stepIndex: number,
-): Result<void, Error> {
+): Result<T, Error> {
   logger.error(
-    { rootRunId, stepIndex, method, errorKind: "dependency" as const, err: cause, hint: "ledger write failed during reconcile — row left in place for the next tick" },
+    { rootRunId, stepIndex, method, errorKind: "dependency" as const, err: toSafeErrorLogString(cause), hint: "ledger write failed during reconcile — row left in place for the next tick" },
     "Durable reconcile: ledger write failed",
   );
   return err(cause);
@@ -346,14 +267,12 @@ function failLedger(
 export interface DurableResumeEngineDeps {
   readonly durableRuns: DurableRunPort;
   readonly ledger: OutwardSendLedgerPort;
-  /** Resolve a live channel adapter by channel type (undefined when none). */
-  readonly channelFor: (channelType: string) => ChannelPort | undefined;
   /** Re-mint a lease from the persisted attenuated caps (the wiring's closure). */
   readonly remintLease: (input: MintLeaseInput) => IssuedLease;
+  /** Revoke a lease whose recovered run failed before accepting execution. */
+  readonly revokeLease?: (leaseId: string) => void;
   /** Resume a run from its checkpoint under the re-minted lease. */
-  readonly resumeRun: (record: DurableRunRecord, leaseId: string) => Promise<Result<void, Error>>;
-  /** Re-deliver a not_sent ledger row exactly once. */
-  readonly replaySend: (row: OutwardSendRecord) => Promise<Result<{ platformMessageId: string }, Error>>;
+  readonly resumeRun: (record: DurableRunRecord, lease: IssuedLease) => Promise<Result<void, Error>>;
   readonly notify: NotifyFn;
   readonly nowMs: () => number;
   /** The wall-clock recovery budget (ms) — the whole pass is bounded by it. */
@@ -361,9 +280,11 @@ export interface DurableResumeEngineDeps {
   readonly logger: ComisLogger;
   readonly eventBus: DurableEventEmitter;
   /**
-   * Reclaim a dead resumable orchestrate run's artifacts on the orphan path
-   * (RESUME-04). Called for a run whose resume FAILED (e.g. the boot-sweep arm
-   * found a missing checkpoint); scoped + idempotent by the bound
+   * Reclaim a dead resumable orchestrate run's artifacts when recovery proves
+   * them unusable (for example, the boot sweep found a missing checkpoint).
+   * Outward uncertainty does not call this hook because the checkpoint, replay,
+   * and pinned script are evidence for manual verification and re-launch.
+   * Scoped + idempotent by the bound
    * {@link reclaimOrphanedOrchestrateRun} (a non-orchestrate row is a no-op).
    * Absent ⇒ no reclaim (a flat/legacy-only wiring).
    */
@@ -383,10 +304,14 @@ export interface DurableResumeEngine {
    * crashed-mid-send rows, then resume-or-orphan it, stopping when the wall-clock
    * budget is exhausted (the remainder deferred). Returns the counts.
    */
-  resumeAll(): Promise<Result<ResumeAllResult, Error>>;
+  resumeAll(options?: {
+    /** Exact authority rows eligible for this pass. Omitted only for boot recovery. */
+    eligibleCheckpointIds?: readonly string[];
+  }): Promise<Result<ResumeAllResult, Error>>;
 }
 
 const DEFAULT_BUDGET_REF = "durable-resume";
+const OUTWARD_RECOVERY_BATCH_SIZE = 100;
 
 /**
  * Bound how many times the watchdog re-anchors a run that makes NO progress.
@@ -400,7 +325,8 @@ const DEFAULT_BUDGET_REF = "durable-resume";
  * its heartbeat (a genuinely live run that checkpoints) resets the counter, so a healthy long
  * run is never false-orphaned; a live no-checkpoint run is bounded by its own orchestrate
  * timeoutMs. The count is in-memory (resets on daemon restart — boot re-anchors once, then the
- * watchdog counts), keyed by rootRunId+heartbeat so progress resets it.
+ * watchdog counts), carried from each source checkpoint id to its atomic
+ * replacement so sibling rows under one root never share attempts.
  */
 const MAX_REANCHOR_ATTEMPTS = 3;
 
@@ -408,10 +334,9 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
   const {
     durableRuns,
     ledger,
-    channelFor,
     remintLease,
+    revokeLease,
     resumeRun,
-    replaySend,
     notify,
     nowMs,
     recoveryBudgetMs,
@@ -420,57 +345,111 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
     reclaimOrchestrateRun,
   } = deps;
 
-  // Re-anchor ledger: rootRunId → { the heartbeat we last saw, how many consecutive
-  // no-progress re-anchors at that heartbeat }. A changed heartbeat (progress) resets count.
+  // Re-anchor ledger: current checkpointId → { heartbeat, consecutive count }.
+  // A successful claim transfers the entry to its replacement checkpoint id.
   const reanchorLedger = new Map<string, { heartbeat: number; count: number }>();
 
   /** Orphan a run: markOrphaned + NotifyFn + eventBus + INFO (never silent). */
-  async function orphan(rootRunId: string, reason: string, hint: string): Promise<void> {
-    const marked = await durableRuns.markOrphaned(rootRunId, reason);
+  async function orphan(record: Pick<DurableRunRecord, "checkpointId" | "rootRunId">, reason: string, hint: string): Promise<void> {
+    const { checkpointId, rootRunId } = record;
+    const reasonCode = orphanReasonToEnum(reason);
+    const marked = await durableRuns.markOrphaned(checkpointId, reason);
     if (!marked.ok) {
       logger.error(
-        { rootRunId, reason, errorKind: "dependency" as const, err: marked.error, hint: "markOrphaned write failed — operator still notified out-of-band" },
+        { rootRunId, reason: reasonCode, errorKind: "dependency" as const, err: toSafeErrorLogString(marked.error), hint: "markOrphaned write failed — operator still notified out-of-band" },
         "Durable resume: markOrphaned failed",
       );
     }
     notify({ kind: "run_orphaned", rootRunId, reason, hint });
     // The EVENT carries the CLOSED enum — the free-text `reason` stays on the
     // notify + logger.info below (the operator surface).
-    eventBus.emit("durable:orphaned", {
+    emitObservationalEventSafely({ eventBus, logger }, "durable:orphaned", {
       rootRunId,
-      reason: orphanReasonToEnum(reason),
+      reason: reasonCode,
       timestamp: nowMs(),
     });
-    logger.info({ rootRunId, reason }, "Durable resume: run orphaned");
+    logger.info({ rootRunId, reason: reasonCode }, "Durable resume: run orphaned");
   }
 
   return {
-    async resumeAll(): Promise<Result<ResumeAllResult, Error>> {
+    async resumeAll(options): Promise<Result<ResumeAllResult, Error>> {
       const passStart = nowMs();
       const deadline = passStart + recoveryBudgetMs;
+
+      const outwardScan = await ledger.listUnreconciled(OUTWARD_RECOVERY_BATCH_SIZE + 1);
+      if (!outwardScan.ok) {
+        logger.error(
+          {
+            errorKind: "dependency" as const,
+            err: toSafeErrorLogString(outwardScan.error),
+            hint: "outward recovery scan failed; no durable run was resumed",
+          },
+          "Durable resume: outward recovery scan failed",
+        );
+        return err(outwardScan.error);
+      }
+      const outwardBatch = outwardScan.value.slice(0, OUTWARD_RECOVERY_BATCH_SIZE);
+      const outwardOverflow = Math.max(
+        0,
+        outwardScan.value.length - OUTWARD_RECOVERY_BATCH_SIZE,
+      );
+      let outwardAttempted = 0;
+      for (const ledgerRow of outwardBatch) {
+        if (nowMs() > deadline) {
+          return ok({
+            resumed: 0,
+            orphaned: 0,
+            deferred: outwardBatch.length - outwardAttempted + outwardOverflow,
+          });
+        }
+        outwardAttempted++;
+        const parked = await reconcileLedgerRow(ledgerRow, {
+          ledger,
+          notify,
+          nowMs,
+          logger,
+          eventBus,
+        });
+        if (!parked.ok) return parked;
+      }
 
       const backlogResult = await durableRuns.listResumable();
       if (!backlogResult.ok) {
         logger.error(
-          { errorKind: "dependency" as const, err: backlogResult.error, hint: "listResumable failed — no recovery this pass; the next boot/tick retries" },
+          { errorKind: "dependency" as const, err: toSafeErrorLogString(backlogResult.error), hint: "listResumable failed — no recovery this pass; the next boot/tick retries" },
           "Durable resume: listResumable failed",
         );
         return err(backlogResult.error);
       }
-      const backlog = backlogResult.value;
+      const scan = backlogResult.value;
+      const fullBacklog: Array<
+        | { kind: "record"; value: DurableRunRecord }
+        | { kind: "invalid"; value: InvalidDurableRunCheckpoint }
+      > = [
+        ...scan.invalid.map((value) => ({ kind: "invalid" as const, value })),
+        ...scan.records.map((value) => ({ kind: "record" as const, value })),
+      ];
+      const eligibleCheckpointIds = options?.eligibleCheckpointIds === undefined
+        ? undefined
+        : new Set(options.eligibleCheckpointIds);
+      const backlog = eligibleCheckpointIds === undefined
+        ? fullBacklog
+        : fullBacklog.filter((candidate) => eligibleCheckpointIds.has(candidate.value.checkpointId));
 
       // Prune re-anchor-ledger entries for runs no longer in the backlog (completed /
       // orphaned / revoked ⇒ off listResumable) so the in-memory map can't slowly grow.
-      const backlogRoots = new Set(backlog.map((c) => c.rootRunId));
+      const backlogCheckpointIds = new Set(
+        fullBacklog.map((candidate) => candidate.value.checkpointId),
+      );
       for (const key of reanchorLedger.keys()) {
-        if (!backlogRoots.has(key)) reanchorLedger.delete(key);
+        if (!backlogCheckpointIds.has(key)) reanchorLedger.delete(key);
       }
 
       let resumed = 0;
       let orphaned = 0;
       let attempted = 0;
 
-      for (const candidate of backlog) {
+      for (const candidateEntry of backlog) {
         // Bounded recovery: stop when the wall-clock budget is spent; the
         // remainder stays `running` so the watchdog / next boot picks them up. No
         // thundering herd.
@@ -480,24 +459,36 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
             { budgetMs: recoveryBudgetMs, attempted, remaining },
             "Durable resume: budget exhausted",
           );
-          return ok({ resumed, orphaned, deferred: remaining });
+          return ok({ resumed, orphaned, deferred: remaining + outwardOverflow });
         }
         attempted++;
 
-        const rootRunId = candidate.rootRunId;
+        if (candidateEntry.kind === "invalid") {
+          await orphan(
+            candidateEntry.value,
+            "invalid durable record",
+            "the persisted checkpoint principal or authority fields failed validation; inspect the protected store before re-launching",
+          );
+          orphaned++;
+          continue;
+        }
+
+        const candidate = candidateEntry.value;
+
+        const { checkpointId, rootRunId } = candidate;
 
         // Belt: re-read the record — a concurrent revoke may have flipped it to
         // 'revoked' since listResumable. A non-running re-read is orphaned.
-        const reread = await durableRuns.getByRootRun(rootRunId);
+        const reread = await durableRuns.getByCheckpoint(checkpointId);
         if (!reread.ok) {
-          await orphan(rootRunId, "re-read failed", "the checkpoint could not be re-read; verify the store");
+          await orphan(candidate, "re-read failed", "the checkpoint could not be re-read; verify the store");
           orphaned++;
           continue;
         }
         const rereadRecord = reread.value;
         if (!rereadRecord || rereadRecord.status !== "running") {
           await orphan(
-            rootRunId,
+            candidate,
             `not resumable: status=${rereadRecord?.status ?? "missing"}`,
             "the run was revoked/completed/removed between scan and resume",
           );
@@ -507,22 +498,19 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
 
         // Cap-tamper guard: parse the re-read record (the closed
         // AgentCapability union + strictObject). A tampered superset / malformed
-        // record orphans — never re-minted. parseDurableRunRecord PERMITS
-        // stepIndex = -1, so a legitimate never-sent run PASSES and is resumed (the
-        // guard rejects only genuinely-malformed caps/records, never a legitimate
-        // never-sent run). The parsed result is THE authoritative `record` we
-        // rehydrate from.
+        // record orphans — never re-minted. The parsed result is the
+        // authoritative record rehydrated below.
         const parsed = parseDurableRunRecord(rereadRecord);
         if (!parsed.ok) {
           await orphan(
-            rootRunId,
+            candidate,
             "invalid caps",
             "the persisted caps/record failed validation (tampered or malformed); resume refused",
           );
           orphaned++;
           continue;
         }
-        const record = parsed.value;
+        const sourceRecord = parsed.value;
 
         // Bound no-progress re-anchors. A surface-only re-anchor never advances the
         // heartbeat, so a run whose process is gone (killed by a restart, never explicitly
@@ -531,48 +519,129 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
         // run → orphan it (never re-anchor again). A heartbeat change (progress) resets the
         // counter, so a genuinely live run that checkpoints is never false-orphaned.
         //
-        // The cap reaps ONLY a run that has PROGRESSED past the spawn boundary
-        // (stepIndex >= 0 — it allocated at least one outward step) and then stalled. A
-        // NEVER-SENT run (stepIndex === -1) is the canonical fresh-resumable checkpoint —
-        // nothing sent yet — and MUST survive repeated boot-sweep re-anchors, never be
-        // false-orphaned (the durable-resume-e2e "never-sent RESUMES, not orphaned" gate).
-        const seen = reanchorLedger.get(rootRunId);
-        const attempts = seen !== undefined && seen.heartbeat === record.lastHeartbeatAt ? seen.count + 1 : 1;
-        reanchorLedger.set(rootRunId, { heartbeat: record.lastHeartbeatAt, count: attempts });
-        if (record.stepIndex >= 0 && attempts > MAX_REANCHOR_ATTEMPTS) {
+        const seen = reanchorLedger.get(checkpointId);
+        const attempts = seen !== undefined && seen.heartbeat === sourceRecord.lastHeartbeatAt ? seen.count + 1 : 1;
+        reanchorLedger.set(checkpointId, { heartbeat: sourceRecord.lastHeartbeatAt, count: attempts });
+        if (attempts > MAX_REANCHOR_ATTEMPTS) {
           await orphan(
-            rootRunId,
+            sourceRecord,
             `not resumable: exceeded ${MAX_REANCHOR_ATTEMPTS} no-progress re-anchor attempts`,
             "the run's heartbeat never advanced across repeated re-anchors — its process is gone and it was never explicitly resumed; re-launch it if still needed",
           );
           orphaned++;
-          reanchorLedger.delete(rootRunId);
-          // Reclaim the dead resumable orchestrate run's workspace (RESUME-04), mirroring the
+          reanchorLedger.delete(checkpointId);
+          // Reclaim the dead resumable orchestrate run's workspace, mirroring the
           // resume-failure orphan path below (a non-orchestrate row is a no-op).
-          if (reclaimOrchestrateRun) await reclaimOrchestrateRun(record);
+          if (reclaimOrchestrateRun) await reclaimOrchestrateRun(sourceRecord);
           continue;
         }
 
-        // Reconcile this run's crashed-mid-send rows BEFORE resuming, so a
-        // mid-send row is resolved (acked/replayed/parked) before the run advances.
-        const unreconciledResult = await ledger.listUnreconciled();
-        if (!unreconciledResult.ok) {
-          logger.warn(
-            { rootRunId, errorKind: "dependency" as const, err: unreconciledResult.error, hint: "listUnreconciled failed — resume continues; rows retried next tick" },
-            "Durable resume: listUnreconciled failed",
+        // Atomically retire the source and create one replacement before any
+        // reconcile, lease mint, or execution. A concurrent boot/watchdog pass
+        // loses this claim and performs no work.
+        const replacementCheckpointId = `resume-${randomUUID()}`;
+        // Wall clocks can move backward across a restart. The durable store
+        // rejects a claim that would regress the source heartbeat, so clamp the
+        // replacement timestamp to the persisted temporal authority.
+        const claimedAtMs = Math.max(
+          nowMs(),
+          sourceRecord.lastHeartbeatAt,
+          sourceRecord.rootBudget.startedAtMs,
+        );
+        const claimed = await durableRuns.claimForResume({
+          checkpointId,
+          replacementCheckpointId,
+          principal: {
+            agentId: sourceRecord.agentId,
+            sessionKey: sourceRecord.sessionKey,
+            ownerTenantId: sourceRecord.ownerTenantId,
+            ownerUserId: sourceRecord.ownerUserId,
+            deliveryOrigin: sourceRecord.deliveryOrigin,
+            trustLevel: sourceRecord.trustLevel,
+            caps: sourceRecord.caps,
+          },
+          claimedAtMs,
+        });
+        if (!claimed.ok) {
+          logger.error(
+            {
+              rootRunId,
+              checkpointId,
+              err: toSafeErrorLogString(claimed.error),
+              hint: "Retry recovery after the durable authority store is healthy",
+              errorKind: "dependency" as const,
+            },
+            "Durable resume claim failed",
           );
-        } else {
-          for (const ledgerRow of unreconciledResult.value) {
-            if (ledgerRow.rootRunId !== rootRunId) continue;
-            await reconcileLedgerRow(ledgerRow, {
-              ledger,
-              channel: channelFor(ledgerRow.channelType),
-              replaySend,
-              notify,
-              nowMs,
-              logger,
-            });
-          }
+          return err(claimed.error);
+        }
+        if (claimed.value.kind !== "claimed") {
+          logger.info(
+            { rootRunId, checkpointId, claimOutcome: claimed.value.kind },
+            "Durable resume claim lost or refused",
+          );
+          continue;
+        }
+        // Keep the source entry until the next scan prunes whichever side of the
+        // atomic replacement is no longer authoritative. Recording both makes
+        // the transfer robust to stores/tests whose claim visibility changes on
+        // the following listResumable call rather than inside claimForResume.
+        reanchorLedger.set(replacementCheckpointId, {
+          heartbeat: sourceRecord.lastHeartbeatAt,
+          count: attempts,
+        });
+        const replacement = parseDurableRunRecord({
+          ...claimed.value.record,
+          checkpointId: replacementCheckpointId,
+          leaseIds: [],
+          status: "running",
+        });
+        if (!replacement.ok) {
+          await orphan(
+            { checkpointId: replacementCheckpointId, rootRunId },
+            "invalid durable replacement",
+            "the atomic replacement failed local validation and was quarantined",
+          );
+          orphaned++;
+          continue;
+        }
+        const record = replacement.value;
+
+        const uncertainty = await ledger.hasUncertainty(rootRunId);
+        if (!uncertainty.ok) {
+          await orphan(
+            record,
+            "outward uncertainty query failed",
+            "the outward ledger could not prove this run safe to resume; repair the store and verify platform effects",
+          );
+          logger.error(
+            {
+              rootRunId,
+              errorKind: "dependency" as const,
+              err: toSafeErrorLogString(uncertainty.error),
+              hint: "the replacement was orphaned; repair the outward ledger before re-launching",
+            },
+            "Durable resume: outward uncertainty query failed",
+          );
+          return err(uncertainty.error);
+        }
+        if (uncertainty.value) {
+          await orphan(
+            record,
+            "outward delivery uncertain",
+            "verify the platform side effect before re-launching this execution",
+          );
+          orphaned++;
+          logger.warn(
+            {
+              rootRunId,
+              checkpointId: record.checkpointId,
+              hint: "resolve the crash-uncertain outward effect manually before re-launching",
+              errorKind: "precondition" as const,
+            },
+            "Durable resume blocked by an uncertain outward delivery",
+          );
+          continue;
         }
 
         // Re-mint from the PERSISTED attenuated caps VERBATIM.
@@ -580,74 +649,66 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
         // from a live parent (the persisted set IS the attenuated result; a
         // re-attenuation against a stale/broadened parent would resurrect or
         // broaden authority).
-        const sessionKey = firstLeaseId(record) ?? rootRunId;
         const lease = remintLease({
-          agentId: deriveAgentId(record),
+          agentId: record.agentId,
           caps: record.caps,
           budgetRef: DEFAULT_BUDGET_REF,
-          sessionKey,
+          sessionKey: record.sessionKey,
+          trustLevel: record.trustLevel,
+          ...(record.deliveryOrigin !== null ? { deliveryOrigin: record.deliveryOrigin } : {}),
           rootRunId,
+          checkpointId: record.checkpointId,
         });
 
         const runStart = nowMs();
-        const resumeResult = await resumeRun(record, lease.leaseId);
+        let resumeResult: Result<void, Error>;
+        try {
+          resumeResult = await resumeRun(record, lease);
+        } catch (cause) {
+          resumeResult = err(cause instanceof Error ? cause : new Error(String(cause)));
+        }
         if (resumeResult.ok) {
           resumed++;
-          // Numeric stepIndex + timestamp (content-free per the §2.7 logging matrix).
-          eventBus.emit("durable:resumed", {
+          emitObservationalEventSafely({ eventBus, logger }, "durable:resumed", {
             rootRunId,
-            stepIndex: record.stepIndex,
+            checkpointId: record.checkpointId,
             timestamp: nowMs(),
           });
           logger.info(
-            { rootRunId, stepIndex: record.stepIndex, durationMs: nowMs() - runStart },
+            { rootRunId, checkpointId: record.checkpointId, durationMs: nowMs() - runStart },
             "Durable resume: run resumed",
           );
         } else {
+          revokeLease?.(lease.leaseId);
           // Propagate the resume failure's specific reason (e.g. the orchestrate
           // arm's "not resumable: the checkpoint blob is gone") so the WARN log /
           // notify name WHY AND `orphanReasonToEnum` maps it to the fitting closed
           // member (a missing checkpoint → not_resumable) — the free text NEVER
-          // crosses onto the event (content-free — INV-5).
+          // crosses onto the event; it remains content-free.
+          const safeResumeError = toSafeErrorLogString(resumeResult.error);
           await orphan(
-            rootRunId,
-            resumeResult.error.message,
+            record,
+            safeResumeError,
             "the run could not be resumed from its checkpoint; inspect the cause and re-launch if needed",
           );
           orphaned++;
-          // RESUME-04 orphan-reclaim: a dead resumable orchestrate run has no
+          // Orphan reclaim: a dead resumable orchestrate run has no
           // surviving runner to GC its workspace — reclaim its results/ + pinned
           // script now. Scoped + idempotent by the bound seam (a non-orchestrate
           // row is a no-op); absent ⇒ no reclaim.
-          if (reclaimOrchestrateRun) await reclaimOrchestrateRun(record);
+          if (reclaimOrchestrateRun) await reclaimOrchestrateRun(sourceRecord);
           logger.warn(
-            { rootRunId, stepIndex: record.stepIndex, errorKind: "internal" as const, err: resumeResult.error, hint: "resumeRun returned err — orphaned + operator notified" },
+            { rootRunId, checkpointId: record.checkpointId, errorKind: "internal" as const, err: safeResumeError, hint: "resumeRun returned err — orphaned + operator notified" },
             "Durable resume: resumeRun failed → orphaned",
           );
         }
       }
 
       logger.info(
-        { resumed, orphaned, deferred: 0, durationMs: nowMs() - passStart },
+        { resumed, orphaned, deferred: outwardOverflow, durationMs: nowMs() - passStart },
         "Durable resume: pass complete",
       );
-      return ok({ resumed, orphaned, deferred: 0 });
+      return ok({ resumed, orphaned, deferred: outwardOverflow });
     },
   };
-}
-
-/**
- * Derive the agentId for the re-mint. The DurableRunRecord does not
- * carry a dedicated agentId field; the run's authority is keyed by rootRunId +
- * caps + leases, and the wiring's remintLease closure resolves the
- * concrete agent from the lease/session context. We pass the rootRunId as a
- * stable correlation id so the mint is attributable; the closure may override.
- */
-function deriveAgentId(record: DurableRunRecord): string {
-  return record.rootRunId;
-}
-
-/** The first lease id (the flat-run session-key node), or undefined. */
-function firstLeaseId(record: DurableRunRecord): string | undefined {
-  return record.leaseIds[0];
 }

@@ -150,7 +150,7 @@ export function createMessageTool(rpcCall: RpcCall): AgentTool<typeof MessageToo
         "Send, reply, react, edit, delete, fetch messages on active channel.",
       parameters: MessageToolParams,
       validActions: VALID_ACTIONS,
-      actionHandler: async (action, p, rpcCall) => {
+      actionHandler: async (action, p, rpcCall, toolCallId) => {
         const channel_type = readStringParam(p, "channel_type");
         const channel_id = readStringParam(p, "channel_id");
 
@@ -174,7 +174,7 @@ export function createMessageTool(rpcCall: RpcCall): AgentTool<typeof MessageToo
               ...(cards ? { cards } : {}),
               ...(effects ? { effects } : {}),
               ...(thread_reply !== undefined ? { thread_reply } : {}),
-            });
+            }, { outwardOperationId: toolCallId });
           }
 
           case "reply": {
@@ -197,13 +197,17 @@ export function createMessageTool(rpcCall: RpcCall): AgentTool<typeof MessageToo
               ...(cards ? { cards } : {}),
               ...(effects ? { effects } : {}),
               ...(thread_reply !== undefined ? { thread_reply } : {}),
-            });
+            }, { outwardOperationId: toolCallId });
           }
 
           case "react": {
             const emoji = readStringParam(p, "emoji");
             const message_id = readStringParam(p, "message_id");
-            return rpcCall("message.react", { channel_type, channel_id, message_id, emoji });
+            return rpcCall(
+              "message.react",
+              { channel_type, channel_id, message_id, emoji },
+              { outwardOperationId: toolCallId },
+            );
           }
 
           case "edit": {

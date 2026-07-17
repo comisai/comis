@@ -3,10 +3,11 @@ import type { TypedEventBus, EventMap } from "@comis/core";
 import type { Env } from "hono";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { suppressError } from "@comis/shared";
+import { err, ok, suppressError, type Result } from "@comis/shared";
 import type { TokenStore } from "../auth/token-auth.js";
 import type { RpcAdapterDeps } from "../rpc/rpc-adapters.js";
 import { extractBearerToken, checkScope } from "../auth/token-auth.js";
+import { projectActivityPayload } from "./activity-projection.js";
 
 interface SseEnv extends Env {
   Variables: { clientScopes: string[]; clientId: string };
@@ -83,6 +84,8 @@ export interface SseEndpointDeps {
   readonly tokenStore: TokenStore;
   /** RPC adapter deps for chat streaming */
   readonly rpcAdapterDeps: RpcAdapterDeps;
+  /** Maximum size of a streaming chat JSON body, in bytes */
+  readonly bodyLimitBytes: number;
 }
 
 /** Keep-alive ping interval in milliseconds */
@@ -91,12 +94,74 @@ const KEEPALIVE_MS = 15_000;
 /** SSE retry directive in milliseconds */
 const RETRY_MS = 3_000;
 
+type ChatBodyReadError =
+  | { readonly kind: "invalid" }
+  | { readonly kind: "too_large" };
+
+async function readBoundedJsonBody(
+  request: Request,
+  maxBytes: number,
+): Promise<Result<unknown, ChatBodyReadError>> {
+  const reader = request.body?.getReader();
+  if (!reader) return err({ kind: "invalid" });
+
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    const declaredLength = Number(request.headers.get("content-length"));
+    if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+      await reader.cancel().then(
+        () => undefined,
+        () => undefined,
+      );
+      return err({ kind: "too_large" });
+    }
+
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      totalBytes += chunk.value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().then(
+          () => undefined,
+          () => undefined,
+        );
+        return err({ kind: "too_large" });
+      }
+      chunks.push(chunk.value);
+    }
+  } catch {
+    await reader.cancel().then(
+      () => undefined,
+      () => undefined,
+    );
+    return err({ kind: "invalid" });
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return ok(JSON.parse(text) as unknown);
+  } catch {
+    return err({ kind: "invalid" });
+  }
+}
+
 /**
  * Create SSE streaming endpoints for real-time event delivery.
  *
  * Endpoints:
  * - GET /api/events - SSE stream of all system events
- * - GET /api/chat/stream?sessionId=<id>&message=<msg> - Streaming chat SSE
+ * - POST /api/chat/stream - Streaming chat SSE with an application/json body
  *
  * Both endpoints require bearer token authentication.
  */
@@ -107,8 +172,11 @@ export function createSseEndpoint(deps: SseEndpointDeps): Hono<SseEnv> {
   // Token auth middleware for SSE endpoints (scoped to /api/* to avoid
   // interfering with other sub-apps when this Hono instance is mounted at root)
   sse.use("/api/*", async (c, next) => {
+    if (c.req.query("token") !== undefined) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
     const authHeader = c.req.header("authorization") ?? "";
-    const token = extractBearerToken(authHeader) ?? c.req.query("token") ?? "";
+    const token = extractBearerToken(authHeader) ?? "";
     const client = tokenStore.verify(token);
 
     if (!client) {
@@ -153,7 +221,7 @@ export function createSseEndpoint(deps: SseEndpointDeps): Hono<SseEnv> {
         const handler = (payload: unknown): void => {
           suppressError(
             stream.writeSSE({
-              data: JSON.stringify(payload),
+              data: JSON.stringify(projectActivityPayload(event, payload)),
               event,
               id: String(eventId++),
             }),
@@ -184,14 +252,41 @@ export function createSseEndpoint(deps: SseEndpointDeps): Hono<SseEnv> {
     });
   });
 
-  // GET /api/chat/stream?sessionId=<id>&message=<msg> - Streaming chat via SSE
-  sse.get("/api/chat/stream", (c) => {
-    const message = c.req.query("message") ?? "";
-    if (!message) {
-      return c.json({ error: "Missing required query parameter: message" }, 400);
+  // POST /api/chat/stream - Streaming chat via an authenticated JSON body.
+  sse.post("/api/chat/stream", async (c) => {
+    if (Object.keys(c.req.queries()).length > 0) {
+      return c.json({ error: "Query parameters are not accepted" }, 400);
     }
 
-    const agentId = c.req.query("agentId");
+    const contentType = c.req.header("content-type") ?? "";
+    const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase();
+    if (mediaType !== "application/json") {
+      return c.json({ error: "Content-Type must be application/json" }, 415);
+    }
+
+    const rawBodyResult = await readBoundedJsonBody(c.req.raw, deps.bodyLimitBytes);
+    if (!rawBodyResult.ok && rawBodyResult.error.kind === "too_large") {
+      return c.json({ error: "Request body too large" }, 413);
+    }
+    if (!rawBodyResult.ok) {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    const rawBody = rawBodyResult.value;
+
+    if (typeof rawBody !== "object" || rawBody === null || Array.isArray(rawBody)) {
+      return c.json({ error: "JSON body must be an object" }, 400);
+    }
+
+    const body = rawBody as Record<string, unknown>;
+    const message = typeof body.message === "string" ? body.message : "";
+    if (!message) {
+      return c.json({ error: "Missing required field: message (string)" }, 400);
+    }
+
+    if (body.agentId !== undefined && typeof body.agentId !== "string") {
+      return c.json({ error: "Field agentId must be a string" }, 400);
+    }
+    const agentId = body.agentId as string | undefined;
 
     return streamSSE(c, async (stream) => {
       let eventId = 0;
@@ -214,7 +309,7 @@ export function createSseEndpoint(deps: SseEndpointDeps): Hono<SseEnv> {
         const clientId = c.get("clientId");
         const result = await rpcAdapterDeps.executeAgent({
           message,
-          agentId: agentId ?? undefined,
+          agentId,
           clientId,
           scopes,
           onDelta,
