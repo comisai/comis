@@ -91,8 +91,9 @@ describe("sanitizeAssistantResponse", () => {
       "Use this transcript fixture:",
       "",
       "```text",
+      "assistant report ready",
+      "",
       "user send the report",
-      "assistant report sent",
       "```",
     ].join("\n");
 
