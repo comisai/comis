@@ -34,6 +34,26 @@ describe("redactOutputText", () => {
   });
 
   it.each([
+    ['{"SERVICE_PASSWORD": "test-password-value"}', "test-password-value"],
+    ['{"SERVICE_USERNAME": "test-login-name"}', "test-login-name"],
+    ["ITURAN_PASSWORD=test-password-value", "test-password-value"],
+    ["client_secret: 'test-client-secret'", "test-client-secret"],
+    ["refreshToken=test-refresh-token", "test-refresh-token"],
+  ])("redacts arbitrary values assigned to credential-named fields in %s", (input, value) => {
+    const result = redactOutputText(input);
+
+    expect(result.text).not.toContain(value);
+    expect(result.text).toContain("[REDACTED]");
+    expect(result.redactions).toBe(1);
+  });
+
+  it("does not redact ordinary prose that mentions password policy", () => {
+    const input = "The password policy requires regular rotation.";
+
+    expect(redactOutputText(input)).toEqual({ text: input, redactions: 0 });
+  });
+
+  it.each([
     "PRIVATE KEY",
     "RSA PRIVATE KEY",
     "DSA PRIVATE KEY",

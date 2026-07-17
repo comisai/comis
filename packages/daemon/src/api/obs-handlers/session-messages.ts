@@ -26,6 +26,7 @@ import { tryCatch } from "@comis/shared";
 import {
   INBOUND_MESSAGE_LEDGER_SUFFIX,
   inboundMessageLedgerPathToSessionKey,
+  isSyntheticSessionUserMessage,
   pathToSessionKey,
 } from "@comis/agent";
 import {
@@ -480,6 +481,10 @@ export function extractSessionMessages(
             coverage.userRecordsSeen++;
             if (isCompactionSummaryRecord(record)) {
               coverage.compactionSummaryRecordsExcluded++;
+              continue;
+            }
+            if (isSyntheticSessionUserMessage(text)) {
+              coverage.internalExcluded++;
               continue;
             }
 

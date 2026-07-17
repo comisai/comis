@@ -36,6 +36,7 @@ import type {
   SessionMessageEntry,
 } from "@earendil-works/pi-coding-agent";
 import { systemNowMs } from "@comis/core";
+import { CONTINUATION_USER_MESSAGE } from "./synthetic-user-messages.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -339,7 +340,7 @@ function repairMidSessionAnomalies(sessionManager: SessionManager): RepairResult
           const fillerText =
             fillerRole === "assistant"
               ? "(previous response was interrupted)"
-              : "(continued from previous message)";
+              : CONTINUATION_USER_MESSAGE;
           sessionManager.appendMessage(
             createSyntheticMessage(fillerRole, fillerText) as any,
           );

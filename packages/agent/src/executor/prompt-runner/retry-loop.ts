@@ -26,6 +26,7 @@ import { fromPromise } from "@comis/shared";
 import { runWithModelRetry } from "../model-retry.js";
 import { classifyError } from "../error-classifier.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
+import { CONTINUATION_USER_MESSAGE } from "../../session/synthetic-user-messages.js";
 
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
@@ -284,7 +285,7 @@ async function detectSilentFailure(
       "Attempting continuation after thinking-only final turn",
     );
     const followUpResult = await fromPromise(
-      session.followUp("(continued from previous message)"),
+      session.followUp(CONTINUATION_USER_MESSAGE),
     );
     const nudgeRecovered = followUpResult.ok && getVisibleAssistantText(session) !== "";
     // Announce whether the continuation produced visible text.

@@ -408,6 +408,7 @@ export {
 export type {
   InboundMessageProvenancePlan,
 } from "./session/inbound-message-provenance.js";
+export { isSyntheticSessionUserMessage } from "./session/synthetic-user-messages.js";
 
 // ---------------------------------------------------------------------------
 // LLM prompting improvements
@@ -425,7 +426,10 @@ export { isContextOverflowError, truncateContextForRecovery } from "./safety/con
 export type { ContextTruncationResult } from "./safety/context-truncation-recovery.js";
 
 // Hybrid memory injector (split RAG results: inline + system prompt)
-export { createHybridMemoryInjector } from "./rag/hybrid-memory-injector.js";
+export {
+  createHybridMemoryInjector,
+  stripInlineRecalledMemory,
+} from "./rag/hybrid-memory-injector.js";
 export type { HybridMemoryInjector, HybridMemoryInjection } from "./rag/hybrid-memory-injector.js";
 export { createMemoryRecall } from "./rag/memory-recall.js";
 export type { MemoryRecall, MemoryRecallDeps, MemoryRecallConfig } from "./rag/memory-recall.js";

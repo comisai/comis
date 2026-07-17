@@ -31,6 +31,7 @@
  */
 
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
+import { REDACTED_TOOL_RESULT_USER_MESSAGE } from "./synthetic-user-messages.js";
 
 /** Literal placeholder written by sanitizeSessionSecrets. */
 // eslint-disable-next-line no-restricted-syntax -- session-scrub placeholder constant (not the Pino censor literal)
@@ -153,7 +154,7 @@ export function scrubRedactedToolCalls(
 
     msg.role = "user";
     msg.content = [
-      { type: "text", text: "(prior secret operation — no output shown)" },
+      { type: "text", text: REDACTED_TOOL_RESULT_USER_MESSAGE },
     ];
     delete msg.toolCallId;
     delete msg.toolName;
@@ -214,4 +215,3 @@ function buildSummaryText(
     `reuse a [REDACTED] placeholder.)`
   );
 }
-

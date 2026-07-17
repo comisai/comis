@@ -31,6 +31,7 @@ import {
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
   parseFormattedSessionKey,
   safePath,
+  wrapExternalContent,
 } from "@comis/core";
 import type { NormalizedMessage, EnvelopeConfig } from "@comis/core";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -1133,6 +1134,100 @@ describe("extractSessionMessages", () => {
     expect(messages[0]!.text).toBe("real message");
   });
 
+  it("extracts the envelope after the producer-owned inline memory prefix", () => {
+    const dataDir = tmpDataDir();
+    const record = userRecord(
+      "2026-07-12T10:00:00.000Z",
+      "[telegram] 555 (10:00 AM):\nreal message after recalled context",
+    );
+    const message = record["message"] as { content: Array<{ type: string; text: string }> };
+    message.content[0]!.text = [
+      "",
+      "[Relevant context from memory: [user] quoted old text\n[agent] quoted response (recorded 2026-07-11)]",
+      "",
+      message.content[0]!.text,
+    ].join("\n");
+    writeSessionFile(dataDir, PEER_KEY, [record]);
+
+    const { messages, coverage } = extractSessionMessages(dataDir, { channel: "telegram" });
+
+    expect(messages.map((message) => message.text)).toEqual([
+      "real message after recalled context",
+    ]);
+    expect(coverage.unparsedUserRecords).toBe(0);
+    expect(coverage.ambiguousEnvelopeRecords).toBe(0);
+  });
+
+  it("removes validated link enrichment from a historical Telegram body", () => {
+    const dataDir = tmpDataDir();
+    const originalText = "read https://example.com for me";
+    const linkedContext = wrapExternalContent(
+      "[Link: Example](https://example.com)\nneutral fetched text",
+      { source: "web_fetch", includeWarning: true },
+    );
+    const enrichedText = `${originalText}\n\n--- Linked Content ---\n\n${linkedContext}`;
+    writeSessionFile(dataDir, PEER_KEY, [
+      userRecord(
+        "2026-07-12T10:00:00.000Z",
+        `[telegram] 555 (10:00 AM):\n${enrichedText}`,
+      ),
+    ]);
+
+    const { messages } = extractSessionMessages(dataDir, { channel: "telegram" });
+
+    expect(messages.map((message) => message.text)).toEqual([originalText]);
+  });
+
+  it("preserves a linked-content-looking suffix when its wrapper is incomplete", () => {
+    const dataDir = tmpDataDir();
+    const body = "literal user text\n\n--- Linked Content ---\n\n<<<UNTRUSTED_deadbeef>>>\ntruncated";
+    writeSessionFile(dataDir, PEER_KEY, [
+      userRecord(
+        "2026-07-12T10:00:00.000Z",
+        `[telegram] 555 (10:00 AM):\n${body}`,
+      ),
+    ]);
+
+    const { messages } = extractSessionMessages(dataDir, { channel: "telegram" });
+
+    expect(messages.map((message) => message.text)).toEqual([body]);
+  });
+
+  it("preserves a complete linked-content wrapper when the user text has no link", () => {
+    const dataDir = tmpDataDir();
+    const wrapped = wrapExternalContent("neutral fetched text", {
+      source: "web_fetch",
+      includeWarning: true,
+    });
+    const body = `literal user text\n\n--- Linked Content ---\n\n${wrapped}`;
+    writeSessionFile(dataDir, PEER_KEY, [
+      userRecord("2026-07-12T10:00:00.000Z", `[telegram] 555 (10:00 AM):\n${body}`),
+    ]);
+
+    const { messages } = extractSessionMessages(dataDir, { channel: "telegram" });
+
+    expect(messages.map((message) => message.text)).toEqual([body]);
+  });
+
+  it("returns the transcribed payload without external-content scaffolding", () => {
+    const dataDir = tmpDataDir();
+    const transcription = "[Voice message transcription]: neutral spoken words";
+    const wrapped = wrapExternalContent(transcription, {
+      source: "voice_transcription",
+      includeWarning: true,
+    });
+    writeSessionFile(dataDir, PEER_KEY, [
+      userRecord(
+        "2026-07-12T10:00:00.000Z",
+        `[telegram] 555 (10:00 AM):\n${wrapped}`,
+      ),
+    ]);
+
+    const { messages } = extractSessionMessages(dataDir, { channel: "telegram" });
+
+    expect(messages.map((message) => message.text)).toEqual([transcription]);
+  });
+
   it("preserves fallback header fields for exact filtering before CLI credential redaction", () => {
     const dataDir = tmpDataDir();
     const telegramToken = `12345678:${"t".repeat(35)}`;
@@ -1777,6 +1872,87 @@ describe("extractSessionMessages", () => {
     expect(result.coverage.unparsedUserRecords).toBe(0);
     expect(result.coverage.unparsedEvidence).toEqual([]);
     expect(result.completeness.complete).toBe(true);
+  });
+
+  it("relocates a copied trajectory and excludes SDK-generated user placeholders", () => {
+    const dataDir = tmpDataDir();
+    const staleRoot = tmpDataDir();
+    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+      { type: "session", version: 3, id: "session-neutral", timestamp: "2026-07-12T09:59:00.000Z" },
+      userRecord(
+        "2026-07-12T10:00:00.000Z",
+        "(prior secret operation — no output shown)",
+        { preamble: "" },
+      ),
+      userRecord(
+        "2026-07-12T10:00:01.000Z",
+        "(continued from previous message)",
+        { preamble: "" },
+      ),
+      userRecord(
+        "2026-07-12T10:00:02.000Z",
+        "real headerless Telegram message",
+        { preamble: "" },
+      ),
+    ]);
+    const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(trajectoryFile, `${JSON.stringify({
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.started",
+      sessionId: PEER_KEY,
+      data: { channelType: "telegram", channelId: "555" },
+    })}\n`, "utf8");
+    fs.writeFileSync(`${sessionFile}.trajectory-path.json`, JSON.stringify({
+      traceSchema: "comis-trajectory-pointer",
+      schemaVersion: 1,
+      sessionId: PEER_KEY,
+      runtimeFile: path.join(staleRoot, "original-session.jsonl.trajectory.jsonl"),
+    }), "utf8");
+    fs.writeFileSync(sessionFile.replace(/\.jsonl$/, "_session-metadata.json"), JSON.stringify({
+      traceId: "trace-neutral",
+    }), "utf8");
+
+    const result = extractSessionMessages(dataDir, { channel: "telegram" });
+
+    expect(result.messages.map((message) => message.text)).toEqual([
+      "real headerless Telegram message",
+    ]);
+    expect(result.coverage.internalExcluded).toBe(2);
+    expect(result.coverage.unparsedUserRecords).toBe(0);
+    expect(result.coverage.unparsedEvidence).toEqual([]);
+    expect(result.completeness.complete).toBe(true);
+  });
+
+  it("preserves a user-authored recall-shaped prefix in a headerless message", () => {
+    const dataDir = tmpDataDir();
+    const body = [
+      "[Relevant context from memory: literal user text (recorded 2026-07-11)]",
+      "actual user-authored tail",
+    ].join("\n");
+    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+      { type: "session", version: 3, id: "session-neutral", timestamp: "2026-07-12T09:59:00.000Z" },
+      userRecord("2026-07-12T10:00:00.000Z", body, { preamble: "" }),
+    ]);
+    const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(trajectoryFile, `${JSON.stringify({
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.started",
+      sessionId: PEER_KEY,
+      data: { channelType: "telegram", channelId: "555" },
+    })}\n`, "utf8");
+    fs.writeFileSync(`${sessionFile}.trajectory-path.json`, JSON.stringify({
+      traceSchema: "comis-trajectory-pointer",
+      schemaVersion: 1,
+      sessionId: PEER_KEY,
+      runtimeFile: trajectoryFile,
+    }), "utf8");
+    fs.writeFileSync(sessionFile.replace(/\.jsonl$/, "_session-metadata.json"), "{}", "utf8");
+
+    const result = extractSessionMessages(dataDir, { channel: "telegram" });
+
+    expect(result.messages.map((message) => message.text)).toEqual([body]);
   });
 
   it("keeps a headerless body unresolved when trajectory channels disagree", () => {

@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Exact-boundary parser for historical model-facing inbound envelopes. */
 
+import { EXTERNAL_CONTENT_WARNING, unwrapExternalContent } from "@comis/core";
+import { stripInlineRecalledMemory } from "@comis/agent";
+
 const SYSTEM_CONTEXT_OPEN = "[System context]";
 const SYSTEM_CONTEXT_CLOSE = "[End system context]";
 const ENVELOPE_HEADER_RE = /^[ \t]*\[([\w-]+)\][ \t]+(\S+)[ \t]+\(([^)\n]*)\):[ \t]*$/;
 const PROVIDER_HIDDEN_HEADER_RE = /^[ \t]*(\S+)[ \t]+\(([^)\n]*)\):[ \t]*$/;
 const COALESCER_LINE_RE = /^[ \t]*\[Message \d+\]:/m;
+const LINKED_CONTENT_SEPARATOR = "\n\n--- Linked Content ---\n\n";
 
 export interface ParsedSessionEnvelope {
   channelType: string;
@@ -84,12 +88,49 @@ function envelopeScope(text: string): string {
   return bodyStart === undefined ? text : text.slice(bodyStart);
 }
 
+/** Unwrap only a complete producer-generated external-content envelope. */
+function unwrapCompleteExternalContent(
+  text: string,
+  expectedSource: "web_fetch" | "voice_transcription",
+): string | undefined {
+  const unwrapped = unwrapExternalContent(text);
+  if (unwrapped === null || unwrapped.source !== expectedSource) return undefined;
+  const startMarker = `<<<UNTRUSTED_${unwrapped.delimiter}>>>`;
+  const endMarker = `<<<END_UNTRUSTED_${unwrapped.delimiter}>>>`;
+  const start = text.indexOf(startMarker);
+  const end = text.lastIndexOf(endMarker);
+  if (start < 0 || end < start) return undefined;
+  const prefix = text.slice(0, start).trim();
+  if (prefix !== "" && prefix !== EXTERNAL_CONTENT_WARNING) return undefined;
+  if (text.slice(end + endMarker.length).trim() !== "") return undefined;
+  return unwrapped.content;
+}
+
+/** Remove model-only enrichments while retaining the physical inbound body. */
+function physicalEnvelopeBody(body: string): string {
+  const linkedAt = body.lastIndexOf(LINKED_CONTENT_SEPARATOR);
+  if (linkedAt >= 0) {
+    const originalBody = body.slice(0, linkedAt);
+    const linked = body.slice(linkedAt + LINKED_CONTENT_SEPARATOR.length);
+    if (
+      (originalBody.includes("https://") || originalBody.includes("http://")) &&
+      unwrapCompleteExternalContent(linked, "web_fetch") !== undefined
+    ) {
+      return originalBody;
+    }
+  }
+  const voice = unwrapCompleteExternalContent(body, "voice_transcription");
+  return voice?.startsWith("[Voice message transcription]: ") === true
+    ? voice
+    : body;
+}
+
 /**
  * Parse only the first nonblank line at the trusted wrapper boundary. Later
  * header/marker-shaped text remains byte-for-byte body and makes the physical
  * message count ambiguous instead of creating another message.
  */
-export function parseSessionEnvelope(text: string): SessionEnvelopeParseResult {
+function parseSessionEnvelopeWithoutRecall(text: string): SessionEnvelopeParseResult {
   const scope = envelopeScope(text);
   const boundary = firstBoundaryLine(scope);
   if (boundary === undefined) {
@@ -107,12 +148,12 @@ export function parseSessionEnvelope(text: string): SessionEnvelopeParseResult {
       ? {
           senderId: undefined,
           envelopeTime: undefined,
-          text: scope.slice(boundary.lineStart),
+          text: physicalEnvelopeBody(scope.slice(boundary.lineStart)),
         }
       : {
           senderId: providerHidden[1]!,
           envelopeTime: providerHidden[2]!,
-          text: scope.slice(boundary.bodyStart),
+          text: physicalEnvelopeBody(scope.slice(boundary.bodyStart)),
         };
     const ambiguous = COALESCER_LINE_RE.test(candidate.text) ||
       candidate.text.includes(SYSTEM_CONTEXT_CLOSE) ||
@@ -125,7 +166,7 @@ export function parseSessionEnvelope(text: string): SessionEnvelopeParseResult {
     };
   }
 
-  const body = scope.slice(boundary.bodyStart);
+  const body = physicalEnvelopeBody(scope.slice(boundary.bodyStart));
   const ambiguous = COALESCER_LINE_RE.test(body) ||
     body.includes(SYSTEM_CONTEXT_CLOSE) ||
     body.split(/\r?\n/).some((line) => ENVELOPE_HEADER_RE.test(line));
@@ -140,4 +181,15 @@ export function parseSessionEnvelope(text: string): SessionEnvelopeParseResult {
     ambiguous,
     unparsedReason: undefined,
   };
+}
+
+/** Parse a rendered prompt while accepting only a recall prefix before a real envelope. */
+export function parseSessionEnvelope(text: string): SessionEnvelopeParseResult {
+  const direct = parseSessionEnvelopeWithoutRecall(text);
+  const withoutRecall = stripInlineRecalledMemory(text);
+  if (withoutRecall === text) return direct;
+  const recalled = parseSessionEnvelopeWithoutRecall(withoutRecall);
+  return recalled.envelope !== undefined || recalled.candidate?.senderId !== undefined
+    ? recalled
+    : direct;
 }

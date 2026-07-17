@@ -59,16 +59,23 @@ export function classifySessionChannelFromTrajectory(
     ? [policy.dataDir]
     : [policy.dataDir, policy.trajectoryDir];
   let trajectoryRead: ReturnType<typeof readRegularFile> | undefined;
-  for (const confinedBaseDir of permittedRoots) {
-    const attempt = readRegularFile({
-      path: pointer["runtimeFile"],
-      maxFileBytes: MAX_TRAJECTORY_BYTES,
-      confinedBaseDir,
-    });
-    if (attempt.ok) {
-      trajectoryRead = attempt;
-      break;
+  const candidates = new Set([
+    pointer["runtimeFile"],
+    `${sessionFile}.trajectory.jsonl`,
+  ]);
+  for (const candidate of candidates) {
+    for (const confinedBaseDir of permittedRoots) {
+      const attempt = readRegularFile({
+        path: candidate,
+        maxFileBytes: MAX_TRAJECTORY_BYTES,
+        confinedBaseDir,
+      });
+      if (attempt.ok) {
+        trajectoryRead = attempt;
+        break;
+      }
     }
+    if (trajectoryRead !== undefined) break;
   }
   if (trajectoryRead === undefined || !trajectoryRead.ok) {
     return { classification: "unresolved", source: "none" };

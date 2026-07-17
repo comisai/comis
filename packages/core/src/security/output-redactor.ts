@@ -21,11 +21,143 @@ const PRIVATE_KEY_BEGIN_MARKER = "-----BEGIN";
 const PRIVATE_KEY_END_MARKER = "-----END";
 const PRIVATE_KEY_BOUNDARY_SUFFIX = "-----";
 const MAX_PRIVATE_KEY_LABEL_CHARS = 64;
+const MAX_CREDENTIAL_FIELD_NAME_CHARS = 128;
 
 interface PrivateKeyBoundary {
   readonly start: number;
   readonly end: number;
   readonly label: string;
+}
+
+interface CredentialAssignmentBoundary {
+  readonly valueStart: number;
+  readonly valueEnd: number;
+}
+
+function isCredentialFieldCharacter(character: string): boolean {
+  const codePoint = character.codePointAt(0);
+  return codePoint !== undefined && (
+    (codePoint >= 0x41 && codePoint <= 0x5a) ||
+    (codePoint >= 0x61 && codePoint <= 0x7a) ||
+    (codePoint >= 0x30 && codePoint <= 0x39) ||
+    character === "_" ||
+    character === "-"
+  );
+}
+
+/** Recognize a bounded credential field name without treating generic keys as secrets. */
+function isCredentialFieldName(fieldName: string): boolean {
+  const normalized = fieldName.toLowerCase().replaceAll("_", "").replaceAll("-", "");
+  return normalized === "pwd" ||
+    normalized.endsWith("password") ||
+    normalized.endsWith("passwd") ||
+    normalized.endsWith("username") ||
+    normalized.endsWith("apikey") ||
+    normalized.endsWith("accesstoken") ||
+    normalized.endsWith("refreshtoken") ||
+    normalized.endsWith("authtoken") ||
+    normalized.endsWith("clientsecret") ||
+    normalized.endsWith("privatekey") ||
+    normalized === "token" ||
+    normalized === "secret" ||
+    normalized === "authorization" ||
+    normalized === "proxyauthorization";
+}
+
+function skipHorizontalWhitespace(input: string, start: number): number {
+  let cursor = start;
+  while (input.charAt(cursor) === " " || input.charAt(cursor) === "\t") cursor++;
+  return cursor;
+}
+
+/** Locate the value boundary for one JSON, YAML, or environment-style assignment. */
+function credentialAssignmentAt(
+  input: string,
+  start: number,
+): CredentialAssignmentBoundary | undefined {
+  const openingQuote = input.charAt(start);
+  const quotedKey = openingQuote === '"' || openingQuote === "'";
+  const fieldStart = quotedKey ? start + 1 : start;
+  if (!isCredentialFieldCharacter(input.charAt(fieldStart))) return undefined;
+  if (
+    !quotedKey &&
+    start > 0 &&
+    isCredentialFieldCharacter(input.charAt(start - 1))
+  ) return undefined;
+
+  let fieldEnd = fieldStart;
+  while (
+    fieldEnd - fieldStart < MAX_CREDENTIAL_FIELD_NAME_CHARS &&
+    isCredentialFieldCharacter(input.charAt(fieldEnd))
+  ) fieldEnd++;
+  if (
+    fieldEnd === fieldStart ||
+    isCredentialFieldCharacter(input.charAt(fieldEnd)) ||
+    !isCredentialFieldName(input.slice(fieldStart, fieldEnd))
+  ) return undefined;
+  if (quotedKey) {
+    if (input.charAt(fieldEnd) !== openingQuote) return undefined;
+    fieldEnd++;
+  }
+
+  let cursor = skipHorizontalWhitespace(input, fieldEnd);
+  if (input.charAt(cursor) !== ":" && input.charAt(cursor) !== "=") return undefined;
+  cursor = skipHorizontalWhitespace(input, cursor + 1);
+  const valueQuote = input.charAt(cursor);
+  if (valueQuote === '"' || valueQuote === "'") {
+    const valueStart = cursor + 1;
+    cursor = valueStart;
+    let escaped = false;
+    while (cursor < input.length) {
+      const character = input.charAt(cursor);
+      if (!escaped && character === valueQuote) {
+        return cursor === valueStart ? undefined : { valueStart, valueEnd: cursor };
+      }
+      if (!escaped && character === "\\") escaped = true;
+      else escaped = false;
+      cursor++;
+    }
+    return cursor === valueStart ? undefined : { valueStart, valueEnd: input.length };
+  }
+
+  const valueStart = cursor;
+  while (cursor < input.length) {
+    const character = input.charAt(cursor);
+    if (
+      character === "\n" ||
+      character === "\r" ||
+      character === "," ||
+      character === "}" ||
+      character === "]"
+    ) break;
+    cursor++;
+  }
+  while (
+    cursor > valueStart &&
+    (input.charAt(cursor - 1) === " " || input.charAt(cursor - 1) === "\t")
+  ) cursor--;
+  return cursor === valueStart ? undefined : { valueStart, valueEnd: cursor };
+}
+
+/** Redact arbitrary values when their assignment key itself identifies a credential. */
+function redactNamedCredentialAssignments(input: string): OutputRedactionResult {
+  const output: string[] = [];
+  let scanCursor = 0;
+  let copyCursor = 0;
+  let redactions = 0;
+  while (scanCursor < input.length) {
+    const boundary = credentialAssignmentAt(input, scanCursor);
+    if (boundary === undefined) {
+      scanCursor++;
+      continue;
+    }
+    output.push(input.slice(copyCursor, boundary.valueStart), REDACTED);
+    redactions++;
+    copyCursor = boundary.valueEnd;
+    scanCursor = boundary.valueEnd;
+  }
+  output.push(input.slice(copyCursor));
+  return { text: output.join(""), redactions };
 }
 
 function normalizePrivateKeyLabel(rawLabel: string): string | undefined {
@@ -155,8 +287,9 @@ export function redactPrivateKeyMaterial(
  */
 export function redactOutputText(input: string): OutputRedactionResult {
   const privateKeys = redactPrivateKeyMaterial(input);
-  let text = privateKeys.text;
-  let redactions = privateKeys.redactions;
+  const namedAssignments = redactNamedCredentialAssignments(privateKeys.text);
+  let text = namedAssignments.text;
+  let redactions = privateKeys.redactions + namedAssignments.redactions;
   for (const canonicalPattern of OUTPUT_CREDENTIAL_PATTERNS) {
     canonicalPattern.lastIndex = 0;
     text = text.replace(canonicalPattern, () => {

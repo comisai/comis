@@ -468,6 +468,44 @@ describe("comis messages", () => {
     },
   );
 
+  it("redacts an arbitrary password assignment from JSON evidence previews", async () => {
+    const credentialValue = "test-arbitrary-password";
+    vi.mocked(extractSessionMessagesOffline).mockResolvedValueOnce({
+      messages: [],
+      coverage: {
+        ...CLEAN_COVERAGE,
+        unparsedEvidence: [{
+          reason: "unmatched",
+          sessionKey: "default:555:555:peer:555",
+          agentId: "default",
+          timestamp: "2026-07-12T10:00:00.000Z",
+          digest: "digest-neutral",
+          preview: `historical context {"SERVICE_PASSWORD": "${credentialValue}"}`,
+          redactions: 0,
+          channel: { classification: "unresolved", source: "none" },
+        }],
+      },
+      completeness: { complete: false, reasons: ["unparsed_records"] },
+    });
+    consoleSpy = createConsoleSpy();
+
+    await run(["--format", "json"]);
+
+    const stdout = getSpyOutput(consoleSpy.log);
+    expect(stdout).not.toContain(credentialValue);
+    const report = JSON.parse(stdout) as {
+      coverage: {
+        secretRedactions: number;
+        unparsedEvidence: Array<{ preview: string; redactions: number }>;
+      };
+    };
+    expect(report.coverage.unparsedEvidence[0]).toMatchObject({
+      preview: 'historical context {"SERVICE_PASSWORD": "[REDACTED]"}',
+      redactions: 1,
+    });
+    expect(report.coverage.secretRedactions).toBe(1);
+  });
+
   it.each(["table", "text", "json", "jsonl"])(
     "scrubs every serialized message and unparsed-evidence string in %s output",
     async (format) => {
