@@ -16,7 +16,7 @@ import { ok, err } from "@comis/shared";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, tryGetContext } from "@comis/core";
 
 /**
  * Structured result tag for MCP tool-call 401 failures.
@@ -108,6 +108,7 @@ export async function callTool(
   args: Record<string, unknown>,
 ): Promise<Result<McpToolCallResult, Error>> {
   const { logger } = deps;
+  const progressToken = tryGetContext()?.traceId;
   const parsed = parseQualifiedName(qualifiedName);
   if (!parsed) {
     return err(new Error(`Invalid MCP tool qualified name: "${qualifiedName}"`));
@@ -194,7 +195,11 @@ export async function callTool(
 
     try {
       const result = await currentConn.client.callTool(
-        { name: toolName, arguments: args },
+        {
+          name: toolName,
+          arguments: args,
+          ...(progressToken ? { _meta: { progressToken } } : {}),
+        },
         undefined,
         { timeout: state.options.callToolTimeoutMs },
       );
