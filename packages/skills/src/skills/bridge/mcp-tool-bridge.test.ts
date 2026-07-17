@@ -234,6 +234,18 @@ describe("mcpToolsToAgentTools", () => {
     expect(result.details).toEqual({ success: false });
   });
 
+  it("propagates MCP isError through the SDK failure boundary", async () => {
+    const callTool = vi.fn().mockResolvedValue(
+      ok({
+        content: [{ type: "text", text: "Upstream rejected the request" }],
+        isError: true,
+      }),
+    );
+    const tools = mcpToolsToAgentTools([makeTool()], callTool);
+
+    await expect(tools[0].execute("call-1", {})).rejects.toThrow("Upstream rejected the request");
+  });
+
   it("execute() returns fallback text when no text content", async () => {
     const callTool = vi.fn().mockResolvedValue(
       ok({
