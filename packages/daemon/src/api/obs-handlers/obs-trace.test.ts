@@ -128,6 +128,35 @@ describe("bindObsTraceHandlers", () => {
     expect(result.rows.some((r) => r.traceId === "t1")).toBe(true);
   });
 
+  it("search by messageId scans the persisted index when the live LRU was not seeded", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-trace-live-message-"));
+    const logsDir = path.join(tmpDir, "logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    const today = new Date().toISOString().slice(0, 10);
+    const indexFile = path.join(logsDir, `session-index.${today}.jsonl`);
+    fs.writeFileSync(indexFile, `${JSON.stringify({
+      traceSchema: "comis-session-index",
+      schemaVersion: 1,
+      event: "turn_completed",
+      ts: new Date().toISOString(),
+      sessionId: "live-session",
+      traceId: "live-trace",
+      messageId: "live-message",
+      durationMs: 100,
+      inputTokens: 10,
+      outputTokens: 5,
+      lastError: null,
+    })}\n`);
+
+    const handlers = bindObsTraceHandlers(makeDeps({ dataDir: tmpDir }));
+    const result = await handlers["obs.trace.search"]!({
+      _trustLevel: "admin",
+      messageId: "live-message",
+    }) as { rows: Array<Record<string, unknown>> };
+
+    expect(result.rows.some((row) => row.traceId === "live-trace")).toBe(true);
+  });
+
   // Test 5: tail with empty chatId causes zod parse error
   it("tail_throws_on_empty_chatId", async () => {
     const handlers = bindObsTraceHandlers(makeDeps());

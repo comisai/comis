@@ -5956,6 +5956,7 @@ describe("session-index emit sites", () => {
 
   it("appendSessionIndexEntry called once with turn_completed carrying BOTH inputTokens and outputTokens on turn_end", () => {
     const deps = createMockDeps();
+    (deps as PiEventBridgeDeps & { inboundMessageId: string }).inboundMessageId = "inbound-message-1";
     const { listener } = createPiEventBridge(deps);
 
     listener({
@@ -5979,7 +5980,7 @@ describe("session-index emit sites", () => {
     );
     expect(turnCompletedCalls).toHaveLength(1);
 
-    const payload = turnCompletedCalls[0][1] as { event: string; inputTokens: number; outputTokens: number; traceSchema: string; schemaVersion: number };
+    const payload = turnCompletedCalls[0][1] as { event: string; inputTokens: number; outputTokens: number; traceSchema: string; schemaVersion: number; messageId?: string };
     expect(payload.event).toBe("turn_completed");
     expect(payload.traceSchema).toBe("comis-session-index");
     expect(payload.schemaVersion).toBe(1);
@@ -5987,6 +5988,7 @@ describe("session-index emit sites", () => {
     expect(typeof payload.outputTokens).toBe("number");
     expect(payload.inputTokens).toBe(123);
     expect(payload.outputTokens).toBe(456);
+    expect(payload.messageId).toBe("inbound-message-1");
   });
 
   it("turn_completed row carries the per-turn stopReason so degraded turns are greppable from the index", () => {
