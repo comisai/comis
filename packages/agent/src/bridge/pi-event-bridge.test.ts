@@ -93,6 +93,7 @@ function createMockDeps(overrides?: Partial<PiEventBridgeDeps>): PiEventBridgeDe
     sessionKey: { tenantId: "t1", channelId: "c1", userId: "u1" },
     agentId: "test-agent",
     channelId: "test-channel",
+    inboundMessageId: "inbound-message-1",
     executionId: "exec-001",
     provider: "anthropic",
     model: "claude-sonnet-4-5-20250929",
@@ -5956,7 +5957,6 @@ describe("session-index emit sites", () => {
 
   it("appendSessionIndexEntry called once with turn_completed carrying BOTH inputTokens and outputTokens on turn_end", () => {
     const deps = createMockDeps();
-    (deps as PiEventBridgeDeps & { inboundMessageId: string }).inboundMessageId = "inbound-message-1";
     const { listener } = createPiEventBridge(deps);
 
     listener({

@@ -166,6 +166,44 @@ async function scanSessionIndexByTrace(
   return rows.slice(0, limit);
 }
 
+/** Resolve the newest persisted trace mapping for an inbound message ID. */
+async function scanSessionIndexByMessageId(
+  dataDir: string,
+  messageId: string,
+  includeSynthetic = false,
+): Promise<{ traceId: string; sessionId: string } | undefined> {
+  let hit: { traceId: string; sessionId: string } | undefined;
+  for (const dayKey of [yesterdayKey(), todayKey()]) {
+    const logsDir = safePath(dataDir, "logs");
+    const file = safePath(logsDir, `session-index.${dayKey}.jsonl`);
+    if (!fs.existsSync(file)) continue;
+    let content: string;
+    try {
+      content = fs.readFileSync(file, "utf-8");
+    } catch {
+      continue;
+    }
+    for (const line of content.split("\n")) {
+      if (!line) continue;
+      try {
+        const rec = JSON.parse(line) as Record<string, unknown>;
+        if (rec.synthetic === true && !includeSynthetic) continue;
+        if (
+          rec.event === "turn_completed" &&
+          rec.messageId === messageId &&
+          typeof rec.traceId === "string" &&
+          typeof rec.sessionId === "string"
+        ) {
+          hit = { traceId: rec.traceId, sessionId: rec.sessionId };
+        }
+      } catch {
+        // Skip malformed lines.
+      }
+    }
+  }
+  return hit;
+}
+
 /** Scan index files for records matching optional since/where filters. */
 async function scanSessionIndexByFilter(
   dataDir: string,
@@ -287,12 +325,17 @@ export function bindObsTraceHandlers(deps: ObsHandlerDeps): Record<string, RpcHa
       let rows: Array<Record<string, unknown>> = [];
 
       if (params.messageId) {
-        // O(1) LRU lookup; fall through to traceId scan if LRU miss.
-        const hit = lruGet(params.messageId);
+        // Use the O(1) cache when possible. A turn written after daemon startup
+        // is not seeded yet, so a cache miss must fall back to the bounded
+        // persisted index rather than returning a false empty trace.
+        let hit = lruGet(params.messageId);
+        if (!hit) {
+          hit = await scanSessionIndexByMessageId(dataDir, params.messageId, params.includeSynthetic);
+          if (hit) lruSet(params.messageId, hit);
+        }
         if (hit) {
           rows = await scanSessionIndexByTrace(dataDir, hit.traceId, limit, params.includeSynthetic);
         }
-        // If LRU miss: return empty rows — caller can retry with --trace-id.
       } else if (params.traceId) {
         rows = await scanSessionIndexByTrace(dataDir, params.traceId, limit, params.includeSynthetic);
       } else if (params.since || params.where) {

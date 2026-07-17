@@ -71,6 +71,7 @@ function createMockDeps(overrides?: Partial<PiEventBridgeDeps>): PiEventBridgeDe
     sessionKey: { tenantId: "t1", channelId: "c1", userId: "u1" },
     agentId: "test-agent",
     channelId: "test-channel",
+    inboundMessageId: "inbound-message-1",
     executionId: "exec-001",
     provider: "anthropic",
     model: "claude-sonnet-4-5-20250929",

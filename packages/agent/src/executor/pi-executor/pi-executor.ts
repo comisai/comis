@@ -1559,6 +1559,7 @@ async function runSessionLocked(
     sessionKey,
     agentId: agentId ?? "default",
     channelId: msg.channelId ?? "",
+    inboundMessageId: msg.id,
     executionId,
     provider: config.provider,
     model: config.model,

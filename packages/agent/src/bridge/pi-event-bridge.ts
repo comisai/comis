@@ -325,6 +325,8 @@ export interface PiEventBridgeDeps {
   sessionKey: SessionKey;
   agentId: string;
   channelId: string;
+  /** Inbound channel message ID used by the session index for operator trace lookup. */
+  inboundMessageId: string;
   executionId: string;
   provider: string;
   model: string;
@@ -2036,6 +2038,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 event: "turn_completed",
                 ts: systemDateFrom(systemNowMs()).toISOString(),
                 sessionId: formatSessionKey(deps.sessionKey),
+                messageId: deps.inboundMessageId,
                 traceId: tryGetContext()?.traceId ?? deps.executionId,
                 durationMs: llmLatencyMs ?? 0,
                 inputTokens: usage.input,

@@ -59,6 +59,8 @@ export interface TurnCompletedEvent extends SessionIndexEventBase {
   readonly event: "turn_completed";
   /** Formatted session key. */
   readonly sessionId: string;
+  /** Inbound channel message ID that initiated this execution. */
+  readonly messageId?: string;
   /** Execution ID for this turn. */
   readonly traceId: string;
   /** LLM latency in milliseconds for this turn. */

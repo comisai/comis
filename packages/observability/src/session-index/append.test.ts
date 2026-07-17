@@ -48,6 +48,7 @@ function makeTurnCompleted(): TurnCompletedEvent {
     event: "turn_completed",
     ts: new Date().toISOString(),
     sessionId: "t1:c1:u1",
+    messageId: "inbound-message-1",
     traceId: "exec-001",
     durationMs: 1234,
     inputTokens: 100,
