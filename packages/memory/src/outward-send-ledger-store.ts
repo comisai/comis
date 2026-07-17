@@ -48,7 +48,7 @@ import {
   type OutwardSendRecord,
   type OutwardSendBeginInput,
   type OutwardSendState,
-  type OutwardOperationKind,
+  type StoredOutwardOperationKind,
 } from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
 import { OutwardLedgerDbRowSchema, type OutwardLedgerDbRow } from "./outward-ledger-row-schema.js";
@@ -91,7 +91,7 @@ function rowToRecord(row: OutwardLedgerDbRow): OutwardSendRecord {
     channelType: row.channel_type,
     channelId: row.channel_id,
     state: row.state as OutwardSendState,
-    operationKind: row.operation_kind as OutwardOperationKind,
+    operationKind: row.operation_kind as StoredOutwardOperationKind,
     operationFingerprint: row.operation_fingerprint,
     ...(row.platform_message_id !== null ? { platformMessageId: row.platform_message_id } : {}),
     contentDigest: row.content_digest,

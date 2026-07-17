@@ -56,6 +56,14 @@ export type OutwardOperationKind =
   | "cross_session_announcement";
 
 /**
+ * Operation identity stored in the ledger. `retained_unclassified` is assigned
+ * only when an existing row has no recorded kind; new begin requests cannot
+ * select it. Its synthetic fingerprint guarantees that a current operation
+ * cannot deduplicate against an identity the store cannot prove.
+ */
+export type StoredOutwardOperationKind = OutwardOperationKind | "retained_unclassified";
+
+/**
  * A single outward-send ledger row. Content-free: `contentDigest`
  * only, never the body. `(rootRunId, stepIndex)` is the UNIQUE idempotency key.
  */
@@ -75,7 +83,7 @@ export interface OutwardSendRecord {
   /** The closed lifecycle state. */
   readonly state: OutwardSendState;
   /** The closed outward operation discriminator. */
-  readonly operationKind: OutwardOperationKind;
+  readonly operationKind: StoredOutwardOperationKind;
   /** SHA-256 of the canonical immutable operation envelope. */
   readonly operationFingerprint: string;
   /** The platform-assigned message id, present once `state === "committed"`. */

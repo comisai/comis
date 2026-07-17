@@ -482,4 +482,100 @@ describe("ensureOutwardLedgerTable wiring — real initSchema layout", () => {
       fresh.close();
     }
   });
+
+  it("the REAL initSchema upgrades a retained ledger without losing committed receipts", async () => {
+    const existing = new Database(":memory:");
+    try {
+      existing.exec(`
+        CREATE TABLE outward_send_ledger (
+          id                  TEXT PRIMARY KEY,
+          root_run_id         TEXT NOT NULL,
+          step_index          INTEGER NOT NULL,
+          agent_id            TEXT NOT NULL,
+          channel_type        TEXT NOT NULL,
+          channel_id          TEXT NOT NULL,
+          state               TEXT NOT NULL CHECK(state IN ('send_attempt_started','unknown_after_send','committed','failed','unresolved')),
+          platform_message_id TEXT,
+          content_digest      TEXT NOT NULL,
+          reconcile_outcome   TEXT,
+          attempt_count       INTEGER NOT NULL DEFAULT 0,
+          last_error          TEXT,
+          created_at_ms       INTEGER NOT NULL,
+          updated_at_ms       INTEGER NOT NULL
+        );
+        CREATE UNIQUE INDEX idx_osl_idempotency
+          ON outward_send_ledger(root_run_id, step_index);
+      `);
+      const insertRetained = existing.prepare(`
+        INSERT INTO outward_send_ledger (
+          id, root_run_id, step_index, agent_id, channel_type, channel_id,
+          state, platform_message_id, content_digest, reconcile_outcome,
+          attempt_count, last_error, created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      insertRetained.run(
+        "retained-run:0",
+        "retained-run",
+        0,
+        "agent-1",
+        "telegram",
+        "chat-99",
+        "committed",
+        "telegram-message-25",
+        "1".repeat(16),
+        null,
+        1,
+        null,
+        900,
+        950,
+      );
+      insertRetained.run(
+        "retained-run:1",
+        "retained-run",
+        1,
+        "agent-1",
+        "telegram",
+        "chat-99",
+        "unknown_after_send",
+        null,
+        "2".repeat(16),
+        null,
+        1,
+        null,
+        960,
+        970,
+      );
+
+      initSchema(existing, 384);
+      const ledger = createSqliteOutwardSendLedger(existing, nowMs);
+      const found = await ledger.lookup("retained-run", 0);
+
+      expect(found.ok).toBe(true);
+      if (!found.ok) return;
+      expect(found.value).toMatchObject({
+        rootRunId: "retained-run",
+        stepIndex: 0,
+        state: "committed",
+        platformMessageId: "telegram-message-25",
+        operationKind: "retained_unclassified",
+      });
+      expect(found.value?.operationFingerprint).toMatch(/^[0-9a-f]{64}$/);
+      expect(found.value?.contentDigest).toMatch(/^[0-9a-f]{64}$/);
+      const uncertain = await ledger.lookup("retained-run", 1);
+      expect(uncertain).toMatchObject({
+        ok: true,
+        value: {
+          state: "unresolved",
+          operationKind: "retained_unclassified",
+          reconcileOutcome: "unresolved",
+        },
+      });
+      await expect(ledger.listUnreconciled(100)).resolves.toEqual({ ok: true, value: [] });
+      expect(
+        existing.prepare("SELECT COUNT(*) AS count FROM outward_send_ledger").get(),
+      ).toEqual({ count: 2 });
+    } finally {
+      existing.close();
+    }
+  });
 });

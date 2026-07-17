@@ -46,6 +46,7 @@ export const OutwardLedgerDbRowSchema = z.strictObject({
     "message_reply",
     "message_react",
     "cross_session_announcement",
+    "retained_unclassified",
   ]),
   operation_fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
   // 'send_attempt_started' | 'unknown_after_send' | 'committed' | 'failed' |
