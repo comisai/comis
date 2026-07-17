@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: MCP AgentTool boundary; pi-agent-core catches execution errors and records toolResult.isError.
 /**
  * MCP Tool Bridge: Converts MCP tool definitions to AgentTool instances.
  *
@@ -162,9 +163,9 @@ export function sanitizeMcpToolName(qualifiedName: string): string {
  * Convert an array of MCP tool definitions to AgentTool instances.
  *
  * Each AgentTool's execute() delegates to the provided callTool function,
- * which dispatches to the correct MCP server connection. Error results
- * from the MCP server are returned as text content (not thrown), matching
- * the AgentTool contract.
+ * which dispatches to the correct MCP server connection. Failures throw at
+ * the AgentTool boundary so pi-agent-core records `toolResult.isError=true`
+ * and the tool lifecycle reports a failed execution.
  *
  * Successful results are capped to the resolved source profile's maxChars
  * limit, preventing oversized MCP responses from consuming agent context.
@@ -274,99 +275,103 @@ export function mcpToolsToAgentTools(
         _toolCallId: string,
         params: unknown,
       ): Promise<AgentToolResult<{ success: boolean }>> {
+        let result: Awaited<ReturnType<McpClientManager["callTool"]>>;
         try {
-          const result = await callTool(tool.qualifiedName, params as Record<string, unknown>);
-
-          if (!result.ok) {
-            const errorResult = {
-              content: [{ type: "text" as const, text: `MCP tool error: ${result.error.message}` }],
-              details: { success: false },
-            };
-            logResult(errorResult, _toolCallId, sanitizedName, true);
-            return errorResult;
-          }
-
-          const value: McpToolCallResult = result.value;
-
-          if (value.isError) {
-            const errorText = value.content
-              .filter((c) => c.type === "text" && c.text)
-              .map((c) => c.text)
-              .join("\n");
-            const isErrorResult = {
-              content: [
-                {
-                  type: "text" as const,
-                  text: errorText || "MCP tool returned an error with no details",
-                },
-              ],
-              details: { success: false },
-            };
-            logResult(isErrorResult, _toolCallId, sanitizedName, true);
-            return isErrorResult;
-          }
-
-          // Collect text content from the MCP result
-          let textParts = value.content
-            .filter((c) => c.type === "text" && c.text)
-            .map((c) => c.text!)
-            .join("\n");
-
-          // Sanitize MCP result (NFKC normalization + invisible char removal)
-          textParts = sanitizeMcpToolResult(textParts);
-
-          // Source-gate: cap text to resolved profile's maxChars limit
-          const profile = resolveSourceProfile(sanitizedName, toolSourceProfiles?.[sanitizedName]);
-          if (textParts.length > profile.maxChars) {
-            const originalSize = textParts.length;
-            const { truncated, wasTruncated } = truncateJsonAware(textParts, profile.maxChars);
-            textParts = truncated;
-            // Emit ONCE here (guarded by wasTruncated), NOT from
-            // truncateJsonAware (pure utility, no bus) nor the wrapExternalContent
-            // step (would fire on non-truncated paths). traceId via the non-throwing
-            // tryGetContext — "" outside a request scope (keepalive/background/test).
-            if (wasTruncated) {
-              onResultTruncated?.({
-                server: serverName,
-                tool: tool.name,
-                originalSize,
-                truncatedSize: truncated.length,
-                traceId: tryGetContext()?.traceId ?? "",
-              });
-            }
-          }
-
-          // Wrap AFTER cap so SECURITY NOTICE boilerplate is preserved
-          // (wrap-then-cap would truncate the closing <<<END_UNTRUSTED_xxx>>>
-          // marker mid-content). Fixed ~150-byte wrapper boilerplate sits beyond
-          // the per-source maxChars budget — the cap governs content size, not
-          // wrapper overhead. The `if (textParts)` guard preserves the empty-
-          // content fallback "Tool returned no text content" path below.
-          if (textParts) {
-            textParts = wrapExternalContent(textParts, {
-              source: "mcp_tool",
-              onSuspiciousContent,
-            });
-          }
-
-          const successResult = {
-            content: [{ type: "text" as const, text: textParts || "Tool returned no text content" }],
-            details: { success: true },
-          };
-          logResult(successResult, _toolCallId, sanitizedName, false);
-          return successResult;
+          result = await callTool(tool.qualifiedName, params as Record<string, unknown>);
         } catch (error: unknown) {
-          // Defense-in-depth: callTool returns Result and should never throw,
-          // but if something unexpected happens, return a clean error to the agent
-          // instead of letting it propagate and produce an opaque SDK error message.
+          // Defense-in-depth: callTool returns Result and should never throw.
+          // Throwing here is deliberate: pi-agent-core is the immediate boundary
+          // that converts this exception into an isError=true tool result.
           const message = error instanceof Error ? error.message : String(error);
+          const crashText = `MCP tool "${tool.qualifiedName}" crashed unexpectedly: ${message}`;
           const crashResult = {
-            content: [{ type: "text" as const, text: `MCP tool "${tool.qualifiedName}" crashed unexpectedly: ${message}` }],
+            content: [{ type: "text" as const, text: crashText }],
             details: { success: false },
           };
           logResult(crashResult, _toolCallId, sanitizedName, true);
-          return crashResult;
+          throw new Error(crashText, { cause: error });
         }
+
+        if (!result.ok) {
+          const errorText = `MCP tool error: ${result.error.message}`;
+          const errorResult = {
+            content: [{ type: "text" as const, text: errorText }],
+            details: { success: false },
+          };
+          logResult(errorResult, _toolCallId, sanitizedName, true);
+          throw new Error(errorText);
+        }
+
+        const value: McpToolCallResult = result.value;
+
+        const capText = (text: string): string => {
+          const profile = resolveSourceProfile(sanitizedName, toolSourceProfiles?.[sanitizedName]);
+          if (text.length <= profile.maxChars) return text;
+          const originalSize = text.length;
+          const { truncated, wasTruncated } = truncateJsonAware(text, profile.maxChars);
+          if (wasTruncated) {
+            onResultTruncated?.({
+              server: serverName,
+              tool: tool.name,
+              originalSize,
+              truncatedSize: truncated.length,
+              traceId: tryGetContext()?.traceId ?? "",
+            });
+          }
+          return truncated;
+        };
+
+        if (value.isError) {
+          const rawErrorText = value.content
+            .filter((c) => c.type === "text" && c.text)
+            .map((c) => c.text)
+            .join("\n");
+          const sanitizedErrorText = capText(sanitizeMcpToolResult(rawErrorText));
+          const errorText = sanitizedErrorText
+            ? wrapExternalContent(sanitizedErrorText, {
+                source: "mcp_tool",
+                onSuspiciousContent,
+              })
+            : "MCP tool returned an error with no details";
+          const isErrorResult = {
+            content: [{ type: "text" as const, text: errorText }],
+            details: { success: false },
+          };
+          logResult(isErrorResult, _toolCallId, sanitizedName, true);
+          throw new Error(errorText);
+        }
+
+        // Collect text content from the MCP result
+        let textParts = value.content
+          .filter((c) => c.type === "text" && c.text)
+          .map((c) => c.text!)
+          .join("\n");
+
+        // Sanitize MCP result (NFKC normalization + invisible char removal)
+        textParts = sanitizeMcpToolResult(textParts);
+
+        // Source-gate: cap text to resolved profile's maxChars limit.
+        textParts = capText(textParts);
+
+        // Wrap AFTER cap so SECURITY NOTICE boilerplate is preserved
+        // (wrap-then-cap would truncate the closing <<<END_UNTRUSTED_xxx>>>
+        // marker mid-content). Fixed ~150-byte wrapper boilerplate sits beyond
+        // the per-source maxChars budget — the cap governs content size, not
+        // wrapper overhead. The `if (textParts)` guard preserves the empty-
+        // content fallback "Tool returned no text content" path below.
+        if (textParts) {
+          textParts = wrapExternalContent(textParts, {
+            source: "mcp_tool",
+            onSuspiciousContent,
+          });
+        }
+
+        const successResult = {
+          content: [{ type: "text" as const, text: textParts || "Tool returned no text content" }],
+          details: { success: true },
+        };
+        logResult(successResult, _toolCallId, sanitizedName, false);
+        return successResult;
       },
     };
   });

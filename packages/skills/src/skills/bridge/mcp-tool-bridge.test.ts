@@ -209,13 +209,9 @@ describe("mcpToolsToAgentTools", () => {
     const callTool = vi.fn().mockResolvedValue(err(new Error("Server unreachable")));
     const tools = mcpToolsToAgentTools([makeTool()], callTool);
 
-    const result = await tools[0].execute("call-1", { query: "test" });
-
-    expect(result.content).toHaveLength(1);
-    const text = (result.content[0] as { type: "text"; text: string }).text;
-    expect(text).toContain("MCP tool error");
-    expect(text).toContain("Server unreachable");
-    expect(result.details).toEqual({ success: false });
+    await expect(tools[0].execute("call-1", { query: "test" })).rejects.toThrow(
+      "MCP tool error: Server unreachable",
+    );
   });
 
   it("execute() handles MCP isError flag", async () => {
@@ -227,11 +223,7 @@ describe("mcpToolsToAgentTools", () => {
     );
     const tools = mcpToolsToAgentTools([makeTool()], callTool);
 
-    const result = await tools[0].execute("call-1", {});
-
-    const text = (result.content[0] as { type: "text"; text: string }).text;
-    expect(text).toBe("Permission denied");
-    expect(result.details).toEqual({ success: false });
+    await expect(tools[0].execute("call-1", {})).rejects.toThrow("Permission denied");
   });
 
   it("propagates MCP isError through the SDK failure boundary", async () => {
@@ -266,12 +258,9 @@ describe("mcpToolsToAgentTools", () => {
     const callTool = vi.fn().mockRejectedValue(new Error("Connection destroyed"));
     const tools = mcpToolsToAgentTools([makeTool()], callTool);
 
-    const result = await tools[0].execute("call-1", { query: "test" });
-
-    const text = (result.content[0] as { type: "text"; text: string }).text;
-    expect(text).toContain("crashed unexpectedly");
-    expect(text).toContain("Connection destroyed");
-    expect(result.details).toEqual({ success: false });
+    await expect(tools[0].execute("call-1", { query: "test" })).rejects.toThrow(
+      'MCP tool "mcp:db-server/search" crashed unexpectedly: Connection destroyed',
+    );
   });
 
   it("converts multiple tools", () => {
@@ -335,7 +324,7 @@ describe("mcpToolsToAgentTools source-gate truncation", () => {
     expect(text).not.toContain("[MCP tool result truncated");
   });
 
-  it("does NOT truncate error results (isError: true)", async () => {
+  it("caps and wraps error results before throwing", async () => {
     const largeError = "E".repeat(60_000);
     const callTool = vi.fn().mockResolvedValue(
       ok({
@@ -344,13 +333,19 @@ describe("mcpToolsToAgentTools source-gate truncation", () => {
       }),
     );
     const tools = mcpToolsToAgentTools([makeTool()], callTool);
-    const result = await tools[0].execute("call-1", {});
+    let thrown: unknown;
+    try {
+      await tools[0].execute("call-1", {});
+    } catch (error: unknown) {
+      thrown = error;
+    }
 
-    const text = (result.content[0] as { type: "text"; text: string }).text;
-    // Error results pass through without truncation
-    expect(text).toBe(largeError);
-    expect(text).not.toContain("[MCP tool result truncated");
-    expect(result.details).toEqual({ success: false });
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    expect(message.length).toBeLessThan(60_000);
+    expect(message).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+    expect(message).toMatch(/<<<END_UNTRUSTED_[a-f0-9]+>>>/);
+    expect(message).toContain("E".repeat(100));
   });
 
   it("custom toolSourceProfiles override the default maxChars", async () => {
@@ -786,7 +781,7 @@ describe("mcpToolsToAgentTools - wrapExternalContent integration", () => {
     );
   });
 
-  it("does NOT wrap error-path content (isError=true ships diagnostics raw)", async () => {
+  it("wraps error-path content before the SDK receives it", async () => {
     const tools: McpToolDefinition[] = [{
       qualifiedName: "mcp:test-server/echo",
       name: "echo",
@@ -800,11 +795,18 @@ describe("mcpToolsToAgentTools - wrapExternalContent integration", () => {
     }));
 
     const agentTools = mcpToolsToAgentTools(tools, callTool);
-    const result = await agentTools[0].execute("call-1", {});
+    let thrown: unknown;
+    try {
+      await agentTools[0].execute("call-1", {});
+    } catch (error: unknown) {
+      thrown = error;
+    }
 
-    const text = (result.content[0] as { text: string }).text;
-    expect(text).not.toMatch(/<<<UNTRUSTED_/);
-    expect(text).toContain("tool failed: invalid input");
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    expect(message).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+    expect(message).toMatch(/<<<END_UNTRUSTED_[a-f0-9]+>>>/);
+    expect(message).toContain("tool failed: invalid input");
   });
 
   it("cap-then-wrap order: profile cap applies to content, wrap markers preserved intact", async () => {
