@@ -198,7 +198,14 @@ export async function callTool(
         {
           name: toolName,
           arguments: args,
-          ...(progressToken ? { _meta: { progressToken } } : {}),
+          ...(progressToken
+            ? {
+                _meta: {
+                  progressToken,
+                  "comis.ai/requestTraceId": progressToken,
+                },
+              }
+            : {}),
         },
         undefined,
         { timeout: state.options.callToolTimeoutMs },
