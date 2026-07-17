@@ -108,7 +108,7 @@ export async function callTool(
   args: Record<string, unknown>,
 ): Promise<Result<McpToolCallResult, Error>> {
   const { logger } = deps;
-  const progressToken = tryGetContext()?.traceId;
+  const requestTraceId = tryGetContext()?.traceId;
   const parsed = parseQualifiedName(qualifiedName);
   if (!parsed) {
     return err(new Error(`Invalid MCP tool qualified name: "${qualifiedName}"`));
@@ -198,17 +198,24 @@ export async function callTool(
         {
           name: toolName,
           arguments: args,
-          ...(progressToken
+          ...(requestTraceId
             ? {
                 _meta: {
-                  progressToken,
-                  "comis.ai/requestTraceId": progressToken,
+                  "comis.ai/requestTraceId": requestTraceId,
                 },
               }
             : {}),
         },
         undefined,
-        { timeout: state.options.callToolTimeoutMs },
+        {
+          timeout: state.options.callToolTimeoutMs,
+          ...(requestTraceId
+            ? {
+                onprogress: () => {},
+                resetTimeoutOnProgress: true,
+              }
+            : {}),
+        },
       );
 
       // Verify generation hasn't changed during the call (stale connection guard)
