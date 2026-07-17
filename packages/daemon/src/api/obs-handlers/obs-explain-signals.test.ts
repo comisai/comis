@@ -115,9 +115,9 @@ function event(
 
 describe("toIncidentSignals — turnCount (flag cumulative-across-turns toolStats)", () => {
   // The trajectory JSONL is append-only across session.reset_conversation severs, so one
-  // file (and the whole-session toolStats) can span MANY turns — each turn a distinct
-  // envelope traceId. turnCount surfaces that span so a reader does not misread a
-  // multi-turn count as this-turn (a near-miss that cost a live-triage cycle).
+  // file (and the whole-session toolStats) can span many turns. prompt.submitted is the
+  // authoritative turn anchor; tool lifecycle records support sparse historical traces.
+  // turnCount surfaces that span so a reader does not misread cumulative counts as one turn.
   const evt = (traceId: string, type: string, seq: number, data: Record<string, unknown>): Record<string, unknown> => ({
     traceSchema: "comis-trajectory",
     schemaVersion: 1,
@@ -142,6 +142,34 @@ describe("toIncidentSignals — turnCount (flag cumulative-across-turns toolStat
       evt("only-turn", "tool.result", 2, { toolName: "web_search", success: true }),
     ]);
     expect(s.turnCount).toBeUndefined();
+  });
+
+  it("does not count a daemon-global health record as another agent turn", () => {
+    const sessionKey = "default:user_a:chat_a:peer:user_a";
+    const s = toIncidentSignals([
+      evt("agent-turn", "prompt.submitted", 1, { promptChars: 12 }),
+      evt(sessionKey, "channel.health_changed", 2, {
+        channelType: "telegram",
+        previousState: "busy",
+        currentState: "healthy",
+        connectionMode: "polling",
+      }),
+    ]);
+    expect(s.turnCount).toBeUndefined();
+  });
+
+  it("counts prompt anchors while ignoring daemon-global fallback trace ids", () => {
+    const s = toIncidentSignals([
+      evt("agent-turn-a", "prompt.submitted", 1, { promptChars: 12 }),
+      evt("session-fallback", "channel.health_changed", 2, {
+        channelType: "telegram",
+        previousState: "busy",
+        currentState: "healthy",
+        connectionMode: "polling",
+      }),
+      evt("agent-turn-b", "prompt.submitted", 3, { promptChars: 18 }),
+    ]);
+    expect(s.turnCount).toBe(2);
   });
 });
 

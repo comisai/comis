@@ -582,7 +582,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     synthesizedBreakerTools: new Set(),
     misclassTokenByTool: new Map(),
     seenToolResultCallIds: new Set(),
-    turnTraceIds: new Set(),
+    promptTraceIds: new Set(),
+    toolTraceIds: new Set(),
     recallCount: 0,
     recallZeroHits: 0,
     crossUserRecalls: 0,
@@ -606,11 +607,17 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       if (envelopeAgentId !== undefined && envelopeAgentId.length > 0) acc.agentId = envelopeAgentId;
     }
     if (rec.traceSchema === "comis-trajectory") {
-      // Count distinct turns (envelope traceId, one per agent turn) so the
-      // report can flag whole-session toolStats as cumulative-across-N-turns (the
-      // trajectory JSONL is append-only across reset_conversation severs).
+      // Count only explicit per-turn anchors. Daemon-global records can ride an
+      // open session recorder outside request context and receive the session id
+      // as their fallback trace id; counting every envelope therefore fabricates
+      // extra turns. Tool records retain support for sparse historical traces that
+      // do not contain prompt.submitted.
       const tid = asString(rec.traceId);
-      if (tid !== undefined && tid.length > 0) acc.turnTraceIds.add(tid);
+      const type = asString(rec.type) ?? "";
+      if (tid !== undefined && tid.length > 0) {
+        if (type === "prompt.submitted") acc.promptTraceIds.add(tid);
+        else if (type.startsWith("tool.")) acc.toolTraceIds.add(tid);
+      }
       handleEventRecord(acc, rec);
     } else if (rec.traceSchema === "comis-cache-trace") {
       // Cache-layer telemetry — NOT tool evidence. Its tool:before/tool:after
@@ -668,6 +675,9 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
   }
 
   const learning = buildLearningSignal(acc.learning); // undefined ⇒ omitted below
+  const turnTraceCount = acc.promptTraceIds.size > 0
+    ? acc.promptTraceIds.size
+    : acc.toolTraceIds.size;
   return {
     sessionKey: acc.sessionKey,
     toolStats,
@@ -771,7 +781,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     // Surface the turn span ONLY when >1 — it flags the whole-session toolStats
     // as cumulative across N turns (the trajectory is append-only across severs), so a
     // reader does not misread a multi-turn count as this-turn. Absent for a 1-turn session.
-    ...(acc.turnTraceIds.size > 1 ? { turnCount: acc.turnTraceIds.size } : {}),
+    ...(turnTraceCount > 1 ? { turnCount: turnTraceCount } : {}),
     ...(learning !== undefined ? { learning } : {}),
     ...(acc.agentId !== undefined ? { agentId: acc.agentId } : {}),
     ...(acc.channel !== undefined ? { channel: acc.channel } : {}),

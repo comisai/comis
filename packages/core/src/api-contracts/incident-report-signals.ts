@@ -317,12 +317,11 @@ export interface IncidentSignals {
    */
   modelTokens?: { input: number; output: number; cacheRead: number; cacheCreation: number };
   /**
-   * The number of DISTINCT turns (envelope
-   * `traceId`, one per agent turn) the trajectory spans. The session trajectory JSONL
-   * is append-only across `session.reset_conversation` severs, so the whole-session
-   * `toolStats` can be the SUM across many turns — surfacing this (only when >1) flags
-   * the counts as cumulative so a reader does not misread a multi-turn count as
-   * this-turn. Absent for a single-turn session.
+   * The number of distinct agent turns the trajectory spans, derived from
+   * `prompt.submitted` trace ids with tool-lifecycle trace ids as the sparse-history
+   * fallback. The session trajectory JSONL is append-only across
+   * `session.reset_conversation` severs, so whole-session `toolStats` can be the sum
+   * across many turns. Present only when greater than one.
    */
   turnCount?: number;
   /**

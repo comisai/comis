@@ -529,10 +529,9 @@ export const IncidentReportSchema = z.object({
       chunksNotSent: z.number(),
     })
     .optional(),
-  /** Distinct turns (envelope traceId) the
-   *  trajectory spans. Present only when >1 — it flags the whole-session toolStats as
-   *  cumulative-across-N-turns (the trajectory JSONL is append-only across severs), so
-   *  a reader does not misread a multi-turn count as this-turn. Additive (schemaVersion 1). */
+  /** Distinct agent turns derived from prompt anchors, with tool-lifecycle
+   *  trace ids as the sparse-history fallback. Present only when greater than one so
+   *  whole-session toolStats cannot be mistaken for one turn's counts. */
   turnCount: z.number().optional(),
   summary: z.string(),
   likelyRootCause: z
