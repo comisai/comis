@@ -4,6 +4,7 @@
 import { chmod, open, readFile, rename, unlink } from "node:fs/promises";
 import { randomBytes, randomUUID } from "node:crypto";
 import { dirname } from "node:path";
+import { toSafeErrorLogString } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 
 interface StorageLogger {
@@ -186,6 +187,7 @@ export function createParentDecisionReservationStore(
     if (!persisted.ok) {
       deps.logger?.error?.(
         {
+          err: toSafeErrorLogString(persisted.error),
           errorKind: "resource" as const,
           hint: "restore dead-letter storage before executing the reserved parent decision",
         },
@@ -411,12 +413,6 @@ async function atomicWrite(
   const opened = await fromPromise(operations.open(temporaryPath, "wx", 0o600));
   if (!opened.ok) return writeFailure(opened.error, "snapshot_unchanged");
 
-  const restricted = await fromPromise(opened.value.chmod(0o600));
-  if (!restricted.ok) {
-    await closeAfter(opened.value, restricted);
-    await removeTemporary(temporaryPath, operations);
-    return writeFailure(restricted.error, "snapshot_unchanged");
-  }
   const written = await fromPromise(opened.value.writeFile(content, "utf8"));
   if (!written.ok) {
     await closeAfter(opened.value, written);

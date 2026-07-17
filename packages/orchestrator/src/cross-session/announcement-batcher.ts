@@ -545,6 +545,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         deps.logger?.warn(
           {
             runId: params.runId,
+            err: toSafeErrorLogString(boundary.error),
             errorKind: "resource" as const,
             hint: "Restore decision-quarantine storage before retrying the same completion",
           },
@@ -556,6 +557,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         deps.logger?.warn(
           {
             runId: params.runId,
+            err: toSafeErrorLogString(boundary.value.error),
             errorKind: "resource" as const,
             hint: "Restore decision-quarantine storage before retrying the same completion",
           },

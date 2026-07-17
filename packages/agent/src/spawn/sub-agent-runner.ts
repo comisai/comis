@@ -1135,6 +1135,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       }, "Ghost run detected and force-failed");
 
       run.status = "failed";
+      deliverySuppressedRunIds.add(runId);
       run.completedAt = now;
       run.error = `Ghost run: stuck in 'running' for ${(runningDurationMs / 1000).toFixed(0)}s (grace: ${(ghostGraceMs / 1000).toFixed(0)}s)`;
       removeDedupEntry(run);
@@ -2073,10 +2074,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         );
 
         // Guard: if already killed, skip completion logic
-        if (runs.get(runId)?.status === "failed") return;
+        if (deliverySuppressedRunIds.has(runId)) return;
 
         const completedAt = clock.now();
-        run.status = "completed";
+        const isSuccess = result.finishReason === "stop" || result.finishReason === "end_turn";
+        run.status = isSuccess ? "completed" : "failed";
         run.completedAt = completedAt;
         run.result = result;
         removeDedupEntry(run);
@@ -2209,7 +2211,6 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }
 
         // Emit completion event
-        const isSuccess = result.finishReason === "stop" || result.finishReason === "end_turn";
         deps.eventBus.emit("session:sub_agent_completed", {
           runId, agentId: params.agentId, success: isSuccess,
           runtimeMs, tokensUsed: result.tokensUsed.total,
@@ -2337,11 +2338,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
         // A bounded shutdown may stop the run while post-processing is still
         // active. The attributed failure notice then owns delivery; never
-        // enqueue a late success behind the final batch drain.
-        if (
-          runs.get(runId)?.status === "failed"
-          || deliverySuppressedRunIds.has(runId)
-        ) return;
+        // enqueue a late terminal result behind the final batch drain.
+        if (deliverySuppressedRunIds.has(runId)) return;
 
         // Route provider_degraded to failure notification path
         // When isDegraded() skips the LLM call, executor returns empty response with
@@ -2455,7 +2453,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }
       } catch (error: unknown) {
         // Guard: if already killed, skip error handling logic
-        if (run.status === "failed") return;
+        if (deliverySuppressedRunIds.has(runId)) return;
 
         const completedAt = clock.now();
         run.status = "failed";
@@ -2606,6 +2604,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       const runtimeMs = completedAt - run.startedAt;
 
       run.status = "failed";
+      deliverySuppressedRunIds.add(runId);
       run.completedAt = completedAt;
       run.error = `Execution timeout: exceeded ${runTimeoutMs}ms wall-clock limit`;
       removeDedupEntry(run);
@@ -2836,6 +2835,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
     const killedBy = opts?.killedBy ?? "parent";
     run.status = "failed";
+    deliverySuppressedRunIds.add(runId);
     run.completedAt = clock.now();
     removeDedupEntry(run);
     run.error = opts?.reason
@@ -3066,7 +3066,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       }
       for (const runId of remaining) {
         const run = runs.get(runId);
-        if (run?.status === "completed") {
+        if (run?.result !== undefined) {
           deliverySuppressedRunIds.add(runId);
           if (run.announceChannelType && run.announceChannelId) {
             trackFailureNotification(deliverFailureNotification({
