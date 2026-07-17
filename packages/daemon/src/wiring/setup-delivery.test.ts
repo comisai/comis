@@ -98,6 +98,7 @@ function createMockMirror(): DeliveryMirrorPort & {
     record: vi.fn(async (entry: Record<string, unknown>) => { recordCalls.push(entry); return ok("test-id"); }),
     pending: vi.fn(async () => ok([] as DeliveryMirrorEntry[])),
     acknowledge: vi.fn(async () => ok(undefined)),
+    clearSession: vi.fn(async () => ok(0)),
     pruneOld: vi.fn(async () => ok(0)),
   };
 }

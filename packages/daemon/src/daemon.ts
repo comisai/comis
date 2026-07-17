@@ -766,7 +766,7 @@ function buildRpcDispatchDeps(deps: {
     recallTraceEnabled: c.container.config.diagnostics?.recallTrace?.enabled ?? false, // memory.recall_trace honest-empty gate
     tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
-    sessionStore: g.sessionStoreBridge, crossSessionSender: c.crossSessionSender, subAgentRunner: c.subAgentRunner,
+    sessionStore: g.sessionStoreBridge, crossSessionSender: c.crossSessionSender, subAgentRunner: c.subAgentRunner, deliveryMirror: c.deliveryMirror,
     ...(c.resolveRootRunId ? { resolveRootRunId: c.resolveRootRunId } : {}), // session→rootRunId resolver so session.spawn propagates one tree root (ceiling/kill/budget key on it).
     // The daemon-wide LeaseManager (autonomy-handlers gate lease.revoke/run.kill on it).
     // durableRuns (revoke ALSO invalidates the persisted record) + outwardLedger (the message.send/reply/react wrap). Absent ⇒ degrade (no revoke RPC / pass-through wrap).

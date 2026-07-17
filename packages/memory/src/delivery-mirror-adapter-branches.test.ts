@@ -64,6 +64,15 @@ describe("SqliteDeliveryMirrorAdapter — branch-gap coverage", () => {
     }
   });
 
+  it("returns err result when clearSession runs against a closed database", async () => {
+    db.close();
+    const result = await mirror.clearSession("tg:dm:user-1");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(Error);
+    }
+  });
+
   it("returns err result when pruneOld runs against a closed database", async () => {
     db.close();
     const result = await mirror.pruneOld(0);

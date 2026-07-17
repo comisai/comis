@@ -4,7 +4,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:63–100`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 18 (11 required + 7 optional + 0 stale-fallback)
+**Field count:** 22 (11 required + 11 optional + 0 stale-fallback)
 **Location:** co-located with @comis/daemon package. The `files: ["dist", "bundled-skills"]` entry in `packages/daemon/package.json` excludes this doc from the npm tarball.
 
 ## Field Classification
@@ -29,6 +29,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | approvalGate | optional | session.delete / session.reset skip approval-cache clearing (`session-handlers.ts:899` `deps.approvalGate?.clearApprovalCache`); no-op when absent | packages/daemon/src/api/types.ts:98 |
 | summarizeSession | optional | session.search returns raw matches without an LLM-summary (`session-handlers.ts:498` gate); only fires when both `shouldSummarize` and the dep are truthy | packages/daemon/src/api/types.ts:100 |
 | deliveryQueue | optional | session.history skips the deliveryStatus join (`session-read.ts` `loadPendingKeySet`); every message reported as `confirmed` when absent (no channel queue == nothing pending to mark) | packages/daemon/src/api/types.ts:102 |
+| deliveryMirror | optional | session.delete, session.reset, and session.reset_conversation fail closed before deleting transcript layers; production wires the SQLite adapter or the no-op adapter, so absence means daemon startup is incomplete | packages/daemon/src/api/types.ts:109 |
 | lcdStore | optional | session.reset_conversation is the only consumer; it fails CLOSED when absent (`session-archive.ts:135` `if (!deps.lcdStore) throw "LCD store not available"`) rather than silently returning 0 — absent only before full daemon init | packages/daemon/src/api/types.ts:109 |
 | memoryPort | optional | session.reset_conversation `--memory` gates on it (`session-archive.ts` `if (!deps.memoryPort?.deleteBySessionKey)`); when absent the --memory flag logs a not-available WARN and clears LCD + sessionStore only (no RAG delete) — same object as MemoryApiDeps.memoryAdapter, threaded at the composition root | packages/daemon/src/api/types.ts:117 |
 | consolidationStore | optional | session.reset_conversation `--memory` unlink/purge gates on it (`session-archive.ts` `if (… && deps.consolidationStore)`); when absent the consolidated-observation unlink + --purge-derived steps are skipped (the by-session memory delete itself still runs) — same instance as MemoryApiDeps.consolidationStore | packages/daemon/src/api/types.ts:122 |
@@ -37,12 +38,12 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Removed Fields (stale-fallback — deleted)
 
-**None.** Every optional field has a verified production absent-mode code path: `agentDataDir` gates the JSONL session scan, `approvalGate` gates approval-cache clearing on session.delete/reset, `summarizeSession` gates the LLM summarization branch of session.search, `deliveryQueue` gates the deliveryStatus join, `lcdStore` gates session.reset_conversation (fail-closed throw when absent), `memoryPort` + `consolidationStore` gate the session.reset_conversation `--memory` honest reset (graceful degrade when absent), `clearAgentSessionState` gates the executor session-state drop on reset/delete (when absent the state survives until session:expired TTL), and `destroyRuntimeSession` gates the Layer-3 pi-runtime destroy on reset (when absent the handler WARNs with the resurrection consequence and reports `runtimeSessionDestroyed: false`). Daemon wires them unconditionally in `buildRpcDispatchDeps` when their upstream prerequisites exist; tests omit them to exercise the absent-branch paths.
+**None.** Every optional field has a verified production absent-mode code path: `agentDataDir` gates the JSONL session scan, `approvalGate` gates approval-cache clearing on session.delete/reset, `summarizeSession` gates the LLM summarization branch of session.search, `deliveryQueue` gates the deliveryStatus join, `deliveryMirror` and `lcdStore` make session.reset_conversation fail closed when absent, `memoryPort` + `consolidationStore` gate the session.reset_conversation `--memory` honest reset (graceful degrade when absent), `clearAgentSessionState` gates the executor session-state drop on reset/delete (when absent the state survives until session:expired TTL), and `destroyRuntimeSession` gates the Layer-3 pi-runtime destroy on reset (when absent the handler WARNs with the resurrection consequence and reports `runtimeSessionDestroyed: false`). Daemon wires the mirror and LCD dependencies unconditionally in `buildRpcDispatchDeps`; tests use explicit no-op adapters where persistence is not under test.
 
 ## Summary
 
 - **Pre-audit count:** 16
-- **Final count:** 18 (11 required + 7 optional)
+- **Final count:** 22 (11 required + 11 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

@@ -29,6 +29,7 @@ import type {
   SecretStorePort,
   ExecGitFn,
   MutableSecretManager,
+  DeliveryMirrorPort,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi, SqliteMemoryAdapter, createEmbeddingQueue } from "@comis/memory";
@@ -97,6 +98,13 @@ export interface SessionsApiDeps {
    *  consumes the derived field to filter to CONFIRMED-only messages, but the
    *  field is also useful to the dashboard / observers. */
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
+  /** Session-mirror persistence for session delete/reset operations. Lifecycle
+   *  handlers delete every entry for the exact session before clearing
+   *  transcript layers, preventing pending outbound text from entering the next prompt.
+   *  Optional at the dependency boundary so incomplete startup is representable;
+   *  the reset handler fails closed when absent. Production always wires either
+   *  the SQLite adapter or the no-op adapter. */
+  deliveryMirror?: DeliveryMirrorPort;
   /** LCD lossless-store write+run surface — `session.reset_conversation`
    *  calls `deleteConversationLcd` in `runOnConversation` to clear lcd_* rows.
    *  Optional: the handler fails-closed (throws "LCD store not available") when

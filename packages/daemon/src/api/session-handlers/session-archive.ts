@@ -7,12 +7,8 @@
  *   - session.delete: delete session + return transcript (admin-only)
  *   - session.reset: clear session messages while preserving metadata
  *   - session.export: dump full session payload (admin-only)
- *   - session.reset_conversation: COMPLETE cross-mode forget — clears ALL
- *     THREE transcript layers: the LCD lossless-store history, the daemon
- *     sessionStore working transcript, and the pi runtime session (observed
- *     live: without the runtime destroy the surviving JSONL re-ingested
- *     wholesale on the next turn and the "forgotten" conversation
- *     resurrected).
+ *   - session.reset_conversation: complete cross-mode forget of delivery-mirror,
+ *     LCD, sessionStore, and pi-runtime prompt-bearing state.
  *
  * @module
  */
@@ -29,6 +25,7 @@ import type { ContextStoreScope } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, loadSessionAnyStore, type SessionHandlerDeps } from "./session-helpers.js";
 import { AuthorizationError } from "../errors.js";
+import { clearSessionDeliveryMirror } from "./session-delivery-mirror.js";
 
 /**
  * Bind the session archive/lifecycle handlers. Object-spread compatible with
@@ -58,6 +55,11 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
         messageCount: data.messages.length,
       };
 
+      const deliveryMirrorRowsDeleted = await clearSessionDeliveryMirror(
+        deps,
+        sessionKey,
+        "session.delete",
+      );
       deps.sessionStore.deleteByFormattedKey(sessionKey);
 
       // Clear approval cache entries for the deleted session to prevent
@@ -113,6 +115,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
           method: SessionDeleteContract.method,
           sessionKey,
           messageCount: transcript.messageCount,
+          deliveryMirrorRowsDeleted,
           lcdRowsDeleted,
           runtimeSessionDestroyed,
         },
@@ -135,6 +138,11 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
 
       const previousMessageCount = data.messages.length;
 
+      const deliveryMirrorRowsDeleted = await clearSessionDeliveryMirror(
+        deps,
+        sessionKey,
+        "session.reset",
+      );
       // Clear messages but preserve metadata (identity)
       deps.sessionStore.saveByFormattedKey(sessionKey, [], data.metadata);
 
@@ -154,7 +162,7 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       deps.approvalGate?.clearApprovalCache(sessionKey);
 
       deps.logger.info(
-        { method: SessionResetContract.method, sessionKey, previousMessageCount, runtimeSessionDestroyed },
+        { method: SessionResetContract.method, sessionKey, previousMessageCount, deliveryMirrorRowsDeleted, runtimeSessionDestroyed },
         "Session reset (messages cleared, identity preserved)",
       );
 
@@ -188,10 +196,11 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
 
     // COMPLETE cross-mode conversation reset (an LCD-only reset is not enough).
     //
-    // This operation clears BOTH layers to guarantee a clean slate in all modes:
-    //   1. LCD store (dag mode: the durable history the model reads at turn-start)
-    //   2. Daemon sessionStore (both modes: the working JSONL-backed transcript
-    //      that feeds state.messages on the next turn)
+    // This operation clears every prompt-bearing layer needed for a clean slate:
+    //   1. Delivery mirror (pending outbound text injected at prompt assembly)
+    //   2. LCD store (dag mode: durable history read at turn-start)
+    //   3. Daemon sessionStore (working transcript for the next turn)
+    //   4. Pi runtime session (live JSONL that can repopulate the stores)
     //
     // Best-effort on each layer — neither empty LCD nor absent sessionStore
     // is an error (pipeline sessions may have no LCD rows; a dag session may
@@ -209,7 +218,6 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
 
       // Fail-closed: lcdStore is optional on SessionsApiDeps; must not silently no-op.
       if (!deps.lcdStore) throw new Error("LCD store not available — daemon not fully initialized");
-
       const userParams = stripInternalFields(rawParams);
       const params = SessionResetConversationContract.request.parse(userParams);
 
@@ -226,6 +234,12 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
         tenantId: deps.tenantId,
         sessionKey,
       };
+
+      const deliveryMirrorRowsDeleted = await clearSessionDeliveryMirror(
+        deps,
+        sessionKey,
+        "session.reset_conversation",
+      );
 
       // Layer 1: LCD store — serialized against concurrent live ingest.
       const lcdRowsDeleted = await deps.lcdStore.runOnConversation(
@@ -285,13 +299,14 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
           conversationId: scope.conversationId,
           agentId: scope.agentId,
           tenantId: scope.tenantId,
+          deliveryMirrorRowsDeleted,
           lcdRowsDeleted,
           sessionMessagesCleared,
           runtimeSessionDestroyed,
           durationMs: systemNowMs() - startMs,
           submodule: "session-reset-conversation",
         },
-        "Conversation reset (LCD + sessionStore + runtime)",
+        "Conversation reset (delivery mirror + LCD + sessionStore + runtime)",
       );
 
       // --memory honest reset. Deletes the RAG-memory

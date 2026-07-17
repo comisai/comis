@@ -82,6 +82,10 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
     WHERE id = ?
   `);
 
+  const clearSessionStmt = db.prepare(`
+    DELETE FROM delivery_mirror WHERE session_key = ?
+  `);
+
   const pruneStmt = db.prepare(`
     DELETE FROM delivery_mirror WHERE created_at < ?
   `);
@@ -133,6 +137,15 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
         });
         ackTx(ids);
         return Promise.resolve(ok(undefined));
+      } catch (e) {
+        return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
+      }
+    },
+
+    clearSession(sessionKey: string): Promise<Result<number, Error>> {
+      try {
+        const result = clearSessionStmt.run(sessionKey);
+        return Promise.resolve(ok(result.changes));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));
       }

@@ -116,6 +116,22 @@ describe("createSqliteDeliveryMirror", () => {
     expect(pending.value).toHaveLength(0);
   });
 
+  it("clearSession() deletes only entries belonging to the requested session", async () => {
+    await mirror.record(makeInput({ sessionKey: "sess-a", idempotencyKey: "clear-a-1" }));
+    await mirror.record(makeInput({ sessionKey: "sess-a", idempotencyKey: "clear-a-2" }));
+    await mirror.record(makeInput({ sessionKey: "sess-b", idempotencyKey: "clear-b-1" }));
+
+    const cleared = await mirror.clearSession("sess-a");
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect(cleared.value).toBe(2);
+
+    const pendingA = await mirror.pending("sess-a");
+    const pendingB = await mirror.pending("sess-b");
+    expect(pendingA.ok && pendingA.value).toHaveLength(0);
+    expect(pendingB.ok && pendingB.value).toHaveLength(1);
+  });
+
   it("pruneOld() removes entries older than maxAgeMs", async () => {
     const now = Date.now();
     // Insert old entry via direct SQL
@@ -171,6 +187,10 @@ describe("createNoOpDeliveryMirror", () => {
 
     const ackResult = await noop.acknowledge(["id1"]);
     expect(ackResult.ok).toBe(true);
+
+    const clearResult = await noop.clearSession("s");
+    expect(clearResult.ok).toBe(true);
+    if (clearResult.ok) expect(clearResult.value).toBe(0);
 
     const pruneResult = await noop.pruneOld(1000);
     expect(pruneResult.ok).toBe(true);

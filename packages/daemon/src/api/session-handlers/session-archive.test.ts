@@ -29,7 +29,7 @@ import { describe, it, expect, vi } from "vitest";
 import { ok, err } from "@comis/shared";
 import { bindSessionArchiveHandlers } from "./session-archive.js";
 import type { SessionHandlerDeps } from "./session-helpers.js";
-import type { ContextStorePort, MemoryPort, MemoryConsolidationStore } from "@comis/core";
+import type { ContextStorePort, DeliveryMirrorPort, MemoryPort, MemoryConsolidationStore } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -123,6 +123,9 @@ function makeDeps(overrides: Partial<SessionHandlerDeps> = {}): SessionHandlerDe
     securityConfig: { agentToAgent: { enabled: true, waitTimeoutMs: 5000 } },
     tenantId: "tenant1",
     logger: makeLogger(),
+    deliveryMirror: {
+      clearSession: vi.fn().mockResolvedValue(ok(0)),
+    } as unknown as DeliveryMirrorPort,
   };
   return { ...base, ...overrides } as SessionHandlerDeps;
 }
@@ -265,6 +268,80 @@ describe("session.reset_conversation handler", () => {
     });
 
     expect(clearAgentSessionState).toHaveBeenCalledWith(SESSION_KEY);
+  });
+
+  it("session.delete clears delivery-mirror text before the session key can be reused", async () => {
+    const clearSession = vi.fn().mockResolvedValue(ok(1));
+    const deliveryMirror = { clearSession } as unknown as DeliveryMirrorPort;
+    const deps = makeDeps({ deliveryMirror } as unknown as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.delete"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    });
+
+    expect(clearSession).toHaveBeenCalledWith(SESSION_KEY);
+  });
+
+  it("session.reset clears delivery-mirror text before starting fresh history", async () => {
+    const clearSession = vi.fn().mockResolvedValue(ok(1));
+    const deliveryMirror = { clearSession } as unknown as DeliveryMirrorPort;
+    const deps = makeDeps({ deliveryMirror } as unknown as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.reset"]!({ session_key: SESSION_KEY });
+
+    expect(clearSession).toHaveBeenCalledWith(SESSION_KEY);
+  });
+
+  it("clears pending delivery-mirror text so the next prompt cannot resurrect the reset reply", async () => {
+    const clearSession = vi.fn().mockResolvedValue(ok(1));
+    const deliveryMirror = { clearSession } as unknown as DeliveryMirrorPort;
+    const deps = makeDeps({
+      lcdStore: makeLcdStore(1),
+      deliveryMirror,
+    } as unknown as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await handlers["session.reset_conversation"]!({
+      session_key: SESSION_KEY,
+      _trustLevel: "admin",
+    });
+
+    expect(clearSession).toHaveBeenCalledWith(SESSION_KEY);
+  });
+
+  it("fails before deleting transcript layers when the delivery mirror cannot be cleared", async () => {
+    const clearSession = vi.fn().mockResolvedValue(err(new Error("mirror unavailable")));
+    const deliveryMirror = { clearSession } as unknown as DeliveryMirrorPort;
+    const lcdStore = makeLcdStore(1);
+    const sessionStore = makeSessionStore();
+    const deps = makeDeps({
+      lcdStore,
+      sessionStore,
+      deliveryMirror,
+    } as unknown as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlers(deps);
+
+    await expect(
+      handlers["session.reset_conversation"]!({
+        session_key: SESSION_KEY,
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow(/delivery mirror/i);
+
+    expect(lcdStore.runOnConversation).not.toHaveBeenCalled();
+    expect(sessionStore.saveByFormattedKey).not.toHaveBeenCalled();
+    expect(deps.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "session.reset_conversation",
+        conversationId: SESSION_KEY,
+        errorKind: "dependency",
+        hint: expect.stringMatching(/delivery mirror/i),
+      }),
+      expect.stringMatching(/delivery mirror/i),
+    );
   });
 
   it("H4b: deleteConversationLcd called inside runOnConversation (scope threaded correctly)", async () => {

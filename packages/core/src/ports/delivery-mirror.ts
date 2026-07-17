@@ -18,7 +18,8 @@ import type { Result } from "@comis/shared";
  * A delivery mirror entry representing a single delivered message recorded
  * for later prompt injection.
  *
- * All fields are readonly -- mutations happen via port methods (acknowledge/pruneOld).
+ * All fields are readonly -- mutations happen via port methods
+ * (acknowledge/clearSession/pruneOld).
  */
 export interface DeliveryMirrorEntry {
   readonly id: string;
@@ -79,6 +80,15 @@ export interface DeliveryMirrorPort {
    * @param ids - Array of entry IDs to acknowledge
    */
   acknowledge(ids: string[]): Promise<Result<void, Error>>;
+
+  /**
+   * Permanently remove every mirror entry for one exact session key.
+   * Session lifecycle operations use this before clearing transcript stores
+   * so pending outbound text cannot be injected after reset or key reuse.
+   * @param sessionKey - The exact session key whose mirror entries are deleted
+   * @returns The number of entries deleted.
+   */
+  clearSession(sessionKey: string): Promise<Result<number, Error>>;
 
   /**
    * Remove entries older than maxAgeMs from the mirror.

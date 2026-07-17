@@ -7,6 +7,7 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
+import { createNoOpDeliveryMirror } from "@comis/core";
 
 // The gated session.spawn handler requires an injected `_capabilities`
 // (orch:spawn) at its top — production supplies it via createAgentRpcCall
@@ -48,6 +49,7 @@ function makeDeps(overrides?: Partial<SessionHandlerDeps>): SessionHandlerDeps {
     subAgentRunner: { spawn: vi.fn(), getRunStatus: vi.fn() } as never,
     securityConfig: { agentToAgent: { enabled: true, waitTimeoutMs: 5000 } },
     logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis() } as never,
+    deliveryMirror: createNoOpDeliveryMirror(),
     ...overrides,
   };
 }
