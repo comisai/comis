@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Output-size escalation policy + success-path response processing
- * (recovery, SEP extraction, post-batch continuation, budget continuation,
- * output guard).
+ * Output-size escalation policy and success-path response processing.
  *
  * The failure-path equivalents (overflow recovery, error classification,
  * timeout cost estimation) live in `./failure-path.js` so each module
@@ -34,17 +32,13 @@ import type { TurnBudgetTracker } from "../../budget/turn-budget-tracker.js";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
 import { processFailurePath } from "./failure-path.js";
 import { applyInteractiveSilentRecovery } from "./interactive-silent-recovery.js";
+import { repairResponseLanguageDrift } from "./response-language-repair.js";
 
 /**
  * Compute the final PromptRunResult by running output escalation, success-
  * path response processing, and failure-path overflow recovery as needed.
  *
- * Side effects:
- *   - mutates `params.result.response`, `params.result.finishReason`,
- *     `params.result.errorContext`, `params.result.continuationMetrics`,
- *     `params.result.budgetMetrics`.
- *   - emits `observability:token_usage` + `execution:output_escalated`
- *     events.
+ * Mutates the response/result metrics and emits output-escalation events.
  */
 export async function escalateOutput(
   params: RunPromptParams,
@@ -325,6 +319,28 @@ async function processSuccessPath(
     userMessageIndex,
     deps.logger,
   );
+
+  const languageRepair = await repairResponseLanguageDrift({
+    requestText: msg.text ?? "", response: result.response,
+    languageDirectiveActive: params.dynamicPreamble?.includes("## Reply Language for This Turn") ?? false,
+    followUp: (instruction) => session.followUp(instruction),
+    readLatestResponse: () => getVisibleAssistantText(session),
+    logger: deps.logger, clock: deps.clock,
+  });
+  if (languageRepair.ok) {
+    result.response = languageRepair.value.response;
+  } else {
+    deps.logger.warn(
+      {
+        repairFailure: languageRepair.error.kind,
+        expectedScript: languageRepair.error.expectedScript,
+        actualScript: languageRepair.error.actualScript,
+        hint: "Inspect saved-language and recalled-profile context; the bounded response rewrite did not restore the current-turn language",
+        errorKind: "validation" as ErrorKind,
+      },
+      "Response language repair failed",
+    );
+  }
 
   // Redact LLM output -- log only character count.
   // OutputGuard scans the full response for secrets immediately after.
