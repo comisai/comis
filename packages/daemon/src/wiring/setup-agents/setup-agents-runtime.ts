@@ -59,8 +59,6 @@ import { wireAgentLearnedSkillSurface } from "./learned-skill-surface-registry.j
 import type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
 // Re-export types so consumers preserve the historic import shape (parity-tests + setup-agents.test.ts inspect by name).
 export type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
-
-// ---------------------------------------------------------------------------
 // Single-agent setup (extracted for hot-add reuse)
 // ---------------------------------------------------------------------------
 
@@ -463,6 +461,10 @@ export async function setupSingleAgent(
     mediaPersistenceEnabled: container.config.integrations.media.persistence.enabled,
     autonomousMediaEnabled: deps.autonomousMediaEnabled,
     getPromptSkillsXml: () => renderLearnedSkillsXml({ skillRegistry, learnedSkills: learnedSurface.current, workspaceDir: dir }),
+    getMcpServerInstructions: () => deps.mcpClientManager.getAllConnections().flatMap((connection) => {
+      const instructions = connection.instructions?.trim();
+      return connection.status === "connected" && instructions ? [{ serverName: connection.name, instructions }] : [];
+    }),
     skillRegistry,  // Enable SDK skill discovery -> registry population
     activeRunRegistry: deps.activeRunRegistry,
     outputGuard,    // Scan LLM responses for leaked secrets

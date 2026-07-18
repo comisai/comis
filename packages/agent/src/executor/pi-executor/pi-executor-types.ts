@@ -55,6 +55,7 @@ import type { OAuthTokenManager } from "../../model/oauth-token-manager.js";
 import type { ActiveRunRegistry } from "../active-run-registry.js";
 import type { GeminiCacheManager } from "../gemini-cache-manager.js";
 import type { BackgroundTaskManager } from "../../background/index.js";
+import type { McpServerInstruction } from "../types.js";
 
 /** Dependencies required by the PiExecutor. */
 export interface PiExecutorDeps {
@@ -183,6 +184,11 @@ export interface PiExecutorDeps {
   mediaPersistenceEnabled?: boolean;
   autonomousMediaEnabled?: boolean;
   getPromptSkillsXml?: () => string;
+  /**
+   * Read instructions from currently connected MCP servers for each execution.
+   * Resolver form keeps the dynamic preamble current after reconnects.
+   */
+  getMcpServerInstructions?: () => ReadonlyArray<McpServerInstruction>;
   /** Tool names available to sub-agents, injected by daemon from TOOL_PROFILES + config. */
   subAgentToolNames?: string[];
   /** Whether sub-agents inherit MCP tools from parent (subAgentMcpTools: "inherit"). */

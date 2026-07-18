@@ -20,6 +20,12 @@ import type { TimeoutSource } from "../model/operation-model-resolver.js";
 // Public types
 // ---------------------------------------------------------------------------
 
+/** Current instructions advertised by one connected MCP server. */
+export interface McpServerInstruction {
+  readonly serverName: string;
+  readonly instructions: string;
+}
+
 /** Result of a single agent execution cycle. */
 export interface ExecutionResult {
   response: string;

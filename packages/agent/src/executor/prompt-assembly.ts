@@ -47,6 +47,7 @@ import {
 } from "@comis/observability";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { PromptMode, RuntimeInfo, InboundMetadata, BootstrapContextFile } from "../bootstrap/types.js";
+import type { McpServerInstruction } from "./types.js";
 import {
   loadWorkspaceBootstrapFiles,
   buildBootstrapContextFiles,
@@ -586,8 +587,8 @@ export interface PromptAssemblyParams {
     deliveryMirror?: DeliveryMirrorPort;
     /** Delivery mirror config for injection budget limits. */
     deliveryMirrorConfig?: { maxEntriesPerInjection: number; maxCharsPerInjection: number };
-    /** MCP server instructions for dynamic preamble injection. */
-    mcpServerInstructions?: ReadonlyArray<{ serverName: string; instructions: string }>;
+    /** Live MCP server instructions for dynamic preamble injection. */
+    getMcpServerInstructions?: () => ReadonlyArray<McpServerInstruction>;
     /** Platform message character limit for auto verbosity mode. Resolved by caller from channelRegistry. */
     channelMaxChars?: number;
     /**
@@ -977,8 +978,9 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     }
 
     // MCP server instructions
-    if (deps.mcpServerInstructions && deps.mcpServerInstructions.length > 0) {
-      const instructionSections = deps.mcpServerInstructions
+    const mcpServerInstructions = deps.getMcpServerInstructions?.() ?? [];
+    if (mcpServerInstructions.length > 0) {
+      const instructionSections = mcpServerInstructions
         .map((s) => `### ${s.serverName}\n${s.instructions}`)
         .join("\n\n");
       dynamicPreambleParts.push(`## MCP Server Instructions\n${instructionSections}`);
@@ -2010,8 +2012,8 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // MCP server instructions in dynamic preamble (not system prompt) for cache stability.
   // Server instructions may change on reconnect; placing them in the dynamic preamble avoids
   // invalidating the system prompt cache prefix.
-  const mcpServerInstructions = deps.mcpServerInstructions;
-  if (mcpServerInstructions && mcpServerInstructions.length > 0) {
+  const mcpServerInstructions = deps.getMcpServerInstructions?.() ?? [];
+  if (mcpServerInstructions.length > 0) {
     const instructionSections = mcpServerInstructions
       .map(s => `### ${s.serverName}\n${s.instructions}`)
       .join("\n\n");

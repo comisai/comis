@@ -36,7 +36,7 @@ import type { WindowProvenance } from "../context-engine/types.js";
 import type { CapabilityIndexRenderResult } from "./capability-index-context.js";
 import type { DiscoveryTracker } from "./discovery-tracker.js";
 import type { ExecutionPromptResult } from "./prompt-assembly.js";
-import type { ExecutionOverrides } from "./types.js";
+import type { ExecutionOverrides, McpServerInstruction } from "./types.js";
 
 /** Subset of PiExecutorDeps used by the tool assembly pipeline. */
 // @optional-field-count: documented Subset of PiExecutorDeps — inherits the parent bag's
@@ -94,6 +94,8 @@ export interface ToolAssemblyDeps {
   mediaPersistenceEnabled?: boolean;
   autonomousMediaEnabled?: boolean;
   getPromptSkillsXml?: () => string;
+  /** Live MCP instructions resolver forwarded to prompt assembly. */
+  getMcpServerInstructions?: () => ReadonlyArray<McpServerInstruction>;
   subAgentToolNames?: string[];
   mcpToolsInherited?: boolean;
   senderTrustDisplayConfig?: SenderTrustDisplayConfig;

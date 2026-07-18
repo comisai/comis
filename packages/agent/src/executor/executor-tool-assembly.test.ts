@@ -884,7 +884,7 @@ describe("assembleTools — MCP instruction resolver passthrough to prompt assem
     const deps = {
       ...makeDeps(),
       getMcpServerInstructions,
-    } as unknown as ToolAssemblyDeps;
+    } satisfies ToolAssemblyDeps;
 
     await assembleTools(makeParams({ deps }));
 

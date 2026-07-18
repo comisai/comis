@@ -3127,7 +3127,7 @@ describe("assembleExecutionPrompt", () => {
             { serverName: "context7", instructions: "Use resolve-library-id before query-docs." },
             { serverName: "filesystem", instructions: "Prefer read_file over read_directory." },
           ],
-        } as unknown as PromptAssemblyParams["deps"],
+        },
       }));
 
       expect(result.dynamicPreamble).toContain("## MCP Server Instructions");
@@ -3145,12 +3145,12 @@ describe("assembleExecutionPrompt", () => {
       expect(result.dynamicPreamble).not.toContain("MCP Server Instructions");
     });
 
-    it("omits MCP server instructions section when array is empty", async () => {
+    it("omits MCP server instructions section when resolver returns none", async () => {
       const result = await assembleExecutionPrompt(makeParams({
         deps: {
           workspaceDir: "/workspace",
           getMcpServerInstructions: () => [],
-        } as unknown as PromptAssemblyParams["deps"],
+        },
       }));
 
       expect(result.dynamicPreamble).not.toContain("MCP Server Instructions");
@@ -3163,7 +3163,7 @@ describe("assembleExecutionPrompt", () => {
           getMcpServerInstructions: () => [
             { serverName: "test-server", instructions: "Test instructions for cache stability." },
           ],
-        } as unknown as PromptAssemblyParams["deps"],
+        },
       }));
 
       expect(result.systemPrompt).not.toContain("MCP Server Instructions");
@@ -3179,7 +3179,7 @@ describe("assembleExecutionPrompt", () => {
       const deps = {
         workspaceDir: "/workspace",
         getMcpServerInstructions,
-      } as unknown as PromptAssemblyParams["deps"];
+      };
 
       const first = await assembleExecutionPrompt(makeParams({ deps }));
       instructions = "Reconnected server instructions.";
@@ -3815,7 +3815,9 @@ describe("parent prefix reuse", () => {
         workspaceDir: "/workspace",
         spawnPacket: makeSpawnPacketWithCache(),
         getPromptSkillsXml: () => "<skills>test-xml</skills>",
-        mcpServerInstructions: [{ serverName: "test-mcp", instructions: "Use test tools" }],
+        getMcpServerInstructions: () => [
+          { serverName: "test-mcp", instructions: "Use test tools" },
+        ],
       },
       msg: makeMsg({ metadata: { promptSkillContent: "Active skill content" } }),
       resolvedModelId: "claude-3-opus",

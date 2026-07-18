@@ -321,6 +321,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       mediaPersistenceEnabled: deps.mediaPersistenceEnabled,
       autonomousMediaEnabled: deps.autonomousMediaEnabled,
       getPromptSkillsXml: deps.getPromptSkillsXml,
+      getMcpServerInstructions: deps.getMcpServerInstructions,
       subAgentToolNames: deps.subAgentToolNames,
       mcpToolsInherited: deps.mcpToolsInherited,
       isFirstMessageInSession,
