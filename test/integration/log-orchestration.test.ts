@@ -156,16 +156,14 @@ describe("Log Orchestration", () => {
       // Must have the method context (proves error propagation preserved context)
       expect(errorEntry).toHaveProperty("method", "config.read");
 
-      // A classified (non-internal) refusal logs its MESSAGE only, not the
-      // Error object: the serializer would emit a full stack that reads as a
-      // fault for a routine operator flow. The message (the error context) is
-      // still preserved; only internal errors keep the full err object + stack.
-      expect(errorEntry).toHaveProperty("err");
-      const errValue = errorEntry.err;
-      expect(typeof errValue).toBe("string");
-      expect((errValue as string).length).toBeGreaterThan(0);
-      // No stack rides the expected-refusal warn (message-only).
-      expect(errValue as string).not.toMatch(/\n\s+at /);
+      // The failure is preserved as STRUCTURED classification context
+      // (kind/name/hint), not the raw error message. A handler exception can
+      // carry private data, so the RPC-failure log withholds `err`; the public
+      // message reaches the caller via the JSON-RPC error response instead.
+      expect(errorEntry).toHaveProperty("errorKind");
+      expect(errorEntry).toHaveProperty("errorName");
+      expect(errorEntry).toHaveProperty("hint");
+      expect(errorEntry).not.toHaveProperty("err");
     });
 
     it("error entry includes timing context from trace logger", async () => {

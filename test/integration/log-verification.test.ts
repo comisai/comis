@@ -210,18 +210,20 @@ describe("Log Verification", () => {
       );
       expect(warnResult.matched, warnResult.error).toBe(true);
 
-      // Assert: the warn entry has method and err context
+      // Assert: the warn entry carries structured classification context.
       const errorEntry = warnResult.entry!;
       expect(errorEntry).toHaveProperty("method", "config.read");
-      expect(errorEntry).toHaveProperty("err");
+      expect(errorEntry).toHaveProperty("errorKind");
+      expect(errorEntry).toHaveProperty("errorName");
+      expect(errorEntry).toHaveProperty("hint");
 
-      // A classified (non-internal) refusal logs its MESSAGE only — the Error
-      // object's serializer would emit a full stack that reads as a fault for a
-      // routine operator flow, so message-only is intentional (no `.stack`).
-      const errValue = errorEntry.err;
-      expect(typeof errValue).toBe("string");
-      expect(errValue as string).toContain("Unknown config section");
-      expect(errValue as string).not.toMatch(/\n\s+at /);
+      // Security posture: the RPC-failure log does NOT carry the raw error
+      // message (`err`) — a handler exception can embed private data (paths,
+      // secrets-store locations). The failure is classified by kind/name/hint
+      // instead; the caller receives the public message via the JSON-RPC error
+      // response, not the server log.
+      expect(errorEntry).not.toHaveProperty("err");
+      expect(JSON.stringify(errorEntry)).not.toContain("Unknown config section");
     });
   });
 });

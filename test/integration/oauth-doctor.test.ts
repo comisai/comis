@@ -272,10 +272,11 @@ describe("comis doctor OAuth health (integration)", () => {
     expect(profileB!.secsUntilExpiry!).toBeLessThan(7 * 24 * 60 * 60);
   });
 
-  it("surfaces schema-version mismatch verbatim from adapter", async () => {
-    // Adapter throws a hard-fail Error with 'version mismatch' substring
-    // (oauth-credential-store-file.ts:177) — doctor surfaces it verbatim
-    // through a fail finding (hint-preservation contract).
+  it("reports a schema-mismatch fail finding without surfacing adapter error content", async () => {
+    // Adapter throws a hard-fail Error on the version mismatch whose message
+    // embeds the profile-store file path (oauth-credential-store-file.ts). The
+    // doctor reports the failure CLASS generically — it must NOT leak the raw
+    // adapter error (path / private detail) into the finding.
     seedProfilesFile(tmpDir, { version: 99, profiles: {} });
     const tempConfigYaml = writeTempConfig(tmpDir);
 
@@ -286,7 +287,9 @@ describe("comis doctor OAuth health (integration)", () => {
     const oauthFindings = json.findings.filter((f) => f.category === "oauth");
     const failFinding = oauthFindings.find((f) => f.status === "fail");
     expect(failFinding, "expected schema-mismatch fail finding").toBeDefined();
-    expect(failFinding!.message).toContain("version mismatch");
+    expect(failFinding!.message).toContain("schema");
+    // Security: the private profile-store path must not ride the finding.
+    expect(failFinding!.message).not.toContain(tmpDir);
   });
 
   it("--refresh-test default OFF — no refresh-test findings without flag", async () => {
