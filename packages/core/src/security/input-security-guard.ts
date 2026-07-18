@@ -38,6 +38,7 @@ import {
   ROLE_BOUNDARY,
   ASSISTANT_ROLE_MARKER,
   PROMPT_EXTRACTION_REQUEST,
+  DEICTIC_PROMPT_EXTRACTION_REQUEST,
 } from "./injection-patterns.js";
 
 // ---------------------------------------------------------------------------
@@ -106,7 +107,11 @@ const PATTERN_WEIGHTS: ReadonlyArray<{
   { patterns: [SYSTEM_TAG, SYSTEM_BRACKET, SYSTEM_COMMAND], weight: 0.3, name: "system_markers" },
   { patterns: [SPECIAL_TOKEN_DELIMITERS], weight: 0.3, name: "special_tokens" },
   { patterns: [ROLE_BOUNDARY, ASSISTANT_ROLE_MARKER], weight: 0.2, name: "role_markers" },
-  { patterns: [PROMPT_EXTRACTION_REQUEST], weight: 0.6, name: "prompt_extraction_request" },
+  {
+    patterns: [PROMPT_EXTRACTION_REQUEST, DEICTIC_PROMPT_EXTRACTION_REQUEST],
+    weight: 0.6,
+    name: "prompt_extraction_request",
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -191,6 +196,7 @@ export function createInputSecurityGuard(config?: Partial<InputSecurityGuardConf
       // passes can never block the event loop on a multi-MB input (a jailbreak is at the start).
       const bounded = text.length > MAX_SCAN_CHARS ? text.slice(0, MAX_SCAN_CHARS) : text;
       const stripped = stripCodeBlocks(bounded);
+      const normalizedWhitespace = stripped.replace(/\s+/g, " ");
       const matched: string[] = [];
       let score = 0;
 
@@ -200,7 +206,7 @@ export function createInputSecurityGuard(config?: Partial<InputSecurityGuardConf
         for (const pattern of category.patterns) {
           // Reset lastIndex before each test() call (patterns have /g or /gi flags)
           pattern.lastIndex = 0;
-          if (pattern.test(stripped)) {
+          if (pattern.test(normalizedWhitespace)) {
             categoryMatched = true;
             break; // Category is boolean -- one match suffices
           }

@@ -16,7 +16,11 @@ export const INSTRUCTIONS_LABEL = /(?:my|the)\s+(?:original|initial)\s+instructi
 
 /** A disclosure verb followed by an internal prompt/instruction target. */
 export const PROMPT_EXTRACTION_REQUEST =
-  /\b(?:reveal|show|display|print|repeat|state|quote|recite|provide|tell|translate|summarize|describe)\b[\s\S]{0,200}\b(?:(?:my|your|the)\s+system\s+(?:prompt|message)|(?:your|the)\s+(?:hidden|internal|initial|original|first)\s+instructions?|(?:all\s+(?:of\s+)?(?:the\s+)?)?instructions?[\s\S]{0,80}(?:you\s+(?:were\s+)?(?:given|provided)|(?:given|provided)\s+to\s+you)[\s\S]{0,40}\b(?:above|before|earlier))\b/i;
+  /\b(?:reveal|show|display|print|repeat|state|quote|recite|provide|tell|translate|summarize|describe)\b[\s\S]{0,200}\b(?:(?:my|your|the)\s+system\s+(?:prompt|message)|(?:your|the)\s+(?:hidden|internal|initial|original|first)\s+instructions?)\b/i;
+
+/** A disclosure verb targeting instructions deictically identified as prior hidden context. */
+export const DEICTIC_PROMPT_EXTRACTION_REQUEST =
+  /\b(?:reveal|show|display|print|repeat|state|quote|recite|provide|tell|translate|summarize|describe)\b (?:all of the |all the |the )?instructions? (?:you were given|you were provided|given to you|provided to you) (?:above|before|earlier)\b/i;
 
 /** All prompt extraction patterns. */
 export const PROMPT_EXTRACTION_PATTERNS: readonly RegExp[] = [
