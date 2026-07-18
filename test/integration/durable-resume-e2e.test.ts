@@ -133,7 +133,7 @@ async function withStores<T>(
 
 /** A minimal running DurableRunRecord for the structural cases. */
 function runningRecord(overrides: Partial<DurableRunRecord> & { rootRunId: string }): DurableRunRecord {
-  return {
+  const merged = {
     checkpointId: overrides.checkpointId ?? overrides.rootRunId,
     agentId: "default",
     sessionKey: "test:chaos-user:durable-checkpoint",
@@ -145,10 +145,26 @@ function runningRecord(overrides: Partial<DurableRunRecord> & { rootRunId: strin
     leaseIds: [`lease-${overrides.rootRunId}`],
     budgetConsumed: 0,
     cronOrigin: null,
-    trustLevel: "user",
-    status: "running",
+    trustLevel: "user" as const,
+    status: "running" as const,
     lastHeartbeatAt: Date.now(),
     ...overrides,
+  } as DurableRunRecord;
+  // Derived fields required by DurableRunRecordSchema:
+  //  - rootBudget.usdConsumed MUST equal budgetConsumed and startedAtMs MUST be
+  //    <= lastHeartbeatAt (superRefine invariants);
+  //  - scriptRef/checkpointRef are nullable but required keys — a DAG-shaped
+  //    spawnTree additionally requires a non-null checkpointRef artifact.
+  const isDag = merged.spawnTree.length > 0 && typeof merged.spawnTree[0] === "object";
+  return {
+    ...merged,
+    rootBudget: merged.rootBudget ?? {
+      startedAtMs: merged.lastHeartbeatAt,
+      tokensConsumed: 0,
+      usdConsumed: merged.budgetConsumed,
+    },
+    scriptRef: merged.scriptRef ?? null,
+    checkpointRef: merged.checkpointRef ?? (isDag ? `ckpt-${overrides.rootRunId}` : null),
   };
 }
 
