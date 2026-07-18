@@ -8,7 +8,28 @@
  * @module
  */
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, vi } from "vitest";
+
+vi.mock("@comis/agent", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/agent")>();
+  return {
+    ...actual,
+    createOutcomeJudgeSeam: vi.fn(() =>
+      vi.fn(async () => ({
+        outcome: "unknown" as const,
+        confidence: 0,
+        cappedConfidence: 0,
+        source: "judge" as const,
+      })),
+    ),
+  };
+});
+
+import { createOutcomeJudgeSeam } from "@comis/agent";
+import { DEFAULT_TEMPLATES } from "@comis/core";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { buildOutcomeJudgeWiring, maybeUpgradeWithJudge } from "./setup-learning-judge.js";
@@ -33,6 +54,10 @@ describe("maybeUpgradeWithJudge — conversational-breadth fallback", () => {
       UNKNOWN,
     );
     expect(observe).toHaveBeenCalledWith(expect.objectContaining({ source: "judge", outcome: "success", confidence: 0.7 }));
+    expect(outcomeJudge).toHaveBeenCalledWith({
+      agentId: SCOPE.agentId,
+      trajectoryContent: "user asked X; assistant satisfied it",
+    });
     expect(resolve).toHaveBeenCalled();
     expect(r.outcome).toBe("success");
   });
@@ -115,11 +140,12 @@ describe("maybeUpgradeWithJudge — conversational-breadth fallback", () => {
 // ===========================================================================
 
 describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identity gate", () => {
-  function makeContainer(over: { agents?: Record<string, unknown>; costFeatures?: boolean; secrets?: Record<string, string>; entries?: Record<string, unknown> } = {}) {
+  function makeContainer(over: { agents?: Record<string, unknown>; costFeatures?: boolean; dataDir?: string; secrets?: Record<string, string>; entries?: Record<string, unknown> } = {}) {
     const secrets = over.secrets ?? {};
     return {
       config: {
         agents: over.agents ?? {},
+        dataDir: over.dataDir ?? "",
         // The master kill-switch is `memory.enabled`.
         memory: { enabled: over.costFeatures ?? true },
         providers: { entries: over.entries ?? {} },
@@ -239,6 +265,56 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
     const transcript = built.readTurnTranscript!({ tenantId: TENANT, agentId: "a1", sessionId: "sess-1", trajectoryId: TRACE });
     expect(lcd.getMessages).toHaveBeenCalledWith({ conversationId: "sess-1", tenantId: TENANT, agentId: "a1", sessionKey: "sess-1" });
     expect(transcript).toBe("user: please summarize\nassistant: here is the summary");
+  });
+
+  it("reads the live role policy from the resolved workspace and ignores the untouched template", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "comis-outcome-role-"));
+    const workspaceDir = join(dataDir, "workspace");
+    mkdirSync(workspaceDir, { recursive: true });
+    const rolePath = join(workspaceDir, "ROLE.md");
+    const rolePolicy = "# Fleet role\nRefuse requests unrelated to fleet operations.";
+    const seam = vi.fn(async () => ({
+      outcome: "unknown" as const,
+      confidence: 0,
+      cappedConfidence: 0,
+      source: "judge" as const,
+    }));
+    vi.mocked(createOutcomeJudgeSeam).mockReturnValueOnce(seam as never);
+
+    try {
+      writeFileSync(rolePath, rolePolicy, "utf8");
+      const built = buildOutcomeJudgeWiring(
+        makeContainer({
+          agents: { default: { provider: "anthropic", learningOutcome: { enabled: true, judge: { enabled: true } } } },
+          dataDir,
+          secrets: { ANTHROPIC_API_KEY: "test-key" },
+        }),
+        createFakeClock(NOW),
+        createMockLogger(),
+        makeLcdStore(),
+      );
+
+      await (built.outcomeJudge as unknown as (input: {
+        agentId: string;
+        trajectoryContent: string;
+      }) => Promise<unknown>)({ agentId: "default", trajectoryContent: "turn transcript" });
+      expect(seam).toHaveBeenLastCalledWith({
+        policyContext: rolePolicy,
+        trajectoryContent: "turn transcript",
+      });
+
+      writeFileSync(rolePath, DEFAULT_TEMPLATES["ROLE.md"], "utf8");
+      await (built.outcomeJudge as unknown as (input: {
+        agentId: string;
+        trajectoryContent: string;
+      }) => Promise<unknown>)({ agentId: "default", trajectoryContent: "next transcript" });
+      expect(seam).toHaveBeenLastCalledWith({
+        policyContext: undefined,
+        trajectoryContent: "next transcript",
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("readTurnTranscript returns undefined for a conversation with no messages (the judge then never runs)", () => {

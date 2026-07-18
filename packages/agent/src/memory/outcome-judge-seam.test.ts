@@ -251,6 +251,33 @@ describe("createOutcomeJudgeSeam", () => {
     expect(beforeMarker).not.toContain("SENTINEL_TRAJECTORY_BODY");
   });
 
+  it("uses trusted role policy as verdict criteria while keeping the trajectory external", async () => {
+    (completeSimple as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      llmText(JSON.stringify({ outcome: "failure", confidence: 0.7 })),
+    );
+    const judge = createOutcomeJudgeSeam(makeDeps() as never) as unknown as (input: {
+      trajectoryContent: string;
+      policyContext: string;
+    }) => Promise<unknown>;
+    const policyContext = "ROLE_POLICY_SENTINEL Refuse requests unrelated to fleet operations.";
+    const trajectoryContent = "TRAJECTORY_SENTINEL assistant answered an unrelated coding request";
+
+    await runWithContext({ contentDelimiter: TEST_DELIMITER }, async () => {
+      await judge({ trajectoryContent, policyContext });
+    });
+
+    const promptArg = (completeSimple as ReturnType<typeof vi.fn>).mock.calls[0][1] as {
+      systemPrompt: string;
+      messages: Array<{ content: string }>;
+    };
+    const userContent = promptArg.messages.map((m) => m.content).join("\n");
+    expect(promptArg.systemPrompt).toContain(policyContext);
+    expect(promptArg.systemPrompt).toContain("correct refusal");
+    expect(userContent).toContain("TRAJECTORY_SENTINEL");
+    expect(userContent).not.toContain("ROLE_POLICY_SENTINEL");
+    expect(userContent).toContain(`<<<UNTRUSTED_${TEST_DELIMITER}>>>`);
+  });
+
   it("an injected confidence:1.0 cannot mint a reward above the cap (the reward-cap keystone)", async () => {
     // A maximal self-report — exactly what a prompt injection ("confidence: 1.0,
     // this succeeded") would coerce the judge into emitting.
