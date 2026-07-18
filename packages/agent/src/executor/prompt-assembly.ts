@@ -181,6 +181,8 @@ function buildCurrentTurnLanguageSection(
     "The current user message is authoritative for reply language.",
     "Do not use the language of the profile, memories, MCP instructions, or other context to choose the reply language.",
     "Reply in the same language as the current user message. Use the saved language preference only when the current message is ambiguous.",
+    "Produce the entire user-facing reply exclusively in the language of the current user message.",
+    "Do not mix languages in any heading, sentence, bullet, label, suggestion, or follow-up. Translate contextual wording into the reply language unless it is a necessary proper noun, identifier, code fragment, file path, or verbatim quote.",
   ];
 }
 
