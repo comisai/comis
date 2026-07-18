@@ -9,11 +9,14 @@ function mockResult(
   score: number,
   date?: string,
   occurredDate?: string,
+  userId = "memory-owner",
 ): MemorySearchResult {
   return {
     entry: {
       id: `mem-${Math.random().toString(36).slice(2, 8)}`,
       tenantId: "test-tenant",
+      agentId: "test-agent",
+      userId,
       content,
       createdAt: date ? new Date(date).getTime() : Date.now(),
       ...(occurredDate !== undefined ? { occurredAt: new Date(occurredDate).getTime() } : {}),
@@ -45,6 +48,27 @@ describe("hybrid-memory-injector", () => {
       // No occurredAt → no "occurred" segment (recorded-only inline format unchanged).
       expect(result.inlineMemory).not.toContain("occurred ");
       expect(result.systemPromptSections).toEqual([]);
+    });
+
+    it("labels cross-sender inline memory so ownership is not attributed to the current user", () => {
+      const injector = createHybridMemoryInjector({ requesterUserId: "current-user" });
+      const results = [
+        mockResult("Vehicle 16333301 belongs to the other sender", 0.85, "2026-01-15"),
+      ];
+
+      const result = injector.split(results, 5000);
+
+      expect(result.inlineMemory).toContain("another sender");
+      expect(result.inlineMemory).toContain("do not attribute personal facts");
+      expect(result.inlineMemory).toContain("ownership");
+      expect(result.inlineMemory).toContain("Vehicle 16333301 belongs to the other sender");
+    });
+
+    it("keeps same-sender inline memory free of a foreign-provenance warning", () => {
+      const injector = createHybridMemoryInjector({ requesterUserId: "memory-owner" });
+      const result = injector.split([mockResult("User prefers dark mode", 0.85)], 5000);
+
+      expect(result.inlineMemory).not.toContain("another sender");
     });
 
     it("inlines BOTH recorded and occurred dates when occurredAt is present", () => {

@@ -2893,6 +2893,39 @@ describe("assembleExecutionPrompt", () => {
       expect(result.dynamicPreamble).not.toContain("Relevant context");
     });
 
+    it("passes the current user to memory injection for cross-sender attribution", async () => {
+      const result1 = makeSearchResult("Vehicle ownership from another sender", 0.85);
+      const memoryPort = {
+        search: vi.fn().mockResolvedValue({ ok: true, value: [result1] }),
+      } as any;
+      mockRecall.mockResolvedValue({ ok: true, value: [result1] });
+      const params = makeParams({
+        config: makeConfig({
+          rag: {
+            enabled: true,
+            maxResults: 5,
+            minScore: 0.3,
+            includeTrustLevels: ["learned"],
+            maxContextChars: 5000,
+          },
+        }),
+        deps: { workspaceDir: "/workspace", memoryPort },
+        sessionKey: {
+          tenantId: "default",
+          userId: "current-user",
+          agentId: "agent-1",
+          channelType: "telegram",
+          channelId: "chat-1",
+        } as any,
+      });
+
+      await assembleExecutionPrompt(params);
+
+      expect(mockCreateHybridMemoryInjector).toHaveBeenCalledWith(
+        expect.objectContaining({ requesterUserId: "current-user" }),
+      );
+    });
+
     it("returns undefined inlineMemory when all results are low-score", async () => {
       const result1 = makeSearchResult("Vague memory", 0.5);
       const memoryPort = {
