@@ -3012,6 +3012,33 @@ describe("assembleExecutionPrompt", () => {
   // dynamic preamble relocation
   // -----------------------------------------------------------------
   describe("dynamic preamble relocation", () => {
+    it("makes a clear current message authoritative over a saved language preference", async () => {
+      mockBuildBootstrapContextFiles.mockReturnValue([
+        { path: "USER.md", content: "- **Preferred language:** Hebrew" },
+      ]);
+      const result = await assembleExecutionPrompt(makeParams({
+        msg: makeMsg({
+          text: "Write a Python function that returns the first twenty Fibonacci numbers.",
+        }),
+      }));
+
+      expect(result.dynamicPreamble).toContain("## Reply Language for This Turn");
+      expect(result.dynamicPreamble).toContain("current user message is authoritative");
+      expect(result.dynamicPreamble).toContain("saved language preference only when the current message is ambiguous");
+      expect(result.dynamicPreamble).not.toContain("Reply in Hebrew");
+    });
+
+    it("keeps the saved language fallback when the current message is ambiguous", async () => {
+      mockBuildBootstrapContextFiles.mockReturnValue([
+        { path: "USER.md", content: "- **Preferred language:** Hebrew" },
+      ]);
+      const result = await assembleExecutionPrompt(makeParams({
+        msg: makeMsg({ text: "10978704" }),
+      }));
+
+      expect(result.dynamicPreamble).not.toContain("## Reply Language for This Turn");
+    });
+
     it("prependContext appears in dynamicPreamble, not systemPrompt", async () => {
       const hookRunner = {
         runBeforeAgentStart: vi.fn().mockResolvedValue({ prependContext: "Hook injected context" }),
@@ -3809,6 +3836,9 @@ describe("parent prefix reuse", () => {
   });
 
   it("independently assembles dynamic preamble on prefix reuse", async () => {
+    mockBuildBootstrapContextFiles.mockReturnValue([
+      { path: "USER.md", content: "- **Preferred language:** Hebrew" },
+    ]);
     const params = makeParams({
       config: makeConfig({ model: "claude-3-opus", provider: "anthropic" }),
       deps: {
@@ -3819,7 +3849,10 @@ describe("parent prefix reuse", () => {
           { serverName: "test-mcp", instructions: "Use test tools" },
         ],
       },
-      msg: makeMsg({ metadata: { promptSkillContent: "Active skill content" } }),
+      msg: makeMsg({
+        text: "Review the current fleet safety report.",
+        metadata: { promptSkillContent: "Active skill content" },
+      }),
       resolvedModelId: "claude-3-opus",
       resolvedModelProvider: "anthropic",
       safetyReinforcement: "SAFETY-REMINDER",
@@ -3836,6 +3869,8 @@ describe("parent prefix reuse", () => {
     expect(result.dynamicPreamble).toContain("Active skill content"); // active skill
     expect(result.dynamicPreamble).toContain("SAFETY-REMINDER"); // safety reinforcement
     expect(result.dynamicPreamble).toContain("test-mcp"); // MCP instructions
+    expect(result.dynamicPreamble).toContain("## Reply Language for This Turn");
+    expect(result.dynamicPreamble).toContain("current user message is authoritative");
     expect(result.inlineMemory).toBeUndefined();
   });
 
