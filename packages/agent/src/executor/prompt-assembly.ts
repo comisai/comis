@@ -179,6 +179,7 @@ function buildCurrentTurnLanguageSection(
   return [
     "## Reply Language for This Turn",
     "The current user message is authoritative for reply language.",
+    "Do not use the language of the profile, memories, MCP instructions, or other context to choose the reply language.",
     "Reply in the same language as the current user message. Use the saved language preference only when the current message is ambiguous.",
   ];
 }
@@ -916,9 +917,6 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     const dateTimeLines = buildDateTimeSection();
     if (dateTimeLines.length > 0) dynamicPreambleParts.push(dateTimeLines.join("\n"));
 
-    const languageLines = buildCurrentTurnLanguageSection(msg.text, reuseUserLanguage);
-    if (languageLines.length > 0) dynamicPreambleParts.push(languageLines.join("\n"));
-
     // Inbound metadata
     const chatType = resolveChatType(msg);
     const inboundMeta: InboundMetadata = {
@@ -1023,6 +1021,12 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         .join("\n\n");
       dynamicPreambleParts.push(`## MCP Server Instructions\n${instructionSections}`);
     }
+
+    // Keep reply-language selection adjacent to the user-authored message. Dynamic
+    // profile, memory, skill, and MCP text may use a different language and must not
+    // become a more recent language sample than the current inbound message.
+    const languageLines = buildCurrentTurnLanguageSection(msg.text, reuseUserLanguage);
+    if (languageLines.length > 0) dynamicPreambleParts.push(languageLines.join("\n"));
 
     // Safety reinforcement
     if (params.safetyReinforcement) {
@@ -1919,10 +1923,6 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   if (dateTimeLines.length > 0) {
     dynamicPreambleParts.push(dateTimeLines.join("\n"));
   }
-  const languageLines = buildCurrentTurnLanguageSection(msg.text, userLanguage);
-  if (languageLines.length > 0) {
-    dynamicPreambleParts.push(languageLines.join("\n"));
-  }
   const inboundLines = buildInboundMetadataSection(inboundMeta, promptMode === "minimal");
   if (inboundLines.length > 0) {
     dynamicPreambleParts.push(inboundLines.join("\n"));
@@ -2042,6 +2042,13 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       .map(s => `### ${s.serverName}\n${s.instructions}`)
       .join("\n\n");
     dynamicPreambleParts.push(`## MCP Server Instructions\n${instructionSections}`);
+  }
+  // Keep reply-language selection adjacent to the user-authored message. Dynamic
+  // profile, memory, skill, and MCP text may use a different language and must not
+  // become a more recent language sample than the current inbound message.
+  const languageLines = buildCurrentTurnLanguageSection(msg.text, userLanguage);
+  if (languageLines.length > 0) {
+    dynamicPreambleParts.push(languageLines.join("\n"));
   }
   // BOOT.md content relocated from system prompt to dynamic preamble.
   // Previously prepended to system prompt on first message only, causing a cache
