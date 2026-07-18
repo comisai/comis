@@ -314,6 +314,26 @@ describe("deferRecallToUncachedTail (pure) — recall off the cached prefix", ()
     expect(blocks[1]!.cache_control).toBeUndefined();
   });
 
+  it("keeps the current-turn language constraint after a conflicting recalled language", () => {
+    const currentTurn =
+      "[System context]\n" +
+      "## Reply Language for This Turn\n" +
+      "The current user message is authoritative for reply language.\n" +
+      "[End system context]\n\n" +
+      "Show the current fleet status.";
+    const messages: Array<Record<string, unknown>> = [
+      { role: "user", content: recall("הקשר צי בעברית") + currentTurn },
+    ];
+
+    expect(deferRecallToUncachedTail(messages)).toBe(1);
+    const blocks = messages[0]!.content as Array<Record<string, unknown>>;
+    expect(blocks).toHaveLength(3);
+    expect(blocks[1]!.text).toContain("הקשר צי בעברית");
+    expect(blocks[2]!.text).toContain("current user message, not recalled memory");
+    expect(blocks[2]!.text).toContain("heading, sentence, bullet, label, suggestion, and follow-up");
+    expect(blocks[2]!.cache_control).toBeUndefined();
+  });
+
   it("only operates on the LATEST user message, not historical ones", () => {
     const messages: Array<Record<string, unknown>> = [
       { role: "user", content: [{ type: "text", text: recall("old") + "old query" }] },
@@ -426,6 +446,29 @@ describe("deferRecallToTrailingResponsesItem (pure) — latest-item recall defer
     expect(input[1]!.content).toBe("new query");
     expect(input.length).toBe(3);
     expect(input[2]!.content).toContain("[Relevant context from memory: fact");
+  });
+
+  it("places the current-turn language constraint after a conflicting trailing recall", () => {
+    const currentTurn =
+      "[System context]\n" +
+      "## Reply Language for This Turn\n" +
+      "The current user message is authoritative for reply language.\n" +
+      "[End system context]\n\n" +
+      "Show the current fleet status.";
+    const input: Array<Record<string, unknown>> = [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: recallStr("הקשר צי בעברית") + currentTurn }],
+      },
+    ];
+
+    expect(deferRecallToTrailingResponsesItem(input)).toBe(1);
+    const trailing = input[input.length - 1]!;
+    const blocks = trailing.content as Array<Record<string, unknown>>;
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]!.text).toContain("הקשר צי בעברית");
+    expect(blocks[1]!.text).toContain("current user message, not recalled memory");
+    expect(blocks[1]!.text).toContain("heading, sentence, bullet, label, suggestion, and follow-up");
   });
 
   it("is a no-op when the latest user item has no recall", () => {
