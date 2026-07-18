@@ -163,6 +163,26 @@ export function extractUserLanguage(files: BootstrapContextFile[]): string | und
   return value;
 }
 
+/**
+ * Resolve a saved-language conflict next to the current turn without changing the
+ * cache-stable system prefix. Identifier-only input remains ambiguous and keeps the
+ * USER.md fallback; four or more letters are enough to make the current text the
+ * authoritative language sample.
+ */
+function buildCurrentTurnLanguageSection(
+  messageText: string | undefined,
+  userLanguage: string | undefined,
+): string[] {
+  if (userLanguage === undefined) return [];
+  const letterCount = messageText?.match(/\p{L}/gu)?.length ?? 0;
+  if (letterCount < 4) return [];
+  return [
+    "## Reply Language for This Turn",
+    "The current user message is authoritative for reply language.",
+    "Reply in the same language as the current user message. Use the saved language preference only when the current message is ambiguous.",
+  ];
+}
+
 /** Per-session tool name snapshot for stable system prompt assembly.
  *  On first execution, captures the full tool name list. Subsequent executions
  *  reuse the snapshot so toolNames fed to assembleRichSystemPrompt stays constant,
@@ -874,12 +894,30 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     // Skip tool name snapshot, bootstrap file snapshot, and content digest
     // No sessionToolNameSnapshots.set, no sessionBootstrapFileSnapshots.set for this session
 
+    // Resolve reply-language tier-2 (USER.md preferred language) on the reuse
+    // path too. If this were a hardcoded `undefined`, a sub-agent that took the
+    // cache-reuse path would resolve its degraded reply without tier-2. The same
+    // snapshot also lets the dynamic preamble make a clear current message
+    // authoritative over a conflicting saved preference.
+    const reuseBaseMode: PromptMode = (config.bootstrap?.promptMode as PromptMode) ?? "full";
+    const reusePromptMode: PromptMode = resolvePromptModeForProfile(
+      reuseBaseMode,
+      params.operationType,
+      params.modelProfile,
+      config.contextEngine?.compactPrompt,
+    );
+    const { bootstrapContextFiles: reuseBootstrapFiles } = await resolveBootstrapContextFiles(reusePromptMode);
+    const reuseUserLanguage = extractUserLanguage(reuseBootstrapFiles);
+
     // Independently assemble dynamic preamble (same logic as the full path)
     const dynamicPreambleParts: string[] = [];
 
     // Date/time section
     const dateTimeLines = buildDateTimeSection();
     if (dateTimeLines.length > 0) dynamicPreambleParts.push(dateTimeLines.join("\n"));
+
+    const languageLines = buildCurrentTurnLanguageSection(msg.text, reuseUserLanguage);
+    if (languageLines.length > 0) dynamicPreambleParts.push(languageLines.join("\n"));
 
     // Inbound metadata
     const chatType = resolveChatType(msg);
@@ -1019,24 +1057,6 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       { agentId, parentModel: parentCache.model, parentProvider: parentCache.provider },
       "Using parent cache prefix (model/provider match)",
     );
-
-    // Resolve reply-language tier-2 (USER.md preferred language) on the reuse
-    // path too. If this were a hardcoded `undefined`, a sub-agent that took the
-    // (dominant) cache-reuse path would resolve its degraded reply WITHOUT tier-2
-    // — silently falling through to tier-3 (inbound script). Compute promptMode
-    // (the same pure resolution as the full path) and load USER.md via the
-    // shared snapshot-aware helper so the filtering (incl. group-chat USER.md
-    // stripping) matches the full path. The system prompt itself is still the
-    // parent's frozen prefix — only the dynamic tier-2 signal is recovered.
-    const reuseBaseMode: PromptMode = (config.bootstrap?.promptMode as PromptMode) ?? "full";
-    const reusePromptMode: PromptMode = resolvePromptModeForProfile(
-      reuseBaseMode,
-      params.operationType,
-      params.modelProfile,
-      config.contextEngine?.compactPrompt,
-    );
-    const { bootstrapContextFiles: reuseBootstrapFiles } = await resolveBootstrapContextFiles(reusePromptMode);
-    const reuseUserLanguage = extractUserLanguage(reuseBootstrapFiles);
 
     // Read-only-child input economy (cache-reuse path): the reused prefix is the PARENT's full
     // frozen prompt, so a read-only child drops the heavy blocks here too (else
@@ -1898,6 +1918,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   const dateTimeLines = buildDateTimeSection();
   if (dateTimeLines.length > 0) {
     dynamicPreambleParts.push(dateTimeLines.join("\n"));
+  }
+  const languageLines = buildCurrentTurnLanguageSection(msg.text, userLanguage);
+  if (languageLines.length > 0) {
+    dynamicPreambleParts.push(languageLines.join("\n"));
   }
   const inboundLines = buildInboundMetadataSection(inboundMeta, promptMode === "minimal");
   if (inboundLines.length > 0) {
