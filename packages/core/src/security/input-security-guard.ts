@@ -37,6 +37,7 @@ import {
   SPECIAL_TOKEN_DELIMITERS,
   ROLE_BOUNDARY,
   ASSISTANT_ROLE_MARKER,
+  PROMPT_EXTRACTION_REQUEST,
 } from "./injection-patterns.js";
 
 // ---------------------------------------------------------------------------
@@ -105,6 +106,7 @@ const PATTERN_WEIGHTS: ReadonlyArray<{
   { patterns: [SYSTEM_TAG, SYSTEM_BRACKET, SYSTEM_COMMAND], weight: 0.3, name: "system_markers" },
   { patterns: [SPECIAL_TOKEN_DELIMITERS], weight: 0.3, name: "special_tokens" },
   { patterns: [ROLE_BOUNDARY, ASSISTANT_ROLE_MARKER], weight: 0.2, name: "role_markers" },
+  { patterns: [PROMPT_EXTRACTION_REQUEST], weight: 0.6, name: "prompt_extraction_request" },
 ];
 
 // ---------------------------------------------------------------------------

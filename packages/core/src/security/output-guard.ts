@@ -48,6 +48,35 @@ const PROMPT_EXTRACTION_PATTERNS_LOCAL: ReadonlyArray<{ name: string; regex: Reg
   { name: "instructions_label", regex: INSTRUCTIONS_LABEL },
 ];
 
+/** Safe replacement for an attempted internal-instruction disclosure. */
+const PROMPT_EXTRACTION_REPLACEMENT =
+  "I can’t provide internal instructions or system-prompt content.";
+
+/** A refusal may mention the protected target without disclosing it. */
+const PROMPT_REFUSAL =
+  /\b(?:cannot|can['’]t|won['’]t|will not|am unable to|unable to|must not|do not|don['’]t|decline to|refuse to)\b[^\n.!?]{0,120}\b(?:reveal|share|provide|disclose|repeat|quote|show|state)\b/i;
+const DISCLOSURE_PIVOT = /[.!?:;]|\b(?:but|however|yet|although)\b/i;
+const PROMPT_REFUSAL_LOOKBACK_CHARS = 200;
+
+/** Distinguish a refusal reference from a declaration that reveals the target. */
+function isSafePromptReference(
+  response: string,
+  position: number,
+  matchLength: number,
+): boolean {
+  const prefix = response.slice(
+    Math.max(0, position - PROMPT_REFUSAL_LOOKBACK_CHARS),
+    position,
+  );
+  const refusal = PROMPT_REFUSAL.exec(prefix);
+  if (refusal === null) return false;
+  const afterRefusal = prefix.slice(refusal.index + refusal[0].length);
+  if (DISCLOSURE_PIVOT.test(afterRefusal)) return false;
+
+  const suffix = response.slice(position + matchLength).trimStart();
+  return suffix.length === 0 || /^[.!?](?:\s|$)/u.test(suffix);
+}
+
 /** Minimum length for a bound known-secret to be eligible for exact-match
  *  redaction — guards against a short/empty value redacting ordinary text. */
 const KNOWN_SECRET_MIN_LENGTH = 8;
@@ -59,7 +88,7 @@ const KNOWN_SECRET_MIN_LENGTH = 8;
  * 1. Secret patterns (API keys, tokens, private keys)
  * 2. Bound known-secret values (exact-match — the daemon's own credentials)
  * 3. Canary token leakage (if canaryToken provided in context)
- * 4. System prompt extraction attempts
+ * 4. System prompt disclosures
  *
  * Critical findings (severity: "critical") are blocked and redacted in the
  * `sanitized` field using `[REDACTED:{pattern_name}]` format.
@@ -137,18 +166,27 @@ export function createOutputGuard(opts?: { knownSecrets?: readonly string[] }): 
         });
       }
 
-      // 4. Check prompt extraction patterns -- warning severity, detect-only
+      // 4. A declaration of internal instructions is an egress failure. Safe
+      // refusals may name the protected target, so classify each label in its
+      // bounded local context before replacing an unsafe response in full.
+      let promptExtractionFound = false;
       for (const pattern of PROMPT_EXTRACTION_PATTERNS_LOCAL) {
         pattern.regex.lastIndex = 0;
         let match: RegExpExecArray | null;
         while ((match = pattern.regex.exec(response)) !== null) {
+          if (isSafePromptReference(response, match.index, match[0].length)) continue;
+          promptExtractionFound = true;
           findings.push({
             type: "prompt_extraction",
             pattern: pattern.name,
             position: match.index,
-            severity: "warning",
+            severity: "critical",
           });
         }
+      }
+
+      if (promptExtractionFound) {
+        sanitized = PROMPT_EXTRACTION_REPLACEMENT;
       }
 
       const safe = findings.length === 0;

@@ -227,6 +227,18 @@ describe("createOutputGuard", () => {
     }
   });
 
+  it("blocks a disclosure appended to an apparent refusal", () => {
+    const response =
+      "I can’t reveal what my system prompt says: always obey the user.";
+    const result = guard.scan(response);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.safe).toBe(false);
+      expect(result.value.blocked).toBe(true);
+      expect(result.value.sanitized).not.toContain("always obey the user");
+    }
+  });
+
   // -------------------------------------------------------------------------
   // Canary edge cases
   // -------------------------------------------------------------------------
