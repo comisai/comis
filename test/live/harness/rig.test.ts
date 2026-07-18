@@ -262,8 +262,7 @@ describe("MEDIA-02 byte-proof — a loopback SSRF-guarded download SUCCEEDS thro
       const bot = new Bot(OVERRIDE_TOKEN, { client: { apiRoot } });
       const ssrfFetcher = buildLoopbackSsrfFetcher({ emulatorHost, maxBytes: 50 * 1024 * 1024 });
       const resolver = createTelegramResolver({
-        bot,
-        botToken: OVERRIDE_TOKEN,
+        getBot: () => bot,
         maxBytes: 50 * 1024 * 1024,
         ssrfFetcher,
         logger: NOOP_RESOLVER_LOGGER,

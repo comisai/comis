@@ -140,7 +140,9 @@ describe("FAULT-01 Stage-B — the four adapter fallbacks fire for real under fa
     // The FIRST sendMessage (with parse_mode:"HTML") hits the injected parse
     // error; isTelegramHtmlParseError → the adapter retries WITHOUT parse_mode.
     // once:true consumes the fault so the retry lands as plain text.
-    emu.fail("sendMessage", { error_code: 400, description: "can't parse entities" }, { once: true });
+    // Use Telegram's real description shape ("Bad Request: can't parse entities: …")
+    // — isTelegramHtmlParseError matches the exact Bot-API 400 prefix.
+    emu.fail("sendMessage", { error_code: 400, description: "Bad Request: can't parse entities: unexpected end tag at byte offset 6" }, { once: true });
 
     const res = await adapter.sendMessage(String(TEST_CHAT.chatId), "hello <b>world</b>");
     expect(res.ok, res.ok ? "" : `sendMessage failed: ${String(!res.ok && res.error)}`).toBe(true);
@@ -163,7 +165,8 @@ describe("FAULT-01 Stage-B — the four adapter fallbacks fire for real under fa
     // A send INTO a forum topic (threadId 5, a custom topic so buildSendThreadParams
     // includes it). The first attempt (with message_thread_id:5) hits the
     // thread-not-found error; sendWithThreadFallback retries WITHOUT the thread id.
-    emu.fail("sendMessage", { error_code: 400, description: "message thread not found" }, { once: true });
+    // Telegram's real description is exactly "Bad Request: message thread not found".
+    emu.fail("sendMessage", { error_code: 400, description: "Bad Request: message thread not found" }, { once: true });
 
     const res = await adapter.sendMessage(String(TEST_CHAT.chatId), "into a topic", { threadId: "5" });
     expect(res.ok, res.ok ? "" : `sendMessage failed: ${String(!res.ok && res.error)}`).toBe(true);
@@ -425,8 +428,8 @@ describe.skipIf(!isLive)("FAULT-01 Stage-C — the parse_mode fallback on a real
 
       // Arm a once parse-entities fault so the NEXT sendMessage (the agent's reply)
       // hits it and the adapter retries WITHOUT parse_mode. once consumes it so the
-      // retry lands.
-      r.emulator.fail("sendMessage", { error_code: 400, description: "can't parse entities" }, { once: true });
+      // retry lands. Telegram's real 400 description carries the "Bad Request: …" prefix.
+      r.emulator.fail("sendMessage", { error_code: 400, description: "Bad Request: can't parse entities: unexpected end tag at byte offset 6" }, { once: true });
 
       const inboundId = await r.send("Reply with a short greeting.");
       const reply = await r.waitForReply(inboundId, 1_500_000);

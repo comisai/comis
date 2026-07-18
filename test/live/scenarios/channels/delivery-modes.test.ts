@@ -7,8 +7,9 @@
  *   - Crash-mid-delivery resume on the REAL crash-safe SQLite delivery queue (the
  *     persistence-oracle case): enqueue + enqueueInFlight rows persist
  *     (`delivery:enqueued` fires per row); close the DB (simulated crash); reopen the
- *     SAME file → recoverInFlight() resets in_flight→pending → pendingEntries()
- *     resumes the persisted rows → statusCounts() reflects them; then runDbOracle()
+ *     SAME file → recoverInFlight() parks the in_flight row as 'failed' (ambiguous
+ *     send outcome, no blind replay) → pendingEntries() drains only the genuinely
+ *     pending row → statusCounts() reflects them; then runDbOracle()
  *     proves the store survived uncorrupted (integrity_check + foreign_key_check).
  *     A FILE-backed DB is used (NOT :memory:) so runDbOracle can re-open it by path.
  *   - Ordered delivery: pendingEntries() returns rows oldest-first (created_at ASC).
@@ -91,14 +92,18 @@ function makeEntry(over: Record<string, unknown> = {}): {
   };
 }
 
-/** Minimal Pick<TypedEventBus,"emit"> spy. */
-function makeBus(): { emit: (event: string, payload: unknown) => boolean; calls: string[] } {
+/** Minimal Pick<TypedEventBus,"emitSafely"> spy. The delivery queue adapter
+ *  emits via emitSafely (never-throw), so the spy records those calls. */
+function makeBus(): { emit: (event: string, payload: unknown) => boolean; emitSafely: (event: string, payload: unknown) => void; calls: string[] } {
   const calls: string[] = [];
   return {
     calls,
     emit: (event: string) => {
       calls.push(event);
       return true;
+    },
+    emitSafely: (event: string) => {
+      calls.push(event);
     },
   };
 }
@@ -115,7 +120,7 @@ describe("CHAN-03 Stage-B — crash-mid-delivery resume (persistence oracle, fil
     // Boot: enqueue one pending + one in_flight row.
     let db = new Database(dbPath);
     initSchema(db, 768);
-    let q = createSqliteDeliveryQueue(db, bus as Pick<TypedEventBus, "emit">);
+    let q = createSqliteDeliveryQueue(db, bus as Pick<TypedEventBus, "emitSafely">);
     const enq = await q.enqueue(makeEntry({ text: "pending-1" }));
     expect(enq.ok).toBe(true);
     const enqIf = await q.enqueueInFlight(makeEntry({ text: "inflight-1" }));
@@ -128,21 +133,27 @@ describe("CHAN-03 Stage-B — crash-mid-delivery resume (persistence oracle, fil
 
     // Reopen the SAME file (fresh process).
     db = new Database(dbPath);
-    q = createSqliteDeliveryQueue(db, bus as Pick<TypedEventBus, "emit">);
+    q = createSqliteDeliveryQueue(db, bus as Pick<TypedEventBus, "emitSafely">);
 
     const recovered = await q.recoverInFlight();
     expect(recovered.ok).toBe(true);
-    if (recovered.ok) expect(recovered.value).toBe(1); // the in_flight row reset to pending
+    // The crashed in_flight row is PARKED as failed (ambiguous send outcome —
+    // a crash can land after the platform accepted the message but before the
+    // ack was stored, so recovery must NOT blindly re-queue the body).
+    if (recovered.ok) expect(recovered.value).toBe(1);
 
     const pending = await q.pendingEntries();
     expect(pending.ok).toBe(true);
-    if (pending.ok) expect(pending.value).toHaveLength(2); // both rows now resumable
+    // Only the genuinely-pending row stays drainable; the parked in_flight row
+    // is 'failed', never silently re-delivered.
+    if (pending.ok) expect(pending.value).toHaveLength(1);
 
     const counts = await q.statusCounts();
     expect(counts.ok).toBe(true);
     if (counts.ok) {
-      expect(counts.value.pending).toBe(2);
+      expect(counts.value.pending).toBe(1);
       expect(counts.value.inFlight).toBe(0);
+      expect(counts.value.failed).toBe(1);
     }
 
     db.close();
@@ -167,7 +178,7 @@ describe("CHAN-03 Stage-B — ordered delivery + delivery-timing config-shape", 
     const dbPath = freshDbPath();
     const db = new Database(dbPath);
     initSchema(db, 768);
-    const q = createSqliteDeliveryQueue(db, makeBus() as Pick<TypedEventBus, "emit">);
+    const q = createSqliteDeliveryQueue(db, makeBus() as Pick<TypedEventBus, "emitSafely">);
 
     const base = Date.now();
     await q.enqueue(makeEntry({ text: "first", createdAt: base, scheduledAt: base }));
