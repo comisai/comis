@@ -88,3 +88,14 @@ describe("output-escalation.ts — interactive silent-response boundary", () => 
     expect(interactiveRecoverySource).toMatch(/interactive_silent_sentinel/);
   });
 });
+
+describe("output-escalation.ts — response-language boundary", () => {
+  it("repairs script drift before the output guard scans the response", () => {
+    const repairIndex = source.indexOf("repairResponseLanguageDrift(");
+    const guardIndex = source.indexOf("scanWithOutputGuard({", repairIndex);
+
+    expect(source).toMatch(/from\s+"\.\/response-language-repair\.js"/);
+    expect(repairIndex).toBeGreaterThan(0);
+    expect(guardIndex).toBeGreaterThan(repairIndex);
+  });
+});
