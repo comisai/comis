@@ -167,6 +167,26 @@ const SPECIALIST_AGENTS_MD = `# Platform Instructions (Specialist)
 - Use structured output as defined in ROLE.md
 - Be concise — you're a specialist worker, not a conversationalist`;
 
+/**
+ * USER.md's preferred-language field is owned by the dedicated Language
+ * section, which applies it only when the current message is ambiguous. Keeping
+ * the same field in raw project context turns that fallback into a competing
+ * unconditional system-level preference.
+ */
+function stripPreferredLanguageLine(content: string): string {
+  return content
+    .split("\n")
+    .filter((line) => {
+      let field = line.trimStart();
+      if (field.startsWith("-")) field = field.slice(1).trimStart();
+      if (field.startsWith("* ")) field = field.slice(2).trimStart();
+      if (field.startsWith("**")) field = field.slice(2);
+      else if (field.startsWith("*")) field = field.slice(1);
+      return !field.toLowerCase().startsWith("preferred language:");
+    })
+    .join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Project Context (included in minimal mode)
 // ---------------------------------------------------------------------------
@@ -193,7 +213,12 @@ export function buildProjectContextSection(
     if (file.path.toLowerCase() === "agents.md" && workspaceProfile === "specialist") {
       lines.push("### AGENTS.md", "", SPECIALIST_AGENTS_MD);
     } else {
-      lines.push(`### ${file.path}`, "", file.content);
+      const content = file.path.toLowerCase() === "user.md"
+        ? stripPreferredLanguageLine(file.content)
+        : file.content;
+      if (content.trim()) {
+        lines.push(`### ${file.path}`, "", content);
+      }
     }
 
     // Append ROLE.md content right after AGENTS.md
