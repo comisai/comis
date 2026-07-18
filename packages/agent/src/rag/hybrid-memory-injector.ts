@@ -26,6 +26,32 @@ import { formatMemorySection } from "./rag-retriever.js";
 const INLINE_RECALL_BLOCK_RE =
   /^\s*\[Relevant context from memory: [\s\S]*? \(recorded \d{4}-\d{2}-\d{2}(?:, occurred \d{4}-\d{2}-\d{2})?\)\]\n?/;
 
+const CURRENT_TURN_LANGUAGE_HEADING = "## Reply Language for This Turn";
+const SYSTEM_CONTEXT_START = "[System context]";
+const SYSTEM_CONTEXT_END = "[End system context]";
+const CURRENT_TURN_LANGUAGE_TAIL = [
+  "[Current-turn language constraint]",
+  "The current user message, not recalled memory, is authoritative for reply language.",
+  "Produce the entire user-facing reply in that language, including every heading, sentence, bullet, label, suggestion, and follow-up.",
+].join("\n");
+
+/**
+ * Re-emit the trusted current-turn language constraint after deferred recall,
+ * which request-body cache stabilization deliberately moves to the freshest
+ * model-visible position. User text appears after the trusted system-context
+ * envelope and therefore cannot activate this check by itself.
+ */
+export function buildRecallLanguageTail(rest: string): string | undefined {
+  const contextStart = rest.indexOf(SYSTEM_CONTEXT_START);
+  if (contextStart < 0) return undefined;
+  const contextEnd = rest.indexOf(SYSTEM_CONTEXT_END, contextStart + SYSTEM_CONTEXT_START.length);
+  if (contextEnd < 0) return undefined;
+  const systemContext = rest.slice(contextStart, contextEnd);
+  return systemContext.includes(CURRENT_TURN_LANGUAGE_HEADING)
+    ? CURRENT_TURN_LANGUAGE_TAIL
+    : undefined;
+}
+
 /**
  * Remove the leading inline-recall block from a user message's text. The single
  * source of truth for carving this TRANSIENT cross-session recall back out before

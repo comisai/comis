@@ -14,7 +14,11 @@
  * @module
  */
 
-import { stripInlineRecalledMemory, extractInlineRecalledMemory } from "../../../rag/hybrid-memory-injector.js";
+import {
+  buildRecallLanguageTail,
+  extractInlineRecalledMemory,
+  stripInlineRecalledMemory,
+} from "../../../rag/hybrid-memory-injector.js";
 
 /** Minimum content length (chars) for a tool result to be considered clearable. */
 export const MICROCOMPACT_MIN_CONTENT_LENGTH = 1000;
@@ -352,32 +356,6 @@ export function stripTransientRecallFromHistory(messages: Array<Record<string, u
 /** Matches a deferred trailing recall block (used to detect/skip it on later passes). */
 const RECALL_PREFIX_RE = /^\s*\[Relevant context from memory:/;
 
-const CURRENT_TURN_LANGUAGE_HEADING = "## Reply Language for This Turn";
-const SYSTEM_CONTEXT_START = "[System context]";
-const SYSTEM_CONTEXT_END = "[End system context]";
-const CURRENT_TURN_LANGUAGE_TAIL = [
-  "[Current-turn language constraint]",
-  "The current user message, not recalled memory, is authoritative for reply language.",
-  "Produce the entire user-facing reply in that language, including every heading, sentence, bullet, label, suggestion, and follow-up.",
-].join("\n");
-
-/**
- * Re-emit the trusted current-turn language constraint after deferred recall,
- * which request-body cache stabilization deliberately moves to the freshest
- * model-visible position. User text appears after the trusted system-context
- * envelope and therefore cannot activate this check by itself.
- */
-function languageTailAfterRecall(rest: string): string | undefined {
-  const contextStart = rest.indexOf(SYSTEM_CONTEXT_START);
-  if (contextStart < 0) return undefined;
-  const contextEnd = rest.indexOf(SYSTEM_CONTEXT_END, contextStart + SYSTEM_CONTEXT_START.length);
-  if (contextEnd < 0) return undefined;
-  const systemContext = rest.slice(contextStart, contextEnd);
-  return systemContext.includes(CURRENT_TURN_LANGUAGE_HEADING)
-    ? CURRENT_TURN_LANGUAGE_TAIL
-    : undefined;
-}
-
 /**
  * Move the inline-recall block on the CURRENT (latest) user message off the cached
  * prefix and onto the UNCACHED tail.
@@ -414,7 +392,7 @@ export function deferRecallToUncachedTail(messages: Array<Record<string, unknown
   if (typeof content === "string") {
     const { recall, rest } = extractInlineRecalledMemory(content);
     if (!recall || rest.trim().length === 0) return 0;
-    const languageTail = languageTailAfterRecall(rest);
+    const languageTail = buildRecallLanguageTail(rest);
     msg.content = [
       { type: "text", text: rest },
       { type: "text", text: recall.trim() },
@@ -433,7 +411,7 @@ export function deferRecallToUncachedTail(messages: Array<Record<string, unknown
     if (!recallBlock) return 0;
     const { recall, rest } = extractInlineRecalledMemory(recallBlock.text as string);
     if (!recall || rest.trim().length === 0) return 0;
-    const languageTail = languageTailAfterRecall(rest);
+    const languageTail = buildRecallLanguageTail(rest);
     recallBlock.text = rest; // query remainder keeps its cache_control → stays cached + stable
     // Append the recall AFTER the cache fence (the SDK marker is on the last block) so it
     // rides the uncached tail. No cache_control on this block.
@@ -576,7 +554,7 @@ export function deferRecallToTrailingResponsesItem(input: Array<Record<string, u
     // empty user item is invalid, and a recall-only turn has no stable prefix to protect.
     if (!ex.recall || ex.rest.trim().length === 0) return 0;
     recall = ex.recall.trim();
-    languageTail = languageTailAfterRecall(ex.rest);
+    languageTail = buildRecallLanguageTail(ex.rest);
     msg.content = ex.rest;
   } else if (Array.isArray(content)) {
     const blocks = content as Array<Record<string, unknown>>;
@@ -587,7 +565,7 @@ export function deferRecallToTrailingResponsesItem(input: Array<Record<string, u
     const ex = extractInlineRecalledMemory(textBlock.text as string);
     if (!ex.recall || ex.rest.trim().length === 0) return 0;
     recall = ex.recall.trim();
-    languageTail = languageTailAfterRecall(ex.rest);
+    languageTail = buildRecallLanguageTail(ex.rest);
     textBlock.text = ex.rest;
   } else {
     return 0;
