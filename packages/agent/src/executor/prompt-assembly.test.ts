@@ -3032,6 +3032,12 @@ describe("assembleExecutionPrompt", () => {
       expect(result.dynamicPreamble).toContain("current user message is authoritative");
       expect(result.dynamicPreamble).toContain("saved language preference only when the current message is ambiguous");
       expect(result.dynamicPreamble).toContain("Do not use the language of the profile, memories, MCP instructions, or other context");
+      expect(result.dynamicPreamble).toContain(
+        "Produce the entire user-facing reply exclusively in the language of the current user message",
+      );
+      expect(result.dynamicPreamble).toContain(
+        "heading, sentence, bullet, label, suggestion, or follow-up",
+      );
       expect(result.dynamicPreamble.lastIndexOf("## Reply Language for This Turn")).toBeGreaterThan(
         result.dynamicPreamble.lastIndexOf("## MCP Server Instructions"),
       );
