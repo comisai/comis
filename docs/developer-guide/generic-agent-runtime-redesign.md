@@ -54,7 +54,7 @@ The following decisions are normative for implementation:
 7. The contribution registry replaces static platform registries and concrete daemon construction branches. It does not extend the hook-only `PluginRegistryApi` with unrelated optional methods.
 8. The first contribution loader is an explicit in-process list assembled by the composition root. Filesystem package discovery and arbitrary module execution remain out of scope.
 9. A linked contribution, a registered capability definition, and an enabled runtime instance have different identities and lifecycles. One contribution may create multiple isolated instances.
-10. Registration is synchronous, definition-only, and receives no authority-bearing dependencies. I/O or started work is a contract violation enforced by review and architecture gates, not an in-process sandbox property. Activation binds implementations to pre-registered definitions, and active views are published only after the enabled set activates successfully.
+10. Registration is synchronous, definition-only, and receives no authority-bearing dependencies. I/O or started work is a contract violation enforced by review and architecture gates, not an in-process sandbox property. Activation binds implementations to pre-registered definitions, and active views are published atomically after the activation plan completes: a structurally invalid plan publishes nothing, while a leaf instance's runtime start failure is recorded as a failed instance rather than aborting the host.
 11. Every contribution declares the surfaces it provides. The registry rejects undeclared bindings, duplicate ownership, invalid namespaces, missing dependencies, and dependency cycles. Independent contributions use a documented stable topological tie-break; independence is not an error.
 12. Core owns capability semantics and approval enforcement. Contributions may request capabilities and declare a minimum side-effect class; they cannot grant authority, lower a classifier result, or weaken policy.
 13. Core owns provider-neutral model execution contracts, not provider names, model catalogs, prices, authentication flows, aliases, or SDK-specific prompt behavior.
@@ -72,21 +72,22 @@ The redesign starts from useful foundations: hexagonal ports and adapters, `Resu
 
 | Area | Repository evidence | Required direction |
 |---|---|---|
-| Ingress and session identity | `packages/core/src/domain/session-key.ts` makes `agentId` optional and excludes it from `formatSessionKey()`. `RequestContext` separately carries optional user, agent, session, and delivery fields. `packages/orchestrator/src/session-key/session-key-builder.ts` accepts `agentId` but does not serialize it. `packages/memory/src/schema.ts` keys `sessions` by `session_key` alone. | Resolve endpoint, authenticated principal, agent, and routing partition into one `ResolvedTurnScope`; replace formatted-string authority with a complete `ConversationScope` and include tenant plus agent in every scoped predicate and uniqueness constraint. |
-| Channel normalization | `NormalizedMessage.metadata` is intentionally loose, while orchestrator routing still interprets platform keys such as `guildId`, `telegramChatType`, `slackThreadTs`, and `telegramThreadId`. `DeliveryOrigin` lacks a channel-instance identifier. | Normalize a typed endpoint, principal, chat kind, and thread at the channel boundary. Adapter metadata remains attributed data and cannot drive kernel routing, authorization, or storage scope. |
-| Scoped stores | `ContextStoreScope` already requires conversation, tenant, and agent, but `SessionStorePort`, delivery mirror, memory maintenance, observability rows, and several control-plane APIs still accept formatted strings or optional scope. Delivery queue rows carry tenant but not agent. | Reuse the working context-store precedent, propagate the same scope through every related store, and require an explicit host-maintenance scope for deployment-wide scans. |
-| Memory search | `packages/memory/src/hybrid-search.ts` and the vector-only and split-lane paths collect global FTS/vec0 candidates before applying tenant and optional agent filters. `MemoryPort` exposes optional agent scoping, and memory writes have no explicit visibility. | Require typed read/write scope and explicit visibility; make FTS matching/ranking authority-aware and put partition plus visibility constraints inside every vec0 KNN query before ranking and limiting. |
-| Web RPC | `API_CONTRACTS_ORDERED`, generated browser-safe JSON schemas, drift tests, and server/handler parity gates already exist. `packages/web/src/api/rpc-client.ts` still accepts `call<T>(method: string)`, the generated artifact lacks request/result TypeScript mappings, and `polling-controller.ts` calls `agent.list` and `channel.list` instead of the registered plural methods. | Extend the existing generator to emit a method map and make raw dispatch private; invalid names and malformed request/result shapes become compile-time or boundary-validation failures without creating a second contract source. |
-| Plugins and channels | `packages/core/src/ports/plugin.ts` deliberately exposes hook registration only. `packages/channels/src/shared/channel-registry.ts` supports lookup after registration, while daemon channel wiring still constructs concrete adapters. | Keep lifecycle hooks focused. Introduce a separate contribution registry that owns typed factories and lets the daemon iterate registrations. |
+| Ingress and session identity | `packages/core/src/domain/session-key.ts` makes `agentId` optional and excludes it from `formatSessionKey()`. `RequestContext` separately carries optional user, agent, session, and delivery fields, and the resolved request context requires an agent even though session persistence drops it. `packages/orchestrator/src/session-key/session-key-builder.ts` requires `agentId` in its parameters but never serializes or populates it. `packages/memory/src/schema.ts` keys `sessions` by `session_key` alone, the `"default"` tenant is an inlined fallback across schemas, call sites, and SQL column defaults, and a per-agent direct-message scope config already encodes four partition modes for the routing-policy resolver to subsume. | Resolve endpoint, authenticated principal, agent, and routing partition into one `ResolvedTurnScope`; replace formatted-string authority with a complete `ConversationScope` and include tenant plus agent in every scoped predicate and uniqueness constraint. |
+| Channel normalization | `NormalizedMessage.metadata` is intentionally loose, while orchestrator routing still interprets platform keys such as `guildId`, `telegramChatType`, `slackThreadTs`, and `telegramThreadId`. `DeliveryOrigin` identifies the chat but not the configured account or adapter instance that received it. | Normalize a typed endpoint, principal, chat kind, and thread at the channel boundary. Adapter metadata remains attributed data and cannot drive kernel routing, authorization, or storage scope. |
+| Scoped stores | `ContextStoreScope` already requires conversation, tenant, and agent, but `SessionStorePort`, delivery mirror, memory maintenance, observability rows, and several control-plane APIs still accept formatted strings or optional scope. Delivery authority is fragmented three ways: queue rows carry tenant but not agent, mirror rows carry only the formatted session key, and observability delivery rows carry agent but not tenant. Durable-run records anchor authority on the formatted session string plus owner fields with cross-field refinements. | Reuse the working context-store precedent, propagate the same scope through every related store, and require an explicit host-maintenance scope for deployment-wide scans. |
+| Memory search | `packages/memory/src/hybrid-search.ts` and the vector-only and split-lane paths collect global FTS/vec0 candidates before applying tenant and optional agent filters, and the memories FTS, trigram, and vec0 indexes carry no authority columns. `MemoryPort` exposes optional agent scoping, ID-based deletes take no agent scope, and memory writes have no explicit visibility. | Require typed read/write scope and explicit visibility; make FTS matching/ranking authority-aware and put partition plus visibility constraints inside every vec0 KNN query before ranking and limiting. |
+| Web RPC | `API_CONTRACTS_ORDERED`, generated browser-safe JSON schemas, drift tests, and server/handler parity gates already exist, but contract definitions carry only method, request, response, and gateway scopes. `packages/web/src/api/rpc-client.ts` still accepts `call<T>(method: string)`, the generated artifact lacks request/result TypeScript mappings beyond a bypassed name-only helper, and `polling-controller.ts` calls `agent.list` and `channel.list` instead of the registered plural methods while silently swallowing the resulting failures. | Extend the existing generator to emit a method map and make raw dispatch private; invalid names and malformed request/result shapes become compile-time or boundary-validation failures without creating a second contract source. |
+| Plugins and channels | `packages/core/src/ports/plugin.ts` deliberately exposes hook registration only. `packages/channels/src/shared/channel-registry.ts` supports registration and lookup, but production wiring builds a read-only registry over adapters constructed directly in daemon setup, one enabled-check per platform. | Keep lifecycle hooks focused. Introduce a separate contribution registry that owns typed factories and lets the daemon iterate registrations. |
 | Boot lifecycle | `packages/core/src/bootstrap.ts` loads the monolithic config and creates the foundation `AppContainer`; daemon wiring then constructs most integrations through additional setup stages. The container has no atomic contribution-start transaction. | Extend the existing bootstrap contract with linked definition registration and activation planning, then start all configured instances through one abortable `AppContainer` lifecycle and one shutdown path. |
-| Providers and media | Provider families, concrete media catalogs and selectors, OAuth/catalog resolution, and SDK-specific behavior appear across `packages/core`, `packages/agent`, and `packages/daemon`; core and agent manifests also carry provider SDK dependencies. | Keep only provider-neutral execution and capability contracts in core/agent; move catalogs, protocol behavior, media selection, auth, and SDK dependencies beside provider or media contributions. |
+| Providers and media | Provider families, concrete media catalogs and selectors, OAuth/catalog resolution, and SDK-specific behavior appear across `packages/core`, `packages/agent`, and `packages/daemon`; core and agent manifests also carry provider SDK dependencies. Core owns no model-execution port: the executor consumes the external coding-agent SDK directly, while media, embedding, and vision wiring branch on concrete provider names. | Keep only provider-neutral execution and capability contracts in core/agent; move catalogs, protocol behavior, media selection, auth, and SDK dependencies beside provider or media contributions. |
+| Tools | `packages/skills/src/platform-tools/registry.ts` returns a static descriptor array whose channel tools are keyed by concrete platform names and whose build callbacks bridge dependencies with `as never` casts; operational tool metadata registers separately through `registerToolMetadata` in `packages/core/src/tool-metadata.ts`. | Register tools as typed contribution-owned definitions that carry their own operational metadata, derive types from definitions, and delete the static registry and the metadata side channel. |
 | Prompt assembly | `packages/agent/src/executor/prompt-assembly.ts` combines kernel policy, workspace policy, runtime state, recall, tools, integrations, and diagnostics in one large module. | Compile typed sections through small independent producers and a deterministic compiler. No consumer reparses prompt headings. |
 | Context assembly | `packages/agent/src/context-engine/context-engine.ts` supports `dag` and `pipeline` and falls through to the pipeline when DAG dependencies are absent. Schema defaults and several daemon comments disagree about which path is canonical. | Select one canonical assembler, satisfy its store explicitly, and remove the selector, silent algorithm fallback, and stale mode-dependent wiring. |
-| Config | `packages/core/src/config/schema.ts` owns a broad product-shaped schema, consumers apply local semantic `??` defaults, and `AppContainer.rawAgentRerankEnabled` preserves pre-Zod state because a boolean default erased `auto` versus explicit-off semantics. | Compose kernel and contribution namespaces once, model semantic tri-state explicitly, return resolved config, and remove raw-tree side channels plus call-site defaults. |
+| Config | `packages/core/src/config/schema.ts` composes a broad product-shaped schema across dozens of schema files, including channel-specific keys; consumers apply local semantic `??` defaults that can diverge from the schema default for the same field; and `AppContainer.rawAgentRerankEnabled` preserves pre-Zod state because a boolean default erased `auto` versus explicit-off semantics. A consolidated section registry already derives the serializer schemas, field metadata, and managed-section redirects. | Compose kernel and contribution namespaces once through the existing section registry, model semantic tri-state explicitly, return resolved config, and remove raw-tree side channels plus call-site defaults. |
 | Control plane | `packages/core/src/api-contracts/` is a large closed product surface and `packages/daemon/src/api/` owns handlers separately. Core event maps similarly contain optional media, scheduler, provider, and observability vocabularies. | Retain a small host control plane and base event set; relocate contribution-owned contracts and schemas while preserving one build-time aggregate for dispatch, code generation, and parity checks. |
-| Package direction | Agent imports observability and scheduler implementations; orchestrator imports agent and channel implementation types/helpers; skills imports agent and observability; infra and memory import observability; observability-otel imports memory. | Introduce the missing core ports or move mechanisms to their owning package, then tighten the exact package graph. Do not hide implementation imports behind dynamic loading or type aliases. |
+| Package direction | Agent imports the observability implementation and declares a scheduler dependency that production wiring satisfies by callback injection; orchestrator imports agent and channel implementation types/helpers; skills imports agent and observability; infra and memory import observability; observability-otel declares a memory dependency it never imports. | Introduce the missing core ports or move mechanisms to their owning package, then tighten the exact package graph. Do not hide implementation imports behind dynamic loading or type aliases. |
 | Distribution | `@comis/daemon` depends on the full runtime graph, `@comis/skills` carries browser/media/ML dependencies, `@comis/memory` carries embedding-provider dependencies, and `comisai` aggregates nearly every SDK. | Publish a separate lean runtime package, move heavy SDKs into contribution package closures, and use dynamic import only as the additional startup-isolation mechanism it actually provides. |
-| Boundary enforcement | `test/architecture/generic-runtime-boundary.test.ts` protects selected terminology and prompt invariants, but it does not prove dependency direction, contribution ownership, or scoped persistence behavior. | Add structural and behavioral gates that encode the target architecture, while keeping allowlists shrink-only. |
+| Boundary enforcement | `test/architecture/generic-runtime-boundary.test.ts` protects selected terminology and prompt invariants, targeted import-direction tests cover several package pairs, and an exact package-graph test pins today's edges — including the implementation edges this redesign removes — while leaving the observability, exporter, web, and umbrella packages unconstrained. Nothing proves contribution ownership or scoped persistence behavior. | Add structural and behavioral gates that encode the target architecture, while keeping allowlists shrink-only. |
 
 ## Target architecture
 
@@ -96,7 +97,7 @@ Operator configuration and workspace policy
                     v
        +------------+-------------+
        |       Runtime host       |
-       | linked descriptors only |
+       |   linked factories only  |
        +------------+-------------+
                     |
                     v
@@ -138,7 +139,7 @@ Workspace policy ----------> operator authority snapshot
 External content ----------> attributed, wrapped runtime context
 ```
 
-The runtime host is the only layer that knows the complete linked set. The definition registry is safe to inspect before activation; active views contain only successfully enabled instances. The kernel knows contribution contracts and registered capabilities, never the names of concrete channels, providers, SDKs, or task domains.
+The runtime host is the only layer that knows the complete linked set. The definition registry is safe to inspect before activation; active views expose live bindings only from successfully started instances and carry explicit failed-instance state for any enabled instance that failed to start. The kernel knows contribution contracts and registered capabilities, never the names of concrete channels, providers, SDKs, or task domains.
 
 ## Ownership boundaries
 
@@ -191,6 +192,7 @@ export const ChannelEndpointSchema = z.strictObject({
   threadId: z.string().min(1).optional(),
   conversationKind: z.enum(["direct", "shared"]),
 });
+export type ChannelEndpoint = z.infer<typeof ChannelEndpointSchema>;
 
 export const PrincipalScopeSchema = z.strictObject({
   principalId: z.string().min(1),
@@ -202,12 +204,13 @@ export const PlatformPrincipalAssertionSchema = z.strictObject({
   channelInstanceId: z.string().min(1),
   platformSubjectId: z.string().min(1),
 });
+export type PlatformPrincipalAssertion = z.infer<typeof PlatformPrincipalAssertionSchema>;
 
 export interface PrincipalResolverPort {
   resolve(
     tenantId: string,
     agentId: string,
-    assertion: z.infer<typeof PlatformPrincipalAssertionSchema>,
+    assertion: PlatformPrincipalAssertion,
   ): Result<PrincipalScope, PrincipalResolutionError>;
 }
 
@@ -250,22 +253,25 @@ export function createConversationRef(
 ): Result<ConversationRef, ConversationScopeError>;
 ```
 
-The channel contribution supplies a platform subject assertion only after channel authentication. `PrincipalResolverPort` maps it to the internal principal. Its safe unmapped behavior namespaces the platform subject by channel type and configured instance; cross-channel or cross-account identity linking requires an explicit typed operator mapping. Display names, message metadata, model output, and workspace prose are never identity evidence.
+The channel contribution supplies a platform subject assertion only after channel authentication. `PrincipalResolverPort` maps it to the internal principal. Its safe unmapped behavior namespaces the platform subject by channel type and configured instance; cross-channel or cross-account identity linking requires an explicit typed operator mapping. Display names, message metadata, model output, and workspace prose are never identity evidence. Resolution is synchronous and pure over validated operator configuration by design: the authentication path performs no I/O. A future store-backed identity directory would materialize typed mappings into configuration rather than making resolution asynchronous.
 
-The routing-policy resolver receives the normalized endpoint, resolved principal, tenant, selected agent, and parsed per-agent session policy, then returns `ConversationScope`. It is the only code allowed to choose a partition variant. A shared conversation always uses `endpoint-conversation`; direct-message modes map explicitly to agent, principal, channel-principal, or endpoint-conversation-principal partitions. The kernel therefore supports intentional sharing without silently equating the latest sender with conversation authority or accidentally merging two configured accounts that reuse a platform conversation ID.
+The routing-policy resolver receives the normalized endpoint, resolved principal, tenant, selected agent, and parsed per-agent session policy, then returns `ConversationScope`. It is the only code allowed to choose a partition variant. A shared conversation always uses `endpoint-conversation`; direct-message modes map explicitly to agent, principal, channel-principal, or endpoint-conversation-principal partitions. Those variants correspond one-to-one to the per-agent direct-message scope modes the configuration already exposes, so the resolver subsumes the existing routing vocabulary instead of adding a second one. The kernel therefore supports intentional sharing without silently equating the latest sender with conversation authority or accidentally merging two configured accounts that reuse a platform conversation ID.
 
 Contract requirements:
 
 - all fields that affect isolation are required and validated before a store or privileged-action call;
 - `channelInstanceId` identifies one configured account or endpoint, not merely a channel implementation type;
-- the opaque reference is the `cv_`-prefixed base64url SHA-256 digest of one explicitly specified canonical scope encoding, contains no raw principal or endpoint value, and is safe for logs, paths, and APIs;
+- the opaque reference is the `cv_`-prefixed base64url SHA-256 digest of one explicitly specified canonical scope encoding that is injective by construction — versioned, domain-separated, and length-delimited so no two distinct scopes can share an encoding; it contains no raw principal or endpoint value, is safe for logs, paths, and APIs, and is produced only by schema parse of that digest — the brand is never applied by cast;
 - no caller parses the opaque reference to reconstruct authority;
 - request context carries the resolved structured types; formatted strings are display identifiers only;
 - a thread can only narrow the chosen endpoint partition;
-- `ResolvedTurnScopeSchema` refines principal-bearing and endpoint-bearing partitions so their values exactly match the outer authenticated principal and normalized endpoint;
+- `ResolvedTurnScopeSchema` refines principal-bearing and endpoint-bearing partitions so their values exactly match the outer authenticated principal and normalized endpoint; channel-scoped partitions match the endpoint's channel type, and endpoint equality is exact over the thread-narrowed endpoint;
 - adapter metadata remains available as attributed data but never supplies a routing or authorization field after normalization;
 - scheduled, RPC, and internal entry points mint explicit generic endpoint and principal identifiers at their boundary rather than omitting identity;
+- sub-agent and delegated executions inherit the parent turn's resolved scope and never mint a new conversation authority; delegation widens no memory visibility;
 - single-tenant deployments inject their configured tenant explicitly at ingress; stores never default it.
+
+Non-channel origins use the same contracts instead of bypassing them. Each internal origin kind — a scheduler tick, a control-plane execution request, a durable resume — mints one canonical generic endpoint whose channel type names the origin kind and whose instance and conversation identifiers name the configured source, plus an explicit configured or synthetic origin principal; the routing-policy resolver then selects the partition exactly as it does for channel ingress. The scheduler's current synthetic formatted-session fallback is replaced by this explicit minting, and no internal origin reaches a store with omitted identity.
 
 ### Session storage
 
@@ -281,7 +287,7 @@ conversation_ref
 
 It also persists the canonical structured partition representation beside the reference. Every point lookup predicates on tenant, agent, and reference, then compares the stored canonical scope before returning or mutating. A collision or mismatch is an internal error, never a best-effort match. Partition-kind columns may be materialized for listing, but they do not replace the canonical scope.
 
-Listing, deletion, context rows, session metadata, checkpoints, approvals, delivery mirrors, delivery queue attribution, observability correlation, durable runs, and cross-session messages carry the same tenant, agent, and conversation reference. Approval records additionally bind the exact principal allowed to resolve them. Delivery records additionally bind the destination endpoint snapshot. Deployment-wide drain, retention, and repair jobs use a distinct, non-serializable authority minted only at the composition root instead of an optional or empty scope. RPC, tool, channel, and model-facing APIs never accept it.
+Listing, deletion, context rows, session metadata, checkpoints, approvals, delivery mirrors, delivery queue attribution, observability correlation, durable runs, and cross-session messages carry the same tenant, agent, and conversation reference. Approval records additionally bind the exact principal allowed to resolve them. Delivery records additionally bind the destination endpoint snapshot. Durable-run records replace their formatted session key and owner-user fields with the conversation reference and principal, and their cross-field consistency refinements re-anchor on the canonical scope. Deployment-wide drain, retention, and repair jobs use a distinct, non-serializable authority minted only at the composition root instead of an optional or empty scope. RPC, tool, channel, and model-facing APIs never accept it.
 
 The implementation must build two agents against the same real stores and the same tenant, principal, endpoint, conversation, and thread, then prove that histories, metadata, approvals, delivery records, durable runs, and deletes remain isolated. It must also prove that a shared partition is shared across two principals while a principal partition is not. Separate fake stores do not satisfy these contracts.
 
@@ -314,13 +320,13 @@ export interface MemoryReadScope {
 }
 ```
 
-The write caller must select visibility explicitly. User- and model-facing inputs may request only a visibility kind; the kernel fills its identifiers from `PreparedTurn` and never accepts caller-supplied tenant, agent, principal, or conversation authority. A background contribution receives a pre-scoped memory service limited by its activation authority rather than constructing raw scope. Widening a conversation-visible write to principal or agent visibility requires the corresponding typed operator permission and code-enforced capability; denial returns `err()` and emits an audit decision. Conversation or principal content does not become agent-shared because a field is omitted. Visibility is immutable for a memory ID; changing it creates a new entry and removes the old one under the original scope. Provenance explains where a fact came from and is a closed variant; it does not grant read authority.
+The write caller must select visibility explicitly. User- and model-facing inputs may request only a visibility kind; the kernel fills its identifiers from `PreparedTurn` and never accepts caller-supplied tenant, agent, principal, or conversation authority. A background contribution receives a pre-scoped memory service limited by its activation authority rather than constructing raw scope; `MemoryReadScope` models a turn read, and pre-scoped services derive narrower read shapes — for example principal-wide reads with no conversation lane — from their activation authority without ever reaching conversation-visible rows outside it. Widening a conversation-visible write to principal or agent visibility requires the corresponding typed operator permission and code-enforced capability; denial returns `err()` and emits an audit decision. External-provenance writes additionally carry a visibility ceiling: they default to conversation visibility, and raising externally sourced content to principal or agent visibility requires the same typed permission plus an explicit operator policy for external facts — a turn that holds the widening capability while ingesting untrusted content must not become a cross-principal poisoning path. Conversation or principal content does not become agent-shared because a field is omitted. Visibility is immutable for a memory ID; changing it creates a new entry and removes the old one under the original scope. Provenance explains where a fact came from and is a closed variant; it does not grant read authority.
 
 Every FTS, vector, temporal, graph, usefulness, consolidation, lifecycle, export, delete, pin, unpin, stats, and inspect operation receives a required scope or the explicit host-maintenance authority. Candidate SQL applies tenant, agent, and allowed visibility predicates before `MATCH`, vector KNN ranking, ordering, or `LIMIT`.
 
 For SQLite:
 
-- FTS candidate generation is authority-aware. Use either a physically tenant-agent-partitioned FTS index or indexed opaque scope tokens in `MATCH` followed by scope-local lexical scoring. Visibility is part of the same candidate constraint. Unindexed authority columns plus a post-`MATCH` `WHERE` clause alone are not proof that out-of-scope corpus statistics or an early limit cannot influence ranked candidates;
+- FTS candidate generation is authority-aware. Use either a physically tenant-agent-partitioned FTS index or indexed opaque scope tokens in `MATCH` followed by scope-local lexical scoring. Visibility is part of the same candidate constraint, and every derived lexical index, including the trigram variant, follows the same rule — the context store's trigram indexes already carry per-agent isolation columns inside `MATCH` queries and prove the pattern in this repository. Unindexed authority columns plus a post-`MATCH` `WHERE` clause alone are not proof that out-of-scope corpus statistics or an early limit cannot influence ranked candidates;
 - vec0 rows carry a collision-free tenant-agent partition ID from an authority table with a unique `(tenant_id, agent_id)` constraint, plus visibility metadata. The partition and visibility constraints are present in the KNN query. If the pinned vec0 query planner cannot express the complete allowed-visibility predicate in one KNN query, run one pre-filtered KNN lane per allowed visibility and merge those already-scoped lanes deterministically;
 - an asynchronous embedding writer reads authority from the source memory row and copies it into vec0 in the same transaction as the vector insert. It never trusts scope supplied by a queue payload;
 - source writes may exist without a derived vector row, but no derived row may exist with broader authority than its source.
@@ -374,7 +380,7 @@ export type ContributionSurface =
   | "lifecycle-hook";
 ```
 
-The manifest does not contain prompt instructions, credentials, executable strings, or dynamic import paths. Contribution IDs and namespaces use one validated identifier grammar. `requires` names contribution IDs only; service dependencies use typed activation context ports. `version` is build inventory, not compatibility negotiation: the runtime supports exactly the linked contract and does not select alternate behavior by version. There is no closed contribution-kind taxonomy; the registered surfaces are the operational classification, and one contribution may provide several of them.
+The manifest does not contain prompt instructions, credentials, executable strings, or dynamic import paths. Contribution IDs and namespaces use one validated identifier grammar. `requires` names contribution IDs only; service dependencies use typed activation context ports. `version` is build inventory, not compatibility negotiation: the runtime supports exactly the linked contract and does not select alternate behavior by version. A contribution itself has no closed kind taxonomy — it is classified operationally by which of the closed surface set it provides, and one contribution may provide several.
 
 `RuntimeContribution` is a linked definition provider, not a configured account and not a live singleton. Registered surface definitions own the activators used in the host's activation plan. `ActiveContribution` is the host-produced aggregate for one activation attempt, so tests and multiple embedded hosts do not mutate a process-global `deactivate()` target. It contains one binding per activated instance plus any explicitly registered contribution-wide lifecycle binding. `close()` is idempotent, bounded by the supplied abort signal, and owns every resource started by that activation.
 
@@ -404,8 +410,8 @@ The facade is scoped to the registering contribution. Registration writes into a
 - duplicate registration returns `err()` with the conflicting owners;
 - dependencies form an acyclic graph;
 - the activation plan is a stable topological sort; otherwise independent nodes are ordered lexically by contribution ID, definition ID, then instance ID;
-- activation follows dependency order, has an abort signal and deadline, and publishes no live binding until the complete enabled set succeeds;
-- partial activation failure closes already-started handles in reverse order, continues cleanup after individual cleanup errors, and returns one structured report containing the initiating and cleanup failures;
+- activation follows dependency order, has an abort signal and deadline, and publishes no live binding before the activation transaction completes;
+- a structural activation failure closes already-started handles in reverse order, continues cleanup after individual cleanup errors, publishes nothing, and returns one structured report containing the initiating and cleanup failures;
 - normal shutdown closes all active handles in reverse activation order and is safe to retry;
 - all ERROR/WARN paths include `hint` and `errorKind`, and lifecycle events contain only identifiers, states, counts, and durations.
 
@@ -421,9 +427,11 @@ Three identifiers remain distinct:
 | `definitionId` | A registered channel type, provider protocol, tool, RPC namespace, or other surface | One contribution can own many |
 | `instanceId` | One operator-configured account, endpoint, provider base URL, or service instance | One definition can have many |
 
-Config namespaces therefore store instance maps keyed by validated `instanceId`; they do not assume one channel account or provider endpoint per contribution. Instance IDs are non-sensitive operator-assigned slugs, not platform account addresses or credential references. They are unique within the owning definition and are present in endpoint identity, health, inventory, metrics, and shutdown reports. Failure of any enabled instance fails the activation transaction; it is never silently omitted from the published view.
+Config namespaces therefore store instance maps keyed by validated `instanceId`; they do not assume one channel account or provider endpoint per contribution. Instance IDs are non-sensitive operator-assigned slugs, not platform account addresses or credential references. They are unique within the owning definition and are present in endpoint identity, health, inventory, metrics, and shutdown reports.
 
-Definitions contain schemas, immutable metadata, and activation factories. They do not expose a live adapter created during registration. Activation receives only the parsed config for its instance, an owner-scoped credential resolver limited to the secret references declared by that namespace, and the minimal surface-specific dependency object. Avoid a universal activation context with dozens of optional services.
+Activation failures split by class. A structurally invalid plan — an unknown definition, a duplicate instance ID, a schema violation, a dependency cycle, or a failed instance that other enabled work depends on — fails the activation transaction and publishes nothing. An enabled leaf instance that fails to start for a runtime cause, such as rejected credentials or an unreachable endpoint, is published as an explicit failed instance with health findings instead of aborting unrelated instances; the deployment boots degraded and loudly, matching the operational reality that one bad account must not take down every other account. Nothing is silently omitted from the published view, and a failed instance never silently narrows a security control.
+
+Definitions contain schemas, immutable metadata, and activation factories. They do not expose a live adapter created during registration. Activation receives only the parsed config for its instance, an owner-scoped credential resolver limited to the secret references declared by that namespace, and the minimal surface-specific dependency object. Avoid a universal activation context with dozens of optional services. Shared kernel resources such as the database handle stay kernel-owned: storage contributions receive scoped ports over them, and an instance's `close()` releases only what that instance started — never a shared handle.
 
 ### Loader boundary
 
@@ -461,9 +469,11 @@ Arbitrary packages are not loaded from a config string. A future external loader
 
 ### Composition root and shutdown
 
-Extend the existing `bootstrap() -> Result<AppContainer, ConfigError>` composition path instead of creating a second service locator. `BootstrapOptions` receives the explicit linked contribution factories plus the required environment and outer runtime adapters. The generic implementation in `packages/core/src/bootstrap.ts` performs transactional definition registration, config assembly, activation planning, and construction of an inactive container without importing a concrete contribution package. `@comis/runtime` and `@comis/daemon` select different linked factory sets and supply adapters; neither reproduces kernel wiring.
+Extend the existing `bootstrap(options) -> Result<AppContainer, ConfigError>` composition path instead of creating a second service locator. `BootstrapOptions` receives the explicit linked contribution factories plus the required environment and outer runtime adapters. The generic implementation in `packages/core/src/bootstrap.ts` performs transactional definition registration, config assembly, activation planning, and construction of an inactive container without importing a concrete contribution package. `@comis/runtime` and `@comis/daemon` select different linked factory sets and supply adapters; neither reproduces kernel wiring.
 
 `AppContainer.start()` performs the abortable activation transaction and atomically publishes typed active views, returning a closed `Result` error type for runtime activation failures. Its one shutdown closure stops new ingress, aborts in-flight activation or execution as appropriate, closes active contribution bindings in reverse order, and then closes kernel-owned stores and adapters. Every step is attempted, and the returned structured result reports all failures. Daemon and headless callers invoke the same start and shutdown lifecycle. Do not add a parallel DI container, mutable global registry, or second shutdown path.
+
+`start()` and the state machine are net-new: today the composition path wires eagerly and the container exposes only shutdown, so the daemon's post-bootstrap setup stages move into activation rather than being wrapped by it, and the container's raw-config side channel is deleted with them. Reconfiguring the linked set, an instance, or activation topology is a lifecycle restart — the existing graceful-restart signal path stops the container and a fresh bootstrap runs the next activation transaction; the active view is never partially mutated in place. Cross-restart session replay identifies sessions by canonical conversation scope, and per-agent capability selection remains runtime-mutable configuration that chooses from the published active view without altering it.
 
 The container lifecycle is a closed state machine: `created -> starting -> active -> stopping -> stopped`, with failed activation moving through cleanup to `stopped`. Concurrent or repeated `start()` calls return a precondition error; shutdown is idempotent and may be called from any state, including while activation is being aborted.
 
@@ -496,6 +506,8 @@ Daemon setup becomes:
 5. publish them with the complete activation transaction;
 6. report an unknown channel type or duplicate instance ID as a configuration error with the list of linked types.
 
+Reconnection and backoff inside a running instance remain adapter-internal behavior surfaced through instance health; the host lifecycle owns activation and shutdown, not mid-run transport management.
+
 There is no daemon `switch`, `if` chain, or static tool map keyed by concrete platform names. The first vertical proof uses the existing Echo channel because it exercises lifecycle and message flow without an external SDK. A second proof uses one networked channel to cover credentials, retry, delivery, media, and shutdown.
 
 ### Model providers
@@ -519,7 +531,9 @@ export interface ModelExecutionStream {
 }
 ```
 
-`ProviderCapabilities` describes generic facts such as streaming, tool calls, image input, structured output, cache reporting, and served context window. It does not enumerate provider families.
+Aborting the execution signal terminates `events`; `cancel()` releases the same underlying execution from the consumer side. Both are idempotent and converge on one terminal state.
+
+`ProviderCapabilities` describes generic facts such as streaming, tool calls, image input, structured output, cache reporting, and served context window. It does not enumerate provider families. The name is currently taken: core's existing `ProviderCapabilities` is a static override schema keyed by a provider-family enumeration — the exact coupling this boundary removes. The redefinition, the relocation of family-keyed overrides into provider contribution instance config, and every consumer migration land in one change; an old and a new `ProviderCapabilities` never coexist in production.
 
 Provider contributions own:
 
@@ -553,11 +567,15 @@ export interface ActiveToolBinding<TInput, TOutput> {
 }
 ```
 
+The definition also carries the tool's operational metadata — result-size bounds, concurrency safety, discovery hints, and action discrimination — replacing the separate tool-metadata registration path so exposure, policy, and metadata cannot drift apart. The agent package's internal SDK-shaped `ToolDefinition` interface is renamed or made package-private when this core contract lands; one exported name does not carry two shapes.
+
 Contribution tools pass through the same action classifier, capability gate, approval path, external-content wrapper, audit logger, timeout, cancellation, and output guard as kernel tools. The effective side-effect class and output trust are the stricter of the registered minima and runtime classification; registration metadata can never lower either. Data returned by an external system is therefore wrapped before it reaches a prompt even when the tool itself is read-only. Tool instructions remain bounded descriptions; longer procedures belong in a skill.
+
+Runtime-dynamic tool sources fit behind, not inside, the static registry. An MCP bridge contribution registers its own bounded surface — bridge tools, config namespace, events — at activation; the remote tools a connected server exposes are runtime data behind that surface, validated on every connect and change, classified and approval-gated like any external capability, and never merged into the immutable activation view. Registered definitions describe code the distribution ships; dynamic discovery stays inside the owning contribution's boundary.
 
 ### RPC and web contracts
 
-Preserve the existing `ApiContract` shape, deterministic generator, generated browser artifact, and bidirectional parity gates; do not create a parallel RPC contract model. First extend the current definitions with owner, allowed origins or audiences, required gateway scopes, required agent capabilities where applicable, side-effect classification, and a separately bound handler.
+Preserve the existing `ApiContract` shape — today method, request schema, response schema, and gateway scopes — plus the deterministic generator, generated browser artifact, and bidirectional parity gates; do not create a parallel RPC contract model. First extend the current definitions with owner, allowed origins or audiences, required agent capabilities where applicable, side-effect classification, and a separately bound handler.
 
 As RPC-owning contributions are extracted, their inert public contract catalogs move with them. The full-distribution codegen entry point composes base host contracts and the explicitly linked contribution catalogs through the same registration validation used at runtime. At that cutover, the full `API_CONTRACTS_ORDERED` aggregate moves out of core; core retains only the generic `ApiContract` type, validation, and base runtime contracts. All generator, daemon, CLI/MCP policy, and architecture-test consumers retarget in the same change, and the old aggregate is deleted. Core never imports a contribution package, and there is never an old and new authoritative aggregate in production simultaneously.
 
@@ -568,27 +586,29 @@ Raw string dispatch remains private to gateway framing. The generator produces t
 The web client becomes method-keyed:
 
 ```ts
-export interface RpcMethodMap {
+export interface WebRpcMethodMap {
   "agents.list": RpcMethod<AgentsListParams, AgentsListResult>;
   "channels.list": RpcMethod<ChannelsListParams, ChannelsListResult>;
   // generated web-exposed entries
 }
 
 export interface RpcClient {
-  call<M extends keyof RpcMethodMap>(
+  call<M extends keyof WebRpcMethodMap>(
     method: M,
-    params: RpcMethodMap[M]["params"],
-  ): Promise<RpcMethodMap[M]["result"]>;
+    params: WebRpcMethodMap[M]["params"],
+  ): Promise<WebRpcMethodMap[M]["result"]>;
 }
 ```
 
-Methods without parameters use a canonical empty-object input so overloads remain simple. Tests must fail compilation for an unknown or wrong-audience method and fail runtime contract validation for malformed responses. The polling controller regression is fixed by changing production and test literals to `agents.list` and `channels.list`; generated typing then prevents recurrence. CLI-, MCP-, and host-maintenance-only methods stay out of the web method map even though they use the same authoritative definitions.
+Methods without parameters use a canonical empty-object input so overloads remain simple. Tests must fail compilation for an unknown or wrong-audience method and fail runtime contract validation for malformed responses. The polling controller regression is fixed by changing production and test literals to `agents.list` and `channels.list`; generated typing then prevents recurrence, and the polling path stops swallowing its failures — a failed poll surfaces through the standard logging and health path instead of an empty catch. CLI-, MCP-, and host-maintenance-only methods stay out of the web method map even though they use the same authoritative definitions.
+
+The method map is audience-prefixed because the gateway already owns a server-side `RpcMethodMap`; each audience map is generated beside its client, and the CLI client adopts its audience map the same way. The web client's existing name-only typed helper is replaced by the generated map rather than kept as a third calling convention. Existing gateway scopes remain authorization metadata; the new audience field is a separate dimension, and the `mcp-client` scope stops doing double duty as an audience marker.
 
 The base host owns only runtime-wide methods such as health, installed contribution inventory, and safe configuration inspection. Channel, provider, scheduler, memory-maintenance, media, and observability RPC namespaces live with their owning contributions.
 
 ### Events
 
-Core retains a compact event map for universal lifecycle and security events. Contributions register namespaced event schemas and emit through a validating event port.
+Core's `EventMap` today closes over media, scheduler, provider, and observability vocabularies; those namespaces move to their owning contributions, and core retains a compact base map for universal lifecycle and security events. Contributions register namespaced event schemas and emit through a validating event port.
 
 ```ts
 export interface EventDefinition<TPayload> {
@@ -598,7 +618,7 @@ export interface EventDefinition<TPayload> {
 }
 ```
 
-Registration records the owning contribution and grants it an owner-scoped emitter that cannot spell another namespace. Runtime dispatch validates every payload and emits a generic validated envelope to dynamic observers. Built-in TypeScript consumers receive generated known-event types, while external contributions remain runtime-validated. A contribution event cannot masquerade as a core event or publish unbounded message content. Observability bridges subscribe through definitions instead of importing a product-wide closed union into core.
+Registration records the owning contribution and grants it an owner-scoped emitter that cannot spell another namespace. Runtime dispatch validates every payload and emits a generic validated envelope to dynamic observers. Built-in TypeScript consumers receive generated known-event types, while external contributions remain runtime-validated. A contribution event cannot masquerade as a core event or publish unbounded message content. Observability bridges subscribe through definitions instead of importing a product-wide closed union into core. The gateway's server-sent-events endpoint, the activity buffer, and WebSocket notification push are the same kind of dynamic observer: they consume validated envelopes, and everything they stream is covered by the registered sensitivity classification.
 
 ### Configuration
 
@@ -609,6 +629,8 @@ Split configuration into:
 - per-agent selection of installed capabilities by opaque IDs.
 
 Config assembly registers every linked namespace before parsing, then validates contribution selection, instance references, and dependencies before activation. Unknown namespaces, missing linked contributions, duplicate instance IDs, or invalid defaults return configuration errors at startup. Schema defaults are applied once. Semantic tri-state settings use an explicit schema union such as `"auto" | "on" | "off"`; they do not preserve pre-Zod raw values in a side map. Runtime consumers accept resolved active types without `??` semantic fallbacks.
+
+Contribution namespaces register through the kernel's existing consolidated section registry — the one source that already derives the serializer schemas, field metadata, and managed-section redirects — rather than introducing a second section-truth mechanism. Runtime configuration writes keep their current in-memory semantics; keys that select contribution instances or activation topology are immutable at runtime, and changing them takes effect only through a restart with a fresh activation transaction. Those keys join the immutable-key set, and every runtime mutation surface — including administrative management tools — enforces that set through one shared path; documentation alone is not enforcement.
 
 The config editor and generated reference read from the same registry metadata. A contribution cannot redirect config changes to a tool unless that tool is registered by the same contribution and its schema is available.
 
@@ -667,7 +689,7 @@ Required implementation rules:
 - MCP or server instructions are individually bounded, attributed, hashed, and wrapped as external content;
 - tool availability comes from the registered tool set, never prompt prose;
 - unchanged workspace starters remain absent;
-- the stable engine section remains below 1,000 tokens and the minimal safe prompt below 500 tokens under the repository tokenizer fixture;
+- the stable engine section and the minimal safe prompt stay within the token budgets the architecture guide sets, measured by the repository token-estimation method; the engine budget keeps its asserting test and the minimal budget gains one;
 - truncation never drops security invariants;
 - diagnostics contain section identity, source, trust, size, hash, budget, and inclusion outcome, never content;
 - no module parses `USER.md`, prompt headings, XML blocks, or generated prose to recover control state.
@@ -695,13 +717,13 @@ Before deleting the alternate path, a parity suite runs the same scenario corpus
 
 Locale resolution remains provider- and domain-neutral. It uses a documented precedence of explicit user preference, validated channel locale metadata, recent high-confidence language evidence, and deployment default. Each result records source and confidence. A free-form language tag is validated and normalized according to the repository locale policy; core never contains a closed list of human languages or a preferred language.
 
-Deterministic runtime replies such as approvals, denials, help, validation failures, and degraded-mode notices consume `ResolvedLocale` through one localization port. Model-facing locale guidance is generated from that same object. No component infers locale by parsing `USER.md`, a prior assistant reply, or a prompt heading.
+`ResolvedLocale` is the per-turn resolution result produced under the existing open `ResponseLocalePolicy` domain type: the policy type remains the normative locale contract, and the resolved object carries its outcome plus source and confidence. Deterministic runtime replies such as approvals, denials, help, validation failures, and degraded-mode notices consume `ResolvedLocale` through one localization port. Model-facing locale guidance is generated from that same object. No component infers locale by parsing `USER.md`, a prior assistant reply, or a prompt heading.
 
 ### Outcome evaluation
 
-Preserve the generic outcome-evaluation contract already represented by the outcome judge: rubric, evidence references, judge model, policy hash, rubric hash, confidence, and reason codes remain structured and auditable. Extract provider-specific judge resolution behind the model-provider boundary rather than putting provider catalogs in the evaluator.
+Preserve the generic outcome-evaluation contract already represented by the outcome judge: rubric, evidence references, judge model, policy hash, rubric hash, confidence, and reason codes remain structured and auditable. Extract judge-model resolution — today it calls the external provider catalog and hand-builds an SDK-specific fallback model spec inside the evaluator layer — behind the model-provider boundary.
 
-Evaluation receives the exact `WorkspacePolicySnapshot` used to prepare the turn, not merely a hash that may or may not resolve later. When a durable replay or asynchronous evaluator has only a hash and the matching snapshot cannot be loaded, the result is `unknown` with a closed reason code. It must never judge against a smaller or current policy snapshot. Missing required evidence similarly produces `unknown`; absence is not success.
+Evaluation receives the exact `WorkspacePolicySnapshot` used to prepare the turn, not merely a hash that may or may not resolve later. When a durable replay or asynchronous evaluator has only a hash and the matching snapshot cannot be loaded, the result is `unknown` with a closed reason code. It must never judge against a smaller or current policy snapshot. Durable and asynchronous evaluation therefore persists the exact snapshot, content-addressed by its hash, whenever evaluation can outlive the in-memory turn; the `unknown` verdict covers genuine loss, not a designed-in inability to resolve any snapshot. Missing required evidence similarly produces `unknown`; absence is not success.
 
 The base rubric measures universal completion properties such as terminal-state truthfulness, required evidence presence, unresolved approvals, and tool-error handling. Deployment criteria come only from the immutable workspace snapshot, and task procedures may contribute bounded checklist evidence without gaining authority. Code-enforced confidence caps continue to dominate model self-confidence. Outcome evaluation remains separate from system health: a healthy runtime can fail a task, and a degraded runtime can still produce an honestly incomplete outcome.
 
@@ -721,7 +743,7 @@ The redesign changes responsibilities before introducing package splits. Move co
 | `@comis/core` | Generic domain contracts, scopes, ports, security, capabilities, base events, prompt section contracts, contribution contracts, and pure registries. No provider SDKs or concrete channel knowledge. |
 | `@comis/agent` | Provider-neutral turn execution, tool loop, canonical context assembly, prompt compilation, and safety enforcement through core ports. No observability implementation and no provider catalogs. |
 | `@comis/orchestrator` | Generic inbound coordination, routing, queues, execution coordination, and delivery coordination through core ports. No imports of concrete channel implementations. |
-| `@comis/infra` | Dependency-light runtime adapters for core logging, clock, environment, and timer contracts. No observability implementation or optional certificate/device SDK family. |
+| `@comis/infra` | Dependency-light runtime adapters for core logging, clock, environment, and timer contracts. No observability implementation, and the optional certificate-authority adapter family moves to a separately installable contribution. |
 | `@comis/channels` | Shared channel contracts and lightweight adapter utilities during extraction; concrete SDK-backed channel contributions become independently installable packages. |
 | `@comis/skills` | Dependency-light skill discovery, manifest validation, and prompt-skill loading. Tool enforcement remains in the agent kernel; MCP, browser, media, terminal, and other SDK-backed tool packs are contributions outside this package. |
 | `@comis/memory` | Scoped SQLite storage contributions implementing context, session, memory, credential, delivery, and diagnostics storage ports. Embedding providers and local-model runtimes are separate contributions. |
@@ -732,6 +754,7 @@ The redesign changes responsibilities before introducing package splits. Move co
 | `@comis/runtime` | Dependency-light headless host entry. It supplies an explicit contribution set to core bootstrap and contains no full-distribution imports or integration SDK dependencies. |
 | `@comis/daemon` | Full-distribution host entry. It supplies the built-in linked set to core bootstrap but contains no concrete channel/provider construction branches. |
 | `@comis/web` | Browser UI using generated RPC contracts and browser-local runtime adapters. It does not import server runtime implementations. |
+| `@comis/cli` | Operator command-line client over the generated control-plane contracts plus offline diagnostics readers. No channel, provider, or media SDK imports. |
 | `comisai` (`packages/comis`) | Full operator distribution and namespace exports; no longer the only practical way to consume the runtime. |
 
 Add `@comis/runtime` as a separate package. The headless acceptance application is its concrete caller. A dependency-light export inside `@comis/daemon` is insufficient because package managers install the daemon's complete declared dependency closure even when a heavy subpath is never imported. Dynamic import provides module-load and startup isolation only; it does not provide install isolation.
@@ -741,44 +764,52 @@ Contribution code with a heavy or unrelated SDK dependency must be independently
 Required dependency changes:
 
 - orchestrator consumes an `AgentRuntimePort` and channel/delivery ports from core rather than importing implementations;
-- agent emits telemetry through core contracts rather than depending on `@comis/observability`, receives scheduling behavior through ports rather than depending on `@comis/scheduler`, and removes provider/media SDKs and provider catalogs from its dependency closure;
+- agent emits telemetry through core contracts rather than depending on `@comis/observability`, receives scheduling behavior through core ports — replacing the declared scheduler dependency that production wiring already satisfies by callback injection — and removes provider/media SDKs and provider catalogs from its dependency closure;
 - skills build tools against core tool contracts rather than importing agent types;
 - core removes the concrete `pi-ai` provider dependency and provider-family/catalog knowledge;
 - skills moves browser, media, speech, terminal, and SDK-backed tool dependencies into their owning contribution packages;
 - memory moves OpenAI, local-model, and embedding-provider dependencies into provider contributions;
-- infra and memory implement core ports without importing the observability implementation, and optional certificate/device adapters leave the headless infra closure;
-- observability-otel consumes core telemetry and cache-stat contracts without importing memory implementation types;
+- infra and memory implement core ports without importing the observability implementation, and the optional certificate-authority adapter family leaves the headless infra closure;
+- observability-otel consumes core telemetry and cache-stat contracts and drops its declared-but-unused memory dependency;
 - web consumes generated contract artifacts without importing Node runtime helpers;
 - the runtime package depends only on the provider-neutral kernel path; daemon and the `comis` distribution are the only packages allowed to import the full built-in contribution set.
 
-Update the exact package-graph architecture test with the target edges in the same dependency-removal changes. Do not loosen it to a partial deny list.
+Update the exact package-graph architecture test with the target edges in the same dependency-removal changes, and extend its exact set to every workspace package — the observability, exporter, web, and umbrella packages sit outside it today. Do not loosen it to a partial deny list.
 
 ## Delivery workstreams
 
 ```text
-Scope correctness ------------------------------+
-                                                 |
-Typed RPC correctness --------+                  v
-                              +--> Contribution registry --> Vertical proofs
-                                                       |             |
-                                                       v             v
-                                              Built-in replacement   |
-                                                       |             |
-Turn preparation --> Prompt compiler + context assembler ------------+
-                                                       |
-Config/events/control-plane registration --------------+
-                                                       |
-Locale and outcome evaluation -------------------------+
-                                                       |
-Optional strategy extraction --------------------------+
-                                                       v
-                                              Headless runtime
-                                                       |
-                                                       v
-                                        Delete old paths and tighten gates
+Immediate correctness work
+(scope authority + typed web RPC)
+              |
+              v
+Contribution registry foundation
+              |
+              v
+Vertical contribution proofs
+              |
+     +--------+-----------------------------------+
+     |                                            |
+     v                                            v
+Built-in replacement                 Turn preparation, prompt, and
+Config, event, and                   context consolidation
+control-plane registration           Locale and outcome correctness
+     |                                            |
+     +--------+-----------------------------------+
+              |
+              v
+Optional strategy extraction
+              |
+              v
+Distribution split
+              |
+              v
+Removal and enforcement
 ```
 
-Each workstream is concern-sized and follows Red → Green → Refactor. A test-only RED commit is preferred when it compiles against the current code. Pure documentation updates remain in the same behavior change that they describe.
+After vertical proofs, two tracks proceed in parallel: converting the built-in integrations together with their control surfaces, and consolidating the execution path together with its locale and outcome consumers. The distribution split waits for both because the headless package boundary is only real once heavy integrations and optional strategies have left the kernel path.
+
+Each workstream is a theme delivered as a sequence of concern-sized changes, each following Red → Green → Refactor. A test-only RED commit is preferred when it compiles against the current code. Pure documentation updates remain in the same behavior change that they describe.
 
 ### Immediate correctness work
 
@@ -791,11 +822,13 @@ Implementation:
 - introduce endpoint, principal, `ConversationScope`, and the routing-policy resolver; replace formatted session authority across session, context, approval, delivery, and cross-session APIs;
 - update SQLite uniqueness and predicates to include required tenant and agent scope;
 - introduce explicit memory visibility and pre-scoped FTS/vector queries;
-- update all call sites in the same changes; do not retain optional `agentId` overloads.
+- update all call sites in the same changes; do not retain optional `agentId` overloads;
+- land the web RPC typing independently of the scope-authority work, and migrate scope store-by-store — each store family, its callers, and its tests move in one concern-sized change.
 
 Acceptance:
 
 - invalid and wrong-audience RPC literals fail TypeScript compilation;
+- a failed web poll is observable through logs and health surfaces rather than silently caught;
 - two agents sharing every other conversation coordinate cannot read, overwrite, list, approve, or delete each other's session data in one real store;
 - two principals intentionally share a shared conversation partition and remain isolated under a principal partition;
 - identical platform subject and conversation strings on two configured channel instances remain isolated unless typed principal mapping and routing policy explicitly join them;
@@ -818,7 +851,7 @@ Acceptance:
 
 - duplicate IDs, duplicate surfaces, namespace violations, undeclared surfaces, missing requirements, and cycles return typed errors;
 - activation uses stable topological order and shutdown uses its reverse, tested with fake clocks/timers and abort signals;
-- partial activation failure publishes no partial view and reports cleanup failures after attempting all cleanup;
+- a structural activation failure publishes no view and reports cleanup failures after attempting all cleanup; a leaf instance's runtime start failure yields a published failed-instance state without aborting unrelated instances;
 - registration receives no network, filesystem, timer, environment, or secret authority, and architecture tests enforce those import boundaries;
 - the registry has no knowledge of concrete channel, provider, or domain names.
 
@@ -975,7 +1008,7 @@ Delete only after callers and parity tests are complete:
 
 - optional-agent session identity and formatted-string authority;
 - post-ranking scope filters;
-- static platform tool registries;
+- static platform tool registries and the shared channel registry with its read-only production wrapper;
 - concrete daemon channel/provider construction branches;
 - direct plugin construction paths after their callers register through contributions;
 - context mode switch and alternate assembler;
@@ -993,7 +1026,7 @@ Then add or strengthen gates so these structures cannot return.
 
 Every new port or registry receives a shared contract suite that all implementations run. Required suites include:
 
-- platform-principal mapping, conversation scope parse/refinement, canonical ref, routing-policy mapping, and storage predicate behavior;
+- platform-principal mapping, conversation scope parse/refinement, canonical-ref encoding injectivity against adversarial near-miss scopes, routing-policy mapping, and storage predicate behavior;
 - session/context store multi-agent isolation plus shared-versus-principal partition behavior in one database;
 - memory visibility, derived-index authority copying, and pre-ranking scope;
 - contribution transactional registration, definition/instance identity, stable dependency ordering, container state transitions, atomic publication, activation cleanup, and shutdown;
@@ -1042,7 +1075,7 @@ Add focused tests instead of broad text deny lists where possible:
 - prompt assembly cannot parse headings for runtime state;
 - production source cannot branch on a context implementation selector;
 - generic-runtime scanning includes `AGENTS.md` and covers structural specialization regressions, not only selected words;
-- architecture documentation and `test/architecture/file-size.test.ts` agree on the enforced maximum;
+- architecture documentation and `test/architecture/file-size.test.ts` agree on one enforced maximum — today the test enforces 1,000 lines while its own description and the engineering protocol still state 800; the redesign picks one value and aligns the gate constant, its description, and the protocol text in the same change;
 - the packed `@comis/runtime` dependency tree stays within a recorded install-size budget and excludes the full-distribution SDK deny set;
 - shrink-only allowlists lose entries as oversized files, raw throws, optional dependency clusters, globals, and coverage gaps are repaired.
 
@@ -1062,7 +1095,7 @@ The contribution system increases composition flexibility, not authority.
 - External instructions are bounded, attributed, hashed, wrapped, and non-authoritative.
 - Health and lifecycle events are content-free.
 - Unknown contribution, provider, tool, event, or RPC names fail closed.
-- Dependency or activation failure publishes no partial active view and never silently drops a security control.
+- A structural activation failure publishes no active view; a runtime instance failure appears only as an explicit failed-instance state, never as a silently narrowed capability set, and never drops a security control.
 - Dynamic external module loading is prohibited until separately designed and approved.
 
 Threat-focused tests cover namespace collision, duplicate registration, partial-registration rollback, undeclared surface registration, dependency confusion, cross-instance identity or credential access, unauthorized memory-visibility widening, capability, side-effect, or output-trust downgrades, secret access during registration, malicious external instructions, wrong-origin RPC calls, malformed event payloads, partial activation, cleanup failure, and shutdown after failure.
@@ -1085,9 +1118,11 @@ The inventory hash covers contribution IDs and versions, registered definition I
 
 The host emits base lifecycle events for registration complete, activation complete, activation failed, and shutdown complete. Contributions emit their own namespaced operational events through registered schemas. Logs describe the failure; events announce the state change.
 
+Registration, activation, degraded-boot, and failed-instance findings also surface through the deployment-wide health report and incident-explanation surfaces, not only through raw lifecycle events; a degraded boot is diagnosable from one health call.
+
 ## Data and runtime cutover
 
-The scope work creates one canonical persisted representation. Implement only that representation. Existing development data is backed up or discarded by the operator before deployment; the runtime does not contain dual readers, aliases, optional-agent overloads, or fallback parsing.
+The scope work creates one canonical persisted representation, and moving to it is a breaking migration for every existing deployment — live production data included, not only development databases. Implement only that representation. Existing deployment data is backed up or explicitly discarded by the operator before the new daemon starts; the runtime does not contain dual readers, aliases, optional-agent overloads, or fallback parsing. Any retention of prior data is a one-time offline transformation in that same window: where an existing row cannot supply a required authority field, the operator supplies an explicit mapping in the offline step or discards the row. The runtime never infers missing authority at read time.
 
 Apply storage changes atomically with their callers:
 
@@ -1110,6 +1145,7 @@ For contribution conversion, keep behavior parity at the user boundary but never
 | Linked code is mistaken for sandboxed code | Treat linked factories as trusted code, deprive registration of authority, enforce import boundaries, and defer resource access to scoped activation. |
 | Dynamic registration weakens TypeScript guarantees | Validate with Zod at runtime and generate known built-in maps for compile-time consumers. |
 | Activation order creates hidden coupling | Require explicit contribution dependencies, use a stable lexical tie-break for independent nodes, reject cycles, and record the resolved inventory hash. |
+| One misconfigured account downs the whole host | Structural plan errors are fatal; a leaf instance's runtime start failure publishes an explicit failed-instance state with health findings and aborts nothing unrelated. |
 | Definition and instance identity are conflated | Keep contribution, definition, and instance IDs distinct in config, routing, credentials, health, metrics, and shutdown. |
 | Scope replacement loses or mixes data | Use one structured scope, real shared-store tests, verified backups, and no dual-read ambiguity. |
 | Search remains vulnerable to noisy neighbors | Apply scope inside FTS/vector candidate queries and test with dominant out-of-scope corpora. |
@@ -1127,13 +1163,10 @@ For contribution conversion, keep behavior parity at the user boundary but never
 During implementation, run the smallest relevant RED/GREEN test first, then the package and architecture gates. Before completion run:
 
 ```bash
-pnpm build
-pnpm test
-pnpm lint:security
-pnpm cycles
-pnpm docs:check
 pnpm validate
 ```
+
+`pnpm validate` composes the documentation check, clean-room build, both cycle checks, the security lint, and per-package coverage; run its component commands individually only while iterating.
 
 For changes touching specialization boundaries, prompts, workspace policy, locale, integrations, health surfaces, or the contribution kernel, also run:
 
@@ -1150,7 +1183,7 @@ The redesign is complete only when all of the following are true:
 - endpoint, authenticated principal, and selected `ConversationScope` partition are distinct, and the scope is the sole session authority with required tenant and agent identity;
 - real shared-store tests prove agent isolation across sessions, context, approvals, delivery, and deletion plus intentional shared/principal partition behavior;
 - memory scope and visibility are required and applied before candidate ranking;
-- contribution definitions register transactionally, configured instances activate with least authority, and one immutable active view is published only after complete success;
+- contribution definitions register transactionally, configured instances activate with least authority, and one immutable active view is published atomically — structural plan failures publish nothing, and runtime instance failures appear only as explicit failed-instance state;
 - core `bootstrap()` remains the generic composition path, while daemon and runtime supply different factory sets to the same `AppContainer.start()` and shutdown lifecycle;
 - the daemon constructs channels, providers, tools, RPC namespaces, config namespaces, events, health probes, and optional services through registered contributions and instance activators;
 - core contains no concrete provider catalog, vendor default, channel construction, or domain workflow;

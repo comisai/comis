@@ -1,6 +1,6 @@
 # Generic agent architecture
 
-Comis is a security-first agent runtime. Runtime code owns orchestration, models, tools, memory, channels, scheduling, approvals, delivery, observability, and immutable workspace-policy loading. It does not own an application's industry, persona, vendor integrations, business rules, or default human language.
+Comis is a security-first agent runtime. Runtime code owns orchestration, models, tools, memory, channels, scheduling, approvals, delivery, observability, security, typed prompt compilation, locale policy, and immutable workspace-policy loading. It does not own an application's industry, persona, vendor integrations, business rules, or default human language.
 
 The [generic agent runtime redesign implementation specification](./generic-agent-runtime-redesign.md) defines the target contracts, delivery workstreams, tests, and completion criteria for applying this boundary across the codebase.
 
@@ -60,9 +60,9 @@ Tool schemas, availability, and side-effect annotations stay in the structured c
 
 ## Executable contributions
 
-Channels, provider protocols, tool packs, storage adapters, scheduler services, RPC namespaces, event namespaces, health probes, and exporters enter the host as explicitly linked contributions. Linked code is trusted in-process code, not sandboxed code. Registration transactionally declares inactive schemas and definitions without receiving runtime authority. Activation creates configured instances with least-authority ports and owner-scoped credential access. The host publishes one immutable active capability view only after the complete enabled activation plan succeeds.
+Channels, provider protocols, tool packs, storage adapters, scheduler services, RPC namespaces, event namespaces, health probes, and exporters enter the host as explicitly linked contributions. Linked code is trusted in-process code, not sandboxed code. Registration transactionally declares inactive schemas and definitions without receiving runtime authority. Activation creates configured instances with least-authority ports and owner-scoped credential access. The host publishes one immutable active capability view atomically after the activation plan completes: a structurally invalid plan publishes nothing, while a leaf instance's runtime start failure is published as explicit, health-visible failed-instance state rather than aborting the host.
 
-Contribution ID, registered definition ID, and configured instance ID are distinct. One contribution may own several surfaces, and one channel or provider definition may activate many accounts or endpoints. Dependencies use a stable topological order with the three identifiers as lexical tie-breaks; failure closes all started handles in reverse order and reports both the initiating and cleanup failures. Metadata may require stricter security handling but cannot lower code-enforced capability, approval, side-effect, or output-trust classification.
+Contribution ID, registered definition ID, and configured instance ID are distinct. One contribution may own several surfaces, and one channel or provider definition may activate many accounts or endpoints. Dependencies use a stable topological order with the three identifiers as lexical tie-breaks; a structural plan failure closes all started handles in reverse order and reports both the initiating and cleanup failures. Metadata may require stricter security handling but cannot lower code-enforced capability, approval, side-effect, or output-trust classification.
 
 ## Outcome evaluation
 
@@ -93,4 +93,4 @@ No compatibility aliases exist for retired surface names. Producers, consumers, 
 
 Reusable task expertise belongs in skills. Application workspace files own persona, scope, business policy, response preferences, and optional evaluation guidance. Capability servers own their API clients, credentials, schemas, response shaping, and side-effect classification. Vertical acceptance campaigns live with their application or skill.
 
-Comis tests use neutral synthetic entities and integration fixtures. `test/architecture/generic-runtime-boundary.test.ts` prevents domain terms, retired identifiers, persona-bearing starters, closed locale unions, unwrapped server instructions, and prompt-heading state recovery from returning.
+Comis tests use neutral synthetic entities and integration fixtures. `test/architecture/generic-runtime-boundary.test.ts` prevents retired domain terms and surface identifiers, persona-bearing starters, closed locale unions, and unwrapped server instructions from returning; the redesign extends it to structural regressions such as prompt-heading state recovery and scans of the engineering protocol itself.
