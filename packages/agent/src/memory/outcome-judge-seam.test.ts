@@ -273,6 +273,8 @@ describe("createOutcomeJudgeSeam", () => {
     const userContent = promptArg.messages.map((m) => m.content).join("\n");
     expect(promptArg.systemPrompt).toContain(policyContext);
     expect(promptArg.systemPrompt).toContain("correct refusal");
+    expect(promptArg.systemPrompt).toContain("Any partial answer, hint, example, definition, code, or summary");
+    expect(promptArg.systemPrompt).toContain("even when paired with a refusal");
     expect(userContent).toContain("TRAJECTORY_SENTINEL");
     expect(userContent).not.toContain("ROLE_POLICY_SENTINEL");
     expect(userContent).toContain(`<<<UNTRUSTED_${TEST_DELIMITER}>>>`);
