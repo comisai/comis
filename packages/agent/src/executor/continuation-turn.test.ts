@@ -10,6 +10,7 @@ const executorDir = dirname(fileURLToPath(import.meta.url));
 const idleContinuationSources = [
   "prompt-runner/output-escalation.ts",
   "prompt-runner/retry-loop.ts",
+  "prompt-runner/interactive-silent-recovery.ts",
   "post-batch-continuation.ts",
   "narrate-nudge.ts",
 ].map((file) => readFileSync(resolve(executorDir, file), "utf8"));

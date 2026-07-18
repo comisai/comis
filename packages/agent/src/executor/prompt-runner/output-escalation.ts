@@ -14,9 +14,8 @@
 
 import { formatSessionKey, toSafeErrorLogString } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { fromPromise } from "@comis/shared";
-
 import { withPromptTimeout } from "../prompt-timeout.js";
+import { runContinuationTurn } from "../continuation-turn.js";
 import {
   scanWithOutputGuard,
   recoverEmptyFinalResponse,
@@ -228,10 +227,11 @@ async function processSuccessPath(
         },
         "Attempting continuation after all-thinking execution",
       );
-      const followUpResult = await fromPromise(
-        session.followUp("Please provide a visible response summarizing what you did."),
+      const continuationResult = await runContinuationTurn(
+        session,
+        "Please provide a visible response summarizing what you did.",
       );
-      if (followUpResult.ok) {
+      if (continuationResult.ok) {
         const lateRecovered = getVisibleAssistantText(session);
         if (lateRecovered !== "") {
           result.response = lateRecovered;
@@ -242,8 +242,8 @@ async function processSuccessPath(
         }
       } else {
         deps.logger.debug(
-          { err: toSafeErrorLogString(followUpResult.error) },
-          "followUp call failed; downstream handler will return empty response",
+          { err: toSafeErrorLogString(continuationResult.error) },
+          "Continuation turn failed; downstream handler will return empty response",
         );
       }
     }
@@ -288,7 +288,7 @@ async function processSuccessPath(
 
   // L4: Post-batch continuation (the silent-termination enforcement path).
   // Detects empty final assistant turn after a successful tool batch within
-  // the current execution window and fires a directive followUp with multi-
+  // the current execution window and starts directive continuation turns with multi-
   // shot retry. Falls through to L3 synthesis (recoverEmptyFinalResponse) on
   // exhaustion. SEP plan extraction + step counting remain intact for
   // observability — see pi-event-bridge.ts:949-1024.
@@ -323,7 +323,7 @@ async function processSuccessPath(
   const languageRepair = await repairResponseLanguageDrift({
     requestText: msg.text ?? "", response: result.response,
     languageDirectiveActive: params.dynamicPreamble?.includes("## Reply Language for This Turn") ?? false,
-    followUp: (instruction) => session.followUp(instruction),
+    continueTurn: (instruction) => runContinuationTurn(session, instruction),
     readLatestResponse: () => getVisibleAssistantText(session),
     logger: deps.logger, clock: deps.clock,
   });
@@ -392,7 +392,7 @@ async function runPostBatchContinuationStep(params: RunPromptParams): Promise<vo
     deps.logger.warn(
       {
         err: toSafeErrorLogString(continuationResult.error.cause),
-        hint: "Post-batch continuation followUp failed; preserving response collected so far",
+        hint: "Post-batch continuation turn failed; preserving response collected so far",
         errorKind: "internal" as ErrorKind,
       },
       "Post-batch continuation error",
@@ -453,12 +453,11 @@ async function runBudgetContinuation(
       "Budget continuation nudge",
     );
 
-    // fromPromise wrapping: followUp rejections surface as Result values, never thrown exceptions.
-    const followUpResult = await fromPromise(session.followUp(budgetNudgeText));
-    if (!followUpResult.ok) {
+    const continuationResult = await runContinuationTurn(session, budgetNudgeText);
+    if (!continuationResult.ok) {
       deps.logger.warn(
-        { err: toSafeErrorLogString(followUpResult.error), hint: "Budget continuation followUp failed; preserving response collected so far", errorKind: "dependency" as ErrorKind },
-        "followUp error, stopping budget continuation",
+        { err: toSafeErrorLogString(continuationResult.error), hint: "Budget continuation turn failed; preserving response collected so far", errorKind: "dependency" as ErrorKind },
+        "Continuation turn error, stopping budget continuation",
       );
       break;
     }

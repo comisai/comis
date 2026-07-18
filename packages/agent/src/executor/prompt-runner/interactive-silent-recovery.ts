@@ -10,13 +10,13 @@ import {
   type ModelOperationType,
 } from "@comis/core";
 import {
-  fromPromise,
   isSilentResponse,
   ok,
   tryCatch,
   type Result,
 } from "@comis/shared";
 import { getVisibleAssistantText } from "../phase-filter.js";
+import { runContinuationTurn } from "../continuation-turn.js";
 import type { RunPromptParams } from "./prompt-runner-types.js";
 
 export const INTERACTIVE_SILENT_FAILURE_RESPONSE =
@@ -34,7 +34,7 @@ export interface InteractiveSilentRecoveryInput {
   operationType: ModelOperationType;
   response: string;
   outboundDelivered: boolean;
-  followUp: (instruction: string) => Promise<unknown>;
+  continueTurn: (instruction: string) => Promise<Result<unknown, Error>>;
   getVisibleResponse: () => string;
 }
 
@@ -59,8 +59,8 @@ export async function recoverInteractiveSilentResponse(
     });
   }
 
-  const followUpResult = await fromPromise(input.followUp(VISIBLE_REPLY_INSTRUCTION));
-  if (!followUpResult.ok) return followUpResult;
+  const continuationResult = await input.continueTurn(VISIBLE_REPLY_INSTRUCTION);
+  if (!continuationResult.ok) return continuationResult;
 
   const visibleResult = tryCatch(input.getVisibleResponse);
   if (!visibleResult.ok) return visibleResult;
@@ -112,7 +112,7 @@ export async function applyInteractiveSilentRecovery(
       channelType: msg.channelType,
       channelId: msg.channelId,
     }),
-    followUp: (instruction) => session.followUp(instruction),
+    continueTurn: (instruction) => runContinuationTurn(session, instruction),
     getVisibleResponse: () => getVisibleAssistantText(session),
   });
 

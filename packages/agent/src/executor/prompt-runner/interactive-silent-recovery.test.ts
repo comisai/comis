@@ -11,18 +11,18 @@ import type { RunPromptParams } from "./prompt-runner-types.js";
 
 describe("recoverInteractiveSilentResponse", () => {
   it("re-enters the model when an interactive request ends silently without delivery", async () => {
-    const followUp = vi.fn(async () => undefined);
+    const continueTurn = vi.fn(async () => ({ ok: true as const, value: undefined }));
     const result = await recoverInteractiveSilentResponse({
       operationType: "interactive",
       response: "NO_REPLY",
       outboundDelivered: false,
-      followUp,
+      continueTurn,
       getVisibleResponse: () => "Visible answer",
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(followUp).toHaveBeenCalledTimes(1);
+    expect(continueTurn).toHaveBeenCalledTimes(1);
     expect(result.value).toEqual({
       attempted: true,
       recovered: true,
@@ -31,18 +31,18 @@ describe("recoverInteractiveSilentResponse", () => {
   });
 
   it("allows a silent sentinel after successful delivery to the same route", async () => {
-    const followUp = vi.fn(async () => undefined);
+    const continueTurn = vi.fn(async () => ({ ok: true as const, value: undefined }));
     const result = await recoverInteractiveSilentResponse({
       operationType: "interactive",
       response: "NO_REPLY",
       outboundDelivered: true,
-      followUp,
+      continueTurn,
       getVisibleResponse: () => "unused",
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(followUp).not.toHaveBeenCalled();
+    expect(continueTurn).not.toHaveBeenCalled();
     expect(result.value).toEqual({
       attempted: false,
       recovered: false,
@@ -51,18 +51,18 @@ describe("recoverInteractiveSilentResponse", () => {
   });
 
   it("preserves silent control responses for non-interactive operations", async () => {
-    const followUp = vi.fn(async () => undefined);
+    const continueTurn = vi.fn(async () => ({ ok: true as const, value: undefined }));
     const result = await recoverInteractiveSilentResponse({
       operationType: "heartbeat",
       response: "HEARTBEAT_OK",
       outboundDelivered: false,
-      followUp,
+      continueTurn,
       getVisibleResponse: () => "unused",
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(followUp).not.toHaveBeenCalled();
+    expect(continueTurn).not.toHaveBeenCalled();
     expect(result.value.attempted).toBe(false);
     expect(result.value.response).toBe("HEARTBEAT_OK");
   });
@@ -72,7 +72,7 @@ describe("recoverInteractiveSilentResponse", () => {
       operationType: "interactive",
       response: "<reply>NO_REPLY</reply>",
       outboundDelivered: false,
-      followUp: async () => undefined,
+      continueTurn: async () => ({ ok: true as const, value: undefined }),
       getVisibleResponse: () => "[SILENT] still nothing",
     });
 
@@ -92,7 +92,7 @@ describe("recoverInteractiveSilentResponse", () => {
       operationType: "interactive",
       response: "NO_REPLY",
       outboundDelivered: false,
-      followUp: async () => Promise.reject(new Error("provider unavailable")),
+      continueTurn: async () => ({ ok: false as const, error: new Error("provider unavailable") }),
       getVisibleResponse: () => "unused",
     });
 
@@ -108,7 +108,7 @@ describe("applyInteractiveSilentRecovery", () => {
       role: "assistant",
       content: [{ type: "text", text: "NO_REPLY" }],
     }];
-    const followUp = vi.fn(async () => {
+    const prompt = vi.fn(async () => {
       messages.push({
         role: "assistant",
         content: [{ type: "text", text: "Visible answer" }],
@@ -125,7 +125,7 @@ describe("applyInteractiveSilentRecovery", () => {
     };
     const params = {
       msg: { channelType: "telegram", channelId: "chat-1" },
-      session: { messages, followUp },
+      session: { messages, prompt },
       result,
       executionOverrides: { operationType: "interactive" },
       bridge: {
@@ -179,7 +179,7 @@ describe("applyInteractiveSilentRecovery", () => {
       msg: { channelType: "telegram", channelId: "chat-1" },
       session: {
         messages,
-        followUp: vi.fn(async () => {
+        prompt: vi.fn(async () => {
           messages.push({
             role: "assistant",
             content: [{ type: "text", text: "Recovered answer" }],

@@ -21,9 +21,8 @@ import {
   toSafeErrorLogString,
 } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { fromPromise } from "@comis/shared";
-
 import { runWithModelRetry } from "../model-retry.js";
+import { runContinuationTurn } from "../continuation-turn.js";
 import { classifyError } from "../error-classifier.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
 import { CONTINUATION_USER_MESSAGE } from "../../session/synthetic-user-messages.js";
@@ -251,7 +250,7 @@ async function invokeModelRetry(
  * Orchestrate the silent-failure detection cascade. Returns the updated
  * silentRetryAttempted flag (always `true` after this function runs).
  *
- *   1. followUp("(continued)") — Gemini thinking-only recovery
+ *   1. Start a continuation turn — Gemini thinking-only recovery
  *   2. classify the bridge's recorded LLM error → branch:
  *        a. client_request_signed_replay  → scrub + retry (signed-replay self-heal)
  *        b. tool_schema_unsupported       → strip pattern/format + retry once
@@ -284,10 +283,8 @@ async function detectSilentFailure(
       },
       "Attempting continuation after thinking-only final turn",
     );
-    const followUpResult = await fromPromise(
-      session.followUp(CONTINUATION_USER_MESSAGE),
-    );
-    const nudgeRecovered = followUpResult.ok && getVisibleAssistantText(session) !== "";
+    const continuationResult = await runContinuationTurn(session, CONTINUATION_USER_MESSAGE);
+    const nudgeRecovered = continuationResult.ok && getVisibleAssistantText(session) !== "";
     // Announce whether the continuation produced visible text.
     emitObservationalEventSafely({ eventBus: deps.eventBus, logger: deps.logger }, "execution:recovery_attempted", {
       agentId: agentId ?? "default",
@@ -296,7 +293,7 @@ async function detectSilentFailure(
       succeeded: nudgeRecovered,
       timestamp: deps.clock.now(),
     });
-    if (followUpResult.ok) {
+    if (continuationResult.ok) {
       const recoveredText = getVisibleAssistantText(session);
       if (recoveredText !== "") {
         silent02Recovered = true;
@@ -308,8 +305,8 @@ async function detectSilentFailure(
       }
     } else {
       deps.logger.debug(
-        { err: toSafeErrorLogString(followUpResult.error) },
-        "followUp call failed; falling through to",
+        { err: toSafeErrorLogString(continuationResult.error) },
+        "Continuation turn failed; falling through to retry recovery",
       );
     }
   }

@@ -33,7 +33,7 @@ function assistantTextMsg(text: string): unknown {
 
 function makeDeps(overrides: Partial<RunNarrateNudgeDeps> = {}): RunNarrateNudgeDeps {
   return {
-    session: { followUp: vi.fn().mockResolvedValue(undefined) },
+    session: { prompt: vi.fn().mockResolvedValue(undefined) },
     messages: [assistantTextMsg("Now let me run the comparison script:")],
     capabilityClass: "small",
     logger: makeLogger() as unknown as RunNarrateNudgeDeps["logger"],
@@ -97,15 +97,15 @@ describe("isIntentPrelude", () => {
 // ---------------------------------------------------------------------------
 
 describe("runNarrateNudge", () => {
-  it("fires exactly ONE followUp for a small-class narrate-without-emit turn and recovers the real answer", async () => {
-    const followUp = vi.fn().mockResolvedValue(undefined);
+  it("fires exactly one continuation prompt for a small-class narrate-without-emit turn and recovers the real answer", async () => {
+    const continuationPrompt = vi.fn().mockResolvedValue(undefined);
     const deps = makeDeps({
-      session: { followUp },
+      session: { prompt: continuationPrompt },
       getVisibleAssistantText: () => "Support is $42.50, resistance $48.20.",
     });
     const outcome = await runNarrateNudge(deps);
-    expect(followUp).toHaveBeenCalledTimes(1);
-    expect(followUp.mock.calls[0]![0]).toContain("did not call a tool");
+    expect(continuationPrompt).toHaveBeenCalledTimes(1);
+    expect(continuationPrompt.mock.calls[0]![0]).toContain("did not call a tool");
     expect(outcome).toMatchObject({
       fired: true,
       recovered: true,
@@ -115,35 +115,35 @@ describe("runNarrateNudge", () => {
   });
 
   it("nano class is gated IN", async () => {
-    const followUp = vi.fn().mockResolvedValue(undefined);
-    const outcome = await runNarrateNudge(makeDeps({ capabilityClass: "nano", session: { followUp } }));
-    expect(followUp).toHaveBeenCalledTimes(1);
+    const continuationPrompt = vi.fn().mockResolvedValue(undefined);
+    const outcome = await runNarrateNudge(makeDeps({ capabilityClass: "nano", session: { prompt: continuationPrompt } }));
+    expect(continuationPrompt).toHaveBeenCalledTimes(1);
     expect(outcome.fired).toBe(true);
   });
 
   it("a FRONTIER model giving a short answer ending in ':' is NEVER nudged (the hard gate)", async () => {
-    const followUp = vi.fn().mockResolvedValue(undefined);
+    const continuationPrompt = vi.fn().mockResolvedValue(undefined);
     const outcome = await runNarrateNudge(
-      makeDeps({ capabilityClass: "frontier", session: { followUp } }),
+      makeDeps({ capabilityClass: "frontier", session: { prompt: continuationPrompt } }),
     );
-    expect(followUp).not.toHaveBeenCalled();
+    expect(continuationPrompt).not.toHaveBeenCalled();
     expect(outcome).toMatchObject({ fired: false, recovered: false, outcome: "not_small_class" });
   });
 
   it("mid / undefined capability classes are not nudged either", async () => {
     for (const capabilityClass of ["mid", undefined]) {
-      const followUp = vi.fn().mockResolvedValue(undefined);
-      const outcome = await runNarrateNudge(makeDeps({ capabilityClass, session: { followUp } }));
-      expect(followUp).not.toHaveBeenCalled();
+      const continuationPrompt = vi.fn().mockResolvedValue(undefined);
+      const outcome = await runNarrateNudge(makeDeps({ capabilityClass, session: { prompt: continuationPrompt } }));
+      expect(continuationPrompt).not.toHaveBeenCalled();
       expect(outcome.outcome).toBe("not_small_class");
     }
   });
 
   it("a small-class turn WITH a tool call is not nudged (the model did emit)", async () => {
-    const followUp = vi.fn().mockResolvedValue(undefined);
+    const continuationPrompt = vi.fn().mockResolvedValue(undefined);
     const outcome = await runNarrateNudge(
       makeDeps({
-        session: { followUp },
+        session: { prompt: continuationPrompt },
         messages: [
           {
             role: "assistant",
@@ -155,39 +155,39 @@ describe("runNarrateNudge", () => {
         ],
       }),
     );
-    expect(followUp).not.toHaveBeenCalled();
+    expect(continuationPrompt).not.toHaveBeenCalled();
     expect(outcome.outcome).toBe("no_match");
   });
 
   it("a small-class turn ending on a real answer is not nudged (task satisfied)", async () => {
-    const followUp = vi.fn().mockResolvedValue(undefined);
+    const continuationPrompt = vi.fn().mockResolvedValue(undefined);
     const outcome = await runNarrateNudge(
       makeDeps({
-        session: { followUp },
+        session: { prompt: continuationPrompt },
         messages: [assistantTextMsg("The support level is $42.50 and resistance is $48.20.")],
       }),
     );
-    expect(followUp).not.toHaveBeenCalled();
+    expect(continuationPrompt).not.toHaveBeenCalled();
     expect(outcome.outcome).toBe("no_match");
   });
 
   it("still_narration: the re-prompt that produces another prelude is NOT retried (bounded to one)", async () => {
-    const followUp = vi.fn().mockResolvedValue(undefined);
+    const continuationPrompt = vi.fn().mockResolvedValue(undefined);
     const outcome = await runNarrateNudge(
       makeDeps({
-        session: { followUp },
+        session: { prompt: continuationPrompt },
         getVisibleAssistantText: () => "Okay, let me try the tool now:",
       }),
     );
-    expect(followUp).toHaveBeenCalledTimes(1);
+    expect(continuationPrompt).toHaveBeenCalledTimes(1);
     expect(outcome).toMatchObject({ fired: true, recovered: false, outcome: "still_narration" });
   });
 
-  it("followUp rejection is contained: WARN with hint, outcome followup_error, never a throw", async () => {
+  it("continuation rejection is contained with a warning and followup_error outcome", async () => {
     const logger = makeLogger();
     const outcome = await runNarrateNudge(
       makeDeps({
-        session: { followUp: vi.fn().mockRejectedValue(new Error("ws closed")) },
+        session: { prompt: vi.fn().mockRejectedValue(new Error("ws closed")) },
         logger: logger as unknown as RunNarrateNudgeDeps["logger"],
       }),
     );

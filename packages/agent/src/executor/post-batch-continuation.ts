@@ -4,15 +4,16 @@
  *
  * When the LLM emits an empty final assistant turn (zero text + zero thinking +
  * zero tool calls) following a successful tool batch within the same execution
- * window, this handler fires a directive `session.followUp()` with multi-shot
+ * window, this handler fires a real continuation turn with multi-shot
  * retry. This handler is the completeness-enforcement path; SEP plan
  * extraction + step counting are observability-only and do not enforce.
  *
  * @module
  */
 
-import { fromPromise, ok, err, type Result } from "@comis/shared";
+import { ok, err, type Result } from "@comis/shared";
 import type { ComisLogger } from "@comis/core";
+import { runContinuationTurn, type ContinuationTurnSession } from "./continuation-turn.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -21,9 +22,9 @@ import type { ComisLogger } from "@comis/core";
 /** Configuration for the post-batch continuation handler. */
 export interface ContinuationConfig {
   /** Master toggle. When false, handler returns
-   *  `{recovered: false, outcome: "disabled"}` without calling followUp. */
+   *  `{recovered: false, outcome: "disabled"}` without starting a continuation turn. */
   enabled: boolean;
-  /** Maximum directive followUp attempts before falling through to L3
+  /** Maximum directive continuation attempts before falling through to L3
    *  synthesis. Range 0..5; 0 is treated as disabled. */
   maxRetries: number;
 }
@@ -34,11 +35,11 @@ export interface ContinuationOutcome {
   /** Recovered visible text from the followed-up assistant turn (only set
    *  when `recovered === true`). */
   response?: string;
-  /** Number of followUp attempts actually made (0 when handler did not fire). */
+  /** Number of continuation attempts actually made (0 when handler did not fire). */
   attempts: number;
   /** Terminal outcome:
-   *  - `recovered`           — followUp produced visible text on some attempt
-   *  - `still_empty`         — followUp ran but produced no visible text
+   *  - `recovered`           — continuation produced visible text on some attempt
+   *  - `still_empty`         — continuation ran but produced no visible text
    *                           (single-attempt diagnostic; not a terminal flag)
    *  - `max_attempts_exhausted` — all `maxRetries` attempts produced empty
    *  - `disabled`            — config.enabled = false OR maxRetries = 0
@@ -48,20 +49,20 @@ export interface ContinuationOutcome {
   priorToolNames: string[];
 }
 
-/** Error variant — only ever returned when `session.followUp` rejects. */
+/** Error variant — only ever returned when the continuation prompt rejects. */
 export type ContinuationError = { kind: "followup_error"; cause: unknown };
 
 /** Dependencies passed in by the executor wire-in site. */
 export interface RunPostBatchContinuationDeps {
-  /** Live session — invoked via `followUp(text)` to issue the directive. */
-  session: { followUp(text: string): Promise<unknown>; messages?: unknown[] };
+  /** Live idle session used to issue the directive as a real model turn. */
+  session: ContinuationTurnSession & { messages?: unknown[] };
   /** Session messages — passed explicitly via the caller's canonical
    *  `(session as any).messages ?? []` read (see output-escalation.ts). */
   messages: unknown[];
   config: ContinuationConfig;
   logger: ComisLogger;
   agentId?: string;
-  /** Read visible text from the latest assistant turn (post-followUp). */
+  /** Read visible text from the latest assistant continuation turn. */
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   getVisibleAssistantText: (session: any) => string;
 }
@@ -128,7 +129,7 @@ function buildDirective(priorToolCallCount: number, priorToolNames: string[]): s
 /**
  * Run the post-batch continuation handler. Returns a `Result` so callers can
  * distinguish a clean outcome (any `ContinuationOutcome.outcome` value) from
- * a true error (followUp rejected).
+ * a true error (the continuation prompt rejected).
  *
  * Detection (pure inspection, no throw):
  *   1. Walk `messages` to find the most recent user-role index (lower bound).
@@ -139,7 +140,7 @@ function buildDirective(priorToolCallCount: number, priorToolNames: string[]): s
  *      `block.name` is a string.
  *   4. Fire when (2) AND (≥1 tool call from step 3); else `no_match`.
  *
- * `session.followUp` errors are caught and propagated as
+ * Continuation-prompt errors are caught and propagated as
  * `Result<_, ContinuationError>` — never thrown.
  */
 export async function runPostBatchContinuation(
@@ -249,9 +250,9 @@ export async function runPostBatchContinuation(
   // Step 5: directive multi-shot retry loop.
   const directive = buildDirective(priorToolCallCount, priorToolNames);
   for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
-    const followUpResult = await fromPromise(session.followUp(directive));
-    if (!followUpResult.ok) {
-      return err({ kind: "followup_error", cause: followUpResult.error });
+    const continuationResult = await runContinuationTurn(session, directive);
+    if (!continuationResult.ok) {
+      return err({ kind: "followup_error", cause: continuationResult.error });
     }
     const text = getVisibleAssistantText(session);
     const outcomeForLog = text && text.length > 0 ? "recovered" : "still_empty";

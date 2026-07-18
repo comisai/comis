@@ -13,7 +13,7 @@
  * This handler is the sibling of `post-batch-continuation.ts` (which covers
  * truly EMPTY final turns): when the FINAL assistant turn carries intent-
  * prelude text but NO tool call, it fires exactly ONE directive
- * `session.followUp()` telling the model to either emit the announced tool
+ * a real continuation turn telling the model to either emit the announced tool
  * call or give its final answer.
  *
  * Gating is strict — near-zero false positives is the bar:
@@ -34,8 +34,8 @@
  * @module
  */
 
-import { fromPromise } from "@comis/shared";
 import type { ComisLogger } from "@comis/core";
+import { runContinuationTurn, type ContinuationTurnSession } from "./continuation-turn.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -43,7 +43,7 @@ import type { ComisLogger } from "@comis/core";
 
 /** Outcome of the narrate-nudge handler. */
 export interface NarrateNudgeOutcome {
-  /** True when the nudge followUp was actually issued. */
+  /** True when the nudge continuation turn was actually issued. */
   fired: boolean;
   /** True when the followed-up turn produced a non-prelude visible answer. */
   recovered: boolean;
@@ -54,21 +54,21 @@ export interface NarrateNudgeOutcome {
    *  - `no_match`        — final turn is not a narrate-without-emit shape
    *  - `recovered`       — the re-prompt produced a real answer (or tool work)
    *  - `still_narration` — the re-prompt still ended on narration / empty
-   *  - `followup_error`  — session.followUp rejected (logged, never thrown) */
+   *  - `followup_error`  — continuation prompt rejected (logged, never thrown) */
   outcome: "not_small_class" | "no_match" | "recovered" | "still_narration" | "followup_error";
 }
 
 /** Dependencies passed in by the executor wire-in site. */
 export interface RunNarrateNudgeDeps {
-  /** Live session — invoked via `followUp(text)` to issue the directive. */
-  session: { followUp(text: string): Promise<unknown> };
+  /** Live idle session used to issue the directive as a real model turn. */
+  session: ContinuationTurnSession;
   /** Session messages — the canonical `(session as any).messages ?? []` slice. */
   messages: unknown[];
   /** The resolved ModelProfile capabilityClass (gate 1: small/nano only). */
   capabilityClass: string | undefined;
   logger: ComisLogger;
   agentId?: string;
-  /** Read visible text from the latest assistant turn (post-followUp). */
+  /** Read visible text from the latest assistant continuation turn. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   getVisibleAssistantText: (session: any) => string;
 }
@@ -139,7 +139,7 @@ const NUDGE_DIRECTIVE =
   "Never narrate an action without calling the tool in the same turn.";
 
 /**
- * Run the narrate-without-emit nudge. Never throws — a `followUp` rejection
+ * Run the narrate-without-emit nudge. Never throws — a continuation rejection
  * is logged (WARN, hint + errorKind) and returned as `followup_error` so the
  * turn's existing response is preserved.
  *
@@ -148,7 +148,7 @@ const NUDGE_DIRECTIVE =
  *  2. The LAST session message is an assistant turn with visible text and NO
  *     tool-call block.
  *  3. That text matches {@link isIntentPrelude}.
- * Fire: ONE directive followUp; recovered iff the new visible text is
+ * Fire: ONE directive continuation turn; recovered iff the new visible text is
  * non-empty AND not itself an intent prelude.
  */
 export async function runNarrateNudge(deps: RunNarrateNudgeDeps): Promise<NarrateNudgeOutcome> {
@@ -187,14 +187,14 @@ export async function runNarrateNudge(deps: RunNarrateNudgeDeps): Promise<Narrat
   );
 
   // ONE bounded re-prompt — never a loop.
-  const followUpResult = await fromPromise(session.followUp(NUDGE_DIRECTIVE));
-  if (!followUpResult.ok) {
+  const continuationResult = await runContinuationTurn(session, NUDGE_DIRECTIVE);
+  if (!continuationResult.ok) {
     logger.warn(
       {
         submodule: SUBMODULE,
         agentId,
-        err: followUpResult.error,
-        hint: "Narrate-nudge followUp failed; preserving the narration response collected so far",
+        err: continuationResult.error,
+        hint: "Narrate-nudge continuation turn failed; preserving the narration response collected so far",
         errorKind: "internal" as const,
       },
       "Narrate-without-emit nudge error",

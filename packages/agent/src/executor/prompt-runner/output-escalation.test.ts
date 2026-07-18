@@ -73,7 +73,7 @@ describe("output-escalation.ts — dependency direction", () => {
 describe("output-escalation.ts — failure log privacy", () => {
   it("converts retry and continuation failures to safe message strings", () => {
     expect(source).toMatch(/toSafeErrorLogString\(escalationError\)/);
-    expect(source).toMatch(/toSafeErrorLogString\(followUpResult\.error\)/);
+    expect(source).toMatch(/toSafeErrorLogString\(continuationResult\.error\)/);
     expect(source).toMatch(/toSafeErrorLogString\(continuationResult\.error\.cause\)/);
     expect(source).not.toMatch(/err:\s*(?:escalationError|followUpResult\.error|continuationResult\.error\.cause)/);
   });

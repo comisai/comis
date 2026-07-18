@@ -7,13 +7,13 @@ import {
   type ComisLogger,
   type ScriptClass,
 } from "@comis/core";
-import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 
 export interface ResponseLanguageRepairInput {
   requestText: string;
   response: string;
   languageDirectiveActive: boolean;
-  followUp: (instruction: string) => Promise<unknown>;
+  continueTurn: (instruction: string) => Promise<Result<unknown, Error>>;
   readLatestResponse: () => string;
   logger: ComisLogger;
   clock: ClockPort;
@@ -95,15 +95,13 @@ export async function repairResponseLanguageDrift(
     { expectedScript, responseScript, step: "response-language-repair" },
     "Response language drift detected",
   );
-  const followUpResult = await fromPromise(
-    input.followUp(repairDirective(expectedScript, responseScript)),
-  );
-  if (!followUpResult.ok) {
+  const continuationResult = await input.continueTurn(repairDirective(expectedScript, responseScript));
+  if (!continuationResult.ok) {
     return err({
       kind: "followup_failed",
       expectedScript,
       actualScript: responseScript,
-      cause: followUpResult.error,
+      cause: continuationResult.error,
     });
   }
 
