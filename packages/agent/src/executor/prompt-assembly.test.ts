@@ -3039,6 +3039,15 @@ describe("assembleExecutionPrompt", () => {
       expect(result.dynamicPreamble).toContain(
         "heading, sentence, bullet, label, suggestion, or follow-up",
       );
+      expect(result.dynamicPreamble).toContain(
+        "A profile name or assistant identity is not necessary merely for personalization",
+      );
+      expect(result.dynamicPreamble).toContain(
+        "Broad fleet categories do not count as concrete actions",
+      );
+      expect(result.dynamicPreamble).toContain(
+        "even when the user constrains the response length",
+      );
       expect(result.dynamicPreamble.lastIndexOf("## Reply Language for This Turn")).toBeGreaterThan(
         result.dynamicPreamble.lastIndexOf("## MCP Server Instructions"),
       );

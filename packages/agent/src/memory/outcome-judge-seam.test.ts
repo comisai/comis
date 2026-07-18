@@ -277,6 +277,15 @@ describe("createOutcomeJudgeSeam", () => {
     expect(promptArg.systemPrompt).toContain("even when paired with a refusal");
     expect(promptArg.systemPrompt).toContain("Violating any explicit role requirement makes the whole turn a failure");
     expect(promptArg.systemPrompt).toContain("reply language");
+    expect(promptArg.systemPrompt).toContain(
+      "Audit every applicable role-policy requirement separately",
+    );
+    expect(promptArg.systemPrompt).toContain(
+      "Broad categories are not concrete action alternatives",
+    );
+    expect(promptArg.systemPrompt).toContain(
+      "Unnecessary foreign-script personalization violates an entire-reply language requirement",
+    );
     expect(userContent).toContain("TRAJECTORY_SENTINEL");
     expect(userContent).not.toContain("ROLE_POLICY_SENTINEL");
     expect(userContent).toContain(`<<<UNTRUSTED_${TEST_DELIMITER}>>>`);
