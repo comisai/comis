@@ -1496,6 +1496,54 @@ describe("createMemoryRecall — recall-trace capture", () => {
 });
 
 describe("createMemoryRecall — memory:recalled / memory:reranked emit", () => {
+  it("caps entity-expanded recall to maxResults and reports only injected survivors", async () => {
+    const input = [
+      makeResult("base-own", { base: 0.95, userId: "user_a", sourceWho: "user_a" }),
+      makeResult("base-foreign", { base: 0.9, userId: "user_b", sourceWho: "user_b" }),
+    ];
+    const { store } = fakeEntityStore(
+      ok([
+        makeResult("entity-b", { base: 0.85, userId: "user_b", sourceWho: "user_b" }),
+        makeResult("entity-c", { base: 0.8, userId: "user_c", sourceWho: "user_c" }),
+        makeResult("entity-d", { base: 0.75, userId: "user_d", sourceWho: "user_d" }),
+      ]),
+    );
+    const { eventBus, emits } = recordingEventBus();
+    const { recallTrace, records } = recordingRecallTrace();
+    const recall = recallWithObs(
+      {
+        memoryPort: fakeMemoryPort(input),
+        entityStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+        eventBus,
+        recallTrace,
+      },
+      baseConfig({
+        maxResults: 2,
+        entityLane: { enabled: true, seedCount: 5, perEntityCap: 200, weight: 1.0 },
+      } as Partial<MemoryRecallConfig>),
+    );
+
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_z");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value).toHaveLength(2);
+
+    const recalled = emits.find((entry) => entry.event === "memory:recalled")?.payload;
+    expect(recalled?.finalCount).toBe(2);
+    expect(recalled?.crossUserCount).toBe(
+      got.value.filter((result) => result.entry.userId !== "user_a").length,
+    );
+    expect(recalled?.distinctSources).toBe(
+      new Set(got.value.map((result) => result.entry.source?.who)).size,
+    );
+
+    const ranked = records[0]?.ranked as Array<{ id: string; reason: string }>;
+    expect(ranked.filter((entry) => entry.reason === "included")).toHaveLength(2);
+    expect(ranked.filter((entry) => entry.reason === "below_budget")).toHaveLength(3);
+  });
+
   it("emits memory:recalled once with a counts-only payload (no query text / memory body)", async () => {
     const input = [
       makeResult("a", { base: 0.9, content: "sensitive body text" }),
