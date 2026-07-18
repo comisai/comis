@@ -213,7 +213,7 @@ export class EchoChannelAdapter implements ChannelPort {
       msg.metadata.traceId = traceId;
     }
     await runWithContext(
-      { traceId, startedAt: systemNowMs(), channelType: "echo", tenantId: "default", trustLevel: "user" },
+      { traceId, startedAt: systemNowMs(), channelType: this.channelType, tenantId: "default", trustLevel: "user" },
       async () => {
         for (const handler of this.messageHandlers) {
           await handler(msg);

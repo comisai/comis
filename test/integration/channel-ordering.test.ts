@@ -36,6 +36,7 @@ import {
   createPluginRegistry,
 } from "@comis/core";
 import type { NormalizedMessage, ChannelPort, ComisLogger } from "@comis/core";
+import { ok } from "@comis/shared";
 import { ASYNC_SETTLE_MS } from "../support/timeouts.js";
 
 /**
@@ -157,6 +158,10 @@ function makeMinimalDeps(
     // processInboundMessage is dep-injected to avoid back-edges between
     // packages. Integration test wires the real implementation.
     processInboundMessage: processInboundMessage as unknown as ChannelManagerDeps["processInboundMessage"],
+    // Durable physical-inbound boundary. The real pipeline commits every
+    // inbound before routing; the test wires an in-memory success so the
+    // executor path (the actual subject of these ordering tests) is reached.
+    persistInboundMessage: async () => ok({ payloads: [], ledgerContent: "" }),
   };
 }
 
