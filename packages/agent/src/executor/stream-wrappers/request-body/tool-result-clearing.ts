@@ -352,6 +352,32 @@ export function stripTransientRecallFromHistory(messages: Array<Record<string, u
 /** Matches a deferred trailing recall block (used to detect/skip it on later passes). */
 const RECALL_PREFIX_RE = /^\s*\[Relevant context from memory:/;
 
+const CURRENT_TURN_LANGUAGE_HEADING = "## Reply Language for This Turn";
+const SYSTEM_CONTEXT_START = "[System context]";
+const SYSTEM_CONTEXT_END = "[End system context]";
+const CURRENT_TURN_LANGUAGE_TAIL = [
+  "[Current-turn language constraint]",
+  "The current user message, not recalled memory, is authoritative for reply language.",
+  "Produce the entire user-facing reply in that language, including every heading, sentence, bullet, label, suggestion, and follow-up.",
+].join("\n");
+
+/**
+ * Re-emit the trusted current-turn language constraint after deferred recall,
+ * which request-body cache stabilization deliberately moves to the freshest
+ * model-visible position. User text appears after the trusted system-context
+ * envelope and therefore cannot activate this check by itself.
+ */
+function languageTailAfterRecall(rest: string): string | undefined {
+  const contextStart = rest.indexOf(SYSTEM_CONTEXT_START);
+  if (contextStart < 0) return undefined;
+  const contextEnd = rest.indexOf(SYSTEM_CONTEXT_END, contextStart + SYSTEM_CONTEXT_START.length);
+  if (contextEnd < 0) return undefined;
+  const systemContext = rest.slice(contextStart, contextEnd);
+  return systemContext.includes(CURRENT_TURN_LANGUAGE_HEADING)
+    ? CURRENT_TURN_LANGUAGE_TAIL
+    : undefined;
+}
+
 /**
  * Move the inline-recall block on the CURRENT (latest) user message off the cached
  * prefix and onto the UNCACHED tail.
@@ -388,9 +414,11 @@ export function deferRecallToUncachedTail(messages: Array<Record<string, unknown
   if (typeof content === "string") {
     const { recall, rest } = extractInlineRecalledMemory(content);
     if (!recall || rest.trim().length === 0) return 0;
+    const languageTail = languageTailAfterRecall(rest);
     msg.content = [
       { type: "text", text: rest },
       { type: "text", text: recall.trim() },
+      ...(languageTail !== undefined ? [{ type: "text", text: languageTail }] : []),
     ];
     return 1;
   }
@@ -405,10 +433,12 @@ export function deferRecallToUncachedTail(messages: Array<Record<string, unknown
     if (!recallBlock) return 0;
     const { recall, rest } = extractInlineRecalledMemory(recallBlock.text as string);
     if (!recall || rest.trim().length === 0) return 0;
+    const languageTail = languageTailAfterRecall(rest);
     recallBlock.text = rest; // query remainder keeps its cache_control → stays cached + stable
     // Append the recall AFTER the cache fence (the SDK marker is on the last block) so it
     // rides the uncached tail. No cache_control on this block.
     blocks.push({ type: "text", text: recall.trim() });
+    if (languageTail !== undefined) blocks.push({ type: "text", text: languageTail });
     return 1;
   }
   return 0;
@@ -539,12 +569,14 @@ export function deferRecallToTrailingResponsesItem(input: Array<Record<string, u
   const wasString = typeof content === "string";
 
   let recall: string;
+  let languageTail: string | undefined;
   if (wasString) {
     const ex = extractInlineRecalledMemory(content as string);
     // Keep recall inline if removing it would leave the query empty (recall-only turn): an
     // empty user item is invalid, and a recall-only turn has no stable prefix to protect.
     if (!ex.recall || ex.rest.trim().length === 0) return 0;
     recall = ex.recall.trim();
+    languageTail = languageTailAfterRecall(ex.rest);
     msg.content = ex.rest;
   } else if (Array.isArray(content)) {
     const blocks = content as Array<Record<string, unknown>>;
@@ -555,6 +587,7 @@ export function deferRecallToTrailingResponsesItem(input: Array<Record<string, u
     const ex = extractInlineRecalledMemory(textBlock.text as string);
     if (!ex.recall || ex.rest.trim().length === 0) return 0;
     recall = ex.recall.trim();
+    languageTail = languageTailAfterRecall(ex.rest);
     textBlock.text = ex.rest;
   } else {
     return 0;
@@ -565,7 +598,16 @@ export function deferRecallToTrailingResponsesItem(input: Array<Record<string, u
   // item-level `type` presence (pi-ai user items have none; assistant items use "message").
   const trailing: Record<string, unknown> = {
     role: "user",
-    content: wasString ? recall : [{ type: "input_text", text: recall }],
+    content: wasString
+      ? languageTail !== undefined
+        ? `${recall}\n\n${languageTail}`
+        : recall
+      : [
+          { type: "input_text", text: recall },
+          ...(languageTail !== undefined
+            ? [{ type: "input_text", text: languageTail }]
+            : []),
+        ],
   };
   if (typeof msg.type !== "undefined") trailing.type = msg.type;
   input.push(trailing);
