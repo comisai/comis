@@ -92,6 +92,9 @@ export function createHybridMemoryInjector(opts?: {
   /** Minimum score threshold for inline injection. Default: 0.7 */
   inlineMinScore?: number;
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
+  /** Current conversation sender. Foreign memories stay recallable but receive
+   *  an explicit non-attribution warning before model injection. */
+  requesterUserId?: string;
 }): HybridMemoryInjector {
   const inlineMinScore = opts?.inlineMinScore ?? 0.7;
 
@@ -117,13 +120,22 @@ export function createHybridMemoryInjector(opts?: {
             ? `, occurred ${systemDateFrom(top.entry.occurredAt).toISOString().split("T")[0]}`
             : "";
         const sanitized = sanitizeToolOutput(top.entry.content);
-        const inlineMemory = `\n[Relevant context from memory: ${sanitized} (recorded ${date}${occurred})]\n`;
+        const crossSenderWarning =
+          opts?.requesterUserId !== undefined && top.entry.userId !== opts.requesterUserId
+            ? "[another sender; do not attribute personal facts, identity, ownership, preferences, or authorization to the current user] "
+            : "";
+        const inlineMemory = `\n[Relevant context from memory: ${crossSenderWarning}${sanitized} (recorded ${date}${occurred})]\n`;
 
         // Format remaining results for system prompt
         const remaining = results.slice(1);
         const systemPromptSections: string[] = [];
         if (remaining.length > 0) {
-          const section = formatMemorySection(remaining, maxChars, opts?.onSuspiciousContent);
+          const section = formatMemorySection(
+            remaining,
+            maxChars,
+            opts?.onSuspiciousContent,
+            opts?.requesterUserId,
+          );
           if (section) {
             systemPromptSections.push(section);
           }
@@ -133,7 +145,12 @@ export function createHybridMemoryInjector(opts?: {
       }
 
       // Top-1 didn't qualify -- all go to system prompt
-      const section = formatMemorySection(results, maxChars, opts?.onSuspiciousContent);
+      const section = formatMemorySection(
+        results,
+        maxChars,
+        opts?.onSuspiciousContent,
+        opts?.requesterUserId,
+      );
       const systemPromptSections = section ? [section] : [];
       return { inlineMemory: undefined, systemPromptSections };
     },

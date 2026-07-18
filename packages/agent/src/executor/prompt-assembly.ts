@@ -1238,6 +1238,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         recalledMemories = ranked.map((r) => ({ id: r.entry.id, content: r.entry.content }));
         const injector = createHybridMemoryInjector({
           onSuspiciousContent: deps.onSuspiciousContent,
+          requesterUserId: sessionKey.userId,
         });
 
         // Budget accounting: subtract pinnedChars from maxContextChars BEFORE sizing
@@ -1255,7 +1256,12 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         let fusedSet = ranked.filter((r) => r.entry.pinned !== true);
         let pinnedChars = 0;
         if (pinnedSet.length > 0) {
-          const pinnedSection = formatMemorySection(pinnedSet, config.rag.maxContextChars);
+          const pinnedSection = formatMemorySection(
+            pinnedSet,
+            config.rag.maxContextChars,
+            undefined,
+            sessionKey.userId,
+          );
           pinnedChars = pinnedSection ? pinnedSection.length : 0;
         }
 

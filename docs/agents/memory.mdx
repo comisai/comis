@@ -127,6 +127,12 @@ to your agent from several chats and share one memory). If you run **one agent
 for multiple distinct people** under a single tenant, be aware that a personal
 fact learned from one person is recallable when talking to another. Give each
 person their own agent (or tenant) if their memories must stay private.
+When this shared-agent mode recalls a memory from a different sender, Comis
+marks it as `another sender` in the model context and explicitly forbids
+attributing personal facts, identity, ownership, preferences, or authorization
+from that memory to the current user. This provenance warning reduces mistaken
+attribution; it is not a privacy boundary, because the recalled content still
+enters the shared agent's context.
 
 The database uses WAL mode (write-ahead logging) by default, which allows
 your agent to read memories quickly even while new ones are being written.
