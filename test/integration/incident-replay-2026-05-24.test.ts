@@ -224,13 +224,29 @@ describe("duplicate-adapter replay — deduplication event", () => {
       dedupEvents.push(ev as Record<string, unknown>);
     });
 
-    // Build minimal InboundPipelineDeps that hits the dedup check and exits early
-    // messageRouter returns undefined, so execution exits before invoking an executor.
-    // The deduplication check still fires before that routing exit.
+    // Build InboundPipelineDeps whose first ingress routes successfully so its
+    // dedup reservation is committed (not rolled back). The physical inbound is
+    // committed durably (persistInboundMessage) before routing; a message that
+    // failed to route or find an executor would release its reservation for a
+    // platform retry, so the duplicate must follow a *successful* first ingress.
+    const queueConfig = QueueConfigSchema.parse({ cleanupIdleMs: 60_000 });
+    const commandQueue = createCommandQueue({ eventBus, config: queueConfig, logger: logger as any });
+    const executorStub = {
+      execute: vi.fn(async () => ({
+        response: "echo response",
+        sessionKey: { tenantId: "t", userId: "u", channelId: "c" },
+        tokensUsed: { input: 1, output: 1, total: 2 },
+        cost: { total: 0 },
+        stepsExecuted: 0,
+        finishReason: "stop",
+        toolCalls: [],
+        traceId: randomUUID(),
+      })),
+    };
     const minimalDeps: InboundPipelineDeps = {
       eventBus,
       logger: logger as any,
-      messageRouter: { resolve: vi.fn(() => undefined) } as any,
+      messageRouter: { resolve: vi.fn(() => "default") } as any,
       sessionManager: {
         loadOrCreate: vi.fn(() => []),
         save: vi.fn(),
@@ -238,7 +254,9 @@ describe("duplicate-adapter replay — deduplication event", () => {
         expire: vi.fn(() => true),
         cleanStale: vi.fn(() => 0),
       } as any,
-      createExecutor: vi.fn(() => undefined) as any,
+      createExecutor: vi.fn(() => executorStub) as any,
+      commandQueue,
+      persistInboundMessage: async () => ok({ payloads: [], ledgerContent: "" }),
       deliveryService: {
         deliverToChannel: vi.fn(async () => ok({ ok: true, messageId: "m1" }) as any),
         drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
@@ -340,6 +358,7 @@ describe("duplicate-adapter replay — queue ownership", () => {
       } as any,
       createExecutor: vi.fn(() => executorStub) as any,
       commandQueue,
+      persistInboundMessage: async () => ok({ payloads: [], ledgerContent: "" }),
       deliveryService: {
         deliverToChannel: vi.fn(async () => ok({ ok: true, messageId: "m1" }) as any),
         drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
