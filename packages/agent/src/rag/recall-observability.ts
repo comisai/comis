@@ -70,8 +70,8 @@ export function captureRecallObservability(
   // (trust_filtered / deduped) so the trace explains every memory's fate, not just the
   // survivors. "below_budget" applies when a maxResults cap drops tail items from the
   // final set (the injector's char budget is applied downstream; the count cap is here).
-  const ranked: RecallRankedEntry[] = ctx.finalRanked
-    .slice(0, cfg.maxResults)
+  const includedRanked = ctx.finalRanked.slice(0, cfg.maxResults);
+  const ranked: RecallRankedEntry[] = includedRanked
     .map((r) => {
       const breakdown = ctx.breakdownById.get(r.entry.id);
       return breakdown !== undefined
@@ -137,7 +137,7 @@ export function captureRecallObservability(
     // Include the graph-spread lane so the counts-only event reflects the 6th lane (the
     // trace's RecallLaneCounts stays the 5-lane shape — extending it is a deferred obs change).
     (ctx.graphSpreadCandidates > 0 ? 1 : 0);
-  // Content-free provenance summary over the SAME final set finalCount counts: how many
+  // Content-free provenance summary over the SAME bounded final set finalCount counts: how many
   // recalled memories belong to a DIFFERENT user than the current conversation (the
   // cross-sender injection signal — one shared agent surfaces sender A's memory into
   // sender B's turn), and how many distinct authors contributed. COUNTS only — the
@@ -149,8 +149,8 @@ export function captureRecallObservability(
   const crossUserCount =
     requesterUserId === undefined
       ? 0
-      : ctx.finalRanked.reduce((n, r) => (r.entry.userId !== requesterUserId ? n + 1 : n), 0);
-  const distinctSources = new Set(ctx.finalRanked.map((r) => r.entry.source?.who)).size;
+      : includedRanked.reduce((n, r) => (r.entry.userId !== requesterUserId ? n + 1 : n), 0);
+  const distinctSources = new Set(includedRanked.map((r) => r.entry.source?.who)).size;
   try {
     deps.eventBus.emit("memory:recalled", {
       agentId: ctx.agentId ?? "default",
@@ -160,7 +160,7 @@ export function captureRecallObservability(
       ftsCandidates: ctx.ftsCandidates,
       vectorCandidates: ctx.vectorCandidates,
       entityCandidates: ctx.entityCandidates,
-      finalCount: ctx.finalRanked.length,
+      finalCount: includedRanked.length,
       crossUserCount,
       distinctSources,
       rerankerAvailable,
@@ -173,7 +173,7 @@ export function captureRecallObservability(
         agentId: ctx.agentId ?? "default",
         traceId,
         candidateCount: ctx.rerankCandidateCount,
-        hitCount: ctx.finalRanked.length,
+        hitCount: includedRanked.length,
         rerankerAvailable,
         timedOut: ctx.rerankOutcome === "timed_out",
         fellBack: ctx.rerankOutcome === "fell_back",

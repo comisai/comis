@@ -168,7 +168,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // (mirroring hybridSearch's slice), then minScore-filter. The result is the single
       // pre-fused base lane the prior path carried, so the downstream entity/temporal append + final
       // fuse() is byte-identical to that path at default config (count AND id order), and the
-      // entity/temporal lanes still legitimately add candidates ON TOP of the capped base.
+      // later lanes add candidates to the ranked pool before the final maxResults cap.
       const baseLanes: FusionLane[] = [];
       // ftsCandidates is assigned on BOTH reachable paths below (the searchLanes branch and
       // the search() fallback) before any read, so a `= 0` initializer is provably dead
@@ -432,7 +432,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // exactly once on the capped base (inside search()->hybridSearch) and never re-filtered the
       // entity lane's post-fusion contributions — reproducing that single-apply is what keeps the
       // default-config result SET byte-identical AND lets the entity/temporal lanes add
-      // candidates as designed. (On the searchLanes path the base lane was fused, sliced to
+      // candidates that compete for the final bounded set. (On the searchLanes path the base lane was fused, sliced to
       // maxResults, and minScore-filtered above; on the fallback path search() did the same
       // internally — so the base entering fuse() is identically pre-filtered on both paths.)
       let ranked = fuse(gatedLanes);
@@ -772,6 +772,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const finalRankedWithPins = filteredPinnedResults.length > 0
         ? [...filteredPinnedResults, ...finalRanked]
         : finalRanked;
+      const budgetedFinalRanked = finalRankedWithPins.slice(0, cfg.maxResults);
 
       // Observability tail. ADDITIVE + NON-FATAL: assemble ONE trace record
       // and emit the counts-only events. Skipped cleanly when neither sink is present.
@@ -803,8 +804,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         });
       }
 
-      return ok(finalRankedWithPins);
+      return ok(budgetedFinalRanked);
     },
   };
 }
-
