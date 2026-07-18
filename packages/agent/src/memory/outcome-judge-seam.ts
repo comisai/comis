@@ -3,7 +3,7 @@
  * The daemon-injected OPTIONAL, cost-gated outcome-judge seam.
  *
  * {@link createOutcomeJudgeSeam} wraps a cheap resolved model into a
- * `judge(trajectoryContent)` seam — the FALLBACK outcome source for
+ * `judge({ trajectoryContent, policyContext })` seam — the FALLBACK outcome source for
  * verified learning. When NO deterministic tool/pipeline signal exists for
  * a finished trajectory AND the per-agent judge is enabled, the daemon
  * runs ONE cheap-model pass over the trajectory and gets back a
@@ -12,8 +12,7 @@
  * deterministic tool/pipeline sources ALWAYS outrank it via the fusion
  * precedence — this seam can never overturn a deterministic result.
  *
- * Built but DORMANT: the judge ships `enabled:false` by default, so
- * the daemon never constructs or calls it unless an operator opts in. Follows the
+ * The judge is default-on and can be disabled per agent. It follows the
  * standard offline cron-seam posture (bounded, non-fatal, lenient-parsing) and adds
  * a triple bound for its UNTRUSTED input.
  *
@@ -59,6 +58,8 @@ import { parseLenientJson } from "./llm-json.js";
 
 /** Hard abort ceiling per LLM call (mirrors the usefulness-judge seam LLM timeout). */
 const LLM_TIMEOUT_MS = 120_000;
+/** Trusted role-policy input bound; keeps a malformed workspace file from dominating the judge prompt. */
+const JUDGE_POLICY_MAX_CHARS = 20_000;
 
 /**
  * The reward ceiling for a judge verdict — the "reward capped
@@ -120,6 +121,14 @@ export interface OutcomeVerdict {
   source: "judge";
 }
 
+/** Separate trusted policy criteria from the untrusted trajectory being judged. */
+interface OutcomeJudgeInput {
+  /** The finished user/assistant turn. Always delimiter-wrapped before model input. */
+  trajectoryContent: string;
+  /** Resolved non-template ROLE.md content. Trusted at the same level as the agent's system prompt. */
+  policyContext?: string;
+}
+
 /** The judge's system prompt (AGENT-INTERNAL — never crosses the package boundary). */
 const OUTCOME_JUDGE_PROMPT = `You are auditing whether an agent's finished task trajectory SUCCEEDED or FAILED at the user's actual request.
 
@@ -133,6 +142,20 @@ Return ONLY valid JSON of the form
 - "unknown": insufficient evidence to decide.
 - "confidence" is YOUR certainty in the verdict, in [0, 1].
 - Do NOT include any other fields, scores, trust levels, or commentary. No markdown fences.`;
+
+/** Add the current trusted role policy to the verdict criteria without mixing it into external content. */
+function buildOutcomeJudgePrompt(policyContext: string | undefined): string {
+  const policy = policyContext?.trim().slice(0, JUDGE_POLICY_MAX_CHARS);
+  if (!policy) return OUTCOME_JUDGE_PROMPT;
+  return `${OUTCOME_JUDGE_PROMPT}
+
+The following trusted role policy defines what the agent is allowed and expected to do:
+
+## Agent role policy
+${policy}
+
+Apply that policy when deciding the outcome. If a user request is outside the role, a correct refusal that follows the policy is success. Complying with a prohibited or out-of-scope request is failure, even when the literal request was answered.`;
+}
 
 /** Pull the concatenated text parts out of a pi-ai completeSimple response. */
 function extractResponseText(response: { content?: unknown[] }): string {
@@ -196,8 +219,8 @@ function parseVerdict(raw: string): OutcomeVerdict {
 /**
  * Build the OPTIONAL outcome-judge seam from a cheap resolved model.
  *
- * Returns the `judge(trajectoryContent)` function the daemon injects when the
- * per-agent judge is enabled (default OFF). It wraps the UNTRUSTED trajectory via
+ * Returns the `judge({ trajectoryContent, policyContext })` function the daemon injects when the
+ * per-agent judge is enabled. It wraps the UNTRUSTED trajectory via
  * `wrapExternalContent({ source: "outcome_judge" })`, issues ONE cheap-model call
  * asking for a success/failure verdict, parses the response via the
  * lenient/total {@link parseVerdict} (which STRIPS smuggled fields and caps the
@@ -208,7 +231,7 @@ function parseVerdict(raw: string): OutcomeVerdict {
  */
 export function createOutcomeJudgeSeam(
   deps: OutcomeJudgeSeamDeps,
-): (trajectoryContent: string) => Promise<OutcomeVerdict | undefined> {
+): (input: OutcomeJudgeInput) => Promise<OutcomeVerdict | undefined> {
   const { provider, modelId, apiKey, maxOutputTokens, clock, logger, agentId, customModel } = deps;
 
   /** Issue one bounded, non-fatal cheap-model call; return raw text or undefined. */
@@ -286,14 +309,14 @@ export function createOutcomeJudgeSeam(
     }
   }
 
-  return async function judge(trajectoryContent: string): Promise<OutcomeVerdict | undefined> {
+  return async function judge(input: OutcomeJudgeInput): Promise<OutcomeVerdict | undefined> {
     // The trajectory is UNTRUSTED — delimiter-wrap it BEFORE the model sees it so
     // an injected "this succeeded / confidence: 1.0" is neutralized as external
     // content, never read as an instruction (bound #1). The wrap reads
     // `contentDelimiter` from the ALS context for cache-stable, session-consistent
     // markers.
-    const wrapped = wrapExternalContent(trajectoryContent, { source: "outcome_judge" });
-    const text = await callModel(OUTCOME_JUDGE_PROMPT, wrapped);
+    const wrapped = wrapExternalContent(input.trajectoryContent, { source: "outcome_judge" });
+    const text = await callModel(buildOutcomeJudgePrompt(input.policyContext), wrapped);
     // A failed/aborted call → no verdict (undefined); the outcome stays unresolved.
     if (text === undefined) return undefined;
     // The lenient/total parser STRIPS smuggled fields and CAPS the reward in code

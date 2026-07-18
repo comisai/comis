@@ -1916,7 +1916,10 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
     // The judge ran over the transcript and a source:"judge" row was observed (capped reward).
     expect(readTurnTranscript).toHaveBeenCalledTimes(1);
     expect(outcomeJudge).toHaveBeenCalledTimes(1);
-    expect(outcomeJudge.mock.calls[0]![0]).toContain("summarize");
+    expect(outcomeJudge.mock.calls[0]![0]).toEqual({
+      agentId: AGENT,
+      trajectoryContent: "user: please summarize\nassistant: here is the summary",
+    });
     const judgeObs = observe.mock.calls.map((c) => c[0]).find((o) => o.source === "judge");
     expect(judgeObs, "a source:'judge' observation must be written").toBeDefined();
     expect(judgeObs!.outcome).toBe("success");

@@ -28,9 +28,13 @@
  * @module
  */
 
+import { readFileSync } from "node:fs";
 import {
+  DEFAULT_TEMPLATES,
   KEYLESS_PROVIDER_TYPES,
   KEYLESS_API_KEY_SENTINEL,
+  resolveWorkspaceDir,
+  safePath,
   type ClockPort,
   type ComisLogger,
   type ContextStorePort,
@@ -39,6 +43,7 @@ import {
   type ResolvedOutcome,
 } from "@comis/core";
 import { createOutcomeJudgeSeam, resolveOperationModel, resolveProviderFamily, normalizeOpenAICompatBaseUrl, type CustomCompletionsModelSpec } from "@comis/agent";
+import { tryCatch } from "@comis/shared";
 
 /**
  * Provider-config fields {@link buildCustomJudgeModelSpec} reads. `apiKeyName` is
@@ -87,7 +92,7 @@ const JUDGE_TRANSCRIPT_MAX_MESSAGES = 12;
 
 /** The mapped judge seam the resolve consume-seam calls (the verdict's narrow union + the CODE-capped reward). */
 export type OutcomeJudge = (
-  trajectoryContent: string,
+  input: { agentId: string; trajectoryContent: string },
 ) => Promise<{ outcome: "success" | "failure" | "unknown"; cappedConfidence: number } | undefined>;
 
 /** The resolved scope an upgrade/transcript-read keys on (mirrors the setup-learning OutcomeScope). */
@@ -106,6 +111,7 @@ export interface JudgeScope {
 interface JudgeAgentConfig {
   provider?: string;
   model?: string;
+  workspacePath?: string;
   operationModels?: Record<string, unknown>;
   learningOutcome?: { enabled?: boolean; judge?: { enabled?: boolean } };
 }
@@ -114,6 +120,7 @@ interface JudgeAgentConfig {
 export interface OutcomeJudgeWiringContainer {
   config: {
     agents?: Record<string, JudgeAgentConfig | undefined>;
+    dataDir?: string;
     // The REAL MemoryConfig type (not a loose `{ costFeatures?: { enabled?: boolean } }`)
     // so tsc ENFORCES that the master gate reads `memory.enabled`. A loose optional type would let
     // a wrong/absent key read as `undefined !== false === true` → SILENTLY force-ENABLED (the kill-switch
@@ -163,6 +170,7 @@ function resolveOutcomeJudge(
   agentId: string,
   clock: ClockPort,
   logger: ComisLogger,
+  readRolePolicy: (agentId: string) => string | undefined,
 ): OutcomeJudge | undefined {
   const agentProvider = agent.provider ?? "anthropic";
   const resolved = resolveOperationModel({
@@ -196,8 +204,11 @@ function resolveOutcomeJudge(
     agentId,
     customModel,
   });
-  return async (trajectoryContent: string) => {
-    const verdict = await seam(trajectoryContent);
+  return async (input: { agentId: string; trajectoryContent: string }) => {
+    const verdict = await seam({
+      trajectoryContent: input.trajectoryContent,
+      policyContext: readRolePolicy(input.agentId),
+    });
     if (verdict === undefined) return undefined; // model/abort failure → no verdict (non-fatal)
     return { outcome: verdict.outcome, cappedConfidence: verdict.cappedConfidence };
   };
@@ -227,6 +238,38 @@ export function buildOutcomeJudgeWiring(
   const costFeaturesEnabled = container.config.memory?.enabled !== false;
   const agents = container.config.agents ?? {};
 
+  // Resolve ROLE.md at verdict time so edits made after daemon startup apply to the next
+  // judged turn. Empty and untouched template roles define no deployment-specific policy.
+  const readRolePolicy = (agentId: string): string | undefined => {
+    const agent = agents[agentId];
+    if (agent === undefined) return undefined;
+    const workspaceDir = resolveWorkspaceDir(agent as never, agentId, container.config.dataDir || undefined);
+    const result = tryCatch(() => readFileSync(safePath(workspaceDir, "ROLE.md"), "utf8"));
+    if (!result.ok) {
+      const code = (result.error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        logger.debug(
+          { agentId, step: "outcome-judge-role-policy" as const },
+          "Outcome judge role policy is absent",
+        );
+      } else {
+        logger.warn(
+          {
+            agentId,
+            errorKind: "resource" as const,
+            step: "outcome-judge-role-policy" as const,
+            hint: "verify the agent workspace ROLE.md exists and is readable; the outcome judge will continue without role-specific criteria",
+          },
+          "Outcome judge could not read role policy",
+        );
+      }
+      return undefined;
+    }
+    const policy = result.value.trim();
+    if (policy.length === 0 || policy === DEFAULT_TEMPLATES["ROLE.md"].trim()) return undefined;
+    return policy;
+  };
+
   // Judge is DEFAULT-ON (opt-out): ON unless learning-outcome OR the judge is EXPLICITLY
   // disabled. Uses `!== false` (NOT `=== true`) because the daemon's config-load does not
   // always MATERIALIZE the nested `judge` default for an explicitly-present-but-partial
@@ -250,7 +293,7 @@ export function buildOutcomeJudgeWiring(
   const firstAgentId = Object.keys(agents).find((id) => learningOutcomeJudgeEnabled(id));
   const agent = firstAgentId !== undefined ? agents[firstAgentId] : undefined;
   if (agent !== undefined) {
-    outcomeJudge = resolveOutcomeJudge(agent, container, firstAgentId ?? "default", clock, logger);
+    outcomeJudge = resolveOutcomeJudge(agent, container, firstAgentId ?? "default", clock, logger, readRolePolicy);
   }
   if (outcomeJudge === undefined) {
     logger.warn(
@@ -347,7 +390,7 @@ export async function maybeUpgradeWithJudge(
   try {
     const text = deps.readTurnTranscript(scope);
     if (text === undefined || text.length === 0) return verdict; // nothing to score → keep unknown
-    const jv = await deps.outcomeJudge(text);
+    const jv = await deps.outcomeJudge({ agentId: scope.agentId, trajectoryContent: text });
     // A model/abort failure (undefined) or a judge abstention (unknown) → keep the
     // unknown verdict; the judge can NEVER inflate failure metrics (BENIGN, Defer ≠ Retry).
     if (jv === undefined || jv.outcome === "unknown") return verdict;
