@@ -1523,18 +1523,19 @@ describe("PiExecutor", () => {
         textEmitted: true,
       });
 
-      // First read returns "" (triggers L4); after followUp pushes the
+      // First read returns "" (triggers L4); after the continuation pushes the
       // recovered turn, getVisibleAssistantText reads it directly from
       // session.messages (since the latest assistant has a visible text
       // block, phase-filter's getVisibleAssistantText returns it).
       mockGetLastAssistantText.mockReturnValue("");
-      mockFollowUp.mockImplementationOnce(async () => {
-        mockSession.messages.push({
-          role: "assistant",
-          content: [{ type: "text", text: "done!" }],
-        });
-        // Bump the SDK getter so post-followUp reads see "done!".
-        mockGetLastAssistantText.mockReturnValue("done!");
+      mockPrompt.mockImplementation(async (text: string) => {
+        if (text.includes("post-batch continuation")) {
+          mockSession.messages.push({
+            role: "assistant",
+            content: [{ type: "text", text: "done!" }],
+          });
+          mockGetLastAssistantText.mockReturnValue("done!");
+        }
       });
 
       const deps = createMockDeps();
@@ -1554,7 +1555,10 @@ describe("PiExecutor", () => {
         postBatchContinuationAttempts: 1,
         postBatchContinuationOutcome: "recovered",
       });
-      expect(mockFollowUp).toHaveBeenCalledTimes(1);
+      expect(mockPrompt).toHaveBeenCalledWith(
+        expect.stringContaining("post-batch continuation"),
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
 
     it("emits sepStepsPlanned/sepStepsCompleted; does NOT emit sepNudgeTriggered (SEP observability after L4 downgrade)", async () => {
@@ -1798,7 +1802,10 @@ describe("PiExecutor", () => {
 
       expect(result.response).toBe(INTERACTIVE_SILENT_FAILURE_RESPONSE);
       expect(result.finishReason).toBe("error");
-      expect(mockFollowUp).toHaveBeenCalledOnce();
+      expect(mockPrompt).toHaveBeenCalledWith(
+        expect.stringContaining("no response was delivered"),
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
 
     it("multiple sequential executions on same executor produce valid results", async () => {
@@ -4629,12 +4636,12 @@ describe("PiExecutor", () => {
   // -------------------------------------------------------------------------
 
   describe("thinking-only continuation retry", () => {
-    it("retries with followUp when finishReason is stop and tool calls were made", async () => {
-      // initial check returns "" triggering the block. After followUp, the
+    it("retries with a continuation turn when finishReason is stop and tool calls were made", async () => {
+      // initial check returns "" triggering the block. After continuation, the
       // assistant message in mockSession.messages contains "recovered response"
       // for the continuation re-check and all subsequent reads
       // (getVisibleAssistantText reads messages directly, so we wire the
-      // recovery via followUp's mockImplementation pushing a new assistant).
+      // recovery via the prompt mock pushing a new assistant).
       setMockAssistantText("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -4643,8 +4650,10 @@ describe("PiExecutor", () => {
         llmCalls: 4,
         finishReason: "stop",
       });
-      mockFollowUp.mockImplementation(async () => {
-        setMockAssistantText("recovered response");
+      mockPrompt.mockImplementation(async (text: string) => {
+        if (text === "(continued from previous message)") {
+          setMockAssistantText("recovered response");
+        }
       });
 
       const deps = createMockDeps();
@@ -4653,7 +4662,10 @@ describe("PiExecutor", () => {
 
       expect(result.response).toBe("recovered response");
       expect(result.finishReason).not.toBe("error");
-      expect(mockFollowUp).toHaveBeenCalledWith("(continued from previous message)");
+      expect(mockPrompt).toHaveBeenCalledWith(
+        "(continued from previous message)",
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
 
     it("does NOT retry when finishReason is error (provider failure)", async () => {
@@ -4671,12 +4683,14 @@ describe("PiExecutor", () => {
       const result = await executor.execute(testMessage, testSessionKey);
 
       expect(result.finishReason).toBe("error");
-      // followUp should NOT have been called — finishReason is "error"
-      expect(mockFollowUp).not.toHaveBeenCalled();
+      expect(mockPrompt).not.toHaveBeenCalledWith(
+        "(continued from previous message)",
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
 
-    it("retries with followUp when thinking-only with zero tool calls (stepsExecuted=0)", async () => {
-      // initial check returns "" triggering the block. After followUp, the
+    it("retries with a continuation turn when thinking-only with zero tool calls", async () => {
+      // initial check returns "" triggering the block. After continuation, the
       // assistant message in mockSession.messages contains "recovered response".
       setMockAssistantText("");
       mockGetResult.mockReturnValue({
@@ -4686,8 +4700,10 @@ describe("PiExecutor", () => {
         llmCalls: 1,
         finishReason: "stop",
       });
-      mockFollowUp.mockImplementation(async () => {
-        setMockAssistantText("recovered response");
+      mockPrompt.mockImplementation(async (text: string) => {
+        if (text === "(continued from previous message)") {
+          setMockAssistantText("recovered response");
+        }
       });
 
       const deps = createMockDeps();
@@ -4696,11 +4712,14 @@ describe("PiExecutor", () => {
 
       expect(result.response).toBe("recovered response");
       expect(result.finishReason).not.toBe("error");
-      expect(mockFollowUp).toHaveBeenCalledWith("(continued from previous message)");
+      expect(mockPrompt).toHaveBeenCalledWith(
+        "(continued from previous message)",
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
 
-    it("falls through to failure when zero-tool followUp also produces empty", async () => {
-      // Assistant content always empty — even after followUp
+    it("falls through to failure when the zero-tool continuation stays empty", async () => {
+      // Assistant content always empty — even after continuation
       setMockAssistantText("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 100, output: 50, total: 150 },
@@ -4716,12 +4735,14 @@ describe("PiExecutor", () => {
       const result = await executor.execute(testMessage, testSessionKey);
 
       expect(result.finishReason).toBe("error");
-      // followUp WAS called (continuation attempted), but recovery failed
-      expect(mockFollowUp).toHaveBeenCalledWith("(continued from previous message)");
+      expect(mockPrompt).toHaveBeenCalledWith(
+        "(continued from previous message)",
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
 
-    it("falls through to failure when followUp also produces empty response", async () => {
-      // Assistant content always empty — even after followUp
+    it("falls through to failure when the continuation also produces an empty response", async () => {
+      // Assistant content always empty — even after continuation
       setMockAssistantText("");
       mockGetResult.mockReturnValue({
         tokensUsed: { input: 500, output: 200, total: 700 },
@@ -4737,13 +4758,15 @@ describe("PiExecutor", () => {
       const result = await executor.execute(testMessage, testSessionKey);
 
       expect(result.finishReason).toBe("error");
-      // followUp WAS called (continuation attempted), but recovery failed
-      expect(mockFollowUp).toHaveBeenCalledWith("(continued from previous message)");
+      expect(mockPrompt).toHaveBeenCalledWith(
+        "(continued from previous message)",
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
 
     it("strips empty assistant turn and retries via model retry on silent failure (recovery succeeds)", async () => {
       // First prompt: finishReason "stop" but empty text (thinking-only response).
-      // followUp also fails. New behavior: strip empty assistant turn, re-enter model retry.
+      // The continuation also stays empty. Strip the empty assistant turn and re-enter model retry.
       // Second prompt: returns "recovered text".
       // getVisibleAssistantText reads mockSession.messages directly,
       // so we drive the recovery via mockPrompt's mockImplementation: the second
@@ -4751,7 +4774,7 @@ describe("PiExecutor", () => {
       let promptCallCount = 0;
       mockPrompt.mockImplementation(async () => {
         promptCallCount++;
-        if (promptCallCount === 2) {
+        if (promptCallCount === 3) {
           // Model retry — replace the thinking-only assistant with recovered text.
           mockSession.messages = [
             { role: "user", content: "hello", timestamp: 1 },
@@ -4795,8 +4818,8 @@ describe("PiExecutor", () => {
       // Should succeed via retry
       expect(result.response).toBe("recovered text");
       expect(result.finishReason).not.toBe("error");
-      // prompt should be called twice: original + retry
-      expect(mockPrompt).toHaveBeenCalledTimes(2);
+      // Initial turn + continuation attempt + model retry.
+      expect(mockPrompt).toHaveBeenCalledTimes(3);
 
       // Verify INFO log for the retry attempt
       const infoCalls = (deps.logger.info as Mock).mock.calls;
@@ -4839,8 +4862,8 @@ describe("PiExecutor", () => {
       // Silent LLM failure classifier produces an actionable message instead
       // of the legacy generic "An error occurred…" UNKNOWN_ERROR fallback.
       expect(result.response.toLowerCase()).toMatch(/try again|no output|tool call/);
-      // prompt should be called twice: original + retry
-      expect(mockPrompt).toHaveBeenCalledTimes(2);
+      // Initial turn + continuation attempt + model retry.
+      expect(mockPrompt).toHaveBeenCalledTimes(3);
     });
 
     it("cleans thinking-only assistant messages from session before retry", async () => {
@@ -4853,7 +4876,7 @@ describe("PiExecutor", () => {
 
       mockGetLastAssistantText
         .mockReturnValueOnce("") // initial candidateResponse
-        .mockReturnValueOnce("") // after followUp
+        .mockReturnValueOnce("") // after continuation
         .mockReturnValue("recovered text"); // after retry
 
       mockGetResult.mockReturnValue({
@@ -4865,7 +4888,7 @@ describe("PiExecutor", () => {
       });
       mockFollowUp.mockResolvedValue(undefined);
 
-      // Simulate: user message + thinking-only assistant + followUp assistant (also thinking-only)
+      // Simulate: user message + thinking-only assistant + continuation assistant (also thinking-only)
       mockSession.messages = [
         { role: "user", content: "hello", timestamp: 1 },
         {
@@ -4876,7 +4899,7 @@ describe("PiExecutor", () => {
         },
         {
           role: "assistant",
-          content: [{ type: "thinking", thinking: "followUp thinking" }],
+          content: [{ type: "thinking", thinking: "continuation thinking" }],
           stopReason: "stop",
           timestamp: 3,
         },
@@ -4886,10 +4909,10 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       await executor.execute(testMessage, testSessionKey);
 
-      // On the retry call (second prompt), the thinking-only assistant messages
+      // On the retry call (third prompt), the thinking-only assistant messages
       // should have been stripped. The snapshot should show only non-assistant messages.
-      expect(messageSnapshots.length).toBe(2);
-      const retryMessages = messageSnapshots[1];
+      expect(messageSnapshots.length).toBe(3);
+      const retryMessages = messageSnapshots[2];
       const assistantMsgs = retryMessages?.filter((m: any) => m.role === "assistant") ?? [];
       // All thinking-only assistant messages should be removed
       expect(assistantMsgs.length).toBe(0);
@@ -4921,8 +4944,8 @@ describe("PiExecutor", () => {
       const executor = createPiExecutor(testConfig, deps);
       await executor.execute(testMessage, testSessionKey);
 
-      // prompt called exactly 2 times: original + 1 retry (no infinite loop)
-      expect(mockPrompt).toHaveBeenCalledTimes(2);
+      // Initial turn + one continuation + one model retry (no infinite loop).
+      expect(mockPrompt).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -5468,7 +5491,10 @@ describe("PiExecutor", () => {
 
       expect(result.response).toBe(INTERACTIVE_SILENT_FAILURE_RESPONSE);
       expect(result.finishReason).toBe("error");
-      expect(mockFollowUp).toHaveBeenCalled();
+      expect(mockPrompt).toHaveBeenCalledWith(
+        "Please provide a visible response summarizing what you did.",
+        { expandPromptTemplates: false, source: "extension" },
+      );
     });
   });
 
@@ -6222,7 +6248,7 @@ describe("ExcludeDeferralResult wiring", () => {
       expect(result.budgetMetrics!.stopReason).toBe("budget_reached");
     });
 
-    it("injects continuation nudge via followUp when tracker says continue", async () => {
+    it("injects a continuation prompt when the budget tracker says continue", async () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
@@ -6257,9 +6283,9 @@ describe("ExcludeDeferralResult wiring", () => {
         { userTokenBudget: 500_000 },
       );
 
-      // followUp should have been called with budget nudge text
-      expect(mockFollowUp).toHaveBeenCalledWith(
+      expect(mockPrompt).toHaveBeenCalledWith(
         expect.stringContaining("[budget:nudge]"),
+        { expandPromptTemplates: false, source: "extension" },
       );
       expect(result.response).toContain("extended response after budget nudge");
     });
@@ -6335,10 +6361,11 @@ describe("ExcludeDeferralResult wiring", () => {
       // Budget tracker should be active and suppress escalation
       expect(result.budgetMetrics).toBeDefined();
       // With budget active, the escalation guard includes `&& !budgetTracker`
-      // so no escalation retry happens. Only the initial prompt was called.
-      const promptCallsDuringExec = mockPrompt.mock.calls.length - promptCallsBefore;
-      // We expect exactly 1 prompt call (the initial one), no escalation retry
-      expect(promptCallsDuringExec).toBe(1);
+      // so no escalation retry happens. Budget continuation calls carry the
+      // extension source and are excluded from this initial/escalation count.
+      const promptCallsDuringExec = mockPrompt.mock.calls.slice(promptCallsBefore);
+      const nonContinuationCalls = promptCallsDuringExec.filter((call) => call[1]?.source !== "extension");
+      expect(nonContinuationCalls).toHaveLength(1);
     });
   });
 

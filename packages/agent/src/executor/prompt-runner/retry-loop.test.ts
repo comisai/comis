@@ -57,8 +57,8 @@ describe("retry-loop.ts — module surface", () => {
   });
 
   it("converts continuation failures to a safe debug-log string", () => {
-    expect(source).toMatch(/toSafeErrorLogString\(followUpResult\.error\)/);
-    expect(source).not.toMatch(/err:\s*followUpResult\.error/);
+    expect(source).toMatch(/toSafeErrorLogString\(continuationResult\.error\)/);
+    expect(source).not.toMatch(/err:\s*continuationResult\.error/);
   });
 });
 
@@ -144,6 +144,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
       session: {
         messages: [],
         getLastAssistantText: vi.fn(() => "recovered visible text"),
+        prompt: vi.fn(async () => undefined),
         followUp: vi.fn(async () => undefined),
       },
       sessionKey: { tenantId: "t1", userId: "u1", channelId },
@@ -388,7 +389,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     (params.bridge.getResult as ReturnType<typeof vi.fn>).mockReturnValue({
       llmCalls: 1, stepsExecuted: 1, textEmitted: false, finishReason: "stop", lastLlmErrorMessage: undefined,
     });
-    // First getVisibleAssistantText → "" (triggers detect); after followUp → recovered.
+    // First getVisibleAssistantText → "" (triggers detect); after continuation → recovered.
     let visibleCalls = 0;
     (params.session.getLastAssistantText as ReturnType<typeof vi.fn>).mockImplementation(() => {
       visibleCalls += 1;
