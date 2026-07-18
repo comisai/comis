@@ -455,31 +455,24 @@ export function registerMemoryCommand(program: Command): void {
   // memory clear
   memory
     .command("clear")
-    .description("Clear memory entries matching a filter")
-    .option("--filter <filter>", "Filter expression (e.g. memoryType=conversation)")
-    .option("--tenant <tenantId>", "Filter by tenant ID")
+    .description("Clear non-system, non-pinned memory for a tenant or agent")
+    .option("--tenant <tenantId>", "Tenant scope")
+    .option("--agent <agentId>", "Agent scope")
     .option("-y, --yes", "Skip confirmation prompt")
-    .action(async (options: { filter?: string; tenant?: string; yes?: boolean }) => {
-      // Require at least one filter to prevent accidental blanket wipes
-      if (!options.filter && !options.tenant) {
+    .action(async (options: { tenant?: string; agent?: string; yes?: boolean }) => {
+      if (!options.tenant && !options.agent) {
         error(
-          "At least one filter is required (--filter or --tenant). Safety check prevents blanket clears.",
+          "At least one scope is required (--tenant or --agent). Safety check prevents tenant-wide default clears.",
         );
         process.exit(1);
       }
 
-      // Build filter params
-      const params: Record<string, unknown> = {};
-      if (options.filter) {
-        const [key, ...valueParts] = options.filter.split("=");
-        if (!key || valueParts.length === 0) {
-          error("Invalid filter format. Use key=value (e.g. memoryType=conversation)");
-          process.exit(1);
-        }
-        params[key] = valueParts.join("=");
-      }
+      const params: { tenant_id?: string; agent_id?: string } = {};
       if (options.tenant) {
-        params["tenantId"] = options.tenant;
+        params.tenant_id = options.tenant;
+      }
+      if (options.agent) {
+        params.agent_id = options.agent;
       }
 
       // Confirmation check
@@ -489,13 +482,16 @@ export function registerMemoryCommand(program: Command): void {
       }
 
       if (!options.yes) {
-        const filterDesc = Object.entries(params)
-          .map(([k, v]) => `${k}=${v}`)
+        const scopeDesc = [
+          options.tenant ? `tenant=${options.tenant}` : undefined,
+          options.agent ? `agent=${options.agent}` : undefined,
+        ]
+          .filter((scope): scope is string => scope !== undefined)
           .join(", ");
 
         if (
           !(await confirm({
-            message: `Clear memory entries matching [${filterDesc}]?`,
+            message: `Clear non-system, non-pinned memory for [${scopeDesc}]?`,
           }))
         ) {
           info("Cancelled");
@@ -504,18 +500,8 @@ export function registerMemoryCommand(program: Command): void {
       }
 
       try {
-        // Routed via MemoryFlushContract — the actual flush surface.
-        // The tenant filter maps to `tenant_id`; the generic
-        // `--filter key=value` flag is a no-op here (there is no
-        // `config.set` handler with section=memory).
         await withSpinner("Clearing memory entries...", () =>
-          withClient(async (client) => {
-            const flushParams: { tenant_id?: string } = {};
-            if (typeof params.tenantId === "string") {
-              flushParams.tenant_id = params.tenantId;
-            }
-            return await callTyped(client, MemoryFlushContract, flushParams);
-          }),
+          withClient(async (client) => await callTyped(client, MemoryFlushContract, params)),
         );
 
         success("Memory entries cleared");

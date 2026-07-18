@@ -770,7 +770,7 @@ Memory management and recall-diagnostics commands for searching, inspecting, and
 | `memory recall-trace <session>` | Inspect a session's hybrid-recall trace — **admin** |
 | `memory observations` | List observation provenance (sources + history) — **admin** |
 | `memory entities` | List an agent's entity graph, most-mentioned first — **admin** |
-| `memory clear` | Clear memory entries matching a filter |
+| `memory clear` | Clear non-system, non-pinned memory for a tenant or agent |
 | `memory export` | Export agent memory to a secret-scrubbed versioned JSON file — **admin** |
 | `memory import <file>` | Import memory from a `comis-memory-export-v1` JSON envelope — **admin** |
 | `memory pin <id>` | Pin a memory entry so it is always injected in recall — **admin** |
@@ -880,11 +880,11 @@ List an agent's entity graph, most-mentioned first. **Admin-gated** and (tenant,
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--filter <filter>` | `string` | - | Filter expression (e.g. `memoryType=conversation`) |
-| `--tenant <tenantId>` | `string` | - | Filter by tenant ID |
+| `--tenant <tenantId>` | `string` | - | Tenant scope |
+| `--agent <agentId>` | `string` | - | Agent scope within the selected or configured tenant |
 | `-y, --yes` | `boolean` | `false` | Skip confirmation prompt |
 
-<Warning>At least one filter (`--filter` or `--tenant`) is required. This safety check prevents accidental blanket clears.</Warning>
+<Warning>At least one scope (`--tenant` or `--agent`) is required. The command removes every non-system, non-pinned memory in that scope; it does not support content or memory-type filters.</Warning>
 
 #### `memory export`
 
@@ -982,8 +982,8 @@ comis memory observations --agent default --limit 50
 # List an agent's entity graph (most-mentioned first)
 comis memory entities --agent default --limit 100
 
-# Clear conversation memory for a specific tenant
-comis memory clear --tenant default --filter memoryType=conversation --yes
+# Clear non-system, non-pinned memory for a specific agent
+comis memory clear --tenant default --agent fleet --yes
 
 # Export an agent's memory to a file (secrets scrubbed, 0600 permissions)
 comis memory export --agent default --output backup.json
