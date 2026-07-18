@@ -44,6 +44,21 @@ describe("setup-agents-runtime wiring", () => {
     const depsBlock = source.slice(depsStart, depsEnd);
     expect(depsBlock).toContain("skillRegistry");
   });
+
+  it("passes a live connected MCP instruction resolver to createPiExecutor", () => {
+    const source = readRuntimeSource();
+    const depsStart = source.indexOf("createPiExecutor(effectiveConfig, {");
+    const depsEnd = source.indexOf("});", depsStart);
+    expect(depsStart).toBeGreaterThan(-1);
+    expect(depsEnd).toBeGreaterThan(depsStart);
+
+    const depsBlock = source.slice(depsStart, depsEnd);
+    expect(depsBlock).toContain("getMcpServerInstructions:");
+    expect(depsBlock).toContain("deps.mcpClientManager.getAllConnections()");
+    expect(depsBlock).toContain('connection.status === "connected"');
+    expect(depsBlock).toContain("connection.instructions?.trim()");
+    expect(depsBlock).toContain("serverName: connection.name");
+  });
 });
 
 // ---------------------------------------------------------------------------

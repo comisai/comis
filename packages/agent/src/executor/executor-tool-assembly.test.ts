@@ -876,6 +876,27 @@ describe("assembleTools — recall-trace config passthrough to prompt assembly",
   });
 });
 
+describe("assembleTools — MCP instruction resolver passthrough to prompt assembly", () => {
+  it("forwards the live MCP instruction resolver without taking a startup snapshot", async () => {
+    const getMcpServerInstructions = vi.fn(() => [
+      { serverName: "fleet", instructions: "Use fleet tools for current vehicle facts." },
+    ]);
+    const deps = {
+      ...makeDeps(),
+      getMcpServerInstructions,
+    } as unknown as ToolAssemblyDeps;
+
+    await assembleTools(makeParams({ deps }));
+
+    expect(mocks.assembleExecutionPromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deps: expect.objectContaining({ getMcpServerInstructions }),
+      }),
+    );
+    expect(getMcpServerInstructions).not.toHaveBeenCalled();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Recall-store passthrough to prompt assembly (the segregated KG / lane stores)
 //

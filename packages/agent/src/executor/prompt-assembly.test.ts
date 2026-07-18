@@ -3123,11 +3123,11 @@ describe("assembleExecutionPrompt", () => {
       const result = await assembleExecutionPrompt(makeParams({
         deps: {
           workspaceDir: "/workspace",
-          mcpServerInstructions: [
+          getMcpServerInstructions: () => [
             { serverName: "context7", instructions: "Use resolve-library-id before query-docs." },
             { serverName: "filesystem", instructions: "Prefer read_file over read_directory." },
           ],
-        },
+        } as unknown as PromptAssemblyParams["deps"],
       }));
 
       expect(result.dynamicPreamble).toContain("## MCP Server Instructions");
@@ -3139,7 +3139,7 @@ describe("assembleExecutionPrompt", () => {
 
     it("omits MCP server instructions section when none provided", async () => {
       const result = await assembleExecutionPrompt(makeParams({
-        deps: { workspaceDir: "/workspace", mcpServerInstructions: undefined },
+        deps: { workspaceDir: "/workspace" },
       }));
 
       expect(result.dynamicPreamble).not.toContain("MCP Server Instructions");
@@ -3147,7 +3147,10 @@ describe("assembleExecutionPrompt", () => {
 
     it("omits MCP server instructions section when array is empty", async () => {
       const result = await assembleExecutionPrompt(makeParams({
-        deps: { workspaceDir: "/workspace", mcpServerInstructions: [] },
+        deps: {
+          workspaceDir: "/workspace",
+          getMcpServerInstructions: () => [],
+        } as unknown as PromptAssemblyParams["deps"],
       }));
 
       expect(result.dynamicPreamble).not.toContain("MCP Server Instructions");
@@ -3157,15 +3160,35 @@ describe("assembleExecutionPrompt", () => {
       const result = await assembleExecutionPrompt(makeParams({
         deps: {
           workspaceDir: "/workspace",
-          mcpServerInstructions: [
+          getMcpServerInstructions: () => [
             { serverName: "test-server", instructions: "Test instructions for cache stability." },
           ],
-        },
+        } as unknown as PromptAssemblyParams["deps"],
       }));
 
       expect(result.systemPrompt).not.toContain("MCP Server Instructions");
       expect(result.systemPrompt).not.toContain("test-server");
       expect(result.dynamicPreamble).toContain("## MCP Server Instructions");
+    });
+
+    it("reads current MCP instructions again after a server reconnect", async () => {
+      let instructions = "First connection instructions.";
+      const getMcpServerInstructions = vi.fn(() => [
+        { serverName: "fleet", instructions },
+      ]);
+      const deps = {
+        workspaceDir: "/workspace",
+        getMcpServerInstructions,
+      } as unknown as PromptAssemblyParams["deps"];
+
+      const first = await assembleExecutionPrompt(makeParams({ deps }));
+      instructions = "Reconnected server instructions.";
+      const second = await assembleExecutionPrompt(makeParams({ deps }));
+
+      expect(first.dynamicPreamble).toContain("First connection instructions.");
+      expect(second.dynamicPreamble).toContain("Reconnected server instructions.");
+      expect(second.dynamicPreamble).not.toContain("First connection instructions.");
+      expect(getMcpServerInstructions).toHaveBeenCalledTimes(2);
     });
   });
   // -----------------------------------------------------------------
