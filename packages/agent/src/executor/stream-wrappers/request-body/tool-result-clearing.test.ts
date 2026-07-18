@@ -319,6 +319,7 @@ describe("deferRecallToUncachedTail (pure) — recall off the cached prefix", ()
       "[System context]\n" +
       "## Reply Language for This Turn\n" +
       "The current user message is authoritative for reply language.\n" +
+      "Current message dominant script: Latin.\n" +
       "[End system context]\n\n" +
       "Show the current fleet status.";
     const messages: Array<Record<string, unknown>> = [
@@ -330,6 +331,7 @@ describe("deferRecallToUncachedTail (pure) — recall off the cached prefix", ()
     expect(blocks).toHaveLength(3);
     expect(blocks[1]!.text).toContain("הקשר צי בעברית");
     expect(blocks[2]!.text).toContain("current user message, not recalled memory");
+    expect(blocks[2]!.text).toContain("Current message dominant script: Latin.");
     expect(blocks[2]!.text).toContain("heading, sentence, bullet, label, suggestion, and follow-up");
     expect(blocks[2]!.cache_control).toBeUndefined();
   });
@@ -453,6 +455,7 @@ describe("deferRecallToTrailingResponsesItem (pure) — latest-item recall defer
       "[System context]\n" +
       "## Reply Language for This Turn\n" +
       "The current user message is authoritative for reply language.\n" +
+      "Current message dominant script: Latin.\n" +
       "[End system context]\n\n" +
       "Show the current fleet status.";
     const input: Array<Record<string, unknown>> = [
@@ -468,6 +471,7 @@ describe("deferRecallToTrailingResponsesItem (pure) — latest-item recall defer
     expect(blocks).toHaveLength(2);
     expect(blocks[0]!.text).toContain("הקשר צי בעברית");
     expect(blocks[1]!.text).toContain("current user message, not recalled memory");
+    expect(blocks[1]!.text).toContain("Current message dominant script: Latin.");
     expect(blocks[1]!.text).toContain("heading, sentence, bullet, label, suggestion, and follow-up");
   });
 

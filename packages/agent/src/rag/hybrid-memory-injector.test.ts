@@ -50,7 +50,7 @@ describe("hybrid-memory-injector", () => {
       expect(result.systemPromptSections).toEqual([]);
     });
 
-    it("labels cross-sender inline memory so ownership is not attributed to the current user", () => {
+    it("keeps cross-sender memory out of the user-message inline position", () => {
       const injector = createHybridMemoryInjector({ requesterUserId: "current-user" });
       const results = [
         mockResult("Vehicle 16333301 belongs to the other sender", 0.85, "2026-01-15"),
@@ -58,10 +58,12 @@ describe("hybrid-memory-injector", () => {
 
       const result = injector.split(results, 5000);
 
-      expect(result.inlineMemory).toContain("another sender");
-      expect(result.inlineMemory).toContain("do not attribute personal facts");
-      expect(result.inlineMemory).toContain("ownership");
-      expect(result.inlineMemory).toContain("Vehicle 16333301 belongs to the other sender");
+      expect(result.inlineMemory).toBeUndefined();
+      expect(result.systemPromptSections).toHaveLength(1);
+      expect(result.systemPromptSections[0]).toContain("another sender");
+      expect(result.systemPromptSections[0]).toContain("Do not attribute personal facts");
+      expect(result.systemPromptSections[0]).toContain("identity, ownership, preferences, or authorization");
+      expect(result.systemPromptSections[0]).toContain("Vehicle 16333301 belongs to the other sender");
     });
 
     it("keeps same-sender inline memory free of a foreign-provenance warning", () => {
@@ -132,6 +134,35 @@ describe("hybrid-memory-injector", () => {
       // System prompt sections may be empty if budget too small for header
       // The important thing is it doesn't crash
       expect(result.systemPromptSections.length).toBeLessThanOrEqual(1);
+    });
+
+    it("enforces maxChars across inline and system recall together", () => {
+      const injector = createHybridMemoryInjector({ requesterUserId: "memory-owner" });
+      const maxChars = 4000;
+      const result = injector.split(
+        [
+          mockResult("T".repeat(1000), 0.9),
+          mockResult("A".repeat(1500), 0.8),
+          mockResult("B".repeat(1500), 0.7),
+        ],
+        maxChars,
+      );
+
+      const injectedChars =
+        (result.inlineMemory?.length ?? 0) +
+        result.systemPromptSections.reduce((total, section) => total + section.length, 0);
+      expect(injectedChars).toBeLessThanOrEqual(maxChars);
+    });
+
+    it("does not emit an inline block larger than the total recall budget", () => {
+      const injector = createHybridMemoryInjector({ requesterUserId: "memory-owner" });
+      const maxChars = 400;
+      const result = injector.split([mockResult("T".repeat(1000), 0.9)], maxChars);
+
+      const injectedChars =
+        (result.inlineMemory?.length ?? 0) +
+        result.systemPromptSections.reduce((total, section) => total + section.length, 0);
+      expect(injectedChars).toBeLessThanOrEqual(maxChars);
     });
 
     it("handles results with undefined score (treats as 0)", () => {
