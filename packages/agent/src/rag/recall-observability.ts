@@ -182,7 +182,7 @@ export function captureRecallObservability(
       });
     }
   } catch (e) {
-    // A failing memory:recalled/reranked emit blinds the trajectory + fleet recall
+    // A failing memory:recalled/reranked emit blinds the trajectory + system recall
     // signals. Failure branch with hint+errorKind → WARN, visible at the default level.
     deps.logger.warn(
       {

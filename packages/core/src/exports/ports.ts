@@ -162,6 +162,8 @@ export type {
   EnvPort,
   TimerPort,
   TimerHandle,
+  WorkspacePolicyPort,
+  WorkspacePolicyError,
   CaManagerPort,
   EgressControlPort,
   EgressMaterialization,

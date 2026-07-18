@@ -442,7 +442,7 @@ describe("getMutableOverridesForSection", () => {
 // leak a misleading capability hint to LLMs (formatRedirectHint would emit
 // "you can also patch agents.<id>.persona") which an LLM echoes back as
 // `persona:` in agents_manage.create config, triggering Zod
-// unrecognized_keys rejection (observed as repeated fleet-creation failures
+// unrecognized_keys rejection (observed as repeated system-creation failures
 // in production).
 // ---------------------------------------------------------------------------
 describe("MUTABLE_CONFIG_OVERRIDES (persona must stay absent)", () => {

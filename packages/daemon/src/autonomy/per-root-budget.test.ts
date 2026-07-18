@@ -147,7 +147,7 @@ describe("per-root-budget — $/token/wall-clock limbs reusing the 3-state gate"
   it("fires onLimbWarning ONCE per root+limb when the token limb crosses 80% of its cap", () => {
     // The wedge arrived with zero warning (observed live): the meter enforced
     // silently until the abort. A once-per-(root,limb) pre-trip warning gives
-    // the fleet lens a health signal BEFORE the session dies.
+    // the system health view a health signal BEFORE the session dies.
     const clock = createFakeClock(1_000_000);
     const warnings: Array<{ rootRunId: string; limb: string; spent: number; cap: number; unit: string }> = [];
     const budget = createPerRootBudget({

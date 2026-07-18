@@ -492,7 +492,7 @@ See [Resilience Architecture](/agents/resilience) for how these systems work tog
     `subagent.killed` trajectory record all carry `killedBy: health_monitor`
     plus the idle/threshold numbers, the announce channel receives an LLM-free
     failure notification, and `comis explain` on the killed child session
-    returns the `subagent_stuck_killed` root-cause verdict. `comis fleet`
+    returns the `subagent_stuck_killed` root-cause verdict. `comis system-health`
     counts these as the `subagent_stuck_killed` finding.
 
     **How to fix:**
@@ -652,7 +652,7 @@ Recall is the path that selects which memories enter the prompt. When it surpris
        ```
        A vec→FTS fallback shows as `memory:recalled.vectorCandidates: 0`.
 
-    **Aggregate health:** the `comis memory stats` recall-counter overlay surfaces the rerank-fallback rate, lane usage, consolidation throughput, and recall hit-rate — a climbing fallback rate means the reranker is timing out across the fleet, not just on one turn:
+    **Aggregate health:** the `comis memory stats` recall-counter overlay surfaces the rerank-fallback rate, lane usage, consolidation throughput, and recall hit-rate — a climbing fallback rate means the reranker is timing out across the system, not just on one turn:
     ```bash
     node packages/cli/dist/cli.js memory stats
     ```

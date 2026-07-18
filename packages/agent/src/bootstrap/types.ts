@@ -2,12 +2,10 @@
 /**
  * Bootstrap types for workspace file loading and system prompt assembly.
  *
- * These types support the workspace loader (loading all 7 workspace files
- * with truncation and missing-file markers) and the system prompt assembler
- * (composing rich multi-section prompts with verbosity modes).
+ * These types support workspace loading and typed prompt compilation.
  */
 
-import type { WorkspaceFileName } from "../workspace/templates.js";
+import type { WorkspaceFileName } from "@comis/core";
 
 /**
  * A workspace file loaded (or attempted) from the agent workspace directory.
@@ -41,51 +39,15 @@ export interface TruncationResult {
 /**
  * System prompt verbosity mode.
  *
- * - `"full"`: All workspace sections included (primary agents)
- * - `"operational"`: All workspace sections relevant to autonomous operations;
- *    drops interactive-only guidance (compaction recovery, silent replies,
- *    heartbeats, reactions, media, SEP, sender trust). Used for cron and
- *    heartbeat executions. `staticPrefix` and `attribution` cache blocks
- *    remain byte-identical to `"full"` so the cached identity/attribution
- *    prefix is shared across modes.
- * - `"minimal"`: Only AGENTS.md + TOOLS.md (sub-agents)
- * - `"none"`: Identity-only prompt (lightweight contexts)
- * - `"compact-secure"`: compact prompt for small/nano capabilityClass.
- *    Targets ≤ 3500 tokens while ALWAYS retaining the full safety core
- *    (buildSafetySection(false) — 14 constitutional lines), sender-trust,
- *    and config-secret sections. Drops interactive-only sections (heartbeats,
- *    reactions, media, SEP, compaction recovery, documentation). Lockdown
- *    tightens with securityLevel (locked → mandatory sandbox restriction line
- *    appended). NEVER calls buildSafetySection(isMinimal=true) — that call
- *    drops all safety content.
+ * Every mode retains the engine kernel. Full and operational modes include
+ * bounded runtime context. Minimal and compact-secure defer optional runtime
+ * context, while none also defers operator policy for lightweight execution.
  */
 export type PromptMode = "full" | "operational" | "minimal" | "none" | "compact-secure";
 
 /**
- * Runtime metadata injected into the system prompt header.
- */
-export interface RuntimeInfo {
-  readonly agentId?: string;
-  readonly host?: string;
-  readonly os?: string;
-  readonly arch?: string;
-  readonly model?: string;
-  readonly thinkingLevel?: string;
-  /** Node.js version (e.g., "20.11.0") */
-  readonly nodeVersion?: string;
-  /** User's default shell (e.g., "/bin/zsh") */
-  readonly shell?: string;
-  /** Configured default model string */
-  readonly defaultModel?: string;
-  /** Current channel type (e.g., "telegram") */
-  readonly channel?: string;
-  /** Comma-separated capability summary (e.g., "reactions, threads, fetch") */
-  readonly channelCapabilities?: string;
-}
-
-/**
  * Per-message metadata injected as trusted system-role context.
- * Changes on every message turn (unlike RuntimeInfo which is static per session).
+ * Changes on every message turn.
  */
 export interface InboundMetadata {
   readonly messageId: string;

@@ -22,7 +22,7 @@
 | | | | | |
 
 ## Observability / emulator gaps closed (or dated TODO)
-| gap | how closed (signal threaded to explain/fleet · verb/method/fault/oracle added) | litmus proven? |
+| gap | how closed (signal threaded to explain/system · verb/method/fault/oracle added) | litmus proven? |
 |---|---|---|
 | | | |
 

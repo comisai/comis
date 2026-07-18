@@ -581,7 +581,7 @@ export async function constructCapabilityLayer(
     config: autonomyBearingConfig,
     ...(deps.cronJobCount ? { cronJobCount: deps.cronJobCount } : {}),
     logger: daemonLogger,
-    // The pre-trip budget signal: 80% of any per-root limb → the fleet lens
+    // The pre-trip budget signal: 80% of any per-root limb → the system health view
     // (health_signal row via the persistence wiring) BEFORE the abort wedges
     // the session. Counts + closed labels only. Absent container (boot-gate
     // unit tests) ⇒ no emit — the meter still enforces.

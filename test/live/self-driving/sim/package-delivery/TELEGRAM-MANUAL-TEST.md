@@ -109,7 +109,7 @@ episode — and a distinct session, which counts toward corroboration):
 node packages/cli/dist/cli.js sessions reset "<sessionKey>" --yes
 ```
 
-*(Find `<sessionKey>` with `node packages/cli/dist/cli.js fleet --since 1` or `node /root/db.mjs rows
+*(Find `<sessionKey>` with `node packages/cli/dist/cli.js system --since 1` or `node /root/db.mjs rows
 session_index 3`.)*
 
 ### Round 1 — drive a second corroborating success

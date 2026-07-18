@@ -436,9 +436,8 @@ export async function setupSingleAgent(
     authRotation,
     sessionAdapter,
     workspaceDir: dir,
-    // Resolved daemon data dir → PiExecutorDeps.dataDir → the pi-event-bridge
-    // session-index writer (else it falls back to the REAL ~/.comis) +
-    // prompt-assembly's recall-trace containment base.
+    ...(container.workspacePolicyPort === undefined ? {} : { workspacePolicyPort: container.workspacePolicyPort }),
+    // Keep session and recall-trace paths on the resolved daemon data directory.
     dataDir: dataDirAbs,
     agentDir: resolvedAgentDir,
     customTools: [],
@@ -455,7 +454,6 @@ export async function setupSingleAgent(
     secretManager: scopedManager,
     envelopeConfig: container.config.envelope,
     senderTrustDisplayConfig: container.config.senderTrustDisplay,
-    documentationConfig: container.config.documentation,
     hookRunner: container.hookRunner,
     outboundMediaEnabled: deps.outboundMediaEnabled,
     mediaPersistenceEnabled: container.config.integrations.media.persistence.enabled,
@@ -463,7 +461,9 @@ export async function setupSingleAgent(
     getPromptSkillsXml: () => renderLearnedSkillsXml({ skillRegistry, learnedSkills: learnedSurface.current, workspaceDir: dir }),
     getMcpServerInstructions: () => deps.mcpClientManager.getAllConnections().flatMap((connection) => {
       const instructions = connection.instructions?.trim();
-      return connection.status === "connected" && instructions ? [{ serverName: connection.name, instructions }] : [];
+      return connection.status === "connected" && instructions && connection.instructionHash
+        ? [{ serverId: connection.name, instructions, contentHash: connection.instructionHash, trust: "external" as const }]
+        : [];
     }),
     skillRegistry,  // Enable SDK skill discovery -> registry population
     activeRunRegistry: deps.activeRunRegistry,
@@ -579,7 +579,6 @@ export async function setupSingleAgent(
     // here; observabilityStore is the load-bearing sink.
     observabilityStore: deps.obsStore,
   });
-
   agentLogger.debug({ agentId, name: effectiveConfig.name, model: effectiveConfig.model }, "Agent executor initialized");
 
   return {

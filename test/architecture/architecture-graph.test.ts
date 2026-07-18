@@ -162,9 +162,9 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   // other CLI memory access still routes through daemon RPC.
   //
   // @comis/daemon edge: the OFFLINE obs fallback.
-  // `comis explain`/`comis fleet` reuse the daemon's exported pure assemblers
+  // `comis explain`/`comis system-health` reuse the daemon's exported pure assemblers
   // (assembleIncidentReportFromSources / makeRealReader /
-  // assembleFleetHealthReport) to build the post-mortem directly from the
+  // assembleSystemHealthReport) to build the post-mortem directly from the
   // local ~/.comis files when the gateway is unreachable — the session data
   // is on local disk and must not require a live daemon to read. Single
   // bounded import site: `util/offline-obs.ts`. Acyclic (daemon has no cli

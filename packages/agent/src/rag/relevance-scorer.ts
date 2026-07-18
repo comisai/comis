@@ -120,7 +120,7 @@ export interface RelevanceQuery {
  * test-covered (relevance-scorer.test.ts) — as the query builder a future cross-tier LTM/KG
  * allocator will consume when assembly fetches cross-session candidate lanes. It is NOT on the
  * `@comis/agent` public barrel, so the public-export-consumers gate does not fire; this comment
- * is the YAGNI-exception record (the AGENTS.md §2.3 informed-exception, the `reduceFleetWindow` precedent).
+ * is the YAGNI-exception record (the AGENTS.md §2.3 informed-exception, the `reduceSystemWindow` precedent).
  *
  * Build the relevance query from the newest-weighted rolling window of the last ~3 user
  * turns + the GoalAnchor bias term when present (GoalAnchor IS the

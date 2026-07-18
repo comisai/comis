@@ -60,6 +60,8 @@ export const RequestContextSchema = z.strictObject({
     resolvedModel: z.string().optional(),
     /** Resolved reply language tag set by parent executor for sub-agent inheritance via ALS. */
     resolvedLanguage: z.string().optional(),
+    /** Immutable operator-policy snapshot hash used by this turn and durable descendants. */
+    workspacePolicyHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   });
 
 export type RequestContext = z.infer<typeof RequestContextSchema>;
@@ -89,6 +91,7 @@ export interface ResolvedRequestContextSeed {
   deliveryOrigin?: DeliveryOrigin;
   resolvedModel?: string;
   resolvedLanguage?: string;
+  workspacePolicyHash?: string;
 }
 
 /**
@@ -116,6 +119,7 @@ const lockedContextFields = [
 const mutableContextFields = [
   "resolvedModel",
   "resolvedLanguage",
+  "workspacePolicyHash",
 ] as const satisfies readonly (keyof RequestContext)[];
 
 interface ContextInspection {
@@ -205,6 +209,7 @@ function lockResolvedContext(
     const mutableValues: ReadonlyArray<readonly [keyof RequestContext, unknown]> = [
       ["resolvedModel", parsed.resolvedModel],
       ["resolvedLanguage", parsed.resolvedLanguage],
+      ["workspacePolicyHash", parsed.workspacePolicyHash],
     ];
     const descriptors = Object.fromEntries([
       ...lockedValues.map(([field, value]) => [field, {
@@ -252,6 +257,7 @@ export function createResolvedRequestContext(
     deliveryOrigin: seed.deliveryOrigin,
     resolvedModel: seed.resolvedModel,
     resolvedLanguage: seed.resolvedLanguage,
+    workspacePolicyHash: seed.workspacePolicyHash,
   }));
   if (!captured.ok) {
     return err(new Error("Resolved request context could not be inspected safely"));

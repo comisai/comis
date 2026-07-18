@@ -145,6 +145,7 @@ export type ExternalContentSource =
   | "vision"
   | "video_description"
   | "mcp_tool"
+  | "mcp_instructions"
   | "mcp_resource"
   | "orchestrate_checkpoint"
   | "outcome_judge"
@@ -168,6 +169,7 @@ const EXTERNAL_SOURCE_LABELS: Record<ExternalContentSource, string> = {
   vision: "Vision analysis",
   video_description: "Video description",
   mcp_tool: "MCP tool result",
+  mcp_instructions: "MCP server instructions",
   mcp_resource: "MCP resource content",
   orchestrate_checkpoint: "Orchestrate checkpoint state",
   outcome_judge: "Outcome judge input",

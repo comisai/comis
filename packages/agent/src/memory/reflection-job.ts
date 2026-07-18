@@ -292,7 +292,7 @@ export interface RunReflectionResult {
   /**
    * How many topics corroborated via the `single_owner` REPETITION path (an
    * explicitly-trusted owner repeating a topic ≥`minObservations` times) rather than the
-   * distinct-sessions gate (0 in `distinct_sessions` mode). Lets `comis fleet` / `comis explain`
+   * distinct-sessions gate (0 in `distinct_sessions` mode). Lets `comis system-health` / `comis explain`
    * show the single-owner mode is active and how much it learned. Content-free (a count).
    */
   singleOwnerCorroborated: number;

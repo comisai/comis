@@ -92,7 +92,7 @@ COMIS_LIVE=1 pnpm vitest run -c test/live/vitest.config.ts \
 `chan` is the standalone shell/agent driver for the channel surface; **`tg` is the alias for
 `chan --channel telegram`**. It is a **thin tsx client** over the three surfaces a running rig
 records in its handle file: the emulator `/control/*` API (the drive verbs), the gateway
-`/rpc` over WebSocket (RPC passthrough + the curated `explain` / `fleet` + `trigger`), and the
+`/rpc` over WebSocket (RPC passthrough + the curated `explain` / `system` + `trigger`), and the
 rig lifecycle. Invoke it through `tsx` (it is not a `comis` subcommand):
 
 ```bash
@@ -122,7 +122,7 @@ handle, or malformed JSON. A no-reply is an honest empty body, **never a fabrica
 | `tg rpc <method> [json]` | A verbatim gateway JSON-RPC passthrough (over WS). |
 | `tg trigger cron <id>` / `heartbeat` / `wake` | Fire a scheduler RPC now (`cron.run` / `heartbeat.trigger` / `scheduler.wake`). |
 | `tg wait --event <type>` / `--tool <name>` | Block until a trajectory signal (bounded; never hangs). |
-| `tg explain` / `tg fleet` | The curated observability lenses for the rig's session. |
+| `tg explain` / `tg system` | The curated observability lenses for the rig's session. |
 | `tg mirror` / `tg traj` / `tg db` | The Comis-oracle reads: `delivery_mirror`, the trajectory, and `memory.db`. |
 
 Pass `--agent <id>` to target a non-default agent (for `tg trigger`), `--endpoint <url>` to
@@ -182,7 +182,7 @@ processes** — start it with `tg up --detached`:
 COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram up --detached --json
 # Process 2 — a FRESH shell reaches the surviving rig.
 COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram send "hi" --json
-COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram rpc obs.fleet.health '{"since":1}' --json
+COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram rpc obs.system.health '{"since":1}' --json
 # Process 3 — tear it down (SIGTERMs the rig's process group; no leaked daemon).
 COMIS_CHANLIVE_DIR=/tmp/my-rig node --import tsx test/live/bin/chan.ts --channel telegram down --json
 ```

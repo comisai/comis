@@ -99,7 +99,6 @@ const PRE_EXISTING_BENIGN_PATH_TAIL_ALLOWLIST: readonly string[] = [
   // ---------- Documentation / defaults / policy text (no live BC shim) ----------
   "packages/agent/src/bootstrap/workspace-loader.ts", // doc-string: "preserves backward-compatible behavior" describing opt-in flag semantics
   "packages/agent/src/bootstrap/system-prompt-assembler.ts", // doc-strings on "additional sections" field (RAG-memory etc.)
-  "packages/agent/src/bootstrap/sections/skills-memory-sections.ts", // doc-comment about absent-subsection case
   "packages/agent/src/model/model-allowlist.ts", // doc-string: empty array = "allow all models (backward compatible)" — default rationale
   "packages/agent/src/model/compaction-model-resolver.ts", // doc-string: "No backward-compat shim per feedback_no_backward_compat.md" — POLICY citation, not BC code
   "packages/agent/src/model/model-registry-adapter.ts", // doc-string mentioning "legacy aliases that ..." — describes local inference catalog

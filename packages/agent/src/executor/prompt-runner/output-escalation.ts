@@ -31,7 +31,7 @@ import type { TurnBudgetTracker } from "../../budget/turn-budget-tracker.js";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
 import { processFailurePath } from "./failure-path.js";
 import { applyInteractiveSilentRecovery } from "./interactive-silent-recovery.js";
-import { repairResponseLanguageDrift } from "./response-language-repair.js";
+import { evaluateResponseLocale } from "../resolve-response-locale-policy.js";
 
 /**
  * Compute the final PromptRunResult by running output escalation, success-
@@ -320,26 +320,21 @@ async function processSuccessPath(
     deps.logger,
   );
 
-  const languageRepair = await repairResponseLanguageDrift({
-    requestText: msg.text ?? "", response: result.response,
-    languageDirectiveActive: params.dynamicPreamble?.includes("## Reply Language for This Turn") ?? false,
-    continueTurn: (instruction) => runContinuationTurn(session, instruction),
-    readLatestResponse: () => getVisibleAssistantText(session),
-    logger: deps.logger, clock: deps.clock,
-  });
-  if (languageRepair.ok) {
-    result.response = languageRepair.value.response;
-  } else {
-    deps.logger.warn(
-      {
-        repairFailure: languageRepair.error.kind,
-        expectedScript: languageRepair.error.expectedScript,
-        actualScript: languageRepair.error.actualScript,
-        hint: "Inspect saved-language and recalled-profile context; the bounded response rewrite did not restore the current-turn language",
-        errorKind: "validation" as ErrorKind,
-      },
-      "Response language repair failed",
-    );
+  if (params.responseLocalePolicy !== undefined) {
+    const finding = evaluateResponseLocale(params.responseLocalePolicy, result.response);
+    if (finding !== undefined) {
+      result.localeQualityFinding = finding;
+      deps.logger.debug(
+        {
+          step: "response-locale-quality",
+          locale: finding.locale,
+          expectedScript: finding.expectedScript,
+          actualScript: finding.actualScript,
+          responseChars: finding.responseChars,
+        },
+        "Response locale quality mismatch recorded",
+      );
+    }
   }
 
   // Redact LLM output -- log only character count.

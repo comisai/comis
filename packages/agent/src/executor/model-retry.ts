@@ -288,7 +288,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
         totalElapsedMs: clock.now() - retryStartMs,
         hint: "Primary model failed, attempting fallback",
         // Timeouts are their own failure class — booking them as
-        // "dependency" misclassified every prompt timeout in fleet rollups.
+        // "dependency" misclassified every prompt timeout in system rollups.
         errorKind: (primaryError instanceof PromptTimeoutError ? "timeout" : "dependency") as ErrorKind,
       },
       "Primary model prompt error",
@@ -548,7 +548,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             maxRetries,
             totalElapsedMs: clock.now() - retryStartMs,
             hint: "Fallback model also failed",
-            // Timeout class for PromptTimeoutError (fleet rollups).
+            // Timeout class for PromptTimeoutError (system rollups).
             errorKind: (fallbackError instanceof PromptTimeoutError ? "timeout" : "dependency") as ErrorKind,
           },
           "Fallback model prompt error",
@@ -660,7 +660,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
               lkwProvider: lkw.provider,
               lkwModel: lkw.model,
               hint: "Last-known-working model also failed",
-              // Timeout class for PromptTimeoutError (fleet rollups).
+              // Timeout class for PromptTimeoutError (system rollups).
               errorKind: (lkwError instanceof PromptTimeoutError ? "timeout" : "dependency") as ErrorKind,
             },
             "Last-known-working model fallback failed",

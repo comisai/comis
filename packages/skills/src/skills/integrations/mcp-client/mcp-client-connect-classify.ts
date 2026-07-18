@@ -168,7 +168,7 @@ export function classifyConnectFailure(
  * connection entry (the ENRICHED message so mcp.list/status shows the real
  * cause), log the ERROR (closed reason + content-free stderr counters), emit
  * mcp:server:connect_failed (so a failed install is diagnosable via
- * `comis fleet`/`explain`, not only a raw daemon.log grep), and return the
+ * `comis system-health`/`explain`, not only a raw daemon.log grep), and return the
  * enriched err (original error kept as `cause` for stack context).
  */
 export function recordConnectFailure(

@@ -1491,7 +1491,7 @@ describe("runWithModelRetry", () => {
 
     it("the primary-failure WARN logs errorKind timeout for PromptTimeoutError and keeps dependency for non-timeout errors", async () => {
       // Timeout case: the WARN must say errorKind "timeout" — pre-patch it
-      // logs "dependency", misclassifying every prompt timeout in fleet/explain
+      // logs "dependency", misclassifying every prompt timeout in system/explain
       // errorKind rollups.
       const session = makeHungSession();
       const logger = createMockLogger();

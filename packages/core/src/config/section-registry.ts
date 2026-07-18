@@ -152,7 +152,7 @@ export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = 
     managedRedirect: {
       pathPrefix: "agents",
       tool: "agents_manage",
-      description: "Manage agent fleet (create, get, update, delete, suspend, resume).",
+      description: "Manage agent system (create, get, update, delete, suspend, resume).",
       // Verified against agents-manage-tool.ts AgentsManageToolParams.
       exampleArgs: {
         action: "create",

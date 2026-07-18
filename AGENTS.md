@@ -45,6 +45,21 @@ web           Lit + Vite + Tailwind standalone SPA
 
 Dependency direction: inward to `core`. `daemon` depends on everything; `shared` depends on nothing. Use public exports (`packages/*/dist/index.js`) only — no cross-package internal imports.
 
+### 1.1 Generic agent runtime invariant
+
+Comis production runtime is a domain-neutral agent platform. Before every production-code change, read `docs/developer-guide/generic-agent-architecture.md` and classify the requested behavior before choosing a layer. The generic runtime owns mechanisms shared across domains: orchestration, models, tools, memory, channels, scheduling, approvals, delivery, observability, security, typed prompt compilation, locale policy, and immutable workspace-policy loading. It must not own an application's industry, persona, business rules, preferred human language, vendor workflow, response script, or task-specific evaluation criteria.
+
+Route specialization through the existing extension boundaries:
+
+- Deployment-specific persona, scope, tone, and business policy belong in operator workspace policy.
+- Reusable task expertise, procedures, examples, and tool-selection guidance belong in an opt-in prompt skill. If the expertise should ship with Comis, add a repository-shipped skill under `skills/<name>/SKILL.md`; do not inject it into the engine kernel or default workspace starters.
+- External product or API behavior belongs behind an MCP server or a capability adapter with typed schemas, attributed bounded instructions, explicit side-effect metadata, and the normal approval/security path.
+- Only behavior that remains valid across unrelated agents and applications may enter core runtime code. A concrete caller is still required; "generic" is not permission for a speculative abstraction.
+
+Never hard-code vertical nouns, personas, fixed task flows, closed language lists, provider-specific prompt prose, or application-specific tool advice into `packages/core`, `packages/agent`, default config, workspace templates, or the stable engine prompt. Skills and external instructions are advisory context: they cannot grant capabilities, raise trust, bypass approvals, weaken engine/operator policy, or become silently active for every agent.
+
+Every runtime change must pass this review before implementation and again during diff review: **could an unrelated Comis deployment use the changed runtime without inheriting the requester's domain assumptions?** If not, keep the runtime unchanged and implement the behavior as workspace policy, a skill, an MCP integration, or an adapter. Do not land a temporary runtime special case with a plan to extract it later. `test/architecture/generic-runtime-boundary.test.ts` is the enforcement floor; extend it whenever a specialization regression would otherwise be able to return.
+
 ## 2) Engineering Principles (Normative)
 
 ### 2.1 Result<T, E> everywhere
@@ -200,11 +215,12 @@ When uncertain, classify higher.
 ## 5) Workflow
 
 1. **Read before write** — inspect existing port interfaces, adapter patterns, and adjacent tests before editing.
-2. **Define scope** — one concern per change; no mixed feature+refactor+infra patches.
-3. **Test-first (TDD)** — write the failing test before the production patch (regression test for bugs, contract test for new behavior). Co-located unit test by default; integration test only for daemon-level flows. RED must be reproducible on the pre-patch code; the patch is the GREEN step.
-4. **Implement minimal patch** — make the test pass. Apply KISS/YAGNI/rule-of-three explicitly.
-5. **Validate** — `pnpm validate` (= `pnpm build && pnpm test && pnpm lint:security && pnpm cycles`) must all pass.
-6. **Document impact** — update comments/docs for behavior changes, risk, side effects.
+2. **Enforce the generic-runtime boundary** — classify domain-specific behavior before editing; route it to workspace policy, a prompt skill, MCP, or an adapter instead of the engine/runtime.
+3. **Define scope** — one concern per change; no mixed feature+refactor+infra patches.
+4. **Test-first (TDD)** — write the failing test before the production patch (regression test for bugs, contract test for new behavior). Co-located unit test by default; integration test only for daemon-level flows. RED must be reproducible on the pre-patch code; the patch is the GREEN step.
+5. **Implement minimal patch** — make the test pass. Apply KISS/YAGNI/rule-of-three explicitly.
+6. **Validate** — `pnpm validate` (= `pnpm build && pnpm test && pnpm lint:security && pnpm cycles`) must all pass.
+7. **Document impact** — update comments/docs for behavior changes, risk, side effects.
 
 ## 6) Change Playbooks
 
@@ -237,7 +253,9 @@ Define interface in `core/src/ports/` → export from core index → add to `App
 `schema-*.ts` in `core/src/config/` with `.default()` on every field → wire into parent (typically `AppConfigSchema`) → export from config index. Consumers see a fully-defaulted `AppConfig` — never `config.x ?? fallback` at call sites; fallbacks belong in `.default()`. Layer precedence: schema defaults < env-layer projection < YAML (later YAML wins). Keys in `immutable-keys.ts` are rejected by `config.write`. New top-level sections register a single entry in the `SECTION_REGISTRY` in `core/src/config/section-registry.ts` (the consolidated source of truth). Per-view derivations (`SECTION_SCHEMAS` in `schema-serializer.ts`, the metadata map in `field-metadata.ts`, the managed-section redirect map in `managed-sections.ts`) are derived from the registry — no per-file edit needed beyond the registry entry.
 
 ### 6.5 Add a Skill
-Skills are Markdown files with manifest frontmatter. Add to `packages/skills/`, validate frontmatter against manifest Zod schema, test loading + manifest validation.
+Use a prompt skill when a request adds reusable task expertise, a domain procedure, a persona playbook, examples, or task-specific tool guidance rather than a universal runtime mechanism. Repository-shipped prompt skills live under `skills/<name>/SKILL.md`; skill-system implementation code lives under `packages/skills/`. Skills are Markdown files with manifest frontmatter: validate frontmatter against the manifest Zod schema and test discovery, eligibility, loading, sanitization, and representative selection behavior.
+
+A repository-shipped skill must remain opt-in and discoverable, not part of the stable engine prefix or default workspace policy. Its description must state the narrow trigger accurately. A skill may recommend tools, but capability and approval enforcement remains in code and agent tool policy; skill metadata or prose never grants authority. If the specialization needs a new external capability rather than instructions, implement the MCP/tool adapter and its security contract separately, then let the skill describe how to use that capability.
 
 ### 6.6 Security / Gateway / Daemon
 Include threat/risk notes in commit message. Add boundary + failure-mode tests. Changes in `core/src/security/` require reviewing all downstream consumers. `injection-patterns.ts` changes require both detection accuracy and false-positive tests.

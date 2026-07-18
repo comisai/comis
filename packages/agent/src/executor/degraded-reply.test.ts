@@ -238,37 +238,34 @@ describe("buildContextExhaustedReply — recovery guidance + incident ref", () =
 });
 
 // ---------------------------------------------------------------------------
-// The builders take an optional `language` tag and
-// DELEGATE string selection to degraded-reply-i18n.ts. A he/ar/ru tag yields
-// the localized reply (deep-equal to the matching selector); NO language arg
-// stays English byte-identical — the existing pins above already lock the
-// English vocabulary/security invariants and must stay green.
+// The builders take an optional canonical locale tag and delegate string
+// selection to the locale catalog. Missing packs fall back to English.
 // ---------------------------------------------------------------------------
 describe("builders consume the resolved language tag (delegate to i18n)", () => {
   // The warning marker (U+26A0 U+FE0F) — referenced via codepoints, never pasted.
   const WARNING_MARKER = String.fromCodePoint(0x26a0, 0xfe0f);
 
-  it("buildContextExhaustedReply with language:'he' equals the he selector output", () => {
+  it("buildContextExhaustedReply delegates an open locale to the selector", () => {
     const opts = { cause: "oversized_input", capabilityClass: "small", traceId: "t" } as const;
-    expect(buildContextExhaustedReply({ ...opts, language: "he" })).toBe(
-      selectContextExhaustedReply("he", opts),
+    expect(buildContextExhaustedReply({ ...opts, language: "fr-CA" })).toBe(
+      selectContextExhaustedReply("fr-CA", opts),
     );
   });
 
-  it("buildOutputStarvedAnnotation('ar') equals the ar selector output and carries the warning marker", () => {
-    const ar = buildOutputStarvedAnnotation("ar");
-    expect(ar).toBe(selectOutputStarvedAnnotation("ar"));
-    expect(ar).toContain(WARNING_MARKER);
+  it("buildOutputStarvedAnnotation delegates the locale and carries the warning marker", () => {
+    const annotation = buildOutputStarvedAnnotation("sr-Latn-RS");
+    expect(annotation).toBe(selectOutputStarvedAnnotation("sr-Latn-RS"));
+    expect(annotation).toContain(WARNING_MARKER);
   });
 
-  it("buildLoopDetectedReply with language:'ru' equals the ru selector output", () => {
-    expect(buildLoopDetectedReply({ language: "ru", traceId: "x" })).toBe(
-      selectLoopDetectedReply("ru", { traceId: "x" }),
+  it("buildLoopDetectedReply delegates an open locale to the selector", () => {
+    expect(buildLoopDetectedReply({ language: "de-DE", traceId: "x" })).toBe(
+      selectLoopDetectedReply("de-DE", { traceId: "x" }),
     );
   });
 
-  it("a Hebrew context-exhausted reply also omits raw configuration paths", () => {
-    const reply = buildContextExhaustedReply({ capabilityClass: "small", language: "he" });
+  it("a locale-selected context-exhausted reply omits raw configuration paths", () => {
+    const reply = buildContextExhaustedReply({ capabilityClass: "small", language: "fr-CA" });
     expect(reply).not.toContain("contextEngine.");
     expect(reply).not.toContain("uncapped");
   });

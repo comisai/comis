@@ -2,9 +2,8 @@
 /**
  * HEARTBEAT.md content classifier for preflight file gate.
  *
- * Classifies file content as "effectively empty" when it contains only
- * structural Markdown (headers, empty list items) and whitespace -- meaning
- * no actual heartbeat task instructions exist.
+ * Classifies content as empty when it contains only comments, structural
+ * Markdown, and whitespace, meaning no heartbeat instruction exists.
  *
  * @module
  */
@@ -32,7 +31,8 @@ const EFFECTIVELY_EMPTY_LINE = /^\s*(?:#{1,6}\s.*|[-*+]\s*(?:\[[\sx]\])?\s*)?$/;
  * the caller must handle ENOENT separately.
  */
 export function isHeartbeatContentEffectivelyEmpty(content: string): boolean {
-  if (!content.trim()) return true;
-  const lines = content.split("\n");
+  const withoutComments = content.replace(/<!--[\s\S]*?-->/g, "");
+  if (!withoutComments.trim()) return true;
+  const lines = withoutComments.split("\n");
   return lines.every(line => EFFECTIVELY_EMPTY_LINE.test(line));
 }

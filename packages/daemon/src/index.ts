@@ -148,8 +148,8 @@ export type { TracingLoggerOptions } from "./observability/trace-logger.js";
 export { emitStartupInvariants } from "./wiring/setup-startup-invariants.js";
 export type { StartupInvariantsDeps, StartupInvariants } from "./wiring/setup-startup-invariants.js";
 
-// Obs-explain assembler + reader DI seam — re-exported so the RE-PROVE
-// scenario (test/live) can call the FROZEN assembler over a fixture
+// Obs-explain assembler + reader DI seam — re-exported so live verification
+// can call the frozen assembler over a fixture
 // reader without a deep daemon-internal dist path. Read-only; the admin gate
 // stays on bindObsExplainHandlers (obs-explain.ts:188) — this exports ONLY the
 // gate-free assembler the live-scenario tests + the obs_explain MCP tool already call with
@@ -163,14 +163,14 @@ export type { IncidentSourceReader } from "./api/obs-handlers/obs-explain-reader
 // authoritative way — never a hand-built flat `<dataDir>/sessions/<id>` path.
 export { resolveSessionFilePath } from "./api/obs-handlers/obs-explain-readers.js";
 
-// Fleet-health assembler RE-PROVE seam — mirrors the obs-explain
-// precedent above. Re-exported from the TOP-LEVEL barrel so the keyless fleet
-// RE-PROVE scenario (test/live) can `import { assembleFleetHealthReport } from
+// System-health assembler verification seam — mirrors the obs-explain
+// precedent above. Re-exported from the top-level barrel so keyless live tests
+// can `import { assembleSystemHealthReport } from
 // "@comis/daemon"` — the live config aliases ONLY the top-level @comis/daemon ->
 // daemon/dist/index.js (no obs-handlers subpath alias). The gate-free assembler
-// only; the admin gate stays on bindFleetHealthHandlers (fleet-health.ts).
-// Consumer: test/live/scenarios/prove/fleet-reprove.test.ts
-export { assembleFleetHealthReport } from "./api/obs-handlers/fleet-health.js";
+// only; the admin gate stays on bindSystemHealthHandlers (system-health.ts).
+// Consumer: test/live/scenarios/prove/system-reprove.test.ts
+export { assembleSystemHealthReport } from "./api/obs-handlers/system-health.js";
 
 // Offline inbound-message extraction (`comis messages`) — CONTENT-BEARING by
 // design (message bodies are the payload), so it has NO RPC/MCP surface: the
@@ -194,7 +194,7 @@ export type {
 // cross-package consumer exists (public-export-consumers gate). A future-phase
 // transport that genuinely needs one cross-package re-exports it here then.
 
-// DENYLISTED_RPC_METHODS (RE-PROVE seam) — the cap-socket's
+// DENYLISTED_RPC_METHODS verification seam — the cap-socket's
 // method-precise closed-door set (the `skills_manage`/admin-management methods the
 // endpoint's pre-check throws on BEFORE `validate()`). Re-exported from the
 // top-level barrel so the `comis-agent-same-gate` / `comis-agent-no-admin`
@@ -206,7 +206,7 @@ export type {
 // Consumer: test/architecture/comis-agent-same-gate.test.ts + comis-agent-no-admin.test.ts
 export { DENYLISTED_RPC_METHODS } from "./wiring/setup-capability-endpoint.js";
 
-// CAPABILITY_ACTION_CLASS (RE-PROVE seam) — the closed capability→action-class
+// CAPABILITY_ACTION_CLASS verification seam — the closed capability→action-class
 // map (`read`|`mutate`) the durable audit trail's `classification` reads. Typed
 // `Record<AgentCapability,…>`, so a new cap-union member is a compile-visible gap
 // at its definition. Re-exported from the top-level barrel so the

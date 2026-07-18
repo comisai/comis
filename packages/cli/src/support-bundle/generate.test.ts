@@ -11,9 +11,9 @@
  *    generates (a section failure is a warning, never a crash);
  *  - `doctor.json` carries the real `buildDoctorJson` shape from a genuine run
  *    (nine checks), and `triage.json` round-trips through its parser;
- *  - the injected fleet assembler's report is written verbatim as `fleet.json`
+ *  - the injected system assembler's report is written verbatim as `system-health.json`
  *    and its finding + root-cause codes reach `triage.json`'s active signals; a
- *    thrown or coverage-empty fleet folds into a `{source:"fleet"}` manifest
+ *    thrown or coverage-empty system folds into a `{source:"system"}` manifest
  *    warning without crashing;
  *  - `config-posture.json` lists the present config sections when the config
  *    parsed, and is omitted with a `{source:"config-posture"}` warning when it
@@ -24,7 +24,7 @@
  * loopback, tls → https) is unit-asserted directly.
  *
  * Temp dirs ONLY. The daemon-liveness probe is stubbed down so the host
- * snapshot opens no socket, and the fleet assembler is injected with a hermetic
+ * snapshot opens no socket, and the system assembler is injected with a hermetic
  * fixture so no case loads the @comis/daemon runtime graph.
  */
 
@@ -41,7 +41,7 @@ import {
 import { tmpdir } from "node:os";
 
 import { safePath } from "@comis/core";
-import type { FleetHealthReport, IncidentReport } from "@comis/core";
+import type { SystemHealthReport, IncidentReport } from "@comis/core";
 
 import { generateSupportBundle, buildSupportDoctorContext } from "./generate.js";
 import { parseSupportTriage } from "./types.js";
@@ -83,12 +83,12 @@ afterEach(() => {
 });
 
 /**
- * Minimal valid FleetHealthReport fixture — an empty, coverage-empty window
+ * Minimal valid SystemHealthReport fixture — an empty, coverage-empty window
  * (the shape the offline assembler returns against a data dir with no
  * `memory.db`). Overrides shallow-merge the base, so a case replaces only the
  * sub-object it exercises (`findings`, `coverage`, `likelyRootCause`, …).
  */
-function makeFleet(over: Partial<FleetHealthReport> = {}): FleetHealthReport {
+function makeSystem(over: Partial<SystemHealthReport> = {}): SystemHealthReport {
   return {
     schemaVersion: 1,
     windowHours: 24,
@@ -120,10 +120,10 @@ function makeFleet(over: Partial<FleetHealthReport> = {}): FleetHealthReport {
 
 /**
  * Base deps for the orchestrator: a temp data dir, the config path under it, the
- * daemon-down stub, and an injected fleet assembler. `configBody` defaults to a
+ * daemon-down stub, and an injected system assembler. `configBody` defaults to a
  * valid config whose gateway points at an unused loopback port so the
  * connectivity probe fails fast and deterministically instead of touching a real
- * daemon. `assembleFleet` defaults to a hermetic empty-window fixture so no case
+ * daemon. `assembleSystem` defaults to a hermetic empty-window fixture so no case
  * loads the @comis/daemon runtime graph; individual cases override it to
  * exercise the write, the signal flow, or the degradation branches.
  */
@@ -131,7 +131,7 @@ function makeDeps(
   overrides: {
     dataDir?: string;
     configBody?: string;
-    assembleFleet?: (dataDir: string, sinceHours: number) => Promise<FleetHealthReport>;
+    assembleSystem?: (dataDir: string, sinceHours: number) => Promise<SystemHealthReport>;
   } = {},
 ) {
   const dataDir = overrides.dataDir ?? makeDataDir();
@@ -144,8 +144,8 @@ function makeDeps(
     sinceHours: 24,
     nowMs: NOW_MS,
     isDaemonRunning: daemonDown.isDaemonRunning,
-    assembleFleet:
-      overrides.assembleFleet ?? (async (): Promise<FleetHealthReport> => makeFleet()),
+    assembleSystem:
+      overrides.assembleSystem ?? (async (): Promise<SystemHealthReport> => makeSystem()),
   };
 }
 
@@ -166,9 +166,9 @@ describe("generateSupportBundle offline against a dead daemon", () => {
       "ai-issue-draft.md",
       "config-posture.json",
       "doctor.json",
-      "fleet.json",
       "issue-summary.md",
       "manifest.json",
+      "system-health.json",
       "triage.json",
     ]);
     expect(result.value.activeSignals).toContain("daemon_down");
@@ -223,14 +223,14 @@ describe("generateSupportBundle honest degradation", () => {
     expect(result.value.status).toBe("misconfigured");
     expect(result.value.activeSignals).toContain("config_corrupt");
     // config-posture.json is OMITTED on an unparseable config (no raw keys), so
-    // the corrupt-config bundle is six files — fleet.json is still written.
+    // the corrupt-config bundle is six files — system-health.json is still written.
     const files = readdirSync(result.value.bundleDir).sort();
     expect(files).toEqual([
       "ai-issue-draft.md",
       "doctor.json",
-      "fleet.json",
       "issue-summary.md",
       "manifest.json",
+      "system-health.json",
       "triage.json",
     ]);
   });
@@ -326,9 +326,9 @@ describe("generateSupportBundle keeps the reducer's trusted strings intact on di
   });
 });
 
-describe("generateSupportBundle fleet composition", () => {
-  it("writes a fleet.json that round-trips the injected report's schemaVersion and finding codes", async () => {
-    const fleet = makeFleet({
+describe("generateSupportBundle system composition", () => {
+  it("writes a system-health.json that round-trips the injected report's schemaVersion and finding codes", async () => {
+    const system = makeSystem({
       sessions: { total: 3, degraded: 1, degradedRate: 0.33 },
       findings: [
         { code: "config_posture", detail: "gateway.tls (off)", count: 1, hint: "Enable TLS" },
@@ -339,29 +339,29 @@ describe("generateSupportBundle fleet composition", () => {
         billing: { present: true },
       },
     });
-    const result = await generateSupportBundle(makeDeps({ assembleFleet: async () => fleet }));
+    const result = await generateSupportBundle(makeDeps({ assembleSystem: async () => system }));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
     const written = JSON.parse(
-      readFileSync(safePath(result.value.bundleDir, "fleet.json"), "utf8"),
+      readFileSync(safePath(result.value.bundleDir, "system-health.json"), "utf8"),
     ) as { schemaVersion: number; findings: Array<{ code: string }> };
     expect(written.schemaVersion).toBe(1);
     expect(written.findings.map((f) => f.code)).toContain("config_posture");
   });
 
-  it("surfaces the injected fleet finding and root-cause codes in the triage.json active signals", async () => {
-    const fleet = makeFleet({
+  it("surfaces the injected system finding and root-cause codes in the triage.json active signals", async () => {
+    const system = makeSystem({
       sessions: { total: 5, degraded: 3, degradedRate: 0.6 },
       findings: [{ code: "model_health:embedder_not_multilingual", detail: "", count: 1, hint: "" }],
-      likelyRootCause: { code: "fleet_high_degraded_rate", detail: "", suggestedNextSteps: [] },
+      likelyRootCause: { code: "system_high_degraded_rate", detail: "", suggestedNextSteps: [] },
       coverage: {
         sessionSummary: { found: true, rows: 5 },
         sessionIndex: { daysRead: 1, daysMissing: 0 },
         billing: { present: true },
       },
     });
-    const result = await generateSupportBundle(makeDeps({ assembleFleet: async () => fleet }));
+    const result = await generateSupportBundle(makeDeps({ assembleSystem: async () => system }));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
@@ -369,29 +369,29 @@ describe("generateSupportBundle fleet composition", () => {
       readFileSync(safePath(result.value.bundleDir, "triage.json"), "utf8"),
     ) as { activeSignals: string[] };
     expect(triage.activeSignals).toContain("model_health:embedder_not_multilingual");
-    expect(triage.activeSignals).toContain("fleet_high_degraded_rate");
+    expect(triage.activeSignals).toContain("system_high_degraded_rate");
   });
 
-  it("folds a coverage-empty fleet read into a manifest fleet warning while still writing fleet.json", async () => {
+  it("folds a coverage-empty system read into a manifest system warning while still writing system-health.json", async () => {
     // The default fixture is the coverage-empty window the offline assembler
     // returns against a data dir with no memory.db — a valid empty report that
-    // is still written, with an honest {source:"fleet"} warning.
-    const result = await generateSupportBundle(makeDeps({ assembleFleet: async () => makeFleet() }));
+    // is still written, with an honest {source:"system"} warning.
+    const result = await generateSupportBundle(makeDeps({ assembleSystem: async () => makeSystem() }));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    expect(result.value.warnings.some((w) => w.source === "fleet")).toBe(true);
-    expect(existsSync(safePath(result.value.bundleDir, "fleet.json"))).toBe(true);
+    expect(result.value.warnings.some((w) => w.source === "system")).toBe(true);
+    expect(existsSync(safePath(result.value.bundleDir, "system-health.json"))).toBe(true);
     const manifest = JSON.parse(
       readFileSync(safePath(result.value.bundleDir, "manifest.json"), "utf8"),
     ) as { warnings?: Array<{ source: string }> };
-    expect(manifest.warnings?.some((w) => w.source === "fleet")).toBe(true);
+    expect(manifest.warnings?.some((w) => w.source === "system")).toBe(true);
   });
 
-  it("folds a thrown fleet assembler into a manifest fleet warning and omits fleet.json without crashing", async () => {
+  it("folds a thrown system assembler into a manifest system warning and omits system-health.json without crashing", async () => {
     const result = await generateSupportBundle(
       makeDeps({
-        assembleFleet: async () => {
+        assembleSystem: async () => {
           throw new Error("memory.db unreadable");
         },
       }),
@@ -399,9 +399,9 @@ describe("generateSupportBundle fleet composition", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    expect(result.value.warnings.some((w) => w.source === "fleet")).toBe(true);
-    // A thrown assembler leaves fleet undefined, so fleet.json is omitted.
-    expect(existsSync(safePath(result.value.bundleDir, "fleet.json"))).toBe(false);
+    expect(result.value.warnings.some((w) => w.source === "system")).toBe(true);
+    // A thrown assembler leaves system undefined, so system-health.json is omitted.
+    expect(existsSync(safePath(result.value.bundleDir, "system-health.json"))).toBe(false);
   });
 });
 

@@ -7,7 +7,7 @@
  * channel surface: a THIN client over the three surfaces the handle records —
  * the emulator `/control/*` (drive verbs: send / react / last / history), the
  * gateway `/rpc` (the `tg rpc` verbatim passthrough + the curated
- * explain / fleet + the `tg trigger` cron/heartbeat/wake fire-now over WS), and
+ * explain / system + the `tg trigger` cron/heartbeat/wake fire-now over WS), and
  * the rig lifecycle (up / down / status / restart / reset --deep / reconfigure —
  * the model sweep).
  *
@@ -300,7 +300,7 @@ import { signalCaps } from "../emulators/signal/signal-caps.js";
 // NOTE: `wait.ts` statically imports `@comis/observability` (runtime values), the
 // ONE bare `@comis/*` specifier in this CLI's static graph. It is imported
 // TYPE-ONLY here and `await import()`-ed lazily inside the `wait`/`traj` verbs so
-// the HTTP/handle verbs (status/send/last/history/rpc/explain/fleet/mirror/db)
+// the HTTP/handle verbs (status/send/last/history/rpc/explain/system/mirror/db)
 // stay runnable via a bare `tsx test/live/bin/chan.ts …` (a raw shell, no vitest
 // alias map). `rpcRequest`/`startStandaloneRig` are safe statically: their
 // `@comis/*` imports are type-only (erased) + a dynamic `import("@comis/daemon")`
@@ -517,7 +517,7 @@ const REQUIRES_HANDLE = new Set([
   // `tg trigger` reaches the gateway RPCs over WS (needs the handle token).
   "trigger",
   "explain",
-  "fleet",
+  "system",
   "mirror",
   "traj",
   "db",
@@ -1260,10 +1260,10 @@ export async function runVerb(
       return invokeRpc(ctx, handle, "obs.explain", params);
     }
 
-    case "fleet": {
+    case "system": {
       const handle = ctx.handle as ChanliveHandle;
       const since = Number(args[0] ?? "24");
-      return invokeRpc(ctx, handle, "obs.fleet.health", {
+      return invokeRpc(ctx, handle, "obs.system.health", {
         since: Number.isFinite(since) ? since : 24,
       });
     }
@@ -1378,7 +1378,7 @@ export async function runVerb(
     default:
       throw new VerbFailure("bad_json", {
         detail: `unknown verb "${verb}"`,
-        hint: "run a known verb: up/down/status/restart/reset/reconfigure/send/react/tap/edit/send-photo/send-voice/last/history/rpc/trigger/explain/fleet/mirror/traj/db/wait.",
+        hint: "run a known verb: up/down/status/restart/reset/reconfigure/send/react/tap/edit/send-photo/send-voice/last/history/rpc/trigger/explain/system/mirror/traj/db/wait.",
       });
   }
 }

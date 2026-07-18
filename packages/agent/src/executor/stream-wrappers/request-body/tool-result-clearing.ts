@@ -15,7 +15,6 @@
  */
 
 import {
-  buildRecallLanguageTail,
   extractInlineRecalledMemory,
   stripInlineRecalledMemory,
 } from "../../../rag/hybrid-memory-injector.js";
@@ -392,11 +391,9 @@ export function deferRecallToUncachedTail(messages: Array<Record<string, unknown
   if (typeof content === "string") {
     const { recall, rest } = extractInlineRecalledMemory(content);
     if (!recall || rest.trim().length === 0) return 0;
-    const languageTail = buildRecallLanguageTail(rest);
     msg.content = [
       { type: "text", text: rest },
       { type: "text", text: recall.trim() },
-      ...(languageTail !== undefined ? [{ type: "text", text: languageTail }] : []),
     ];
     return 1;
   }
@@ -411,12 +408,10 @@ export function deferRecallToUncachedTail(messages: Array<Record<string, unknown
     if (!recallBlock) return 0;
     const { recall, rest } = extractInlineRecalledMemory(recallBlock.text as string);
     if (!recall || rest.trim().length === 0) return 0;
-    const languageTail = buildRecallLanguageTail(rest);
     recallBlock.text = rest; // query remainder keeps its cache_control → stays cached + stable
     // Append the recall AFTER the cache fence (the SDK marker is on the last block) so it
     // rides the uncached tail. No cache_control on this block.
     blocks.push({ type: "text", text: recall.trim() });
-    if (languageTail !== undefined) blocks.push({ type: "text", text: languageTail });
     return 1;
   }
   return 0;
@@ -547,14 +542,12 @@ export function deferRecallToTrailingResponsesItem(input: Array<Record<string, u
   const wasString = typeof content === "string";
 
   let recall: string;
-  let languageTail: string | undefined;
   if (wasString) {
     const ex = extractInlineRecalledMemory(content as string);
     // Keep recall inline if removing it would leave the query empty (recall-only turn): an
     // empty user item is invalid, and a recall-only turn has no stable prefix to protect.
     if (!ex.recall || ex.rest.trim().length === 0) return 0;
     recall = ex.recall.trim();
-    languageTail = buildRecallLanguageTail(ex.rest);
     msg.content = ex.rest;
   } else if (Array.isArray(content)) {
     const blocks = content as Array<Record<string, unknown>>;
@@ -565,7 +558,6 @@ export function deferRecallToTrailingResponsesItem(input: Array<Record<string, u
     const ex = extractInlineRecalledMemory(textBlock.text as string);
     if (!ex.recall || ex.rest.trim().length === 0) return 0;
     recall = ex.recall.trim();
-    languageTail = buildRecallLanguageTail(ex.rest);
     textBlock.text = ex.rest;
   } else {
     return 0;
@@ -577,14 +569,9 @@ export function deferRecallToTrailingResponsesItem(input: Array<Record<string, u
   const trailing: Record<string, unknown> = {
     role: "user",
     content: wasString
-      ? languageTail !== undefined
-        ? `${recall}\n\n${languageTail}`
-        : recall
+      ? recall
       : [
           { type: "input_text", text: recall },
-          ...(languageTail !== undefined
-            ? [{ type: "input_text", text: languageTail }]
-            : []),
         ],
   };
   if (typeof msg.type !== "undefined") trailing.type = msg.type;

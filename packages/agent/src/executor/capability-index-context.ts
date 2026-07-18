@@ -75,7 +75,7 @@ const EMPTY: CapabilityIndexRenderResult = Object.freeze({
 /**
  * Active-tool count threshold above which all per-cluster name lists are
  * dropped (cluster headers + `(N tools)` counts remain).
- * Currently a fixed constant; revisit only if telemetry shows fleets clustering near it.
+ * Currently a fixed constant; revisit only if telemetry shows systems clustering near it.
  */
 const ELISION_THRESHOLD = 32;
 

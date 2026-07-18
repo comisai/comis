@@ -5,7 +5,7 @@
  * Comis implements progressive disclosure on TWO axes that this test
  * pins end to end:
  *
- *   A. Tool policy (`applyToolPolicy`): given a fleet of registered
+ *   A. Tool policy (`applyToolPolicy`): given a system of registered
  *      AgentTools, only the subset selected by the agent's tool policy
  *      reaches the LLM. The policy supports named profiles, allow/deny
  *      lists, and group expansion. Filtered-out tools come back with a

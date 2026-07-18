@@ -235,12 +235,30 @@ export async function connectServer(
     state.serverConfigs.set(config.name, effectiveConfig);
     // Initialize generation
     state.generations.set(config.name, state.generations.get(config.name) ?? 0);
-
     // Extract server metadata
     const metadata = extractServerMetadata(client);
 
-    if (metadata.instructions) {
-      logger.debug?.({ serverName: config.name, instructionChars: metadata.instructions.length }, "MCP server provided instructions");
+    if (metadata.instructionValidation === "rejected") {
+      logger.warn?.(
+        {
+          serverName: config.name,
+          errorKind: "validation" as const,
+          hint: "Remove control characters or non-text data from the MCP server instructions and reconnect the server.",
+        },
+        "Rejected malformed MCP server instructions",
+      );
+      deps.eventBus?.emit("mcp:server:instructions_rejected", {
+        serverName: config.name,
+        reason: "invalid_text_shape",
+        timestamp: systemNowMs(),
+      });
+    } else if (metadata.instructions) {
+      logger.debug?.(
+        { step: "mcp-instruction-discovery", serverName: config.name,
+          instructionChars: metadata.instructions.length, instructionHash: metadata.instructionHash,
+          instructionValidation: metadata.instructionValidation },
+        "MCP server instructions validated",
+      );
     }
 
     // Discover tools (with timeout)
@@ -267,6 +285,7 @@ export async function connectServer(
       maxReconnectAttempts: state.options.reconnectOpts.maxAttempts,
       generation: state.generations.get(config.name) ?? 0,
       instructions: metadata.instructions,
+      instructionHash: metadata.instructionHash,
       capabilities: metadata.capabilities,
       serverInfo: metadata.serverInfo,
       // Mirror the per-server resources/prompts opt-out onto the connection so
@@ -349,7 +368,7 @@ export async function connectServer(
       );
       // Initial-connect failure → obs (health_signal + trajectory), like the
       // reconnect_failed sibling — so a failed install is diagnosable via
-      // `comis fleet`/`explain`, not only a raw daemon.log grep.
+      // `comis system-health`/`explain`, not only a raw daemon.log grep.
       deps.eventBus?.emit("mcp:server:connect_failed", {
         serverName: config.name,
         transport: config.transport,

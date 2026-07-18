@@ -26,39 +26,6 @@ import { formatMemorySection } from "./rag-retriever.js";
 const INLINE_RECALL_BLOCK_RE =
   /^\s*\[Relevant context from memory: [\s\S]*? \(recorded \d{4}-\d{2}-\d{2}(?:, occurred \d{4}-\d{2}-\d{2})?\)\]\n?/;
 
-const CURRENT_TURN_LANGUAGE_HEADING = "## Reply Language for This Turn";
-const SYSTEM_CONTEXT_START = "[System context]";
-const SYSTEM_CONTEXT_END = "[End system context]";
-const CURRENT_TURN_SCRIPT_LINE_RE =
-  /^Current message dominant script: (?:Latin|Cyrillic|Hebrew|Arabic|CJK|Thai|Greek|Devanagari|Other)\.$/m;
-const CURRENT_TURN_LANGUAGE_TAIL = [
-  "[Current-turn language constraint]",
-  "The current user message, not recalled memory, is authoritative for reply language.",
-];
-
-/**
- * Re-emit the trusted current-turn language constraint after deferred recall,
- * which request-body cache stabilization deliberately moves to the freshest
- * model-visible position. User text appears after the trusted system-context
- * envelope and therefore cannot activate this check by itself.
- */
-export function buildRecallLanguageTail(rest: string): string | undefined {
-  const contextStart = rest.indexOf(SYSTEM_CONTEXT_START);
-  if (contextStart < 0) return undefined;
-  const contextEnd = rest.indexOf(SYSTEM_CONTEXT_END, contextStart + SYSTEM_CONTEXT_START.length);
-  if (contextEnd < 0) return undefined;
-  const systemContext = rest.slice(contextStart, contextEnd);
-  const languageSectionStart = systemContext.lastIndexOf(CURRENT_TURN_LANGUAGE_HEADING);
-  if (languageSectionStart < 0) return undefined;
-  const languageSection = systemContext.slice(languageSectionStart);
-  const scriptLine = CURRENT_TURN_SCRIPT_LINE_RE.exec(languageSection)?.[0];
-  return [
-    ...CURRENT_TURN_LANGUAGE_TAIL,
-    ...(scriptLine === undefined ? [] : [scriptLine]),
-    "Produce the entire user-facing reply in the language expressed by the current message, including every heading, sentence, bullet, label, suggestion, and follow-up.",
-  ].join("\n");
-}
-
 /**
  * Remove the leading inline-recall block from a user message's text. The single
  * source of truth for carving this TRANSIENT cross-session recall back out before

@@ -22,7 +22,7 @@ the shorter form works too.
 
 <Note>
 The incident bundle is **per-session** — one session's full trajectory. For a **host-scoped**
-snapshot of the whole daemon (health checks, cross-session fleet digest, config posture) in one
+snapshot of the whole daemon (health checks, cross-session system digest, config posture) in one
 paste-ready offline directory, use [`comis support-bundle`](/reference/cli#comis-support-bundle). Its
 `--session` / `--deep` flags **embed this per-session bundle** — the `explain` digest, and with
 `--deep` the trace bundle — inside the host bundle, so a single `support-bundle --deep --session <id>`
@@ -345,6 +345,6 @@ and exact tool definitions active during the session.
     The process that runs all of this — startup, shutdown, and configuration.
   </Card>
   <Card title="Support Bundle" icon="box-archive" href="/reference/cli#comis-support-bundle">
-    The host-scoped sibling — a paste-ready diagnostic bundle (health checks, fleet digest, config posture) that embeds this per-session bundle with `--deep --session`.
+    The host-scoped sibling — a paste-ready diagnostic bundle (health checks, system digest, config posture) that embeds this per-session bundle with `--deep --session`.
   </Card>
 </CardGroup>

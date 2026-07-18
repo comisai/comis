@@ -6,7 +6,7 @@
  * The outcome ledger (`outcome_events`) lives in the local `~/.comis/memory.db`,
  * so a coverage read must not require a live gateway — the CLI reads the table
  * directly (the same offline-disk discipline `offline-obs.ts` uses for
- * `comis explain`/`fleet`). The CLI cannot import `@comis/agent`/`@comis/skills`
+ * `comis explain`/`system`). The CLI cannot import `@comis/agent`/`@comis/skills`
  * (closed graph) and the in-process daemon coverage gauge is not yet a queryable
  * RPC, so the offline `@comis/memory` read is the
  * sanctioned path — CLI→@comis/memory + better-sqlite3 are already allowed edges.

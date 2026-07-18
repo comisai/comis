@@ -168,7 +168,7 @@ describe("TOOL_GUIDES", () => {
 
   // -------------------------------------------------------------------------
   // Prescriptive 2-step creation flow + workspace.profile enum guardrail.
-  // Production trace showed 18 fleet-creation failures across 9 agents because
+  // Production trace showed 18 system-creation failures across 9 agents because
   // the LLM:
   //   (a) embedded persona/role text inside the create config (Zod
   //       unrecognized_keys rejection on z.strictObject), and
@@ -197,7 +197,7 @@ describe("TOOL_GUIDES", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Single-call creation is the PREFERRED path for batch fleet creation;
+  // Single-call creation is the PREFERRED path for batch system creation;
   // the 2-step flow is labeled FALLBACK and ordered after the single-call
   // section.
   //
@@ -214,7 +214,7 @@ describe("TOOL_GUIDES", () => {
   describe("TOOL_GUIDES.agents_manage (single-call PREFERRED)", () => {
     it("contains a 'Single-call creation' PREFERRED block with workspace.role/identity example", () => {
       expect(TOOL_GUIDES.agents_manage).toContain("Single-call creation");
-      expect(TOOL_GUIDES.agents_manage).toContain("PREFERRED for batch fleet creation");
+      expect(TOOL_GUIDES.agents_manage).toContain("PREFERRED for batch system creation");
       expect(TOOL_GUIDES.agents_manage).toContain("workspace:");
       expect(TOOL_GUIDES.agents_manage).toMatch(/role:\s*"/);
       expect(TOOL_GUIDES.agents_manage).toMatch(/identity:\s*"/);

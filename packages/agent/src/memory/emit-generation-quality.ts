@@ -8,7 +8,7 @@
  * `classifyGenerationQuality` over the pass's (source → output) text pair
  * and, ONLY when a quality issue is present, emits a content-free event so the
  * language-mismatch regression class (a weak local model translating non-Latin
- * source memories into a Latin output) becomes a counted `comis fleet` finding
+ * source memories into a Latin output) becomes a counted `comis system-health` finding
  * instead of an offline-probe finding.
  *
  * VISIBILITY ONLY — never gates the generation. The emit is strictly additive and
@@ -33,7 +33,7 @@ type NarrowLogger = { warn(obj: Record<string, unknown>, msg: string): void };
 /**
  * Classify one generation pass and emit `memory:generation_quality` iff an issue
  * is detected (`languageMismatch || emptyOutput || formatViolation`). A clean
- * pass is silent (no event), so the fleet count is the regression count.
+ * pass is silent (no event), so the system count is the regression count.
  *
  * @param eventBus - the pass's typed bus (absent ⇒ a silent no-op via the `?.`)
  * @param logger   - structured logger for the guarded-emit failure WARN
@@ -60,7 +60,7 @@ export function emitGenerationQuality(
 ): void {
   const c = classifyGenerationQuality(args.sourceText, args.outputText);
   const formatViolation = args.formatViolation ?? false;
-  // VISIBILITY ONLY: a clean pass emits nothing; the fleet count == regression count.
+  // VISIBILITY ONLY: a clean pass emits nothing; the system count == regression count.
   if (!c.languageMismatch && !c.emptyOutput && !formatViolation) return;
 
   // Typed literal so the payload SHAPE is compile-checked against the EventMap

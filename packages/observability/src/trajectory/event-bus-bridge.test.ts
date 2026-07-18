@@ -3890,7 +3890,7 @@ describe("health:budget_exceeded entry (bridge entry count guard)", () => {
     // removal: any change to the mapping must update this number in lockstep,
     // forcing a deliberate review of every newly-bridged or dropped event.
     // 122 = 121 + memory:recall_degraded (the degraded/failed-recall record —
-    // makes a dead recall diagnosable from `comis explain` + the fleet lens
+    // makes a dead recall diagnosable from `comis explain` + the system health view
     // instead of a daemon.log grep).
     expect(Object.keys(TRAJECTORY_BRIDGE_MAPPING).length).toBe(123);
   });

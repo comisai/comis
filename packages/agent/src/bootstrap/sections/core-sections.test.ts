@@ -1,33 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
-  buildIdentitySection,
   buildSafetySection,
-  buildLanguageSection,
   buildDateTimeSection,
-  buildRuntimeMetadataSection,
   buildInboundMetadataSection,
-  buildReasoningSection,
 } from "./core-sections.js";
-import type { RuntimeInfo, InboundMetadata } from "../types.js";
-
-// ---------------------------------------------------------------------------
-// buildIdentitySection
-// ---------------------------------------------------------------------------
-
-describe("buildIdentitySection", () => {
-  it("returns array containing agent name in identity line", () => {
-    const result = buildIdentitySection("TestBot");
-    expect(result.length).toBeGreaterThan(0);
-    expect(result[0]).toContain("TestBot");
-    expect(result[0]).toContain("personal AI assistant");
-  });
-
-  it("uses custom agent name", () => {
-    const result = buildIdentitySection("Sentinel");
-    expect(result[0]).toContain("Sentinel");
-  });
-});
+import type { InboundMetadata } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // buildSafetySection
@@ -47,7 +25,7 @@ describe("buildSafetySection", () => {
   });
 
   // A model was observed running a confirmation flow ("reply YES to
-  // immobilize") for an action it has no tool for — implying a capability it
+  // update") for an action it has no tool for — implying a capability it
   // lacks without ever fabricating a result. The general honesty principle did
   // not stop the *pre-affirmation*; this operational rule names the exact
   // trigger (act-on-request verbs) and the required disclosure order.
@@ -57,32 +35,6 @@ describe("buildSafetySection", () => {
     expect(joined).toMatch(/before (you )?(affirm|confirm|promis)/i);
     expect(joined).toMatch(/create, set, send/i);
     expect(joined).toContain("do not imply you can perform an action you cannot");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// buildLanguageSection
-// ---------------------------------------------------------------------------
-
-describe("buildLanguageSection", () => {
-  it("includes language matching instruction without userLanguage", () => {
-    const result = buildLanguageSection();
-    const joined = result.join("\n");
-    expect(joined).toContain("## Language");
-    expect(joined).toContain("same language the user writes in");
-    expect(joined).toContain("switches languages");
-    expect(joined).not.toContain("default to");
-  });
-
-  it("includes default language hint when userLanguage is provided", () => {
-    const result = buildLanguageSection("Hebrew");
-    const joined = result.join("\n");
-    expect(joined).toContain("default to Hebrew");
-  });
-
-  it("always returns content (never skipped)", () => {
-    expect(buildLanguageSection().length).toBeGreaterThan(0);
-    expect(buildLanguageSection("ar").length).toBeGreaterThan(0);
   });
 });
 
@@ -97,93 +49,6 @@ describe("buildDateTimeSection", () => {
     expect(result[0]).toBe("## Current Date & Time");
     // Verify second element contains an ISO-like timestamp
     expect(result[1]).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// buildRuntimeMetadataSection
-// ---------------------------------------------------------------------------
-
-describe("buildRuntimeMetadataSection", () => {
-  it("returns empty array when no info fields are populated", () => {
-    expect(buildRuntimeMetadataSection({}, false)).toEqual([]);
-  });
-
-  it("returns Runtime heading with pipe-separated key=value for populated fields", () => {
-    const info: RuntimeInfo = { agentId: "agent-1", host: "myhost" };
-    const result = buildRuntimeMetadataSection(info, false);
-    expect(result[0]).toBe("## Runtime");
-    expect(result[1]).toContain("agent=agent-1");
-    expect(result[1]).toContain("host=myhost");
-    expect(result[1]).toContain(" | ");
-  });
-
-  it("includes os with arch combo", () => {
-    const info: RuntimeInfo = { os: "linux", arch: "x64" };
-    const result = buildRuntimeMetadataSection(info, false);
-    expect(result[1]).toContain("os=linux (x64)");
-  });
-
-  it("includes os without arch when arch is absent", () => {
-    const info: RuntimeInfo = { os: "linux" };
-    const result = buildRuntimeMetadataSection(info, false);
-    expect(result[1]).toContain("os=linux");
-    expect(result[1]).not.toContain("(");
-  });
-
-  it("includes model field", () => {
-    const info: RuntimeInfo = { model: "claude-3-opus" };
-    const result = buildRuntimeMetadataSection(info, false);
-    expect(result[1]).toContain("model=claude-3-opus");
-  });
-
-  it("includes thinkingLevel field", () => {
-    const info: RuntimeInfo = { thinkingLevel: "high" };
-    const result = buildRuntimeMetadataSection(info, false);
-    expect(result[1]).toContain("thinking=high");
-  });
-
-  it("includes nodeVersion field", () => {
-    const info: RuntimeInfo = { nodeVersion: "20.11.0" };
-    const result = buildRuntimeMetadataSection(info, false);
-    expect(result[1]).toContain("node=20.11.0");
-  });
-
-  it("includes shell field", () => {
-    const info: RuntimeInfo = { shell: "/bin/zsh" };
-    const result = buildRuntimeMetadataSection(info, false);
-    expect(result[1]).toContain("shell=/bin/zsh");
-  });
-
-  it("includes defaultModel field", () => {
-    const info: RuntimeInfo = { defaultModel: "gpt-4" };
-    const result = buildRuntimeMetadataSection(info, false);
-    expect(result[1]).toContain("default_model=gpt-4");
-  });
-
-  it("excludes channel field (channel rides the dynamic preamble)", () => {
-    // channel-only info produces an empty result since channel is not rendered here
-    const info: RuntimeInfo = { channel: "telegram" };
-    const result = buildRuntimeMetadataSection(info, false);
-    expect(result).toEqual([]);
-    // With other fields present, channel= should still not appear
-    const infoWithHost: RuntimeInfo = { channel: "telegram", host: "myhost" };
-    const result2 = buildRuntimeMetadataSection(infoWithHost, false);
-    expect(result2[1]).not.toContain("channel=");
-    expect(result2[1]).toContain("host=myhost");
-  });
-
-  it("includes channelCapabilities field", () => {
-    const info: RuntimeInfo = { channelCapabilities: "reactions, threads" };
-    const result = buildRuntimeMetadataSection(info, false);
-    expect(result[1]).toContain("capabilities=reactions, threads");
-  });
-
-  it("still renders in minimal mode (isMinimal is unused)", () => {
-    const info: RuntimeInfo = { agentId: "agent-2" };
-    const result = buildRuntimeMetadataSection(info, true);
-    expect(result.length).toBeGreaterThan(0);
-    expect(result[1]).toContain("agent=agent-2");
   });
 });
 
@@ -360,45 +225,5 @@ describe("buildInboundMetadataSection", () => {
     const result = buildInboundMetadataSection(meta, false);
     const joined = result.join("\n");
     expect(joined).not.toContain("sender_trust");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// buildReasoningSection
-// ---------------------------------------------------------------------------
-
-describe("buildReasoningSection", () => {
-  it("returns empty for minimal mode", () => {
-    expect(buildReasoningSection(true, true, false)).toEqual([]);
-  });
-
-  it("returns empty when not enabled and no tagHint", () => {
-    expect(buildReasoningSection(false, false, false)).toEqual([]);
-  });
-
-  it("returns Extended Thinking content when enabled without tagHint", () => {
-    const result = buildReasoningSection(true, false, false);
-    const joined = result.join("\n");
-    expect(joined).toContain("Extended Thinking");
-    expect(joined).toContain("extended thinking enabled");
-  });
-
-  it("returns Reasoning Format with think/final tags when tagHint is true (regardless of enabled)", () => {
-    const result = buildReasoningSection(false, false, true);
-    const joined = result.join("\n");
-    expect(joined).toContain("Reasoning Format");
-    expect(joined).toContain("<think>");
-    expect(joined).toContain("<final>");
-  });
-
-  it("returns Reasoning Format with tags even when enabled is true and tagHint is true", () => {
-    const result = buildReasoningSection(true, false, true);
-    const joined = result.join("\n");
-    expect(joined).toContain("Reasoning Format");
-    expect(joined).toContain("<think>");
-  });
-
-  it("returns empty for minimal mode even with tagHint", () => {
-    expect(buildReasoningSection(true, true, true)).toEqual([]);
   });
 });

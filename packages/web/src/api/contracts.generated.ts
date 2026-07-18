@@ -9332,7 +9332,159 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "rpc"
     ]
   },
-  "obs.fleet.health": {
+  "obs.getCacheStats": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "cacheHitRate": {
+          "type": "number"
+        },
+        "cacheEffectiveness": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "cacheHitRate",
+        "cacheEffectiveness"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "obs.reset": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "reset": {
+          "type": "boolean",
+          "const": true
+        },
+        "rowsDeleted": {
+          "type": "object",
+          "properties": {
+            "tokenUsage": {
+              "type": "number"
+            },
+            "delivery": {
+              "type": "number"
+            },
+            "diagnostics": {
+              "type": "number"
+            },
+            "channels": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "tokenUsage",
+            "delivery",
+            "diagnostics",
+            "channels"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "reset",
+        "rowsDeleted"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "obs.reset.table": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string",
+          "enum": [
+            "token_usage",
+            "delivery",
+            "diagnostics",
+            "channels"
+          ]
+        }
+      },
+      "required": [
+        "table"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "reset": {
+          "type": "boolean",
+          "const": true
+        },
+        "table": {
+          "type": "string"
+        },
+        "rowsDeleted": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "reset",
+        "table",
+        "rowsDeleted"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "obs.spend.snapshot": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "snapshot": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "snapshot"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "obs.system.health": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -9814,158 +9966,6 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "likelyRootCause",
         "suggestedNextSteps",
         "truncations"
-      ],
-      "additionalProperties": false
-    },
-    "scopes": [
-      "admin"
-    ]
-  },
-  "obs.getCacheStats": {
-    "request": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {},
-      "additionalProperties": false
-    },
-    "response": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "cacheHitRate": {
-          "type": "number"
-        },
-        "cacheEffectiveness": {
-          "type": "number"
-        }
-      },
-      "required": [
-        "cacheHitRate",
-        "cacheEffectiveness"
-      ],
-      "additionalProperties": false
-    },
-    "scopes": [
-      "admin"
-    ]
-  },
-  "obs.reset": {
-    "request": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {},
-      "additionalProperties": false
-    },
-    "response": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "reset": {
-          "type": "boolean",
-          "const": true
-        },
-        "rowsDeleted": {
-          "type": "object",
-          "properties": {
-            "tokenUsage": {
-              "type": "number"
-            },
-            "delivery": {
-              "type": "number"
-            },
-            "diagnostics": {
-              "type": "number"
-            },
-            "channels": {
-              "type": "number"
-            }
-          },
-          "required": [
-            "tokenUsage",
-            "delivery",
-            "diagnostics",
-            "channels"
-          ],
-          "additionalProperties": false
-        }
-      },
-      "required": [
-        "reset",
-        "rowsDeleted"
-      ],
-      "additionalProperties": false
-    },
-    "scopes": [
-      "admin"
-    ]
-  },
-  "obs.reset.table": {
-    "request": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "table": {
-          "type": "string",
-          "enum": [
-            "token_usage",
-            "delivery",
-            "diagnostics",
-            "channels"
-          ]
-        }
-      },
-      "required": [
-        "table"
-      ],
-      "additionalProperties": false
-    },
-    "response": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "reset": {
-          "type": "boolean",
-          "const": true
-        },
-        "table": {
-          "type": "string"
-        },
-        "rowsDeleted": {
-          "type": "number"
-        }
-      },
-      "required": [
-        "reset",
-        "table",
-        "rowsDeleted"
-      ],
-      "additionalProperties": false
-    },
-    "scopes": [
-      "admin"
-    ]
-  },
-  "obs.spend.snapshot": {
-    "request": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {},
-      "additionalProperties": false
-    },
-    "response": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "snapshot": {
-          "type": "object",
-          "propertyNames": {
-            "type": "string"
-          },
-          "additionalProperties": {}
-        }
-      },
-      "required": [
-        "snapshot"
       ],
       "additionalProperties": false
     },

@@ -44,7 +44,7 @@ describe("emitGenerationQuality", () => {
     expect("sessionKey" in (payload as object)).toBe(false);
   });
 
-  it("is SILENT on a clean pass (script preserved, non-empty, parsed) — fleet count == regression count", () => {
+  it("is SILENT on a clean pass (script preserved, non-empty, parsed) — system count == regression count", () => {
     const { bus, emit } = makeBus();
     emitGenerationQuality(bus, logger, {
       agentId: "default",

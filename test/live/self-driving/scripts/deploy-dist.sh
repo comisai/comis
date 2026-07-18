@@ -82,4 +82,8 @@ if [ "$drift" = 1 ]; then
   echo "    on boot (ERR_PACKAGE_PATH_NOT_EXPORTED). Do a FULL reinstall from this checkout instead:"
   echo "      ./install-vps.sh    # rebuild + pack + install.sh --tarball (ships matching deps)"
 fi
-echo "Done. Next:  ssh \$VPS 'bash /root/restart-daemon.sh'   # or clean-restart.sh for a fresh slate"
+if [ "${REMOTE_SUDO:-0}" = "1" ]; then
+  echo "Done. Next:  ssh \$VPS 'sudo -n bash /root/restart-daemon.sh'   # or clean-restart.sh for a fresh slate"
+else
+  echo "Done. Next:  ssh \$VPS 'bash /root/restart-daemon.sh'   # or clean-restart.sh for a fresh slate"
+fi

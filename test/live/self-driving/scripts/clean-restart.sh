@@ -40,14 +40,14 @@ sleep 1
 sudo -u "$COMIS_USER" bash -c "
   # Wipe ALL default/* session dirs, NOT just default/<CHATID>.
   # A chatId-only wipe leaves STALE per-chat / cron@ / sub-agent dirs from prior (possibly different-config)
-  # runs — they pollute (a) fleet activeChannels, (b) cross-run model greps (a prior CODEX run's cron@ dirs
+  # runs — they pollute (a) system activeChannels, (b) cross-run model greps (a prior CODEX run's cron@ dirs
   # showed gpt-5.x modelIds while THIS run's config was anthropic — a phantom 'chimera'), and (c) re-prime a
   # multi-sender test's session (a different sender's prior-run refusals reload from its surviving JSONL).
   # clean-restart is a from-scratch tool (memory.db is wiped globally below), so wiping every default session
   # is the correct slate. (Targeted single-session severs use session.reset_conversation, not this script.)
   rm -rf '$DATA'/workspace/sessions/default/* '$DATA'/workspace/sessions/*/sub-agent*
   rm -f '$DATA'/memory.db '$DATA'/memory.db-wal '$DATA'/memory.db-shm
-  # NOT just *.log — fleet's activeChannels/activeAgents enumerate session-index.<date>.jsonl
+  # NOT just *.log — system's activeChannels/activeAgents enumerate session-index.<date>.jsonl
   # (the whole-day file, not time-windowed), and cache-trace.jsonl pollutes the cache lens, so a
   # bare '*.log' leaves a 'clean' rig surfacing prior runs.
   rm -f '$DATA'/logs/*.log '$DATA'/logs/session-index.*.jsonl* '$DATA'/logs/cache-trace.jsonl

@@ -94,7 +94,7 @@ export const TOOL_SUMMARIES: Record<string, string> = {
   slack_action: "Perform actions on Slack platform",
   whatsapp_action: "Perform actions on WhatsApp platform",
   // Privileged / Supervisor
-  agents_manage: "Manage full agent fleet (admin)",
+  agents_manage: "Manage full agent system (admin)",
   obs_query: "Query platform diagnostics data (admin)",
   sessions_manage: "Manage session lifecycle operations (admin)",
   memory_manage: "Admin memory CRUD operations (admin)",
@@ -173,7 +173,7 @@ export const LEAN_TOOL_DESCRIPTIONS: Record<string, string | ((ctx: ToolDescript
 
   // ----- Privileged / Supervisor (dynamic: admin suffix) -----
   agents_manage: (ctx: ToolDescriptionContext): string => {
-    const base = "Manage agent fleet: list, create, get, update, delete, suspend, resume. For batch creation, pass workspace.role/identity inline to skip the 2-step write flow.";
+    const base = "Manage agent system: list, create, get, update, delete, suspend, resume. For batch creation, pass workspace.role/identity inline to skip the 2-step write flow.";
     return ctx.trustLevel === "admin" ? base : base + " Admin required.";
   },
   obs_query: (ctx: ToolDescriptionContext): string => {
@@ -260,8 +260,8 @@ export const TOOL_ORDER: string[] = [
  * Not all tools need guides -- most are self-explanatory from their lean description.
  */
 export const TOOL_GUIDES: Record<string, string> = {
-  agents_manage: `## Single-call creation (PREFERRED for batch fleet creation)
-For batch creation (multiple agents in one turn) and any case where you already know the agent's role and identity, use the SINGLE-CALL form. This collapses the previous 3-call workflow (create + 2× write) into 1 call per agent — critical when creating fleets of 5+ agents in parallel.
+  agents_manage: `## Single-call creation (PREFERRED for batch system creation)
+For batch creation (multiple agents in one turn) and any case where you already know the agent's role and identity, use the SINGLE-CALL form. This collapses the previous 3-call workflow (create + 2× write) into 1 call per agent — critical when creating systems of 5+ agents in parallel.
 
 agents_manage({action:"create", agent_id, config:{
   name, model, provider, maxSteps,
@@ -291,7 +291,7 @@ BOOTSTRAP.md: Write empty string to skip interactive onboarding.
 AGENTS.md: DO NOT MODIFY (read-only platform instructions).
 SOUL.md: DO NOT MODIFY (read-only core personality).
 ## Workspace Profile
-workspace_profile: 'specialist' (~800 tokens) for task workers and fleet sub-agents.
+workspace_profile: 'specialist' (~800 tokens) for task workers and system sub-agents.
 workspace_profile: 'full' (~9K tokens) for user-facing agents on channels.
 ## Tool Defaults
 All built-in tools ENABLED by default (except browser). Do NOT disable tools unless explicitly requested.
@@ -439,8 +439,8 @@ When the user says "add" / "also" / "in addition", read first. When they say "se
 ### Clearing a Field
 \`persistToConfig\` cannot remove keys via patch — only set or replace. To clear an apiKeyName (e.g., to convert a cloud provider to keyless), the recipe is: disable > delete > recreate without apiKeyName. Direct YAML edits also work for operators with shell access.
 
-### Fleet-Wide Operations
-providers_manage and agents_manage operate on one entity at a time. For fleet-wide provider/model/failover changes: (1) create new provider(s) first, (2) agents_manage list to discover agents, (3) agents_manage update x N in parallel (one call per agent in the same turn). Group agents by model tier for tiered failover (e.g. opus agents get different fallbacks than sonnet agents).`,
+### System-Wide Operations
+providers_manage and agents_manage operate on one entity at a time. For deployment-wide provider/model/failover changes: (1) create new provider(s) first, (2) agents_manage list to discover agents, (3) agents_manage update x N in parallel (one call per agent in the same turn). Group agents by model tier for tiered failover (e.g. opus agents get different fallbacks than sonnet agents).`,
 
   pipeline: `## Pipeline Usage Guide
 Use 'define' action first to validate graph structure before save/execute.
@@ -720,7 +720,7 @@ When you call a gated action, the following happens automatically:
 
 Do not ask the user for permission before calling a gated action -- the approval gate handles that. Just call the tool and the system manages the rest.
 
-### Fleet Management Patterns
+### System Management Patterns
 
 - **Create vs reuse**: Before creating a new agent, check if one with the right configuration already exists (agents_manage get). Reuse when possible.
 - **Workspace files**: After creating a new agent, customize its workspace files -- ROLE.md (role/behavior), TOOLS.md (tool notes), IDENTITY.md (name/vibe). AGENTS.md and SOUL.md are read-only platform files.

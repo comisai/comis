@@ -11,7 +11,7 @@ import type { ErrorKind } from "@comis/core";
  *                       of truth as the co-persisted `sessionEnd.endReason`.
  * - `costUsd`         — THIS execution's USD cost. The rollup is emitted once
  *                       per execution, so a session's total is the SUM of its
- *                       executions' rollups — the fleet aggregate and the
+ *                       executions' rollups — the system aggregate and the
  *                       explain assembler both sum; the last-written
  *                       `sessionEnd` alone under-reports a multi-execution
  *                       session.

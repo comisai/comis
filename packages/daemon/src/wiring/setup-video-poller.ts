@@ -385,7 +385,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
         const noticeResult = await sendMessage(record.channelId, degrade.text);
         // §2.7: a content-free INFO names the degrade (ids/labels/counts
         // only — never the bytes, a credential, or the keyed-download-URL). The
-        // policy (link|notice) is recorded so the fleet lens can see it.
+        // policy (link|notice) is recorded so the system health view can see it.
         logger.info(
           {
             traceId: record.traceId,
@@ -697,7 +697,7 @@ export function createVideoPoller(deps: VideoPollerDeps): VideoPoller {
     inFlight.add(record.jobId);
     // Route the suppressed rejection through the Pino logger (off-turn, no
     // ALS frame), NOT console.debug — so a throw escaping runJob is reconstructable
-    // from daemon.log / `comis fleet` / `comis explain` (§2.7).
+    // from daemon.log / `comis system-health` / `comis explain` (§2.7).
     suppressError(runJob(record), "video poller per-job loop", (m) =>
       logger.debug({ step: "video_poll_suppressed" }, m),
     );

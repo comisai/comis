@@ -96,7 +96,7 @@ export { createHeartbeatManageTool } from "./tools/heartbeat-manage-tool.js";
 export { createAdminManageTool } from "./admin-manage-factory.js";
 export type { AdminManageDescriptor } from "./admin-manage-factory.js";
 
-// Fleet management
+// Agent administration
 export { createAgentsManageTool } from "./tools/agents-manage-tool.js";
 export { createObsQueryTool } from "./tools/obs-query-tool.js";
 export { createMemoryManageTool } from "./tools/memory-manage-tool.js";

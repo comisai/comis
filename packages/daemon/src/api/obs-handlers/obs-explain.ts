@@ -61,7 +61,7 @@ export interface AssembleIncidentReportParams {
    * in-process root by a pure prefix-strip, a real socket/spawned root by the
    * session-index scan. An unresolvable rootRunId soft-fails to "" → the
    * not-found marker (it never masquerades as a clean session). Lets the
-   * fleet→explain drill-down paste the worst run's rootRunId straight in.
+   * system→explain drill-down paste the worst run's rootRunId straight in.
    */
   readonly rootRunId?: string;
   readonly depth?: "summary" | "full";

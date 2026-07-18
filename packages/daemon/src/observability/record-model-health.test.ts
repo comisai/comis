@@ -211,7 +211,7 @@ describe("recordModelHealth", () => {
 });
 
 describe("recordModelHealth vec rebuild reporting", () => {
-  it("includes the boot vec-dimension rebuilds in details so the fleet drill-down confirms the heal ran", () => {
+  it("includes the boot vec-dimension rebuilds in details so the system drill-down confirms the heal ran", () => {
     const { obsStore, insertDiagnostic } = createSpiedObsStore();
     const clock = createFakeClock(2000);
 
@@ -258,7 +258,7 @@ describe("recordModelHealth vec rebuild reporting", () => {
 });
 
 describe("recordModelHealth embedding backlog", () => {
-  it("includes unembeddedCount in details when provided so the fleet drill-down sees the boot backlog", () => {
+  it("includes unembeddedCount in details when provided so the system drill-down sees the boot backlog", () => {
     // Live incident: rows sat unembedded for hours with zero signal anywhere —
     // the boot snapshot now carries the backlog so a stuck queue is one look away.
     const { obsStore, insertDiagnostic } = createSpiedObsStore();

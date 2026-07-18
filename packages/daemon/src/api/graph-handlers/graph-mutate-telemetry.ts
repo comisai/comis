@@ -73,7 +73,7 @@ export function createGraphMutateTelemetry(deps: GraphHandlerDeps): GraphMutateT
   // pre-Zod guards (define's "Missing required parameter: nodes" empty-call
   // check, execute's a2a-disabled policy gate) emit NOTHING — an empty/garbage
   // call or a policy rejection is not an authoring attempt. This boundary is
-  // deliberate (documented in fleet-findings.ts's pipeline_authoring finding +
+  // deliberate (documented in system-findings.ts's pipeline_authoring finding +
   // docs/developer-guide/event-bus.mdx).
   const emitPipelineAuthored = (
     action: "define" | "execute",

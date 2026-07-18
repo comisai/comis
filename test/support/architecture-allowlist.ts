@@ -1368,13 +1368,6 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
     removedIn: "phase-D",
   },
   {
-    file: "packages/agent/src/bootstrap/system-prompt-assembler.ts",
-    typeName: "AssemblerParams",
-    optionalCount: 34,
-    reason: "(b) Cluster-split candidate: prompt-section assembly params — every `?` corresponds to ONE prompt section (skills XML, attribution, language hint, sub-agent role, sender trust, documentation, media directives, SEP, MCP inheritance, runtime info, etc). Each section's `includeIn` set determines whether the corresponding param is read in a given PromptMode; absent params skip the section. Future refactor: group by section family (identity / safety / tooling / media / sub-agent)..",
-    removedIn: "phase-D",
-  },
-  {
     file: "packages/agent/src/executor/stream-wrappers/request-body/types.ts",
     typeName: "RequestBodyInjectorConfig",
     optionalCount: 32,

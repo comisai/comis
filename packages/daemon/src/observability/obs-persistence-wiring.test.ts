@@ -498,11 +498,11 @@ describe("sessionSummaryEventToRow", () => {
     expect(details.breakerTripCount).toBe(1);
     expect(details.turnCount).toBe(24);
     // topErrorKinds and source are carried into the row — both queryable
-    // by the fleet aggregate without opening per-session _session-metadata.json.
+    // by the system aggregate without opening per-session _session-metadata.json.
     expect(details.topErrorKinds).toEqual({ dependency: 8 });
     expect(details.source).toBe("runtime");
     // The named endReason cause is persisted into the row details so
-    // obs.fleet.health can build degradedByCause from the rows alone.
+    // obs.system.health can build degradedByCause from the rows alone.
     expect(details.endReason).toBe("context_exhausted");
   });
 
@@ -580,11 +580,11 @@ describe("dagDegradedEventToRow", () => {
   // Severity must track the reason. The `serialized_wait` member of the
   // closed union is documented (events-messaging.ts) as the bounded-wait signal
   // — normal back-pressure, NOT a degrade. Stamping it `warning` would inflate
-  // the fleet lens's degrade count with a benign event.
+  // the system health view's degrade count with a benign event.
   it("maps the benign session_rebase reason to severity info, not warning", () => {
     // session_rebase = "continued after restart" — the comment on
     // the union member itself says NOT a degradation. At warning severity it
-    // fires once per session start and dominates the fleet's findings.
+    // fires once per session start and dominates the system's findings.
     const row = dagDegradedEventToRow({
       conversationId: "c1",
       agentId: "agent-1",
@@ -640,7 +640,7 @@ describe("dagDegradedEventToRow", () => {
   // security-relevant degrade (`fail_closed_rollover`) fires precisely on a
   // conversationId/sessionKey CONFLICT — so the row must carry conversationId
   // (an identifier, not content — bounded-payload still holds) for the
-  // fleet lens to join on, instead of silently dropping it.
+  // system health view to join on, instead of silently dropping it.
   it("carries conversationId into details so a divergent identifier is recoverable", () => {
     const row = dagDegradedEventToRow({
       conversationId: "conv-divergent",
@@ -711,7 +711,7 @@ describe("channelInboundSilentEventToRow", () => {
     expect(row.traceId).toBeUndefined();
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
-    // The label the generic health_signal:<label> fleet rollup groups on, plus
+    // The label the generic health_signal:<label> system rollup groups on, plus
     // channelType + counts only — no message bodies.
     expect(details).toEqual({
       signal: "channel_ingress_silent",
@@ -759,7 +759,7 @@ describe("channelIngressAuthRejectedEventToRow", () => {
     expect(row.traceId).toBeUndefined();
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
-    // The label the generic health_signal:<label> fleet rollup groups on, plus
+    // The label the generic health_signal:<label> system rollup groups on, plus
     // the channel label + the closed reason class only — no token, header, or body.
     expect(details).toEqual({
       signal: "channel_ingress_auth_rejected",
@@ -863,7 +863,7 @@ describe("wakeGateEventToRow (cron wake-gate fire → cron_wake_gate)", () => {
     expect(row.timestamp).toBe(4242);
     expect(row.category).toBe("cron_wake_gate");
     // INFO: a skip (and a wake) is healthy posture, NOT a degrade alert — the row
-    // must NOT inflate the fleet degrade count (the benign-reason discipline).
+    // must NOT inflate the system degrade count (the benign-reason discipline).
     expect(row.severity).toBe("info");
     expect(row.agentId).toBe("default");
     expect(row.message).toBe("scheduler:wake_gate");
@@ -882,7 +882,7 @@ describe("wakeGateEventToRow (cron wake-gate fire → cron_wake_gate)", () => {
       "toolCalls",
       "wake",
     ]);
-    // The jobId (an id, but the fleet fork rolls up per-AGENT) never lands on the
+    // The jobId (an id, but the system fork rolls up per-AGENT) never lands on the
     // row — never a gate script / gathered payload / prompt substring either.
     expect(row.details ?? "").not.toContain("job-inbox-triage");
     expect(row.details ?? "").not.toMatch(/script|payload|gather|prompt/i);
@@ -939,7 +939,7 @@ describe("mcpReconnectFailedEventToRow", () => {
 // ---------------------------------------------------------------------------
 // mcpConnectFailedEventToRow (MCP INITIAL-connect/install failure →
 // health_signal). Unlike reconnect_failed there is no error BODY to drop —
-// `reason` is a closed enum, safe to carry so `comis fleet` can group by it.
+// `reason` is a closed enum, safe to carry so `comis system-health` can group by it.
 // ---------------------------------------------------------------------------
 
 describe("mcpConnectFailedEventToRow", () => {
@@ -971,7 +971,7 @@ describe("mcpConnectFailedEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// script_zero_hit + summary_language_mismatch (the fleet
+// script_zero_hit + summary_language_mismatch (the system
 // path). Both are visibility-only signals → severity ALWAYS "warning" (no
 // gating, no benign allow-set like dag_degraded's). details carries closed
 // ScriptClass/lane enums + ids + counts ONLY — never query text / summary body.
@@ -1066,7 +1066,7 @@ describe("summaryLanguageMismatchEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// generationQualityEventToRow (the memory-generation fleet path).
+// generationQualityEventToRow (the memory-generation system path).
 // Visibility-only → severity ALWAYS "warning". details carries the closed
 // GenerationPass + ScriptClass enums + the three issue booleans ONLY — never the
 // source or generated body. Cron-job passes carry no sessionKey.
@@ -1127,12 +1127,12 @@ describe("generationQualityEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// pipelineAuthoredEventToRow (the fleet authoring path).
+// pipelineAuthoredEventToRow (the system authoring path).
 // Like generationQualityEventToRow: a `pipeline:authored` event → a `health_signal` DiagnosticRow
 // with `signal:"pipeline_authoring"`. details carries closed enums + booleans ONLY
 // (action/tier/schemaValid/repaired) — NEVER a pipeline body, a type_config value,
 // a node task/label, or a graph (§2.7). severity is INFO for a valid author (so a
-// valid authoring does NOT inflate the fleet degrade count) and WARNING for an
+// valid authoring does NOT inflate the system degrade count) and WARNING for an
 // invalid one (the operator-visible small-model miss).
 // ---------------------------------------------------------------------------
 
@@ -1165,7 +1165,7 @@ describe("pipelineAuthoredEventToRow", () => {
     });
   });
 
-  it("maps a VALID author to severity:info (valid authorings do not inflate the fleet degrade count)", () => {
+  it("maps a VALID author to severity:info (valid authorings do not inflate the system degrade count)", () => {
     const row = pipelineAuthoredEventToRow({
       action: "execute",
       capabilityClass: "frontier",
@@ -1207,14 +1207,14 @@ describe("pipelineAuthoredEventToRow", () => {
 });
 
 // ---------------------------------------------------------------------------
-// orchestrateRunSummaryEventToRow (the fleet efficiency path).
+// orchestrateRunSummaryEventToRow (the system efficiency path).
 // Like pipelineAuthoredEventToRow: an `orchestrate:run_summary` event → a
 // `health_signal` DiagnosticRow with `signal:"orchestrate_efficiency"`. details
 // carries counts + token ESTIMATES + the closed failureClass ONLY — NEVER the
 // runId, the raw stdout, the resultRefBytes body, or the stderr tail (§2.7). The
 // `sessionKey` rides the row as the correlation key (the event carries it even
 // though the trajectory translator strips it from the trajectory `data`). severity
-// is ALWAYS info: a completed run is standing signal, never a fleet degrade.
+// is ALWAYS info: a completed run is standing signal, never a system degrade.
 // ---------------------------------------------------------------------------
 
 describe("orchestrateRunSummaryEventToRow", () => {
@@ -1309,7 +1309,7 @@ describe("orchestrateRunSummaryEventToRow", () => {
 
 // ---------------------------------------------------------------------------
 // Orchestration-observability — three daemon-side orchestration events
-// that were DARK (no fleet/trajectory surface): a fail-closed sandbox-downgrade
+// that were DARK (no system/trajectory surface): a fail-closed sandbox-downgrade
 // spawn refusal, a dead-lettered sub-agent delivery, and a per-node
 // token-budget breach. Each maps to a `health_signal` DiagnosticRow (the same
 // shape as the generation-quality and pipeline-authoring mappers) carrying CLOSED
@@ -1438,7 +1438,7 @@ describe("nodeBudgetExceededEventToRow", () => {
       graphId: "g", nodeId: "n", agentId: "a", tokenBudget: 5000, tokensUsed: 17770, capSource: "inherit-share", timestamp: 1,
     });
     expect(Object.keys(JSON.parse(row.details ?? "{}"))).toEqual(["signal", "capSource"]);
-    // The aggregate fleet count never needs the raw spend — those are per-incident (explain).
+    // The aggregate system count never needs the raw spend — those are per-incident (explain).
     const serialized = JSON.stringify(row.details);
     expect(serialized).not.toContain("17770");
   });
@@ -1513,7 +1513,7 @@ describe("durableResumedEventToRow", () => {
 
     expect(row.timestamp).toBe(6000);
     expect(row.category).toBe("health_signal");
-    // A resume is healthy recovery, not degradation → info (does not inflate the fleet degrade count).
+    // A resume is healthy recovery, not degradation → info (does not inflate the system degrade count).
     expect(row.severity).toBe("info");
     expect(row.message).toBe("durable:resumed");
 
@@ -1528,7 +1528,7 @@ describe("durableResumedEventToRow", () => {
 describe("autonomyBudgetWarningEventToRow", () => {
   it("maps autonomy:budget_warning to a health_signal row (severity warning) with limb + counts only", () => {
     // The pre-trip budget warning: a session at 80% of an autonomy.budget limb
-    // must surface on the fleet lens BEFORE the abort wedges it (observed
+    // must surface on the system health view BEFORE the abort wedges it (observed
     // live: the wedge arrived with zero warning). Counts + closed labels only.
     const row = autonomyBudgetWarningEventToRow({
       rootRunId: "root-session-default:u1:c1",
@@ -2995,9 +2995,9 @@ describe("setupObsPersistence — cache break + token-usage persistence (real st
 
 // ---------------------------------------------------------------------------
 // subagentKilledEventToRow — the attributed sub-agent kill → health_signal row.
-// A health-monitor stuck-kill is fleet-visible degradation (warning); a
+// A health-monitor stuck-kill is system-visible degradation (warning); a
 // parent/operator/system kill is deliberate orchestration (info — the
-// BENIGN_DAG_DEGRADED severity discipline, so it never inflates the fleet
+// BENIGN_DAG_DEGRADED severity discipline, so it never inflates the system
 // degrade count). Content-free: closed signal + closed killedBy ONLY — the
 // runtime/idle numbers stay per-incident (trajectory record + failure record).
 // ---------------------------------------------------------------------------
@@ -3062,9 +3062,9 @@ describe("subagentKilledEventToRow", () => {
 // ---------------------------------------------------------------------------
 
 describe("recallDegradedEventToRow", () => {
-  it("maps a memory:recall_degraded payload to a health_signal row the fleet rollup groups on (signal:recall_degraded)", () => {
+  it("maps a memory:recall_degraded payload to a health_signal row the system rollup groups on (signal:recall_degraded)", () => {
     // Live incident: hours of per-turn recall failures were daemon.log-only —
-    // this row is what turns them into a counted `comis fleet` finding.
+    // this row is what turns them into a counted `comis system-health` finding.
     const row = recallDegradedEventToRow({
       agentId: "a1",
       sessionKey: "sk-1",
@@ -3110,10 +3110,10 @@ describe("recallDegradedEventToRow", () => {
 // ---------------------------------------------------------------------------
 
 describe("prefixUnstableEventToRow", () => {
-  it("maps an agent:prefix_unstable payload to a health_signal row the fleet rollup groups on (signal:cache_prefix_churn)", () => {
+  it("maps an agent:prefix_unstable payload to a health_signal row the system rollup groups on (signal:cache_prefix_churn)", () => {
     // Live incident (comis-harel 2026-07-12): ~328k wasted cache-write tokens
     // in one session were visible only as daemon.log WARNs — this row turns a
-    // recurring churn into a counted `comis fleet` finding.
+    // recurring churn into a counted `comis system-health` finding.
     const row = prefixUnstableEventToRow({
       agentId: "default",
       sessionKey: "default:5177:5177:peer:5177",
@@ -3130,7 +3130,7 @@ describe("prefixUnstableEventToRow", () => {
     expect(row.sessionKey).toBe("default:5177:5177:peer:5177");
     expect(row.message).toBe("agent:prefix_unstable");
 
-    // details: closed labels + counts only — the signal label the fleet rollup
+    // details: closed labels + counts only — the signal label the system rollup
     // groups on, and the mutationClass under `reason` so the finding names it.
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details["signal"]).toBe("cache_prefix_churn");

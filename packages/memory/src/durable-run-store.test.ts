@@ -52,6 +52,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       lastHeartbeatAt: 1_700_000_000_000,
       scriptRef: null,
       checkpointRef: null,
+      workspacePolicyHash: "b".repeat(64),
       ...overrides,
       checkpointId: overrides.checkpointId ?? rootRunId,
       rootRunId,
@@ -68,6 +69,15 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   });
 
   describe("checkpoint identity isolation", () => {
+    it("round-trips the immutable workspace policy hash with checkpoint metadata", async () => {
+      const record = makeRecord({ checkpointId: "checkpoint-policy-provenance" });
+
+      expect((await store.upsertCheckpoint(record)).ok).toBe(true);
+      const persisted = await store.getByCheckpoint(record.checkpointId);
+
+      expect(persisted.ok && persisted.value?.workspacePolicyHash).toBe("b".repeat(64));
+    });
+
     it("rejects a checkpoint update that moves its persisted heartbeat backward", async () => {
       const current = makeRecord({
         checkpointId: "checkpoint-heartbeat-floor",

@@ -699,7 +699,7 @@ export interface MediaApiDeps {
    *  Optional — undefined on a selector-less boot (handler derives from config). */
   voiceSelection?: { stt?: ResolvedVoiceSelection; tts?: ResolvedVoiceSelection };
   /** The obs store the voice obs inserts a `voice_degraded`
-   *  health_signal row into on a STT/TTS failure (feeds the `comis fleet`
+   *  health_signal row into on a STT/TTS failure (feeds the `comis system-health`
    *  voice_health finding). Same instance as `ObservabilityApiDeps.obsStore`;
    *  declared here so the voice handlers' deps slice can read it. Optional. */
   obsStore?: import("@comis/memory").ObservabilityStore;
@@ -762,15 +762,15 @@ export interface ObservabilityApiDeps {
    *  existing handler tests can pass {} for deps. */
   dataDir?: string;
   /**
-   * Injected ClockPort for obs.fleet.health's `sinceHours` -> `sinceMs`
+   * Injected ClockPort for obs.system.health's `sinceHours` -> `sinceMs`
    * conversion (the globals gate forbids Date.now()/new Date() in the
    * handler/assembler). Populated by `buildRpcDispatchDeps` in daemon.ts
    * from `boot.clock`. Optional preserves existing handler
-   * tests that pass {} for deps; the fleet handler asserts `deps.clock!`
-   * because buildRpcDispatchDeps always populates it, and the fleet tests inject a fakeClock.
+   * tests that pass {} for deps; the system handler asserts `deps.clock!`
+   * because buildRpcDispatchDeps always populates it, and the system tests inject a fakeClock.
    */
   clock?: import("@comis/core").ClockPort;
-  /** The durable-run store the fleet assembler reads (`countByStatus`) for the autonomy block. Soft-fail (obsStore? precedent): absent ⇒ the block is OMITTED (offline CLI / non-durability boot). Wired on the SAME object as obsStore/clock by buildRpcDispatchDeps (daemon.ts:893). @optional-field */ durableRuns?: import("@comis/core").DurableRunPort;
+  /** The durable-run store the system assembler reads (`countByStatus`) for the autonomy block. Soft-fail (obsStore? precedent): absent ⇒ the block is OMITTED (offline CLI / non-durability boot). Wired on the SAME object as obsStore/clock by buildRpcDispatchDeps (daemon.ts:893). @optional-field */ durableRuns?: import("@comis/core").DurableRunPort;
   /**
    * DI seam for the bundle pipeline.
    * Tests inject a stub that returns ok({ bundleDir: "/tmp/bundle", ... }).

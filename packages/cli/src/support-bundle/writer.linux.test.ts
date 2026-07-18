@@ -82,7 +82,7 @@ function makeTriage(): SupportTriage {
       failing: ["config"],
     },
     reporterNextSteps: ["Run `comis doctor --repair`."],
-    maintainerNextSteps: ["comis fleet --since 24"],
+    maintainerNextSteps: ["comis system-health --since 24"],
     evidenceFiles: [{ path: "triage.json", description: "machine-readable verdict" }],
     privacy: {
       redaction: "platform-aware-v1",

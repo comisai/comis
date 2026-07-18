@@ -650,8 +650,8 @@ export interface AgentEvents {
    * still served (e.g. a vec-table/embedder dimension drift); `scope:"lanes"`
    * = the whole searchLanes call failed and the turn ran with NO recall.
    * Bridged to the trajectory and persisted as a `health_signal` obs row so a
-   * recurring recall failure is a fleet finding, not a log-grep discovery
-   * (observed live: hours of per-turn failures with zero fleet signal).
+   * recurring recall failure is a system finding, not a log-grep discovery
+   * (observed live: hours of per-turn failures with zero system signal).
    * Emit site: `createMemoryRecall` (memory-recall.ts), via the same
    * deferred-emit path as `memory:recalled`.
    */
@@ -672,9 +672,8 @@ export interface AgentEvents {
    * signal. MINIMAL payload — the divergent index + a windowed mutation count +
    * the closed mutation-class label ONLY, NEVER message text (§2.7). Emitted
    * alongside the "Unstable prefix detected" WARN so the churn surfaces as a
-   * `comis fleet` `cache_prefix_churn` health signal instead of being visible
-   * only as a daemon.log WARN (the fleet-blindness incident, comis-harel
-   * 2026-07-12). `mutationClass` is the classifier's label
+   * `comis system-health` `cache_prefix_churn` health signal instead of being visible
+   * only as a daemon.log WARN. `mutationClass` is the classifier's label
    * (structural-shift / datetime-preamble / thinking-cleared / …).
    */
   "agent:prefix_unstable": {
@@ -789,9 +788,9 @@ export interface AgentEvents {
   /**
    * The once-per-run lifecycle/forget sweep SUMMARY — the parity
    * event for the forget half of learning (reflection has `reflect:funnel`; the forget sweep had
-   * only the per-category demoted/evicted counts above, invisible to `cron.runs`/fleet/`explain`).
+   * only the per-category demoted/evicted counts above, invisible to `cron.runs`/system/`explain`).
    * Carries the run breakdown so `cron.runs jobName "Memory lifecycle"` answers "what did the sweep
-   * do" (scanned/evicted/demoted) in one call instead of a `db.mjs` `evicted_at` poll, and the fleet
+   * do" (scanned/evicted/demoted) in one call instead of a `db.mjs` `evicted_at` poll, and the system
    * lens rolls a `memory_lifecycle` finding. Counts ONLY — never an id-list/body (§2.7).
    */
   "learning:lifecycle_swept": {

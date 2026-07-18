@@ -127,7 +127,7 @@ export async function handleWireMemoryCronSentinel(
       container.eventBus.emit("learning:memory_demoted", { agentId, count: r.demoted, timestamp: clock.now() });
       container.eventBus.emit("learning:memory_evicted", { agentId, count: r.evicted, timestamp: clock.now() });
       // The once-per-run forget-sweep SUMMARY — parity with reflect:funnel
-      // so `cron.runs jobName "Memory lifecycle"` + the fleet lens answer "what did forget do" in one call
+      // so `cron.runs jobName "Memory lifecycle"` + the system health view answer "what did forget do" in one call
       // (was a db.mjs evicted_at poll). Counts ONLY (§2.7).
       container.eventBus.emit("learning:lifecycle_swept", { agentId, scanned: r.scanned, promoted: r.promoted, demoted: r.demoted, evicted: r.evicted, timestamp: clock.now() });
     }
@@ -290,7 +290,7 @@ export async function handleWireMemoryCronSentinel(
         source,
         // Background-run spend attribution: reflection LLM calls previously
         // hit the provider bill with ZERO obs_token_usage rows — invisible to
-        // fleet/billing/obs_query. The synthetic __REFLECT__ session key keys
+        // system/billing/obs_query. The synthetic __REFLECT__ session key keys
         // the rows to the background job, never a user session.
         onUsage: (usage) => {
           container.eventBus.emit("observability:token_usage", {

@@ -1,6 +1,6 @@
 ---
 title: "Multilingual"
-description: "Which scripts Comis serves (Hebrew · Arabic · Russian · CJK · general non-Latin), the search/token/degradation behavior per script, and the knobs + fleet checks that prove a multilingual stack works"
+description: "Which scripts Comis serves (Hebrew · Arabic · Russian · CJK · general non-Latin), the search/token/degradation behavior per script, and the knobs + system checks that prove a multilingual stack works"
 icon: "language"
 ---
 
@@ -10,7 +10,7 @@ observability — and covers all five with one script-class data table, one pure
 normalization function, one trigram search lane, one shared prompt line, and one phrase
 table, with zero extra runtime dependencies. The result: a Hebrew, Arabic, Russian, or CJK
 conversation gets honest token math, search that survives morphology, summaries and replies
-in its own language, and fleet-visible script health — while for a **Latin-script deployment
+in its own language, and system-visible script health — while for a **Latin-script deployment
 the multilingual layer is inert** (token factor 1.0, the same search SQL, the same English strings).
 
 This page tells an operator which scripts Comis serves, which knobs exist, and why. Comis
@@ -20,7 +20,7 @@ that matters most for a constrained deployment lives in the dedicated
 [Local and small models](#local-and-small-models-non-latin) section, which cross-links the
 [Local Models](/operations/local-models) capacity playbook rather than restating it.
 
-Two-tier triage applies throughout: [`comis fleet`](/reference/cli#comis-fleet) surfaces the
+Two-tier triage applies throughout: [`comis system-health`](/reference/cli#comis-system-health) surfaces the
 daemon-wide pattern (including the three multilingual signals below), then
 [`comis explain`](/reference/cli#comis-explain) root-causes the worst session it points at.
 
@@ -87,10 +87,10 @@ Every non-Latin capability has a working, visible, lower-fidelity floor — noth
 | Trigram tokenizer missing in host SQLite | Probe fails closed → non-Latin conversation queries take the bounded normalized-scan floor; long-term memory stays on word + vector lanes; the Latin word lane is untouched everywhere |
 | Sub-3-char tokens in a non-Latin query | Dropped from the trigram MATCH; the query proceeds ranked on the remaining tokens |
 | All tokens shorter than 3 chars | Conversation store: bounded normalized-scan floor (recent-rows cap, noted in the result); long-term memory: status-quo lanes |
-| Trigram lane returns zero for a non-Latin query | `script_zero_hit` fleet signal (lane = `tri`); search degrades to empty as before, but *visibly* |
-| Embedding model not multilingual, or embeddings disabled | FTS trigram floor carries recall; the `embeddingMultilingual` advisory names the cause in `comis fleet` |
+| Trigram lane returns zero for a non-Latin query | `script_zero_hit` system signal (lane = `tri`); search degrades to empty as before, but *visibly* |
+| Embedding model not multilingual, or embeddings disabled | FTS trigram floor carries recall; the `embeddingMultilingual` advisory names the cause in `comis system-health` |
 | Summarizer model weak in the source language | dag mode: the extractive/deterministic floor preserves source spans verbatim; pipeline mode: the weak-class path skips summarization (passthrough — nothing mistranslated); distillation is already gated (see [Local and small models](#local-and-small-models-non-latin)) |
-| Small or local summarizer silently ignores the language instruction (Hebrew in → English out) | The recall hole would reopen invisibly → the `summary_language_mismatch` fleet signal makes it a count; the remedy is `strongerSummarizerModel` (language-capable), no gating |
+| Small or local summarizer silently ignores the language instruction (Hebrew in → English out) | The recall hole would reopen invisibly → the `summary_language_mismatch` system signal makes it a count; the remedy is `strongerSummarizerModel` (language-capable), no gating |
 | No phrase-table entry for the resolved reply language | English degraded-reply strings (never throws) |
 | Ambiguous or mixed-script inbound for reply-language resolution | Config → USER.md → English; the script default fires only on a strict majority of non-neutral codepoints, and only for `he`/`ar`/`ru` |
 | Conversation history not yet indexed by the trigram twins | Reachable via the word lane exactly as before; the `comis doctor` twin-backfill (normalized) makes it trigram-searchable, operator-run |
@@ -151,7 +151,7 @@ Two config keys carry the multilingual surface; both are documented in the
   then the inbound message script — **Hebrew, Arabic, and Russian/Cyrillic only**. It does **not**
   affect the live agent reply, which always follows the user's language. See the
   [`agents` reference](/reference/config-yaml#agents).
-- **`embedding.multilingual`** — an advisory boolean for the `comis fleet` model-health line
+- **`embedding.multilingual`** — an advisory boolean for the `comis system-health` model-health line
   (see [Embedding and reranker](#embedding-and-reranker)). It does not gate search. See the
   [configuration reference](/reference/config-yaml).
 
@@ -178,7 +178,7 @@ those tiers *unless* `strongerSummarizerModel` is configured, so getting languag
 distilled memories on a pure-local non-Latin deployment requires setting it to a language-capable
 model. A
 weak summarizer that silently ignores the language instruction is made visible (not gated) by the
-`summary_language_mismatch` fleet signal. See the
+`summary_language_mismatch` system signal. See the
 [Local Models compaction section](/operations/local-models#compaction-on-small-models) for the
 full small-model compaction mechanics, which this page does not restate.
 
@@ -197,22 +197,22 @@ Semantic recall (the vector lane) and recall re-ranking (the local GGUF cross-en
 as multilingual as the models you configure. An English-only embedder silently degrades non-Latin
 recall *coverage*; an English-only reranker silently degrades non-Latin recall *ordering*. Neither
 gates anything — the FTS trigram floor carries recall regardless — but Comis names the degradation
-in `comis fleet` so it is not silently absent.
+in `comis system-health` so it is not silently absent.
 
 - **Embedder** — for non-Latin deployments, select a multilingual embedding model: set
   `embedding.local.modelUri` to a `bge-m3` GGUF (on-device, e.g.
   `hf:gpustack/bge-m3-GGUF:bge-m3-Q8_0.gguf`) or `embedding.provider: openai`
   (`text-embedding-3-small`, hosted). The `comis init` wizard asks about this at install and
   writes the block for you (`--embedding-multilingual` / `--embedding-provider` non-interactively).
-  `embedding.multilingual: true` is the **advisory** flag for the fleet health line — it selects
+  `embedding.multilingual: true` is the **advisory** flag for the system health line — it selects
   nothing itself; declare it (or let the advisory infer it from the model id: `bge-m3` /
   `multilingual-e5` / LaBSE / E5 read as multilingual, otherwise `"unknown"`). See
   [Embeddings](/agents/embeddings#multilingual-deployments).
 - **Reranker** — `bge-reranker-v2-m3` is the multilingual cross-encoder; it is inferred from the
   model id (no separate config flag).
 
-The `comis fleet` model-health line surfaces `embeddingMultilingual` and `rerankerMultilingual`
-beside `embeddingAvailable` — see [the three fleet checks](#local-and-small-models-non-latin).
+The `comis system-health` model-health line surfaces `embeddingMultilingual` and `rerankerMultilingual`
+beside `embeddingAvailable` — see [the three system checks](#local-and-small-models-non-latin).
 
 ## Security stance
 
@@ -270,11 +270,11 @@ playbook documents:
 - For the full secure local configuration, see the
   [Recommended Secure qwen3.6 Configuration](/reference/config-yaml#recommended-secure-qwen36-configuration).
 
-**The four fleet checks that prove a multilingual local stack works.** Run
-[`comis fleet`](/reference/cli#comis-fleet) and look for these — together they answer "is my
+**The four system checks that prove a multilingual local stack works.** Run
+[`comis system-health`](/reference/cli#comis-system-health) and look for these — together they answer "is my
 local multilingual stack actually working?" without a log dive:
 
-| Fleet check | What it tells you | Remedy |
+| System check | What it tells you | Remedy |
 |-------------|-------------------|--------|
 | `summary_language_mismatch` | The local summarizer is writing English summaries of non-Latin conversations (the recall hole reopening) | Set `contextEngine.compaction.strongerSummarizerModel` to a language-capable (qwen-class) model |
 | `generation_quality` | A **memory-generation** pass (consolidation / reasoning / user-representation) translated non-Latin source memories into Latin output, or produced empty / unparseable output — the recall hole reopening on the *memory* side | Use a language-capable memory model — pin `providers.entries.<id>.capabilities.capabilityClass` to `frontier`/`mid` for the memory pipeline (the memory-ops capability override) |

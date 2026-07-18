@@ -135,7 +135,7 @@ export function registerExplainCommand(program: Command): void {
           info(
             // Name the token basis: explain sums the full per-LLM-call ledger
             // (input+output+cacheRead+cacheCreation), so it is much larger than
-            // fleet's cache-excluding session-index total — labeling both prevents
+            // system's cache-excluding session-index total — labeling both prevents
             // the two lenses reading as the same "tok" (comis-daniel 2026-07-09).
             `Cost:       $${report.cost.costUsd} · ${report.cost.totalTokens} tok (incl cache reads)`,
           );

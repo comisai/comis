@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: CLI entry point — errors propagate to Commander error handler.
 /**
- * OFFLINE assembly for `comis explain` and `comis fleet`.
+ * OFFLINE assembly for `comis explain` and `comis system-health`.
  *
  * The session telemetry these commands read lives on LOCAL disk
  * (`<dataDir>/workspace/sessions/...`, `<dataDir>/logs/...`, `memory.db`), so a
@@ -32,7 +32,7 @@ import {
   systemNowDate,
   systemNowMs,
 } from "@comis/core";
-import type { ClockPort, FleetHealthReport, IncidentReport } from "@comis/core";
+import type { ClockPort, SystemHealthReport, IncidentReport } from "@comis/core";
 import type { SessionMessagesFilter, SessionMessagesResult } from "@comis/daemon";
 import type { CostBucketFilter, QuarterHourBucket } from "@comis/memory";
 
@@ -56,7 +56,7 @@ import {
 /**
  * The CLI's offline data dir. Honors `COMIS_DATA_DIR` (the daemon's + the wizard's
  * data-dir env, `04-oauth-helpers.ts`), falling back to `<homedir>/.comis`. Without the
- * env check, `comis explain --offline` / `comis fleet --offline` read the INVOKING user's
+ * env check, `comis explain --offline` / `comis system-health --offline` read the INVOKING user's
  * home — so running the CLI as a different user than the daemon (or against a non-default
  * `COMIS_DATA_DIR` install) silently reads an empty dir and reports a false "nothing
  * happened" for a session that succeeded.
@@ -84,7 +84,7 @@ export function resolveOfflineTrajectoryDir(dataDir: string): string | undefined
   return envDir === undefined || envDir.length === 0 ? undefined : envDir;
 }
 
-/** Sanctioned system clock for the fleet window (cli has no infra edge). */
+/** Sanctioned system clock for the system window (cli has no infra edge). */
 const systemClock: ClockPort = { now: () => systemNowMs(), nowDate: () => systemNowDate() };
 
 /**
@@ -152,15 +152,15 @@ export async function assembleIncidentReportOffline(
   }
 }
 
-/** Assemble a FleetHealthReport from the local data dir without a daemon. */
-export async function assembleFleetHealthReportOffline(
+/** Assemble a SystemHealthReport from the local data dir without a daemon. */
+export async function assembleSystemHealthReportOffline(
   dataDir: string,
   sinceHours: number,
-): Promise<FleetHealthReport> {
-  const { assembleFleetHealthReport } = await loadDaemonAssemblers();
+): Promise<SystemHealthReport> {
+  const { assembleSystemHealthReport } = await loadDaemonAssemblers();
   const { store, close } = openObsStoreIfPresent(dataDir);
   try {
-    return await assembleFleetHealthReport(
+    return await assembleSystemHealthReport(
       // The offline CLI is daemon-less — there is no
       // durable-run store edge here, so pass `durableRuns: undefined` explicitly. The
       // assembler soft-fails and the autonomy block is honestly OMITTED (the documented
@@ -384,7 +384,7 @@ function rollupRanksWorse(
  * The CLI stopgap for a worst-session hint: rank the LOCAL session rollups
  * CLI-side and return the worst one's key.
  *
- * `FleetHealthReport` exposes no worst sessionKey today (only
+ * `SystemHealthReport` exposes no worst sessionKey today (only
  * `autonomy.worstRootRunId`); an authoritative `worstSessions` field is a
  * deferred daemon-side follow-on. Until then this bounded, tenant/channel-scoped
  * scan reads each session's `_session-metadata.json` rollup

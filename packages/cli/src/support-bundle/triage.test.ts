@@ -14,7 +14,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import type { FleetHealthReport, IncidentReport } from "@comis/core";
+import type { SystemHealthReport, IncidentReport } from "@comis/core";
 import { runDoctorChecks } from "../doctor/check-runner.js";
 import { configHealthCheck } from "../doctor/checks/config-health.js";
 import { daemonHealthCheck } from "../doctor/checks/daemon-health.js";
@@ -27,8 +27,8 @@ import {
   buildSupportTriage,
   deriveDoctorSignals,
   deriveExplainSignals,
-  deriveFleetSignals,
-  fleetHasEvidence,
+  deriveSystemSignals,
+  systemHasEvidence,
 } from "./triage.js";
 import type { HostSnapshot } from "./types.js";
 import { parseSupportTriage } from "./types.js";
@@ -73,11 +73,11 @@ function finding(
 }
 
 /**
- * Minimal valid FleetHealthReport fixture — an empty, coverage-empty window.
+ * Minimal valid SystemHealthReport fixture — an empty, coverage-empty window.
  * Overrides shallow-merge the base, so a test replaces only the sub-object it
  * exercises (e.g. `findings`, `sessions`, `coverage`).
  */
-function makeFleet(over: Partial<FleetHealthReport> = {}): FleetHealthReport {
+function makeSystem(over: Partial<SystemHealthReport> = {}): SystemHealthReport {
   return {
     schemaVersion: 1,
     windowHours: 24,
@@ -404,13 +404,13 @@ describe("buildSupportTriage assembly", () => {
     // FILE_PLAN order), so a file the bundle writes cannot silently drop out of
     // the index — ai-issue-draft.md and audit-summary.json are attempted on
     // every run (audit-summary.json is omitted only on an unreadable store,
-    // exactly like fleet.json).
+    // exactly like system-health.json).
     expect(paths).toEqual([
       "issue-summary.md",
       "ai-issue-draft.md",
       "triage.json",
       "doctor.json",
-      "fleet.json",
+      "system-health.json",
       "config-posture.json",
       "audit-summary.json",
       "manifest.json",
@@ -435,7 +435,7 @@ describe("buildSupportTriage assembly", () => {
       "ai-issue-draft.md",
       "triage.json",
       "doctor.json",
-      "fleet.json",
+      "system-health.json",
       "config-posture.json",
       "explain.json",
       "audit-summary.json",
@@ -465,62 +465,62 @@ describe("buildSupportTriage assembly", () => {
   });
 });
 
-describe("deriveFleetSignals", () => {
-  it("surfaces every fleet finding code plus the likely-root-cause code verbatim", () => {
-    const fleet = makeFleet({
+describe("deriveSystemSignals", () => {
+  it("surfaces every system finding code plus the likely-root-cause code verbatim", () => {
+    const system = makeSystem({
       findings: [
         { code: "config_posture", detail: "", count: 1, hint: "" },
         { code: "model_health:embedder_not_multilingual", detail: "", count: 1, hint: "" },
         { code: "health_signal:mcp_churn", detail: "", count: 1, hint: "" },
       ],
-      likelyRootCause: { code: "fleet_high_degraded_rate", detail: "", suggestedNextSteps: [] },
+      likelyRootCause: { code: "system_high_degraded_rate", detail: "", suggestedNextSteps: [] },
     });
 
-    expect(deriveFleetSignals(fleet)).toEqual([
+    expect(deriveSystemSignals(system)).toEqual([
       "config_posture",
       "model_health:embedder_not_multilingual",
       "health_signal:mcp_churn",
-      "fleet_high_degraded_rate",
+      "system_high_degraded_rate",
     ]);
   });
 
-  it("omits the likely-root-cause code when the fleet root cause is null", () => {
-    const fleet = makeFleet({
+  it("omits the likely-root-cause code when the system root cause is null", () => {
+    const system = makeSystem({
       findings: [{ code: "config_posture", detail: "", count: 1, hint: "" }],
       likelyRootCause: null,
     });
 
-    const signals = deriveFleetSignals(fleet);
+    const signals = deriveSystemSignals(system);
     expect(signals).toEqual(["config_posture"]);
-    expect(signals).not.toContain("fleet_high_degraded_rate");
+    expect(signals).not.toContain("system_high_degraded_rate");
   });
 
   it("surfaces an unnamed finding code proving no curated allow-list filters it out", () => {
-    const fleet = makeFleet({
+    const system = makeSystem({
       findings: [{ code: "voice_health", detail: "", count: 1, hint: "" }],
     });
 
-    expect(deriveFleetSignals(fleet)).toContain("voice_health");
+    expect(deriveSystemSignals(system)).toContain("voice_health");
   });
 });
 
-describe("fleetHasEvidence", () => {
-  it("treats an absent fleet report as carrying no evidence", () => {
-    expect(fleetHasEvidence(undefined)).toBe(false);
+describe("systemHasEvidence", () => {
+  it("treats an absent system report as carrying no evidence", () => {
+    expect(systemHasEvidence(undefined)).toBe(false);
   });
 
-  it("treats a zero-session empty-coverage fleet as carrying no evidence", () => {
-    expect(fleetHasEvidence(makeFleet())).toBe(false);
+  it("treats a zero-session empty-coverage system as carrying no evidence", () => {
+    expect(systemHasEvidence(makeSystem())).toBe(false);
   });
 
-  it("counts a fleet with at least one session as carrying evidence", () => {
-    const fleet = makeFleet({ sessions: { total: 1, degraded: 0, degradedRate: 0 } });
-    expect(fleetHasEvidence(fleet)).toBe(true);
+  it("counts a system with at least one session as carrying evidence", () => {
+    const system = makeSystem({ sessions: { total: 1, degraded: 0, degradedRate: 0 } });
+    expect(systemHasEvidence(system)).toBe(true);
   });
 
-  it("counts a fleet with at least one finding as carrying evidence", () => {
-    const fleet = makeFleet({ findings: [{ code: "voice_health", detail: "", count: 1, hint: "" }] });
-    expect(fleetHasEvidence(fleet)).toBe(true);
+  it("counts a system with at least one finding as carrying evidence", () => {
+    const system = makeSystem({ findings: [{ code: "voice_health", detail: "", count: 1, hint: "" }] });
+    expect(systemHasEvidence(system)).toBe(true);
   });
 
   it("does not treat a coverage-found flag as evidence when no real session or finding is present", () => {
@@ -529,38 +529,38 @@ describe("fleetHasEvidence", () => {
     // synthetic-EXCLUDED. A window holding only synthetic/test rows sets found
     // true yet carries zero operator evidence, so it must not be admitted —
     // otherwise a thrown doctor run falls through to a false healthy.
-    const fleet = makeFleet({
+    const system = makeSystem({
       coverage: {
         sessionSummary: { found: true, rows: 2 },
         sessionIndex: { daysRead: 1, daysMissing: 0 },
         billing: { present: false },
       },
     });
-    expect(fleetHasEvidence(fleet)).toBe(false);
+    expect(systemHasEvidence(system)).toBe(false);
   });
 });
 
-describe("buildSupportTriage fleet enrichment", () => {
-  it("dedupes a fleet code that repeats a doctor signal, keeping the doctor entry first", () => {
+describe("buildSupportTriage system enrichment", () => {
+  it("dedupes a system code that repeats a doctor signal, keeping the doctor entry first", () => {
     const doctor = makeDoctorResult([
       finding({ category: "channels", check: "Channel reachable", status: "fail" }),
       finding({ category: "config", check: "Config files", status: "pass" }),
     ]);
-    const fleet = makeFleet({
+    const system = makeSystem({
       findings: [
         { code: "channels", detail: "", count: 1, hint: "" },
         { code: "config_posture", detail: "", count: 1, hint: "" },
       ],
     });
 
-    expect(buildSupportTriage({ host: HOST, doctor, fleet }).activeSignals).toEqual([
+    expect(buildSupportTriage({ host: HOST, doctor, system }).activeSignals).toEqual([
       "channels",
       "config_posture",
     ]);
   });
 
-  it("maps the fleet summary field-for-field from the fleet report", () => {
-    const fleet = makeFleet({
+  it("maps the system summary field-for-field from the system report", () => {
+    const system = makeSystem({
       sessions: { total: 10, degraded: 4, degradedRate: 0.4 },
       topErrorKinds: [{ kind: "context_exhausted", count: 3 }],
       breakerTripTotal: 2,
@@ -568,56 +568,56 @@ describe("buildSupportTriage fleet enrichment", () => {
         { code: "config_posture", detail: "", count: 1, hint: "" },
         { code: "model_health", detail: "", count: 1, hint: "" },
       ],
-      likelyRootCause: { code: "fleet_high_degraded_rate", detail: "", suggestedNextSteps: [] },
+      likelyRootCause: { code: "system_high_degraded_rate", detail: "", suggestedNextSteps: [] },
     });
 
-    const summary = buildSupportTriage({ host: HOST, doctor: makeDoctorResult([]), fleet }).fleetSummary;
+    const summary = buildSupportTriage({ host: HOST, doctor: makeDoctorResult([]), system }).systemSummary;
 
     expect(summary).toEqual({
       degradedRate: 0.4,
       topErrorKinds: [{ kind: "context_exhausted", count: 3 }],
       breakerTripTotal: 2,
       findingCodes: ["config_posture", "model_health"],
-      likelyRootCause: "fleet_high_degraded_rate",
+      likelyRootCause: "system_high_degraded_rate",
     });
   });
 
-  it("maps a null fleet root cause to a null summary likely-root-cause", () => {
-    const fleet = makeFleet({ findings: [], likelyRootCause: null });
+  it("maps a null system root cause to a null summary likely-root-cause", () => {
+    const system = makeSystem({ findings: [], likelyRootCause: null });
 
-    const summary = buildSupportTriage({ host: HOST, doctor: makeDoctorResult([]), fleet }).fleetSummary;
+    const summary = buildSupportTriage({ host: HOST, doctor: makeDoctorResult([]), system }).systemSummary;
 
     expect(summary?.likelyRootCause).toBeNull();
     expect(summary?.findingCodes).toEqual([]);
   });
 
-  it("omits the fleet summary entirely when no fleet report is provided", () => {
+  it("omits the system summary entirely when no system report is provided", () => {
     const triage = buildSupportTriage({ host: HOST, doctor: makeDoctorResult([]) });
 
-    expect(triage.fleetSummary).toBeUndefined();
+    expect(triage.systemSummary).toBeUndefined();
   });
 
-  it("reports degraded when the fleet supplies a non-null likely root cause", () => {
+  it("reports degraded when the system supplies a non-null likely root cause", () => {
     const doctor = makeDoctorResult([
       finding({ category: "config", check: "Config files", status: "pass" }),
       finding({ category: "daemon", check: "Process alive", status: "pass" }),
     ]);
-    const fleet = makeFleet({
+    const system = makeSystem({
       sessions: { total: 5, degraded: 3, degradedRate: 0.6 },
       coverage: {
         sessionSummary: { found: true, rows: 5 },
         sessionIndex: { daysRead: 1, daysMissing: 0 },
         billing: { present: true },
       },
-      likelyRootCause: { code: "fleet_high_degraded_rate", detail: "", suggestedNextSteps: [] },
+      likelyRootCause: { code: "system_high_degraded_rate", detail: "", suggestedNextSteps: [] },
     });
 
-    expect(buildSupportTriage({ host: HOST, doctor, fleet }).status).toBe("degraded");
+    expect(buildSupportTriage({ host: HOST, doctor, system }).status).toBe("degraded");
   });
 
-  it("ranks a coverage-empty fleet as insufficient_evidence rather than healthy", () => {
+  it("ranks a coverage-empty system as insufficient_evidence rather than healthy", () => {
     const doctor = makeDoctorResult([]);
-    const fleet = makeFleet({
+    const system = makeSystem({
       sessions: { total: 0, degraded: 0, degradedRate: 0 },
       findings: [],
       likelyRootCause: null,
@@ -628,10 +628,10 @@ describe("buildSupportTriage fleet enrichment", () => {
       },
     });
 
-    expect(buildSupportTriage({ host: HOST, doctor, fleet }).status).toBe("insufficient_evidence");
+    expect(buildSupportTriage({ host: HOST, doctor, system }).status).toBe("insufficient_evidence");
   });
 
-  it("ranks a synthetic-only fleet window with a thrown doctor as insufficient_evidence, not healthy", () => {
+  it("ranks a synthetic-only system window with a thrown doctor as insufficient_evidence, not healthy", () => {
     // A window whose only rows are synthetic sets coverage.sessionSummary.found
     // true (found is synthetic-INCLUSIVE) while sessions.total stays 0
     // (synthetic-EXCLUDED) and no findings fire. Paired with a doctor run that
@@ -639,7 +639,7 @@ describe("buildSupportTriage fleet enrichment", () => {
     // the verdict must be insufficient_evidence — an empty read is never
     // healthy.
     const doctor = makeDoctorResult([]);
-    const fleet = makeFleet({
+    const system = makeSystem({
       sessions: { total: 0, degraded: 0, degradedRate: 0 },
       findings: [],
       likelyRootCause: null,
@@ -650,14 +650,14 @@ describe("buildSupportTriage fleet enrichment", () => {
       },
     });
 
-    expect(buildSupportTriage({ host: HOST, doctor, fleet }).status).toBe("insufficient_evidence");
+    expect(buildSupportTriage({ host: HOST, doctor, system }).status).toBe("insufficient_evidence");
   });
 
-  it("reports healthy when a passing doctor pairs with a fleet that has evidence and no root cause", () => {
+  it("reports healthy when a passing doctor pairs with a system that has evidence and no root cause", () => {
     const doctor = makeDoctorResult([
       finding({ category: "config", check: "Config files", status: "pass" }),
     ]);
-    const fleet = makeFleet({
+    const system = makeSystem({
       sessions: { total: 3, degraded: 0, degradedRate: 0 },
       coverage: {
         sessionSummary: { found: true, rows: 3 },
@@ -667,44 +667,44 @@ describe("buildSupportTriage fleet enrichment", () => {
       likelyRootCause: null,
     });
 
-    expect(buildSupportTriage({ host: HOST, doctor, fleet }).status).toBe("healthy");
+    expect(buildSupportTriage({ host: HOST, doctor, system }).status).toBe("healthy");
   });
 
-  it("produces a deeply identical verdict for the same fleet-enriched input", () => {
+  it("produces a deeply identical verdict for the same system-enriched input", () => {
     const doctor = makeDoctorResult([
       finding({ category: "config", check: "Config files", status: "pass" }),
     ]);
-    const fleet = makeFleet({
+    const system = makeSystem({
       findings: [{ code: "config_posture", detail: "", count: 1, hint: "" }],
-      likelyRootCause: { code: "fleet_config_posture", detail: "", suggestedNextSteps: [] },
+      likelyRootCause: { code: "system_config_posture", detail: "", suggestedNextSteps: [] },
     });
 
-    const first = buildSupportTriage({ host: HOST, doctor, fleet });
-    const second = buildSupportTriage({ host: HOST, doctor, fleet });
+    const first = buildSupportTriage({ host: HOST, doctor, system });
+    const second = buildSupportTriage({ host: HOST, doctor, system });
 
     expect(first).toEqual(second);
     expect(first).not.toBe(second);
   });
 
-  it("round-trips a fleet-enriched verdict through the strict schema parser", () => {
-    const fleet = makeFleet({
+  it("round-trips a system-enriched verdict through the strict schema parser", () => {
+    const system = makeSystem({
       sessions: { total: 4, degraded: 1, degradedRate: 0.25 },
       topErrorKinds: [{ kind: "context_exhausted", count: 2 }],
       breakerTripTotal: 1,
       findings: [{ code: "config_posture", detail: "", count: 1, hint: "" }],
-      likelyRootCause: { code: "fleet_config_posture", detail: "", suggestedNextSteps: [] },
+      likelyRootCause: { code: "system_config_posture", detail: "", suggestedNextSteps: [] },
     });
 
-    const triage = buildSupportTriage({ host: HOST, doctor: makeDoctorResult([]), fleet });
+    const triage = buildSupportTriage({ host: HOST, doctor: makeDoctorResult([]), system });
 
     expect(parseSupportTriage(triage).ok).toBe(true);
   });
 
-  it("lists the fleet and config-posture outputs among the evidence files", () => {
+  it("lists the system and config-posture outputs among the evidence files", () => {
     const triage = buildSupportTriage({ host: HOST, doctor: makeDoctorResult([]) });
 
     const paths = triage.evidenceFiles.map((file) => file.path);
-    expect(paths).toContain("fleet.json");
+    expect(paths).toContain("system-health.json");
     expect(paths).toContain("config-posture.json");
     for (const entry of triage.evidenceFiles) {
       expect(entry.description.length).toBeGreaterThan(0);
@@ -797,12 +797,12 @@ describe("buildSupportTriage explain enrichment", () => {
     expect(triage.explainSummary).toBeUndefined();
   });
 
-  it("reports degraded when the embedded explain outcome is degraded and the doctor and fleet are clean", () => {
+  it("reports degraded when the embedded explain outcome is degraded and the doctor and system are clean", () => {
     const doctor = makeDoctorResult([
       finding({ category: "config", check: "Config files", status: "pass" }),
       finding({ category: "daemon", check: "Process alive", status: "pass" }),
     ]);
-    const fleet = makeFleet({
+    const system = makeSystem({
       sessions: { total: 3, degraded: 0, degradedRate: 0 },
       coverage: {
         sessionSummary: { found: true, rows: 3 },
@@ -816,23 +816,23 @@ describe("buildSupportTriage explain enrichment", () => {
       likelyRootCause: null,
     });
 
-    expect(buildSupportTriage({ host: HOST, doctor, fleet, explain }).status).toBe("degraded");
+    expect(buildSupportTriage({ host: HOST, doctor, system, explain }).status).toBe("degraded");
   });
 
-  it("dedupes an explain root cause that repeats a fleet code, keeping the fleet entry first", () => {
-    // The explain root-cause append runs AFTER the fleet codes, so a shared code
-    // keeps its earlier fleet slot (first-seen-wins across doctor -> fleet -> explain).
+  it("dedupes an explain root cause that repeats a system code, keeping the system entry first", () => {
+    // The explain root-cause append runs AFTER the system codes, so a shared code
+    // keeps its earlier system slot (first-seen-wins across doctor -> system -> explain).
     const doctor = makeDoctorResult([
       finding({ category: "config", check: "Config files", status: "pass" }),
     ]);
-    const fleet = makeFleet({
+    const system = makeSystem({
       findings: [{ code: "context_exhausted", detail: "", count: 1, hint: "" }],
     });
     const explain = makeIncident({
       likelyRootCause: { code: "context_exhausted", detail: "", suggestedNextSteps: [] },
     });
 
-    expect(buildSupportTriage({ host: HOST, doctor, fleet, explain }).activeSignals).toEqual([
+    expect(buildSupportTriage({ host: HOST, doctor, system, explain }).activeSignals).toEqual([
       "context_exhausted",
     ]);
   });

@@ -150,7 +150,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       if (synthPattern && !deps.authoringConfig?.intentAction) {
         // Typed: a gated-off policy refusal is a caller
         // precondition failure, not an internal handler fault — classifyRpcError maps
-        // PreconditionError to precondition/warn so it doesn't read as a fleet ERROR.
+        // PreconditionError to precondition/warn so it doesn't read as a system ERROR.
         throw new PreconditionError(
           "from_intent authoring is disabled by policy (orchestration.authoring.intentAction).",
         );

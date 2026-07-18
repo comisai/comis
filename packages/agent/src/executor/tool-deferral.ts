@@ -160,7 +160,7 @@ export const DEFERRAL_RULES: DeferralRule[] = [
     tools: [...PRIVILEGED_TOOL_NAMES],
     activeWhen: (ctx) => ctx.trustLevel === "admin",
     namespace: "admin",
-    namespaceDescription: "Fleet management, observability, session/memory/channel/token/skill/MCP admin (requires admin trust)",
+    namespaceDescription: "Agent administration, observability, session/memory/channel/token/skill/MCP admin (requires admin trust)",
   },
   ...CHANNEL_TOOL_GATES.map((gate) => ({
     tools: [gate.tool],

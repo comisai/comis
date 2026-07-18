@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
+import type { OutcomeVerdict } from "@comis/agent";
 import { TypedEventBus, runWithContext } from "@comis/core";
 import { createSqliteMentalModelStore, initSchema } from "@comis/memory";
 import type { EventMap, OutcomeObservation, ResolvedOutcome, LearningScope } from "@comis/core";
@@ -1843,6 +1844,18 @@ describe("promote/demote drive the REAL learned-skill store via name→id (not n
 // consume chain. The deterministic tool/pipeline tier ALWAYS out-ranks the judge at
 // fusion, so the judge runs ONLY on `unknown` (resolved turns skip it — bounds cost).
 describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conversational turn", () => {
+  function judgeVerdict(outcome: OutcomeVerdict["outcome"]): OutcomeVerdict {
+    return {
+      outcome,
+      confidence: 0.7,
+      cappedConfidence: 0.7,
+      source: "judge",
+      judgeModel: "example/judge",
+      rubricHash: "a".repeat(64),
+      evidenceRefs: ["b".repeat(64)],
+    };
+  }
+
   function diagnosticPayload(
     over?: Partial<EventMap["diagnostic:message_processed"]>,
   ): EventMap["diagnostic:message_processed"] {
@@ -1893,7 +1906,7 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
       baseVerdict({ outcome: "success", confidence: 0.7, sources: ["judge"], recalledIds: ["m1"] }),
     );
     const us = mockUsefulnessStore();
-    const outcomeJudge = vi.fn(async () => ({ outcome: "success" as const, cappedConfidence: 0.7 }));
+    const outcomeJudge = vi.fn(async () => judgeVerdict("success"));
     const readTurnTranscript = vi.fn(() => "user: please summarize\nassistant: here is the summary");
     const emitSpy = vi.spyOn(bus, "emit");
     wireLearningOutcome({
@@ -1947,7 +1960,7 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
       baseVerdict({ outcome: "success", confidence: 0.7, sources: ["judge"] }),
     );
     const us = mockUsefulnessStore();
-    const outcomeJudge = vi.fn(async () => ({ outcome: "success" as const, cappedConfidence: 0.7 }));
+    const outcomeJudge = vi.fn(async () => judgeVerdict("success"));
     const readTurnTranscript = vi.fn(() => "user: hi\nassistant: hello");
     wireLearningOutcome({
       eventBus: bus,
@@ -2003,7 +2016,7 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
     const bus = new TypedEventBus();
     // resolve already yields a deterministic success — the judge must never run.
     const { store } = makeStubStore(baseVerdict({ outcome: "success", sources: ["tool"], recalledIds: ["m1"] }));
-    const outcomeJudge = vi.fn(async () => ({ outcome: "failure" as const, cappedConfidence: 0.7 }));
+    const outcomeJudge = vi.fn(async () => judgeVerdict("failure"));
     const readTurnTranscript = vi.fn(() => "user: do x\nassistant: done");
     wireLearningOutcome({
       eventBus: bus,
@@ -2070,7 +2083,7 @@ describe("wireLearningOutcome — LLM outcome-judge fallback on an unknown conve
       baseVerdict({ outcome: "unknown", confidence: 0, sources: [] }),
       baseVerdict({ outcome: "success", confidence: 0.7, sources: ["judge"] }),
     );
-    const outcomeJudge = vi.fn(async () => ({ outcome: "success" as const, cappedConfidence: 0.7 }));
+    const outcomeJudge = vi.fn(async () => judgeVerdict("success"));
     wireLearningOutcome({
       eventBus: bus,
       outcomeStore: store,

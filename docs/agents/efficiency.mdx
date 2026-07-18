@@ -238,7 +238,7 @@ The estimate surfaces in two places, both content-free (counts and token estimat
 - **Per run** -- `comis explain <sessionKey>` carries it as
   `savings: { estSavedTokens, savedRatio }` on each entry of its
   [`orchestrate`](/reference/json-rpc#obs-explain) section.
-- **Daemon-wide** -- `comis fleet` rolls it into an **`orchestrate_efficiency`** finding: the run
+- **Daemon-wide** -- `comis system-health` rolls it into an **`orchestrate_efficiency`** finding: the run
   count and the summed estimated tokens saved across the window.
 
 Because it is labeled an estimate at every surface (`estSavedTokens`, never `savedTokens`), it

@@ -83,7 +83,7 @@ export interface TrajectoryEvents {
    * `topErrorKinds` (keys ⊂ the closed `ErrorKind` union, capped at 3) and
    * `source` (provenance enum, mirroring the session-index SSOT) are carried
    * onto the event so they land in the persisted `obs_diagnostics` row and the
-   * fleet aggregate (`aggregateSessionsInWindow`) can read them
+   * system aggregate (`aggregateSessionsInWindow`) can read them
    * without opening per-session `_session-metadata.json` files. Production emits
    * the constant `source: "runtime"`; tests inject `"test"` / `"bench"`.
    *
@@ -91,7 +91,7 @@ export interface TrajectoryEvents {
    * chokepoint derives ONCE via `END_REASON_MAP` (executor-post-execution.ts) and
    * co-persists onto `sessionEnd`. Carrying it here threads the NAMED degradation
    * cause (e.g. `context_exhausted` / `output_starved`, the named degradation
-   * detectors) into the persisted row so `obs.fleet.health` can aggregate
+   * detectors) into the persisted row so `obs.system.health` can aggregate
    * `degradedByCause` from the rows alone — never opening per-session metadata. It
    * is a closed-set label (the endReason union), never free text.
    */

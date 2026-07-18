@@ -1,7 +1,7 @@
 // wg.mjs — wake-gate drive helper for the cron pre-run wake-gate live test.
 // Authors (replacing any same-name job) → fires (cron.run force) → polls the execution
 // record → reads BOTH per-fire oracles: cron.runs (the skip lens) + the latest
-// cron_wake_gate DiagnosticRow (the fleet fork's content-free wake flag) + the stored
+// cron_wake_gate DiagnosticRow (the system fork's content-free wake flag) + the stored
 // wakeGate (ground truth from the cron store, since cron.list's mapJob omits it).
 //
 // One call = one fire, evaluated in isolation (honors the ≤1-open-COMIS-FAIL discipline).

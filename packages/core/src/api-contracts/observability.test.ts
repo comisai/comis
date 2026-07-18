@@ -54,7 +54,7 @@ describe("observability-domain contracts", () => {
     // obs.explain + obs.diagnostics are scopes:["rpc"] — the obs_query agent tool's
     // self-diagnose path ("why did my session degrade?") needs them agent-reachable.
     // Read-only + scrubbed (zero secret residency), single-tenant. The
-    // daemon-wide/sensitive obs contracts (fleet/audit/billing/channels/delivery)
+    // daemon-wide/sensitive obs contracts (system/audit/billing/channels/delivery)
     // stay admin.
     const SELF_OBS = new Set(["obs.explain", "obs.diagnostics"]);
     for (const c of OBSERVABILITY_CONTRACTS) {
@@ -89,13 +89,13 @@ describe("observability-domain contracts", () => {
       "obs.diagnostics",
       // Incident-report assembler.
       "obs.explain",
-      // Cross-session fleet-health digest.
-      "obs.fleet.health",
       "obs.getCacheStats",
       "obs.reset",
       "obs.reset.table",
       // Live spend snapshot the kill-switch enforces.
       "obs.spend.snapshot",
+      // Cross-session system-health digest.
+      "obs.system.health",
       // SystemPromptReport surface.
       "obs.systemPromptReport.latest",
       "obs.systemPromptReport.list",

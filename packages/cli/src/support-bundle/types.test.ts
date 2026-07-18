@@ -94,19 +94,19 @@ describe("parseSupportTriage", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("returns ok when the optional fleet and explain summaries are omitted", () => {
+  it("returns ok when the optional system and explain summaries are omitted", () => {
     const result = parseSupportTriage(makeValidTriage());
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.fleetSummary).toBeUndefined();
+      expect(result.value.systemSummary).toBeUndefined();
       expect(result.value.explainSummary).toBeUndefined();
     }
   });
 
-  it("returns ok when the optional fleet and explain summaries are present", () => {
+  it("returns ok when the optional system and explain summaries are present", () => {
     const result = parseSupportTriage(
       makeValidTriage({
-        fleetSummary: {
+        systemSummary: {
           degradedRate: 0.25,
           topErrorKinds: [{ kind: "timeout", count: 3 }],
           breakerTripTotal: 1,
@@ -122,7 +122,7 @@ describe("parseSupportTriage", () => {
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.fleetSummary?.degradedRate).toBe(0.25);
+      expect(result.value.systemSummary?.degradedRate).toBe(0.25);
       expect(result.value.explainSummary?.endReason).toBe("spend_exceeded");
     }
   });
@@ -192,22 +192,22 @@ describe("parseSupportBundleManifest", () => {
     }
   });
 
-  it("accepts a warning sourced from the fleet section", () => {
+  it("accepts a warning sourced from the system section", () => {
     const result = parseSupportBundleManifest(
       makeValidManifest({
         warnings: [
           {
-            source: "fleet",
-            code: "fleet_read_failed",
+            source: "system",
+            code: "system_read_failed",
             count: 1,
-            message: "the fleet report could not be assembled",
+            message: "the system report could not be assembled",
           },
         ],
       }),
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.warnings?.[0]?.source).toBe("fleet");
+      expect(result.value.warnings?.[0]?.source).toBe("system");
     }
   });
 

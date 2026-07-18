@@ -151,7 +151,7 @@ export function ingestTurn(
     // in its OWN output — a self-forgery attempt that was neutralized before it
     // could re-enter replay history. Counts only, no bodies. WARN (not DEBUG) so
     // it is visible at the default log level and can be lifted onto the
-    // FleetHealthReport as a health_signal.
+    // SystemHealthReport as a health_signal.
     logger.warn(
       {
         step: "lcd-ingest",

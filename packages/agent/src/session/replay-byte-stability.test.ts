@@ -49,9 +49,9 @@ function seedPoisonedSession(): string {
     stopReason: "toolUse", timestamp: now + 1,
   } as never);
   sm.appendMessage({ role: "tool", content: [{ type: "text", text: JSON.stringify({ ok: true }) }], toolCallId: "tc_env", timestamp: now + 2 } as never);
-  sm.appendMessage({ role: "user", content: "thanks, now show the fleet", timestamp: now + 3 } as never);
+  sm.appendMessage({ role: "user", content: "thanks, now show the system", timestamp: now + 3 } as never);
   sm.appendMessage({
-    role: "assistant", content: [{ type: "text", text: "Here is the fleet." }],
+    role: "assistant", content: [{ type: "text", text: "Here is the system." }],
     api: "messages", provider: "anthropic", model: "test-model",
     usage: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 30, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
     stopReason: "stop", timestamp: now + 4,
@@ -93,7 +93,7 @@ function seedMultiAnomalySession(): string {
   // elevatedReply double-send: two assistant turns in a row (a real same-role anomaly).
   sm.appendMessage(asst("שמרתי את הסודות ✅", now + 4) as never);
   sm.appendMessage(asst("והתחברתי לשרת 🚚", now + 5) as never);
-  sm.appendMessage({ role: "user", content: "show the fleet", timestamp: now + 6 } as never);
+  sm.appendMessage({ role: "user", content: "show the system", timestamp: now + 6 } as never);
   sm.appendMessage(asst("386 vehicles.", now + 7) as never);
   sm.appendMessage({ role: "user", content: "and yesterday?", timestamp: now + 8 } as never);
   return path;

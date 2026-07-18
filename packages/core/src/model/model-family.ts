@@ -8,9 +8,9 @@
  *
  * The failure mode this exists for: an agent configured `provider:
  * anthropic` with a qwen model ref resolves a phantom nano/8192 ModelProfile that
- * blocks Opus fallback — and nothing in `obs.explain`/`obs.fleet.health` names the
+ * blocks Opus fallback — and nothing in `obs.explain`/`obs.system.health` names the
  * mismatch. The detector lets `config_posture` surface "N agent(s) with a chimeric
- * provider/model" in one `comis fleet` look.
+ * provider/model" in one `comis system-health` look.
  *
  * CONSERVATIVE BY DESIGN — false negatives are safe, false positives are noise:
  *   - Only NATIVE single-family providers (where the provider IS one model family)

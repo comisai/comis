@@ -46,7 +46,7 @@ export interface MsTeamsIngressDeps {
    * Optional content-free hook fired on every auth-gate rejection (before any
    * body parse or adapter dispatch), carrying ONLY the closed rejection class.
    * The composition root binds it to a daemon eventBus emit so an ingress
-   * forged/expired/wrong-audience/missing-token FLOOD is COUNTABLE by the fleet
+   * forged/expired/wrong-audience/missing-token FLOOD is COUNTABLE by the system
    * lens instead of living only in a raw WARN. A no-op when absent — the gate
    * and its opaque 401 are unchanged either way; the hook NEVER receives the
    * token, the Authorization header, or the request body.
@@ -102,7 +102,7 @@ export function createMsTeamsIngress(deps: MsTeamsIngressDeps): Hono {
         },
         "Rejected inbound activity: missing bearer token",
       );
-      // Fleet-visible, content-free: the class only — never the (absent) token.
+      // System-visible, content-free: the class only — never the (absent) token.
       onAuthRejected?.("missing_bearer");
       return c.json({ error: "unauthorized" }, 401);
     }
@@ -120,7 +120,7 @@ export function createMsTeamsIngress(deps: MsTeamsIngressDeps): Hono {
         },
         "Rejected inbound activity: token validation failed",
       );
-      // Fleet-visible, content-free: the class only — never the forged token.
+      // System-visible, content-free: the class only — never the forged token.
       onAuthRejected?.("invalid_token");
       return c.json({ error: "unauthorized" }, 401);
     }

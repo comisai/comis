@@ -527,8 +527,8 @@ export type {
 // The pre-committed, PURE, deterministic decision rule:
 // `pipelineAuthoringGate(aggregate) -> { buildAuthor, reason }`.
 // This package is the SINGLE SOURCE of `PipelineAuthoringAggregate` — the
-// daemon's fleet-findings reducer imports the type from here, and the daemon's
-// fleet-health assembler surfaces the verdict on the FleetHealthReport. Pure
+// daemon's system-findings reducer imports the type from here, and the daemon's
+// system-health assembler surfaces the verdict on the SystemHealthReport. Pure
 // (no I/O, no clock, no globals) — a leaf consumer like the rest of the package.
 export {
   pipelineAuthoringGate,

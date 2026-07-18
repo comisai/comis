@@ -252,7 +252,7 @@ describe("wrapToolResultWithGuide -- SYSTEM_PROMPT_GUIDES", () => {
     expect(wrapped.content).toHaveLength(2);
     const guideText = (wrapped.content[1] as { text: string }).text;
     expect(guideText).toContain("Privileged Tools & Approval Gate");
-    expect(guideText).toContain("Fleet Management Patterns");
+    expect(guideText).toContain("System Management Patterns");
     expect(delivered.has("section:privileged")).toBe(true);
   });
 

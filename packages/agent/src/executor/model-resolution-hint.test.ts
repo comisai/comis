@@ -5,8 +5,8 @@ import { FAIL_CLOSED_PROFILE } from "./model-profile.js";
 
 describe("diagnoseUnresolvedModel", () => {
   it("names the unknown model id + the provider's available ids when the provider IS registered", () => {
-    // Live shape (fleet-marathon 2026-07-10): config `model: gpt-5.6` against the
-    // registered `openai-codex` provider whose real ids are gpt-5.6-luna/terra/sol.
+    // Config can name an unknown model on a registered provider with several
+    // concrete model IDs available for remediation.
     // The old hint blamed provider registration and misdirected the operator to
     // providers.entries; the provider was fine — only the model id was wrong.
     const d = diagnoseUnresolvedModel("openai-codex", "gpt-5.6", [

@@ -18,7 +18,7 @@ import type { DiagnosticRow } from "@comis/memory";
 
 /**
  * Map a `security:sandbox_downgrade_refused` event to a `health_signal` diagnostic
- * row. A fail-closed sub-agent spawn refusal had NO fleet surface; an operator could
+ * row. A fail-closed sub-agent spawn refusal had NO system surface; an operator could
  * not learn (cross-session) that an agent attempted to spawn a LESS-confined child.
  * Attributed to the SPAWNER (`parentAgentId`). `details` carries the closed
  * `violatedDimensions` LABELS ONLY (exec/filesystem/network/uid) — NEVER the
@@ -49,7 +49,7 @@ export function sandboxDowngradeRefusedEventToRow(
  * Map a `subagent:delivery_deadlettered` event to a `health_signal` diagnostic row.
  * A dead-lettered (permanently dropped) sub-agent completion is a SILENT degradation:
  * the graph reports "completed" while a node's result never reached the parent, with
- * no fleet signal today. `details` carries the closed `channelType` (which channel is
+ * no system signal today. `details` carries the closed `channelType` (which channel is
  * dropping) + the `transient` tag (retries-exhausted vs immediate-permanent) ONLY —
  * NEVER the runId, the announcement body, or the error string (AGENTS.md §2.7).
  * severity:"warning" (a dropped delivery).
@@ -75,7 +75,7 @@ export function deliveryDeadletteredEventToRow(
 
 /**
  * Map a `subagent:budget_exceeded` event to a `health_signal` diagnostic row. A
- * per-node token-budget breach had NO fleet surface; an operator could not
+ * per-node token-budget breach had NO system surface; an operator could not
  * learn (cross-session) how often nodes are being cut off by which budget knob.
  * `details` carries the closed `capSource` enum ONLY (node / operator-default /
  * inherit-share — WHICH knob bound the node) — NEVER the per-node token NUMBERS
@@ -103,12 +103,12 @@ export function nodeBudgetExceededEventToRow(
 
 /**
  * Map a `subagent:killed` event to a `health_signal` diagnostic row. An
- * autonomous health-monitor stuck-kill had NO fleet surface — a live incident
+ * autonomous health-monitor stuck-kill had NO system surface — a live incident
  * needed a raw daemon-log grep to learn a run was killed at all. Severity
  * TRACKS the attribution: `health_monitor` is operator-visible degradation
  * (`warning`); a parent/operator/system kill is deliberate orchestration
  * (`info` — the BENIGN_DAG_DEGRADED severity discipline, so it never inflates
- * the fleet degrade count and never surfaces as a finding). `details` carries
+ * the system degrade count and never surfaces as a finding). `details` carries
  * the closed `signal` label + the closed `killedBy` union ONLY — NEVER the
  * runtime/idle NUMBERS (per-incident: the `subagent.killed` trajectory record,
  * the failure record, `comis explain`), never the free-text reason (AGENTS.md

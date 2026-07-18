@@ -57,7 +57,7 @@ export type ObservabilityQueries = Pick<
 /**
  * Validate the `details.toolStats` record from an untrusted session_summary row,
  * keeping ONLY entries with finite numeric `ok`/`failed`. A malformed entry is
- * DROPPED — the fleet reducer does raw arithmetic and would otherwise emit `NaN`.
+ * DROPPED — the system reducer does raw arithmetic and would otherwise emit `NaN`.
  */
 function parseToolStats(value: unknown): Record<string, { ok: number; failed: number }> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
@@ -75,7 +75,7 @@ function parseToolStats(value: unknown): Record<string, { ok: number; failed: nu
   return out;
 }
 
-/** Validate `details.topErrorKinds` from an untrusted row, keeping ONLY finite-number entries (a string/NaN count would corrupt the fleet reducer). */
+/** Validate `details.topErrorKinds` from an untrusted row, keeping ONLY finite-number entries (a string/NaN count would corrupt the system reducer). */
 function parseErrorKinds(value: unknown): Record<string, number> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
   const out: Record<string, number> = {};
@@ -143,7 +143,7 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     FROM obs_token_usage WHERE timestamp >= ? GROUP BY (timestamp / 3600000) ORDER BY hour
   `);
 
-  // Fleet aggregate: ALL in-window session_summary rows, ordered by insert id. A
+  // System aggregate: ALL in-window session_summary rows, ordered by insert id. A
   // session emits ONE summary row per EXECUTION → the rollup SUMs additive fields
   // across a session's rows (latest-row-only under-reports). Rides idx_obs_diag_session_cat.
   const aggSessionsInWindowStmt = db.prepare(`
@@ -313,9 +313,9 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
       acc.turnCount += typeof d.turnCount === "number" ? d.turnCount : 0;
       // Validate the nested record shapes rather than blind-casting: a malformed
       // value (a bare number for toolStats, a string for an errorKind count)
-      // would otherwise flow unchecked into the fleet reducer and corrupt its
+      // would otherwise flow unchecked into the system reducer and corrupt its
       // arithmetic (NaN / string concatenation). Mirrors the session reader's
-      // `typeof … && Number.isFinite(…)` discipline (fleet-session-index.ts).
+      // `typeof … && Number.isFinite(…)` discipline (system-session-index.ts).
       for (const [tool, s] of Object.entries(parseToolStats(d.toolStats))) {
         const t = acc.toolStats[tool] ?? { ok: 0, failed: 0 }; // eslint-disable-line security/detect-object-injection -- validated tool-name key from parseToolStats
         acc.toolStats[tool] = { ok: t.ok + s.ok, failed: t.failed + s.failed }; // eslint-disable-line security/detect-object-injection -- validated tool-name key from parseToolStats
@@ -324,7 +324,7 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
         acc.topErrorKinds[kind] = (acc.topErrorKinds[kind] ?? 0) + n; // eslint-disable-line security/detect-object-injection -- validated ErrorKind key from parseErrorKinds
       }
       // Pre-change rows lack `source` -> parse-default "runtime" (additive
-      // read-time default per AGENTS §2.9; not a migration shim). The fleet
+      // read-time default per AGENTS §2.9; not a migration shim). The system
       // reducer filters on this; the latest row's provenance wins.
       acc.source = typeof d.source === "string" ? d.source : "runtime";
       // The named degradation cause. Pre-change rows (and a blank value)
@@ -368,7 +368,7 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     return rows.map(diagnosticFromRow);
   }
 
-  /** Total USD cost of off-session (`__PREFIX__`-keyed background-job) LLM spend since `sinceMs`. Distinct from the per-session cost the fleet rollup sums (no double-count). */
+  /** Total USD cost of off-session (`__PREFIX__`-keyed background-job) LLM spend since `sinceMs`. Distinct from the per-session cost the system rollup sums (no double-count). */
   function offSessionCostSince(sinceMs: number): number {
     const parsed = offSessionCostMapper.parseOptionalRow(offSessionCostSinceStmt.get(sinceMs));
     return parsed.ok ? (parsed.value?.total_cost ?? 0) : 0;

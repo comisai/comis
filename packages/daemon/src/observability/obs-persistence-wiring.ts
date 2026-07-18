@@ -484,7 +484,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
 
   // A recorder that cannot safely resume its existing JSONL must surface in
-  // fleet diagnostics, not only in a local WARN. The event and row contain
+  // system diagnostics, not only in a local WARN. The event and row contain
   // identifiers + closed failure labels only.
   eventBus.on("observability:trajectory_degraded", (payload) => {
     diagnosticBuffer.push(trajectoryDegradedEventToRow(payload));
@@ -492,7 +492,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
 
   // Persist the high-value WARNs to obs_diagnostics
   // under category:"health_signal" — the LCD-divergence class + MCP health — via
-  // the SAME diagnosticBuffer (no new table/buffer/transaction). The fleet lens
+  // the SAME diagnosticBuffer (no new table/buffer/transaction). The system health view
   // reads these rows; without them the signals are Pino-only (LCD) or per-session
   // trajectory JSONL (MCP), invisible to a cross-session query. Each mapper emits
   // counts/labels only (no error bodies, no message text — AGENTS.md §2.7).
@@ -502,28 +502,27 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   eventBus.on("health:budget_exceeded", (payload) => {
     diagnosticBuffer.push(healthBudgetExceededEventToRow(payload));
   });
-  // A degraded/failed recall lane → a health_signal row (fleet finding
-  // `health_signal:recall_degraded`) — dead recall must be a fleet finding,
+  // A degraded/failed recall lane → a health_signal row (system finding
+  // `health_signal:recall_degraded`) — dead recall must be a system finding,
   // not a daemon.log-grep discovery.
   eventBus.on("memory:recall_degraded", (payload) => {
     diagnosticBuffer.push(recallDegradedEventToRow(payload));
   });
   // A recurring cached-prefix collapse (wasted Anthropic cache writes) → a
-  // health_signal row, so the churn is a fleet finding
-  // (health_signal:cache_prefix_churn) instead of a daemon.log-grep discovery
-  // (the comis-harel fleet-blindness incident, 2026-07-12).
+  // health_signal row, so the churn is a system finding
+  // (health_signal:cache_prefix_churn) instead of a daemon.log-grep discovery.
   eventBus.on("agent:prefix_unstable", (payload) => {
     diagnosticBuffer.push(prefixUnstableEventToRow(payload));
   });
   // A silently-dead webhook ingress (past its missed-inbound threshold) → a
-  // health_signal row, so the fleet lens surfaces it (health_signal:channel_ingress_silent)
+  // health_signal row, so the system health view surfaces it (health_signal:channel_ingress_silent)
   // the moment the liveness timer fires. Content-free (channelType + counts only).
   eventBus.on("channel:inbound_silent", (payload) => {
     diagnosticBuffer.push(channelInboundSilentEventToRow(payload));
   });
   // A rejected ingress auth attempt (missing bearer / invalid token) → a
   // health_signal row, so a forged/expired/wrong-audience/missing-token flood
-  // is COUNTED by the fleet lens (health_signal:channel_ingress_auth_rejected)
+  // is COUNTED by the system health view (health_signal:channel_ingress_auth_rejected)
   // instead of living only in a raw WARN. Content-free (channel label + closed
   // reason class only) — symmetric with channel:inbound_silent above.
   eventBus.on("channel:ingress_auth_rejected", (payload) => {
@@ -533,24 +532,24 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     diagnosticBuffer.push(mcpReconnectFailedEventToRow(payload));
   });
   // An INITIAL connect/install failure (never reached the reconnect loop) → a
-  // health_signal row, so a failed MCP install surfaces in `comis fleet`
+  // health_signal row, so a failed MCP install surfaces in `comis system-health`
   // (health_signal:mcp_connect_failed) instead of only a raw daemon.log grep.
   eventBus.on("mcp:server:connect_failed", (payload) => {
     diagnosticBuffer.push(mcpConnectFailedEventToRow(payload));
   });
   // The reflection funnel → a learning_health row, so the
-  // fleet lens surfaces the daemon-wide reflection posture (admit/why-0-admitted) cross-session.
+  // system health view surfaces the daemon-wide reflection posture (admit/why-0-admitted) cross-session.
   // Content-free (the reflect:funnel event is counts + the closed admissionOutcome enum only).
   eventBus.on("reflect:funnel", (payload) => {
     diagnosticBuffer.push(reflectFunnelEventToRow(payload));
   });
-  // The forget-sweep summary → a memory_lifecycle row, so the fleet
+  // The forget-sweep summary → a memory_lifecycle row, so the system
   // lens surfaces the daemon-wide forget posture (is the sweep evicting/demoting?) cross-session —
   // parity with the reflection funnel above. Content-free (counts only).
   eventBus.on("learning:lifecycle_swept", (payload) => {
     diagnosticBuffer.push(lifecycleSweptEventToRow(payload));
   });
-  // Each gated cron fire → a cron_wake_gate row, so the fleet lens
+  // Each gated cron fire → a cron_wake_gate row, so the system health view
   // surfaces the daemon-wide wake-gate efficiency (per-agent skip-rate / turns-saved /
   // tool-call cost) cross-session. Content-free (counts + the wake verdict enum only —
   // never the gate's gathered payload/script). Info severity (a skip is savings, not a
@@ -559,7 +558,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
     diagnosticBuffer.push(wakeGateEventToRow(payload));
   });
   // The two multilingual signals → health_signal rows (same diagnosticBuffer),
-  // so they reach the fleet lens the moment they fire.
+  // so they reach the system health view the moment they fire.
   eventBus.on("context:script_zero_hit", (payload) => {
     diagnosticBuffer.push(scriptZeroHitEventToRow(payload));
   });
@@ -573,13 +572,13 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   // The pipeline-authoring signal → health_signal row (same
   // diagnosticBuffer, NO migration). Fires per `pipeline` define/execute invocation;
-  // the fleet lens rolls the small-tier invalid rate into a dedicated finding.
+  // the system health view rolls the small-tier invalid rate into a dedicated finding.
   eventBus.on("pipeline:authored", (payload) => {
     diagnosticBuffer.push(pipelineAuthoredEventToRow(payload));
   });
   // The orchestrate run-summary efficiency signal → health_signal row
   // (same diagnosticBuffer, NO migration). Fires once per completed orchestrate
-  // run; the fleet lens rolls the run count + the summed measured token-savings
+  // run; the system health view rolls the run count + the summed measured token-savings
   // estimate into a dedicated finding. Content-free (counts + estimates + the
   // closed failureClass only — never the runId, the stdout, or the stderr tail).
   eventBus.on("orchestrate:run_summary", (payload) => {
@@ -587,7 +586,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   // The three daemon-side
   // orchestration signals → health_signal rows (same diagnosticBuffer, NO migration).
-  // The fleet lens rolls each into a dedicated finding (fleet-findings.ts). Each
+  // The system health view rolls each into a dedicated finding (system-findings.ts). Each
   // mapper emits closed labels/counts only (no path/host/credential, no announcement
   // body, no per-node token numbers — AGENTS.md §2.7).
   eventBus.on("security:sandbox_downgrade_refused", (payload) => {
@@ -601,7 +600,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
   // The attributed sub-agent kill → a health_signal row (warning ONLY for the
   // autonomous health-monitor kill; parent/operator/system kills are info —
-  // deliberate orchestration). The fleet lens rolls the warning rows into the
+  // deliberate orchestration). The system health view rolls the warning rows into the
   // dedicated subagent_stuck_killed finding.
   eventBus.on("subagent:killed", (payload) => {
     diagnosticBuffer.push(subagentKilledEventToRow(payload));
@@ -609,7 +608,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
 
   // The four autonomy/durable lifecycle signals →
   // content-free health_signal rows (same diagnosticBuffer, NO migration). The
-  // fleet lens rolls these into the orphaned/resumed/revoked/killed
+  // system health view rolls these into the orphaned/resumed/revoked/killed
   // counts. Each row carries closed labels/enums/counts/ids only — the engine's
   // free-text orphan reason stays on its WARN log, never on the row (AGENTS.md §2.7).
   eventBus.on("durable:orphaned", (payload) => {

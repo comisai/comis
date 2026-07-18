@@ -1963,7 +1963,7 @@ describe("setupSchedulers", () => {
     // ONE content-free scheduler:wake_gate carrying the verdict enum + the
     // runner's counts + the derived estTurnsSaved (1 avoided model turn per skip,
     // 0 on wake). NEVER the gathered finding / the script / a secret — the emit is
-    // the fleet fork's feed. A runAsToday degrade emits nothing (no gate ran).
+    // the system fork's feed. A runAsToday degrade emits nothing (no gate ran).
     // -------------------------------------------------------------------------
 
     /** The content-free allowlist — the ONLY keys a scheduler:wake_gate may carry. */
@@ -1993,7 +1993,7 @@ describe("setupSchedulers", () => {
       });
       expect(typeof payload.timestamp).toBe("number");
       // Content-free (I5): EXACTLY the allowlist keys — no gathered finding /
-      // script / deliver / payload crosses into the fleet fork's feed.
+      // script / deliver / payload crosses into the system fork's feed.
       expect(Object.keys(payload).sort()).toEqual([...WAKE_GATE_KEYS].sort());
     });
 
@@ -2200,7 +2200,7 @@ describe("setupSchedulers", () => {
           (fields as { step?: string }).step === "wake-gate",
       );
       expect(dropDebug).toBeDefined();
-      // The drop never degrades the fire: status:ok, the fleet emit fired, AND the
+      // The drop never degrades the fire: status:ok, the system emit fired, AND the
       // model still dispatched (the durable forks stay whole).
       expect(result.status).toBe("ok");
       const emit = deps.container.eventBus.emit as ReturnType<typeof vi.fn>;

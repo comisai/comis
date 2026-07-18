@@ -8,11 +8,11 @@
  *  1. collect the content-free host snapshot (best-effort daemon-version probe,
  *     short-circuited when the daemon is down),
  *  2. build a local doctor context and run the nine health checks daemon-down,
- *  3. read the cross-session fleet digest over the --since window through the
+ *  3. read the cross-session system digest over the --since window through the
  *     sanctioned offline seam, and build the config-posture membership digest,
  *  4. on --session, embed the offline IncidentReport (and, on --deep, resolve the
  *     real session file) and read the window-scoped audit {total,byKind} digest,
- *  5. fold the doctor aggregate + fleet + embedded explain into the triage verdict,
+ *  5. fold the doctor aggregate + system + embedded explain into the triage verdict,
  *  6. shape `doctor.json`, render the issue summary and the AI issue draft,
  *  7. create the bundle dir, export the deep trace bundle into it (--deep), then
  *     write the up-to-nine-file bundle through the symlink-safe writer.
@@ -31,7 +31,7 @@
  * @module
  */
 
-import type { FleetHealthReport } from "@comis/core";
+import type { SystemHealthReport } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { exportTrajectoryBundle } from "@comis/observability";
 
@@ -48,7 +48,7 @@ import { lcdHealthCheck } from "../doctor/checks/lcd-health.js";
 import { buildDiagnosticContext } from "../doctor/diagnostic-suite.js";
 import { buildDoctorJson } from "../doctor/output.js";
 import {
-  assembleFleetHealthReportOffline,
+  assembleSystemHealthReportOffline,
   readAuditSummaryOffline,
   suggestWorstSessionOffline,
 } from "../util/offline-obs.js";
@@ -97,7 +97,7 @@ export interface GenerateSupportBundleDeps {
   readonly dataDir: string;
   /** Config file paths, resolved exactly as the doctor command resolves them. */
   readonly configPaths: string[];
-  /** Diagnostic window in hours — the span the fleet digest is assembled over. */
+  /** Diagnostic window in hours — the span the system digest is assembled over. */
   readonly sinceHours: number;
   /** Generation instant in epoch ms — stamps the manifest and the bundle dir name. */
   readonly nowMs: number;
@@ -108,13 +108,13 @@ export interface GenerateSupportBundleDeps {
   /** Forwarded to the host snapshot's best-effort daemon-version probe. */
   readonly withClient?: CollectHostSnapshotDeps["withClient"];
   /**
-   * The fleet-report assembler, defaulting to the sanctioned offline seam
-   * (`assembleFleetHealthReportOffline`). Injected in tests with a hermetic
+   * The system-report assembler, defaulting to the sanctioned offline seam
+   * (`assembleSystemHealthReportOffline`). Injected in tests with a hermetic
    * fixture so a unit run never loads the @comis/daemon runtime graph the offline
    * seam dynamic-imports. Matches the injected-seam style of `readFile`,
    * `isDaemonRunning`, and `withClient`.
    */
-  readonly assembleFleet?: (dataDir: string, sinceHours: number) => Promise<FleetHealthReport>;
+  readonly assembleSystem?: (dataDir: string, sinceHours: number) => Promise<SystemHealthReport>;
   /** The `--session <ref>` argument (sessionKey | traceId | rootRunId) when focusing on one session. */
   readonly session?: string;
   /** Whether `--deep` was requested — embeds the per-session trace bundle (requires `--session`). */
@@ -244,33 +244,33 @@ export async function generateSupportBundle(
     });
   }
 
-  // Fleet compose: assemble the cross-session digest over the --since window
+  // System compose: assemble the cross-session digest over the --since window
   // through the sanctioned offline seam (dead-daemon capable). A throw folds into
-  // a warning and omits fleet.json; a coverage-empty read keeps the valid empty
+  // a warning and omits system-health.json; a coverage-empty read keeps the valid empty
   // report (still written) but records an honest warning. Never a crash.
-  const assembleFleet = deps.assembleFleet ?? assembleFleetHealthReportOffline;
-  let fleet: FleetHealthReport | undefined;
+  const assembleSystem = deps.assembleSystem ?? assembleSystemHealthReportOffline;
+  let system: SystemHealthReport | undefined;
   try {
-    fleet = await assembleFleet(deps.dataDir, deps.sinceHours);
+    system = await assembleSystem(deps.dataDir, deps.sinceHours);
   } catch (thrown) {
     sectionWarnings.push({
-      source: "fleet",
-      code: "fleet_read_failed",
+      source: "system",
+      code: "system_read_failed",
       count: 1,
-      message: `Fleet health report could not be assembled: ${describeError(thrown)}`,
+      message: `System health report could not be assembled: ${describeError(thrown)}`,
     });
   }
   if (
-    fleet !== undefined &&
-    fleet.coverage?.sessionSummary.found === false &&
-    fleet.sessions.total === 0
+    system !== undefined &&
+    system.coverage?.sessionSummary.found === false &&
+    system.sessions.total === 0
   ) {
     sectionWarnings.push({
-      source: "fleet",
-      code: "fleet_store_empty",
+      source: "system",
+      code: "system_store_empty",
       count: 1,
       message:
-        "Fleet health store held no session summaries in the window; the report is " +
+        "System health store held no session summaries in the window; the report is " +
         "empty and its coverage block reports the gap.",
     });
   }
@@ -279,7 +279,7 @@ export async function generateSupportBundle(
   // keys the resolver captured (never the fully-defaulted validated config, which
   // reports every section present). A config that did not parse to an object has
   // no raw keys — omit the file and warn; the parse failure already surfaces as
-  // config_corrupt from the doctor run. The fleet config_posture finding's closed
+  // config_corrupt from the doctor run. The system config_posture finding's closed
   // labels + count ride along when present.
   const resolution = context.configResolution;
   let configPosture: ConfigPostureDigest | undefined;
@@ -291,7 +291,7 @@ export async function generateSupportBundle(
       message: "Config-posture digest omitted: the config could not be read as a section map.",
     });
   } else {
-    configPosture = buildConfigPosture(resolution.rawTopLevelKeys, fleet?.findings ?? []);
+    configPosture = buildConfigPosture(resolution.rawTopLevelKeys, system?.findings ?? []);
   }
 
   // Session embed: on --session, assemble the offline IncidentReport and — on
@@ -335,14 +335,14 @@ export async function generateSupportBundle(
     worstSessionKey = (deps.suggestWorst ?? suggestWorstSessionOffline)(deps.dataDir);
   }
 
-  // Pure assembly: the fleet- and explain-enriched reducer verdict, the doctor.json
-  // shape, and the render. Fleet/explain are passed only when present so their
+  // Pure assembly: the system- and explain-enriched reducer verdict, the doctor.json
+  // shape, and the render. System/explain are passed only when present so their
   // summaries are omitted when the section could not be produced (status rule 2
   // honors an embedded explain.outcome.degraded).
   const triage = buildSupportTriage({
     host,
     doctor,
-    ...(fleet !== undefined ? { fleet } : {}),
+    ...(system !== undefined ? { system } : {}),
     ...(embed?.explain !== undefined ? { explain: embed.explain } : {}),
   });
   const doctorJson = buildDoctorJson(doctor);
@@ -396,7 +396,7 @@ export async function generateSupportBundle(
 
   // Safe write: the up-to-nine allowlisted files through the symlink-safe
   // primitives with the redaction backstop, into the pre-created bundle dir.
-  // fleet.json/config-posture.json/audit-summary.json ride the trusted leaf and
+  // system-health.json/config-posture.json/audit-summary.json ride the trusted leaf and
   // explain.json rides the untrusted value-shape leaf; each is written only when
   // defined. Section-level write failures fold into warnings.
   const writeResult = writeSupportBundle({
@@ -407,7 +407,7 @@ export async function generateSupportBundle(
     issueSummaryMd,
     aiIssueDraftMd,
     doctorJson,
-    fleetJson: fleet,
+    systemJson: system,
     configPostureJson: configPosture,
     explainJson: embed?.explain,
     auditSummaryJson: auditSummary,

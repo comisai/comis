@@ -41,6 +41,7 @@ const durableRootMapper = createRowMapper(
 const durableCheckpointPayloadSchema = z.strictObject({
   spawnTree: z.unknown(),
   rootBudget: DurableRootBudgetSchema,
+  workspacePolicyHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 });
 const resumeClaimSchema = z.strictObject({
   checkpointId: z.string().min(1),
@@ -65,6 +66,7 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
   let leaseIds: unknown;
   let deliveryOrigin: unknown;
   let rootBudget: unknown;
+  let workspacePolicyHash: string | undefined;
   try {
     const payload = durableCheckpointPayloadSchema.safeParse(JSON.parse(row.spawn_tree));
     if (!payload.success) {
@@ -72,6 +74,7 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
     }
     spawnTree = payload.data.spawnTree;
     rootBudget = payload.data.rootBudget;
+    workspacePolicyHash = payload.data.workspacePolicyHash;
     caps = JSON.parse(row.caps);
     leaseIds = JSON.parse(row.lease_ids);
     deliveryOrigin = row.delivery_origin === null ? null : JSON.parse(row.delivery_origin);
@@ -104,6 +107,9 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
     lastHeartbeatAt: row.last_heartbeat_at,
     scriptRef: row.script_ref,
     checkpointRef: row.checkpoint_ref,
+    ...(workspacePolicyHash === undefined
+      ? {}
+      : { workspacePolicyHash }),
   });
   if (!parsed.ok) {
     return err(new Error(`durable checkpoint validation failed: ${parsed.error.message}`));
@@ -227,6 +233,9 @@ export function createSqliteDurableRunStore(
       JSON.stringify({
         spawnTree: record.spawnTree,
         rootBudget: record.rootBudget,
+        ...(record.workspacePolicyHash === undefined
+          ? {}
+          : { workspacePolicyHash: record.workspacePolicyHash }),
       }),
       JSON.stringify(record.caps),
       JSON.stringify(record.leaseIds),

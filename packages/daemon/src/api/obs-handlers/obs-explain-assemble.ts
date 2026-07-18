@@ -56,7 +56,7 @@ const HARD_FAILURE_END_REASONS: ReadonlySet<string> = new Set([
   "budget_exceeded",
   "budget_exhausted",
   // The dollars kill-switch abort is a hard failure (never
-  // "ok") — so `comis explain` marks severity:"failed" and `comis fleet`
+  // "ok") — so `comis explain` marks severity:"failed" and `comis system-health`
   // degradedByCause buckets the spend-killed session on the named "spend_exceeded"
   // cause instead of leaving it in the generic "error" bucket.
   "spend_exceeded",
@@ -145,7 +145,7 @@ function readRollupNumber(
 }
 
 // ---------------------------------------------------------------------------
-// toolStats reconciliation (obs.explain ↔ obs.fleet.health).
+// toolStats reconciliation (obs.explain ↔ obs.system.health).
 // ---------------------------------------------------------------------------
 
 /** A {ok, failed} count pair (defensively coerced from an untrusted source). */
@@ -177,7 +177,7 @@ function countPairOf(raw: unknown): CountPair {
 
 /**
  * Reconcile the WHOLE-session trajectory toolStats (`obs.explain`'s headline,
- * complete) against the persisted per-session rollup toolStats (`obs.fleet.health`'s
+ * complete) against the persisted per-session rollup toolStats (`obs.system.health`'s
  * source, latest-execution-wins).
  *
  * The two lenses read structurally-different sources and so CAN differ — but only
@@ -185,7 +185,7 @@ function countPairOf(raw: unknown): CountPair {
  * `sessionEnd` is overwritten each execution, while the trajectory `.jsonl` is
  * APPENDED across every execution. So the rollup is a SUBSET of the trajectory:
  * `rollup.{ok,failed} ≤ trajectory.{ok,failed}` per tool. That is the documented,
- * bounded reason `comis explain` and `comis fleet` can show different per-tool
+ * bounded reason `comis explain` and `comis system-health` can show different per-tool
  * numbers for the same session — they MUST NOT contradict beyond it.
  *
  * - `divergentTools` lists every tool whose persisted rollup count differs from
@@ -209,9 +209,9 @@ function reconcileToolStats(
   const divergentTools: ToolStatsDivergence[] = [];
   let reconciled = true;
 
-  // Only the rollup's tools can produce a fleet/explain divergence: a
+  // Only the rollup's tools can produce a system/explain divergence: a
   // trajectory-only tool (not in the rollup) is expected (the rollup is the last
-  // execution) and is NOT a contradiction — fleet simply has not persisted it.
+  // execution) and is NOT a contradiction — system simply has not persisted it.
   // A rollup tool whose count exceeds the trajectory IS a contradiction.
   for (const tool of Object.keys(rollupToolStats ?? {}).sort()) {
     const rollup = countPairOf((rollupToolStats ?? {})[tool]);
@@ -410,7 +410,7 @@ export function assembleIncidentReport(
   // masquerading as a clean session.
   const offloadsResolved = offloads.filter((o) => o.pointer !== "<offloaded>").length;
   // Reconcile the headline (whole-session trajectory) toolStats against the
-  // persisted per-session rollup that obs.fleet.health reads (latest-execution).
+  // persisted per-session rollup that obs.system.health reads (latest-execution).
   // Makes the structural divergence TRANSPARENT (rollup ⊆ trajectory) so the two
   // commands can never silently contradict for the same session.
   const toolStatsReconciliation = reconcileToolStats(signals.toolStats, rollupToolStats);

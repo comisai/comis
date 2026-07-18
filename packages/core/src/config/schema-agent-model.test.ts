@@ -307,6 +307,15 @@ describe("OperationModelsSchema", () => {
     expect(result.cron?.timeout).toBe(150_000);
   });
 
+  it("accepts a per-agent outcome judge model override", () => {
+    const result = OperationModelsSchema.parse({
+      outcomeJudge: { model: "anthropic:claude-haiku-4-5-20251001", timeout: 30_000 },
+    });
+
+    expect(result.outcomeJudge?.model).toBe("anthropic:claude-haiku-4-5-20251001");
+    expect(result.outcomeJudge?.timeout).toBe(30_000);
+  });
+
   it("accepts 'primary' keyword as a nested model value", () => {
     const result = OperationModelsSchema.parse({
       heartbeat: { model: "primary" },

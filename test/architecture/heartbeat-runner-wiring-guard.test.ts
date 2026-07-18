@@ -24,8 +24,8 @@
  * (heartbeat-handlers.test.ts); only the LIVE wiring was missing — the program's
  * #1 recurring blocker class (identical shape to the lease.revoke gap).
  *
- * Live incident (fleet-marathon, gpt-5.6-sol): `heartbeat.trigger {agentId}` →
- * "Heartbeat runner not available"; `heartbeat.states` → `{agents:[]}`; daemon.log
+ * If `perAgentRunner` is not threaded, `heartbeat.trigger {agentId}` returns
+ * "Heartbeat runner not available" and `heartbeat.states` returns `{agents:[]}` despite
  * "Per-agent heartbeat runner started" agentCount=1.
  *
  * This guard pins the live wiring: `buildRpcDispatchDeps` must thread
@@ -77,8 +77,8 @@ describe("heartbeat management (heartbeat.trigger / heartbeat.states) built-but-
     // wakeCoalescer IS wired from the boot context (both live on `c` via the
     // post-channels Object.assign) — this is the sibling that works.
     expect(code).toMatch(/wakeCoalescer:\s*c\.wakeCoalescer/);
-    // perAgentRunner from the SAME boot context MUST be threaded too — else
-    // heartbeat.trigger/states are dead live (the fleet-marathon finding).
+    // perAgentRunner from the same boot context must be threaded too, otherwise
+    // heartbeat.trigger/states cannot reach the running agents.
     expect(code).toMatch(/perAgentRunner:\s*c\.perAgentRunner/);
   });
 });

@@ -4,7 +4,7 @@
  *
  * Captures the three in-process load-level recall signals as a one-shot
  * `obs_diagnostics` row at startup, so a degraded-recall root cause (embedding
- * provider or reranker absent) is queryable cross-session via the fleet lens
+ * provider or reranker absent) is queryable cross-session via the system health view
  * instead of living only as an ephemeral boot boolean + Pino line:
  *   - `embeddingAvailable`    — the cached embedding wrapper is present
  *                               (derived `!!cachedPort` at the boot site).
@@ -19,7 +19,7 @@
  * Two advisory signals — `embeddingMultilingual` and
  * `rerankerMultilingual` (each `true | false | "unknown"`) — mean a degraded
  * non-Latin semantic-recall stack (an English-leaning embedder/reranker) is
- * named in one `comis fleet` look. They are ADVISORY ONLY: nothing gates search
+ * named in one `comis system-health` look. They are ADVISORY ONLY: nothing gates search
  * or recall on them (the FTS trigram floor carries recall regardless).
  *
  * `details` carries ONLY the booleans / `"unknown"` markers — no provider
@@ -48,7 +48,7 @@ export interface ModelHealthSignals {
   rerankerMultilingual: boolean | "unknown";
   /** The vec0 twins rebuilt at THIS boot because the embedder dimension
    *  changed (closed table names + two integers — content-free). Present only
-   *  when a rebuild happened, so the fleet drill-down confirms the heal ran
+   *  when a rebuild happened, so the system drill-down confirms the heal ran
    *  and names both dimensions in one look. */
   vecRebuilt?: readonly VecTableRebuild[];
   /** Memories awaiting their vector twin (`has_embedding = 0`) at boot — the

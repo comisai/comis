@@ -241,6 +241,8 @@ export interface ResumePrincipal {
   readonly ownerUserId: string;
   readonly deliveryOrigin: DeliveryOrigin | null;
   readonly trustLevel: UserTrustLevel;
+  /** Immutable operator-policy snapshot hash captured by the parent turn. */
+  readonly workspacePolicyHash?: string;
   readonly caps: readonly AgentCapability[];
 }
 
@@ -272,6 +274,8 @@ export interface DurableRowInput {
   readonly nowMs: number;
   /** Exact authenticated trust inherited by a restart re-minted lease. */
   readonly trustLevel: UserTrustLevel;
+  /** Immutable operator-policy snapshot hash captured by the parent turn. */
+  readonly workspacePolicyHash?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +309,9 @@ export function buildResumableRow(input: DurableRowInput): DurableRunRecord {
     lastHeartbeatAt: input.nowMs,
     scriptRef: input.scriptRef,
     checkpointRef: input.checkpointRef ?? null,
+    ...(input.workspacePolicyHash === undefined
+      ? {}
+      : { workspacePolicyHash: input.workspacePolicyHash }),
   };
 }
 

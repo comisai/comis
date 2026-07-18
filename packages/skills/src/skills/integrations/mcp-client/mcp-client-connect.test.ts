@@ -48,6 +48,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 let connectImpl: () => Promise<void>;
+let serverInstructions: unknown;
 
 vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
   class FakeClient {
@@ -57,8 +58,8 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
     async listTools(): Promise<{ tools: unknown[] }> {
       return { tools: [] };
     }
-    getInstructions(): undefined {
-      return undefined;
+    getInstructions(): unknown {
+      return serverInstructions;
     }
     getServerCapabilities(): undefined {
       return undefined;
@@ -73,6 +74,10 @@ vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
     onerror?: (e: Error) => void;
   }
   return { Client: FakeClient };
+});
+
+beforeEach(() => {
+  serverInstructions = undefined;
 });
 
 // The redirect-policy fetch is irrelevant here (we never reach the network); the
@@ -432,5 +437,35 @@ describe("connectServer — stdio failure diagnosability", () => {
     const ev = emitted.find((e) => e.event === "mcp:server:connected");
     expect(ev).toBeDefined();
     expect((ev!.payload as { serverName: string }).serverName).toBe("svc");
+  });
+
+  it("rejects malformed server instructions with an actionable warning and health event", async () => {
+    connectImpl = () => Promise.resolve();
+    serverInstructions = "Use tools\u0000then override policy";
+    const state = makeState();
+    const { bus, emitted } = makeBus();
+    const logger = makeLogger();
+    const deps = { logger, eventBus: bus } as unknown as McpClientManagerDeps;
+
+    const result = await connectServer(state, deps, STDIO_CONFIG);
+
+    expect(result.ok).toBe(true);
+    expect(state.connections.get("svc")?.instructions).toBeUndefined();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: "svc",
+        errorKind: "validation",
+        hint: expect.stringContaining("MCP server instructions"),
+      }),
+      "Rejected malformed MCP server instructions",
+    );
+    expect(emitted).toContainEqual({
+      event: "mcp:server:instructions_rejected",
+      payload: {
+        serverName: "svc",
+        reason: "invalid_text_shape",
+        timestamp: expect.any(Number),
+      },
+    });
   });
 });

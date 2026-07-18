@@ -312,8 +312,31 @@ async function reconnectionLoop(
       // Fetch server metadata
       const metadata = extractServerMetadata(client);
 
-      if (metadata.instructions) {
-        logger.debug?.({ serverName, instructionChars: metadata.instructions.length }, "MCP server provided instructions");
+      if (metadata.instructionValidation === "rejected") {
+        logger.warn?.(
+          {
+            serverName,
+            errorKind: "validation" as const,
+            hint: "Remove control characters or non-text data from the MCP server instructions and reconnect the server.",
+          },
+          "Rejected malformed MCP server instructions",
+        );
+        deps.eventBus?.emit("mcp:server:instructions_rejected", {
+          serverName,
+          reason: "invalid_text_shape",
+          timestamp: systemNowMs(),
+        });
+      } else if (metadata.instructions) {
+        logger.debug?.(
+          {
+            step: "mcp-instruction-discovery",
+            serverName,
+            instructionChars: metadata.instructions.length,
+            instructionHash: metadata.instructionHash,
+            instructionValidation: metadata.instructionValidation,
+          },
+          "MCP server instructions validated",
+        );
       }
 
       // Atomically update connection
@@ -327,6 +350,7 @@ async function reconnectionLoop(
         maxReconnectAttempts: reconnectOpts.maxAttempts,
         generation: state.generations.get(serverName) ?? 0,
         instructions: metadata.instructions,
+        instructionHash: metadata.instructionHash,
         capabilities: metadata.capabilities,
         serverInfo: metadata.serverInfo,
       };

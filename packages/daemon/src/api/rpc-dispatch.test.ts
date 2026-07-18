@@ -287,7 +287,7 @@ describe("classifyRpcError", () => {
   it("classifies SandboxDowngradeError as precondition error (warn level)", () => {
     // A fail-closed P0-C no-downgrade spawn refusal is an EXPECTED security precondition
     // failure, NOT an internal handler fault — it must classify warn/precondition so a
-    // fleet health sweep does not read it as an ERROR.
+    // system health sweep does not read it as an ERROR.
     // The daemon classifies by Error.name (via @comis/core classifyTypedRpcError) — it no
     // longer imports the @comis/agent class. Construct exactly what the dispatch layer sees.
     const e = new Error('Spawn refused: child "x" sandbox posture is less confined than parent "p" on: exec.');
@@ -306,7 +306,7 @@ describe("classifyRpcError", () => {
   });
 
   // An admin-trust denial is an EXPECTED authorization refusal, not an
-  // internal/handler fault — auth/warn, so an operator's wrong-trust call doesn't read as a fleet ERROR.
+  // internal/handler fault — auth/warn, so an operator's wrong-trust call doesn't read as a system ERROR.
   it("classifies AuthorizationError as auth error (warn level), NOT internal/error", () => {
     const result = classifyRpcError(new AuthorizationError("Admin access required for obs.explain (admin-trust only)"));
     expect(result.errorKind).toBe("auth");
@@ -1221,8 +1221,8 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
       evictRegistry,
       abortEvents: () => pull("execution:aborted"),
       // The dedicated content-free autonomy event the trip
-      // emits BESIDE execution:aborted so `comis fleet` surfaces the denial-breaker
-      // count (the abort reason is never a session endReason, so the fleet lens has
+      // emits BESIDE execution:aborted so `comis system-health` surfaces the denial-breaker
+      // count (the abort reason is never a session endReason, so the system health view has
       // no other ingestion path).
       denialBreakerEvents: () => pull("autonomy:denial_breaker_tripped"),
     };
@@ -1371,7 +1371,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
 
     await expect(callDeny()).rejects.toBeInstanceOf(CapabilityDeniedError); // 1
     await expect(callDeny()).rejects.toBeInstanceOf(CapabilityDeniedError); // 2
-    // Before the trip: no abort, no kill, no fleet denial-breaker event.
+    // Before the trip: no abort, no kill, no system denial-breaker event.
     expect(abortEvents()).toHaveLength(0);
     expect(killByRootRun).not.toHaveBeenCalled();
     expect(denialBreakerEvents()).toHaveLength(0);
@@ -1387,7 +1387,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
     expect(killByRootRun).toHaveBeenCalledTimes(1);
     expect(killByRootRun).toHaveBeenCalledWith("root-session-tenant-a:user-7:chan-9");
     // The trip ALSO emits the content-free autonomy:denial_breaker_tripped
-    // event (the fleet-ingestion path — execution:aborted has none). It carries the
+    // event (the system-ingestion path — execution:aborted has none). It carries the
     // rootRunId (an id) + a timestamp ONLY — never the free-text deny reason.
     const denialEvents = denialBreakerEvents();
     expect(denialEvents).toHaveLength(1);

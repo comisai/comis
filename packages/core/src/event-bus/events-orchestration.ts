@@ -260,7 +260,7 @@ export interface OrchestrationEvents {
    * Emitted DAEMON-SIDE (the graph.define / graph.execute handlers)
    * where schema validity is determined (the buildGraphInput parse + validate)
    * and the resolved capabilityClass arrives. Mirrors the
-   * memory:generation_quality triple (event -> health_signal row -> fleet
+   * memory:generation_quality triple (event -> health_signal row -> system
    * finding). NEVER a pipeline body, a type_config value, a node task/label, or
    * a secret (AGENTS.md §2.7) — closed enums + booleans only; every payload is
    * reconstructable from the bus alone.
@@ -328,7 +328,7 @@ export interface OrchestrationEvents {
    * A durable run did NOT resume after a restart —
    * the boot/watchdog resume pass orphaned it (durable-resume-engine.ts orphan()).
    * Emitted DAEMON-SIDE; bridges to a content-free `health_signal` obs row
-   * (obs-autonomy-rows.ts) so `comis fleet` surfaces an orphaned-run count.
+   * (obs-autonomy-rows.ts) so `comis system-health` surfaces an orphaned-run count.
    * Content-free by construction: the `reason` is a CLOSED enum —
    * the engine's free-text reason ("not resumable: status=…", "reread failed",
    * "invalid record", "invalid caps", "resume failed") is mapped to a member via the TOTAL
@@ -398,8 +398,8 @@ export interface OrchestrationEvents {
    * TOOL-failure breaker (`execution:aborted{reason:"circuit_breaker"}` → the
    * session-rollup `breakerTripCount` → `breakerTripTotal`) and from kill/revoke:
    * the denial-breaker abort is NEVER a session endReason and NEVER a
-   * breakerTripCount, so this dedicated event is the ONLY fleet-ingestion path for
-   * it — without it the trip is invisible to `comis fleet` (the aborted run lands
+   * breakerTripCount, so this dedicated event is the ONLY system-ingestion path for
+   * it — without it the trip is invisible to `comis system-health` (the aborted run lands
    * in durable status 'completed', so it shows
    * 0 in orphaned/revoked/killed/breakerTrips too). Carries the rootRunId (an id) +
    * timestamp ONLY — NEVER the engine's free-text deny reason (which stays on the
@@ -409,7 +409,7 @@ export interface OrchestrationEvents {
 
   /**
    * A completed `orchestrate` run — the content-free per-run summary
-   * every `comis explain` / `comis fleet` consumer reads. Emitted from the
+   * every `comis explain` / `comis system-health` consumer reads. Emitted from the
    * `orchestrate` TOOL (agent-side, where the threaded eventBus reaches the live
    * per-session trajectory bridge), NOT a daemon graph handler — the per-session
    * recordEvent on the graph-handler deps is a permanent no-op. Timing is safe:

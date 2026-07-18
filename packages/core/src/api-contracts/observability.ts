@@ -16,8 +16,8 @@
  *   Trace (3):       obs.trace.{export,search,tail}
  *   Explain (1):     obs.explain  (IncidentReport assembler;
  *                    contract + wire schema in sibling `incident-report.ts`)
- *   Fleet (1):       obs.fleet.health  (cross-session FleetHealthReport;
- *                    contract + wire schema in `fleet-health-report.ts`)
+ *   System (1):       obs.system.health  (cross-session SystemHealthReport;
+ *                    contract + wire schema in `system-health-report.ts`)
  *
  * Dispatch: the non-Trace methods are web-SPA only (packages/web/src/views/),
  * handled by packages/daemon/src/api/obs-handlers.ts; the Trace group is also
@@ -42,19 +42,19 @@ import { ERROR_KINDS } from "../logging/log-fields.js";
 import { ObsExplainContract } from "./incident-report.js";
 export { ObsExplainContract, IncidentReportSchema, IncidentContextBudgetSchema, IncidentCronWakeGateSchema, IncidentPromptTimeoutSchema } from "./incident-report.js";
 export type { IncidentReport, IncidentFailure, IncidentSignals, IncidentContextBudget, IncidentContextBudgetHistoryEntry, IncidentCronWakeGate, IncidentPromptTimeout } from "./incident-report.js";
-// The `obs.fleet.health` contract + wire schema live in the
-// sibling `fleet-health-report.ts` (file-size split, mirroring incident-report.ts
+// The `obs.system.health` contract + wire schema live in the
+// sibling `system-health-report.ts` (file-size split, mirroring incident-report.ts
 // which holds BOTH IncidentReportSchema + ObsExplainContract). Import the contract
 // for the OBSERVABILITY_CONTRACTS array below; re-export the contract + schema so
 // the `@comis/core` public surface + the registered RPC set carry them.
-import { ObsFleetHealthContract } from "./fleet-health-report.js";
-export { ObsFleetHealthContract, FleetHealthReportSchema } from "./fleet-health-report.js";
-export type { FleetHealthReport } from "./fleet-health-report.js";
+import { ObsSystemHealthContract } from "./system-health-report.js";
+export { ObsSystemHealthContract, SystemHealthReportSchema } from "./system-health-report.js";
+export type { SystemHealthReport } from "./system-health-report.js";
 // The `obs.audit.query` contract + wire schema live
 // in the sibling `audit-query.ts` (the read surface onto the durable
 // obs_audit_events table). Import for the OBSERVABILITY_CONTRACTS array below;
 // re-export the contract + schema so the `@comis/core` public surface + the
-// registered RPC set carry them (the ObsFleetHealthContract precedent).
+// registered RPC set carry them (the ObsSystemHealthContract precedent).
 import { ObsAuditQueryContract } from "./audit-query.js";
 export { ObsAuditQueryContract } from "./audit-query.js";
 export type { AuditEventRowWire, AuditQueryResponse } from "./audit-query.js";
@@ -764,7 +764,7 @@ export const OBSERVABILITY_CONTRACTS = [
   ObsDeliveryStatsContract,
   ObsDiagnosticsContract,
   ObsExplainContract,
-  ObsFleetHealthContract,
+  ObsSystemHealthContract,
   ObsGetCacheStatsContract,
   ObsResetContract,
   ObsResetTableContract,

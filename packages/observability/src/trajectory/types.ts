@@ -211,7 +211,7 @@ export const TRAJECTORY_EVENT_TYPES = [
   // NOT scan — the terminal.drive_promoted precedent), so the bridge mapping is
   // what records it. Content-free: ids + the closed failureClass enum + counts +
   // token ESTIMATES ONLY — never the stderr tail, script body, or tool params.
-  // The `orchestrate` IncidentReport section + the fleet efficiency finding read
+  // The `orchestrate` IncidentReport section + the system efficiency finding read
   // this record.
   "orchestrate.run_summary",
 
@@ -377,7 +377,7 @@ export const TRAJECTORY_EVENT_TYPES = [
   "media.tts.failed",
 
   // The spend kill-switch lifecycle on the explain timeline.
-  // The 3 spend.* events are bridged (not fleet-only rollups) so a spend-killed
+  // The 3 spend.* events are bridged (not system-only rollups) so a spend-killed
   // session's WARNING / ABORT / UNPRICEABLE signals reach `comis explain` and the
   // deterministic verdict. Content-free: the closed
   // SpendScopeKind enum + dollar amounts as NUMBERS + provider/model config ids

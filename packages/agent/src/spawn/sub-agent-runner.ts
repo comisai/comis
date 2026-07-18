@@ -760,6 +760,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         lastHeartbeatAt: clock.now(),
         scriptRef: null,
         checkpointRef: null,
+        workspacePolicyHash: tryGetContext()?.workspacePolicyHash,
       })
       .then((r) => {
         if (!r.ok) {

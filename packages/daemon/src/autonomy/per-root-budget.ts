@@ -139,7 +139,7 @@ export function createPerRootBudget(deps: {
   /**
    * Fired ONCE per (root, limb) when a limb crosses {@link WARN_FRACTION} of
    * its cap — the PRE-TRIP signal (the wiring emits `autonomy:budget_warning`
-   * so the fleet lens sees a session approaching its budget BEFORE the abort
+   * so the system health view sees a session approaching its budget BEFORE the abort
    * wedges it). Re-armed by {@link PerRootBudget.evictRoot}. Optional — absent
    * ⇒ no warning surface (existing callers unchanged).
    */

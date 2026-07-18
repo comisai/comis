@@ -53,7 +53,7 @@ describe("markTrajectoryResolved — per-trajectory resolve dedup", () => {
   });
 
   it("defaults the cap to MAX_TRACKED_RESOLVED_TRAJECTORIES (a bounded, sane value)", () => {
-    // The default cap is a finite bound (not Infinity / 0) — a busy fleet cannot grow
+    // The default cap is a finite bound (not Infinity / 0) — a busy system cannot grow
     // the Set without limit, and a realistic per-turn workload never bites the cap.
     expect(MAX_TRACKED_RESOLVED_TRAJECTORIES).toBeGreaterThan(0);
     expect(Number.isFinite(MAX_TRACKED_RESOLVED_TRAJECTORIES)).toBe(true);

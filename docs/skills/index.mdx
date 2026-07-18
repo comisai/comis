@@ -73,7 +73,7 @@ in total. The 70 break down across functional categories: web (2), files (7),
 apply_patch (1), exec/process (2), terminal driver (9), memory (5 including
 opt-in memory_ask), sessions (6), agents (4 including pipeline), messaging (6),
 scheduling (1), media (6), infrastructure/context (4 + 4 context-DAG), and
-fleet admin (8). See [Built-in Tools](/skills/built-in-tools) and
+system admin (8). See [Built-in Tools](/skills/built-in-tools) and
 [Platform Tools](/skills/platform-tools) for the per-category breakdown.
 </Info>
 
@@ -90,7 +90,7 @@ categories including:
   documents
 - **Infrastructure** -- read and modify configuration at runtime
 - **Memory** -- search, read, and store long-term memories
-- **Fleet management** -- supervisor-level tools for managing the entire
+- **Agent administration** -- supervisor-level tools for managing the entire
   installation
 - **Platform actions** -- platform-specific moderation for Discord, Telegram,
   Slack, and WhatsApp
@@ -162,7 +162,7 @@ for non-interactive runs, so you can quickly set the right level of access:
 - **minimal** -- `read` + `write`, for highly restricted agents
 - **coding** -- file operations, shell, and process management for development agents
 - **messaging** -- `message` + `session_status` for communication-focused agents
-- **supervisor** -- fleet-management tools for administration agents
+- **supervisor** -- system-management tools for administration agents
 - **full** -- all tools with no restrictions (this is the default)
 - **cron-minimal** -- safe subset for scheduled cron jobs (web, message, basic
   file/memory, cron itself)

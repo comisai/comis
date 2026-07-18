@@ -162,7 +162,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // coordinator) ride whichever session bridge is active. Content-free translators
   // (translate-orchestration-payload.ts) forward closed labels/ids/numbers ONLY — never
   // a path/host/uid value, an announcement body, or a task. These ALSO feed
-  // the fleet lens via obs-persistence-wiring (the daemon-wide aggregate surface).
+  // the system health view via obs-persistence-wiring (the daemon-wide aggregate surface).
   "security:sandbox_downgrade_refused": "security.sandbox_downgrade_refused",
   // An attributed sub-agent kill (killRun chokepoint,
   // packages/agent — arch-scanned, so mapped, NOT allowlisted). The payload's
@@ -177,7 +177,7 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   // via `?.emit`. Bridged here for
   // per-session visibility (how many retries a completion took before landing). Content-free
   // (translate-orchestration-payload.ts): runId + closed channelType + attempt count + transient tag
-  // ONLY. NOTE: unlike its deadlettered sibling, retried is trajectory-only for now (NOT yet a fleet
+  // ONLY. NOTE: unlike its deadlettered sibling, retried is trajectory-only for now (NOT yet a system
   // health_signal/finding — a self-healed retry as a daemon-wide aggregate is a follow-up).
   "subagent:delivery_retried": "subagent.delivery_retried",
   "subagent:budget_exceeded": "subagent.budget_exceeded",

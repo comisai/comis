@@ -173,21 +173,21 @@ describe("R8 needs_reauth", () => {
 
 describe("request correlation", () => {
   it("registers MCP progress handling while forwarding the request trace separately", async () => {
-    const serverName = "ituran";
+    const serverName = "inventory";
     const state = makeConnectedState(serverName, () =>
       Promise.resolve({ content: [{ type: "text", text: "{}" }] }),
     );
     const deps = { logger: makeLogger() } as unknown as McpClientManagerDeps;
 
     const result = await runWithContext(makeContext(), () =>
-      callTool(state, deps, `mcp:${serverName}/ituran_places_list`, { name_contains: "area" }),
+      callTool(state, deps, `mcp:${serverName}/inventory_items_list`, { name_contains: "item" }),
     );
 
     expect(result.ok).toBe(true);
     expect(state.connections.get(serverName)?.client.callTool).toHaveBeenCalledWith(
       {
-        name: "ituran_places_list",
-        arguments: { name_contains: "area" },
+        name: "inventory_items_list",
+        arguments: { name_contains: "item" },
         _meta: {
           "comis.ai/requestTraceId": "40000000-0000-4000-8000-000000000004",
         },

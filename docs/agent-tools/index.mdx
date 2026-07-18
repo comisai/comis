@@ -191,12 +191,12 @@ These platform-management tools let agents inspect or modify the running Comis d
 Supervisor tools require admin-level trust. They manage the entire platform, not just the current agent's session. Only agents with the `supervisor` profile or explicit `allow` entries can use these tools.
 
 <Warning>
-Supervisor tools can modify agents, delete sessions, flush memory, and manage gateway tokens. Grant these tools only to trusted agents that need fleet-wide control. See [tool policy](/skills/tool-policy) for how to restrict access.
+Supervisor tools can modify agents, delete sessions, flush memory, and manage gateway tokens. Grant these tools only to trusted agents that need deployment-wide control. See [tool policy](/skills/tool-policy) for how to restrict access.
 </Warning>
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `agents_manage` | Agent fleet management (create, get, update, delete, suspend, resume) | [Infrastructure](/agent-tools/infrastructure) |
+| `agents_manage` | Agent agent administration (create, get, update, delete, suspend, resume) | [Infrastructure](/agent-tools/infrastructure) |
 | `obs_query` | Observability and metrics queries (diagnostics, billing, delivery, channels) | [Infrastructure](/agent-tools/infrastructure) |
 | `sessions_manage` | Session lifecycle management (delete, reset, export, compact) | [Infrastructure](/agent-tools/infrastructure) |
 | `channels_manage` | Channel adapter management (list, get, enable, disable, restart, configure) | [Infrastructure](/agent-tools/infrastructure) |
@@ -288,7 +288,7 @@ Explore each tool category in detail:
     Image analysis, text-to-speech, transcription, and documents
   </Card>
   <Card title="Infrastructure" icon="server" href="/agent-tools/infrastructure">
-    Configuration, gateway control, and fleet management
+    Configuration, gateway control, and agent administration
   </Card>
   <Card title="Browser" icon="window-maximize" href="/agent-tools/browser">
     Headless browser automation and web interaction

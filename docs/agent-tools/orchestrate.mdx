@@ -370,7 +370,7 @@ materialized ResultRefs.
 A run that exited non-zero — or that recorded a `decision: "deny"` on any tool call —
 root-causes to a deterministic **`orchestrate_failed`** `likelyRootCause`: the same signals
 always produce the same verdict, so a failed run is a one-call `comis explain` diagnosis rather
-than a log grep. Across the whole daemon, [`comis fleet`](/reference/json-rpc#obs-fleet-health)
+than a log grep. Across the whole daemon, [`comis system-health`](/reference/json-rpc#obs-system-health)
 rolls the per-run savings into an **`orchestrate_efficiency`** finding (run count + summed
 estimated tokens saved — counts only, safe to paste into a review).
 

@@ -133,7 +133,7 @@ interface BillingHourlyEntry {
 
 /**
  * Dashboard view combining stat cards, system health, context engine summary,
- * sparklines, agent fleet cards with per-agent cost, channel badges, and
+ * sparklines, agent system cards with per-agent cost, channel badges, and
  * live activity feed.
  *
  * Fetches data from both the REST ApiClient and JSON-RPC RpcClient.
@@ -624,7 +624,7 @@ export class IcDashboard extends LitElement {
     this._agentActionPending = agentId;
     try {
       await this.rpcClient.call("agents.delete", { agentId });
-      // Deletion only changes the fleet cards and their cached billing entry;
+      // Deletion only changes the system cards and their cached billing entry;
       // the remaining dashboard datasets do not need to be reloaded.
       const revision = ++this._agentMutationRevision;
       this._agentDeletionMutations.set(agentId, revision);

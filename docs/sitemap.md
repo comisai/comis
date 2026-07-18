@@ -146,7 +146,7 @@ Open-source security-first runtime for AI agents that learn and act across sessi
 - [Trace CLI](https://docs.comis.ai/operations/trace-cli) — comis trace subcommands — search by messageId, traceId, chat, time; export bundles
 - [Incident Bundle Export](https://docs.comis.ai/operations/incident-bundle) — Export a self-contained diagnostic bundle for a session — CLI + slash command + redaction policy
 - [Local Models](https://docs.comis.ai/operations/local-models) — Running Comis on local Ollama models — recommended models with measured receipts, capacity and latency knobs, and what each boot WARN means
-- [Multilingual](https://docs.comis.ai/operations/multilingual) — Which scripts Comis serves (Hebrew · Arabic · Russian · CJK · general non-Latin), the search/token/degradation behavior per script, and the knobs + fleet checks that prove a multilingual stack works
+- [Multilingual](https://docs.comis.ai/operations/multilingual) — Which scripts Comis serves (Hebrew · Arabic · Russian · CJK · general non-Latin), the search/token/degradation behavior per script, and the knobs + system checks that prove a multilingual stack works
 - [systemd](https://docs.comis.ai/operations/systemd) — Running Comis as a systemd service on Linux
 - [Docker](https://docs.comis.ai/operations/docker) — Running Comis in Docker, including Linux production boundaries
 - [Docker Hub Publishing](https://docs.comis.ai/operations/docker-hub) — Publish Comis images to Docker Hub and pull official releases

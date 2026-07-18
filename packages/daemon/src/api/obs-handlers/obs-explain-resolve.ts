@@ -103,7 +103,7 @@ export async function resolveTraceToSession(
 
 /**
  * Resolve an autonomy run's `rootRunId` to its canonical `sessionKey`,
- * so the `fleet → explain` drill-down (paste the worst run's `rootRunId`) shares
+ * so the `system → explain` drill-down (paste the worst run's `rootRunId`) shares
  * the ONE assembler path with the by-sessionKey/by-traceId inputs. The sibling of
  * {@link resolveTraceToSession}. TWO honest sources, in order:
  *

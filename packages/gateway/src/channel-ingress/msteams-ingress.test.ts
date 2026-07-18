@@ -227,10 +227,10 @@ describe("createMsTeamsIngress", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Content-free auth-reject fleet signal.
+// Content-free auth-reject system signal.
 //
 // Each 401 gate fires an injected content-free hook so a forged / expired /
-// wrong-audience / missing-token FLOOD is COUNTABLE by the fleet lens — while
+// wrong-audience / missing-token FLOOD is COUNTABLE by the system health view — while
 // the rejection behavior and the opaque 401 response stay exactly as they were.
 // ---------------------------------------------------------------------------
 describe("createMsTeamsIngress — content-free auth-reject signal", () => {

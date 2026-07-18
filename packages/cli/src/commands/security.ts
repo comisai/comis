@@ -286,7 +286,7 @@ export function registerSecurityCommand(program: Command): void {
   // security audit-log — the durable security-decision audit query.
   // DISTINCT from `security audit` (the local check-runner): this is a REMOTE
   // admin RPC (obs.audit.query) reading the persisted obs_audit_events. The
-  // handler lives in the flat `security-audit-log.ts` (the explain.ts/fleet.ts
+  // handler lives in the flat `security-audit-log.ts` (the explain.ts/system.ts
   // mold); ONLY callTyped is used there (the cli-uses-typed-rpc invariant).
   security
     .command("audit-log")

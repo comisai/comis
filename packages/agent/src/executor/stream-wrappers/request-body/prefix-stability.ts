@@ -204,8 +204,8 @@ export function runPrefixStabilityDiagnostic(
       mutations = [...mutations, callCount];
       if (mutations.length >= THRESHOLD) {
         emitUnstableWarn(logger, config.sessionKey, mutations.length, WINDOW, fd, pSig, cSig, mutationClass);
-        // Surface the churn to the fleet lens (content-free) so a recurring
-        // cache-prefix collapse is a `comis fleet` finding, not a log-only WARN.
+        // Surface the churn to the system health view (content-free) so a recurring
+        // cache-prefix collapse is a `comis system-health` finding, not a log-only WARN.
         config.onPrefixUnstable?.({
           sessionKey: config.sessionKey,
           firstDivergentIndex: fd,

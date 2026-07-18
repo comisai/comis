@@ -256,7 +256,6 @@ export type {
   BootstrapFile,
   TruncationResult,
   PromptMode,
-  RuntimeInfo,
   BootstrapContextFile,
   AssemblerParams,
   SystemPromptBlocks,
@@ -273,6 +272,7 @@ export type {
 // heartbeat code via the agent barrel (it sits next to the workspace helpers
 // as a workspace-state probe).
 export { isHeartbeatContentEffectivelyEmpty } from "./workspace/index.js";
+export { createFilesystemWorkspacePolicyAdapter } from "./workspace/index.js";
 
 // File-state tracker registry (per-session lifetime)
 export { createSessionTrackerRegistry } from "./file-state/session-tracker-registry.js";
@@ -584,6 +584,7 @@ export type { CorrectionVerdict } from "./memory/index.js";
 // gate never sees an orphan. The prompt + triple-bound + the reward cap stay
 // agent-internal (the daemon `observe()`s the seam's already-capped `cappedConfidence`).
 export { createOutcomeJudgeSeam } from "./memory/index.js";
+export type { OutcomeVerdict } from "./memory/index.js";
 // CustomCompletionsModelSpec is consumed by the daemon's judge resolvers;
 // resolveJudgeModel stays package-internal (the seams import it relatively).
 export type { CustomCompletionsModelSpec } from "./memory/index.js";

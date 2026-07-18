@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as fs from "node:fs/promises";
-import { safePath, systemNowMs } from "@comis/core";
-import { incrementOnboardingCount, isIdentityFilled, readWorkspaceState, writeWorkspaceState } from "./workspace-state.js";
+import {
+  incrementOnboardingCount,
+  isIdentityFilled,
+  readWorkspaceState,
+  safePath,
+  systemNowMs,
+  writeWorkspaceState,
+} from "@comis/core";
 
 /** Auto-complete onboarding after this many messages if identity is still unfilled. */
 const MAX_ONBOARDING_MESSAGES = 3;

@@ -171,8 +171,10 @@ export interface InfraEvents {
      * (setup-learning-reactions.ts) can record the prior completed trajectory for
      * a single-agent turn without depending on AsyncLocalStorage at subscriber
      * execution time.
-     */
+    */
     traceId?: string;
+    /** Hash of the exact immutable workspace policy snapshot used by execution. */
+    workspacePolicyHash?: string;
     /** Exact tool executions for completed turns; null when execution did not return a result. */
     toolCalls: number | null;
     /** Exact model calls for completed turns; null when execution did not return a result. */
@@ -510,6 +512,13 @@ export interface InfraEvents {
     transport: "stdio" | "sse" | "http";
     toolCount: number;
     durationMs: number;
+    timestamp: number;
+  };
+
+  /** Server-authored instruction prose was excluded after text-shape validation. */
+  "mcp:server:instructions_rejected": {
+    serverName: string;
+    reason: "invalid_text_shape";
     timestamp: number;
   };
 

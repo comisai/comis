@@ -5,7 +5,7 @@
  * A loopback-bound listener has no off-host network exposure, so running it
  * WITHOUT TLS is benign. This is the ONE definition of that posture judgment,
  * shared by every layer that makes it: the gateway's boot log (warn only on a
- * non-loopback plain-HTTP bind), the fleet `tlsOff` config-posture finding
+ * non-loopback plain-HTTP bind), the system `tlsOff` config-posture finding
  * (suppressed on loopback), and the `gateway-exposure` security check (flags
  * only a `0.0.0.0`-without-TLS bind as critical).
  *

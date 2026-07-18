@@ -87,9 +87,9 @@ describe("CLI entry point", () => {
       // Live resolved-caps + remaining-budget read (capabilities.introspect) —
       // the `comis whoami` surface (live-only, no --offline).
       "whoami",
-      // Cross-session FleetHealthReport triage (obs.fleet.health) — the
+      // Cross-session SystemHealthReport triage (obs.system.health) — the
       // remote-admin sibling of `explain`, DISTINCT from the local `health` doctor.
-      "fleet",
+      "system-health",
       // Offline inbound-message extraction per channel (`comis messages`) —
       // content-bearing by design, so it is offline-only with NO RPC sibling.
       "messages",

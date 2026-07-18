@@ -1,9 +1,9 @@
-import { assembleIncidentReportFromSources, assembleFleetHealthReport, makeRealReader } from "../api/obs-handlers/index.js";
-import { ObsExplainContract, ObsFleetHealthContract } from "@comis/core";
+import { assembleIncidentReportFromSources, assembleSystemHealthReport, makeRealReader } from "../api/obs-handlers/index.js";
+import { ObsExplainContract, ObsSystemHealthContract } from "@comis/core";
 
 /**
- * The trust-flag-FREE obs.explain + obs.fleet.health MCP-client closures
- * (operator-allowlisted `obs_explain` / `obs_fleet_health` tools). Extracted from
+ * The trust-flag-FREE obs.explain + obs.system.health MCP-client closures
+ * (operator-allowlisted `obs_explain` / `obs_system_health` tools). Extracted from
  * daemon.ts `bootGateway` to keep daemon.ts within the ≤3000-line architecture cap.
  *
  * SECURITY: these closures run the SAME assemblers the admin RPC
@@ -28,28 +28,28 @@ import { ObsExplainContract, ObsFleetHealthContract } from "@comis/core";
  * `boot.durableRunStore`. Absent (durability off) ⇒ honest degradation (the autonomy
  * block is omitted), byte-identical with the offline path.
  */
-type FleetAssemblerDeps = Parameters<typeof assembleFleetHealthReport>[0];
+type SystemAssemblerDeps = Parameters<typeof assembleSystemHealthReport>[0];
 
 export function buildObsMcpClientClosures(deps: {
   dataDir: string;
-  obsStore: FleetAssemblerDeps["obsStore"];
-  clock: FleetAssemblerDeps["clock"];
-  durableRuns: FleetAssemblerDeps["durableRuns"];
+  obsStore: SystemAssemblerDeps["obsStore"];
+  clock: SystemAssemblerDeps["clock"];
+  durableRuns: SystemAssemblerDeps["durableRuns"];
 }): {
   obsExplainForMcpClient: (params: Record<string, unknown>) => Promise<unknown>;
-  obsFleetHealthForMcpClient: (params: Record<string, unknown>) => Promise<unknown>;
+  obsSystemHealthForMcpClient: (params: Record<string, unknown>) => Promise<unknown>;
 } {
   const reader = makeRealReader(deps.dataDir, deps.obsStore);
   const obsExplainForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
     const parsed = ObsExplainContract.request.parse(params);
     return assembleIncidentReportFromSources(reader, deps.dataDir, parsed);
   };
-  const obsFleetHealthForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
-    const parsed = ObsFleetHealthContract.request.parse(params);
-    return assembleFleetHealthReport(
+  const obsSystemHealthForMcpClient = (params: Record<string, unknown>): Promise<unknown> => {
+    const parsed = ObsSystemHealthContract.request.parse(params);
+    return assembleSystemHealthReport(
       { obsStore: deps.obsStore, dataDir: deps.dataDir, clock: deps.clock, durableRuns: deps.durableRuns },
       parsed.sinceHours ?? 24,
     );
   };
-  return { obsExplainForMcpClient, obsFleetHealthForMcpClient };
+  return { obsExplainForMcpClient, obsSystemHealthForMcpClient };
 }

@@ -32,11 +32,8 @@
  *     registry reloads between turns. Only LIVE-RUNTIME accessors are
  *     forbidden; config-derived booleans do not flow through
  *     `assemblerParams`.
- *   - `bootstrap/` and `workspace/` directories remain agent-owned.
- *     Both directories are executor support (LLM system-prompt assembly
- *     + ~/.comis/ filesystem-layout management), NOT inbound message
- *     handling. A future PR that moves either directory to orchestrator
- *     fails CI at the existsSync boundary below.
+ *   - Prompt assembly and turn-scoped workspace adapters remain agent-owned;
+ *     canonical workspace lifecycle and template policy remain core-owned.
  *
  * @module
  */
@@ -536,7 +533,7 @@ describe("@comis/agent -- architecture invariants", () => {
       }
     });
 
-    it("workspace/ remains agent-owned (executor workspace runtime, not inbound)", () => {
+    it("keeps turn-scoped workspace adapters in agent and lifecycle policy in core", () => {
       const workspaceDir = resolve(SRC_ROOT, "workspace");
       expect(
         existsSync(workspaceDir),
@@ -545,17 +542,26 @@ describe("@comis/agent -- architecture invariants", () => {
           "not inbound message handling.",
       ).toBe(true);
 
-      // Sanity: the barrel + the load-bearing modules are present.
+      // Agent owns execution-time adapters and probes.
       const expectedFiles = [
         "index.ts",
-        "workspace-manager.ts",
+        "filesystem-workspace-policy-adapter.ts",
+        "onboarding-detector.ts",
         "boot-file.ts",
         "data-env.ts",
       ];
       for (const f of expectedFiles) {
         expect(
           existsSync(resolve(workspaceDir, f)),
-          `${f} must exist in packages/agent/src/workspace/ (agent-owned).`,
+          `${f} must exist in packages/agent/src/workspace/ (turn-scoped adapter).`,
+        ).toBe(true);
+      }
+
+      const coreWorkspaceDir = resolve(PKG_ROOT, "../core/src/workspace");
+      for (const f of ["workspace-manager.ts", "workspace-state.ts", "templates.ts"]) {
+        expect(
+          existsSync(resolve(coreWorkspaceDir, f)),
+          `${f} must exist in packages/core/src/workspace/ (canonical policy).`,
         ).toBe(true);
       }
     });

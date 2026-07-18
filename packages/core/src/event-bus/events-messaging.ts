@@ -446,9 +446,9 @@ export interface MessagingEvents {
 
   /** A non-Latin search returned zero hits on a CLEANLY-executed lane.
    *  The marquee non-Latin failure mode — "Hebrew finds nothing" —
-   *  made fleet-visible instead of DEBUG-only. Bridged to the trajectory as
+   *  made system-visible instead of DEBUG-only. Bridged to the trajectory as
    *  `context.script_zero_hit` (the explain timeline) AND persisted as a
-   *  `health_signal` row (the fleet path); both paths are required.
+   *  `health_signal` row (the system path); both paths are required.
    *  Payload is a closed `ScriptClass` enum + a closed lane union + identifiers
    *  ONLY — NEVER the query text or any tokens (§2.7; the lossless store).
    *  Fires only when the lane executed cleanly: a `safeAll`-swallowed FTS5 syntax

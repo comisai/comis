@@ -193,7 +193,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         if (!laneRes.ok) {
           // The whole lane split failed — this turn runs with NO recall. Emit
           // the degradation marker so the failure reaches the trajectory +
-          // fleet (observed live: hours of per-turn recall failures visible
+          // system (observed live: hours of per-turn recall failures visible
           // only as log WARNs).
           emitRecallDegraded(deps, sessionKey, agentId, "lanes", "internal");
           return laneRes;

@@ -20,8 +20,8 @@
  * a value derivable ONLY from the pointer target, so a regression to co-location
  * (or to a flat `sessions/<id>` guess) fails here loudly.
  *
- * Only `assembleFleet` and daemon-liveness are stubbed (so a unit run never
- * loads the fleet graph); the session/deep resolution runs the real seams.
+ * Only `assembleSystem` and daemon-liveness are stubbed (so a unit run never
+ * loads the system graph); the session/deep resolution runs the real seams.
  *
  * Temp dirs ONLY — never `~/.comis` (AGENTS.md §6). `path.join` is test-only-legal
  * (the no-path.join rule scopes to non-test src); the SUT resolves via the
@@ -35,7 +35,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { safePath } from "@comis/core";
-import type { FleetHealthReport } from "@comis/core";
+import type { SystemHealthReport } from "@comis/core";
 import { writeTrajectoryPointerFileBestEffort } from "@comis/observability";
 
 import { generateSupportBundle } from "./generate.js";
@@ -70,11 +70,11 @@ const EXPECTED_TRACE_FILES = [
 ];
 
 /**
- * A hermetic empty-window fleet report, injected so the run never loads the
- * daemon fleet graph. The session/deep paths still exercise the REAL assembler +
- * exporter — only the cross-session fleet digest is stubbed.
+ * A hermetic empty-window system report, injected so the run never loads the
+ * daemon system graph. The session/deep paths still exercise the REAL assembler +
+ * exporter — only the cross-session system digest is stubbed.
  */
-function emptyFleet(): FleetHealthReport {
+function emptySystem(): SystemHealthReport {
   return {
     schemaVersion: 1,
     windowHours: 24,
@@ -254,7 +254,7 @@ describe("support bundle --session — resolves the incident via the on-disk poi
         session: fx.sessionKey,
         deep: false,
         isDaemonRunning: async () => false,
-        assembleFleet: async () => emptyFleet(),
+        assembleSystem: async () => emptySystem(),
       });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
@@ -320,7 +320,7 @@ describe("support bundle --deep — exports the trace bundle from the pointer ta
         session: fx.sessionKey,
         deep: true,
         isDaemonRunning: async () => false,
-        assembleFleet: async () => emptyFleet(),
+        assembleSystem: async () => emptySystem(),
       });
       expect(result.ok).toBe(true);
       if (!result.ok) return;
@@ -391,7 +391,7 @@ describe("support bundle — dead daemon (no audit store) degrades honestly", ()
         session: fx.sessionKey,
         deep: false,
         isDaemonRunning: async () => false,
-        assembleFleet: async () => emptyFleet(),
+        assembleSystem: async () => emptySystem(),
       });
 
       // Partial output, not a crash: the bundle is still produced.

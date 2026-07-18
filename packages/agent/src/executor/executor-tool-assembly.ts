@@ -284,6 +284,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     config,
     deps: {
       workspaceDir: effectiveWorkspaceDir, // AGENTS.md/BOOT.md from the run's working tree.
+      workspacePolicySnapshot: deps.workspacePolicySnapshot,
       // Forward the data dir so the recall-trace recorder's base resolves
       // from the same source as the memory.recall_trace reader.
       dataDir: deps.dataDir,
@@ -326,7 +327,6 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       mcpToolsInherited: deps.mcpToolsInherited,
       isFirstMessageInSession,
       senderTrustDisplayConfig: deps.senderTrustDisplayConfig,
-      documentationConfig: deps.documentationConfig,
       eventBus: deps.eventBus,
       spawnPacket: executionOverrides?.spawnPacket,
       deliveryMirror: deps.deliveryMirror,

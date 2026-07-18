@@ -116,7 +116,7 @@ export function clampFactorText(m: AgentMessage): string {
  * of a completed summary against its source chunk; when a NON-Latin source
  * produced a Latin summary, emit `context:summary_language_mismatch` (a weak
  * local summarizer silently writing English summaries of Hebrew chunks becomes
- * a counted `comis fleet` finding with the `strongerSummarizerModel` remedy hint).
+ * a counted `comis system-health` finding with the `strongerSummarizerModel` remedy hint).
  *
  * VISIBILITY ONLY — no gating, no rejection, no behavior change to the summarize
  * paths (validation-gating is deliberately rejected: a mixed code-heavy chunk

@@ -23,20 +23,20 @@ export {
 export { makeRealReader } from "./obs-explain-readers.js";
 
 // The multi-day session-index aggregate reader — the activity half
-// of the fleet lens. Generalizes the single-traceId resolveTraceToSession into a
+// of the system health view. Generalizes the single-traceId resolveTraceToSession into a
 // windowed aggregate over <dataDir>/logs/session-index.*.jsonl. Re-exported so
-// the obs.fleet.health handler can assemble it alongside the other aggregates.
+// the obs.system.health handler can assemble it alongside the other aggregates.
 export {
   readSessionIndexWindow,
-  type FleetSessionIndexSummary,
-} from "./fleet-session-index.js";
+  type SystemSessionIndexSummary,
+} from "./system-session-index.js";
 
-// The obs.fleet.health assembler. Re-exported so the daemon composition
-// root can build the trust-flag-FREE obsFleetHealthForMcpClient closure
+// The obs.system.health assembler. Re-exported so the daemon composition
+// root can build the trust-flag-FREE obsSystemHealthForMcpClient closure
 // over the SAME assembler the admin RPC handler delegates to — mirroring the
-// assembleIncidentReportFromSources re-export above (the obs_fleet_health MCP tool
+// assembleIncidentReportFromSources re-export above (the obs_system_health MCP tool
 // runs it directly under daemon authority; no admin RPC, no admin trust).
-export { assembleFleetHealthReport } from "./fleet-health.js";
+export { assembleSystemHealthReport } from "./system-health.js";
 
 // The obs.audit.query binder. Re-exported for symmetry with
 // the other obs-handler slices; the daemon composition root spreads it into
@@ -62,7 +62,7 @@ import { bindObsSystemPromptReportHandlers } from "./obs-system-prompt-report.js
 import { bindConfigAuditHandlers } from "./config-audit.js";
 import { bindObsTraceHandlers } from "./obs-trace.js";
 import { bindObsExplainHandlers } from "./obs-explain.js";
-import { bindFleetHealthHandlers } from "./fleet-health.js";
+import { bindSystemHealthHandlers } from "./system-health.js";
 import { bindObsAuditHandlers } from "./obs-audit.js";
 import { bindObsCacheBreaksHandlers } from "./obs-cache-breaks.js";
 import { bindObsSpendHandlers } from "./obs-spend.js";
@@ -83,7 +83,7 @@ export function createObsHandlers(deps: ObsHandlerDeps): Record<string, RpcHandl
     ...bindConfigAuditHandlers(deps),
     ...bindObsTraceHandlers(deps),
     ...bindObsExplainHandlers(deps),
-    ...bindFleetHealthHandlers(deps),
+    ...bindSystemHealthHandlers(deps),
     ...bindObsAuditHandlers(deps),
     ...bindObsCacheBreaksHandlers(deps),
     ...bindObsSpendHandlers(deps),

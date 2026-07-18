@@ -166,6 +166,7 @@ export async function executeAndDeliver(
   } | undefined;
   let rejectionStage: "execution" | "delivery" = "execution";
   let rejectionErrorKind: ErrorKind = "internal";
+  let workspacePolicyHash: string | undefined;
   let coordinator: ActivityTurnCoordinator | undefined;
   let coordinatorStarted = false;
   let coordinatorFinalized = false;
@@ -239,6 +240,7 @@ export async function executeAndDeliver(
         // context retains the trajectory traceId throughout the turn; absent only
         // on direct non-entry calls (the writer then fails closed).
         traceId: tryGetContext()?.traceId,
+        ...(workspacePolicyHash === undefined ? {} : { workspacePolicyHash }),
         toolCalls: callCounts.toolCalls,
         llmCalls: callCounts.llmCalls,
         status: outcome.status,
@@ -345,6 +347,7 @@ export async function executeAndDeliver(
   const { replyTo, trustLevel } = policy;
   if (policy.kind === "denied") {
     const policyResult = policy.result;
+    workspacePolicyHash = policyResult.workspacePolicyHash;
     knownUsage = {
       tokensUsed: policyResult.tokensUsed.total,
       cost: policyResult.cost.total,
@@ -431,6 +434,7 @@ export async function executeAndDeliver(
       toolCalls: execResult.result?.stepsExecuted ?? null,
       llmCalls: execResult.result?.llmCalls ?? null,
     };
+    workspacePolicyHash = execResult.result?.workspacePolicyHash;
     knownUsage = {
       tokensUsed: execResult.tokensUsed,
       cost: execResult.cost,

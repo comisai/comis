@@ -137,7 +137,7 @@ describe("role:coordinator narrows to the orchestration surface (no escalation)"
       violations,
       formatViolations({
         description:
-          "The coordinator surface is missing an orchestration/observability tool — the lead cannot spawn, schedule, route, or observe its fleet.",
+          "The coordinator surface is missing an orchestration/observability tool — the lead cannot spawn, schedule, route, or observe its system.",
         violations,
         suggestedFix:
           "Keep sessions_spawn, pipeline, cron, message, and obs_query in TOOL_PROFILES.coordinator. obs_query is a tool-NAME on the profile, not a new obs:read capability.",

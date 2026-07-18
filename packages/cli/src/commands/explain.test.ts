@@ -290,7 +290,7 @@ describe("comis explain default (table) renders key report fields", () => {
     expect(output).toContain("14 tool failures across 25 turns");
     expect(output).toContain("content_heuristic_misclassification");
     // The token figure names its basis so it doesn't read as the same "tok" as
-    // fleet's (which excludes cache). explain = the full model-call ledger.
+    // system's (which excludes cache). explain = the full model-call ledger.
     expect(output).toContain("735800 tok (incl cache reads)");
     // The table branch must NOT have emitted the whole report as JSON.
     expect(() => JSON.parse(output)).toThrow();

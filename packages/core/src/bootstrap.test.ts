@@ -5,6 +5,8 @@ import * as path from "node:path";
 import { describe, it, expect, afterEach } from "vitest";
 import type { AppContainer } from "./bootstrap.js";
 import { bootstrap, INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME } from "./bootstrap.js";
+import { err } from "@comis/shared";
+import type { WorkspacePolicyPort } from "./ports/workspace-policy.js";
 
 describe("bootstrap", () => {
   const tmpDirs: string[] = [];
@@ -48,6 +50,27 @@ describe("bootstrap", () => {
       expect(result.value.config).toBeDefined();
       expect(result.value.config.tenantId).toBe("test");
       expect(result.value.config.logLevel).toBe("debug");
+    }
+  });
+
+  it("wires the workspace policy adapter factory into the application container", () => {
+    const dir = makeTmpDir();
+    const configPath = writeYaml(dir, "config.yaml", "tenantId: policy-test\n");
+    const workspacePolicyPort: WorkspacePolicyPort = {
+      load: async (agentId) => err({ kind: "agent_not_found", agentId }),
+      get: (policyHash) => err({ kind: "snapshot_not_found", policyHash }),
+    };
+
+    const result = bootstrap({
+      configPaths: [configPath],
+      env: {},
+      workspacePolicyPortFactory: () => workspacePolicyPort,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      containers.push(result.value);
+      expect(result.value.workspacePolicyPort).toBe(workspacePolicyPort);
     }
   });
 

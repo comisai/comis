@@ -2,7 +2,7 @@
 
 ## Prime directives (non-negotiable)
 1. **A false success is the worst outcome.** Before optimizing for success, make the system tell the *truth* about failure. A run that silently claims "done" while broken gets fixed first.
-2. **Diagnose from evidence, not hypotheses.** Read the trajectory / `explain` / `fleet` / DB. Never patch a cause you have not observed.
+2. **Diagnose from evidence, not hypotheses.** Read the trajectory / `explain` / `system` / DB. Never patch a cause you have not observed.
 3. **One root cause per iteration, fixed test-first.** Write a RED test reproducing the *live* failure shape (use the real payload from the trajectory), then make it GREEN. Expect a *chain* of causes — each fix unblocks the next.
 4. **Verify against ground truth, not the surface.** The real artifact usually lives somewhere other than the reply — on disk, in a queue, in `memory.db`, in the emulator's recorded outbound. Find it. Use **two oracles** (`03-OBSERVABILITY.md`).
 5. **Stop when the success predicate holds** — defined concretely per test — and not before.
@@ -29,7 +29,7 @@
 7. **Rebuild + clean-restart** and **prove you're running the new code** — a live process holds the old `dist/` in memory.
 8. **Reproduce on the clean slate** — drive the *same* failing test again from zero.
 9. **Confirm** the predicate now holds **against ground truth (both oracles)**, *and* that a forced failure still **degrades honestly** (both branches).
-10. **Close the observability gap, if any** (`03-OBSERVABILITY.md §obs-loop`). If diagnosing needed a raw-log grep / a hand-join / any evidence not already in `explain`/`fleet`/the trajectory, that gap is itself an issue — close it **test-first** before moving on.
+10. **Close the observability gap, if any** (`03-OBSERVABILITY.md §obs-loop`). If diagnosing needed a raw-log grep / a hand-join / any evidence not already in `explain`/`system`/the trajectory, that gap is itself an issue — close it **test-first** before moving on.
 11. **Re-run any test the fix could regress**, then resume forward progress.
 
 **Batching rule (NARROW — not a license to defer).** The ONLY sanctioned batching: when a SINGLE already-completed expensive drive (a 15–25 min small/local-model turn) surfaces several distinct issues *at once*, write the test-first fix for each, rebuild once, THEN clean-slate + reproduce + confirm before the next drive. That is it. It does **not** license driving further tests to collect more failures, and it does **not** license fixing at the end of the run — those are the #1 deviation above. Batching *fixes from one drive* is fine; batching *guesses*, or batching *across drives / to the end*, is forbidden. When in doubt, the default wins: **stop at the first failure.**
@@ -74,13 +74,13 @@ The deep tests assert the **POSITIVE path on the default (secure-by-default) con
 2. **Track K** complete: every configured provider × model classified; **0 COMIS-FAIL** open; NO-ACCESS rows recorded with reason; the actual `modelId` == config on every OK row.
 3. **Track L** walked: every RPC method, agent tool, CLI command, HTTP endpoint, channel, media provider, content gate exercised + classified; admin-gated methods reject non-admin.
 4. **Dual-oracle clean:** for every channel test the channel oracle (recorded outbound) and the Comis oracle (`delivery_mirror`/trajectory) agree; no divergence open.
-5. **Logs clean:** no unexplained ERROR/FATAL in the active daemon log on a final clean pass; every WARN accounted; `fleet` degraded sessions all map to *intentional* failure-injection tests; **no secret/canary residency** anywhere (logs + trajectory + `memory.db`).
+5. **Logs clean:** no unexplained ERROR/FATAL in the active daemon log on a final clean pass; every WARN accounted; `system` degraded sessions all map to *intentional* failure-injection tests; **no secret/canary residency** anywhere (logs + trajectory + `memory.db`).
 6. **`pnpm validate` green** on the fix branch; the live suites green for what you touched; **test-only config mutations restored** (config snapshot diff = intended only); the daemon left **running healthy on the fixed build**.
 7. **Reliability:** every reliability-sensitive test reported as **pass@k**; long-horizon drift tests run long enough to be meaningful.
-8. **Observability loop closed** (`03`): every diagnosis friction is fixed test-first (the missing signal threaded to `explain`/`fleet`, proven on the original incident) or a dated TODO naming the incident.
+8. **Observability loop closed** (`03`): every diagnosis friction is fixed test-first (the missing signal threaded to `explain`/`system`, proven on the original incident) or a dated TODO naming the incident.
 9. **Track M two-sided:** every behavior-changing toggle covered on both polarities; every relaxed security default *surfaced* the relaxation (no silent relaxation).
 10. **Emulator loop closed** (`03`): every capability the rig couldn't drive/observe is closed test-first (the Bot API method / inbound shape / verb / fault / oracle field added) or a dated TODO — with the emulator's own unit+contract tests green and **no `@comis/*`/`bundledDependencies` edge added**.
-11. **System-health sweep done** (`03 §system-health-sweep`): `fleet` triaged + the daemon log scanned with precise filters + a basic agent tool driven; every real issue found (target-related or not) is **fixed test-first or a documented finding** with verdict + evidence + fix direction. No unexplained ERROR/FATAL, broken core tool, or mis-gated RPC left un-triaged.
+11. **System-health sweep done** (`03 §system-health-sweep`): `system` triaged + the daemon log scanned with precise filters + a basic agent tool driven; every real issue found (target-related or not) is **fixed test-first or a documented finding** with verdict + evidence + fix direction. No unexplained ERROR/FATAL, broken core tool, or mis-gated RPC left un-triaged.
 
 ## Budget & safety envelope
 

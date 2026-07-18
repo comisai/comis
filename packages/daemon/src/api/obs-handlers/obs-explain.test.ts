@@ -520,7 +520,7 @@ describe("assembleIncidentReportFromSources", () => {
   });
 
   // -------------------------------------------------------------------------
-  // The fleet→explain drill-down by rootRunId. fleet names
+  // The system→explain drill-down by rootRunId. system names
   // the worst run's rootRunId; pasting it into obs.explain must resolve to the
   // run's sessionKey and render its spawn-tree. The rootRunId arm is FIRST in
   // the 3-way resolution; an unresolvable rootRunId yields the not-found
@@ -529,13 +529,13 @@ describe("assembleIncidentReportFromSources", () => {
   // -------------------------------------------------------------------------
 
   it("assemble by rootRunId resolves the run's sessionKey and renders its spawnTree (REAL layout)", async () => {
-    const ROOT_RUN_ID = "run-fleet-05-headline";
+    const ROOT_RUN_ID = "run-system-05-headline";
     const SESSION_KEY = "default:unattended:unattended:peer:7";
     // Seed a REAL <dataDir>/logs/session-index.<dayKey>.jsonl carrying a
     // capability.audited record that maps the rootRunId → the run's runId
     // (≈ sessionKey), so resolveRootRunToSession canonicalizes ROOT_RUN_ID →
     // SESSION_KEY against the actual nested file layout.
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-fleet05-"));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-system05-"));
     const logsDir = path.join(dataDir, "logs");
     fs.mkdirSync(logsDir, { recursive: true });
     fs.writeFileSync(
@@ -590,7 +590,7 @@ describe("assembleIncidentReportFromSources", () => {
   it("an unresolvable rootRunId yields the session_not_found marker (not a clean session)", async () => {
     // Empty dataDir → no session-index → resolveRootRunToSession returns "" (and
     // the id is not a synthetic root). The report must SIGNAL unresolvability.
-    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-fleet05-nope-"));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-system05-nope-"));
     const reader: IncidentSourceReader = {
       readSessionRecords: async () => [],
       readCacheTraceRecords: async () => [],

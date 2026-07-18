@@ -538,7 +538,7 @@ export interface ChannelEvents {
    * any body parse or adapter dispatch. Raised by the ingress through an
    * injected content-free hook so a forged / expired / wrong-audience /
    * missing-token FLOOD against the public messaging endpoint is COUNTABLE by
-   * the fleet lens instead of living only in a raw WARN. Content-free by
+   * the system health view instead of living only in a raw WARN. Content-free by
    * construction: the closed `reason` class + the channel label ONLY — never
    * the bearer token, the Authorization header, or the request body (§2.7 and
    * the opaque-401 contract: the forged material is counted without being

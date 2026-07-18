@@ -216,7 +216,7 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
         "LCD distillation skipped: failed the memory-write security scan",
       );
       // Emit the documented reason:"validation" skip so the
-      // security-relevant secret-egress block is fleet-observable (consistent
+      // security-relevant secret-egress block is system-observable (consistent
       // with every other gate). CONTENT-FREE: ids/agentId/sessionKey only —
       // NEVER the matched secret text or the verdict patterns.
       deps.eventBus?.emit("memory:distillation_skipped", {

@@ -276,11 +276,11 @@ describe("createDynamicMethodRouter trace logging", () => {
   });
 
   it("logs an admin-trust denial on a read-only obs method at DEBUG, not WARN (the CLI probe-then-offline-fallback flow)", async () => {
-    // `comis explain` / `comis fleet` hit the admin-gated obs.explain /
-    // obs.fleet.health RPC, then fall back to offline assembly from the local
+    // `comis explain` / `comis system-health` hit the admin-gated obs.explain /
+    // obs.system.health RPC, then fall back to offline assembly from the local
     // data dir. The daemon-side denial is a ROUTINE operator flow — logging it
     // WARN spams the very log the operator is reviewing (live incident).
-    for (const method of ["obs.explain", "obs.fleet.health"]) {
+    for (const method of ["obs.explain", "obs.system.health"]) {
       const { logger, calls } = makeLogger();
       const router = createDynamicMethodRouter(undefined, logger);
       router.registerMethod(method, "rpc", () => {

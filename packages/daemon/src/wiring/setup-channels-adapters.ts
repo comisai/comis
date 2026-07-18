@@ -482,7 +482,7 @@ export async function bootstrapAdapters(deps: {
         handleWebhookEvents: (activities) => teamsAdapter.handleWebhookEvents(activities as TeamsActivity[]),
         // Bridge the ingress auth-gate rejections onto the daemon eventBus as a
         // content-free health_signal, so a forged/expired/wrong-audience/missing-
-        // token flood is COUNTED by `comis fleet` instead of raw-log-only. Carries
+        // token flood is COUNTED by `comis system-health` instead of raw-log-only. Carries
         // the channel label + closed reason class only — never the token/header/body.
         onAuthRejected: (reason) =>
           container.eventBus.emit("channel:ingress_auth_rejected", {

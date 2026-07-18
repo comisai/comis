@@ -21,7 +21,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { mcpStderrLooksLikeError } from "./mcp-client-connect-classify.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { systemNowMs } from "@comis/core";
+import { createHash } from "node:crypto";
+import { isMcpInstructionTextSafe, systemNowMs } from "@comis/core";
 import type {
   McpClientManagerDeps,
   McpClientManagerState,
@@ -372,19 +373,36 @@ export function createClient(
 // ---------------------------------------------------------------------------
 
 export function extractServerMetadata(client: Client) {
-  const instructions = client.getInstructions();
+  const rawInstructions: unknown = client.getInstructions();
   const serverCaps = client.getServerCapabilities();
   const serverImpl = client.getServerVersion();
 
   const capabilities = serverCaps ? (serverCaps as Record<string, unknown>) : undefined;
   const serverInfo = serverImpl ? { name: serverImpl.name, version: serverImpl.version } : undefined;
 
-  // Cap instructions to prevent preamble budget issues
-  const cappedInstructions = instructions && instructions.length > MAX_INSTRUCTIONS_CHARS
-    ? instructions.slice(0, MAX_INSTRUCTIONS_CHARS - INSTRUCTIONS_TRUNCATED_SUFFIX.length) + INSTRUCTIONS_TRUNCATED_SUFFIX
-    : instructions;
+  let instructions: string | undefined;
+  let instructionHash: string | undefined;
+  let instructionValidation: "absent" | "included" | "truncated" | "rejected" = "absent";
+  if (rawInstructions !== undefined && rawInstructions !== null) {
+    if (typeof rawInstructions !== "string") {
+      instructionValidation = "rejected";
+    } else {
+      const trimmed = rawInstructions.trim();
+      if (trimmed.length > 0 && !isMcpInstructionTextSafe(trimmed)) {
+        instructionValidation = "rejected";
+      } else if (trimmed.length > 0) {
+        const truncated = trimmed.length > MAX_INSTRUCTIONS_CHARS;
+        instructions = truncated
+          ? trimmed.slice(0, MAX_INSTRUCTIONS_CHARS - INSTRUCTIONS_TRUNCATED_SUFFIX.length)
+            + INSTRUCTIONS_TRUNCATED_SUFFIX
+          : trimmed;
+        instructionHash = createHash("sha256").update(instructions, "utf-8").digest("hex");
+        instructionValidation = truncated ? "truncated" : "included";
+      }
+    }
+  }
 
-  return { instructions: cappedInstructions, capabilities, serverInfo };
+  return { instructions, instructionHash, instructionValidation, capabilities, serverInfo };
 }
 
 // ---------------------------------------------------------------------------

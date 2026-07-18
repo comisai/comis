@@ -172,7 +172,7 @@ const ADMIN_METHODS: ReadonlySet<string> = new Set(
 
 /**
  * Admin-gated, READ-ONLY obs methods whose operator CLI (`comis explain` /
- * `comis fleet`) probes the RPC then falls back to offline assembly from the
+ * `comis system-health`) probes the RPC then falls back to offline assembly from the
  * local data dir. An admin-trust denial here is a ROUTINE control flow, so the
  * dispatch logs it at DEBUG (not WARN) — otherwise every `comis explain` run
  * spams the daemon log the operator is reviewing. Mirrors the same set in the
@@ -180,7 +180,7 @@ const ADMIN_METHODS: ReadonlySet<string> = new Set(
  */
 const OFFLINE_FALLBACK_OBS_METHODS: ReadonlySet<string> = new Set([
   "obs.explain",
-  "obs.fleet.health",
+  "obs.system.health",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -729,11 +729,11 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
                 });
               }
               // ALSO emit the dedicated content-free
-              // autonomy:denial_breaker_tripped event so `comis fleet` surfaces the
+              // autonomy:denial_breaker_tripped event so `comis system-health` surfaces the
               // trip as a separable `denialBreakerTrips` count. The execution:aborted
-              // emit above flips a UI phase only (no fleet-ingestion path) and its
+              // emit above flips a UI phase only (no system-ingestion path) and its
               // `denial_breaker` reason is never a session endReason/breakerTripCount,
-              // so the trip would otherwise be INVISIBLE to the fleet lens.
+              // so the trip would otherwise be INVISIBLE to the system health view.
               // rootRunId is in scope (the `!== undefined` guard
               // above); systemNowMs is the globals-gate-safe wiring clock (no Date.now).
               // Content-free: the rootRunId (an id) + timestamp ONLY — the deny reason
@@ -773,8 +773,8 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       const parameterCount = Object.keys(params).filter((key) => !key.startsWith("_")).length;
       // A routine operator flow — an admin-trust denial on a read-only obs
       // method the CLI probes-then-falls-back-offline (obs.explain /
-      // obs.fleet.health) — logs at DEBUG, not WARN: otherwise every `comis
-      // explain` / `comis fleet` run spams the daemon log the operator is
+      // obs.system.health) — logs at DEBUG, not WARN: otherwise every `comis
+      // explain` / `comis system-health` run spams the daemon log the operator is
       // reviewing. The @comis/gateway method-router trace wrapper applies the
       // SAME narrowing on its own layer. A denial on any other method keeps its
       // classified level.

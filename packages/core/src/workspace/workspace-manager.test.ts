@@ -117,7 +117,7 @@ describe("workspace-manager", () => {
       // Verify files still have correct content (not corrupted)
       for (const name of WORKSPACE_FILE_NAMES) {
         const content = await fs.readFile(path.join(dir, name), "utf-8");
-        expect(content.length).toBeGreaterThan(0);
+        expect(content).toBe(DEFAULT_TEMPLATES[name]);
       }
     });
 
@@ -240,11 +240,12 @@ describe("workspace-manager", () => {
           .sort();
         expect(recordedPaths).toEqual(expectedPaths);
 
-        // Every call has a positive mtime (seeding happened) and a non-empty buffer.
+        // Every call has a positive mtime and the exact canonical starter bytes.
         for (const call of calls) {
           expect(call.mtime).toBeGreaterThan(0);
           expect(call.sample).toBeInstanceOf(Buffer);
-          expect(call.sample!.length).toBeGreaterThan(0);
+          const name = path.basename(call.path) as keyof typeof DEFAULT_TEMPLATES;
+          expect(call.sample!.toString("utf-8")).toBe(DEFAULT_TEMPLATES[name]);
         }
       });
 
@@ -294,22 +295,17 @@ describe("workspace-manager", () => {
     });
   });
 
-  describe("refreshPlatformFiles (content-hash refresh)", () => {
-    // A `wx`-only seed flow would let stale template copies persist forever,
-    // so an installed agent's inherited workspace could keep promising
-    // capabilities no code provisions. These tests lock the architectural
-    // contract — platform-owned files heal on the next ensureWorkspace call;
-    // user-owned files and cleared BOOTSTRAP.md are preserved.
+  describe("operator-owned workspace preservation", () => {
 
-    it("drifted AGENTS.md is refreshed to canonical on next ensureWorkspace", async () => {
+    it("operator-edited AGENTS.md is preserved on every ensureWorkspace call", async () => {
       const dir = await makeTempDir();
       await fs.mkdir(dir, { recursive: true });
-      await fs.writeFile(path.join(dir, "AGENTS.md"), "# Stale platform content\n", "utf-8");
+      await fs.writeFile(path.join(dir, "AGENTS.md"), "# Operator policy\n", "utf-8");
 
       await ensureWorkspace({ dir });
 
       const content = await fs.readFile(path.join(dir, "AGENTS.md"), "utf-8");
-      expect(content).toBe(DEFAULT_TEMPLATES["AGENTS.md"]);
+      expect(content).toBe("# Operator policy\n");
     });
 
     it("user-edited IDENTITY.md is preserved (never refreshed)", async () => {
@@ -335,19 +331,19 @@ describe("workspace-manager", () => {
       expect(content).toBe("");
     });
 
-    it("non-empty stale BOOTSTRAP.md is refreshed to canonical (stale-seed install heals)", async () => {
+    it("non-empty BOOTSTRAP.md agent state is preserved", async () => {
       const dir = await makeTempDir();
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(
         path.join(dir, "BOOTSTRAP.md"),
-        "# Stale seed content from an older install\n",
+        "- [ ] Pending setup state\n",
         "utf-8",
       );
 
       await ensureWorkspace({ dir });
 
       const content = await fs.readFile(path.join(dir, "BOOTSTRAP.md"), "utf-8");
-      expect(content).toBe(DEFAULT_TEMPLATES["BOOTSTRAP.md"]);
+      expect(content).toBe("- [ ] Pending setup state\n");
     });
 
     it("file already at canonical hash is not rewritten (idempotency, no-op mtime)", async () => {
@@ -397,7 +393,8 @@ describe("workspace-manager", () => {
         const diskStat = await fs.stat(call.path);
         expect(call.mtime).toBe(diskStat.mtimeMs);
         expect(call.sample).toBeInstanceOf(Buffer);
-        expect(call.sample!.length).toBeGreaterThan(0);
+        const name = path.basename(call.path) as keyof typeof DEFAULT_TEMPLATES;
+        expect(call.sample!.toString("utf-8")).toBe(DEFAULT_TEMPLATES[name]);
       }
     });
 
@@ -606,7 +603,8 @@ describe("workspace-manager", () => {
 
       for (const file of status.files) {
         expect(file.present).toBe(true);
-        expect(file.sizeBytes).toBeGreaterThan(0);
+        const name = file.name as keyof typeof DEFAULT_TEMPLATES;
+        expect(file.sizeBytes).toBe(Buffer.byteLength(DEFAULT_TEMPLATES[name], "utf-8"));
       }
     });
 
@@ -632,9 +630,20 @@ describe("workspace-manager", () => {
       expect(status.isBootstrapped).toBe(true);
     });
 
-    it("reports isBootstrapped: false when BOOTSTRAP.md is present", async () => {
+    it("reports isBootstrapped: true for the neutral empty BOOTSTRAP.md starter", async () => {
       const dir = await makeTempDir();
       await ensureWorkspace({ dir });
+
+      const status = await getWorkspaceStatus(dir);
+
+      expect(status.isBootstrapped).toBe(true);
+      expect(status.state!.onboardingCompletedAt).toBeTypeOf("number");
+    });
+
+    it("reports isBootstrapped: false when BOOTSTRAP.md contains setup state", async () => {
+      const dir = await makeTempDir();
+      await ensureWorkspace({ dir });
+      await fs.writeFile(path.join(dir, "BOOTSTRAP.md"), "Collect required setup values.", "utf-8");
 
       const status = await getWorkspaceStatus(dir);
 

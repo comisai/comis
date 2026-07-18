@@ -457,7 +457,7 @@ async function runOneLeafPass(
       "LCD leaf pass skipped: ordinal-window divergence",
     );
     // Emit a content-free context:dag_degraded so the divergence persists
-    // as a health_signal row (fleet-lens queryable), not a Pino-only WARN.
+    // as a health_signal row (system-lens queryable), not a Pino-only WARN.
     // Identifiers + reason + timing only; injected clock (the globals gate).
     eventBus?.emit("context:dag_degraded", {
       conversationId,

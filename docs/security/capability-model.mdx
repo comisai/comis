@@ -170,7 +170,7 @@ The gate is an **efficiency** layer, not a guaranteed-fire security control, and
   </Step>
   <Step title="A self-DoS is visible, not silent">
     A gate that skips every fire shows up as a **100% skip-rate** in the
-    [`comis fleet`](/reference/cli#comis-fleet) health report, so a monitor gated
+    [`comis system-health`](/reference/cli#comis-system-health) health report, so a monitor gated
     into silence is legible rather than a quiet gap. Each denied tool call inside
     a gate is the same content-free `CapabilityDeniedError` audit signal as
     anywhere else.

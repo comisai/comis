@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
+import { DEFAULT_TEMPLATES } from "@comis/core";
 import { isHeartbeatContentEffectivelyEmpty } from "./heartbeat-file.js";
-import { DEFAULT_TEMPLATES } from "./templates.js";
 
 describe("isHeartbeatContentEffectivelyEmpty", () => {
   it("returns true for the default HEARTBEAT.md template", () => {

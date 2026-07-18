@@ -285,7 +285,7 @@ export async function setupSchedulers(deps: {
               const estTurnsSaved = verdict.wake ? 0 : 1;
               // Content-free savings/health signal (I5): ids / verdict enum /
               // counts ONLY — NEVER the gathered finding, the script source, or a
-              // secret. This is the fleet fork's feed (a cross-session skip-rate /
+              // secret. This is the system fork's feed (a cross-session skip-rate /
               // turns-saved / net-cost rollup); it is wired independently of the
               // woke case's direct trajectory record below.
               container.eventBus.emit("scheduler:wake_gate", {
@@ -418,7 +418,7 @@ export async function setupSchedulers(deps: {
               // cap-calls. Off-turn: the cron/daemon context has no live bus bridge,
               // so this mirrors the image / capability-audit direct emits (a
               // per-session recorder call, not a bus subscription) — the incident
-              // fork's feed, wired independently of the fleet emit above.
+              // fork's feed, wired independently of the system emit above.
               //
               // BEST-EFFORT enrichment: this trajectory record is the ONLY source of
               // the woke cronWakeGate fact, so it reaches `comis explain` ONLY when
@@ -427,7 +427,7 @@ export async function setupSchedulers(deps: {
               // session), a monitor-only agent whose main session no turn ever
               // opens, or an idle-evicted session — getRecorder resolves undefined
               // and the fact is DROPPED. The fire stays reconstructable from the
-              // DURABLE fleet fork (the cron_wake_gate DiagnosticRow /
+              // DURABLE system fork (the cron_wake_gate DiagnosticRow /
               // cron_wake_gate_efficiency block) and the cap-audit stream
               // (`explain <rootRunId>`), so the drop degrades one lens, never the
               // fire's record. Emit a DEBUG on the drop so it is observable rather
@@ -446,7 +446,7 @@ export async function setupSchedulers(deps: {
                   {
                     step: "wake-gate",
                     wake: true,
-                    hint: "no open main-session recorder — the woke trajectory fact was dropped; the fire is still captured by the fleet cron_wake_gate lens and the cap-audit stream (explain <rootRunId>)",
+                    hint: "no open main-session recorder — the woke trajectory fact was dropped; the fire is still captured by the system cron_wake_gate lens and the cap-audit stream (explain <rootRunId>)",
                   },
                   "Wake-gate woke trajectory record dropped (no open session recorder)",
                 );

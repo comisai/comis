@@ -93,7 +93,7 @@ import { setupContextEngine } from "../executor-context-engine-setup.js";
 import { runPrompt } from "../prompt-runner/index.js";
 import { wrapToolResultWithGuide } from "../jit-guide-injector.js";
 import { postExecution } from "../executor-post-execution.js";
-import { resolveReplyLanguage } from "../resolve-reply-language.js";
+import { resolveResponseLocalePolicy } from "../resolve-response-locale-policy.js";
 import { assembleTools } from "../executor-tool-assembly.js";
 import {
   getDeliveredGuides,
@@ -421,8 +421,10 @@ export function createPiExecutor(
       // Tag the resolved reply language on ALS for the sub-agent leg
       // (config-then-inbound resolution order; set only when non-en so the en path is untouched).
       if (alsCtx) {
-        const lang = resolveReplyLanguage({ inboundText: msg.text ?? "", configLanguage: config.language });
-        if (lang !== "en") (alsCtx as Record<string, unknown>).resolvedLanguage = lang;
+        const localePolicy = resolveResponseLocalePolicy({ explicitLocale: config.language });
+        if (localePolicy.locale !== undefined) {
+          (alsCtx as Record<string, unknown>).resolvedLanguage = localePolicy.locale;
+        }
       }
 
       // Derive compat config via normalizeModelCompat (xAI + GBNF auto-detection;
@@ -775,6 +777,56 @@ async function runSessionLocked(
   // worktree is the child's actual working tree, so onboarding state reflects it).
   const isOnboarding = await detectOnboardingState(effectiveWorkspaceDir);
 
+  let workspacePolicySnapshot = deps.workspacePolicySnapshot;
+  if (workspacePolicySnapshot === undefined && deps.workspacePolicyPort !== undefined) {
+    const policyAgentId = agentId ?? sessionKey.agentId ?? "default";
+    const policyLoadStartMs = deps.clock.now();
+    const policyResult = await deps.workspacePolicyPort.load(policyAgentId);
+    const durationMs = Math.max(0, deps.clock.now() - policyLoadStartMs);
+    if (!policyResult.ok) {
+      deps.logger.error(
+        {
+          agentId: policyAgentId,
+          step: "workspace-policy-load",
+          failureKind: policyResult.error.kind,
+          durationMs,
+          hint: "Check the agent workspace path, file permissions, and workspace policy size before retrying.",
+          errorKind: policyResult.error.kind === "agent_not_found"
+            ? ("precondition" as const)
+            : ("resource" as const),
+        },
+        "Workspace policy snapshot load failed",
+      );
+      result.finishReason = "error";
+      result.response = "The agent policy could not be loaded safely. Please try again.";
+      result.errorContext = {
+        errorType: "WorkspacePolicyError",
+        retryable: policyResult.error.kind !== "invalid_section",
+        originalError: "Workspace policy snapshot load failed",
+      };
+      return result;
+    }
+    workspacePolicySnapshot = policyResult.value;
+    result.workspacePolicyHash = workspacePolicySnapshot.combinedHash;
+    deps.logger.info(
+      {
+        agentId: policyAgentId,
+        step: "workspace-policy-load",
+        durationMs,
+        sectionCount: workspacePolicySnapshot.sections.length,
+        workspacePolicyHash: workspacePolicySnapshot.combinedHash,
+      },
+      "Workspace policy snapshot loaded",
+    );
+  }
+  if (workspacePolicySnapshot !== undefined) {
+    result.workspacePolicyHash = workspacePolicySnapshot.combinedHash;
+    const activeContext = tryGetContext();
+    if (activeContext) {
+      (activeContext as Record<string, unknown>).workspacePolicyHash = workspacePolicySnapshot.combinedHash;
+    }
+  }
+
   // Capture prompt skills XML once at execution start.
   // Skills registered during tool calls (e.g., skill-creator creating stock-scanner)
   // do not mutate the system prompt until the next execution.
@@ -783,7 +835,11 @@ async function runSessionLocked(
     ? () => frozenPromptSkillsXml
     : deps.getPromptSkillsXml;
   // toolCapabilityPort flows through frozenDeps spread — no explicit re-assignment.
-  const frozenDeps = { ...deps, getPromptSkillsXml: stableGetPromptSkillsXml };
+  const frozenDeps = {
+    ...deps,
+    getPromptSkillsXml: stableGetPromptSkillsXml,
+    ...(workspacePolicySnapshot !== undefined ? { workspacePolicySnapshot } : {}),
+  };
 
   // Tool assembly pipeline: merge, settings, prompt, deferral, JIT, pruning, snapshot, normalization, serializer
   // Extracted to executor-tool-assembly.ts
@@ -801,7 +857,14 @@ async function runSessionLocked(
     resourceLoaderOptions, promptResult, cachedSystemTokensEstimate, cachedFreshTailPreambleTokens,
   } = toolAssembly;
   const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
-  const { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory, recalledMemories, userLanguage } = promptResult;
+  const {
+    systemPrompt,
+    systemPromptBlocks,
+    dynamicPreamble,
+    inlineMemory,
+    recalledMemories,
+    responseLocalePolicy,
+  } = promptResult;
 
   const resourceLoader = new DefaultResourceLoader(resourceLoaderOptions);
   await resourceLoader.reload();
@@ -1888,7 +1951,7 @@ async function runSessionLocked(
       const promptRunResult = await runPrompt({
         msg, session, config, sessionKey, formattedKey, agentId, result,
         executionOverrides, executionStartMs, effectiveTimeout, executionId,
-        bridge, dynamicPreamble, deferredContext, capabilityIndexResult, inlineMemory,
+        bridge, dynamicPreamble, responseLocalePolicy, deferredContext, capabilityIndexResult, inlineMemory,
         systemPrompt,
         mergedCustomTools,
         cmdResult, sepEnabled, executionPlanRef,
@@ -1963,7 +2026,7 @@ async function runSessionLocked(
       // Read the per-turn skill-use carrier the bridge wrote
       // back into postExecution, which emits the memory:skill_used write-back.
       usedSkillIds: [...bridge.getUsedSkillIds()],
-      userMdLanguage: userLanguage, // consumed by the degraded-reply resolver
+      responseLocalePolicy,
       executionStartMs, executionId, executionOverrides,
       bridge, unsubscribe,
       contextEngineRef, ceSetup, streamSetup,

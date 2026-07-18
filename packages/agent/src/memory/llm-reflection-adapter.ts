@@ -104,7 +104,7 @@ export interface LlmReflectionAdapterDeps {
   /**
    * Optional per-call usage sink. A background reflection run spends real
    * tokens with no executor in the loop — without this hook the spend hits
-   * the provider bill with ZERO obs rows (invisible to fleet/billing). The
+   * the provider bill with ZERO obs rows (invisible to system/billing). The
    * daemon wiring forwards it as an `observability:token_usage` event under
    * the synthetic `__REFLECT__` session key. Best-effort: a throwing sink
    * never fails the reflect call.

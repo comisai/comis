@@ -248,8 +248,8 @@ export interface McpConnection {
   readonly maxReconnectAttempts: number;
   /** Last error message, if status is "error" or "reconnecting". */
   readonly error?: string;
-  /** Server-provided instructions (from client.getInstructions() after connect). */
   readonly instructions?: string;
+  readonly instructionHash?: string; // SHA-256 identity of the bounded instruction text.
   /** Server capabilities object (from client.getServerCapabilities() after connect). */
   readonly capabilities?: Record<string, unknown>;
   /** Server info object (from client.getServerVersion() after connect). */

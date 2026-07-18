@@ -465,7 +465,7 @@ export function createMsTeamsAdapter(
       // or a non-card invoke) from the security-relevant rejects, each of which
       // gets a §2.7 WARN carrying hint + a distinct errorKind so a T-6
       // arbitrary-verb probe against the approval gate, or a legitimate approver
-      // whose click vanished, is diagnosable via comis explain / fleet. The log
+      // whose click vanished, is diagnosable via comis explain / system. The log
       // names the reject class and carries NO secret/token/raw-signature — it
       // mirrors the allowlist-drop WARN shape below.
       switch (result.reason) {

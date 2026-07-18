@@ -119,7 +119,7 @@ A cron job can carry a [wake-gate](/agent-tools/scheduling#wake-gate-run-the-mod
 Because a skip runs no session, the per-fire gate decision and the job's efficiency are read from the observability lenses rather than the Recent Executions list:
 
 - **Per-fire decision** -- the [`cron.runs`](/reference/json-rpc#cron-runs) run history records each gated fire, including the ones the gate skipped, with the tool-call and avoided-turn counts.
-- **Per-job efficiency** -- the [`comis fleet`](/reference/cli#comis-fleet) health report rolls up the skip-rate, the model turns saved, and the gate's own tool-call cost per agent (counts only, never the gate's gathered findings). A gate stuck at a 100% skip-rate on a monitor you expect to fire is the signal to inspect.
+- **Per-job efficiency** -- the [`comis system-health`](/reference/cli#comis-system-health) health report rolls up the skip-rate, the model turns saved, and the gate's own tool-call cost per agent (counts only, never the gate's gathered findings). A gate stuck at a 100% skip-rate on a monitor you expect to fire is the signal to inspect.
 
 <CardGroup cols={2}>
   <Card title="Scheduling Tools" icon="clock" href="/agent-tools/scheduling">

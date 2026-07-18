@@ -33,7 +33,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | mainProviderVision | optional | the main-provider vision bridge is unwired; `image_analyze` skips main-vision and uses the registry tier / honest-unavailable | packages/daemon/src/api/types.ts:632 |
 | trajectoryRegistry | optional | the vision handlers cannot resolve a per-session recorder; the `media.vision.*` trajectory direct-emits no-op (the INFO/WARN log lines still fire) so `comis explain` lacks the vision turn | packages/daemon/src/api/types.ts:642 |
 | voiceSelection | optional | the daemon voice handlers cannot read the boot-resolved STT/TTS `source`/`onSkip` reasons; the `media.stt.*`/`media.tts.*` trajectory records fall back to the config-derived provider + keyless (source defaults to "explicit") so `comis explain` shows the provider but not WHY `auto` picked the rung | packages/daemon/src/api/types.ts:683 |
-| obsStore | optional | the daemon voice handlers cannot insert the `voice_degraded` health_signal diagnostic row on an STT/TTS failure, so `comis fleet` surfaces no `voice_health` finding (the log line + the per-session `media.stt.*`/`media.tts.*` trajectory record still fire — only the cross-session fleet rollup of voice degradation is absent) | packages/daemon/src/api/types.ts:687 |
+| obsStore | optional | the daemon voice handlers cannot insert the `voice_degraded` health_signal diagnostic row on an STT/TTS failure, so `comis system-health` surfaces no `voice_health` finding (the log line + the per-session `media.stt.*`/`media.tts.*` trajectory record still fire — only the cross-session system rollup of voice degradation is absent) | packages/daemon/src/api/types.ts:687 |
 
 ## Removed Fields (stale-fallback — deleted)
 

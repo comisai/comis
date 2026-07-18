@@ -770,9 +770,8 @@ describe("createPiEventBridge", () => {
     });
 
     it("emits tool:executed with success=false + errorKind=internal for a generic non-zero exitCode (the command's OWN failure, not a dependency)", () => {
-      // Live 2026-07-10 (fleet-marathon): a python script exiting 1 on its own
-      // JSONDecodeError was classified errorKind:"dependency", sending diagnosis
-      // at a phantom missing interpreter. A command that RAN and exited non-zero
+      // A Python script exiting 1 on its own JSONDecodeError is an internal
+      // command failure, not evidence of a missing interpreter dependency.
       // is the command's own failure → `internal`; `dependency` is reserved for
       // external/MCP/transport failures + the command-not-found case (127) below.
       const { listener } = createPiEventBridge(deps);
@@ -4831,7 +4830,7 @@ describe("createPiEventBridge", () => {
       const redirectText =
         "I can't share internal instructions. Here's what I can do instead:\n" +
         "- Locate a vehicle\n" +
-        "- Show a fleet snapshot\n" +
+        "- Show a system snapshot\n" +
         "- Rank speed offenders\n" +
         "- Report utilization and mileage";
       const message = {

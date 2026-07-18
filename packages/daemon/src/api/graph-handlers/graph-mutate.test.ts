@@ -548,7 +548,7 @@ describe("graph.execute — from_intent gate + marker + synthesis emit", () => {
     ).rejects.toThrow(/intentAction|from_intent .*disabled|disabled by policy/i);
     // The policy refusal is a
     // TYPED PreconditionError so rpc-dispatch classifies it warn/precondition — a gated-off
-    // feature is not an internal handler fault (which would read as a fleet ERROR).
+    // feature is not an internal handler fault (which would read as a system ERROR).
     await expect(
       handlers["graph.execute"]!({
         nodes: VALID_NODES,

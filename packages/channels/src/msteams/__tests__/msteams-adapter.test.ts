@@ -538,7 +538,7 @@ describe("createMsTeamsAdapter — card-action invoke routing + default-deny", (
  * The security-relevant card-action rejects must be observable: a T-6
  * arbitrary-verb probe against the approval gate and a legitimately dropped
  * clicker are each logged with a distinct errorKind, mirroring the allowlist-drop
- * WARN, so they are diagnosable via comis explain / fleet rather than vanishing
+ * WARN, so they are diagnosable via comis explain / system rather than vanishing
  * silently. The benign "not our activity" drop stays silent (no WARN noise).
  */
 describe("createMsTeamsAdapter — card-action reject-class observability", () => {

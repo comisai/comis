@@ -541,23 +541,23 @@ describe("obs_query tool", () => {
   });
 
   // -----------------------------------------------------------------------
-  // fleet_health action — dispatches to obs.fleet.health (admin-guarded)
+  // system_health action — dispatches to obs.system.health (admin-guarded)
   // -----------------------------------------------------------------------
 
-  describe("fleet_health action", () => {
-    it("calls rpcCall('obs.fleet.health') with sinceHours from since_hours + the ctx trustLevel", async () => {
+  describe("system_health action", () => {
+    it("calls rpcCall('obs.system.health') with sinceHours from since_hours + the ctx trustLevel", async () => {
       mockRpcCall.mockResolvedValue({ windowHours: 12 });
 
       const tool = createObsQueryTool(mockRpcCall);
 
       const result = await runWithContext(makeContext("admin"), () =>
         tool.execute("call-fh1", {
-          action: "fleet_health",
+          action: "system_health",
           since_hours: 12,
         } as never),
       );
 
-      expect(mockRpcCall).toHaveBeenCalledWith("obs.fleet.health", {
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.system.health", {
         sinceHours: 12,
         _trustLevel: "admin",
       });
@@ -570,39 +570,39 @@ describe("obs_query tool", () => {
       const tool = createObsQueryTool(mockRpcCall);
 
       await runWithContext(makeContext("admin"), () =>
-        tool.execute("call-fh2", { action: "fleet_health" } as never),
+        tool.execute("call-fh2", { action: "system_health" } as never),
       );
 
-      expect(mockRpcCall).toHaveBeenCalledWith("obs.fleet.health", {
+      expect(mockRpcCall).toHaveBeenCalledWith("obs.system.health", {
         sinceHours: undefined,
         _trustLevel: "admin",
       });
     });
 
-    it("accepts fleet_health as a valid action (no invalid-action error)", async () => {
+    it("accepts system_health as a valid action (no invalid-action error)", async () => {
       mockRpcCall.mockResolvedValue({ windowHours: 24 });
 
       const tool = createObsQueryTool(mockRpcCall);
 
       const result = await runWithContext(makeContext("admin"), () =>
-        tool.execute("call-fh3", { action: "fleet_health" } as never),
+        tool.execute("call-fh3", { action: "system_health" } as never),
       );
 
       // A valid action dispatches; the [invalid_value] sentinel must NOT fire.
       expect(result.details).not.toHaveProperty("error");
       expect(mockRpcCall).toHaveBeenCalledWith(
-        "obs.fleet.health",
+        "obs.system.health",
         expect.objectContaining({ _trustLevel: "admin" }),
       );
     });
 
-    it("throws for guest callers on action=fleet_health (the existing trustGuard covers it)", async () => {
+    it("throws for guest callers on action=system_health (the existing trustGuard covers it)", async () => {
       const tool = createObsQueryTool(mockRpcCall);
 
       await expect(
         runWithContext(makeContext("guest"), () =>
           tool.execute("call-g-fh", {
-            action: "fleet_health",
+            action: "system_health",
             since_hours: 6,
           } as never),
         ),
@@ -610,12 +610,12 @@ describe("obs_query tool", () => {
       expect(mockRpcCall).not.toHaveBeenCalled();
     });
 
-    it("throws for non-admin (user) callers on action=fleet_health", async () => {
+    it("throws for non-admin (user) callers on action=system_health", async () => {
       const tool = createObsQueryTool(mockRpcCall);
 
       await expect(
         runWithContext(makeContext("user"), () =>
-          tool.execute("call-u-fh", { action: "fleet_health" } as never),
+          tool.execute("call-u-fh", { action: "system_health" } as never),
         ),
       ).rejects.toThrow(/Insufficient trust level/);
       expect(mockRpcCall).not.toHaveBeenCalled();

@@ -4,13 +4,13 @@
  *
  * The load-bearing property: `buildConfigPosture` emits ONLY top-level config
  * section NAMES present in the raw config file — each a member of the fixed
- * AppConfigSchema universe — plus the fleet `config_posture` finding's closed
+ * AppConfigSchema universe — plus the system `config_posture` finding's closed
  * labels and COUNT. No config VALUE can enter the function: its only config
  * input is a list of key NAMES, so the digest is content-free by construction.
  *
  * These goldens pin that membership is a set-membership check (never a config
  * dump), that an unknown or mistyped key is dropped (output is a subset of the
- * universe, so a typo cannot leak), and that the fleet finding is plucked
+ * universe, so a typo cannot leak), and that the system finding is plucked
  * verbatim or null when it is absent.
  */
 
@@ -18,15 +18,15 @@ import { describe, it, expect } from "vitest";
 import { buildConfigPosture } from "./config-posture.js";
 import { parseConfigPosture } from "./types.js";
 
-/** A fleet finding element — mirrors the FleetHealthReport `findings[]` shape. */
-type FleetFinding = { code: string; detail: string; count: number; hint: string };
+/** A system finding element — mirrors the SystemHealthReport `findings[]` shape. */
+type SystemFinding = { code: string; detail: string; count: number; hint: string };
 
 /**
- * The config_posture finding as it renders on a fleet report: closed name+state
+ * The config_posture finding as it renders on a system report: closed name+state
  * labels and a stranded-secret COUNT only — verified content-free, never a
  * secret value.
  */
-const CONFIG_POSTURE_FINDING: FleetFinding = {
+const CONFIG_POSTURE_FINDING: SystemFinding = {
   code: "config_posture",
   detail:
     "2 config-posture signal(s) (insecure or drifted config) — flagged: gateway.tls (off), stranded secrets (2)",
@@ -68,7 +68,7 @@ describe("buildConfigPosture membership", () => {
   });
 });
 
-describe("buildConfigPosture fleet finding pluck", () => {
+describe("buildConfigPosture system finding pluck", () => {
   it("copies the config_posture finding detail, count, and hint verbatim", () => {
     const digest = buildConfigPosture(["gateway"], [CONFIG_POSTURE_FINDING]);
     expect(digest.configPosture).toEqual({
@@ -82,7 +82,7 @@ describe("buildConfigPosture fleet finding pluck", () => {
     expect(digest.configPosture?.detail).toContain("stranded secrets (2)");
   });
 
-  it("returns a null posture when no config_posture finding is present in the fleet set", () => {
+  it("returns a null posture when no config_posture finding is present in the system set", () => {
     const digest = buildConfigPosture(
       ["gateway"],
       [{ code: "model_health", detail: "an unrelated finding", count: 1, hint: "unrelated hint" }],

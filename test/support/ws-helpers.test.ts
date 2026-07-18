@@ -57,7 +57,7 @@ afterEach(() => {
 describe("sendJsonRpc — mid-request socket death", () => {
   it("rejects PROMPTLY when the socket closes before the response (not after the full timeout)", async () => {
     const ws = new FakeWebSocket();
-    const promise = sendJsonRpc(ws as unknown as WebSocket, "obs.fleet.health", {}, 1, {
+    const promise = sendJsonRpc(ws as unknown as WebSocket, "obs.system.health", {}, 1, {
       timeoutMs: 30_000,
     });
     // Attach a rejection expectation BEFORE the close so we can assert it settles.

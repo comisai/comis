@@ -78,7 +78,7 @@ See the [installation guide](https://docs.comis.ai/installation) for supported h
 ~~~bash
 comis explain "<sessionKey|traceId|rootRunId>"
 comis explain "<sessionKey|traceId|rootRunId>" --offline
-comis fleet --since 24
+comis system-health --since 24
 comis security audit-log
 ~~~
 
@@ -93,7 +93,7 @@ Reports are bounded and designed to exclude raw message bodies and credential va
 - Configurable authority, credential scope, tool policy, and spending limits.
 - Cloud models, local Ollama and LM Studio models, built-in tools, and MCP integrations.
 - Telegram, Discord, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Email, and Microsoft Teams.
-- Web dashboard, CLI, JSON-RPC, WebSocket, session reports, fleet health, audit records, cost accounting, optional OpenTelemetry export, and optional Prometheus metrics.
+- Web dashboard, CLI, JSON-RPC, WebSocket, session reports, system health, audit records, cost accounting, optional OpenTelemetry export, and optional Prometheus metrics.
 
 Configured spending limits can refuse later model calls after a limit is crossed; they do not cancel a call already in progress. Configured graph checkpoints recover at node boundaries but do not provide exact replay of every external side effect.
 

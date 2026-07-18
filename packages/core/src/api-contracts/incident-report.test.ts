@@ -295,7 +295,7 @@ describe("ObsExplainContract.request skip-negative (a skipped fire is NOT resolv
 
 describe("ObsExplainContract.request rootRunId arm", () => {
   // The rootRunId arm widens obs.explain from a TWO-ref (sessionKey | traceId) request to a
-  // THREE-ref one (+ rootRunId), so the fleet→explain drill-down can paste an
+  // THREE-ref one (+ rootRunId), so the system→explain drill-down can paste an
   // autonomy run's rootRunId straight in. The widen is ADDITIVE-OPTIONAL: the
   // .object stays non-strict, the .refine requires "one of three", and an existing
   // sessionKey/traceId caller is unaffected.

@@ -17,7 +17,7 @@
  * NO generic `/rpc` HTTP endpoint and no config toggle for one (hono-server.js
  * mounts the dispatch via `createWsHandler`, ws-handler.js does "JSON-RPC message
  * dispatch (single and batch)"). Over WS the SAME methods round-trip cleanly:
- * `obs.fleet.health` -> a bounded FleetHealthReport result; an unknown method ->
+ * `obs.system.health` -> a bounded SystemHealthReport result; an unknown method ->
  * a proper `{"error":{"code":-32601,"message":"Method not found"}}`. This is
  * exactly how the production `comis` CLI talks to the gateway
  * (`packages/cli/src/client/rpc-client.ts` is a WS JSON-RPC client; the
@@ -38,9 +38,9 @@
  * PINNED below as documentation of WHY WS is the transport — but `rpcRequest`
  * itself now round-trips, never throws on the 404. (`channels.health` is also
  * NOT a registered dispatch method at HEAD — it appears only as a property
- * access, not a quoted key; the confirmed no-LLM methods are `obs.fleet.health`
+ * access, not a quoted key; the confirmed no-LLM methods are `obs.system.health`
  * / `obs.explain`, registered via the computed-key form
- * `[ObsFleetHealthContract.method]`, and the core `config.get`.)
+ * `[ObsSystemHealthContract.method]`, and the core `config.get`.)
  *
  * Stage-B (CI, deterministic): boots the daemon (no model needed for the obs RPC
  * methods — only the agent-authored reply needs a model, which this does not
@@ -98,8 +98,8 @@ describe("AUTO-01 — the honest-error exits (bad_json + rpc_error), no daemon",
         return {};
       },
     };
-    // `tg rpc obs.fleet.health {not-json}` -> the json is validated first.
-    await expect(runVerb("rpc", ["obs.fleet.health", "{not valid json"], ctx)).rejects.toMatchObject({
+    // `tg rpc obs.system.health {not-json}` -> the json is validated first.
+    await expect(runVerb("rpc", ["obs.system.health", "{not valid json"], ctx)).rejects.toMatchObject({
       kind: "bad_json",
     });
     // The passthrough was NEVER reached (no partial dispatch on a malformed arg).
@@ -162,21 +162,21 @@ describe("AUTO-01 Stage-B — `tg rpc <known method>` round-trips auth'd by the 
     rig = undefined;
   });
 
-  it("obs.fleet.health round-trips to a bounded report (proves the auth'd passthrough + admin scope, over WS)", async () => {
+  it("obs.system.health round-trips to a bounded report (proves the auth'd passthrough + admin scope, over WS)", async () => {
     const r = rig;
     expect(r, "rig booted").toBeDefined();
     if (r === undefined) return;
 
     // The admin-scoped handle token (ws scope) authenticates the WS connection;
-    // obs.fleet.health requires admin trust (the gateway injects _trustLevel from
+    // obs.system.health requires admin trust (the gateway injects _trustLevel from
     // the token scope) and needs NO model -> a deterministic CI round-trip.
     const ws = await openAuthenticatedWebSocket(r.gatewayUrl, r.authToken);
     try {
-      const resp = (await sendJsonRpc(ws, "obs.fleet.health", { since: 1 }, 1, {
+      const resp = (await sendJsonRpc(ws, "obs.system.health", { since: 1 }, 1, {
         timeoutMs: 20_000,
       })) as JsonRpcResponse;
-      // A well-formed JSON-RPC result (a bounded FleetHealthReport: counts + hints).
-      expect(resp.error, `obs.fleet.health errored: ${JSON.stringify(resp.error)}`).toBeUndefined();
+      // A well-formed JSON-RPC result (a bounded SystemHealthReport: counts + hints).
+      expect(resp.error, `obs.system.health errored: ${JSON.stringify(resp.error)}`).toBeUndefined();
       expect(resp.result).toBeTypeOf("object");
       expect(resp.result).not.toBeNull();
       expect((resp.result as { schemaVersion?: number }).schemaVersion).toBe(1);
@@ -233,7 +233,7 @@ describe("AUTO-01 Stage-B — `tg rpc <known method>` round-trips auth'd by the 
     // never the old `RPC error undefined: undefined` thrown off the 404 body.
     const report = (await rpcRequest(
       r.gatewayUrl,
-      "obs.fleet.health",
+      "obs.system.health",
       { since: 1 },
       r.authToken,
     )) as { schemaVersion?: number };
@@ -255,8 +255,8 @@ describe("AUTO-01 Stage-B — `tg rpc <known method>` round-trips auth'd by the 
 
     // The CLI path with NO injected `rpc` fake — runVerb falls through to the
     // default `rpcRequest`, which now routes over WS. This is the genuine
-    // `tg rpc obs.fleet.health` an agent/operator runs against a live rig: it must
-    // return a real bounded FleetHealthReport, never a 404 throw. The handle the
+    // `tg rpc obs.system.health` an agent/operator runs against a live rig: it must
+    // return a real bounded SystemHealthReport, never a 404 throw. The handle the
     // CLI reads carries the admin-scoped gateway token (the `ws`/`admin` scope).
     const handle: ChanliveHandle = {
       channel: "telegram",
@@ -268,7 +268,7 @@ describe("AUTO-01 Stage-B — `tg rpc <known method>` round-trips auth'd by the 
       dataDir: "/tmp/none",
       memoryDbPath: "/tmp/none/memory.db",
     };
-    const result = (await runVerb("rpc", ["obs.fleet.health", '{"since":1}'], {
+    const result = (await runVerb("rpc", ["obs.system.health", '{"since":1}'], {
       handle,
     } satisfies VerbContext)) as { schemaVersion?: number };
     expect(result).toBeTypeOf("object");
@@ -313,7 +313,7 @@ describe("AUTO-01 Stage-B — `tg rpc <known method>` round-trips auth'd by the 
     const raw = await fetch(`${r.gatewayUrl}/rpc`, {
       method: "POST",
       headers: { Authorization: `Bearer ${r.authToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "obs.fleet.health", params: { since: 1 } }),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "obs.system.health", params: { since: 1 } }),
     });
     expect(raw.status).toBe(404);
   });
@@ -327,7 +327,7 @@ describe("AUTO-01 — `tg rpc` with NO resolved handle is an honest dead_handle,
   it("rpc with no resolved handle throws VerbFailure(dead_handle) BEFORE any transport (it needs the gateway token)", async () => {
     // An empty ctx (handle omitted) is the unresolved-handle case under
     // exactOptionalPropertyTypes — runVerb's `ctx.handle === undefined` guard fires.
-    const err = await runVerb("rpc", ["obs.fleet.health"], {}).catch((e: unknown) => e);
+    const err = await runVerb("rpc", ["obs.system.health"], {}).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(VerbFailure);
     expect((err as VerbFailure).kind).toBe("dead_handle");
     // The honest hint points at `tg up` — never a silent spawn / fabricated success.

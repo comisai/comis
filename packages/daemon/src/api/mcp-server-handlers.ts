@@ -205,12 +205,12 @@ export interface BuildMcpServerForClientDeps {
   ) => Promise<unknown>;
   /**
    * SECURITY — the trust-flag-FREE direct invocation of the
-   * `obs.fleet.health` ASSEMBLER (`assembleFleetHealthReport`), the cross-session
-   * fleet sibling of {@link obsExplainForMcpClient}. Built at the composition
-   * root over the obsStore + dataDir + boot.clock. The `obs_fleet_health` MCP
+   * `obs.system.health` ASSEMBLER (`assembleSystemHealthReport`), the cross-session
+   * system sibling of {@link obsExplainForMcpClient}. Built at the composition
+   * root over the obsStore + dataDir + boot.clock. The `obs_system_health` MCP
    * tool's dispatch branch calls THIS (not {@link daemonRpcForMcpClient}) so it
    * runs under DAEMON authority WITHOUT touching the admin-gated
-   * `obs.fleet.health` RPC and WITHOUT injecting `_trustLevel:"admin"`. Its
+   * `obs.system.health` RPC and WITHOUT injecting `_trustLevel:"admin"`. Its
    * authorization is the per-client `mcpClient.allowlist` (the compensating
    * control) + the digest-only/bounded report — NOT admin trust.
    *
@@ -222,7 +222,7 @@ export interface BuildMcpServerForClientDeps {
    * Step 4 for every tool); the closure validates the `{sinceHours?}` shape via
    * the contract `request.parse` before assembling.
    */
-  readonly obsFleetHealthForMcpClient?: (
+  readonly obsSystemHealthForMcpClient?: (
     params: Record<string, unknown>,
   ) => Promise<unknown>;
 }
@@ -567,20 +567,20 @@ function buildDispatchCallback(args: {
       return { content: [{ type: "text", text: wrapped }] };
     }
 
-    // ----- Step 4 (obs_fleet_health) -- direct-assembler dispatch -------------
-    // SECURITY: the cross-session fleet sibling of obs_explain. It reaches the
-    // FleetHealthReport with NO new privilege — it does NOT route through
-    // daemonRpcForMcpClient -> the admin-gated obs.fleet.health RPC; instead it
+    // ----- Step 4 (obs_system_health) -- direct-assembler dispatch -------------
+    // SECURITY: the cross-session system sibling of obs_explain. It reaches the
+    // SystemHealthReport with NO new privilege — it does NOT route through
+    // daemonRpcForMcpClient -> the admin-gated obs.system.health RPC; instead it
     // invokes the trust-flag-FREE assembler closure DIRECTLY under daemon
     // authority. Its boundary is the per-client mcpClient.allowlist (enforced
     // above at Steps 1 + the registration filter) + the digest-only/bounded
     // report. `safeParams` is already _trustLevel-stripped, so no admin trust can
     // be smuggled in.
-    if (toolName === "obs_fleet_health") {
-      if (!deps.obsFleetHealthForMcpClient) {
+    if (toolName === "obs_system_health") {
+      if (!deps.obsSystemHealthForMcpClient) {
         // obsStore-less boot or wiring gap — fail CLOSED, not crash, and do NOT
         // fall through to the trust-isolated daemonRpcForMcpClient indirection
-        // (which would hit the admin-gated obs.fleet.health RPC and be rejected).
+        // (which would hit the admin-gated obs.system.health RPC and be rejected).
         logger.warn(
           {
             clientId: client.id,
@@ -588,23 +588,23 @@ function buildDispatchCallback(args: {
             submodule: "dispatch",
             errorKind: "internal" as const,
             hint:
-              "obs_fleet_health reached dispatch but the closure is unwired; check daemon.ts setupGateway wiring",
+              "obs_system_health reached dispatch but the closure is unwired; check daemon.ts setupGateway wiring",
           },
-          "MCP obs_fleet_health dispatch skipped -- closure unavailable",
+          "MCP obs_system_health dispatch skipped -- closure unavailable",
         );
         return {
           isError: true,
           content: [
             {
               type: "text",
-              text: `[dispatch_error] obs_fleet_health unavailable; check daemon logs (clientId=${client.id})`,
+              text: `[dispatch_error] obs_system_health unavailable; check daemon logs (clientId=${client.id})`,
             },
           ],
         };
       }
       let report: unknown;
       try {
-        report = await deps.obsFleetHealthForMcpClient(safeParams);
+        report = await deps.obsSystemHealthForMcpClient(safeParams);
       } catch (err) {
         logger.warn(
           {
@@ -614,9 +614,9 @@ function buildDispatchCallback(args: {
             submodule: "dispatch",
             errorKind: "internal" as const,
             hint:
-              "obs_fleet_health assembler threw; inspect the fleet-health assembler + request shape",
+              "obs_system_health assembler threw; inspect the system-health assembler + request shape",
           },
-          "MCP obs_fleet_health dispatch error",
+          "MCP obs_system_health dispatch error",
         );
         // NEVER surface raw err.message (it can carry sessionKeys/file paths);
         // a contract request.parse failure also collapses here.

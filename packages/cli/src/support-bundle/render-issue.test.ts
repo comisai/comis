@@ -42,7 +42,7 @@ function makeTriage(overrides: Partial<SupportTriage> = {}): SupportTriage {
       "Run `comis doctor --repair` to fix the repairable checks.",
       "Start the daemon, then generate the bundle again.",
     ],
-    maintainerNextSteps: ["comis fleet --since 24"],
+    maintainerNextSteps: ["comis system-health --since 24"],
     evidenceFiles: [
       { path: "triage.json", description: "machine-readable verdict" },
       { path: "doctor.json", description: "full diagnostic findings" },

@@ -277,6 +277,14 @@ vi.mock("../../bridge/pi-event-bridge.js", () => ({
 vi.mock("../../bootstrap/index.js", () => ({
   assembleRichSystemPrompt: mockAssembleRichSystemPrompt,
   assembleRichSystemPromptBlocks: vi.fn().mockReturnValue({ staticPrefix: "static-prefix", attribution: "attribution", semiStableBody: "semi-stable-body" }),
+  compileRichSystemPrompt: vi.fn().mockReturnValue({
+    report: {
+      mode: "full",
+      combinedHash: "c".repeat(64),
+      totalChars: 42,
+      sections: [],
+    },
+  }),
   buildDateTimeSection: mockBuildDateTimeSection,
   buildInboundMetadataSection: mockBuildInboundMetadataSection,
   loadWorkspaceBootstrapFiles: mockLoadWorkspaceBootstrapFiles,
@@ -601,6 +609,46 @@ describe("PiExecutor", () => {
   // -------------------------------------------------------------------------
 
   describe("basic execution", () => {
+    it("loads one workspace policy snapshot and records its hash on the turn result", async () => {
+      const snapshot = {
+        agentId: "agent-1",
+        sections: [],
+        combinedHash: "a".repeat(64),
+      };
+      const load = vi.fn().mockResolvedValue(ok(snapshot));
+      const deps = createMockDeps({ workspacePolicyPort: { load, get: vi.fn() } });
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(testMessage, testSessionKey);
+
+      expect(load).toHaveBeenCalledTimes(1);
+      expect(load).toHaveBeenCalledWith(testSessionKey.agentId ?? "default");
+      expect(result.workspacePolicyHash).toBe(snapshot.combinedHash);
+    });
+
+    it("stops before model dispatch when workspace policy loading fails", async () => {
+      const load = vi.fn().mockResolvedValue(err({
+        kind: "agent_not_found" as const,
+        agentId: "agent-1",
+      }));
+      const deps = createMockDeps({ workspacePolicyPort: { load, get: vi.fn() } });
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(testMessage, testSessionKey);
+
+      expect(result.finishReason).toBe("error");
+      expect(result.errorContext?.errorType).toBe("WorkspacePolicyError");
+      expect(createAgentSession).not.toHaveBeenCalled();
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "workspace-policy-load",
+          hint: expect.any(String),
+          errorKind: "precondition",
+        }),
+        "Workspace policy snapshot load failed",
+      );
+    });
+
     it("calls withSession with correct sessionKey", async () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
@@ -2106,7 +2154,7 @@ describe("PiExecutor", () => {
   // -------------------------------------------------------------------------
 
   describe("full prompt assembly", () => {
-    it("passes full assembler params including runtime info and inbound metadata", async () => {
+    it("passes policy inputs to the compiler and inbound state to the dynamic section builder", async () => {
       const deps = createMockDeps({
         secretManager: { get: vi.fn().mockReturnValue("canary-secret-123") } as any,
       });
@@ -2116,29 +2164,22 @@ describe("PiExecutor", () => {
 
       expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
         expect.objectContaining({
-          agentName: "test-agent",
           promptMode: "full",
-          runtimeInfo: expect.objectContaining({
-            agentId: "agent-x",
-            host: expect.any(String),
-            os: expect.any(String),
-            arch: expect.any(String),
-            model: "claude-sonnet-4-5-20250929",
-            nodeVersion: expect.any(String),
-            defaultModel: "claude-sonnet-4-5-20250929",
-            channel: "test",
-          }),
-          inboundMeta: expect.objectContaining({
-            messageId: testMessage.id,
-            senderId: "user1",
-            chatId: "c1",
-            channel: "test",
-            chatType: "dm",
-            flags: expect.any(Object),
-          }),
-          workspaceDir: "/tmp/test-workspace",
-          // canarySecret and sessionKey no longer passed to assembler (relocated to dynamic preamble)
         }),
+      );
+      const compilerInput = mockAssembleRichSystemPrompt.mock.calls[0][0];
+      expect(compilerInput).not.toHaveProperty("runtimeInfo");
+      expect(compilerInput).not.toHaveProperty("inboundMeta");
+      expect(mockBuildInboundMetadataSection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messageId: testMessage.id,
+          senderId: "user1",
+          chatId: "c1",
+          channel: "test",
+          chatType: "dm",
+          flags: expect.any(Object),
+        }),
+        false,
       );
     });
 
@@ -2203,12 +2244,8 @@ describe("PiExecutor", () => {
         { limit: 5, minScore: 0.5, agentId: "agent-rag" },
       );
       expect(mockCreateHybridMemoryInjector).toHaveBeenCalled();
-      // RAG relocated to dynamic preamble, not system prompt
-      expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
-        expect.objectContaining({
-          additionalSections: [],
-        }),
-      );
+      const compilerInput = mockAssembleRichSystemPrompt.mock.calls[0][0];
+      expect(compilerInput).not.toHaveProperty("additionalSections");
     });
 
     it("RAG retrieval failure is non-fatal", async () => {
@@ -2369,7 +2406,7 @@ describe("PiExecutor", () => {
       expect(promptText).toContain("You are a helpful assistant.");
     });
 
-    it("derives tool names from customTools, not legacy tools parameter", async () => {
+    it("uses custom tools structurally without turning their names into prompt prose", async () => {
       const customTools = [
         { name: "memory_store", description: "Store memory", parameters: {} },
         { name: "memory_search", description: "Search memory", parameters: {} },
@@ -2380,15 +2417,15 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey);
 
-      expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
-        expect.objectContaining({
-          toolNames: ["memory_store", "memory_search", "bash"],
-          hasMemoryTools: true,
-        }),
-      );
+      expect(mockSetActiveToolsByName).toHaveBeenCalledWith([
+        "memory_store", "memory_search", "bash",
+      ]);
+      const compilerInput = mockAssembleRichSystemPrompt.mock.calls[0][0];
+      expect(compilerInput).not.toHaveProperty("toolNames");
+      expect(compilerInput).not.toHaveProperty("hasMemoryTools");
     });
 
-    it("passes undefined channelContext and reactionLevel to assembler", async () => {
+    it("keeps channel and reaction presentation state out of compiler configuration", async () => {
       const configWithReaction = {
         ...testConfig,
         reactionLevel: "extensive" as const,
@@ -2398,12 +2435,9 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey);
 
-      expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
-        expect.objectContaining({
-          channelContext: undefined,
-          reactionLevel: "extensive",
-        }),
-      );
+      const compilerInput = mockAssembleRichSystemPrompt.mock.calls[0][0];
+      expect(compilerInput).not.toHaveProperty("channelContext");
+      expect(compilerInput).not.toHaveProperty("reactionLevel");
     });
   });
 

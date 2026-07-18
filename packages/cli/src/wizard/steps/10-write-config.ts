@@ -280,7 +280,7 @@ function buildConfigObject(state: WizardState): Record<string, unknown> {
   // multilingual choice is written (English keeps the daemon's nomic default, so
   // there is nothing to emit). Writes the AUTHORITATIVE `embedding.*` surface,
   // NOT the legacy `memory.recall.embeddingModel` field. `multilingual: true` is
-  // the advisory flag that reconciles the `comis fleet` model-health line.
+  // the advisory flag that reconciles the `comis system-health` model-health line.
   if (state.recallProvider?.multilingual === true) {
     const rp = state.recallProvider;
     config.embedding =

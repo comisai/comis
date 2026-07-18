@@ -426,11 +426,11 @@ describe("wireVoiceObs — the handler-wiring helper (emitter + logger closure)"
 });
 
 // ---------------------------------------------------------------------------
-// The voice_degraded fleet emit.
+// The voice_degraded system emit.
 //
 // On a transcription/synthesis FAILURE, wireVoiceObs.failed() ALSO inserts a
 // `voice_degraded` health_signal diagnostic row (when an obsStore is wired) so the
-// cross-session `comis fleet` voice_health finding (fleet-findings.ts) has a
+// cross-session `comis system-health` voice_health finding (system-findings.ts) has a
 // source. The row is CONTENT-FREE: signal + the closed domain errorKind + the
 // voice family ONLY — never the raw provider message, never a secret. Insertion is
 // best-effort: an absent store no-ops, and a throwing store never breaks the
@@ -449,7 +449,7 @@ function captureObsStore(opts: { throwOnInsert?: boolean } = {}) {
   };
 }
 
-describe("wireVoiceObs — voice_degraded fleet emit", () => {
+describe("wireVoiceObs — voice_degraded system emit", () => {
   it("failed() inserts ONE voice_degraded health_signal row carrying the closed domain errorKind + the voice family", () => {
     const logger = captureLogger();
     const obsStore = captureObsStore();

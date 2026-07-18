@@ -33,6 +33,7 @@ import {
   // validateMemoryWrite REJECTS (severity "critical") when the secret-egress scan
   // finds a redaction.
   validateMemoryWrite,
+  type ResponseLocalePolicy,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError, isSilentResponse } from "@comis/shared";
@@ -103,7 +104,7 @@ import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // The turn-end memory:recall_used emit threads
 // classifyIntent(msg.text) so the daemon write-back records the per-intent usefulness bucket.
 import { classifyIntent } from "../rag/query-understanding.js";
-import { getWorkspaceStatus } from "../workspace/index.js";
+import { getWorkspaceStatus } from "@comis/core";
 import type { ExecutionResult, ExecutionOverrides } from "./types.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import type { ContextEngine } from "../context-engine/index.js";
@@ -116,8 +117,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { shouldRunCritic, runVerificationCritic } from "./verification-gate.js";
 // Deterministic user-facing replies for named degraded terminal causes.
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply } from "./degraded-reply.js";
-// Resolve the degraded reply's language once at the chokepoint.
-import { resolveReplyLanguage } from "./resolve-reply-language.js";
 import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
@@ -228,9 +227,8 @@ export interface PostExecutionParams {
   sm: { buildSessionContext(): unknown };
   config: PerAgentConfig;
   msg: NormalizedMessage;
-  /** USER.md preferred language, threaded from prompt assembly. Consumed by
-   *  the degraded-reply resolver (priority: config > USER.md > inbound script). */
-  userMdLanguage?: string;
+  /** Exact typed response-locale decision used for this turn. */
+  responseLocalePolicy: ResponseLocalePolicy;
   sessionKey: SessionKey;
   formattedKey: string;
   /** Resolver-aligned key for activeRunRegistry.deregister. Must match the
@@ -635,7 +633,7 @@ export function shouldRunLcdStorePasses(config: {
  * so the named cause stays deliberate rather than accidental.
  *
  * NAMED degradation causes: flattening context-exhaustion into the generic
- * "error" bucket would leave obs.explain / obs.fleet.health unable to tell a
+ * "error" bucket would leave obs.explain / obs.system.health unable to tell a
  * context-exhausted session from a tool crash. The two related
  * context-exhaustion finish reasons —
  * `context_exhausted` (the bridge's hard context-window-guard abort,
@@ -655,14 +653,14 @@ export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["session
   // The terminal output-cap truncation promoted at the chokepoint.
   output_starved: "output_starved",
   // PromptTimeoutError terminals get their own NAMED cause. HARD_FAILURE_END_REASONS
-  // and the fleet degradedByCause record carry "timeout".
+  // and the system degradedByCause record carry "timeout".
   prompt_timeout: "timeout",
   input_too_large: "error",
   // The dollars kill-switch abort (bridge-safety-controls sets
   // finishReason:"spend_exceeded") gets its OWN named cause instead of the `?? "error"`
-  // catch-all — so obs.explain / obs.fleet.health can tell a spend-killed session from
+  // catch-all — so obs.explain / obs.system.health can tell a spend-killed session from
   // a tool crash. HARD_FAILURE_END_REASONS (obs-explain-
-  // assemble.ts) carries it so the fleet degradedByCause record attributes the CAUSE.
+  // assemble.ts) carries it so the system degradedByCause record attributes the CAUSE.
   spend_exceeded: "spend_exceeded",
   completed_with_tool_errors: "completed_with_tool_errors",
   // The narrate-without-emit terminal promoted at the chokepoint
@@ -813,7 +811,7 @@ export function buildSessionEndMetadata(args: {
  *
  * The payload carries ids + counts + typed flags PLUS `topErrorKinds` and
  * `source`: both are threaded into the
- * persisted `obs_diagnostics` row so the fleet aggregate
+ * persisted `obs_diagnostics` row so the system aggregate
  * (`aggregateSessionsInWindow`) can read them without opening per-session
  * `_session-metadata.json`. Production emits the constant `source: "runtime"`;
  * a synthetic/test row is produced by a caller injecting `source: "test"`.
@@ -832,7 +830,7 @@ export function emitSessionSummary(
     rollup: SessionHealthRollup;
     /** The mapped endReason (named degradation cause) — the SAME value derived
      *  once at the chokepoint via END_REASON_MAP and co-persisted on sessionEnd.
-     *  Carried so the row feeds the fleet `degradedByCause` aggregate. */
+     *  Carried so the row feeds the system `degradedByCause` aggregate. */
     endReason: string;
     clock: ClockPort;
   },
@@ -925,7 +923,7 @@ export function snapshotSummarizerDepsForDefer(
  * plumbed on some path) every failed tool is reported as unrecovered —
  * so this never HIDES a genuine unrecovered failure.
  *
- * Observability is unaffected: effectiveFinishReason / logs / fleet rollup still
+ * Observability is unaffected: effectiveFinishReason / logs / system rollup still
  * record the failure. Only the user-facing reply is gated.
  *
  * Pure: no I/O, no side effects. Returns deduped failed names with no same-name success.
@@ -1323,7 +1321,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // read as a user-facing failure. Also suppressed when the model already
   // acknowledged the failure or the response is a silent sentinel. The
   // observability label (effectiveFinishReason) is unchanged — operators still
-  // see the recovered failure in logs/fleet.
+  // see the recovered failure in logs/system.
   const unrecoveredFailed = unrecoveredFailedToolNames(
     bridgeResult.failedTools ?? [],
     bridgeResult.toolExecResults,
@@ -1345,14 +1343,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // Degrade loudly — deliver an honest user-facing reply for named degraded causes.
   // APPEND for output_starved (partial text exists); REPLACE for context_exhausted (no usable text).
   // Gate on effectiveFinishReason (NOT result.finishReason — output_starved is only set here).
-  // Resolve the reply language ONCE (config > USER.md > inbound
-  // script he/ar/ru > en) and pass the tag to all three builders, so a Hebrew
-  // user reads the what/why/knob in Hebrew (en/"en" path stays byte-identical).
-  const replyLanguage = resolveReplyLanguage({
-    inboundText: params.msg.text ?? "",
-    configLanguage: params.config.language,
-    userMdLanguage: params.userMdLanguage,
-  });
+  // Resolve the open response-locale policy once and pass the canonical tag to
+  // each deterministic degraded-reply builder. Missing locale packs fall back
+  // to the injected catalog's English strings.
+  const replyLanguage = params.responseLocalePolicy.locale;
   if (effectiveFinishReason === "output_starved") {
     result.response = (result.response ?? "") + buildOutputStarvedAnnotation(replyLanguage);
     deps.logger.warn(
@@ -1495,7 +1489,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // emitSessionSummary — a throwing in-process listener must not abort teardown.
   // The event carries ids + counts + topErrorKinds + source:"runtime"
   // PLUS the mapped endReason (the named degradation cause)
-  // so the row feeds the fleet aggregate AND its degradedByCause rollup.
+  // so the row feeds the system aggregate AND its degradedByCause rollup.
   // endReason is the SAME value mapped once above and co-persisted on sessionEnd.
   emitSessionSummary(
     { eventBus: deps.eventBus, logger: deps.logger },
@@ -1667,7 +1661,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         },
         // The live/store-divergence skip emits a content-free
         // context:dag_degraded so the divergence persists as a health_signal row
-        // (queryable by the fleet lens) instead of being a Pino-only WARN.
+        // (queryable by the system health view) instead of being a Pino-only WARN.
         () => {
           deps.eventBus.emit("context:dag_degraded", {
             conversationId: scope.conversationId,

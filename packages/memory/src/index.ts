@@ -306,7 +306,7 @@ export {
 export type { AuditQueryParams } from "./observability-store/index.js";
 
 // The cache-break row-builder + the rate-by-reason analytics query the daemon's
-// obs-persistence-wiring (the cache_break subscriber) and the fleet/explain
+// obs-persistence-wiring (the cache_break subscriber) and the system/explain
 // surfaces consume.
 export {
   cacheBreakEventToRow,
@@ -314,14 +314,14 @@ export {
 } from "./observability-store/index.js";
 export type { CacheBreakReasonRate } from "./observability-store/index.js";
 
-// Fleet window-rollup reducer. reduceFleetWindow is the PURE cross-session reduce
+// System window-rollup reducer. reduceSystemWindow is the PURE cross-session reduce
 // over the SessionSummaryRollup[] (synthetic excluded on the real `source`
-// field). Barrel-surfaced AHEAD of its in-repo consumer: the obs.fleet.health
+// field). Barrel-surfaced AHEAD of its in-repo consumer: the obs.system.health
 // handler imports it, but no production module references it yet — tracked in
-// public-api-policy.ts as a planned orphan (mirror FleetHealthReportSchema/
-// FleetHealthReport).
-export { reduceFleetWindow } from "./observability-store/fleet-window-rollup.js";
-export type { FleetWindowRollup } from "./observability-store/fleet-window-rollup.js";
+// public-api-policy.ts as a planned orphan (mirror SystemHealthReportSchema/
+// SystemHealthReport).
+export { reduceSystemWindow } from "./observability-store/system-window-rollup.js";
+export type { SystemWindowRollup } from "./observability-store/system-window-rollup.js";
 
 // Generic Row mapper factory.
 // Consumed via createRowMapper(schema) at every SQLite call-site to

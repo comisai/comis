@@ -147,7 +147,7 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
 
   /**
    * Admin-gated, READ-ONLY obs methods whose operator CLI (`comis explain` /
-   * `comis fleet`) probes the RPC then falls back to offline assembly from the
+   * `comis system-health`) probes the RPC then falls back to offline assembly from the
    * local data dir. An admin-trust denial here is a ROUTINE control flow — the
    * CLI expects it and recovers — so it logs at DEBUG, not WARN: otherwise
    * every `comis explain` an operator runs spams an `errorKind:auth` WARN into
@@ -157,7 +157,7 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
    */
   const OFFLINE_FALLBACK_OBS_METHODS: ReadonlySet<string> = new Set([
     "obs.explain",
-    "obs.fleet.health",
+    "obs.system.health",
   ]);
 
   /**
@@ -192,7 +192,7 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
             : 0;
         // A routine operator flow — an admin-trust denial on a read-only obs
         // method the CLI probes-then-falls-back-offline — logs at DEBUG so
-        // `comis explain` / `comis fleet` do not spam WARNs into the log an
+        // `comis explain` / `comis system-health` do not spam WARNs into the log an
         // operator is reviewing. Internal errors → error; every other
         // non-internal refusal (incl. denials on other methods) → warn.
         const isRoutineObsDeny =

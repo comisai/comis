@@ -6,7 +6,7 @@ export { redactOutputText } from "./output-redactor.js";
 export type { OutputRedactionResult } from "./output-redactor.js";
 
 // Loopback bind detection — the shared TLS-off-is-benign-on-loopback judgment
-// (gateway boot log, fleet config-posture, gateway-exposure security check).
+// (gateway boot log, system config-posture, gateway-exposure security check).
 export { isLoopbackHost } from "./loopback-host.js";
 
 // Bind-mount validator — pure denylist backstop reusing the

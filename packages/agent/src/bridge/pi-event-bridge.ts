@@ -945,9 +945,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               // external/MCP/transport failure — see classifyToolError). The one
               // genuinely-missing-dependency exit is 127 (command/binary not
               // found), where the "check the package is installed" hint is right.
-              // Live 2026-07-10 (fleet-marathon): a python script exiting 1 on its
-              // own JSONDecodeError was mislabeled `dependency`, sending diagnosis
-              // at a phantom missing interpreter.
+              // A command that ran and exited non-zero failed internally; it does
+              // not prove that its interpreter or another dependency is missing.
               toolErrorKind = exitCode === 127 ? "dependency" : "internal";
               classifiedFailureBy = "exit_code"; // exec non-zero exit — call returned, content failed
             }

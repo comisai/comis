@@ -66,7 +66,7 @@ interface SpendSnapshot {
  *
  * It consumes the LIVE `obs.spend.snapshot` (the threaded
  * `spendAccumulator.getSnapshot()`, NOT the lagging SQL) — so the rendered figure
- * CANNOT disagree with `comis fleet` / the dollars kill-switch.
+ * CANNOT disagree with `comis system-health` / the dollars kill-switch.
  *
  * Admin-gating rides the admin-gated snapshot RPC (an "Admin access required"
  * rejection surfaces the error path). Honest-degradation: an `{ enabled: false }`

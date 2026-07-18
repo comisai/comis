@@ -20,6 +20,7 @@ import type {
   OutputGuardPort,
   ClockPort,
   TimerPort,
+  ResponseLocalePolicy,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type { CommandDirectives } from "../command-directive-types.js";
@@ -75,6 +76,7 @@ export interface RunPromptParams {
   bridge: PromptRunnerBridge;
   // Prompt assembly data
   dynamicPreamble: string | undefined;
+  responseLocalePolicy?: ResponseLocalePolicy;
   deferredContext: string | undefined;
   /**
    * Per-turn capability-index render result. The .text field is concatenated

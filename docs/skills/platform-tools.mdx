@@ -34,7 +34,7 @@ tab. Here is a summary of what is available, organized by category:
 | Context | `session_search` | Search the current session's conversation history | [Context Tools](/skills/built-in-tools#context-tools) |
 | Browser | `browser` | Automate a headless browser with 16 actions | [Browser Guide](/agent-tools/browser) |
 | Background | `background_tasks` | List, inspect, cancel, and read output from background tasks | Below |
-| Fleet Management | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `providers_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` | Supervisor-level administration tools | [Infrastructure Guide](/agent-tools/infrastructure) |
+| System Management | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `providers_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` | Supervisor-level administration tools | [Infrastructure Guide](/agent-tools/infrastructure) |
 | Platform Actions | `discord_action`, `telegram_action`, `slack_action`, `whatsapp_action` | Platform-specific moderation (54 total actions) | [Platform Actions Guide](/agent-tools/platform-actions) |
 
 ### Scheduling
@@ -73,7 +73,7 @@ ability to collaborate with other agents:
 - `sessions_spawn` -- create a new sub-agent session for parallel work
 - `subagents` -- manage spawned sub-agents
 
-Fleet listing is available via `agents_manage` (action: `list`).
+System listing is available via `agents_manage` (action: `list`).
 
 ### Orchestration
 
@@ -134,9 +134,9 @@ cross-session recall (`memory_search`, `session_search`). In the opt-in
 and [Context Tools](/skills/built-in-tools#context-tools) for the `session_search`
 parameter reference.
 
-### Fleet Management
+### System Management
 
-Fleet management tools are supervisor-level capabilities for managing the
+Agent administration tools are supervisor-level capabilities for managing the
 entire Comis installation:
 
 - `agents_manage` -- six actions for agent lifecycle: `create`, `get`, `update`, `delete`, `suspend`, `resume` (create/delete take effect immediately without daemon restart; update requires restart)
@@ -251,7 +251,7 @@ check its own tasks -- this is not restricted to supervisor agents.
 ## Regular vs Supervisor Tools
 
 Most platform tools are available to any agent running with the `coding`,
-`messaging`, or `full` tool policy profile. However, fleet management tools
+`messaging`, or `full` tool policy profile. However, agent administration tools
 require the `supervisor` tool policy profile or an explicit `allow` list in
 the tool policy configuration. The supervisor-restricted tools are:
 

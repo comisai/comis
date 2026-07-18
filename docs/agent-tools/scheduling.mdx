@@ -235,7 +235,7 @@ On an empty queue the fire costs one sandboxed HTTP call and zero model turns; o
 **A wake-gate is not the `wake` action.** The `cron` tool's `wake` action (and the `scheduler.wake` RPC) is a **restart-replay** -- it nudges the scheduler to pick up firings missed while the daemon was down. A **wake-gate** is a per-job pre-run decision about a *single* fire. They share a word and nothing else.
 </Note>
 
-Every gated fire is observable without exposing what the gate gathered: a skipped fire is recorded in the job's run history (`runs` shows it with a `skipped` status and the avoided-turn count), and the daemon-wide skip-rate, turns-saved, and gate tool-call cost roll up into the [fleet health report](/reference/cli#comis-fleet). See the [operations scheduler guide](/operations/scheduler#wake-gate-efficiency) for the operator view.
+Every gated fire is observable without exposing what the gate gathered: a skipped fire is recorded in the job's run history (`runs` shows it with a `skipped` status and the avoided-turn count), and the daemon-wide skip-rate, turns-saved, and gate tool-call cost roll up into the [system health report](/reference/cli#comis-system-health). See the [operations scheduler guide](/operations/scheduler#wake-gate-efficiency) for the operator view.
 
 ## heartbeat_manage -- Agent Heartbeat
 

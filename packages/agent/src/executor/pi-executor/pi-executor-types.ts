@@ -1,13 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Pure types for the PiExecutor factory — extracted to a dedicated file so
- * closure-extracted helpers can `import type { PiExecutorDeps }` without
- * creating a cyclic import with `pi-executor.ts` (which itself imports
- * those helpers).
- *
- * @module
- */
-
+/** PiExecutor factory types, isolated to avoid cyclic imports from its helpers. */
+/** @module */
 import type {
   AuthStorage,
   ModelRegistry,
@@ -40,6 +33,8 @@ import type {
   EnvPort,
   TimerPort,
   ContextStorePort,
+  WorkspacePolicyPort,
+  WorkspacePolicySnapshot,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 
@@ -55,7 +50,7 @@ import type { OAuthTokenManager } from "../../model/oauth-token-manager.js";
 import type { ActiveRunRegistry } from "../active-run-registry.js";
 import type { GeminiCacheManager } from "../gemini-cache-manager.js";
 import type { BackgroundTaskManager } from "../../background/index.js";
-import type { McpServerInstruction } from "../types.js";
+import type { McpInstructionBlock } from "@comis/core";
 
 /** Dependencies required by the PiExecutor. */
 export interface PiExecutorDeps {
@@ -89,6 +84,9 @@ export interface PiExecutorDeps {
   sessionAdapter: ComisSessionManager;
   // Workspace
   workspaceDir: string;
+  /** Daemon-composed loader. When present, one snapshot is loaded at turn start. */
+  workspacePolicyPort?: WorkspacePolicyPort;
+  workspacePolicySnapshot?: WorkspacePolicySnapshot;
   /** Daemon data dir (COMIS_DATA_DIR / config.dataDir). Threaded to
    *  prompt-assembly via ToolAssemblyDeps so the recall-trace recorder resolves
    *  its containment base from the SAME source the memory.recall_trace reader
@@ -188,7 +186,7 @@ export interface PiExecutorDeps {
    * Read instructions from currently connected MCP servers for each execution.
    * Resolver form keeps the dynamic preamble current after reconnects.
    */
-  getMcpServerInstructions?: () => ReadonlyArray<McpServerInstruction>;
+  getMcpServerInstructions?: () => ReadonlyArray<McpInstructionBlock>;
   /** Tool names available to sub-agents, injected by daemon from TOOL_PROFILES + config. */
   subAgentToolNames?: string[];
   /** Whether sub-agents inherit MCP tools from parent (subAgentMcpTools: "inherit"). */
@@ -260,8 +258,6 @@ export interface PiExecutorDeps {
   toolCapabilityPort: ToolCapabilityPort;
   /** Sender trust display config from AppConfig. */
   senderTrustDisplayConfig?: SenderTrustDisplayConfig;
-  /** Documentation config from AppConfig. */
-  documentationConfig?: import("@comis/core").DocumentationConfig;
   /** Tenant ID for conversation creation. */
   tenantId?: string;
   /** Delivery mirror port for session mirroring injection. */

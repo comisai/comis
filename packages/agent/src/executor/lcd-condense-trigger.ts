@@ -200,7 +200,7 @@ export async function maybeRunCondensePass(
       );
       // Emit a content-free context:dag_degraded so the inverted-
       // window divergence persists as a health_signal row (queryable by the
-      // fleet lens) instead of being a Pino-only WARN. Identifiers + reason +
+      // system health view) instead of being a Pino-only WARN. Identifiers + reason +
       // timing only — NEVER summary content (mirrors the context:dag_compacted
       // emit below). Reuse the injected clock (the globals gate bans Date.now());
       // a scalar-only caller degrades durationMs to 0.

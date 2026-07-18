@@ -21,13 +21,13 @@
  *                                  no explicit setup-gateway-api.ts entry)
  *
  *   admin (setup-gateway-api.ts:203-207 — "Agent management admin"):
- *   - `agents.list`         (admin — fleet read; OWNED BY session-handlers.ts:272
+ *   - `agents.list`         (admin — system read; OWNED BY session-handlers.ts:272
  *                                    — the handler ownership is in
  *                                    session-handlers.ts even though the name
  *                                    suggests agents.ts, so the contract lives here)
  *
  *   admin (setup-gateway-api.ts:213-215 — "Session management admin"):
- *   - `session.list`        (admin — fleet read)
+ *   - `session.list`        (admin — system read)
  *   - `session.delete`      (admin — destructive)
  *   - `session.reset`       (admin — destructive, preserves identity metadata)
  *   - `session.export`      (admin — full transcript dump)

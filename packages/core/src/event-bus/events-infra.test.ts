@@ -200,6 +200,7 @@ describe("InfraEvents payload structure", () => {
       agentId: "agent-1",
       sessionKey: "t1:u1:c1",
       traceId: "trace-1",
+      workspacePolicyHash: "a".repeat(64),
       toolCalls: 2,
       llmCalls: 3,
       receivedAt: now - 3000,
@@ -225,6 +226,7 @@ describe("InfraEvents payload structure", () => {
     expect(received.tokensUsed).toBe(1500);
     expect(received.cost).toBe(0.018);
     expect(received.traceId).toBe("trace-1");
+    expect(received.workspacePolicyHash).toBe("a".repeat(64));
     expect(received.toolCalls).toBe(2);
     expect(received.llmCalls).toBe(3);
     expect(received.status).toBe("success");
@@ -550,6 +552,22 @@ describe("InfraEvents payload structure", () => {
     expect(received.truncatedSize).toBeLessThan(received.originalSize);
     expect(received.traceId).toBe("11111111-1111-1111-1111-111111111111");
     expect(typeof received.timestamp).toBe("number");
+  });
+
+  it("mcp:server:instructions_rejected carries only content-free validation metadata", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["mcp:server:instructions_rejected"] = {
+      serverName: "example-server",
+      reason: "invalid_text_shape",
+      timestamp: Date.now(),
+    };
+
+    bus.on("mcp:server:instructions_rejected", handler);
+    bus.emit("mcp:server:instructions_rejected", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    expect(JSON.stringify(payload)).not.toContain("instructions");
   });
 
   it("type safety: @ts-expect-error for missing required fields", () => {

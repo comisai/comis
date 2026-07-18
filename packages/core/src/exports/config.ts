@@ -283,7 +283,6 @@ export type {
   LifecycleReactionsConfig,
   LifecycleReactionsTimingConfig,
   SenderTrustDisplayConfig,
-  DocumentationConfig,
   DocumentationLink,
   ImageGenerationConfig,
   VideoGenerationConfig,

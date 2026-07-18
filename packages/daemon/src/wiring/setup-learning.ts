@@ -127,7 +127,9 @@ export interface LearningOutcomeWiringDeps {
    * with no tool/pipeline signal. Returns the verdict's `outcome` + the CODE-capped reward
    * (≤ 0.7) the daemon `observe()`s as a `source:"judge"` row. OPTIONAL — absent (no judge
    * wired, or the judge disabled for every agent) ⇒ the upgrade path is never entered
-   * (byte-identical). These three fields ARE the {@link JudgeUpgradeDeps} structural subset.
+   * (byte-identical). The returned verdict also carries content-free model, rubric,
+   * evidence, and policy provenance for the completion record. These three fields
+   * ARE the {@link JudgeUpgradeDeps} structural subset.
    */
   outcomeJudge?: OutcomeJudge;
   /** Per-agent judge enable (memory.enabled && learningOutcome.enabled && judge.enabled); absent ⇒ never runs. */
@@ -153,6 +155,7 @@ interface OutcomeScope {
   agentId: string;
   sessionId: string;
   trajectoryId: string;
+  workspacePolicyHash?: string;
 }
 
 /**
@@ -167,6 +170,7 @@ function resolveScope(payload: {
   agentId?: string;
   traceId?: string;
   sessionKey?: string;
+  workspacePolicyHash?: string;
 }): OutcomeScope | undefined {
   const ctx = tryGetContext();
   const agentId = payload.agentId ?? ctx?.agentId;
@@ -179,7 +183,15 @@ function resolveScope(payload: {
   // distinct sessionId). Use sessionKey when present, else fall back to the
   // trajectory identity (a stable, scope-consistent key).
   const sessionId = sessionKey ?? trajectoryId;
-  return { tenantId, agentId, sessionId, trajectoryId };
+  return {
+    tenantId,
+    agentId,
+    sessionId,
+    trajectoryId,
+    ...(payload.workspacePolicyHash === undefined
+      ? {}
+      : { workspacePolicyHash: payload.workspacePolicyHash }),
+  };
 }
 
 /**
@@ -535,7 +547,11 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     // Nothing attributed this turn → no write (avoids an empty attribution row).
     if (p.usedSkillIds.length === 0) return;
 
-    const scope = resolveScope({ agentId: p.agentId, traceId: p.traceId, sessionKey: p.sessionKey });
+    const scope = resolveScope({
+      agentId: p.agentId,
+      traceId: p.traceId,
+      sessionKey: p.sessionKey,
+    });
     if (scope === undefined) return;
 
     // ATTRIBUTION_CONFIDENCE: a neutral, low-confidence `explicit`/`unknown` carrier —
@@ -621,7 +637,12 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   // absent traceId → skip (fail-closed); the dedup makes a both-events DAG turn resolve once.
   deps.eventBus.on("diagnostic:message_processed", (p) => {
     if (!deps.learningOutcomeEnabled(p.agentId)) return;
-    const scope = resolveScope({ agentId: p.agentId, traceId: p.traceId, sessionKey: p.sessionKey });
+    const scope = resolveScope({
+      agentId: p.agentId,
+      traceId: p.traceId,
+      sessionKey: p.sessionKey,
+      workspacePolicyHash: p.workspacePolicyHash,
+    });
     if (scope === undefined) return; // no trajectory identity (absent traceId) → skip
     resolveAndConsume(scope, deps.clock.now());
   });

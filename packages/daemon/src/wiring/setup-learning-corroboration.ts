@@ -17,7 +17,7 @@ export const CORROBORATION_MIN_INDEPENDENT = 2;
 /**
  * Bound on the corroboration tally — the max distinct memoryIds the
  * `failureCorroborationTally` Map tracks before evicting the oldest. The tally is a
- * daemon-lifetime in-process gauge (resets on restart); without a cap a busy fleet (or
+ * daemon-lifetime in-process gauge (resets on restart); without a cap a busy system (or
  * an adversary on rotating session keys) grows it unbounded. 50_000 mirrors the
  * reaction/session trajectory maps' `maxEntries`. Past it the oldest-touched id is
  * dropped — a soft forget of the stalest corroboration state, never a correctness loss.

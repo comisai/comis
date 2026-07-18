@@ -20,7 +20,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | budgetGuards | optional | obs.budget returns an empty snapshot map; per-agent budget enforcement guards are not enumerated for the UI | packages/daemon/src/api/types.ts:429 |
 | obsStore | optional | obs.usage / obs.billing historical-aggregation queries return live in-memory snapshots only; no persisted timeseries is read or written | packages/daemon/src/api/types.ts:431 |
 | obsPersistence | optional | obs.reset can delete persisted rows while delayed writes remain queued, and obs.delivery.stats cannot flush current-process delivery rows before its canonical SQLite read; reset data can reappear and windowed stats fall back to the bounded live tracer plus pre-startup rows | packages/daemon/src/api/types.ts:730 |
-| clock | optional | the obs.fleet.health assembler reads `deps.clock!` for the window `sinceMs`; absent in handler unit tests that pass `{}` deps, but ALWAYS populated in production from boot.clock (buildRpcDispatchDeps `clock: c.clock`) — an unwired clock throws at request time | packages/daemon/src/api/types.ts:581 |
+| clock | optional | the obs.system.health assembler reads `deps.clock!` for the window `sinceMs`; absent in handler unit tests that pass `{}` deps, but ALWAYS populated in production from boot.clock (buildRpcDispatchDeps `clock: c.clock`) — an unwired clock throws at request time | packages/daemon/src/api/types.ts:581 |
 | startupTimestamp | optional | obs.diagnostics omits the uptime field; UI shows "unknown" for daemon-uptime | packages/daemon/src/api/types.ts:432 |
 | sharedCostTracker | optional | obs.reset cannot reset the shared cost tracker; only per-agent trackers are reset | packages/daemon/src/api/types.ts:433 |
 | contextPipelineCollector | optional | obs.diagnostics omits the context-pipeline stage metrics; ctx_recall / ctx_search / ctx_inspect / ctx_expand throughput is invisible to operators | packages/daemon/src/api/types.ts:435 |
@@ -32,7 +32,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | dataDir | optional | obs.trace.* handlers default to $HOME/.comis at handler-construction time; session-index scan path falls back to the home directory convention | packages/daemon/src/api/types.ts:470 |
 | exportTrajectoryBundle | optional | obs.trace.export throws "exportTrajectoryBundle DI not configured" — the export RPC is unavailable until production wiring injects the bundle pipeline | packages/daemon/src/api/types.ts:477 |
 | spendSnapshot | optional | obs.spend.snapshot returns `enabled:false` (no live daemon-wide spend reader wired); the live-spend headroom (ceiling − spend) is unavailable and the UI shows spend governance as off | packages/daemon/src/api/types.ts:714 |
-| durableRuns | optional | the obs.fleet.health autonomy block is OMITTED (orphaned/resumed/revoked/killed counts, breaker/budget breaches, and the worst-run `comis explain <rootRunId>` pointer are unavailable); absent on offline-CLI and non-durability boots — honest degradation, byte-identical with the durability-off path | packages/daemon/src/api/types.ts:751 |
+| durableRuns | optional | the obs.system.health autonomy block is OMITTED (orphaned/resumed/revoked/killed counts, breaker/budget breaches, and the worst-run `comis explain <rootRunId>` pointer are unavailable); absent on offline-CLI and non-durability boots — honest degradation, byte-identical with the durability-off path | packages/daemon/src/api/types.ts:751 |
 
 ## Removed Fields (stale-fallback — deleted)
 

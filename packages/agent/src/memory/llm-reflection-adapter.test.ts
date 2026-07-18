@@ -302,7 +302,7 @@ describe("reflection LLM usage attribution (onUsage hook)", () => {
   });
 
   // Background reflection runs previously spent tokens with ZERO obs rows —
-  // invisible to fleet/billing (comis-daniel review finding). The hook hands
+  // invisible to system/billing (comis-daniel review finding). The hook hands
   // the SDK usage to the daemon wiring, which attributes it under the
   // synthetic __REFLECT__ session key.
   it("hands the SDK usage (tokens + cost + durationMs) to onUsage on a completed call", async () => {

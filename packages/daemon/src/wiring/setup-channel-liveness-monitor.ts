@@ -11,7 +11,7 @@
  * ingress) and, once the silence exceeds the configured
  * `missedInboundThresholdMs`, emits a content-free `channel:inbound_silent`
  * event + a WARN. The obs bridge turns the event into a `health_signal` row
- * that surfaces as a `comis fleet` finding.
+ * that surfaces as a `comis system-health` finding.
  *
  * Extracted from `daemon.ts` (mirrors `setupChannelHealthMonitor`) to keep the
  * composition root under its architecture line cap.

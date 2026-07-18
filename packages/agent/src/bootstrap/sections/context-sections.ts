@@ -6,7 +6,7 @@
 
 import type { BootstrapContextFile } from "../types.js";
 import { extractMarkdownSections, MAX_POST_COMPACTION_CHARS } from "../section-extractor.js";
-import { TEMPLATE_MARKER } from "../../workspace/templates.js";
+import { TEMPLATE_MARKER } from "@comis/core";
 
 export interface SubagentRoleParams {
   /** Task description assigned to the subagent */

@@ -879,7 +879,12 @@ describe("assembleTools — recall-trace config passthrough to prompt assembly",
 describe("assembleTools — MCP instruction resolver passthrough to prompt assembly", () => {
   it("forwards the live MCP instruction resolver without taking a startup snapshot", async () => {
     const getMcpServerInstructions = vi.fn(() => [
-      { serverName: "fleet", instructions: "Use fleet tools for current vehicle facts." },
+      {
+        serverId: "example-operations",
+        instructions: "Use the structured tools for current facts.",
+        contentHash: "a".repeat(64),
+        trust: "external" as const,
+      },
     ]);
     const deps = {
       ...makeDeps(),

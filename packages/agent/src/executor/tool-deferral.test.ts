@@ -571,7 +571,7 @@ describe("applyToolDeferral - discover_tools creation", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),
-      { ...makeTool("agents_manage"), description: "Manage agent fleet: create, get, update, delete, suspend, resume." },
+      { ...makeTool("agents_manage"), description: "Manage agent system: create, get, update, delete, suspend, resume." },
       { ...makeTool("obs_query"), description: "Query platform diagnostics, billing data, delivery traces" },
     ];
     const ctx = makeContext({ trustLevel: "external", toolNames: tools.map(t => t.name) });
@@ -581,7 +581,7 @@ describe("applyToolDeferral - discover_tools creation", () => {
     expect(result.discoverTool).not.toBeNull();
 
     // Search for "agent" -- should match agents_manage
-    const searchResult = await result.discoverTool!.execute!("call-1", { query: "agent manage fleet" });
+    const searchResult = await result.discoverTool!.execute!("call-1", { query: "agent manage system" });
     expect(searchResult.isError).toBe(false);
     const resultText = (searchResult.content[0] as any).text;
     expect(resultText).toContain("<functions>");
@@ -675,10 +675,10 @@ describe("discover_tools score-floor filter", () => {
       },
       {
         name: "agents_manage",
-        description: "Manage agent fleet: create, get, update",
+        description: "Manage agent system: create, get, update",
         original: {
           ...makeTool("agents_manage"),
-          description: "Manage agent fleet: create, get, update",
+          description: "Manage agent system: create, get, update",
         } as ToolDefinition,
       },
       {
@@ -740,7 +740,7 @@ describe("discover_tools score-floor filter", () => {
     const logger = createMockLogger();
     const discoverTool = createDiscoverTool(makeNoiseFixture(), logger, undefined, undefined, new Set<string>());
 
-    const searchResult = await discoverTool.execute!("call-1", { query: "agent manage fleet" });
+    const searchResult = await discoverTool.execute!("call-1", { query: "agent manage system" });
 
     expect(searchResult.isError).toBe(false);
     const resultText = (searchResult.content[0] as any).text;
@@ -769,10 +769,10 @@ describe("discover_tools score-floor filter", () => {
         } as ToolDefinition,
       },
       {
-        name: "custom_fleet",
+        name: "custom_system",
         description: "alpha beta",
         original: {
-          ...makeTool("custom_fleet"),
+          ...makeTool("custom_system"),
           description: "alpha beta",
         } as ToolDefinition,
       },
@@ -796,7 +796,7 @@ describe("discover_tools score-floor filter", () => {
     expect(defaultText).toContain('"name":"custom_tokens"');
     // Secondary docs ("alpha beta", "alpha beta charlie") have no "generate"
     // token so their BM25 contribution is 0 -> excluded from ranked.
-    expect(defaultText).not.toContain('"name":"custom_fleet"');
+    expect(defaultText).not.toContain('"name":"custom_system"');
 
     // Zero-threshold override: at the zero floor, every positive-scoring
     // doc surfaces. Here only custom_tokens has any match for the query
@@ -1220,11 +1220,11 @@ describe("discover_tools -- searchHint BM25 enrichment", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),
-      { ...makeTool("agents_manage"), description: "Manage agent fleet" } as unknown as ToolDefinition,
+      { ...makeTool("agents_manage"), description: "Manage agent system" } as unknown as ToolDefinition,
       { ...makeTool("obs_query"), description: "Query diagnostics" } as unknown as ToolDefinition,
     ];
 
-    registerToolMetadata("agents_manage", { searchHint: "fleet create delete suspend resume" });
+    registerToolMetadata("agents_manage", { searchHint: "system create delete suspend resume" });
     registerToolMetadata("obs_query", { searchHint: "diagnostics monitoring metrics billing health" });
 
     const ctx = makeContext({ trustLevel: "external", toolNames: tools.map(t => t.name) });
@@ -1292,7 +1292,7 @@ describe("discover_tools -- searchHint BM25 enrichment", () => {
     const tools: ToolDefinition[] = [
       makeTool("read"),
       { ...makeTool("obs_query"), description: "Query diagnostics and billing data" } as unknown as ToolDefinition,
-      { ...makeTool("agents_manage"), description: "Manage agent fleet" } as unknown as ToolDefinition,
+      { ...makeTool("agents_manage"), description: "Manage agent system" } as unknown as ToolDefinition,
       { ...makeTool("sessions_manage"), description: "Admin session lifecycle" } as unknown as ToolDefinition,
       { ...makeTool("memory_manage"), description: "Admin memory CRUD operations" } as unknown as ToolDefinition,
     ];
@@ -1326,11 +1326,11 @@ describe("discover_tools -- searchHint BM25 enrichment", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),
-      { ...makeTool("agents_manage"), description: "Manage agent fleet" } as unknown as ToolDefinition,
+      { ...makeTool("agents_manage"), description: "Manage agent system" } as unknown as ToolDefinition,
       { ...makeTool("obs_query"), description: "Query diagnostics" } as unknown as ToolDefinition,
     ];
 
-    registerToolMetadata("agents_manage", { searchHint: "fleet create delete suspend resume" });
+    registerToolMetadata("agents_manage", { searchHint: "system create delete suspend resume" });
     registerToolMetadata("obs_query", { searchHint: "diagnostics monitoring metrics billing health" });
 
     const ctx = makeContext({ trustLevel: "external", toolNames: tools.map(t => t.name) });
@@ -1561,7 +1561,7 @@ describe("discover_tools -- output format", () => {
       makeTool("read"),
       {
         ...makeTool("agents_manage"),
-        description: "Manage agent fleet: create, get, update, delete.",
+        description: "Manage agent system: create, get, update, delete.",
         parameters: {
           type: "object" as const,
           properties: {
@@ -1613,7 +1613,7 @@ describe("discover_tools -- output format", () => {
     const tools: ToolDefinition[] = [
       makeTool("read"),
       { ...makeTool("obs_query"), description: "Query diagnostics and billing" } as unknown as ToolDefinition,
-      { ...makeTool("agents_manage"), description: "Manage agent fleet" } as unknown as ToolDefinition,
+      { ...makeTool("agents_manage"), description: "Manage agent system" } as unknown as ToolDefinition,
       { ...makeTool("sessions_manage"), description: "Admin session lifecycle" } as unknown as ToolDefinition,
     ];
 
@@ -1646,7 +1646,7 @@ describe("discover_tools -- sideEffects", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),
-      { ...makeTool("agents_manage"), description: "Manage agent fleet" } as unknown as ToolDefinition,
+      { ...makeTool("agents_manage"), description: "Manage agent system" } as unknown as ToolDefinition,
       { ...makeTool("obs_query"), description: "Query diagnostics" } as unknown as ToolDefinition,
     ];
     const ctx = makeContext({ trustLevel: "external", toolNames: tools.map(t => t.name) });
@@ -2209,7 +2209,7 @@ describe("discover_tools -- mid-turn injection support", () => {
     const logger = createMockLogger();
     const tools: ToolDefinition[] = [
       makeTool("read"),
-      { ...makeTool("agents_manage"), description: "Manage agent fleet" } as unknown as ToolDefinition,
+      { ...makeTool("agents_manage"), description: "Manage agent system" } as unknown as ToolDefinition,
       { ...makeTool("obs_query"), description: "Query diagnostics" } as unknown as ToolDefinition,
     ];
     const ctx = makeContext({ trustLevel: "external", toolNames: tools.map(t => t.name) });
@@ -2309,7 +2309,7 @@ describe("discover_tools -- co-discovery", () => {
     const tools: ToolDefinition[] = [
       makeTool("read"),
       { ...makeTool("models_manage"), description: "Manage LLM model catalog and aliases" } as unknown as ToolDefinition,
-      { ...makeTool("agents_manage"), description: "Manage agent fleet and configuration" } as unknown as ToolDefinition,
+      { ...makeTool("agents_manage"), description: "Manage agent system and configuration" } as unknown as ToolDefinition,
       { ...makeTool("obs_query"), description: "Query observability data" } as unknown as ToolDefinition,
     ];
     const ctx = makeContext({ trustLevel: "external", toolNames: tools.map(t => t.name) });
@@ -2330,12 +2330,12 @@ describe("discover_tools -- co-discovery", () => {
     const tools: ToolDefinition[] = [
       makeTool("read"),
       { ...makeTool("models_manage"), description: "Manage LLM model catalog and aliases" } as unknown as ToolDefinition,
-      { ...makeTool("agents_manage"), description: "Manage agent fleet and configuration" } as unknown as ToolDefinition,
+      { ...makeTool("agents_manage"), description: "Manage agent system and configuration" } as unknown as ToolDefinition,
     ];
     const ctx = makeContext({ trustLevel: "external", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 128_000, ctx, createMockLogger());
 
-    const searchResult = await result.discoverTool!.execute!("call-1", { query: "fleet manage agents configure" });
+    const searchResult = await result.discoverTool!.execute!("call-1", { query: "system manage agents configure" });
     const sideEffects = (searchResult as Record<string, unknown>).sideEffects as { discoveredTools: string[] };
 
     expect(sideEffects.discoveredTools).toContain("agents_manage");
@@ -2366,7 +2366,7 @@ describe("discover_tools -- co-discovery", () => {
     const tools: ToolDefinition[] = [
       makeTool("read"),
       { ...makeTool("models_manage"), description: "Manage LLM model catalog" } as unknown as ToolDefinition,
-      { ...makeTool("agents_manage"), description: "Manage agent fleet" } as unknown as ToolDefinition,
+      { ...makeTool("agents_manage"), description: "Manage agent system" } as unknown as ToolDefinition,
     ];
     const ctx = makeContext({ trustLevel: "external", toolNames: tools.map(t => t.name) });
     const result = applyToolDeferral(tools, 128_000, ctx, createMockLogger());

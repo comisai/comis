@@ -36,7 +36,7 @@ describe("redactOutputText", () => {
   it.each([
     ['{"SERVICE_PASSWORD": "test-password-value"}', "test-password-value"],
     ['{"SERVICE_USERNAME": "test-login-name"}', "test-login-name"],
-    ["ITURAN_PASSWORD=test-password-value", "test-password-value"],
+    ["SERVICE_PASSWORD=test-password-value", "test-password-value"],
     ["client_secret: 'test-client-secret'", "test-client-secret"],
     ["refreshToken=test-refresh-token", "test-refresh-token"],
   ])("redacts arbitrary values assigned to credential-named fields in %s", (input, value) => {

@@ -1708,7 +1708,7 @@ describe("ensureUsefulnessTable intent column", () => {
     expect(row).toEqual({ used_count: 3, ignored_count: 1, last_useful_at: 555, intent: "" });
   });
 
-  it("EXISTING (pre-intent) DB: the migrated table lets the ADAPTER upsert BOTH the global '' bucket AND a per-intent bucket for the SAME memory without throwing — per-intent learning works on the existing fleet", async () => {
+  it("EXISTING (pre-intent) DB: the migrated table lets the ADAPTER upsert BOTH the global '' bucket AND a per-intent bucket for the SAME memory without throwing — per-intent learning works on the existing system", async () => {
     // This is the regression the blocker describes: on the broken
     // ADD-COLUMN-only migration the surviving 3-col PK aborts the SECOND intent
     // bucket's upsert with `UNIQUE constraint failed`. It drives the REAL adapter

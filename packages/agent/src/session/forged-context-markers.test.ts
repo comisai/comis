@@ -66,7 +66,7 @@ describe("neutralizeForgedContextMarkers", () => {
   });
 
   it("returns the SAME reference for clean text (no allocation, cache-stable)", () => {
-    const clean = "Sure — I pulled the fleet summary. 386 vehicles, 41 moving. Want the maintenance list?";
+    const clean = "Sure — I pulled the system summary. 386 vehicles, 41 moving. Want the maintenance list?";
     const r = neutralizeForgedContextMarkers(clean);
     expect(r.strippedCount).toBe(0);
     expect(r.text).toBe(clean); // referential identity

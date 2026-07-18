@@ -36,7 +36,7 @@ groups:
             warnAtFraction line) for scope {{ $labels.scope }}. The in-process
             kill-switch is at or past its spend_warning point; the next reserve
             may be refused at the ceiling.
-          runbook: "Drill into the worst session: `comis fleet --since 6` then `comis explain <sessionKey>`."
+          runbook: "Drill into the worst session: `comis system-health --since 6` then `comis explain <sessionKey>`."
 
       # Degraded-rate spike — uses the recorded ratio (comis:sessions_degraded:ratio5m).
       - alert: ComisDegradedRateHigh
@@ -49,7 +49,7 @@ groups:
           description: >
             More than 20% of sessions are degraded (recorded series
             comis:sessions_degraded:ratio5m). Investigate the top errorKinds.
-          runbook: "`comis fleet --since 6` to surface the recurring errorKind, then `comis explain <sessionKey>`."
+          runbook: "`comis system-health --since 6` to surface the recurring errorKind, then `comis explain <sessionKey>`."
 
       # Breaker-trip burst — a sudden rise in circuit-breaker trips.
       - alert: ComisBreakerTripBurst
@@ -76,7 +76,7 @@ groups:
             comis_pricing_turns_total{state="unknown"} is rising — some turns
             cannot be priced (a model missing from the pricing catalog), so cost
             and spend-ceiling accounting under-count.
-          runbook: "Check `config_posture` in `comis fleet`; add the model to the pricing catalog."
+          runbook: "Check `config_posture` in `comis system-health`; add the model to the pricing catalog."
 
       # Audit-sink failure — audit events failing to persist (security blind spot).
       - alert: ComisAuditSinkFailure

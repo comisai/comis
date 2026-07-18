@@ -118,7 +118,7 @@ export function handleEnvelopeException(
   // ContextExhaustionError is a clean escalation — it means
   // the pre-flight fit check determined the conversation cannot fit in the context
   // window even after all down-shifts.  It must map to "context_exhausted" so
-  // END_REASON_MAP fires the correct degradation cause for fleet-health reporting.
+  // END_REASON_MAP fires the correct degradation cause for system-health reporting.
   // Handle it BEFORE the generic classification so it is never mis-labeled "error".
   if (error instanceof ContextExhaustionError) {
     deps.logger.warn(

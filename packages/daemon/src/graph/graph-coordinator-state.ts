@@ -50,6 +50,8 @@ export interface GraphRunState {
   parentLeaseId?: string;
   /** Channel origin captured from the authenticated graph submission. */
   callerDeliveryOrigin?: DeliveryOrigin;
+  /** Immutable operator-policy snapshot hash captured at graph submission. */
+  workspacePolicyHash?: string;
   graph: ValidatedGraph;
   stateMachine: GraphStateMachine;
   runIdToNode: Map<string, string>;    // runId -> nodeId

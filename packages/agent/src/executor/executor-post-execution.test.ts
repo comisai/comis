@@ -18,8 +18,9 @@ import { fileURLToPath } from "node:url";
 import { describe, it, expect, expectTypeOf, vi } from "vitest";
 import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunLcdStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, unrecoveredFailedToolNames, recoveredFailedToolNames, type PostExecutionParams } from "./executor-post-execution.js";
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildDegradedReply } from "./degraded-reply.js";
-import { resolveReplyLanguage } from "./resolve-reply-language.js";
+import { resolveResponseLocalePolicy } from "./resolve-response-locale-policy.js";
 import {
+  createLocaleCatalog,
   selectOutputStarvedAnnotation,
   selectContextExhaustedReply,
   selectLoopDetectedReply,
@@ -257,8 +258,8 @@ describe("buildSessionEndMetadata", () => {
   it("END_REASON_MAP maps prompt_timeout → the 'timeout' endReason, its only source", () => {
     // A PromptTimeoutError terminal carries its OWN named cause
     // instead of flattening into generic "error", so a timeout-heavy session
-    // attributes correctly in obs.explain / obs.fleet.health
-    // (HARD_FAILURE_END_REASONS and fleet degradedByCause carry "timeout").
+    // attributes correctly in obs.explain / obs.system.health
+    // (HARD_FAILURE_END_REASONS and system degradedByCause carry "timeout").
     expect(END_REASON_MAP["prompt_timeout"]).toBe("timeout");
     // "timeout" reaches the map through EXACTLY this one entry — no stray
     // mapping re-introduces it for any other finishReason.
@@ -276,7 +277,7 @@ describe("buildSessionEndMetadata", () => {
     // Collapsing BOTH context-exhaustion
     // finish reasons to the generic "error" bucket would make a context-exhausted
     // session indistinguishable from a tool crash in obs.explain /
-    // obs.fleet.health. The map folds the two related reasons into ONE named cause:
+    // obs.system.health. The map folds the two related reasons into ONE named cause:
     // context_exhausted (the bridge actively sets finishReason:"context_exhausted"
     // at the block guard) and context_loop (the related loop-on-exhaustion abort)
     // both map to the SINGLE "context_exhausted" endReason.
@@ -304,14 +305,14 @@ describe("buildSessionEndMetadata", () => {
     // (bridge-safety-controls.checkSpendLimit). Without its own END_REASON_MAP
     // key the reason would fall through the `?? "error"`
     // catch-all → a spend-killed session indistinguishable from a tool crash
-    // in obs.explain / obs.fleet.health. It
+    // in obs.explain / obs.system.health. It
     // must carry its OWN named endReason (an in-union reason mapped
     // EXPLICITLY, never the catch-all).
     expect(END_REASON_MAP.spend_exceeded).toBe("spend_exceeded");
     // The value reaches sessionEnd.endReason through the real builder.
     expect(buildSessionEndMetadata({ ...baseArgs, finishReason: "spend_exceeded" }).sessionEnd?.endReason).toBe("spend_exceeded");
     // Still degraded (the named cause is not "success") — restores the CAUSE the
-    // fleet degradedByCause record buckets on (degraded was already true).
+    // system degradedByCause record buckets on (degraded was already true).
     expect(buildSessionHealthRollup({}, "spend_exceeded").degraded).toBe(true);
   });
 
@@ -530,10 +531,10 @@ describe("emitSessionSummary emits session:summary, fire-and-forget", () => {
     clock: { now: () => 4242, nowDate: () => new Date(4242) },
   };
 
-  it("CARRIES the named endReason cause on the emitted event payload (fleet aggregates by cause)", () => {
+  it("CARRIES the named endReason cause on the emitted event payload (system aggregates by cause)", () => {
     // The mapped endReason (e.g. context_exhausted / output_starved) is the
     // headline cause. It must ride the session:summary event so the daemon row
-    // (sessionSummaryEventToRow) persists it and obs.fleet.health can aggregate
+    // (sessionSummaryEventToRow) persists it and obs.system.health can aggregate
     // degradedByCause WITHOUT opening per-session _session-metadata.json.
     const emit = vi.fn();
     const eventBus = { emit, on: vi.fn(), off: vi.fn() } as unknown as import("@comis/core").TypedEventBus;
@@ -563,7 +564,7 @@ describe("emitSessionSummary emits session:summary, fire-and-forget", () => {
   });
 
   it("CARRIES topErrorKinds + source:'runtime' on the emitted event payload", () => {
-    // The fleet aggregate needs topErrorKinds + source
+    // The system aggregate needs topErrorKinds + source
     // on the row, and the row is written from this event payload. Production
     // emits the constant "runtime"; tests inject "test" by building the payload.
     const emit = vi.fn();
@@ -777,7 +778,7 @@ describe("tool-failure endReason and notice", () => {
   // Live: pipeline attempt-1 (validation) failed, attempt-2 launched the graph,
   // yet the user still saw "[tool failure] pipeline reported an error". The notice
   // must surface only UNRECOVERED failures (a failed tool with no same-name
-  // success this turn). Observability (effectiveFinishReason/logs/fleet) still
+  // success this turn). Observability (effectiveFinishReason/logs/system) still
   // records the failure — only the user-facing reply is gated.
   // See design/small-model-orchestration-fidelity.md §4.
   it("source-grep — failure notice gated on unrecoveredFailedToolNames (recovered failures suppressed)", () => {
@@ -2360,67 +2361,53 @@ describe("onCondensed callback seam (built-not-wired guard)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// USER.md-language plumbing: PostExecutionParams.userMdLanguage threads from
-// prompt assembly so the degraded-reply resolver can
-// read the USER.md preferred language. The en/undefined path must stay
-// byte-identical: the field is optional, so a config that never sets it is
-// unchanged.
+// Typed locale policy plumbing from prompt assembly through post-execution.
 // ---------------------------------------------------------------------------
-describe("userMdLanguage threads into PostExecutionParams", () => {
-  it("PostExecutionParams declares userMdLanguage as an optional string (type contract)", () => {
+describe("response locale policy threads into PostExecutionParams", () => {
+  it("PostExecutionParams declares the exact typed locale policy", () => {
     // expectTypeOf is the repo's type-contract convention (see
     // executor-tool-assembly-types.test.ts); enforced under vitest --typecheck.
-    expectTypeOf<PostExecutionParams["userMdLanguage"]>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<PostExecutionParams["responseLocalePolicy"]>()
+      .toEqualTypeOf<import("@comis/core").ResponseLocalePolicy>();
     expect(true).toBe(true);
   });
 
-  it("source-grep — PostExecutionParams interface declares an optional userMdLanguage field", () => {
-    // The interface must carry `userMdLanguage?: string`.
+  it("source-grep — PostExecutionParams interface declares responseLocalePolicy", () => {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const ifaceBlock = src.match(/export interface PostExecutionParams \{[\s\S]*?\n\}/);
     expect(ifaceBlock, "PostExecutionParams interface must exist").not.toBeNull();
-    expect(ifaceBlock![0]).toMatch(/userMdLanguage\?\s*:\s*string/);
+    expect(ifaceBlock![0]).toMatch(/responseLocalePolicy\s*:\s*ResponseLocalePolicy/);
   });
 
-  it("source-grep — assembleExecutionPrompt returns userLanguage (so pi-executor can thread it)", () => {
+  it("source-grep — assembleExecutionPrompt returns responseLocalePolicy", () => {
     const src = readFileSync(resolve(here, "prompt-assembly.ts"), "utf-8");
     const stripped = src
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .split("\n")
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
-    // The function's return object literal must carry userLanguage.
-    expect(stripped).toMatch(/return\s*\{[^}]*\buserLanguage\b/);
+    expect(stripped).toMatch(/return\s*\{[^}]*\bresponseLocalePolicy\b/);
   });
 
-  it("source-grep — pi-executor threads userLanguage into the postExecution call as userMdLanguage", () => {
+  it("source-grep — pi-executor threads responseLocalePolicy into postExecution", () => {
     const src = readFileSync(resolve(here, "pi-executor/pi-executor.ts"), "utf-8");
     const stripped = src
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .split("\n")
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
-    // promptResult destructure surfaces userLanguage …
-    expect(stripped).toMatch(/const\s*\{[^}]*\buserLanguage\b[^}]*\}\s*=\s*promptResult/);
-    // … and the postExecution({...}) call passes it as userMdLanguage.
-    expect(stripped).toMatch(/userMdLanguage\s*:\s*userLanguage/);
+    expect(stripped).toMatch(/const\s*\{[^}]*\bresponseLocalePolicy\b[^}]*\}\s*=\s*promptResult/);
+    expect(stripped).toMatch(/postExecution\(\{[\s\S]*?\bresponseLocalePolicy\b/);
   });
 });
 
 // ---------------------------------------------------------------------------
-// The degraded-reply chokepoint resolves the reply
-// language ONCE (resolveReplyLanguage) and passes the tag to all three
-// builders, so a Hebrew turn yields a Hebrew degraded reply with the knob path
-// and incident ref verbatim. The en/Latin path stays byte-identical.
+// The degraded-reply chokepoint consumes the turn's typed locale policy.
 //
-// Strategy (the load-bearing mode here — postExecution has 30+ deps, see the
-// markRead/degraded-reply blocks above): a SOURCE-GREP locks the wiring invariants
-// (resolveReplyLanguage imported + called once in the degraded block; the tag
-// reaches each of the 3 builders); BEHAVIOR PROBES simulate exactly what the
-// chokepoint does — resolve the language from the same {msg.text, config, USER.md}
-// inputs and build the reply — asserting the localized/byte-identical outputs.
+// A source-level gate locks the typed locale-policy wiring into all three
+// deterministic builders, while behavior probes cover open locale packs.
 // ---------------------------------------------------------------------------
-describe("degraded-reply chokepoint resolves language once + passes the tag", () => {
+describe("degraded-reply chokepoint consumes the typed locale policy", () => {
   function readDegradedBlock(): string {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const stripped = src
@@ -2429,47 +2416,34 @@ describe("degraded-reply chokepoint resolves language once + passes the tag", ()
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
     // Scope to the degraded-reply section (the 3 endReason gates). Anchor on
-    // CODE that survives comment-stripping: the resolve line is emitted just
-    // before the first gate, so start at the resolveReplyLanguage call (or,
-    // when that call is absent, the first effectiveFinishReason gate) and end
-    // at the resolveScaffoldDefaults block that follows the loop_detected gate.
-    const resolveStart = stripped.indexOf("resolveReplyLanguage(");
     const gateStart = stripped.indexOf('effectiveFinishReason === "output_starved"');
-    const candidates = [resolveStart, gateStart].filter((p) => p >= 0);
-    const startPos = candidates.length > 0 ? Math.min(...candidates) : 0;
+    const startPos = gateStart >= 0 ? gateStart : 0;
     const endMarker = stripped.indexOf("resolveScaffoldDefaults", startPos);
     return endMarker > startPos ? stripped.slice(startPos, endMarker) : stripped.slice(startPos);
   }
 
-  // A predominantly-Hebrew inbound message → the inbound-script tier resolves "he"
-  // (Hebrew letters are non-neutral; ASCII punct/space are excluded from the
-  // share denominator, so the Hebrew share is a strict majority).
-  const HEBREW_INBOUND = "שלום, אני צריך עזרה עם הקוד שלי";
-
-  it("source-grep — executor-post-execution imports resolveReplyLanguage", () => {
+  it("source-grep — executor-post-execution does not resolve locale from message text", () => {
     const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
     const stripped = src
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .split("\n")
       .filter((l) => !l.trim().startsWith("//"))
       .join("\n");
-    expect(stripped).toMatch(/import\s*\{[^}]*\bresolveReplyLanguage\b[^}]*\}\s*from\s*["']\.\/resolve-reply-language\.js["']/);
+    expect(stripped).not.toContain("resolveReplyLanguage");
+    expect(stripped).not.toContain("dominantScript");
   });
 
-  it("source-grep — resolveReplyLanguage is called exactly ONCE in the degraded block", () => {
+  it("source-grep — the degraded block reads the supplied locale once", () => {
     const block = readDegradedBlock();
-    const calls = block.match(/resolveReplyLanguage\s*\(/g) ?? [];
-    expect(calls.length).toBe(1);
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    expect(src.match(/params\.responseLocalePolicy\.locale/g)).toHaveLength(1);
+    expect(block).toContain("replyLanguage");
   });
 
-  it("source-grep — the resolve call threads msg.text, config.language, and userMdLanguage", () => {
+  it("source-grep — the degraded block does not infer locale from request content", () => {
     const block = readDegradedBlock();
-    // The three language-tier inputs must all feed the single resolve call.
-    expect(block).toMatch(/inboundText\s*:/);
-    expect(block).toMatch(/configLanguage\s*:/);
-    expect(block).toMatch(/userMdLanguage\s*:/);
-    expect(block).toMatch(/params\.msg\.text/);
-    expect(block).toMatch(/params\.config\.language/);
+    expect(block).not.toMatch(/inboundText\s*:/);
+    expect(block).not.toContain("userMdLanguage");
   });
 
   it("source-grep — the resolved tag reaches all three builders (language passed in)", () => {
@@ -2482,71 +2456,45 @@ describe("degraded-reply chokepoint resolves language once + passes the tag", ()
     expect(languageFields.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("behavior probe — a Hebrew turn resolves 'he' and yields the Hebrew context-exhausted reply", () => {
-    // Exactly what the chokepoint computes: resolve once from the 3 inputs…
-    const replyLanguage = resolveReplyLanguage({
-      inboundText: HEBREW_INBOUND,
-      configLanguage: undefined,
-      userMdLanguage: undefined,
+  it("behavior probe — an injected locale pack localizes a degraded reply", () => {
+    const policy = resolveResponseLocalePolicy({ explicitLocale: "fr-CA" });
+    const localeCatalog = createLocaleCatalog({
+      "fr-CA": {
+        context_exhausted: "localized base ",
+        cause_oversized_input: "localized cause ",
+        advice_default: "localized advice",
+      },
     });
-    expect(replyLanguage).toBe("he");
-    // …then build the reply with the tag (the context_exhausted gate).
     const reply = buildContextExhaustedReply({
       capabilityClass: "small",
-      traceId: "tid-he",
+      traceId: "tid-locale",
       cause: "oversized_input",
-      language: replyLanguage,
+      language: policy.locale,
+      localeCatalog,
     });
-    // Equals the he selector (the localized reply)…
-    expect(reply).toBe(
-      selectContextExhaustedReply("he", {
-        capabilityClass: "small",
-        traceId: "tid-he",
-        cause: "oversized_input",
-      }),
-    );
-    // …and keeps internal config paths out of the user-visible reply while
-    // preserving the incident reference for operator correlation.
+    expect(reply).toBe("localized base localized cause localized advice (incident tid-locale)");
     expect(reply).not.toContain("contextEngine.");
-    expect(reply).toContain("(incident tid-he)");
   });
 
-  it("behavior probe — config.language 'he' wins (tier-1) even with a Latin inbound message", () => {
-    const replyLanguage = resolveReplyLanguage({
-      inboundText: "please help me debug this",
-      configLanguage: "he",
-      userMdLanguage: undefined,
-    });
-    expect(replyLanguage).toBe("he");
-    expect(buildOutputStarvedAnnotation(replyLanguage)).toBe(selectOutputStarvedAnnotation("he"));
+  it("behavior probe — explicit locale accepts an open canonical tag", () => {
+    const policy = resolveResponseLocalePolicy({ explicitLocale: "sr-latn-rs" });
+    expect(policy.locale).toBe("sr-Latn-RS");
   });
 
-  it("behavior probe — all three endReasons carry the resolved tag (he)", () => {
-    const replyLanguage = resolveReplyLanguage({
-      inboundText: HEBREW_INBOUND,
-      configLanguage: undefined,
-      userMdLanguage: undefined,
-    });
-    // output_starved
-    expect(buildOutputStarvedAnnotation(replyLanguage)).toBe(selectOutputStarvedAnnotation("he"));
-    // context_exhausted
+  it("behavior probe — all three endReasons consume the same resolved locale", () => {
+    const replyLanguage = resolveResponseLocalePolicy({ explicitLocale: "fr-CA" }).locale;
+    expect(buildOutputStarvedAnnotation(replyLanguage)).toBe(selectOutputStarvedAnnotation("fr-CA"));
     expect(
       buildContextExhaustedReply({ capabilityClass: "nano", language: replyLanguage }),
-    ).toBe(selectContextExhaustedReply("he", { capabilityClass: "nano" }));
-    // loop_detected
+    ).toBe(selectContextExhaustedReply("fr-CA", { capabilityClass: "nano" }));
     expect(buildLoopDetectedReply({ traceId: "z", language: replyLanguage })).toBe(
-      selectLoopDetectedReply("he", { traceId: "z" }),
+      selectLoopDetectedReply("fr-CA", { traceId: "z" }),
     );
   });
 
-  it("behavior probe — no config.language + Latin inbound + no USER.md → English byte-identical", () => {
-    const replyLanguage = resolveReplyLanguage({
-      inboundText: "Here is the plan you requested.",
-      configLanguage: undefined,
-      userMdLanguage: undefined,
-    });
-    expect(replyLanguage).toBe("en");
-    // The three builders with the resolved "en" tag === the historical English replies.
+  it("behavior probe — an unset policy uses the English platform fallback", () => {
+    const replyLanguage = resolveResponseLocalePolicy({}).locale;
+    expect(replyLanguage).toBeUndefined();
     expect(buildOutputStarvedAnnotation(replyLanguage)).toBe(buildOutputStarvedAnnotation());
     expect(buildContextExhaustedReply({ capabilityClass: "small", language: replyLanguage })).toBe(
       buildContextExhaustedReply({ capabilityClass: "small" }),

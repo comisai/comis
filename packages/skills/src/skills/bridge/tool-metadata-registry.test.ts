@@ -47,8 +47,8 @@ describe("tool-metadata-registry -- registry count", () => {
     // registered never-export (cost-bearing + outbound delivery); video_status
     // is reserved so its policy is pinned before the tool exists. image_generate
     // is NOT registered here — it rides the default-deny safety net.
-    // obs_fleet_health and obs_explain are slim, READ-ONLY, permission-gated MCP
-    // tools surfacing the obs.fleet.health FleetHealthReport and the obs.explain
+    // obs_system_health and obs_explain are slim, READ-ONLY, permission-gated MCP
+    // tools surfacing the obs.system.health SystemHealthReport and the obs.explain
     // IncidentReport respectively. The three ctx_* in-session expansion tools
     // (ctx_search / ctx_inspect / ctx_expand) are the governed TOOL surface over
     // the LCD store.

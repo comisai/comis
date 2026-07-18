@@ -74,7 +74,7 @@ export interface WakeGateRunContext {
  * just did not print a verdict; that softer case is not a broken run.) It
  * distinguishes a broken gate (fails open every fire — saves nothing, costs its
  * cap-calls + jail spawn) from a healthy monitor that legitimately always wakes;
- * both otherwise look identical (`wake:true`, `skipRate 0`) in the fleet lens. A host that cannot
+ * both otherwise look identical (`wake:true`, `skipRate 0`) in the system health view. A host that cannot
  * jail / has autonomy disabled honestly degrades to `runAsToday` (the job ran as
  * today) and carries NO metrics — there was no gate to measure.
  */

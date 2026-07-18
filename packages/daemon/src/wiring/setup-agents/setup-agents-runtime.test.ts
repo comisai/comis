@@ -57,7 +57,18 @@ describe("setup-agents-runtime wiring", () => {
     expect(depsBlock).toContain("deps.mcpClientManager.getAllConnections()");
     expect(depsBlock).toContain('connection.status === "connected"');
     expect(depsBlock).toContain("connection.instructions?.trim()");
-    expect(depsBlock).toContain("serverName: connection.name");
+    expect(depsBlock).toContain("connection.instructionHash");
+    expect(depsBlock).toContain("serverId: connection.name");
+    expect(depsBlock).toContain('trust: "external" as const');
+  });
+
+  it("passes the composed workspace policy port to each executor", () => {
+    const source = readRuntimeSource();
+    const depsStart = source.indexOf("createPiExecutor(effectiveConfig, {");
+    const depsEnd = source.indexOf("});", depsStart);
+    const depsBlock = source.slice(depsStart, depsEnd);
+    expect(depsBlock).toContain("workspacePolicyPort:");
+    expect(depsBlock).toContain("container.workspacePolicyPort");
   });
 });
 

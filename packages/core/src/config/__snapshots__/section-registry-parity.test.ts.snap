@@ -1814,6 +1814,21 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "immutable": true,
+    "path": "agents.operationModels.outcomeJudge",
+    "type": "object"
+  },
+  {
+    "immutable": true,
+    "path": "agents.operationModels.outcomeJudge.model",
+    "type": "string"
+  },
+  {
+    "immutable": true,
+    "path": "agents.operationModels.outcomeJudge.timeout",
+    "type": "integer"
+  },
+  {
+    "immutable": true,
     "path": "agents.operationModels.planning",
     "type": "object"
   },
@@ -15841,7 +15856,7 @@ exports[`section-registry parity > managed-sections view > MANAGED_SECTIONS expo
     "tool": "channels_manage"
   },
   {
-    "description": "Manage agent fleet (create, get, update, delete, suspend, resume).",
+    "description": "Manage agent system (create, get, update, delete, suspend, resume).",
     "exampleArgs": {
       "action": "create",
       "agent_id": "<new-agent-id>",
@@ -15880,7 +15895,7 @@ exports[`section-registry parity > managed-sections view > MANAGED_SECTIONS expo
 
 exports[`section-registry parity > managed-sections view > getManagedSectionRedirect("agents", "(no key)") 1`] = `
 "{
-  "description": "Manage agent fleet (create, get, update, delete, suspend, resume).",
+  "description": "Manage agent system (create, get, update, delete, suspend, resume).",
   "exampleArgs": {
     "action": "create",
     "agent_id": "<new-agent-id>",
@@ -17666,6 +17681,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       "type": "object"
     },
     "language": {
+      "maxLength": 128,
+      "minLength": 2,
       "type": "string"
     },
     "learning": {
@@ -18302,6 +18319,21 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "object"
         },
         "heartbeat": {
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "timeout": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "outcomeJudge": {
           "additionalProperties": false,
           "properties": {
             "model": {
@@ -28906,6 +28938,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "type": "object"
           },
           "language": {
+            "maxLength": 128,
+            "minLength": 2,
             "type": "string"
           },
           "learning": {
@@ -29542,6 +29576,21 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "object"
               },
               "heartbeat": {
+                "additionalProperties": false,
+                "properties": {
+                  "model": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "timeout": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              },
+              "outcomeJudge": {
                 "additionalProperties": false,
                 "properties": {
                   "model": {

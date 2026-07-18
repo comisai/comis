@@ -92,6 +92,7 @@ import {
   clearSessionState,
   createGeminiCacheManager,
   createSessionTrackerRegistry,
+  createFilesystemWorkspacePolicyAdapter,
   evaluateViableFloorForAgent,
   probeAllOllamaProviders,
   seedDefaultDagTemplates,
@@ -834,8 +835,7 @@ function buildRpcDispatchDeps(deps: {
     // no down-cast to `{ emit }` is needed.
     eventBus: c.container.eventBus,
     mcpClientManager: c.mcpClientManager,
-    // ObservabilityApiDeps.clock = the SAME boot ClockPort (one createSystemClock()
-    // at the composition root) so the obs.fleet.health assembler has a clock (asserts deps.clock!).
+    // Use the composition-root clock for the observability health snapshot.
     obsStore: c.obsStore, obsPersistence: c.obsPersistence, clock: c.clock, startupTimestamp: startupStartMs, sharedCostTracker: c.sharedCostTracker,
     // obs.getCacheStats reads deps.tokenTracker for the in-memory hit-rate/effectiveness;
     // without this it falls to the `!deps.tokenTracker` branch and returns a silent 0/0
@@ -1175,9 +1175,7 @@ async function bootFoundation(
 
   // 0.6. Runtime adapter construction (composition root). overrides.timers is opt-in for test fake-timers; never set in production.
   const clock = createSystemClock(); const env = createSystemEnv(mergedEnv); const timers = overrides.timers ?? createSystemTimers();
-  // test-only renderer-injection seam (mirrors overrides.timers): captured here
-  // and threaded onto BootContext so buildChannelManagerDeps can forward it into
-  // buildActivityRenderers. Never set in production; inert on the inbound path.
+  // Test-only renderer factory threaded through BootContext; inert in production.
   const activityRendererFactory = overrides.activityRendererFactory;
   // ONE process-singleton ActivityCircuitBreaker, constructed at the
   // composition root and shared across EVERY per-turn coordinator the inbound
@@ -1188,7 +1186,18 @@ async function bootFoundation(
   const activityBreaker = createActivityCircuitBreaker(clock);
   // Shared-map SecretManager: construct BEFORE bootstrap; same Map → AppContainer + mutableHandle.
   const { secretManager: sharedSecretManager, mutableHandle } = setupSecretManager(mergedEnv);
-  const wrappedBootstrap = (opts: Parameters<typeof _bootstrap>[0]) => _bootstrap({ ...opts, secretManager: sharedSecretManager });
+  const wrappedBootstrap = (opts: Parameters<typeof _bootstrap>[0]) => _bootstrap({
+    ...opts,
+    secretManager: sharedSecretManager,
+    workspacePolicyPortFactory: (config) => createFilesystemWorkspacePolicyAdapter({
+      resolveWorkspaceDir: (agentId) => {
+        const agentConfig = config.agents[agentId];
+        return agentConfig === undefined
+          ? undefined
+          : resolveWorkspaceDir(agentConfig, agentId, config.dataDir || undefined);
+      },
+    }),
+  });
   // 1. Bootstrap core container. (security.storage pre-read in step 0 before encrypted-store bootstrap.)
   const { configPaths, bootResult } = await runConfigBootstrapAndEmitObserve({ requestedConfigPaths, mergedEnv, bootstrap: wrappedBootstrap });
   if (!bootResult.ok) {
@@ -1437,9 +1446,7 @@ async function bootFoundation(
   // signals as a queryable obs_diagnostics row (no-ops when persistence off).
   // Includes the two advisory multilingual booleans (provider-aware resolution
   // in resolveModelHealthMultilingual; advisory only — no recall is gated on them).
-  // Best-effort boot embedding backlog (memories awaiting their vector twin):
-  // a count that persists/grows across boots while the embedder is available
-  // names a silently-dead embedding queue in one fleet look.
+  // Record the boot embedding backlog so a stalled queue is visible in system health.
   let unembeddedAtBoot: number | undefined;
   try {
     unembeddedAtBoot = (db.prepare("SELECT COUNT(*) AS n FROM memories WHERE has_embedding = 0").get() as { n: number } | undefined)?.n;
@@ -2510,13 +2517,8 @@ async function bootGateway(
   // 7. Gateway server
   const gwConfig = container.config.gateway;
 
-  // The trust-flag-FREE obs.explain + obs.fleet.health MCP-client
-  // closures, extracted to wiring/obs-mcp-closures.ts (daemon.ts ≤3000 line cap).
-  // SECURITY (never-inject-admin; allowlist-only authorization) + the durableRuns
-  // threading rationale (boot.durableRunStore — the live store the RPC path wires)
-  // live in that helper. dataDir MUST be the absolute boot dir (else
-  // makeRealReader → PathTraversalError); clock is the load-bearing boot ClockPort.
-  const { obsExplainForMcpClient, obsFleetHealthForMcpClient } = buildObsMcpClientClosures({
+  // Build allowlisted observability closures with the live run store and absolute data directory.
+  const { obsExplainForMcpClient, obsSystemHealthForMcpClient } = buildObsMcpClientClosures({
     dataDir: container.config.dataDir || bootDataDir,
     obsStore,
     clock: boot.clock,
@@ -2542,7 +2544,7 @@ async function bootGateway(
     interactiveCallbackWiring,
     msTeamsIngress,
     obsExplainForMcpClient,
-    obsFleetHealthForMcpClient,
+    obsSystemHealthForMcpClient,
   });
 
   // 7.0.1. Wire deferred gateway attachment deps (wsConnections / mediaDir /
@@ -2809,10 +2811,7 @@ async function bootShutdown(
   });
   const posture = checkStorageModeConsistency({ logger: daemonLogger, activeMode: boot.container.config.security.storage, dataDir: boot.dataDir, secretsDb: boot.secretsDb });
 
-  // 9.2. Config-posture SNAPSHOT (one-shot boot record, NOT an event).
-  // Records the three log-file-only posture FINDINGS — TLS-off, stranded-secret
-  // COUNTS, canary-fallback — as a single config_posture obs_diagnostics row so
-  // the fleet lens can query a daemon's posture without grepping daemon.log.
+  // Persist one boot-time config-posture snapshot for the system health view.
   // TLS-off is CONFIG-DERIVED here, not read from the gateway's own TLS decision:
   // `gateway.{tls,allowInsecureHttp}` is the INPUT the gateway acts on, but the
   // gateway's resolved `tls ? https : http` branch (hono-server.ts) is internal
@@ -2828,7 +2827,7 @@ async function bootShutdown(
   // every agent uses the deterministic fallback. No deep per-agent plumbing.
   // TLS-off is a posture concern only on a
   // NON-loopback bind. A loopback gateway has no off-host exposure, so flagging it
-  // would make `fleet` headline `config_posture` (TLS-off) on a clean dev/loopback box —
+  // would make `system` headline `config_posture` (TLS-off) on a clean dev/loopback box —
   // noise. The gate matches the gateway-exposure security check (only 0.0.0.0-without-
   // TLS is critical). `gateway.host` defaults to 127.0.0.1, so a default daemon stays
   // benign; an operator-set 0.0.0.0/routable host WITHOUT TLS still flags.

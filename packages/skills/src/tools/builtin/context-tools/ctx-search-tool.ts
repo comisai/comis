@@ -146,7 +146,7 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         );
       } else if (result.scriptZeroHit) {
         // A clean non-Latin zero-hit → emit a content-free event-bus signal onto
-        // the `comis explain` timeline AND the `comis fleet` health_signal.
+        // the `comis explain` timeline AND the `comis system-health` health_signal.
         // Guarded: a throwing subscriber can NEVER fail the already-completed
         // search. Payload carries the closed `scriptClass`/`lane` enums + ids +
         // timestamp ONLY — the query string is intentionally ABSENT.

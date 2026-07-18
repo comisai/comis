@@ -202,7 +202,7 @@ export function createEmailAdapter(deps: EmailAdapterDeps): ChannelPort {
 
       // Preserve the IMAP ingress identity through normalization. Direct test
       // and custom lifecycle calls without a scope receive one fallback scope.
-      // The "Inbound message" INFO log gives operators the same fleet-wide
+      // The "Inbound message" INFO log gives operators the same deployment-wide
       // grep target (messageId=<id>) that exists for all other adapters.
       const traceId = ingressContext?.traceId ?? randomUUID();
       normalized.metadata.traceId = traceId;

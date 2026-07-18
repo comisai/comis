@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: ENOENT re-raise inside writeIfMissing 'wx' flag fallback (line 103); EEXIST is the silent-skip path, all other errors propagate. refreshPlatformFiles propagates fs.rename errors (atomic-write boundary). Consumed at workspace-init boundary (CLI wizard + daemon bootstrap, both @allow-throw entry points).
+// @allow-throw: writeIfMissing translates EEXIST into the create-if-absent result; other filesystem failures propagate to the workspace-init boundary.
 import { safePath } from "../security/safe-path.js";
 import { execFile as execFileCb } from "node:child_process";
-import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import { promisify } from "node:util";
 import {
   DEFAULT_TEMPLATES,
-  PLATFORM_OWNED_FILES,
   WORKSPACE_FILE_NAMES,
   type WorkspaceFileName,
 } from "./templates.js";
@@ -84,7 +82,7 @@ export interface WorkspaceStatus {
   exists: boolean;
   files: { name: string; present: boolean; sizeBytes?: number }[];
   hasGitRepo: boolean;
-  /** false = BOOTSTRAP.md still present (agent has not completed onboarding) */
+  /** false = BOOTSTRAP.md contains pending setup state. */
   isBootstrapped: boolean;
   /** Workspace lifecycle state (timestamps, version). */
   state?: WorkspaceState;
@@ -107,99 +105,6 @@ async function writeIfMissing(filePath: string, content: string): Promise<boolea
   } catch (err) {
     if ((err as { code?: string }).code === "EEXIST") return false;
     throw err;
-  }
-}
-
-/** Compute the lowercase hex sha256 of a string (Node builtin -- no new deps). */
-function sha256Hex(input: string): string {
-  return createHash("sha256").update(input, "utf-8").digest("hex");
-}
-
-/**
- * Content-hash-refresh every platform-owned workspace file (SOUL.md, AGENTS.md,
- * BOOTSTRAP.md) whose on-disk sha256 differs from the canonical template.
- *
- * SILENT BY DESIGN: this helper does NOT take a logger parameter. The existing
- * `ensureWorkspace` signature is called from CLI wizard + daemon bootstrap and
- * does not thread a logger; adding one is invasive. When a `tracker` is
- * supplied, the post-rename `tracker.recordRead` call is sufficient observability
- * for the session-aware path (the tracker is consumed by `write` tools).
- *
- * Why refresh at all: `writeIfMissing` seeds with the `wx` (exclusive-create)
- * flag only, so without this helper an existing install would keep a stale
- * template copy forever -- e.g. prose promising capabilities no code
- * provisions, which sends sub-agents into failing exec cascades. The template
- * AGENTS.md prose declares "This file is read-only" -- this helper makes that
- * contract real for the three platform-owned files.
- *
- * Per-file logic:
- * - Skip silently on ENOENT (first-write path is handled by `writeIfMissing`).
- * - BOOTSTRAP.md empty-guard: skip when the file is empty (.length === 0).
- *   This preserves the post-onboarding cleared state -- the agent clears
- *   BOOTSTRAP.md via the `write` tool once onboarding completes, and we must
- *   not resurrect it. Strict `.length === 0` (not `.trim().length === 0`)
- *   because a single trailing newline is meaningful agent intent.
- * - sha256 match -> skip (idempotent fast path; no write, no tracker call).
- * - Otherwise: atomic write via `.tmp` sibling + fs.rename (crash-safe).
- *   On successful rename, re-register in the tracker if provided.
- *
- * Atomic write: write canonical to `<name>.tmp`, then `fs.rename` to `<name>`.
- * Rename on POSIX is atomic; a crash mid-write cannot corrupt the target. On
- * rename failure, the error propagates (same `@allow-throw` boundary as
- * `writeIfMissing`).
- */
-async function refreshPlatformFiles(
-  dir: string,
-  tracker?: WorkspaceSeedTracker,
-): Promise<void> {
-  for (const name of PLATFORM_OWNED_FILES) {
-    const filePath = safePath(dir, name);
-    let onDiskContent: string;
-    try {
-      onDiskContent = await fs.readFile(filePath, "utf-8");
-    } catch (err) {
-      if ((err as { code?: string }).code === "ENOENT") {
-        // First-write path: writeIfMissing handles seeding. Refresh is a no-op.
-        continue;
-      }
-      throw err;
-    }
-
-    // BOOTSTRAP.md empty-guard: preserve the post-onboarding cleared state.
-    // The agent clears BOOTSTRAP.md via `write` once onboarding completes;
-    // resurrecting it would re-run onboarding on the next ensureWorkspace call.
-    if (name === "BOOTSTRAP.md" && onDiskContent.length === 0) {
-      continue;
-    }
-
-    const canonical = DEFAULT_TEMPLATES[name];
-    if (sha256Hex(onDiskContent) === sha256Hex(canonical)) {
-      // Idempotent fast path: file already canonical. No write, no tracker.
-      continue;
-    }
-
-    // Atomic write: write to .tmp sibling, then rename onto the target.
-    // POSIX rename is atomic; a crash mid-write cannot corrupt the target.
-    const tmpPath = safePath(dir, `${name}.tmp`);
-    await fs.writeFile(tmpPath, canonical, { encoding: "utf-8", flag: "w" });
-    await fs.rename(tmpPath, filePath);
-
-    if (tracker) {
-      try {
-        const stat = await fs.stat(filePath);
-        tracker.recordRead(
-          filePath,
-          stat.mtimeMs,
-          0,
-          undefined,
-          Buffer.from(canonical, "utf-8"),
-        );
-      } catch {
-        // stat failure is non-fatal -- same pattern as writeIfMissing's
-        // tracker-registration block (caller will need to read before
-        // overwriting, but the file itself is healthy on disk).
-      }
-    }
   }
 }
 
@@ -276,12 +181,6 @@ export async function ensureWorkspace(options: EnsureWorkspaceOptions): Promise<
       await writeWorkspaceState(dir, { bootstrapSeededAt: systemNowMs() });
     }
 
-    // Heal stale platform-owned files (SOUL.md, AGENTS.md, non-empty stale
-    // BOOTSTRAP.md) whose on-disk sha256 differs from the canonical template.
-    // No-op on first-run (writeIfMissing just seeded them at canonical hash).
-    // Without this, wx-only seeding would let stale template copies persist
-    // forever.
-    await refreshPlatformFiles(dir, tracker);
   }
 
   if (initGit) {
@@ -393,7 +292,7 @@ export async function getWorkspaceStatus(dir: string): Promise<WorkspaceStatus> 
   }
 
   const fileStatuses: { name: string; present: boolean; sizeBytes?: number }[] = [];
-  let bootstrapPresent = false;
+  let bootstrapHasContent = false;
 
   for (const name of WORKSPACE_FILE_NAMES) {
     if (!exists) {
@@ -404,7 +303,8 @@ export async function getWorkspaceStatus(dir: string): Promise<WorkspaceStatus> 
       const stat = await fs.stat(safePath(dir, name));
       fileStatuses.push({ name, present: true, sizeBytes: stat.size });
       if (name === "BOOTSTRAP.md") {
-        bootstrapPresent = true;
+        const content = await fs.readFile(safePath(dir, name), "utf-8");
+        bootstrapHasContent = content.trim().length > 0;
       }
     } catch {
       fileStatuses.push({ name, present: false });
@@ -432,7 +332,7 @@ export async function getWorkspaceStatus(dir: string): Promise<WorkspaceStatus> 
   }
 
   // Detect and record onboarding completion (fires once)
-  const isComplete = !bootstrapPresent || identityFilled;
+  const isComplete = !bootstrapHasContent || identityFilled;
   if (isComplete && state.bootstrapSeededAt && !state.onboardingCompletedAt) {
     const now = systemNowMs();
     await writeWorkspaceState(dir, { onboardingCompletedAt: now });

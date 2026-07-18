@@ -4778,7 +4778,7 @@ describe("sandbox no-downgrade gate", () => {
   // The refusal is a
   // TYPED SandboxDowngradeError, so the daemon's classifyRpcError classifies it
   // warn/precondition — a fail-closed SECURITY refusal must not read as an
-  // internal/error handler fault in a fleet health sweep.
+  // internal/error handler fault in a system health sweep.
   // -------------------------------------------------------------------------
   it("throws a TYPED SandboxDowngradeError carrying the violated dimensions", () => {
     const resolvePosture = makePostureResolver({
@@ -5567,7 +5567,7 @@ describe("killRun attribution + notification + trajectory teardown", () => {
     const localDeps = runningDeps();
     const runner = createSubAgentRunner(localDeps);
     const runId = runner.spawn({
-      task: "rank all fleet drivers",
+      task: "rank all system drivers",
       agentId: "default",
       announceChannelType: "telegram",
       announceChannelId: "42",
@@ -5587,7 +5587,7 @@ describe("killRun attribution + notification + trajectory teardown", () => {
     expect(channelType).toBe("telegram");
     expect(channelId).toBe("42");
     expect(text).toContain("health monitor");
-    expect(text).toContain("rank all fleet drivers");
+    expect(text).toContain("rank all system drivers");
   });
 
   it("closeTrajectory fires once when a killed execution settles (not at kill time)", async () => {

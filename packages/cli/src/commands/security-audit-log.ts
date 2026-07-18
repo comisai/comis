@@ -7,7 +7,7 @@
  *
  * Registered as a SUBCOMMAND on the `comis security` command tree (in
  * `security.ts`, beside `audit`/`fix`) — this flat module holds only the
- * handler, mirroring how `explain.ts`/`fleet.ts` hold their handlers and call
+ * handler, mirroring how `explain.ts`/`system.ts` hold their handlers and call
  * `callTyped(client, Contract, ...)`.
  *
  * Per the `cli-uses-typed-rpc` arch invariant: ONLY `callTyped` is used here —

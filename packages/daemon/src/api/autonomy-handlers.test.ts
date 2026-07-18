@@ -468,7 +468,7 @@ describe("autonomy handlers — deny-by-origin on the dispatch path", () => {
   // PRODUCTION WIRING: the LIVE createRpcDispatch
   // construction site MUST thread deps.container.eventBus into
   // createAutonomyHandlers — otherwise the optional eventBus? is absent in prod,
-  // the handler emits NOTHING, and the fleet's autonomy_revoked/killed counts are
+  // the handler emits NOTHING, and the system's autonomy_revoked/killed counts are
   // silently ZERO. We assert the emit lands on the CONTAINER bus (the real
   // construction path), NOT a harness-injected `...over` spy.
   // -------------------------------------------------------------------------

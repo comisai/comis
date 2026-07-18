@@ -906,7 +906,7 @@ describe("runDistillationPassAfterTurn — supersession partial-wire observabili
 });
 
 // ---------------------------------------------------------------------------
-// The validation/secret-egress skip must be fleet-observable
+// The validation/secret-egress skip must be system-observable
 // GATE 7 (validateMemoryWrite non-clean) previously only WARNed; the documented
 // reason:"validation" was never emitted on the bus. The skip must emit
 // memory:distillation_skipped CONTENT-FREE (ids only, never the matched secret).

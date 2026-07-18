@@ -130,7 +130,7 @@
                 },
                 "workspace": {
                   "additionalProperties": false,
-                  "description": "Nested workspace configuration. Use this OR the flat workspace_profile field, not both. Optionally inline ROLE.md / IDENTITY.md via role/identity for single-call creation (PREFERRED for batch fleet creation).",
+                  "description": "Nested workspace configuration. Use this OR the flat workspace_profile field, not both. Optionally inline ROLE.md / IDENTITY.md via role/identity for single-call creation (PREFERRED for batch system creation).",
                   "properties": {
                     "identity": {
                       "description": "Inline IDENTITY.md content. Written to <workspaceDir>/IDENTITY.md immediately on create. Should set name/creature/vibe/emoji/avatar/ethos for the agent. Max 4096 chars. When omitted, IDENTITY.md is the unmodified seed template.",
@@ -172,7 +172,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Workspace profile controlling platform instruction verbosity. Valid values: full (~9K tokens, user-facing agents on channels), specialist (~800 tokens, task workers and fleet sub-agents) ONLY. NO other values accepted. Default: full. Can be changed later via update action. Alternative shape: nested workspace.profile (see `workspace` field)."
+                  "description": "Workspace profile controlling platform instruction verbosity. Valid values: full (~9K tokens, user-facing agents on channels), specialist (~800 tokens, task workers and system sub-agents) ONLY. NO other values accepted. Default: full. Can be changed later via update action. Alternative shape: nested workspace.profile (see `workspace` field)."
                 }
               },
               "type": "object"
@@ -1132,7 +1132,7 @@
               "type": "string"
             },
             {
-              "const": "fleet_health",
+              "const": "system_health",
               "type": "string"
             },
             {
@@ -1140,7 +1140,7 @@
               "type": "string"
             }
           ],
-          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), fleet_health (cross-session fleet-health triage: degradation rate, recurring WARNs, model/config health over a window), audit (the durable security-decision audit log: secret access, injection detection, command blocks — filter by kind/classification/agent/tenant/outcome/since/until)"
+          "description": "Observability query category. Valid values: diagnostics (platform diagnostic data), billing (cost data by provider/agent/session), delivery (message delivery traces), channels (channel activity and staleness), explain (assembled IncidentReport / root-cause post-mortem for a session), trace (search trace rows), session_report (session rollup — reuses the IncidentReport), system_health (cross-session system-health triage: degradation rate, recurring WARNs, model/config health over a window), audit (the durable security-decision audit log: secret access, injection detection, command blocks — filter by kind/classification/agent/tenant/outcome/since/until)"
         },
         "agent_id": {
           "description": "Agent identifier (for billing.byAgent)",
@@ -1183,7 +1183,7 @@
           "type": "string"
         },
         "since_hours": {
-          "description": "Window in hours for fleet_health (default 24)",
+          "description": "Window in hours for system_health (default 24)",
           "type": "integer"
         },
         "since_ms": {

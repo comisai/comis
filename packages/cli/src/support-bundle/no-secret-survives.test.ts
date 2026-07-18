@@ -7,7 +7,7 @@
  * (gateway, security, providers), generates a real bundle offline, then
  * enumerates EVERY written file (readdir — so a newly-added output cannot
  * silently escape the grep) and asserts not one seeded secret survives verbatim
- * in any of them, explicitly including `fleet.json` and `config-posture.json`.
+ * in any of them, explicitly including `system-health.json` and `config-posture.json`.
  *
  * `config-posture.json` is the load-bearing subject. It rides the writer's
  * trusted-leaf path (path-token substitution only — no value-shape masking), so
@@ -24,12 +24,12 @@
  * provider headers, or other values into the bundle. The separate deep-session
  * sweep below exercises value-shape redaction against content-bearing artifacts.
  *
- * The fleet assembler is injected with a hermetic empty-report fixture so the
+ * The system assembler is injected with a hermetic empty-report fixture so the
  * sweep never loads the runtime graph the offline seam dynamic-imports. This does
- * NOT narrow the contract: the seeds live in config VALUES, `fleet.json` reads the
+ * NOT narrow the contract: the seeds live in config VALUES, `system-health.json` reads the
  * observability store and never the config (so no config seed could reach it, real
  * or stubbed), and `config-posture.json` is built from the REAL config resolution
- * regardless of the fleet stub — so both trusted-leaf files are still swept
+ * regardless of the system stub — so both trusted-leaf files are still swept
  * against every seed.
  *
  * The gateway host is loopback, so the connectivity probe stays local (fast, no
@@ -44,7 +44,7 @@ import * as path from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import { safePath } from "@comis/core";
-import type { FleetHealthReport } from "@comis/core";
+import type { SystemHealthReport } from "@comis/core";
 import { writeTrajectoryPointerFileBestEffort } from "@comis/observability";
 // Test-only @comis/memory imports (the cli→memory production rule excludes
 // `.test.ts`): seed a REAL memory.db so the offline audit read exercises the
@@ -88,12 +88,12 @@ const NOW_MS = Date.UTC(2026, 6, 3, 10, 15, 0);
 const daemonDown = { isDaemonRunning: async (): Promise<boolean> => false };
 
 /**
- * A hermetic empty-window fleet report — the shape the offline assembler returns
+ * A hermetic empty-window system report — the shape the offline assembler returns
  * against a data dir with no `memory.db`. Injected so the sweep never loads the
- * daemon graph; fleet.json is content-free by construction, so an empty report
+ * daemon graph; system-health.json is content-free by construction, so an empty report
  * suffices to prove no config seed reaches it.
  */
-function emptyFleet(): FleetHealthReport {
+function emptySystem(): SystemHealthReport {
   return {
     schemaVersion: 1,
     windowHours: 24,
@@ -181,7 +181,7 @@ function writeSeededConfig(dataDir: string): string {
 }
 
 describe("no seeded secret survives any support-bundle output file", () => {
-  it("sweeps every written bundle file — including fleet.json and config-posture.json — for surviving seeds", async () => {
+  it("sweeps every written bundle file — including system-health.json and config-posture.json — for surviving seeds", async () => {
     const dataDir = makeDataDir();
     const configPath = writeSeededConfig(dataDir);
 
@@ -191,7 +191,7 @@ describe("no seeded secret survives any support-bundle output file", () => {
       sinceHours: 24,
       nowMs: NOW_MS,
       isDaemonRunning: daemonDown.isDaemonRunning,
-      assembleFleet: async () => emptyFleet(),
+      assembleSystem: async () => emptySystem(),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -202,7 +202,7 @@ describe("no seeded secret survives any support-bundle output file", () => {
 
     // The two trusted-leaf files (no value-shape backstop) are explicitly in the
     // sweep set, so neither can silently drop out of coverage.
-    expect(files, "fleet.json must be present in the sweep").toContain("fleet.json");
+    expect(files, "system-health.json must be present in the sweep").toContain("system-health.json");
     expect(files, "config-posture.json must be present in the sweep").toContain(
       "config-posture.json",
     );
@@ -225,7 +225,7 @@ describe("no seeded secret survives any support-bundle output file", () => {
       sinceHours: 24,
       nowMs: NOW_MS,
       isDaemonRunning: daemonDown.isDaemonRunning,
-      assembleFleet: async () => emptyFleet(),
+      assembleSystem: async () => emptySystem(),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -258,7 +258,7 @@ describe("no seeded secret survives any support-bundle output file", () => {
       sinceHours: 24,
       nowMs: NOW_MS,
       isDaemonRunning: daemonDown.isDaemonRunning,
-      assembleFleet: async () => emptyFleet(),
+      assembleSystem: async () => emptySystem(),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -429,7 +429,7 @@ describe("no seeded secret survives the --session --deep depth surface", () => {
         session: SESSION_KEY,
         deep: true,
         isDaemonRunning: daemonDown.isDaemonRunning,
-        assembleFleet: async () => emptyFleet(),
+        assembleSystem: async () => emptySystem(),
       });
       expect(result.ok).toBe(true);
       if (!result.ok) return;

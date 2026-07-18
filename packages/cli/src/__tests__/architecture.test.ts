@@ -46,7 +46,7 @@ const SRC_ROOT = resolve(here, "..");
 //      projects offline. Type-only; the data read routes through offline-obs's assemblers.
 //   4. util/offline-obs.ts — the offline obs adapter (already the sole L18 @comis/daemon
 //      site): the same cost-aggregate types ride its `comis cost export --offline` /
-//      `comis fleet --offline` local-read path.
+//      `comis system-health --offline` local-read path.
 // All other CLI memory access routes through daemon RPC.
 const L11_ALLOWLIST: readonly string[] = [
   "util/offline-secrets-store.ts",
@@ -63,7 +63,7 @@ const L12_INFRA_ALLOWLIST = [] as const;
 
 // L18: @comis/daemon re-opened for exactly one
 // site — the CLI's OFFLINE obs adapter. `comis explain --offline` /
-// `comis fleet --offline` (and the automatic unreachable-gateway fallback)
+// `comis system-health --offline` (and the automatic unreachable-gateway fallback)
 // reuse the daemon's exported PURE report assemblers over the local ~/.comis
 // files; requiring a live daemon to read local telemetry defeated the
 // post-mortem tool exactly when it was needed. A single bounded adapter file

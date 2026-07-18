@@ -31,6 +31,7 @@ function makeValidRecord(overrides: Partial<Record<string, unknown>> = {}): Reco
     lastHeartbeatAt: 1_700_000_000_000,
     scriptRef: null,
     checkpointRef: null,
+    workspacePolicyHash: "a".repeat(64),
     ...overrides,
   };
 }
@@ -58,6 +59,14 @@ describe("parseDurableRunRecord domain validation", () => {
     expect(record.trustLevel).toBe("user");
     expect(record.status).toBe("running");
     expect(record.lastHeartbeatAt).toBe(1_700_000_000_000);
+    expect(record.workspacePolicyHash).toBe("a".repeat(64));
+  });
+
+  it("accepts an absent policy hash and rejects malformed durable policy provenance", () => {
+    const absent = makeValidRecord();
+    delete absent.workspacePolicyHash;
+    expect(parseDurableRunRecord(absent).ok).toBe(true);
+    expect(parseDurableRunRecord(makeValidRecord({ workspacePolicyHash: "short" })).ok).toBe(false);
   });
 
   it("rejects an empty object because required fields are missing", () => {

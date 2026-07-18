@@ -566,7 +566,7 @@ export const IncidentReportSchema = z.object({
       /**
        * The toolStats reconciliation between THIS report (the whole-session
        * trajectory union, the headline `toolStats`) and the persisted per-session
-       * rollup that `obs.fleet.health` reads (latest-execution-wins). The two
+       * rollup that `obs.system.health` reads (latest-execution-wins). The two
        * lenses read structurally-different sources, so they CAN legitimately
        * differ — but only in one direction: the rollup is built per-execution and
        * the `sessionEnd` is overwritten each execution, so it is a SUBSET of the
@@ -576,7 +576,7 @@ export const IncidentReportSchema = z.object({
        * (rollup ⊆ trajectory) holding; `rollupSource` names WHY the rollup can be
        * smaller; `divergentTools[]` lists each tool whose persisted rollup differs
        * from the trajectory with BOTH count pairs, so an operator cross-
-       * referencing `comis explain` vs `comis fleet` sees exactly the gap. A
+       * referencing `comis explain` vs `comis system-health` sees exactly the gap. A
        * rollup OVERcount (the forbidden direction — incl. a tool present in the
        * rollup but absent from the trajectory) flips `reconciled` to `false` and
        * surfaces the offending tool. Bounded: counts + tool names only, capped by
@@ -657,7 +657,7 @@ export const ObsExplainContract = defineContract({
       // The 3rd ref shape — an autonomy run's rootRunId (the synthetic
       // `root-session-<key>` or a real spawned/socket root). The daemon
       // canonicalizes it to its sessionKey FIRST (resolveRootRunToSession), so the
-      // fleet→explain drill-down can paste the worst run's rootRunId straight in.
+      // system→explain drill-down can paste the worst run's rootRunId straight in.
       rootRunId: z.string().min(1).optional(),
       depth: z.enum(["summary", "full"]).optional(),
       // Admin opt-in to include synthetic/test sessions (excluded by default).

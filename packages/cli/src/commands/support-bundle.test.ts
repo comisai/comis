@@ -25,7 +25,7 @@ describe("registerSupportBundleCommand", () => {
     expect(optionNames).toContain("--session");
     expect(optionNames).toContain("--deep");
 
-    // --since mirrors `comis fleet`: a 24-hour window by default.
+    // --since mirrors `comis system-health`: a 24-hour window by default.
     const since = cmd!.options.find((o) => o.long === "--since");
     expect(since!.defaultValue).toBe("24");
 

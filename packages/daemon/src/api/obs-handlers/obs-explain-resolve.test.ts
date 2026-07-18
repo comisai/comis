@@ -163,7 +163,7 @@ describe("resolveTraceToSession", () => {
 // ---------------------------------------------------------------------------
 // resolveRootRunToSession: the THIRD canonicalization arm. A
 // `rootRunId` (an autonomy run) is canonicalized to the run's sessionKey FIRST,
-// so the fleet→explain drill-down (paste the worst run's rootRunId) shares the
+// so the system→explain drill-down (paste the worst run's rootRunId) shares the
 // ONE assembler path. TWO honest sources:
 //   1. a SYNTHETIC in-process root (`root-session-<formattedKey>`,
 //      setup-capability-endpoint-boot.ts:101) — a pure prefix-strip, NO I/O.

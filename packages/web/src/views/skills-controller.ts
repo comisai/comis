@@ -110,7 +110,7 @@ export const PLATFORM_TOOL_CATEGORIES: { label: string; tools: string[] }[] = [
   { label: "MESSAGING", tools: ["message", "discord_action", "telegram_action", "slack_action", "whatsapp_action"] },
   { label: "MEDIA", tools: ["image_analyze", "tts_synthesize", "transcribe_audio", "describe_video", "extract_document"] },
   { label: "INFRASTRUCTURE", tools: ["cron", "gateway", "browser", "obs_query"] },
-  { label: "FLEET MANAGEMENT", tools: ["models_manage", "tokens_manage", "channels_manage", "skills_manage"] },
+  { label: "SYSTEM MANAGEMENT", tools: ["models_manage", "tokens_manage", "channels_manage", "skills_manage"] },
 ];
 
 export const SKILLS_TABS = [

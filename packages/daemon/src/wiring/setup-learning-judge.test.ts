@@ -8,9 +8,6 @@
  * @module
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, it, expect, vi } from "vitest";
 
 vi.mock("@comis/agent", async (importOriginal) => {
@@ -29,7 +26,7 @@ vi.mock("@comis/agent", async (importOriginal) => {
 });
 
 import { createOutcomeJudgeSeam } from "@comis/agent";
-import { DEFAULT_TEMPLATES } from "@comis/core";
+import { ok } from "@comis/shared";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { buildOutcomeJudgeWiring, maybeUpgradeWithJudge } from "./setup-learning-judge.js";
@@ -42,12 +39,21 @@ const SCOPE = { tenantId: "t", agentId: "a", sessionId: "s", trajectoryId: "traj
 const noopLogger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } as never;
 const clock = { now: () => 1000 } as never;
 const UNKNOWN = { outcome: "unknown" as const, confidence: 0, sources: [], recalledIds: [], usedSkillIds: [] };
+const judgeVerdict = (outcome: "success" | "failure" | "unknown", cappedConfidence: number) => ({
+  outcome,
+  confidence: cappedConfidence,
+  cappedConfidence,
+  source: "judge" as const,
+  judgeModel: "example/judge",
+  rubricHash: "a".repeat(64),
+  evidenceRefs: ["b".repeat(64)],
+});
 
 describe("maybeUpgradeWithJudge — conversational-breadth fallback", () => {
   it("upgrades an UNKNOWN verdict to the judge's success (observe source:judge + re-resolve)", async () => {
     const observe = vi.fn(async () => ({ ok: true as const, value: undefined }));
     const resolve = vi.fn(async () => ({ ok: true as const, value: { outcome: "success" as const, confidence: 0.7, sources: ["judge" as const], recalledIds: [], usedSkillIds: [] } }));
-    const outcomeJudge = vi.fn(async () => ({ outcome: "success" as const, cappedConfidence: 0.7 }));
+    const outcomeJudge = vi.fn(async () => judgeVerdict("success", 0.7));
     const r = await maybeUpgradeWithJudge(
       { outcomeStore: { observe, resolve } as never, clock, logger: noopLogger, outcomeJudge: outcomeJudge as never, learningOutcomeJudgeEnabled: () => true, readTurnTranscript: () => "user asked X; assistant satisfied it" },
       SCOPE,
@@ -60,6 +66,48 @@ describe("maybeUpgradeWithJudge — conversational-breadth fallback", () => {
     });
     expect(resolve).toHaveBeenCalled();
     expect(r.outcome).toBe("success");
+  });
+
+  it("records content-free judge provenance for the evaluated agent and policy snapshot", async () => {
+    const info = vi.fn();
+    const policyHash = "a".repeat(64);
+    const rubricHash = "b".repeat(64);
+    const evidenceRefs = ["c".repeat(64)];
+    await maybeUpgradeWithJudge(
+      {
+        outcomeStore: {
+          observe: vi.fn(async () => ({ ok: true as const, value: undefined })),
+          resolve: vi.fn(async () => ({ ok: true as const, value: UNKNOWN })),
+        } as never,
+        clock,
+        logger: { ...noopLogger, info } as never,
+        outcomeJudge: vi.fn(async () => ({
+          outcome: "success" as const,
+          cappedConfidence: 0.7,
+          policyHash,
+          judgeModel: "anthropic/claude-haiku-4-5-20251001",
+          rubricHash,
+          evidenceRefs,
+        })) as never,
+        learningOutcomeJudgeEnabled: () => true,
+        readTurnTranscript: () => "private transcript body",
+      },
+      { ...SCOPE, workspacePolicyHash: policyHash },
+      UNKNOWN,
+    );
+
+    expect(info).toHaveBeenCalledWith({
+      agentId: SCOPE.agentId,
+      trajectoryId: SCOPE.trajectoryId,
+      outcome: "success",
+      workspacePolicyHash: policyHash,
+      judgeModel: "anthropic/claude-haiku-4-5-20251001",
+      rubricHash,
+      evidenceRefs,
+      durationMs: 0,
+      step: "outcome-judge",
+    }, "Outcome judge verdict recorded");
+    expect(JSON.stringify(info.mock.calls)).not.toContain("private transcript body");
   });
 
   it("does NOT run the judge for an already-resolved (non-unknown) verdict", async () => {
@@ -76,7 +124,7 @@ describe("maybeUpgradeWithJudge — conversational-breadth fallback", () => {
   it("is byte-identical (keeps unknown, no observe) when the judge is disabled or absent", async () => {
     const observe = vi.fn();
     const disabled = await maybeUpgradeWithJudge(
-      { outcomeStore: { observe, resolve: vi.fn() } as never, clock, logger: noopLogger, outcomeJudge: (async () => ({ outcome: "success" as const, cappedConfidence: 0.7 })) as never, learningOutcomeJudgeEnabled: () => false, readTurnTranscript: () => "x" },
+      { outcomeStore: { observe, resolve: vi.fn() } as never, clock, logger: noopLogger, outcomeJudge: (async () => judgeVerdict("success", 0.7)) as never, learningOutcomeJudgeEnabled: () => false, readTurnTranscript: () => "x" },
       SCOPE,
       UNKNOWN,
     );
@@ -98,7 +146,7 @@ describe("maybeUpgradeWithJudge — conversational-breadth fallback", () => {
   });
 
   it("an empty transcript → the judge never runs, verdict stays unknown", async () => {
-    const outcomeJudge = vi.fn(async () => ({ outcome: "success" as const, cappedConfidence: 0.7 }));
+    const outcomeJudge = vi.fn(async () => judgeVerdict("success", 0.7));
     const r = await maybeUpgradeWithJudge(
       { outcomeStore: { observe: vi.fn(), resolve: vi.fn() } as never, clock, logger: noopLogger, outcomeJudge: outcomeJudge as never, learningOutcomeJudgeEnabled: () => true, readTurnTranscript: () => "" },
       SCOPE,
@@ -112,7 +160,7 @@ describe("maybeUpgradeWithJudge — conversational-breadth fallback", () => {
     const observe = vi.fn();
     const resolve = vi.fn();
     const r = await maybeUpgradeWithJudge(
-      { outcomeStore: { observe, resolve } as never, clock, logger: noopLogger, outcomeJudge: (async () => ({ outcome: "unknown" as const, cappedConfidence: 0 })) as never, learningOutcomeJudgeEnabled: () => true, readTurnTranscript: () => "x" },
+      { outcomeStore: { observe, resolve } as never, clock, logger: noopLogger, outcomeJudge: (async () => judgeVerdict("unknown", 0)) as never, learningOutcomeJudgeEnabled: () => true, readTurnTranscript: () => "x" },
       SCOPE,
       UNKNOWN,
     );
@@ -125,7 +173,7 @@ describe("maybeUpgradeWithJudge — conversational-breadth fallback", () => {
     const observe = vi.fn(async () => ({ ok: false as const, error: new Error("db locked") }));
     const resolve = vi.fn();
     const r = await maybeUpgradeWithJudge(
-      { outcomeStore: { observe, resolve } as never, clock, logger: noopLogger, outcomeJudge: (async () => ({ outcome: "success" as const, cappedConfidence: 0.7 })) as never, learningOutcomeJudgeEnabled: () => true, readTurnTranscript: () => "x" },
+      { outcomeStore: { observe, resolve } as never, clock, logger: noopLogger, outcomeJudge: (async () => judgeVerdict("success", 0.7)) as never, learningOutcomeJudgeEnabled: () => true, readTurnTranscript: () => "x" },
       SCOPE,
       UNKNOWN,
     );
@@ -140,7 +188,7 @@ describe("maybeUpgradeWithJudge — conversational-breadth fallback", () => {
 // ===========================================================================
 
 describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identity gate", () => {
-  function makeContainer(over: { agents?: Record<string, unknown>; costFeatures?: boolean; dataDir?: string; secrets?: Record<string, string>; entries?: Record<string, unknown> } = {}) {
+  function makeContainer(over: { agents?: Record<string, unknown>; costFeatures?: boolean; dataDir?: string; secrets?: Record<string, string>; entries?: Record<string, unknown>; workspacePolicyPort?: unknown } = {}) {
     const secrets = over.secrets ?? {};
     return {
       config: {
@@ -151,6 +199,7 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
         providers: { entries: over.entries ?? {} },
       },
       secretManager: { get: (name: string): string | undefined => secrets[name] },
+      workspacePolicyPort: over.workspacePolicyPort,
     } as never;
   }
 
@@ -267,12 +316,21 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
     expect(transcript).toBe("user: please summarize\nassistant: here is the summary");
   });
 
-  it("reads the live role policy from the resolved workspace and ignores the untouched template", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "comis-outcome-role-"));
-    const workspaceDir = join(dataDir, "workspace");
-    mkdirSync(workspaceDir, { recursive: true });
-    const rolePath = join(workspaceDir, "ROLE.md");
-    const rolePolicy = "# Fleet role\nRefuse requests unrelated to fleet operations.";
+  it("passes the exact previously loaded policy snapshot instead of rereading workspace files", async () => {
+    const policySnapshot = {
+      agentId: "default",
+      combinedHash: "a".repeat(64),
+      sections: [{
+        id: "workspace:role",
+        sourceKind: "operator" as const,
+        trust: "trusted" as const,
+        stability: "stable" as const,
+        content: "Configured operator policy.",
+        contentHash: "b".repeat(64),
+        maxChars: 20_000,
+      }],
+    };
+    const get = vi.fn(() => ok(policySnapshot));
     const seam = vi.fn(async () => ({
       outcome: "unknown" as const,
       confidence: 0,
@@ -281,40 +339,73 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
     }));
     vi.mocked(createOutcomeJudgeSeam).mockReturnValueOnce(seam as never);
 
-    try {
-      writeFileSync(rolePath, rolePolicy, "utf8");
-      const built = buildOutcomeJudgeWiring(
-        makeContainer({
-          agents: { default: { provider: "anthropic", learningOutcome: { enabled: true, judge: { enabled: true } } } },
-          dataDir,
-          secrets: { ANTHROPIC_API_KEY: "test-key" },
-        }),
-        createFakeClock(NOW),
-        createMockLogger(),
-        makeLcdStore(),
-      );
+    const built = buildOutcomeJudgeWiring(
+      makeContainer({
+        agents: { default: { provider: "anthropic", learningOutcome: { enabled: true, judge: { enabled: true } } } },
+        secrets: { ANTHROPIC_API_KEY: "test-key" },
+        workspacePolicyPort: { get, load: vi.fn() },
+      }),
+      createFakeClock(NOW),
+      createMockLogger(),
+      makeLcdStore(),
+    );
 
-      await (built.outcomeJudge as unknown as (input: {
-        agentId: string;
-        trajectoryContent: string;
-      }) => Promise<unknown>)({ agentId: "default", trajectoryContent: "turn transcript" });
-      expect(seam).toHaveBeenLastCalledWith({
-        policyContext: rolePolicy,
-        trajectoryContent: "turn transcript",
-      });
+    await built.outcomeJudge?.({
+      agentId: "default",
+      trajectoryContent: "turn transcript",
+      workspacePolicyHash: policySnapshot.combinedHash,
+    });
+    expect(get).toHaveBeenCalledWith(policySnapshot.combinedHash);
+    expect(seam).toHaveBeenLastCalledWith({
+      policySnapshot,
+      trajectoryContent: "turn transcript",
+    });
+  });
 
-      writeFileSync(rolePath, DEFAULT_TEMPLATES["ROLE.md"], "utf8");
-      await (built.outcomeJudge as unknown as (input: {
-        agentId: string;
-        trajectoryContent: string;
-      }) => Promise<unknown>)({ agentId: "default", trajectoryContent: "next transcript" });
-      expect(seam).toHaveBeenLastCalledWith({
-        policyContext: undefined,
-        trajectoryContent: "next transcript",
-      });
-    } finally {
-      rmSync(dataDir, { recursive: true, force: true });
-    }
+  it("preserves judge provenance when mapping the per-agent seam", async () => {
+    const provenance = {
+      outcome: "success" as const,
+      confidence: 0.6,
+      cappedConfidence: 0.6,
+      source: "judge" as const,
+      policyHash: "a".repeat(64),
+      judgeModel: "anthropic/claude-haiku-4-5-20251001",
+      rubricHash: "b".repeat(64),
+      evidenceRefs: ["c".repeat(64)],
+    };
+    vi.mocked(createOutcomeJudgeSeam).mockReturnValueOnce(vi.fn(async () => provenance));
+    const built = buildOutcomeJudgeWiring(
+      makeContainer({
+        agents: { default: { provider: "anthropic", learningOutcome: { enabled: true } } },
+        secrets: { ANTHROPIC_API_KEY: "test-key" },
+      }),
+      createFakeClock(NOW),
+      createMockLogger(),
+      makeLcdStore(),
+    );
+
+    await expect(built.outcomeJudge?.({
+      agentId: "default",
+      trajectoryContent: "turn transcript",
+    })).resolves.toEqual(provenance);
+  });
+
+  it("resolves the judge model independently for each evaluated agent", () => {
+    vi.mocked(createOutcomeJudgeSeam).mockClear();
+    buildOutcomeJudgeWiring(
+      makeContainer({
+        agents: {
+          agent_a: { provider: "provider-a", model: "provider-a:model-a", learningOutcome: { enabled: true } },
+          agent_b: { provider: "provider-b", model: "provider-b:model-b", learningOutcome: { enabled: true } },
+        },
+        secrets: { "PROVIDER-A_API_KEY": "test-key", "PROVIDER-B_API_KEY": "test-key" },
+      }),
+      createFakeClock(NOW),
+      createMockLogger(),
+      makeLcdStore(),
+    );
+    expect(vi.mocked(createOutcomeJudgeSeam).mock.calls.map(([deps]) => deps.agentId))
+      .toEqual(["agent_a", "agent_b"]);
   });
 
   it("readTurnTranscript returns undefined for a conversation with no messages (the judge then never runs)", () => {

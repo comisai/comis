@@ -121,8 +121,8 @@ export interface DurableRunPort {
    * Windowed status counts read DIRECTLY from
    * `durable_run_checkpoints`. Crash-surviving: the row IS the durability, so this count
    * survives a hard crash that would lose an in-process lifecycle event. Counts
-   * ONLY rows with `updated_at_ms >= sinceMs` (the fleet window), grouped by
-   * status; absent statuses default to 0. The `comis fleet` assembler
+   * ONLY rows with `updated_at_ms >= sinceMs` (the system window), grouped by
+   * status; absent statuses default to 0. The `comis system-health` assembler
    * reads this for the orphaned/resumed/revoked/running counts alongside the
    * `health_signal` rows. Mirrors the obs store's `getRollingSpendUsd`
    * windowed-aggregate (`WHERE … >= ?`) precedent.

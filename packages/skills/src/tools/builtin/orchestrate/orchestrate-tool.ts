@@ -812,6 +812,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
             ...(resumedCheckpointRef !== undefined ? { checkpointRef: resumedCheckpointRef } : {}), // resume: carry resumed checkpointRef so the replayed resume() returns it (undefined ⇒ omitted)
             nowMs: now(),
             trustLevel: executionTrustLevel,
+            workspacePolicyHash: tryGetContext()?.workspacePolicyHash,
           });
           if (!registered.ok && resumeAuthority !== undefined) {
             throwToolError(

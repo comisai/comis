@@ -7,6 +7,7 @@ import type { AppConfig, ConfigError } from "./config/types.js";
 import type { SecretManager } from "./security/index.js";
 import type { PluginRegistry } from "./hooks/plugin-registry.js";
 import type { HookRunner } from "./hooks/hook-runner.js";
+import type { WorkspacePolicyPort } from "./ports/workspace-policy.js";
 import { loadLayered } from "./config/layered.js";
 import { buildGatewayEnvLayer } from "./config/env-layer.js";
 import { TypedEventBus } from "./event-bus/index.js";
@@ -106,6 +107,8 @@ export interface BootstrapOptions {
    * handle and AppContainer.secretManager share one Map. Non-daemon callers omit this.
    */
   secretManager?: SecretManager;
+  /** Runtime adapter factory supplied by the outer daemon composition root. */
+  workspacePolicyPortFactory?: (config: AppConfig) => WorkspacePolicyPort;
 }
 
 /**
@@ -148,6 +151,8 @@ export interface AppContainer {
   readonly pluginRegistry: PluginRegistry;
   /** Lifecycle hook execution engine */
   readonly hookRunner: HookRunner;
+  /** Immutable per-turn operator-policy loader, when the runtime supplies its filesystem adapter. */
+  readonly workspacePolicyPort?: WorkspacePolicyPort;
   /** Graceful shutdown — cleans up resources */
   shutdown: () => Promise<void>;
 }
@@ -216,6 +221,7 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
   // 3b. Create plugin infrastructure
   const pluginRegistry = createPluginRegistry();
   const hookRunner = createHookRunner(pluginRegistry, { eventBus, catchErrors: true });
+  const workspacePolicyPort = options.workspacePolicyPortFactory?.(config);
 
   // 4. Return container
   const container: AppContainer = {
@@ -226,6 +232,7 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
     platformSecretNames: referencedNames,
     pluginRegistry,
     hookRunner,
+    ...(workspacePolicyPort !== undefined ? { workspacePolicyPort } : {}),
     shutdown: async () => {
       await pluginRegistry.deactivateAll();
       eventBus.removeAllListeners();

@@ -143,7 +143,7 @@ while (Date.now() - start < maxMs) {
 // agent turn, so there is correctly no reply. Distinguish that from a real hang
 // by checking the daemon log for the block naming THIS sender — else the driver
 // reports a misleading "[TIMEOUT] — NO SUBSTANTIVE ANSWER" on a correct security
-// block (which briefly read as a wedge-finding during the fleet-marathon SE-H4 drive).
+// block, which otherwise looks like a missing substantive answer.
 const detectAllowFromBlock = () => {
   if (seen.length > 0 || sawAnswer || turnEnded || !DATA) return null;
   try {

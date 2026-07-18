@@ -568,7 +568,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("whatsapp_action", { searchHint: "status group admin label broadcast forward whatsapp" });
 
   // --- Privileged management tools ---
-  registerToolMetadata("agents_manage",    { searchHint: "fleet list create delete suspend resume agent configure roster inventory" });
+  registerToolMetadata("agents_manage",    { searchHint: "system list create delete suspend resume agent configure roster inventory" });
   registerToolMetadata("obs_query",        { searchHint: "diagnostics monitoring metrics billing health explain incident post-mortem" });
   registerToolMetadata("sessions_manage",  { searchHint: "delete reset export compact session lifecycle cleanup admin" });
   registerToolMetadata("memory_manage",    { searchHint: "delete flush export browse stats storage cleanup purge" });
@@ -648,10 +648,10 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("session_status",   { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("sessions_list",    { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("sessions_history", { mcpExportPolicy: "permission-gated" });
-  // Observability (3) — all permission-gated; operator allowlists by query scope. obs_explain + obs_fleet_health are READ-ONLY digests that run their assembler directly under daemon authority (NOT the admin RPC); the allowlist is the grant.
+  // Observability (3) — all permission-gated; operator allowlists by query scope. obs_explain + obs_system_health are READ-ONLY digests that run their assembler directly under daemon authority (NOT the admin RPC); the allowlist is the grant.
   registerToolMetadata("obs_query", { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("obs_explain", { mcpExportPolicy: "permission-gated", isReadOnly: true, maxResultSizeChars: 100_000, searchHint: "explain incident root-cause post-mortem session report" });
-  registerToolMetadata("obs_fleet_health", { mcpExportPolicy: "permission-gated", isReadOnly: true, maxResultSizeChars: 100_000, searchHint: "fleet health cross-session degradation rate errorKinds breaker trips config posture model health" });
+  registerToolMetadata("obs_system_health", { mcpExportPolicy: "permission-gated", isReadOnly: true, maxResultSizeChars: 100_000, searchHint: "system health cross-session degradation rate errorKinds breaker trips config posture model health" });
   // Meta-tool (1) — reveals registered-tools attack surface; per-client allowlist required.
   registerToolMetadata("discover_tools", { mcpExportPolicy: "permission-gated" });
   // Media analysis (4) — see media-tools note above. Default permission-gated

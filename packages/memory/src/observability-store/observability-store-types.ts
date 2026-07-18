@@ -405,7 +405,7 @@ export interface ObservabilityStore extends CacheStatsQueriesSlice, CacheBreakQu
    */
   getRollingSpendUsd(windowMs: number): AgentRollingSpend[];
 
-  // Diagnostics — cross-session per-session rollup (A1, fleet aggregate)
+  // Diagnostics — cross-session per-session rollup (A1, system aggregate)
   aggregateSessionsInWindow(sinceMs: number): SessionSummaryRollup[];
 
   // Delivery

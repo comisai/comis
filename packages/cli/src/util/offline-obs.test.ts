@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Real-layout tests for the OFFLINE obs
- * assemblers — `comis explain --offline` / `comis fleet --offline` and the
+ * assemblers — `comis explain --offline` / `comis system-health --offline` and the
  * automatic unreachable-gateway fallback both ride these.
  *
  * Per AGENTS.md §2.10 the layout IS the contract: the explain test builds the
@@ -36,7 +36,7 @@ import {
 import type { AuditEventRow } from "@comis/memory";
 import {
   assembleIncidentReportOffline,
-  assembleFleetHealthReportOffline,
+  assembleSystemHealthReportOffline,
   resolveOfflineDataDir,
   resolveOfflineTrajectoryDir,
   resolveSessionFileOffline,
@@ -44,7 +44,7 @@ import {
   suggestWorstSessionOffline,
 } from "./offline-obs.js";
 
-// Regression guard: if `comis explain --offline` / `comis fleet --offline`
+// Regression guard: if `comis explain --offline` / `comis system-health --offline`
 // resolved the data dir from `os.homedir()` ALONE, ignoring `COMIS_DATA_DIR`,
 // then running the CLI as a different user than the daemon (e.g. the daemon as
 // `comis` but the CLI as `root`) would read an EMPTY `<root-home>/.comis` and
@@ -323,26 +323,26 @@ describe("assembleIncidentReportOffline — real nested layout, no daemon, no me
   });
 });
 
-describe("assembleFleetHealthReportOffline — memory.db present but missing obs tables", () => {
+describe("assembleSystemHealthReportOffline — memory.db present but missing obs tables", () => {
   it("degrades to file-only sources when the db lacks the obs schema (post-reset live state)", { timeout: 30_000 }, async () => {
     const dataDir = tmpDataDir();
     fs.mkdirSync(path.join(dataDir, "logs"), { recursive: true });
     // An empty SQLite db — exactly what an operator reset can leave behind.
     fs.writeFileSync(path.join(dataDir, "memory.db"), "", "utf-8");
 
-    const report = await assembleFleetHealthReportOffline(dataDir, 24);
+    const report = await assembleSystemHealthReportOffline(dataDir, 24);
 
     expect(report.windowHours).toBe(24);
     expect(report.coverage?.sessionSummary.found).toBe(false);
   });
 });
 
-describe("assembleFleetHealthReportOffline — local day files, no daemon, no memory.db", () => {
+describe("assembleSystemHealthReportOffline — local day files, no daemon, no memory.db", () => {
   it("returns an honest report with coverage gaps when memory.db is absent", { timeout: 30_000 }, async () => {
     const dataDir = tmpDataDir();
     const logsDir = path.join(dataDir, "logs");
     fs.mkdirSync(logsDir, { recursive: true });
-    // Today's session-index day file (the fleet activity source reads real day-keys).
+    // Today's session-index day file (the system activity source reads real day-keys).
     const today = new Date().toISOString().slice(0, 10);
     const rows = [
       {
@@ -374,13 +374,13 @@ describe("assembleFleetHealthReportOffline — local day files, no daemon, no me
       "utf-8",
     );
 
-    const report = await assembleFleetHealthReportOffline(dataDir, 24);
+    const report = await assembleSystemHealthReportOffline(dataDir, 24);
 
     expect(report.windowHours).toBe(24);
     // Activity came from the local day file.
     expect(report.activity.activeAgents).toContain("default");
     // The session-summary store (memory.db) is absent — coverage says so
-    // honestly instead of masquerading as a clean zero-session fleet.
+    // honestly instead of masquerading as a clean zero-session system.
     expect(report.coverage?.sessionSummary.found).toBe(false);
   });
 });

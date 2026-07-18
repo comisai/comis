@@ -216,6 +216,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       lastHeartbeatAt: systemNowMs(),
       scriptRef: null,
       checkpointRef: checkpointArtifact.value,
+      ...(gs.workspacePolicyHash === undefined
+        ? {}
+        : { workspacePolicyHash: gs.workspacePolicyHash }),
     };
     const persisted = await store.upsertCheckpoint(record);
     if (!persisted.ok) {
@@ -469,6 +472,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
         : {}),
       ...(callerPrincipalMatches && params.callerDeliveryOrigin !== undefined
         ? { callerDeliveryOrigin: params.callerDeliveryOrigin }
+        : {}),
+      ...(callerPrincipalMatches && callerContext.workspacePolicyHash !== undefined
+        ? { workspacePolicyHash: callerContext.workspacePolicyHash }
         : {}),
       ...(graphRootRunId !== undefined ? { rootRunId: graphRootRunId } : {}),
       graph: params.graph,
@@ -876,6 +882,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       ...(validRecord.deliveryOrigin !== null
         ? { callerDeliveryOrigin: validRecord.deliveryOrigin }
         : {}),
+      ...(validRecord.workspacePolicyHash === undefined
+        ? {}
+        : { workspacePolicyHash: validRecord.workspacePolicyHash }),
       callerSessionKey: validRecord.sessionKey,
       callerAgentId: validRecord.agentId,
       rootRunId, // tree-stable durable key shared by recovered node attempts

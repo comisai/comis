@@ -750,7 +750,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
         }
       : {}),
     // Collapse the per-reason cache-break fold → a bounded,
-    // deterministically-ordered array (count desc, then reason asc — the fleet
+    // deterministically-ordered array (count desc, then reason asc — the system
     // degradedByCause ordering). Present ONLY when the session had ≥1 cache break
     // (undefined, never [], when none). estCostUsd rounded to cents-precision to
     // avoid float-noise in the digest.

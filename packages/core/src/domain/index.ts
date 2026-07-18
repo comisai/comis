@@ -86,6 +86,40 @@ export { SecretRefSchema, isSecretRef, SecretRefOrStringSchema } from "./secret-
 export type { SecretRef } from "./secret-ref.js";
 
 export {
+  McpInstructionBlockSchema,
+  isMcpInstructionTextSafe,
+  parseMcpInstructionBlock,
+} from "./mcp-instruction-block.js";
+export type { McpInstructionBlock } from "./mcp-instruction-block.js";
+
+export {
+  InstructionSourceKindSchema,
+  InstructionTrustSchema,
+  InstructionStabilitySchema,
+  InstructionSectionSchema,
+  WorkspacePolicySnapshotSchema,
+  parseWorkspacePolicySnapshot,
+} from "./workspace-policy.js";
+
+export {
+  CanonicalLocaleSchema,
+  ResponseLocaleSourceSchema,
+  ResponseLocalePolicySchema,
+  parseResponseLocalePolicy,
+} from "./response-locale-policy.js";
+export type {
+  ResponseLocaleSource,
+  ResponseLocalePolicy,
+} from "./response-locale-policy.js";
+export type {
+  InstructionSourceKind,
+  InstructionTrust,
+  InstructionStability,
+  InstructionSection,
+  WorkspacePolicySnapshot,
+} from "./workspace-policy.js";
+
+export {
   MemoryExportEnvelopeSchema,
   MemoryExportEntrySchema,
   parseMemoryExportEnvelope,

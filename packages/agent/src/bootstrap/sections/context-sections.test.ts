@@ -193,7 +193,7 @@ describe("buildProjectContextSection", () => {
         content: [
           "- **Name:** Harel",
           "- **Preferred language:** עברית (Hebrew)",
-          "- **Notes:** Prefer concise fleet summaries.",
+          "- **Notes:** Prefer concise system summaries.",
         ].join("\n"),
       },
     ];
@@ -202,7 +202,7 @@ describe("buildProjectContextSection", () => {
 
     expect(joined).toContain("### USER.md");
     expect(joined).toContain("**Name:** Harel");
-    expect(joined).toContain("Prefer concise fleet summaries.");
+    expect(joined).toContain("Prefer concise system summaries.");
     expect(joined).not.toContain("Preferred language");
     expect(joined).not.toContain("עברית (Hebrew)");
   });
@@ -698,17 +698,17 @@ describe("buildSubagentRoleSection (enriched fields)", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildSubagentRoleSection (Language section)", () => {
-  it("emits a Language section with the verbatim-preserving directive for a non-en language", () => {
-    const result = buildSubagentRoleSection({ task: "Summarize the thread", language: "he" });
+  it("emits a Language section with the verbatim-preserving directive for a non-English locale", () => {
+    const result = buildSubagentRoleSection({ task: "Summarize the thread", language: "fr-CA" });
     const joined = result.join("\n");
     expect(joined).toContain("### Language");
     expect(joined).toContain(
-      "Produce all user-facing output in he (the conversation language). Code, identifiers, and file paths stay verbatim.",
+      "Produce all user-facing output in fr-CA (the conversation language). Code, identifiers, and file paths stay verbatim.",
     );
   });
 
   it("places the Language section before the Rules block", () => {
-    const result = buildSubagentRoleSection({ task: "Task", language: "ar" });
+    const result = buildSubagentRoleSection({ task: "Task", language: "sr-Latn-RS" });
     const joined = result.join("\n");
     const langIdx = joined.indexOf("### Language");
     const rulesIdx = joined.indexOf("### Rules");

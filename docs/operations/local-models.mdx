@@ -12,7 +12,7 @@ deployment boots, runs, and tells you precisely which lever to pull. This page i
 playbook: which models to run (with the measured receipts), how to size the context window,
 which knobs govern capacity and latency, and what each boot WARN means.
 
-Two-tier triage applies throughout: [`comis fleet`](/reference/cli#comis-fleet) surfaces the
+Two-tier triage applies throughout: [`comis system-health`](/reference/cli#comis-system-health) surfaces the
 daemon-wide pattern, then [`comis explain`](/reference/cli#comis-explain) root-causes the worst
 session it points at.
 
@@ -189,12 +189,12 @@ pick the summarizer model per agent via
 
 ## Diagnosing a degraded local session
 
-Start fleet-wide: `comis fleet --since 24` surfaces the
+Start deployment-wide: `comis system-health --since 24` surfaces the
 `config_posture:served_below_configured` finding (the count of providers serving below their
 configured window at the latest boot — `servedBelowConfiguredCount` on the
-[`obs.fleet.health`](/reference/json-rpc#obs-fleet-health) RPC), the degraded-by-cause
+[`obs.system.health`](/reference/json-rpc#obs-system-health) RPC), the degraded-by-cause
 breakdown (`context_exhausted`, `output_starved`, `timeout`, `narration_stall`), and
-breaker/cost rollups. See [`comis fleet`](/reference/cli#comis-fleet).
+breaker/cost rollups. See [`comis system-health`](/reference/cli#comis-system-health).
 
 One cause is specific to `small`/`nano` models: **`narration_stall`** — the model announced
 an action ("Now let me run the tool:") but never emitted the tool call, and the one bounded

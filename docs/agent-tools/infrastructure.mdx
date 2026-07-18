@@ -4,7 +4,7 @@ description: "Configuration management, gateway control, and supervisor administ
 icon: "server"
 ---
 
-**What it does:** Lets agents manage the Comis daemon itself -- read and write configuration, restart, store secrets, inspect long-running tasks, and (for supervisor agents) manage the entire fleet.
+**What it does:** Lets agents manage the Comis daemon itself -- read and write configuration, restart, store secrets, inspect long-running tasks, and (for supervisor agents) manage the entire system.
 
 **Who it's for:** Admin or supervisor agents that need to operate the platform from inside a conversation. These tools are gated behind the `supervisor` tool policy profile or an explicit allow list -- they should not be exposed to general-purpose agents.
 
@@ -174,7 +174,7 @@ Supervisor tools can make significant changes to your system. They are intended 
 
 | Tool | Actions | What It Manages |
 |------|---------|-----------------|
-| `agents_manage` | create, get, update, delete, suspend, resume | Agent fleet -- create new agents, modify settings, suspend or resume them |
+| `agents_manage` | create, get, update, delete, suspend, resume | Agent system -- create new agents, modify settings, suspend or resume them |
 | `obs_query` | diagnostics, billing, delivery, channels | Observability -- system diagnostics, cost tracking, and delivery metrics |
 | `sessions_manage` | delete, reset, export, compact | Session lifecycle -- clean up, export, and compact conversation data |
 | `memory_manage` | stats, browse, delete, flush, export, pin, unpin | Memory lifecycle -- view stats, browse entries, clean up memory, pin/unpin always-inject entries |
@@ -188,7 +188,7 @@ Supervisor tools can make significant changes to your system. They are intended 
 ### Supervisor Tool Details
 
 <AccordionGroup>
-  <Accordion title="agents_manage -- Agent fleet management" icon="users-gear">
+  <Accordion title="agents_manage -- Agent agent administration" icon="users-gear">
     Create, configure, suspend, and remove agents in your Comis installation. Each action targets a specific agent by ID. Create and delete operations take effect immediately without a daemon restart -- the new agent is routable within seconds. Update operations still require a daemon restart to apply configuration changes.
 
     **Actions:**

@@ -3,8 +3,8 @@
  * Multilingual model-name heuristic (advisory-only). Pure: no I/O/clock/env.
  *
  * Classifies an embedder / reranker model id as `true | false | "unknown"` for
- * the `comis fleet` model-health line, so a degraded non-Latin semantic-recall
- * stack (an English-leaning embedder/reranker) is named in one fleet look. The
+ * the `comis system-health` model-health line, so a degraded non-Latin semantic-recall
+ * stack (an English-leaning embedder/reranker) is named in one system look. The
  * result NEVER gates search/recall behavior — the FTS trigram floor
  * carries recall regardless. Imported by the daemon boot wiring (daemon.ts:1581).
  *

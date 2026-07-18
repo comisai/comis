@@ -107,12 +107,12 @@ export interface AutonomyHandlerDeps {
   /**
    * The typed event bus. OPTIONAL — when wired, the
    * handlers emit a content-free `autonomy:revoked` (lease.revoke by rootRunId) /
-   * `autonomy:killed` (run.kill) BESIDE the existing INFO line so `comis fleet`
+   * `autonomy:killed` (run.kill) BESIDE the existing INFO line so `comis system-health`
    * surfaces the revoke/kill counts. **Absent ⇒ no emit**
    * (mirrors the `durableRuns?`/`evictRegistry?` optional-dep convention).
    * The PRODUCTION construction site (rpc-dispatch.ts createAutonomyHandlers)
    * MUST supply `deps.container.eventBus` — otherwise the live daemon emits
-   * nothing and the fleet revoke/kill counts are silently zero.
+   * nothing and the system revoke/kill counts are silently zero.
    */
   eventBus?: { emit<K extends keyof EventMap>(event: K, payload: EventMap[K]): void };
   /**

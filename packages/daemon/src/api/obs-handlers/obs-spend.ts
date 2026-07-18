@@ -8,7 +8,7 @@
  * Reads the LIVE `spendAccumulator.getSnapshot()` threaded
  * into `ObservabilityApiDeps.spendSnapshot` (the kill-switch value), NOT the
  * lagging SQL `getRollingSpendUsd` — the Spend & Governance view must agree with
- * `comis fleet` / the kill-switch. The configured ceilings ride alongside so the
+ * `comis system-health` / the kill-switch. The configured ceilings ride alongside so the
  * handler computes per-scope `headroomUsd = capUsd − spentUsd` (null when that
  * ceiling dimension is off). The three-state pricing-coverage count (priced / free
  * / unknown) comes from `obsStore.pricingCoverage()` so a finance review sees how

@@ -27,6 +27,7 @@ import { LearningOutcomeConfigSchema } from "../schema-learning-outcome.js";
 import { LearningConfigSchema } from "../schema-learning.js";
 import { MemoryLifecycleConfigSchema } from "../schema-memory-lifecycle.js";
 import { validateProfileId } from "../../security/profile-id.js";
+import { CanonicalLocaleSchema } from "../../domain/response-locale-policy.js";
 
 // Sibling-leaf imports (one-directional dependency graph).
 import {
@@ -190,10 +191,8 @@ export const AgentConfigSchema = z.strictObject({
     promptTimeout: PromptTimeoutConfigSchema.default(() => PromptTimeoutConfigSchema.parse({})),
     /** Per-operation model override configuration (model tiering). */
     operationModels: OperationModelsSchema,
-    /** Reply language for deterministic degraded replies. BCP-47 ("he")
-     *  or an English display name ("Hebrew"). Omit to auto-detect from the
-     *  USER.md preferred language, then the inbound message script (he/ar/ru only). */
-    language: z.string().optional(),
+    /** Canonical BCP-47 locale for response policy and deterministic platform replies. */
+    language: CanonicalLocaleSchema.optional(),
   });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;

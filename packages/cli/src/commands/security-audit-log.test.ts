@@ -5,7 +5,7 @@
  * Covers: the filter-flag → `obs.audit.query` param threading, the table render,
  * the `--format json` branch, and registration on the `comis security` tree.
  *
- * Mirrors the `explain.test.ts`/`fleet.test.ts` seam: `withClient` is mocked via
+ * Mirrors the `explain.test.ts`/`system.test.ts` seam: `withClient` is mocked via
  * importOriginal so the REAL `callTyped` runs (it parses BOTH request against
  * `ObsAuditQueryContract` and response against `AuditQueryResponseSchema`), while
  * `withSpinner` is a pass-through. The captured (method, params) pair drives the

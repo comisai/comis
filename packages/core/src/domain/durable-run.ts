@@ -215,6 +215,8 @@ export const DurableRunRecordSchema = z.strictObject({
    * checkpoints without a result blob do not have a pointer.
    */
   checkpointRef: z.string().nullable(),
+  /** Hash of the immutable operator-policy snapshot used when the run started. */
+  workspacePolicyHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).superRefine((record, ctx) => {
   if (record.budgetConsumed !== record.rootBudget.usdConsumed) {
     ctx.addIssue({
