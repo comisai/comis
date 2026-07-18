@@ -185,6 +185,27 @@ describe("buildProjectContextSection", () => {
     expect(joined).not.toContain("### SOUL.md");
     expect(joined).toContain("### TOOLS.md");
   });
+
+  it("keeps the saved language preference out of raw project context", () => {
+    const files: BootstrapContextFile[] = [
+      {
+        path: "USER.md",
+        content: [
+          "- **Name:** Harel",
+          "- **Preferred language:** עברית (Hebrew)",
+          "- **Notes:** Prefer concise fleet summaries.",
+        ].join("\n"),
+      },
+    ];
+
+    const joined = buildProjectContextSection(files, false).join("\n");
+
+    expect(joined).toContain("### USER.md");
+    expect(joined).toContain("**Name:** Harel");
+    expect(joined).toContain("Prefer concise fleet summaries.");
+    expect(joined).not.toContain("Preferred language");
+    expect(joined).not.toContain("עברית (Hebrew)");
+  });
 });
 
 // ---------------------------------------------------------------------------
