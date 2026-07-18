@@ -32,6 +32,7 @@ import {
   safePath,
   formatSessionKey,
   generateCanaryToken,
+  dominantScript,
   scriptTokenFactor,
   tryGetContext,
   systemNowMs,
@@ -179,11 +180,41 @@ function buildCurrentTurnLanguageSection(
   return [
     "## Reply Language for This Turn",
     "The current user message is authoritative for reply language.",
+    `Current message dominant script: ${currentMessageScriptLabel(messageText ?? "")}.`,
     "Do not use the language of the profile, memories, MCP instructions, or other context to choose the reply language.",
     "Reply in the same language as the current user message. Use the saved language preference only when the current message is ambiguous.",
     "Produce the entire user-facing reply exclusively in the language of the current user message.",
     "Do not mix languages in any heading, sentence, bullet, label, suggestion, or follow-up. Translate contextual wording into the reply language unless it is a necessary proper noun, identifier, code fragment, file path, or verbatim quote.",
   ];
+}
+
+/** Give the model a concrete script anchor without guessing a Latin-script language. */
+function currentMessageScriptLabel(messageText: string): string {
+  const script = dominantScript(messageText);
+  switch (script) {
+    case "latin":
+      return "Latin";
+    case "cyrillic":
+      return "Cyrillic";
+    case "hebrew":
+      return "Hebrew";
+    case "arabic":
+      return "Arabic";
+    case "cjk":
+      return "CJK";
+    case "thai":
+      return "Thai";
+    case "greek":
+      return "Greek";
+    case "devanagari":
+      return "Devanagari";
+    case "other":
+      return "Other";
+    default: {
+      const _exhaustive: never = script;
+      return _exhaustive;
+    }
+  }
 }
 
 /** Per-session tool name snapshot for stable system prompt assembly.
@@ -1260,7 +1291,8 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       const recalled = await recall.recall(msg.text, sessionKey, agentId);
 
       if (recalled.ok && recalled.value.length > 0) {
-        // Hybrid split: top-1 inline with user message, rest in dynamic preamble.
+        // Hybrid split: a same-sender top hit may be inline; unknown-sender,
+        // cross-sender, and remaining recall stays in the dynamic preamble.
         const ranked = recalled.value;
         // Capture id + content for turn-end attribution (in-process only).
         recalledMemories = ranked.map((r) => ({ id: r.entry.id, content: r.entry.content }));

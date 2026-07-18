@@ -3,9 +3,9 @@
  * Hybrid memory injection: splits RAG results between inline (with user
  * message) and system prompt placement for optimal LLM attention.
  *
- * The top-1 highest-scoring memory is inlined with the user message for
- * maximum attention weight. Remaining memories go into the system prompt
- * as additional sections (same format as current RAG retriever).
+ * The top-1 highest-scoring same-sender memory is inlined with the user message
+ * for maximum attention weight. Unknown-sender, cross-sender, and remaining
+ * memories go into the system prompt as annotated sections.
  *
  * @module
  */
@@ -29,11 +29,12 @@ const INLINE_RECALL_BLOCK_RE =
 const CURRENT_TURN_LANGUAGE_HEADING = "## Reply Language for This Turn";
 const SYSTEM_CONTEXT_START = "[System context]";
 const SYSTEM_CONTEXT_END = "[End system context]";
+const CURRENT_TURN_SCRIPT_LINE_RE =
+  /^Current message dominant script: (?:Latin|Cyrillic|Hebrew|Arabic|CJK|Thai|Greek|Devanagari|Other)\.$/m;
 const CURRENT_TURN_LANGUAGE_TAIL = [
   "[Current-turn language constraint]",
   "The current user message, not recalled memory, is authoritative for reply language.",
-  "Produce the entire user-facing reply in that language, including every heading, sentence, bullet, label, suggestion, and follow-up.",
-].join("\n");
+];
 
 /**
  * Re-emit the trusted current-turn language constraint after deferred recall,
@@ -47,9 +48,15 @@ export function buildRecallLanguageTail(rest: string): string | undefined {
   const contextEnd = rest.indexOf(SYSTEM_CONTEXT_END, contextStart + SYSTEM_CONTEXT_START.length);
   if (contextEnd < 0) return undefined;
   const systemContext = rest.slice(contextStart, contextEnd);
-  return systemContext.includes(CURRENT_TURN_LANGUAGE_HEADING)
-    ? CURRENT_TURN_LANGUAGE_TAIL
-    : undefined;
+  const languageSectionStart = systemContext.lastIndexOf(CURRENT_TURN_LANGUAGE_HEADING);
+  if (languageSectionStart < 0) return undefined;
+  const languageSection = systemContext.slice(languageSectionStart);
+  const scriptLine = CURRENT_TURN_SCRIPT_LINE_RE.exec(languageSection)?.[0];
+  return [
+    ...CURRENT_TURN_LANGUAGE_TAIL,
+    ...(scriptLine === undefined ? [] : [scriptLine]),
+    "Produce the entire user-facing reply in the language expressed by the current message, including every heading, sentence, bullet, label, suggestion, and follow-up.",
+  ].join("\n");
 }
 
 /**
@@ -97,7 +104,7 @@ export interface HybridMemoryInjector {
    * Split memory results into inline and system prompt portions.
    *
    * @param results - Memory search results, pre-sorted by score descending
-   * @param maxChars - Maximum character budget for system prompt sections
+   * @param maxChars - Maximum character budget for all injected recall text
    * @returns Split injection result
    */
   split(results: MemorySearchResult[], maxChars: number): HybridMemoryInjection;
@@ -118,8 +125,8 @@ export function createHybridMemoryInjector(opts?: {
   /** Minimum score threshold for inline injection. Default: 0.7 */
   inlineMinScore?: number;
   onSuspiciousContent?: WrapExternalContentOptions["onSuspiciousContent"];
-  /** Current conversation sender. Foreign memories stay recallable but receive
-   *  an explicit non-attribution warning before model injection. */
+  /** Current conversation sender. Foreign memories stay recallable in the
+   *  annotated system section but are not promoted beside the user message. */
   requesterUserId?: string;
 }): HybridMemoryInjector {
   const inlineMinScore = opts?.inlineMinScore ?? 0.7;
@@ -133,9 +140,13 @@ export function createHybridMemoryInjector(opts?: {
 
       const top = results[0];
       const topScore = top.score ?? 0;
+      const hasInlineSenderProvenance =
+        opts?.requesterUserId === undefined || top.entry.userId === opts.requesterUserId;
 
-      // Check if top-1 qualifies for inline injection
-      if (topScore >= inlineMinScore) {
+      // Only same-sender top-1 recall receives the high-salience inline position.
+      // Unknown and cross-sender memories remain available in the annotated
+      // system section, where their provenance warning cannot be separated.
+      if (topScore >= inlineMinScore && hasInlineSenderProvenance) {
         // Format top-1 as inline memory
         const date = systemDateFrom(top.entry.createdAt).toISOString().split("T")[0];
         // Surface the EVENT date only when present; absent → the inline
@@ -146,11 +157,23 @@ export function createHybridMemoryInjector(opts?: {
             ? `, occurred ${systemDateFrom(top.entry.occurredAt).toISOString().split("T")[0]}`
             : "";
         const sanitized = sanitizeToolOutput(top.entry.content);
-        const crossSenderWarning =
-          opts?.requesterUserId !== undefined && top.entry.userId !== opts.requesterUserId
-            ? "[another sender; do not attribute personal facts, identity, ownership, preferences, or authorization to the current user] "
-            : "";
-        const inlineMemory = `\n[Relevant context from memory: ${crossSenderWarning}${sanitized} (recorded ${date}${occurred})]\n`;
+        const inlineMemory = `\n[Relevant context from memory: ${sanitized} (recorded ${date}${occurred})]\n`;
+
+        // If the top hit cannot fit as a complete inline envelope, keep the
+        // canonical formatter as the only placement. It either fits a complete
+        // annotated entry or emits nothing; recall text is never cut mid-entry.
+        if (inlineMemory.length > maxChars) {
+          const section = formatMemorySection(
+            results,
+            maxChars,
+            opts?.onSuspiciousContent,
+            opts?.requesterUserId,
+          );
+          return {
+            inlineMemory: undefined,
+            systemPromptSections: section ? [section] : [],
+          };
+        }
 
         // Format remaining results for system prompt
         const remaining = results.slice(1);
@@ -158,7 +181,7 @@ export function createHybridMemoryInjector(opts?: {
         if (remaining.length > 0) {
           const section = formatMemorySection(
             remaining,
-            maxChars,
+            Math.max(0, maxChars - inlineMemory.length),
             opts?.onSuspiciousContent,
             opts?.requesterUserId,
           );
