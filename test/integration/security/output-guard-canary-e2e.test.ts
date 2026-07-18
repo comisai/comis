@@ -226,11 +226,11 @@ describe("Output Guard -- false-positive boundary", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Prompt-extraction phrases (warning-only)
+// Prompt-extraction phrases
 // ---------------------------------------------------------------------------
 
-describe("Output Guard -- prompt extraction (warning-only)", () => {
-  it("flags 'the system prompt is' phrase without redacting", () => {
+describe("Output Guard -- prompt extraction", () => {
+  it("blocks 'the system prompt is' disclosure and replaces it", () => {
     const guard = createOutputGuard();
     // SYSTEM_PROMPT_LABEL regex: (?:my|the)\s+system\s+prompt\s+(?:is|says|reads|contains)
     const response =
@@ -242,14 +242,12 @@ describe("Output Guard -- prompt extraction (warning-only)", () => {
       (f) => f.type === "prompt_extraction",
     );
     expect(ext).toBeDefined();
-    expect(ext?.severity).toBe("warning");
-    // Warning level: sanitized should NOT redact the phrase.
-    expect(r.value.sanitized).toBe(response);
-    // Block status driven by criticals only; warnings alone do not block.
-    expect(r.value.blocked).toBe(false);
+    expect(ext?.severity).toBe("critical");
+    expect(r.value.sanitized).not.toContain("to be helpful");
+    expect(r.value.blocked).toBe(true);
   });
 
-  it("flags 'my original instructions are' phrase as warning", () => {
+  it("blocks 'my original instructions are' disclosure", () => {
     const guard = createOutputGuard();
     // INSTRUCTIONS_LABEL regex: (?:my|the)\s+(?:original|initial)\s+instructions?\s+(?:are|is|say)
     const r = guard.scan(
@@ -263,6 +261,8 @@ describe("Output Guard -- prompt extraction (warning-only)", () => {
           f.type === "prompt_extraction" && f.pattern === "instructions_label",
       ),
     ).toBe(true);
+    expect(r.value.blocked).toBe(true);
+    expect(r.value.sanitized).not.toContain("keep it concise");
   });
 });
 

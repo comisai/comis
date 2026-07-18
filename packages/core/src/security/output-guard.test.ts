@@ -190,26 +190,38 @@ describe("createOutputGuard", () => {
     }
   });
 
-  it("does NOT redact prompt extraction pattern (warning severity), blocked=false", () => {
+  it("blocks a system-prompt disclosure and replaces the whole response", () => {
     const response = "My system prompt says to always be helpful and never refuse.";
     const result = guard.scan(response);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.safe).toBe(false);
-      expect(result.value.blocked).toBe(false);
-      expect(result.value.sanitized).toBe(response);
+      expect(result.value.blocked).toBe(true);
+      expect(result.value.sanitized).not.toContain("always be helpful");
+      expect(result.value.sanitized).toContain("can’t provide internal instructions");
       const finding = result.value.findings.find((f) => f.type === "prompt_extraction");
       expect(finding).toBeDefined();
-      expect(finding!.severity).toBe("warning");
+      expect(finding!.severity).toBe("critical");
     }
   });
 
-  it("detects 'original instructions' extraction pattern as warning", () => {
+  it("blocks an original-instructions disclosure", () => {
     const response = "The original instructions are to follow these rules...";
     const result = guard.scan(response);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.safe).toBe(false);
+      expect(result.value.blocked).toBe(true);
+      expect(result.value.sanitized).not.toContain("follow these rules");
+    }
+  });
+
+  it("does not block a refusal to reveal internal instructions", () => {
+    const response = "I can’t reveal what my system prompt says.";
+    const result = guard.scan(response);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.safe).toBe(true);
       expect(result.value.blocked).toBe(false);
       expect(result.value.sanitized).toBe(response);
     }
@@ -262,23 +274,21 @@ describe("createOutputGuard", () => {
     }
   });
 
-  it("mixed critical+warning: only critical are redacted, blocked=true", () => {
+  it("a prompt disclosure with a secret is replaced in full", () => {
     const response = "My system prompt says AKIAIOSFODNN7EXAMPLE is the key";
     const result = guard.scan(response);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.safe).toBe(false);
       expect(result.value.blocked).toBe(true);
-      // AWS key is redacted (critical)
-      expect(result.value.sanitized).toContain("[REDACTED:aws_key]");
+      // Whole-response replacement removes both disclosed instructions and the key.
       expect(result.value.sanitized).not.toContain("AKIAIOSFODNN7EXAMPLE");
-      // Prompt extraction text is still present (warning, detect-only)
-      expect(result.value.sanitized).toContain("My system prompt says");
+      expect(result.value.sanitized).not.toContain("My system prompt says");
       // Both findings are reported
       const criticalFindings = result.value.findings.filter((f) => f.severity === "critical");
       const warningFindings = result.value.findings.filter((f) => f.severity === "warning");
-      expect(criticalFindings.length).toBeGreaterThanOrEqual(1);
-      expect(warningFindings.length).toBeGreaterThanOrEqual(1);
+      expect(criticalFindings.length).toBeGreaterThanOrEqual(2);
+      expect(warningFindings).toHaveLength(0);
     }
   });
 
@@ -296,11 +306,10 @@ describe("createOutputGuard", () => {
       expect(types.has("secret_leak")).toBe(true);
       expect(types.has("canary_leak")).toBe(true);
       expect(types.has("prompt_extraction")).toBe(true);
-      // Critical findings are redacted
-      expect(result.value.sanitized).toContain("[REDACTED:aws_key]");
-      expect(result.value.sanitized).toContain("[REDACTED:canary]");
-      // Warning findings are NOT redacted
-      expect(result.value.sanitized).toContain("My system prompt says");
+      // Whole-response replacement removes every disclosed value.
+      expect(result.value.sanitized).not.toContain("AKIAIOSFODNN7EXAMPLE");
+      expect(result.value.sanitized).not.toContain(canary);
+      expect(result.value.sanitized).not.toContain("My system prompt says");
     }
   });
 
