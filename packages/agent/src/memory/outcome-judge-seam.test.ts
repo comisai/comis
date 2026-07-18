@@ -286,6 +286,12 @@ describe("createOutcomeJudgeSeam", () => {
     expect(promptArg.systemPrompt).toContain(
       "Unnecessary foreign-script personalization violates an entire-reply language requirement",
     );
+    expect(promptArg.systemPrompt).toContain(
+      "A requested translation target does not excuse a mixed-language refusal",
+    );
+    expect(promptArg.systemPrompt).toContain(
+      "every refusal sentence, alternative, label, and follow-up uses the required reply language",
+    );
     expect(userContent).toContain("TRAJECTORY_SENTINEL");
     expect(userContent).not.toContain("ROLE_POLICY_SENTINEL");
     expect(userContent).toContain(`<<<UNTRUSTED_${TEST_DELIMITER}>>>`);
