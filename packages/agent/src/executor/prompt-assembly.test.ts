@@ -3017,6 +3017,12 @@ describe("assembleExecutionPrompt", () => {
         { path: "USER.md", content: "- **Preferred language:** Hebrew" },
       ]);
       const result = await assembleExecutionPrompt(makeParams({
+        deps: {
+          workspaceDir: "/workspace",
+          getMcpServerInstructions: () => [
+            { serverName: "hebrew-context", instructions: "הוראות כלי בעברית" },
+          ],
+        },
         msg: makeMsg({
           text: "Write a Python function that returns the first twenty Fibonacci numbers.",
         }),
@@ -3025,6 +3031,10 @@ describe("assembleExecutionPrompt", () => {
       expect(result.dynamicPreamble).toContain("## Reply Language for This Turn");
       expect(result.dynamicPreamble).toContain("current user message is authoritative");
       expect(result.dynamicPreamble).toContain("saved language preference only when the current message is ambiguous");
+      expect(result.dynamicPreamble).toContain("Do not use the language of the profile, memories, MCP instructions, or other context");
+      expect(result.dynamicPreamble.lastIndexOf("## Reply Language for This Turn")).toBeGreaterThan(
+        result.dynamicPreamble.lastIndexOf("## MCP Server Instructions"),
+      );
       expect(result.dynamicPreamble).not.toContain("Reply in Hebrew");
     });
 
@@ -3871,6 +3881,10 @@ describe("parent prefix reuse", () => {
     expect(result.dynamicPreamble).toContain("test-mcp"); // MCP instructions
     expect(result.dynamicPreamble).toContain("## Reply Language for This Turn");
     expect(result.dynamicPreamble).toContain("current user message is authoritative");
+    expect(result.dynamicPreamble).toContain("Do not use the language of the profile, memories, MCP instructions, or other context");
+    expect(result.dynamicPreamble.lastIndexOf("## Reply Language for This Turn")).toBeGreaterThan(
+      result.dynamicPreamble.lastIndexOf("## MCP Server Instructions"),
+    );
     expect(result.inlineMemory).toBeUndefined();
   });
 
