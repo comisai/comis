@@ -185,6 +185,8 @@ function buildCurrentTurnLanguageSection(
     "Reply in the same language as the current user message. Use the saved language preference only when the current message is ambiguous.",
     "Produce the entire user-facing reply exclusively in the language of the current user message.",
     "Do not mix languages in any heading, sentence, bullet, label, suggestion, or follow-up. Translate contextual wording into the reply language unless it is a necessary proper noun, identifier, code fragment, file path, or verbatim quote.",
+    "A profile name or assistant identity is not necessary merely for personalization. If it uses a different script and is not required to answer, omit it or use a conventional transliteration.",
+    "When the active role requires alternatives after a refusal, include concrete executable actions. Broad fleet categories do not count as concrete actions, even when the user constrains the response length.",
   ];
 }
 
