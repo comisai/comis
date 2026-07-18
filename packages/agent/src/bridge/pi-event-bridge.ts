@@ -637,6 +637,17 @@ export function extractSelfGradedOutcome(result: unknown): "success" | "failure"
   return undefined;
 }
 
+/** A plan can advance only when this assistant message continues into tool work. */
+function assistantMessageContinuesWithTools(message: AssistantMessage | undefined): boolean {
+  if (!message) return false;
+  const stopReason = (message as { stopReason?: unknown }).stopReason;
+  if (stopReason === "toolUse" || stopReason === "tool_use") return true;
+  return Array.isArray(message.content) && message.content.some((block: unknown) => {
+    const type = (block as { type?: unknown })?.type;
+    return type === "toolCall" || type === "tool_use";
+  });
+}
+
 /**
  * Parse a JSON OBJECT out of `text`: the whole string first (a bare result), else the
  * `{`…`}` slice (a security-wrapped payload whose preamble + markers carry no braces).
@@ -1584,7 +1595,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   .join(" ")
               : "";
 
-            if (assistantTextForPlan.length > 0) {
+            if (assistantTextForPlan.length > 0 && assistantMessageContinuesWithTools(assistantMsg)) {
               const steps = extractPlanFromResponse(assistantTextForPlan, deps.sepConfig.maxSteps);
               if (steps && steps.length >= deps.sepConfig.minSteps) {
                 const plan: ExecutionPlan = {
@@ -2347,7 +2358,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                   .join(" ")
               : "";
 
-            if (assistantTextForPlan.length > 0) {
+            if (assistantTextForPlan.length > 0 && assistantMessageContinuesWithTools(assistantMsg)) {
               const steps = extractPlanFromResponse(assistantTextForPlan, deps.sepConfig.maxSteps);
               if (steps && steps.length >= deps.sepConfig.minSteps) {
                 const plan: ExecutionPlan = {
