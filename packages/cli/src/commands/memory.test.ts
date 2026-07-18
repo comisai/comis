@@ -58,12 +58,14 @@ describe("registerMemoryCommand", () => {
     const memoryCmd = program.commands.find((c) => c.name() === "memory");
     const clearCmd = memoryCmd!.commands.find((c) => c.name() === "clear");
     expect(clearCmd).toBeDefined();
-    expect(clearCmd!.description()).toBe("Clear memory entries matching a filter");
+    expect(clearCmd!.description()).toBe("Clear non-system, non-pinned memory for a tenant or agent");
 
     const filterOpt = clearCmd!.options.find((o) => o.long === "--filter");
-    expect(filterOpt).toBeDefined();
+    expect(filterOpt).toBeUndefined();
     const tenantOpt = clearCmd!.options.find((o) => o.long === "--tenant");
     expect(tenantOpt).toBeDefined();
+    const agentOpt = clearCmd!.options.find((o) => o.long === "--agent");
+    expect(agentOpt).toBeDefined();
     const yesOpt = clearCmd!.options.find((o) => o.long === "--yes");
     expect(yesOpt).toBeDefined();
   });
@@ -159,7 +161,7 @@ describe("memory search runs the contracted entry search", () => {
 });
 
 describe("memory clear safety checks", () => {
-  it("requires at least one filter", async () => {
+  it("requires at least one tenant or agent scope", async () => {
     const program = new Command();
     program.exitOverride();
     registerMemoryCommand(program);
@@ -175,7 +177,7 @@ describe("memory clear safety checks", () => {
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
       const errOutput = consoleErrSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-      expect(errOutput).toContain("At least one filter is required");
+      expect(errOutput).toContain("At least one scope is required");
     } finally {
       consoleSpy.mockRestore();
       consoleErrSpy.mockRestore();
@@ -200,8 +202,8 @@ describe("memory clear safety checks", () => {
         "test",
         "memory",
         "clear",
-        "--filter",
-        "memoryType=conversation",
+        "--tenant",
+        "default",
       ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
