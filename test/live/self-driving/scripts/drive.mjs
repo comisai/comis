@@ -14,6 +14,7 @@
 //   - NOTE the DAG caveat: a `pipeline`/`graph.execute` turn ENDS at the agent's "running it now" answer,
 //     then the GRAPH runs separately — poll `graph.status`/the daemon log for the final node, not this.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { rig } from './_rig.mjs';
 const [, , chatIdArg, text, quiesceMsArg, maxMsArg, dataArg] = process.argv;
 const chatId = chatIdArg || rig.chatId;
@@ -37,6 +38,23 @@ const DATA = dataArg || rig.dataDir;
 const fromUser = process.env.FROMUSER ? Number(process.env.FROMUSER) : Number(chatId);
 const emu = JSON.parse(readFileSync(rig.emuWiringPath, 'utf8'));
 const base = emu.apiRoot;
+const tenantId = process.env.TENANT_ID || 'default';
+const agentId = process.env.AGENT_ID || 'default';
+
+// A parallel drive must watch only its own canonical-principal trajectory. Selecting the globally
+// newest file lets one conversation stop on another conversation's session.summary and fabricates
+// an early completion. Resolve the same assertion key as channel ingress, then fail loudly if the
+// emulator identity cannot be established.
+const botResponse = await fetch(`${base}/bot${emu.botToken}/getMe`);
+const botBody = await botResponse.json();
+if (!botResponse.ok || botBody?.ok !== true || !botBody?.result?.id) {
+  console.error('drive.mjs: emulator getMe did not return a bot id');
+  process.exit(2);
+}
+const assertionFields = [tenantId, agentId, 'telegram', `telegram-${botBody.result.id}`, String(fromUser)];
+const assertionKey = assertionFields.map((field) => `${Buffer.byteLength(field, 'utf8')}:${field}`).join('');
+const expectedPrincipalId = `platform_${createHash('sha256').update(assertionKey, 'utf8').digest('base64url')}`;
+const expectedTrajectorySuffix = `${expectedPrincipalId}~peer~${expectedPrincipalId}.jsonl.trajectory.jsonl`;
 
 // Resilient long-poll: a loaded machine or a long slow-model turn (a cold local 35b can run >200s)
 // can transiently ETIMEDOUT a fetch — a crash here aborts the WHOLE drive mid-turn.
@@ -82,6 +100,7 @@ const resolveTraj = () => {
     };
     visit(dir);
     const f = files
+      .filter((path) => path.endsWith(expectedTrajectorySuffix))
       .map((path) => ({ path, m: statSync(path).mtimeMs }))
       .sort((a, b) => b.m - a.m)[0];
     return f?.path ?? null;
