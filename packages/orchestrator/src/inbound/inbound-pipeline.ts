@@ -242,6 +242,9 @@ function enrichResolvedInboundContext(
     ),
     senderTrustTier,
     senderTrustExplicit,
+    // Runtime-generated restart continuations may finish the authorized user turn,
+    // but they are not independent user evidence and must not seed durable learning.
+    learningEligible: processedMsg.metadata?.isRestartContinuation !== true,
     deliveryOrigin: deliveryOrigin.value,
     turnScope,
   });

@@ -58,6 +58,8 @@ export const RequestContextSchema = z.strictObject({
     senderTrustTier: z.string().min(1).optional(),
     /** True only when the operator explicitly named the raw sender in senderTrustMap. */
     senderTrustExplicit: z.boolean().optional(),
+    /** False when this runtime-generated turn must not contribute outcome evidence to learning. */
+    learningEligible: z.boolean().optional(),
     /** Per-session random delimiter for external content wrapping */
     contentDelimiter: z.string().min(16).optional(),
     /** Channel type for the originating request (e.g. "telegram", "discord"). Flows through AsyncLocalStorage for downstream delivery routing. */
@@ -83,6 +85,7 @@ export interface ResolvedRequestContext {
   trustLevel: UserTrustLevel;
   senderTrustTier?: string;
   senderTrustExplicit?: boolean;
+  learningEligible?: boolean;
   deliveryOrigin: DeliveryOrigin;
   turnScope?: ResolvedTurnScope;
 }
@@ -99,6 +102,7 @@ export interface ResolvedRequestContextSeed {
   trustLevel: UserTrustLevel;
   senderTrustTier?: string;
   senderTrustExplicit?: boolean;
+  learningEligible?: boolean;
   contentDelimiter?: string;
   channelType?: string;
   deliveryOrigin?: DeliveryOrigin;
@@ -128,6 +132,7 @@ const lockedContextFields = [
   "trustLevel",
   "senderTrustTier",
   "senderTrustExplicit",
+  "learningEligible",
   "contentDelimiter",
   "channelType",
   "deliveryOrigin",
@@ -233,6 +238,7 @@ function lockResolvedContext(
       ["trustLevel", parsed.trustLevel],
       ["senderTrustTier", parsed.senderTrustTier],
       ["senderTrustExplicit", parsed.senderTrustExplicit],
+      ["learningEligible", parsed.learningEligible],
       ["contentDelimiter", parsed.contentDelimiter],
       ["channelType", parsed.channelType],
       ["deliveryOrigin", parsed.deliveryOrigin],
@@ -285,6 +291,7 @@ export function createResolvedRequestContext(
     trustLevel: seed.trustLevel,
     senderTrustTier: seed.senderTrustTier,
     senderTrustExplicit: seed.senderTrustExplicit,
+    learningEligible: seed.learningEligible,
     contentDelimiter: seed.contentDelimiter,
     channelType: seed.channelType,
     deliveryOrigin: seed.deliveryOrigin,
@@ -418,6 +425,7 @@ export function enrichCurrentContext(
     trustLevel: enrichment.trustLevel,
     senderTrustTier: enrichment.senderTrustTier,
     senderTrustExplicit: enrichment.senderTrustExplicit,
+    learningEligible: enrichment.learningEligible,
     deliveryOrigin: enrichment.deliveryOrigin,
     turnScope: enrichment.turnScope,
   }));
@@ -480,6 +488,7 @@ export function enrichCurrentContext(
     trustLevel: resolved.trustLevel,
     senderTrustTier: resolved.senderTrustTier,
     senderTrustExplicit: resolved.senderTrustExplicit,
+    learningEligible: resolved.learningEligible,
     channelType: existingChannelType ?? deliveryOrigin.channelType,
     deliveryOrigin,
   }));
@@ -498,6 +507,7 @@ export function enrichCurrentContext(
     turnScope: inspectedValue(inspection, "turnScope"),
     clientId: inspectedValue(inspection, "clientId"),
     trustLevel: inspectedValue(inspection, "trustLevel"),
+    learningEligible: inspectedValue(inspection, "learningEligible"),
     deliveryOrigin: inspectedValue(inspection, "deliveryOrigin"),
     authorizationAlreadyResolved: inspectedValue(inspection, "userId") !== undefined
       || inspectedValue(inspection, "clientId") !== undefined
@@ -523,6 +533,12 @@ export function enrichCurrentContext(
   }
   if (snapshot.agentId !== undefined && snapshot.agentId !== parsed.data.agentId) {
     return err(new Error("Resolved request context conflicts with existing agentId"));
+  }
+  if (
+    snapshot.learningEligible !== undefined
+    && snapshot.learningEligible !== parsed.data.learningEligible
+  ) {
+    return err(new Error("Resolved request context conflicts with existing learningEligible"));
   }
   if (snapshot.turnScope !== undefined) {
     const existingTurn = ResolvedTurnScopeSchema.safeParse(snapshot.turnScope);

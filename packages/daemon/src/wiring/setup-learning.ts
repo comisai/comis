@@ -179,6 +179,10 @@ function resolveScope(payload: {
   workspacePolicyHash?: string;
 }, configuredTenantId: string): OutcomeScope | undefined {
   const ctx = tryGetContext();
+  // Internal runtime continuations can complete an authorized turn, but they are
+  // not independent task evidence. With no ledger row, reflection cannot select
+  // or generalize their synthetic request prose.
+  if (ctx?.learningEligible === false) return undefined;
   const agentId = payload.agentId ?? ctx?.agentId;
   const trajectoryId = payload.traceId ?? ctx?.traceId;
   if (agentId === undefined || agentId.length === 0) return undefined;
