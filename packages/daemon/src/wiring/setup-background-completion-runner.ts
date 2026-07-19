@@ -21,6 +21,7 @@ import {
   createCompletionDispatcher,
   createTurnFlightTracker,
   type BackgroundCompletionRunner,
+  type BackgroundCompletionRunnerDeps,
   type BackgroundTaskManager,
   type CompletionDispatcher,
   type NotifyFn,
@@ -47,6 +48,7 @@ export interface BackgroundCompletionRunnerContext {
 export interface SetupBackgroundCompletionRunnerDeps {
   eventBus: TypedEventBus;
   getExecutor: (agentId: string) => AgentExecutor;
+  assembleToolsForAgent: NonNullable<BackgroundCompletionRunnerDeps["assembleToolsForAgent"]>;
   sessionStore: RunnerSessionStore;
   /**
    * Must support `transitionDispatchState`; the dispatcher persists state
@@ -96,6 +98,7 @@ export function setupBackgroundCompletionRunner(
   const runner = createBackgroundCompletionRunner({
     eventBus: deps.eventBus,
     getExecutor: deps.getExecutor,
+    assembleToolsForAgent: deps.assembleToolsForAgent,
     sessionStore: deps.sessionStore,
     taskManager: deps.taskManager,
     fallbackNotifyFn: deps.fallbackNotifyFn,

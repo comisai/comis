@@ -2,7 +2,10 @@
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { ok } from "@comis/shared";
-import { createBackgroundCompletionRunner } from "./completion-runner.js";
+import {
+  createBackgroundCompletionRunner,
+  type BackgroundCompletionRunnerDeps,
+} from "./completion-runner.js";
 import type { BackgroundTask } from "./background-task-types.js";
 import {
   getContext,
@@ -99,7 +102,11 @@ describe("createBackgroundCompletionRunner", () => {
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
   });
 
-  function build(maxBackgroundHops = 3, isTurnInFlight?: (key: string) => boolean) {
+  function build(
+    maxBackgroundHops = 3,
+    isTurnInFlight?: (key: string) => boolean,
+    assembleToolsForAgent?: BackgroundCompletionRunnerDeps["assembleToolsForAgent"],
+  ) {
     return createBackgroundCompletionRunner({
       eventBus,
       getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
@@ -108,6 +115,7 @@ describe("createBackgroundCompletionRunner", () => {
       fallbackNotifyFn,
       maxBackgroundHops,
       ...(isTurnInFlight ? { isTurnInFlight } : {}),
+      ...(assembleToolsForAgent ? { assembleToolsForAgent } : {}),
       logger: makeLogger(),
     });
   }
@@ -133,10 +141,14 @@ describe("createBackgroundCompletionRunner", () => {
   it("completed event triggers executor.execute with synthetic message AND emits background_task:reentered", async () => {
     const reenteredEvents: unknown[] = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data));
+    const tools = [{ name: "next_report_page" }] as unknown as NonNullable<
+      Parameters<import("../executor/types.js").AgentExecutor["execute"]>[2]
+    >;
+    const assembleToolsForAgent = vi.fn().mockResolvedValue(tools);
 
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);
-    const runner = build();
+    const runner = build(3, undefined, assembleToolsForAgent);
     eventBus.emit("background_task:completed", {
       agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
@@ -145,7 +157,7 @@ describe("createBackgroundCompletionRunner", () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     expect(executor.execute).toHaveBeenCalledTimes(1);
-    const [msg, parsedKey, , , passedAgentId] = executor.execute.mock.calls[0]!;
+    const [msg, parsedKey, passedTools, , passedAgentId] = executor.execute.mock.calls[0]!;
     expect(msg.text.startsWith("[Background Task: exec]")).toBe(true);
     expect(msg.channelType).toBe("background_task");
     expect(msg.senderId).toBe("background-task-runner");
@@ -153,6 +165,8 @@ describe("createBackgroundCompletionRunner", () => {
     expect(msg.metadata.backgroundHopCount).toBe(1);
     expect(passedAgentId).toBe("default");
     expect(parsedKey).toBeDefined();
+    expect(assembleToolsForAgent).toHaveBeenCalledWith("default", { sessionKey: parsedKey });
+    expect(passedTools).toBe(tools);
     // reentered event fired exactly once with hopCount = 1.
     expect(reenteredEvents).toHaveLength(1);
     const reentered = reenteredEvents[0] as { taskId: string; hopCount: number; sessionKey: string };
@@ -369,7 +383,7 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  it("missing session skips re-entry and fallback (session expired)", async () => {
+  it("missing SQLite session still re-enters from persisted origin authority", async () => {
     const reenteredEvents: unknown[] = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data));
 
@@ -383,10 +397,8 @@ describe("createBackgroundCompletionRunner", () => {
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    expect(executor.execute).not.toHaveBeenCalled();
-    // Reentered event should NOT have fired -- the runner short-circuits before emit.
-    expect(reenteredEvents).toHaveLength(0);
-    // No fallback either -- expired session has no channel to deliver to.
+    expect(executor.execute).toHaveBeenCalledTimes(1);
+    expect(reenteredEvents).toHaveLength(1);
     expect(fallbackNotifyFn).not.toHaveBeenCalled();
     await runner.shutdown();
   });
@@ -668,8 +680,9 @@ describe("trace continuity sub-tests", () => {
   });
 
   it("operator-facing log lines on completion-runner WARN/INFO paths include traceId from origin", async () => {
-    const traceId = "trace-29c";
-    // Force a path that emits an INFO log: session expired (sessionStore returns undefined).
+    const traceId = randomUUID();
+    // The persisted origin remains authoritative when the SQLite session store
+    // has no row, so the invocation DEBUG line must carry the originating trace.
     sessionStore.loadByRef.mockReturnValue(ok(undefined));
     const task = buildTask({
       result: "ok",

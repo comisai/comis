@@ -124,12 +124,13 @@ describe("installMicrocompactionGuard", () => {
     expect(logger.debug).toHaveBeenCalled();
   });
 
-  it("offloads MCP tool results exceeding the 15K threshold", () => {
+  it("offloads MCP tabular results exceeding the default 8K threshold", () => {
     const sm = createMockSessionManager(tempDir);
     installMicrocompactionGuard(sm as any, tempDir, tempDir, logger);
 
-    // 16K exceeds MCP threshold of 15K
-    const mcpResult = createToolResult("mcp__github_list_issues", 16_000, "call-mcp");
+    // A live structured page was 14,111 characters and must be analyzed from a
+    // file instead of repeatedly consuming the model context inline.
+    const mcpResult = createToolResult("mcp__github_list_issues", 14_000, "call-mcp");
     sm.appendMessage(mcpResult);
 
     const appended = sm.appended[0] as any;

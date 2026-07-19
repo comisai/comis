@@ -151,6 +151,7 @@ describe("setupBackgroundCompletionRunner", () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
+      assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
@@ -166,6 +167,7 @@ describe("setupBackgroundCompletionRunner", () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
+      assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
@@ -179,6 +181,7 @@ describe("setupBackgroundCompletionRunner", () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
+      assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
@@ -201,6 +204,7 @@ describe("setupBackgroundCompletionRunner", () => {
       setupBackgroundCompletionRunner({
         eventBus: recording.bus,
         getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
+        assembleToolsForAgent: vi.fn().mockResolvedValue([]),
         sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
         taskManager: {
           getTask: vi.fn(),
@@ -224,6 +228,7 @@ describe("setupBackgroundCompletionRunner", () => {
       const ctx = setupBackgroundCompletionRunner({
         eventBus: makeFakeEventBus(),
         getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
+        assembleToolsForAgent: vi.fn().mockResolvedValue([]),
         sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
         taskManager: {
           getTask: vi.fn(),
@@ -268,6 +273,7 @@ describe("setupBackgroundCompletionRunner", () => {
       setupBackgroundCompletionRunner({
         eventBus: recording.bus,
         getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
+        assembleToolsForAgent: vi.fn().mockResolvedValue([]),
         sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: { messages: [] } }) },
         taskManager: {
           getTask: getTaskMock,

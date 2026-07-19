@@ -26,6 +26,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fromPromise, suppressError, tryCatch, type Result } from "@comis/shared";
 import {
   createDeliveryOrigin,
@@ -58,7 +59,7 @@ export interface BackgroundCompletionRunner {
   shutdown(): Promise<void>;
 }
 
-/** Minimal session-store contract the runner needs (fallback gate). */
+/** Session-store dependency retained by daemon composition; it is not routing authority. */
 export interface RunnerSessionStore {
   loadByRef(scope: SessionQueryScope, conversationRef: BackgroundTaskOrigin["conversationRef"]): Result<unknown | undefined, SessionStoreError>;
 }
@@ -66,6 +67,11 @@ export interface RunnerSessionStore {
 export interface BackgroundCompletionRunnerDeps {
   eventBus: TypedEventBus;
   getExecutor: (agentId: string) => AgentExecutor;
+  /** Assemble the same agent-scoped tools available to an ordinary inbound turn. */
+  assembleToolsForAgent?: (
+    agentId: string,
+    options?: { sessionKey?: SessionKey },
+  ) => Promise<AgentTool[]>;
   sessionStore: RunnerSessionStore;
   /**
    * Includes `transitionDispatchState` in addition to `getTask`. fallbackForTask
@@ -186,10 +192,6 @@ export function createBackgroundCompletionRunner(
     // rejects missing-origin) so we read it directly.
     const origin = task.origin;
     const agentId = origin.turnScope.conversation.agentId;
-    const queryScope = {
-      tenantId: origin.turnScope.conversation.tenantId,
-      agentId,
-    };
     const projectedSession = conversationScopeToSessionKey(origin.turnScope.conversation);
     if (!projectedSession.ok) {
       log.warn({
@@ -243,38 +245,6 @@ export function createBackgroundCompletionRunner(
           hint: "Origin turn in flight — live turn owns consumption; no re-entry",
         },
         "Background completion runner: skipped (origin turn live)",
-      );
-      return;
-    }
-
-    // No active session for this sessionKey in the in-memory store. The
-    // originating session may have ended (user closed the channel) OR may live
-    // in JSONL but not be currently registered. Either way, there is no
-    // streaming channel to inject into, so skip fallback (which would only
-    // produce a WARN from notification-service).
-    const loadedSession = deps.sessionStore.loadByRef(queryScope, origin.conversationRef);
-    if (!loadedSession.ok) {
-      log.warn({
-        taskId,
-        conversationRef: origin.conversationRef,
-        hint: "Inspect session database integrity and retry after storage recovers",
-        errorKind: loadedSession.error.errorKind,
-      }, "Background completion: session authority check failed");
-      return;
-    }
-    if (loadedSession.value === undefined) {
-      log.info(
-        {
-          taskId,
-          sessionKey: formattedSessionKey,
-          // traceId from origin so this INFO log line stays threaded with the
-          // originating request's trace stream even though the runner runs in a
-          // background context (the ALS traceId at this point may differ from
-          // origin.traceId).
-          traceId: origin.traceId ?? undefined,
-          hint: "No active in-memory session for this sessionKey; runner will skip re-entry. Task result remains in JSONL for offline review.",
-        },
-        "Background completion: no active session for re-entry",
       );
       return;
     }
@@ -349,10 +319,14 @@ export function createBackgroundCompletionRunner(
         // One turn per event. Existing session lock orders concurrent calls.
         const executor = tryCatch(() => deps.getExecutor(agentId));
         if (!executor.ok) return executor;
+        const toolAssembly = deps.assembleToolsForAgent
+          ? await fromPromise(deps.assembleToolsForAgent(agentId, { sessionKey: parsedKey }))
+          : undefined;
+        if (toolAssembly !== undefined && !toolAssembly.ok) return toolAssembly;
         const execution = tryCatch(() => executor.value.execute(
           syntheticMsg,
           parsedKey,
-          undefined,
+          toolAssembly?.value,
           undefined,
           agentId,
         ));

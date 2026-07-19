@@ -170,7 +170,7 @@ export interface SessionMetadata {
   sessionEnd?: {
     type: "session_end";
     timestamp: string;
-    endReason: "success" | "error" | "timeout" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "completed_with_tool_errors" | "context_exhausted" | "output_starved" | "narration_stall" | "spend_exceeded";
+    endReason: "success" | "error" | "timeout" | "budget_exceeded" | "budget_exhausted" | "circuit_open" | "provider_degraded" | "completed_with_tool_errors" | "context_exhausted" | "output_starved" | "narration_stall" | "spend_exceeded" | "background_pending";
     durationMs: number;
     totalTokens: number;
     /** Per-session health rollup — additive optional on schemaVersion:1. */

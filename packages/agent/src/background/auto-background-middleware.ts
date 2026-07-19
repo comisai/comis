@@ -193,9 +193,9 @@ export function wrapToolForAutoBackground(
       // cascade (see AGENTS.md / auto-background-middleware.test.ts invariant).
       const placeholderText =
         `Tool "${tool.name}" is taking longer than expected and has been moved to the background. ` +
-        `Task ID: ${taskId}. Use background_tasks with action=read_output and this task ID to obtain ` +
-        `the result. Do not finalize an answer that depends on this result or substitute unrelated earlier data ` +
-        `before reading it.`;
+        `Task ID: ${taskId}. Automatic completion re-entry will resume this conversation with the result. ` +
+        `Do not call background_tasks or sleep to poll it; end this turn now without finalizing an answer or ` +
+        `substituting unrelated earlier data.`;
       return {
         content: [{ type: "text" as const, text: placeholderText }],
         details: {

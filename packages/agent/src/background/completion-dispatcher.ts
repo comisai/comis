@@ -6,10 +6,9 @@
  * Subscribes to background_task:completed and background_task:failed BEFORE
  * the existing BackgroundCompletionRunner. On each event:
  *  1. Reads `task.dispatchState`.
- *  2. If "pending": transitions to "notified" only when the runner cannot
- *     re-enter the originating session (no active session for the formatted
- *     key, or recursion limit reached). Otherwise transitions to "dispatched"
- *     and lets the completion-runner perform re-entry.
+ *  2. If "pending": transitions to "notified" only when persisted routing
+ *     authority is invalid or the recursion limit is reached. Otherwise it
+ *     transitions to "dispatched" and lets the completion-runner re-enter.
  *  3. If already "notified" or "dispatched": no-op (at-most-once).
  *
  * The runner is wired AFTER the dispatcher in setup-background-completion-
@@ -89,7 +88,7 @@ export interface CompletionDispatcher {
   shutdown(): Promise<void>;
 }
 
-/** Minimal session-store contract the dispatcher needs (active-session check). */
+/** Session-store dependency retained by daemon composition; it is not routing authority. */
 export interface DispatcherSessionStore {
   loadByRef(scope: SessionQueryScope, conversationRef: BackgroundTaskOrigin["conversationRef"]): Result<unknown | undefined, SessionStoreError>;
 }
@@ -134,8 +133,7 @@ export interface CompletionDispatcherDeps {
    * the originating session.
    */
   fallbackNotifyFn?: NotifyFn;
-  /** Active-session check (production wiring). When absent, the dispatcher
-   *  defers to the runner without firing fallback. */
+  /** SQLite session rows are not authoritative for JSONL-backed conversations. */
   sessionStore?: DispatcherSessionStore;
   /**
    * LIVE-TURN oracle: returns true while the given FORMATTED sessionKey has a
@@ -250,7 +248,6 @@ export function createCompletionDispatcher(
     // origin is producer-required; read it directly.
     const origin = task.origin;
     const agentId = origin.turnScope.conversation.agentId;
-    const queryScope = { tenantId: origin.turnScope.conversation.tenantId, agentId };
     const projected = conversationScopeToSessionKey(origin.turnScope.conversation);
     if (!projected.ok) {
       log.warn({
@@ -260,7 +257,7 @@ export function createCompletionDispatcher(
         errorKind: projected.error.errorKind,
       }, "Completion dispatcher: invalid persisted conversation scope");
       transitionTo(taskId, "notified");
-      await fireFallback(task, `Background task "${task.toolName}" completed (routing failed).`);
+      await fireFallback(task, `Background task "${task.toolName}" ${kind} (routing failed).`);
       return;
     }
     const formattedSessionKey = formatSessionKey(projected.value);
@@ -273,7 +270,7 @@ export function createCompletionDispatcher(
         emitNotified(task, origin, true, "hop_cap");
         await fireFallback(
           task,
-          `Background task "${task.toolName}" completed but follow-up was skipped — recursion limit reached. Run again or check the result manually.`,
+          `Background task "${task.toolName}" ${kind} but follow-up was skipped — recursion limit reached. Run again or check the result manually.`,
         );
         return;
       }
@@ -304,36 +301,10 @@ export function createCompletionDispatcher(
       return;
     }
 
-    // Active-session check (when configured). No active session → fallback.
-    if (deps.sessionStore) {
-      const loaded = deps.sessionStore.loadByRef(queryScope, origin.conversationRef);
-      if (!loaded.ok) {
-        log.warn({
-          taskId,
-          conversationRef: origin.conversationRef,
-          hint: "Inspect session database integrity and retry after storage recovers",
-          errorKind: loaded.error.errorKind,
-        }, "Completion dispatcher: session authority check failed");
-        return;
-      }
-      if (loaded.value === undefined) {
-        // The originating session is not currently registered. The
-        // completion-runner would skip re-entry (no streaming channel) —
-        // fire fallback so the user still sees a notification. The
-        // dispatcher transitions to "notified" so the runner does NOT
-        // also fire (single-owner contract).
-        transitionTo(taskId, "notified");
-        emitNotified(task, origin, true, "no_session");
-        await fireFallback(
-          task,
-          `Background task "${task.toolName}" completed.`,
-        );
-        return;
-      }
-    }
-
-    // Active session exists (or sessionStore not wired): the runner will
-    // dispatch via re-entry. Transition to "dispatched" so the runner's
+    // The persisted origin identifies the JSONL-backed conversation and its
+    // delivery route. SQLite SessionStore rows are not authoritative for this
+    // runtime, so their absence must never downgrade a completion to a raw
+    // notification. Transition to "dispatched" so the runner's
     // handler — which reads task.dispatchState — sees the updated state.
     // We do NOT fire fallback here (zero spurious outbound).
     transitionTo(taskId, "dispatched");
@@ -375,7 +346,7 @@ export function createCompletionDispatcher(
     task: BackgroundTask,
     origin: BackgroundTaskOrigin,
     notified: boolean,
-    reason: "no_session" | "hop_cap" | "live_turn_suppressed",
+    reason: "hop_cap" | "live_turn_suppressed",
   ): void {
     const projected = conversationScopeToSessionKey(origin.turnScope.conversation);
     if (!projected.ok) return;

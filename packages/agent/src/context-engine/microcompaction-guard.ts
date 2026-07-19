@@ -18,7 +18,7 @@
  *
  * Per-tool inline thresholds:
  * - Default tools: 8K chars (MAX_INLINE_TOOL_RESULT_CHARS)
- * - MCP tools (mcp__*): 15K chars (MAX_INLINE_MCP_TOOL_RESULT_CHARS)
+ * - MCP tools (mcp__*): 8K chars (MAX_INLINE_MCP_TOOL_RESULT_CHARS)
  * - read (file read): 15K chars (MAX_INLINE_FILE_READ_RESULT_CHARS)
  *
  * Hard cap: 100K chars (TOOL_RESULT_HARD_CAP_CHARS) -- the clean payload is
@@ -58,7 +58,7 @@ import {
  * Resolve the per-tool inline character threshold.
  *
  * - `read` (file read) -> 15K (code context is high-value)
- * - `mcp__*` -> 15K (MCP tools return structured data needed for analysis)
+ * - `mcp__*` -> 8K (large structured results should be analyzed from files)
  * - Default -> 8K
  */
 export function getInlineThreshold(toolName: string): number {

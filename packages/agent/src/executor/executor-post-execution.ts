@@ -124,6 +124,8 @@ import { parseContextExhaustionCause } from "../context-engine/errors.js";
 import { buildSyntheticCriticDeps } from "./verification-gate-synth-deps.js";
 import { resolveScaffoldDefaults } from "./scaffold-defaults.js";
 import { generateCanaryToken } from "@comis/core";
+import type { BackgroundTaskManager } from "../background/background-task-manager.js";
+import { reconcilePendingBackgroundTurn } from "./pending-background-reply.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -329,6 +331,8 @@ export interface PostExecutionParams {
     workspaceDir: string;
     /** Wall-clock + monotonic time reads. */
     clock: ClockPort;
+    /** Required-work ownership for terminal response reconciliation. */
+    backgroundTaskManager?: Pick<BackgroundTaskManager, "getTasks">;
   };
   // Session adapter
   sessionAdapter: ComisSessionManager;
@@ -632,6 +636,7 @@ export const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["session
   context_loop: "context_exhausted", context_exhausted: "context_exhausted",
   // The terminal output-cap truncation promoted at the chokepoint.
   output_starved: "output_starved",
+  background_pending: "background_pending",
   // PromptTimeoutError terminals get their own NAMED cause. HARD_FAILURE_END_REASONS
   // and the system degradedByCause record carry "timeout".
   prompt_timeout: "timeout",
@@ -1130,10 +1135,19 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // (the terminal stop reason is no longer "length"). See promoteOutputStarved.
   // Stage 3: promote a narrate-without-emit terminal that the one
   // bounded nudge could not recover — same conservative shape as stage 2.
-  const effectiveFinishReason = promoteNarrationStall(
+  const baseEffectiveFinishReason = promoteNarrationStall(
     promoteOutputStarved(toolReconciledFinishReason, bridgeResult.lastStopReason),
     result.narrateNudge,
   );
+  const pendingBackground = reconcilePendingBackgroundTurn({
+    response: result.response ?? "",
+    executionId,
+    tasks: deps.backgroundTaskManager?.getTasks(effectiveAgentId) ?? [],
+  });
+  const effectiveFinishReason = pendingBackground.finishReason ?? baseEffectiveFinishReason;
+  if (pendingBackground.finishReason !== undefined) {
+    result.response = pendingBackground.response;
+  }
 
   // Execution bookend INFO log with summary stats
   const durationMs = deps.clock.now() - executionStartMs;
@@ -1178,6 +1192,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       // promotion). Emitted only when it differs from finishReason to avoid noise
       // on the common case where they are identical.
       ...(effectiveFinishReason !== result.finishReason && { effectiveFinishReason }),
+      ...(pendingBackground.pendingCount > 0 && { pendingBackgroundTasks: pendingBackground.pendingCount }),
       tokensIn: result.tokensUsed.input,
       tokensOut: result.tokensUsed.output,
       tokensTotal: result.tokensUsed.total,

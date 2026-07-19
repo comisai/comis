@@ -218,7 +218,7 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
     await dispatcher.shutdown();
   });
 
-  it("origin turn NOT in flight + no session → the fallback notice still fires + is OBSERVABLE (notified:true, reason:no_session)", async () => {
+  it("origin turn finished + SQLite session missing → dispatches persisted JSONL conversation for re-entry", async () => {
     const mod = await loadDispatcher();
     expect(mod).toBeDefined();
     if (!mod) return;
@@ -247,10 +247,9 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
     });
     await new Promise((r) => setTimeout(r, 5));
 
-    expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
-    expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "notified");
-    expect(notifiedEvents).toHaveLength(1);
-    expect(notifiedEvents[0]).toMatchObject({ notified: true, reason: "no_session" });
+    expect(fallbackNotifyFn).not.toHaveBeenCalled();
+    expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "dispatched");
+    expect(notifiedEvents).toHaveLength(0);
     await dispatcher.shutdown();
   });
 
@@ -274,6 +273,7 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
       taskManager,
       fallbackNotifyFn,
       sessionStore: { loadByRef: () => ok(undefined) },
+      maxBackgroundHops: 1,
       logger,
     });
 
@@ -290,6 +290,37 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
     expect(task.dispatchState).toBe("notified");
     expect(fallbackNotifyFn).toHaveBeenCalledOnce();
     expect(laterObserver).toHaveBeenCalledOnce();
+    await dispatcher.shutdown();
+  });
+
+  it("labels failed tasks as failed when the hop cap requires fallback delivery", async () => {
+    const mod = await loadDispatcher();
+    expect(mod).toBeDefined();
+    if (!mod) return;
+    const task = buildTask({ dispatchState: "pending", status: "failed", error: "upstream timeout" });
+    taskManager.getTask.mockReturnValue(task);
+    const dispatcher = mod.createCompletionDispatcher({
+      eventBus,
+      taskManager,
+      fallbackNotifyFn,
+      maxBackgroundHops: 1,
+      logger: makeLogger(),
+    });
+
+    eventBus.emit("background_task:failed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      error: task.error ?? "",
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(fallbackNotifyFn).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining(`Background task "${task.toolName}" failed`),
+    }));
     await dispatcher.shutdown();
   });
 });

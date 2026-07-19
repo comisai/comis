@@ -2185,6 +2185,7 @@ async function runSessionLocked(
         // actual working tree (the worktree when present).
         workspaceDir: effectiveWorkspaceDir,
         clock: deps.clock,
+        backgroundTaskManager: deps.backgroundTaskManager,
       },
       sessionAdapter,
       executionCacheRetentionClear,
