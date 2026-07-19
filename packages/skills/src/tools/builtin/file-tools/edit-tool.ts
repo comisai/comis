@@ -198,6 +198,7 @@ export function createComisEditTool(
     "You MUST read the file before editing in each response (reads from prior messages do not carry over). Strip line number prefixes from read output before using as oldText.",
     "Use the smallest unique oldText (2-4 lines). Merge adjacent changes into one edit.",
     "Prefer one batch edit call with multiple edits[] over sequential calls to the same file.",
+    "The single path applies to every edits[] entry. Never combine changes for different files; use a separate edit call for each file.",
     "On [text_not_found]: re-read the file and retry with fresh content.",
   ] };
   return {
@@ -206,6 +207,7 @@ export function createComisEditTool(
     label: "Edit",
     description:
       "Edit a file using exact text replacement. Supports batch edits via edits[] array. " +
+      "The single path applies to every entry in edits[]; different files require separate edit calls. " +
       "Each oldText must match exactly one location in the ORIGINAL file (not after prior edits). " +
       "Auto fuzzy-matches encoding differences (smart quotes, unicode, whitespace). " +
       "You must read the file in the current response before editing (reads from previous messages " +

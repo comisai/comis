@@ -44,6 +44,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 // Import fs AFTER the mock is set up
 import * as fs from "node:fs/promises";
+import { DEFAULT_TEMPLATES } from "@comis/core";
 import { createComisWriteTool } from "./write-tool.js";
 
 // ---------------------------------------------------------------------------
@@ -173,6 +174,19 @@ describe("device file blocking", () => {
 // ---------------------------------------------------------------------------
 
 describe("read-before-write enforcement", () => {
+  it("rejects reverting a customized workspace policy file to its starter template", async () => {
+    await writeAndRead("USER.md", "# USER.md\n\n- Name: Moshe\n");
+    const tool = createTool();
+
+    await expect(tool.execute("id", {
+      path: "USER.md",
+      content: DEFAULT_TEMPLATES["USER.md"],
+    })).rejects.toThrow("[starter_template_restore]");
+
+    expect(await fs.readFile(path.join(workspaceDir, "USER.md"), "utf-8"))
+      .toBe("# USER.md\n\n- Name: Moshe\n");
+  });
+
   it("cold-registers existing file when tracker is empty and appends audit notice", async () => {
     // Create file but do NOT call tracker.recordRead -- simulates the session-
     // start "seeded workspace template" case where the LLM has the file in

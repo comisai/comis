@@ -103,6 +103,15 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe("input validation", () => {
+  it("states that every batch replacement targets the single declared path", () => {
+    const tool = createTool() as ReturnType<typeof createTool> & {
+      promptGuidelines?: string[];
+    };
+
+    expect(tool.description).toMatch(/single `?path`?.*every.*edits\[\]/isu);
+    expect(tool.promptGuidelines?.join("\n")).toMatch(/different files.*separate edit call/isu);
+  });
+
   it("rejects empty edits array with [empty_edits]", async () => {
     await writeAndRead("test.txt", "hello world");
     const tool = createTool();

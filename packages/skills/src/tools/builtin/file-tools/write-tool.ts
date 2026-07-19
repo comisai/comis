@@ -17,7 +17,15 @@ import * as fs from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, dirname, extname } from "node:path";
 import { fromPromise } from "@comis/shared";
-import { safePath, PathTraversalError, scrubSecretsFromText, registerActivityLabelSpec } from "@comis/core";
+import {
+  DEFAULT_TEMPLATES,
+  OPERATOR_OWNED_FILES,
+  safePath,
+  PathTraversalError,
+  scrubSecretsFromText,
+  registerActivityLabelSpec,
+  type WorkspaceFileName,
+} from "@comis/core";
 import type { FileStateTracker } from "../file/file-state-tracker.js";
 import { isDeviceFile } from "../file/file-state-tracker.js";
 import {
@@ -52,6 +60,10 @@ registerActivityLabelSpec("write", {
 
 /** Maximum file size in bytes (1 GiB). Existing files above this are rejected. */
 const MAX_FILE_SIZE = 1024 * 1024 * 1024;
+
+function isOperatorOwnedWorkspaceFile(name: string): name is WorkspaceFileName {
+  return OPERATOR_OWNED_FILES.some((candidate) => candidate === name);
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -333,6 +345,23 @@ export function createComisWriteTool(
             if (staleness.stale) {
               throw new Error(
                 "[stale_file] File was modified since you last read it (mtime changed). Re-read before overwriting.",
+              );
+            }
+          }
+
+          // A model may accidentally copy a visible starter back over a file it
+          // customized earlier in the same turn. Reject that exact destructive
+          // reset at the workspace root while leaving ordinary rewrites and
+          // explicitly customized content unaffected.
+          if (
+            absolutePath === safePath(workspacePath, base)
+            && isOperatorOwnedWorkspaceFile(base)
+            && content === DEFAULT_TEMPLATES[base]
+          ) {
+            const currentContent = await fs.readFile(absolutePath, "utf-8");
+            if (currentContent !== DEFAULT_TEMPLATES[base]) {
+              throw new Error(
+                `[starter_template_restore] Refusing to replace customized ${base} with its empty starter template. Preserve the confirmed content or use targeted edits.`,
               );
             }
           }
