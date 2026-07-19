@@ -11,7 +11,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import type { Result } from "@comis/shared";
-import { readStringParam, readEnumParam } from "../tool-helpers.js";
+import { readStringParam, readEnumParam, throwToolError } from "../tool-helpers.js";
 import { systemDateFrom } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -32,8 +32,11 @@ interface TaskInfo {
   completedAt?: number;
   result?: string;
   error?: string;
-  /** agentId is nested under origin.agentId */
-  origin: { agentId: string };
+  origin: {
+    turnScope: {
+      conversation: { agentId: string };
+    };
+  };
 }
 
 /** Subset of BackgroundTaskManager consumed by this tool. */
@@ -41,6 +44,10 @@ export interface BackgroundTaskManagerLike {
   getTask(taskId: string): TaskInfo | undefined;
   getTasks(agentId: string): TaskInfo[];
   cancel(taskId: string): Result<void, Error>;
+}
+
+function taskAgentId(task: TaskInfo): string {
+  return task.origin.turnScope.conversation.agentId;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,11 +135,10 @@ export function createBackgroundTasksTool(deps: {
         case "get": {
           const taskId = readStringParam(p, "taskId");
           const task = deps.manager.getTask(taskId!);
-          if (!task || task.origin.agentId !== deps.agentId) {
-            return {
-              content: [{ type: "text", text: `Error: Task not found: ${taskId}` }],
-              details: null,
-            };
+          if (!task || taskAgentId(task) !== deps.agentId) {
+            throwToolError("not_found", `Background task not found: ${taskId}`, {
+              hint: "Call background_tasks with action=list to obtain a task ID owned by this agent",
+            });
           }
           const details = {
             id: task.id,
@@ -153,18 +159,14 @@ export function createBackgroundTasksTool(deps: {
         case "cancel": {
           const taskId = readStringParam(p, "taskId");
           const task = deps.manager.getTask(taskId!);
-          if (!task || task.origin.agentId !== deps.agentId) {
-            return {
-              content: [{ type: "text", text: `Error: Task not found: ${taskId}` }],
-              details: null,
-            };
+          if (!task || taskAgentId(task) !== deps.agentId) {
+            throwToolError("not_found", `Background task not found: ${taskId}`, {
+              hint: "Call background_tasks with action=list to obtain a task ID owned by this agent",
+            });
           }
           const cancelResult = deps.manager.cancel(taskId!);
           if (!cancelResult.ok) {
-            return {
-              content: [{ type: "text", text: `Error: ${cancelResult.error.message}` }],
-              details: null,
-            };
+            throwToolError("conflict", cancelResult.error.message);
           }
           return {
             content: [{ type: "text", text: `Task ${taskId} cancelled successfully.` }],
@@ -175,11 +177,10 @@ export function createBackgroundTasksTool(deps: {
         case "read_output": {
           const taskId = readStringParam(p, "taskId");
           const task = deps.manager.getTask(taskId!);
-          if (!task || task.origin.agentId !== deps.agentId) {
-            return {
-              content: [{ type: "text", text: `Error: Task not found: ${taskId}` }],
-              details: null,
-            };
+          if (!task || taskAgentId(task) !== deps.agentId) {
+            throwToolError("not_found", `Background task not found: ${taskId}`, {
+              hint: "Call background_tasks with action=list to obtain a task ID owned by this agent",
+            });
           }
           switch (task.status) {
             case "running":
@@ -193,10 +194,9 @@ export function createBackgroundTasksTool(deps: {
                 details: { taskId, status: "completed", result: task.result },
               };
             case "failed":
-              return {
-                content: [{ type: "text", text: `Task failed: ${task.error}` }],
-                details: { taskId, status: "failed", error: task.error },
-              };
+              return throwToolError("conflict", `Background task failed: ${task.error ?? "unknown error"}`, {
+                hint: "Inspect the task details and retry the underlying operation when appropriate",
+              });
             case "cancelled":
               return {
                 content: [{ type: "text", text: "Task was cancelled." }],

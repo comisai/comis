@@ -371,14 +371,17 @@ describe("wrapToolForAutoBackground", () => {
       );
     });
 
-    it("placeholder text contains \"I'll continue when it completes.\" and not \"user will be notified\"", async () => {
+    it("placeholder requires reading the result before a dependent answer is finalized", async () => {
       const tool = createMockTool({ resolveAfterMs: 200 });
       const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-7" }));
 
       const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);
 
       const text = (result.content[0] as { text: string }).text;
-      expect(text).toContain("I'll continue when it completes.");
+      expect(text).toContain("background_tasks");
+      expect(text).toContain("read_output");
+      expect(text).toContain("Do not finalize");
+      expect(text).toContain("unrelated earlier data");
       expect(text).not.toContain("user will be notified");
     });
   });
