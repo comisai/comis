@@ -46,6 +46,9 @@ function makeObs(overrides: Partial<OutcomeObservation> = {}): OutcomeObservatio
     confidence: overrides.confidence ?? 0.9,
     observedAt: overrides.observedAt ?? 1_000,
     ...(overrides.senderTrust !== undefined ? { senderTrust: overrides.senderTrust } : {}),
+    ...(overrides.senderTrustExplicit !== undefined
+      ? { senderTrustExplicit: overrides.senderTrustExplicit }
+      : {}),
     ...(overrides.recalledIds !== undefined ? { recalledIds: overrides.recalledIds } : {}),
     ...(overrides.usedSkillIds !== undefined ? { usedSkillIds: overrides.usedSkillIds } : {}),
     ...(overrides.procedureDescriptor !== undefined ? { procedureDescriptor: overrides.procedureDescriptor } : {}),
@@ -136,6 +139,23 @@ describe("createSqliteOutcomeStore", () => {
       const byId = new Map(r.value.map((p) => [p.trajectoryId, p]));
       expect(byId.get("turn-a")?.observedAt).toBe(1_001); // MAX across the turn's rows
       expect(byId.get("turn-b")?.observedAt).toBe(2_000);
+    });
+
+    it("projects the content-free ingress trust decision used by reflection", async () => {
+      await store.observe(makeObs({
+        trajectoryId: "turn-trusted",
+        sessionId: "sess-1",
+        senderTrust: "user",
+        senderTrustExplicit: true,
+      }));
+
+      const result = await store.listTrajectoryIds!(SCOPE_A);
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const trusted = result.value.find((entry) => entry.trajectoryId === "turn-trusted");
+      expect(trusted?.senderTrust).toBe("user");
+      expect(trusted?.senderTrustExplicit).toBe(true);
     });
 
     it("is scoped — never returns another (tenant, agent)'s trajectories", async () => {

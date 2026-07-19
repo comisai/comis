@@ -255,6 +255,37 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     expect(observe.mock.calls[0]![0].outcome).toBe("success");
   });
 
+  it("persists the ingress sender-trust decision with a tool outcome", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    runWithContext({
+      tenantId: "tenant-x",
+      agentId: AGENT,
+      sessionKey: SESSION_KEY,
+      traceId: TRACE,
+      senderTrustTier: "user",
+      senderTrustExplicit: true,
+    } as never, () => bus.emit("tool:executed", toolPayload({ success: true })));
+    await Promise.resolve();
+
+    expect(observe.mock.calls[0]![0]).toMatchObject({
+      senderTrust: "user",
+      senderTrustExplicit: true,
+    });
+  });
+
   it("graph:completed { status:'completed' } records 'success' AND emits learning:outcome_observed", async () => {
     const bus = new TypedEventBus();
     const { store, observe, resolve } = makeStubStore(baseVerdict({ outcome: "success" }));
@@ -1464,6 +1495,40 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
     // … AND the SURFACE promote for the attributed skill (by NAME).
     expect(ls.promoteByName).toHaveBeenCalledTimes(1);
     expect(ls.promoteByName.mock.calls[0]![0]).toBe("s1");
+  });
+
+  it("records the completed-turn boundary after tool observations before resolving a single-agent turn", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe, resolve } = makeStubStore();
+    const clock = createFakeClock(NOW);
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock,
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("tool:executed", toolPayload({ success: true }));
+    await flushMicrotasks();
+    clock.advance(250);
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    expect(observe).toHaveBeenCalledTimes(2);
+    expect(observe.mock.calls[1]![0]).toEqual(expect.objectContaining({
+      trajectoryId: TRACE,
+      sessionId: SESSION_KEY,
+      source: "explicit",
+      outcome: "unknown",
+      confidence: 0,
+      observedAt: NOW + 250,
+    }));
+    expect(observe.mock.invocationCallOrder[1]).toBeLessThan(resolve.mock.invocationCallOrder[0]!);
   });
 
   it("byte-identity: learningOutcomeEnabled => false → diagnostic:message_processed resolves NOTHING", async () => {

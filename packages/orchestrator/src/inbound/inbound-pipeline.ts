@@ -222,6 +222,15 @@ function enrichResolvedInboundContext(
   }));
   if (!deliveryOrigin.ok) return deliveryOrigin;
 
+  const senderTrustMap = elevatedConfig.value?.senderTrustMap ?? {};
+  const senderTrustTier = senderTrustMap[processedMsg.senderId]
+    ?? elevatedConfig.value?.defaultTrustLevel
+    ?? "external";
+  const senderTrustExplicit = Object.prototype.hasOwnProperty.call(
+    senderTrustMap,
+    processedMsg.senderId,
+  );
+
   return enrichCurrentContext({
     tenantId: sessionKey.tenantId,
     userId: sessionKey.userId,
@@ -231,6 +240,8 @@ function enrichResolvedInboundContext(
       elevatedConfig.value,
       processedMsg.senderId,
     ),
+    senderTrustTier,
+    senderTrustExplicit,
     deliveryOrigin: deliveryOrigin.value,
     turnScope,
   });

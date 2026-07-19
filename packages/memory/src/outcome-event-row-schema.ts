@@ -14,7 +14,7 @@
  *   - INTEGER `observed_at` → `z.number()`; REAL `confidence` → `z.number()`.
  *
  * PROJECTION: the scoped `SELECT id, session_id, trajectory_id, outcome, source,
- * confidence, sender_trust, recalled_ids, used_skill_ids, procedure_descriptor,
+ * confidence, sender_trust, sender_trust_explicit, recalled_ids, used_skill_ids, procedure_descriptor,
  * observed_at FROM outcome_events WHERE tenant_id=? AND agent_id=? AND trajectory_id=?` read.
  * `tenant_id`/`agent_id` are NOT projected — the WHERE pins them, the load-bearing
  * tenant/agent isolation boundary (mirror the usefulness-row JSDoc). `outcome`/`source`
@@ -42,6 +42,8 @@ export const OutcomeEventRowSchema = z.strictObject({
   confidence: z.number(),
   /** Optional sender-trust tag (reaction/correction provenance); NULL when absent. */
   sender_trust: z.string().nullable(),
+  /** 1 only when the sender was explicitly named in senderTrustMap; NULL when unavailable. */
+  sender_trust_explicit: z.union([z.literal(0), z.literal(1)]).nullable(),
   /** JSON-encoded string[] of recalled-memory ids; NULL when absent. */
   recalled_ids: z.string().nullable(),
   /** JSON-encoded string[] of used-skill ids; NULL/empty when none are recorded. */

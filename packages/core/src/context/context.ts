@@ -54,6 +54,10 @@ export const RequestContextSchema = z.strictObject({
     traceId: z.guid(),
     startedAt: z.number().int().positive(),
     trustLevel: UserTrustLevelSchema.default("guest"),
+    /** Content-free trust tier resolved from the raw channel sender at ingress. */
+    senderTrustTier: z.string().min(1).optional(),
+    /** True only when the operator explicitly named the raw sender in senderTrustMap. */
+    senderTrustExplicit: z.boolean().optional(),
     /** Per-session random delimiter for external content wrapping */
     contentDelimiter: z.string().min(16).optional(),
     /** Channel type for the originating request (e.g. "telegram", "discord"). Flows through AsyncLocalStorage for downstream delivery routing. */
@@ -77,6 +81,8 @@ export interface ResolvedRequestContext {
   sessionKey: SessionKey;
   agentId: string;
   trustLevel: UserTrustLevel;
+  senderTrustTier?: string;
+  senderTrustExplicit?: boolean;
   deliveryOrigin: DeliveryOrigin;
   turnScope?: ResolvedTurnScope;
 }
@@ -91,6 +97,8 @@ export interface ResolvedRequestContextSeed {
   traceId: string;
   startedAt: number;
   trustLevel: UserTrustLevel;
+  senderTrustTier?: string;
+  senderTrustExplicit?: boolean;
   contentDelimiter?: string;
   channelType?: string;
   deliveryOrigin?: DeliveryOrigin;
@@ -118,6 +126,8 @@ const lockedContextFields = [
   "traceId",
   "startedAt",
   "trustLevel",
+  "senderTrustTier",
+  "senderTrustExplicit",
   "contentDelimiter",
   "channelType",
   "deliveryOrigin",
@@ -221,6 +231,8 @@ function lockResolvedContext(
       ["traceId", parsed.traceId],
       ["startedAt", parsed.startedAt],
       ["trustLevel", parsed.trustLevel],
+      ["senderTrustTier", parsed.senderTrustTier],
+      ["senderTrustExplicit", parsed.senderTrustExplicit],
       ["contentDelimiter", parsed.contentDelimiter],
       ["channelType", parsed.channelType],
       ["deliveryOrigin", parsed.deliveryOrigin],
@@ -271,6 +283,8 @@ export function createResolvedRequestContext(
     traceId: seed.traceId,
     startedAt: seed.startedAt,
     trustLevel: seed.trustLevel,
+    senderTrustTier: seed.senderTrustTier,
+    senderTrustExplicit: seed.senderTrustExplicit,
     contentDelimiter: seed.contentDelimiter,
     channelType: seed.channelType,
     deliveryOrigin: seed.deliveryOrigin,
@@ -402,6 +416,8 @@ export function enrichCurrentContext(
     sessionKey: enrichment.sessionKey,
     agentId: enrichment.agentId,
     trustLevel: enrichment.trustLevel,
+    senderTrustTier: enrichment.senderTrustTier,
+    senderTrustExplicit: enrichment.senderTrustExplicit,
     deliveryOrigin: enrichment.deliveryOrigin,
     turnScope: enrichment.turnScope,
   }));
@@ -462,6 +478,8 @@ export function enrichCurrentContext(
     agentId: resolved.agentId,
     turnScope: resolved.turnScope,
     trustLevel: resolved.trustLevel,
+    senderTrustTier: resolved.senderTrustTier,
+    senderTrustExplicit: resolved.senderTrustExplicit,
     channelType: existingChannelType ?? deliveryOrigin.channelType,
     deliveryOrigin,
   }));

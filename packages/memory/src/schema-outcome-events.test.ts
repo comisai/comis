@@ -60,6 +60,7 @@ describe("ensureOutcomeEventsTable — guarded additive procedure_descriptor col
     const db = new Database(":memory:");
     ensureOutcomeEventsTable(db);
     expect(columns(db).has("procedure_descriptor")).toBe(true);
+    expect(columns(db).has("sender_trust_explicit")).toBe(true);
     db.close();
   });
 
@@ -68,15 +69,18 @@ describe("ensureOutcomeEventsTable — guarded additive procedure_descriptor col
     // A DB a prior build created WITHOUT the column — CREATE IF NOT EXISTS won't touch it.
     createPreMigrationTable(db);
     expect(columns(db).has("procedure_descriptor")).toBe(false);
+    expect(columns(db).has("sender_trust_explicit")).toBe(false);
 
     // The migration adds the column (guarded ALTER) — no throw.
     expect(() => ensureOutcomeEventsTable(db)).not.toThrow();
     expect(columns(db).has("procedure_descriptor")).toBe(true);
+    expect(columns(db).has("sender_trust_explicit")).toBe(true);
 
     // Re-running is a no-op: the PRAGMA guard skips the duplicate ADD COLUMN
     // (a bare re-ALTER would throw "duplicate column name").
     expect(() => ensureOutcomeEventsTable(db)).not.toThrow();
     expect(columns(db).has("procedure_descriptor")).toBe(true);
+    expect(columns(db).has("sender_trust_explicit")).toBe(true);
     db.close();
   });
 

@@ -390,6 +390,8 @@ describe("inbound preprocessing trust boundary", () => {
       userId: principalId,
       agentId: "ordinary-agent",
       trustLevel: "guest",
+      senderTrustTier: "guest",
+      senderTrustExplicit: false,
       deliveryOrigin: {
         channelType: "telegram",
         channelId: "trusted-chat",

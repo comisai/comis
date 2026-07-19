@@ -41,6 +41,7 @@ import {
   type ContextBrowsePort,
   type AppContainer,
   type SessionStorePort,
+  parseFormattedSessionKey,
 } from "@comis/core";
 import type { ReflectionSourceTrajectory } from "@comis/agent";
 import type { MemoryApi } from "@comis/memory";
@@ -75,9 +76,10 @@ export interface ReflectionDepsInput {
 const UNTRUSTED_TRUST_TIER = "external";
 
 /**
- * Derive the two origin-trust signals for a session-source sender, reading the
- * per-agent `elevatedReply.senderTrustMap` (senderId -> trust-tier name) with the
- * configured `defaultTrustLevel` (schema default `"external"`) for an unmapped sender:
+ * Derive the two origin-trust signals for a session-source sender. Prefer the
+ * immutable, content-free ingress decision persisted on the trajectory. Synthetic
+ * trajectories without that carrier fall back to `elevatedReply.senderTrustMap`
+ * plus the configured `defaultTrustLevel`:
  *
  *  - `trustedOrigin` (ANTI-POISON AXIS 1): trusted iff the resolved tier is NOT the
  *    `"external"` tier. DENY-ON-UNKNOWN — no sender id, no `senderTrustMap` entry with
@@ -95,8 +97,16 @@ function deriveOriginTrust(
   sender: string,
   senderTrustMap: Record<string, string>,
   defaultTrustLevel: string,
+  persisted?: { senderTrust?: string; senderTrustExplicit?: boolean },
 ): { trustedOrigin: boolean; explicitlyTrusted: boolean } {
-  // No sender id ⇒ cannot establish trust ⇒ deny-on-unknown (both axes false).
+  if (persisted?.senderTrust !== undefined) {
+    const trustedOrigin = persisted.senderTrust !== UNTRUSTED_TRUST_TIER;
+    return {
+      trustedOrigin,
+      explicitlyTrusted: persisted.senderTrustExplicit === true && trustedOrigin,
+    };
+  }
+  // Without persisted evidence, no sender id means trust cannot be established.
   if (sender.length === 0) return { trustedOrigin: false, explicitlyTrusted: false };
   const explicitEntry = Object.prototype.hasOwnProperty.call(senderTrustMap, sender);
   const tier = senderTrustMap[sender] ?? defaultTrustLevel;
@@ -251,7 +261,14 @@ async function buildSkillSources(
   const prevObservedBySession = new Map<string, number>();
 
   const out: ReflectionSourceTrajectory[] = [];
-  for (const { trajectoryId, sessionId, observedAt, procedureDescriptor: descriptor } of ids) {
+  for (const {
+    trajectoryId,
+    sessionId,
+    observedAt,
+    senderTrust,
+    senderTrustExplicit,
+    procedureDescriptor: descriptor,
+  } of ids) {
     const rows = sessionRows(sessionId);
     if (rows === undefined) continue; // no transcript for this turn's session → skip
     // Windowing needs BOTH the ledger observedAt AND at least one timestamped row.
@@ -260,7 +277,9 @@ async function buildSkillSources(
     if (typeof observedAt === "number") prevObservedBySession.set(sessionId, observedAt);
     const texts = turnTexts(rows, windowed, prevObservedAt, typeof observedAt === "number" ? observedAt : Number.POSITIVE_INFINITY);
     if (texts === undefined) continue; // empty window (severed LCD / no user text) → skip
-    const sender = senderBySession.get(sessionId) ?? "";
+    const sender = senderBySession.get(sessionId)
+      || parseFormattedSessionKey(sessionId)?.userId
+      || "";
     // The content-free procedure descriptor read back from listTrajectoryIds (the ordered
     // tool-NAME sequence + counts). The KEY is the ordered sequence JOINED — order + repeats
     // preserved, NOT sorted/deduped (the sequence + counts contract). It is self-sufficient
@@ -269,9 +288,14 @@ async function buildSkillSources(
     // is injective. Absent (empty) ⇒ omit — the turn ran no cap-mapped tool call sites.
     const sequence = descriptor ?? [];
     // Trust axis 1 (trustedOrigin) + the single-owner belt (explicitlyTrusted), both
-    // derived DAEMON-SIDE (deny-on-unknown). The job filters on axis 1 and counts
-    // repetition only among explicitlyTrusted members.
-    const originTrust = deriveOriginTrust(sender, senderTrustMap, defaultTrustLevel);
+    // resolved daemon-side at ingress and persisted content-free. The config lookup
+    // remains a fail-closed fallback for synthetic rows without that carrier.
+    const originTrust = deriveOriginTrust(
+      sender,
+      senderTrustMap,
+      defaultTrustLevel,
+      { senderTrust, senderTrustExplicit },
+    );
     out.push({
       trajectoryId,
       sessionId,

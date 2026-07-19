@@ -160,6 +160,8 @@ interface OutcomeScope {
   trajectoryId: string;
   conversationRef?: ConversationRef;
   workspacePolicyHash?: string;
+  senderTrust?: string;
+  senderTrustExplicit?: boolean;
 }
 
 /**
@@ -199,6 +201,10 @@ function resolveScope(payload: {
     ...(payload.workspacePolicyHash === undefined
       ? {}
       : { workspacePolicyHash: payload.workspacePolicyHash }),
+    ...(ctx?.senderTrustTier === undefined ? {} : { senderTrust: ctx.senderTrustTier }),
+    ...(ctx?.senderTrustExplicit === undefined
+      ? {}
+      : { senderTrustExplicit: ctx.senderTrustExplicit }),
   };
 }
 
@@ -225,6 +231,10 @@ function observeNonFatal(
       outcome,
       source,
       confidence,
+      ...(scope.senderTrust === undefined ? {} : { senderTrust: scope.senderTrust }),
+      ...(scope.senderTrustExplicit === undefined
+        ? {}
+        : { senderTrustExplicit: scope.senderTrustExplicit }),
       // Thread the per-turn used-skill ids onto observe() so the
       // used_skill_ids COLUMN is written; resolve() union-dedups across rows. Omitted
       // (the tool/pipeline paths) ⇒ the column stays NULL — no behavior change for those paths.
@@ -334,8 +344,9 @@ function recordNonFatal(
  *  - `graph:completed` (DAG)       → observe a `pipeline` outcome, then the shared
  *                                    resolve→consume chain. (`graph:driver_lifecycle`
  *                                    is NOT observed — per-node, floods the ledger.)
- *  - `diagnostic:message_processed` → the single-agent turn's resolve→consume (the
- *                                    common turn never fires graph:completed).
+ *  - `diagnostic:message_processed` → record the completed-turn boundary, then run
+ *                                    resolve→consume (the common turn never fires
+ *                                    graph:completed).
  *
  * The shared chain resolves the fused verdict, runs the reward/forgetting/skill consumers,
  * emits `learning:outcome_observed` (counts/ids only), updates the fail-closed coverage
@@ -634,15 +645,19 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     );
   });
 
-  // ---- Single-agent turn completion → resolve via the per-turn PAYLOAD ----
+  // ---- Turn completion boundary + single-agent resolve via the per-turn PAYLOAD ----
   // graph:completed fires ONLY for DAG runs, so without this handler a single-agent turn
   // never resolves — its tool:executed + memory:skill_used rows (keyed on traceId) go
   // unresolved. diagnostic:message_processed fires once per turn for single-agent turns
   // too (execution-pipeline.ts) and carries agentId/sessionKey/traceId on its PAYLOAD — so
   // resolve keys off the payload NOT the ALS (the emit is outside runWithContext).
   // The trajectoryId is the payload traceId = the SAME key the
-  // tool/skill observe() wrote, so resolve finds the rows. NO pipeline observe; an
-  // absent traceId → skip (fail-closed); the dedup makes a both-events DAG turn resolve once.
+  // tool/skill observe() wrote, so resolve finds the rows. A neutral explicit/unknown
+  // carrier is written FIRST at this completion seam. Besides preserving fusion, its
+  // observedAt is the authoritative upper bound after the executor has persisted the
+  // completed LCD turn; reflection can therefore slice that turn even when every tool
+  // observation preceded the transcript append. An absent traceId → skip
+  // (fail-closed); the dedup makes a both-events DAG turn resolve once.
   deps.eventBus.on("diagnostic:message_processed", (p) => {
     if (!deps.learningOutcomeEnabled(p.agentId)) return;
     const scope = resolveScope({
@@ -652,7 +667,14 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
       workspacePolicyHash: p.workspacePolicyHash,
     }, deps.tenantId);
     if (scope === undefined) return; // no trajectory identity (absent traceId) → skip
-    resolveAndConsume(scope, deps.clock.now());
+    const resolveStart = deps.clock.now();
+    void observeNonFatal(
+      deps,
+      scope,
+      "unknown",
+      "explicit",
+      ATTRIBUTION_CONFIDENCE,
+    ).then(() => resolveAndConsume(scope, resolveStart));
   });
 
   // ---- Refresh the per-agent surface the MOMENT a

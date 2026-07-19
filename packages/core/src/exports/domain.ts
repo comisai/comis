@@ -33,6 +33,7 @@ export {
   SessionKeySchema,
   parseSessionKey,
   formatSessionKey,
+  parseFormattedSessionKey,
   SessionStoreError,
   // Poll
   PollInputSchema,

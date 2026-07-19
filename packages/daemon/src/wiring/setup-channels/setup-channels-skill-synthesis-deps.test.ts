@@ -313,8 +313,8 @@ describe("buildReflectionCronDeps", () => {
   });
 
   // ── TRUSTED-ORIGIN DERIVATION — daemon-side, deny-on-unknown ──
-  // `ResolvedOutcome` does NOT carry sender_trust, so the daemon derives
-  // trust here from the per-agent elevatedReply.senderTrustMap + defaultTrustLevel.
+  // Trajectories with persisted ingress trust use that immutable decision. Synthetic
+  // rows without it derive trust from elevatedReply.senderTrustMap + defaultTrustLevel.
   // The JOB FILTERS on the resulting `trustedOrigin` (reflection-job.ts SELECT);
   // these tests pin the DERIVATION feeding it. CRITICAL: an
   // unknown/unmapped sender must be `false` (deny-on-unknown) — never trusted.
@@ -334,6 +334,66 @@ describe("buildReflectionCronDeps", () => {
     function withAgentTrust(elevatedReply: unknown) {
       return { config: { tenantId: "t", agents: { "agent-1": { elevatedReply } } } } as any;
     }
+
+    it("keeps the ingress trust decision for an LCD-only canonical-principal session", async () => {
+      const sessionKey = "t:agent:agent-1:principal-1:telegram:peer:principal-1";
+      const lcdOnly = {
+        sessionStore: {
+          listDetailed: vi.fn(() => [{ sessionKey, tenantId: "t", channelId: "telegram", metadata: null, createdAt: 1, updatedAt: 2, messageCount: 2 }]),
+          loadByFormattedKey: vi.fn(() => ({ messages: [{ role: "user", content: "do X" }, { role: "assistant", content: "did X" }], metadata: {}, createdAt: 1, updatedAt: 2 })),
+        } as any,
+        outcomeStore: {
+          observe: vi.fn(), prune: vi.fn(), resolve: vi.fn(),
+          listTrajectoryIds: vi.fn(async () => ({
+            ok: true as const,
+            value: [{
+              trajectoryId: "turn-1",
+              sessionId: sessionKey,
+              senderTrust: "user",
+              senderTrustExplicit: true,
+            }],
+          })),
+        } as any,
+      };
+      const container = withAgentTrust({ senderTrustMap: { "raw-platform-sender": "user" }, defaultTrustLevel: "external" });
+      const bundle = buildReflectionCronDeps(makeInput({ ...lcdOnly, container }))!;
+
+      const trajectories = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
+
+      expect(trajectories).toHaveLength(1);
+      expect(trajectories[0].sender).toBe("principal-1");
+      expect(trajectories[0].trustedOrigin).toBe(true);
+      expect(trajectories[0].explicitlyTrusted).toBe(true);
+    });
+
+    it("uses persisted ingress trust even when the session view exposes no reversible sender id", async () => {
+      const noSender = {
+        sessionStore: {
+          listDetailed: vi.fn(() => [{ sessionKey: "opaque-session", userId: "", tenantId: "t", channelId: "telegram", metadata: null, createdAt: 1, updatedAt: 2, messageCount: 2 }]),
+          loadByFormattedKey: vi.fn(() => ({ messages: [{ role: "user", content: "do X" }, { role: "assistant", content: "did X" }], metadata: {}, createdAt: 1, updatedAt: 2 })),
+        } as any,
+        outcomeStore: {
+          observe: vi.fn(), prune: vi.fn(), resolve: vi.fn(),
+          listTrajectoryIds: vi.fn(async () => ({
+            ok: true as const,
+            value: [{
+              trajectoryId: "turn-1",
+              sessionId: "opaque-session",
+              senderTrust: "user",
+              senderTrustExplicit: true,
+            }],
+          })),
+        } as any,
+      };
+      const bundle = buildReflectionCronDeps(makeInput(noSender))!;
+
+      const trajectories = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
+
+      expect(trajectories).toHaveLength(1);
+      expect(trajectories[0].sender).toBe("");
+      expect(trajectories[0].trustedOrigin).toBe(true);
+      expect(trajectories[0].explicitlyTrusted).toBe(true);
+    });
 
     it("a sender mapped to a NON-external tier is a trusted origin AND explicitly trusted (named in senderTrustMap)", async () => {
       const container = withAgentTrust({ senderTrustMap: { u1: "verified" }, defaultTrustLevel: "external" });
