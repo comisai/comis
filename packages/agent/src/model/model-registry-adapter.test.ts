@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { createSecretManager } from "@comis/core";
@@ -255,6 +256,94 @@ describe("resolveInitialModel", () => {
       });
       expect(result.thinkingLevel).toBe("off");
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Requested-thinking-level clamping (SDK clampThinkingLevel adoption)
+  // ---------------------------------------------------------------------------
+
+  describe("requested thinking level", () => {
+    it("passes through a requested level the model supports", async () => {
+      const authStorage = buildAuthStorage();
+      const { registry } = await createModelRegistryAdapter(authStorage);
+      const available = registry.getAvailable();
+      const model = available.find(
+        (m) => m.reasoning && getSupportedThinkingLevels(m).includes("high"),
+      );
+      expect(model).toBeDefined();
+
+      const result = await resolveInitialModel(
+        registry,
+        { provider: model!.provider as string, model: model!.id },
+        undefined,
+        undefined,
+        "high",
+      );
+      expect(result.thinkingLevel).toBe("high");
+    });
+
+    it("clamps a requested level the model cannot serve to its nearest supported level", async () => {
+      const authStorage = buildAuthStorage();
+      const { registry } = await createModelRegistryAdapter(authStorage);
+      const available = registry.getAvailable();
+      // A reasoning model without the opt-in xhigh tier: requesting xhigh
+      // must land on a level the model actually supports, not be sent to the
+      // provider verbatim (which would 400) — and not silently become
+      // "medium" (the pre-adoption hand-roll).
+      const model = available.find((m) => {
+        if (!m.reasoning) return false;
+        const levels = getSupportedThinkingLevels(m);
+        return !levels.includes("xhigh") && levels.includes("high");
+      });
+      expect(model).toBeDefined();
+
+      const result = await resolveInitialModel(
+        registry,
+        { provider: model!.provider as string, model: model!.id },
+        undefined,
+        undefined,
+        "xhigh",
+      );
+      expect(result.thinkingLevel).toBe("high");
+    });
+
+    it("passes through xhigh on a model that supports the tier", async () => {
+      const authStorage = buildAuthStorage();
+      const { registry } = await createModelRegistryAdapter(authStorage);
+      const available = registry.getAvailable();
+      const model = available.find(
+        (m) => m.reasoning && getSupportedThinkingLevels(m).includes("xhigh"),
+      );
+      // Tier availability depends on the shipped catalog; skip-if-absent like
+      // the reasoning/non-reasoning probe above.
+      if (model) {
+        const result = await resolveInitialModel(
+          registry,
+          { provider: model!.provider as string, model: model!.id },
+          undefined,
+          undefined,
+          "xhigh",
+        );
+        expect(result.thinkingLevel).toBe("xhigh");
+      }
+    });
+
+    it("returns off for any requested level on a non-reasoning model", async () => {
+      const authStorage = buildAuthStorage();
+      const { registry } = await createModelRegistryAdapter(authStorage);
+      const available = registry.getAvailable();
+      const model = available.find((m) => m.reasoning === false);
+      expect(model).toBeDefined();
+
+      const result = await resolveInitialModel(
+        registry,
+        { provider: model!.provider as string, model: model!.id },
+        undefined,
+        undefined,
+        "high",
+      );
+      expect(result.thinkingLevel).toBe("off");
+    });
   });
 });
 
