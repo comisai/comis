@@ -1505,7 +1505,10 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   //
   // Non-blocking, non-fatal -- execution never fails due to memory store errors.
   const operationType = params.executionOverrides?.operationType;
-  const pairedTurnScope = tryGetContext()?.turnScope;
+  const pairedContext = tryGetContext();
+  const pairedTurnScope = pairedContext?.turnScope;
+  const learningEligible = pairedContext?.learningEligible;
+  const canPersistPairedMemory = learningEligible !== false;
   const skipMemoryForOperation =
     operationType != null && MEMORY_SKIP_OPERATIONS.has(operationType);
 
@@ -1516,7 +1519,12 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // gates, a `NO_REPLY` / `HEARTBEAT_OK` / `[SILENT]` sentinel is rejected
   // from memory persistence.
   const isSilent = !!(deps.memoryPort && result.response && msg.text && isSilentResponse(result.response));
-  if (isSilent) {
+  if (!canPersistPairedMemory) {
+    deps.logger.debug(
+      { agentId: effectiveAgentId, sessionKey: formattedKey, step: "memory-persistence" },
+      "Paired memory skipped: turn ineligible for learning",
+    );
+  } else if (isSilent) {
     deps.logger.debug(
       { agentId: effectiveAgentId, sessionKey: formattedKey, hint: "Silent-sentinel response (NO_REPLY / HEARTBEAT_OK / [SILENT]) skipped from paired memory" },
       "Paired memory skipped: silent-sentinel response",
