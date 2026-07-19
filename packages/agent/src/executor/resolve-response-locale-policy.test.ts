@@ -155,13 +155,14 @@ describe("request-locale vs conversation-script precedence", () => {
     expect(policy.enforceLocale).toBe(true);
   });
 
-  it("does not enforce a non-Latin transport locale over Latin-script conversation text", () => {
+  it("enforces the current Latin prose script when it contradicts a non-Latin transport locale", () => {
     const policy = resolveResponseLocalePolicy({
       requestLocale: "he",
       requestText: "What is the weather tomorrow in Tel Aviv?",
     });
-    expect(policy.source).toBe("unset");
-    expect(policy.enforceLocale).toBe(false);
+    expect(policy.locale).toBe("und-Latn");
+    expect(policy.source).toBe("request");
+    expect(policy.enforceLocale).toBe(true);
   });
 
   it("keeps the request locale when the message carries no script signal", () => {
