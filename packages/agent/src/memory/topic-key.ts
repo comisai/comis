@@ -16,7 +16,7 @@
  *     channel header carry a per-turn timestamp, so two IDENTICAL requests differ in
  *     raw form (raw-text clustering failed live 2026-06-25). {@link stripUserSystemContext}
  *     recovers the stable request.
- *  2. LOWERCASE, collapse every non-alphanumeric run to a single space, trim.
+ *  2. LOWERCASE, collapse every non-letter/number run to a single space, trim.
  *  3. TOKENIZE on whitespace; drop {@link STOPWORDS} and tokens of length <= 1.
  *  4. DE-DUPLICATE into a Set, then SORT — order-insensitive. "deploy the app" and
  *     "app deploy please" carry the same {app,deploy} token set and collide; a
@@ -143,10 +143,12 @@ export function normalizeOpeningRequest(signature: string): string {
 export function openingRequestTokens(signature: string): string[] {
   // 1. Strip the volatile per-turn envelope FIRST (its timestamps would defeat collision).
   const stripped = stripUserSystemContext(signature);
-  // 2. Lowercase; collapse non-alphanumeric runs to a single space; trim.
+  // 2. Lowercase; collapse non-letter/number runs to a single space; trim. Unicode
+  // property escapes preserve Hebrew, Arabic, Cyrillic, and other non-Latin topic
+  // words instead of turning the entire request into an ungroupable empty token set.
   const cleaned = stripped
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
   // 3. Tokenize; drop stopwords and tokens of length <= 1; STEM each survivor (collapse
   //    morphological variants so two genuinely-same-task openings worded differently — "deliver"/"delivered"/

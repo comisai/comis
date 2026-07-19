@@ -129,6 +129,27 @@ describe("openingRequestTokens", () => {
     expect(openingRequestTokens("please could you the a an")).toEqual([]);
     expect(openingRequestTokens("   ...!?   ")).toEqual([]);
   });
+
+  it.each([
+    ["Hebrew", "העבר את החבילה דרך המעלית למשרד הצפוני", ["החבילה", "המעלית", "הצפוני"]],
+    ["Arabic", "انقل الطرد عبر المصعد إلى المكتب الشمالي", ["الطرد", "المصعد", "الشمالي"]],
+    ["Russian", "доставь посылку через лифт в северный офис", ["доставь", "посылку", "северный"]],
+  ])("preserves %s content words so native-language topics remain groupable", (_language, request, expectedTokens) => {
+    const tokens = openingRequestTokens(request);
+    expect(tokens.length).toBeGreaterThan(0);
+    expect(tokens).toEqual(expect.arrayContaining(expectedTokens));
+    expect(normalizeOpeningRequest(request)).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it.each([
+    ["Hebrew", "העבר את החבילה דרך המעלית למשרד הצפוני", "בבקשה העבר את החבילה דרך המעלית למשרד הצפוני ודווח על המסירה"],
+    ["Arabic", "انقل الطرد عبر المصعد إلى المكتب الشمالي", "من فضلك انقل الطرد عبر المصعد إلى المكتب الشمالي وأبلغ عن التسليم"],
+    ["Russian", "доставь посылку через лифт в северный офис", "пожалуйста доставь посылку через лифт в северный офис и сообщи о доставке"],
+  ])("credits a surfaced %s skill from a matching native-language turn", (language, opening, reuse) => {
+    const topicTokens = openingRequestTokens(opening);
+    const skillName = `skill-${language.toLowerCase()}-delivery`;
+    expect(topicMatchedSkillNames(reuse, [{ name: skillName, topicTokens }])).toEqual([skillName]);
+  });
 });
 
 describe("stemToken + morphological collapse (the keyless semantic-matching slice)", () => {
