@@ -41,7 +41,7 @@ for file in "$HERE"/*.sh; do
 done
 relative_files=()
 for file in "${box_files[@]}"; do relative_files+=("${file#"$HERE/"}"); done
-tar --no-xattrs -C "$HERE" -cf - "${relative_files[@]}" | remote_root "tar -xf - -C /root"
+COPYFILE_DISABLE=1 tar --no-xattrs -C "$HERE" -cf - "${relative_files[@]}" | remote_root "tar -xf - -C /root"
 
 # GWTOKEN auto-fetch — when .live-env doesn't carry it, resolve it FROM THE BOX so the rendered
 # rig env (and every RPC helper) still works: the secrets store first (`comis secrets get` — the

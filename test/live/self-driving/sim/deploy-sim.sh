@@ -12,6 +12,8 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -f "$HERE/../scripts/.live-env" ] && . "$HERE/../scripts/.live-env"
+# shellcheck source=../scripts/_remote-root.sh
+. "$HERE/../scripts/_remote-root.sh"
 VPS="${VPS:?set VPS=user@host in scripts/.live-env (see .live-env.example) or pass inline}"
 DEST="${SIM_DEST:-${COMIS_HOME:-/home/comis}/sim}"   # where the daemon (comis) will read the sim from
 
@@ -22,7 +24,7 @@ echo "Shipping sim/ → $VPS:$DEST"
 # failure — it `rm -rf $DEST` then `mv $DEST.tmp $DEST`, so a failed/incomplete scp left the live sim
 # dir WIPED (the "sim vanished" detour). Here the `rm $DEST && mv` runs ONLY after a successful extract
 # in the same && chain, staged in $DEST.new, so a transfer failure leaves $DEST untouched.
-tar czf - -C "$HERE/.." "$(basename "$HERE")" | ssh -o ConnectTimeout=20 -o ServerAliveInterval=10 "$VPS" "
+COPYFILE_DISABLE=1 tar --no-xattrs -czf - -C "$HERE/.." "$(basename "$HERE")" | remote_root "
   set -e
   rm -rf '${DEST}.new' && mkdir -p '${DEST}.new'
   tar xzf - -C '${DEST}.new' --strip-components=1     # drop the sim/ prefix → files land directly
