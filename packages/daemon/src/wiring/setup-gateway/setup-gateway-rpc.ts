@@ -170,7 +170,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
         gatewayLogger.error({
           agentId: execAgentId,
           hint: "Verify the gateway client and conversation identifiers before retrying",
-          errorKind: identity.error.errorKind,
+          errorKind: "validation" as const,
         }, "Gateway RPC identity resolution failed");
         return Promise.reject(identity.error);
       }

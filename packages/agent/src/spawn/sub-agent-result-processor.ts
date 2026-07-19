@@ -970,19 +970,13 @@ export function deliverFailureNotification(
   return pending;
 }
 
-// ---------------------------------------------------------------------------
 // Output validation
-// ---------------------------------------------------------------------------
 
 /**
  * Validate expected output files exist on disk with retry for I/O race conditions.
  * Best-effort: retries handle transient filesystem delays (e.g., flush lag).
  */
-export async function validateOutputs(
-  paths: string[],
-  retries = 3,
-  delayMs = 200,
-): Promise<ValidationResult[]> {
+export async function validateOutputs(paths: string[], retries = 3, delayMs = 200): Promise<ValidationResult[]> {
   const results: ValidationResult[] = [];
   for (const filePath of paths) {
     let exists = false;

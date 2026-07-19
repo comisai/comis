@@ -103,7 +103,7 @@ describe("resolveResponseLocalePolicy", () => {
   it("rejects a substantial Latin prose preamble hidden by a longer Arabic tail", () => {
     const finding = evaluateResponseLocale(
       { locale: "ar", source: "request", enforceLocale: true },
-      "I'm here for fleet management only, so I can't answer general questions like that — even in one sentence.\n\n"
+      "I'm here for project management only, so I can't answer general questions like that — even in one sentence.\n\n"
         + "بدلاً من ذلك يمكنني عرض مواقع المركبات أو التحقق من حالة التنبيهات النشطة.",
     );
 
