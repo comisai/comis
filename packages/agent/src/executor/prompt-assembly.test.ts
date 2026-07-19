@@ -455,10 +455,10 @@ describe("assembleExecutionPrompt", () => {
   // throwing fixed_overhead_exceeds_window downstream.
   // -----------------------------------------------------------------
   it("falls back to compact-secure when the full prompt cannot fit the effective window", async () => {
-    // Mock returns "assembled-prompt" (~5 tok). A tiny window (budget 4 tok) makes
-    // even that degenerate, forcing the fallback. Default modelProfile → full mode
-    // (the mid/frontier-class small-window case that compact-secure never covered).
-    mockAssembleRichSystemPrompt.mockReturnValue("x".repeat(40)); // ~12 tok
+    // Mode-sensitive mock: the full prompt is way oversized; the compact-secure
+    // re-assembly genuinely shrinks and FITS the window, so the ladder stops there.
+    mockAssembleRichSystemPrompt.mockImplementation((p: { promptMode?: string }) =>
+      p.promptMode === "compact-secure" ? "x".repeat(8) : "x".repeat(4_000));
     const logger = createMockLogger();
     const params = makeParams({
       logger,
@@ -478,6 +478,56 @@ describe("assembleExecutionPrompt", () => {
       (c: unknown[]) => typeof c[1] === "string" && (c[1] as string).toLowerCase().includes("compact"),
     );
     expect(fbCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("escalates to the engine-kernel-only prompt when compact-secure still cannot fit", async () => {
+    // At mid/frontier the operator bootstrap files ride into compact-secure at
+    // full size, so the "compact" prompt can STILL exceed a degenerate window.
+    // The fallback must VERIFY the compact prompt against the window and
+    // escalate to promptMode "none" (engine kernel only) instead of proceeding
+    // on faith with an oversized prompt while logging success.
+    mockAssembleRichSystemPrompt.mockImplementation((p: { promptMode?: string }) =>
+      p.promptMode === "none" ? "x".repeat(8)
+        : p.promptMode === "compact-secure" ? "x".repeat(400)
+          : "x".repeat(4_000));
+    const logger = createMockLogger();
+    const params = makeParams({
+      agentId: "kernel-floor-agent",
+      logger,
+      windowFitBudget: { effectiveWindow: 10, outputHeadroom: 4, messageFloorTokens: 2 },
+    });
+    await assembleExecutionPrompt(params);
+
+    const lastMode = mockAssembleRichSystemPrompt.mock.calls.at(-1)![0].promptMode;
+    expect(lastMode).toBe("none");
+    const fbCalls = (logger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c: unknown[]) => typeof c[1] === "string" && (c[1] as string).includes("engine-kernel-only"),
+    );
+    expect(fbCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("logs the truth when no prompt mode fits the window instead of claiming success", async () => {
+    // Every mode is oversized. The fallback must not log "so the agent still
+    // runs" — it must say the preflight will fail, while still choosing the
+    // smallest prompt so the failure is as recoverable as possible.
+    mockAssembleRichSystemPrompt.mockImplementation(() => "x".repeat(4_000));
+    const logger = createMockLogger();
+    const params = makeParams({
+      agentId: "hopeless-window-agent",
+      logger,
+      windowFitBudget: { effectiveWindow: 10, outputHeadroom: 4, messageFloorTokens: 2 },
+    });
+    await assembleExecutionPrompt(params);
+
+    const warns = (logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    const claimsSuccess = warns.filter(
+      (c: unknown[]) => typeof c[1] === "string" && (c[1] as string).includes("using compact-secure"),
+    );
+    const admitsFailure = warns.filter(
+      (c: unknown[]) => typeof c[1] === "string" && (c[1] as string).includes("no prompt mode fits"),
+    );
+    expect(claimsSuccess.length).toBe(0);
+    expect(admitsFailure.length).toBeGreaterThanOrEqual(1);
   });
 
   it("does NOT shrink the prompt when the full prompt fits the effective window (no regression)", async () => {
@@ -3045,7 +3095,7 @@ describe("bootstrap file snapshotting", () => {
       expect(result.responseLocalePolicy).toEqual({
         locale: "fr-CA",
         source: "request",
-        enforceLocale: false,
+        enforceLocale: true,
       });
     });
 
@@ -3071,6 +3121,20 @@ describe("bootstrap file snapshotting", () => {
 
       expect(result.dynamicPreamble).not.toContain("## Reply Language for This Turn");
       expect(result.responseLocalePolicy.source).toBe("unset");
+    });
+
+    it("enforces the current request script when locale metadata is absent", async () => {
+      const result = await assembleExecutionPrompt(makeParams({
+        msg: makeMsg({ text: "أجب عن هذا الطلب بإيجاز" }),
+      }));
+
+      expect(result.responseLocalePolicy).toEqual({
+        locale: "und-Arab",
+        source: "request",
+        enforceLocale: true,
+      });
+      expect(result.dynamicPreamble).toContain('locale="und-Arab"');
+      expect(result.dynamicPreamble).toContain("same human language as the current user request");
     });
 
     it("prependContext appears in dynamicPreamble, not systemPrompt", async () => {
@@ -4153,7 +4217,7 @@ describe("parent prefix reuse", () => {
     expect(result.responseLocalePolicy).toEqual({
       locale: "ar-EG",
       source: "request",
-      enforceLocale: false,
+      enforceLocale: true,
     });
   });
 

@@ -667,6 +667,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   const responseLocalePolicy = resolveResponseLocalePolicy({
     explicitLocale: config.language ?? deps.spawnPacket?.language,
     requestLocale: typeof msg.metadata?.locale === "string" ? msg.metadata.locale : undefined,
+    requestText: msg.originalMessages?.map(message => message.text).join("\n") ?? msg.text,
   });
 
   // Build subagentRole from SpawnPacket when present.
@@ -729,46 +730,79 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   ) {
     // Factor the prompt's own script (dense non-Latin prompts carry more
     // tokens/char), matching estimateSystemTokensFactored at toolOverheadChars=0.
-    const systemPromptOnlyTokens = Math.ceil(
-      systemPrompt.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(systemPrompt)),
+    const promptTokensFor = (prompt: string): number => Math.ceil(
+      prompt.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(prompt)),
     );
-    const minFixed = systemPromptOnlyTokens + fitBudget.outputHeadroom + fitBudget.messageFloorTokens;
-    if (minFixed > fitBudget.effectiveWindow) {
-      const compactParams = { ...assemblerParams, promptMode: "compact-secure" as PromptMode };
-      const compactPrompt = assembleRichSystemPrompt(compactParams);
-      const compactTokens = Math.ceil(
-        compactPrompt.length / (CHARS_PER_TOKEN_RATIO * scriptTokenFactor(compactPrompt)),
-      );
+    const fixedBeyondPrompt = fitBudget.outputHeadroom + fitBudget.messageFloorTokens;
+    const fitsWindow = (promptTokens: number): boolean =>
+      promptTokens + fixedBeyondPrompt <= fitBudget.effectiveWindow;
+    const systemPromptOnlyTokens = promptTokensFor(systemPrompt);
+    if (!fitsWindow(systemPromptOnlyTokens)) {
+      // Escalation ladder, VERIFIED at each rung — never assumed. At
+      // mid/frontier the operator bootstrap sections ride into compact-secure
+      // at full size, so the "compact" prompt can itself exceed a degenerate
+      // window: measure it, and when it still cannot fit, escalate to
+      // promptMode "none" (engine kernel only — the minimal secure floor).
+      // When even that overflows, keep the smallest prompt and say so — the
+      // context preflight then fails honestly instead of this WARN claiming
+      // "the agent still runs" over an oversized prompt.
+      let fallbackMode: PromptMode = "compact-secure";
+      let fallbackParams = { ...assemblerParams, promptMode: fallbackMode };
+      let fallbackPrompt = assembleRichSystemPrompt(fallbackParams);
+      let fallbackTokens = promptTokensFor(fallbackPrompt);
+      if (!fitsWindow(fallbackTokens)) {
+        const kernelParams = { ...assemblerParams, promptMode: "none" as PromptMode };
+        const kernelPrompt = assembleRichSystemPrompt(kernelParams);
+        const kernelTokens = promptTokensFor(kernelPrompt);
+        if (fitsWindow(kernelTokens) || kernelTokens < fallbackTokens) {
+          fallbackMode = "none";
+          fallbackParams = kernelParams;
+          fallbackPrompt = kernelPrompt;
+          fallbackTokens = kernelTokens;
+        }
+      }
+      const fallbackFits = fitsWindow(fallbackTokens);
+      const fallbackLabel = fallbackMode === "none" ? "engine-kernel-only" : "compact-secure";
+      const overflowContext =
+        `System prompt (~${systemPromptOnlyTokens} tok) + output headroom (${fitBudget.outputHeadroom}) ` +
+        `+ message floor (${fitBudget.messageFloorTokens}) exceeds the effective window ` +
+        `(${fitBudget.effectiveWindow})`;
       logger.warn(
         {
           step: "prompt-compact-fallback",
           errorKind: "resource" as const,
-          hint:
-            `System prompt (~${systemPromptOnlyTokens} tok) + output headroom (${fitBudget.outputHeadroom}) ` +
-            `+ message floor (${fitBudget.messageFloorTokens}) exceeds the effective window ` +
-            `(${fitBudget.effectiveWindow}); fell back to the compact-secure prompt (~${compactTokens} tok) so ` +
-            `the agent still runs. Raise the model's context window or use a larger model to restore the full prompt.`,
+          hint: fallbackFits
+            ? `${overflowContext}; fell back to the ${fallbackLabel} prompt (~${fallbackTokens} tok) so ` +
+              `the agent still runs. Raise the model's context window or use a larger model to restore the full prompt.`
+            : `${overflowContext}, and even the ${fallbackLabel} prompt (~${fallbackTokens} tok) does not fit — ` +
+              `the context preflight will fail this turn. Raise the model's context window or use a larger model.`,
           agentId: agentId ?? config.name,
           fromPromptMode: promptMode,
+          fallbackPromptMode: fallbackMode,
+          fallbackFits,
           effectiveWindow: fitBudget.effectiveWindow,
           fullPromptTokens: systemPromptOnlyTokens,
-          compactPromptTokens: compactTokens,
+          compactPromptTokens: fallbackTokens,
           outputHeadroom: fitBudget.outputHeadroom,
           messageFloorTokens: fitBudget.messageFloorTokens,
         },
-        "prompt compact-fallback: full prompt too large for window, using compact-secure",
+        fallbackFits
+          ? `prompt compact-fallback: full prompt too large for window, using ${fallbackLabel}`
+          : "prompt compact-fallback: no prompt mode fits the effective window; context preflight will fail",
       );
       deps.eventBus?.emit("context:overflow", {
         agentId: agentId ?? config.name,
         sessionKey: formatSessionKey(sessionKey),
-        contextTokens: minFixed,
+        contextTokens: systemPromptOnlyTokens + fixedBeyondPrompt,
         budgetTokens: fitBudget.effectiveWindow,
-        recoveryAction: "strip_skills",
+        // compact-secure strips the optional runtime (skills) sections; the
+        // kernel-only rung additionally strips the operator workspace files.
+        recoveryAction: fallbackMode === "none" ? "strip_files" : "strip_skills",
         timestamp: deps.clock?.now() ?? systemNowMs(),
       });
-      systemPrompt = compactPrompt;
-      systemPromptBlocks = assembleRichSystemPromptBlocks(compactParams);
-      promptCompileReport = compileRichSystemPrompt(compactParams).report;
+      systemPrompt = fallbackPrompt;
+      systemPromptBlocks = assembleRichSystemPromptBlocks(fallbackParams);
+      promptCompileReport = compileRichSystemPrompt(fallbackParams).report;
     }
   }
 
