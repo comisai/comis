@@ -1326,8 +1326,10 @@ export class IcMemoryInspector extends LitElement {
     if (!this._embeddingStats) return nothing;
     const stats = this._embeddingStats;
 
-    // Circuit breaker state display
-    const cbState = stats.circuitBreaker.state;
+    // Circuit breaker state display. A daemon that has embedding disabled (or an
+    // older daemon) may omit the circuitBreaker block entirely — render "Unknown"
+    // rather than failing the whole view render.
+    const cbState = stats.circuitBreaker?.state;
     const cbVariant = cbState === "closed" ? "success"
       : cbState === "halfOpen" ? "warning"
       : cbState === "open" ? "error"

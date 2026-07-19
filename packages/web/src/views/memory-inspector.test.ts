@@ -668,6 +668,22 @@ describe("IcMemoryInspector", () => {
 
   // --- Embedding Infrastructure ---
 
+  it("renders without throwing when stats omit circuitBreaker (partial daemon response)", async () => {
+    const el = await createElement();
+    priv(el)._embeddingStats = {
+      enabled: false,
+      l1: null,
+      l2: null,
+      provider: null,
+      vecAvailable: false,
+    } as unknown as EmbeddingCacheStats;
+    await (el as any).updateComplete;
+
+    const section = el.shadowRoot?.querySelector(".embedding-section");
+    expect(section).toBeTruthy();
+    expect(section?.textContent).toContain("Unknown");
+  });
+
   it("renders embedding infrastructure section when stats loaded", async () => {
     const el = await createElement();
     priv(el)._embeddingStats = {

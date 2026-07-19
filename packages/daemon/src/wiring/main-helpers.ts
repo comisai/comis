@@ -797,3 +797,30 @@ export function buildMediaVisionBundle(deps: {
   });
   return { capability, resolveMainModelId: (agentId: string) => resolveMain(agentId).modelId || undefined };
 }
+
+/**
+ * Background-task notifier bound to a late-populated notification-service ref
+ * (the service is constructed by bootChannels after this closure is wired).
+ * Internal boundary: mints the delivery authority + destination endpoint the
+ * notifyUser guard requires — there is no originating turn context here. A
+ * missing service or a no-channel resolution is non-fatal: the background
+ * notification is simply dropped.
+ */
+export function createBgNotifyFn(
+  bgNotifyRef: { ref?: import("../notification/notification-service.js").NotificationService },
+): (opts: { agentId: string; message: string; priority: "normal"; origin: "background_task" }) => Promise<void> {
+  return async (opts) => {
+    const service = bgNotifyRef.ref;
+    if (!service) return;
+    const destination = service.resolveDestination({ agentId: opts.agentId });
+    if (!destination.ok) return;
+    await service.notifyUser({
+      agentId: opts.agentId,
+      message: opts.message,
+      priority: opts.priority,
+      origin: opts.origin,
+      authority: destination.value.authority,
+      destinationEndpoint: destination.value.destinationEndpoint,
+    });
+  };
+}

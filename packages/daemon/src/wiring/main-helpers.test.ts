@@ -291,3 +291,58 @@ describe("daemon.ts wires buildMediaVisionBundle into MediaApiDeps (built-but-no
     expect(daemonSrc).toMatch(/mainModelIdFor\s*:/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// createBgNotifyFn: the background-task notifier extracted from daemon.ts.
+// Internal boundary — it must mint the delivery authority + destination
+// endpoint notifyUser requires, and drop non-fatally when the service is not
+// yet wired or no channel resolves.
+// ---------------------------------------------------------------------------
+
+describe("createBgNotifyFn", () => {
+  const OPTS = {
+    agentId: "agent-1",
+    message: "task done",
+    priority: "normal" as const,
+    origin: "background_task" as const,
+  };
+
+  it("threads the minted authority + destination endpoint into notifyUser", async () => {
+    const authority = { tenantId: "t", agentId: "agent-1", conversationRef: "cv_x" };
+    const destinationEndpoint = {
+      channelType: "telegram",
+      channelInstanceId: "telegram-acct",
+      conversationId: "chat-9",
+      conversationKind: "direct" as const,
+    };
+    const notifyUser = vi.fn().mockResolvedValue({ ok: true, value: "n-1" });
+    const service = {
+      resolveDestination: vi.fn().mockReturnValue({ ok: true, value: { authority, destinationEndpoint } }),
+      notifyUser,
+    };
+    const { createBgNotifyFn } = await import("./main-helpers.js");
+    const fn = createBgNotifyFn({ ref: service as never });
+
+    await fn(OPTS);
+
+    expect(service.resolveDestination).toHaveBeenCalledWith({ agentId: "agent-1" });
+    expect(notifyUser).toHaveBeenCalledWith(expect.objectContaining({
+      ...OPTS,
+      authority,
+      destinationEndpoint,
+    }));
+  });
+
+  it("drops non-fatally when the service is not yet wired or no channel resolves", async () => {
+    const { createBgNotifyFn } = await import("./main-helpers.js");
+    await expect(createBgNotifyFn({}) (OPTS)).resolves.toBeUndefined();
+
+    const notifyUser = vi.fn();
+    const service = {
+      resolveDestination: vi.fn().mockReturnValue({ ok: false, error: new Error("no channel") }),
+      notifyUser,
+    };
+    await expect(createBgNotifyFn({ ref: service as never })(OPTS)).resolves.toBeUndefined();
+    expect(notifyUser).not.toHaveBeenCalled();
+  });
+});

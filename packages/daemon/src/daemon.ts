@@ -159,7 +159,7 @@ import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setu
 import { createConversationReset } from "./wiring/conversation-reset.js";
 import { createSubagentActivityTracker, sweepStuckSubAgentRuns } from "./wiring/subagent-stuck-sweep.js"; // idle-based stuck sub-agent sweep (health tick)
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
-import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring } from "./wiring/main-helpers.js";
+import { restoreApprovalState, resolveGatewayTokens, setupChannelHealthMonitor, resolveModelHealthMultilingual, buildImageGenBundle, buildImageHandlerDeps, buildVideoGenBundle, buildVideoHandlerDeps, buildVideoStatusHandlerDeps, buildMediaVisionBundle, createBoundedAutonomyWiring, createBgNotifyFn } from "./wiring/main-helpers.js";
 import { setupChannelLivenessMonitor } from "./wiring/setup-channel-liveness-monitor.js";
 import { hardenDataDirPermissions } from "./wiring/harden-data-dir.js";
 import { buildAudioResolverDeps } from "./wiring/setup-audio-provider.js";
@@ -1500,25 +1500,9 @@ async function bootFoundation(
     timers,
   });
 
-  // Deferred notification ref + bgNotifyFn closure
+  // Deferred notification ref + bgNotifyFn closure (see createBgNotifyFn).
   const bgNotifyRef: { ref?: import("./notification/notification-service.js").NotificationService } = {};
-  const bgNotifyFn = async (opts: { agentId: string; message: string; priority: "normal"; origin: "background_task" }) => {
-    const service = bgNotifyRef.ref;
-    if (!service) return;
-    // Internal boundary: mint the delivery authority + destination endpoint the
-    // notifyUser guard requires (no originating turn context here). A no-channel
-    // resolution is non-fatal — the background notification is simply dropped.
-    const destination = service.resolveDestination({ agentId: opts.agentId });
-    if (!destination.ok) return;
-    await service.notifyUser({
-      agentId: opts.agentId,
-      message: opts.message,
-      priority: opts.priority,
-      origin: opts.origin,
-      authority: destination.value.authority,
-      destinationEndpoint: destination.value.destinationEndpoint,
-    });
-  };
+  const bgNotifyFn = createBgNotifyFn(bgNotifyRef);
 
   // 6.5.2. Credential broker (constructed only when executor.broker is configured)
   const brokerHandle = container.config.executor?.broker
