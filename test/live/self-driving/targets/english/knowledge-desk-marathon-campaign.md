@@ -52,7 +52,7 @@
 **Entry criteria (do not start driving until all hold):** kickoff paste filled (box ·
 knowledge-stack MCPs · embedding posture · model · budget) · box reinstalled to THIS build and
 `/root/comis-deployed-build` confirms your SHA · green baseline (`phase0-check.sh` +
-`rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES** (`comis fleet` shows zero
+`rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES** (`comis system-health` shows zero
 `config_posture:unresolved_model`, and the served `capabilityClass` on an `Execution complete`
 line matches the intended tier — an unknown id fails closed to nano silently) · **embedding
 RESOLVES** (the embedding provider is wired and the vec dimension in `memory.db` matches the
@@ -342,7 +342,7 @@ Deliverables of Phase 0, written BEFORE any driving, under `runs/<campaign>-<dat
     provider selection + keyless · operationModels · auth-profile rotation · failover · **the
     embedding-model resolver specifically (a wrong/absent embedding model silently kills recall —
     guard it in ground truth against the vec-dimension mismatch class)**.
-  - **Observability** — explain/IncidentReport · fleet/FleetHealthReport · trajectory ·
+  - **Observability** — explain/IncidentReport · system-health/SystemHealthReport · trajectory ·
     **recall-trace (the `memory.*` recall records — flagship)** · cache-trace · health_signal/
     model_health/config_posture (incl. the embedding-provider boot signal) · audit-log · OTel/
     Prometheus · cost/spend/pricing accounting.
@@ -469,7 +469,7 @@ dumb model, a lost commitment looks like the agent forgot. This is precisely the
 functional complaint ("the context fills and details vanish mid-task, without warning") — prove
 Comis does it honestly. Oracles: `comis explain` (`contextBudget` + the `context_exhausted`
 verdict), the trajectory (`tool.result_offloaded` + a resolvable `diskPathRel`, `session.summary`,
-`model.completed` token counts), `~/.comis/logs/cache-trace.jsonl`, and the fleet
+`model.completed` token counts), `~/.comis/logs/cache-trace.jsonl`, and the system-health
 `served_below_configured` / LCD-divergence `health_signal`.
 
 - **Compaction pipeline (the ten layers).** Drive a mega-conversation — a multi-topic
@@ -560,7 +560,7 @@ disabled toggle).
   watched topic for genuinely NEW material and SKIPS the LLM turn when nothing changed (the verdict
   protocol — skip vs wake), fail-OPEN on gate error/timeout/over-cap, ✓ status direct-to-channel
   with no model turn, and the `scheduler.cron.wakeGate` toggle both ways. Oracles: the `cron.runs`
-  per-fire lens + fleet `cron_wake_gate_efficiency` + the `security audit-log` jail trail — model on
+  per-fire lens + system-health `cron_wake_gate_efficiency` + the `security audit-log` jail trail — model on
   `../EXAMPLE-cron-wake-gate.md`, drive with `scripts/wg.mjs`. (Gate scripts PRINT their verdict to
   stdout — see Field notes.)
 - **Durable resume** — a long in-flight research run (or a scheduled digest) surviving a daemon
@@ -801,7 +801,7 @@ those three ways is a coverage gap, not a pass.
   residency applies to the campaign's own artifacts too: no creds in `runs/**`). The grounding gate
   above is mandatory; verify it (and the embedding resolution) at baseline.
 - **Spend watch:** the campaign makes real LLM + real web + real embedding calls for days. Check cost
-  per window in `comis fleet` at every phase boundary; runaway or unknown-priced spend (`pricing_gap`)
+  per window in `comis system-health` at every phase boundary; runaway or unknown-priced spend (`pricing_gap`)
   is itself a finding to investigate. A runaway research loop (an over-cap synthesis DAG, a monitor
   that wakes every cycle) is a defect candidate — investigate before driving on. ⚠ **The 5×-median
   runaway heuristic is a WITHIN-model signal, not cross-model:** compare a UC's cost to its own
@@ -865,22 +865,22 @@ Non-negotiables:
    SERIALLY (never parallel drives); document-ingest UCs drive via `scripts/media-drive.mjs`. Verify
    every predicate in GROUND TRUTH, never the surface reply: trajectory (`*.jsonl.trajectory.jsonl`
    via its `.trajectory-path.json` pointer, incl. the `memory.*` recall records) +
-   `_session-metadata.json` → `comis explain "<sessionKey|traceId>"` → `comis fleet --since N` →
+   `_session-metadata.json` → `comis explain "<sessionKey|traceId>"` → `comis system-health --since N` →
    `~/.comis/memory.db` (`scripts/db.mjs`) → only then a raw `daemon.log` grep. (On the box the
    npm-global `comis` serves the CLI; from a source checkout it is `node packages/cli/dist/cli.js`.)
    A false success is the worst outcome — and a confabulation is the false success this campaign most
    exists to catch.
 4. **AUDIT THE OBSERVABILITY EVERY CYCLE** — pass or fail, no exceptions. After EVERY use-case drive,
-   turn the lenses on themselves: run `comis explain` on the session and `comis fleet` over the
+   turn the lenses on themselves: run `comis explain` on the session and `comis system-health` over the
    window, and GRADE them against the ground truth you just read. Does `explain` name the actual root
-   cause (or a wrong/`unknown` verdict)? Does `fleet` surface the signal you found by hand (incl. a
+   cause (or a wrong/`unknown` verdict)? Does `system-health` surface the signal you found by hand (incl. a
    recall_degraded signal, an embedding/model_health boot signal, the `chimeric_model` posture)? Can
    the recall-trace show WHAT was recalled, via WHICH lane, at WHAT scope, and WHY it ranked? Is every
    load-bearing fact visible at default log level (INFO completion + `durationMs`, ERROR/WARN carrying
    `hint` + `errorKind` naming the exact config knob and values, step-tagged stages, event-bus events
    on state transitions)? Do the trajectory records carry what the incident needs? Any divergence — a
    grep you needed, a hand-join, a wrong-way or missing hint, DEBUG-only evidence, a field meaning two
-   things, a double-counting lens, a signal `fleet` missed — is a DEFECT in the observability layer:
+   things, a double-counting lens, a signal `system-health` missed — is a DEFECT in the observability layer:
    fix it test-first IN THE SAME CYCLE, then re-run the lens to prove the gap is closed. Litmus before
    closing any cycle: "next time, `comis explain <ref>` answers this in one call." If not, the cycle
    is not done.
@@ -942,7 +942,7 @@ Non-negotiables:
    attempts, record it as an honest fail with everything you learned and move on — do not spin.
 11. **IMPROVE THE OBS LAYER AND THE KIT CONSTANTLY, unprompted** — a standing deliverable of every
    cycle, not a wrap-up chore. Every friction from steps 4–6 ships as its own test-first improvement
-   (trajectory event → bridge mapping → translator → IncidentReport / FleetHealthReport section →
+   (trajectory event → bridge mapping → translator → IncidentReport / SystemHealthReport section →
    heuristic verdict, per the repo's obs feedback loop — the recall-trace / recall_degraded lens is
    this campaign's natural home for such improvements). Same for the kit — if the emulator or a
    `scripts/` helper drifted, errored, or misled you (`db.mjs` for a new memory column, a recall-lane
@@ -1009,7 +1009,7 @@ nothing:
   so real elapsed time can accumulate multi-fire evidence (a review that ran once is not yet
   "nightly").
 - **PHASE CADENCE:** at every phase boundary (and at least every few hours of driving) run `comis
-  fleet --since N` as a campaign heartbeat — degraded rate, error kinds, breaker trips, cost — plus
+  system-health --since N` as a campaign heartbeat — degraded rate, error kinds, breaker trips, cost — plus
   the endurance trendline (daemon RSS, open FDs, `memory.db`/WAL size, knowledge-base row count, log
   growth) — plus the **knowledge-integrity sweep** (row count diff — an unexplained drop is an S1
   candidate; a spot-check that a sample of recalled facts still trace to real rows/sources) — and
@@ -1136,7 +1136,7 @@ issue so a crash never loses a closed fix; do not push unless the operator asks.
   mined demand is a roadmap signal; the memory/decay/salience demands especially).
 - `TEST-PLAN.md` · `RESULTS-LOG.md` (per-UC: the verdict works / fails honestly with ground-truth
   evidence pointers, PLUS the step-5 memory/recall/learning audit result AND the step-6 product grade
-  — a UC missing either is NOT closed — plus periodic fleet-health + knowledge-integrity-sweep
+  — a UC missing either is NOT closed — plus periodic system-health + knowledge-integrity-sweep
   snapshots + anomaly-sweep outcomes) · `FIX-VERIFY-LOG.md` (issue → RED test → fix → wipe → rebuild →
   clean-slate reproduction → confirmation; one entry per issue, closed in order) · `OBS-AUDIT-LOG.md`
   (per-cycle: what each lens got right/wrong vs ground truth — with the recall-trace/recall_degraded

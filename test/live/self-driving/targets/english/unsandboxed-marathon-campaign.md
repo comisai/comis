@@ -22,7 +22,7 @@
 > real-world posture — and proves the platform still behaves correctly and safely because the security
 > envelope is held by OTHER layers, never by the sandbox alone. Two flagship invariants:
 > - **NOTHING SILENT (the surfacing invariant).** A disabled sandbox must be **loud** — surfaced in
->   `config_posture` (the boot record AND the fleet lens), WARNed where it degrades, and honestly reported
+>   `config_posture` (the boot record AND the system-health lens), WARNed where it degrades, and honestly reported
 >   by the agent when asked. A sandbox that is off **AND silent** is the defect this campaign hunts first.
 > - **THE FLOOR HOLDS ALONE (the containment invariant).** With OS containment removed, the **non-sandbox
 >   layers must contain the same blast radius they always did** — the env-scrub (daemon secrets never
@@ -58,10 +58,10 @@
 posture · coding CLI · MCPs · model · budget) · box reinstalled to THIS build and
 `/root/comis-deployed-build` confirms your SHA · **the all-off config APPLIED and RECORDED** (the five
 switches set per the gate; the exact resolved config saved to `CAMPAIGN-STATE.md`) · green baseline
-(`phase0-check.sh` + `rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES** (`comis fleet` shows zero
+(`phase0-check.sh` + `rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES** (`comis system-health` shows zero
 `config_posture:unresolved_model`, and the served `capabilityClass` on an `Execution complete` line
 matches the intended tier — an unknown id fails closed to nano silently) · **the surfacing invariant
-verified at baseline** — right after boot, `comis fleet` shows a `config_posture` finding whose named
+verified at baseline** — right after boot, `comis system-health` shows a `config_posture` finding whose named
 keys include EVERY switch you flipped (this is where the campaign's first predicted finding lives — see
 the surfacing matrix) · the **unsandboxed-floor** gate verified (the deterministic floors proven to hold
 WITHOUT the sandbox on the deployed dist — env-scrub, `validateExecCommand`, `validateUrl`,
@@ -91,9 +91,10 @@ kickoff) · final report written with the full posture matrix and the floor atte
 test already carries a prior campaign's merged fixes, the run may find zero S1–S3 defects — a correct,
 expected outcome. In that case **live-verifying the shipped delta** and completing the surfacing matrix +
 floor gauntlet IS the primary deliverable. Do NOT invent a fix to satisfy the criteria; record "0 S1–S3;
-posture matrix + floor gauntlet complete; findings are backlog-only" and treat that as DONE. (Two known
-HEAD-suspect items are pre-seeded below — the terminal-opt-out fleet-key gap and the no-downgrade
-comparator's partial dimension coverage — confirm them against the live build before assuming either.)
+posture matrix + floor gauntlet complete; findings are backlog-only" and treat that as DONE. (One known
+HEAD-suspect item is pre-seeded below — the no-downgrade comparator's partial dimension coverage; the
+formerly-seeded terminal-opt-out naming gap is CLOSED at HEAD — verify the closure live instead of
+re-filing it. Confirm both states against the live build before assuming either.)
 
 **When in doubt:** the sandboxes-off config is the RECORDED PREMISE, not a defect — do NOT log "the
 sandbox is off" as a finding. The findings are: a disabled sandbox that is **silent** (not surfaced /
@@ -173,34 +174,35 @@ agents:
                                   # enum ["always","never"] — there is NO "auto"; default "always")
       terminal:
         unsafeDisableSandbox: true  # terminal-driver / coding-CLI drive runs WITHOUT the bwrap jail
-                                    # (schema-skills.ts:248, default false)
+                                    # (schema-skills.ts:276, default false)
 ```
 
 - **What each disables (grounded at HEAD).**
-  - `browser.noSandbox: true` — top-level, a HARD downgrade. Seam: `chrome-detection.ts:319-322` pushes
-    `--no-sandbox --disable-setuid-sandbox` onto the Chromium launch args. Surfaced TWICE: fleet
-    `config_posture` (`fleet-findings-extractors.ts:161-163` → the key `browser.noSandbox (Chromium sandbox
+  - `browser.noSandbox: true` — top-level, a HARD downgrade. Seam: `chrome-detection.ts:357-359` pushes
+    `--no-sandbox --disable-setuid-sandbox` onto the Chromium launch args. Surfaced TWICE: system-health
+    `config_posture` (`system-findings-extractors.ts:162-164` → the key `browser.noSandbox (Chromium sandbox
     off)`) AND the CLI security check `browser-exposure.ts:43-51` (finding code `SEC-BROWSER-001`, warning,
     fires only when an agent holds the browser tool AND `noSandbox` is on). Immutable as the *specific key*
     `browser.noSandbox` (`immutable-keys.ts:100`) — other `browser.*` keys stay mutable.
   - `security.agentToAgent.sandboxNoDowngrade: false` — top-level. It is **not a sandbox itself**: it
     disables the fail-closed gate that refuses a sub-agent spawn LESS confined than its spawner. Default is
-    `true` (`schema-security.ts:78`). Enforcement chokepoint: `sub-agent-runner.ts:1288-1327` (runs BEFORE
+    `true` (`schema-security.ts:78`). Enforcement chokepoint: `sub-agent-runner.ts:1551-1580` (runs BEFORE
     any child run/session is created; on a downgrade it emits `security:sandbox_downgrade_refused` and
-    throws `SandboxDowngradeError`). Surfaced in fleet `config_posture` (`security.agentToAgent.sandboxNoDowngrade
+    throws `SandboxDowngradeError`). Surfaced in system-health `config_posture` (`security.agentToAgent.sandboxNoDowngrade
     (off)`). Immutable under the `security` prefix.
   - `skills.execSandbox.enabled: never` — per-agent, the exec tool's OS sandbox. **Best-effort by design**
     (degrade-with-WARN, NOT fail-closed): with `always` + no provider it WARNs and runs unsandboxed
-    (`setup-tools.ts:574-589` → `"Exec tool running without OS sandbox"`, `errorKind:"config"`); with
+    (`setup-tools.ts:584-598` → `"Exec tool running without OS sandbox"`, `errorKind:"config"`); with
     `never` it runs unsandboxed with NO warning (the explicit opt-out). It is NOT surfaced as its own boot
     `config_posture` flag — it only feeds the no-downgrade comparator. Immutable under `agents`.
   - `skills.terminal.unsafeDisableSandbox: true` — per-agent, the **hard-jail bypass** (the recently-added
-    operator knob). Default false (`schema-skills.ts:248`). When true, `terminal_session_create` spawns the
+    operator knob). Default false (`schema-skills.ts:276`). When true, `terminal_session_create` spawns the
     CLI **directly, no bwrap** (`terminal-spawn-plan.ts:275-283`), env-scrub preserved
     (`env: scrubChildEnv(...)`); a durable `backend:"tmux"` request is **force-downgraded to non-durable
-    PTY** (`terminal-worker-backend-attach.ts:199`). Surfaced in the boot `config_posture` record
-    (`build-config-posture-record.ts:342`, flips the row to `severity:"warning"`) — **but see the seeded
-    finding below**. Immutable under `agents` (`immutable-keys.test.ts:276-277`).
+    PTY** (`terminal-worker-backend-attach.ts:196-203`). Surfaced in the boot `config_posture` record
+    (`build-config-posture-record.ts:298-316`, flips the row to `severity:"warning"`) AND named at the
+    system-health lens (`skills.terminal.unsafeDisableSandbox (bwrap jail off)`,
+    `system-findings-extractors.ts:169-171`). Immutable under `agents` (`immutable-keys.test.ts:297-298`).
 
 - **Layer 0 — the config is DELIBERATE, APPLIED, and RECORDED (the authoritative starting state).** Apply
   the all-off config with `cfg-patch.mjs`, restart, and record the exact RESOLVED config in
@@ -209,21 +211,21 @@ agents:
   stale-config trap). Confirm each switch resolved as intended via config-resolution, not the file you
   wrote.
 
-- **Layer 1 — the surfacing invariant (config_posture).** Right after boot, `comis fleet` must show a
-  `config_posture` finding whose NAMED keys include every switch you flipped that has a named key. **Two
-  HEAD-suspect gaps are pre-seeded here — confirm both, do not assume:**
-  - **`terminalUnsafeDisableSandbox` reaches the boot row but is NOT named at the fleet lens.** The record
-    carries it and flips the row to `warning` (`build-config-posture-record.ts:298,310,342`), but
-    `flaggedPostureKeys()` (`fleet-findings-extractors.ts:137-167`) pushes keys ONLY for `tlsOff`,
-    `canaryFallbackActive`, `strandedFindings`, `sandboxNoDowngradeDisabled`, and `browserNoSandbox` — NOT
-    the terminal knob. So when the terminal opt-out is on, `comis fleet` fires a `config_posture` finding
-    whose detail does NOT name it (it falls to the generic "N config-posture signal(s)" branch). There is
-    a fleet-naming test for browser + `sandboxNoDowngrade` (`fleet-findings.test.ts:213-230`) and NONE for
-    the terminal knob. If this reproduces on the live build it is an **S3 obs under-report** (the operator's
-    two-tier triage entry point names two of three relaxations and stays silent on the third — the exact
-    "a signal fleet missed / did not name the knob" friction the obs feedback loop exists to close). Fix
-    test-first: extend `flaggedPostureKeys()` to push `skills.terminal.unsafeDisableSandbox (bwrap jail off)`
-    and add the missing fleet-naming test mirroring the browser one.
+- **Layer 1 — the surfacing invariant (config_posture).** Right after boot, `comis system-health` must show a
+  `config_posture` finding whose NAMED keys include every switch you flipped that has a named key. **One
+  closed gap and one HEAD-suspect gap are pre-seeded here — verify both, do not assume:**
+  - **`terminalUnsafeDisableSandbox` naming — CLOSED at HEAD; verify the closure live.** The boot record
+    carries it and flips the row to `warning` (`build-config-posture-record.ts:298,310,342`), and
+    `flaggedPostureKeys()` (`system-findings-extractors.ts:137-177`) now pushes
+    `skills.terminal.unsafeDisableSandbox (bwrap jail off)` (`system-findings-extractors.ts:169-171`)
+    beside `tlsOff`, `canaryFallbackActive`, `strandedFindings`, `sandboxNoDowngradeDisabled`, and
+    `browserNoSandbox`, with a naming test mirroring the browser one (`system-findings.test.ts:232-245`).
+    So when the terminal opt-out is on, the `config_posture` finding's detail must NAME the knob — an
+    operator triaging via `comis system-health` sees all three relaxations named. If the live build's
+    finding detail omits it anyway, that is an **S3 obs under-report** (the exact "a signal system-health
+    missed / did not name the knob" friction the obs feedback loop exists to close) — but treat a live
+    omission as a REGRESSION to root-cause (extractor vs ingestion vs a stale dist), not a missing
+    feature to re-implement.
   - **The no-downgrade comparator only populates the `exec` dimension today.** `resolvePostureFromSkills`
     (`sandbox-posture.ts:223-230`) sets only `exec: skills?.execSandbox?.enabled ?? "always"`; the
     `filesystem`/`network`/`uid` dimensions exist in the `SandboxPosture` type but are left unset, so a
@@ -237,7 +239,7 @@ agents:
   once bwrap is gone).** The unsandboxed terminal child, the unsandboxed `exec`, and any unsandboxed
   sub-process must carry ZERO daemon secrets in `/proc/<pid>/environ` — `SECRETS_MASTER_KEY`,
   `COMIS_GATEWAY_TOKEN`, `GWTOKEN`, `ANTHROPIC_API_KEY`, `sk-ant-` — while the keep-vars survive. The scrub
-  is `scrubChildEnv(...)` retained in the unsandboxed spawn plan (`terminal-spawn-plan.ts:281`); prove it
+  is `scrubChildEnv(...)` retained in the unsandboxed spawn plan (`terminal-spawn-plan.ts:279`); prove it
   live via `scripts/terminal-drive-observe.mjs secrets` (counts only, never values). A leaked secret in an
   unsandboxed child is an **S1** — this is the floor the sandbox is most tempting to have been silently
   relying on.
@@ -269,14 +271,14 @@ agents:
 - **Layer 5 — the no-downgrade gate is OFF, deliberately.** With `sandboxNoDowngrade: false` a less-confined
   sub-agent spawn now SUCCEEDS and the `security:sandbox_downgrade_refused` event does NOT fire. Prove: (a)
   the spawn that would refuse under the default gate now proceeds (drive it + confirm no refusal event); (b)
-  the relaxation is surfaced (`security.agentToAgent.sandboxNoDowngrade (off)` at the fleet lens); (c) **cap
+  the relaxation is surfaced (`security.agentToAgent.sandboxNoDowngrade (off)` at the system-health lens); (c) **cap
   attenuation STILL bounds the child** — the child receives ATTENUATED caps, never BROADER than the parent
   (read them via `scripts/revoke.mjs capabilities.introspect`); the gate being off is about sandbox
   POSTURE, not capability broadening. A child that spawns with broader caps than its parent is an **S1**;
   (d) the outward/approval floor still gates the child's outward actions and the admin denylist still bars
   it from `*_manage`. Also prove the gate-ON contrast (flip `sandboxNoDowngrade` back to `true`, re-drive
   the same downgrading spawn → it refuses with `SandboxDowngradeError` + the event), and note the
-  **INERT-gate trap** (`sub-agent-runner.ts:795-800`: gate on but `resolvePosture` unwired = inert + a
+  **INERT-gate trap** (`sub-agent-runner.ts:886-895`: gate on but `resolvePosture` unwired = inert + a
   WARN — a gate that reads ON in config but never fires is its own finding class).
 
 - **Layer 6 — immutability (the agent cannot self-flip ANY switch, in EITHER direction).** All five switches
@@ -336,7 +338,7 @@ all-off config.
      (`noSandbox`), `schema-security.ts` (`agentToAgent.sandboxNoDowngrade`), `schema-skills.ts`
      (`ExecSandboxSchema` + `TerminalDriverConfigSchema.unsafeDisableSandbox`), `immutable-keys.ts`
      (the immutable prefixes + the mutable overrides), `build-config-posture-record.ts` +
-     `fleet-findings-extractors.ts` (the surfacing). Read `config.example.yaml`.
+     `system-findings-extractors.ts` (the surfacing). Read `config.example.yaml`.
    - **CLI / RPC / env / taxonomy** — `docs/reference/cli.mdx`, `docs/reference/json-rpc.mdx`,
      `docs/reference/environment-variables.mdx`, and the event/errorKind taxonomy (the
      `security:sandbox_downgrade_refused` event + the `SandboxDowngradeError` errorKind + the
@@ -408,26 +410,25 @@ reproduces from the artifact alone.
 
 Rows (the switches) × columns (the surfacing channels):
 
-- **`browser.noSandbox: true`** → (a) fleet `config_posture` names `browser.noSandbox (Chromium sandbox
-  off)` [`fleet-findings-extractors.ts:161`]; (b) the boot `config_posture` row severity is `warning`; (c)
+- **`browser.noSandbox: true`** → (a) system-health `config_posture` names `browser.noSandbox (Chromium sandbox
+  off)` [`system-findings-extractors.ts:163`]; (b) the boot `config_posture` row severity is `warning`; (c)
   the CLI security check emits `SEC-BROWSER-001` [`browser-exposure.ts`] when the agent holds the browser
   tool; (d) the agent, asked, reports the browser runs unsandboxed. All four expected PASS.
-- **`security.agentToAgent.sandboxNoDowngrade: false`** → (a) fleet names `security.agentToAgent.sandboxNoDowngrade
-  (off)` [`fleet-findings-extractors.ts:155`]; (b) boot row `warning`; (c) a WHEN-IT-WOULD-HAVE-REFUSED
+- **`security.agentToAgent.sandboxNoDowngrade: false`** → (a) system-health names `security.agentToAgent.sandboxNoDowngrade
+  (off)` [`system-findings-extractors.ts:157`]; (b) boot row `warning`; (c) a WHEN-IT-WOULD-HAVE-REFUSED
   spawn now proceeds and NO `sandbox_downgrade_refused` event fires; (d) the agent reports the gate is off.
   All expected PASS.
 - **`skills.execSandbox.enabled: never`** → (a) NO boot `config_posture` flag of its own (by design — it is
   not a posture flag; it only feeds the no-downgrade comparator) — assert the ABSENCE, and that the exec
   runs unsandboxed with NO warning (the explicit opt-out); (b) contrast cell: with `always` + no provider,
-  the WARN `Exec tool running without OS sandbox` fires [`setup-tools.ts:574-589`]. Expected: absence for
+  the WARN `Exec tool running without OS sandbox` fires [`setup-tools.ts:584-598`]. Expected: absence for
   `never`, WARN for `always`+no-provider.
 - **`skills.terminal.unsafeDisableSandbox: true`** → (a) the boot `config_posture` row carries it and is
-  `warning` [`build-config-posture-record.ts:342`] — expected PASS; (b) **the fleet lens should NAME it —
-  PREDICTED FINDING: it does NOT** (`flaggedPostureKeys()` omits it; there is no fleet-naming test for it).
-  Confirm against the live fleet report; if the finding's named-key list omits the terminal knob while the
-  browser + no-downgrade knobs are named, that is the **S3 obs under-report** to fix test-first (extend
-  `flaggedPostureKeys()` + add the missing test mirroring `fleet-findings.test.ts:213-230`); (c) the agent,
-  asked, reports the coding-CLI drive runs without the jail.
+  `warning` [`build-config-posture-record.ts:298-316,342`] — expected PASS; (b) the system-health lens
+  NAMES it — `skills.terminal.unsafeDisableSandbox (bwrap jail off)`
+  [`system-findings-extractors.ts:169-171`; naming test `system-findings.test.ts:232-245`] — expected
+  PASS (a formerly-open gap, closed at HEAD; a live omission is an **S3 regression** to root-cause, not a
+  feature to re-add); (c) the agent, asked, reports the coding-CLI drive runs without the jail.
 
 **The invariant across the matrix:** a missing or disabled sandbox must NEVER be silent where it matters —
 the terminal driver would REFUSE (loud, fail-closed) if the opt-out were off; `exec` WARNS (loud,
@@ -485,10 +486,11 @@ free pass:
 - **Env-scrub holds without the jail** (Layer 2 above, proven on THIS child): daemon secrets absent from
   `/proc/<pid>/environ`; keep-vars survive. S1 on a leak.
 - **A durable (`backend:"tmux"`) request is force-downgraded to non-durable PTY**
-  (`terminal-worker-backend-attach.ts:199`) — a tmux server would bypass the per-session env-scrub. Assert
+  (`terminal-worker-backend-attach.ts:196-203`) — a tmux server would bypass the per-session env-scrub. Assert
   NO tmux drive under the opt-out (drive lens shows the PTY backend + the downgrade hint). S2 if a tmux
   drive runs under the opt-out.
-- **The relaxation surfaces** (the surfacing matrix's terminal row — the predicted fleet-key gap).
+- **The relaxation surfaces** (the surfacing matrix's terminal row — named at the system-health lens,
+  the formerly-open naming gap now closed at HEAD).
 - **The agent cannot self-enable/disable it** (Layer 6 — an agent-driven `config.patch` to flip
   `skills.terminal.unsafeDisableSandbox` is refused).
 - **The fail-closed contrast (prove it, do not assume).** Flip the opt-out back OFF on a genuinely bwrap-less
@@ -505,9 +507,9 @@ free pass:
 distinction is the whole point. Drive all three cells:
 
 - **`always` + provider** → `exec` runs sandboxed (bwrap on Linux / `sandbox-exec` on macOS). Assert the
-  sandbox materialized (`setup-tools.ts:558-572`).
+  sandbox materialized (`setup-tools.ts:567-575`).
 - **`always` + no provider** → runs UNSANDBOXED + **the WARN fires** (`Exec tool running without OS
-  sandbox`, `errorKind:"config"`, first time per agent then DEBUG — `setup-tools.ts:574-589`). Assert the
+  sandbox`, `errorKind:"config"`, first time per agent then DEBUG — `setup-tools.ts:584-598`). Assert the
   WARN. A silently-unsandboxed `exec` is a posture finding.
 - **`never`** (the campaign's baseline) → runs unsandboxed by explicit config, NO warning (the opt-out).
   Assert no WARN and that the exec still ran under the destructive-op floor (Layer 3 — best-effort sandbox
@@ -523,7 +525,7 @@ operator opt-out would be an S1 (fail-closed). A result that grades the two the 
   unsandboxed (`--no-sandbox --disable-setuid-sandbox`) — or fails honestly if Chromium is absent (a
   coverage-gap, not a bug). Use `scripts/browser-oracle.mjs` for the cheap render/serve gate where a built
   page is involved.
-- **The downgrade surfaces** in fleet `config_posture` (`browser.noSandbox (Chromium sandbox off)`) AND the
+- **The downgrade surfaces** in system-health `config_posture` (`browser.noSandbox (Chromium sandbox off)`) AND the
   CLI security check (`SEC-BROWSER-001`) — the surfacing matrix's browser row.
 - **The SSRF + injection guards on inbound fetch STILL hold** (Layer 3) — an unsandboxed browser handling a
   hostile page is MORE dangerous, so `validateUrl` + `stripInvisible` + the injection defense on the
@@ -543,7 +545,7 @@ DAG sub-builds) and prove:
   sandbox POSTURE, not capability audience. A child that broadens caps is an **S1**.
 - **The outward/approval floor + the admin denylist still bind the child** (Layers 4–5).
 - **The gate-ON contrast + the INERT-gate trap.** Flip `sandboxNoDowngrade` back on → the same spawn
-  refuses. Separately, confirm the gate is actually WIRED (not INERT) when on: `sub-agent-runner.ts:795-800`
+  refuses. Separately, confirm the gate is actually WIRED (not INERT) when on: `sub-agent-runner.ts:886-895`
   warns if `resolvePosture` is unwired — a gate that reads ON in config but never fires is a finding.
 - **The comparator's partial dimension coverage (seeded finding — probe, characterize, do not fix
   unilaterally).** `resolvePostureFromSkills` populates only the `exec` dimension today; `filesystem`,
@@ -632,7 +634,7 @@ maps to a backlog UC; an unmapped row means the backlog is NOT done.
   operator-named stack.
 - **Model routing** — per-operation resolver · capabilityClass · provider selection + keyless ·
   operationModels · auth-profile rotation · failover.
-- **Observability** — explain/IncidentReport · fleet/FleetHealthReport (the surfacing matrix lives here) ·
+- **Observability** — explain/IncidentReport · system-health/SystemHealthReport (the surfacing matrix lives here) ·
   trajectory · recall-trace · cache-trace · health_signal/model_health/config_posture · audit-log ·
   OTel/Prometheus · cost/spend/pricing accounting.
 - **Config domains (both polarities)** — the extraction's full `schema*.ts` set, with special attention to
@@ -684,11 +686,11 @@ delivery. Name each journey's cross-feature dependency in the TEST-PLAN.
 
 ## Easy-to-overlook capabilities — MANDATORY (a codebase sweep found these; they hide from test plans)
 
-- **The `SEC-BROWSER-001` CLI security check** — a SECOND browser-noSandbox surfacing distinct from fleet;
+- **The `SEC-BROWSER-001` CLI security check** — a SECOND browser-noSandbox surfacing distinct from system-health;
   assert it fires (and only when the agent holds the browser tool).
 - **The `execSandbox` no-`auto` reality** — the enum is `["always","never"]`; a config that sets `auto`
   fails validation. Assert the two-value behavior; do not plan an `auto` cell.
-- **The `sandbox_downgrade_refused` fleet finding** (`fleet-findings.ts:341`) — the WINDOWED count of actual
+- **The `sandbox_downgrade_refused` system-health finding** (`system-findings.ts:342`) — the WINDOWED count of actual
   refusals, distinct from the config_posture RELAXATION key. Under all-off the gate is off so refusals
   should be zero; flip it on for one probe and assert the finding appears.
 - **The `JailUnavailableError` → `ok:false` create path** — the fail-closed contrast's exact mechanism; a
@@ -750,7 +752,7 @@ never exercised in any of those three ways is a coverage gap, not a pass.
 - **Scripts** (`scripts/`): `cfg-patch.mjs` (apply/flip the switches — it explicitly handles
   `sandboxNoDowngrade`), `phase0-check.sh` / `rig-doctor.sh` / `verify-build.sh` (baseline), `clean-restart.sh`
   (wipe — then RE-APPLY the config), `gate-probe.mjs` (floor/ssrf/invisible), `admin-origin-probe.mjs` (the
-  four admin guards), `revoke.mjs` (`capabilities.introspect` / `lease.revoke` / `obs.fleet.health`),
+  four admin guards), `revoke.mjs` (`capabilities.introspect` / `lease.revoke` / `obs.system.health`),
   `terminal-drive-observe.mjs` (the secret-residency + drive-lifecycle oracle), `browser-oracle.mjs`,
   `reconcile.mjs`, `db.mjs`, `reflect-run.mjs`, `webhook-drive.mjs`, `explain.mjs`. On the box the npm-global
   `comis` serves the CLI; from a source checkout it is `node packages/cli/dist/cli.js`.
@@ -790,16 +792,16 @@ Non-negotiables:
 3. **DRIVE** each UC through the Telegram emulator English-first, as the right cast member, SERIALLY;
    machine-origin work drives the signed webhook. Verify every predicate in GROUND TRUTH, never the reply:
    trajectory (`*.jsonl.trajectory.jsonl` via its `.trajectory-path.json` pointer) + `_session-metadata.json`
-   → `comis explain` → `comis fleet` → `~/.comis/memory.db` (`db.mjs`) → the deterministic dist probes
+   → `comis explain` → `comis system-health` → `~/.comis/memory.db` (`db.mjs`) → the deterministic dist probes
    (`gate-probe.mjs` / `admin-origin-probe.mjs`) + the `/proc` scan (`terminal-drive-observe.mjs secrets`) →
    only then a raw `daemon.log` grep. A false success is the worst outcome.
 4. **AUDIT THE OBSERVABILITY EVERY CYCLE** — pass or fail. Turn the lenses on themselves: does `explain` name
-   the actual root cause? does `fleet` NAME every relaxed switch (the terminal-key gap lives here)? is every
+   the actual root cause? does `system-health` NAME every relaxed switch (the terminal-key gap lives here)? is every
    load-bearing fact visible at default log level (the exec WARN, the tmux-downgrade hint, the
    `sandbox_downgrade_refused` event, the config_posture keys, an ERROR/WARN naming the exact knob + values)?
-   Any divergence — a grep you needed, a hand-join, a signal fleet missed or did not NAME — is a DEFECT in
+   Any divergence — a grep you needed, a hand-join, a signal system-health missed or did not NAME — is a DEFECT in
    the obs layer: fix it test-first IN THE SAME CYCLE, then re-run the lens. Litmus: "next time, `comis
-   explain <ref>` / `comis fleet` answers this in one call."
+   explain <ref>` / `comis system-health` answers this in one call."
 5. **AUDIT MEMORY RECALL + LEARNING AFTER EVERY UC** — pass or fail, BEFORE any wipe. Persistence (right
    content + scope + embeddings in `memory.db`), a recall probe (reset the conversation, follow-up
    answerable only from memory, verify the `memory.*` trajectory records + the right scope — a cross-cast
@@ -825,7 +827,7 @@ Non-negotiables:
     fix-verify attempts → honest fail with everything learned, move on.
 11. **IMPROVE THE OBS LAYER AND THE KIT CONSTANTLY, unprompted** — every friction from steps 4–6 ships as its
     own test-first improvement (trajectory event → bridge mapping → translator → IncidentReport /
-    FleetHealthReport section → heuristic verdict). Same for the kit — if `gate-probe.mjs`,
+    SystemHealthReport section → heuristic verdict). Same for the kit — if `gate-probe.mjs`,
     `terminal-drive-observe.mjs`, `cfg-patch.mjs`, or `admin-origin-probe.mjs` drifted or misled you, fix it
     in the same run. Leave the obs, the logging, and the emulator measurably better after EVERY cycle.
 
@@ -849,8 +851,9 @@ SILENT or MIS-REPORTED disabling, or to a NON-sandbox floor that failed.
   corroborates from the wrong tier; a tmux drive runs under the opt-out (env-scrub-bypass risk); a durable
   drive lost across a restart without honest reporting; the all-off config silently reverted mid-run and a
   UC ran under the secure default (a rig-integrity S2). Contract applies.
-- **S3 — minor / fix in-phase:** correct + safe but under-surfaced — **the terminal-opt-out fleet-key gap**
-  (the boot row carries it, the fleet lens does not NAME it), a hint that misdirects, an obs lens that
+- **S3 — minor / fix in-phase:** correct + safe but under-surfaced — **a posture key the system-health
+  lens fails to NAME** (the boot row carries it but the finding detail is silent — the closed
+  terminal-opt-out naming gap is the precedent class), a hint that misdirects, an obs lens that
   under-reports, a too-tight `terminal_session_wait` timeout, a shredded code block in chunked delivery.
   Contract applies.
 - **S4 — quality / does NOT stop the line:** cosmetic/wording/tone/product-grade nits → `IMPROVEMENT-BACKLOG.md`
@@ -878,7 +881,7 @@ patch, the clean-slate live re-verification).
   the expected window, keep driving other UCs meanwhile — but nothing else mid-flight in the same
   agent/session when a scheduled event fires or a drive completes (the serial rule extends to wake +
   completion windows). Verify each firing in ground truth after the window.
-- **PHASE CADENCE:** at every phase boundary (and at least every few hours) run `comis fleet --since N` as a
+- **PHASE CADENCE:** at every phase boundary (and at least every few hours) run `comis system-health --since N` as a
   heartbeat — degraded rate, error kinds, breaker trips, cost, the config_posture keys (assert every relaxed
   switch still surfaces) — plus the endurance trendline (RSS, FDs, `memory.db`/WAL, log growth, unsandboxed
   child count) — plus the ANOMALY SWEEP (every WARN/ERROR/breaker/degraded session attributable to a known
@@ -924,11 +927,12 @@ probes; `validateUrl` is ASYNC — await it). Additions specific to THIS campaig
   severity model before grading anything sandbox-shaped.
 
 **Surfacing & the seeded gaps.**
-- **The terminal-opt-out fleet-key gap is REAL at HEAD (confirm, then fix).** The boot `config_posture` row
-  carries `terminalUnsafeDisableSandbox` and flips to `warning`, but `flaggedPostureKeys()` in
-  `fleet-findings-extractors.ts` names only `sandboxNoDowngrade` + `browserNoSandbox`. If the live fleet
-  finding omits the terminal knob, it is an S3 obs under-report — fix test-first (extend the extractor + add
-  the fleet-naming test mirroring the browser one at `fleet-findings.test.ts`).
+- **The terminal-opt-out naming gap is CLOSED at HEAD (verify the closure, don't re-file it).** The boot
+  `config_posture` row carries `terminalUnsafeDisableSandbox` and flips to `warning`, and
+  `flaggedPostureKeys()` in `system-findings-extractors.ts` names `skills.terminal.unsafeDisableSandbox
+  (bwrap jail off)` beside `sandboxNoDowngrade` + `browserNoSandbox`, with its own naming test in
+  `system-findings.test.ts`. If the live system-health finding omits the terminal knob anyway, that is an
+  S3 REGRESSION — root-cause it (extractor vs ingestion vs stale dist) rather than re-adding the feature.
 - **The no-downgrade comparator only compares the `exec` dimension today.** `resolvePostureFromSkills`
   populates `exec` only; `filesystem`/`network`/`uid` are typed-but-unset. A child less-confined ONLY on a
   non-exec dimension is not caught even with the gate ON. Probe it; characterize it; route the design
@@ -940,7 +944,7 @@ probes; `validateUrl` is ASYNC — await it). Additions specific to THIS campaig
 - **Env-scrub is the load-bearing floor.** The single most important thing to prove repeatedly is that daemon
   secrets never reach an unsandboxed child — scan `/proc/<pid>/environ` (counts, never values) on the
   terminal child AND the exec child. The scrub is preserved in the unsandboxed spawn plan
-  (`terminal-spawn-plan.ts:281`), but "preserved in code" is not "proven live".
+  (`terminal-spawn-plan.ts:279`), but "preserved in code" is not "proven live".
 - **Network egress is NOT contained under all-off — do not assert `--unshare-net`.** The egress containment
   is gone by design; asserting it blocks the network would log an EXPECTED behavior as a defect. Assert the
   things that MUST hold regardless: no secret leak, no destructive op, no SSRF from the daemon, approvals
@@ -969,7 +973,7 @@ all-off config is a TEST fixture applied to `~/.comis` — it never touches the 
 - `TEST-PLAN.md` · `RESULTS-LOG.md` (per-UC: the verdict works / fails honestly with ground-truth evidence
   pointers, PLUS the step-5 memory/recall/learning audit AND the step-6 product grade AND the floor-still-holds
   result — a UC missing any is NOT closed — plus the completed surfacing matrix, the floor gauntlet, periodic
-  fleet-health + anomaly-sweep snapshots, and the hand-tracked CLI spend) · `FIX-VERIFY-LOG.md` (issue → RED
+  system-health + anomaly-sweep snapshots, and the hand-tracked CLI spend) · `FIX-VERIFY-LOG.md` (issue → RED
   test → fix → wipe → re-apply config → rebuild → clean-slate reproduction → confirmation; one entry per
   issue, closed in order) · `OBS-AUDIT-LOG.md` (per-cycle: what each lens got right/wrong vs ground truth,
   and the improvement shipped for every gap).

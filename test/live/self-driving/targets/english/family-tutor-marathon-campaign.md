@@ -125,7 +125,7 @@
 **Entry criteria (do not start driving until all hold):** kickoff paste filled (box · learner
 personas · study-stack MCPs · model · budget) · box reinstalled to THIS build and
 `/root/comis-deployed-build` confirms your SHA · green baseline (`phase0-check.sh` +
-`rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES** (`comis fleet` shows zero
+`rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES** (`comis system-health` shows zero
 `config_posture:unresolved_model`, and the served `capabilityClass` on an `Execution complete`
 line matches the intended tier — an unknown id fails closed to nano silently) · **embedding
 RESOLVES** (the embedding provider is wired and the vec dimension in `memory.db` matches the
@@ -549,7 +549,7 @@ Deliverables of Phase 0, written BEFORE any driving, under `runs/<campaign>-<dat
     learner model — guard the vec-dimension mismatch class in ground truth). The GATE must hold
     on every tier a Track-K sweep serves (integrity + age-appropriateness are binary on nano
     too).
-  - **Observability** — explain/IncidentReport · fleet/FleetHealthReport · trajectory ·
+  - **Observability** — explain/IncidentReport · system-health/SystemHealthReport · trajectory ·
     recall-trace (the `memory.*` records — the learner-model audit's substrate) · cache-trace ·
     health_signal/model_health/config_posture (incl. the embedding boot signal) · audit-log ·
     OTel/Prometheus · cost/spend/pricing accounting.
@@ -689,7 +689,7 @@ completed one-shot, the other learner's slot, a disabled toggle).
   if today's drill already happened (the ledger says so), the gate skips — no model turn, ✓
   status honoring quiet hours; if the kid missed, it wakes and nudges; after N consecutive
   misses it ESCALATES to the parent («Yoav missed three drills in a row») instead of nagging the kid
-  a fourth time. Oracles: the `cron.runs` per-fire lens + fleet `cron_wake_gate_efficiency` +
+  a fourth time. Oracles: the `cron.runs` per-fire lens + system-health `cron_wake_gate_efficiency` +
   the `security audit-log` jail trail — model on `../EXAMPLE-cron-wake-gate.md`, drive with
   `scripts/wg.mjs`; the gate script PRINTS its verdict to stdout (see field notes). Fail-open
   on gate error is the documented semantics — assert it, and assert the toggle both ways.
@@ -867,7 +867,7 @@ Context management fails SILENTLY — a truncated window looks like a dumb model
 commitment looks like a tutor that forgot the exam. Test the engine at its breaking points.
 Oracles: `comis explain` (`contextBudget` + the `context_exhausted` verdict), the trajectory
 (`tool.result_offloaded` + `diskPathRel`, `session.summary`, `model.completed` token counts),
-`~/.comis/logs/cache-trace.jsonl`, and the fleet `served_below_configured` / LCD-divergence
+`~/.comis/logs/cache-trace.jsonl`, and the system-health `served_below_configured` / LCD-divergence
 `health_signal`.
 
 - **Compaction pipeline (the ten layers).** Drive a mega-session — a full evening: homework
@@ -1124,7 +1124,7 @@ coverage gap, not a pass.
   (keyless defaults are valid); every media UC's oracle starts from the resolved posture, and a
   missing provider is a config STATE (honest absence), never an excuse for a fabricated media
   result.
-- **Spend watch:** real LLM calls for days. Check cost per window in `comis fleet` at every
+- **Spend watch:** real LLM calls for days. Check cost per window in `comis system-health` at every
   phase boundary; runaway or unknown-priced spend (`pricing_gap`) is itself a finding. A single
   UC costing far above the running median (~5×) is a defect candidate — but compare WITHIN a
   model tier, never across a Track-K sweep (tier spans are legitimate). The kickoff `Budget:`
@@ -1185,19 +1185,19 @@ Non-negotiables:
 3. **DRIVE** each use case through the Telegram emulator **English-first, as the RIGHT cast
    member**, SERIALLY (never parallel drives). Verify every predicate in GROUND TRUTH, never
    the surface reply: trajectory (`*.jsonl.trajectory.jsonl` via its `.trajectory-path.json`
-   pointer) + `_session-metadata.json` → `comis explain "<sessionKey|traceId>"` → `comis fleet
+   pointer) + `_session-metadata.json` → `comis explain "<sessionKey|traceId>"` → `comis system-health
    --since N` → `~/.comis/memory.db` (`scripts/db.mjs`) → only then a raw `daemon.log` grep.
    (On the box the npm-global `comis` serves the CLI; from a source checkout it is
    `node packages/cli/dist/cli.js`.) A false success is the worst outcome.
 4. **AUDIT THE OBSERVABILITY EVERY CYCLE** — pass or fail, no exceptions. After EVERY use-case
-   drive, turn the lenses on themselves: run `comis explain` on the session and `comis fleet`
+   drive, turn the lenses on themselves: run `comis explain` on the session and `comis system-health`
    over the window, and GRADE them against the ground truth you just read. Does `explain` name
-   the actual root cause? Does `fleet` surface the signal you found by hand? Is every
+   the actual root cause? Does `system-health` surface the signal you found by hand? Is every
    load-bearing fact visible at default log level (INFO completion + `durationMs`, ERROR/WARN
    carrying `hint` + `errorKind` naming the exact config knob and values, step-tagged stages,
    event-bus events on state transitions)? Do the trajectory records carry what the incident
    needs? Any divergence — a grep you needed, a hand-join, a wrong-way or missing hint,
-   DEBUG-only evidence, a field meaning two things, a double-counting lens, a signal `fleet`
+   DEBUG-only evidence, a field meaning two things, a double-counting lens, a signal `system-health`
    missed — is a DEFECT in the observability layer: fix it test-first IN THE SAME CYCLE, then
    re-run the lens to prove the gap is closed. Litmus before closing any cycle: "next time,
    `comis explain <ref>` answers this in one call." If not, the cycle is not done.
@@ -1259,7 +1259,7 @@ Non-negotiables:
 11. **IMPROVE THE OBS LAYER AND THE KIT CONSTANTLY, unprompted** — a standing deliverable of
    every cycle, not a wrap-up chore. Every friction from steps 4–6 ships as its own test-first
    improvement (trajectory event → bridge mapping → translator → IncidentReport /
-   FleetHealthReport section → heuristic verdict, per the repo's obs feedback loop). Same for
+   SystemHealthReport section → heuristic verdict, per the repo's obs feedback loop). Same for
    the kit — if the emulator or a `scripts/` helper drifted, errored, or misled you, fix it in
    the same run. Leave the observability, the logging, and the emulator measurably better
    after EVERY cycle.
@@ -1331,7 +1331,7 @@ nothing:
   else is mid-flight in the same agent/session when a scheduled event fires (the serial rule
   extends to wake windows). Verify each firing in ground truth after the window passes.
 - **PHASE CADENCE:** at every phase boundary (and at least every few hours of driving) run
-  `comis fleet --since N` as a campaign heartbeat — degraded rate, error kinds, breaker trips,
+  `comis system-health --since N` as a campaign heartbeat — degraded rate, error kinds, breaker trips,
   cost — plus the endurance trendline (daemon RSS, open FDs, `memory.db`/WAL size, log growth)
   — and append a dated snapshot to RESULTS-LOG.md. Pair it with the ANOMALY SWEEP: every
   WARN/ERROR, breaker trip, and degraded session in the window must be attributable to a known
@@ -1389,7 +1389,7 @@ the hard way.
 
 **Observability read-order.**
 - **Ground-truth read-order holds:** trajectory (via its `.trajectory-path.json` pointer) →
-  `_session-metadata.json` → `explain` → `fleet` → only then a raw log grep. Real MCP results
+  `_session-metadata.json` → `explain` → `system-health` → only then a raw log grep. Real MCP results
   are `wrapExternalContent`-wrapped — a green mock is not ground truth.
 - **Non-ASCII in the trajectory JSONL may be `\u`-escaped — the WIRE oracle is authoritative for
   non-ASCII text.** A naive `grep` for an accented Spanish drill word (or a guillemet «», an emoji)
@@ -1405,7 +1405,7 @@ the hard way.
 
 **Model & product grade.**
 - **An unknown model id fails CLOSED to nano — loudly in the oracles, silently in the chat.**
-  Oracles, in order: the boot WARN naming the provider's ACTUAL ids, `comis fleet`
+  Oracles, in order: the boot WARN naming the provider's ACTUAL ids, `comis system-health`
   `config_posture:unresolved_model`, the served `capabilityClass` on `Execution complete`.
   Check all three at baseline and after EVERY model swap — a nano-classed tutor will
   context-exhaust on the first real drill and look like a product failure.
@@ -1466,7 +1466,7 @@ each issue so a crash never loses a closed fix; do not push unless the operator 
 - `TEST-PLAN.md` (including the pinned integrity rubric + the fixed gate batteries) ·
   `RESULTS-LOG.md` (per-UC: the verdict works / fails honestly with ground-truth evidence
   pointers, PLUS the step-5 memory/recall/learning audit result AND the step-6 two-seat
-  product grade — a UC missing either is NOT closed — plus periodic fleet-health snapshots +
+  product grade — a UC missing either is NOT closed — plus periodic system-health snapshots +
   anomaly-sweep outcomes) · `FIX-VERIFY-LOG.md` (issue → RED test → fix → wipe → rebuild →
   clean-slate reproduction → confirmation; one entry per issue, closed in order) ·
   `OBS-AUDIT-LOG.md` (per-cycle: what each lens got right/wrong vs ground truth, and the

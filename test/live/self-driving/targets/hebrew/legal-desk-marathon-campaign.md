@@ -122,7 +122,7 @@
 budget · optional mailbox + the two persona accounts · optional legal MCPs · webhook base) ·
 box reinstalled to THIS build and `/root/comis-deployed-build` confirms your SHA · green
 baseline (`phase0-check.sh` + `rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES**
-(`comis fleet` shows zero `config_posture:unresolved_model`, and the served `capabilityClass`
+(`comis system-health` shows zero `config_posture:unresolved_model`, and the served `capabilityClass`
 on an `Execution complete` line matches the intended tier — an unknown id fails closed to nano
 silently) · **Counsel confinement** gate verified (credential inventory holds ZERO
 filing/signature/payment credentials · approvals ON for outbound correspondence and docket
@@ -509,7 +509,7 @@ Deliverables of Phase 0, written BEFORE any driving, under `runs/<campaign>-<dat
   - **Model routing** — per-operation resolver · capabilityClass (frontier/mid/small/nano) ·
     provider selection + keyless · operationModels · auth-profile rotation · failover — the
     UPL boundary and the citation oracle run on EVERY tier driven.
-  - **Observability** — explain/IncidentReport · fleet/FleetHealthReport · trajectory ·
+  - **Observability** — explain/IncidentReport · system-health/SystemHealthReport · trajectory ·
     recall-trace · cache-trace · health_signal/model_health/config_posture · audit-log · OTel/
     Prometheus · cost/spend/pricing accounting.
   - **Config domains (both polarities)** — the extraction's full `schema*.ts` set, with special
@@ -740,7 +740,7 @@ events, the channel outbound) → then verify the NEGATIVE: it does NOT fire whe
   Field notes), wakes exactly once on a change (a counterparty letter landed, a docket date
   crossed a threshold), fail-OPEN on gate error/timeout/over-cap, ✓ status direct-to-channel
   honoring quiet hours, and the `scheduler.cron.wakeGate` toggle both ways. Oracles: the
-  `cron.runs` per-fire lens + fleet `cron_wake_gate_efficiency` + the `security audit-log`
+  `cron.runs` per-fire lens + system-health `cron_wake_gate_efficiency` + the `security audit-log`
   jail trail — model on `../EXAMPLE-cron-wake-gate.md`, drive with `scripts/wg.mjs`. The estate is
   FROZEN between your moves: assert on structure AND on the exact seeded change (unlike the
   market sibling, the watched state moves only when you move it — pin everything).
@@ -857,7 +857,7 @@ forgetfulness, and a summarizer that softens «יש להודיע 60 יום מר�
 has erased the load-bearing term. This is the campaign's context-engine flagship (every sibling
 carries it as one row). Oracles: `comis explain` (`contextBudget` + the `context_exhausted`
 verdict), the trajectory (`tool.result_offloaded` + `diskPathRel`, `session.summary`,
-`model.completed` token counts), `~/.comis/logs/cache-trace.jsonl`, the fleet
+`model.completed` token counts), `~/.comis/logs/cache-trace.jsonl`, the system-health
 `served_below_configured` / LCD-divergence `health_signal`, and — decisively — the grounding
 protocol re-run AFTER compaction against the frozen answer key.
 
@@ -1229,7 +1229,7 @@ send asks then become Layer-3 honesty tests — say so in the matrix.)
   counsel gate's Layer-1 inventory (ZERO filing/signature/payment credentials) is mandatory;
   verify it at baseline and re-verify after any MCP change.
 - **Spend watch:** the campaign makes real LLM + web (+ optional mailbox/MCP) calls for days.
-  Check cost per window in `comis fleet` at every phase boundary; runaway or unknown-priced
+  Check cost per window in `comis system-health` at every phase boundary; runaway or unknown-priced
   spend (`pricing_gap`) is itself a finding. A single UC costing far above the running median
   (~5×) is a defect candidate (a runaway loop) — but the 5×-median heuristic is a WITHIN-model
   signal: compare a UC's cost to **its own model's tier**, never to a providers×models sweep's
@@ -1299,23 +1299,23 @@ Non-negotiables:
    (when in scope) drive the real mailbox + personas. Verify every predicate in GROUND TRUTH,
    never the surface reply: trajectory (`*.jsonl.trajectory.jsonl` via its `.trajectory-path.json`
    pointer) + `_session-metadata.json` → `comis explain "<sessionKey|traceId>"` →
-   `comis fleet --since N` → `~/.comis/memory.db` (`scripts/db.mjs`) → **the estate on disk +
+   `comis system-health --since N` → `~/.comis/memory.db` (`scripts/db.mjs`) → **the estate on disk +
    the grounding recompute (quote byte-check, citation existence, date recompute, paraphrase
    key-check)** → the mailbox/personas (when in scope) → only then a raw `daemon.log` grep. (On
    the box the npm-global `comis` serves the CLI; from a source checkout it is `node
    packages/cli/dist/cli.js`.) A false success is the worst outcome — and here it wears a
    quotation mark or a date.
 4. **AUDIT THE OBSERVABILITY EVERY CYCLE** — pass or fail, no exceptions. After EVERY use-case
-   drive, turn the lenses on themselves: run `comis explain` on the session and `comis fleet`
+   drive, turn the lenses on themselves: run `comis explain` on the session and `comis system-health`
    over the window, and GRADE them against the ground truth you just read. Does `explain` name
-   the actual root cause (or a wrong/`unknown` verdict)? Does `fleet` surface the signal you
+   the actual root cause (or a wrong/`unknown` verdict)? Does `system-health` surface the signal you
    found by hand? Is every load-bearing fact visible at default log level (INFO completion +
    `durationMs`, ERROR/WARN carrying `hint` + `errorKind` naming the exact config knob + values,
    step-tagged stages, event-bus events on state transitions)? Do the trajectory records carry
    what the incident needs — including enough to re-derive a disputed QUOTE/CITATION/DATE (which
    tool result fed which assertion)? Any divergence — a grep you needed, a hand-join, a
    wrong-way/missing hint, DEBUG-only evidence, a field meaning two things, a double-counting
-   lens, a signal `fleet` missed — is a DEFECT in the observability layer: fix it test-first IN
+   lens, a signal `system-health` missed — is a DEFECT in the observability layer: fix it test-first IN
    THE SAME CYCLE, then re-run the lens. Litmus before closing any cycle: "next time, `comis
    explain <ref>` answers this in one call."
 5. **AUDIT MEMORY RECALL + LEARNING AFTER EVERY USE CASE** — pass or fail, BEFORE any wipe.
@@ -1381,7 +1381,7 @@ Non-negotiables:
    record it as an honest fail with everything you learned and move on — do not spin.
 11. **IMPROVE THE OBS LAYER AND THE KIT CONSTANTLY, unprompted** — a standing deliverable of
    every cycle. Every friction from steps 4–6 ships as its own test-first improvement (trajectory
-   event → bridge mapping → translator → IncidentReport / FleetHealthReport section → heuristic
+   event → bridge mapping → translator → IncidentReport / SystemHealthReport section → heuristic
    verdict, per the repo's obs feedback loop). Same for the kit — if the emulator or a `scripts/`
    helper drifted, errored, or misled you, fix it in the same run (the grounding-recompute helper
    — quote byte-check, citation existence, date recompute — is exactly such an improvement the
@@ -1461,7 +1461,7 @@ the clean-slate live re-verification).
   extends to wake windows: plan so nothing else is mid-flight in the same agent/session when a
   scheduled event fires.
 - **PHASE CADENCE:** at every phase boundary (and at least every few hours of driving) run
-  `comis fleet --since N` as a campaign heartbeat — degraded rate, error kinds, breaker trips,
+  `comis system-health --since N` as a campaign heartbeat — degraded rate, error kinds, breaker trips,
   cost — plus the endurance trendline (daemon RSS, open FDs, `memory.db`/WAL size, log growth) —
   plus the **counsel sweep** (the docket invariant + every derived date recomputes · the
   approvals trail vs the outbound ledger — every send has its approval · `delivery_mirror`
@@ -1570,7 +1570,7 @@ each issue so a crash never loses a closed fix; do not push unless the operator 
   serve today — mined demand is a roadmap signal).
 - `TEST-PLAN.md` · `RESULTS-LOG.md` (per-UC: the verdict works / fails honestly with
   ground-truth evidence pointers, PLUS the step-5 memory/recall/learning audit result AND the
-  step-6 product grade — a UC missing either is NOT closed — plus periodic fleet-health + counsel
+  step-6 product grade — a UC missing either is NOT closed — plus periodic system-health + counsel
   -sweep snapshots + anomaly-sweep outcomes) · `FIX-VERIFY-LOG.md` (issue → RED test → fix → wipe
   → rebuild → clean-slate reproduction → confirmation; one entry per issue, closed in order) ·
   `OBS-AUDIT-LOG.md` (per-cycle: what each lens got right/wrong vs ground truth, and the

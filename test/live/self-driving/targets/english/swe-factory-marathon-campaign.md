@@ -51,7 +51,7 @@
 **Entry criteria (do not start driving until all hold):** kickoff paste filled (box · target
 repo/remote + push/PR token · coding CLI + GSD install · dev-stack MCPs · model · budget) · box
 reinstalled to THIS build and `/root/comis-deployed-build` confirms your SHA · green baseline
-(`phase0-check.sh` + `rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES** (`comis fleet` shows
+(`phase0-check.sh` + `rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES** (`comis system-health` shows
 zero `config_posture:unresolved_model`, and the served `capabilityClass` on an `Execution complete`
 line matches the intended tier — an unknown id fails closed to nano silently) · **Delivery-
 confinement** gate verified (credential inventory test-scoped only · the push/PR token proven
@@ -441,7 +441,7 @@ Deliverables of Phase 0, written BEFORE any driving, under `runs/<campaign>-<dat
     against the operator-named dev stack (a GitHub/PR MCP if named).
   - **Model routing** — per-operation resolver · capabilityClass (frontier/mid/small/nano) · provider
     selection + keyless · operationModels · auth-profile rotation · failover.
-  - **Observability** — explain/IncidentReport · fleet/FleetHealthReport · trajectory (incl.
+  - **Observability** — explain/IncidentReport · system-health/SystemHealthReport · trajectory (incl.
     `terminal.session_evicted` → `terminalDriveEvicted{reason,idleMs,wasProducing}`) · recall-trace ·
     cache-trace · health_signal/model_health/config_posture · audit-log · OTel/Prometheus ·
     cost/spend/pricing accounting.
@@ -771,7 +771,7 @@ one-shot, disabled toggle).
   checks a watched value (a new issue labeled `agent-build` / a webhook queue depth / a repo's open-PR
   count) and skips the LLM turn when nothing changed (the verdict protocol — skip vs wake), fail-OPEN
   on gate error/timeout/over-cap, ✓ status direct-to-channel with no model turn, and the
-  `scheduler.cron.wakeGate` toggle both ways. Oracles: the `cron.runs` per-fire lens + fleet
+  `scheduler.cron.wakeGate` toggle both ways. Oracles: the `cron.runs` per-fire lens + system-health
   `cron_wake_gate_efficiency` + the `security audit-log` jail trail — model on
   `../EXAMPLE-cron-wake-gate.md`, drive with `scripts/wg.mjs`. (Gate scripts PRINT their verdict to
   stdout — see the inherited Field notes.)
@@ -836,7 +836,7 @@ like forgetfulness. Test the engine at its breaking points — and this theme su
 largest natural inputs (a multi-file spec, a giant diff, a full test log, the driven CLI's scrollback).
 Oracles: `comis explain` (`contextBudget` + the `context_exhausted` verdict), the trajectory
 (`tool.result_offloaded` + `diskPathRel`, `session.summary`, `model.completed` token counts),
-`~/.comis/logs/cache-trace.jsonl`, and the fleet `served_below_configured` / LCD-divergence
+`~/.comis/logs/cache-trace.jsonl`, and the system-health `served_below_configured` / LCD-divergence
 `health_signal`.
 
 - **Compaction pipeline (the ten layers).** Drive a mega-conversation — a long build thread: a spec, a
@@ -1035,7 +1035,7 @@ check.
 - **Browser tool** (`browser.enabled` + `skills.builtinTools.browser` default **true**). The browser
   drives a live public page (a doc the spec cites, a repo's rendered README) — or **fails honestly** if
   Chromium is absent (a coverage-gap, not a bug) — and stays **SANDBOXED** (`noSandbox` default false —
-  a HARD security floor, never flipped; it is an immutable config prefix; it now surfaces in fleet
+  a HARD security floor, never flipped; it is an immutable config prefix; it now surfaces in system-health
   `config_posture` if relaxed). The approval floor applies to the ORCHESTRATE surface: **`orch:browse`
   STILL escalates** (an ALWAYS_ESCALATE cap) so a jailed orchestrate script's outward browse is
   approval-gated. HARD: a jailed-script `orch:browse` routes through the approval floor.
@@ -1098,7 +1098,7 @@ NOT test them the same way: one **fails closed**, the other **degrades with a WA
     host (a container without user-namespaces, a CI box). This posture is a DOWNGRADE, so it carries
     its OWN HARD checks, not a free pass: (a) **daemon secrets are STILL absent from the child** — the
     env-scrub holds even without the jail (`/proc/<pid>/environ` carries no `SECRETS_MASTER_KEY` /
-    `COMIS_GATEWAY_TOKEN`); a leaked secret here is an S1; (b) the relaxation **surfaces in fleet
+    `COMIS_GATEWAY_TOKEN`); a leaked secret here is an S1; (b) the relaxation **surfaces in system-health
     `config_posture` as `terminalUnsafeDisableSandbox`** (a silent downgrade is a finding); (c) a
     durable (`backend:"tmux"`) request is **force-downgraded to the non-durable PTY backend** (a tmux
     server would bypass the per-session env-scrub — assert no tmux drive under the opt-out); (d) the
@@ -1112,7 +1112,7 @@ NOT test them the same way: one **fails closed**, the other **degrades with a WA
   is present; with NO provider it runs **UNSANDBOXED + a WARN**. Drive all three: (a)
   `execSandbox.enabled: "always"` + provider → sandboxed (assert the jail); (b) `execSandbox.enabled:
   "always"` + no provider → unsandboxed + **the WARN fires** (assert the WARN — a silently-unsandboxed
-  `exec` is a posture finding; if fleet `config_posture` surfaces the unsandboxed posture, assert that
+  `exec` is a posture finding; if system-health `config_posture` surfaces the unsandboxed posture, assert that
   too); (c) `execSandbox.enabled: "never"` → unsandboxed by explicit config (the opt-out — no WARN
   needed). **The distinction from the terminal driver is the whole point:** `exec` degrading
   unsandboxed-with-WARN is CORRECT by design (best-effort), whereas the terminal driver doing the same
@@ -1120,7 +1120,7 @@ NOT test them the same way: one **fails closed**, the other **degrades with a WA
 
 - **`browser.noSandbox` — the config downgrade.** WITH the sandbox (`noSandbox: false`, the default +
   a HARD floor): the browser tool runs Chromium sandboxed. WITHOUT (`noSandbox: true`): the downgrade
-  must SURFACE in fleet `config_posture` (the browser-noSandbox relaxation is a config-posture
+  must SURFACE in system-health `config_posture` (the browser-noSandbox relaxation is a config-posture
   finding). Drive both; assert the config_posture surfacing when it is flipped, and that `noSandbox`
   stays an immutable config prefix the agent cannot flip itself.
 
@@ -1200,7 +1200,7 @@ rule here; say so in the matrix.)
   repo's files, commits, or PR bodies). The delivery-confinement gate above is mandatory; verify it at
   baseline.
 - **Spend watch:** the campaign makes real LLM + real web/MCP calls for days, PLUS the driven Claude
-  Code's OWN spend. Check cost per window in `comis fleet` at every phase boundary; runaway or
+  Code's OWN spend. Check cost per window in `comis system-health` at every phase boundary; runaway or
   unknown-priced spend (`pricing_gap`) is itself a finding. A single UC costing far above the running
   median (~5×) is a defect candidate (a runaway loop) — investigate before driving on. ⚠ The
   5×-median heuristic is a WITHIN-model signal, not cross-model. ⚠ **The driven Claude Code spends
@@ -1267,22 +1267,22 @@ Non-negotiables:
    SERIALLY (never parallel drives); machine-origin work orders drive the signed webhook route. Verify
    every predicate in GROUND TRUTH, never the surface reply: trajectory (`*.jsonl.trajectory.jsonl` via
    its `.trajectory-path.json` pointer) + `_session-metadata.json` → `comis explain
-   "<sessionKey|traceId>"` → `comis fleet --since N` → `~/.comis/memory.db` (`scripts/db.mjs`) → **the
+   "<sessionKey|traceId>"` → `comis system-health --since N` → `~/.comis/memory.db` (`scripts/db.mjs`) → **the
    repo itself** (`git ls-remote`, `gh pr view`, the re-run test exit code, `.planning/` artifacts, the
    project dir) for delivery UCs → only then a raw `daemon.log` grep. (On the box the npm-global
    `comis` serves the CLI; from a source checkout it is `node packages/cli/dist/cli.js`.) A false
    success is the worst outcome.
 4. **AUDIT THE OBSERVABILITY EVERY CYCLE** — pass or fail, no exceptions. After EVERY use-case drive,
-   turn the lenses on themselves: run `comis explain` on the session and `comis fleet` over the window,
+   turn the lenses on themselves: run `comis explain` on the session and `comis system-health` over the window,
    and GRADE them against the ground truth you just read. Does `explain` name the actual root cause (or
    a wrong/`unknown` verdict)? Does a reaped drive surface as `terminal_drive_evicted` with the right
-   `wasProducing`? Does `fleet` surface the signal you found by hand? Is every load-bearing fact
+   `wasProducing`? Does `system-health` surface the signal you found by hand? Is every load-bearing fact
    visible at default log level (INFO completion + `durationMs`, ERROR/WARN carrying `hint` +
    `errorKind` naming the exact config knob and values, step-tagged stages, event-bus events on state
    transitions)? Do the trajectory records carry what the incident needs (the drive lifecycle, the
    push/PR outcome, the clone base)? Any divergence — a grep you needed, a hand-join, a wrong-way or
    missing hint, DEBUG-only evidence, a field meaning two things, a double-counting lens, a signal
-   `fleet` missed — is a DEFECT in the observability layer: fix it test-first IN THE SAME CYCLE, then
+   `system-health` missed — is a DEFECT in the observability layer: fix it test-first IN THE SAME CYCLE, then
    re-run the lens to prove the gap is closed. Litmus before closing any cycle: "next time, `comis
    explain <ref>` answers this in one call." If not, the cycle is not done.
 5. **AUDIT MEMORY RECALL + LEARNING AFTER EVERY USE CASE** — pass or fail, BEFORE any wipe. Three
@@ -1343,7 +1343,7 @@ Non-negotiables:
    record it as an honest fail with everything you learned and move on — do not spin.
 11. **IMPROVE THE OBS LAYER AND THE KIT CONSTANTLY, unprompted** — a standing deliverable of every
    cycle, not a wrap-up chore. Every friction from steps 4–6 ships as its own test-first improvement
-   (trajectory event → bridge mapping → translator → IncidentReport / FleetHealthReport section →
+   (trajectory event → bridge mapping → translator → IncidentReport / SystemHealthReport section →
    heuristic verdict, per the repo's obs feedback loop). Same for the kit — if the emulator or a
    `scripts/` helper drifted, errored, or misled you (e.g. `terminal-drive-observe.mjs` missing a GSD
    artifact lens, or `webhook-drive.mjs` on the work-order path), fix it in the same run. Leave the
@@ -1411,7 +1411,7 @@ it does NOT decide whether it gets fixed; S1–S3 all ride the per-issue contrac
   windows). Verify each firing/completion in ground truth after the window passes. Schedule the
   proactive rows and kick off the long builds EARLY so real elapsed time can accumulate multi-fire /
   full-build evidence.
-- **PHASE CADENCE:** at every phase boundary (and at least every few hours of driving) run `comis fleet
+- **PHASE CADENCE:** at every phase boundary (and at least every few hours of driving) run `comis system-health
   --since N` as a campaign heartbeat — degraded rate, error kinds, breaker trips, cost — plus the
   endurance trendline (daemon RSS, open FDs, `memory.db`/WAL size, log growth, tmux-server count) —
   plus the **fence sweep** (`delivery_mirror` vs the origin chats; the target remote's refs + open PRs
@@ -1544,7 +1544,7 @@ only inside the fence, and never touch the Comis repo's history.)
   surface).
 - `TEST-PLAN.md` · `RESULTS-LOG.md` (per-UC: the verdict works / fails honestly with ground-truth
   evidence pointers, PLUS the step-5 memory/recall/learning audit result AND the step-6 product grade —
-  a UC missing either is NOT closed — plus periodic fleet-health + fence-sweep snapshots + anomaly-sweep
+  a UC missing either is NOT closed — plus periodic system-health + fence-sweep snapshots + anomaly-sweep
   outcomes + the hand-tracked CLI spend) · `FIX-VERIFY-LOG.md` (issue → RED test → fix → wipe → rebuild
   → clean-slate reproduction → confirmation; one entry per issue, closed in order) · `OBS-AUDIT-LOG.md`
   (per-cycle: what each lens got right/wrong vs ground truth, and the improvement shipped for every gap

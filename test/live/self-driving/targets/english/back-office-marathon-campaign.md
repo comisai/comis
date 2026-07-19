@@ -73,7 +73,7 @@
 **Entry criteria (do not start driving until all hold):** kickoff paste filled (box · project
 portfolio · business-stack MCPs · model(s) · budget) · box reinstalled to THIS build and
 `/root/comis-deployed-build` confirms your SHA · green baseline (`phase0-check.sh` +
-`rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES** (`comis fleet` shows zero
+`rig-doctor.sh` + `verify-build.sh`) · **model RESOLVES** (`comis system-health` shows zero
 `config_posture:unresolved_model`, and the served `capabilityClass` on an `Execution complete`
 line matches the intended tier — an unknown id fails closed to nano silently; re-check PER
 AGENT — each workforce member may ride its own model) · **Mandate-confinement gate verified**
@@ -186,7 +186,7 @@ alone:
   spending — a tree that outlives its budget, or a stop that loses the partial work, or a
   ceiling breach the obs lenses cannot see, is an S1. The `tokens` limb must bite on
   unknown-priced ($0) models; the `wallClockMs` limb must bite on a stuck-but-cheap loop.
-  Verify in the lease/budget events + `comis explain`'s spend section + the fleet cost
+  Verify in the lease/budget events + `comis explain`'s spend section + the system-health cost
   lens — never the agent's own claim of thrift.
 - **Layer 2 — leases are law (attenuation never broadens, revoke is forever).** Every
   autonomous run holds a capability lease minted from the operator's grants, ATTENUATED to
@@ -430,7 +430,7 @@ Deliverables of Phase 0, written BEFORE any driving, under `runs/<campaign>-<dat
     · provider selection + keyless · operationModels · auth-profile rotation · failover ·
     **PER-AGENT model assignment (the mixed-tier workforce: a frontier coordinator, a
     mid-tier specialist — verify the SERVED model per agent per turn)**.
-  - **Observability** — explain/IncidentReport · fleet/FleetHealthReport · trajectory ·
+  - **Observability** — explain/IncidentReport · system-health/SystemHealthReport · trajectory ·
     recall-trace · cache-trace · health_signal/model_health/config_posture · audit-log ·
     OTel/Prometheus · cost/spend/pricing accounting (**per-agent + per-mandate attribution
     — can the operator see which project spent what?**).
@@ -512,7 +512,7 @@ distinct emulator `fromUserId`; the machine principals are the workforce itself.
 
 Every sibling asserts these once inside a checklist; this campaign LIVES here. Each row is
 driven against a real mandate with real elapsed time, and verified in the lease/budget
-events + `comis explain` + the fleet lenses — never the agent's self-report.
+events + `comis explain` + the system-health lenses — never the agent's self-report.
 
 - **The profile/mode matrix as postures.** Run the SAME small mandate under `assistant`,
   `standard`, `unattended`, and `max` and assert the DESIGNED differences in ground truth:
