@@ -95,9 +95,9 @@ try {
     // memories row (if absent) — needs the NOT NULL columns (source_who etc.); INSERT OR REPLACE to re-seed.
     db.prepare(
       `INSERT OR REPLACE INTO memories
-       (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_session_key, proof_count, pinned, confidence, strength, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    ).run(memId, tenant, agent, "678314278", content, "learned", "semantic", "user", `${tenant}:678314278:678314278:peer:678314278`, proof, pinned, 0.7, 1.0, now, now);
+       (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, source_session_key, proof_count, pinned, confidence, strength, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    ).run(memId, tenant, agent, "678314278", "agent-shared", content, "learned", "semantic", "user", `${tenant}:678314278:678314278:peer:678314278`, proof, pinned, 0.7, 1.0, now, now);
     db.prepare(
       `INSERT OR REPLACE INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count, failure_count) VALUES (?,?,?,?,?,?,?)`,
     ).run(tenant, agent, memId, "", 0, 0, failureCount);

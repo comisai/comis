@@ -10,8 +10,9 @@
 # data-dir .env supply them).
 #
 #   bash drive-sim-workload.sh <workload> [variant=A] [feeder1=678314279] [feeder2=678314280]
+#   REUSE_ONLY=1 bash drive-sim-workload.sh <workload> B <fresh-sender>
 #
-# Steps: daemon restart (resets the per-root meter — avoids a spurious-abort from an accumulated meter) → disconnect ALL sim
+# Steps: daemon restart (resets the per-root meter — avoids a spurious-abort from an accumulated meter) → disconnect live sim
 # servers + connect THIS workload's server (one server at a time, no tool confusion) → reset the 2 feeder
 # sessions (clear cross-workload LCD) → 2 BYTE-IDENTICAL feeders (the topicKey card-2 bar) → reflect-run →
 # read GROUND TRUTH (mental_models delta + the newest skill row + a grounding grep of its body).
@@ -21,6 +22,7 @@ WL="${1:?usage: drive-sim-workload.sh <workload> [variant=A] [feeder1] [feeder2]
 VARIANT="${2:-A}"
 F1="${3:-678314279}"
 F2="${4:-678314280}"
+REUSE_ONLY="${REUSE_ONLY:-0}"
 [ -f /root/comis-rig.env ] && . /root/comis-rig.env
 DATA="${DATA:-/home/comis/.comis}"
 COMIS_HOME="${COMIS_HOME:-/home/${COMIS_USER:-comis}}"
@@ -37,7 +39,6 @@ export COMIS_GATEWAY_TOKEN="${COMIS_GATEWAY_TOKEN:-${GWTOKEN:-}}"
 # Keep this script runnable on the repository's supported macOS/Bash 3.2 host. Bash associative arrays
 # require Bash 4, so the workload registry uses case functions plus an indexed server list.
 ALL_WORKLOADS=(package-delivery threat-hunting market-making icu-clinical contract-negotiation wildfire-command content-moderation grid-operator lab-research customer-success aml-investigations tutoring humanitarian-logistics precision-apiary)
-ALL_SERVERS=(depot-sim th-sim mm-sim icu-sim nego-sim fire-sim mod-sim grid-sim lab-sim cs-sim aml-sim tutor-sim relief-sim apiary-sim)
 
 server_for() {
   case "$1" in
@@ -126,10 +127,14 @@ P="$(prompt_for "$WL" 2>/dev/null || true)"
 if [ -z "$SRV" ] || [ -z "$P" ]; then
   echo "unknown workload '$WL'. known: ${ALL_WORKLOADS[*]}" >&2; exit 2
 fi
-echo "== drive-sim-workload: $WL (server=$SRV variant=$VARIANT feeders=$F1,$F2) =="
+if [ "$REUSE_ONLY" = "1" ]; then
+  echo "== drive-sim-workload: $WL (server=$SRV variant=$VARIANT reuse=$F1) =="
+else
+  echo "== drive-sim-workload: $WL (server=$SRV variant=$VARIANT feeders=$F1,$F2) =="
+fi
 
 connect_workload_server() {
-  $CLI mcp disconnect "$SRV" >/dev/null 2>&1 || true
+  [ "${1:-connect}" = "reconnect" ] && $CLI mcp disconnect "$SRV" >/dev/null 2>&1
   $CLI mcp connect "$SRV" --transport stdio --command node \
     --args "${SIM_DIR:-$COMIS_HOME/sim}/bin/mcp-server.mjs" "$WL" "$VARIANT" \
     2>&1 | grep -iE 'connected|tool|error' | head -1
@@ -139,12 +144,19 @@ connect_workload_server() {
 bash /root/restart-daemon.sh >/dev/null 2>&1
 for i in $(seq 1 30); do ss -ltnp 2>/dev/null | grep -q ":$GW_PORT" && break; sleep 2; done
 
-# 2) one server at a time: disconnect every known sim server, then connect THIS one on the chosen variant.
-for s in "${ALL_SERVERS[@]}"; do $CLI mcp disconnect "$s" >/dev/null 2>&1; done
+# 2) one server at a time: disconnect only simulator servers that are actually connected, then connect
+# THIS one on the chosen variant. Calling disconnect for an absent server correctly returns an RPC error,
+# so probing every known name would pollute the live error ledger with harness-generated failures.
+connected_sim_servers="$($CLI mcp list --format json 2>/dev/null \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{for(const x of JSON.parse(s).servers||[]){if(x.name.endsWith("-sim"))console.log(x.name)}})' \
+  2>/dev/null)"
+for s in $connected_sim_servers; do $CLI mcp disconnect "$s" >/dev/null 2>&1 || exit 1; done
 connect_workload_server
 
 # 3) reset the 2 feeder sessions (clear any prior workload's LCD — cross-task contamination trap).
-for s in "$F1" "$F2"; do
+RESET_SENDERS=("$F1" "$F2")
+[ "$REUSE_ONLY" = "1" ] && RESET_SENDERS=("$F1")
+for s in "${RESET_SENDERS[@]}"; do
   session_key="$(canonical_session_key "$s")" || { echo "failed to resolve canonical session for $s" >&2; exit 1; }
   conversation_ref="$(node /root/db.mjs pickw lcd_messages conversation_ref session_key "$session_key" 1 2>/dev/null \
     | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s)[0]?.conversation_ref||"")}catch{process.exit(1)}})')" || {
@@ -166,18 +178,28 @@ MM0=$(node /root/db.mjs count mental_models 2>/dev/null | grep -oE '[0-9]+' | he
 
 # 4) two BYTE-IDENTICAL feeders (distinct (session,sender) → the card-2 corroboration bar).
 echo "-- feeder-1 ($F1) --"; node /root/drive.mjs "$F1" "$P" 2>&1 | tail -1
+if [ "$REUSE_ONLY" = "1" ]; then
+  echo "-- latest simulator grade --"
+  node /root/db.mjs sql "SELECT p.tool_name, substr(p.tool_output,instr(p.tool_output,'outcome'),220) AS grade FROM lcd_message_parts p JOIN lcd_messages m ON m.id=p.message_id WHERE m.session_key='$session_key' AND p.tool_name LIKE 'mcp__%-sim--%' AND p.tool_output LIKE '%graded%' ORDER BY m.created_at DESC,p.ordinal DESC LIMIT 1" 2>/dev/null
+  echo "-- latest attributed outcome --"
+  node /root/db.mjs sql "SELECT outcome, used_skill_ids, observed_at FROM outcome_events WHERE session_id='$session_key' AND outcome='success' AND used_skill_ids IS NOT NULL AND used_skill_ids <> '[]' ORDER BY observed_at DESC LIMIT 1" 2>/dev/null
+  echo "-- current skill states --"
+  node /root/db.mjs sql "SELECT name,state,proof_count,trust_level FROM mental_models WHERE kind='skill' ORDER BY updated_at DESC, created_at DESC LIMIT 3" 2>/dev/null
+  echo "== done: $WL reuse $VARIANT =="
+  exit 0
+fi
 # Each corroborating sender must start from an independent simulator world. Several workloads
 # create an isolated case per opening call, while market/grid state lives at server scope; a
 # reconnect gives both shapes the same clean-episode contract and prevents feeder 2 from merely
 # observing feeder 1's already-settled world.
-connect_workload_server
+connect_workload_server reconnect
 echo "-- feeder-2 ($F2) --"; node /root/drive.mjs "$F2" "$P" 2>&1 | tail -1
 
 # 5) reflect (polls the EXACT 'Reflection complete (all kinds)' marker — never the dispatch line).
 # Accumulating-store catalog runs revisit more eligible sources on each workload; keep the
 # completion oracle above the single-workload default so a valid late completion is not
 # misreported as a timeout and then interrupted by the next workload's daemon restart.
-echo "-- reflect --"; node /root/reflect-run.mjs Reflection 240 2>&1 | tail -1
+echo "-- reflect --"; node /root/reflect-run.mjs Reflection 360 2>&1 | tail -1
 
 # 6) GROUND TRUTH: the mm delta + the newest skill row + a grounding grep of its body.
 MM1=$(node /root/db.mjs count mental_models 2>/dev/null | grep -oE '[0-9]+' | head -1)
