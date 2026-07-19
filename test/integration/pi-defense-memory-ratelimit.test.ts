@@ -304,22 +304,45 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
   // =========================================================================
 
   describe("Injection Rate Limiter", () => {
+    // The rate limiter keys each bucket by the AUTHENTICATED principal, which
+    // the gateway derives from the token's client id (never a caller-asserted
+    // sessionKey.userId — see gateway-session-principal.ts). Distinct config
+    // tokens therefore give distinct, hermetic buckets. Resolve each token's
+    // secret by id so a fresh principal isolates every rate-limiter test from
+    // cross-test and cross-retry counter pollution.
+    function principalToken(tokenId: string): string {
+      const tokens = (handle.daemon.container as unknown as {
+        config: { gateway: { tokens: Array<{ id: string; secret: string }> } };
+      }).config.gateway.tokens;
+      const token = tokens.find((t) => t.id === tokenId);
+      if (!token) throw new Error(`Missing rate-limiter test token: ${tokenId}`);
+      return token.secret;
+    }
+
     /**
      * Helper: Send a high-risk injection message through agent.execute via
      * WebSocket. This triggers the full InputSecurityGuard -> RateLimiter pipeline.
      *
-     * @param userId - User ID for the session key (rate limiter keying)
+     * The rate-limiter bucket is keyed by the authenticated principal (the
+     * `authToken`'s client id), so pass a dedicated token per logical user to
+     * exercise independent counters. `peerId` still rides the resolved session
+     * key string, so the emitted `sessionKey` carries the caller marker even
+     * though it is NOT the throttle key.
+     *
+     * @param userId - Peer marker carried on the resolved session key string
      * @param requestId - Unique JSON-RPC request ID
+     * @param authToken - Bearer token whose principal owns the throttle bucket
      */
     async function sendHighRiskMessage(
       userId: string,
       requestId: number,
+      authToken: string,
     ): Promise<void> {
       let ws: WebSocket | undefined;
       try {
         ws = await openAuthenticatedWebSocket(
           handle.gatewayUrl,
-          handle.authToken,
+          authToken,
         );
         await sendJsonRpc(
           ws,
@@ -350,12 +373,17 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
 
     it(
       "3rd high-risk detection triggers security:injection_rate_exceeded with warn action",
+      // retry: 0 — a retry would replay these high-risk turns against the SAME
+      // principal bucket (in-memory, 5-min window), so the counter would start
+      // above 0 and the count===3 assertion below would never match.
+      { retry: 0, timeout: 120_000 },
       async () => {
+        const token = principalToken("test-token-rl-warn");
         const awaiter = createEventAwaiter(eventBus);
         try {
           // Send 2 high-risk messages (below warn threshold)
-          await sendHighRiskMessage("attacker-warn-01", 100);
-          await sendHighRiskMessage("attacker-warn-01", 101);
+          await sendHighRiskMessage("attacker-warn-01", 100, token);
+          await sendHighRiskMessage("attacker-warn-01", 101, token);
 
           // Register listener BEFORE the 3rd message
           const warnPromise = awaiter.waitFor(
@@ -368,7 +396,7 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
           );
 
           // 3rd message crosses warn threshold
-          await sendHighRiskMessage("attacker-warn-01", 102);
+          await sendHighRiskMessage("attacker-warn-01", 102, token);
 
           // Await the warn event
           const event = await warnPromise;
@@ -380,7 +408,6 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
           awaiter.dispose();
         }
       },
-      120_000,
     );
 
     // -----------------------------------------------------------------------
@@ -389,15 +416,19 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
 
     it(
       "5th high-risk detection triggers reinforce action and audit:event",
+      // retry: 0 + a dedicated principal token — the audit threshold fires
+      // deterministically at count===5 only from a fresh, unpolluted bucket.
+      { retry: 0, timeout: 180_000 },
       async () => {
+        const token = principalToken("test-token-rl-audit");
         const awaiter = createEventAwaiter(eventBus);
         try {
-          // Send messages 1-4 (building up to audit threshold)
-          // Use a fresh user so counts are independent
-          await sendHighRiskMessage("attacker-audit-01", 200);
-          await sendHighRiskMessage("attacker-audit-01", 201);
-          await sendHighRiskMessage("attacker-audit-01", 202);
-          await sendHighRiskMessage("attacker-audit-01", 203);
+          // Send messages 1-4 (building up to audit threshold) on a fresh
+          // principal so counts start at 0 and reach exactly 5 on message 5.
+          await sendHighRiskMessage("attacker-audit-01", 200, token);
+          await sendHighRiskMessage("attacker-audit-01", 201, token);
+          await sendHighRiskMessage("attacker-audit-01", 202, token);
+          await sendHighRiskMessage("attacker-audit-01", 203, token);
 
           // Register listeners BEFORE the 5th message
           const reinforcePromise = awaiter.waitFor(
@@ -419,7 +450,7 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
           });
 
           // 5th message crosses audit threshold
-          await sendHighRiskMessage("attacker-audit-01", 204);
+          await sendHighRiskMessage("attacker-audit-01", 204, token);
 
           // Await both events
           const reinforceEvent = await reinforcePromise;
@@ -437,7 +468,6 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
           awaiter.dispose();
         }
       },
-      180_000,
     );
 
     // -----------------------------------------------------------------------
@@ -446,15 +476,21 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
 
     it(
       "different users have independent rate limit counters",
+      // Independence is now per-authenticated-principal: user A and user B
+      // authenticate with distinct tokens, so their throttle buckets are
+      // isolated. retry: 0 keeps each principal's counter fresh.
+      { retry: 0, timeout: 360_000 },
       async () => {
+        const tokenA = principalToken("test-token-rl-user-a");
+        const tokenB = principalToken("test-token-rl-user-b");
         const awaiter = createEventAwaiter(eventBus);
         try {
-          // Send 2 high-risk messages from user A
-          await sendHighRiskMessage("independent-user-A", 300);
-          await sendHighRiskMessage("independent-user-A", 301);
+          // Send 2 high-risk messages from user A (principal A)
+          await sendHighRiskMessage("independent-user-A", 300, tokenA);
+          await sendHighRiskMessage("independent-user-A", 301, tokenA);
 
-          // Send 1 high-risk message from user B
-          await sendHighRiskMessage("independent-user-B", 302);
+          // Send 1 high-risk message from user B (principal B)
+          await sendHighRiskMessage("independent-user-B", 302, tokenB);
 
           // Register listener for user A's warn threshold BEFORE 3rd message
           const warnPromise = awaiter.waitFor(
@@ -469,18 +505,18 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
           );
 
           // User A's 3rd message should trigger warn
-          await sendHighRiskMessage("independent-user-A", 303);
+          await sendHighRiskMessage("independent-user-A", 303, tokenA);
 
           const event = await warnPromise;
           expect(event.action).toBe("warn");
           expect(event.count).toBe(3);
-          // The sessionKey should reference user A (keyed as tenantId:userId)
+          // The emitted session key carries user A's peer marker.
           expect(event.sessionKey).toContain("independent-user-A");
 
           // Verify user B does NOT have 3 detections -- they only sent 1
           // User B's 2nd message should NOT trigger any rate limit event.
           // Send message first, then check for absence of warn event.
-          await sendHighRiskMessage("independent-user-B", 304);
+          await sendHighRiskMessage("independent-user-B", 304, tokenB);
 
           const noEventPromise = new Promise<boolean>((resolve) => {
             const timeout = setTimeout(() => resolve(true), 5_000);
@@ -513,7 +549,6 @@ describe("PI Defense Memory + Rate Limiter E2E", () => {
           awaiter.dispose();
         }
       },
-      360_000,
     );
   });
 });

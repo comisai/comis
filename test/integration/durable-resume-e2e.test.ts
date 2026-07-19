@@ -17,22 +17,25 @@
  * RED proof: on a naive recovery that blind-replays an `unknown_after_send` row,
  * scenario (A) — the message DID land before the crash — re-delivers it, so the
  * Echo delivery count is 2 (a double-send) and the `toBe(1)` assertion FAILS with
- * `expected 1, received 2`. The wired stack's reconcileSend resolves it to `sent`
- * → commit, NO replay → the count stays 1.
+ * `expected 1, received 2`. Recovery is REPLAY-SAFE: it never queries the channel
+ * and never issues a second platform call — it conservatively PARKS the
+ * crash-uncertain row as `unresolved` and escalates it for manual verification,
+ * so the count stays 1 (landed) or 0 (never-sent). Exactly-once here means AT
+ * MOST once: no double-send and no blind replay, ever.
  *
  * The Echo channel is the controllable channel: it is NOT a daemon config channel
- * type, so the test registers an `EchoChannelAdapter` on `daemon.adapterRegistry`,
- * and Echo's deterministic `reconcileSend` is the oracle — a pre-seeded Echo
- * (modeling the platform's durable retention) reports `sent`; a fresh Echo reports
- * `not_sent`.
+ * type, so the test registers an `EchoChannelAdapter` on `daemon.adapterRegistry`
+ * to model the live platform estate. The oracle is the OBSERVABLE outcome —
+ * the exact Echo delivery count plus the parked ledger state — NOT a channel
+ * history query (recovery makes none).
  *
  * Cases (each on observable state — delivery count, ledger state, run status):
- *   - SENT: crash after the platform recorded it → restart → reconcile
- *     sent → commit, NO replay → Echo shows EXACTLY 1 delivery (no double-send).
- *   - NOT_SENT: crash before the platform recorded it → restart →
- *     reconcile not_sent → the wired engine PARKS unresolved (the content-free
- *     ledger has no body to replay) → Echo shows 0, the row is `unresolved`
- *     (NEVER a blind double-send). [documented engine limitation.]
+ *   - SENT: crash after the platform recorded it → restart → recovery PARKS the
+ *     crash-uncertain row `unresolved` (no channel query, no re-issued send) →
+ *     Echo shows EXACTLY 1 delivery (no double-send), the row is `unresolved`.
+ *   - NOT_SENT: crash before the platform recorded it → restart → recovery PARKS
+ *     `unresolved` (the content-free ledger has no body to replay) → Echo shows 0,
+ *     the row is `unresolved` (NEVER a blind replay / double-send).
  *   - Two outward sends with a CHECKPOINT WRITE interleaved → the checkpoint does
  *     NOT reset the outward_step counter (send #2 keeps index 1) → exactly 2
  *     deliveries, two committed ledger rows at (root,0)+(root,1).
@@ -197,8 +200,16 @@ function runningRecord(overrides: Partial<DurableRunRecord> & { rootRunId: strin
 /**
  * Drive ONE real autonomy-originated message.send through the daemon's internal
  * rpcCall (NOT the gateway — the internal dispatch does NOT strip internal
- * fields, so `_callerSessionKey` + `_outwardStepIndex` reach the wrap). This is
- * the LIVE wrapped send path the crash seam crashes mid-flight.
+ * fields, so the trusted-boundary signals reach the wrap). This is the LIVE
+ * wrapped send path the crash seam crashes mid-flight.
+ *
+ * The trusted in-process producer resolves the tree root BEFORE dispatch and
+ * threads `_rootRunId` (never re-derived from the display session key at the
+ * handler). This test bypasses that producer to reach the raw sink, so it must
+ * inject `_rootRunId` itself — exactly the field the producer would thread —
+ * alongside the pre-allocated `_outwardStepIndex`. Without it the wrap reads no
+ * root and is a pure pass-through, so the ledger never engages and the crash
+ * seam cannot interpose.
  */
 async function driveAutonomySend(
   handle: TestDaemonHandle,
@@ -216,6 +227,10 @@ async function driveAutonomySend(
     // auto-allows the ORIGIN channel (a non-origin send with no grant is denied).
     _callerChannelId: args.channelId,
     _callerSessionKey: sessionKeyFor(args.channelId),
+    // The trusted-boundary tree root the wrap keys the (rootRunId, stepIndex)
+    // idempotency pair on. Matches the rootRunId the structural seeding +
+    // assertions use, so the seeded checkpoint reconciles the live ledger row.
+    _rootRunId: rootRunIdFor(args.channelId),
     _outwardStepIndex: args.outwardStepIndex,
   });
 }
@@ -303,12 +318,12 @@ describe("exactly-once chaos restart acceptance gate for the outward-send durabi
   });
 
   // =========================================================================
-  // Crash AFTER the platform recorded it → reconcile SENT → no double-send
+  // Crash AFTER the platform recorded it → PARK unresolved → no double-send
   // =========================================================================
-  describe("crash between ledger-write and ack, restart, reconcile resolves SENT → no double-send", () => {
+  describe("crash between ledger-write and ack, restart, recovery parks the crash-uncertain row unresolved (no double-send)", () => {
     let handle: TestDaemonHandle | undefined;
 
-    it("delivers EXACTLY ONCE — the platform truth=sent reconcile commits without a blind replay (no double-send)", async () => {
+    it("delivers AT MOST ONCE — the crash-uncertain row that LANDED is parked unresolved without a blind replay (no double-send)", async () => {
       // Fresh per-attempt ids so a retry (the integration config sets retry:1)
       // never collides with a prior attempt's leftover rows in the shared dataDir.
       const channelId = `echo-sent-${randomUUID().slice(0, 8)}`;
@@ -341,13 +356,14 @@ describe("exactly-once chaos restart acceptance gate for the outward-send durabi
       await stop(handle);
       handle = undefined;
 
-      // ---- Stage 2: restart against the SAME dataDir; register Echo as the platform truth ----
+      // ---- Stage 2: restart against the SAME dataDir; register a live Echo estate ----
       handle = await boot();
       // The post-restart Echo models the platform's durable retention: the message
-      // DID land before the crash, so a queryable channel reports `sent`. Pre-seed
-      // it with the exact content so reconcileSend (digest + window) matches. Register
-      // it on the daemon's deliveryAdapters map (=== the engine's channelAdaptersRef)
-      // BEFORE seeding the durable run so the watchdog reconcile finds the live Echo.
+      // DID land before the crash, so it is present as 1 delivery. Recovery is
+      // REPLAY-SAFE — it never queries the channel and never issues a second
+      // platform call; it conservatively PARKS the crash-uncertain row `unresolved`
+      // and escalates. Registering the Echo models a live estate; the
+      // no-double-send proof is that recovery adds ZERO further deliveries.
       const restartedEcho = new EchoChannelAdapter({ channelId, channelType: ECHO_TYPE });
       await restartedEcho.start();
       await restartedEcho.sendMessage(channelId, content); // 1 pre-existing delivery = the landed message
@@ -356,37 +372,39 @@ describe("exactly-once chaos restart acceptance gate for the outward-send durabi
       // Seed the durable checkpoint row now (after Echo is registered) with a stale
       // heartbeat: the boot resumeAll already ran (found no run), so it did NOT
       // touch the ledger row; the next watchdog tick (staleHeartbeatMs=500ms)
-      // detects this stale run and runs resumeAll → reconciles the
-      // unknown_after_send row against the LIVE Echo → sent → commit, NO replay.
+      // detects this stale run and runs resumeAll → parks the unknown_after_send
+      // row as `unresolved` (never a blind replay, never a second send).
       await withStores(dbAbs, ({ durableRuns }) =>
         durableRuns.upsertCheckpoint(runningRecord({ rootRunId, lastHeartbeatAt: Date.now() - 600_000 })),
       );
 
-      // The watchdog reconciles the row → committed (sent), NO replay.
-      await pollUntil(() => handle!.getOutwardLedgerRow(rootRunId, 0)?.state === "committed", 10_000);
+      // The watchdog parks the crash-uncertain row → unresolved (escalated), NO replay.
+      await pollUntil(() => handle!.getOutwardLedgerRow(rootRunId, 0)?.state === "unresolved", 10_000);
 
-      // ---- ASSERT: exactly-once. Echo still shows EXACTLY ONE delivery (no double-send). ----
+      // ---- ASSERT: at-most-once. Echo still shows EXACTLY ONE delivery (no double-send). ----
       const finalEcho = handle.daemon.adapterRegistry.get(ECHO_TYPE) as EchoChannelAdapter;
       expect(
         getEchoDeliveries(finalEcho),
-        "no double-send: a crashed-mid-send message that LANDED must reconcile to sent (ack once), " +
-          "NOT be blind-replayed — Echo must show exactly ONE delivery (RED on a naive replay: 2)",
+        "no double-send: a crashed-mid-send message that LANDED is conservatively PARKED " +
+          "(unresolved) — recovery never re-issues the platform call, so Echo must show exactly " +
+          "ONE delivery (RED on a naive replay: 2)",
       ).toHaveLength(1);
 
-      // The ledger row is now committed with the sent reconcile verdict.
+      // The ledger row is parked unresolved (escalated for manual verification) —
+      // never committed-by-guess and never blind-replayed.
       const finalRow = handle.getOutwardLedgerRow(rootRunId, 0);
-      expect(finalRow?.state).toBe("committed");
-      expect(finalRow?.reconcileOutcome).toBe("sent");
+      expect(finalRow?.state).toBe("unresolved");
+      expect(finalRow?.reconcileOutcome).toBe("unresolved");
     }, 120_000);
   });
 
   // =========================================================================
-  // Crash BEFORE the platform recorded it → reconcile NOT_SENT
+  // Crash BEFORE the platform recorded it → PARK unresolved (no blind replay)
   // =========================================================================
-  describe("reconcile resolves NOT_SENT → parked unresolved, never a blind double-send", () => {
+  describe("crash-uncertain row is parked unresolved, never a blind replay/double-send", () => {
     let handle: TestDaemonHandle | undefined;
 
-    it("never double-sends: the platform truth=not_sent row is parked unresolved (the content-free ledger has no body to replay)", async () => {
+    it("never double-sends: the crash-uncertain row is parked unresolved (recovery never blind-replays the content-free ledger)", async () => {
       const channelId = `echo-notsent-${randomUUID().slice(0, 8)}`;
       const rootRunId = rootRunIdFor(channelId);
       const content = "exactly-once not-sent-case payload";
@@ -410,35 +428,33 @@ describe("exactly-once chaos restart acceptance gate for the outward-send durabi
       await stop(handle);
       handle = undefined;
 
-      // ---- Stage 2: restart with a FRESH (empty) Echo → reconcileSend = not_sent ----
+      // ---- Stage 2: restart with a FRESH (empty) Echo estate ----
       handle = await boot();
-      const freshEcho = registerEcho(handle, channelId); // empty store ⇒ not_sent
+      const freshEcho = registerEcho(handle, channelId); // empty store
       await freshEcho.start();
-      // Seed the stale run AFTER Echo is registered so the watchdog reconcile sees
-      // the live (empty) Echo and resolves not_sent.
+      // Seed the stale run AFTER Echo is registered so the watchdog sweep sees the
+      // live estate and parks the crash-uncertain row.
       await withStores(dbAbs, ({ durableRuns }) =>
         durableRuns.upsertCheckpoint(runningRecord({ rootRunId, lastHeartbeatAt: Date.now() - 600_000 })),
       );
 
-      // Wait for the reconcile to run (the watchdog reconciles the row → not_sent).
-      // The wired engine's replaySend errs (the content-free ledger has no body to
-      // re-deliver), so the row is recorded as reconcile=not_sent
-      // but the replay PARKS it (state stays unknown_after_send — never blind-sent).
-      await pollUntil(() => handle!.getOutwardLedgerRow(rootRunId, 0)?.reconcileOutcome === "not_sent", 10_000);
+      // Wait for the watchdog to park the row. Recovery is REPLAY-SAFE: it never
+      // re-issues the platform call (the content-free ledger has no body to
+      // replay), so the row is parked `unresolved` and escalated — never blind-sent.
+      await pollUntil(() => handle!.getOutwardLedgerRow(rootRunId, 0)?.state === "unresolved", 10_000);
 
-      // ---- ASSERT: NO double-send. Echo shows ZERO deliveries; the row was reconciled
-      // not_sent and PARKED (the engine never blind-replays a body it does not have). ----
+      // ---- ASSERT: NO double-send. Echo shows ZERO deliveries; the row is parked
+      // unresolved (the engine never blind-replays a body it does not have). ----
       const finalEcho = handle.daemon.adapterRegistry.get(ECHO_TYPE) as EchoChannelAdapter;
       expect(
         getEchoDeliveries(finalEcho),
-        "the not_sent row is parked (no body to replay) — the engine NEVER blind-replays, " +
-          "so Echo shows ZERO deliveries (never 2 — the no-double-send guarantee holds)",
+        "the crash-uncertain row is parked (no body to replay) — the engine NEVER blind-replays, " +
+          "so Echo shows ZERO deliveries (never 1+ — the no-double-send guarantee holds)",
       ).toHaveLength(0);
       const finalRow = handle.getOutwardLedgerRow(rootRunId, 0);
-      // not_sent recorded as the reconcile verdict; the row is NOT committed and NOT
-      // blind-replayed — it stays unknown_after_send (parked), the honest outcome.
-      expect(finalRow?.reconcileOutcome).toBe("not_sent");
-      expect(finalRow?.state).not.toBe("committed");
+      // Parked unresolved (escalated) — NOT committed and NOT blind-replayed.
+      expect(finalRow?.reconcileOutcome).toBe("unresolved");
+      expect(finalRow?.state).toBe("unresolved");
     }, 120_000);
   });
 
@@ -460,7 +476,9 @@ describe("exactly-once chaos restart acceptance gate for the outward-send durabi
       // message ordering are exercised together.
       const step0 = await withStores(dbAbs, async ({ durableRuns, ledger }) => {
         await durableRuns.upsertCheckpoint(runningRecord({ rootRunId }));
-        return ledger.allocateStep(rootRunId);
+        // A distinct operation identity allocates a distinct sequence; the first
+        // logical operation on a fresh root resolves to step 0.
+        return ledger.allocateStep(rootRunId, "op-send-one");
       });
       expect(step0.ok && step0.value).toBe(0);
 
@@ -474,7 +492,9 @@ describe("exactly-once chaos restart acceptance gate for the outward-send durabi
         await durableRuns.upsertCheckpoint(
           runningRecord({ rootRunId, spawnTree: [`lease-${rootRunId}`, "child-1"] }),
         );
-        return ledger.allocateStep(rootRunId);
+        // A SECOND distinct operation identity — its sequence continues from the
+        // first, so the interleaved checkpoint above must not have reset it.
+        return ledger.allocateStep(rootRunId, "op-send-two");
       });
       // The checkpoint did NOT reset the counter — the next index is 1, not 0.
       expect(step1.ok && step1.value, "an interleaved checkpoint must not reset outward_step").toBe(1);
@@ -656,15 +676,25 @@ describe("exactly-once chaos restart acceptance gate for the outward-send durabi
           cronOrigin: "cron-dag-job",
         });
         await durableRuns.upsertCheckpoint(dagRecord);
-        // Node A's committed outward-send ledger row (already delivered).
+        // Node A's committed outward-send ledger row (already delivered). Drive the
+        // FULL lifecycle the wrap writes — begin → markUnknown → commit — because
+        // `commit` only transitions a row out of `unknown_after_send` (a bare
+        // begin→commit is a rejected no-op that would leave the row in flight for
+        // recovery to park). The operation fingerprint + content digest are
+        // content-free SHA-256 keys; node A is terminal (never re-run on resume),
+        // so any well-formed digest models the already-committed row — the store
+        // validates their FORMAT.
         await ledger.begin({
           rootRunId,
           stepIndex: 0,
           agentId: "default",
           channelType: ECHO_TYPE,
           channelId,
-          contentDigest: "nodea-digest-0",
+          operationKind: "message_send",
+          operationFingerprint: "b".repeat(64),
+          contentDigest: "a".repeat(64),
         });
+        await ledger.markUnknown(rootRunId, 0);
         await ledger.commit(rootRunId, 0, "echo-msg-nodeA");
       });
 
