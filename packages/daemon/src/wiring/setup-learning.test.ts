@@ -286,6 +286,33 @@ describe("wireLearningOutcome — tool/pipeline → observe/resolve → emit", (
     });
   });
 
+  it("does not persist an outcome for a turn that ingress marked ineligible for learning", async () => {
+    const bus = new TypedEventBus();
+    const { store, observe } = makeStubStore();
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: store,
+      usefulnessStore: mockUsefulnessStore().store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    runWithContext({
+      tenantId: "tenant-x",
+      agentId: AGENT,
+      sessionKey: SESSION_KEY,
+      traceId: TRACE,
+      learningEligible: false,
+    } as never, () => bus.emit("tool:executed", toolPayload({ success: true })));
+    await Promise.resolve();
+
+    expect(observe).not.toHaveBeenCalled();
+  });
+
   it("graph:completed { status:'completed' } records 'success' AND emits learning:outcome_observed", async () => {
     const bus = new TypedEventBus();
     const { store, observe, resolve } = makeStubStore(baseVerdict({ outcome: "success" }));

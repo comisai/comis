@@ -339,6 +339,53 @@ describe("resolveAndPreprocess enrichment boundary", () => {
 });
 
 describe("inbound preprocessing trust boundary", () => {
+  it("marks a synthetic restart continuation as ineligible for learning without lowering sender authorization", async () => {
+    let observedContext: RequestContext | undefined;
+    const deps: InboundPipelineDeps = {
+      ...makeDeps(),
+      deliveryService: {} as never,
+      getElevatedReplyConfig: () => ({
+        enabled: true,
+        senderTrustMap: { "ordinary-user": "admin" },
+        defaultTrustLevel: "guest",
+        trustModelRoutes: {},
+        trustPromptOverrides: {},
+      }),
+      handleSlashCommand: vi.fn(async () => {
+        observedContext = tryGetContext();
+        return { handled: true };
+      }),
+    };
+    const ingressContext = {
+      tenantId: "default",
+      traceId: "00000000-0000-4000-8000-000000000011",
+      startedAt: 1_700_000_000_000,
+      trustLevel: "user" as const,
+      channelType: "telegram",
+    };
+    const message = makeMessage({
+      text: "/inspect-context",
+      metadata: {
+        ...makeMessage().metadata,
+        isRestartContinuation: true,
+      },
+    });
+
+    await runWithContext(ingressContext, () => processInboundMessage(
+      deps,
+      makeAdapter(),
+      message,
+      new Set(),
+      new Map(),
+    ));
+
+    expect(observedContext).toMatchObject({
+      trustLevel: "admin",
+      senderTrustTier: "admin",
+      learningEligible: false,
+    });
+  });
+
   it("derives trust and delivery routing from ingress identity after a forged preprocessing result", async () => {
     let observedContext: RequestContext | undefined;
     const preprocessMessage = vi.fn(async (message: NormalizedMessage) => ({
