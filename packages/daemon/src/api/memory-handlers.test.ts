@@ -638,6 +638,58 @@ describe("memory.store - write validation", () => {
     expect(deps.memoryAdapter.store).not.toHaveBeenCalled();
   });
 
+  it("stores an operator entry by synthesizing a control-plane scope when an admin has no ambient turn scope", async () => {
+    const deps = makeDeps({ tenantId: "deployment-tenant" });
+    const handlers = createRawMemoryHandlers(deps);
+
+    // No withTestTurnScope wrapper: there is NO ambient request context — exactly
+    // the operator (web-console) call arriving over the gateway admin leg, which
+    // injects _trustLevel:"admin" but never a conversation turn scope. The write
+    // must still land, bound to a control-plane scope synthesized for the
+    // EXPLICIT tenant/agent (mirrors memory.change_visibility's admin branch).
+    const result = (await handlers["memory.store"]!({
+      content: "operator-authored fact",
+      visibility: "agent-shared",
+      tenantId: "op-tenant",
+      agentId: "op-agent",
+      _trustLevel: "admin",
+    })) as { stored: boolean; id: string };
+
+    expect(result.stored).toBe(true);
+    expect(deps.memoryAdapter.store).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "operator-authored fact",
+        // Admin callers are attributed to the operator, never a phantom agent.
+        source: expect.objectContaining({ who: "operator" }),
+      }),
+      expect.objectContaining({
+        turnScope: expect.objectContaining({
+          conversation: expect.objectContaining({ tenantId: "op-tenant", agentId: "op-agent" }),
+        }),
+        // The write lands under the EXPLICIT tenant/agent — never a silent default.
+        operatorPermission: expect.objectContaining({ tenantId: "op-tenant", agentId: "op-agent" }),
+      }),
+    );
+  });
+
+  it("rejects a memory store with no ambient turn scope from a NON-admin caller (no authority widening)", async () => {
+    const deps = makeDeps({ tenantId: "deployment-tenant" });
+    const handlers = createRawMemoryHandlers(deps);
+
+    // Same context-free call, but WITHOUT admin trust: a non-admin caller has no
+    // resolved request authority to bind the write to, so it must be rejected —
+    // the control-plane synthesis is admin-gated and never widens agent authority.
+    await expect(
+      handlers["memory.store"]!({
+        content: "unscoped fact",
+        visibility: "agent-shared",
+        tenantId: "op-tenant",
+        agentId: "op-agent",
+      }),
+    ).rejects.toThrow("Memory operation requires resolved request authority");
+    expect(deps.memoryAdapter.store).not.toHaveBeenCalled();
+  });
+
   it("stores an explicitly scoped entry without a validator", async () => {
     const deps = makeDeps();
     const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
