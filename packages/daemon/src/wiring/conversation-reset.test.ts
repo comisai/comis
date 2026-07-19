@@ -25,10 +25,19 @@
 import { describe, it, expect, vi } from "vitest";
 import { createConversationReset } from "./conversation-reset.js";
 import type { ConversationResetDeps, ResetRuntimeAdapter } from "./conversation-reset.js";
-import type { SessionKey } from "@comis/core";
+import { createConversationRef, formatSessionKey, type ConversationScope, type SessionKey } from "@comis/core";
+import { ok } from "@comis/shared";
 
-const KEY: SessionKey = { tenantId: "t1", userId: "u1", channelId: "c1" };
-const FORMATTED = "t1:u1:c1";
+const KEY: SessionKey = { tenantId: "t1", agentId: "agent-a", userId: "u1", channelId: "c1" };
+const SCOPE: ConversationScope = {
+  tenantId: "t1",
+  agentId: "agent-a",
+  partition: { kind: "principal", principalId: "u1" },
+};
+const conversationRef = createConversationRef(SCOPE);
+if (!conversationRef.ok) throw conversationRef.error;
+const CONVERSATION_REF = conversationRef.value;
+const FORMATTED = formatSessionKey(KEY);
 
 function makeLogger() {
   return { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
@@ -46,8 +55,8 @@ function makeLcdStore(deleteCount = 7) {
 function makeSessionStore(messages: unknown[] = [{ role: "user" }, { role: "assistant" }]) {
   const metadata = { channelType: "openai" };
   return {
-    loadByFormattedKey: vi.fn().mockReturnValue({ messages, metadata }),
-    saveByFormattedKey: vi.fn(),
+    load: vi.fn(() => ok({ messages, metadata })),
+    save: vi.fn(() => ok(undefined)),
     metadata,
   };
 }
@@ -58,7 +67,7 @@ function makeAdapter(): ResetRuntimeAdapter & { destroySession: ReturnType<typeo
 
 function makeDeps(overrides: Partial<ConversationResetDeps> = {}): ConversationResetDeps & { logger: ReturnType<typeof makeLogger> } {
   const logger = makeLogger();
-  return { tenantId: "t1", logger, ...overrides } as ConversationResetDeps & { logger: ReturnType<typeof makeLogger> };
+  return { logger, ...overrides } as ConversationResetDeps & { logger: ReturnType<typeof makeLogger> };
 }
 
 describe("user asks the platform to completely forget a conversation", () => {
@@ -73,7 +82,7 @@ describe("user asks the platform to completely forget a conversation", () => {
     });
 
     const reset = createConversationReset(deps);
-    const result = await reset.destroyConversationCompletely("agent-a", KEY);
+    const result = await reset.destroyConversationCompletely(SCOPE, KEY);
 
     expect(result).toEqual({ lcdRowsDeleted: 7, sessionMessagesCleared: 2, runtimeSessionDestroyed: true });
     expect(adapter.destroySession).toHaveBeenCalledWith(KEY);
@@ -83,11 +92,11 @@ describe("user asks the platform to completely forget a conversation", () => {
     const lcdStore = makeLcdStore();
     const deps = makeDeps({ lcdStore });
 
-    await createConversationReset(deps).destroyConversationCompletely("agent-a", KEY);
+    await createConversationReset(deps).destroyConversationCompletely(SCOPE, KEY);
 
-    expect(lcdStore.runOnConversation).toHaveBeenCalledWith(FORMATTED, expect.any(Function));
+    expect(lcdStore.runOnConversation).toHaveBeenCalledWith(CONVERSATION_REF, expect.any(Function));
     expect(lcdStore.deleteConversationLcd).toHaveBeenCalledWith({
-      conversationId: FORMATTED,
+      conversationRef: CONVERSATION_REF,
       agentId: "agent-a",
       tenantId: "t1",
       sessionKey: FORMATTED,
@@ -98,15 +107,15 @@ describe("user asks the platform to completely forget a conversation", () => {
     const sessionStore = makeSessionStore();
     const deps = makeDeps({ sessionStore });
 
-    await createConversationReset(deps).destroyConversationCompletely("agent-a", KEY);
+    await createConversationReset(deps).destroyConversationCompletely(SCOPE, KEY);
 
-    expect(sessionStore.saveByFormattedKey).toHaveBeenCalledWith(FORMATTED, [], sessionStore.metadata);
+    expect(sessionStore.save).toHaveBeenCalledWith(SCOPE, [], sessionStore.metadata);
   });
 
   it("degrades to honest zeros/false when no layer is wired — never throws", async () => {
     const deps = makeDeps();
 
-    const result = await createConversationReset(deps).destroyConversationCompletely("agent-a", KEY);
+    const result = await createConversationReset(deps).destroyConversationCompletely(SCOPE, KEY);
 
     expect(result).toEqual({ lcdRowsDeleted: 0, sessionMessagesCleared: 0, runtimeSessionDestroyed: false });
     expect(deps.logger.warn).toHaveBeenCalledWith(
@@ -122,7 +131,7 @@ describe("user asks the platform to completely forget a conversation", () => {
   it("WARNs with the formatted-key hint when the reset clears NOTHING across all layers", async () => {
     const deps = makeDeps({ lcdStore: makeLcdStore(0), sessionStore: makeSessionStore([]) });
 
-    const result = await createConversationReset(deps).destroyConversationCompletely("agent-a", KEY);
+    const result = await createConversationReset(deps).destroyConversationCompletely(SCOPE, KEY);
 
     expect(result).toEqual({ lcdRowsDeleted: 0, sessionMessagesCleared: 0, runtimeSessionDestroyed: false });
     expect(deps.logger.warn).toHaveBeenCalledWith(
@@ -147,7 +156,7 @@ describe("user asks the platform to completely forget a conversation", () => {
       piSessionAdapters: new Map([["agent-a", adapter]]),
     });
 
-    await createConversationReset(deps).destroyConversationCompletely("agent-a", KEY);
+    await createConversationReset(deps).destroyConversationCompletely(SCOPE, KEY);
 
     expect(deps.logger.info).toHaveBeenCalledWith(
       expect.anything(),
@@ -167,7 +176,7 @@ describe("user asks the platform to completely forget a conversation", () => {
     const adapter = makeAdapter();
     const deps = makeDeps({ lcdStore, piSessionAdapters: new Map([["agent-a", adapter]]) });
 
-    const result = await createConversationReset(deps).destroyConversationCompletely("agent-a", KEY);
+    const result = await createConversationReset(deps).destroyConversationCompletely(SCOPE, KEY);
 
     expect(result.lcdRowsDeleted).toBe(0);
     expect(result.runtimeSessionDestroyed).toBe(true);
@@ -181,7 +190,7 @@ describe("user asks the platform to completely forget a conversation", () => {
     const adapter = { destroySession: vi.fn().mockRejectedValue(new Error("fs error")) };
     const deps = makeDeps({ piSessionAdapters: new Map([["agent-a", adapter]]) });
 
-    const result = await createConversationReset(deps).destroyConversationCompletely("agent-a", KEY);
+    const result = await createConversationReset(deps).destroyConversationCompletely(SCOPE, KEY);
 
     expect(result.runtimeSessionDestroyed).toBe(false);
     expect(deps.logger.warn).toHaveBeenCalledWith(
@@ -192,11 +201,11 @@ describe("user asks the platform to completely forget a conversation", () => {
 });
 
 describe("session.reset_conversation severs the runtime layer it used to skip", () => {
-  it("parses the formatted key and destroys the runtime session for the agent", async () => {
+  it("passes explicit conversation and display authority to the runtime adapter", async () => {
     const adapter = makeAdapter();
-    const deps = makeDeps({ piSessionAdapters: new Map([["default", adapter]]) });
+    const deps = makeDeps({ piSessionAdapters: new Map([["agent-a", adapter]]) });
 
-    const destroyed = await createConversationReset(deps).destroyRuntimeSession("default", FORMATTED);
+    const destroyed = await createConversationReset(deps).destroyRuntimeSession(SCOPE, KEY);
 
     expect(destroyed).toBe(true);
     expect(adapter.destroySession).toHaveBeenCalledWith(
@@ -204,24 +213,23 @@ describe("session.reset_conversation severs the runtime layer it used to skip", 
     );
   });
 
-  it("an unparseable session key degrades to false + WARN, never a throw", async () => {
+  it("does not reconstruct authority from the display key", async () => {
     const adapter = makeAdapter();
-    const deps = makeDeps({ piSessionAdapters: new Map([["default", adapter]]) });
+    const deps = makeDeps({ piSessionAdapters: new Map([["agent-a", adapter]]) });
+    const colonBearingKey = { ...KEY, channelId: "nested:conversation" };
 
-    const destroyed = await createConversationReset(deps).destroyRuntimeSession("default", "");
+    const destroyed = await createConversationReset(deps).destroyRuntimeSession(SCOPE, colonBearingKey);
 
-    expect(destroyed).toBe(false);
-    expect(adapter.destroySession).not.toHaveBeenCalled();
-    expect(deps.logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ errorKind: "validation" }),
-      "Conversation reset: unparseable session key",
-    );
+    expect(destroyed).toBe(true);
+    expect(adapter.destroySession).toHaveBeenCalledWith(colonBearingKey);
   });
 
   it("a missing adapter for the agent degrades to false + WARN naming the consequence", async () => {
     const deps = makeDeps({ piSessionAdapters: new Map() });
+    const ghostScope = { ...SCOPE, agentId: "ghost-agent" };
+    const ghostKey = { ...KEY, agentId: "ghost-agent" };
 
-    const destroyed = await createConversationReset(deps).destroyRuntimeSession("ghost-agent", FORMATTED);
+    const destroyed = await createConversationReset(deps).destroyRuntimeSession(ghostScope, ghostKey);
 
     expect(destroyed).toBe(false);
     expect(deps.logger.warn).toHaveBeenCalledWith(

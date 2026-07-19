@@ -41,7 +41,7 @@ const ApprovalRequestSchema = LooseRecord;
  * `admin.approval.pending` — list all pending approval requests
  * awaiting operator decision. ADMIN scope. Read-only.
  *
- * Request: `{}` (no params).
+ * Request carries the exact tenant-agent-conversation query authority.
  *
  * Response: `{ requests: ApprovalRequest[], total: number }`. The
  * handler returns `requests: deps.approvalGate.pending()` directly
@@ -49,7 +49,11 @@ const ApprovalRequestSchema = LooseRecord;
  */
 export const AdminApprovalPendingContract = defineContract({
   method: "admin.approval.pending",
-  request: z.object({}),
+  request: z.object({
+    tenant_id: z.string(),
+    agent_id: z.string(),
+    conversation_ref: z.string(),
+  }),
   response: z.object({
     requests: z.array(ApprovalRequestSchema),
     total: z.number(),
@@ -75,6 +79,9 @@ export const AdminApprovalResolveContract = defineContract({
   method: "admin.approval.resolve",
   request: z.object({
     requestId: z.string().min(1),
+    tenant_id: z.string(),
+    agent_id: z.string(),
+    conversation_ref: z.string(),
     approved: z.boolean(),
     approvedBy: z.string().optional(),
     reason: z.string().optional(),
@@ -112,7 +119,9 @@ export const AdminApprovalResolveContract = defineContract({
 export const AdminApprovalResolveAllContract = defineContract({
   method: "admin.approval.resolveAll",
   request: z.object({
-    sessionKey: z.string().optional(),
+    tenant_id: z.string(),
+    agent_id: z.string(),
+    conversation_ref: z.string(),
     approved: z.boolean(),
     approvedBy: z.string().optional(),
     reason: z.string().optional(),
@@ -126,17 +135,18 @@ export const AdminApprovalResolveAllContract = defineContract({
 
 /**
  * `admin.approval.clearDenialCache` — clear cached denial entries
- * (optionally scoped to one sessionKey). ADMIN scope.
+ * scoped to one explicit conversation authority. ADMIN scope.
  *
- * Request: `{ sessionKey? }`. When absent, the entire denial cache
- * is flushed.
+ * Request carries tenant, agent, and conversation reference.
  *
  * Response: `{ cleared: true }`.
  */
 export const AdminApprovalClearDenialCacheContract = defineContract({
   method: "admin.approval.clearDenialCache",
   request: z.object({
-    sessionKey: z.string().optional(),
+    tenant_id: z.string(),
+    agent_id: z.string(),
+    conversation_ref: z.string(),
   }),
   response: z.object({
     cleared: z.literal(true),

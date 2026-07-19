@@ -19,6 +19,7 @@ import type {
   UserTrustLevel,
   AgentCapability,
   DeliveryOrigin,
+  ConversationLocator,
 } from "@comis/core";
 import type {
   AnnouncementBatcher,
@@ -64,6 +65,12 @@ export interface GraphRunState {
   runningCount: number;
   callerSessionKey?: string;
   callerAgentId?: string;
+  /** Canonical durable authority captured at graph submission. */
+  callerConversationLocator?: ConversationLocator;
+  /** Principal authorized to continue this durable graph. */
+  callerPrincipalId?: string;
+  /** Thread-narrowed endpoint authorized for interactive and terminal delivery. */
+  callerEndpoint?: import("@comis/core").ChannelEndpoint;
   /** The tree-stable rootRunId shared by EVERY node spawn in
    *  this graph run, resolved ONCE at submission (inherit the driving sub-agent's
    *  root, else the caller session's stable root). Threaded into each
@@ -128,7 +135,7 @@ export interface DriverNodeState {
   driver: NodeTypeDriver;
   ctx: NodeDriverContext;
   currentRunId?: string;
-  persistentSessionKey?: string;  // Stable session key for multi-round driver reuse
+  persistentConversation?: ConversationLocator;
   /** Tool names discovered across driver rounds, carried forward to seed subsequent round spawns. */
   accumulatedDiscoveries?: string[];
   pendingParallel?: Map<string, { agentId: string; index: number; total: number }>;
@@ -191,8 +198,8 @@ export interface GraphCoordinatorDeps {
       caps?: readonly AgentCapability[];
       /** Sorted tool name superset for graph sub-agent cache prefix sharing. */
       graphToolNames?: string[];
-      /** Reuse an existing session key for multi-round driver spawns. */
-      reuseSessionKey?: string;
+      /** Reuse an existing conversation for multi-round driver spawns. */
+      reuseConversation?: ConversationLocator;
       /** Pre-discovered deferred tool names for sub-agent discovery tracker seeding. */
       discoveredDeferredTools?: string[];
       /** Graph node depth: 0 = root (dependsOn=[]), 1+ = downstream. */
@@ -204,7 +211,14 @@ export interface GraphCoordinatorDeps {
       reservedRunId?: string;
     }): string;
     killRun(runId: string): { killed: boolean; error?: string };
-    getRunStatus(runId: string): { status: string; result?: { response: string; finishReason?: string }; error?: string; sessionKey?: string } | undefined;
+    getRunStatus(runId: string): {
+      status: string;
+      result?: { response: string; finishReason?: string };
+      error?: string;
+      sessionKey: string;
+      conversationScope: ConversationLocator["conversationScope"];
+      conversationRef: ConversationLocator["conversationRef"];
+    } | undefined;
     /** Resolve a driving sub-agent's run by its session key so a
      *  graph submitted BY a sub-agent inherits that run's tree root. Optional
      *  (narrowed wiring may omit it); absent ⇒ the resolver/mint fallback applies. */
@@ -248,6 +262,7 @@ export interface GraphCoordinatorDeps {
   announceToParent?: (
     callerAgentId: string,
     callerSessionKey: SessionKey,
+    callerConversation: ConversationLocator,
     text: string,
     channelType: string,
     channelId: string,

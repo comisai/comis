@@ -58,7 +58,7 @@ function toPersistedState(task: BackgroundTask | PersistedTaskState): PersistedT
  * subsequent recovery scan will simply miss this task.
  */
 export function persistTaskSync(dataDir: string, task: BackgroundTask | PersistedTaskState): void {
-  const agentDir = safePath(dataDir, task.origin.agentId);
+  const agentDir = safePath(dataDir, task.origin.turnScope.conversation.agentId);
   ensureContainedDir({ dir: agentDir, mode: 0o700, confinedBaseDir: dataDir });
   const filePath = safePath(agentDir, `${task.id}.json`);
   const state: PersistedTaskState = "_promise" in task ? toPersistedState(task as BackgroundTask) : task;

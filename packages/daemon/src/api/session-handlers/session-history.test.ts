@@ -27,16 +27,60 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { bindSessionReadHandlers } from "./session-read.js";
+import { bindSessionReadHandlers as bindSessionReadHandlersRaw } from "./session-read.js";
 import type { SessionHandlerDeps } from "./session-helpers.js";
 import { ok } from "@comis/shared";
-import type { DeliveryQueueEntry, DeliveryQueuePort } from "@comis/core";
+import { createConversationRef, type ConversationScope, type DeliveryQueueEntry, type DeliveryQueuePort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 const SESSION_KEY = "test:user-1:chan-A";
+const scopeFor = (agentId: string): ConversationScope => ({
+  tenantId: "test",
+  agentId,
+  partition: {
+    kind: "endpoint-conversation-principal",
+    principalId: "user-1",
+    endpoint: {
+      channelType: "telegram",
+      channelInstanceId: "telegram-account",
+      conversationId: "chan-A",
+      conversationKind: "direct",
+    },
+  },
+});
+const referenceFor = (agentId: string) => {
+  const result = createConversationRef(scopeFor(agentId));
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+
+function bindSessionReadHandlers(deps: SessionHandlerDeps): ReturnType<typeof bindSessionReadHandlersRaw> {
+  const rawStore = deps.sessionStore as any;
+  const store = {
+    ...rawStore,
+    loadByRef: (scope: { tenantId: string; agentId: string }, conversationRef: string) => {
+      const raw = rawStore.loadByRef?.(scope, conversationRef) ?? rawStore.loadByFormattedKey?.(SESSION_KEY);
+      const normalized = raw && typeof raw === "object" && "ok" in raw ? raw : ok(raw);
+      if (!normalized.ok || normalized.value === undefined) return normalized;
+      const conversationScope = scopeFor(scope.agentId);
+      return ok({ ...normalized.value, conversationScope, conversationRef: referenceFor(scope.agentId) });
+    },
+  };
+  const handlers = bindSessionReadHandlersRaw({ ...deps, sessionStore: store });
+  const history = handlers["session.history"]!;
+  return {
+    ...handlers,
+    "session.history": (params) => history({
+      tenant_id: "test",
+      agent_id: "default",
+      conversation_ref: referenceFor("default"),
+      ...params,
+    }),
+  };
+}
 
 interface SeededSession {
   messages: unknown[];
@@ -271,6 +315,9 @@ describe("session.history agent-origin self-scoping", () => {
 
     const r = (await handlers["session.history"]!({
       session_key: SESSION_KEY,
+      tenant_id: "test",
+      agent_id: "caller-agent",
+      conversation_ref: referenceFor("caller-agent"),
       _agentId: "caller-agent",
       _callerSessionKey: SESSION_KEY,
     })) as { messages: Array<{ role: string; content: string }> };
@@ -291,7 +338,7 @@ describe("session.history agent-origin self-scoping", () => {
         _agentId: "attacker-agent",
         _callerSessionKey: "test:attacker-user:attacker-channel",
       }),
-    ).rejects.toThrow(/not found/i);
+    ).rejects.toThrow(/does not match the authenticated caller/i);
   });
 
   it("session.history still returns the full transcript for an admin/operator call with NO _agentId injected", async () => {

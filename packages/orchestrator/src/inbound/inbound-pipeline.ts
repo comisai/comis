@@ -17,7 +17,7 @@ import type { CommandQueue } from "../queue/command-queue.js";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 // Relative path used because orchestrator cannot import its own published name.
 import type { InteractiveCallbackRouter } from "../approval/index.js";
-import type { ApprovalRequest, ChannelPort, DeliveryQueuePort, EventMap, NormalizedMessage, RequestContext, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
+import type { ApprovalGate, ChannelPort, ConversationRef, DeliveryQueuePort, DmScopeConfig, EventMap, LocalizationPort, NormalizedMessage, PrincipalResolverPort, RequestContext, ResolvedTurnScope, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 // The orchestrator imports ONLY the @comis/core activity port + ctx type
 // (never the observability impl — hexagonal boundary). The
 // ActivityTurnCoordinator is a local execution type.
@@ -44,6 +44,7 @@ import { evaluateInboundGate } from "./inbound-gate.js";
 import { setupAndRoute } from "./setup-and-route.js";
 import {
   createDeliveryOrigin,
+  createConversationRef,
   enrichCurrentContext,
   systemNowMs,
   tryGetContext,
@@ -67,6 +68,10 @@ export interface InboundPipelineDeps {
   logger: ComisLogger;
   messageRouter: MessageRouter;
   sessionManager: SessionLifecycle;
+  principalResolver: PrincipalResolverPort;
+  localization: LocalizationPort;
+  /** Parsed per-agent routing policy; schema defaults are already applied. */
+  getDmScope: (agentId: string) => DmScopeConfig;
   createExecutor: (agentId: string) => AgentExecutor | undefined;
   /**
    * Persist the original physical inbound occurrence in the resolved agent's
@@ -83,7 +88,10 @@ export interface InboundPipelineDeps {
     errorKind: "validation" | "precondition" | "resource" | "config";
   }>>;
   channelRegistry?: ChannelRegistry;
-  preprocessMessage?: (msg: NormalizedMessage) => Promise<NormalizedMessage>;
+  preprocessMessage?: (
+    msg: NormalizedMessage,
+    turnScope: ResolvedTurnScope,
+  ) => Promise<NormalizedMessage>;
   commandQueue?: CommandQueue;
   autoReplyEngineConfig?: AutoReplyEngineConfig;
   sendPolicyConfig?: SendPolicyConfig;
@@ -123,15 +131,7 @@ export interface InboundPipelineDeps {
   /** Template context builder for response prefix variables. */
   buildTemplateContext?: (agentId: string, channelType: string, msg: NormalizedMessage) => Record<string, string>;
   /** Optional approval gate for resolving /approve and /deny chat commands. When absent, approval commands pass through as plain text. */
-  approvalGate?: {
-    resolveApproval(requestId: string, approved: boolean, approvedBy: string, reason?: string): void;
-    pending(): Array<{ requestId: string; shortId: string; sessionKey: string; action: string; toolName: string }>;
-    getRequest(requestId: string): { requestId: string; sessionKey: string } | undefined;
-    /** Resolve a minted 12-char shortId to its pending request. Gate-internal; channels never call this. */
-    getRequestByShortId(shortId: string): { requestId: string; shortId: string; sessionKey: string; action: string; toolName: string } | undefined;
-    /** Pending requests scoped to a session (the plain-text/button resolution source). */
-    pendingForSession(sessionKey: string): ApprovalRequest[];
-  };
+  approvalGate?: Pick<ApprovalGate, "resolveApproval" | "pending" | "getRequest" | "getRequestByShortId" | "pendingForAuthority">;
   /**
    * Optional server-side interactive-callback router. When present, an inbound
    * `NormalizedMessage` carrying `metadata.isButtonCallback === true` is intercepted and
@@ -206,6 +206,7 @@ function enrichResolvedInboundContext(
   processedMsg: NormalizedMessage,
   sessionKey: SessionKey,
   agentId: string,
+  turnScope: ResolvedTurnScope,
 ): Result<RequestContext, Error> {
   const elevatedConfig = tryCatch(
     () => deps.getElevatedReplyConfig?.(agentId),
@@ -231,6 +232,7 @@ function enrichResolvedInboundContext(
       processedMsg.senderId,
     ),
     deliveryOrigin: deliveryOrigin.value,
+    turnScope,
   });
 }
 
@@ -370,7 +372,15 @@ export async function processInboundMessage(
       sessionKey,
       processedMsg,
       inboundProvenancePlan,
+      turnScope,
     } = resolved;
+    const conversationRefResult = createConversationRef(turnScope.conversation);
+    if (!conversationRefResult.ok) {
+      dedupReservation?.rollback();
+      emitInboundTerminal("error", "inbound_rejected");
+      return Promise.reject(conversationRefResult.error);
+    }
+    const conversationRef: ConversationRef = conversationRefResult.value;
 
     // Agent, session, and sender trust become authoritative at resolution.
     // Fill them on the ingress scope before gate handling and queue capture so
@@ -381,6 +391,7 @@ export async function processInboundMessage(
       processedMsg,
       sessionKey,
       agentId,
+      turnScope,
     );
     if (!enrichedContext.ok) {
       dedupReservation?.rollback();
@@ -403,6 +414,8 @@ export async function processInboundMessage(
         processedMsg,
         sessionKey,
         agentId,
+        turnScope,
+        conversationRef,
         sendOverrides,
         sourceTerminalScope,
       ),
@@ -426,7 +439,7 @@ export async function processInboundMessage(
 
     // Set up execution and route through the configured queue mode.
     const routed = await fromPromise(setupAndRoute(
-      deps, adapter, gate.processedMsg, msg, sessionKey, agentId,
+      deps, adapter, gate.processedMsg, msg, sessionKey, agentId, turnScope, conversationRef,
       executor, activePacers, sendOverrides, gate.directives,
       inboundProvenancePlan,
       sourceTerminalScope,

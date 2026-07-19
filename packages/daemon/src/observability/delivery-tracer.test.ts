@@ -80,7 +80,7 @@ describe("createDeliveryTracer", () => {
         attachments: [],
         metadata: { traceId },
       },
-      sessionKey: { tenantId: "default", userId: "user-1", channelId },
+      sessionKey: { tenantId: "default", agentId: "agent-1", userId: "user-1", channelId },
     });
   }
 
@@ -177,7 +177,7 @@ describe("createDeliveryTracer", () => {
     expect(recent[0]!.targetChannelType).toBe("telegram");
     expect(recent[0]!.latencyMs).toBe(50);
     expect(recent[0]!.status).toBe("success");
-    expect(recent[0]!.sessionKey).toBe("default:user-1:ch-corr");
+    expect(recent[0]!.sessionKey).toBe("default:agent:agent-1:user-1:ch-corr");
     expect(recent[0]!.toolCalls).toBeNull();
     expect(recent[0]!.llmCalls).toBeNull();
     expect(recent[0]!.tokensTotal).toBeNull();

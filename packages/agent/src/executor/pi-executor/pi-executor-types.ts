@@ -2,8 +2,8 @@
 /** PiExecutor factory types, isolated to avoid cyclic imports from its helpers. */
 /** @module */
 import type {
-  AuthStorage,
   ModelRegistry,
+  ModelRuntime,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -46,6 +46,7 @@ import type { SummarizerSpendBreaker } from "../../safety/summarizer-spend-break
 import type { ProviderHealthMonitor } from "../../safety/provider-health-monitor.js";
 import type { ComisSessionManager } from "../../session/comis-session-manager.js";
 import type { AuthRotationAdapter } from "../../model/auth-rotation-adapter.js";
+import type { ComisCredentialStore } from "../../model/auth-storage-adapter.js";
 import type { OAuthTokenManager } from "../../model/oauth-token-manager.js";
 import type { ActiveRunRegistry } from "../active-run-registry.js";
 import type { GeminiCacheManager } from "../gemini-cache-manager.js";
@@ -54,6 +55,8 @@ import type { McpInstructionBlock } from "@comis/core";
 
 /** Dependencies required by the PiExecutor. */
 export interface PiExecutorDeps {
+  /** Agent authority bound to this executor instance by the composition root. */
+  agentId: string;
   // Safety controls
   circuitBreaker: CircuitBreaker;
   /** Optional provider health monitor for cross-agent pre-check. */
@@ -77,8 +80,11 @@ export interface PiExecutorDeps {
    *  plan bridge reads the live plan via the shared port. Absent in non-ACP runtimes. */
   executionPlanHolder?: import("./execution-plan-holder.js").ExecutionPlanHolder;
   // Adapters
-  authStorage: AuthStorage;
+  authStorage: ComisCredentialStore;
   modelRegistry: ModelRegistry;
+  /** ModelRuntime backing modelRegistry — createAgentSession consumes it and
+   *  resolves request auth live through the credential store. */
+  modelRuntime: ModelRuntime;
   providerAliases?: Map<string, string>;
   // Session management
   sessionAdapter: ComisSessionManager;
@@ -102,12 +108,8 @@ export interface PiExecutorDeps {
   agentDir: string;
   // Optional
   memoryPort?: MemoryPort;
-  /** Optional LCD context store (dag-mode write-path + assembly).
-   *  TYPE-only from @comis/core — the agent never imports the memory package
-   *  (the agent↛memory cut); the daemon injects the concrete createLcdStore.
-   *  Absent ⇒ no afterTurn ingest + the dag branch falls through to the
-   *  pipeline (never crashes, never no-ops). */
-  contextStore?: ContextStorePort;
+  /** Canonical durable context store injected through the core port. */
+  contextStore: ContextStorePort;
   /** The daemon-owned per-tenant summarizer spend+breaker. ONE
    *  instance constructed at the composition root (mirrors the embedding breaker,
    *  setup-memory.ts) and injected here so it bounds AGGREGATE per-tenant
@@ -182,6 +184,8 @@ export interface PiExecutorDeps {
   mediaPersistenceEnabled?: boolean;
   autonomousMediaEnabled?: boolean;
   getPromptSkillsXml?: () => string;
+  /** Typed path-to-skill attribution captured beside the rendered skill listing. */
+  getPromptSkillLocations?: () => ReadonlyMap<string, string>;
   /**
    * Read instructions from currently connected MCP servers for each execution.
    * Resolver form keeps the dynamic preamble current after reconnects.
@@ -259,7 +263,8 @@ export interface PiExecutorDeps {
   /** Sender trust display config from AppConfig. */
   senderTrustDisplayConfig?: SenderTrustDisplayConfig;
   /** Tenant ID for conversation creation. */
-  tenantId?: string;
+  /** Bound tenant authority for every turn executed by this instance. */
+  tenantId: string;
   /** Delivery mirror port for session mirroring injection. */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget limits. */

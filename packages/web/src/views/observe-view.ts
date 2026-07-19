@@ -728,16 +728,16 @@ export class IcObserveView extends LitElement {
       agentListResult,
       channelListResult,
     ] = await Promise.allSettled([
-      rpc.call<Record<string, unknown>>("obs.delivery.stats", { sinceMs: 86_400_000 }),
-      rpc.call<Record<string, unknown>>("obs.delivery.stats", { sinceMs: deliveryWindowMs }),
-      rpc.call<Record<string, unknown>>("obs.billing.total"),
-      rpc.call<unknown>("obs.billing.usage24h"),
-      rpc.call<unknown>("obs.billing.byProvider"),
-      rpc.call<unknown>("obs.diagnostics"),
-      rpc.call<unknown>("obs.delivery.recent", { sinceMs: 604_800_000, limit: 200 }),
-      rpc.call<unknown>("obs.channels.all"),
-      rpc.call<Record<string, unknown>>("agents.list"),
-      rpc.call<Record<string, unknown>>("channels.list"),
+      rpc.call("obs.delivery.stats", { sinceMs: 86_400_000 }),
+      rpc.call("obs.delivery.stats", { sinceMs: deliveryWindowMs }),
+      rpc.call("obs.billing.total"),
+      rpc.call("obs.billing.usage24h"),
+      rpc.call("obs.billing.byProvider"),
+      rpc.call("obs.diagnostics"),
+      rpc.call("obs.delivery.recent", { sinceMs: 604_800_000, limit: 200 }),
+      rpc.call("obs.channels.all"),
+      rpc.call("agents.list"),
+      rpc.call("channels.list"),
     ]);
 
     let anySuccess = false;
@@ -831,7 +831,7 @@ export class IcObserveView extends LitElement {
       const agentIds: string[] = Array.isArray(agentListResult.value.agents) ? agentListResult.value.agents : [];
       if (agentIds.length > 0) {
         const details = await Promise.allSettled(
-          agentIds.map((id) => rpc.call<AgentHealthEntry>("agents.get", { agentId: id })),
+          agentIds.map((id) => rpc.call("agents.get", { agentId: id })),
         );
         this._agentHealth = details
           .filter((r): r is PromiseFulfilledResult<AgentHealthEntry> => r.status === "fulfilled")
@@ -1361,7 +1361,7 @@ export class IcObserveView extends LitElement {
     if (!this.rpcClient || this.rpcClient.status !== "connected") return;
     const sinceMs = this._getTimeRangeMs();
     const [result] = await Promise.allSettled([
-      this.rpcClient.call<Record<string, unknown>>("obs.delivery.stats", { sinceMs }),
+      this.rpcClient.call("obs.delivery.stats", { sinceMs }),
     ]);
     if (sinceMs === this._getTimeRangeMs()) {
       this._deliveryWindowStats = result?.status === "fulfilled"

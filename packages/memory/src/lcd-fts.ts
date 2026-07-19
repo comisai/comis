@@ -10,7 +10,7 @@
  *      text lives in `lcd_message_parts.tool_input`/`tool_output` + text-part
  *      JSON), so the store populates the CONTENTLESS `lcd_messages_fts` table on
  *      append with this rendering.
- *   2. `searchLcdImpl(db, conversationId, query, opts)` — the FTS5-MATCH-with-
+ *   2. `searchLcdImpl(db, conversationRef, query, opts)` — the FTS5-MATCH-with-
  *      LIKE-fallback branch. It probes FTS5 availability ONCE per db (a host
  *      whose better-sqlite3 lacks compiled FTS5 has no `lcd_*_fts` tables); when
  *      available it runs the BM25 MATCH queries (the in-tree recall-FTS query
@@ -21,7 +21,7 @@
  * @comis/skills before calling the port — @comis/memory cannot import it,
  * boundary cut). All SQL is static with bound parameters — no
  * interpolated identifiers. Every query is scoped by
- * `conversation_id`. This file reads ONLY the `lcd_*_fts` tables,
+ * `conversation_ref`. This file reads ONLY the `lcd_*_fts` tables,
  * NEVER the cross-session recall index.
  *
  * The store is infra-free (AGENTS.md §2.4 — no logger): a degraded read returns
@@ -175,10 +175,10 @@ export function isTriAvailable(db: Database.Database): boolean {
  * Full-text search over THIS (conversation, agent)'s lossless store with
  * SCRIPT-AWARE routing. The `query` MUST already be sanitized by the
  * caller. Returns at most `opts.limit` hits across the requested `opts.scope`.
- * Scoped by `conversationId` AND `agentId` on EVERY lane — the word FTS
+ * Scoped by `conversationRef` AND `agentId` on EVERY lane — the word FTS
  * path, the LIKE fallback, the trigram twins, AND both scan-floor branches — so a
  * different agent sharing the conversation never recovers another agent's hits;
- * the conversation_id prefix carries the tenant boundary.
+ * the conversation_ref prefix carries the tenant boundary.
  * Never throws (degrades to fewer/no hits).
  *
  * Routing (the query router decides the lane; `opts.scope` gates branches WITHIN
@@ -204,7 +204,7 @@ export function isTriAvailable(db: Database.Database): boolean {
  */
 export function searchLcdImpl(
   db: Database.Database,
-  conversationId: string,
+  conversationRef: string,
   agentId: string,
   query: string,
   opts: { limit: number; scope?: LcdSearchScope },
@@ -223,13 +223,13 @@ export function searchLcdImpl(
     // EXACTLY today's body — the ORIGINAL `query` string, untouched (I1).
     lane = "word";
     result = isFtsAvailable(db)
-      ? searchViaFts(db, conversationId, agentId, query, scope, limit)
-      : searchViaLike(db, conversationId, agentId, query, scope, limit);
+      ? searchViaFts(db, conversationRef, agentId, query, scope, limit)
+      : searchViaLike(db, conversationRef, agentId, query, scope, limit);
   } else if (route.lane === "tri" && route.match !== undefined && isTriAvailable(db)) {
     // The trigram twins (route.match comes ONLY from the query builder — quoted
     // terms, operator allowlist, dangling-operator sweep).
     lane = "tri";
-    result = searchTrigram(db, conversationId, agentId, route.match, scope, limit);
+    result = searchTrigram(db, conversationRef, agentId, route.match, scope, limit);
   } else {
     // Either the router chose "scan" (all tokens below the trigram floor), OR the
     // host lacks the trigram tokenizer (tri route but isTriAvailable false).
@@ -241,7 +241,7 @@ export function searchLcdImpl(
       // tri-route-on-a-trigram-absent host: derive the floor's tokens by
       // normalizing the query's non-operator tokens (same normalizer as the index).
       deriveScanTokens(query);
-    result = searchViaScan(db, conversationId, agentId, scanTokens, scope, limit);
+    result = searchViaScan(db, conversationRef, agentId, scanTokens, scope, limit);
   }
 
   // Result assembly. dominantScript returns "latin" for
@@ -291,21 +291,21 @@ interface HitsResult {
 /** FTS5 MATCH path (word lane) — BM25 `ORDER BY rank` (the in-tree recall-FTS query shape). */
 function searchViaFts(
   db: Database.Database,
-  conversationId: string,
+  conversationRef: string,
   agentId: string,
   query: string,
   scope: LcdSearchScope,
   limit: number,
 ): HitsResult {
   // A closed-union switch with an exhaustive `never` default (AGENTS.md §2.8).
-  // Each branch is static SQL + bound params, scoped by (conversation_id, agent_id).
+  // Each branch is static SQL + bound params, scoped by (conversation_ref, agent_id).
   switch (scope) {
     case "summaries": {
-      const s = ftsSummaryHits(db, conversationId, agentId, query, limit);
+      const s = ftsSummaryHits(db, conversationRef, agentId, query, limit);
       return { hits: s.hits.slice(0, limit), errored: s.errored };
     }
     case "messages": {
-      const m = ftsMessageHits(db, conversationId, agentId, query, limit);
+      const m = ftsMessageHits(db, conversationRef, agentId, query, limit);
       return { hits: m.hits.slice(0, limit), errored: m.errored };
     }
     case "both": {
@@ -318,8 +318,8 @@ function searchViaFts(
       // representation up to `limit` without pretending the two scales are
       // comparable (and without the old `?? 0` fallback, which would have
       // sorted an unranked hit as MOST relevant since BM25 ranks are negative).
-      const summaries = ftsSummaryHits(db, conversationId, agentId, query, limit);
-      const messages = ftsMessageHits(db, conversationId, agentId, query, limit);
+      const summaries = ftsSummaryHits(db, conversationRef, agentId, query, limit);
+      const messages = ftsMessageHits(db, conversationRef, agentId, query, limit);
       return {
         hits: interleaveByRank(summaries.hits, messages.hits, limit),
         errored: summaries.errored || messages.errored,
@@ -360,7 +360,7 @@ function interleaveByRank(
 
 function ftsSummaryHits(
   db: Database.Database,
-  conversationId: string,
+  conversationRef: string,
   agentId: string,
   query: string,
   limit: number,
@@ -370,17 +370,17 @@ function ftsSummaryHits(
   const stmt = db.prepare(`
     SELECT summary_id AS ref_id, content AS snippet, rank
     FROM lcd_summaries_fts
-    WHERE lcd_summaries_fts MATCH ? AND conversation_id = ? AND agent_id = ?
+    WHERE lcd_summaries_fts MATCH ? AND conversation_ref = ? AND agent_id = ?
     ORDER BY rank
     LIMIT ?
   `);
-  const { rows, errored } = safeAllReporting(() => stmt.all(query, conversationId, agentId, limit));
+  const { rows, errored } = safeAllReporting(() => stmt.all(query, conversationRef, agentId, limit));
   return { hits: mapFtsRows(rows, "summary"), errored };
 }
 
 function ftsMessageHits(
   db: Database.Database,
-  conversationId: string,
+  conversationRef: string,
   agentId: string,
   query: string,
   limit: number,
@@ -390,11 +390,11 @@ function ftsMessageHits(
   const stmt = db.prepare(`
     SELECT message_id AS ref_id, content AS snippet, rank
     FROM lcd_messages_fts
-    WHERE lcd_messages_fts MATCH ? AND conversation_id = ? AND agent_id = ?
+    WHERE lcd_messages_fts MATCH ? AND conversation_ref = ? AND agent_id = ?
     ORDER BY rank
     LIMIT ?
   `);
-  const { rows, errored } = safeAllReporting(() => stmt.all(query, conversationId, agentId, limit));
+  const { rows, errored } = safeAllReporting(() => stmt.all(query, conversationRef, agentId, limit));
   return { hits: mapFtsRows(rows, "message"), errored };
 }
 
@@ -407,12 +407,12 @@ function ftsMessageHits(
  * eviction hot path takes this branch, no interleave, no summary query),
  * "summaries" → ONLY lcd_summaries_fts_tri, "both" → both twins merged via
  * `interleaveByRank` VERBATIM (the same within-table round-robin the word
- * lane uses). Every twin query is `MATCH ? AND conversation_id = ? AND
+ * lane uses). Every twin query is `MATCH ? AND conversation_ref = ? AND
  * agent_id = ?` (the twin carries agent_id UNINDEXED — schema-trigram.ts).
  */
 function searchTrigram(
   db: Database.Database,
-  conversationId: string,
+  conversationRef: string,
   agentId: string,
   match: string,
   scope: LcdSearchScope,
@@ -420,16 +420,16 @@ function searchTrigram(
 ): HitsResult {
   switch (scope) {
     case "summaries": {
-      const s = triSummaryHits(db, conversationId, agentId, match, limit);
+      const s = triSummaryHits(db, conversationRef, agentId, match, limit);
       return { hits: s.hits.slice(0, limit), errored: s.errored };
     }
     case "messages": {
-      const m = triMessageHits(db, conversationId, agentId, match, limit);
+      const m = triMessageHits(db, conversationRef, agentId, match, limit);
       return { hits: m.hits.slice(0, limit), errored: m.errored };
     }
     case "both": {
-      const summaries = triSummaryHits(db, conversationId, agentId, match, limit);
-      const messages = triMessageHits(db, conversationId, agentId, match, limit);
+      const summaries = triSummaryHits(db, conversationRef, agentId, match, limit);
+      const messages = triMessageHits(db, conversationRef, agentId, match, limit);
       return {
         hits: interleaveByRank(summaries.hits, messages.hits, limit),
         errored: summaries.errored || messages.errored,
@@ -444,7 +444,7 @@ function searchTrigram(
 
 function triSummaryHits(
   db: Database.Database,
-  conversationId: string,
+  conversationRef: string,
   agentId: string,
   match: string,
   limit: number,
@@ -459,18 +459,18 @@ function triSummaryHits(
       .prepare(`
         SELECT summary_id AS ref_id, content AS snippet, rank
         FROM lcd_summaries_fts_tri
-        WHERE lcd_summaries_fts_tri MATCH ? AND conversation_id = ? AND agent_id = ?
+        WHERE lcd_summaries_fts_tri MATCH ? AND conversation_ref = ? AND agent_id = ?
         ORDER BY rank
         LIMIT ?
       `)
-      .all(match, conversationId, agentId, limit),
+      .all(match, conversationRef, agentId, limit),
   );
   return { hits: mapFtsRows(rows, "summary"), errored };
 }
 
 function triMessageHits(
   db: Database.Database,
-  conversationId: string,
+  conversationRef: string,
   agentId: string,
   match: string,
   limit: number,
@@ -484,11 +484,11 @@ function triMessageHits(
       .prepare(`
         SELECT message_id AS ref_id, content AS snippet, rank
         FROM lcd_messages_fts_tri
-        WHERE lcd_messages_fts_tri MATCH ? AND conversation_id = ? AND agent_id = ?
+        WHERE lcd_messages_fts_tri MATCH ? AND conversation_ref = ? AND agent_id = ?
         ORDER BY rank
         LIMIT ?
       `)
-      .all(match, conversationId, agentId, limit),
+      .all(match, conversationRef, agentId, limit),
   );
   return { hits: mapFtsRows(rows, "message"), errored };
 }
@@ -527,7 +527,7 @@ function mapFtsRows(rawRows: unknown[], kind: "message" | "summary"): LcdSearchH
  */
 function searchViaLike(
   db: Database.Database,
-  conversationId: string,
+  conversationRef: string,
   agentId: string,
   query: string,
   scope: LcdSearchScope,
@@ -541,11 +541,11 @@ function searchViaLike(
     const stmt = db.prepare(`
       SELECT summary_id AS ref_id, content AS snippet
       FROM lcd_summaries
-      WHERE conversation_id = ? AND agent_id = ? AND content LIKE ? ESCAPE '\\'
+      WHERE conversation_ref = ? AND agent_id = ? AND content LIKE ? ESCAPE '\\'
       ORDER BY created_at
       LIMIT ?
     `);
-    const res = safeAllReporting(() => stmt.all(conversationId, agentId, like, limit));
+    const res = safeAllReporting(() => stmt.all(conversationRef, agentId, like, limit));
     errored = errored || res.errored;
     for (const raw of res.rows) {
       // Per-row validate+skip (mirror mapFtsRows / every other LCD read) —
@@ -565,7 +565,7 @@ function searchViaLike(
       SELECT m.id AS ref_id, p.metadata AS snippet
       FROM lcd_messages m
       JOIN lcd_message_parts p ON p.message_id = m.id
-      WHERE m.conversation_id = ? AND m.agent_id = ?
+      WHERE m.conversation_ref = ? AND m.agent_id = ?
         AND (
           COALESCE(p.tool_input, '') LIKE ? ESCAPE '\\'
           OR COALESCE(p.tool_output, '') LIKE ? ESCAPE '\\'
@@ -574,7 +574,7 @@ function searchViaLike(
       ORDER BY m.seq, p.ordinal
       LIMIT ?
     `);
-    const res = safeAllReporting(() => stmt.all(conversationId, agentId, like, like, like, limit));
+    const res = safeAllReporting(() => stmt.all(conversationRef, agentId, like, like, like, limit));
     errored = errored || res.errored;
     const seen = new Set<string>();
     for (const raw of res.rows) {
@@ -615,7 +615,7 @@ function escapeLike(value: string): string {
  */
 function searchViaScan(
   db: Database.Database,
-  conversationId: string,
+  conversationRef: string,
   agentId: string,
   scanTokens: string[],
   scope: LcdSearchScope,
@@ -640,17 +640,17 @@ function searchViaScan(
   const FETCH = SCAN_ROW_CAP + 1;
 
   if (scope === "summaries" || scope === "both") {
-    // Scoped by conversation_id AND agent_id (the base table carries both).
+    // Scoped by conversation_ref AND agent_id (the base table carries both).
     const stmt = db.prepare(`
       SELECT summary_id AS ref_id, content AS snippet
       FROM lcd_summaries
-      WHERE conversation_id = ? AND agent_id = ?
+      WHERE conversation_ref = ? AND agent_id = ?
       ORDER BY created_at DESC
       LIMIT ?
     `);
     try {
       let examined = 0;
-      for (const raw of stmt.iterate(conversationId, agentId, FETCH)) {
+      for (const raw of stmt.iterate(conversationRef, agentId, FETCH)) {
         if (examined >= SCAN_ROW_CAP) {
           // The (cap+1)th row exists → more history than the cap covers.
           scanCapped = true;
@@ -687,14 +687,14 @@ function searchViaScan(
              (SELECT metadata FROM lcd_message_parts WHERE message_id = m.id ORDER BY ordinal LIMIT 1) AS snippet
       FROM lcd_messages m
       JOIN lcd_message_parts p ON p.message_id = m.id
-      WHERE m.conversation_id = ? AND m.agent_id = ?
+      WHERE m.conversation_ref = ? AND m.agent_id = ?
       GROUP BY m.id
       ORDER BY m.seq DESC
       LIMIT ?
     `);
     try {
       let examined = 0;
-      for (const raw of stmt.iterate(conversationId, agentId, FETCH)) {
+      for (const raw of stmt.iterate(conversationRef, agentId, FETCH)) {
         if (examined >= SCAN_ROW_CAP) {
           scanCapped = true;
           break;

@@ -1953,10 +1953,28 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "visibility": {
+          "anyOf": [
+            {
+              "const": "conversation",
+              "type": "string"
+            },
+            {
+              "const": "principal",
+              "type": "string"
+            },
+            {
+              "const": "agent-shared",
+              "type": "string"
+            }
+          ],
+          "description": "Who may recall this memory"
         }
       },
       "required": [
-        "content"
+        "content",
+        "visibility"
       ],
       "type": "object"
     },

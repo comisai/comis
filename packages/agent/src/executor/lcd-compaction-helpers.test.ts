@@ -14,7 +14,7 @@ import type { ContextStorePort, ContextStoreScope, LcdSummary } from "@comis/cor
 import { previousSummaryContent, chunkOrdinalWindow } from "./lcd-compaction-helpers.js";
 
 const SCOPE: ContextStoreScope = {
-  conversationId: "conv-a",
+  conversationRef: "conv-a",
   tenantId: "tenant_a",
   agentId: "agent_a",
   sessionKey: "sess-a",
@@ -23,7 +23,7 @@ const SCOPE: ContextStoreScope = {
 function summary(id: string, content: string, kind: LcdSummary["kind"] = "leaf"): LcdSummary {
   return {
     summaryId: id,
-    conversationId: "conv-a",
+    conversationRef: "conv-a",
     kind,
     depth: 0,
     earliestAt: 1,

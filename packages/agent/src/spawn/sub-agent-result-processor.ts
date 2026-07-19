@@ -14,7 +14,7 @@
  */
 
 import {
-  parseFormattedSessionKey,
+  conversationScopeToSessionKey,
   safePath,
   systemNowMs,
   systemNowDate,
@@ -23,6 +23,7 @@ import {
   toSafeErrorLogString,
   scrubSecretsFromText,
   type DeliveryOrigin,
+  type ConversationLocator,
 } from "@comis/core";
 import { fromPromise, TimeoutError, withTimeout } from "@comis/shared";
 import { mkdir, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
@@ -548,6 +549,7 @@ export async function deliverAnnouncement(params: {
   announceThreadId?: string;
   callerAgentId?: string;
   callerSessionKey?: string;
+  callerConversation?: ConversationLocator;
   runId: string;
 }, deps: {
   announceToParent?: SubAgentRunnerDeps["announceToParent"];
@@ -586,7 +588,7 @@ export async function deliverAnnouncement(params: {
   const announcementText = announceScrub.redactions > 0 ? announceScrub.text : params.announcementText;
 
   // Route through batcher for coalesced delivery when available
-  if (deps.batcher && callerAgentId && callerSessionKey) {
+  if (deps.batcher && callerAgentId && callerSessionKey && params.callerConversation) {
     const enqueued = await deps.batcher.enqueue({
       announcementText,
       announceChannelType,
@@ -594,6 +596,7 @@ export async function deliverAnnouncement(params: {
       announceThreadId: params.announceThreadId,
       callerAgentId,
       callerSessionKey,
+      callerConversation: params.callerConversation,
       runId,
       idempotencyKey: announceKey,
     });
@@ -635,7 +638,7 @@ export async function deliverAnnouncement(params: {
 
   // Parent execution produces text only. The single irreversible send remains
   // below this branch so a rewritten response cannot bypass the outward ledger.
-  if (deps.announceToParent && callerAgentId && callerSessionKey) {
+  if (deps.announceToParent && callerAgentId && callerSessionKey && params.callerConversation) {
     if (deps.sendGovernedAnnouncement) {
       if (!announceKey || !deps.deadLetterQueue) {
         deps.logger?.warn({
@@ -670,12 +673,13 @@ export async function deliverAnnouncement(params: {
       decisionReserved = true;
     }
     try {
-      const parentSk = parseFormattedSessionKey(callerSessionKey);
-      if (!parentSk) throw new Error(`Invalid parent session key: ${callerSessionKey}`);
+      const parentSk = conversationScopeToSessionKey(params.callerConversation.conversationScope);
+      if (!parentSk.ok) throw parentSk.error;
       const candidate = await withTimeout(
         deps.announceToParent(
           callerAgentId,
-          parentSk,
+          parentSk.value,
+          params.callerConversation,
           announcementText,
           announceChannelType,
           announceChannelId,
@@ -723,7 +727,7 @@ export async function deliverAnnouncement(params: {
   let lastError = "direct channel send failed";
   let identity: AnnouncementOperationIdentity | undefined;
 
-  if (deps.sendGovernedAnnouncement && (!callerAgentId || !callerSessionKey)) {
+  if (deps.sendGovernedAnnouncement && (!callerAgentId || !callerSessionKey || !params.callerConversation)) {
     deps.logger?.warn({
       runId,
       channelType: announceChannelType,
@@ -733,10 +737,11 @@ export async function deliverAnnouncement(params: {
     return;
   }
 
-  if (deps.sendGovernedAnnouncement && callerAgentId && callerSessionKey) {
+  if (deps.sendGovernedAnnouncement && callerAgentId && callerSessionKey && params.callerConversation) {
     const boundary = await fromPromise(deps.sendGovernedAnnouncement({
       agentId: callerAgentId,
       callerSessionKey,
+      callerConversation: params.callerConversation,
       runId,
       channelType: announceChannelType,
       channelId: announceChannelId,
@@ -820,6 +825,8 @@ interface FailureNotificationParams {
   callerAgentId?: string;
   /** Formatted caller session key — needed to build the shared announceKey. */
   callerSessionKey?: string;
+  /** Canonical caller authority for the governed outward operation. */
+  callerConversation?: ConversationLocator;
   /** Topic captured from the exact requester route when the run was accepted. */
   threadId?: string;
   /** Cause line replacing the generic error sentence for attributed kills. */
@@ -878,7 +885,7 @@ async function deliverFailureNotificationOnce(
 
   const threadId = params.threadId;
 
-  if (deps.sendGovernedAnnouncement && (!params.callerAgentId || !params.callerSessionKey)) {
+  if (deps.sendGovernedAnnouncement && (!params.callerAgentId || !params.callerSessionKey || !params.callerConversation)) {
     deps.logger?.warn({
       runId: params.runId,
       hint: "Bind the failure notice to its authenticated caller agent and session before delivery",
@@ -893,6 +900,7 @@ async function deliverFailureNotificationOnce(
     const boundary = await fromPromise(deps.sendGovernedAnnouncement({
       agentId: params.callerAgentId!,
       callerSessionKey: params.callerSessionKey!,
+      callerConversation: params.callerConversation!,
       runId: params.runId,
       channelType: params.channelType,
       channelId: params.channelId,

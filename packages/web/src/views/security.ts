@@ -41,19 +41,6 @@ interface SecurityConfig {
   };
 }
 
-/** agent.cacheStats response shape. */
-interface ProviderCacheStats {
-  providers: Array<{
-    provider: string;
-    model: string;
-    callCount: number;
-    totalCost: number;
-    totalCacheSaved: number;
-    cacheHitRate: number;
-  }>;
-  totalCacheSaved: number;
-}
-
 // Side-effect imports for sub-components
 import "../components/nav/ic-tabs.js";
 import "../components/feedback/ic-loading.js";
@@ -527,7 +514,7 @@ export class IcSecurityView extends LitElement {
   private async _loadProviderHealth(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const result = await this.rpcClient.call<ProviderCacheStats>("agent.cacheStats");
+      const result = await this.rpcClient.call("agent.cacheStats");
 
       const now = systemNowMs();
       const fiveMinAgo = now - 5 * 60 * 1000;
@@ -577,7 +564,7 @@ export class IcSecurityView extends LitElement {
     this._error = "";
 
     try {
-      const configResult = await this.rpcClient.call<{ config: { security?: SecurityConfig }; sections: string[] }>("config.read");
+      const configResult = await this.rpcClient.call("config.read");
 
       this._securityConfig = configResult.config.security ?? {};
       this._loadState = "loaded";

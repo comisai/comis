@@ -21,7 +21,7 @@
  * @module
  */
 
-import { tryGetContext, type ContextStorePort, type ContextStoreScope, type LcdMessage, type LcdMessagePart } from "@comis/core";
+import { createConversationRef, tryGetContext, type ContextStorePort, type ContextStoreScope, type LcdMessage, type LcdMessagePart } from "@comis/core";
 import { throwToolError } from "../../../platform-tools/tool-helpers.js";
 
 /**
@@ -80,20 +80,26 @@ export interface ContextToolDeps {
  * FAIL CLOSED: throws `permission_denied` when there is no live
  * session OR the agentId/tenantId is absent — a tool running outside a fully
  * scoped session REFUSES rather than reading conversation-wide (which would leak
- * another agent's history within a shared conversation_id). `conversationId` is
+ * another agent's history within a shared conversation_id). `conversationRef` is
  * the live `sessionKey` (its first segment is the tenant); `sessionKey` on the
  * scope is the same value (the store does not filter on the 4th field — it is
  * carried for shape symmetry with the write path).
  */
 export function requireCtxScope(): ContextStoreScope {
   const ctx = tryGetContext();
-  if (!ctx?.sessionKey || !ctx.agentId || !ctx.tenantId) {
+  if (!ctx?.sessionKey || !ctx.agentId || !ctx.tenantId || !ctx.turnScope) {
     throwToolError("permission_denied", "ctx_* tools operate only inside a live, fully-scoped session.", {
       hint: "These tools read THIS conversation's compressed history scoped to the live agent; they cannot run outside a session with a resolved agentId + tenantId.",
     });
   }
+  const conversationRef = createConversationRef(ctx.turnScope.conversation);
+  if (!conversationRef.ok) {
+    throwToolError("permission_denied", "ctx_* tools require valid conversation authority.", {
+      hint: "Retry from a turn with a resolved canonical conversation scope.",
+    });
+  }
   return {
-    conversationId: ctx.sessionKey,
+    conversationRef: conversationRef.value,
     agentId: ctx.agentId,
     tenantId: ctx.tenantId,
     sessionKey: ctx.sessionKey,

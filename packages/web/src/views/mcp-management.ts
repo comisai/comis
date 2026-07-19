@@ -495,13 +495,8 @@ export class IcMcpManagement extends LitElement {
     const rpc = this.rpcClient;
     try {
       const [mcpResp, configResp] = await Promise.all([
-        rpc.call<{ servers: McpServerListEntry[]; total: number }>("mcp.list"),
-        rpc.call<{
-          config: {
-            integrations?: { mcp?: { servers?: McpServerEntry[] } };
-            security?: { storage?: string };
-          };
-        }>("config.read"),
+        rpc.call("mcp.list"),
+        rpc.call("config.read"),
       ]);
       this._servers = mcpResp.servers ?? [];
       this._mcpConfig = (configResp.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
@@ -516,7 +511,7 @@ export class IcMcpManagement extends LitElement {
     if (!this.rpcClient) return;
     this._detailLoading = true;
     try {
-      const detail = await this.rpcClient.call<McpServerDetail>("mcp.status", { server_name: name });
+      const detail = await this.rpcClient.call("mcp.status", { server_name: name });
       this._serverDetail = detail;
       this._expandedServer = name;
     } catch {
@@ -596,7 +591,7 @@ export class IcMcpManagement extends LitElement {
   private async _handleTest(name: string): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const result = await this.rpcClient.call<{ success: boolean; message?: string }>("mcp.test", { name });
+      const result = await this.rpcClient.call("mcp.test", { name });
       if (result.success) {
         IcToast.show(`${name}: test passed`, "success");
       } else {
@@ -767,7 +762,7 @@ export class IcMcpManagement extends LitElement {
         params.headers = server.headers;
       }
 
-      const result = await this.rpcClient.call<{ success: boolean; toolCount?: number; tools?: string[]; message?: string; error?: string }>("mcp.test", params);
+      const result = await this.rpcClient.call("mcp.test", params);
 
       this._testResult = { name: server.name, ...result };
     } catch (err) {

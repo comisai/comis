@@ -201,7 +201,7 @@ function makeParams(overrides?: Partial<ToolAssemblyParams>): ToolAssemblyParams
       name: "test-agent",
       provider: "anthropic",
       model: "claude-sonnet-4-5-20250929",
-      contextEngine: { enabled: true, version: "pipeline" },
+      contextEngine: { enabled: true },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PerAgentConfig has many fields
     } as any,
     deps,

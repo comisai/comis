@@ -18,6 +18,7 @@ import type { DurableRunRecord } from "../domain/durable-run.js";
 import type { DeliveryOrigin } from "../domain/delivery-origin.js";
 import type { UserTrustLevel } from "../context/context.js";
 import type { AgentCapability } from "../security/capability.js";
+import type { ConversationRef, ConversationScope } from "../domain/conversation-scope.js";
 
 /** A running row that could not cross the durable authority boundary. */
 export interface InvalidDurableRunCheckpoint {
@@ -34,10 +35,11 @@ export interface DurableRunResumeScan {
 
 /** Authenticated authority that may claim a persisted checkpoint for resume. */
 interface DurableRunResumePrincipal {
+  readonly tenantId: string;
   readonly agentId: string;
-  readonly sessionKey: string;
-  readonly ownerTenantId: string;
-  readonly ownerUserId: string;
+  readonly conversationRef: ConversationRef;
+  readonly conversationScope: ConversationScope;
+  readonly principalId: string;
   readonly deliveryOrigin: DeliveryOrigin | null;
   readonly trustLevel: UserTrustLevel;
   readonly caps: readonly AgentCapability[];

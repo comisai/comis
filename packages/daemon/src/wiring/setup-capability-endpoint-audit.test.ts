@@ -36,9 +36,48 @@ vi.mock("@comis/core", async (importOriginal) => {
   };
 });
 
-const { createLeaseManager } = await import("@comis/infra");
+const { createLeaseManager: createRawLeaseManager } = await import("@comis/infra");
 const { createCapabilityEndpoint } = await import("./setup-capability-endpoint.js");
 const { deniedResult } = await import("./setup-tool-invoke-executor.js");
+
+function createLeaseManager(deps: Parameters<typeof createRawLeaseManager>[0]): ReturnType<typeof createRawLeaseManager> {
+  const manager = createRawLeaseManager(deps);
+  return {
+    ...manager,
+    mintLease(input) {
+      const deliveryOrigin = input.deliveryOrigin ?? {
+        channelType: "telegram",
+        channelId: "chan-1",
+        userId: "user-1",
+        tenantId: "tenant-sock",
+      };
+      const endpoint = {
+        channelType: deliveryOrigin.channelType,
+        channelInstanceId: "capability-audit-test",
+        conversationId: deliveryOrigin.channelId,
+        ...(deliveryOrigin.threadId !== undefined ? { threadId: deliveryOrigin.threadId } : {}),
+        conversationKind: "direct" as const,
+      };
+      return manager.mintLease({
+        ...input,
+        deliveryOrigin,
+        turnScope: input.turnScope ?? {
+          conversation: {
+            tenantId: deliveryOrigin.tenantId,
+            agentId: input.agentId,
+            partition: {
+              kind: "endpoint-conversation-principal",
+              endpoint,
+              principalId: deliveryOrigin.userId,
+            },
+          },
+          principal: { principalId: deliveryOrigin.userId },
+          endpoint,
+        },
+      });
+    },
+  };
+}
 
 /** A test ClockPort backed by a mutable epoch. */
 function createTestClock(startMs = 1_700_000_000_000): { now: () => number; advance(ms: number): void } {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the LCD `dag`-mode assembly engine.
+ * Tests for the canonical durable context assembly engine.
  *
  * Drives the assembly contract:
  *  - history reconstructed from the STORE via the core `partsToMessage` codec
@@ -29,7 +29,6 @@ import Database from "better-sqlite3";
 import { initSchema } from "@comis/memory";
 import { createLcdStore } from "@comis/memory";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createContextEngine } from "./context-engine.js";
 import { createLcdContextEngine, freshTailBoundaryIndex } from "./lcd-assembler.js";
 import type { ContextEngineDeps } from "./types.js";
 import { LCD_FRESH_TAIL_MAX_TOOL_RESULT_CHARS } from "./constants.js";
@@ -52,10 +51,10 @@ import { boundFreshTailTotalToResidual } from "./lcd-fresh-tail-bound.js";
 // ---------------------------------------------------------------------------
 
 const FIXED_CREATED_AT = 1000;
-const CONVERSATION_ID = "conv-lcd";
+const CONVERSATION_ID = `cv_${"l".repeat(43)}`;
 
 const SCOPE: ContextStoreScope = {
-  conversationId: CONVERSATION_ID,
+  conversationRef: CONVERSATION_ID,
   tenantId: "tenant_a",
   agentId: "agent_a",
   sessionKey: "sess-a",
@@ -110,9 +109,10 @@ function makeDeps(store: ContextStorePort): {
   const logger = createMockLogger();
   const deps: ContextEngineDeps = {
     logger: logger as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
     getModel: () => ({ reasoning: true, contextWindow: 200_000, maxTokens: 8_192 }),
     contextStore: store,
-    conversationId: CONVERSATION_ID,
+    conversationRef: CONVERSATION_ID,
     agentId: "agent_a",
     tenantId: "tenant_a", // The assembler needs the full scope to read (else it fails closed).
     sessionKey: "sess-a",
@@ -135,7 +135,7 @@ function append(store: ContextStorePort, msg: Message, seq: number): void {
 
 // A dag config carrying the activated freshTailTurns (= STEP count).
 const dagConfig = (freshTailTurns: number) =>
-  ({ enabled: true, thinkingKeepTurns: 10, historyTurns: 15, version: "dag", freshTailTurns }) as unknown as Parameters<typeof createLcdContextEngine>[0];
+  ({ enabled: true, thinkingKeepTurns: 10, freshTailTurns }) as unknown as Parameters<typeof createLcdContextEngine>[0];
 
 function isToolCallBlock(b: unknown): b is { type: "toolCall"; id: string; name: string } {
   return !!b && typeof b === "object" && (b as { type?: string }).type === "toolCall";
@@ -573,9 +573,10 @@ describe("fresh-tail oversized-MESSAGE bounding (one oversized message must not 
     };
     const deps: ContextEngineDeps = {
       logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
       getModel: () => ({ reasoning: false, contextWindow: 32_768, maxTokens: 4_096 }),
       contextStore: store,
-      conversationId: CONVERSATION_ID,
+      conversationRef: CONVERSATION_ID,
       agentId: "agent_a",
       tenantId: "tenant_a",
       sessionKey: "sess-a",
@@ -865,10 +866,11 @@ describe("createLcdContextEngine context_items + eviction", () => {
     // evictable prefix while the fresh tail STILL ships (unconditional concat).
     const deps: ContextEngineDeps = {
       logger: logger as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
       getModel: () => ({ reasoning: true, contextWindow: 1_000, maxTokens: 256 }),
       getSystemTokensEstimate: () => 0,
       contextStore: store,
-      conversationId: CONVERSATION_ID,
+      conversationRef: CONVERSATION_ID,
       agentId: "agent_a",
       sessionKey: "sess-a",
     };
@@ -937,11 +939,12 @@ describe("createLcdContextEngine context_items + eviction", () => {
     // without a prompt cache gets relevanceFirst=true from resolveScaffoldDefaults.)
     const deps: ContextEngineDeps = {
       logger: logger as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
       getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 4_096 }),
       getSystemTokensEstimate: () => 5_210,
       getThinkingLevel: () => "off",
       contextStore: store,
-      conversationId: CONVERSATION_ID,
+      conversationRef: CONVERSATION_ID,
       agentId: "agent_a",
       tenantId: "tenant_a",
       sessionKey: "sess-a",
@@ -981,11 +984,12 @@ describe("createLcdContextEngine context_items + eviction", () => {
       const logger = createMockLogger();
       const deps: ContextEngineDeps = {
         logger: logger as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
         getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 4_096 }),
         getSystemTokensEstimate: () => 5_210,
         getThinkingLevel: () => "off",
         contextStore: store,
-        conversationId: CONVERSATION_ID,
+        conversationRef: CONVERSATION_ID,
         agentId: "agent_a",
         tenantId: "tenant_a",
         sessionKey: "sess-a",
@@ -1043,12 +1047,13 @@ describe("createLcdContextEngine context_items + eviction", () => {
       };
       const deps: ContextEngineDeps = {
         logger: logger as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
         getModel: () => ({ reasoning: false, contextWindow: W, maxTokens: 4_096 }),
         getSystemTokensEstimate: () => S,
         getThinkingLevel: () => "off",
         modelProfile: nanoProfile,
         contextStore: store,
-        conversationId: CONVERSATION_ID,
+        conversationRef: CONVERSATION_ID,
         agentId: "agent_a",
         tenantId: "tenant_a",
         sessionKey: "sess-a",
@@ -1123,12 +1128,13 @@ describe("createLcdContextEngine context_items + eviction", () => {
       };
       const deps: ContextEngineDeps = {
         logger: logger as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
         getModel: () => ({ reasoning: false, contextWindow: W, maxTokens: 4_096 }),
         getSystemTokensEstimate: () => S,
         getThinkingLevel: () => "off",
         modelProfile: nanoProfile,
         contextStore: store,
-        conversationId: CONVERSATION_ID,
+        conversationRef: CONVERSATION_ID,
         agentId: "agent_a",
         tenantId: "tenant_a",
         sessionKey: "sess-a",
@@ -1214,12 +1220,13 @@ describe("createLcdContextEngine context_items + eviction", () => {
       };
       const deps: ContextEngineDeps = {
         logger: logger as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
         getModel: () => ({ reasoning: true, contextWindow: W, maxTokens: 4_096 }),
         getSystemTokensEstimate: () => S,
         getThinkingLevel: () => "medium", // the configured level; the governor down-shifts toward the floor
         modelProfile: nativeNanoProfile,
         contextStore: store,
-        conversationId: CONVERSATION_ID,
+        conversationRef: CONVERSATION_ID,
         agentId: "agent_a",
         tenantId: "tenant_a",
         sessionKey: "sess-a",
@@ -1253,7 +1260,7 @@ describe("createLcdContextEngine context_items + eviction", () => {
     const TURNS = 10;
     // dag config carrying the nano cap (the assembler reads config.budget.effectiveContextCapNano).
     const cfgWithCap = {
-      enabled: true, thinkingKeepTurns: 10, historyTurns: 15, version: "dag", freshTailTurns: 8,
+      enabled: true, thinkingKeepTurns: 10, freshTailTurns: 8,
       budget: { effectiveContextCapNano: CAP, effectiveContextCapSmall: 32_000 },
     } as unknown as Parameters<typeof createLcdContextEngine>[0];
     const live: AgentMessage[] = [];
@@ -1276,12 +1283,13 @@ describe("createLcdContextEngine context_items + eviction", () => {
       };
       const deps: ContextEngineDeps = {
         logger: logger as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
         getModel: () => ({ reasoning: true, contextWindow: RAW_WINDOW, maxTokens: 4_096 }),
         getSystemTokensEstimate: () => S,
         getThinkingLevel: () => "medium",
         modelProfile: pinnedNanoProfile,
         contextStore: store,
-        conversationId: CONVERSATION_ID,
+        conversationRef: CONVERSATION_ID,
         agentId: "agent_a",
         tenantId: "tenant_a",
         sessionKey: "sess-a",
@@ -1450,11 +1458,12 @@ describe("createLcdContextEngine context_items + eviction", () => {
 
     const baseDeps = (preamble: number): ContextEngineDeps => ({
       logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
       getModel: () => ({ reasoning: true, contextWindow: 13_667, maxTokens: 256 }),
       getSystemTokensEstimate: () => 0,
       getFreshTailPreambleTokensEstimate: () => preamble,
       contextStore: store,
-      conversationId: CONVERSATION_ID,
+      conversationRef: CONVERSATION_ID,
       agentId: "agent_a",
       tenantId: "tenant_a",
       sessionKey: "sess-a",
@@ -1486,11 +1495,12 @@ describe("createLcdContextEngine context_items + eviction", () => {
 
     const deps: ContextEngineDeps = {
       logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
       getModel: () => ({ reasoning: true, contextWindow: 1_000, maxTokens: 256 }),
       getSystemTokensEstimate: () => 0,
       // getFreshTailPreambleTokensEstimate intentionally OMITTED.
       contextStore: store,
-      conversationId: CONVERSATION_ID,
+      conversationRef: CONVERSATION_ID,
       agentId: "agent_a",
       tenantId: "tenant_a",
       sessionKey: "sess-a",
@@ -1520,11 +1530,12 @@ describe("createLcdContextEngine context_items + eviction", () => {
     // Tiny window (H=0) guarantees the whole evictable prefix drops → droppedCount > 0.
     const deps: ContextEngineDeps = {
       logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
       getModel: () => ({ reasoning: true, contextWindow: 1_000, maxTokens: 256 }),
       getSystemTokensEstimate: () => 0,
       eventBus: { emit },
       contextStore: store,
-      conversationId: CONVERSATION_ID,
+      conversationRef: CONVERSATION_ID,
       agentId: "agent_a",
       tenantId: "tenant_a",
       sessionKey: "sess-a",
@@ -1557,11 +1568,12 @@ describe("createLcdContextEngine context_items + eviction", () => {
 
     const deps: ContextEngineDeps = {
       logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
       getModel: () => ({ reasoning: true, contextWindow: 200_000, maxTokens: 8_192 }),
       getSystemTokensEstimate: () => 0,
       eventBus: { emit },
       contextStore: store,
-      conversationId: CONVERSATION_ID,
+      conversationRef: CONVERSATION_ID,
       agentId: "agent_a",
       tenantId: "tenant_a",
       sessionKey: "sess-a",
@@ -2099,36 +2111,6 @@ describe("summaryRefToMessage (honest, taint-safe render)", () => {
   });
 });
 
-describe("createContextEngine dag fallback", () => {
-  it("version 'dag' with NO store wired falls through to the pipeline with a config WARN", async () => {
-    const logger = createMockLogger();
-    const deps: ContextEngineDeps = {
-      logger: logger as unknown as ContextEngineDeps["logger"],
-      getModel: () => ({ reasoning: true, contextWindow: 200_000, maxTokens: 8_192 }),
-      // deliberately NO contextStore / conversationId
-    };
-    const engine = createContextEngine(
-      { enabled: true, thinkingKeepTurns: 10, historyTurns: 15, version: "dag" } as unknown as Parameters<
-        typeof createContextEngine
-      >[0],
-      deps,
-    );
-
-    // WARN with the canonical config errorKind (does not crash, does not no-op).
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ errorKind: "config" }),
-      expect.any(String),
-    );
-
-    // Pipeline behavior: below the masking threshold it returns the array unchanged.
-    const messages: AgentMessage[] = [
-      { role: "assistant", content: [{ type: "text", text: "hello" }] } as AgentMessage,
-    ];
-    const result = await engine.transformContext(messages);
-    expect(result).toBe(messages); // pipeline pass-through, not a no-op crash
-  });
-});
-
 describe("frontier/mid budget characterization — byte-identity (no-regression)", () => {
   let store: ContextStorePort;
   beforeEach(() => {
@@ -2330,9 +2312,10 @@ describe("pre-flight fit check + security-pin", () => {
     const onAssembledInputTokens = vi.fn<[number], void>();
     const deps: ContextEngineDeps = {
       logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
       getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 2_048 }),
       contextStore: store,
-      conversationId: CONVERSATION_ID,
+      conversationRef: CONVERSATION_ID,
       agentId: "agent_a",
       tenantId: "tenant_a",
       sessionKey: "sess-a",
@@ -2372,9 +2355,10 @@ describe("pre-flight fit check + security-pin", () => {
     };
     const deps: ContextEngineDeps = {
       logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
       getModel: () => ({ reasoning: false, contextWindow: 32_768, maxTokens: 4_096 }),
       contextStore: store,
-      conversationId: CONVERSATION_ID,
+      conversationRef: CONVERSATION_ID,
       agentId: "agent_a",
       tenantId: "tenant_a",
       sessionKey: "sess-a",
@@ -2425,9 +2409,10 @@ describe("pre-flight fit check + security-pin", () => {
     const eventBusEmit = vi.fn<[string, unknown], void>();
     const deps: ContextEngineDeps = {
       logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
       getModel: () => ({ reasoning: true, contextWindow: 32_768, maxTokens: 4_096 }),
       contextStore: store,
-      conversationId: CONVERSATION_ID,
+      conversationRef: CONVERSATION_ID,
       agentId: "agent_a",
       tenantId: "tenant_a",
       sessionKey: "sess-a",
@@ -2477,9 +2462,10 @@ describe("pre-flight fit check + security-pin", () => {
 
     const deps: ContextEngineDeps = {
       logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
       getModel: () => ({ reasoning: true, contextWindow: 32_768, maxTokens: 4_096 }),
       contextStore: store,
-      conversationId: CONVERSATION_ID,
+      conversationRef: CONVERSATION_ID,
       agentId: "agent_a",
       tenantId: "tenant_a",
       sessionKey: "sess-a",
@@ -2556,9 +2542,10 @@ describe("pre-flight fit check + security-pin", () => {
 
     const deps: ContextEngineDeps = {
       logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
       getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 2_048 }),
       contextStore: store,
-      conversationId: CONVERSATION_ID,
+      conversationRef: CONVERSATION_ID,
       agentId: "agent_a",
       tenantId: "tenant_a",
       sessionKey: "sess-a",
@@ -3175,6 +3162,7 @@ describe("margin arbiter at the evict seam (frontier byte-identical + arbiter pa
     await createLcdContextEngine(dagConfig(1), {
       ...deps,
       logger: logger as unknown as ContextEngineDeps["logger"],
+      clock: { now: () => FIXED_CREATED_AT },
       getModel: () => ({ reasoning: false, contextWindow: 8_192, maxTokens: 2_048 }),
       modelProfile: smallNoCacheProfile,
       getThinkingLevel: () => "medium",

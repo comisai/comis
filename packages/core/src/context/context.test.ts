@@ -27,10 +27,11 @@ function makeContext(overrides: Partial<RequestContext> = {}): RequestContext {
 }
 
 function makeResolvedSession(
-  overrides: Partial<{ tenantId: string; userId: string; channelId: string }> = {},
+  overrides: Partial<{ tenantId: string; agentId: string; userId: string; channelId: string }> = {},
 ) {
   return {
     tenantId: "tenant-1",
+    agentId: "agent-1",
     userId: "user-1",
     channelId: "chat-1",
     ...overrides,
@@ -52,7 +53,7 @@ describe("RequestContext", () => {
 
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      expect(result.value.sessionKey).toBe("tenant-1:user-1:chat-1");
+      expect(result.value.sessionKey).toBe("tenant-1:agent:agent-1:user-1:chat-1");
       expect(Reflect.set(result.value, "trustLevel", "admin")).toBe(false);
       expect(Reflect.set(result.value, "agentId", "agent-2")).toBe(false);
       expect(Reflect.set(result.value, "resolvedLanguage", "en")).toBe(true);
@@ -146,6 +147,38 @@ describe("RequestContext", () => {
   });
 
   describe("enrichCurrentContext", () => {
+    it("persists the resolved structured turn scope on request context", () => {
+      const ctx = makeContext({ userId: undefined, sessionKey: undefined, agentId: undefined });
+      const turnScope = {
+        conversation: { tenantId: "tenant-1", agentId: "agent-1", partition: { kind: "agent" as const } },
+        principal: { principalId: "principal-1" },
+        endpoint: {
+          channelType: "telegram",
+          channelInstanceId: "account-1",
+          conversationId: "chat-1",
+          conversationKind: "direct" as const,
+        },
+      };
+
+      const result = runWithContext(ctx, () => enrichCurrentContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        trustLevel: "user",
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+        turnScope,
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(ctx.turnScope).toEqual(turnScope);
+    });
+
     it("fills resolved turn identity on the existing inbound context object", () => {
       const ctx = makeContext({
         tenantId: "default",
@@ -173,7 +206,7 @@ describe("RequestContext", () => {
       expect(ctx).toMatchObject({
         tenantId: "tenant-1",
         userId: "user-1",
-        sessionKey: "tenant-1:user-1:chat-1",
+        sessionKey: "tenant-1:agent:agent-1:user-1:chat-1",
         agentId: "agent-1",
         trustLevel: "admin",
         deliveryOrigin: { channelType: "telegram", channelId: "chat-1" },
@@ -461,7 +494,7 @@ describe("RequestContext", () => {
       const forged = makeContext({
         tenantId: resolved.tenantId,
         userId: resolved.userId,
-        sessionKey: "tenant-1:user-1:chat-1",
+        sessionKey: "tenant-1:agent:agent-1:user-1:chat-1",
         agentId: resolved.agentId,
         trustLevel: resolved.trustLevel,
         deliveryOrigin: { ...resolved.deliveryOrigin },
@@ -714,8 +747,18 @@ describe("RequestContext", () => {
   });
 
   describe("RequestContextSchema", () => {
+    it("request context parse fails without an explicit tenant", () => {
+      const result = RequestContextSchema.safeParse({
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+      });
+
+      expect(result.success).toBe(false);
+    });
+
     it("validates correct context", () => {
       const result = RequestContextSchema.safeParse({
+        tenantId: "default",
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
         traceId: randomUUID(),
@@ -724,14 +767,15 @@ describe("RequestContext", () => {
       expect(result.success).toBe(true);
     });
 
-    it("tenantId defaults to 'default'", () => {
+    it("preserves the explicit ingress tenant", () => {
       const result = RequestContextSchema.parse({
+        tenantId: "tenant-a",
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
         traceId: randomUUID(),
         startedAt: Date.now(),
       });
-      expect(result.tenantId).toBe("default");
+      expect(result.tenantId).toBe("tenant-a");
     });
 
     it("rejects missing required fields", () => {
@@ -769,6 +813,7 @@ describe("RequestContext", () => {
       // and populated at the executor entry; the ctx_* tools read it
       // per-call to scope LCD reads by agent.
       const withAgent = RequestContextSchema.parse({
+        tenantId: "default",
         userId: "u1",
         sessionKey: "t1:u1:c1",
         traceId: randomUUID(),
@@ -779,6 +824,7 @@ describe("RequestContext", () => {
 
       // Absent → undefined (no default, matching sessionKey).
       const withoutAgent = RequestContextSchema.parse({
+        tenantId: "default",
         userId: "u1",
         sessionKey: "t1:u1:c1",
         traceId: randomUUID(),
@@ -788,6 +834,7 @@ describe("RequestContext", () => {
 
       // An empty-string agentId is rejected (only undefined is the "not resolved" state).
       const empty = RequestContextSchema.safeParse({
+        tenantId: "default",
         userId: "u1",
         sessionKey: "t1:u1:c1",
         traceId: randomUUID(),
@@ -799,6 +846,7 @@ describe("RequestContext", () => {
 
     it("RequestContext carries an authenticated gateway client identity when provided", () => {
       const withClient = RequestContextSchema.parse({
+        tenantId: "default",
         userId: "u1",
         sessionKey: "t1:u1:c1",
         traceId: randomUUID(),
@@ -808,6 +856,7 @@ describe("RequestContext", () => {
       expect(withClient.clientId).toBe("dashboard-client");
 
       const withoutClient = RequestContextSchema.parse({
+        tenantId: "default",
         userId: "u1",
         sessionKey: "t1:u1:c1",
         traceId: randomUUID(),
@@ -816,6 +865,7 @@ describe("RequestContext", () => {
       expect(withoutClient.clientId).toBeUndefined();
 
       const emptyClient = RequestContextSchema.safeParse({
+        tenantId: "default",
         userId: "u1",
         sessionKey: "t1:u1:c1",
         traceId: randomUUID(),
@@ -835,6 +885,7 @@ describe("RequestContext", () => {
       // modeled for the parent's ALS set-side mutation to survive a parse.
       // Mirrors how the resolvedModel field is modeled.
       const result = RequestContextSchema.safeParse({
+        tenantId: "default",
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
         traceId: randomUUID(),
@@ -849,6 +900,7 @@ describe("RequestContext", () => {
 
     it("context without resolvedLanguage still parses (optional) and yields undefined", () => {
       const result = RequestContextSchema.safeParse({
+        tenantId: "default",
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
         traceId: randomUUID(),
@@ -875,6 +927,7 @@ describe("RequestContext", () => {
   describe("trustLevel", () => {
     it("trustLevel defaults to fail-closed guest", () => {
       const result = RequestContextSchema.parse({
+        tenantId: "default",
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
         traceId: randomUUID(),
@@ -885,6 +938,7 @@ describe("RequestContext", () => {
 
     it("accepts admin trustLevel", () => {
       const result = RequestContextSchema.safeParse({
+        tenantId: "default",
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
         traceId: randomUUID(),
@@ -899,6 +953,7 @@ describe("RequestContext", () => {
 
     it("accepts guest trustLevel", () => {
       const result = RequestContextSchema.safeParse({
+        tenantId: "default",
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
         traceId: randomUUID(),
@@ -913,6 +968,7 @@ describe("RequestContext", () => {
 
     it("rejects invalid trustLevel", () => {
       const result = RequestContextSchema.safeParse({
+        tenantId: "default",
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
         traceId: randomUUID(),
@@ -926,6 +982,7 @@ describe("RequestContext", () => {
   describe("contentDelimiter", () => {
     it("accepts optional contentDelimiter field", () => {
       const result = RequestContextSchema.safeParse({
+        tenantId: "default",
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
         traceId: randomUUID(),
@@ -940,6 +997,7 @@ describe("RequestContext", () => {
 
     it("context without contentDelimiter still parses (field is optional)", () => {
       const result = RequestContextSchema.safeParse({
+        tenantId: "default",
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
         traceId: randomUUID(),
@@ -953,6 +1011,7 @@ describe("RequestContext", () => {
 
     it("rejects contentDelimiter shorter than 16 chars", () => {
       const result = RequestContextSchema.safeParse({
+        tenantId: "default",
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
         traceId: randomUUID(),
@@ -966,6 +1025,7 @@ describe("RequestContext", () => {
   describe("channelType", () => {
     it("accepts optional channelType field", () => {
       const result = RequestContextSchema.safeParse({
+        tenantId: "default",
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
         traceId: randomUUID(),
@@ -980,6 +1040,7 @@ describe("RequestContext", () => {
 
     it("context without channelType still parses (field is optional)", () => {
       const result = RequestContextSchema.safeParse({
+        tenantId: "default",
         userId: "user-1",
         sessionKey: "default:user-1:chan-1",
         traceId: randomUUID(),
@@ -1006,6 +1067,7 @@ describe("RequestContext", () => {
       // Validates that userId/sessionKey are optional on the schema.
       const traceId = randomUUID();
       const ctx = RequestContextSchema.parse({
+        tenantId: "default",
         traceId,
         channelType: "telegram",
         startedAt: Date.now(),
@@ -1020,6 +1082,7 @@ describe("RequestContext", () => {
     it("still rejects empty-string userId (z.string().min(1).optional() — only undefined is acceptable, not empty)", () => {
       // An empty string "" is NOT an acceptable userId — only omission (undefined) is.
       const result = RequestContextSchema.safeParse({
+        tenantId: "default",
         traceId: randomUUID(),
         startedAt: Date.now(),
         userId: "",
@@ -1029,6 +1092,7 @@ describe("RequestContext", () => {
 
     it("still accepts full userId + sessionKey when both are present (post-queue callers unaffected)", () => {
       const result = RequestContextSchema.safeParse({
+        tenantId: "default",
         userId: "user-1",
         sessionKey: "tenant-1:user-1:chan-1",
         traceId: randomUUID(),

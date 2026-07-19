@@ -635,7 +635,7 @@ describe("credentialsStep", () => {
     // New artifacts present
     expect(src).toMatch(/PROVIDER_VALIDATION_PATHS/);
     expect(src).toMatch(/getValidationEndpoint/);
-    expect(src).toMatch(/getModels.*KnownProvider.*baseUrl/);
+    expect(src).toMatch(/getModels.*BuiltinProvider.*baseUrl/);
   });
 
   // ---------- composed-URL regression tests ----------

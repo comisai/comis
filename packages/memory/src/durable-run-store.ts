@@ -7,6 +7,8 @@ import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import {
   AgentCapabilitySchema,
+  ConversationRefSchema,
+  ConversationScopeSchema,
   DurableRootBudgetSchema,
   DeliveryOriginSchema,
   UserTrustLevelSchema,
@@ -48,10 +50,11 @@ const resumeClaimSchema = z.strictObject({
   replacementCheckpointId: z.string().min(1),
   claimedAtMs: z.number().nonnegative().finite(),
   principal: z.strictObject({
+    tenantId: z.string().min(1),
     agentId: z.string().min(1),
-    sessionKey: z.string().min(1),
-    ownerTenantId: z.string().min(1),
-    ownerUserId: z.string().min(1),
+    conversationRef: ConversationRefSchema,
+    conversationScope: ConversationScopeSchema,
+    principalId: z.string().min(1),
     deliveryOrigin: DeliveryOriginSchema.nullable(),
     trustLevel: UserTrustLevelSchema,
     caps: z.array(AgentCapabilitySchema),
@@ -65,6 +68,7 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
   let caps: unknown;
   let leaseIds: unknown;
   let deliveryOrigin: unknown;
+  let conversationScope: unknown;
   let rootBudget: unknown;
   let workspacePolicyHash: string | undefined;
   try {
@@ -78,6 +82,11 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
     caps = JSON.parse(row.caps);
     leaseIds = JSON.parse(row.lease_ids);
     deliveryOrigin = row.delivery_origin === null ? null : JSON.parse(row.delivery_origin);
+    const parsedScope = ConversationScopeSchema.safeParse(JSON.parse(row.canonical_scope));
+    if (!parsedScope.success) {
+      return err(new Error(`durable_run_checkpoints row ${row.checkpoint_id} has an invalid canonical scope`));
+    }
+    conversationScope = parsedScope.data;
   } catch (cause) {
     return err(
       new Error(
@@ -91,10 +100,11 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
   const parsed = parseDurableRunRecord({
     checkpointId: row.checkpoint_id,
     rootRunId: row.root_run_id,
+    tenantId: row.tenant_id,
     agentId: row.agent_id,
-    sessionKey: row.session_key,
-    ownerTenantId: row.owner_tenant_id,
-    ownerUserId: row.owner_user_id,
+    conversationRef: row.conversation_ref,
+    conversationScope,
+    principalId: row.principal_id,
     deliveryOrigin,
     spawnTree,
     caps,
@@ -125,11 +135,11 @@ export function createSqliteDurableRunStore(
 
   const upsertStmt = db.prepare(`
     INSERT INTO durable_run_checkpoints (
-      checkpoint_id, root_run_id, agent_id, session_key, owner_tenant_id,
-      owner_user_id, delivery_origin, spawn_tree, caps, lease_ids,
+      checkpoint_id, root_run_id, tenant_id, agent_id, conversation_ref,
+      canonical_scope, principal_id, delivery_origin, spawn_tree, caps, lease_ids,
       budget_consumed, cron_origin, trust_level, status, last_heartbeat_at,
       created_at_ms, updated_at_ms, script_ref, checkpoint_ref
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(checkpoint_id) DO UPDATE SET
       spawn_tree = excluded.spawn_tree,
       caps = excluded.caps,
@@ -146,10 +156,11 @@ export function createSqliteDurableRunStore(
       script_ref = COALESCE(excluded.script_ref, script_ref),
       checkpoint_ref = COALESCE(excluded.checkpoint_ref, checkpoint_ref)
     WHERE durable_run_checkpoints.root_run_id = excluded.root_run_id
+      AND durable_run_checkpoints.tenant_id = excluded.tenant_id
       AND durable_run_checkpoints.agent_id = excluded.agent_id
-      AND durable_run_checkpoints.session_key = excluded.session_key
-      AND durable_run_checkpoints.owner_tenant_id = excluded.owner_tenant_id
-      AND durable_run_checkpoints.owner_user_id = excluded.owner_user_id
+      AND durable_run_checkpoints.conversation_ref = excluded.conversation_ref
+      AND durable_run_checkpoints.canonical_scope = excluded.canonical_scope
+      AND durable_run_checkpoints.principal_id = excluded.principal_id
       AND durable_run_checkpoints.delivery_origin IS excluded.delivery_origin
       AND durable_run_checkpoints.trust_level = excluded.trust_level
       AND NOT EXISTS (
@@ -164,11 +175,11 @@ export function createSqliteDurableRunStore(
   `);
   const insertCheckpointStmt = db.prepare(`
     INSERT INTO durable_run_checkpoints (
-      checkpoint_id, root_run_id, agent_id, session_key, owner_tenant_id,
-      owner_user_id, delivery_origin, spawn_tree, caps, lease_ids,
+      checkpoint_id, root_run_id, tenant_id, agent_id, conversation_ref,
+      canonical_scope, principal_id, delivery_origin, spawn_tree, caps, lease_ids,
       budget_consumed, cron_origin, trust_level, status, last_heartbeat_at,
       created_at_ms, updated_at_ms, script_ref, checkpoint_ref
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const getStmt = db.prepare(
     `SELECT * FROM durable_run_checkpoints WHERE checkpoint_id = ?`,
@@ -225,10 +236,11 @@ export function createSqliteDurableRunStore(
     return [
       record.checkpointId,
       record.rootRunId,
+      record.tenantId,
       record.agentId,
-      record.sessionKey,
-      record.ownerTenantId,
-      record.ownerUserId,
+      record.conversationRef,
+      JSON.stringify(record.conversationScope),
+      record.principalId,
       record.deliveryOrigin === null ? null : JSON.stringify(record.deliveryOrigin),
       JSON.stringify({
         spawnTree: record.spawnTree,
@@ -359,10 +371,11 @@ export function createSqliteDurableRunStore(
 
       const principal = claim.principal;
       if (
-        record.agentId !== principal.agentId
-        || record.sessionKey !== principal.sessionKey
-        || record.ownerTenantId !== principal.ownerTenantId
-        || record.ownerUserId !== principal.ownerUserId
+        record.tenantId !== principal.tenantId
+        || record.agentId !== principal.agentId
+        || record.conversationRef !== principal.conversationRef
+        || JSON.stringify(record.conversationScope) !== JSON.stringify(principal.conversationScope)
+        || record.principalId !== principal.principalId
         || !sameDeliveryOrigin(record.deliveryOrigin, principal.deliveryOrigin)
         || trustRank(principal.trustLevel) < trustRank(record.trustLevel)
       ) {

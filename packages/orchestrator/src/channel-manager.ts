@@ -25,7 +25,7 @@ import type { SessionLifecycle } from "@comis/agent";
 import type { CommandQueue } from "./queue/command-queue.js";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { InteractiveCallbackRouter } from "./approval/index.js";
-import type { ApprovalRequest, ChannelPort, DeliveryQueuePort, EventMap, NormalizedMessage, NormalizedReaction, RequestContext, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
+import type { ApprovalGate, ChannelPort, DeliveryQueuePort, DmScopeConfig, EventMap, LocalizationPort, NormalizedMessage, NormalizedReaction, PrincipalResolverPort, RequestContext, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 // Orchestrator imports ONLY the @comis/core activity port + ctx type
 // (never the observability impl — hexagonal boundary). The
 // ActivityTurnCoordinator is a local execution type.
@@ -34,7 +34,7 @@ import type { ActivityTurnCoordinator } from "./execution/activity-turn-coordina
 import type { StreamingConfig } from "@comis/core";
 import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig } from "@comis/core";
 import {
-  formatSessionKey,
+  createConversationRef,
   runWithContext,
   getMessageTraceId,
   systemNowMs,
@@ -156,6 +156,9 @@ export interface ChannelManagerDeps {
   eventBus: TypedEventBus;
   messageRouter: MessageRouter;
   sessionManager: SessionLifecycle;
+  principalResolver: PrincipalResolverPort;
+  localization: LocalizationPort;
+  getDmScope: (agentId: string) => DmScopeConfig;
   createExecutor: (agentId: string) => AgentExecutor | undefined;
   /** Durable physical-inbound ledger boundary used before gates and queues. */
   persistInboundMessage: (
@@ -170,7 +173,10 @@ export interface ChannelManagerDeps {
   adapters?: ChannelPort[];
   logger: ComisLogger;
   /** Optional media preprocessor -- transcribes voice and analyzes images before agent dispatch. */
-  preprocessMessage?: (msg: NormalizedMessage) => Promise<NormalizedMessage>;
+  preprocessMessage?: (
+    msg: NormalizedMessage,
+    turnScope: import("@comis/core").ResolvedTurnScope,
+  ) => Promise<NormalizedMessage>;
   /** Optional channel registry for capability-driven behavior. Falls back to hardcoded maps if not provided. */
   channelRegistry?: ChannelRegistry;
   /** Optional command queue for per-session serialization and mode-aware handling. Falls back to direct execution if not provided. */
@@ -238,15 +244,7 @@ export interface ChannelManagerDeps {
   /** Template context builder for response prefix variables. */
   buildTemplateContext?: (agentId: string, channelType: string, msg: NormalizedMessage) => Record<string, string>;
   /** Optional approval gate for /approve and /deny chat commands. When absent, approval commands pass through as plain text. */
-  approvalGate?: {
-    resolveApproval(requestId: string, approved: boolean, approvedBy: string, reason?: string): void;
-    pending(): Array<{ requestId: string; shortId: string; sessionKey: string; action: string; toolName: string }>;
-    getRequest(requestId: string): { requestId: string; sessionKey: string } | undefined;
-    /** Resolve a minted 12-char shortId to its pending request. Gate-internal; channels never call this. */
-    getRequestByShortId(shortId: string): { requestId: string; shortId: string; sessionKey: string; action: string; toolName: string } | undefined;
-    /** Pending requests scoped to a session (the plain-text/button resolution source). */
-    pendingForSession(sessionKey: string): ApprovalRequest[];
-  };
+  approvalGate?: Pick<ApprovalGate, "resolveApproval" | "pending" | "getRequest" | "getRequestByShortId" | "pendingForAuthority">;
   /**
    * Optional server-side interactive-callback router. When present, an inbound
    * button-callback (`metadata.isButtonCallback`) is forwarded to `router.route()` (the
@@ -380,7 +378,8 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
 
   // Clean up stale send overrides when sessions expire
   deps.eventBus.on("session:expired", (ev) => {
-    sendOverrides.delete(formatSessionKey(ev.sessionKey));
+    const reference = createConversationRef(ev.conversationScope);
+    if (reference.ok) sendOverrides.delete(reference.value);
   });
 
   // Targeted channel adapter lifecycle updates when credentials change.

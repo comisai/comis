@@ -25,6 +25,30 @@ import { buildAutonomyToolWiring, type AutonomyToolInputs } from "./setup-tools-
 // child-lease attribution is the security keystone, never a green mock.
 import { createLeaseManager, type LeaseManager } from "@comis/infra";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
+import { createConversationRef, type ConversationRef } from "@comis/core";
+
+function turnScope(tenantId: string, agentId: string, principalId: string, conversationId: string, threadId?: string) {
+  const endpoint = {
+    channelType: "telegram",
+    channelInstanceId: "telegram-main",
+    conversationId,
+    ...(threadId === undefined ? {} : { threadId }),
+    conversationKind: "direct" as const,
+  };
+  return {
+    conversation: {
+      tenantId,
+      agentId,
+      partition: {
+        kind: "endpoint-conversation-principal" as const,
+        endpoint,
+        principalId,
+      },
+    },
+    principal: { principalId },
+    endpoint,
+  };
+}
 
 function makeLogger() {
   const child = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -95,17 +119,19 @@ describe("buildAutonomyToolWiring", () => {
       trustLevel: "admin",
       sessionKey: {
         tenantId: "tenant-1",
+        agentId: "agent-1",
         userId: "user-1",
         channelId: "chat-1",
         threadId: "topic-1",
       },
       requesterOrigin,
+      turnScope: turnScope("tenant-1", "agent-1", "user-1", "chat-1", "topic-1"),
     });
     buildAutonomyToolWiring(input);
     const handle = input.capEndpointHandle!;
     const mint = (handle.leaseManager as never as { mintLease: ReturnType<typeof vi.fn> }).mintLease;
     expect(mint.mock.calls[0]![0]).toMatchObject({
-      sessionKey: "tenant-1:user-1:chat-1:thread:topic-1",
+      sessionKey: "tenant-1:agent:agent-1:user-1:chat-1:thread:topic-1",
       trustLevel: "admin",
       deliveryOrigin: requesterOrigin,
     });
@@ -115,7 +141,7 @@ describe("buildAutonomyToolWiring", () => {
     };
     args.mintRunLease!("run-child", 30_000);
     expect(mint.mock.calls[1]![0]).toMatchObject({
-      sessionKey: "tenant-1:user-1:chat-1:thread:topic-1",
+      sessionKey: "tenant-1:agent:agent-1:user-1:chat-1:thread:topic-1",
       trustLevel: "admin",
       deliveryOrigin: requesterOrigin,
     });
@@ -424,13 +450,14 @@ describe("buildAutonomyToolWiring", () => {
       const input = baseInput({
         trustLevel: "admin",
         callerRootRunId: "root-current",
-        sessionKey: { tenantId: "tenant-current", userId: "user-current", channelId: "chat-current" },
+        sessionKey: { tenantId: "tenant-current", agentId: "agent-1", userId: "user-current", channelId: "chat-current" },
         requesterOrigin: {
           channelType: "telegram",
           channelId: "chat-current",
           userId: "user-current",
           tenantId: "tenant-current",
         },
+        turnScope: turnScope("tenant-current", "agent-1", "user-current", "chat-current"),
       });
       buildAutonomyToolWiring(input);
       const handle = input.capEndpointHandle!;
@@ -440,24 +467,30 @@ describe("buildAutonomyToolWiring", () => {
           runId: string,
           timeoutMs: number,
           authority?: {
+            tenantId: string;
             agentId: string;
-            sessionKey: string;
+            conversationRef: ConversationRef;
+            conversationScope: ReturnType<typeof turnScope>["conversation"];
+            principalId: string;
             trustLevel: "user";
             caps: readonly ["orch:read"];
             rootRunId: string;
             sourceCheckpointId: string;
-            ownerTenantId: string;
-            ownerUserId: string;
             deliveryOrigin: null;
           },
         ) => { leaseId: string; bearer: string };
       };
 
+      const ownerTurnScope = turnScope("tenant-owner", "agent-owner", "user-owner", "chat-owner");
+      const ownerReference = createConversationRef(ownerTurnScope.conversation);
+      if (!ownerReference.ok) throw ownerReference.error;
+
       args.mintRunLease!("replacement-checkpoint", 25_000, {
+        tenantId: "tenant-owner",
         agentId: "agent-owner",
-        sessionKey: "tenant-owner:user-owner:chat-owner",
-        ownerTenantId: "tenant-owner",
-        ownerUserId: "user-owner",
+        conversationRef: ownerReference.value,
+        conversationScope: ownerTurnScope.conversation,
+        principalId: "user-owner",
         deliveryOrigin: null,
         trustLevel: "user",
         caps: ["orch:read"],
@@ -467,7 +500,7 @@ describe("buildAutonomyToolWiring", () => {
 
       expect(mint.mock.calls[1]![0]).toEqual(expect.objectContaining({
         agentId: "agent-owner",
-        sessionKey: "tenant-owner:user-owner:chat-owner",
+        sessionKey: "tenant-owner:agent:agent-owner:user-owner:telegram:telegram-main:chat-owner:peer:user-owner",
         trustLevel: "user",
         caps: ["orch:read"],
         rootRunId: "root-persisted",

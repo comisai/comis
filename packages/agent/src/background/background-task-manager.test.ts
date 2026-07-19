@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { safePath, TypedEventBus } from "@comis/core";
+import { createConversationRef, safePath, TypedEventBus } from "@comis/core";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
 import { persistTaskSync } from "./background-task-persistence.js";
 import type { BackgroundTaskOrigin, PersistedTaskState } from "./background-task-types.js";
@@ -61,15 +61,24 @@ function createMockLogger() {
   };
 }
 
-function buildOrigin(overrides: Partial<BackgroundTaskOrigin> = {}): BackgroundTaskOrigin {
+function buildOrigin(overrides: Partial<BackgroundTaskOrigin> & { agentId?: string; sessionKey?: string } = {}): BackgroundTaskOrigin {
+  const agentId = overrides.agentId ?? "default";
+  const tenantId = overrides.sessionKey?.split(":")[0] ?? "default";
+  const endpoint = { channelType: "echo", channelInstanceId: "test-instance", conversationId: "test", conversationKind: "direct" as const };
+  const turnScope = {
+    conversation: { tenantId, agentId, partition: { kind: "endpoint-conversation-principal" as const, endpoint, principalId: "user1" } },
+    principal: { principalId: "user1" },
+    endpoint,
+  };
+  const conversationRef = createConversationRef(turnScope.conversation);
+  if (!conversationRef.ok) throw conversationRef.error;
   return {
-    agentId: "default",
-    sessionKey: "default:echo:test:user1",
-    channelType: "echo",
-    channelId: "test",
+    turnScope,
+    conversationRef: conversationRef.value,
+    deliveryOrigin: { channelType: "echo", channelId: "test", userId: "user1", tenantId },
     traceId: null,
     backgroundHopCount: 0,
-    ...overrides,
+    ...Object.fromEntries(Object.entries(overrides).filter(([key]) => key !== "agentId" && key !== "sessionKey")),
   };
 }
 
@@ -116,7 +125,7 @@ describe("BackgroundTaskManager", () => {
       const task = manager.getTask(result.value);
       expect(task).toBeDefined();
       expect(task!.status).toBe("running");
-      expect(task!.origin.agentId).toBe("agent-1");
+      expect(task!.origin.turnScope.conversation.agentId).toBe("agent-1");
       expect(task!.toolName).toBe("exec_command");
     });
 
@@ -353,7 +362,7 @@ describe("BackgroundTaskManager", () => {
       expect(result.error.message).toMatch(/origin/i);
     });
 
-    it("promote with empty agentId returns Result.err", () => {
+    it("promote with an empty agent authority returns Result.err", () => {
       const result = manager.promote("my_tool", new Promise(() => {}), new AbortController(), {
         agentId: "",
         sessionKey: "k",
@@ -365,10 +374,10 @@ describe("BackgroundTaskManager", () => {
 
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.error.message).toContain("agentId");
+      expect(result.error.message).toContain("structured turn authority");
     });
 
-    it("promote with empty sessionKey returns Result.err", () => {
+    it("promote with an empty formatted key cannot substitute for structured authority", () => {
       const result = manager.promote("my_tool", new Promise(() => {}), new AbortController(), {
         agentId: "a",
         sessionKey: "",
@@ -380,7 +389,7 @@ describe("BackgroundTaskManager", () => {
 
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      expect(result.error.message).toContain("sessionKey");
+      expect(result.error.message).toContain("structured turn authority");
     });
 
     it("complete(taskId) emits background_task:completed with origin in payload", () => {
@@ -409,14 +418,14 @@ describe("BackgroundTaskManager", () => {
       );
     });
 
-    it("getTasks(agentId) filters by origin.agentId", () => {
+    it("getTasks(agentId) filters by origin.turnScope.conversation.agentId", () => {
       manager.promote("t1", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "filter-agent" }));
       manager.promote("t2", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "other-agent" }));
       manager.promote("t3", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "filter-agent" }));
 
       const tasks = manager.getTasks("filter-agent");
       expect(tasks).toHaveLength(2);
-      expect(tasks.every((t) => t.origin.agentId === "filter-agent")).toBe(true);
+      expect(tasks.every((t) => t.origin.turnScope.conversation.agentId === "filter-agent")).toBe(true);
     });
 
     it("recoverOnStartup emits failed event with origin populated (restart-recovery path)", () => {
@@ -436,7 +445,7 @@ describe("BackgroundTaskManager", () => {
         };
 
         // Write directly to the agent subdir using safePath
-        const agentDir = safePath(testDir, origin.agentId);
+        const agentDir = safePath(testDir, origin.turnScope.conversation.agentId);
         mkdirSync(agentDir, { recursive: true });
         const filePath = safePath(agentDir, `${persisted.id}.json`);
         writeFileSync(filePath, JSON.stringify(persisted, null, 2), "utf-8");
@@ -489,7 +498,7 @@ describe("BackgroundTaskManager", () => {
           dispatchState: "notified",
         };
 
-        const agentDir = safePath(testDir, origin.agentId);
+        const agentDir = safePath(testDir, origin.turnScope.conversation.agentId);
         mkdirSync(agentDir, { recursive: true });
         const filePath = safePath(agentDir, `${persistedRecord.id as string}.json`);
         writeFileSync(filePath, JSON.stringify(persistedRecord, null, 2), "utf-8");

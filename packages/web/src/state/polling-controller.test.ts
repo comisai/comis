@@ -13,6 +13,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ReactiveControllerHost } from "lit";
 import type { RpcClient } from "../api/rpc-client.js";
+import { CONTRACTS } from "../api/contracts.generated.js";
 import { PollingController } from "./polling-controller.js";
 
 // -- Helpers --
@@ -46,8 +47,8 @@ function makeRpc(responses: {
       if (responses.throwOn === method) {
         throw new Error("rpc failure");
       }
-      if (method === "agent.list") return (responses.agentList ?? { agents: [] }) as T;
-      if (method === "channel.list") return (responses.channelList ?? { channels: [] }) as T;
+      if (method === "agents.list") return (responses.agentList ?? { agents: [] }) as T;
+      if (method === "channels.list") return (responses.channelList ?? { channels: [] }) as T;
       if (method === "session.list")
         return (responses.sessionList ?? { sessions: [], total: 0 }) as T;
       throw new Error(`unexpected method: ${method}`);
@@ -81,6 +82,23 @@ describe("PollingController", () => {
     const { host, controllers } = makeHost();
     const ctrl = new PollingController(host, makeRpc({}), () => {});
     expect(controllers).toContain(ctrl);
+  });
+
+  it("polls only method names that exist in the generated contract map", async () => {
+    const methods: string[] = [];
+    const rpc = makeRpc({});
+    const call = rpc.call.bind(rpc);
+    rpc.call = (async (method: string, params?: unknown) => {
+      methods.push(method);
+      return call(method, params);
+    }) as RpcClient["call"];
+
+    const { host } = makeHost();
+    new PollingController(host, rpc, () => {}).hostConnected();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(methods).toEqual(["agents.list", "channels.list", "session.list"]);
+    expect(methods.every((method) => Object.hasOwn(CONTRACTS, method))).toBe(true);
   });
 
   it("schedules a setInterval callback on hostConnected with the configured interval ms", () => {
@@ -182,17 +200,19 @@ describe("PollingController", () => {
     expect(requestUpdate).toHaveBeenCalled();
   });
 
-  it("swallows RPC failures silently so badge counts retain stale data (non-fatal branch)", async () => {
+  it("a failed poll reaches the observable error path while retaining stale data", async () => {
     const { host, requestUpdate } = makeHost();
     const onData = vi.fn();
-    new PollingController(
+    const ctrl = new PollingController(
       host,
-      makeRpc({ throwOn: "agent.list" }),
+      makeRpc({ throwOn: "agents.list" }),
       onData,
-    ).hostConnected();
+    );
+    ctrl.hostConnected();
     await new Promise((r) => setTimeout(r, 0));
     expect(onData).not.toHaveBeenCalled();
-    expect(requestUpdate).not.toHaveBeenCalled();
+    expect(ctrl.lastError).toEqual(expect.objectContaining({ message: "rpc failure" }));
+    expect(requestUpdate).toHaveBeenCalledTimes(1);
   });
 
   it("clears the scheduled interval on hostDisconnected to prevent leak after unmount", () => {

@@ -93,7 +93,7 @@ export async function handleWireMemoryCronSentinel(
       return true;
     }
 
-    const lifecycleTenantId = tenantId ?? container.config.tenantId ?? "default";
+    const lifecycleTenantId = tenantId;
     const lifecycleStartMs = clock.now();
     // Per-call policy: thread THIS agent's collapsed learning forget policy onto the
     // sweep CALL. OFF (memory.enabled / learning.enabled) → no override → DORMANT sweep (byte-identical).
@@ -200,7 +200,7 @@ export async function handleWireMemoryCronSentinel(
       return true;
     }
 
-    const reflectTenantId = tenantId ?? container.config.tenantId ?? "default";
+    const reflectTenantId = tenantId;
     const scope = { tenantId: reflectTenantId, agentId };
     const reflectLogger = logger.child({ agentId, submodule: "reflection" });
     const reflectStartMs = clock.now();

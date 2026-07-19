@@ -7,7 +7,7 @@ import { mintApprovalShortId } from "./approval-short-id.js";
 import { TypedEventBus } from "../event-bus/bus.js";
 import type { EventMap } from "../event-bus/events.js";
 import type { ApprovalResolution, SerializedApprovalRequest, SerializedApprovalCacheEntry } from "../domain/approval-request.js";
-import { parseFormattedSessionKey } from "../domain/session-key.js";
+import { ConversationRefSchema } from "../domain/conversation-scope.js";
 import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -83,29 +83,32 @@ function makeRequest(overrides: Partial<{
 }> = {}) {
   const params = overrides.params ?? { agentId: "bot-1" };
   const sessionKey = overrides.sessionKey ?? "default:user1:discord";
-  const parsedSession = parseFormattedSessionKey(sessionKey);
+  const authority = authorityForSession(sessionKey, overrides.agentId ?? "agent-1");
+  const [tenantId = "default", userId = "user1", channelKey = "discord"] = sessionKey.split(":");
   return {
     toolName: overrides.toolName ?? "agents.restart",
     action: overrides.action ?? "agents.restart",
     params,
     fingerprintParams: overrides.fingerprintParams ?? params,
-    agentId: overrides.agentId ?? "agent-1",
-    sessionKey,
+    ...authority,
     trustLevel: overrides.trustLevel ?? "user" as const,
-    callbackOwner: overrides.callbackOwner ?? (parsedSession === undefined
-      ? {
-          tenantId: "default",
-          userId: "user1",
-          channelType: "discord",
-          channelKey: "discord",
-        }
-      : {
-          tenantId: parsedSession.tenantId,
-          userId: parsedSession.userId,
-          channelType: parsedSession.channelId,
-          channelKey: parsedSession.channelId,
-          ...(parsedSession.threadId === undefined ? {} : { threadId: parsedSession.threadId }),
-        }),
+    callbackOwner: overrides.callbackOwner ?? {
+      tenantId,
+      userId,
+      channelType: channelKey,
+      channelKey,
+    },
+  };
+}
+
+function authorityForSession(sessionKey: string, agentId = "agent-1") {
+  const tenantId = sessionKey.split(":")[0] || "default";
+  const digest = createHash("sha256").update(sessionKey).digest("base64url");
+  return {
+    tenantId,
+    agentId,
+    conversationRef: ConversationRefSchema.parse(`cv_${digest}`),
+    resolvingPrincipalId: `principal:${sessionKey}`,
   };
 }
 
@@ -274,7 +277,7 @@ describe("request creation", () => {
       operationFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
     }));
     expect(request!.agentId).toBe("agent-2");
-    expect(request!.sessionKey).toBe("default:admin:telegram");
+    expect(request!.conversationRef).toBe(authorityForSession("default:admin:telegram", "agent-2").conversationRef);
     expect(request!.trustLevel).toBe("admin");
     expect(request!.requestId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
@@ -333,7 +336,7 @@ describe("approval:requested event", () => {
       operationFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
     }));
     expect(payload.agentId).toBe("agent-3");
-    expect(payload.sessionKey).toBe("default:op1:slack");
+    expect(payload.conversationRef).toBe(authorityForSession("default:op1:slack", "agent-3").conversationRef);
     expect(payload.trustLevel).toBe("admin");
     expect(typeof payload.createdAt).toBe("number");
     expect(payload.timeoutMs).toBe(DEFAULT_TIMEOUT_MS);
@@ -729,7 +732,7 @@ describe("denial cache", () => {
     await promise1;
 
     // Clear cache for this session
-    gateWithTtl.clearDenialCache("default:user1:discord");
+    gateWithTtl.clearDenialCache(authorityForSession("default:user1:discord"));
 
     // Next request should create a real pending entry (cache cleared)
     gateWithTtl.requestApproval(makeRequest());
@@ -940,7 +943,9 @@ describe("batch parallel requests", () => {
 
   it("fails closed without creating a shared pending bucket when principal identity is missing", async () => {
     const missingAgent = gate.requestApproval(makeRequest({ agentId: "" }));
-    const missingSession = gate.requestApproval(makeRequest({ sessionKey: "" }));
+    const missingSession = gate.requestApproval(makeRequest({
+      callbackOwner: { tenantId: "", userId: "user1", channelType: "discord", channelKey: "discord" },
+    }));
 
     expect(gate.pending()).toHaveLength(0);
     await expect(missingAgent).resolves.toMatchObject({
@@ -1021,7 +1026,7 @@ describe("serialization and restore", () => {
     expect(serialized).toHaveLength(2);
     expect(serialized[0]!.action).toBe("agents.create");
     expect(serialized[0]!.toolName).toBe("agents_manage");
-    expect(serialized[0]!.sessionKey).toBe("default:user1:discord");
+    expect(serialized[0]!.conversationRef).toBe(authorityForSession("default:user1:discord").conversationRef);
     expect(serialized[0]!.trustLevel).toBe("user");
     expect(typeof serialized[0]!.requestId).toBe("string");
     expect(typeof serialized[0]!.createdAt).toBe("number");
@@ -1037,8 +1042,7 @@ describe("serialization and restore", () => {
       toolName: "agents_manage",
       action: "agents.create",
       params: { agent_id: "bot-1" },
-      agentId: "agent-1",
-      sessionKey: "default:user1:discord",
+      ...authorityForSession("default:user1:discord"),
       trustLevel: "user",
       callbackOwner: { tenantId: "default", userId: "user1", channelType: "discord", channelKey: "discord" },
       createdAt: now - 1000, // 1 second ago
@@ -1067,8 +1071,7 @@ describe("serialization and restore", () => {
       toolName: "agents_manage",
       action: "agents.create",
       params: { agent_id: "bot-2" },
-      agentId: "agent-1",
-      sessionKey: "default:user1:discord",
+      ...authorityForSession("default:user1:discord"),
       trustLevel: "user",
       callbackOwner: { tenantId: "default", userId: "user1", channelType: "discord", channelKey: "discord" },
       createdAt: now - 10000, // 10 seconds ago
@@ -1091,8 +1094,7 @@ describe("serialization and restore", () => {
       toolName: "agents_manage",
       action: "agents.delete",
       params: { agent_id: "bot-3" },
-      agentId: "agent-1",
-      sessionKey: "default:user1:discord",
+      ...authorityForSession("default:user1:discord"),
       trustLevel: "admin",
       callbackOwner: { tenantId: "default", userId: "user1", channelType: "discord", channelKey: "discord" },
       createdAt: now - 500,
@@ -1396,7 +1398,7 @@ describe("approval cache", () => {
     await promise1;
 
     // Clear cache for this session
-    gateWithApprovalCache.clearApprovalCache("default:user1:discord");
+    gateWithApprovalCache.clearApprovalCache(authorityForSession("default:user1:discord"));
 
     // Next request should create a real pending entry (cache cleared)
     gateWithApprovalCache.requestApproval(makeRequest());
@@ -1532,7 +1534,7 @@ describe("approval cache serialization and logging", () => {
 
     const entries = gateWithApprovalCache.serializeApprovalCache();
     expect(entries).toHaveLength(1);
-    expect(entries[0]!.cacheKey).toMatch(/^h1:21:default:user1:discord:[0-9a-f]{64}$/);
+    expect(entries[0]!.cacheKey).toMatch(/^h1:\d+:\[.*\]:[0-9a-f]{64}$/);
     expect(entries[0]!.resolution.approved).toBe(true);
     expect(entries[0]!.resolution.approvedBy).toBe("operator");
     expect(entries[0]!.expiresAt).toBeGreaterThan(Date.now());
@@ -1738,7 +1740,7 @@ describe("approval cache serialization and logging", () => {
 
     expect(debugFn).toHaveBeenCalledWith(
       expect.objectContaining({
-        cacheKey: expect.stringMatching(/^h1:21:default:user1:discord:[0-9a-f]{64}$/),
+        cacheKey: expect.stringMatching(/^h1:\d+:\[.*\]:[0-9a-f]{64}$/),
         action: "agents.restart",
       }),
       "Approval cache hit",
@@ -1952,7 +1954,7 @@ describe("shortId minting and emission", () => {
 
 // ---------------------------------------------------------------------------
 // 17. shortId secondary index + read helpers
-//     getRequestByShortId / pendingForSession + atomic dual-map removal.
+//     getRequestByShortId / pendingForAuthority + atomic dual-map removal.
 // ---------------------------------------------------------------------------
 
 describe("shortId secondary index + read helpers", () => {
@@ -2017,34 +2019,36 @@ describe("shortId secondary index + read helpers", () => {
     expect(gate.getRequestByShortId(shortId)).toBeUndefined();
   });
 
-  it("pendingForSession(sessionKey) returns only requests whose request.sessionKey matches", () => {
+  it("pendingForAuthority returns only requests whose full authority matches", () => {
     gate.requestApproval(makeRequest({ sessionKey: "default:alice:discord", action: "a", toolName: "a" }));
     gate.requestApproval(makeRequest({ sessionKey: "default:alice:discord", action: "b", toolName: "b" }));
     gate.requestApproval(makeRequest({ sessionKey: "default:bob:telegram", action: "c", toolName: "c" }));
 
-    const alice = gate.pendingForSession("default:alice:discord");
+    const aliceAuthority = authorityForSession("default:alice:discord");
+    const alice = gate.pendingForAuthority(aliceAuthority);
     expect(alice).toHaveLength(2);
-    expect(alice.every((r) => r.sessionKey === "default:alice:discord")).toBe(true);
+    expect(alice.every((r) => r.conversationRef === aliceAuthority.conversationRef)).toBe(true);
     expect(alice.map((r) => r.action).sort()).toEqual(["a", "b"]);
 
-    const bob = gate.pendingForSession("default:bob:telegram");
+    const bob = gate.pendingForAuthority(authorityForSession("default:bob:telegram"));
     expect(bob).toHaveLength(1);
     expect(bob[0]!.action).toBe("c");
   });
 
-  it("pendingForSession returns an empty array for a session with no pending requests", () => {
+  it("pendingForAuthority returns an empty array for a conversation with no pending requests", () => {
     gate.requestApproval(makeRequest({ sessionKey: "default:alice:discord" }));
-    expect(gate.pendingForSession("default:nobody:slack")).toEqual([]);
+    expect(gate.pendingForAuthority(authorityForSession("default:nobody:slack"))).toEqual([]);
   });
 
-  it("pendingForSession no longer lists a request after it is resolved (index-leak guard)", async () => {
+  it("pendingForAuthority no longer lists a request after it is resolved (index-leak guard)", async () => {
     const promise = gate.requestApproval(makeRequest({ sessionKey: "default:alice:discord" }));
-    expect(gate.pendingForSession("default:alice:discord")).toHaveLength(1);
+    const authority = authorityForSession("default:alice:discord");
+    expect(gate.pendingForAuthority(authority)).toHaveLength(1);
 
     gate.resolveApproval(gate.pending()[0]!.requestId, true, "chat:u");
     await promise;
 
-    expect(gate.pendingForSession("default:alice:discord")).toEqual([]);
+    expect(gate.pendingForAuthority(authority)).toEqual([]);
   });
 
   it("a restored approval is reachable via getRequestByShortId (callback identity survives restart)", () => {
@@ -2071,7 +2075,12 @@ describe("shortId secondary index + read helpers", () => {
     expect(found!.requestId).toBe(original.requestId);
     expect(found!.shortId).toBe(original.shortId);
     // And it is listed for its session.
-    expect(freshGate.pendingForSession(original.sessionKey).map((r) => r.shortId)).toContain(original.shortId);
+    expect(freshGate.pendingForAuthority({
+      tenantId: original.tenantId,
+      agentId: original.agentId,
+      conversationRef: original.conversationRef,
+      resolvingPrincipalId: original.resolvingPrincipalId,
+    }).map((r) => r.shortId)).toContain(original.shortId);
 
     freshGate.dispose();
   });

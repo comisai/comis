@@ -20,7 +20,7 @@ registerStory({
     "As a researcher, I want the agent to research a topic, remember the finding, " +
     "and recall it in a later session, so that my knowledge persists across conversations.",
   tags: ["A", "B", "N", "E", "J", "S"],
-  dimensions: ["search=tavily", "contextEngine.version=dag"],
+  dimensions: ["search=tavily", "contextEngine.contextThreshold=high"],
   requires: {
     providers: ["anthropic"],
     capabilities: ["tools"],

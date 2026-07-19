@@ -172,15 +172,15 @@ export const AgentsListContract = defineContract({
 export const SessionListContract = defineContract({
   method: "session.list",
   request: z.object({
+    tenant_id: z.string(),
+    agent_id: z.string(),
     kind: z.string().optional(),
     since_minutes: z.number().optional(),
   }),
   response: z.object({
     sessions: z.array(z.object({
-      sessionKey: z.string(),
+      conversationRef: z.string(),
       agentId: z.string(),
-      userId: z.string(),
-      channelId: z.string(),
       kind: z.string(),
       messageCount: z.number(),
       totalTokens: z.number(),
@@ -229,6 +229,8 @@ export const SessionListContract = defineContract({
 export const SessionSearchContract = defineContract({
   method: "session.search",
   request: z.object({
+    tenant_id: z.string(),
+    agent_id: z.string(),
     query: z.string().optional(),
     scope: z.string().optional(),
     limit: z.number().optional(),
@@ -264,7 +266,9 @@ export const SessionSearchContract = defineContract({
 export const SessionHistoryContract = defineContract({
   method: "session.history",
   request: z.object({
-    session_key: z.string(),
+    tenant_id: z.string(),
+    agent_id: z.string(),
+    conversation_ref: z.string(),
     offset: z.number().optional(),
     limit: z.number().optional(),
   }),
@@ -339,12 +343,13 @@ export const SessionHistoryContract = defineContract({
 export const SessionSendContract = defineContract({
   method: "session.send",
   request: z.object({
-    session_key: z.string(),
+    tenant_id: z.string(),
+    agent_id: z.string(),
+    conversation_ref: z.string(),
     text: z.string(),
     mode: z.string().optional(),
     timeout_ms: z.number().optional(),
     max_turns: z.number().optional(),
-    agent_id: z.string().optional(),
   }),
   response: z.record(z.string(), z.unknown()),
   scopes: ["rpc"] as const,
@@ -485,10 +490,12 @@ export const SessionRunStatusContract = defineContract({
 export const SessionDeleteContract = defineContract({
   method: "session.delete",
   request: z.object({
-    session_key: z.string(),
+    tenant_id: z.string(),
+    agent_id: z.string(),
+    conversation_ref: z.string(),
   }),
   response: z.object({
-    sessionKey: z.string(),
+    conversationRef: z.string(),
     deleted: z.literal(true),
     transcript: z.object({
       messages: z.array(z.record(z.string(), z.unknown())),
@@ -520,10 +527,12 @@ export const SessionDeleteContract = defineContract({
 export const SessionResetContract = defineContract({
   method: "session.reset",
   request: z.object({
-    session_key: z.string(),
+    tenant_id: z.string(),
+    agent_id: z.string(),
+    conversation_ref: z.string(),
   }),
   response: z.object({
-    sessionKey: z.string(),
+    conversationRef: z.string(),
     reset: z.literal(true),
     previousMessageCount: z.number(),
   }),
@@ -559,10 +568,12 @@ export const SessionResetContract = defineContract({
 export const SessionExportContract = defineContract({
   method: "session.export",
   request: z.object({
-    session_key: z.string(),
+    tenant_id: z.string(),
+    agent_id: z.string(),
+    conversation_ref: z.string(),
   }),
   response: z.object({
-    sessionKey: z.string(),
+    conversationRef: z.string(),
     messages: z.array(z.record(z.string(), z.unknown())),
     metadata: z.record(z.string(), z.unknown()),
     messageCount: z.number(),
@@ -600,13 +611,13 @@ export const SessionExportContract = defineContract({
 export const SessionCompactContract = defineContract({
   method: "session.compact",
   request: z.object({
-    // OPTIONAL: omit or pass "self"/"current" to compact the
-    // caller's own session via the injected _callerSessionKey.
-    session_key: z.string().optional(),
+    tenant_id: z.string(),
+    agent_id: z.string(),
+    conversation_ref: z.string(),
     instructions: z.string().optional(),
   }),
   response: z.object({
-    sessionKey: z.string(),
+    conversationRef: z.string(),
     messageCount: z.number(),
     estimatedTokens: z.number(),
     compactionTriggered: z.literal(true),
@@ -669,17 +680,16 @@ export const SessionCompactContract = defineContract({
 export const SessionResetConversationContract = defineContract({
   method: "session.reset_conversation",
   request: z.object({
-    session_key: z.string(),
+    tenant_id: z.string(),
+    agent_id: z.string(),
+    conversation_ref: z.string(),
     memory: z.boolean().optional(),
     purge_derived: z.boolean().optional(),
-    // Admin-supplied agent scope. This is an ADMIN RPC, so the caller is
-    // trusted to name which agent's conversation to forget; absent, it falls
-    // back to the default. Without an explicit scope, a non-default agent's
-    // reset silently acts on the default agent and returns lcdRowsDeleted:0.
-    agentId: z.string().optional(),
+    // Admin-supplied tenant and agent authority is required for the exact
+    // conversation partition being reset.
   }),
   response: z.object({
-    sessionKey: z.string(),
+    conversationRef: z.string(),
     lcdRowsDeleted: z.number(),
     sessionMessagesCleared: z.number(),
     memoriesDeleted: z.number().optional(),

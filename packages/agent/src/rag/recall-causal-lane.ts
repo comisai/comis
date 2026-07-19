@@ -21,7 +21,7 @@
  * @module
  */
 
-import type { MemoryCausalStore, SessionKey, ComisLogger } from "@comis/core";
+import type { MemoryCausalStore, MemoryRecallScope, ComisLogger } from "@comis/core";
 import type { FusionLane } from "./fuse.js";
 
 /**
@@ -49,19 +49,17 @@ export async function appendCausalLane(
   weight: number,
   maxResults: number,
   seedIds: string[],
-  sessionKey: SessionKey,
-  agentId: string | undefined,
+  scope: MemoryRecallScope,
   logger: ComisLogger,
 ): Promise<number> {
   if (seedIds.length === 0) return 0;
   // Scope mirrors the entity/temporal lanes / memoryPort.search: tenant from the session key,
   // agent from the recall arg (else the session key's agent, else "default"). The lane's WHERE
   // enforces this in SQL — the load-bearing isolation.
-  const scope = { tenantId: sessionKey.tenantId, agentId: agentId ?? sessionKey.agentId ?? "default" };
   const laneRes = await store.causalLane(seedIds, scope, maxResults);
   if (!laneRes.ok) {
     logger.warn(
-      { agentId, seedCount: seedIds.length, errorKind: "internal" as const, hint: "causal lane failed; using other lanes only" },
+      { agentId: scope.agentId, seedCount: seedIds.length, errorKind: "internal" as const, hint: "causal lane failed; using other lanes only" },
       "causal lane fallback",
     );
     return 0;

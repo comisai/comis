@@ -256,9 +256,8 @@ function createMinimalContainer(overrides: Record<string, any> = {}) {
         rerankerThreads: 4,
         ...overrides.memory,
       },
-      // Per-agent configs scanned for rag.rerank.enabled (the build gate fallback path).
-      // Default: a single all-default agent with rerank OFF -> the factory must NOT be called.
-      agents: overrides.agents ?? { default: { rag: { rerank: { enabled: false } } } },
+      // Per-agent modes drive the model build gate.
+      agents: overrides.agents ?? { default: { rag: { rerank: { mode: "off" } } } },
       embedding: {
         enabled: false,
         provider: "local",
@@ -271,10 +270,6 @@ function createMinimalContainer(overrides: Record<string, any> = {}) {
       },
       dataDir: "/test/data",
     },
-    // The build gate reads this RAW (pre-Zod-default) map when present
-    // so it shares ONE definition of "explicitly on" with the per-agent precedence. When
-    // omitted (undefined), setupMemory falls back to scanning the parsed config.agents.
-    rawAgentRerankEnabled: overrides.rawAgentRerankEnabled,
     secretManager: {
       get: vi.fn(() => undefined),
       has: vi.fn(() => false),
@@ -950,13 +945,11 @@ describe("setupMemory", () => {
     expect(result.rerankerModelPresent).toBe(false);
   });
 
-  it("auto-builds the reranker when the model is present (all-default config)", async () => {
-    // All agents all-default (rerank unset → false), but the
-    // GGUF is already cached locally → the probe resolves true → the widened gate
-    // `someAgentExplicitOn(false) || modelPresent(true)` = true builds the port. No
-    // schema flip; the auto-on is a daemon-wiring decision keyed on local presence.
+  it("auto-builds the reranker when the model is present", async () => {
     mockRerankerModelPresent.mockResolvedValueOnce(true);
-    const container = createMinimalContainer(); // default agent has rerank OFF (unset → false)
+    const container = createMinimalContainer({
+      agents: { default: { rag: { rerank: { mode: "auto" } } } },
+    });
     const setupMemory = await getSetupMemory();
 
     const result = await setupMemory({
@@ -1034,8 +1027,7 @@ describe("setupMemory", () => {
       throw new Error("Path traversal blocked");
     });
     const container = createMinimalContainer({
-      agents: { researcher: { rag: { rerank: { enabled: true } } } },
-      rawAgentRerankEnabled: new Map<string, boolean | undefined>([["researcher", true]]),
+      agents: { researcher: { rag: { rerank: { mode: "on" } } } },
     });
     const memoryLogger = createMockLogger();
     const setupMemory = await getSetupMemory();
@@ -1079,8 +1071,8 @@ describe("setupMemory", () => {
   it("builds the reranker when at least one agent enables rerank and the factory succeeds", async () => {
     const container = createMinimalContainer({
       agents: {
-        default: { rag: { rerank: { enabled: false } } },
-        researcher: { rag: { rerank: { enabled: true } } },
+        default: { rag: { rerank: { mode: "off" } } },
+        researcher: { rag: { rerank: { mode: "on" } } },
       },
     });
     const setupMemory = await getSetupMemory();
@@ -1108,24 +1100,13 @@ describe("setupMemory", () => {
   });
 
   // -------------------------------------------------------------------------
-  // The build gate keys on the SAME raw pre-default signal the per-agent
-  // precedence consumes (container.rawAgentRerankEnabled), so the two gates share
-  // one definition of "explicitly on" and cannot desync on a future schema change.
+  // The build gate consumes the same validated modes as the agent runtime.
   // -------------------------------------------------------------------------
 
-  it("builds the reranker from the RAW map when an agent is explicitly on, model absent (opt-in download)", async () => {
-    // The raw map says `researcher` is explicit-on (true). modelPresent=false. The gate
-    // is `someAgentExplicitOn(true) || modelPresent(false)` = true → factory called. This
-    // exercises the raw-map branch, NOT the parsed-config fallback.
+  it("builds the reranker when an agent mode is on and the model is absent", async () => {
     mockRerankerModelPresent.mockResolvedValueOnce(false);
     const container = createMinimalContainer({
-      // Parsed config carries concrete false for everyone (the Zod default) — proving the
-      // gate did NOT read the parsed config (which would yield someAgentExplicitOn=false).
-      agents: { default: { rag: { rerank: { enabled: false } } }, researcher: { rag: { rerank: { enabled: false } } } },
-      rawAgentRerankEnabled: new Map<string, boolean | undefined>([
-        ["default", undefined],
-        ["researcher", true],
-      ]),
+      agents: { default: { rag: { rerank: { mode: "off" } } }, researcher: { rag: { rerank: { mode: "on" } } } },
     });
     const setupMemory = await getSetupMemory();
 
@@ -1140,16 +1121,10 @@ describe("setupMemory", () => {
     expect(result.rerankerPort).toBeDefined();
   });
 
-  it("does NOT build the reranker when the RAW map shows only unset agents and model absent (via raw)", async () => {
-    // The raw map shows all agents UNSET (undefined) — none explicit-on. modelPresent=false.
-    // The gate is false → zero download. Crucially the parsed config below carries
-    // `enabled: true` for one agent, which the OLD parsed-config gate would have treated as
-    // explicit-on and built — so this asserts the gate truly reads the raw map (which says
-    // unset), preserving the zero-download posture keyed on the genuine operator signal.
+  it("does not build the reranker for auto mode when the model is absent", async () => {
     mockRerankerModelPresent.mockResolvedValueOnce(false);
     const container = createMinimalContainer({
-      agents: { default: { rag: { rerank: { enabled: true } } } },
-      rawAgentRerankEnabled: new Map<string, boolean | undefined>([["default", undefined]]),
+      agents: { default: { rag: { rerank: { mode: "auto" } } } },
     });
     const setupMemory = await getSetupMemory();
 
@@ -1171,7 +1146,7 @@ describe("setupMemory", () => {
       error: { message: "model load failed" },
     });
     const container = createMinimalContainer({
-      agents: { default: { rag: { rerank: { enabled: true } } } },
+      agents: { default: { rag: { rerank: { mode: "on" } } } },
     });
     const memoryLogger = createMockLogger();
     const setupMemory = await getSetupMemory();
@@ -1192,7 +1167,7 @@ describe("setupMemory", () => {
 
   it("disposes the rerankerPort via a disposeReranker callback (no leaked native context)", async () => {
     const container = createMinimalContainer({
-      agents: { default: { rag: { rerank: { enabled: true } } } },
+      agents: { default: { rag: { rerank: { mode: "on" } } } },
     });
     const setupMemory = await getSetupMemory();
 
@@ -1421,7 +1396,7 @@ describe("setupMemory recall-counter wiring", () => {
           rerankerGpu: "auto",
           rerankerThreads: 4,
         },
-        agents: { default: { rag: { rerank: { enabled: false } } } },
+        agents: { default: { rag: { rerank: { mode: "off" } } } },
         embedding: {
           enabled: false,
           provider: "local",

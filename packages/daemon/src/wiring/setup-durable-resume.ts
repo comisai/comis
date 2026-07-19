@@ -27,8 +27,17 @@
  */
 
 import { existsSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import type { ClockPort, TimerPort, TimerHandle, DurableRunPort, OutwardSendLedgerPort, DurableRunRecord, PerAgentConfig, AgentCapability, TypedEventBus } from "@comis/core";
-import { resolveAutonomy, DurabilityConfigSchema, safePath, toSafeErrorLogString } from "@comis/core";
+import {
+  createDeliveryOrigin,
+  createResolvedRequestContext,
+  resolveAutonomy,
+  DurabilityConfigSchema,
+  runWithContext,
+  safePath,
+  toSafeErrorLogString,
+} from "@comis/core";
 import { createSqliteDurableRunStore, createSqliteOutwardSendLedger } from "@comis/memory";
 import { createResultRefStore } from "@comis/skills/tools";
 import type { ComisLogger, LeaseManager } from "@comis/infra";
@@ -45,6 +54,7 @@ import {
 import { detectStaleRuns } from "../autonomy/durable-watchdog.js";
 import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
 import { isDagSpawnTree } from "../graph/graph-durable-checkpoint.js";
+import { resolveInternalTurnIdentity } from "@comis/orchestrator";
 
 // ───────────────────────────────────────────────────────────────────────────
 // The orchestrate-kind resume arm (233). A durable row with a FLAT spawnTree
@@ -533,7 +543,34 @@ export function buildDurableResume(deps: {
           return err(cause instanceof Error ? cause : new Error(String(cause)));
         }
       };
-      const outcome = await attempt();
+      const internalIdentity = resolveInternalTurnIdentity({
+        tenantId: record.tenantId,
+        agentId: record.agentId,
+        originKind: "durable-resume",
+        instanceId: "daemon",
+        conversationId: record.checkpointId,
+        principalId: `durable-resume-${record.checkpointId}`,
+      });
+      if (!internalIdentity.ok) return err(internalIdentity.error);
+      const resumeContext = createResolvedRequestContext({
+        tenantId: record.tenantId,
+        userId: internalIdentity.value.turnScope.principal.principalId,
+        sessionKey: internalIdentity.value.displaySessionKey,
+        agentId: record.agentId,
+        traceId: randomUUID(),
+        startedAt: clock.now(),
+        trustLevel: record.trustLevel,
+        channelType: internalIdentity.value.turnScope.endpoint.channelType,
+        deliveryOrigin: createDeliveryOrigin({
+          tenantId: record.tenantId,
+          userId: internalIdentity.value.turnScope.principal.principalId,
+          channelType: internalIdentity.value.turnScope.endpoint.channelType,
+          channelId: internalIdentity.value.turnScope.endpoint.conversationId,
+        }),
+        turnScope: internalIdentity.value.turnScope,
+      });
+      if (!resumeContext.ok) return resumeContext;
+      const outcome = await runWithContext(resumeContext.value, attempt);
       if (!outcome.ok) boundedAutonomy?.evictRootIfIdle(record.rootRunId);
       return outcome;
     },

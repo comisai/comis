@@ -18,7 +18,8 @@ import {
 } from "./identity-loader.js";
 import { createSessionLifecycle } from "../session/session-lifecycle.js";
 import type { SessionStore, SessionData } from "@comis/memory";
-import type { SessionKey } from "@comis/core";
+import type { SessionKey, SessionStorePort } from "@comis/core";
+import { ok, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // In-memory fake SessionStore (copied from session-lifecycle.test.ts pattern)
@@ -135,6 +136,24 @@ function createFakeSessionStore(): SessionStore & {
   };
 }
 
+function createTestSessionLifecycle(store: ReturnType<typeof createFakeSessionStore>) {
+  const port = {
+    save: (scope: SessionKey, messages: unknown[], metadata?: Record<string, unknown>) => {
+      store.save(scope, messages, metadata);
+      return ok(undefined);
+    },
+    load: (scope: SessionKey) => ok(store.load(scope)),
+    delete: (scope: SessionKey) => ok(store.delete(scope)),
+    deleteStale: (_scope: unknown, maxAgeMs: number) => ok(store.deleteStale(maxAgeMs)),
+  } as unknown as SessionStorePort;
+  return createSessionLifecycle(port);
+}
+
+function unwrap<T>(result: Result<T, unknown>): T {
+  if (!result.ok) throw result.error;
+  return result.value;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -190,7 +209,7 @@ describe("Identity persistence across messages", () => {
 
   it("session messages persist across loadOrCreate calls (session continuity)", () => {
     const store = createFakeSessionStore();
-    const mgr = createSessionLifecycle(store);
+    const mgr = createTestSessionLifecycle(store);
 
     const key: SessionKey = {
       tenantId: "default",
@@ -199,7 +218,7 @@ describe("Identity persistence across messages", () => {
     };
 
     // First "message turn": new session returns empty
-    const turn1Messages = mgr.loadOrCreate(key);
+    const turn1Messages = unwrap(mgr.loadOrCreate(key));
     expect(turn1Messages).toHaveLength(0);
 
     // Save messages from first turn
@@ -209,7 +228,7 @@ describe("Identity persistence across messages", () => {
     ]);
 
     // Second "message turn": loads previous messages
-    const turn2Messages = mgr.loadOrCreate(key);
+    const turn2Messages = unwrap(mgr.loadOrCreate(key));
     expect(turn2Messages).toHaveLength(2);
 
     // Save messages from second turn (accumulating)
@@ -221,7 +240,7 @@ describe("Identity persistence across messages", () => {
     ]);
 
     // Third "message turn": loads all 4 messages
-    const turn3Messages = mgr.loadOrCreate(key);
+    const turn3Messages = unwrap(mgr.loadOrCreate(key));
     expect(turn3Messages).toHaveLength(4);
   });
 
@@ -237,7 +256,7 @@ describe("Identity persistence across messages", () => {
 
     // Create SessionManager with fake store
     const store = createFakeSessionStore();
-    const mgr = createSessionLifecycle(store);
+    const mgr = createTestSessionLifecycle(store);
 
     const key: SessionKey = {
       tenantId: "default",
@@ -250,7 +269,7 @@ describe("Identity persistence across messages", () => {
 
     // Turn 1: assemble prompt, new session (0 messages), save 2 messages
     prompts.push(assembleSystemPrompt(identity));
-    messageCounts.push(mgr.loadOrCreate(key).length);
+    messageCounts.push(unwrap(mgr.loadOrCreate(key)).length);
     mgr.save(key, [
       { role: "user", content: "msg 1" },
       { role: "assistant", content: "reply 1" },
@@ -258,7 +277,7 @@ describe("Identity persistence across messages", () => {
 
     // Turn 2: assemble prompt, load messages (2 present), save 4 messages
     prompts.push(assembleSystemPrompt(identity));
-    messageCounts.push(mgr.loadOrCreate(key).length);
+    messageCounts.push(unwrap(mgr.loadOrCreate(key)).length);
     mgr.save(key, [
       { role: "user", content: "msg 1" },
       { role: "assistant", content: "reply 1" },
@@ -268,7 +287,7 @@ describe("Identity persistence across messages", () => {
 
     // Turn 3: assemble prompt, load messages (4 present)
     prompts.push(assembleSystemPrompt(identity));
-    messageCounts.push(mgr.loadOrCreate(key).length);
+    messageCounts.push(unwrap(mgr.loadOrCreate(key)).length);
 
     // All 3 assembled prompts contain identity content
     for (const prompt of prompts) {

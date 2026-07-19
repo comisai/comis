@@ -8,7 +8,7 @@
  *
  * The single capability: enumerate the distinct conversations one agent owns
  * within one tenant, most-recently-updated first, paginated. Tenant + agent
- * isolation: every query filters by agent_id AND tenant_id so a conversation_id shared by
+ * isolation: every query filters by agent_id AND tenant_id so a conversation_ref shared by
  * two agents (formatSessionKey omits agentId) never leaks across agents, and one
  * tenant never sees another's. Static SQL, bound params, no interpolated
  * identifiers; reads degrade gracefully (createRowMapper, no `as` casts —
@@ -24,6 +24,7 @@ import type {
   LcdConversationPage,
   LcdConversationSummary,
 } from "@comis/core";
+import { ConversationRefSchema } from "@comis/core";
 import { z } from "zod";
 import { createRowMapper } from "./row-mapper.js";
 
@@ -33,7 +34,7 @@ import { createRowMapper } from "./row-mapper.js";
  * metadata — no content column is selected.
  */
 const ConversationRowSchema = z.strictObject({
-  conversation_id: z.string(),
+  conversation_ref: ConversationRefSchema,
   tenant_id: z.string(),
   agent_id: z.string(),
   session_key: z.string(),
@@ -43,7 +44,7 @@ const ConversationRowSchema = z.strictObject({
 });
 const conversationRowMapper = createRowMapper(ConversationRowSchema);
 
-/** Single-column COUNT(DISTINCT conversation_id) projection for the unpaginated total. */
+/** Single-column COUNT(DISTINCT conversation_ref) projection for the unpaginated total. */
 const TotalRowSchema = z.strictObject({ total: z.number() });
 const totalRowMapper = createRowMapper(TotalRowSchema);
 
@@ -54,13 +55,13 @@ const totalRowMapper = createRowMapper(TotalRowSchema);
  */
 export function createLcdBrowseStore(db: Database.Database): ContextBrowsePort {
   // The distinct-conversation page, most-recently-updated first. Filter by
-  // agent_id AND tenant_id (the conversation_id prefix carries the tenant; the
+  // agent_id AND tenant_id (the conversation_ref prefix carries the tenant; the
   // explicit tenant_id is defense-in-depth). `session_key` is grouped via
   // MIN so the GROUP BY stays keyed on the conversation alone (one session per
   // conversation in the current model). No content column is selected.
   const selectConversations = db.prepare(`
     SELECT
-      conversation_id              AS conversation_id,
+      conversation_ref              AS conversation_ref,
       tenant_id                    AS tenant_id,
       agent_id                     AS agent_id,
       MIN(session_key)             AS session_key,
@@ -69,14 +70,14 @@ export function createLcdBrowseStore(db: Database.Database): ContextBrowsePort {
       COUNT(*)                     AS message_count
     FROM lcd_messages
     WHERE agent_id = ? AND tenant_id = ?
-    GROUP BY conversation_id, tenant_id, agent_id
-    ORDER BY MAX(created_at) DESC, conversation_id
+    GROUP BY conversation_ref, tenant_id, agent_id
+    ORDER BY MAX(created_at) DESC, conversation_ref
     LIMIT ? OFFSET ?
   `);
 
   // The unpaginated count of distinct conversations for the (agent, tenant).
   const selectTotal = db.prepare(`
-    SELECT COUNT(DISTINCT conversation_id) AS total
+    SELECT COUNT(DISTINCT conversation_ref) AS total
     FROM lcd_messages
     WHERE agent_id = ? AND tenant_id = ?
   `);
@@ -95,7 +96,7 @@ export function createLcdBrowseStore(db: Database.Database): ContextBrowsePort {
         if (!parsed.ok || !parsed.value) continue; // skip only the bad row
         const row = parsed.value;
         conversations.push({
-          conversationId: row.conversation_id,
+          conversationRef: row.conversation_ref,
           tenantId: row.tenant_id,
           agentId: row.agent_id,
           sessionKey: row.session_key,

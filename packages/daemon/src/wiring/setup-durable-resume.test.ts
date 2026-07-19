@@ -20,6 +20,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   TypedEventBus,
+  createConversationRef,
+  tryGetContext,
   type ClockPort,
   type TimerPort,
   type TimerHandle,
@@ -39,6 +41,43 @@ import {
   verifyOrchestrateResumable,
   type SetupDurableResumeDeps,
 } from "./setup-durable-resume.js";
+
+const DURABLE_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "telegram-main",
+  conversationId: "chat-a",
+  conversationKind: "direct" as const,
+};
+const DURABLE_SCOPE = {
+  tenantId: "tenant-a",
+  agentId: "agent-a",
+  partition: {
+    kind: "endpoint-conversation-principal" as const,
+    endpoint: DURABLE_ENDPOINT,
+    principalId: "user-a",
+  },
+};
+const durableConversationReference = createConversationRef(DURABLE_SCOPE);
+if (!durableConversationReference.ok) throw durableConversationReference.error;
+const DURABLE_AUTHORITY = {
+  tenantId: "tenant-a",
+  agentId: "agent-a",
+  conversationRef: durableConversationReference.value,
+  conversationScope: DURABLE_SCOPE,
+  principalId: "user-a",
+};
+function durableAuthority(agentId: string): Pick<DurableRunRecord, "tenantId" | "agentId" | "conversationRef" | "conversationScope" | "principalId"> {
+  const conversationScope = { ...DURABLE_SCOPE, agentId };
+  const reference = createConversationRef(conversationScope);
+  if (!reference.ok) throw reference.error;
+  return {
+    tenantId: "tenant-a",
+    agentId,
+    conversationRef: reference.value,
+    conversationScope,
+    principalId: "user-a",
+  };
+}
 import type { DurableRunRecord as DRR } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -87,10 +126,7 @@ async function seedRunningRun(
   const r = await store.upsertCheckpoint({
     checkpointId: `checkpoint-${rootRunId}`,
     rootRunId,
-    agentId: "agent-a",
-    sessionKey: "tenant-a:user-a:chat-a",
-    ownerTenantId: "tenant-a",
-    ownerUserId: "user-a",
+    ...DURABLE_AUTHORITY,
     deliveryOrigin: null,
     spawnTree: [rootRunId],
     caps: ["orch:read"],
@@ -175,10 +211,7 @@ describe("setupDurableResume (stores + resume engine + watchdog)", () => {
     await result.durableRunStore!.upsertCheckpoint({
       checkpointId: "checkpoint-root-stale",
       rootRunId: "root-stale",
-      agentId: "agent-a",
-      sessionKey: "tenant-a:user-a:chat-a",
-      ownerTenantId: "tenant-a",
-      ownerUserId: "user-a",
+      ...DURABLE_AUTHORITY,
       deliveryOrigin: null,
       spawnTree: ["root-stale"],
       caps: ["orch:read"],
@@ -315,10 +348,7 @@ describe("buildDurableResume resumeGraph dispatch", () => {
     const r = await store.upsertCheckpoint({
       checkpointId: `checkpoint-${rootRunId}`,
       rootRunId,
-      agentId: "agent-a",
-      sessionKey: "tenant-a:user-a:chat-a",
-      ownerTenantId: "tenant-a",
-      ownerUserId: "user-a",
+      ...DURABLE_AUTHORITY,
       deliveryOrigin: null,
       spawnTree,
       caps: ["orch:read"],
@@ -388,6 +418,45 @@ describe("buildDurableResume resumeGraph dispatch", () => {
     expect(resumeGraph).toHaveBeenCalledTimes(1);
     expect(resumeGraph.mock.calls[0]![0].rootRunId).toBe("root-dag");
     expect(boundedAutonomy.registerRoot).not.toHaveBeenCalled();
+  });
+
+  it("runs recovered work under an explicit durable-resume endpoint and principal", async () => {
+    const db = await makeDb();
+    const observed: unknown[] = [];
+    const wiring = buildDurableResume({
+      db,
+      durabilityCfg: { enabled: true, staleHeartbeatMs: 1_000, keepAliveMs: 250, recoveryBudgetMs: 5_000 },
+      boundedAutonomy: makeBoundedAutonomy() as never,
+      sharedLeaseManager: makeLeaseManager(),
+      eventBus: new TypedEventBus(),
+      logger: silentLogger,
+      clock: testClock,
+      timers: testTimers,
+      resumeGraph: vi.fn(async () => {
+        observed.push(tryGetContext());
+        return ok(undefined);
+      }),
+    });
+    await seed(wiring.durableResume.durableRunStore!, "root-internal-resume", [
+      { nodeId: "A", status: "running", runId: "run-a" },
+    ]);
+
+    await wiring.startAndResumeDurable();
+    wiring.durableResume.shutdown();
+
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toMatchObject({
+      agentId: "agent-a",
+      tenantId: "tenant-a",
+      channelType: "durable-resume",
+      turnScope: {
+        principal: { principalId: expect.stringMatching(/^durable-resume-/) },
+        endpoint: {
+          channelType: "durable-resume",
+          channelInstanceId: "daemon",
+        },
+      },
+    });
   });
 
   it("routes a FLAT record (string[] spawn_tree) to the flat re-anchor, NEVER to resumeGraph (no mis-route)", async () => {
@@ -495,10 +564,7 @@ describe("buildOrchestrateResumeWiring (the composition-root cluster)", () => {
     const record = {
       checkpointId: "checkpoint-research",
       rootRunId: "root-research",
-      agentId: "researcher",
-      sessionKey: "tenant-a:user-a:telegram:chat-a",
-      ownerTenantId: "tenant-a",
-      ownerUserId: "user-a",
+      ...durableAuthority("researcher"),
       deliveryOrigin: {
         tenantId: "tenant-a",
         userId: "user-a",

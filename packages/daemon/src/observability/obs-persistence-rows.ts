@@ -75,11 +75,19 @@ export function tokenUsageEventToRow(
  */
 export function deliveryEventToRow(
   payload: EventMap["diagnostic:message_processed"],
-): DeliveryRow {
+): DeliveryRow | undefined {
+  if (
+    payload.tenantId === undefined
+    || payload.conversationRef === undefined
+    || payload.destinationEndpoint === undefined
+  ) return undefined;
   return {
     timestamp: payload.timestamp,
     traceId: payload.traceId ?? "",
+    tenantId: payload.tenantId,
     agentId: payload.agentId,
+    conversationRef: payload.conversationRef,
+    destinationEndpoint: payload.destinationEndpoint,
     channelType: payload.channelType,
     channelId: payload.channelId,
     sessionKey: payload.sessionKey,

@@ -86,12 +86,27 @@ describe("wireContextTools — daemon composition root", () => {
 
     // Drive execute inside a live, FULLY-SCOPED session so the per-call scope-gate
     // passes (the ctx tools require a live agentId + tenantId).
+    const endpoint = {
+      channelType: "test",
+      channelInstanceId: "test-instance",
+      conversationId: "chan_a",
+      conversationKind: "direct" as const,
+    };
     await runWithContext(
       {
         tenantId: "default",
         sessionKey: "default:chan_a:user_a",
         agentId: "agent-a",
         contentDelimiter: "DELIM",
+        turnScope: {
+          conversation: {
+            tenantId: "default",
+            agentId: "agent-a",
+            partition: { kind: "endpoint-conversation", endpoint },
+          },
+          principal: { principalId: "user_a" },
+          endpoint,
+        },
       } as never,
       async () => {
         await ctxSearch!.execute("call-1", { query: "needle" });
@@ -104,7 +119,7 @@ describe("wireContextTools — daemon composition root", () => {
     expect(searchLcd).toHaveBeenCalledTimes(1);
     expect(searchLcd).toHaveBeenCalledWith(
       expect.objectContaining({
-        conversationId: "default:chan_a:user_a",
+        conversationRef: expect.stringMatching(/^cv_/),
         agentId: "agent-a",
         tenantId: "default",
       }),

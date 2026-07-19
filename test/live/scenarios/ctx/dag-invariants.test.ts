@@ -6,10 +6,10 @@
  *   A1 losslessness: lcd_messages rows are NEVER deleted by appendLeafSummary.
  *   A2 pair-intact: every tool_use has a matching tool_result in the assembled array.
  *   A3 no-split: the budget assembler never splits a tool_use/tool_result pair.
- *   O1 structure: ENGINE_MATRIX covers both contextEngine.version values.
+ *   O1 structure: the threshold matrix covers low and high pressure profiles.
  *
  * Stage-C (describe.skipIf(!isLive)):
- *   Iterates ENGINE_MATRIX combos (dag×low, dag×high, pipeline×low). Each combo
+ *   Iterates low and high context-threshold profiles. Each profile
  *   drives 2 turns via ConversationDriver against a real LLM, then asserts:
  *     - CTX-01 A1/A2/A3 via readContextStreamShape on cache-trace.jsonl
  *     - CTX-03 P1/P2 via driver.capturedEvents() (context:dag_compacted)
@@ -34,7 +34,7 @@ import {
   assertP2UncertaintyClauses,
 } from "../../assert/context-trace.js";
 import { createLcdStore, initSchema } from "@comis/memory";
-import type { AppendMessageInput, AppendSummaryInput } from "@comis/core";
+import type { AppendMessageInput, AppendSummaryInput, ConversationRef } from "@comis/core";
 import Database from "better-sqlite3";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -48,7 +48,7 @@ import { buildCtxConfig } from "../../harness/ctx-config.js";
 const isLive = !!process.env["COMIS_LIVE"];
 
 // ---------------------------------------------------------------------------
-// Engine matrix — contextEngine.version × contextThreshold profiles
+// Canonical context-threshold profiles
 //
 // contextThreshold is the agent-level key (schema-agent-context.ts line 255).
 // contextWindow is a PROVIDER-MODEL level key — it CANNOT be patched under
@@ -57,9 +57,8 @@ const isLive = !!process.env["COMIS_LIVE"];
 // ---------------------------------------------------------------------------
 
 const ENGINE_MATRIX = [
-  { version: "dag"      as const, label: "dag-low-threshold",  contextThreshold: 0.4 },
-  { version: "dag"      as const, label: "dag-high-threshold", contextThreshold: 0.75 },
-  { version: "pipeline" as const, label: "pipe-low-threshold", contextThreshold: 0.4 },
+  { label: "low-threshold", contextThreshold: 0.4 },
+  { label: "high-threshold", contextThreshold: 0.75 },
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -76,7 +75,7 @@ describe("CTX-01 Stage-A — DAG/LCD structural invariants (no COMIS_LIVE)", () 
     const store = createLcdStore(db);
 
     const SCOPE = {
-      conversationId: "ctx-inv-a1",
+      conversationRef: `cv_${"i".repeat(43)}` as ConversationRef,
       agentId: "agent-a",
       tenantId: "t-1",
       sessionKey: "s-1",
@@ -199,13 +198,11 @@ describe("CTX-01 Stage-A — DAG/LCD structural invariants (no COMIS_LIVE)", () 
     expect(() => assertA3NoPairSplit(splitShape)).toThrow();
   });
 
-  it("O1 structure — ENGINE_MATRIX covers both contextEngine.version values", () => {
-    const versions = ENGINE_MATRIX.map((m) => m.version);
-    expect(versions).toContain("dag");
-    expect(versions).toContain("pipeline");
-
+  it("O1 structure — ENGINE_MATRIX covers low and high thresholds", () => {
+    const thresholds = ENGINE_MATRIX.map((m) => m.contextThreshold);
+    expect(thresholds.some((threshold) => threshold <= 0.5)).toBe(true);
+    expect(thresholds.some((threshold) => threshold >= 0.7)).toBe(true);
     for (const entry of ENGINE_MATRIX) {
-      expect(typeof entry.version).toBe("string");
       expect(typeof entry.label).toBe("string");
       // contextThreshold must be a number in [0,1] — schema-agent-context.ts line 255
       expect(typeof entry.contextThreshold).toBe("number");
@@ -219,16 +216,16 @@ describe("CTX-01 Stage-A — DAG/LCD structural invariants (no COMIS_LIVE)", () 
 // Stage-C — real-LLM DAG invariants + honest presentation (COMIS_LIVE only)
 // ---------------------------------------------------------------------------
 
-// costTier: "¢¢" — Anthropic Haiku, 2 turns per combo, 3 combos
+// costTier: "¢¢" — Anthropic Haiku, 2 turns per profile
 describe.skipIf(!isLive)("Live — CTX-01/CTX-03 DAG invariants + honest presentation (Stage-C)", () => {
   const registry = buildCredentialRegistry();
   const canRun = registry.getSkipVerdict("LLM(anthropic)") === null;
 
   it.skipIf(!canRun).each(ENGINE_MATRIX)(
-    "version=$label",
-    async ({ version, label, contextThreshold }) => {
+    "threshold=$label",
+    async ({ label, contextThreshold }) => {
       // Each driver has a 3-min timeout; the finally block guarantees close().
-      const configPath = buildCtxConfig({ version, label, contextThreshold, filePrefix: "ctx-inv" });
+      const configPath = buildCtxConfig({ label, contextThreshold, filePrefix: "ctx-inv" });
       const driver = new ConversationDriver({
         agentId: `ctx-inv-${label}`,
         provider: "anthropic",

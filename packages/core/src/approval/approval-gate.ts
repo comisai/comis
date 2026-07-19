@@ -16,7 +16,6 @@ import type {
   SerializedApprovalRequest,
   SerializedApprovalCacheEntry,
 } from "../domain/approval-request.js";
-import { parseFormattedSessionKey } from "../domain/session-key.js";
 import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
 import { createApprovalHmac, snapshotApprovalParams } from "./approval-fingerprint.js";
 import { mintApprovalShortId } from "./approval-short-id.js";
@@ -83,14 +82,14 @@ export interface ApprovalGate {
    */
   getRequestByShortId(shortId: string): ApprovalRequest | undefined;
 
-  /** Get all pending requests whose `sessionKey` matches (the plain-text router branch). */
-  pendingForSession(sessionKey: string): ApprovalRequest[];
+  /** Get pending requests for one exact tenant-agent-conversation-principal authority. */
+  pendingForAuthority(authority: ApprovalAuthority): ApprovalRequest[];
 
-  /** Clear denial cache entries. If sessionKey is provided, clears entries for that session only. If omitted, clears all entries. */
-  clearDenialCache(sessionKey?: string): void;
+  /** Clear denial cache entries for one conversation authority, or all entries. */
+  clearDenialCache(authority?: ApprovalConversationAuthority): void;
 
-  /** Clear approval cache entries. If sessionKey is provided, clears entries for that session only. If omitted, clears all entries. */
-  clearApprovalCache(sessionKey?: string): void;
+  /** Clear approval cache entries for one conversation authority, or all entries. */
+  clearApprovalCache(authority?: ApprovalConversationAuthority): void;
 
   /** Serialize all pending requests to plain objects (for restart persistence). */
   serializePending(): SerializedApprovalRequest[];
@@ -124,9 +123,13 @@ interface CachedApproval {
   readonly expiresAt: number;
 }
 
-/** Prefix that keeps cache clearing by session exact and delimiter-safe. */
-function cacheSessionPrefix(sessionKey: string): string {
-  return `h1:${sessionKey.length}:${sessionKey}:`;
+type ApprovalConversationAuthority = Pick<ApprovalRequest, "tenantId" | "agentId" | "conversationRef">;
+type ApprovalAuthority = ApprovalConversationAuthority & Pick<ApprovalRequest, "resolvingPrincipalId">;
+
+/** Prefix that keeps cache clearing by conversation authority exact and delimiter-safe. */
+function cacheAuthorityPrefix(authority: ApprovalConversationAuthority): string {
+  const encoded = JSON.stringify([authority.tenantId, authority.agentId, authority.conversationRef]);
+  return `h1:${encoded.length}:${encoded}:`;
 }
 
 /**
@@ -136,7 +139,7 @@ function cacheSessionPrefix(sessionKey: string): string {
  * persisted cache keys.
  */
 function createApprovalCacheKey(
-  request: Pick<ApprovalRequest, "toolName" | "action" | "agentId" | "sessionKey" | "trustLevel" | "callbackOwner">,
+  request: Pick<ApprovalRequest, "toolName" | "action" | "tenantId" | "agentId" | "conversationRef" | "resolvingPrincipalId" | "trustLevel" | "callbackOwner">,
   canonicalParams: string,
   secret: string,
 ): Result<string, Error> {
@@ -147,8 +150,12 @@ function createApprovalCacheKey(
     || request.action.length === 0
     || typeof request.agentId !== "string"
     || request.agentId.length === 0
-    || typeof request.sessionKey !== "string"
-    || request.sessionKey.length === 0
+    || typeof request.tenantId !== "string"
+    || request.tenantId.length === 0
+    || typeof request.conversationRef !== "string"
+    || request.conversationRef.length === 0
+    || typeof request.resolvingPrincipalId !== "string"
+    || request.resolvingPrincipalId.length === 0
     || !["admin", "user", "guest"].includes(request.trustLevel)
   ) {
     return err(new Error("Approval request identity is incomplete"));
@@ -157,6 +164,9 @@ function createApprovalCacheKey(
   const owner = request.callbackOwner;
   const digest = createApprovalHmac(secret, "cache", JSON.stringify([
       request.agentId,
+      request.tenantId,
+      request.conversationRef,
+      request.resolvingPrincipalId,
       request.trustLevel,
       request.toolName,
       request.action,
@@ -168,28 +178,21 @@ function createApprovalCacheKey(
       canonicalParams,
     ]));
   return digest.ok
-    ? ok(`${cacheSessionPrefix(request.sessionKey)}${digest.value}`)
+    ? ok(`${cacheAuthorityPrefix(request)}${digest.value}`)
     : digest;
 }
 
 function snapshotCallbackOwner(
   raw: unknown,
-  sessionKey: string,
+  tenantId: string,
 ): Result<ApprovalCallbackOwner, Error> {
   const parsedOwner = tryCatch(() => ApprovalCallbackOwnerSchema.safeParse(raw));
   if (!parsedOwner.ok || !parsedOwner.value.success) {
     return err(new Error("Approval callback owner is invalid"));
   }
-  const session = parseFormattedSessionKey(sessionKey);
   const owner = parsedOwner.value.data;
-  if (
-    session === undefined
-    || session.tenantId !== owner.tenantId
-    || session.userId !== owner.userId
-    || session.channelId !== owner.channelKey
-    || session.threadId !== owner.threadId
-  ) {
-    return err(new Error("Approval callback owner conflicts with the session"));
+  if (tenantId !== owner.tenantId) {
+    return err(new Error("Approval callback owner conflicts with the conversation authority"));
   }
   return ok(Object.freeze({ ...owner }));
 }
@@ -221,7 +224,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
 
   /**
    * Secondary index: minted `shortId → requestId`. Lets the InteractiveCallbackRouter
-   * resolve an attacker-supplied shortId to a server-side requestId/sessionKey.
+   * resolve an attacker-supplied shortId to a server-side request authority.
    * INVARIANT: mutated symmetrically with `pendingMap` at EVERY
    * set/delete/clear site — a stale entry would defeat replay rejection, since the
    * pending-table removal IS the router's replay guard.
@@ -342,8 +345,10 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       action: req.action,
       params: req.params,
       fingerprintParams: req.fingerprintParams,
+      tenantId: req.tenantId,
       agentId: req.agentId,
-      sessionKey: req.sessionKey,
+      conversationRef: req.conversationRef,
+      resolvingPrincipalId: req.resolvingPrincipalId,
       trustLevel: req.trustLevel,
       callbackOwner: req.callbackOwner,
     }));
@@ -354,7 +359,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       ? snapshotApprovalParams(captured.value.fingerprintParams)
       : err(new Error("Approval request could not be inspected"));
     const callbackOwner = captured.ok
-      ? snapshotCallbackOwner(captured.value.callbackOwner, captured.value.sessionKey)
+      ? snapshotCallbackOwner(captured.value.callbackOwner, captured.value.tenantId)
       : err(new Error("Approval request could not be inspected"));
     const operationFingerprint = fingerprintParams.ok
       ? createApprovalHmac(
@@ -373,8 +378,10 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       ? createApprovalCacheKey({
           toolName: captured.value.toolName,
           action: captured.value.action,
+          tenantId: captured.value.tenantId,
           agentId: captured.value.agentId,
-          sessionKey: captured.value.sessionKey,
+          conversationRef: captured.value.conversationRef,
+          resolvingPrincipalId: captured.value.resolvingPrincipalId,
           trustLevel: captured.value.trustLevel,
           callbackOwner: callbackOwner.value,
         }, displayParams.value.canonical, deps.fingerprintSecret)
@@ -461,8 +468,10 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       toolName: requestInput.toolName,
       action: requestInput.action,
       params: displayParams.value.value,
+      tenantId: requestInput.tenantId,
       agentId: requestInput.agentId,
-      sessionKey: requestInput.sessionKey,
+      conversationRef: requestInput.conversationRef,
+      resolvingPrincipalId: requestInput.resolvingPrincipalId,
       trustLevel: requestInput.trustLevel,
       callbackOwner: callbackOwner.value,
       createdAt,
@@ -490,8 +499,10 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       toolName: request.toolName,
       action: request.action,
       params: request.params,
+      tenantId: request.tenantId,
       agentId: request.agentId,
-      sessionKey: request.sessionKey,
+      conversationRef: request.conversationRef,
+      resolvingPrincipalId: request.resolvingPrincipalId,
       trustLevel: request.trustLevel,
       createdAt: request.createdAt,
       timeoutMs: request.timeoutMs,
@@ -514,17 +525,20 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     return requestId === undefined ? undefined : pendingMap.get(requestId)?.request;
   }
 
-  function pendingForSession(sessionKey: string): ApprovalRequest[] {
+  function pendingForAuthority(authority: ApprovalAuthority): ApprovalRequest[] {
     return Array.from(pendingMap.values())
       .map((e) => e.request)
-      .filter((r) => r.sessionKey === sessionKey);
+      .filter((r) => r.tenantId === authority.tenantId
+        && r.agentId === authority.agentId
+        && r.conversationRef === authority.conversationRef
+        && r.resolvingPrincipalId === authority.resolvingPrincipalId);
   }
 
-  function clearDenialCache(sessionKey?: string): void {
-    if (sessionKey === undefined) {
+  function clearDenialCache(authority?: ApprovalConversationAuthority): void {
+    if (authority === undefined) {
       denialCache.clear();
     } else {
-      const prefix = cacheSessionPrefix(sessionKey);
+      const prefix = cacheAuthorityPrefix(authority);
       for (const [key] of denialCache.entries()) {
         if (key.startsWith(prefix)) {
           denialCache.delete(key);
@@ -533,11 +547,11 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     }
   }
 
-  function clearApprovalCache(sessionKey?: string): void {
-    if (sessionKey === undefined) {
+  function clearApprovalCache(authority?: ApprovalConversationAuthority): void {
+    if (authority === undefined) {
       approvalCache.clear();
     } else {
-      const prefix = cacheSessionPrefix(sessionKey);
+      const prefix = cacheAuthorityPrefix(authority);
       for (const [key] of approvalCache.entries()) {
         if (key.startsWith(prefix)) {
           approvalCache.delete(key);
@@ -579,8 +593,10 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       toolName: e.request.toolName,
       action: e.request.action,
       params: { ...e.request.params },
+      tenantId: e.request.tenantId,
       agentId: e.request.agentId,
-      sessionKey: e.request.sessionKey,
+      conversationRef: e.request.conversationRef,
+      resolvingPrincipalId: e.request.resolvingPrincipalId,
       trustLevel: e.request.trustLevel,
       callbackOwner: { ...e.request.callbackOwner },
       createdAt: e.request.createdAt,
@@ -636,7 +652,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       if (elapsed >= record.timeoutMs) continue; // Already expired, skip
 
       const params = snapshotApprovalParams(record.params);
-      const callbackOwner = snapshotCallbackOwner(record.callbackOwner, record.sessionKey);
+      const callbackOwner = snapshotCallbackOwner(record.callbackOwner, record.tenantId);
       if (!params.ok || !callbackOwner.ok) continue;
       if (
         pendingMap.has(record.requestId)
@@ -650,8 +666,10 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
         toolName: record.toolName,
         action: record.action,
         params: params.value.value,
+        tenantId: record.tenantId,
         agentId: record.agentId,
-        sessionKey: record.sessionKey,
+        conversationRef: record.conversationRef,
+        resolvingPrincipalId: record.resolvingPrincipalId,
         trustLevel: record.trustLevel,
         callbackOwner: callbackOwner.value,
         createdAt: record.createdAt,
@@ -695,8 +713,10 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
         toolName: request.toolName,
         action: request.action,
         params: request.params,
+        tenantId: request.tenantId,
         agentId: request.agentId,
-        sessionKey: request.sessionKey,
+        conversationRef: request.conversationRef,
+        resolvingPrincipalId: request.resolvingPrincipalId,
         trustLevel: request.trustLevel,
         createdAt: request.createdAt,
         timeoutMs: request.timeoutMs,
@@ -714,7 +734,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     pending,
     getRequest,
     getRequestByShortId,
-    pendingForSession,
+    pendingForAuthority,
     clearDenialCache,
     clearApprovalCache,
     serializePending,

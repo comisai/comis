@@ -24,11 +24,12 @@ import { describe, it, expect, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { writeTrajectoryPointerFileBestEffort } from "@comis/observability";
 import { makeRealReader } from "./obs-explain-readers.js";
 import type { IncidentSourceReader } from "./obs-explain-readers.js";
 
 // The 678 fixture's canonical key; sessionId is the trailing colon segment.
-const SESSION_KEY = "default:678314278:678314278:peer:678314278";
+const SESSION_KEY = "default:agent:default:678314278:678314278:peer:678314278";
 const SESSION_ID = "678314278";
 
 // The REAL production on-disk layout for SESSION_KEY (verified against live
@@ -53,6 +54,11 @@ function makeRealSessionDir(dataDir: string): string {
   // The session JSONL itself (message log) — empty is fine; the readers target
   // its trajectory/metadata siblings.
   fs.writeFileSync(sessionFile, "", "utf-8");
+  writeTrajectoryPointerFileBestEffort({
+    sessionFile,
+    sessionId: SESSION_KEY,
+    runtimeFile: `${sessionFile}.trajectory.jsonl`,
+  });
   return sessionFile;
 }
 
@@ -181,22 +187,6 @@ describe("makeRealReader REAL production layout (workspace/sessions + pointer)",
     expect(records.length).toBe(2);
     expect(records.some((r) => (r.data as Record<string, unknown>)?.classifiedFailureBy === "executor")).toBe(true);
     expect(records.some((r) => r.type === "tool.result_offloaded")).toBe(true);
-  });
-
-  it("readSessionRecords falls back to co-located <sessionFile>.trajectory.jsonl when the pointer is absent", async () => {
-    const dataDir = tmpDataDir();
-    const sessionFile = makeRealSessionDir(dataDir);
-    // NO pointer file written — the reader must fall back to the co-located
-    // convention (the bundle reader's documented step 3).
-    fs.writeFileSync(
-      `${sessionFile}.trajectory.jsonl`,
-      JSON.stringify({ traceSchema: "comis-trajectory", schemaVersion: 1, type: "tool.result", seq: 1, data: { toolName: "x" } }) + "\n",
-      "utf-8",
-    );
-
-    const reader = makeRealReader(dataDir);
-    const records = await reader.readSessionRecords(SESSION_KEY);
-    expect(records.length).toBe(1);
   });
 
   it("readSessionMetadata reads the <file>_session-metadata.json companion next to the session JSONL (sessionEnd rollup)", async () => {

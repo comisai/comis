@@ -112,8 +112,8 @@ function getProcessDelimiterSalt(): Buffer {
  * then uses a fresh random delimiter (the prior behavior for that case).
  */
 function sessionStableDelimiter(ctx: ReturnType<typeof tryGetContext>): string | undefined {
-  if (!ctx?.sessionKey) return undefined;
-  const scopeKey = `${ctx.tenantId ?? "default"}:${ctx.sessionKey}:${ctx.agentId ?? ""}`;
+  if (!ctx?.sessionKey || !ctx.tenantId) return undefined;
+  const scopeKey = `${ctx.tenantId}:${ctx.sessionKey}:${ctx.agentId ?? ""}`;
   return createHmac("sha256", getProcessDelimiterSalt()).update(scopeKey).digest("hex").slice(0, 24);
 }
 

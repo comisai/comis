@@ -12,7 +12,12 @@ export {
   loginOpenAICodexOAuth,
   createOAuthCredentialStoreFile,
   loginOpenAICodexDeviceCode,
+  loginOpenAICodexBrowser,
+  extractCodexAccountId,
   runOAuthTlsPreflight,
+  getProviderOAuth,
+  listOAuthProviderIds,
+  resolveOAuthApiKey,
 } from "../oauth/index.js";
 
 export type {
@@ -32,4 +37,8 @@ export type {
   TlsPreflightResult,
   TlsPreflightFailureKind,
   RunOAuthTlsPreflightOptions,
+  CodexBrowserLoginCredentials,
+  LoginOpenAICodexBrowserOptions,
+  ResolvedOAuthApiKey,
+  ResolveOAuthApiKeyDeps,
 } from "../oauth/index.js";

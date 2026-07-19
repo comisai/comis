@@ -141,7 +141,7 @@ function baselineConfig(rerankEnabled: boolean): MemoryRecallConfig {
     maxResults: 5,
     minScore: 0.1,
     includeTrustLevels: ["system", "learned"],
-    rerank: { enabled: rerankEnabled, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+    rerank: { mode: rerankEnabled ? "on" : "off", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
     scoring: {
       recencyAlpha: 0.2,
       temporalAlpha: 0.2,

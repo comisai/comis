@@ -8,7 +8,7 @@
  * to live inside the `createLcdStore` return object (no SQL/column/ordering/
  * error-handling change):
  *   1. `getMessagesByIds(scope, ids)` — bounded message fetch via variable-length
- *      IN(), scoped by (conversation_id, agent_id, tenant_id).
+ *      IN(), scoped by (conversation_ref, agent_id, tenant_id).
  *   2. `getSummariesByIds(scope, ids)` — bounded summary fetch via variable-length
  *      IN(), same scope discipline.
  *   3. `countMessages(scope)` — single-integer COUNT(*) over lcd_messages with no
@@ -77,7 +77,7 @@ export function createBoundedReads(
   // tenant_id. The count read goes through ctxCountRowMapper, not a raw
   // count cast (§6.8 untyped-sqlite) — same { c } shape as countCtxItems.
   const countMsgs = db.prepare(
-    "SELECT COUNT(*) AS c FROM lcd_messages WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
+    "SELECT COUNT(*) AS c FROM lcd_messages WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ?",
   );
 
   return {
@@ -93,17 +93,17 @@ export function createBoundedReads(
       // mismatch at the boundary. Ids are always bound as '?'
       // parameters — never string-interpolated — so SQL injection is structurally
       // impossible. The three-column scope triple
-      // (conversation_id, agent_id, tenant_id) is always present so a cross-agent
+      // (conversation_ref, agent_id, tenant_id) is always present so a cross-agent
       // id lookup returns [].
       const placeholders = ids.map(() => "?").join(",");
       const stmt = db.prepare(
         `SELECT * FROM lcd_messages
-         WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?
+         WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ?
            AND id IN (${placeholders})
          ORDER BY seq`,
       );
       const out: LcdMessage[] = [];
-      for (const rawMsg of stmt.all(scope.conversationId, scope.agentId, scope.tenantId, ...ids)) {
+      for (const rawMsg of stmt.all(scope.conversationRef, scope.agentId, scope.tenantId, ...ids)) {
         const parsedMsg = messageRowMapper.parseOptionalRow(rawMsg);
         if (!parsedMsg.ok || !parsedMsg.value) continue;
         const row = parsedMsg.value;
@@ -124,7 +124,7 @@ export function createBoundedReads(
         }
         out.push({
           id: row.id,
-          conversationId: row.conversation_id,
+          conversationRef: row.conversation_ref,
           seq: row.seq,
           role: row.role as LcdRole,
           tokenCount: row.token_count,
@@ -143,7 +143,7 @@ export function createBoundedReads(
       // no rows yields { c: 0 }; a parse failure (corruption/drift) degrades to 0
       // rather than throwing — a missing count must never break live assembly.
       const countRow = ctxCountRowMapper.parseOptionalRow(
-        countMsgs.get(scope.conversationId, scope.agentId, scope.tenantId),
+        countMsgs.get(scope.conversationRef, scope.agentId, scope.tenantId),
       );
       return countRow.ok && countRow.value ? countRow.value.c : 0;
     },
@@ -154,18 +154,18 @@ export function createBoundedReads(
       const placeholders = ids.map(() => "?").join(",");
       const stmt = db.prepare(
         `SELECT * FROM lcd_summaries
-         WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?
+         WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ?
            AND summary_id IN (${placeholders})
          ORDER BY created_at, summary_id`,
       );
       const out: LcdSummary[] = [];
-      for (const raw of stmt.all(scope.conversationId, scope.agentId, scope.tenantId, ...ids)) {
+      for (const raw of stmt.all(scope.conversationRef, scope.agentId, scope.tenantId, ...ids)) {
         const parsed = summaryRowMapper.parseOptionalRow(raw);
         if (!parsed.ok || !parsed.value) continue;
         const row = parsed.value;
         out.push({
           summaryId: row.summary_id,
-          conversationId: row.conversation_id,
+          conversationRef: row.conversation_ref,
           kind: row.kind as LcdSummaryKind,
           depth: row.depth,
           earliestAt: row.earliest_at,

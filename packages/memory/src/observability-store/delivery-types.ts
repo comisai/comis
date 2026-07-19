@@ -1,14 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Delivery persistence rows, filters, and aggregate result types. @module */
 
-import type { DeliveryFailureStage, DeliveryStatus, ErrorKind } from "@comis/core";
+import type {
+  ChannelEndpoint,
+  ConversationRef,
+  DeliveryFailureStage,
+  DeliveryStatus,
+  ErrorKind,
+} from "@comis/core";
 
 /** A delivery row (insert or query result). */
 export interface DeliveryRow {
   id?: number;
   timestamp: number;
   traceId: string;
+  tenantId: string;
   agentId: string;
+  conversationRef: ConversationRef;
+  destinationEndpoint: ChannelEndpoint;
   channelType: string;
   channelId: string;
   sessionKey?: string;

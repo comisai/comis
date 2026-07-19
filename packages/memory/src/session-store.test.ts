@@ -1,28 +1,38 @@
 // SPDX-License-Identifier: Apache-2.0
-import { type SessionKey, formatSessionKey } from "@comis/core";
+import {
+  createConversationRef,
+  type ConversationScope,
+  type SessionStorePort,
+} from "@comis/core";
 import Database from "better-sqlite3";
+import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach } from "vitest";
 import { initSchema } from "./schema.js";
-import { createSessionStore, MAX_SESSION_BYTES, type SessionStore } from "./session-store.js";
+import { createSessionStore, MAX_SESSION_BYTES } from "./session-store.js";
+
+function makeScope(
+  tenantId = "default",
+  agentId = "agent-1",
+  principalId = "user-1",
+): ConversationScope {
+  return { tenantId, agentId, partition: { kind: "principal", principalId } };
+}
+
+function resultValue<T>(result: { ok: true; value: T } | { ok: false; error: Error }): T {
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error;
+  return result.value;
+}
 
 describe("createSessionStore", () => {
   let db: Database.Database;
-  let store: SessionStore;
+  let store: SessionStorePort;
 
-  const testKey: SessionKey = {
-    tenantId: "default",
-    userId: "user-1",
-    channelId: "telegram",
-  };
-
-  const otherKey: SessionKey = {
-    tenantId: "default",
-    userId: "user-2",
-    channelId: "discord",
-  };
+  const testScope = makeScope();
+  const otherScope = makeScope("default", "agent-1", "user-2");
 
   beforeEach(() => {
     db = new Database(":memory:");
@@ -30,319 +40,163 @@ describe("createSessionStore", () => {
     store = createSessionStore(db);
   });
 
-  it("save and load roundtrip -- messages array preserved exactly", () => {
+  it("save and load roundtrip preserves messages exactly", () => {
     const messages = [
       { role: "user", content: "Hello" },
       { role: "assistant", content: "Hi there!" },
     ];
-
-    store.save(testKey, messages);
-    const loaded = store.load(testKey);
-
-    expect(loaded).toBeDefined();
-    expect(loaded!.messages).toEqual(messages);
+    resultValue(store.save(testScope, messages));
+    expect(resultValue(store.load(testScope))?.messages).toEqual(messages);
   });
 
-  it("save with metadata -- metadata object preserved", () => {
-    const messages = [{ role: "user", content: "test" }];
-    const metadata = { model: "gpt-4", temperature: 0.7, tags: ["debug"] };
-
-    store.save(testKey, messages, metadata);
-    const loaded = store.load(testKey);
-
-    expect(loaded).toBeDefined();
-    expect(loaded!.metadata).toEqual(metadata);
+  it("save and load roundtrip preserves metadata exactly", () => {
+    const metadata = { model: "test-model", temperature: 0.7, tags: ["debug"] };
+    resultValue(store.save(testScope, [{ role: "user", content: "test" }], metadata));
+    expect(resultValue(store.load(testScope))?.metadata).toEqual(metadata);
   });
 
-  it("load returns undefined for non-existent session", () => {
-    const result = store.load({
-      tenantId: "default",
-      userId: "nobody",
-      channelId: "nowhere",
-    });
-
-    expect(result).toBeUndefined();
+  it("load returns an empty optional result for an unknown canonical scope", () => {
+    expect(resultValue(store.load(makeScope("default", "agent-1", "nobody")))).toBeUndefined();
   });
 
-  it("save overwrites existing session (upsert) -- messages updated", () => {
-    const original = [{ role: "user", content: "first" }];
-    const updated = [
-      { role: "user", content: "first" },
-      { role: "assistant", content: "reply" },
-    ];
-
-    store.save(testKey, original);
-    store.save(testKey, updated);
-
-    const loaded = store.load(testKey);
-    expect(loaded).toBeDefined();
-    expect(loaded!.messages).toEqual(updated);
-  });
-
-  it("save preserves createdAt on update (only updatedAt changes)", () => {
-    store.save(testKey, [{ msg: "first" }]);
-    const first = store.load(testKey)!;
-
-    // Small delay to ensure different timestamps
-    const createdAt = first.createdAt;
-
-    // Manually set a known created_at in the past for deterministic testing
+  it("save updates messages while preserving the original creation timestamp", () => {
+    resultValue(store.save(testScope, [{ content: "first" }]));
+    const reference = resultValue(createConversationRef(testScope));
     db.prepare(
-      "UPDATE sessions SET created_at = 1000, updated_at = 1000 WHERE session_key = ?",
-    ).run("default:user-1:telegram");
+      "UPDATE sessions SET created_at = 1000, updated_at = 1000 WHERE tenant_id = ? AND agent_id = ? AND conversation_ref = ?",
+    ).run(testScope.tenantId, testScope.agentId, reference);
 
-    store.save(testKey, [{ msg: "second" }]);
-    const second = store.load(testKey)!;
-
-    // createdAt should stay at 1000 (the original ON CONFLICT preserves it)
-    expect(second.createdAt).toBe(1000);
-    // updatedAt should be fresh (not 1000)
-    expect(second.updatedAt).toBeGreaterThan(1000);
+    resultValue(store.save(testScope, [{ content: "second" }]));
+    const loaded = resultValue(store.load(testScope));
+    expect(loaded?.messages).toEqual([{ content: "second" }]);
+    expect(loaded?.createdAt).toBe(1000);
+    expect(loaded?.updatedAt).toBeGreaterThan(1000);
   });
 
-  it("list returns sessions ordered by updatedAt DESC", () => {
-    // Insert with explicit timestamps for deterministic ordering
-    db.prepare(
-      `INSERT INTO sessions (session_key, tenant_id, user_id, channel_id, messages, created_at, updated_at, metadata)
-       VALUES ('s1', 'default', 'u1', 'ch1', '[]', 1000, 1000, '{}')`,
-    ).run();
-    db.prepare(
-      `INSERT INTO sessions (session_key, tenant_id, user_id, channel_id, messages, created_at, updated_at, metadata)
-       VALUES ('s2', 'default', 'u2', 'ch2', '[]', 2000, 3000, '{}')`,
-    ).run();
-    db.prepare(
-      `INSERT INTO sessions (session_key, tenant_id, user_id, channel_id, messages, created_at, updated_at, metadata)
-       VALUES ('s3', 'default', 'u3', 'ch3', '[]', 1500, 2000, '{}')`,
-    ).run();
+  it("list orders canonical sessions by descending update timestamp", () => {
+    const oldest = makeScope("default", "agent-1", "oldest");
+    const newest = makeScope("default", "agent-1", "newest");
+    resultValue(store.save(oldest, []));
+    resultValue(store.save(newest, []));
+    db.prepare("UPDATE sessions SET updated_at = 1000 WHERE conversation_ref = ?")
+      .run(resultValue(createConversationRef(oldest)));
+    db.prepare("UPDATE sessions SET updated_at = 3000 WHERE conversation_ref = ?")
+      .run(resultValue(createConversationRef(newest)));
 
-    const list = store.list();
-
-    expect(list).toHaveLength(3);
-    expect(list[0]!.sessionKey).toBe("s2"); // updatedAt 3000
-    expect(list[1]!.sessionKey).toBe("s3"); // updatedAt 2000
-    expect(list[2]!.sessionKey).toBe("s1"); // updatedAt 1000
+    const listed = resultValue(store.list({ tenantId: "default", agentId: "agent-1" }));
+    expect(listed.map((entry) => entry.conversationRef)).toEqual([
+      resultValue(createConversationRef(newest)),
+      resultValue(createConversationRef(oldest)),
+    ]);
   });
 
-  it("list with tenantId filter returns only matching sessions", () => {
-    const tenantAKey: SessionKey = { tenantId: "tenant-a", userId: "u1", channelId: "ch1" };
-    const tenantBKey: SessionKey = { tenantId: "tenant-b", userId: "u2", channelId: "ch2" };
+  it("list requires exact tenant and agent query authority", () => {
+    resultValue(store.save(makeScope("tenant-a", "agent-a", "user-a"), []));
+    resultValue(store.save(makeScope("tenant-a", "agent-b", "user-b"), []));
+    resultValue(store.save(makeScope("tenant-b", "agent-a", "user-c"), []));
 
-    store.save(tenantAKey, [{ msg: "a" }]);
-    store.save(tenantBKey, [{ msg: "b" }]);
-
-    const filtered = store.list("tenant-a");
-    expect(filtered).toHaveLength(1);
-    expect(filtered[0]!.sessionKey).toContain("tenant-a");
+    expect(resultValue(store.list({ tenantId: "tenant-a", agentId: "agent-a" }))).toHaveLength(1);
   });
 
-  it("delete removes session and returns true", () => {
-    store.save(testKey, [{ msg: "test" }]);
-
-    const deleted = store.delete(testKey);
-    expect(deleted).toBe(true);
-
-    const loaded = store.load(testKey);
-    expect(loaded).toBeUndefined();
+  it("delete removes the exact canonical session and reports success", () => {
+    resultValue(store.save(testScope, [{ content: "test" }]));
+    expect(resultValue(store.delete(testScope))).toBe(true);
+    expect(resultValue(store.load(testScope))).toBeUndefined();
   });
 
-  it("delete returns false for non-existent session", () => {
-    const deleted = store.delete({
-      tenantId: "default",
-      userId: "nonexistent",
-      channelId: "none",
-    });
-
-    expect(deleted).toBe(false);
+  it("delete reports false for an unknown canonical session", () => {
+    expect(resultValue(store.delete(makeScope("default", "agent-1", "missing")))).toBe(false);
   });
 
-  it("deleteStale removes sessions older than threshold", () => {
-    // Insert sessions with specific updatedAt timestamps
-    db.prepare(
-      `INSERT INTO sessions (session_key, tenant_id, user_id, channel_id, messages, created_at, updated_at, metadata)
-       VALUES ('old-session', 'default', 'u1', 'ch1', '[]', 1000, 1000, '{}')`,
-    ).run();
-
-    store.save(testKey, [{ msg: "fresh" }]); // This will have a current timestamp
-
-    // Delete sessions older than 1 hour (the old session at timestamp 1000ms will be deleted)
-    const deleted = store.deleteStale(60 * 60 * 1000);
-
-    expect(deleted).toBe(1);
-
-    // Fresh session should survive
-    const loaded = store.load(testKey);
-    expect(loaded).toBeDefined();
+  it("deleteByRef remains constrained by tenant and agent query authority", () => {
+    resultValue(store.save(testScope, []));
+    const reference = resultValue(createConversationRef(testScope));
+    expect(resultValue(store.deleteByRef({ tenantId: "default", agentId: "foreign" }, reference))).toBe(false);
+    expect(resultValue(store.load(testScope))).toBeDefined();
   });
 
-  it("deleteStale returns count of deleted sessions", () => {
-    // Insert multiple old sessions
-    db.prepare(
-      `INSERT INTO sessions (session_key, tenant_id, user_id, channel_id, messages, created_at, updated_at, metadata)
-       VALUES ('old1', 'default', 'u1', 'ch1', '[]', 100, 100, '{}')`,
-    ).run();
-    db.prepare(
-      `INSERT INTO sessions (session_key, tenant_id, user_id, channel_id, messages, created_at, updated_at, metadata)
-       VALUES ('old2', 'default', 'u2', 'ch2', '[]', 200, 200, '{}')`,
-    ).run();
+  it("deleteStale removes only old sessions in the requested authority partition", () => {
+    const oldScope = makeScope("default", "agent-1", "old");
+    const foreignScope = makeScope("default", "agent-2", "foreign");
+    resultValue(store.save(oldScope, []));
+    resultValue(store.save(testScope, []));
+    resultValue(store.save(foreignScope, []));
+    db.prepare("UPDATE sessions SET updated_at = 1000 WHERE conversation_ref IN (?, ?)")
+      .run(resultValue(createConversationRef(oldScope)), resultValue(createConversationRef(foreignScope)));
 
-    const deleted = store.deleteStale(60 * 60 * 1000);
-    expect(deleted).toBe(2);
+    expect(resultValue(store.deleteStale({ tenantId: "default", agentId: "agent-1" }, 60 * 60 * 1000))).toBe(1);
+    expect(resultValue(store.load(testScope))).toBeDefined();
+    expect(resultValue(store.load(foreignScope))).toBeDefined();
   });
 
-  // File-backed close/reopen fsyncs to real disk — on a loaded CI runner this
-  // has exceeded the default 5s timeout (observed 6.6s), so it gets its own.
-  it("session survives db close/reopen cycle (file-backed)", { timeout: 20_000 }, () => {
+  it("session data survives a file-backed close and reopen cycle", { timeout: 20_000 }, () => {
     const dbPath = join(tmpdir(), `comis-test-${randomUUID()}.db`);
-
-    // Create and populate
     const fileDb = new Database(dbPath);
     initSchema(fileDb, 1536);
     const fileStore = createSessionStore(fileDb);
-
-    const messages = [
-      { role: "user", content: "persist me" },
-      { role: "assistant", content: "I will be remembered" },
-    ];
-
-    fileStore.save(testKey, messages, { persistent: true });
+    const messages = [{ role: "user", content: "persist me" }];
+    resultValue(fileStore.save(testScope, messages, { persistent: true }));
     fileDb.close();
 
-    // Reopen and verify
     const reopened = new Database(dbPath);
-    initSchema(reopened, 1536); // Safe to call again (idempotent)
-    const reopenedStore = createSessionStore(reopened);
-
-    const loaded = reopenedStore.load(testKey);
-    expect(loaded).toBeDefined();
-    expect(loaded!.messages).toEqual(messages);
-    expect(loaded!.metadata).toEqual({ persistent: true });
-
+    initSchema(reopened, 1536);
+    const loaded = resultValue(createSessionStore(reopened).load(testScope));
+    expect(loaded?.messages).toEqual(messages);
+    expect(loaded?.metadata).toEqual({ persistent: true });
     reopened.close();
 
-    // Cleanup
-    try {
-      const { unlinkSync } = require("node:fs");
-      unlinkSync(dbPath);
-      unlinkSync(dbPath + "-wal");
-      unlinkSync(dbPath + "-shm");
-    } catch {
-      // Ignore cleanup errors
+    for (const path of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+      if (existsSync(path)) unlinkSync(path);
     }
   });
 
-  it("multiple sessions with different keys are independent", () => {
-    const msgs1 = [{ msg: "session 1" }];
-    const msgs2 = [{ msg: "session 2" }];
-
-    store.save(testKey, msgs1);
-    store.save(otherKey, msgs2);
-
-    const loaded1 = store.load(testKey);
-    const loaded2 = store.load(otherKey);
-
-    expect(loaded1!.messages).toEqual(msgs1);
-    expect(loaded2!.messages).toEqual(msgs2);
+  it("different canonical partitions remain independent", () => {
+    resultValue(store.save(testScope, [{ content: "one" }]));
+    resultValue(store.save(otherScope, [{ content: "two" }]));
+    expect(resultValue(store.load(testScope))?.messages).toEqual([{ content: "one" }]);
+    expect(resultValue(store.load(otherScope))?.messages).toEqual([{ content: "two" }]);
   });
 
-  it("empty messages array is valid (new session with no history)", () => {
-    store.save(testKey, []);
-
-    const loaded = store.load(testKey);
-    expect(loaded).toBeDefined();
-    expect(loaded!.messages).toEqual([]);
+  it("empty messages and omitted metadata remain valid", () => {
+    resultValue(store.save(testScope, []));
+    const loaded = resultValue(store.load(testScope));
+    expect(loaded?.messages).toEqual([]);
+    expect(loaded?.metadata).toEqual({});
   });
 
-  it("default metadata is empty object when not provided", () => {
-    store.save(testKey, [{ msg: "test" }]);
-
-    const loaded = store.load(testKey);
-    expect(loaded).toBeDefined();
-    expect(loaded!.metadata).toEqual({});
+  it("loadByRef resolves an exact canonical reference under query authority", () => {
+    resultValue(store.save(testScope, [{ content: "hello" }], { foo: "bar" }));
+    const reference = resultValue(createConversationRef(testScope));
+    const loaded = resultValue(store.loadByRef(
+      { tenantId: testScope.tenantId, agentId: testScope.agentId },
+      reference,
+    ));
+    expect(loaded?.metadata).toEqual({ foo: "bar" });
   });
 
-  describe("loadByFormattedKey", () => {
-    it("loads session by formatted key string", () => {
-      const key: SessionKey = { tenantId: "default", userId: "u1", channelId: "c1" };
-      store.save(key, [{ role: "user", content: "hello" }], { foo: "bar" });
-      const formatted = formatSessionKey(key);
-      const data = store.loadByFormattedKey(formatted);
-      expect(data).toBeDefined();
-      expect(data!.messages).toEqual([{ role: "user", content: "hello" }]);
-      expect(data!.metadata).toEqual({ foo: "bar" });
-    });
-
-    it("returns undefined for non-existent key", () => {
-      expect(store.loadByFormattedKey("nonexistent:key:string")).toBeUndefined();
-    });
+  it("session size validation returns an error without writing oversized data", () => {
+    const messages = [{ content: "x".repeat(11 * 1024 * 1024) }];
+    const saved = store.save(testScope, messages);
+    expect(saved.ok).toBe(false);
+    if (!saved.ok) expect(saved.error.message).toMatch(/byte limit/i);
+    expect(resultValue(store.load(testScope))).toBeUndefined();
   });
 
-  // ── session size limits ────────────────────────────────────────
-
-  describe("session size limits", () => {
-    it("saves session with small messages successfully", () => {
-      const messages = [{ role: "user", content: "hello" }];
-      expect(() => store.save(testKey, messages)).not.toThrow();
-
-      const loaded = store.load(testKey);
-      expect(loaded).toBeDefined();
-      expect(loaded!.messages).toEqual(messages);
-    });
-
-    it("throws when messages JSON exceeds 10MB", () => {
-      // Create a message array that exceeds 10MB when serialized
-      const largeContent = "x".repeat(11 * 1024 * 1024); // 11MB string
-      const messages = [{ role: "user", content: largeContent }];
-
-      expect(() => store.save(testKey, messages)).toThrow(
-        /Session data exceeds maximum size/,
-      );
-      expect(() => store.save(testKey, messages)).toThrow(/10MB limit/);
-    });
-
-    it("saves session right at the limit", () => {
-      // Create messages that are close to but under 10MB
-      // MAX_SESSION_BYTES = 10 * 1024 * 1024 = 10485760
-      // We need messages + metadata JSON to be <= 10485760 bytes
-      // JSON overhead: {"role":"user","content":"..."} -> ~30 bytes + content
-      // Outer array: [...]  -> ~2 bytes
-      // metadata: {} -> 2 bytes
-      const targetContentSize = MAX_SESSION_BYTES - 100; // leave room for JSON overhead + metadata
-      const content = "a".repeat(targetContentSize);
-      const messages = [{ content }];
-
-      expect(() => store.save(testKey, messages)).not.toThrow();
-    });
-
-    it("MAX_SESSION_BYTES is 10MB", () => {
-      expect(MAX_SESSION_BYTES).toBe(10 * 1024 * 1024);
-    });
+  it("session data just below the byte limit is accepted", () => {
+    const content = "a".repeat(MAX_SESSION_BYTES - 100);
+    expect(store.save(testScope, [{ content }]).ok).toBe(true);
   });
 
-  describe("listDetailed", () => {
-    it("returns detailed session entries with metadata", () => {
-      const key1: SessionKey = { tenantId: "t1", userId: "u1", channelId: "c1" };
-      const key2: SessionKey = { tenantId: "t1", userId: "u2", channelId: "c2" };
-      store.save(key1, [], { parentSessionKey: "some-parent" });
-      store.save(key2, [], {});
+  it("the exported session byte limit remains ten binary megabytes", () => {
+    expect(MAX_SESSION_BYTES).toBe(10 * 1024 * 1024);
+  });
 
-      const entries = store.listDetailed("t1");
-      expect(entries).toHaveLength(2);
-      // Most recent first
-      const subAgent = entries.find(e => e.metadata.parentSessionKey !== undefined);
-      expect(subAgent).toBeDefined();
-      expect(subAgent!.userId).toBe("u1");
-      expect(subAgent!.metadata.parentSessionKey).toBe("some-parent");
-    });
-
-    it("filters session-store listDetailed results by tenantId for tenant isolation", () => {
-      const key1: SessionKey = { tenantId: "t1", userId: "u1", channelId: "c1" };
-      const key2: SessionKey = { tenantId: "t2", userId: "u2", channelId: "c2" };
-      store.save(key1, []);
-      store.save(key2, []);
-
-      expect(store.listDetailed("t1")).toHaveLength(1);
-      expect(store.listDetailed("t2")).toHaveLength(1);
-      expect(store.listDetailed()).toHaveLength(2);
-    });
+  it("listDetailed returns canonical scope metadata and message counts", () => {
+    resultValue(store.save(testScope, [{ content: "one" }], { parent: "root" }));
+    const entries = resultValue(store.listDetailed({ tenantId: "default", agentId: "agent-1" }));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.conversationScope).toEqual(testScope);
+    expect(entries[0]?.metadata).toEqual({ parent: "root" });
+    expect(entries[0]?.messageCount).toBe(1);
   });
 });

@@ -1,163 +1,109 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Unit tests for the session.list handler's agent-origin self-scoping.
- *
- * `session.list` enumerates every session's `{ sessionKey, agentId, userId,
- * channelId, ... }`. Its only pre-existing visibility narrowing is the
- * sub-agent `parentSessionKey` filter. The `tool.invoke` rpc route injects
- * `_agentId = lease.agentId` (setup-capability-endpoint.ts:321) but NOT the
- * `_callerMetadata`/`_callerSessionKey` the sub-agent filter needs, so for a
- * jailed orch:read caller that narrowing never fires — the script receives the
- * directory of EVERY agent's/user's sessions (the keys that turn a
- * single-session read into a turnkey cross-tenant exfiltration, plus a
- * userId/channelId enumeration leak in its own right).
- *
- * The fix mirrors the sibling session.search's existing `_agentId` filter
- * (session-list.ts:163-168): when `_agentId` is present (agent-origin, an
- * unforgeable signal — inbound `_agentId` is stripped at the gateway), only
- * the caller's own sessions are returned; when ABSENT (admin / operator / CLI)
- * the full directory is preserved.
- *
- * @module
- */
-
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { createConversationRef, type ConversationScope, type SessionDetailedEntry } from "@comis/core";
+import { ok } from "@comis/shared";
 import { bindSessionListHandlers } from "./session-list.js";
 import type { SessionHandlerDeps } from "./session-helpers.js";
 
-// Two sessions across DIFFERENT tenants/users — the cross-tenant directory a
-// jailed orch:read script must NOT be able to enumerate.
-const OTHER_KEY = "victim-tenant:victim-user:telegram";
-const ANOTHER_KEY = "other-tenant:other-user:discord";
-
-interface DetailedEntry {
-  sessionKey: string;
-  tenantId: string;
-  userId: string;
-  channelId: string;
-  metadata: Record<string, unknown>;
-  createdAt: number;
-  updatedAt: number;
-  messageCount: number;
+function scope(agentId: string): ConversationScope {
+  return {
+    tenantId: "tenant_a",
+    agentId,
+    partition: { kind: "principal", principalId: `principal-${agentId}` },
+  };
 }
 
-function entry(sessionKey: string, tenantId: string, userId: string, channelId: string): DetailedEntry {
+function reference(conversationScope: ConversationScope) {
+  const result = createConversationRef(conversationScope);
+  if (!result.ok) throw result.error;
+  return result.value;
+}
+
+function entry(agentId: string): SessionDetailedEntry {
+  const conversationScope = scope(agentId);
   return {
-    sessionKey,
-    tenantId,
-    userId,
-    channelId,
+    conversationRef: reference(conversationScope),
+    conversationScope,
+    agentId,
     metadata: {},
     createdAt: 1_700_000_000_000,
-    updatedAt: 1_700_000_000_000,
-    messageCount: 3,
+    updatedAt: 1_700_000_001_000,
+    messageCount: 1,
   };
 }
 
 function makeDeps(): SessionHandlerDeps {
-  const detailed: DetailedEntry[] = [
-    entry(OTHER_KEY, "victim-tenant", "victim-user", "telegram"),
-    entry(ANOTHER_KEY, "other-tenant", "other-user", "discord"),
-  ];
-  const base = {
-    defaultAgentId: "default",
-    agents: { default: { name: "A", model: "m" } as SessionHandlerDeps["agents"][string] },
-    costTrackers: new Map(),
-    stepCounters: new Map(),
-    defaultWorkspaceDir: "",
-    agentDataDir: "",
+  const entries = [entry("agent_a"), entry("agent_b")];
+  return {
     sessionStore: {
-      listDetailed: () => detailed,
-      loadByFormattedKey: () => undefined,
-      deleteByFormattedKey: () => false,
-      saveByFormattedKey: vi.fn(),
+      listDetailed: (query: { tenantId: string; agentId: string }) => ok(entries.filter((candidate) =>
+        candidate.conversationScope.tenantId === query.tenantId
+        && candidate.conversationScope.agentId === query.agentId)),
+      loadByRef: (query: { tenantId: string; agentId: string }, conversationRef: string) => {
+        const found = entries.find((candidate) => candidate.conversationRef === conversationRef
+          && candidate.agentId === query.agentId);
+        return ok(found ? {
+          conversationRef: found.conversationRef,
+          conversationScope: found.conversationScope,
+          messages: [{ role: "user", content: `marker for ${found.agentId}`, timestamp: 10 }],
+          metadata: {},
+          createdAt: found.createdAt,
+          updatedAt: found.updatedAt,
+        } : undefined);
+      },
     },
-    crossSessionSender: { send: vi.fn() } as never,
-    subAgentRunner: { spawn: vi.fn(), getRunStatus: vi.fn() } as never,
-    securityConfig: { agentToAgent: { enabled: true, waitTimeoutMs: 5000 } },
-    tenantId: "victim-tenant",
     logger: {
-      info: vi.fn(), debug: vi.fn(), warn: vi.fn(),
-      error: vi.fn(), trace: vi.fn(), fatal: vi.fn(), child: vi.fn(),
-    } as unknown as SessionHandlerDeps["logger"],
-  };
-  return base as unknown as SessionHandlerDeps;
+      info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis(),
+    },
+  } as unknown as SessionHandlerDeps;
 }
 
-describe("session.list agent-origin self-scoping", () => {
-  it("session.list returns the exact caller session even though formatted keys omit agent identity", async () => {
+describe("session list explicit authority", () => {
+  it("lists only sessions inside the requested tenant and agent scope", async () => {
     const handlers = bindSessionListHandlers(makeDeps());
-    const r = (await handlers["session.list"]!({
-      _agentId: "jailed-agent",
-      _callerSessionKey: OTHER_KEY,
-    })) as {
-      sessions: Array<{ sessionKey: string; agentId: string }>;
+    const result = await handlers["session.list"]!({ tenant_id: "tenant_a", agent_id: "agent_a" }) as {
+      sessions: Array<{ conversationRef: string; agentId: string }>;
       total: number;
     };
 
-    expect(r.sessions).toEqual([
-      expect.objectContaining({ sessionKey: OTHER_KEY, agentId: "jailed-agent" }),
+    expect(result.sessions).toEqual([
+      expect.objectContaining({ conversationRef: reference(scope("agent_a")), agentId: "agent_a" }),
     ]);
-    expect(r.total).toBe(1);
+    expect(result.total).toBe(1);
   });
 
-  it("session.search searches the exact caller session without relying on an unserialized agent field", async () => {
-    const deps = makeDeps();
-    deps.sessionStore.loadByFormattedKey = vi.fn((key: string) => key === OTHER_KEY
-      ? {
-          messages: [{ role: "user", content: "caller-owned marker", timestamp: 10 }],
-          metadata: {},
-          createdAt: 1,
-          updatedAt: 10,
-        }
-      : undefined);
-    const handlers = bindSessionListHandlers(deps);
-
-    const r = (await handlers["session.search"]!({
-      query: "caller-owned",
+  it("searches only transcripts inside the requested authority scope", async () => {
+    const handlers = bindSessionListHandlers(makeDeps());
+    const result = await handlers["session.search"]!({
+      tenant_id: "tenant_a",
+      agent_id: "agent_a",
+      query: "marker",
       summarize: false,
-      _agentId: "jailed-agent",
-      _callerSessionKey: OTHER_KEY,
-    })) as {
-      results: Array<{ sessionKey: string; agentId: string }>;
-      total: number;
-    };
+    }) as { results: Array<{ conversationRef: string; agentId: string }>; total: number };
 
-    expect(r.results).toEqual([
-      expect.objectContaining({ sessionKey: OTHER_KEY, agentId: "jailed-agent" }),
+    expect(result.results).toEqual([
+      expect.objectContaining({ conversationRef: reference(scope("agent_a")), agentId: "agent_a" }),
     ]);
-    expect(r.total).toBe(1);
+    expect(result.total).toBe(1);
   });
 
-  it("session.list does NOT return other agents' sessions to an agent-origin caller (_agentId injected)", async () => {
-    // An agent-origin caller (the orchestrate rpc route injects `_agentId`)
-    // must never receive the cross-tenant directory. With agent-scoping the
-    // enumerated keys are filtered to the caller's own — the victim/other
-    // tenant keys must be absent.
+  it("rejects an agent-origin query for a different agent scope", async () => {
     const handlers = bindSessionListHandlers(makeDeps());
-    const r = (await handlers["session.list"]!({ _agentId: "jailed-agent" })) as {
-      sessions: Array<{ sessionKey: string }>;
-      total: number;
-    };
 
-    const keys = r.sessions.map((s) => s.sessionKey);
-    expect(keys).not.toContain(OTHER_KEY);
-    expect(keys).not.toContain(ANOTHER_KEY);
+    await expect(handlers["session.list"]!({
+      tenant_id: "tenant_a",
+      agent_id: "agent_b",
+      _agentId: "agent_a",
+      _tenantId: "tenant_a",
+    })).rejects.toThrow(/does not match the authenticated caller/i);
   });
 
-  it("session.list returns the full session directory for an admin/operator call with NO _agentId", async () => {
-    // No _agentId (the gateway stripped it for an external operator/CLI call):
-    // full enumeration must be preserved — the fix must NOT break the operator
-    // path.
+  it("lets the authenticated control plane select an explicit agent scope", async () => {
     const handlers = bindSessionListHandlers(makeDeps());
-    const r = (await handlers["session.list"]!({})) as {
-      sessions: Array<{ sessionKey: string }>;
-      total: number;
+    const result = await handlers["session.list"]!({ tenant_id: "tenant_a", agent_id: "agent_b" }) as {
+      sessions: Array<{ agentId: string }>;
     };
 
-    const keys = r.sessions.map((s) => s.sessionKey);
-    expect(keys).toContain(OTHER_KEY);
-    expect(keys).toContain(ANOTHER_KEY);
-    expect(r.total).toBe(2);
+    expect(result.sessions).toEqual([expect.objectContaining({ agentId: "agent_b" })]);
   });
 });

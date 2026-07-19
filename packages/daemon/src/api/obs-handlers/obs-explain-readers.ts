@@ -46,9 +46,7 @@
 
 import * as fs from "node:fs";
 import * as os from "node:os";
-import * as path from "node:path";
-import { safePath, parseFormattedSessionKey } from "@comis/core";
-import { sessionKeyToPath } from "@comis/agent";
+import { safePath } from "@comis/core";
 import { resolveTrajectoryPointerFilePath } from "@comis/observability";
 import type { ObservabilityStore } from "@comis/memory";
 
@@ -156,7 +154,7 @@ function sessionArtifactsExist(sessionFile: string): boolean {
 }
 
 /**
- * Fallback resolution for a formatted sessionKey whose `parseFormattedSessionKey`
+ * Fallback resolution for a display session label whose canonical parser
  * round-trip is LOSSY. A colon-bearing userId — webhook sessions are created with
  * `userId:"hook:devtask:<id>"`, `channelId:"webhook"` — is greedily mis-split into
  * channelId by the parser (the inverse of the writer's intent), so `sessionKeyToPath`
@@ -177,46 +175,49 @@ function sessionArtifactsExist(sessionFile: string): boolean {
 function findSessionFileByPointerSessionId(
   sessionKey: string,
   sessionsBase: string,
-  encodedTenantDir: string,
 ): string | undefined {
-  // safePath (not raw path.join): the on-disk session names are `@`-encoded
-  // single components created via sessionKeyToPath's safePath, so they round-trip
-  // (safePath's decodeURIComponent only touches `%XX`, never `@XX`), and a stray
-  // entry cannot traverse out of the tenant tree.
-  const tenantDir = safePath(sessionsBase, encodedTenantDir);
-  let channels: fs.Dirent[];
+  let tenants: fs.Dirent[];
   try {
-    channels = fs.readdirSync(tenantDir, { withFileTypes: true });
+    tenants = fs.readdirSync(sessionsBase, { withFileTypes: true });
   } catch {
-    return undefined; // Tenant dir absent/unreadable — soft-fail.
+    return undefined;
   }
   let scanned = 0;
-  for (const channel of channels) {
-    if (!channel.isDirectory()) continue;
-    const channelDir = safePath(tenantDir, channel.name);
-    let entries: string[];
+  for (const tenant of tenants) {
+    if (!tenant.isDirectory()) continue;
+    const tenantDir = safePath(sessionsBase, tenant.name);
+    let channels: fs.Dirent[];
     try {
-      entries = fs.readdirSync(channelDir);
+      channels = fs.readdirSync(tenantDir, { withFileTypes: true });
     } catch {
-      continue; // Unreadable channel dir — skip.
+      continue;
     }
-    for (const name of entries) {
-      if (!name.endsWith(TRAJECTORY_POINTER_SUFFIX)) continue;
-      if (scanned >= MAX_POINTER_SCAN) return undefined; // Runaway backstop.
-      scanned++;
-      const pointerPath = safePath(channelDir, name);
-      let pointer: Record<string, unknown>;
+    for (const channel of channels) {
+      if (!channel.isDirectory()) continue;
+      const channelDir = safePath(tenantDir, channel.name);
+      let entries: string[];
       try {
-        pointer = JSON.parse(fs.readFileSync(pointerPath, "utf-8")) as Record<string, unknown>;
+        entries = fs.readdirSync(channelDir);
       } catch {
-        continue; // Corrupt/unreadable pointer — skip.
+        continue;
       }
-      if (
-        pointer["traceSchema"] === "comis-trajectory-pointer" &&
-        pointer["sessionId"] === sessionKey
-      ) {
-        // Session file = pointer path minus the `.trajectory-path.json` suffix.
-        return pointerPath.slice(0, -TRAJECTORY_POINTER_SUFFIX.length);
+      for (const name of entries) {
+        if (!name.endsWith(TRAJECTORY_POINTER_SUFFIX)) continue;
+        if (scanned >= MAX_POINTER_SCAN) return undefined;
+        scanned++;
+        const pointerPath = safePath(channelDir, name);
+        let pointer: Record<string, unknown>;
+        try {
+          pointer = JSON.parse(fs.readFileSync(pointerPath, "utf-8")) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        if (
+          pointer["traceSchema"] === "comis-trajectory-pointer"
+          && pointer["sessionId"] === sessionKey
+        ) {
+          return pointerPath.slice(0, -TRAJECTORY_POINTER_SUFFIX.length);
+        }
       }
     }
   }
@@ -228,7 +229,7 @@ function findSessionFileByPointerSessionId(
  * under the workspace sessions base, via the authoritative `sessionKeyToPath`
  * mapper (`<sessionsBase>/<tenantId>/<channelId>/<file>.jsonl`).
  *
- * Two-stage: (1) the FAST PATH — a clean `parseFormattedSessionKey` round-trip
+ * Two-stage: (1) the FAST PATH — a clean display-label round-trip
  * whose computed artifacts exist on disk (telegram + any single-colon-field key);
  * (2) the FALLBACK — when the fast-path artifacts are absent, the key may have a
  * colon-bearing userId the parser mis-split (webhook sessions), so resolve via the
@@ -240,22 +241,7 @@ function findSessionFileByPointerSessionId(
  * inside `sessionsBase`.
  */
 function resolveSessionFile(sessionKey: string, sessionsBase: string): string | undefined {
-  const key = parseFormattedSessionKey(sessionKey);
-  if (key === undefined) return undefined;
-  const fastPath = sessionKeyToPath(key, sessionsBase);
-  // Fast path: a clean round-trip whose session artifacts exist on disk. Use it.
-  if (sessionArtifactsExist(fastPath)) return fastPath;
-  // Fallback: the fast path missed — the key may have a colon-bearing userId the
-  // parser mis-split. The tenant dir is unambiguous (the first colon segment,
-  // never mis-split), so derive the ENCODED tenant dir from the fast path (already
-  // safePath-collapsed) to scope the scan, then resolve via the pointer sessionId.
-  const rel = path.relative(sessionsBase, fastPath);
-  const encodedTenantDir = rel.startsWith("..") ? undefined : rel.split(path.sep)[0];
-  if (encodedTenantDir !== undefined && encodedTenantDir.length > 0) {
-    const matched = findSessionFileByPointerSessionId(sessionKey, sessionsBase, encodedTenantDir);
-    if (matched !== undefined) return matched;
-  }
-  return fastPath; // No pointer match — unchanged fast-path miss behavior (soft-fail).
+  return findSessionFileByPointerSessionId(sessionKey, sessionsBase);
 }
 
 /**
@@ -508,16 +494,14 @@ export function makeRealReader(
       return match === undefined ? null : (match as unknown as Record<string, unknown>);
     },
 
-    async readAuditEvents(sessionKey: string): Promise<Array<Record<string, unknown>>> {
+    async readAuditEvents(_sessionKey: string): Promise<Array<Record<string, unknown>>> {
       if (obsStore === undefined) return []; // No store — the audit? section is omitted.
       // AuditQueryParams has NO traceId predicate, so scope by the session's
       // TENANT (the first sessionKey segment) + a bounded limit, and let the
       // caller filter by the resolved traceId AFTER. An unparseable key yields no
       // tenant scope — query the bounded window unfiltered (the caller's traceId
       // filter still narrows it to this session).
-      const key = parseFormattedSessionKey(sessionKey);
       const rows = obsStore.queryAuditEvents({
-        ...(key !== undefined ? { tenant: key.tenantId } : {}),
         limit: AUDIT_QUERY_LIMIT,
       });
       return rows as unknown as Array<Record<string, unknown>>;

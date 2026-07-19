@@ -9,7 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { ok, err, type Result } from "@comis/shared";
-import { emitObservationalEventSafely, type TypedEventBus, type ClockPort, type TimerPort } from "@comis/core";
+import { BackgroundTaskOriginSchema, emitObservationalEventSafely, type TypedEventBus, type ClockPort, type TimerPort } from "@comis/core";
 import { persistTaskSync, recoverTasks, removeTaskFile } from "./background-task-persistence.js";
 import type {
   BackgroundTask,
@@ -120,25 +120,12 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
   const manager: BackgroundTaskManager = {
     promote(toolName, promise, ac, origin, notificationPolicy) {
       // Reject calls with missing/invalid origin (no silent fallback).
-      if (!origin || typeof origin !== "object") {
-        return err(new Error("BackgroundTaskOrigin is required (received undefined or non-object)"));
+      const parsedOrigin = BackgroundTaskOriginSchema.safeParse(origin);
+      if (!parsedOrigin.success) {
+        return err(new Error("BackgroundTaskOrigin requires valid structured turn authority"));
       }
-      if (!origin.agentId || origin.agentId.length === 0) {
-        return err(new Error("BackgroundTaskOrigin.agentId must be a non-empty string"));
-      }
-      if (!origin.sessionKey || origin.sessionKey.length === 0) {
-        return err(new Error("BackgroundTaskOrigin.sessionKey must be a non-empty string"));
-      }
-      if (!origin.channelType || origin.channelType.length === 0) {
-        return err(new Error("BackgroundTaskOrigin.channelType must be a non-empty string"));
-      }
-      if (!origin.channelId || origin.channelId.length === 0) {
-        return err(new Error("BackgroundTaskOrigin.channelId must be a non-empty string"));
-      }
-      // traceId may be null (per BackgroundTaskOriginSchema), so no length check.
-      // backgroundHopCount has a schema-level default of 0; no inline guard needed.
-
-      const agentId = origin.agentId;
+      const acceptedOrigin = parsedOrigin.data;
+      const agentId = acceptedOrigin.turnScope.conversation.agentId;
       const agentCurrent = perAgentCount.get(agentId) ?? 0;
       if (agentCurrent >= maxPerAgent) {
         return err(new Error(`Concurrency limit exceeded: agent ${agentId} has ${agentCurrent}/${maxPerAgent} tasks`));
@@ -153,7 +140,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         toolName,
         status: "running",
         startedAt: clock.now(),
-        origin,
+        origin: acceptedOrigin,
         // Seed the dispatch state machine. Default policy is "deferred" —
         // the dispatcher inspects dispatchState before firing fallback notify
         // (at-most-once).
@@ -196,12 +183,12 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       task.result = truncateResult(result);
 
       if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
-      decrementCounters(task.origin.agentId);
+      decrementCounters(task.origin.turnScope.conversation.agentId);
       persistTaskSync(dataDir, task);
 
       const durationMs = task.completedAt - task.startedAt;
       emitObservationalEventSafely({ eventBus, logger }, "background_task:completed", {
-        agentId: task.origin.agentId,
+        agentId: task.origin.turnScope.conversation.agentId,
         taskId,
         toolName: task.toolName,
         durationMs,
@@ -225,12 +212,12 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       task.error = error instanceof Error ? error.message : String(error);
 
       if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
-      decrementCounters(task.origin.agentId);
+      decrementCounters(task.origin.turnScope.conversation.agentId);
       persistTaskSync(dataDir, task);
 
       const durationMs = task.completedAt - task.startedAt;
       emitObservationalEventSafely({ eventBus, logger }, "background_task:failed", {
-        agentId: task.origin.agentId,
+        agentId: task.origin.turnScope.conversation.agentId,
         taskId,
         toolName: task.toolName,
         error: task.error,
@@ -252,11 +239,11 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
 
       if (task._abortController) task._abortController.abort();
       if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
-      decrementCounters(task.origin.agentId);
+      decrementCounters(task.origin.turnScope.conversation.agentId);
       persistTaskSync(dataDir, task);
 
       emitObservationalEventSafely({ eventBus, logger }, "background_task:cancelled", {
-        agentId: task.origin.agentId,
+        agentId: task.origin.turnScope.conversation.agentId,
         taskId,
         toolName: task.toolName,
         timestamp: clock.now(),
@@ -270,7 +257,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     },
 
     getTasks(agentId) {
-      return [...tasks.values()].filter((t) => t.origin.agentId === agentId);
+      return [...tasks.values()].filter((t) => t.origin.turnScope.conversation.agentId === agentId);
     },
 
     getAllTasks() {
@@ -309,7 +296,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           }
           count++;
           emitObservationalEventSafely({ eventBus, logger }, "background_task:failed", {
-            agentId: task.origin.agentId,
+            agentId: task.origin.turnScope.conversation.agentId,
             taskId: task.id,
             toolName: task.toolName,
             error: persisted.error,
@@ -345,7 +332,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       for (const [taskId, task] of tasks) {
         if (task.status !== "running" && (task.completedAt ?? task.startedAt) < cutoff) {
           tasks.delete(taskId);
-          removeTaskFile(dataDir, task.origin.agentId, taskId);
+          removeTaskFile(dataDir, task.origin.turnScope.conversation.agentId, taskId);
         }
       }
     },

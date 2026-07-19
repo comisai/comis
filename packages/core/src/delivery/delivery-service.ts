@@ -29,6 +29,13 @@ import type { SendMessageOptions } from "../ports/channel.js";
 import type { ComisLogger } from "../logging/log-fields.js";
 import { toSafeErrorLogString } from "../security/log-sanitizer.js";
 import { tryGetContext } from "../context/context.js";
+import {
+  ChannelEndpointSchema,
+  ConversationRefSchema,
+  createConversationRef,
+  type ChannelEndpoint,
+} from "../domain/conversation-scope.js";
+import type { DeliveryAuthority } from "../ports/delivery-queue.js";
 
 import { formatForChannel } from "./format-for-channel.js";
 import { chunkForDelivery } from "./chunk-for-delivery.js";
@@ -72,6 +79,71 @@ const PLATFORMS_NEEDING_FORMAT = new Set([
 ]);
 
 const PASSTHROUGH_PLATFORMS = new Set(["discord", "gateway", "echo"]);
+
+interface DeliveryPersistenceScope {
+  authority: DeliveryAuthority;
+  destinationEndpoint: ChannelEndpoint;
+}
+
+function resolveDeliveryPersistenceScope(
+  adapter: DeliveryAdapter,
+  channelId: string,
+  options: DeliverToChannelOptions | undefined,
+): Result<DeliveryPersistenceScope, Error> {
+  const context = tryGetContext();
+  let authority = options?.authority;
+  if (authority === undefined && context?.turnScope !== undefined && context.agentId !== undefined) {
+    const reference = createConversationRef(context.turnScope.conversation);
+    if (reference.ok) {
+      authority = {
+        tenantId: context.tenantId,
+        agentId: context.agentId,
+        conversationRef: reference.value,
+      };
+    }
+  }
+  const parsedReference = authority === undefined
+    ? undefined
+    : ConversationRefSchema.safeParse(authority.conversationRef);
+  if (
+    authority === undefined
+    || authority.tenantId.length === 0
+    || authority.agentId.length === 0
+    || parsedReference === undefined
+    || !parsedReference.success
+  ) {
+    return err(new Error("Delivery persistence requires explicit conversation authority"));
+  }
+
+  let destinationEndpoint = options?.destinationEndpoint;
+  const turnEndpoint = context?.turnScope?.endpoint;
+  if (
+    destinationEndpoint === undefined
+    && turnEndpoint !== undefined
+    && turnEndpoint.channelType === adapter.channelType
+    && turnEndpoint.conversationId === channelId
+    && turnEndpoint.threadId === options?.threadId
+  ) {
+    destinationEndpoint = turnEndpoint;
+  }
+  const parsedEndpoint = ChannelEndpointSchema.safeParse(destinationEndpoint);
+  if (
+    !parsedEndpoint.success
+    || parsedEndpoint.data.channelType !== adapter.channelType
+    || parsedEndpoint.data.conversationId !== channelId
+    || parsedEndpoint.data.threadId !== options?.threadId
+  ) {
+    return err(new Error("Delivery persistence requires an exact destination endpoint snapshot"));
+  }
+  return ok({
+    authority: {
+      tenantId: authority.tenantId,
+      agentId: authority.agentId,
+      conversationRef: parsedReference.data,
+    },
+    destinationEndpoint: parsedEndpoint.data,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Public interfaces
@@ -235,6 +307,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         // runBeforeDelivery to return undefined (see
         // hooks/hook-runner.ts:runModifyingHook empty-registry short-circuit).
         let deliveryText = text;
+        const persistenceScope = resolveDeliveryPersistenceScope(adapter, channelId, options);
 
         // --- One-pass egress secret scan BEFORE hooks and chunking ---
         // mightContainSecret pre-filter inside — secret-free messages pay near-zero cost.
@@ -258,8 +331,14 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
             },
             {
               sessionKey: hookCtx?.sessionKey,
-              agentId: undefined,
+              agentId: hookCtx?.agentId,
               traceId: hookCtx?.traceId,
+              ...(persistenceScope.ok
+                ? {
+                    deliveryAuthority: persistenceScope.value.authority,
+                    destinationEndpoint: persistenceScope.value.destinationEndpoint,
+                  }
+                : {}),
             },
           );
 
@@ -341,11 +420,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
 
         // Resolve context for queue integration (non-throwing)
         const ctx = tryGetContext();
-        const tenantId = ctx?.tenantId ?? "default";
         const traceId = ctx?.traceId ?? null;
-        // Persist the request-scoped agent identity for queue-drain attribution;
-        // missing identity fails closed instead of substituting the tenant.
-        const agentId = ctx?.agentId ?? null;
         // Bind reactions to the inbound participant so an unmapped group
         // bystander cannot inherit the participant's trust.
         const participantId = ctx?.userId;
@@ -436,25 +511,28 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
           // deps.deliveryQueue is REQUIRED in DeliveryServiceDeps — no
           // null-guard needed here.
           {
-            // Persist agentId into the serialized options so
-            // the drain reads the REAL agent (drain reads options.agentId). It is
-            // added to a SEPARATE persistence object — NOT to `sendOpts` — so it
-            // never rides into the platform `adapter.sendMessage` call. Omitted
-            // entirely when absent (pre-executor paths), keeping the drain
-            // fail-closed rather than mis-attributing to the tenantId.
-            //
-            // Likewise persist the conversation participant (ctx.userId) so
-            // a reaction resolved via the DRAIN path (not the direct ack) is also
-            // participant-aware — an unmapped group bystander stays inert. Omitted
-            // when absent; the drain then threads `undefined` → fail-safe.
+            if (!persistenceScope.ok) {
+              queueTransitionFailures.push(reportQueueTransitionFailure(
+                deps,
+                "enqueue_in_flight",
+                null,
+                persistenceScope.error,
+                channelId,
+                adapter.channelType,
+              ));
+            } else {
+            // Persist only non-authority send metadata in optionsJson. The
+            // authority triple and endpoint have dedicated typed columns.
             const persistedOptions: Record<string, unknown> = { ...sendOpts };
-            if (agentId !== null) persistedOptions.agentId = agentId;
             if (participantId !== undefined) persistedOptions.participantId = participantId;
             const enqueueResult = await deps.deliveryQueue.enqueueInFlight({
               text: chunk,
               channelType: adapter.channelType,
               channelId,
-              tenantId,
+              tenantId: persistenceScope.value.authority.tenantId,
+              agentId: persistenceScope.value.authority.agentId,
+              conversationRef: persistenceScope.value.authority.conversationRef,
+              destinationEndpoint: persistenceScope.value.destinationEndpoint,
               optionsJson: JSON.stringify(persistedOptions),
               origin: options?.origin ?? "unknown",
               maxAttempts: 5,
@@ -478,6 +556,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
             // The platform send still proceeds so the returned transition error
             // can retain the real send outcome instead of guessing whether the
             // user received the chunk.
+            }
           }
 
           // Send with or without retry
@@ -548,11 +627,11 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
             // Bind the authoritative platform ID on the direct-send path. Missing
             // request identity skips the bind; the callback is idempotent when a
             // queue retry later observes the same message.
-            if (deps.recordOutboundMessage !== undefined && traceId !== null && agentId !== null) {
+            if (deps.recordOutboundMessage !== undefined && traceId !== null && persistenceScope.ok) {
               const recorded = tryCatch(() => deps.recordOutboundMessage?.(result.value, {
                 traceId,
-                tenantId,
-                agentId,
+                tenantId: persistenceScope.value.authority.tenantId,
+                agentId: persistenceScope.value.authority.agentId,
                 sessionId: traceId, // session identity falls back to the trajectory id (scope-consistent with the drain)
                 // Bind the conversation participant (the inbound sender) so a
                 // reaction from an unmapped group bystander is inert (resolves to
@@ -577,7 +656,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                   channelId,
                   channelType: adapter.channelType,
                   traceId,
-                  agentId,
+                  agentId: persistenceScope.value.authority.agentId,
                   timestamp: systemNowMs(),
                 });
               }
@@ -739,8 +818,14 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               },
               {
                 sessionKey: afterCtx?.sessionKey,
-                agentId: undefined,
+                agentId: afterCtx?.agentId,
                 traceId: afterCtx?.traceId,
+                ...(persistenceScope.ok
+                  ? {
+                      deliveryAuthority: persistenceScope.value.authority,
+                      destinationEndpoint: persistenceScope.value.destinationEndpoint,
+                    }
+                  : {}),
               },
             ),
             "after_delivery hook failed",

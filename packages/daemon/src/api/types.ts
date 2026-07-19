@@ -22,6 +22,7 @@ import type {
   TtsOutputFormat,
   TtsAutoMode,
   AppContainer,
+  ConversationScope,
   SessionKey,
   PerAgentConfig,
   ProviderEntry,
@@ -65,20 +66,7 @@ export interface SessionsApiDeps {
   agentDataDir?: string;
   /** Default workspace directory (e.g., ~/.comis/workspace). Used to scan workspace JSONL sessions. */
   defaultWorkspaceDir: string;
-  sessionStore: {
-    listDetailed: (tenantId?: string) => Array<{
-      sessionKey: string;
-      userId: string;
-      channelId: string;
-      metadata: Record<string, unknown>;
-      createdAt: number;
-      updatedAt: number;
-      messageCount: number;
-    }>;
-    loadByFormattedKey: (sessionKey: string) => { messages: unknown[]; metadata: Record<string, unknown>; createdAt: number; updatedAt: number } | undefined;
-    deleteByFormattedKey: (sessionKey: string) => boolean;
-    saveByFormattedKey: (sessionKey: string, messages: unknown[], metadata?: Record<string, unknown>) => void;
-  };
+  sessionStore: import("@comis/core").SessionStorePort;
   crossSessionSender: ReturnType<typeof createCrossSessionSender>; subAgentRunner: ReturnType<typeof createSubAgentRunner>;
   resolveRootRunId?: (agentId: string, sessionKey: import("@comis/core").SessionKey) => string;
   securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[]; steerInject?: boolean } };
@@ -128,10 +116,10 @@ export interface SessionsApiDeps {
    *  LCD + sessionStore alone resurrects the conversation (the surviving pi
    *  runtime JSONL re-ingests wholesale via the lcd-ingest epoch rebase). Wired
    *  at the composition root from `createConversationReset(...).destroyRuntimeSession`
-   *  bound to the default agent. Returns true when an adapter destroy ran.
+   *  with explicit conversation and display identities. Returns true when an adapter destroy ran.
    *  Optional: absent ⇒ the handler reports `runtimeSessionDestroyed: false`
    *  and WARNs with the resurrection consequence (honest degradation). */
-  destroyRuntimeSession?: (formattedSessionKey: string) => Promise<boolean>;
+  destroyRuntimeSession?: (scope: ConversationScope, key: SessionKey) => Promise<boolean>;
   /** Executor session-scoped state cleanup: wired at the
    *  composition root (daemon.ts) to @comis/agent's clearSessionState — the
    *  single authoritative path that drops the per-key tool-schema snapshots,
@@ -262,7 +250,7 @@ export interface ChannelsApiDeps {
   // Gateway attachment deps -- set after gateway init via mutable ref
   wsConnections?: { sendToClientId(clientId: string, method: string, params: unknown): boolean };
   mediaDir?: string;
-  onGatewayAttachment?: (sessionKey: SessionKey, marker: string) => void;
+  onGatewayAttachment?: (scope: import("@comis/core").ConversationScope, marker: string) => void;
   // Delivery queue + service
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
   /** DeliveryService constructed once at the composition root (setup-channels.ts); createMessageHandlers calls `deps.deliveryService.deliverToChannel(...)`. */
@@ -294,10 +282,8 @@ export interface ChannelsApiDeps {
 export interface AgentsApiDeps {
   // Agent management
   suspendedAgents: Set<string>;
-  /** Hot-add callback passed through to agent handlers for runtime agent creation without restart.
-   *  `rawRerankEnabled` is the RAW (pre-Zod-default) rag.rerank.enabled from the RPC input so the
-   *  hot-added agent's effective-rerank precedence distinguishes unset from explicit-off. */
-  hotAdd?: (agentId: string, config: PerAgentConfig, rawRerankEnabled?: boolean | undefined) => Promise<void>;
+  /** Hot-add callback passed through to agent handlers for runtime agent creation without restart. */
+  hotAdd?: (agentId: string, config: PerAgentConfig) => Promise<void>;
   /** Hot-remove callback passed through to agent handlers for runtime agent deletion without restart. */
   hotRemove?: (agentId: string) => Promise<void>;
   // Model management

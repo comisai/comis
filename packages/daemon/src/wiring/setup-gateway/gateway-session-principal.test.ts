@@ -1,43 +1,48 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
-import { err, ok } from "@comis/shared";
-import {
-  gatewaySessionOwnershipError,
-  resolveGatewaySessionKey,
-} from "./gateway-session-principal.js";
+import { resolveGatewayTurnIdentity } from "./gateway-session-principal.js";
 
 describe("gateway session principal binding", () => {
-  it("isolates authenticated clients while preserving the selected conversation peer", () => {
+  it("isolates authenticated clients with delimiter-safe canonical principals", () => {
     const selected = { userId: "untrusted-user", channelId: "shared", peerId: "thread-a" };
-    const first = resolveGatewaySessionKey({
+    const first = resolveGatewayTurnIdentity({
       tenantId: "tenant-a",
+      agentId: "agent-a",
       clientId: "client-a",
       sessionKey: selected,
     });
-    const second = resolveGatewaySessionKey({
+    const second = resolveGatewayTurnIdentity({
       tenantId: "tenant-a",
+      agentId: "agent-a",
       clientId: "client-b",
       sessionKey: selected,
     });
 
-    expect(first.userId).toMatch(/^gateway-[a-f0-9]{64}$/);
-    expect(second.userId).toMatch(/^gateway-[a-f0-9]{64}$/);
-    expect(first.userId).not.toBe(second.userId);
-    expect(first).toMatchObject({ channelId: "shared", peerId: "thread-a" });
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+    expect(first.value.displaySessionKey.userId).toMatch(/^gateway-[a-f0-9]{64}$/);
+    expect(second.value.displaySessionKey.userId).toMatch(/^gateway-[a-f0-9]{64}$/);
+    expect(first.value.displaySessionKey.userId).not.toBe(second.value.displaySessionKey.userId);
+    expect(first.value.turnScope.endpoint.conversationId).toBe('["shared","thread-a"]');
+    expect(first.value.displaySessionKey.agentId).toBe("agent-a");
   });
 
-  it("rejects unverifiable, cross-agent, and cross-client stored ownership", () => {
-    expect(gatewaySessionOwnershipError(err(new Error("read failed")), "agent-a", "client-a")?.message)
-      .toMatch(/could not be verified/i);
-    expect(gatewaySessionOwnershipError(
-      ok({ metadata: { agentId: "agent-b", gatewayClientId: "client-a" } }),
-      "agent-a",
-      "client-a",
-    )?.message).toMatch(/different agent/i);
-    expect(gatewaySessionOwnershipError(
-      ok({ metadata: { agentId: "agent-a", gatewayClientId: "client-b" } }),
-      "agent-a",
-      "client-a",
-    )?.message).toMatch(/different gateway client/i);
+  it("ignores caller-selected user identity while preserving explicit agent authority", () => {
+    const resolved = resolveGatewayTurnIdentity({
+      tenantId: "tenant-a",
+      agentId: "specialist",
+      sessionKey: { userId: "forged-user", channelId: "shared" },
+    });
+
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.value.displaySessionKey).toMatchObject({
+      tenantId: "tenant-a",
+      agentId: "specialist",
+      userId: "gateway-anonymous",
+      peerId: "gateway-anonymous",
+    });
+    expect(resolved.value.displaySessionKey.userId).not.toBe("forged-user");
   });
 });

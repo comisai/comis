@@ -18,9 +18,8 @@
 
 import type { ComisLogger } from "@comis/core";
 import type { TypedEventBus } from "@comis/core";
-import { parseFormattedSessionKey } from "@comis/core";
 import type { SessionResetPolicyConfig, ResetPolicyOverride } from "@comis/core";
-import type { SessionStorePort, SessionDetailedEntry } from "@comis/core";
+import type { SessionStorePort, SessionDetailedEntry, SessionQueryScope } from "@comis/core";
 import type { ComputeDailyResetNextRun } from "@comis/core";
 import type { TimerPort, TimerHandle } from "@comis/core";
 import type { SessionLifecycle } from "./session-lifecycle.js";
@@ -67,6 +66,8 @@ export interface SessionResetSchedulerDeps {
   nowMs: () => number;
   /** Timer scheduling. Sweep-interval uses .unref() so it does not block shutdown. */
   timers: TimerPort;
+  /** Explicit tenant-agent authorities swept by this scheduler. */
+  listQueryScopes: () => readonly SessionQueryScope[];
 }
 
 /** Session reset scheduler interface. */
@@ -84,15 +85,14 @@ export interface SessionResetScheduler {
 // ---------------------------------------------------------------------------
 
 /**
- * Classify a session as dm, group, or thread based on its formatted key.
- *
- * If the parsed key has a guildId, it is a group session.
- * Otherwise (including unparseable keys), it falls back to "dm".
- * Thread classification is reserved for future platform metadata enrichment.
+ * Classify a session from its validated conversation partition.
  */
 export function classifySession(session: SessionDetailedEntry): SessionKind {
-  const parsed = parseFormattedSessionKey(session.sessionKey);
-  if (parsed?.guildId) return "group";
+  const partition = session.conversationScope.partition;
+  if (partition.kind === "endpoint-conversation" || partition.kind === "endpoint-conversation-principal") {
+    if (partition.endpoint.threadId !== undefined) return "thread";
+    if (partition.endpoint.conversationKind === "shared") return "group";
+  }
   return "dm";
 }
 
@@ -250,7 +250,23 @@ export function createSessionResetScheduler(
       return;
     }
 
-    const sessions = deps.sessionStore.listDetailed();
+    const sessions: SessionDetailedEntry[] = [];
+    for (const queryScope of deps.listQueryScopes()) {
+      const listed = deps.sessionStore.listDetailed(queryScope);
+      if (!listed.ok) {
+        deps.logger.warn(
+          {
+            tenantId: queryScope.tenantId,
+            agentId: queryScope.agentId,
+            hint: "Inspect session database integrity and restore storage availability before the next reset sweep.",
+            errorKind: listed.error.errorKind,
+          },
+          "Session reset scope could not be listed",
+        );
+        continue;
+      }
+      sessions.push(...listed.value);
+    }
     let resetCount = 0;
 
     for (const session of sessions) {
@@ -266,14 +282,23 @@ export function createSessionResetScheduler(
       const result = checkReset(policy, session, now, deps.computeDailyResetNextRun);
 
       if (result.reset) {
-        const parsed = parseFormattedSessionKey(session.sessionKey);
-        if (parsed) {
-          deps.sessionManager.expire(parsed);
+        const expired = deps.sessionManager.expire(session.conversationScope);
+        if (expired.ok && expired.value) {
           deps.eventBus.emit("session:expired", {
-            sessionKey: parsed,
+            conversationScope: session.conversationScope,
             reason: `auto-reset:${result.reason}`,
           });
           resetCount++;
+        } else if (!expired.ok) {
+          deps.logger.warn(
+            {
+              tenantId: session.tenantId,
+              agentId: session.agentId,
+              hint: "Inspect session database integrity and retry the reset after storage recovers.",
+              errorKind: expired.error.errorKind,
+            },
+            "Session reset deletion failed",
+          );
         }
       }
     }

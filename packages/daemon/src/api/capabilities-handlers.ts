@@ -40,12 +40,11 @@
 
 import {
   CapabilitiesIntrospectContract,
-  parseFormattedSessionKey,
   resolveAutonomy,
   stripInternalFields,
   systemGetEnv,
 } from "@comis/core";
-import type { PerAgentConfig, SessionKey } from "@comis/core";
+import type { PerAgentConfig } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
 import type { BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
@@ -86,8 +85,6 @@ export interface CapabilitiesHandlerDeps {
   agents: Record<string, PerAgentConfig>;
   /** The default agent the self-scope falls back to (operator/CLI origin, or an unknown agent). */
   defaultAgentId: string;
-  /** Tree-stable synthetic-root resolver. Absent ⇒ no live root ⇒ budget omitted. */
-  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
   /** Structured logger for the content-free §2.7 instrumentation. */
   logger: ComisLogger;
 }
@@ -109,11 +106,10 @@ export function createCapabilitiesHandlers(
       // unforgeable agent-origin signal). Fall back to the default agent for an
       // operator/CLI origin (no `_agentId`). NEVER an arbitrary `agentId` param.
       const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
-      // The caller session key the in-process leg injects (`_callerSessionKey`,
-      // setup-tools-capabilities.ts:75) — read BEFORE strip; used to resolve the
-      // live synthetic root for the budget snapshot.
-      const callerSessionKey =
-        typeof rawParams._callerSessionKey === "string" ? rawParams._callerSessionKey : undefined;
+      // The trusted in-process boundary resolves the tree root before dispatch.
+      // A display session key is never parsed here to recover authority.
+      const rootRunId =
+        typeof rawParams._rootRunId === "string" ? rawParams._rootRunId : undefined;
 
       // The AUTHORITATIVE held-cap set the in-process gate injected alongside
       // `_agentId` (`_capabilities` = `createAgentRpcCall`'s `heldCapabilities`,
@@ -146,8 +142,6 @@ export function createCapabilitiesHandlers(
       // (no caller key) or no-autonomy ⇒ both ABSENT — honest, never a fabricated zero snapshot.
       let budget: ReturnType<BoundedAutonomy["snapshot"]>["budget"] | undefined;
       let outwardQuota: ReturnType<BoundedAutonomy["snapshot"]>["outwardQuota"] | undefined;
-      const parsedKey = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
-      const rootRunId = parsedKey ? deps.resolveRootRunId?.(agentId, parsedKey) : undefined;
       if (rootRunId && deps.boundedAutonomy) {
         const snap = deps.boundedAutonomy.snapshot(rootRunId, agentId, "");
         budget = snap.budget;

@@ -679,7 +679,7 @@ export class IcWorkspaceManager extends LitElement {
     this._error = "";
 
     try {
-      this._status = await this.rpcClient.call<WorkspaceStatusDto>("workspace.status", { agentId: this.agentId });
+      this._status = await this.rpcClient.call("workspace.status", { agentId: this.agentId });
       this._loadState = "loaded";
     } catch (e) {
       this._error = e instanceof Error ? e.message : "Failed to load workspace status";
@@ -696,7 +696,7 @@ export class IcWorkspaceManager extends LitElement {
     }
 
     try {
-      const result = await this.rpcClient.call<{ content: string }>("workspace.readFile", { agentId: this.agentId, filePath: name });
+      const result = await this.rpcClient.call("workspace.readFile", { agentId: this.agentId, filePath: name });
       this._selectedFile = name;
       this._fileContent = result.content;
       this._editedContent = result.content;
@@ -720,7 +720,7 @@ export class IcWorkspaceManager extends LitElement {
     }
 
     try {
-      const result = await this.rpcClient.call<{ entries: WorkspaceDirEntry[] }>("workspace.listDir", { agentId: this.agentId, subdir: name });
+      const result = await this.rpcClient.call("workspace.listDir", { agentId: this.agentId, subdir: name });
       this._selectedSubdir = name;
       this._dirEntries = result.entries;
       this._selectedFile = null;
@@ -749,8 +749,8 @@ export class IcWorkspaceManager extends LitElement {
 
     try {
       const [statusResult, logResult] = await Promise.all([
-        rpc.call<GitStatusDto>("workspace.git.status", { agentId: this.agentId }),
-        rpc.call<{ commits: GitCommitDto[] }>("workspace.git.log", { agentId: this.agentId, limit: 20 }),
+        rpc.call("workspace.git.status", { agentId: this.agentId }),
+        rpc.call("workspace.git.log", { agentId: this.agentId, limit: 20 }),
       ]);
       this._gitStatus = statusResult;
       this._gitLog = logResult.commits;
@@ -768,7 +768,7 @@ export class IcWorkspaceManager extends LitElement {
     if (!this.rpcClient || !this.agentId) return;
 
     try {
-      const result = await this.rpcClient.call<{ diff: string }>("workspace.git.diff", { agentId: this.agentId, filePath });
+      const result = await this.rpcClient.call("workspace.git.diff", { agentId: this.agentId, filePath });
       this._gitDiff = result.diff;
       this._gitDiffFile = filePath;
     } catch (e) {

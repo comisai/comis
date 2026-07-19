@@ -77,15 +77,11 @@ export interface MemoryResult {
   embeddingCircuitBreakerState?: () => import("@comis/agent").CircuitState;
   /** R1 (132-05): daemon-owned per-tenant summarizer spend+breaker. ONE instance (mirrors the embedding breaker) injected setupAgents -> createPiExecutor -> setupContextEngine; gated per tenant, bounds AGGREGATE spend. */
   summarizerSpendBreaker: SummarizerSpendBreaker;
-  /** Cross-encoder reranker port. Defined only when at least one agent has
-   *  `rag.rerank.enabled === true` AND the model loaded — otherwise undefined and recall
-   *  degrades to fusion order. The all-default (rerank-off) config NEVER builds
-   *  it, so the ~606MB GGUF is not downloaded by default. */
+  /** Cross-encoder reranker port. Explicit `on` may download the model;
+   *  `auto` builds only when the model is already present. */
   rerankerPort?: import("@comis/core").RerankerPort;
-  /** Whether the reranker GGUF is ALREADY present locally — computed
-   *  ONCE here via the no-download `rerankerModelPresent` probe. The composition root threads
-   *  this SAME boolean to `setupAgents` so the per-agent effective `rag.rerank.enabled`
-   *  precedence and this build gate consult one source (no two-gate drift). */
+  /** Whether the reranker model is already present locally, computed once
+   *  with a no-download probe and shared with per-agent mode resolution. */
   rerankerModelPresent: boolean;
   /** Entity-associative store. The SOLE adapter for the segregated
    *  `MemoryEntityStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
@@ -384,22 +380,12 @@ export async function setupMemory(deps: {
       );
     }
   }
-  // someAgentExplicitOn preserves the explicit opt-in DOWNLOAD path (operator set
-  // `rag.rerank.enabled: true` on a fresh machine still fetches).
-  // Read the SAME raw pre-Zod-default signal the per-agent effective-rerank
-  // precedence consumes (container.rawAgentRerankEnabled), NOT the parsed
-  // container.config.agents. Both gates therefore share ONE definition of "explicitly
-  // on" — a future change to the rerank schema default can no longer silently desync the
-  // build gate from the per-agent flip. Falls back to scanning the parsed config only
-  // when the raw map is absent (non-bootstrap AppContainer); there `=== true` is still
-  // correct because Zod defaults unset to false, so `true` can only be an explicit opt-in.
-  const rawRerankMap = container.rawAgentRerankEnabled;
-  const someAgentExplicitOn = rawRerankMap
-    ? [...rawRerankMap.values()].some((enabled) => enabled === true)
-    : Object.values(container.config.agents ?? {}).some(
-        (agent) => agent?.rag?.rerank?.enabled === true,
-      );
-  const shouldBuildReranker = someAgentExplicitOn || modelPresent;
+  const rerankModes = Object.values(container.config.agents ?? {}).map(
+    (agent) => agent?.rag?.rerank?.mode,
+  );
+  const someAgentExplicitOn = rerankModes.some((mode) => mode === "on");
+  const someAgentAuto = rerankModes.some((mode) => mode === "auto");
+  const shouldBuildReranker = someAgentExplicitOn || (someAgentAuto && modelPresent);
   // Boundary decision an operator must be able to reconstruct (AGENTS.md §2.7). Booleans
   // only — never the model-path body beyond the non-secret config path.
   memoryLogger.debug(
@@ -568,6 +554,7 @@ export async function setupMemory(deps: {
   // (Once the `feedback` schema field is added this access is live; until
   // then the forward-declared view yields false = off.) Fire-and-forget/non-fatal.
   wireMemoryUsefulness({
+    tenantId: container.config.tenantId,
     eventBus: container.eventBus,
     usefulnessStore,
     clock,

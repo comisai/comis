@@ -20,11 +20,7 @@ import type {
   SessionListItem,
   SessionMessage,
 } from "./types/index.js";
-import {
-  validateRequest,
-  validateResponse,
-  type MethodName,
-} from "./contracts.generated.js";
+import type { RpcClient } from "./rpc-client.js";
 /** Memory search result (api-client local -- not shared with other modules) */
 export interface MemorySearchResult {
   readonly id: string;
@@ -53,7 +49,7 @@ export interface ChatHistoryMessage {
 export type SseEventHandler = (event: string, data: unknown) => void;
 
 /** RPC call function signature for JSON-RPC 2.0 method invocation */
-export type RpcCallFn = <T>(method: string, params?: unknown) => Promise<T>;
+export type RpcCallFn = RpcClient["call"];
 
 /** Parameters for browsing memory entries */
 export interface BrowseMemoryParams {
@@ -125,56 +121,6 @@ export interface ApiClient {
   exportSessionsBulk(keys: string[]): Promise<string>;
   /** Bulk delete sessions */
   deleteSessionsBulk(keys: string[]): Promise<{ deleted: number }>;
-}
-
-/**
- * Dev-mode validation gate, applied to the browser.
- *
- * In Vite dev/build, `import.meta.env.DEV` is `true` for `vite dev` and `false`
- * for production builds. Validation surfaces contract drift fast in development
- * but never crashes a production SPA on an unexpected daemon response shape —
- * the daemon-side handler is the trust boundary; the browser-side validator is
- * a sanity check.
- *
- * Wrapped in try/catch so non-Vite runtimes (unit tests, SSR, etc.) safely
- * fall through to `false` without ReferenceError on `import.meta.env`.
- */
-function isDevValidationActive(): boolean {
-  try {
-    const meta = import.meta as { env?: { DEV?: boolean } };
-    return meta.env?.DEV === true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Typed JSON-RPC call helper — dispatches through the generated CONTRACTS map.
- *
- * Validates request + response against the inlined JSON Schema literals in
- * `./contracts.generated.ts` when DEV mode is active. Production builds skip
- * validation (defense-in-depth: the daemon validates server-side, which is the
- * load-bearing trust boundary).
- *
- * @internal Used by every method-wrapper below that dispatches over the RPC
- *           channel; consolidates the prior `rpcCall(method, params)` pattern
- *           through the single generated artifact.
- */
-function typedCall<T>(
-  rpcCall: RpcCallFn,
-  method: MethodName,
-  params: unknown,
-): Promise<T> {
-  const validating = isDevValidationActive();
-  if (validating && !validateRequest(method, params)) {
-    throw new Error(`Invalid RPC request for ${method}`);
-  }
-  return rpcCall<T>(method, params).then((raw) => {
-    if (validating && !validateResponse(method, raw)) {
-      throw new Error(`Invalid RPC response for ${method}`);
-    }
-    return raw;
-  });
 }
 
 /**
@@ -311,12 +257,18 @@ export function createApiClient(
     async browseMemory(
       params: BrowseMemoryParams,
     ): Promise<{ entries: MemoryEntry[]; total: number }> {
-      if (rpcCall) {
-        return typedCall<{ entries: MemoryEntry[]; total: number }>(
-          rpcCall,
-          "memory.browse",
-          params,
-        );
+      if (rpcCall && params.from === undefined && params.to === undefined) {
+        const result = await rpcCall("memory.browse", {
+          ...(params.offset !== undefined ? { offset: params.offset } : {}),
+          ...(params.limit !== undefined ? { limit: params.limit } : {}),
+          ...(params.type !== undefined ? { memory_type: params.type } : {}),
+          ...(params.trust !== undefined ? { trust_level: params.trust } : {}),
+          ...(params.agentId !== undefined ? { agent_id: params.agentId } : {}),
+        });
+        return {
+          entries: result.entries as unknown as MemoryEntry[],
+          total: result.total,
+        };
       }
       const qs = new URLSearchParams();
       if (params.offset !== undefined) qs.set("offset", String(params.offset));
@@ -334,7 +286,7 @@ export function createApiClient(
 
     async deleteMemory(id: string): Promise<void> {
       if (rpcCall) {
-        await typedCall<void>(rpcCall, "memory.delete", { id });
+        await rpcCall("memory.delete", { ids: [id] });
         return;
       }
       await fetchJson(`/api/memory/${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -342,7 +294,7 @@ export function createApiClient(
 
     async deleteMemoryBulk(ids: string[]): Promise<{ deleted: number }> {
       if (rpcCall) {
-        return typedCall<{ deleted: number }>(rpcCall, "memory.delete", { ids });
+        return rpcCall("memory.delete", { ids });
       }
       return fetchJson<{ deleted: number }>("/api/memory/bulk-delete", {
         method: "POST",
@@ -352,7 +304,11 @@ export function createApiClient(
 
     async exportMemory(ids?: string[]): Promise<string> {
       if (rpcCall) {
-        return typedCall<string>(rpcCall, "memory.export", ids ? { ids } : {});
+        const result = await rpcCall("memory.export", {});
+        const selected = ids === undefined
+          ? result.entries
+          : result.entries.filter((entry) => ids.includes(String(entry.id)));
+        return selected.map((entry) => JSON.stringify(entry)).join("\n");
       }
       return fetchText("/api/memory/export", {
         method: "POST",
@@ -363,11 +319,8 @@ export function createApiClient(
     // --- Session management methods ---
 
     async listSessions(params?: ListSessionsParams): Promise<SessionListItem[]> {
-      if (rpcCall) {
-        const result = await typedCall<{
-          sessions: SessionListItem[];
-          total: number;
-        }>(rpcCall, "session.list", params ?? {});
+      if (rpcCall && params === undefined) {
+        const result = await rpcCall("session.list", {});
         return result.sessions;
       }
       const qs = new URLSearchParams();
@@ -382,11 +335,10 @@ export function createApiClient(
       key: string,
     ): Promise<{ session: SessionInfo; messages: SessionMessage[] }> {
       if (rpcCall) {
-        return typedCall<{ session: SessionInfo; messages: SessionMessage[] }>(
-          rpcCall,
-          "session.history",
-          { session_key: key },
-        );
+        return rpcCall("session.history", { session_key: key }) as Promise<{
+          session: SessionInfo;
+          messages: SessionMessage[];
+        }>;
       }
       return fetchJson<{ session: SessionInfo; messages: SessionMessage[] }>(
         `/api/sessions/${encodeURIComponent(key)}`,
@@ -395,7 +347,7 @@ export function createApiClient(
 
     async resetSession(key: string): Promise<void> {
       if (rpcCall) {
-        await typedCall<void>(rpcCall, "session.reset", { session_key: key });
+        await rpcCall("session.reset", { session_key: key });
         return;
       }
       await fetchJson(`/api/sessions/${encodeURIComponent(key)}/reset`, { method: "POST" });
@@ -403,7 +355,7 @@ export function createApiClient(
 
     async compactSession(key: string): Promise<void> {
       if (rpcCall) {
-        await typedCall<void>(rpcCall, "session.compact", { session_key: key });
+        await rpcCall("session.compact", { session_key: key });
         return;
       }
       await fetchJson(`/api/sessions/${encodeURIComponent(key)}/compact`, { method: "POST" });
@@ -411,7 +363,7 @@ export function createApiClient(
 
     async deleteSession(key: string): Promise<void> {
       if (rpcCall) {
-        await typedCall<void>(rpcCall, "session.delete", { session_key: key });
+        await rpcCall("session.delete", { session_key: key });
         return;
       }
       await fetchJson(`/api/sessions/${encodeURIComponent(key)}`, { method: "DELETE" });
@@ -419,14 +371,18 @@ export function createApiClient(
 
     async exportSession(key: string): Promise<string> {
       if (rpcCall) {
-        return typedCall<string>(rpcCall, "session.export", { session_key: key });
+        const result = await rpcCall("session.export", { session_key: key });
+        return JSON.stringify(result, null, 2);
       }
       return fetchText(`/api/sessions/${encodeURIComponent(key)}/export`);
     },
 
     async resetSessionsBulk(keys: string[]): Promise<{ reset: number }> {
       if (rpcCall) {
-        return typedCall<{ reset: number }>(rpcCall, "session.reset", { keys });
+        const results = await Promise.all(
+          keys.map((sessionKey) => rpcCall("session.reset", { session_key: sessionKey })),
+        );
+        return { reset: results.length };
       }
       return fetchJson<{ reset: number }>("/api/sessions/bulk-reset", {
         method: "POST",
@@ -436,7 +392,10 @@ export function createApiClient(
 
     async exportSessionsBulk(keys: string[]): Promise<string> {
       if (rpcCall) {
-        return typedCall<string>(rpcCall, "session.export", { keys });
+        const results = await Promise.all(
+          keys.map((sessionKey) => rpcCall("session.export", { session_key: sessionKey })),
+        );
+        return results.map((result) => JSON.stringify(result)).join("\n");
       }
       return fetchText("/api/sessions/bulk-export", {
         method: "POST",
@@ -446,7 +405,10 @@ export function createApiClient(
 
     async deleteSessionsBulk(keys: string[]): Promise<{ deleted: number }> {
       if (rpcCall) {
-        return typedCall<{ deleted: number }>(rpcCall, "session.delete", { keys });
+        const results = await Promise.all(
+          keys.map((sessionKey) => rpcCall("session.delete", { session_key: sessionKey })),
+        );
+        return { deleted: results.length };
       }
       return fetchJson<{ deleted: number }>("/api/sessions/bulk-delete", {
         method: "POST",

@@ -15,8 +15,13 @@
  */
 
 import type Database from "better-sqlite3";
+import {
+  buildScopedFtsMatch,
+  findMemoryAuthorityPartition,
+  memoryVisibilityKeys,
+} from "./memory-authority.js";
 import { z } from "zod";
-import { routeSearchQuery } from "@comis/core";
+import { routeSearchQuery, type MemoryRecallScope } from "@comis/core";
 import { isVecAvailable } from "./schema.js";
 import { createRowMapper } from "./row-mapper.js";
 import { IdProjectionRowSchema } from "./row-schemas.js";
@@ -147,16 +152,19 @@ function searchByTrigram(
   db: Database.Database,
   match: string,
   limit: number,
+  partitionIds: readonly number[],
 ): Array<{ id: string; rank: number }> {
   const stmt = db.prepare(`
-    SELECT m.id, fts.rank
+    SELECT m.id, bm25(memory_fts_tri, 1.0, 0.0) AS rank
     FROM memory_fts_tri fts
     JOIN memories m ON m.rowid = fts.rowid
     WHERE memory_fts_tri MATCH ?
-    ORDER BY fts.rank
+    ORDER BY rank
     LIMIT ?
   `);
-  const parsed = ftsSearchMapper.parseRows(stmt.all(match, limit));
+  const parsed = ftsSearchMapper.parseRows(
+    stmt.all(buildScopedFtsMatch(match, partitionIds), limit),
+  );
   // Degrade-on-validation-error: identical discipline to the word lane.
   const rows = parsed.ok ? parsed.value : [];
   return rows.map((r) => ({ id: r.id, rank: r.rank }));
@@ -200,28 +208,35 @@ export function searchByText(
   db: Database.Database,
   query: string,
   limit: number,
+  scope: MemoryRecallScope,
 ): Array<{ id: string; rank: number }> {
+  const partitionIds = memoryVisibilityKeys(scope)
+    .map((visibilityKey) => findMemoryAuthorityPartition(db, { ...scope, visibilityKey }))
+    .filter((partitionId): partitionId is number => partitionId !== undefined);
+  if (partitionIds.length === 0) return [];
   // LTM uses OR-join (buildFtsQuery parity — broad recall). Lane "word"/"scan"
   // → today's word body below, untouched. Lane "tri" + twin available → the
   // trigram lane; lane "tri" + twin absent → fall through to the word body.
   const route = routeSearchQuery(query, { join: "or" });
   if (route.lane === "tri" && route.match !== undefined && isMemoryTriAvailable(db)) {
-    return searchByTrigram(db, route.match, limit);
+    return searchByTrigram(db, route.match, limit, partitionIds);
   }
 
   const ftsQuery = buildFtsQuery(query);
   if (ftsQuery === null) return [];
 
   const stmt = db.prepare(`
-    SELECT m.id, fts.rank
+    SELECT m.id, bm25(memory_fts, 1.0, 0.0) AS rank
     FROM memory_fts fts
     JOIN memories m ON m.rowid = fts.rowid
     WHERE memory_fts MATCH ?
-    ORDER BY fts.rank
+    ORDER BY rank
     LIMIT ?
   `);
 
-  const parsed = ftsSearchMapper.parseRows(stmt.all(ftsQuery, limit));
+  const parsed = ftsSearchMapper.parseRows(
+    stmt.all(buildScopedFtsMatch(ftsQuery, partitionIds), limit),
+  );
   // Degrade-on-validation-error: FTS hit is non-fatal; return empty result.
   const rows = parsed.ok ? parsed.value : [];
 
@@ -245,7 +260,12 @@ export function searchByVector(
   db: Database.Database,
   queryEmbedding: number[],
   k: number,
+  scope: MemoryRecallScope,
 ): Array<{ id: string; distance: number }> {
+  const partitionIds = memoryVisibilityKeys(scope)
+    .map((visibilityKey) => findMemoryAuthorityPartition(db, { ...scope, visibilityKey }))
+    .filter((partitionId): partitionId is number => partitionId !== undefined);
+  if (partitionIds.length === 0) return [];
   // Convert to Float32Array as required by sqlite-vec
   const float32 = new Float32Array(queryEmbedding);
 
@@ -253,12 +273,14 @@ export function searchByVector(
     SELECT memory_id, distance
     FROM vec_memories
     WHERE embedding MATCH ?
+    AND authority_partition_id = ?
     AND k = ?
   `);
 
-  const parsed = vecSearchMapper.parseRows(stmt.all(float32, k));
-  // Degrade-on-validation-error: vector hit is non-fatal; return empty result.
-  const rows = parsed.ok ? parsed.value : [];
+  const rows = partitionIds.flatMap((partitionId) => {
+    const parsed = vecSearchMapper.parseRows(stmt.all(float32, BigInt(partitionId), k));
+    return parsed.ok ? parsed.value : [];
+  }).sort((left, right) => left.distance - right.distance).slice(0, k);
 
   return rows.map((r) => ({
     id: r.memory_id,
@@ -339,22 +361,9 @@ export function computeRRF(
 /** Options for hybrid search filtering and limits. */
 export interface HybridSearchOptions {
   limit: number;
+  scope: MemoryRecallScope;
   trustLevel?: string;
   memoryType?: string;
-  tenantId?: string;
-  /**
-   * Recall is scoped by (tenant_id, agent_id) — AGENT-scoped BY DESIGN, NOT by
-   * user_id. An agent has ONE shared memory across every conversation it holds
-   * within a tenant; the per-row `user_id`/`source_who` is PROVENANCE (who said
-   * it), never a recall filter. This is correct for the single-owner model (the
-   * owner talks to their agent from multiple chats and shares one memory). NOTE
-   * for a MULTI-USER deployment (distinct real people under one tenant+agent): a
-   * personal fact from user A is recallable for user B — a privacy consideration
-   * if personal facts should be user-private. Making recall user-scoped is a
-   * deliberate future memory-model change (the adapter already supports a
-   * user_id predicate for get/delete — sqlite-memory-adapter.ts), NOT a bug.
-   */
-  agentId?: string;
   /**
    * Read-side NL temporal-range filter. Epoch ms. ANDed onto the
    * post-fusion WHERE as `occurred_at BETWEEN ? AND ?` (bound params) — it
@@ -393,11 +402,12 @@ export function hybridSearch(
   vecAvailable?: boolean,
 ): HybridSearchResult[] {
   const overfetchLimit = options.limit * 2;
+  const scope = options.scope;
   // Use per-instance vec state when provided, fall back to global
   const vecIsAvailable = vecAvailable ?? isVecAvailable();
 
   // ── FTS5 text search ──
-  const ftsRaw = searchByText(db, query, overfetchLimit);
+  const ftsRaw = searchByText(db, query, overfetchLimit, scope);
 
   // Assign 1-based ranks for RRF
   const ftsRanked = ftsRaw.map((item, idx) => ({
@@ -409,7 +419,7 @@ export function hybridSearch(
   let vecRanked: Array<{ id: string; rank: number }> = [];
 
   if (queryEmbedding !== undefined && queryEmbedding.length > 0 && vecIsAvailable) {
-    const vecRaw = searchByVector(db, queryEmbedding, overfetchLimit);
+    const vecRaw = searchByVector(db, queryEmbedding, overfetchLimit, scope);
 
     vecRanked = vecRaw.map((item, idx) => ({
       id: item.id,
@@ -446,8 +456,14 @@ export function hybridSearch(
   if (candidateIds.length === 0) return [];
 
   // The always-applied base condition + any caller-supplied narrowing conditions.
-  const conditions: string[] = ["evicted_at IS NULL"];
-  const params: unknown[] = [];
+  const conditions: string[] = [
+    "evicted_at IS NULL",
+    "tenant_id = ?",
+    "agent_id = ?",
+    "((visibility = 'conversation' AND conversation_ref = ?) OR (visibility = 'principal' AND principal_id = ?)"
+      + (scope.includeAgentShared ? " OR visibility = 'agent-shared')" : ")"),
+  ];
+  const params: unknown[] = [scope.tenantId, scope.agentId, scope.conversationRef, scope.principalId];
 
   if (options.trustLevel) {
     conditions.push("trust_level = ?");
@@ -456,14 +472,6 @@ export function hybridSearch(
   if (options.memoryType) {
     conditions.push("memory_type = ?");
     params.push(options.memoryType);
-  }
-  if (options.tenantId) {
-    conditions.push("tenant_id = ?");
-    params.push(options.tenantId);
-  }
-  if (options.agentId) {
-    conditions.push("agent_id = ?");
-    params.push(options.agentId);
   }
   if (options.occurredAtRange) {
     // ANDed onto the scoped clause (never widens). Bound params, never

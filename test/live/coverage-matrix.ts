@@ -55,7 +55,7 @@ export { storyCoverageContributions } from "./journeys/registry.js";
 
 export const COVERAGE_DIMENSIONS = [
   // Context engine
-  "contextEngine.version",
+  "contextEngine.contextThreshold",
   // Embedding
   "embedding.provider",
   "local.gpu",
@@ -71,7 +71,7 @@ export const COVERAGE_DIMENSIONS = [
   "recall.graphSpread",
   "recall.entity",
   // RAG options
-  "rag.rerank.enabled",
+  "rag.rerank.mode",
   "rag.mmr.enabled",
   "rag.pinned.enabled",
   "rag.forget.enabled",
@@ -146,18 +146,18 @@ export type DimensionName = (typeof COVERAGE_DIMENSIONS)[number];
  */
 export const coverageMatrix: readonly CoverageCell[] = [
   // ===========================================================================
-  // contextEngine.version (2 cells)
+  // contextEngine.contextThreshold (2 cells)
   // ===========================================================================
   {
-    dimension: "contextEngine.version",
-    modeValue: "pipeline",
+    dimension: "contextEngine.contextThreshold",
+    modeValue: "low",
     status: "covered",
-    reference: "test/live/scenarios/ctx/pipeline.test.ts",
+    reference: "test/live/scenarios/ctx/dag-invariants.test.ts",
     phase: "138",
   },
   {
-    dimension: "contextEngine.version",
-    modeValue: "dag",
+    dimension: "contextEngine.contextThreshold",
+    modeValue: "high",
     status: "covered",
     reference: "test/live/scenarios/ctx/dag-invariants.test.ts",
     phase: "138",
@@ -381,15 +381,15 @@ export const coverageMatrix: readonly CoverageCell[] = [
   // RAG options (14 cells: 7 boolean dimensions × on/off, minus rag.includeTrustLevels)
   // ===========================================================================
   {
-    dimension: "rag.rerank.enabled",
-    modeValue: "true",
+    dimension: "rag.rerank.mode",
+    modeValue: "on",
     status: "covered",
     reference: "test/live/scenarios/memory/recall-lanes.test.ts",
     phase: "139",
   },
   {
-    dimension: "rag.rerank.enabled",
-    modeValue: "false",
+    dimension: "rag.rerank.mode",
+    modeValue: "off",
     status: "covered",
     reference: "test/live/scenarios/memory/recall-lanes.test.ts",
     phase: "139",

@@ -66,11 +66,11 @@ const SYNTHESIZED_RESULT_MARKER = "[tool result missing — synthesized placehol
 // The deterministic Level-3 leaf-fallback marker (constants.ts).
 const LEAF_FALLBACK_SUMMARY_MARKER = "[lcd-leaf-fallback]";
 
-const CONVERSATION_ID = "conv-synthetic";
+const CONVERSATION_ID = `cv_${"s".repeat(43)}`;
 const FIXED_CREATED_AT_BASE = 1000;
 
 const SCOPE: ContextStoreScope = {
-  conversationId: CONVERSATION_ID,
+  conversationRef: CONVERSATION_ID,
   tenantId: "tenant_a",
   agentId: "agent_a",
   sessionKey: "sess-a",
@@ -304,6 +304,7 @@ function makeDagDeps(store: ContextStorePort, contextWindow: number): ContextEng
   const logger = createMockLogger();
   return {
     logger: logger as unknown as ContextEngineDeps["logger"],
+    clock: { now: () => FIXED_CREATED_AT_BASE },
     getModel: () => ({ reasoning: true, contextWindow, maxTokens: 8_192 }),
     // The dag assembler fails CLOSED to the nano cap (16K)
     // when modelProfile is absent. In production the profile is always threaded
@@ -318,7 +319,7 @@ function makeDagDeps(store: ContextStorePort, contextWindow: number): ContextEng
     } as ModelProfile,
     getSystemTokensEstimate: () => 0,
     contextStore: store,
-    conversationId: CONVERSATION_ID,
+    conversationRef: CONVERSATION_ID,
     agentId: "agent_a",
     tenantId: "tenant_a", // full read scope (else the assembler fails closed)
     sessionKey: "sess-a",
@@ -326,7 +327,7 @@ function makeDagDeps(store: ContextStorePort, contextWindow: number): ContextEng
 }
 
 const dagConfig = (freshTailTurns: number) =>
-  ({ enabled: true, thinkingKeepTurns: 10, historyTurns: 15, version: "dag", freshTailTurns }) as unknown as Parameters<typeof createLcdContextEngine>[0];
+  ({ enabled: true, thinkingKeepTurns: 10, freshTailTurns }) as unknown as Parameters<typeof createLcdContextEngine>[0];
 
 /** Sum estimated tokens over an assembled message array. */
 function estimateArrayTokens(msgs: AgentMessage[]): number {

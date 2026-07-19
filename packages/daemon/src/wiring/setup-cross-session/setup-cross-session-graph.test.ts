@@ -67,7 +67,17 @@ import {
   type ExecuteSubAgentDeps,
 } from "./setup-cross-session-graph.js";
 import { createWorktreeRegistry } from "../setup-worktree-sweep.js";
-import { runWithContext, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+import { createConversationLocator, runWithContext, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+
+function makeConversation(tenantId: string, agentId: string) {
+  const result = createConversationLocator({
+    tenantId,
+    agentId,
+    partition: { kind: "agent" },
+  });
+  if (!result.ok) throw result.error;
+  return result.value;
+}
 
 describe("setup-cross-session-graph", () => {
   it("buildExecuteSubAgent: exported as a callable function", () => {
@@ -135,7 +145,8 @@ describe("setup-cross-session-graph", () => {
   // the bare { promptTimeoutMs } shape is the provenance-collapse bug.
   // -------------------------------------------------------------------------
   describe("promptTimeout provenance from the spawn producer", () => {
-    const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
+    const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1", agentId: "agent-2" };
+    const conversation = makeConversation("t-1", "agent-2");
 
     function makeGraphDeps(metadata: Record<string, unknown>) {
       const capturedOverrides: Array<Record<string, unknown>> = [];
@@ -170,7 +181,7 @@ describe("setup-cross-session-graph", () => {
           },
           secretManager: { get: vi.fn(() => "test-key") },
         },
-        sessionStore: { loadByFormattedKey: vi.fn(() => ({ messages: [], metadata })) },
+        sessionStore: { load: vi.fn(() => ({ ok: true, value: { messages: [], metadata } })) },
         assembleToolsForAgent: vi.fn(async () => [{ name: "tool-1" }]),
         getExecutor: vi.fn(() => executor),
         fileLock: {
@@ -188,7 +199,7 @@ describe("setup-cross-session-graph", () => {
       const { deps, capturedOverrides, executor } = makeGraphDeps({ graphSharedDir: "/tmp/graph-shared" });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "task");
 
       expect(executor.execute).toHaveBeenCalledOnce();
       expect(capturedOverrides[0].promptTimeout).toEqual({
@@ -201,7 +212,7 @@ describe("setup-cross-session-graph", () => {
       const { deps, capturedOverrides, executor } = makeGraphDeps({});
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "task");
 
       expect(executor.execute).toHaveBeenCalledOnce();
       expect(capturedOverrides[0].promptTimeout).toEqual({
@@ -223,7 +234,8 @@ describe("setup-cross-session-graph", () => {
 
       await executeSubAgent(
         "agent-2",
-        sessionKey as Parameters<typeof executeSubAgent>[1],
+        sessionKey,
+        conversation,
         "task",
         undefined,
         undefined,
@@ -239,7 +251,7 @@ describe("setup-cross-session-graph", () => {
       const { deps, capturedOverrides, executor } = makeGraphDeps({});
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "task");
 
       expect(executor.execute).toHaveBeenCalledOnce();
       expect(capturedOverrides[0].tokenBudget).toBeUndefined();
@@ -268,7 +280,8 @@ describe("setup-cross-session-graph", () => {
         deliveryOrigin,
       }, () => executeSubAgent(
         "agent-2",
-        { ...sessionKey, threadId: "topic-1" } as Parameters<typeof executeSubAgent>[1],
+        { ...sessionKey, threadId: "topic-1" },
+        conversation,
         "task",
       ));
 
@@ -285,7 +298,8 @@ describe("setup-cross-session-graph", () => {
 
       await executeSubAgent(
         "agent-2",
-        sessionKey as Parameters<typeof executeSubAgent>[1],
+        sessionKey,
+        conversation,
         "task",
         undefined,
         undefined,
@@ -322,7 +336,8 @@ describe("setup-cross-session-graph", () => {
   // the lifecycle module exists.
   // -------------------------------------------------------------------------
   describe("executeSubAgent worktree create/run/clean wiring", () => {
-    const sessionKey = { channelId: "chan-wt", userId: "user-wt", tenantId: "t-wt" };
+    const sessionKey = { channelId: "chan-wt", userId: "user-wt", tenantId: "t-wt", agentId: "agent-2" };
+    const conversation = makeConversation("t-wt", "agent-2");
     const DATA_DIR = "/data";
     // workspace-agent-2 (resolveWorkspaceDir: <dataDir>/workspace-<agentId>).
     const WORKSPACE = "/data/workspace-agent-2";
@@ -370,7 +385,7 @@ describe("setup-cross-session-graph", () => {
           },
           secretManager: { get: vi.fn(() => "test-key") },
         },
-        sessionStore: { loadByFormattedKey: vi.fn(() => ({ messages: [], metadata: opts.metadata })) },
+        sessionStore: { load: vi.fn(() => ({ ok: true, value: { messages: [], metadata: opts.metadata } })) },
         assembleToolsForAgent: vi.fn(async () => [{ name: "tool-1" }]),
         getExecutor: vi.fn(() => executor),
         fileLock: { acquire: vi.fn(), release: vi.fn(), withLock: vi.fn(), isLocked: vi.fn(async () => false), cleanupStaleLocks: vi.fn(async () => 0) },
@@ -385,7 +400,7 @@ describe("setup-cross-session-graph", () => {
       });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "wt task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "wt task");
 
       // Honest wiring: git worktree add actually ran.
       const addCall = gitCalls.find((c) => c.args[0] === "worktree" && c.args[1] === "add");
@@ -404,7 +419,7 @@ describe("setup-cross-session-graph", () => {
       });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "wt task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "wt task");
 
       expect(gitCalls.some((c) => c.args[0] === "worktree" && c.args[1] === "remove")).toBe(true);
       // Clean worktree reclaimed in-line → registry empty.
@@ -418,7 +433,7 @@ describe("setup-cross-session-graph", () => {
       });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "wt task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "wt task");
 
       // The dangerous op was NEVER attempted on the dirty tree.
       expect(gitCalls.some((c) => c.args[0] === "worktree" && c.args[1] === "remove")).toBe(false);
@@ -434,7 +449,7 @@ describe("setup-cross-session-graph", () => {
       });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "plain task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "plain task");
 
       expect(gitCalls).toHaveLength(0);
       expect(capturedOverrides[0].workspaceDir).toBeUndefined();
@@ -447,7 +462,7 @@ describe("setup-cross-session-graph", () => {
       });
       const executeSubAgent = buildExecuteSubAgent(deps);
 
-      await executeSubAgent("agent-2", sessionKey as Parameters<typeof executeSubAgent>[1], "wt task");
+      await executeSubAgent("agent-2", sessionKey, conversation, "wt task");
 
       // No git calls (no seam), but the child still ran in its shared workspace.
       expect(gitCalls).toHaveLength(0);

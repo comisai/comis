@@ -13,7 +13,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ok, err, type Result } from "@comis/shared";
-import type { DurableRunRecord, DurableRunResumeClaimOutcome } from "@comis/core";
+import {
+  createConversationRef,
+  type DurableRunRecord,
+  type DurableRunResumeClaimOutcome,
+} from "@comis/core";
 
 import {
   buildResumableRow,
@@ -92,14 +96,24 @@ function makeFakeFs(over?: {
 }
 
 /** A canned resumable row for the loader tests. */
+const CONVERSATION_SCOPE = {
+  tenantId: "tenant-a",
+  agentId: "agent-a",
+  partition: { kind: "principal" as const, principalId: "user-a" },
+};
+const conversationReference = createConversationRef(CONVERSATION_SCOPE);
+if (!conversationReference.ok) throw conversationReference.error;
+const CONVERSATION_REF = conversationReference.value;
+
 function makeRow(over?: Partial<DurableRunRecord>): DurableRunRecord {
   return {
     checkpointId: "checkpoint-abc",
     rootRunId: "root-abc",
+    tenantId: "tenant-a",
     agentId: "agent-a",
-    sessionKey: "tenant-a:user-a:chat-a",
-    ownerTenantId: "tenant-a",
-    ownerUserId: "user-a",
+    conversationRef: CONVERSATION_REF,
+    conversationScope: CONVERSATION_SCOPE,
+    principalId: "user-a",
     deliveryOrigin: null,
     spawnTree: [],
     caps: [],
@@ -121,10 +135,11 @@ function makeRow(over?: Partial<DurableRunRecord>): DurableRunRecord {
 }
 
 const RESUME_PRINCIPAL: ResumePrincipal = {
+  tenantId: "tenant-a",
   agentId: "agent-a",
-  sessionKey: "tenant-a:user-a:chat-a",
-  ownerTenantId: "tenant-a",
-  ownerUserId: "user-a",
+  conversationRef: CONVERSATION_REF,
+  conversationScope: CONVERSATION_SCOPE,
+  principalId: "user-a",
   deliveryOrigin: null,
   trustLevel: "user",
   caps: [],
@@ -134,10 +149,11 @@ function durableInput(over: Partial<DurableRowInput> = {}): DurableRowInput {
   return {
     checkpointId: "checkpoint-1",
     rootRunId: "root-1",
+    tenantId: RESUME_PRINCIPAL.tenantId,
     agentId: RESUME_PRINCIPAL.agentId,
-    sessionKey: RESUME_PRINCIPAL.sessionKey,
-    ownerTenantId: RESUME_PRINCIPAL.ownerTenantId,
-    ownerUserId: RESUME_PRINCIPAL.ownerUserId,
+    conversationRef: RESUME_PRINCIPAL.conversationRef,
+    conversationScope: RESUME_PRINCIPAL.conversationScope,
+    principalId: RESUME_PRINCIPAL.principalId,
     deliveryOrigin: RESUME_PRINCIPAL.deliveryOrigin,
     caps: [],
     leaseIds: [],
@@ -282,10 +298,11 @@ describe("orchestrate-durable — buildResumableRow", () => {
     // the flat arm — never a DAG {nodeId,status}[].
     expect(Array.isArray(row.spawnTree)).toBe(true);
     expect(row.spawnTree).toEqual([]);
+    expect(row.tenantId).toBe(RESUME_PRINCIPAL.tenantId);
     expect(row.agentId).toBe(RESUME_PRINCIPAL.agentId);
-    expect(row.sessionKey).toBe(RESUME_PRINCIPAL.sessionKey);
-    expect(row.ownerTenantId).toBe(RESUME_PRINCIPAL.ownerTenantId);
-    expect(row.ownerUserId).toBe(RESUME_PRINCIPAL.ownerUserId);
+    expect(row.conversationRef).toBe(RESUME_PRINCIPAL.conversationRef);
+    expect(row.conversationScope).toEqual(RESUME_PRINCIPAL.conversationScope);
+    expect(row.principalId).toBe(RESUME_PRINCIPAL.principalId);
     expect(row.caps).toEqual([]);
     expect(row.leaseIds).toEqual([]);
     expect(row.budgetConsumed).toBe(0.25);
@@ -449,9 +466,7 @@ describe("orchestrate-durable — loadResumeSpec", () => {
     const runs = makeFakeRuns({
       getRow: makeRow({
         agentId: "agent-owner",
-        sessionKey: "tenant-a:user-a:chat-a",
-        ownerTenantId: "tenant-a",
-        ownerUserId: "user-a",
+        conversationScope: { ...CONVERSATION_SCOPE, agentId: "agent-owner" },
         deliveryOrigin: null,
       }),
     });
@@ -460,10 +475,11 @@ describe("orchestrate-durable — loadResumeSpec", () => {
       resumeRunId: "checkpoint-owner",
       workspacePath,
       principal: {
+        tenantId: "tenant-a",
         agentId: "agent-attacker",
-        sessionKey: "tenant-a:user-a:chat-a",
-        ownerTenantId: "tenant-a",
-        ownerUserId: "user-a",
+        conversationRef: CONVERSATION_REF,
+        conversationScope: CONVERSATION_SCOPE,
+        principalId: "user-a",
         deliveryOrigin: null,
         trustLevel: "user",
         caps: [],

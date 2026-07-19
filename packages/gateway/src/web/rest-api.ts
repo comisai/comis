@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { parseFormattedSessionKey, type TypedEventBus, type EventMap, systemNowMs, systemNowDate } from "@comis/core";
+import { type TypedEventBus, type EventMap, systemNowMs, systemNowDate } from "@comis/core";
 import type { Env } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -287,9 +287,14 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
 
     const limitParam = c.req.query("limit");
     const limit = limitParam ? Math.min(Math.max(1, parseInt(limitParam, 10) || 10), 100) : 10;
+    const tenantId = c.req.query("tenant") ?? "";
+    const agentId = c.req.query("agent") ?? "";
+    if (!tenantId || !agentId) {
+      return c.json({ error: "Missing required query parameters: tenant and agent" }, 400);
+    }
 
     try {
-      const result = await rpcAdapterDeps.searchMemory({ query, limit });
+      const result = await rpcAdapterDeps.searchMemory({ query, limit, tenantId, agentId });
       return c.json(result);
     } catch (err) {
       deps.logger?.error({ err, hint: "Verify memory database path and search index integrity", errorKind: "internal" as const }, "GET /memory/search error");
@@ -299,8 +304,13 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
 
   // GET /memory/stats - Memory statistics
   api.get("/memory/stats", async (c) => {
+    const tenantId = c.req.query("tenant") ?? "";
+    const agentId = c.req.query("agent") ?? "";
+    if (!tenantId || !agentId) {
+      return c.json({ error: "Missing required query parameters: tenant and agent" }, 400);
+    }
     try {
-      const result = await rpcAdapterDeps.inspectMemory({});
+      const result = await rpcAdapterDeps.inspectMemory({ tenantId, agentId });
       return c.json(result);
     } catch (err) {
       deps.logger?.error({ err, hint: "Verify memory database path and entry existence", errorKind: "internal" as const }, "GET /memory/stats error");
@@ -355,14 +365,11 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
     const agentId = typeof body.agentId === "string" ? body.agentId : undefined;
     const rawSessionKey = typeof body.sessionKey === "string" ? body.sessionKey : undefined;
 
-    // If the incoming key is a previously-formatted session key (from a prior round-trip),
-    // parse it to extract the original channelId — prevents session key snowball growth.
-    const parsed = rawSessionKey ? parseFormattedSessionKey(rawSessionKey) : undefined;
     const sessionKey = rawSessionKey
       ? {
-          userId: parsed?.userId ?? "web-user",
-          channelId: parsed?.channelId ?? rawSessionKey,
-          peerId: parsed?.peerId ?? "web-user",
+          userId: "web-user",
+          channelId: rawSessionKey,
+          peerId: "web-user",
         }
       : undefined;
 

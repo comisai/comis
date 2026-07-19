@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { ok } from "@comis/shared";
 import { createBackgroundCompletionRunner } from "./completion-runner.js";
 import type { BackgroundTask } from "./background-task-types.js";
 import {
   getContext,
+  createConversationRef,
+  conversationScopeToSessionKey,
+  formatSessionKey,
   RequestContextSchema,
   runWithContext,
   TypedEventBus,
@@ -19,16 +23,38 @@ function createFakeEventBus() {
   return new TypedEventBus();
 }
 
-function buildOrigin(over: Partial<BackgroundTaskOrigin> = {}): BackgroundTaskOrigin {
+function buildOrigin(over: Partial<BackgroundTaskOrigin> & { agentId?: string; sessionKey?: string; channelType?: string; channelId?: string; userId?: string } = {}): BackgroundTaskOrigin {
+  const agentId = over.agentId ?? "default";
+  const sessionParts = over.sessionKey?.split(":") ?? [];
+  const tenantId = sessionParts[0] ?? "default";
+  const userId = over.userId ?? sessionParts[1] ?? "user1";
+  const channelType = over.channelType ?? "echo";
+  const channelId = over.channelId ?? "test";
+  const referenceEndpoint = { channelType, channelInstanceId: "test-instance", conversationId: channelId || "invalid-route", conversationKind: "direct" as const };
+  const turnScope = {
+    conversation: { tenantId, agentId, partition: { kind: "endpoint-conversation-principal" as const, endpoint: referenceEndpoint, principalId: userId } },
+    principal: { principalId: userId }, endpoint: referenceEndpoint,
+  };
+  const conversationRef = createConversationRef(turnScope.conversation);
+  if (!conversationRef.ok) throw conversationRef.error;
+  if (channelId === "") {
+    turnScope.endpoint = { ...referenceEndpoint, conversationId: "" };
+    turnScope.conversation.partition.endpoint = turnScope.endpoint;
+  }
   return {
-    agentId: "default",
-    sessionKey: "default:echo:test:user1",
-    channelType: "echo",
-    channelId: "test",
+    turnScope,
+    conversationRef: conversationRef.value,
+    deliveryOrigin: { channelType, channelId, userId, tenantId },
     traceId: null,
     backgroundHopCount: 0,
-    ...over,
+    ...Object.fromEntries(Object.entries(over).filter(([key]) => !["agentId", "sessionKey", "channelType", "channelId", "userId"].includes(key))),
   };
+}
+
+function originSessionKey(origin: BackgroundTaskOrigin): string {
+  const projected = conversationScopeToSessionKey(origin.turnScope.conversation);
+  if (!projected.ok) throw projected.error;
+  return formatSessionKey(projected.value);
 }
 
 function buildTask(over: Partial<BackgroundTask> = {}): BackgroundTask {
@@ -56,7 +82,7 @@ function makeLogger() {
 describe("createBackgroundCompletionRunner", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
-  let sessionStore: { loadByFormattedKey: ReturnType<typeof vi.fn> };
+  let sessionStore: { loadByRef: ReturnType<typeof vi.fn> };
   let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn> };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
   let transitionDispatchState: ReturnType<typeof vi.fn>;
@@ -64,7 +90,7 @@ describe("createBackgroundCompletionRunner", () => {
   beforeEach(() => {
     eventBus = createFakeEventBus();
     executor = { execute: vi.fn().mockResolvedValue({ ok: true }) };
-    sessionStore = { loadByFormattedKey: vi.fn().mockReturnValue({ messages: [] }) };
+    sessionStore = { loadByRef: vi.fn().mockReturnValue(ok({ messages: [] })) };
     transitionDispatchState = vi.fn().mockReturnValue(true);
     taskManager = {
       getTask: vi.fn(),
@@ -92,9 +118,9 @@ describe("createBackgroundCompletionRunner", () => {
     // A re-entry now would serialize a redundant continuation behind the live turn.
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);
-    const runner = build(3, (key) => key === task.origin.sessionKey);
+    const runner = build(3, (key) => key === originSessionKey(task.origin));
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
@@ -112,7 +138,7 @@ describe("createBackgroundCompletionRunner", () => {
     taskManager.getTask.mockReturnValue(task);
     const runner = build();
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     // Wait for handler microtask chain.
@@ -132,7 +158,7 @@ describe("createBackgroundCompletionRunner", () => {
     const reentered = reenteredEvents[0] as { taskId: string; hopCount: number; sessionKey: string };
     expect(reentered.taskId).toBe(task.id);
     expect(reentered.hopCount).toBe(1);
-    expect(reentered.sessionKey).toBe(task.origin.sessionKey);
+    expect(reentered.sessionKey).toBe(originSessionKey(task.origin));
     await runner.shutdown();
   });
 
@@ -147,7 +173,7 @@ describe("createBackgroundCompletionRunner", () => {
     const runner = build();
 
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       durationMs: 1,
@@ -207,7 +233,7 @@ describe("createBackgroundCompletionRunner", () => {
     const runner = build();
     await runWithContext(ambientAdmin, async () => {
       eventBus.emit("background_task:completed", {
-        agentId: task.origin.agentId,
+        agentId: task.origin.turnScope.conversation.agentId,
         taskId: task.id,
         toolName: task.toolName,
         durationMs: 1,
@@ -222,7 +248,7 @@ describe("createBackgroundCompletionRunner", () => {
     expect(executorContext).toMatchObject({
       tenantId: "tenant_a",
       userId: "user_a",
-      sessionKey: task.origin.sessionKey,
+      sessionKey: originSessionKey(task.origin),
       agentId: "agent_a",
       traceId: originTraceId,
       trustLevel: "guest",
@@ -254,7 +280,7 @@ describe("createBackgroundCompletionRunner", () => {
 
     const runner = build();
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       durationMs: 1,
@@ -296,7 +322,7 @@ describe("createBackgroundCompletionRunner", () => {
 
     const runner = build();
     eventBus.emit("background_task:failed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       error: task.error!,
@@ -312,7 +338,7 @@ describe("createBackgroundCompletionRunner", () => {
     expect(executorContext).toMatchObject({
       tenantId: "tenant_restart",
       userId: "user_restart",
-      sessionKey: task.origin.sessionKey,
+      sessionKey: originSessionKey(task.origin),
       agentId: "agent_restart",
       trustLevel: "guest",
       channelType: "telegram",
@@ -332,7 +358,7 @@ describe("createBackgroundCompletionRunner", () => {
     taskManager.getTask.mockReturnValue(task);
     const runner = build();
     eventBus.emit("background_task:failed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       error: "boom", durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
@@ -349,10 +375,10 @@ describe("createBackgroundCompletionRunner", () => {
 
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);
-    sessionStore.loadByFormattedKey.mockReturnValue(undefined); // session gone
+    sessionStore.loadByRef.mockReturnValue(ok(undefined)); // session gone
     const runner = build();
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
@@ -373,7 +399,7 @@ describe("createBackgroundCompletionRunner", () => {
     taskManager.getTask.mockReturnValue(task);
     const runner = build(3);
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
@@ -391,13 +417,13 @@ describe("createBackgroundCompletionRunner", () => {
     executor.execute.mockRejectedValueOnce(new Error("transient")).mockResolvedValue({});
     const runner = build();
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 4,
     });
     await new Promise((r) => setImmediate(r));
@@ -412,7 +438,7 @@ describe("createBackgroundCompletionRunner", () => {
     const runner = build();
     await runner.shutdown();
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
@@ -428,7 +454,7 @@ describe("createBackgroundCompletionRunner", () => {
     taskManager.getTask.mockReturnValue(task);
     const runner = build();
     eventBus.emit("background_task:failed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       error: task.error!, durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
@@ -475,7 +501,7 @@ describe("createBackgroundCompletionRunner", () => {
     const runner = build(3);
 
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
@@ -521,7 +547,7 @@ describe("createBackgroundCompletionRunner", () => {
 
     const runner = build(3);
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
@@ -545,7 +571,7 @@ describe("createBackgroundCompletionRunner", () => {
     executor.execute.mockReset();
     const recoveredRunner = build(3);
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId, taskId: task.id, toolName: task.toolName,
+      agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
       durationMs: 1, origin: task.origin, timestamp: 3,
     });
     await new Promise((r) => setImmediate(r));
@@ -563,7 +589,7 @@ describe("createBackgroundCompletionRunner", () => {
 describe("trace continuity sub-tests", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
-  let sessionStore: { loadByFormattedKey: ReturnType<typeof vi.fn> };
+  let sessionStore: { loadByRef: ReturnType<typeof vi.fn> };
   let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn> };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
   let logger: ReturnType<typeof makeLogger>;
@@ -571,7 +597,7 @@ describe("trace continuity sub-tests", () => {
   beforeEach(() => {
     eventBus = createFakeEventBus();
     executor = { execute: vi.fn().mockResolvedValue({ ok: true }) };
-    sessionStore = { loadByFormattedKey: vi.fn().mockReturnValue({ messages: [] }) };
+    sessionStore = { loadByRef: vi.fn().mockReturnValue(ok({ messages: [] })) };
     taskManager = {
       getTask: vi.fn(),
       transitionDispatchState: vi.fn().mockReturnValue(true),
@@ -601,7 +627,7 @@ describe("trace continuity sub-tests", () => {
     taskManager.getTask.mockReturnValue(task);
     const runner = buildRunner();
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       durationMs: 1,
@@ -627,7 +653,7 @@ describe("trace continuity sub-tests", () => {
     taskManager.getTask.mockReturnValue(task);
     const runner = buildRunner();
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       durationMs: 1,
@@ -644,7 +670,7 @@ describe("trace continuity sub-tests", () => {
   it("operator-facing log lines on completion-runner WARN/INFO paths include traceId from origin", async () => {
     const traceId = "trace-29c";
     // Force a path that emits an INFO log: session expired (sessionStore returns undefined).
-    sessionStore.loadByFormattedKey.mockReturnValue(undefined);
+    sessionStore.loadByRef.mockReturnValue(ok(undefined));
     const task = buildTask({
       result: "ok",
       origin: buildOrigin({ traceId }),
@@ -652,7 +678,7 @@ describe("trace continuity sub-tests", () => {
     taskManager.getTask.mockReturnValue(task);
     const runner = buildRunner();
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       durationMs: 1,
@@ -686,7 +712,7 @@ describe("trace continuity sub-tests", () => {
     const runner = buildRunner();
 
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       durationMs: 1,

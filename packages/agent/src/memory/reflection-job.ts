@@ -68,9 +68,6 @@ import type { ReflectionAdapter } from "./llm-reflection-adapter.js";
 // Defaults
 // ---------------------------------------------------------------------------
 
-/** Max topics reflected (one LLM call each) per run — the DoS ceiling. */
-const DEFAULT_MAX_DOCS_PER_RUN = 10;
-
 /**
  * The token-set Jaccard floor at/above which two exact-token-SET groups MERGE into
  * one corroboration cluster. The exact-hash group
@@ -165,7 +162,7 @@ export interface ReflectionSourceTrajectory {
 export interface RunReflectionConfig {
   enabled: boolean;
   minConfidence: number;
-  /** Max topics reflected per run (defaults to 10). */
+  /** Max topics reflected per run, already resolved by the config schema. */
   maxDocsPerRun: number;
   /**
    * How a topic must corroborate before it can seed a doc. `single_owner` (the PRODUCT
@@ -520,7 +517,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   const groupKey = deps.groupKey ?? defaultGroupKey;
 
   const startMs = clock.now();
-  const maxDocsPerRun = config.maxDocsPerRun ?? DEFAULT_MAX_DOCS_PER_RUN;
+  const maxDocsPerRun = config.maxDocsPerRun;
 
   // 1. SELECT (fail-closed): keep only trusted-origin `success` >= minConfidence.
   const selected: ReflectionSourceTrajectory[] = [];

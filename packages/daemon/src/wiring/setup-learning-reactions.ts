@@ -61,7 +61,6 @@ import {
   resolveProviderFamily,
   type CorrectionVerdict,
 } from "@comis/agent";
-import { deriveTenantFromSessionKey } from "./setup-memory-usefulness-wiring.js";
 import { buildCustomJudgeModelSpec } from "./setup-learning-judge.js";
 
 // ===========================================================================
@@ -249,6 +248,8 @@ function matchEmoji(emoji: string, map: ReactionEmojiMap): "success" | "failure"
 
 /** Dependencies for {@link wireLearningReactions} + {@link wireLearningCorrection}. */
 export interface LearningReactionsWiringDeps {
+  /** Configured deployment tenant used for completion events emitted outside ALS. */
+  tenantId: string;
   /** The daemon's typed event bus (source of channel:reaction_received / message:received / graph:completed). */
   eventBus: TypedEventBus;
   /** The sole @comis/memory adapter for the outcome port (the observe target). */
@@ -495,8 +496,7 @@ export function wireLearningCorrection(deps: LearningReactionsWiringDeps): void 
   // so no ALS dependency. The sessionKey is already the `formatSessionKey(...)`
   // string the reader formats the `message:received` payload into. An absent
   // sessionKey OR traceId records NOTHING (a later correction then fails-closed —
-  // never mis-joined). The tenant is derived from the sessionKey's first segment
-  // (mirrors `deriveTenantFromSessionKey`).
+  // never mis-joined). The tenant is deployment authority, not a parsed display key.
   deps.eventBus.on("diagnostic:message_processed", (p) => {
     if (deps.recordSessionTrajectory === undefined) return;
     if (!deps.correctionEnabled(p.agentId)) return;
@@ -504,8 +504,12 @@ export function wireLearningCorrection(deps: LearningReactionsWiringDeps): void 
     const trajectoryId = p.traceId;
     if (sk === undefined || sk.length === 0) return; // cannot reliably join → skip
     if (trajectoryId === undefined || trajectoryId.length === 0) return;
-    const tenantId = deriveTenantFromSessionKey(sk) ?? "default";
-    deps.recordSessionTrajectory(sk, { traceId: trajectoryId, tenantId, agentId: p.agentId, sessionId: sk });
+    deps.recordSessionTrajectory(sk, {
+      traceId: trajectoryId,
+      tenantId: deps.tenantId,
+      agentId: p.agentId,
+      sessionId: sk,
+    });
   });
 
   // READER — classify a follow-up user turn and observe a correction against the
@@ -556,6 +560,7 @@ export function wireLearningCorrection(deps: LearningReactionsWiringDeps): void 
 /** The slice of the daemon container {@link buildReactionWiringDeps} reads. */
 export interface ReactionWiringContainer {
   config: {
+    tenantId: string;
     agents?: Record<string, AgentReactionConfig | undefined>;
     // The REAL MemoryConfig type (not a loose `{ costFeatures?: { enabled?: boolean } }`)
     // so tsc ENFORCES that the master gate reads `memory.enabled` — a missed field is a
@@ -768,6 +773,7 @@ export function buildReactionWiringDeps(
   };
 
   const deps: LearningReactionsWiringDeps = {
+    tenantId: container.config.tenantId,
     eventBus,
     outcomeStore,
     clock,

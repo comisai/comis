@@ -28,7 +28,7 @@ describe("KEYLESS_PROVIDER_TYPES (shared from @comis/core)", () => {
     // With a set that excludes lm-studio it fails (registered=0, WARN).
     const secretManager = createSecretManager({});
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const warns: string[] = [];
     const logger = {
       warn: (_obj: Record<string, unknown>, msg: string) => warns.push(msg),
@@ -75,16 +75,16 @@ function buildAuthStorage() {
 // ---------------------------------------------------------------------------
 
 describe("createModelRegistryAdapter", () => {
-  it("returns a ModelRegistry instance", () => {
+  it("returns a ModelRegistry instance", async () => {
     const authStorage = buildAuthStorage();
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
 
     expect(registry).toBeInstanceOf(ModelRegistry);
   });
 
-  it("discovers built-in models for providers with auth configured", () => {
+  it("discovers built-in models for providers with auth configured", async () => {
     const authStorage = buildAuthStorage();
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
 
     const available = registry.getAvailable();
     expect(available.length).toBeGreaterThan(0);
@@ -102,7 +102,7 @@ describe("createModelRegistryAdapter", () => {
 describe("resolveInitialModel", () => {
   it("returns a model when provider/modelId match an available model", async () => {
     const authStorage = buildAuthStorage();
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
 
     // Find an actual model ID from the registry to test with
     const available = registry.getAvailable();
@@ -122,7 +122,7 @@ describe("resolveInitialModel", () => {
 
   it("returns undefined model with fallback message when no matching model exists", async () => {
     const authStorage = buildAuthStorage();
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
 
     const result = await resolveInitialModel(registry, {
       provider: "anthropic",
@@ -141,7 +141,7 @@ describe("resolveInitialModel", () => {
       ANTHROPIC_API_KEY: "test-key-123",
     });
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
 
     // ModelRegistry.find() searches all models (auth-independent)
     const result = await resolveInitialModel(registry, {
@@ -157,7 +157,7 @@ describe("resolveInitialModel", () => {
 
   it("returns undefined for completely unknown provider", async () => {
     const authStorage = buildAuthStorage();
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
 
     const result = await resolveInitialModel(registry, {
       provider: "unknown-provider-xyz",
@@ -171,7 +171,7 @@ describe("resolveInitialModel", () => {
 
   it("with active allowlist that permits the model -- returns the model", async () => {
     const authStorage = buildAuthStorage();
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const available = registry.getAvailable();
     const anthropicModel = available.find((m) => m.provider === "anthropic");
     expect(anthropicModel).toBeDefined();
@@ -191,7 +191,7 @@ describe("resolveInitialModel", () => {
 
   it("with active allowlist that rejects the model -- returns undefined with rejection message", async () => {
     const authStorage = buildAuthStorage();
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const available = registry.getAvailable();
     const anthropicModel = available.find((m) => m.provider === "anthropic");
     expect(anthropicModel).toBeDefined();
@@ -213,7 +213,7 @@ describe("resolveInitialModel", () => {
 
   it("with inactive allowlist (empty) -- allows any model", async () => {
     const authStorage = buildAuthStorage();
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const available = registry.getAvailable();
     const anthropicModel = available.find((m) => m.provider === "anthropic");
     expect(anthropicModel).toBeDefined();
@@ -233,7 +233,7 @@ describe("resolveInitialModel", () => {
 
   it("sets thinkingLevel based on model.reasoning capability", async () => {
     const authStorage = buildAuthStorage();
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const available = registry.getAvailable();
 
     // Find a reasoning model (e.g., claude-opus-4-5 or similar)
@@ -288,7 +288,7 @@ describe("registerCustomProviders", () => {
     };
   }
 
-  it("registers a custom OpenAI-compatible provider so find() succeeds", () => {
+  it("registers a custom OpenAI-compatible provider so find() succeeds", async () => {
     const secretManager = createSecretManager({
       NVIDIA_API_KEY: "nvapi-test",
     });
@@ -296,7 +296,7 @@ describe("registerCustomProviders", () => {
       secretManager,
       customProviderEntries: { nvidia: { apiKeyName: "NVIDIA_API_KEY", enabled: true } },
     });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
     const { registered } = registerCustomProviders(
@@ -320,13 +320,13 @@ describe("registerCustomProviders", () => {
     expect(found!.baseUrl).toBe("https://integrate.api.nvidia.com/v1");
   });
 
-  it("after registration, getAvailable() includes the custom provider's models", () => {
+  it("after registration, getAvailable() includes the custom provider's models", async () => {
     const secretManager = createSecretManager({ NVIDIA_API_KEY: "nvapi-test" });
     const authStorage = createAuthStorageAdapter({
       secretManager,
       customProviderEntries: { nvidia: { apiKeyName: "NVIDIA_API_KEY", enabled: true } },
     });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
     const { registered } = registerCustomProviders(registry, { nvidia: nvidiaEntry() }, secretManager, logger);
@@ -338,10 +338,10 @@ describe("registerCustomProviders", () => {
     expect(nvidiaAvailable[0]!.id).toBe("moonshotai/kimi-k2.5");
   });
 
-  it("skips disabled entries", () => {
+  it("skips disabled entries", async () => {
     const secretManager = createSecretManager({ NVIDIA_API_KEY: "nvapi-test" });
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger, debugs } = captureLogger();
 
     const { registered } = registerCustomProviders(
@@ -356,10 +356,10 @@ describe("registerCustomProviders", () => {
     expect(debugs.some((d) => d.msg.includes("disabled"))).toBe(true);
   });
 
-  it("skips entries with no models and no baseUrl override", () => {
+  it("skips entries with no models and no baseUrl override", async () => {
     const secretManager = createSecretManager({});
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
     const { registered } = registerCustomProviders(
@@ -372,10 +372,10 @@ describe("registerCustomProviders", () => {
     expect(registered).toBe(0);
   });
 
-  it("logs WARN and continues when models declared but apiKeyName secret is missing", () => {
+  it("logs WARN and continues when models declared but apiKeyName secret is missing", async () => {
     const secretManager = createSecretManager({}); // no NVIDIA_API_KEY
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger, warns } = captureLogger();
 
     const { registered } = registerCustomProviders(
@@ -392,12 +392,12 @@ describe("registerCustomProviders", () => {
     expect(warns[0]!.obj.providerName).toBe("nvidia");
   });
 
-  it("maps known provider types to pi API identifiers", () => {
+  it("maps known provider types to pi API identifiers", async () => {
     const secretManager = createSecretManager({
       A: "a", B: "b", C: "c", D: "d",
     });
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
     registerCustomProviders(
@@ -434,7 +434,7 @@ describe("registerCustomProviders", () => {
   it("registers keyless ollama provider with sentinel apiKey", async () => {
     const secretManager = createSecretManager({});
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger, debugs } = captureLogger();
 
     const { registered } = registerCustomProviders(
@@ -463,10 +463,10 @@ describe("registerCustomProviders", () => {
     expect(debugs.some((d) => d.msg.includes("keyless sentinel"))).toBe(true);
   });
 
-  it("still rejects keyless openai-compatible provider", () => {
+  it("still rejects keyless openai-compatible provider", async () => {
     const secretManager = createSecretManager({});
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger, warns } = captureLogger();
 
     const { registered } = registerCustomProviders(
@@ -497,7 +497,7 @@ describe("registerCustomProviders", () => {
       secretManager,
       customProviderEntries: { "secure-ollama": { apiKeyName: "OLLAMA_API_KEY", enabled: true } },
     });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
     const { registered } = registerCustomProviders(
@@ -524,10 +524,10 @@ describe("registerCustomProviders", () => {
     expect(resolvedKey).toBe("real-key");
   });
 
-  it("does not leak sentinel to cloud providers when apiKey is missing", () => {
+  it("does not leak sentinel to cloud providers when apiKey is missing", async () => {
     const secretManager = createSecretManager({});
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger, warns } = captureLogger();
 
     const { registered } = registerCustomProviders(
@@ -553,10 +553,10 @@ describe("registerCustomProviders", () => {
     expect(warns[0]!.obj.providerName).toBe("cloud-missing");
   });
 
-  it("logs WARN and keeps going when registerProvider throws (e.g., missing baseUrl)", () => {
+  it("logs WARN and keeps going when registerProvider throws (e.g., missing baseUrl)", async () => {
     const secretManager = createSecretManager({ A: "a", NVIDIA_API_KEY: "n" });
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger, warns } = captureLogger();
 
     const { registered } = registerCustomProviders(
@@ -579,10 +579,10 @@ describe("registerCustomProviders", () => {
     expect(warns[0]!.obj.errorKind).toBe("config");
   });
 
-  it("filters out models that already exist in pi SDK built-in catalog", () => {
+  it("filters out models that already exist in pi SDK built-in catalog", async () => {
     const secretManager = createSecretManager({ GEMINI_KEY: "gk" });
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger, debugs } = captureLogger();
 
     const { registered, providerAliases } = registerCustomProviders(
@@ -613,10 +613,10 @@ describe("registerCustomProviders", () => {
     expect(debugs.some((d) => d.msg.includes("built-in models already in pi SDK"))).toBe(true);
   });
 
-  it("skips registration entirely when all models are built-in", () => {
+  it("skips registration entirely when all models are built-in", async () => {
     const secretManager = createSecretManager({ GEMINI_KEY: "gk" });
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
     const { registered, providerAliases } = registerCustomProviders(
@@ -640,10 +640,10 @@ describe("registerCustomProviders", () => {
     expect(providerAliases.get("gemini")).toBe("google");
   });
 
-  it("does not create alias when provider name matches built-in type", () => {
+  it("does not create alias when provider name matches built-in type", async () => {
     const secretManager = createSecretManager({ KEY: "k" });
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
     const { providerAliases } = registerCustomProviders(
@@ -672,7 +672,7 @@ describe("registerCustomProviders", () => {
   // the fallback table covers legacy custom types pi-ai does not ship.
   // -------------------------------------------------------------------------
 
-  it("registered API for native type 'openrouter' matches the live pi-ai catalog", () => {
+  it("registered API for native type 'openrouter' matches the live pi-ai catalog", async () => {
     // Read the expected api from the catalog at test time so the assertion
     // stays stable across pi-ai upgrades that may switch openrouter's wire
     // format.
@@ -682,7 +682,7 @@ describe("registerCustomProviders", () => {
 
     const secretManager = createSecretManager({ OPENROUTER_API_KEY: "or-test" });
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
     const { registered } = registerCustomProviders(
@@ -707,10 +707,10 @@ describe("registerCustomProviders", () => {
     expect(found!.api).toBe(expectedApi);
   });
 
-  it("'ollama' falls back to openai-completions via FALLBACK_API_FOR_CUSTOM_TYPES (not in pi-ai catalog)", () => {
+  it("'ollama' falls back to openai-completions via FALLBACK_API_FOR_CUSTOM_TYPES (not in pi-ai catalog)", async () => {
     const secretManager = createSecretManager({});
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
     const { registered } = registerCustomProviders(
@@ -743,10 +743,10 @@ describe("registerCustomProviders", () => {
   // or enrich each user-supplied model with catalog metadata.
   // -------------------------------------------------------------------------
 
-  it("empty model list with native type inherits the entire native catalog", () => {
+  it("empty model list with native type inherits the entire native catalog", async () => {
     const secretManager = createSecretManager({ OPENROUTER_API_KEY: "or-test" });
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
     // Note: providerName "myrouter" differs from type "openrouter" so the
@@ -779,10 +779,10 @@ describe("registerCustomProviders", () => {
     expect(withCost.length).toBeGreaterThanOrEqual(10);
   });
 
-  it("sparse list with native type enriches missing fields from catalog", () => {
+  it("sparse list with native type enriches missing fields from catalog", async () => {
     const secretManager = createSecretManager({ OPENROUTER_API_KEY: "or-test" });
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
     // Pick a real catalog model for the assertion.
@@ -829,10 +829,10 @@ describe("registerCustomProviders", () => {
     expect(builtinHit!.maxTokens).toBe(sample!.maxTokens);
   });
 
-  it("custom (non-catalog) type uses hardcoded fallbacks for unknown models", () => {
+  it("custom (non-catalog) type uses hardcoded fallbacks for unknown models", async () => {
     const secretManager = createSecretManager({ MY_PROXY_KEY: "k" });
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
 
     const { registered } = registerCustomProviders(
@@ -871,7 +871,7 @@ describe("resolveInitialModel with providerAliases", () => {
   it("resolves built-in model via alias when comis name differs from built-in", async () => {
     const secretManager = createSecretManager({ GEMINI_API_KEY: "gk" });
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const aliases = new Map([["gemini", "google"]]);
 
     const result = await resolveInitialModel(
@@ -889,7 +889,7 @@ describe("resolveInitialModel with providerAliases", () => {
   it("returns undefined when alias target also has no match", async () => {
     const secretManager = createSecretManager({ GEMINI_API_KEY: "gk" });
     const authStorage = createAuthStorageAdapter({ secretManager });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const aliases = new Map([["gemini", "google"]]);
 
     const result = await resolveInitialModel(
@@ -943,13 +943,13 @@ describe("registerCustomProviders — local OpenAI-compat baseUrl /v1 normalizat
     };
   }
 
-  function registerLocal(providerName: string, type: string, baseUrl: string) {
+  async function registerLocal(providerName: string, type: string, baseUrl: string) {
     const secretManager = createSecretManager({});
     const authStorage = createAuthStorageAdapter({
       secretManager,
       customProviderEntries: { [providerName]: { enabled: true } },
     });
-    const registry = createModelRegistryAdapter(authStorage);
+    const { registry } = await createModelRegistryAdapter(authStorage);
     const { logger } = captureLogger();
     const { registered } = registerCustomProviders(
       registry,
@@ -961,29 +961,29 @@ describe("registerCustomProviders — local OpenAI-compat baseUrl /v1 normalizat
     return registry.find(providerName, "local-model");
   }
 
-  it("appends /v1 to a bare-origin ollama baseUrl", () => {
-    const found = registerLocal("ollama", "ollama", "http://127.0.0.1:11434");
+  it("appends /v1 to a bare-origin ollama baseUrl", async () => {
+    const found = await registerLocal("ollama", "ollama", "http://127.0.0.1:11434");
     expect(found).toBeDefined();
     expect(found!.baseUrl).toBe("http://127.0.0.1:11434/v1");
   });
 
-  it("appends /v1 to a bare-origin ollama baseUrl with a trailing slash", () => {
-    const found = registerLocal("ollama", "ollama", "http://127.0.0.1:11434/");
+  it("appends /v1 to a bare-origin ollama baseUrl with a trailing slash", async () => {
+    const found = await registerLocal("ollama", "ollama", "http://127.0.0.1:11434/");
     expect(found!.baseUrl).toBe("http://127.0.0.1:11434/v1");
   });
 
-  it("preserves an ollama baseUrl that already ends in /v1", () => {
-    const found = registerLocal("ollama", "ollama", "http://127.0.0.1:11434/v1");
+  it("preserves an ollama baseUrl that already ends in /v1", async () => {
+    const found = await registerLocal("ollama", "ollama", "http://127.0.0.1:11434/v1");
     expect(found!.baseUrl).toBe("http://127.0.0.1:11434/v1");
   });
 
-  it("preserves an ollama baseUrl that carries a custom proxy path", () => {
-    const found = registerLocal("ollama", "ollama", "http://proxy.local/ollama/openai");
+  it("preserves an ollama baseUrl that carries a custom proxy path", async () => {
+    const found = await registerLocal("ollama", "ollama", "http://proxy.local/ollama/openai");
     expect(found!.baseUrl).toBe("http://proxy.local/ollama/openai");
   });
 
-  it("appends /v1 to a bare-origin lm-studio baseUrl", () => {
-    const found = registerLocal("lmstudio", "lm-studio", "http://localhost:1234");
+  it("appends /v1 to a bare-origin lm-studio baseUrl", async () => {
+    const found = await registerLocal("lmstudio", "lm-studio", "http://localhost:1234");
     expect(found!.baseUrl).toBe("http://localhost:1234/v1");
   });
 });

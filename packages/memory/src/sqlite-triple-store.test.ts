@@ -22,7 +22,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { MemoryConfig, MemoryEntry, TripleInput } from "@comis/core";
-import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
+import { ScopedMemoryTestAdapter as SqliteMemoryAdapter } from "../../../test/support/scoped-memory-adapter.js";
 import { createSqliteTripleStore } from "./sqlite-triple-store.js";
 import type Database from "better-sqlite3";
 

@@ -2,11 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ChannelPort,
+  ConversationRef,
   DeliveryService,
   NormalizedMessage,
+  ResolvedTurnScope,
   SessionKey,
 } from "@comis/core";
 import {
+  createConversationRef,
   QueueConfigSchema,
   StreamingConfigSchema,
   TypedEventBus,
@@ -52,11 +55,36 @@ function makeMessage(id: string): NormalizedMessage {
 function makeSessionKey(channelId = "chat-1"): SessionKey {
   return {
     tenantId: "default",
+    agentId: "agent-1",
     userId: "user-1",
     channelId,
     peerId: "user-1",
   };
 }
+
+const TURN_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "telegram-adapter",
+  conversationId: "chat-1",
+  conversationKind: "direct" as const,
+};
+const TURN_SCOPE: ResolvedTurnScope = {
+  conversation: {
+    tenantId: "default",
+    agentId: "agent-1",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: TURN_ENDPOINT,
+      principalId: "user-1",
+    },
+  },
+  principal: { principalId: "user-1" },
+  endpoint: TURN_ENDPOINT,
+};
+const turnConversationRef = createConversationRef(TURN_SCOPE.conversation);
+if (!turnConversationRef.ok) throw turnConversationRef.error;
+const TURN_CONVERSATION_REF: ConversationRef = turnConversationRef.value;
+const EMPTY_INBOUND_PROVENANCE = { payloads: [], ledgerContent: "" } as const;
 
 function makeAdapter(): ChannelPort {
   return {
@@ -152,10 +180,13 @@ async function route(
     message,
     sessionKey,
     "agent-1",
+    TURN_SCOPE,
+    TURN_CONVERSATION_REF,
     executor,
     new Set(),
     new Map(),
     undefined,
+    EMPTY_INBOUND_PROVENANCE,
   );
 }
 

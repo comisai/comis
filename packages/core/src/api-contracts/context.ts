@@ -39,7 +39,7 @@ import { defineContract } from "./types.js";
  * Request: `{ limit?, offset? }` (defaults applied handler-side: limit 100,
  * offset 0). Response: `{ conversations: DagConversation[], total }`. Each
  * conversation row carries snake_case keys matching the web `DagConversation`
- * type (`conversation_id`, `tenant_id`, `agent_id`, `session_key`, `title`,
+ * type (`conversation_ref`, `tenant_id`, `agent_id`, `session_key`, `title`,
  * `created_at`, `updated_at`). `title` is always null (the LCD store has no
  * title); `created_at` / `updated_at` are ISO-8601 strings derived from the
  * min / max message epoch.
@@ -52,7 +52,7 @@ export const ContextConversationsContract = defineContract({
   }),
   response: z.object({
     conversations: z.array(z.object({
-      conversation_id: z.string(),
+      conversation_ref: z.string(),
       tenant_id: z.string(),
       agent_id: z.string(),
       session_key: z.string(),
@@ -75,7 +75,7 @@ export const ContextConversationsContract = defineContract({
  * summary nodes plus the count of raw messages still present in the model-
  * facing context_items view.
  *
- * Request: `{ conversation_id }`. Response: `{ conversationId, nodes:
+ * Request: `{ conversation_ref }`. Response: `{ conversationRef, nodes:
  * DagTreeNode[], messageCount }`. Each node mirrors the web `DagTreeNode` type
  * (`summaryId`, `kind` ("leaf"|"condensed"), `depth`, `tokenCount`,
  * `contentPreview` (bounded, untrusted-origin — shown to a human, never re-fed
@@ -87,10 +87,10 @@ export const ContextConversationsContract = defineContract({
 export const ContextTreeContract = defineContract({
   method: "context.tree",
   request: z.object({
-    conversation_id: z.string(),
+    conversation_ref: z.string(),
   }),
   response: z.object({
-    conversationId: z.string(),
+    conversationRef: z.string(),
     nodes: z.array(z.object({
       summaryId: z.string(),
       kind: z.string(),

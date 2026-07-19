@@ -40,7 +40,7 @@ import { ctxExpandWalk, depthForTier } from "./ctx-expand-walk.js";
 // ---------------------------------------------------------------------------
 
 const SCOPE: ContextStoreScope = {
-  conversationId: "default:user_a:chan_a",
+  conversationRef: "default:user_a:chan_a",
   agentId: "agent_a",
   tenantId: "default",
   sessionKey: "default:user_a:chan_a",
@@ -55,7 +55,7 @@ function textPart(text: string): LcdMessagePart {
 function makeMessage(id: string, seq: number, text: string): LcdMessage {
   return {
     id,
-    conversationId: SCOPE.conversationId,
+    conversationRef: SCOPE.conversationRef,
     seq,
     role: "user",
     tokenCount: 4,
@@ -68,7 +68,7 @@ function makeMessage(id: string, seq: number, text: string): LcdMessage {
 function makeSummary(summaryId: string, kind: "leaf" | "condensed", depth: number): LcdSummary {
   return {
     summaryId,
-    conversationId: SCOPE.conversationId,
+    conversationRef: SCOPE.conversationRef,
     kind,
     depth,
     earliestAt: 1_000_001,
@@ -92,7 +92,7 @@ interface StoreStub {
   messages: Map<string, LcdMessage>;
   /** Records the FULL scope of every read for the R4 per-call-scope assertion. */
   readScopes: ContextStoreScope[];
-  /** Records every conversationId passed to runOnConversation (single-flight proof). */
+  /** Records every conversationRef passed to runOnConversation (single-flight proof). */
   serialized: string[];
   /** Records every (parentSummaryId | summaryId) the walk read, in order (traversal proof). */
   visitedIds: string[];
@@ -122,8 +122,8 @@ function makeStore(over: Partial<StoreStub> = {}): { stub: StoreStub; store: Con
       stub.readScopes.push(scope);
       return [...stub.messages.values()];
     },
-    async runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T> {
-      stub.serialized.push(conversationId);
+    async runOnConversation<T>(conversationRef: string, fn: () => T | Promise<T>): Promise<T> {
+      stub.serialized.push(conversationRef);
       return fn();
     },
   } as unknown as ContextStorePort;
@@ -345,7 +345,7 @@ describe("ctxExpandWalk performs a bounded multi-hop BFS over summary-parent (T2
     for (const s of stub.readScopes) {
       expect(s.agentId).toBe("agent_a");
       expect(s.tenantId).toBe("default");
-      expect(s.conversationId).toBe("default:user_a:chan_a");
+      expect(s.conversationRef).toBe("default:user_a:chan_a");
     }
   });
 });

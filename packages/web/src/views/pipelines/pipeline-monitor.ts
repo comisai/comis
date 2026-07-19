@@ -342,7 +342,7 @@ export class IcPipelineMonitor extends LitElement {
 
     // Try loading saved graph from server to get nodes with positions
     try {
-      const saved = await rpc.call<{ nodes: Array<Record<string, unknown>>; edges?: PipelineEdge[]; settings?: Record<string, unknown> }>("graph.load", { id: this.graphId });
+      const saved = await rpc.call("graph.load", { id: this.graphId });
 
       if (saved?.nodes?.length) {
         // Transform server nodes to canvas format (handle nodeId->id, agent->agentId)
@@ -396,7 +396,7 @@ export class IcPipelineMonitor extends LitElement {
     // This handles graphs executed via CLI/API without ever being saved through the GUI.
     if (nodeDefinitions.length === 0) {
       try {
-        const response = await rpc.call<{ executionOrder: string[] }>("graph.status", { graphId: this.graphId });
+        const response = await rpc.call("graph.status", { graphId: this.graphId });
 
         // Build minimal PipelineNode stubs
         const stubNodes: PipelineNode[] = response.executionOrder.map((nodeId) => ({

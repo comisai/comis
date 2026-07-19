@@ -41,10 +41,6 @@ interface DeliveryRecord {
   readonly steps: ReadonlyArray<DeliveryStep> | null;
 }
 
-interface DeliveryRecentResponse {
-  readonly deliveries: ReadonlyArray<DeliveryRecord>;
-}
-
 function normalizeDeliveryStatus(status: unknown): DeliveryTrace["status"] {
   switch (status) {
     case "success":
@@ -351,8 +347,8 @@ export class IcDeliveryView extends LitElement {
 
     try {
       const [statsResult, tracesResult] = await Promise.allSettled([
-        rpc.call<DeliveryStats>("obs.delivery.stats", { sinceMs: this._sinceMs }),
-        rpc.call<DeliveryRecentResponse>("obs.delivery.recent", { sinceMs: this._sinceMs, limit: 200 }),
+        rpc.call("obs.delivery.stats", { sinceMs: this._sinceMs }),
+        rpc.call("obs.delivery.recent", { sinceMs: this._sinceMs, limit: 200 }),
       ]);
 
       if (statsResult.status === "rejected" && tracesResult.status === "rejected") {

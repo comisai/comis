@@ -9,7 +9,7 @@
  */
 
 import type { AppContainer, ActivityTheme, ClockPort, AppConfig } from "@comis/core";
-import { systemSetInterval, getToolMetadata, parseFormattedSessionKey } from "@comis/core";
+import { systemSetInterval, getToolMetadata } from "@comis/core";
 import { createActivityStream, type ActivityStream } from "@comis/observability";
 import { createCostTracker, createCacheBreakDiffWriter, createSpendAccumulator } from "@comis/agent";
 import type { SpendAccumulator, SpendScope } from "@comis/agent";
@@ -231,7 +231,8 @@ export async function setupObservability(deps: {
   // (e.g. a boot stub) so a missing block degrades to "no accumulator" rather
   // than crashing boot.
   const spendCfg = deps.config?.observability?.spend;
-  if (deps.clock && spendCfg) {
+  const configuredTenantId = deps.config?.tenantId;
+  if (deps.clock && spendCfg && configuredTenantId) {
     spendAccumulator = createSpendAccumulator({
       clock: deps.clock,
       ceilings: {
@@ -243,15 +244,11 @@ export async function setupObservability(deps: {
     });
     const acc = spendAccumulator;
 
-    // Live increment from the SAME event the sharedCostTracker consumes (sees
-    // in-flight spend, no per-check SQL re-sum). The token_usage payload carries
-    // `sessionKey` but NO `tenantId`, so derive the tenant via the canonical
-    // `parseFormattedSessionKey` (L1) — NOT `agentId`-as-tenant, NOT a bare
-    // colon-split (which mishandles channelIds containing a colon) — so the
-    // per-tenant counter stays isolated (the cross-tenant-DoS guard).
+    // Live increment from the same event the shared cost tracker consumes.
+    // Tenant authority comes from parsed deployment config; sessionKey is a
+    // display projection and cannot select a spend partition.
     eventBus.on("observability:token_usage", (payload) => {
-      const tenantId = parseFormattedSessionKey(payload.sessionKey)?.tenantId ?? "default";
-      const scope: SpendScope = { tenantId, agentId: payload.agentId };
+      const scope: SpendScope = { tenantId: configuredTenantId, agentId: payload.agentId };
       acc.recordSpend(scope, payload.cost.total);
     });
   }

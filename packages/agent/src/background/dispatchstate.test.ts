@@ -17,7 +17,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { safePath } from "@comis/core";
+import { createConversationRef, safePath } from "@comis/core";
 import {
   createBackgroundTaskManager,
   type BackgroundTaskManager,
@@ -80,15 +80,19 @@ function createMockLogger() {
   return { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
 }
 
-function buildOrigin(overrides: Partial<BackgroundTaskOrigin> = {}): BackgroundTaskOrigin {
+function buildOrigin(overrides: Partial<BackgroundTaskOrigin> & { agentId?: string } = {}): BackgroundTaskOrigin {
+  const agentId = overrides.agentId ?? "default";
+  const endpoint = { channelType: "echo", channelInstanceId: "test-instance", conversationId: "test", conversationKind: "direct" as const };
+  const turnScope = { conversation: { tenantId: "default", agentId, partition: { kind: "endpoint-conversation-principal" as const, endpoint, principalId: "user1" } }, principal: { principalId: "user1" }, endpoint };
+  const conversationRef = createConversationRef(turnScope.conversation);
+  if (!conversationRef.ok) throw conversationRef.error;
   return {
-    agentId: "default",
-    sessionKey: "default:echo:test:user1",
-    channelType: "echo",
-    channelId: "test",
+    turnScope,
+    conversationRef: conversationRef.value,
+    deliveryOrigin: { channelType: "echo", channelId: "test", userId: "user1", tenantId: "default" },
     traceId: null,
     backgroundHopCount: 0,
-    ...overrides,
+    ...Object.fromEntries(Object.entries(overrides).filter(([key]) => key !== "agentId")),
   };
 }
 

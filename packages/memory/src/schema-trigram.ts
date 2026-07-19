@@ -6,8 +6,8 @@
  * plus the base-table delete-mirror triggers and the WHEN-guarded memories
  * content-update trigger:
  *
- *   - `lcd_messages_fts_tri`   ← lcd_messages   (conversation_id/agent_id/message_id UNINDEXED)
- *   - `lcd_summaries_fts_tri`  ← lcd_summaries  (conversation_id/agent_id/summary_id UNINDEXED)
+ *   - `lcd_messages_fts_tri`   ← lcd_messages   (conversation_ref/agent_id/message_id UNINDEXED)
+ *   - `lcd_summaries_fts_tri`  ← lcd_summaries  (conversation_ref/agent_id/summary_id UNINDEXED)
  *   - `memory_fts_tri`         ← memories       (no scope columns — the rowid-JOIN lane)
  *
  * The twins are the substrate the search/write paths target: appends
@@ -43,7 +43,16 @@
  * @module
  */
 
+import { normalizeForSearch } from "@comis/core";
 import type Database from "better-sqlite3";
+import { z } from "zod";
+
+const SchemaRowSchema = z.strictObject({ sql: z.string().nullable() });
+const MemoryBackfillRowSchema = z.strictObject({
+  rowid: z.number().int().positive(),
+  content: z.string(),
+  partition_id: z.number().int().positive(),
+});
 
 /** True iff a base table `name` exists — so a twin block is skipped wholesale on
  *  a partial-schema host (the table + its triggers stay paired; no orphan twin
@@ -53,6 +62,13 @@ function tableExists(db: Database.Database, name: string): boolean {
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(name);
   return row !== undefined;
+}
+
+function schemaSql(db: Database.Database, name: string): string | undefined {
+  const parsed = SchemaRowSchema.safeParse(
+    db.prepare("SELECT sql FROM sqlite_master WHERE name = ?").get(name),
+  );
+  return parsed.success ? (parsed.data.sql ?? undefined) : undefined;
 }
 
 /**
@@ -76,7 +92,7 @@ export function ensureTrigramTwins(db: Database.Database): void {
       db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS lcd_messages_fts_tri USING fts5(
           content,
-          conversation_id UNINDEXED,
+          conversation_ref UNINDEXED,
           agent_id UNINDEXED,          -- per-agent read isolation; MATCH … AND agent_id = ?
           message_id UNINDEXED,
           tokenize='trigram'
@@ -100,7 +116,7 @@ export function ensureTrigramTwins(db: Database.Database): void {
       db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS lcd_summaries_fts_tri USING fts5(
           content,
-          conversation_id UNINDEXED,
+          conversation_ref UNINDEXED,
           agent_id UNINDEXED,          -- per-agent read isolation; MATCH … AND agent_id = ?
           summary_id UNINDEXED,
           tokenize='trigram'
@@ -119,9 +135,8 @@ export function ensureTrigramTwins(db: Database.Database): void {
   }
 
   // ── Block 3: memories twin + delete-mirror trigger + WHEN-guarded update ─────
-  // The memory twin carries NO scope columns — the LTM lane scopes via a
-  // rowid-JOIN to `memories` plus the existing post-fusion tenant/agent filters.
-  // It also carries TWO triggers (delete + update); the
+  // The memory twin carries an indexed authority token, so tenant-agent scope is
+  // applied by MATCH before ranking and LIMIT. It also carries TWO triggers (delete + update); the
   // WHEN-guarded update is mandatory: a plain `AFTER UPDATE OF content` fires on
   // the consolidation proof-only fold `content = COALESCE(NULL, content)`
   // (probe-verified), which would silently de-index a
@@ -131,9 +146,19 @@ export function ensureTrigramTwins(db: Database.Database): void {
   // fail-safe direction), never stale-indexed.
   if (tableExists(db, "memories")) {
     try {
+      const existingSql = schemaSql(db, "memory_fts_tri");
+      const needsRebuild = existingSql === undefined || !/authority_token/i.test(existingSql);
+      if (needsRebuild) {
+        db.exec(`
+          DROP TRIGGER IF EXISTS memories_tri_ad;
+          DROP TRIGGER IF EXISTS memories_tri_au;
+          DROP TABLE IF EXISTS memory_fts_tri;
+        `);
+      }
       db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts_tri USING fts5(
           content,
+          authority_token,
           tokenize='trigram'
         );
         CREATE TRIGGER IF NOT EXISTS memories_tri_ad AFTER DELETE ON memories BEGIN
@@ -144,6 +169,33 @@ export function ensureTrigramTwins(db: Database.Database): void {
           DELETE FROM memory_fts_tri WHERE rowid = old.rowid;
         END;
       `);
+      if (needsRebuild) {
+        const rows = db
+          .prepare(
+            `SELECT m.rowid, m.content, p.partition_id
+             FROM memories m
+             JOIN memory_authority_partitions p
+               ON p.tenant_id = m.tenant_id AND p.agent_id = m.agent_id
+              AND p.visibility_key = CASE m.visibility
+                WHEN 'conversation' THEN 'conversation:' || m.conversation_ref
+                WHEN 'principal' THEN 'principal:' || m.principal_id
+                ELSE 'agent-shared'
+              END`,
+          )
+          .iterate();
+        const insert = db.prepare(
+          "INSERT INTO memory_fts_tri(rowid, content, authority_token) VALUES (?, ?, ?)",
+        );
+        for (const raw of rows) {
+          const parsed = MemoryBackfillRowSchema.safeParse(raw);
+          if (!parsed.success) continue;
+          insert.run(
+            parsed.data.rowid,
+            normalizeForSearch(parsed.data.content),
+            `authority_${parsed.data.partition_id}`,
+          );
+        }
+      }
     } catch {
       // trigram tokenizer not compiled into this host's better-sqlite3 (or base
       // table absent in a partial-schema test db) → boot WITHOUT this twin;

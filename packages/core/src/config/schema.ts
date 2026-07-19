@@ -35,6 +35,7 @@ import { TelegramFileRefGuardConfigSchema } from "./schema-telegram-file-guard.j
 import { ToolingConfigSchema } from "./schema-tooling.js";
 import { WebhooksConfigSchema } from "./schema-webhooks.js";
 import { ExecutorConfigSchema } from "./schema-executor.js";
+import { IdentityConfigSchema } from "./schema-identity.js";
 
 /**
  * Root application configuration schema.
@@ -46,6 +47,8 @@ import { ExecutorConfigSchema } from "./schema-executor.js";
 export const AppConfigSchema = z.strictObject({
     /** Tenant identifier for SaaS multi-tenancy */
     tenantId: z.string().default("default"),
+    /** Typed platform-subject to principal mappings used by ingress identity resolution. */
+    identity: IdentityConfigSchema.default(() => IdentityConfigSchema.parse({})),
     /** Global log level */
     logLevel: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("debug"),
     /** Base data directory for all persistent storage (default: ~/.comis) */

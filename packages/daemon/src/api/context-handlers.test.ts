@@ -16,8 +16,27 @@ import type {
   LcdConversationPage,
   LcdSummary,
 } from "@comis/core";
+import { createConversationRef } from "@comis/core";
 import { createContextHandlers } from "./context-handlers.js";
 import type { ContextHandlerDeps } from "./context-handlers.js";
+
+function conversationRef(conversationId: string, agentId = "agent_a") {
+  const result = createConversationRef({
+    tenantId: "tenant_a",
+    agentId,
+    partition: {
+      kind: "endpoint-conversation",
+      endpoint: {
+        channelType: "gateway",
+        channelInstanceId: "gateway-test",
+        conversationId,
+        conversationKind: "direct",
+      },
+    },
+  });
+  if (!result.ok) throw result.error;
+  return result.value;
+}
 
 function makeLogger(): ComisLogger {
   return {
@@ -62,8 +81,8 @@ describe("createContextHandlers", () => {
     it("returns the agent's conversations scoped by injected _agentId + deps.tenantId (not -32601)", async () => {
       const page: LcdConversationPage = {
         conversations: [
-          { conversationId: "conv-2", tenantId: "tenant_a", agentId: "agent_a", sessionKey: "conv-2", title: null, createdAt: 5000, updatedAt: 9000, messageCount: 4 },
-          { conversationId: "conv-1", tenantId: "tenant_a", agentId: "agent_a", sessionKey: "conv-1", title: null, createdAt: 1000, updatedAt: 2000, messageCount: 2 },
+          { conversationRef: conversationRef("conv-2"), tenantId: "tenant_a", agentId: "agent_a", sessionKey: "conv-2", title: null, createdAt: 5000, updatedAt: 9000, messageCount: 4 },
+          { conversationRef: conversationRef("conv-1"), tenantId: "tenant_a", agentId: "agent_a", sessionKey: "conv-1", title: null, createdAt: 1000, updatedAt: 2000, messageCount: 2 },
         ],
         total: 2,
       };
@@ -84,7 +103,7 @@ describe("createContextHandlers", () => {
       expect(result.conversations).toHaveLength(2);
       // snake_case wire keys matching the web DagConversation type.
       const c0 = result.conversations[0]!;
-      expect(c0.conversation_id).toBe("conv-2");
+      expect(c0.conversation_ref).toBe(conversationRef("conv-2"));
       expect(c0.agent_id).toBe("agent_a");
       expect(c0.title).toBeNull();
       // created_at / updated_at are ISO strings derived from the epoch bounds.
@@ -133,13 +152,13 @@ describe("createContextHandlers", () => {
       const handlers = createContextHandlers(deps);
 
       const result = (await handlers["context.tree"]!({
-        conversation_id: "conv-1",
+        conversation_ref: conversationRef("conv-1"),
         _agentId: "agent_a",
-      })) as { conversationId: string; nodes: Array<Record<string, unknown>>; messageCount: number };
+      })) as { conversationRef: string; nodes: Array<Record<string, unknown>>; messageCount: number };
 
       // Agent+tenant scope passed to the store reads.
-      expect(getSummaries).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "conv-1", agentId: "agent_a", tenantId: "tenant_a" }));
-      expect(result.conversationId).toBe("conv-1");
+      expect(getSummaries).toHaveBeenCalledWith(expect.objectContaining({ conversationRef: conversationRef("conv-1"), agentId: "agent_a", tenantId: "tenant_a" }));
+      expect(result.conversationRef).toBe(conversationRef("conv-1"));
       // Two summary nodes.
       expect(result.nodes).toHaveLength(2);
       // messageCount counts ONLY message-ref context_items (2 of 3).
@@ -173,7 +192,7 @@ describe("createContextHandlers", () => {
       const deps = makeDeps({ lcdStore });
       const handlers = createContextHandlers(deps);
 
-      const result = (await handlers["context.tree"]!({ conversation_id: "conv-1", _agentId: "agent_a" })) as {
+      const result = (await handlers["context.tree"]!({ conversation_ref: conversationRef("conv-1"), _agentId: "agent_a" })) as {
         nodes: Array<{ contentPreview: string }>;
       };
       expect(result.nodes[0]!.contentPreview.length).toBeLessThanOrEqual(280);
@@ -183,12 +202,12 @@ describe("createContextHandlers", () => {
       const deps = makeDeps({ lcdStore: undefined });
       const handlers = createContextHandlers(deps);
 
-      const result = (await handlers["context.tree"]!({ conversation_id: "conv-1", _agentId: "agent_a" })) as {
-        conversationId: string;
+      const result = (await handlers["context.tree"]!({ conversation_ref: conversationRef("conv-1"), _agentId: "agent_a" })) as {
+        conversationRef: string;
         nodes: unknown[];
         messageCount: number;
       };
-      expect(result.conversationId).toBe("conv-1");
+      expect(result.conversationRef).toBe(conversationRef("conv-1"));
       expect(result.nodes).toEqual([]);
       expect(result.messageCount).toBe(0);
     });

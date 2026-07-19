@@ -537,7 +537,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       {
         schemaVersion: 1,
         activityId,
-        sessionKey: p.sessionKey,
+        sessionKey: p.conversationRef,
         agentId: p.agentId,
         traceId: p.traceId,
         ts: ts(),

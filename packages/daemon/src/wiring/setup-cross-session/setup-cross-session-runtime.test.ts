@@ -5,7 +5,9 @@ import { mkdirSync } from "node:fs";
 import { MIN_SUB_AGENT_STEPS, resolveGraphCacheRetention } from "./index.js";
 import {
   createDeliveryOrigin,
+  createConversationLocator,
   DeliveryQueueTransitionError,
+  formatSessionKey,
   getContext,
   runWithContext,
   SUB_AGENT_TOOL_DENYLIST,
@@ -261,10 +263,105 @@ function createFunctionalEventBus() {
   };
 }
 
+function makeConversation(tenantId: string, agentId: string) {
+  const result = createConversationLocator({
+    tenantId,
+    agentId,
+    partition: { kind: "agent" },
+  });
+  if (!result.ok) throw result.error;
+  return result.value;
+}
+
+function getExecuteAgent(runnerArgs: any) {
+  const executeAgent = runnerArgs.executeAgent;
+  return (agentId: string, sessionKey: any, task: string, ...rest: any[]) => {
+    sessionKey.agentId ??= agentId;
+    const scopedSessionKey = sessionKey;
+    return executeAgent(
+      agentId,
+      scopedSessionKey,
+      makeConversation(scopedSessionKey.tenantId, agentId),
+      task,
+      ...rest,
+    );
+  };
+}
+
+function getExecuteInSession(senderArgs: any) {
+  const executeInSession = senderArgs.executeInSession;
+  return (agentId: string, sessionKey: any, text: string) => {
+    sessionKey.agentId ??= agentId;
+    const scopedSessionKey = sessionKey;
+    return executeInSession(
+      agentId,
+      scopedSessionKey,
+      makeConversation(scopedSessionKey.tenantId, agentId),
+      text,
+    );
+  };
+}
+
+function getAnnounceToParent(runnerArgs: any) {
+  const announceToParent = runnerArgs.announceToParent;
+  return (
+    agentId: string,
+    sessionKey: any,
+    text: string,
+    channelType: string,
+    channelId: string,
+    options?: { threadId?: string },
+  ) => runWithConversationAuthority(agentId, sessionKey, (scopedSessionKey) => (
+    announceToParent(
+      agentId,
+      scopedSessionKey,
+      makeConversation(scopedSessionKey.tenantId, agentId),
+      text,
+      channelType,
+      channelId,
+      options,
+    )
+  ));
+}
+
+function runWithConversationAuthority<T>(
+  agentId: string,
+  sessionKey: any,
+  fn: (scopedSessionKey: any) => T,
+): T {
+  const scopedSessionKey = { ...sessionKey, agentId: sessionKey.agentId ?? agentId };
+  const conversation = makeConversation(scopedSessionKey.tenantId, agentId).conversationScope;
+  return runWithContext({
+    tenantId: scopedSessionKey.tenantId,
+    userId: scopedSessionKey.userId,
+    sessionKey: formatSessionKey(scopedSessionKey),
+    agentId,
+    traceId: "40000000-0000-4000-8000-000000000004",
+    startedAt: 1_700_000_000_000,
+    trustLevel: "user",
+    turnScope: {
+      conversation,
+      principal: { principalId: scopedSessionKey.userId },
+      endpoint: {
+        channelType: "telegram",
+        channelInstanceId: "test-account",
+        conversationId: scopedSessionKey.channelId,
+        threadId: scopedSessionKey.threadId,
+        conversationKind: "direct",
+      },
+    },
+  }, () => fn(scopedSessionKey));
+}
+
 function createMinimalDeps(overrides: Record<string, any> = {}) {
+  const loadByFormattedKey = vi.fn();
   return {
     sessionStore: {
-      loadByFormattedKey: vi.fn(),
+      loadByFormattedKey,
+      load: vi.fn((scope: unknown) => ({
+        ok: true,
+        value: loadByFormattedKey(scope),
+      })),
       save: vi.fn(),
       delete: vi.fn(),
     },
@@ -363,7 +460,7 @@ describe("setupCrossSession", () => {
 
     // Extract the executeInSession callback passed to createCrossSessionSender
     const senderArgs = mockCreateCrossSessionSender.mock.calls[0][0];
-    const executeInSession = senderArgs.executeInSession;
+    const executeInSession = getExecuteInSession(senderArgs);
 
     const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
     const result = await executeInSession("agent-1", sessionKey, "Hello agent");
@@ -407,7 +504,7 @@ describe("setupCrossSession", () => {
     });
     setupCrossSession(deps);
 
-    const executeInSession = mockCreateCrossSessionSender.mock.calls[0][0].executeInSession;
+    const executeInSession = getExecuteInSession(mockCreateCrossSessionSender.mock.calls[0][0]);
     const sourceContext: RequestContext = {
       tenantId: "source-tenant",
       userId: "source-user",
@@ -443,14 +540,21 @@ describe("setupCrossSession", () => {
     expect(identityMutationAttempts).toEqual([false, false, false]);
     expect(observedContexts[0]).toBe(observedContexts[1]);
     expect(observedContexts[0]).not.toBe(sourceContext);
-    expect(observedContexts[0]).toEqual({
+    expect(observedContexts[0]).toMatchObject({
       tenantId: "target-tenant",
       userId: "target-user",
-      sessionKey: "target-tenant:target-user:target-channel:thread:target-thread",
+      sessionKey: "target-tenant:agent:target-agent:target-user:target-channel:thread:target-thread",
       agentId: "target-agent",
       traceId: "30000000-0000-4000-8000-000000000003",
       startedAt: 5_000,
       trustLevel: "guest",
+      turnScope: {
+        conversation: {
+          tenantId: "target-tenant",
+          agentId: "target-agent",
+          partition: { kind: "agent" },
+        },
+      },
     });
     expect(sourceContext.trustLevel).toBe("admin");
     expect(execute).toHaveBeenCalledWith(
@@ -493,7 +597,7 @@ describe("setupCrossSession", () => {
     });
     setupCrossSession(deps);
 
-    const executeInSession = mockCreateCrossSessionSender.mock.calls[0][0].executeInSession;
+    const executeInSession = getExecuteInSession(mockCreateCrossSessionSender.mock.calls[0][0]);
     const targetSessionKey = {
       tenantId: "target-tenant",
       userId: "target-user",
@@ -503,7 +607,7 @@ describe("setupCrossSession", () => {
     const ambient: RequestContext = {
       tenantId: "target-tenant",
       userId: "target-user",
-      sessionKey: "target-tenant:target-user:target-channel:thread:target-thread",
+      sessionKey: "target-tenant:agent:target-agent:target-user:target-channel:thread:target-thread",
       agentId: "source-agent",
       traceId: "20000000-0000-4000-8000-000000000002",
       startedAt: 2_000,
@@ -542,7 +646,7 @@ describe("setupCrossSession", () => {
     });
     setupCrossSession(deps);
 
-    const executeInSession = mockCreateCrossSessionSender.mock.calls[0][0].executeInSession;
+    const executeInSession = getExecuteInSession(mockCreateCrossSessionSender.mock.calls[0][0]);
 
     await expect(executeInSession(
       "target-agent",
@@ -691,7 +795,7 @@ describe("setupCrossSession", () => {
 
     // executeSubAgent is passed to createSubAgentRunner
     const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-    const executeAgent = runnerArgs.executeAgent;
+    const executeAgent = getExecuteAgent(runnerArgs);
 
     const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
     await executeAgent("agent-2", sessionKey, "Execute this task");
@@ -787,7 +891,7 @@ describe("setupCrossSession", () => {
 
     // announceToParent is passed to createSubAgentRunner
     const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-    const announceToParent = runnerArgs.announceToParent;
+    const announceToParent = getAnnounceToParent(runnerArgs);
 
     const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
     const candidate = await announceToParent("agent-1", sessionKey, "Sub-agent done", "telegram", "chat-123");
@@ -826,7 +930,7 @@ describe("setupCrossSession", () => {
     const setupCrossSession = await getSetupCrossSession();
     const deps = createMinimalDeps();
     setupCrossSession(deps);
-    const announceToParent = mockCreateSubAgentRunner.mock.calls[0][0].announceToParent;
+    const announceToParent = getAnnounceToParent(mockCreateSubAgentRunner.mock.calls[0][0]);
 
     const candidate = await announceToParent(
       "agent-1",
@@ -851,7 +955,7 @@ describe("setupCrossSession", () => {
     }));
     deps.getExecutor = vi.fn(() => ({ execute }));
     setupCrossSession(deps);
-    const announceToParent = mockCreateSubAgentRunner.mock.calls[0][0].announceToParent;
+    const announceToParent = getAnnounceToParent(mockCreateSubAgentRunner.mock.calls[0][0]);
 
     await announceToParent(
       "agent-1",
@@ -875,7 +979,7 @@ describe("setupCrossSession", () => {
     const setupCrossSession = await getSetupCrossSession();
     const deps = createMinimalDeps();
     setupCrossSession(deps);
-    const announceToParent = mockCreateSubAgentRunner.mock.calls[0][0].announceToParent;
+    const announceToParent = getAnnounceToParent(mockCreateSubAgentRunner.mock.calls[0][0]);
     const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
     const unrelatedContext: RequestContext = {
       traceId: "550e8400-e29b-41d4-a716-446655440090",
@@ -929,7 +1033,7 @@ describe("setupCrossSession", () => {
     setupCrossSession(deps);
 
     const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-    const announceToParent = runnerArgs.announceToParent;
+    const announceToParent = getAnnounceToParent(runnerArgs);
 
     mockDeliverToChannel.mockClear();
     const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
@@ -959,7 +1063,7 @@ describe("setupCrossSession", () => {
     setupCrossSession(deps);
 
     const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-    const announceToParent = runnerArgs.announceToParent;
+    const announceToParent = getAnnounceToParent(runnerArgs);
 
     mockDeliverToChannel.mockClear();
     const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
@@ -984,7 +1088,7 @@ describe("setupCrossSession", () => {
     setupCrossSession(deps);
 
     const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-    const announceToParent = runnerArgs.announceToParent;
+    const announceToParent = getAnnounceToParent(runnerArgs);
 
     const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
     await expect(
@@ -1023,7 +1127,7 @@ describe("setupCrossSession", () => {
     setupCrossSession(deps);
 
     const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-    const announceToParent = runnerArgs.announceToParent;
+    const announceToParent = getAnnounceToParent(runnerArgs);
 
     const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
     await announceToParent("agent-1", sessionKey, "Done", "telegram", "chat-123");
@@ -1060,7 +1164,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
@@ -1094,7 +1198,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await Promise.all([
@@ -1113,7 +1217,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
@@ -1143,7 +1247,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       const result = await executeAgent("agent-2", sessionKey, "task");
@@ -1183,7 +1287,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
@@ -1217,7 +1321,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
@@ -1278,7 +1382,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
 
@@ -1333,7 +1437,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
 
@@ -1365,7 +1469,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task", 10);
@@ -1391,7 +1495,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task", 40);
@@ -1417,7 +1521,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
@@ -1464,7 +1568,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
@@ -1502,7 +1606,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
@@ -1538,7 +1642,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
@@ -1573,7 +1677,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       // Call WITHOUT callerAgentId (skip parent tool intersection path)
@@ -1610,7 +1714,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       // Pass callerAgentId to trigger parent tool intersection
@@ -1661,7 +1765,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
@@ -1747,7 +1851,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("target-agent", sessionKey, "task", undefined, "parent-agent");
@@ -1810,7 +1914,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("target-agent", sessionKey, "task", undefined, "parent-agent");
@@ -1866,7 +1970,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       // No callerAgentId -- direct execution without parent intersection
@@ -1929,7 +2033,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("target-agent", sessionKey, "task", undefined, "parent-agent");
@@ -1984,7 +2088,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("sub-agent-xyz", sessionKey, "task", undefined, "technical-analyst");
@@ -2035,7 +2139,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("sub-agent-xyz", sessionKey, "task", undefined, "technical-analyst");
@@ -2085,7 +2189,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       // No callerAgentId -- original fallback behavior
@@ -2142,7 +2246,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("sub-agent-xyz", sessionKey, "task", undefined, "technical-analyst");
@@ -2577,7 +2681,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
@@ -2626,7 +2730,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
@@ -2687,7 +2791,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
@@ -2727,7 +2831,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
 
@@ -2756,7 +2860,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
 
@@ -2810,7 +2914,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
 
@@ -2839,7 +2943,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
 
@@ -2888,14 +2992,16 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
 
       expect(mockExecutor.execute).toHaveBeenCalledWith(
         expect.any(Object), sessionKey, expect.any(Array),
         undefined, "agent-2", undefined, undefined,
-        expect.objectContaining({ promptTimeout: { promptTimeoutMs: 90_000 } }),
+        expect.objectContaining({
+          promptTimeout: expect.objectContaining({ promptTimeoutMs: 90_000 }),
+        }),
       );
     });
 
@@ -2916,6 +3022,10 @@ describe("setupCrossSession", () => {
           loadByFormattedKey: vi.fn(() => ({
             metadata: { modelOverride: "openai:gpt-4o" },
           })),
+          load: vi.fn(() => ({
+            ok: true,
+            value: { metadata: { modelOverride: "openai:gpt-4o" } },
+          })),
           save: vi.fn(),
           delete: vi.fn(),
         },
@@ -2923,7 +3033,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
 
@@ -2955,7 +3065,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
 
       // Execute within ALS context that has resolvedModel set
@@ -3015,6 +3125,10 @@ describe("setupCrossSession", () => {
           loadByFormattedKey: vi.fn(() => ({
             metadata: { modelOverride: "openai:gpt-4o-mini" },
           })),
+          load: vi.fn(() => ({
+            ok: true,
+            value: { metadata: { modelOverride: "openai:gpt-4o-mini" } },
+          })),
           save: vi.fn(),
           delete: vi.fn(),
         },
@@ -3022,7 +3136,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("unknown-agent", sessionKey, "task");
 
@@ -3072,7 +3186,7 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task");
 
@@ -3236,12 +3350,12 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
-      // Pass graphOverrides with reuseSessionKey
+      // Pass graph overrides with canonical reuse conversation authority.
       await executeAgent("agent-2", sessionKey, "task", undefined, undefined, {
-        reuseSessionKey: "default:debate-node1:debate:graph1:node1",
+        reuseConversation: makeConversation("t-1", "agent-2"),
       });
 
       // SpawnPacket should be undefined (skipped) when isReuseSession is true
@@ -3269,11 +3383,11 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task", undefined, undefined, {
-        reuseSessionKey: "default:debate-node1:debate:graph1:node1",
+        reuseConversation: makeConversation("t-1", "agent-2"),
       });
 
       // Reuse sessions use createComisSessionManager (disk-backed), not ephemeral
@@ -3326,11 +3440,11 @@ describe("setupCrossSession", () => {
       setupCrossSession(deps);
 
       const runnerArgs = mockCreateSubAgentRunner.mock.calls[0][0];
-      const executeAgent = runnerArgs.executeAgent;
+      const executeAgent = getExecuteAgent(runnerArgs);
 
       const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1" };
       await executeAgent("agent-2", sessionKey, "task", undefined, undefined, {
-        reuseSessionKey: "default:debate-node1:debate:graph1:node1",
+        reuseConversation: makeConversation("t-1", "agent-2"),
       });
 
       // Reuse sessions force "long" retention even when resolution says "short"
@@ -3600,9 +3714,10 @@ describe("setupCrossSession durable-store injection", () => {
       announceChannelType: "telegram",
       announceChannelId: "chat-1",
       callerAgentId: "agent-1",
-      callerSessionKey: "default:user1:chan1",
+      callerSessionKey: "default:agent:agent-1:user1:chan1",
+      callerConversation: makeConversation("default", "agent-1"),
       runId: "completion-run-1",
-      idempotencyKey: "default:user1:chan1::completion-run-1",
+      idempotencyKey: "default:agent:agent-1:user1:chan1::completion-run-1",
     });
     await result.announcementBatcher.flush();
 
@@ -3687,9 +3802,10 @@ describe("setupCrossSession durable-store injection", () => {
       announceChannelType: "telegram",
       announceChannelId: "chat-retained",
       callerAgentId: "agent-1",
-      callerSessionKey: "default:user1:chan1",
+      callerSessionKey: "default:agent:agent-1:user1:chan1",
+      callerConversation: makeConversation("default", "agent-1"),
       runId: `completion-${mode}`,
-      idempotencyKey: `default:user1:chan1::completion-${mode}`,
+      idempotencyKey: `default:agent:agent-1:user1:chan1::completion-${mode}`,
     });
     await result.announcementBatcher.flush();
 

@@ -2,6 +2,7 @@
 import type { NormalizedMessage } from "../domain/normalized-message.js";
 import type { DeliveryStatus } from "../domain/delivery-status.js";
 import type { SessionKey } from "../domain/session-key.js";
+import type { ConversationScope } from "../domain/conversation-scope.js";
 import type { ScriptClass } from "../text/script-classes.js";
 import type {
   SubAgentSpawnPreparedEvent,
@@ -66,7 +67,7 @@ export interface MessagingEvents {
   "session:created": { sessionKey: SessionKey; timestamp: number };
 
   /** Session expired and was cleaned up */
-  "session:expired": { sessionKey: SessionKey; reason: string };
+  "session:expired": { conversationScope: ConversationScope; reason: string };
 
   // -------------------------------------------------------------------------
   // Cross-session messaging and sub-agent lifecycle events

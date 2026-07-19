@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
 
-import type { ComisLogger, DurableRunRecord } from "@comis/core";
+import { createConversationRef, type ComisLogger, type DurableRunRecord } from "@comis/core";
 import { ok, type Result } from "@comis/shared";
 
 import { createOrchestrateReplayRespawn } from "./orchestrate-replay-respawn.js";
@@ -27,11 +27,20 @@ import { BwrapProvider } from "../sandbox/bwrap-provider.js";
 import type { OrchestrateSpawnFn, OrchestrateSpawnedChild } from "./orchestrate-repair.js";
 import type { OrchestrateDurableRuns, ResumePrincipal } from "./orchestrate-durable.js";
 
-const PRINCIPAL: ResumePrincipal = {
+const CONVERSATION_SCOPE = {
+  tenantId: "tenant-a",
   agentId: "agent-a",
-  sessionKey: "tenant-a:user-a:chat-a",
-  ownerTenantId: "tenant-a",
-  ownerUserId: "user-a",
+  partition: { kind: "principal" as const, principalId: "user-a" },
+};
+const conversationReference = createConversationRef(CONVERSATION_SCOPE);
+if (!conversationReference.ok) throw conversationReference.error;
+
+const PRINCIPAL: ResumePrincipal = {
+  tenantId: "tenant-a",
+  agentId: "agent-a",
+  conversationRef: conversationReference.value,
+  conversationScope: CONVERSATION_SCOPE,
+  principalId: "user-a",
   deliveryOrigin: null,
   trustLevel: "user",
   caps: [],
@@ -80,10 +89,11 @@ function makeDurableRuns(scriptRef: string | undefined): OrchestrateDurableRuns 
           : ({
               checkpointId: "orch-x",
               rootRunId: "root-x",
+              tenantId: PRINCIPAL.tenantId,
               agentId: PRINCIPAL.agentId,
-              sessionKey: PRINCIPAL.sessionKey,
-              ownerTenantId: PRINCIPAL.ownerTenantId,
-              ownerUserId: PRINCIPAL.ownerUserId,
+              conversationRef: PRINCIPAL.conversationRef,
+              conversationScope: PRINCIPAL.conversationScope,
+              principalId: PRINCIPAL.principalId,
               deliveryOrigin: PRINCIPAL.deliveryOrigin,
               spawnTree: [],
               caps: [],

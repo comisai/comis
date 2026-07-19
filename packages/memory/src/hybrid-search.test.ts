@@ -2,14 +2,56 @@
 import Database from "better-sqlite3";
 import { describe, it, expect, beforeEach } from "vitest";
 import { normalizeForSearch } from "@comis/core";
+import type { ConversationRef, MemoryRecallScope } from "@comis/core";
 import {
   buildFtsQuery,
-  searchByText,
-  searchByVector,
+  searchByText as scopedSearchByText,
+  searchByVector as scopedSearchByVector,
   computeRRF,
-  hybridSearch,
+  hybridSearch as scopedHybridSearch,
+  type HybridSearchOptions,
 } from "./hybrid-search.js";
 import { initSchema, isVecAvailable } from "./schema.js";
+import {
+  memoryAuthorityToken,
+  requireMemoryAuthorityPartitionForMemory,
+} from "./memory-authority.js";
+
+function recallScope(tenantId = "default", agentId = "default"): MemoryRecallScope {
+  return {
+    tenantId,
+    agentId,
+    conversationRef: `cv_${"A".repeat(43)}` as ConversationRef,
+    principalId: "u1",
+    includeAgentShared: true,
+  };
+}
+
+function searchByText(db: Database.Database, query: string, limit: number) {
+  return scopedSearchByText(db, query, limit, recallScope());
+}
+
+function searchByVector(db: Database.Database, embedding: number[], limit: number) {
+  return scopedSearchByVector(db, embedding, limit, recallScope());
+}
+
+type FixtureHybridOptions = Omit<HybridSearchOptions, "scope"> & {
+  tenantId?: string;
+  agentId?: string;
+};
+
+function hybridSearch(
+  db: Database.Database,
+  query: string,
+  embedding: number[] | undefined,
+  options: FixtureHybridOptions,
+) {
+  const { tenantId, agentId, ...filters } = options;
+  return scopedHybridSearch(db, query, embedding, {
+    ...filters,
+    scope: recallScope(tenantId, agentId),
+  });
+}
 
 /** Helper to insert a memory row with minimal boilerplate. */
 function insertMemory(
@@ -26,8 +68,8 @@ function insertMemory(
   },
 ): void {
   db.prepare(
-    `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, occurred_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'agent', '[]', ?, ?)`,
+    `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at, occurred_at)
+     VALUES (?, ?, ?, ?, 'agent-shared', ?, ?, ?, 'agent', '[]', ?, ?)`,
   ).run(
     id,
     opts?.tenantId ?? "default",
@@ -44,7 +86,10 @@ function insertMemory(
 /** Helper to insert a vector embedding for a memory. */
 function insertEmbedding(db: Database.Database, memoryId: string, embedding: number[]): void {
   const float32 = new Float32Array(embedding);
-  db.prepare("INSERT INTO vec_memories(memory_id, embedding) VALUES (?, ?)").run(memoryId, float32);
+  const partitionId = requireMemoryAuthorityPartitionForMemory(db, memoryId);
+  db.prepare(
+    "INSERT INTO vec_memories(memory_id, embedding, authority_partition_id) VALUES (?, ?, ?)",
+  ).run(memoryId, float32, BigInt(partitionId));
   db.prepare("UPDATE memories SET has_embedding = 1 WHERE id = ?").run(memoryId);
 }
 
@@ -242,9 +287,10 @@ describe("searchByText script routing (trigram lane)", () => {
    *  its rowid — the index state the store()-side twin write produces. */
   function insertWithTwin(id: string, content: string): void {
     insertMemory(db, id, content);
+    const partitionId = requireMemoryAuthorityPartitionForMemory(db, id);
     db.prepare(
-      "INSERT INTO memory_fts_tri(rowid, content) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?)",
-    ).run(id, normalizeForSearch(content));
+      "INSERT INTO memory_fts_tri(rowid, content, authority_token) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?, ?)",
+    ).run(id, normalizeForSearch(content), memoryAuthorityToken(partitionId));
   }
 
   // Stored / query pairs, all assembled from codepoints.

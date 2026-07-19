@@ -1,120 +1,132 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  createConversationRef,
+  type ConversationRef,
+  type ConversationScope,
+  type SessionStorePort,
+} from "@comis/core";
+import { ok } from "@comis/shared";
 import { createSessionLabelStore, type SessionLabelStore } from "./session-label-store.js";
-import type { SessionStore, SessionData, SessionDetailedEntry, SessionListEntry } from "@comis/memory";
-import type { SessionKey } from "@comis/core";
-import { formatSessionKey } from "@comis/core";
-
-// ---------------------------------------------------------------------------
-// In-memory mock SessionStore
-// ---------------------------------------------------------------------------
 
 interface StoredSession {
+  conversationRef: ConversationRef;
+  conversationScope: ConversationScope;
   messages: unknown[];
   metadata: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
-  key: SessionKey;
 }
 
-function createMockSessionStore(): SessionStore & { _sessions: Map<string, StoredSession> } {
-  const sessions = new Map<string, StoredSession>();
+function refFor(scope: ConversationScope): ConversationRef {
+  const result = createConversationRef(scope);
+  if (!result.ok) throw result.error;
+  return result.value;
+}
 
+function makeScope(
+  tenantId: string,
+  principalId: string,
+  conversationId: string,
+  agentId = "agent_a",
+): ConversationScope {
   return {
-    _sessions: sessions,
-
-    save(key: SessionKey, messages: unknown[], metadata?: Record<string, unknown>): void {
-      const formatted = formatSessionKey(key);
-      const existing = sessions.get(formatted);
-      const now = Date.now();
-      sessions.set(formatted, {
-        messages,
-        metadata: metadata ?? {},
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-        key,
-      });
-    },
-
-    load(key: SessionKey): SessionData | undefined {
-      const formatted = formatSessionKey(key);
-      const stored = sessions.get(formatted);
-      if (!stored) return undefined;
-      return {
-        messages: stored.messages,
-        metadata: { ...stored.metadata },
-        createdAt: stored.createdAt,
-        updatedAt: stored.updatedAt,
-      };
-    },
-
-    list(tenantId?: string): SessionListEntry[] {
-      const entries: SessionListEntry[] = [];
-      for (const [sessionKey, stored] of sessions) {
-        if (tenantId !== undefined && stored.key.tenantId !== tenantId) continue;
-        entries.push({ sessionKey, updatedAt: stored.updatedAt });
-      }
-      return entries.sort((a, b) => b.updatedAt - a.updatedAt);
-    },
-
-    delete(key: SessionKey): boolean {
-      const formatted = formatSessionKey(key);
-      return sessions.delete(formatted);
-    },
-
-    deleteStale(maxAgeMs: number): number {
-      const cutoff = Date.now() - maxAgeMs;
-      let count = 0;
-      for (const [key, stored] of sessions) {
-        if (stored.updatedAt < cutoff) {
-          sessions.delete(key);
-          count++;
-        }
-      }
-      return count;
-    },
-
-    loadByFormattedKey(sessionKey: string): SessionData | undefined {
-      const stored = sessions.get(sessionKey);
-      if (!stored) return undefined;
-      return {
-        messages: stored.messages,
-        metadata: { ...stored.metadata },
-        createdAt: stored.createdAt,
-        updatedAt: stored.updatedAt,
-      };
-    },
-
-    listDetailed(tenantId?: string): SessionDetailedEntry[] {
-      const entries: SessionDetailedEntry[] = [];
-      for (const [sessionKey, stored] of sessions) {
-        if (tenantId !== undefined && stored.key.tenantId !== tenantId) continue;
-        entries.push({
-          sessionKey,
-          tenantId: stored.key.tenantId,
-          userId: stored.key.userId,
-          channelId: stored.key.channelId,
-          metadata: { ...stored.metadata },
-          createdAt: stored.createdAt,
-          updatedAt: stored.updatedAt,
-        });
-      }
-      return entries.sort((a, b) => b.updatedAt - a.updatedAt);
+    tenantId,
+    agentId,
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: {
+        channelType: "test",
+        channelInstanceId: "test-instance",
+        conversationId,
+        conversationKind: "direct",
+      },
+      principalId,
     },
   };
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function makeKey(tenant: string, user: string, channel: string): SessionKey {
-  return { tenantId: tenant, userId: user, channelId: channel };
+function createMockSessionStore(): SessionStorePort & {
+  _sessions: Map<ConversationRef, StoredSession>;
+} {
+  const sessions = new Map<ConversationRef, StoredSession>();
+  return {
+    _sessions: sessions,
+    save(scope, messages, metadata) {
+      const conversationRef = refFor(scope);
+      const existing = sessions.get(conversationRef);
+      const now = Date.now();
+      sessions.set(conversationRef, {
+        conversationRef,
+        conversationScope: scope,
+        messages: [...messages],
+        metadata: { ...(metadata ?? {}) },
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      });
+      return ok(undefined);
+    },
+    load(scope) {
+      return ok(sessions.get(refFor(scope)));
+    },
+    loadByRef(query, conversationRef) {
+      const stored = sessions.get(conversationRef);
+      return ok(
+        stored?.conversationScope.tenantId === query.tenantId
+          && stored.conversationScope.agentId === query.agentId
+          ? stored
+          : undefined,
+      );
+    },
+    list(query) {
+      return ok([...sessions.values()]
+        .filter((entry) => entry.conversationScope.tenantId === query.tenantId
+          && entry.conversationScope.agentId === query.agentId)
+        .map((entry) => ({
+          conversationRef: entry.conversationRef,
+          conversationScope: entry.conversationScope,
+          updatedAt: entry.updatedAt,
+        })));
+    },
+    delete(scope) {
+      return ok(sessions.delete(refFor(scope)));
+    },
+    deleteByRef(query, conversationRef) {
+      const stored = sessions.get(conversationRef);
+      if (stored?.conversationScope.tenantId !== query.tenantId
+        || stored.conversationScope.agentId !== query.agentId) return ok(false);
+      return ok(sessions.delete(conversationRef));
+    },
+    deleteStale(query, maxAgeMs) {
+      const cutoff = Date.now() - maxAgeMs;
+      let deleted = 0;
+      for (const [conversationRef, entry] of sessions) {
+        if (entry.conversationScope.tenantId === query.tenantId
+          && entry.conversationScope.agentId === query.agentId
+          && entry.updatedAt < cutoff) {
+          sessions.delete(conversationRef);
+          deleted++;
+        }
+      }
+      return ok(deleted);
+    },
+    listDetailed(query) {
+      return ok([...sessions.values()]
+        .filter((entry) => entry.conversationScope.tenantId === query.tenantId
+          && entry.conversationScope.agentId === query.agentId)
+        .map((entry) => ({
+          conversationRef: entry.conversationRef,
+          conversationScope: entry.conversationScope,
+          tenantId: entry.conversationScope.tenantId,
+          agentId: entry.conversationScope.agentId,
+          metadata: { ...entry.metadata },
+          createdAt: entry.createdAt,
+          updatedAt: entry.updatedAt,
+          messageCount: entry.messages.length,
+        })));
+    },
+  };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("createSessionLabelStore", () => {
   let mockStore: ReturnType<typeof createMockSessionStore>;
@@ -125,167 +137,80 @@ describe("createSessionLabelStore", () => {
     labelStore = createSessionLabelStore(mockStore);
   });
 
-  // -----------------------------------------------------------------------
-  // getLabel
-  // -----------------------------------------------------------------------
+  it("returns a stored label through the scoped result contract", () => {
+    const scope = makeScope("tenant_a", "user_a", "chat_a");
+    mockStore.save(scope, [], { label: "Project Planning" });
 
-  it("returns label string when session has a label", () => {
-    const key = makeKey("t1", "u1", "c1");
-    mockStore.save(key, [{ role: "user", content: "hi" }], { label: "Project Planning" });
-
-    const label = labelStore.getLabel(key);
-    expect(label).toBe("Project Planning");
+    expect(labelStore.getLabel(scope)).toEqual(ok("Project Planning"));
   });
 
-  it("returns undefined when session exists but has no label", () => {
-    const key = makeKey("t1", "u1", "c1");
-    mockStore.save(key, [{ role: "user", content: "hi" }], { someOtherField: "value" });
+  it("returns no label when the session or label is absent", () => {
+    const scope = makeScope("tenant_a", "user_a", "chat_a");
+    mockStore.save(scope, [], { other: "value" });
 
-    const label = labelStore.getLabel(key);
-    expect(label).toBeUndefined();
+    expect(labelStore.getLabel(scope)).toEqual(ok(undefined));
+    expect(labelStore.getLabel(makeScope("tenant_a", "user_a", "missing"))).toEqual(ok(undefined));
   });
 
-  it("returns undefined when session does not exist", () => {
-    const key = makeKey("t1", "u1", "nonexistent");
+  it("sets a label while preserving existing metadata", () => {
+    const scope = makeScope("tenant_a", "user_a", "chat_a");
+    mockStore.save(scope, [], { customField: "keep", count: 2 });
 
-    const label = labelStore.getLabel(key);
-    expect(label).toBeUndefined();
-  });
-
-  // -----------------------------------------------------------------------
-  // setLabel
-  // -----------------------------------------------------------------------
-
-  it("stores label in metadata.label", () => {
-    const key = makeKey("t1", "u1", "c1");
-    mockStore.save(key, [{ role: "user", content: "hi" }]);
-
-    labelStore.setLabel(key, "Daily Standup");
-
-    const data = mockStore.load(key);
-    expect(data?.metadata.label).toBe("Daily Standup");
-  });
-
-  it("is a no-op when session does not exist", () => {
-    const key = makeKey("t1", "u1", "nonexistent");
-
-    // Should not throw
-    labelStore.setLabel(key, "Some Label");
-
-    // Session should still not exist
-    const data = mockStore.load(key);
-    expect(data).toBeUndefined();
-  });
-
-  it("preserves existing metadata fields when setting label", () => {
-    const key = makeKey("t1", "u1", "c1");
-    mockStore.save(key, [{ role: "user", content: "hi" }], {
-      customField: "keepMe",
-      anotherField: 42,
+    expect(labelStore.setLabel(scope, "Daily Standup")).toEqual(ok(undefined));
+    const loaded = mockStore.load(scope);
+    expect(loaded.ok && loaded.value?.metadata).toEqual({
+      customField: "keep",
+      count: 2,
+      label: "Daily Standup",
     });
-
-    labelStore.setLabel(key, "My Label");
-
-    const data = mockStore.load(key);
-    expect(data?.metadata.label).toBe("My Label");
-    expect(data?.metadata.customField).toBe("keepMe");
-    expect(data?.metadata.anotherField).toBe(42);
   });
 
-  it("overwrites existing label", () => {
-    const key = makeKey("t1", "u1", "c1");
-    mockStore.save(key, [{ role: "user", content: "hi" }], { label: "Old Label" });
+  it("overwrites an existing label", () => {
+    const scope = makeScope("tenant_a", "user_a", "chat_a");
+    mockStore.save(scope, [], { label: "Old Label" });
 
-    labelStore.setLabel(key, "New Label");
+    labelStore.setLabel(scope, "New Label");
 
-    const data = mockStore.load(key);
-    expect(data?.metadata.label).toBe("New Label");
+    const loaded = mockStore.load(scope);
+    expect(loaded.ok && loaded.value?.metadata.label).toBe("New Label");
   });
 
-  // -----------------------------------------------------------------------
-  // removeLabel
-  // -----------------------------------------------------------------------
+  it("does not create a session when setting or removing an absent label", () => {
+    const scope = makeScope("tenant_a", "user_a", "missing");
 
-  it("removes label while preserving other metadata", () => {
-    const key = makeKey("t1", "u1", "c1");
-    mockStore.save(key, [{ role: "user", content: "hi" }], {
-      label: "To Remove",
-      keepMe: "still here",
-    });
-
-    labelStore.removeLabel(key);
-
-    const data = mockStore.load(key);
-    expect(data?.metadata.label).toBeUndefined();
-    expect(data?.metadata.keepMe).toBe("still here");
+    expect(labelStore.setLabel(scope, "unused")).toEqual(ok(undefined));
+    expect(labelStore.removeLabel(scope)).toEqual(ok(undefined));
+    expect(mockStore.load(scope)).toEqual(ok(undefined));
   });
 
-  it("is a no-op when session does not exist", () => {
-    const key = makeKey("t1", "u1", "nonexistent");
+  it("removes a label while preserving other metadata", () => {
+    const scope = makeScope("tenant_a", "user_a", "chat_a");
+    mockStore.save(scope, [], { label: "remove", keep: "value" });
 
-    // Should not throw
-    labelStore.removeLabel(key);
+    expect(labelStore.removeLabel(scope)).toEqual(ok(undefined));
+    const loaded = mockStore.load(scope);
+    expect(loaded.ok && loaded.value?.metadata).toEqual({ keep: "value" });
   });
 
-  it("is a no-op when session has no label", () => {
-    const key = makeKey("t1", "u1", "c1");
-    mockStore.save(key, [{ role: "user", content: "hi" }], { other: "data" });
+  it("lists only labels inside the explicit tenant-agent query scope", () => {
+    const first = makeScope("tenant_a", "user_a", "chat_a");
+    const unlabeled = makeScope("tenant_a", "user_b", "chat_b");
+    const otherAgent = makeScope("tenant_a", "user_a", "chat_a", "agent_b");
+    const otherTenant = makeScope("tenant_b", "user_a", "chat_a");
+    mockStore.save(first, [], { label: "Planning" });
+    mockStore.save(unlabeled, [], {});
+    mockStore.save(otherAgent, [], { label: "Other agent" });
+    mockStore.save(otherTenant, [], { label: "Other tenant" });
 
-    labelStore.removeLabel(key);
-
-    const data = mockStore.load(key);
-    expect(data?.metadata.other).toBe("data");
-    expect(data?.metadata.label).toBeUndefined();
+    expect(labelStore.listLabeled({ tenantId: "tenant_a", agentId: "agent_a" })).toEqual(ok([
+      { conversationRef: refFor(first), label: "Planning" },
+    ]));
   });
 
-  // -----------------------------------------------------------------------
-  // listLabeled
-  // -----------------------------------------------------------------------
+  it("returns an empty scoped list when no session has a label", () => {
+    const scope = makeScope("tenant_a", "user_a", "chat_a");
+    mockStore.save(scope, [], {});
 
-  it("returns only sessions with labels", () => {
-    const key1 = makeKey("t1", "u1", "c1");
-    const key2 = makeKey("t1", "u2", "c2");
-    const key3 = makeKey("t1", "u3", "c3");
-
-    mockStore.save(key1, [], { label: "Planning" });
-    mockStore.save(key2, [], {}); // no label
-    mockStore.save(key3, [], { label: "Debug Session" });
-
-    const labeled = labelStore.listLabeled();
-    expect(labeled).toHaveLength(2);
-
-    const labels = labeled.map((e) => e.label);
-    expect(labels).toContain("Planning");
-    expect(labels).toContain("Debug Session");
-  });
-
-  it("filters by tenantId when provided", () => {
-    const key1 = makeKey("tenant-a", "u1", "c1");
-    const key2 = makeKey("tenant-b", "u2", "c2");
-
-    mockStore.save(key1, [], { label: "Tenant A Session" });
-    mockStore.save(key2, [], { label: "Tenant B Session" });
-
-    const labeled = labelStore.listLabeled("tenant-a");
-    expect(labeled).toHaveLength(1);
-    expect(labeled[0].label).toBe("Tenant A Session");
-  });
-
-  it("returns empty array when no sessions have labels", () => {
-    const key1 = makeKey("t1", "u1", "c1");
-    mockStore.save(key1, [], {});
-
-    const labeled = labelStore.listLabeled();
-    expect(labeled).toHaveLength(0);
-  });
-
-  it("returns sessionKey in each entry", () => {
-    const key1 = makeKey("t1", "u1", "c1");
-    mockStore.save(key1, [], { label: "My Session" });
-
-    const labeled = labelStore.listLabeled();
-    expect(labeled).toHaveLength(1);
-    expect(labeled[0].sessionKey).toBe(formatSessionKey(key1));
-    expect(labeled[0].label).toBe("My Session");
+    expect(labelStore.listLabeled({ tenantId: "tenant_a", agentId: "agent_a" })).toEqual(ok([]));
   });
 });

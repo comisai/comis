@@ -12,11 +12,10 @@
  * @module
  */
 
-import type { AuthStorage } from "@earendil-works/pi-coding-agent";
 import type { SecretManager } from "@comis/core";
 import type { TypedEventBus, OAuthCredentialStorePort, FileLockPort } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
-import { createAuthStorageAdapter, type AuthStorageAdapterOptions } from "./auth-storage-adapter.js";
+import { createAuthStorageAdapter, type AuthStorageAdapterOptions, type ComisCredentialStore } from "./auth-storage-adapter.js";
 import { createAuthProfileManager, type AuthProfileManager, type AuthProfileManagerConfig, type AuthProfile, type OrderingStrategy } from "./auth-profile.js";
 import { createAuthRotationAdapter, type AuthRotationAdapter } from "./auth-rotation-adapter.js";
 import { createAuthUsageTracker, type AuthUsageTracker } from "./auth-usage-tracker.js";
@@ -89,8 +88,8 @@ export interface AuthProviderConfig {
 
 /** Unified auth provider exposing all composed auth modules. */
 export interface AuthProvider {
-  /** In-memory AuthStorage populated from SecretManager. */
-  readonly authStorage: AuthStorage;
+  /** In-memory credential store populated from SecretManager. */
+  readonly authStorage: ComisCredentialStore;
 
   /** Auth profile manager for multi-key cooldown tracking. Undefined when no profiles configured. */
   readonly profileManager: AuthProfileManager | undefined;
@@ -113,9 +112,9 @@ export interface AuthProvider {
  * Create a unified auth provider composing all auth modules.
  *
  * Wires the dependency chain:
- * 1. AuthStorage (from SecretManager)
+ * 1. ComisCredentialStore (from SecretManager)
  * 2. AuthProfileManager (from profiles + SecretManager) -- optional
- * 3. AuthRotationAdapter (from AuthStorage + ProfileManager) -- optional
+ * 3. AuthRotationAdapter (from the credential store + ProfileManager) -- optional
  * 4. AuthUsageTracker (standalone)
  * 5. OAuthTokenManager (from SecretManager + EventBus) -- optional
  *
@@ -134,7 +133,7 @@ export function createAuthProvider(config: AuthProviderConfig): AuthProvider {
     oauth,
   } = config;
 
-  // 1. AuthStorage: bridge SecretManager to pi-coding-agent's AuthStorage
+  // 1. Credential store: bridge SecretManager to pi-ai's CredentialStore
   const storageOptions: AuthStorageAdapterOptions = {
     secretManager,
     additionalProviderKeys,

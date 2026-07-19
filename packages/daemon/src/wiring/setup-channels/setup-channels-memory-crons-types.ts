@@ -79,7 +79,7 @@ export interface MemoryCronContext {
   resolveAccessToken?: (agentId: string, provider: string) => Promise<string | undefined>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- container.config.agents PerAgentConfig map (erased at the dispatch boundary)
   agents: Record<string, any>;
-  tenantId?: string;
+  tenantId: string;
   // All stores below are injected from setup-memory on the shared db; the agent
   // receives the port TYPE only (the agent↛memory cut). Each backs the named sentinel.
   /** Orphaned — the __MEMORY_CONSOLIDATION__ cron and its writer were removed; the store is retired. */

@@ -16,8 +16,8 @@ export const MemoryPinContract = defineContract({
   method: "memory.pin",
   request: z.object({
     id: z.string().min(1),
-    tenant_id: z.string().optional(),
-    agent_id: z.string().optional(),
+    tenant_id: z.string().min(1),
+    agent_id: z.string().min(1),
   }),
   response: z.object({
     pinned: z.literal(true),
@@ -34,8 +34,8 @@ export const MemoryUnpinContract = defineContract({
   method: "memory.unpin",
   request: z.object({
     id: z.string().min(1),
-    tenant_id: z.string().optional(),
-    agent_id: z.string().optional(),
+    tenant_id: z.string().min(1),
+    agent_id: z.string().min(1),
   }),
   response: z.object({
     unpinned: z.literal(true),

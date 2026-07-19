@@ -23,14 +23,12 @@ describe("DeliveryOrigin", () => {
       expect(Object.isFrozen(origin)).toBe(true);
     });
 
-    it("defaults tenantId to 'default' when omitted", () => {
-      const origin = createDeliveryOrigin({
+    it("rejects an omitted tenant instead of selecting delivery authority", () => {
+      expect(() => createDeliveryOrigin({
         channelType: "discord",
         channelId: "ch-1",
         userId: "u-1",
-      });
-
-      expect(origin.tenantId).toBe("default");
+      } as Parameters<typeof createDeliveryOrigin>[0])).toThrow();
     });
 
     it("allows threadId to be omitted (undefined)", () => {
@@ -38,6 +36,7 @@ describe("DeliveryOrigin", () => {
         channelType: "discord",
         channelId: "ch-1",
         userId: "u-1",
+        tenantId: "tenant-a",
       });
 
       expect(origin.threadId).toBeUndefined();

@@ -47,7 +47,7 @@ export function bindGraphExportHandlers(deps: GraphHandlerDeps): Record<string, 
       const userParams = stripInternalFields(rawParams);
       GraphLoadContract.request.parse(userParams);
 
-      const tenantId = deps.tenantId ?? "default";
+      const tenantId = deps.tenantId;
       const entry = deps.namedGraphStore.load(id, tenantId);
       if (!entry) {
         throw new PreconditionError("Named graph not found");

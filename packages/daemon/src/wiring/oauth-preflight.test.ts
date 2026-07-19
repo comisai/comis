@@ -4,7 +4,7 @@
  *
  * Two exported helpers under test:
  *   1. `hasAnyOAuthAgent(agents)` — boolean gate; true iff any agent's
- *      `provider` field is recognised by pi-ai's `getOAuthProvider`.
+ *      `provider` field is recognised by the provider OAuth catalog.
  *   2. `emitOAuthTlsPreflightWarn(logger)` — fire-and-forget; runs
  *      `runOAuthTlsPreflight({ timeoutMs: 4000 })` and on
  *      `kind: "tls-cert"` emits exactly one structured WARN with a
@@ -35,18 +35,15 @@ vi.mock("node:fs/promises", () => ({
   readFile: mockReadFile,
 }));
 
-// runOAuthTlsPreflight is exposed from @comis/core.
+// runOAuthTlsPreflight and getProviderOAuth are exposed from @comis/core.
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
   return {
     ...actual,
     runOAuthTlsPreflight: mockRunOAuthTlsPreflight,
+    getProviderOAuth: mockGetOAuthProvider,
   };
 });
-
-vi.mock("@earendil-works/pi-ai/oauth", () => ({
-  getOAuthProvider: mockGetOAuthProvider,
-}));
 
 // Import after mocks are registered.
 import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "./oauth-preflight.js";
@@ -99,7 +96,7 @@ describe("hasAnyOAuthAgent", () => {
     expect(mockGetOAuthProvider).not.toHaveBeenCalled();
   });
 
-  it("returns false when no agent's provider is recognised by pi-ai", () => {
+  it("returns false when no agent's provider is recognised by the provider OAuth catalog", () => {
     mockGetOAuthProvider.mockReturnValue(undefined);
     const agents: Record<string, PerAgentConfig> = {
       a: makeAgent("anthropic"),

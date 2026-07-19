@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { NormalizedMessageSchema, tryGetContext } from "@comis/core";
+import { conversationScopeToSessionKey, NormalizedMessageSchema, tryGetContext } from "@comis/core";
+import { err, ok } from "@comis/shared";
 import type { SystemEventEntry } from "../system-events/system-event-types.js";
 import type { EffectiveHeartbeatConfig } from "./heartbeat-config.js";
 import {
   isQueueBusy,
-  resolveHeartbeatSessionKey,
   createAgentHeartbeatSource,
 } from "./agent-heartbeat-source.js";
 import type { AgentHeartbeatSourceDeps, HeartbeatSessionOps } from "./agent-heartbeat-source.js";
@@ -51,6 +51,30 @@ function createMockDeps(overrides?: Partial<AgentHeartbeatSourceDeps>): AgentHea
     assembleToolsForAgent: vi.fn().mockResolvedValue([]),
     getEffectiveConfig: vi.fn().mockReturnValue(mockConfig()),
     getAgentConfig: vi.fn().mockReturnValue({ model: "claude-sonnet", tenantId: "default" }),
+    resolveInternalTurnIdentity: vi.fn((input) => {
+      const endpoint = {
+        channelType: input.originKind,
+        channelInstanceId: input.instanceId,
+        conversationId: input.conversationId,
+        conversationKind: "direct" as const,
+      };
+      const turnScope = {
+        conversation: {
+          tenantId: input.tenantId,
+          agentId: input.agentId,
+          partition: {
+            kind: "endpoint-conversation-principal" as const,
+            endpoint,
+            principalId: input.principalId,
+          },
+        },
+        principal: { principalId: input.principalId },
+        endpoint,
+      };
+      const display = conversationScopeToSessionKey(turnScope.conversation);
+      if (!display.ok) return display;
+      return ok({ turnScope, displaySessionKey: display.value });
+    }),
     checkFileGate: vi.fn().mockResolvedValue(false), // Not empty -> proceed
     systemEventQueue: {
       enqueue: vi.fn(),
@@ -91,47 +115,6 @@ describe("isQueueBusy (composite-key resolver)", () => {
   it("returns true when session has an active run", () => {
     const resolver = { hasActiveSession: vi.fn().mockReturnValue(true) };
     expect(isQueueBusy(resolver as any, composite)).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// resolveHeartbeatSessionKey
-// ---------------------------------------------------------------------------
-
-describe("resolveHeartbeatSessionKey", () => {
-  it("returns session key from config target + session", () => {
-    const config = mockConfig({
-      target: { channelType: "telegram", channelId: "ch-1", chatId: "chat-123" },
-      session: "custom-session",
-    });
-    const result = resolveHeartbeatSessionKey("agent1", config, "my-tenant");
-    expect(result).toEqual({
-      tenantId: "my-tenant",
-      userId: "custom-session",
-      channelId: "chat-123",
-    });
-  });
-
-  it("returns fallback session key when no target", () => {
-    const config = mockConfig();
-    const result = resolveHeartbeatSessionKey("agent1", config, "default");
-    expect(result).toEqual({
-      tenantId: "default",
-      userId: "heartbeat",
-      channelId: "heartbeat-agent1",
-    });
-  });
-
-  it("returns session key with default userId when target exists but no session", () => {
-    const config = mockConfig({
-      target: { channelType: "discord", channelId: "ch-2", chatId: "chat-456" },
-    });
-    const result = resolveHeartbeatSessionKey("agent1", config, "default");
-    expect(result).toEqual({
-      tenantId: "default",
-      userId: "heartbeat",
-      channelId: "chat-456",
-    });
   });
 });
 
@@ -220,14 +203,22 @@ describe("createAgentHeartbeatSource", () => {
     expect(observed[0]).toMatchObject({
       agentId: "agent1",
       tenantId: "default",
-      userId: "heartbeat",
-      sessionKey: "default:heartbeat:chat-123",
-      channelType: "telegram",
+      userId: "scheduler-heartbeat-agent1",
+      sessionKey: "default:agent:agent1:scheduler-heartbeat-agent1:scheduler:heartbeat:agent1:peer:scheduler-heartbeat-agent1",
+      channelType: "scheduler",
       deliveryOrigin: {
-        channelType: "telegram",
-        channelId: "chat-123",
-        userId: "heartbeat",
+        channelType: "scheduler",
+        channelId: "agent1",
+        userId: "scheduler-heartbeat-agent1",
         tenantId: "default",
+      },
+      turnScope: {
+        principal: { principalId: "scheduler-heartbeat-agent1" },
+        endpoint: {
+          channelType: "scheduler",
+          channelInstanceId: "heartbeat",
+          conversationId: "agent1",
+        },
       },
     });
     expect(Reflect.set(observed[0]!, "trustLevel", "admin")).toBe(false);
@@ -253,6 +244,46 @@ describe("createAgentHeartbeatSource", () => {
     // getExecutor should not have been called (early return before executor needed)
     expect(mockExecute).not.toHaveBeenCalled();
     expect(deps.logger.debug).toHaveBeenCalled();
+  });
+
+  it("stops before execution when scheduler authority cannot be resolved", async () => {
+    const deps = createMockDeps({
+      resolveInternalTurnIdentity: vi.fn(() => err(new Error("invalid scheduler authority"))),
+    });
+
+    await createAgentHeartbeatSource(deps).onTick("agent1");
+
+    expect(deps.getExecutor).not.toHaveBeenCalled();
+    expect(deps.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "agent1", errorKind: "validation" }),
+      "Heartbeat internal identity resolution failed",
+    );
+  });
+
+  it("applies the configured tool policy before heartbeat execution", async () => {
+    const applyToolPolicyFilter = vi.fn(() => ({
+      tools: [{ name: "allowed" }],
+      filtered: [{ toolName: "blocked", reason: { kind: "explicit_deny" as const } }],
+    }));
+    const deps = createMockDeps({
+      assembleToolsForAgent: vi.fn(async () => [{ name: "allowed" }, { name: "blocked" }]),
+      applyToolPolicyFilter,
+    });
+
+    await createAgentHeartbeatSource(deps).onTick("agent1");
+
+    const executor = (deps.getExecutor as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+    expect(applyToolPolicyFilter).toHaveBeenCalledWith(
+      expect.any(Array),
+      { profile: "full", allow: [], deny: [] },
+    );
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.any(Object),
+      [{ name: "allowed" }],
+      "agent1",
+      expect.any(Object),
+    );
   });
 
   it("skips execution for interval trigger with empty HEARTBEAT.md", async () => {
@@ -724,20 +755,21 @@ describe("heartbeat source uses BackgroundSessionResolver.hasActiveSession", () 
 // a self-triggered heartbeat rides ONE (sessionId, sender) per agent, so N cron runs
 // collapse to distinctSenderCardinality 1 (never self-corroborates — proven against the
 // gate in packages/agent reflection-job.test.ts). Verdict: constant sessionId ⇒ dead-end
-// (safe) — NO cron-origin exclusion needed. These pin the SOURCE derivation the verdict
-// rests on (resolveHeartbeatSessionKey is constant per agent; the synthetic message rides
-// senderId:"system").
+// The internal scheduler identity stays stable per agent while remaining
+// structurally distinct across agents; the synthetic message sender is constant.
 // ---------------------------------------------------------------------------
-describe("OQ-3 — heartbeat rides a constant (sessionId, sender) per agent (cron self-corroboration dead-end)", () => {
-  it("resolveHeartbeatSessionKey is CONSTANT across repeated ticks for one agent (no target)", () => {
-    const config = mockConfig(); // no delivery target → the self-triggered fallback identity
-    const k1 = resolveHeartbeatSessionKey("agent1", config, "default");
-    const k2 = resolveHeartbeatSessionKey("agent1", config, "default");
-    // Byte-identical across ticks — ONE sessionId per agent (userId + channelId constant).
-    expect(k1).toEqual({ tenantId: "default", userId: "heartbeat", channelId: "heartbeat-agent1" });
-    expect(k2).toEqual(k1);
-    // A DIFFERENT agent gets a DIFFERENT constant key (agents never cross-corroborate).
-    expect(resolveHeartbeatSessionKey("agent2", config, "default").channelId).toBe("heartbeat-agent2");
+describe("heartbeat uses a stable internal identity per agent", () => {
+  it("requests one explicit scheduler endpoint and principal for each heartbeat tick", async () => {
+    const deps = createMockDeps();
+    await createAgentHeartbeatSource(deps).onTick("agent1");
+    expect(deps.resolveInternalTurnIdentity).toHaveBeenCalledWith({
+      tenantId: "default",
+      agentId: "agent1",
+      originKind: "scheduler",
+      instanceId: "heartbeat",
+      conversationId: "agent1",
+      principalId: "scheduler-heartbeat-agent1",
+    });
   });
 
   it("two heartbeat ticks for one agent execute on the SAME (channelId, senderId) pair (constant across runs)", async () => {
@@ -751,9 +783,9 @@ describe("OQ-3 — heartbeat rides a constant (sessionId, sender) per agent (cro
     const [msg2, key2] = executor.execute.mock.calls[1]!;
     // The (sessionId, sender) PAIR the reflection cardinality keys on is CONSTANT across ticks:
     // the session channelId + userId are identical, and the sender is the constant "system".
-    expect(key1.channelId).toBe("heartbeat-agent1");
+    expect(key1.channelId).toBe("scheduler:heartbeat:agent1");
     expect(key2.channelId).toBe(key1.channelId);
-    expect(key1.userId).toBe("heartbeat");
+    expect(key1.userId).toBe("scheduler-heartbeat-agent1");
     expect(key2.userId).toBe(key1.userId);
     expect(msg1.senderId).toBe("system");
     expect(msg2.senderId).toBe("system");

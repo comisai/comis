@@ -12,7 +12,7 @@
 
 import { readFileSync } from "node:fs";
 import { emitObservationalEventSafely, fingerprint, formatSessionKey, safePath, systemDateFrom } from "@comis/core";
-import type { AppConfig, AppContainer, ComisLogger, SessionKey } from "@comis/core";
+import type { AppConfig, AppContainer, ComisLogger, ConversationScope, SessionKey } from "@comis/core";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import { createGreetingGenerator, type GreetingGenerator, type GreetingTrigger, type CostTracker } from "@comis/agent";
 import { createCommandHandler, type CommandHandlerDeps } from "@comis/orchestrator";
@@ -275,6 +275,7 @@ export interface SlashCommandDepsInput {
   costTrackers: Map<string, CostTracker>;
   workspaceDirs: Map<string, string>;
   logger: ComisLogger;
+  conversationScope: ConversationScope;
   piSessionAdapters?: Map<string, {
     destroySession(key: SessionKey): Promise<void>;
     getSessionStats(key: SessionKey): {
@@ -293,7 +294,7 @@ export interface SlashCommandDepsInput {
    *  destroyed only the runtime session, so in DAG mode the LCD context items
    *  survived and the model saw the old conversation right back. When present,
    *  destroySession severs ALL layers; absent ⇒ legacy runtime-only destroy. */
-  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
+  destroyConversation?: (scope: ConversationScope, key: SessionKey) => Promise<unknown>;
 }
 
 /**
@@ -302,7 +303,7 @@ export interface SlashCommandDepsInput {
  * per-command behavior contract.
  */
 export function buildSlashCommandDeps(input: SlashCommandDepsInput): CommandHandlerDeps {
-  const { execAgentId, defaultAgentId, execAgentConfig, container, costTrackers, workspaceDirs, piSessionAdapters, destroyConversation, logger } = input;
+  const { execAgentId, defaultAgentId, execAgentConfig, container, costTrackers, workspaceDirs, piSessionAdapters, destroyConversation, logger, conversationScope } = input;
   return {
     getSessionInfo: (key) => {
       const adapter = piSessionAdapters?.get(execAgentId);
@@ -326,14 +327,14 @@ export function buildSlashCommandDeps(input: SlashCommandDepsInput): CommandHand
       // Complete three-layer forget when wired (live finding 2026-06-11:
       // runtime-only destroy left LCD context items the DAG re-presented).
       if (destroyConversation) {
-        suppressError(destroyConversation(execAgentId, key), "fire-and-forget conversation destroy");
-        emitObservationalEventSafely({ eventBus: container.eventBus, logger }, "session:expired", { sessionKey: key, reason: "gateway-reset" });
+        suppressError(destroyConversation(conversationScope, key), "fire-and-forget conversation destroy");
+        emitObservationalEventSafely({ eventBus: container.eventBus, logger }, "session:expired", { conversationScope, reason: "gateway-reset" });
         return;
       }
       const adapter = piSessionAdapters?.get(execAgentId);
       if (adapter) {
         suppressError(adapter.destroySession(key), "fire-and-forget session destroy");
-        emitObservationalEventSafely({ eventBus: container.eventBus, logger }, "session:expired", { sessionKey: key, reason: "gateway-reset" });
+        emitObservationalEventSafely({ eventBus: container.eventBus, logger }, "session:expired", { conversationScope, reason: "gateway-reset" });
         return;
       }
     },

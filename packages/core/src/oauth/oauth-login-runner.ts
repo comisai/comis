@@ -2,7 +2,7 @@
 /**
  * OAuth login orchestrator for OpenAI Codex.
  *
- * Wraps pi-ai's loginOpenAICodex with VPS-aware handlers, manual-paste
+ * Wraps loginOpenAICodexBrowser with VPS-aware handlers, manual-paste
  * fallback (15s delay + 1s grace), and error rewriting for
  * 2 user-friendly mappings (unsupported_region, callback_validation_failed)
  * + 1 identity-decode error path. Returns Result<LoginRunnerSuccess, LoginError>
@@ -11,11 +11,11 @@
  * Both the CLI (`comis auth login`) and wizard step 04 OpenAI OAuth branch
  * import and call loginOpenAICodexOAuth — this is the single shared runner.
  *
- * Pi-ai (0.71.0) owns the protocol: PKCE generation, the local callback
- * server (hardcoded 127.0.0.1:1455), the token exchange POST to
- * https://auth.openai.com/oauth/token. This module owns the UX: browser-open
- * vs manual-paste, fallback timing, error mapping, identity derivation via
- * resolveCodexAuthIdentity.
+ * openai-codex-browser-login.ts owns the protocol: PKCE generation, the
+ * local callback server (hardcoded 127.0.0.1:1455), the token exchange POST
+ * to https://auth.openai.com/oauth/token. This module owns the UX:
+ * browser-open vs manual-paste, fallback timing, error mapping, identity
+ * derivation via resolveCodexAuthIdentity.
  *
  * Logging discipline: submodule: "oauth-login" on every call.
  * NEVER log access tokens, refresh tokens, PKCE state, or callback `code`.
@@ -27,7 +27,7 @@
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import type { ComisLogger } from "../logging/log-fields.js";
-import { loginOpenAICodex } from "@earendil-works/pi-ai/oauth";
+import { loginOpenAICodexBrowser } from "./openai-codex-browser-login.js";
 import {
   resolveCodexAuthIdentity,
   redactEmailForLog,
@@ -85,7 +85,7 @@ export interface LoginRunnerParams {
   /** Optional logger — callers without one get a no-op fallback. */
   logger?: ComisLogger;
   /**
-   * Login method. "browser" (default) uses pi-ai's loginOpenAICodex with
+   * Login method. "browser" (default) uses loginOpenAICodexBrowser with
    * local-callback-server + manual-paste fallback; "device-code" uses the
    * OpenAI proprietary 3-step device-code flow (no clipboard, suitable for
    * SSH sessions). Only "openai-codex" supports "device-code"; the CLI
@@ -122,7 +122,6 @@ export interface LoginRunnerSuccess {
 // ---------------------------------------------------------------------------
 
 const PROVIDER = "openai-codex" as const;
-const ORIGINATOR = "comis" as const; // wire-visible client identifier sent to OpenAI — must name this product
 
 /**
  * Manual-paste fallback timing: after 15s the browser redirect is assumed
@@ -425,12 +424,11 @@ export async function loginOpenAICodexOAuth(
   });
 
   try {
-    const creds = await loginOpenAICodex({
+    const creds = await loginOpenAICodexBrowser({
       onAuth,
       onPrompt: handlers.onPrompt,
       onManualCodeInput,
       onProgress: (msg: string) => spin.update(msg),
-      originator: ORIGINATOR,
     });
 
     // Identity derivation via shared helper (rule-of-three: browser, device-code,

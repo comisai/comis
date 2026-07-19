@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ok, err } from "@comis/shared";
-import { registerToolMetadata } from "@comis/core";
+import { formatSessionKey, registerToolMetadata } from "@comis/core";
 import type { ModelOperationType, ErrorKind } from "@comis/core";
 import { BudgetError, checkSpendCeiling } from "../budget/budget-guard.js";
 import type { SpendGateOutcome } from "../budget/budget-guard.js";
@@ -90,8 +90,34 @@ function createMockDeps(overrides?: Partial<PiEventBridgeDeps>): PiEventBridgeDe
       getState: vi.fn(),
       reset: vi.fn(),
     },
-    sessionKey: { tenantId: "t1", channelId: "c1", userId: "u1" },
+    sessionKey: { tenantId: "t1", agentId: "test-agent", channelId: "c1", userId: "u1" },
     agentId: "test-agent",
+    memoryScope: {
+      turnScope: {
+        conversation: {
+          tenantId: "t1",
+          agentId: "test-agent",
+          partition: {
+            kind: "endpoint-conversation-principal",
+            endpoint: {
+              channelType: "test",
+              channelInstanceId: "test-instance",
+              conversationId: "c1",
+              conversationKind: "direct",
+            },
+            principalId: "u1",
+          },
+        },
+        principal: { principalId: "u1" },
+        endpoint: {
+          channelType: "test",
+          channelInstanceId: "test-instance",
+          conversationId: "c1",
+          conversationKind: "direct",
+        },
+      },
+      visibility: { kind: "conversation-private" },
+    },
     channelId: "test-channel",
     inboundMessageId: "inbound-message-1",
     executionId: "exec-001",
@@ -1666,7 +1692,7 @@ describe("createPiEventBridge", () => {
       listener(makeAutoCompactionStartEvent() as any);
 
       expect(deps.logger.info).toHaveBeenCalledWith(
-        { step: "compaction", sessionKey: "t1:u1:c1" },
+        { step: "compaction", sessionKey: formatSessionKey(deps.sessionKey) },
         "Auto-compaction started",
       );
     });
@@ -1822,9 +1848,6 @@ describe("createPiEventBridge", () => {
       expect(mockMemoryPort.store).toHaveBeenCalledTimes(1);
       const storedEntry = mockMemoryPort.store.mock.calls[0][0];
       expect(storedEntry).toMatchObject({
-        tenantId: "t1",
-        userId: "u1",
-        agentId: "test-agent",
         content: "compacted",
         trustLevel: "learned",
         source: { who: "compaction", channel: "test-channel" },
@@ -1832,6 +1855,7 @@ describe("createPiEventBridge", () => {
       });
       expect(storedEntry.id).toBeTypeOf("string");
       expect(storedEntry.createdAt).toBeTypeOf("number");
+      expect(mockMemoryPort.store.mock.calls[0][1]).toEqual(depsWithMemory.memoryScope);
     });
 
     it("emits memoriesWritten=1 when memoryPort.store is called", () => {
@@ -6336,10 +6360,10 @@ describe("skill-use attribution (read-path → skill:prompt_invoked + carrier)",
   }
 
   it("a read of a path matching a frozen skill <location> emits skill:prompt_invoked{invokedBy:'model'} and writes the carrier", () => {
-    // sessionKey {t1,c1,u1} → formatSessionKey → "t1:u1:c1"
+    const snapshotKey = formatSessionKey(deps.sessionKey);
     const skillPath = "/home/user/.comis/skills/deploy/SKILL.md";
-    mockGetSessionPromptSkillLocations.mockImplementation((snapshotKey) =>
-      snapshotKey === "t1:u1:c1"
+    mockGetSessionPromptSkillLocations.mockImplementation((key) =>
+      key === snapshotKey
         ? new Map<string, string>([[skillPath, "deploy"]])
         : undefined,
     );

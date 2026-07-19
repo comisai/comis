@@ -1433,6 +1433,18 @@ describe("tool-metadata-registry -- co-discovery metadata", () => {
 // ===========================================================================
 
 describe("tool-metadata-registry -- gateway validateInput patchable path hints", () => {
+  it.each([
+    ["patch", "contributions", "instances.echo"],
+    ["patch", "plugins", "plugins.echo.enabled"],
+    ["apply", "contributions", undefined],
+    ["apply", "plugins", undefined],
+  ])("rejects contribution topology through bridge action %s at %s", async (action, section, key) => {
+    const meta = getToolMetadata("gateway");
+    const error = await meta!.validateInput!({ action, section, key });
+
+    expect(error).toContain("immutable");
+  });
+
   it("redirects to agents_manage and includes patchable paths when rejecting immutable agents path", async () => {
     const meta = getToolMetadata("gateway");
     expect(meta?.validateInput).toBeDefined();

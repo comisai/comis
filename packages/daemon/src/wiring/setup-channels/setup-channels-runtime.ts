@@ -8,7 +8,7 @@
  */
 
 import type { Attachment, ChannelPort, ChannelPluginPort, DeliveryService, ExecutionPlanPort, NormalizedMessage, SessionKey, ClockPort, TimerPort, ActivityStreamPort, TurnActivityContext } from "@comis/core";
-import { formatSessionKey, systemNowDate, themeForName, chatProjection, toSafeErrorLogString } from "@comis/core";
+import { formatSessionKey, systemNowDate, themeForName, chatProjection, toSafeErrorLogString, tryGetContext } from "@comis/core";
 import { createPlanStream } from "@comis/observability";
 import type { AppContainer } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
@@ -19,8 +19,8 @@ import { buildReadOnlyChannelRegistry, buildChannelCredentialMap } from "./setup
 import { buildActivityRenderers, type ActivityRendererFactory } from "./setup-channels-activity-renderers.js";
 import { resolveActivityKillSwitchSlice } from "./activity-kill-switch.js";
 import { createGraphReportRequestHandler } from "./graph-report-delivery.js";
-import { createChannelManager, processInboundMessage, type ChannelManager } from "@comis/orchestrator";
-import { RetryConfigSchema, createRetryEngine } from "@comis/core";
+import { createChannelManager, createDeterministicLocalization, processInboundMessage, type ChannelManager } from "@comis/orchestrator";
+import { DmScopeConfigSchema, RetryConfigSchema, createRetryEngine } from "@comis/core";
 import {
   shouldAutoTts,
   resolveOutputFormat,
@@ -75,7 +75,10 @@ export interface ChannelManagerBuildDeps {
   // Server-side interactive-callback router (verifier) — inbound-gate.ts verifies
   // a signed button callback BEFORE slash parsing so the payload never reaches the LLM.
   interactiveCallbackRouter?: import("@comis/orchestrator").InteractiveCallbackRouter;
-  preprocessMessageCallback: (msg: NormalizedMessage) => Promise<NormalizedMessage>;
+  preprocessMessageCallback: (
+    msg: NormalizedMessage,
+    turnScope: import("@comis/core").ResolvedTurnScope,
+  ) => Promise<NormalizedMessage>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PreflightResult type from channels package is not re-exported; pass-through matches setup-channels-media.ts
   preflightFn?: (msg: NormalizedMessage) => Promise<any>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires complex type parameters from pi-ai SDK
@@ -97,7 +100,7 @@ export interface ChannelManagerBuildDeps {
     "getSessionStats" | "destroySession" | "persistInboundMessage"
   >>;
   /** Complete three-layer forget for slash /new + /reset (runtime-only destroy leaves the LCD context the DAG re-presents). */
-  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
+  destroyConversation?: (scope: import("@comis/core").ConversationScope, key: SessionKey) => Promise<unknown>;
   costTrackers?: Map<string, {
     getByProvider(): Array<{ provider: string; model: string; totalTokens: number; totalCost: number; callCount: number }>;
     getBySession(key: string): { totalTokens: number; totalCost: number };
@@ -255,6 +258,11 @@ export async function buildAndStartChannelManager(
       messageRouter,
       commandQueue,
       sessionManager,
+      principalResolver: container.principalResolver,
+      localization: createDeterministicLocalization(),
+      getDmScope: (agentId: string) => DmScopeConfigSchema.parse(
+        agents[agentId]?.session?.dmScope ?? {},
+      ),
       retryEngine,
       deliveryQueue: deps.deliveryQueue,
       deliveryService,
@@ -352,12 +360,31 @@ export async function buildAndStartChannelManager(
         if (parsed.command === "new" || parsed.command === "reset") {
           const resetStartedAt = deps.clock.now();
           const adapter = deps.piSessionAdapters?.get(agentId);
+          const conversationScope = tryGetContext()?.turnScope?.conversation;
+          if (!conversationScope) {
+            const error = new Error("Channel reset requires the resolved conversation scope");
+            channelsLogger.error(
+              {
+                step: "channel-session-reset",
+                agentId,
+                hint: "Ensure channel commands execute inside the resolved inbound request context",
+                errorKind: "precondition" as const,
+              },
+              "Channel session reset scope unavailable",
+            );
+            container.eventBus.emitSafely("system:error", {
+              error,
+              source: "channel-session-reset",
+            });
+            return Promise.reject(error);
+          }
           const started = tryCatch(() => {
             if (deps.destroyConversation) {
-              return deps.destroyConversation(agentId, sessionKey);
+              return deps.destroyConversation(conversationScope, sessionKey);
             }
             if (adapter) return adapter.destroySession(sessionKey);
-            sessionManager.expire(sessionKey);
+            const expired = sessionManager.expire(conversationScope);
+            if (!expired.ok) return Promise.reject(expired.error);
             return Promise.resolve(undefined);
           });
           const destroyed = started.ok
@@ -381,7 +408,7 @@ export async function buildAndStartChannelManager(
             return Promise.reject(destroyed.error);
           }
           container.eventBus.emit("session:expired", {
-            sessionKey,
+            conversationScope,
             reason: "chat-reset",
           });
           channelsLogger.info(

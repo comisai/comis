@@ -26,6 +26,7 @@ import type {
   ActivityEvent,
   AppConfig,
 } from "@comis/core";
+import { ConversationRefSchema } from "@comis/core";
 import {
   resolveInteractiveCallbackSigningSecret,
   createInteractiveCallbackWiring,
@@ -165,7 +166,9 @@ describe("resolveInteractiveCallbackSigningSecret", () => {
 
 const SHORT_ID = "abcDEF123456";
 const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
-const SESSION_K = "tenant:user_a:inbox-1:thread:thread-1";
+const CONVERSATION_REF = ConversationRefSchema.parse(`cv_${"a".repeat(43)}`);
+const OTHER_CONVERSATION_REF = ConversationRefSchema.parse(`cv_${"b".repeat(43)}`);
+const SESSION_K = "tenant:agent:main:user_a:inbox-1:thread:thread-1";
 const CREATED_AT = 1_000_000;
 const TIMEOUT_MS = 300_000;
 
@@ -195,8 +198,12 @@ function makeFakeGate(seed: ApprovalRequest[]): {
     pending: () => Array.from(byRequestId.values()),
     getRequest: (requestId) => byRequestId.get(requestId),
     getRequestByShortId: (shortId) => byShortId.get(shortId),
-    pendingForSession: (sessionKey) =>
-      Array.from(byRequestId.values()).filter((r) => r.sessionKey === sessionKey),
+    pendingForAuthority: (authority) =>
+      Array.from(byRequestId.values()).filter((request) =>
+        request.tenantId === authority.tenantId
+        && request.agentId === authority.agentId
+        && request.conversationRef === authority.conversationRef
+        && request.resolvingPrincipalId === authority.resolvingPrincipalId),
     clearDenialCache: () => {},
     clearApprovalCache: () => {},
     serializePending: () => [],
@@ -215,8 +222,10 @@ function makeApprovalRequest(over: Partial<ApprovalRequest> = {}): ApprovalReque
     toolName: "shell",
     action: "shell.exec",
     params: {},
+    tenantId: "tenant",
     agentId: "main",
-    sessionKey: SESSION_K,
+    conversationRef: CONVERSATION_REF,
+    resolvingPrincipalId: "principal-user-a",
     trustLevel: "untrusted",
     callbackOwner: {
       tenantId: "tenant",
@@ -282,7 +291,10 @@ describe("createInteractiveCallbackWiring (email link → router roundtrip)", ()
     expect(wiring.tokens.size).toBe(1);
     const [entry] = Array.from(wiring.tokens.values());
     expect(entry).toMatchObject({
-      sessionKey: SESSION_K,
+      tenantId: "tenant",
+      conversationRef: CONVERSATION_REF,
+      resolvingPrincipalId: "principal-user-a",
+      inboundUserId: "user_a",
       channelType: "email",
       channelKey: "inbox-1",
       agentId: "main",
@@ -346,7 +358,11 @@ describe("createInteractiveCallbackWiring (email link → router roundtrip)", ()
       .resolves.toBe(false);
     await expect(wiring.resolveApproval({
       ...entry!,
-      sessionKey: "tenant:user_a:inbox-1:thread:thread-2",
+      threadId: "thread-2",
+    })).resolves.toBe(false);
+    await expect(wiring.resolveApproval({
+      ...entry!,
+      conversationRef: OTHER_CONVERSATION_REF,
     })).resolves.toBe(false);
     expect(resolveCalls).toHaveLength(0);
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { err, ok } from "@comis/shared";
+import { createConversationLocator, conversationScopeToSessionKey, formatSessionKey } from "@comis/core";
 import {
   createCrossSessionSender,
   type CrossSessionSenderDeps,
@@ -11,27 +12,71 @@ import {
 // Mock helpers
 // ---------------------------------------------------------------------------
 
+function conversation(userId: string, channelId: string, agentId = "default") {
+  const endpoint = {
+    channelType: "test",
+    channelInstanceId: "cross-session-test",
+    conversationId: channelId,
+    conversationKind: "direct" as const,
+  };
+  const locator = createConversationLocator({
+    tenantId: "default",
+    agentId,
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint,
+      principalId: userId,
+    },
+  });
+  if (!locator.ok) throw locator.error;
+  return locator.value;
+}
+
+const TARGET_ONE = conversation("user1", "channel1");
+const TARGET_TWO = conversation("user2", "channel2");
+const TARGET_THREE = conversation("user3", "channel3");
+const PARENT_TWO = conversation("user2", "channel2", "parent-agent");
+const QUERY_ONE = { tenantId: "default", agentId: "default", conversationRef: TARGET_ONE.conversationRef };
+const QUERY_TWO = { tenantId: "default", agentId: "default", conversationRef: TARGET_TWO.conversationRef };
+const QUERY_THREE = { tenantId: "default", agentId: "default", conversationRef: TARGET_THREE.conversationRef };
+const projectedTargetOne = conversationScopeToSessionKey(TARGET_ONE.conversationScope);
+if (!projectedTargetOne.ok) throw projectedTargetOne.error;
+const TARGET_ONE_DISPLAY = formatSessionKey(projectedTargetOne.value);
+
 function createMockDeps(): CrossSessionSenderDeps {
-  const sessionData = new Map<string, { messages: unknown[]; metadata: Record<string, unknown> }>();
+  const sessionData = new Map<string, ReturnType<typeof makeSessionData>>();
+
+  function makeSessionData(locator: typeof TARGET_ONE, messages: unknown[], createdAt: number) {
+    return {
+      ...locator,
+      messages,
+      metadata: { createdAt },
+      createdAt,
+      updatedAt: createdAt,
+    };
+  }
 
   // Pre-populate a target session
-  sessionData.set("default:user1:channel1", {
-    messages: [{ role: "user", content: "hello", timestamp: 1000 }],
-    metadata: { createdAt: 1000 },
-  });
+  sessionData.set(TARGET_ONE.conversationRef, makeSessionData(
+    TARGET_ONE,
+    [{ role: "user", content: "hello", timestamp: 1000 }],
+    1000,
+  ));
 
   // Pre-populate a second session for ping-pong
-  sessionData.set("default:user2:channel2", {
-    messages: [],
-    metadata: { createdAt: 2000 },
-  });
+  sessionData.set(TARGET_TWO.conversationRef, makeSessionData(TARGET_TWO, [], 2000));
 
   return {
     sessionStore: {
-      loadByFormattedKey: vi.fn((key: string) => sessionData.get(key)),
-      save: vi.fn((key, messages, metadata) => {
-        const formatted = `${key.tenantId}:${key.userId}:${key.channelId}`;
-        sessionData.set(formatted, { messages, metadata });
+      loadByRef: vi.fn((_scope, conversationRef) => ok(sessionData.get(conversationRef))),
+      save: vi.fn((scope, messages, metadata) => {
+        const locator = scope.agentId === TARGET_ONE.conversationScope.agentId
+          && scope.partition.kind === "endpoint-conversation-principal"
+          && scope.partition.principalId === "user1"
+          ? TARGET_ONE
+          : TARGET_TWO;
+        sessionData.set(locator.conversationRef, makeSessionData(locator, messages, Number(metadata.createdAt ?? 0)));
+        return ok(undefined);
       }),
     },
     executeInSession: vi.fn().mockResolvedValue({
@@ -68,9 +113,10 @@ describe("createCrossSessionSender", () => {
   it("fire-and-forget injects message and returns immediately", async () => {
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "cross-session hello",
       mode: "fire-and-forget",
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
     };
 
@@ -98,9 +144,10 @@ describe("createCrossSessionSender", () => {
   it("wait mode executes target and returns response", async () => {
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "need info",
       mode: "wait",
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
     };
 
@@ -116,7 +163,8 @@ describe("createCrossSessionSender", () => {
     expect(deps.executeInSession).toHaveBeenCalledTimes(1);
     expect(deps.executeInSession).toHaveBeenCalledWith(
       "default",
-      { tenantId: "default", userId: "user1", channelId: "channel1" },
+      expect.anything(),
+      TARGET_ONE,
       "need info",
     );
   });
@@ -127,10 +175,11 @@ describe("createCrossSessionSender", () => {
   it("ping-pong mode completes N turns", async () => {
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "start conversation",
       mode: "ping-pong",
       maxTurns: 2,
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
     };
 
@@ -156,9 +205,10 @@ describe("createCrossSessionSender", () => {
 
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "do something",
       mode: "wait",
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
       announceChannelType: "telegram",
       announceChannelId: "chat123",
@@ -178,9 +228,10 @@ describe("createCrossSessionSender", () => {
   it("self-targeting in wait mode throws deadlock error", async () => {
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "talk to myself",
       mode: "wait",
+      caller: QUERY_ONE,
       callerSessionKey: "default:user1:channel1",
     };
 
@@ -195,9 +246,10 @@ describe("createCrossSessionSender", () => {
   it("self-targeting in fire-and-forget is allowed", async () => {
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "note to self",
       mode: "fire-and-forget",
+      caller: QUERY_ONE,
       callerSessionKey: "default:user1:channel1",
     };
 
@@ -232,10 +284,11 @@ describe("createCrossSessionSender", () => {
 
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "start",
       mode: "ping-pong",
       maxTurns: 5,
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
     };
 
@@ -256,9 +309,10 @@ describe("createCrossSessionSender", () => {
   it("announce sends to channel with correct params", async () => {
     const sender = createCrossSessionSender(deps);
     const params: CrossSessionSendParams = {
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "question",
       mode: "wait",
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
       announceChannelType: "discord",
       announceChannelId: "guild-channel-42",
@@ -278,15 +332,16 @@ describe("createCrossSessionSender", () => {
     const sender = createCrossSessionSender(deps);
 
     await sender.send({
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "hello",
       mode: "fire-and-forget",
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
     });
 
     expect(deps.eventBus.emit).toHaveBeenCalledWith("session:cross_send", expect.objectContaining({
       fromSessionKey: "default:user2:channel2",
-      toSessionKey: "default:user1:channel1",
+      toSessionKey: TARGET_ONE_DISPLAY,
       mode: "fire-and-forget",
     }));
   });
@@ -295,9 +350,10 @@ describe("createCrossSessionSender", () => {
     const sender = createCrossSessionSender(deps);
 
     await sender.send({
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "hello",
       mode: "wait",
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
     });
 
@@ -310,10 +366,11 @@ describe("createCrossSessionSender", () => {
     const sender = createCrossSessionSender(deps);
 
     await sender.send({
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "ping",
       mode: "ping-pong",
       maxTurns: 2,
+      caller: QUERY_TWO,
       callerSessionKey: "default:user2:channel2",
     });
 
@@ -334,28 +391,29 @@ describe("createCrossSessionSender", () => {
   // -----------------------------------------------------------------------
   // Error cases
   // -----------------------------------------------------------------------
-  it("throws when target session key is invalid", async () => {
+  it("propagates a typed target conversation lookup failure", async () => {
+    vi.mocked(deps.sessionStore.loadByRef).mockReturnValue(err(new Error("target lookup failed")) as never);
     const sender = createCrossSessionSender(deps);
 
     await expect(
       sender.send({
-        targetSessionKey: "",
+        target: QUERY_ONE,
         text: "hello",
         mode: "fire-and-forget",
       }),
-    ).rejects.toThrow("Invalid session key");
+    ).rejects.toThrow("target lookup failed");
   });
 
-  it("throws when target session not found", async () => {
+  it("throws when target conversation is not found under explicit authority", async () => {
     const sender = createCrossSessionSender(deps);
 
     await expect(
       sender.send({
-        targetSessionKey: "default:nonexistent:user",
+        target: QUERY_THREE,
         text: "hello",
         mode: "fire-and-forget",
       }),
-    ).rejects.toThrow("Session not found");
+    ).rejects.toThrow("Target conversation not found");
   });
 });
 
@@ -367,10 +425,12 @@ describe("createCrossSessionSender uses the governed announcement port", () => {
   });
 
   const ledgeredParams: CrossSessionSendParams = {
-    targetSessionKey: "default:user1:channel1",
+    target: QUERY_ONE,
     text: "question",
     mode: "wait",
+    caller: QUERY_TWO,
     callerSessionKey: "default:user2:channel2",
+    callerConversation: PARENT_TWO,
     callerAgentId: "parent-agent",
     announceOperationId: "announce-tool-call-1",
     announceChannelType: "discord",
@@ -393,6 +453,7 @@ describe("createCrossSessionSender uses the governed announcement port", () => {
     expect(sendGovernedAnnouncement).toHaveBeenCalledWith({
       agentId: "parent-agent",
       callerSessionKey: "default:user2:channel2",
+      callerConversation: PARENT_TWO,
       runId: "announce-tool-call-1",
       channelType: "discord",
       channelId: "guild-channel-42",
@@ -471,7 +532,7 @@ describe("createCrossSessionSender uses the governed announcement port", () => {
     });
 
     const result = await sender.send({
-      targetSessionKey: "default:user1:channel1",
+      target: QUERY_ONE,
       text: "question",
       mode: "wait",
       announceChannelType: "discord",

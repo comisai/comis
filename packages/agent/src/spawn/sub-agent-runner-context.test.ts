@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createConversationLocator,
   createDeliveryOrigin,
   getContext,
   runWithContext,
@@ -9,6 +10,7 @@ import {
   type TimerHandle,
   type TimerPort,
 } from "@comis/core";
+import { ok } from "@comis/shared";
 import {
   createSubAgentRunner,
   type SubAgentRunnerDeps,
@@ -60,9 +62,9 @@ function createDeps(
 ): SubAgentRunnerDeps {
   return {
     sessionStore: {
-      save: vi.fn(),
-      delete: vi.fn(),
-      loadByFormattedKey: vi.fn(),
+      save: vi.fn(() => ok(undefined)),
+      delete: vi.fn(() => ok(false)),
+      loadByRef: vi.fn(() => ok(undefined)),
     },
     executeAgent,
     sendToChannel: vi.fn().mockResolvedValue(true),
@@ -87,6 +89,12 @@ function parentContext(
   trustLevel: RequestContext["trustLevel"],
   overrides: Partial<RequestContext> = {},
 ): RequestContext {
+  const endpoint = {
+    channelType: "telegram",
+    channelInstanceId: "test-instance",
+    conversationId: "chat_a",
+    conversationKind: "direct" as const,
+  };
   return {
     traceId: "10000000-0000-4000-8000-000000000001",
     tenantId: "tenant_a",
@@ -96,8 +104,27 @@ function parentContext(
     startedAt: Date.now() - 5_000,
     trustLevel,
     channelType: "telegram",
+    turnScope: {
+      conversation: {
+        tenantId: "tenant_a",
+        agentId: "parent-agent",
+        partition: {
+          kind: "endpoint-conversation-principal",
+          endpoint,
+          principalId: "user_a",
+        },
+      },
+      principal: { principalId: "user_a" },
+      endpoint,
+    },
     ...overrides,
   };
+}
+
+function parentConversation(parent: RequestContext) {
+  const locator = createConversationLocator(parent.turnScope!.conversation);
+  if (!locator.ok) throw locator.error;
+  return locator.value;
 }
 
 async function flushExecution(): Promise<void> {
@@ -137,6 +164,7 @@ describe("sub-agent request context", () => {
       task: "inspect the deployment",
       agentId: "child-agent",
       callerSessionKey: parent.sessionKey,
+      callerConversation: parentConversation(parent),
       callerAgentId: parent.agentId,
       requesterOrigin: deliveryOrigin,
     }));
@@ -242,6 +270,7 @@ describe("sub-agent request context", () => {
       task: "use a forged announcement origin",
       agentId: "child-agent",
       callerSessionKey: parent.sessionKey,
+      callerConversation: parentConversation(parent),
       callerAgentId: parent.agentId,
       requesterOrigin: forgedOrigin,
       announceChannelType: "telegram",
@@ -266,9 +295,7 @@ describe("sub-agent request context", () => {
 
   it("rejects a direct reused session belonging to another ambient user", async () => {
     const deps = createDeps(vi.fn(async () => successResult()));
-    vi.mocked(deps.sessionStore.loadByFormattedKey).mockReturnValue({
-      metadata: { agentId: "child-agent" },
-    });
+    vi.mocked(deps.sessionStore.loadByRef).mockReturnValue(ok(undefined));
     const runner = createSubAgentRunner(deps);
     const parent = parentContext("user");
 
@@ -303,6 +330,7 @@ describe("sub-agent request context", () => {
       agentId: "child-agent",
       callerType: "agent",
       callerSessionKey: parent.sessionKey,
+      callerConversation: parentConversation(parent),
       callerAgentId: parent.agentId,
     }));
 
@@ -446,16 +474,20 @@ describe("sub-agent request context", () => {
     }));
     const callerSessionKey = "tenant_a:user_a:telegram:chat_a";
 
-    runWithContext(parentContext("admin"), () => runner.spawn({
+    const adminParent = parentContext("admin");
+    runWithContext(adminParent, () => runner.spawn({
       task: "occupy the only child slot",
       agentId: "first-child",
       callerSessionKey,
+      callerConversation: parentConversation(adminParent),
       callerAgentId: "parent-agent",
     }));
-    const queuedRunId = runWithContext(parentContext("user"), () => runner.spawn({
+    const userParent = parentContext("user");
+    const queuedRunId = runWithContext(userParent, () => runner.spawn({
       task: "wait for the child slot",
       agentId: "queued-child",
       callerSessionKey,
+      callerConversation: parentConversation(userParent),
       callerAgentId: "parent-agent",
     }));
 

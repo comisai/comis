@@ -68,22 +68,22 @@ function scanRequiredSchema(db: Database.Database): DoctorFinding[] {
 function scanOrphanedSummaries(db: Database.Database): DoctorFinding[] {
   const row = db
     .prepare(`
-      WITH RECURSIVE reachable(summary_id, conversation_id, tenant_id, agent_id) AS (
-        SELECT DISTINCT s.summary_id, s.conversation_id, s.tenant_id, s.agent_id
+      WITH RECURSIVE reachable(summary_id, conversation_ref, tenant_id, agent_id) AS (
+        SELECT DISTINCT s.summary_id, s.conversation_ref, s.tenant_id, s.agent_id
         FROM lcd_summaries s
         JOIN lcd_context_items ci
           ON ci.ref_kind = 'summary'
          AND ci.ref_id = s.summary_id
-         AND ci.conversation_id = s.conversation_id
+         AND ci.conversation_ref = s.conversation_ref
          AND ci.tenant_id = s.tenant_id
          AND ci.agent_id = s.agent_id
         UNION
-        SELECT child.summary_id, child.conversation_id, child.tenant_id, child.agent_id
+        SELECT child.summary_id, child.conversation_ref, child.tenant_id, child.agent_id
         FROM reachable parent
         JOIN lcd_summary_parents sp ON sp.parent_summary_id = parent.summary_id
         JOIN lcd_summaries child
           ON child.summary_id = sp.child_summary_id
-         AND child.conversation_id = parent.conversation_id
+         AND child.conversation_ref = parent.conversation_ref
          AND child.tenant_id = parent.tenant_id
          AND child.agent_id = parent.agent_id
       )
@@ -126,7 +126,7 @@ function scanDanglingRefs(db: Database.Database): DoctorFinding[] {
              AND NOT EXISTS (
                SELECT 1 FROM lcd_messages m
                WHERE m.id = ci.ref_id
-                 AND m.conversation_id = ci.conversation_id
+                 AND m.conversation_ref = ci.conversation_ref
                  AND m.tenant_id = ci.tenant_id
                  AND m.agent_id = ci.agent_id
              ))
@@ -134,7 +134,7 @@ function scanDanglingRefs(db: Database.Database): DoctorFinding[] {
              AND NOT EXISTS (
                SELECT 1 FROM lcd_summaries s
                WHERE s.summary_id = ci.ref_id
-                 AND s.conversation_id = ci.conversation_id
+                 AND s.conversation_ref = ci.conversation_ref
                  AND s.tenant_id = ci.tenant_id
                  AND s.agent_id = ci.agent_id
              ))
@@ -172,25 +172,25 @@ function scanFallbackMarkers(db: Database.Database): DoctorFinding[] {
   const row = db
     .prepare(`
       WITH RECURSIVE
-      active_roots(summary_id, conversation_id, tenant_id, agent_id) AS (
-        SELECT DISTINCT s.summary_id, s.conversation_id, s.tenant_id, s.agent_id
+      active_roots(summary_id, conversation_ref, tenant_id, agent_id) AS (
+        SELECT DISTINCT s.summary_id, s.conversation_ref, s.tenant_id, s.agent_id
         FROM lcd_summaries s
         JOIN lcd_context_items ci
           ON ci.ref_kind = 'summary'
          AND ci.ref_id = s.summary_id
-         AND ci.conversation_id = s.conversation_id
+         AND ci.conversation_ref = s.conversation_ref
          AND ci.tenant_id = s.tenant_id
          AND ci.agent_id = s.agent_id
       ),
-      reachable(summary_id, conversation_id, tenant_id, agent_id) AS (
-        SELECT summary_id, conversation_id, tenant_id, agent_id FROM active_roots
+      reachable(summary_id, conversation_ref, tenant_id, agent_id) AS (
+        SELECT summary_id, conversation_ref, tenant_id, agent_id FROM active_roots
         UNION
-        SELECT child.summary_id, child.conversation_id, child.tenant_id, child.agent_id
+        SELECT child.summary_id, child.conversation_ref, child.tenant_id, child.agent_id
         FROM reachable parent
         JOIN lcd_summary_parents sp ON sp.parent_summary_id = parent.summary_id
         JOIN lcd_summaries child
           ON child.summary_id = sp.child_summary_id
-         AND child.conversation_id = parent.conversation_id
+         AND child.conversation_ref = parent.conversation_ref
          AND child.tenant_id = parent.tenant_id
          AND child.agent_id = parent.agent_id
       )
@@ -305,7 +305,7 @@ function scanScopeAnomalies(db: Database.Database): DoctorFinding[] {
          FROM lcd_summary_parents sp
          JOIN lcd_summaries parent ON parent.summary_id = sp.parent_summary_id
          JOIN lcd_summaries child ON child.summary_id = sp.child_summary_id
-         WHERE parent.conversation_id <> child.conversation_id
+         WHERE parent.conversation_ref <> child.conversation_ref
             OR parent.tenant_id <> child.tenant_id
             OR parent.agent_id <> child.agent_id) AS edge_scope_mismatches
     `)
@@ -366,7 +366,7 @@ function scanCursorInconsistencies(db: Database.Database): DoctorFinding[] {
       FROM lcd_ingest_cursor c
       WHERE c.ingested_live_len > (
         SELECT COUNT(*) FROM lcd_messages m
-        WHERE m.conversation_id = c.conversation_id
+        WHERE m.conversation_ref = c.conversation_ref
           AND m.agent_id = c.agent_id
           AND m.tenant_id = c.tenant_id
       )

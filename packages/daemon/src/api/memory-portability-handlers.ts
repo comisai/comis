@@ -22,6 +22,7 @@ import {
   systemNowMs,
 } from "@comis/core";
 import { randomUUID } from "node:crypto";
+import { resolveInternalTurnIdentity } from "@comis/orchestrator";
 
 import type { RpcHandler } from "./types.js";
 import type { MemoryApiDeps as MemoryHandlerDeps } from "./types.js";
@@ -49,7 +50,7 @@ export function createMemoryPortabilityHandlers(
 
       const exportUserParams = stripInternalFields(rawParams);
       const exportParams = MemoryPortabilityExportContract.request.parse(exportUserParams);
-      const exportTenantId = exportParams.tenant_id ?? deps.tenantId;
+      const exportTenantId = exportParams.tenant_id;
       const exportAgentId = exportParams.agent_id;
       const exportLimit = exportParams.limit ?? 10_000;
 
@@ -97,13 +98,16 @@ export function createMemoryPortabilityHandlers(
           confidence: (e as unknown as { confidence?: number }).confidence ?? null,
           observation_kind: (e as unknown as { observationKind?: string }).observationKind ?? null,
           pattern_type: (e as unknown as { patternType?: string }).patternType ?? null,
+          visibility: e.visibility.kind,
+          conversation_ref: e.visibility.kind === "conversation" ? e.visibility.conversationRef : null,
+          principal_id: e.visibility.kind === "principal" ? e.visibility.principalId : null,
         };
       });
 
       const exportResult = {
         schemaVersion: "comis-memory-export-v1" as const,
         exportedAt: systemNowMs(),
-        scope: { tenantId: exportTenantId, agentId: exportAgentId ?? null },
+        scope: { tenantId: exportTenantId, agentId: exportAgentId },
         entryCount: exportedEntries.length,
         entries: exportedEntries,
       };
@@ -114,7 +118,7 @@ export function createMemoryPortabilityHandlers(
 
       deps.logger?.info(
         {
-          agentId: exportAgentId ?? "all",
+          agentId: exportAgentId,
           tenantId: exportTenantId,
           entryCount: exportedEntries.length,
           durationMs: systemNowMs() - exportStart,
@@ -143,9 +147,18 @@ export function createMemoryPortabilityHandlers(
       const importUserParams = stripInternalFields(rawParams);
       const importParams = MemoryPortabilityImportContract.request.parse(importUserParams);
       // Re-stamp scope from authenticated RPC params — NEVER trust envelope body.
-      const importTenantId = importParams.tenant_id ?? deps.tenantId;
+      const importTenantId = importParams.tenant_id;
       const importAgentId = importParams.agent_id;
       const importDryRun = importParams.dry_run ?? false;
+      const importIdentity = resolveInternalTurnIdentity({
+        tenantId: importTenantId,
+        agentId: importAgentId,
+        originKind: "control-plane",
+        instanceId: "memory-portability",
+        conversationId: `memory-import-${importAgentId}`,
+        principalId: `control-plane-memory-import-${importAgentId}`,
+      });
+      if (!importIdentity.ok) throw new AuthorizationError(importIdentity.error.message);
 
       // Fail-closed firewall guard — a missing validator is a wiring mistake.
       // Silently bypassing the security firewall is more dangerous than refusing the batch.
@@ -241,6 +254,28 @@ export function createMemoryPortabilityHandlers(
           entryTrustLevel = envelopeTrust === "external" ? "external" : "learned";
         }
 
+        const rawVisibility = rawEntry["visibility"];
+        const visibility = rawVisibility === "conversation"
+          ? { kind: "conversation" as const }
+          : rawVisibility === "principal"
+            ? { kind: "principal" as const }
+            : rawVisibility === "agent-shared"
+              ? { kind: "agent-shared" as const }
+              : undefined;
+        if (visibility === undefined) {
+          blockedCount++;
+          deps.logger?.warn(
+            {
+              agentId: importAgentId,
+              hint: "Export and import the entry with an explicit memory visibility",
+              errorKind: "validation" as const,
+              step: "memory-portability-import",
+            },
+            "Memory import skipped an entry without visibility",
+          );
+          continue;
+        }
+
         // Idempotent skip — content already present in the target scope (or earlier
         // in THIS batch). Counted separately from blocked (security) and downgraded. Security wins:
         // a CRITICAL entry was already blocked above before reaching here.
@@ -264,9 +299,6 @@ export function createMemoryPortabilityHandlers(
           // pre-pinned. Pin state is local operator curation, not portable across scopes.
           const storeEntry = {
             id: importEntryId,
-            tenantId: importTenantId,    // re-stamp to target — NEVER trust envelope's tenantId
-            agentId: importAgentId,      // re-stamp to target — NEVER trust envelope's agentId
-            userId: "import",
             content: entryContent,
             trustLevel: entryTrustLevel,
             source: {
@@ -312,6 +344,15 @@ export function createMemoryPortabilityHandlers(
 
           const importStoreResult = await deps.memoryAdapter.store(
             storeEntry as Parameters<typeof deps.memoryAdapter.store>[0],
+            {
+              turnScope: importIdentity.value.turnScope,
+              visibility,
+              operatorPermission: {
+                kind: "operator-memory-visibility",
+                tenantId: importTenantId,
+                agentId: importAgentId,
+              },
+            },
           );
           if (importStoreResult.ok) {
             importCount++;

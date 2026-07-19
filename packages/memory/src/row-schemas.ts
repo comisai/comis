@@ -22,7 +22,7 @@
  */
 
 import { z } from "zod";
-import { DeliveryFailureStageSchema, DeliveryStatusSchema, ERROR_KINDS } from "@comis/core";
+import { ConversationRefSchema, DeliveryFailureStageSchema, DeliveryStatusSchema, ERROR_KINDS } from "@comis/core";
 
 // ─── 1. Memory-package-local public rows (paired with packages/memory/src/types.ts) ───
 
@@ -35,6 +35,9 @@ export const MemoryRowSchema = z.strictObject({
   tenant_id: z.string(),
   agent_id: z.string(),
   user_id: z.string(),
+  visibility: z.enum(["conversation", "principal", "agent-shared"]),
+  conversation_ref: ConversationRefSchema.nullable(),
+  principal_id: z.string().nullable(),
   content: z.string(),
   trust_level: z.string(),
   memory_type: z.string(),
@@ -250,10 +253,10 @@ export const EntityListRowSchema = z.strictObject({
  * Paired with `SessionRow` exported from `./types.js`.
  */
 export const SessionRowSchema = z.strictObject({
-  session_key: z.string(),
   tenant_id: z.string(),
-  user_id: z.string(),
-  channel_id: z.string(),
+  agent_id: z.string(),
+  conversation_ref: ConversationRefSchema,
+  canonical_scope: z.string(),
   messages: z.string(), // JSON-encoded unknown[]
   created_at: z.number(), // Unix ms
   updated_at: z.number(), // Unix ms
@@ -268,7 +271,7 @@ export const SessionRowSchema = z.strictObject({
  */
 export const LcdMessageRowSchema = z.strictObject({
   id: z.string(),
-  conversation_id: z.string(),
+  conversation_ref: ConversationRefSchema,
   tenant_id: z.string(),
   agent_id: z.string(),
   session_key: z.string(),
@@ -307,7 +310,7 @@ export const LcdMessagePartRowSchema = z.strictObject({
  */
 export const LcdSummaryRowSchema = z.strictObject({
   summary_id: z.string(),
-  conversation_id: z.string(),
+  conversation_ref: ConversationRefSchema,
   tenant_id: z.string(),
   agent_id: z.string(),
   session_key: z.string(),
@@ -352,7 +355,7 @@ export const LcdSummaryParentRowSchema = z.strictObject({
  */
 export const LcdContextItemRowSchema = z.strictObject({
   id: z.string(),
-  conversation_id: z.string(),
+  conversation_ref: ConversationRefSchema,
   tenant_id: z.string(),
   agent_id: z.string(),
   session_key: z.string(),
@@ -444,7 +447,8 @@ export const SessionDataSchema = z.strictObject({
  * Paired with `SessionListEntry` from `@comis/core`.
  */
 export const SessionListEntrySchema = z.strictObject({
-  sessionKey: z.string(),
+  conversationRef: z.string(),
+  conversationScope: z.unknown(),
   updatedAt: z.number(),
 });
 
@@ -453,10 +457,10 @@ export const SessionListEntrySchema = z.strictObject({
  * Paired with `SessionDetailedEntry` from `@comis/core`.
  */
 export const SessionDetailedEntrySchema = z.strictObject({
-  sessionKey: z.string(),
+  conversationRef: z.string(),
+  conversationScope: z.unknown(),
   tenantId: z.string(),
-  userId: z.string(),
-  channelId: z.string(),
+  agentId: z.string(),
   metadata: z.record(z.string(), z.unknown()),
   createdAt: z.number(),
   updatedAt: z.number(),
@@ -509,7 +513,10 @@ export const DeliveryDbRowSchema = z.strictObject({
   id: z.number().int().nonnegative(),
   timestamp: z.number().int().nonnegative(),
   trace_id: z.string(),
+  tenant_id: z.string(),
   agent_id: z.string(),
+  conversation_ref: z.string(),
+  destination_endpoint: z.string(),
   channel_type: z.string(),
   channel_id: z.string(),
   session_key: z.string(),
@@ -716,7 +723,10 @@ export const OAuthProfileRowSchema = z.strictObject({
  */
 export const DeliveryMirrorDbRowSchema = z.strictObject({
   id: z.string(),
-  session_key: z.string(),
+  tenant_id: z.string(),
+  agent_id: z.string(),
+  conversation_ref: z.string(),
+  destination_endpoint: z.string(),
   text: z.string(),
   /** JSON-encoded string[]. */
   media_urls: z.string(),
@@ -741,6 +751,9 @@ export const DeliveryQueueDbRowSchema = z.strictObject({
   channel_type: z.string(),
   channel_id: z.string(),
   tenant_id: z.string(),
+  agent_id: z.string(),
+  conversation_ref: z.string(),
+  destination_endpoint: z.string(),
   /** JSON-encoded options shape. */
   options_json: z.string(),
   origin: z.string(),

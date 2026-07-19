@@ -449,16 +449,7 @@ export class IcChatConsole extends LitElement {
       // Closed-union retype: session.list returns kind ∈
       // {"dm", "group", "sub-agent"} per session-handlers.ts:413-417 derivation
       // (parentSessionKey -> "sub-agent" | guildId -> "group" | else "dm").
-      const result = await this.rpcClient.call<{
-        sessions: Array<{
-          sessionKey: string;
-          agentId: string;
-          channelId: string;
-          kind: "dm" | "group" | "sub-agent";
-          messageCount?: number;
-          updatedAt: number;
-        }>;
-      }>("session.list", { kind: "dm" });
+      const result = await this.rpcClient.call("session.list", { kind: "dm" });
       const sessions = result?.sessions ?? [];
       this._sessions = sessions.map((s) => ({
         key: s.sessionKey,
@@ -487,15 +478,7 @@ export class IcChatConsole extends LitElement {
     if (!this.rpcClient || !this._activeSession) return;
     this._loading = true;
     try {
-      const result = await this.rpcClient.call<{
-        messages: Array<{
-          id?: string;
-          role: "user" | "assistant" | "error" | "system" | "tool";
-          content: string;
-          timestamp?: number;
-          toolCalls?: unknown[];
-        }>;
-      }>("session.history", { session_key: this._activeSession });
+      const result = await this.rpcClient.call("session.history", { session_key: this._activeSession });
       const rawMessages = result?.messages ?? [];
       this._messages = rawMessages
         .map((m): ChatMessageData => ({
@@ -532,14 +515,7 @@ export class IcChatConsole extends LitElement {
     const sessionInfo = this._sessions.find((s) => s.key === this._activeSession);
     const agentId = sessionInfo?.agentId ?? "default";
     try {
-      const result = await this.rpcClient.call<{
-        snapshots: Array<{
-          tokensLoaded?: number;
-          tokensEvicted?: number;
-          tokensMasked?: number;
-          budgetUtilization?: number;
-        }>;
-      }>("obs.context.pipeline", { agentId, limit: 1 });
+      const result = await this.rpcClient.call("obs.context.pipeline", { agentId, limit: 1 });
       const snap = result?.snapshots?.[0] ?? null;
       if (!snap) {
         this._budgetSegments = [];
@@ -746,7 +722,7 @@ export class IcChatConsole extends LitElement {
       const bytes = new Uint8Array(await blob.arrayBuffer());
       let binary = "";
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      const result = await this.rpcClient.call<{ text: string }>(
+      const result = await this.rpcClient.call(
         "audio.transcribe",
         { audio: btoa(binary), format: "webm" },
       );
@@ -889,7 +865,7 @@ export class IcChatConsole extends LitElement {
       case "/export":
         if (this._activeSession && this.rpcClient) {
           try {
-            const result = await this.rpcClient.call<{ data: string }>(
+            const result = await this.rpcClient.call(
               "session.export",
               { session_key: this._activeSession },
             );

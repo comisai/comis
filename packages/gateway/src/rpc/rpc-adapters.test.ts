@@ -160,14 +160,15 @@ describe("createRpcAdapters", () => {
       const adapters = createRpcAdapters(deps);
 
       const result = await adapters["memory.search"](
-        { query: "hello", limit: 5 },
+        { query: "hello", limit: 5, tenantId: "tenant-a", agentId: "agent-a" },
         { clientId: "c1", scopes: ["rpc"] },
       );
 
       expect(deps.searchMemory).toHaveBeenCalledWith({
         query: "hello",
         limit: 5,
-        tenantId: undefined,
+        tenantId: "tenant-a",
+        agentId: "agent-a",
       });
       expect(result).toEqual({
         results: [{ id: "mem-1", content: "test content", score: 0.95 }],
@@ -185,23 +186,24 @@ describe("createRpcAdapters", () => {
   });
 
   describe("memory.inspect", () => {
-    it("calls inspectMemory with optional params", async () => {
+    it("calls inspectMemory with explicit tenant and agent authority", async () => {
       const deps = createMockDeps();
       const adapters = createRpcAdapters(deps);
 
       const result = await adapters["memory.inspect"](
-        { id: "entry-1" },
+        { id: "entry-1", tenantId: "tenant-a", agentId: "agent-a" },
         { clientId: "c1", scopes: ["rpc"] },
       );
 
       expect(deps.inspectMemory).toHaveBeenCalledWith({
         id: "entry-1",
-        tenantId: undefined,
+        tenantId: "tenant-a",
+        agentId: "agent-a",
       });
       expect(result).toEqual({ stats: { totalEntries: 10 } });
     });
 
-    it("handles undefined params gracefully", async () => {
+    it("rejects inspect without explicit tenant and agent authority", async () => {
       const deps = createMockDeps();
       const adapters = createRpcAdapters(deps);
 
@@ -210,11 +212,10 @@ describe("createRpcAdapters", () => {
         scopes: ["rpc"],
       });
 
-      expect(deps.inspectMemory).toHaveBeenCalledWith({
-        id: undefined,
-        tenantId: undefined,
+      expect(deps.inspectMemory).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        error: "Missing required parameters: tenantId and agentId (string)",
       });
-      expect(result).toEqual({ stats: { totalEntries: 10 } });
     });
   });
 
@@ -329,7 +330,7 @@ describe("createRpcAdapters", () => {
       const adapters = createRpcAdapters(deps);
 
       const result = await adapters["memory.search"](
-        { query: "test" },
+        { query: "test", tenantId: "tenant-a", agentId: "agent-a" },
         { clientId: "c1", scopes: ["rpc"] },
       );
 

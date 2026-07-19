@@ -723,7 +723,7 @@ export class IcPipelineBuilder extends LitElement {
 
     if (this.rpcClient) {
       try {
-        const serverGraph = await this.rpcClient.call<{ label?: string; nodes: Array<Record<string, unknown>>; edges: PipelineEdge[]; settings: GraphSettings }>("graph.load", { id: this.graphId });
+        const serverGraph = await this.rpcClient.call("graph.load", { id: this.graphId });
         if (serverGraph && this._graphState) {
           this._graphState.reset();
 
@@ -909,7 +909,7 @@ export class IcPipelineBuilder extends LitElement {
     };
 
     try {
-      const result = await this.rpcClient.call<{ graphId: string }>("graph.execute", payload);
+      const result = await this.rpcClient.call("graph.execute", payload);
       // Navigate to monitor view
       this.dispatchEvent(new CustomEvent("navigate", {
         detail: `pipelines/${result.graphId}`,

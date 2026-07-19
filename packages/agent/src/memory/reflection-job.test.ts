@@ -19,6 +19,7 @@
  *     delta-ops, untargeted sections byte-identical; a new doc synthesizes fresh.
  */
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { ok } from "@comis/shared";
 import { applyDeltaOps, renderStructuredBody, MAX_DOC_NAME_LENGTH } from "@comis/core";
@@ -32,6 +33,14 @@ import {
   type RunReflectionConfig,
   type ReflectionSourceTrajectory,
 } from "./reflection-job.js";
+
+describe("reflection config default authority", () => {
+  it("uses the validated schema value without a call-site default", () => {
+    const source = readFileSync(new URL("./reflection-job.ts", import.meta.url), "utf8");
+    expect(source).not.toContain("DEFAULT_MAX_DOCS_PER_RUN");
+    expect(source).not.toContain("config.maxDocsPerRun ??");
+  });
+});
 
 const NOW = 1_700_000_000_000;
 const SCOPE = { tenantId: "t1", agentId: "a1", now: NOW };

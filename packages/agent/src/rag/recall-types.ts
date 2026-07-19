@@ -29,6 +29,7 @@ import type {
   ComisLogger,
   TripleStorePort,
   MemorySearchResult,
+  MemoryRecallScope,
   SessionKey,
   LcdProvenanceReadStore,
   EventMap,
@@ -173,7 +174,7 @@ export interface MemoryRecallConfig {
   /** Trust levels permitted into recall (external excluded by default). */
   includeTrustLevels: TrustLevel[];
   /** Cross-encoder rerank knobs (opt-in; default-OFF). */
-  rerank: { enabled: boolean; maxCandidates: number; minResults: number; timeoutMs: number };
+  rerank: { mode: "auto" | "on" | "off"; maxCandidates: number; minResults: number; timeoutMs: number };
   /** Multiplicative scoring boost weights. */
   scoring: ScoringAlphas;
   /**
@@ -275,7 +276,7 @@ export interface MemoryRecall {
    */
   recall(
     query: string,
+    scope: MemoryRecallScope,
     sessionKey: SessionKey,
-    agentId?: string,
   ): Promise<Result<MemorySearchResult[], Error>>;
 }

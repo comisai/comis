@@ -216,7 +216,7 @@ export class IcTokenManager extends LitElement {
   private async _loadTokens(): Promise<void> {
     if (!this.rpc) return;
     try {
-      const result = await this.rpc.call<{ tokens: TokenEntry[] }>("tokens.list");
+      const result = await this.rpc.call("tokens.list");
       this._tokens = result.tokens ?? [];
     } catch {
       // Silently ignore -- parent handles top-level error state
@@ -239,7 +239,7 @@ export class IcTokenManager extends LitElement {
   private async _rotateToken(tokenId: string): Promise<void> {
     if (!this.rpc) return;
     try {
-      const result = await this.rpc.call<{ id: string; secret: string }>("tokens.rotate", { id: tokenId });
+      const result = await this.rpc.call("tokens.rotate", { id: tokenId });
       this._newSecretDisplay = result.secret;
       IcToast.show(`Token "${tokenId}" rotated -- new secret shown below`, "success");
       this.dispatchEvent(new CustomEvent("tokens-changed", { bubbles: true, composed: true }));
@@ -260,7 +260,7 @@ export class IcTokenManager extends LitElement {
   private async _generateToken(): Promise<void> {
     if (!this.rpc) return;
     try {
-      const result = await this.rpc.call<{ id: string; secret: string; scopes: string[] }>(
+      const result = await this.rpc.call(
         "tokens.create",
         { scopes: [...this._newTokenScopes] },
       );

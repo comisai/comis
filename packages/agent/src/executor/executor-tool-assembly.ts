@@ -285,6 +285,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     deps: {
       workspaceDir: effectiveWorkspaceDir, // AGENTS.md/BOOT.md from the run's working tree.
       workspacePolicySnapshot: deps.workspacePolicySnapshot,
+      isOnboarding: deps.isOnboarding,
       // Forward the data dir so the recall-trace recorder's base resolves
       // from the same source as the memory.recall_trace reader.
       dataDir: deps.dataDir,
@@ -322,6 +323,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       mediaPersistenceEnabled: deps.mediaPersistenceEnabled,
       autonomousMediaEnabled: deps.autonomousMediaEnabled,
       getPromptSkillsXml: deps.getPromptSkillsXml,
+      getPromptSkillLocations: deps.getPromptSkillLocations,
       getMcpServerInstructions: deps.getMcpServerInstructions,
       subAgentToolNames: deps.subAgentToolNames,
       mcpToolsInherited: deps.mcpToolsInherited,
@@ -577,7 +579,6 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     capabilityClass,
     recentlyUsedToolNames: recentlyUsedTools,
     toolNames: mergedCustomTools.map(t => t.name),
-    contextEngineVersion: config.contextEngine?.version,
     lifecycleDemotedNames,
     discoveryTracker,
     neverDefer: config.deferredTools?.neverDefer,

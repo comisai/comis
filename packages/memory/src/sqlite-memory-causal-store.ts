@@ -41,16 +41,15 @@ import type { MemoryCausalStore, CausalScope, MemorySearchResult } from "@comis/
 import { systemNowMs } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { searchByText } from "./hybrid-search.js";
+import { memoryVisibilityClause } from "./memory-authority.js";
 import { createRowMapper, rowToEntry } from "./row-mapper.js";
 import { CausalLaneRowSchema, MemoryRowSchema, IdProjectionRowSchema } from "./row-schemas.js";
 
 /**
  * How many FTS candidates to over-fetch when resolving `effectText` → a stored
- * memory id. `searchByText` is NOT scope-filtered (it joins memory_fts +
- * memories globally), so we fetch a small ranked window and pick the FIRST
- * candidate that is BOTH in the caller's (tenant, agent) scope AND not the
- * source memory itself (no self-edge). A handful is plenty — the top BM25 match
- * within scope is almost always at or near rank 1.
+ * memory id. `searchByText` applies the caller's tenant-agent authority token
+ * inside MATCH before ranking and limiting; the point-read below independently
+ * verifies the selected row before the edge write.
  */
 const FTS_RESOLVE_OVERFETCH = 5;
 
@@ -89,9 +88,6 @@ export function createSqliteMemoryCausalStore(deps: MemoryCausalStoreDeps): Memo
   // Scope-check a single candidate id (the FTS resolver re-asserts the FULL
   // (tenant, agent) scope on the matched memory — effectText must NOT resolve
   // cross-scope). Bound params only.
-  const memoryInScope = db.prepare(
-    "SELECT id FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ?",
-  );
   // Idempotent edge write (the PK is the conflict target). Bound params only.
   const insertEdge = db.prepare(
     "INSERT OR IGNORE INTO memory_causal_edges " +
@@ -107,10 +103,6 @@ export function createSqliteMemoryCausalStore(deps: MemoryCausalStoreDeps): Memo
   // `memoryInScope` scope-check above is deliberately NOT filtered — a causal edge may
   // legitimately target a soft-evicted memory at link time; only the recall hydration
   // excludes it. The inspect/asOf raw reads stay UNFILTERED (eviction soft + asOf-resolvable).
-  const hydrateMemory = db.prepare(
-    "SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ? AND evicted_at IS NULL",
-  );
-
   return {
     async linkCausal(
       sourceMemoryId: string,
@@ -121,12 +113,20 @@ export function createSqliteMemoryCausalStore(deps: MemoryCausalStoreDeps): Memo
       const startMs = systemNowMs();
       const { tenantId, agentId, now } = scope;
       try {
+        const visibility = memoryVisibilityClause(scope);
+        const memoryInScope = db.prepare(
+          `SELECT id FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ? AND ${visibility.sql}`,
+        );
+        const sourceProbe = memoryInScopeRowMapper.parseOptionalRow(
+          memoryInScope.get(sourceMemoryId, tenantId, agentId, ...visibility.params),
+        );
+        if (!sourceProbe.ok || sourceProbe.value === undefined) {
+          return err(new Error("Causal source memory is outside the resolved visibility scope"));
+        }
         // Resolve effectText -> a stored memory id via the scoped FTS top match.
         // `searchByText` sanitizes the raw text (FTS injection prevention) and
-        // returns BM25-ranked {id, rank}; it is NOT scope-filtered, so we scan
-        // the ranked window for the FIRST candidate that is BOTH in scope AND not
-        // the source itself (no self-edge — a memory cannot cause itself).
-        const candidates = searchByText(db, effectText, FTS_RESOLVE_OVERFETCH);
+        // returns BM25-ranked {id, rank} from the caller's authority partition.
+        const candidates = searchByText(db, effectText, FTS_RESOLVE_OVERFETCH, scope);
         let targetId: string | undefined;
         for (const cand of candidates) {
           if (cand.id === sourceMemoryId) continue; // never self-link
@@ -134,7 +134,7 @@ export function createSqliteMemoryCausalStore(deps: MemoryCausalStoreDeps): Memo
           // via the id-only mapper (no `as { id: string }`). effectText must NOT
           // resolve cross-scope.
           const probe = memoryInScopeRowMapper.parseOptionalRow(
-            memoryInScope.get(cand.id, tenantId, agentId),
+            memoryInScope.get(cand.id, tenantId, agentId, ...visibility.params),
           );
           if (probe.ok && probe.value !== undefined) {
             targetId = cand.id;
@@ -228,10 +228,14 @@ export function createSqliteMemoryCausalStore(deps: MemoryCausalStoreDeps): Memo
 
         // Hydrate each linked memory (scoped) into a MemorySearchResult; score =
         // edge confidence (intra-lane order).
+        const visibility = memoryVisibilityClause(scope);
+        const hydrateMemory = db.prepare(
+          `SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ? AND evicted_at IS NULL AND ${visibility.sql}`,
+        );
         const scored: Array<{ result: MemorySearchResult; score: number }> = [];
         for (const [linkedId, score] of bestConfidence) {
           const memParsed = memoryRowMapper.parseOptionalRow(
-            hydrateMemory.get(linkedId, tenantId, agentId),
+            hydrateMemory.get(linkedId, tenantId, agentId, ...visibility.params),
           );
           if (!memParsed.ok) return err(new Error(memParsed.error.message));
           const row = memParsed.value;

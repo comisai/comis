@@ -21,7 +21,7 @@ registerStory({
     "conversation by compacting old context and expanding detail when needed, so that " +
     "the goal is achieved without losing the thread.",
   tags: ["A", "B", "D", "E", "F"],
-  dimensions: ["contextEngine.version=dag", "memory.costFeatures.enabled=true"],
+  dimensions: ["contextEngine.contextThreshold=high", "memory.costFeatures.enabled=true"],
   requires: {
     providers: ["anthropic"],
     capabilities: ["tools"],

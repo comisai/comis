@@ -248,7 +248,7 @@ export interface ChannelsDeps {
    *  Absent → capture is skipped and a proactive Teams send errs. */
   msTeamsConversationStore?: MsTeamsConversationStorePort;
   /** Default tenant ID for memory storage. */
-  tenantId?: string;
+  tenantId: string;
   /** Embedding queue for new memory entries (optional). */
   embeddingQueue?: { enqueue(id: string, content: string): void };
   /** Optional callback for suspicious-content detection. Forwarded from the
@@ -304,7 +304,7 @@ export interface ChannelsDeps {
   /** Complete three-layer conversation forget for slash /new + /reset
    *  (createConversationReset — runtime-only destroy
    *  leaves the LCD context the DAG re-presents on the next turn). */
-  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
+  destroyConversation?: (scope: import("@comis/core").ConversationScope, key: SessionKey) => Promise<unknown>;
   /** Per-agent cost trackers for /usage and /status cost data. */
   costTrackers?: Map<string, {
     getByProvider(): Array<{ provider: string; model: string; totalTokens: number; totalCost: number; callCount: number }>;

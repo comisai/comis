@@ -12,7 +12,20 @@ import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { initSchema } from "./schema.js";
 import { createSqliteDeliveryMirror } from "./delivery-mirror-adapter.js";
-import type { DeliveryMirrorPort } from "@comis/core";
+import { ConversationRefSchema, type DeliveryMirrorPort } from "@comis/core";
+
+const CONVERSATION_REF = ConversationRefSchema.parse(`cv_${"a".repeat(43)}`);
+const AUTHORITY = {
+  tenantId: "tenant-a",
+  agentId: "agent-a",
+  conversationRef: CONVERSATION_REF,
+};
+const ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "telegram-account",
+  conversationId: "ch-1",
+  conversationKind: "direct" as const,
+};
 
 describe("SqliteDeliveryMirrorAdapter — branch-gap coverage", () => {
   let db: Database.Database;
@@ -20,7 +33,8 @@ describe("SqliteDeliveryMirrorAdapter — branch-gap coverage", () => {
 
   function makeInput(overrides: Record<string, unknown> = {}) {
     return {
-      sessionKey: "tg:dm:user-1",
+      ...AUTHORITY,
+      destinationEndpoint: ENDPOINT,
       text: "mirrored hello",
       mediaUrls: [] as string[],
       channelType: "telegram",
@@ -48,7 +62,7 @@ describe("SqliteDeliveryMirrorAdapter — branch-gap coverage", () => {
 
   it("returns err result when pending runs against a closed database", async () => {
     db.close();
-    const result = await mirror.pending("tg:dm:user-1");
+    const result = await mirror.pending(AUTHORITY);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toBeInstanceOf(Error);
@@ -66,7 +80,7 @@ describe("SqliteDeliveryMirrorAdapter — branch-gap coverage", () => {
 
   it("returns err result when clearSession runs against a closed database", async () => {
     db.close();
-    const result = await mirror.clearSession("tg:dm:user-1");
+    const result = await mirror.clearSession(AUTHORITY);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toBeInstanceOf(Error);
@@ -99,10 +113,18 @@ describe("SqliteDeliveryMirrorAdapter — branch-gap coverage", () => {
   it("pruneOld removes rows whose created_at is older than the cutoff", async () => {
     // Insert a row directly with a stale timestamp so pruneOld removes it
     db.prepare(
-      `INSERT INTO delivery_mirror (id, session_key, text, media_urls, channel_type, channel_id,
+      `INSERT INTO delivery_mirror (
+                                     id, tenant_id, agent_id, conversation_ref, destination_endpoint,
+                                     text, media_urls, channel_type, channel_id,
                                      origin, idempotency_key, status, created_at)
-       VALUES ('stale-id', 'tg:dm:user-1', 'old', '[]', 'telegram', 'ch-1', 'agent', 'k1', 'pending', ?)`,
-    ).run(0); // created_at=0 -> definitely stale
+       VALUES ('stale-id', ?, ?, ?, ?, 'old', '[]', 'telegram', 'ch-1', 'agent', 'k1', 'pending', ?)`,
+    ).run(
+      AUTHORITY.tenantId,
+      AUTHORITY.agentId,
+      AUTHORITY.conversationRef,
+      JSON.stringify(ENDPOINT),
+      0,
+    ); // created_at=0 -> definitely stale
     const result = await mirror.pruneOld(0);
     expect(result.ok).toBe(true);
     if (result.ok) {

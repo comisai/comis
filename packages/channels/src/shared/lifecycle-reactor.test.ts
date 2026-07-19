@@ -113,14 +113,13 @@ describe("extractChannelId", () => {
     expect(extractChannelId(sk)).toBe("chan-abc");
   });
 
-  it("extracts channelId from formatted string without agent prefix", () => {
-    // Format: tenantId:userId:channelId
-    expect(extractChannelId("default:user-1:chan-abc")).toBe("chan-abc");
+  it("rejects an unscoped formatted string without canonical authority", () => {
+    expect(extractChannelId("default:user-1:chan-abc")).toBeUndefined();
   });
 
-  it("extracts a colon-containing channelId without consuming tagged suffixes", () => {
+  it("rejects an unscoped colon-containing formatted string", () => {
     expect(extractChannelId("default:user-1:sub-agent:run-1:peer:user-2"))
-      .toBe("sub-agent:run-1");
+      .toBeUndefined();
   });
 
   it("returns undefined for undefined input", () => {

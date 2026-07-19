@@ -27,6 +27,7 @@ import {
   toSafeErrorLogString,
   tryGetContext,
   type AgentCapability,
+  type ApprovalGate,
   type ComisLogger,
   type DurableRootBudget,
   type EventMap,
@@ -68,8 +69,11 @@ import {
   settleClaimedResumeFailure,
   defaultOrchestrateDurableFs,
 } from "./orchestrate-durable.js";
-import type { OrchestrateDurableRuns } from "./orchestrate-durable.js";
-import type { ResumeAuthority } from "./orchestrate-durable.js";
+import type {
+  OrchestrateDurableRuns,
+  ResumeAuthority,
+  ResumePrincipal,
+} from "./orchestrate-durable.js";
 import {
   defaultResolveJailAgentCli,
   defaultResolveJailNode,
@@ -166,15 +170,7 @@ export interface OrchestrateToolDeps {
   readonly logger: ComisLogger;
   readonly trustLevel: "admin" | "user" | "guest"; // exact authenticated durable-run trust
   /** Authenticated principal persisted with every resumable execution. */
-  readonly durablePrincipal?: {
-    readonly agentId: string;
-    readonly sessionKey: string;
-    readonly ownerTenantId: string;
-    readonly ownerUserId: string;
-    readonly deliveryOrigin: import("@comis/core").DeliveryOrigin | null;
-    readonly trustLevel: "admin" | "user" | "guest";
-    readonly caps: readonly AgentCapability[];
-  };
+  readonly durablePrincipal?: ResumePrincipal;
   /** Resolve the agent's jailed workspace path (the writable jail root). */
   readonly workspaceResolver: () => string;
   /**
@@ -270,18 +266,7 @@ export interface OrchestrateToolDeps {
    * `config.approvals.enabled`, so seam-presence IS "approvals configured" — there is
    * no rule engine (the reused gate is the whole mechanism). Absent ⇒ no approval fire.
    */
-  readonly approvalGate?: {
-    requestApproval(req: {
-      toolName: string;
-      action: string;
-      params: Record<string, unknown>;
-      fingerprintParams: Record<string, unknown>;
-      agentId: string;
-      sessionKey: string;
-      trustLevel: "admin" | "user" | "guest";
-      channelType?: string;
-    }): Promise<{ approved: boolean; reason?: string }>;
-  };
+  readonly approvalGate?: Pick<ApprovalGate, "requestApproval">;
   /**
    * The resolved capability class (operator override ?? provider-family), threaded
    * daemon-side. The one-shot auto-repair is class-gated (ON for weaker models, OFF
@@ -794,10 +779,11 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           const registered = await registerDurableRun(deps.durableRuns, {
             checkpointId: runId,
             rootRunId: treeRootRunId,
+            tenantId: principal.tenantId,
             agentId: principal.agentId,
-            sessionKey: principal.sessionKey,
-            ownerTenantId: principal.ownerTenantId,
-            ownerUserId: principal.ownerUserId,
+            conversationRef: principal.conversationRef,
+            conversationScope: principal.conversationScope,
+            principalId: principal.principalId,
             deliveryOrigin: principal.deliveryOrigin,
             caps: executionCaps,
             leaseIds: [childLeaseId ?? deps.brokerSpawnEnv?.leaseId].filter(
@@ -886,10 +872,11 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           const decision = await markResumable(deps.durableRuns, {
             checkpointId: runId,
             rootRunId: treeRootRunId,
+            tenantId: principal.tenantId,
             agentId: principal.agentId,
-            sessionKey: principal.sessionKey,
-            ownerTenantId: principal.ownerTenantId,
-            ownerUserId: principal.ownerUserId,
+            conversationRef: principal.conversationRef,
+            conversationScope: principal.conversationScope,
+            principalId: principal.principalId,
             deliveryOrigin: principal.deliveryOrigin,
             caps: executionCaps,
             leaseIds: [childLeaseId ?? deps.brokerSpawnEnv?.leaseId].filter(

@@ -5,8 +5,8 @@
  * Fetches agent, channel, and session counts via JSON-RPC at a
  * configurable interval. Designed for sidebar badge count display.
  *
- * Polling failures are non-fatal -- badges show stale data until
- * the next successful poll. No errors are thrown.
+ * Polling failures are non-fatal -- badges show stale data until the next
+ * successful poll, while `lastError` exposes the failure to the host UI.
  */
 
 import type { ReactiveController, ReactiveControllerHost } from "lit";
@@ -43,6 +43,12 @@ export class PollingController implements ReactiveController {
   private readonly _onData: (data: BadgeCounts) => void;
   private readonly _intervalMs: number;
   private _timer: ReturnType<typeof setInterval> | null = null;
+  private _lastError: Error | null = null;
+
+  /** Most recent polling failure, cleared after a successful poll. */
+  get lastError(): Error | null {
+    return this._lastError;
+  }
 
   constructor(
     host: ReactiveControllerHost,
@@ -73,11 +79,12 @@ export class PollingController implements ReactiveController {
   private async _poll(): Promise<void> {
     try {
       const [agentResult, channelResult, sessionResult] = await Promise.all([
-        this._rpcClient.call<{ agents: string[] }>("agent.list"),
-        this._rpcClient.call<{ channels: unknown[] }>("channel.list"),
-        this._rpcClient.call<{ sessions: Array<{ sessionKey: string; agentId: string }>; total: number }>("session.list", {}),
+        this._rpcClient.call("agents.list", {}),
+        this._rpcClient.call("channels.list", {}),
+        this._rpcClient.call("session.list", {}),
       ]);
 
+      this._lastError = null;
       this._onData({
         agents: agentResult.agents.length,
         channels: channelResult.channels.length,
@@ -86,8 +93,9 @@ export class PollingController implements ReactiveController {
         sessionEntries: sessionResult.sessions?.slice(0, 20) ?? [],
       });
       this._host.requestUpdate();
-    } catch {
-      // Polling failure is non-fatal -- badge shows stale data
+    } catch (cause) {
+      this._lastError = cause instanceof Error ? cause : new Error(String(cause));
+      this._host.requestUpdate();
     }
   }
 }

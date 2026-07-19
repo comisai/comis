@@ -5,7 +5,7 @@
 import { randomUUID } from "node:crypto";
 import {
   createResolvedRequestContext,
-  parseFormattedSessionKey,
+  conversationScopeToSessionKey,
   runWithContext,
   stripInternalFields,
   systemNowMs,
@@ -54,14 +54,23 @@ function resolveLeaseRequestPrincipal(
   lease: LeaseInfo,
   requireDeliveryOrigin = false,
 ): Result<LeaseRequestPrincipal, Error> {
-  const sessionKey = parseFormattedSessionKey(lease.sessionKey);
+  const turnScope = lease.turnScope;
+  const sessionKeyResult = turnScope === undefined
+    ? undefined
+    : conversationScopeToSessionKey(turnScope.conversation);
+  const sessionKey = sessionKeyResult?.ok === true ? sessionKeyResult.value : undefined;
   const deliveryOrigin = lease.deliveryOrigin;
   if (
     sessionKey === undefined
+    || turnScope === undefined
+    || turnScope.conversation.agentId !== lease.agentId
     || (requireDeliveryOrigin && deliveryOrigin === undefined)
     || (deliveryOrigin !== undefined && (
       deliveryOrigin.tenantId !== sessionKey.tenantId
       || deliveryOrigin.userId !== sessionKey.userId
+      || deliveryOrigin.channelType !== turnScope.endpoint.channelType
+      || deliveryOrigin.channelId !== turnScope.endpoint.conversationId
+      || deliveryOrigin.threadId !== turnScope.endpoint.threadId
     ))
   ) {
     return err(new Error("capability lease principal invalid"));
@@ -75,6 +84,7 @@ function resolveLeaseRequestPrincipal(
     traceId: randomUUID(),
     startedAt: systemNowMs(),
     trustLevel: lease.trustLevel,
+    turnScope,
     ...(deliveryOrigin !== undefined
       ? { channelType: deliveryOrigin.channelType, deliveryOrigin }
       : {}),

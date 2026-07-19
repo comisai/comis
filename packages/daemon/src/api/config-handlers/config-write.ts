@@ -312,7 +312,7 @@ export function bindConfigWriteHandlers(
         deps.container.eventBus.emit("audit:event", {
           timestamp: systemNowMs(),
           agentId: ctx?.agentId ?? (rawParams._agentId as string | undefined) ?? "system",
-          tenantId: deps.container.config.tenantId ?? "default",
+          tenantId: deps.container.config.tenantId,
           actionType: "config.patch",
           classification: "destructive",
           outcome: "success",
@@ -368,7 +368,7 @@ export function bindConfigWriteHandlers(
         deps.container.eventBus.emit("audit:event", {
           timestamp: systemNowMs(),
           agentId: ctx?.agentId ?? (rawParams._agentId as string | undefined) ?? "system",
-          tenantId: deps.container.config.tenantId ?? "default",
+          tenantId: deps.container.config.tenantId,
           actionType: "config.patch",
           classification: "destructive",
           outcome: "failure",

@@ -13,7 +13,9 @@
  */
 
 import {
-  parseFormattedSessionKey,
+  ConversationRefSchema,
+  conversationScopeToSessionKey,
+  formatSessionKey,
   AgentsListContract,
   SessionStatusContract,
   SessionHistoryContract,
@@ -23,13 +25,7 @@ import {
 } from "@comis/core";
 import type { DeliveryQueueEntry, DeliveryQueuePort } from "@comis/core";
 import type { RpcHandler } from "../types.js";
-import {
-  IS_DEV,
-  type SessionHandlerDeps,
-  scanWorkspaceSessions,
-  loadJsonlSession,
-  collectAvailableSessionKeys,
-} from "./session-helpers.js";
+import { IS_DEV, type SessionHandlerDeps } from "./session-helpers.js";
 import { PreconditionError } from "../errors.js";
 
 /**
@@ -82,21 +78,22 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       // from external callers at the gateway). Admin/operator/CLI calls arrive
       // with NO _agentId and keep full access.
       const callerAgentId = rawParams._agentId as string | undefined;
-      const callerSessionKey = rawParams._callerSessionKey as string | undefined;
 
       const userParams = stripInternalFields(rawParams);
       const params = SessionHistoryContract.request.parse(userParams);
 
-      const sessionKey = params.session_key;
+      const authority = { tenantId: params.tenant_id, agentId: params.agent_id };
+      if (callerAgentId !== undefined && callerAgentId !== authority.agentId) {
+        throw new PreconditionError("Session query agent does not match the authenticated caller");
+      }
+      const callerTenantId = rawParams._tenantId as string | undefined;
+      if (callerTenantId !== undefined && callerTenantId !== authority.tenantId) {
+        throw new PreconditionError("Session query tenant does not match the authenticated caller");
+      }
+      const parsedRef = ConversationRefSchema.safeParse(params.conversation_ref);
+      if (!parsedRef.success) throw new PreconditionError("Invalid conversation reference");
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 20;
-
-      // Formatted session keys omit agentId. Bind an agent-origin read to the
-      // exact caller session injected from the live context; a lease-only call
-      // without that session cannot establish ownership and fails closed.
-      if (callerAgentId && callerSessionKey !== sessionKey) {
-        throw new PreconditionError(`Session not found: ${sessionKey}`);
-      }
 
       // Snapshot the DeliveryQueuePort once per request and build the join
       // keyset BEFORE the message loop. The key is (channelId, text) -- the
@@ -107,41 +104,27 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       // parts[2] (after tenant + userId); we extract it once below.
       const pendingKeySet = await loadPendingKeySet(deps.deliveryQueue);
 
-      let data = deps.sessionStore.loadByFormattedKey(sessionKey);
-
-      // Fallback: check if this is a workspace JSONL session (metadata stores the path)
-      if (!data && deps.defaultWorkspaceDir) {
-        const wsSessions = scanWorkspaceSessions(deps.defaultWorkspaceDir);
-        const match = wsSessions.find(ws => ws.sessionKey === sessionKey);
-        if (match && match.metadata._workspaceJsonlPath) {
-          data = loadJsonlSession(match.metadata._workspaceJsonlPath as string);
-        }
-      }
-
-      if (!data) {
-        const available = collectAvailableSessionKeys(deps);
-        const hint = available.length > 0
-          ? `. Available session keys: ${available.join(", ")}`
-          : ". Use action 'list' to discover available session keys";
-        throw new PreconditionError(`Session not found: ${sessionKey}${hint}`);
-      }
-
-      // Parse session key for metadata
-      const parsed = parseFormattedSessionKey(sessionKey);
-      const agentId = callerAgentId && callerSessionKey === sessionKey
-        ? callerAgentId
-        : parsed?.agentId ?? "default";
+      const loaded = deps.sessionStore.loadByRef(authority, parsedRef.data);
+      if (!loaded.ok) throw loaded.error;
+      const data = loaded.value;
+      if (!data) throw new PreconditionError(`Conversation not found: ${params.conversation_ref}`);
+      const projected = conversationScopeToSessionKey(data.conversationScope);
+      if (!projected.ok) throw projected.error;
+      const sessionKey = formatSessionKey(projected.value);
+      const agentId = data.conversationScope.agentId;
       const isSubAgent = data.metadata.parentSessionKey !== undefined;
-      const channelType = isSubAgent
-        ? "sub-agent"
-        : parsed?.guildId
-          ? "group"
-          : "dm";
+      const partition = data.conversationScope.partition;
+      const isShared = (partition.kind === "endpoint-conversation" || partition.kind === "endpoint-conversation-principal")
+        && partition.endpoint.conversationKind === "shared";
+      const channelType = isSubAgent ? "sub-agent" : isShared ? "group" : "dm";
       // ChannelId for the deliveryStatus join. The DeliveryQueueEntry carries
       // channelType + channelId + text; we match on (channelId, text) below
       // because two queue entries for distinct channel adapters with the same
       // channelId is a deployment conflict operators avoid by construction.
-      const sessionChannelId = parsed?.channelId ?? "";
+      const sessionChannelId = partition.kind === "endpoint-conversation"
+        || partition.kind === "endpoint-conversation-principal"
+        ? partition.endpoint.conversationId
+        : projected.value.channelId;
 
       // Pre-scan: resolve gateway attachment tool calls so we can inject
       // <!-- attachment:... --> markers into displayable assistant messages.

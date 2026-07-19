@@ -17,10 +17,12 @@ import type {
   AgentCapability, AgentConfig, AppContainer, ChannelPort, ClockPort,
   DeliveryOrigin, DeliveryService, DeliverToChannelOptions, DurableRunPort,
   FileLockPort, NormalizedMessage, OutwardSendLedgerPort, RequestContext,
-  SessionKey, TimerPort,
+  SessionKey, TimerPort, SessionStorePort, ConversationLocator, ConversationRef, ConversationScope,
+  ResolvedTurnScope,
+  MemoryWriteEntry, MemoryWriteScope,
 } from "@comis/core";
 import {
-  DeliveryOriginSchema, formatSessionKey,
+  createConversationRef, DeliveryOriginSchema, formatSessionKey,
   resolveWorkspaceDir, runWithContext, safePath, systemNowMs, tryGetContext,
 } from "@comis/core";
 import { createResultRefStore } from "@comis/skills/tools";
@@ -56,6 +58,28 @@ const NOOP_LOGGER: ComisLogger = {
   child: () => NOOP_LOGGER,
 };
 
+function createInternalTurnScope(conversation: ConversationScope): ResolvedTurnScope {
+  const partition = conversation.partition;
+  const reference = createConversationRef(conversation);
+  const endpoint = partition.kind === "endpoint-conversation"
+    || partition.kind === "endpoint-conversation-principal"
+    ? partition.endpoint
+    : {
+        channelType: partition.kind === "channel-principal" ? partition.channelType : "cross-session",
+        channelInstanceId: "runtime",
+        conversationId: reference.ok
+          ? reference.value
+          : conversation.agentId,
+        conversationKind: "direct" as const,
+      };
+  const principalId = partition.kind === "principal"
+    || partition.kind === "channel-principal"
+    || partition.kind === "endpoint-conversation-principal"
+    ? partition.principalId
+    : `cross-session:${conversation.agentId}`;
+  return { conversation, endpoint, principal: { principalId } };
+}
+
 /** All services produced by the cross-session messaging setup. */
 export interface CrossSessionResult {
   /** Cross-session message sender for agent-to-agent communication. */
@@ -67,7 +91,7 @@ export interface CrossSessionResult {
   /** Receipt-aware retained-operation boundary for completion announcements. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
   /** Parent session announcement for graph results */
-  announceToParent: (callerAgentId: string, callerSessionKey: SessionKey, text: string, channelType: string, channelId: string, options?: { threadId?: string }) => Promise<string | undefined>;
+  announceToParent: (callerAgentId: string, callerSessionKey: SessionKey, callerConversation: ConversationLocator, text: string, channelType: string, channelId: string, options?: { threadId?: string }) => Promise<string | undefined>;
   /** Dead-letter queue for failed announcement persistence. */
   deadLetterQueue?: ReturnType<typeof createAnnouncementDeadLetterQueue>;
   /** Announcement batcher for coalescing concurrent graph/sub-agent completions. */
@@ -92,11 +116,7 @@ export interface CrossSessionResult {
  * branch is delegated to setup-cross-session-graph.ts.
  */
 export function setupCrossSession(deps: {
-  sessionStore: {
-    loadByFormattedKey(key: string): { messages: unknown[]; metadata: Record<string, unknown> } | undefined;
-    save(key: SessionKey, messages: unknown[], metadata: Record<string, unknown>): void;
-    delete(key: SessionKey): void;
-  };
+  sessionStore: SessionStorePort;
   container: AppContainer;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires complex type parameters from pi-ai SDK
   assembleToolsForAgent: (agentId: string, options?: import("../setup-tools.js").AssembleToolsOptions) => Promise<any[]>;
@@ -107,17 +127,13 @@ export function setupCrossSession(deps: {
   logger?: ComisLogger;
   /** Optional memory adapter for persisting sub-agent completion summaries. */
   memoryAdapter?: {
-    store(entry: Record<string, unknown>): Promise<{ ok: boolean }>;
+    store(entry: MemoryWriteEntry, scope: MemoryWriteScope): Promise<{ ok: boolean }>;
   };
   /** Deferred gateway send callback (wired after setupGateway). */
   gatewaySend?: { ref?: (channelId: string, text: string) => boolean };
-  /** Optional active run registry for aborting in-flight SDK sessions on kill. */
-  activeRunRegistry?: {
-    get(sessionKey: string): { abort(): Promise<void> } | undefined;
-  };
-  /** Optional composite-key resolver for sub-agent abort paths. */
+  /** Optional conversation-authority resolver for sub-agent abort paths. */
   sessionResolver?: {
-    resolveActiveSession(key: { agentId: string; channelType: string; channelId: string }): { abort(): Promise<void> } | undefined;
+    resolveActiveSession(conversationRef: ConversationRef): { abort(): Promise<void> } | undefined;
   };
   /** Delivery queue for crash-safe persistence */
   deliveryQueue?: import("@comis/core").DeliveryQueuePort;
@@ -203,6 +219,7 @@ export function setupCrossSession(deps: {
   const executeInSession = async (
     agentId: string,
     sessionKey: SessionKey,
+    conversation: ConversationLocator,
     text: string,
     fixedTools?: Awaited<ReturnType<typeof assembleToolsForAgent>>,
   ): Promise<{ response: string; tokensUsed: { total: number }; cost: { total: number } }> => {
@@ -231,6 +248,7 @@ export function setupCrossSession(deps: {
       trustLevel: "guest",
       resolvedModel: undefined,
       resolvedLanguage: undefined,
+      turnScope: createInternalTurnScope(conversation.conversationScope),
       ...(targetOrigin !== undefined
         ? { channelType: targetOrigin.channelType, deliveryOrigin: targetOrigin }
         : {}),
@@ -284,7 +302,7 @@ export function setupCrossSession(deps: {
   // executeSubAgent built via setup-cross-session-graph.ts.
   const executeSubAgent = buildExecuteSubAgent({
     container,
-    sessionStore: { loadByFormattedKey: (k) => sessionStore.loadByFormattedKey(k) },
+    sessionStore,
     assembleToolsForAgent,
     getExecutor,
     fileLock: deps.fileLock,
@@ -298,11 +316,7 @@ export function setupCrossSession(deps: {
 
   // Cross-session sender — fire-and-forget, wait, or ping-pong messaging
   const crossSessionSender = createCrossSessionSender({
-    sessionStore: {
-      loadByFormattedKey: (key: string) => sessionStore.loadByFormattedKey(key),
-      save: (key: SessionKey, messages: unknown[], metadata: Record<string, unknown>) =>
-        sessionStore.save(key, messages, metadata),
-    },
+    sessionStore,
     executeInSession,
     sendToChannel,
     eventBus: container.eventBus,
@@ -316,6 +330,7 @@ export function setupCrossSession(deps: {
   const announceToParent = async (
     callerAgentId: string,
     callerSessionKey: SessionKey,
+    callerConversation: ConversationLocator,
     text: string,
     channelType: string,
     channelId: string,
@@ -345,7 +360,26 @@ export function setupCrossSession(deps: {
       // Candidate rewriting is a text-only boundary. An explicit empty tool
       // set prevents the parent execution from producing platform/tool side
       // effects before the governed delivery decision is durable.
-      const result = await executeInSession(callerAgentId, callerSessionKey, text, []);
+      if (
+        callerConversation.conversationScope.tenantId !== callerSessionKey.tenantId
+        || callerConversation.conversationScope.agentId !== callerAgentId
+      ) {
+        deps.logger?.warn({
+          callerAgentId,
+          hint: "repair the captured parent conversation authority before retrying the announcement",
+          errorKind: "precondition" as const,
+        }, "Parent announcement conversation authority is inconsistent");
+        return undefined;
+      }
+      const callerRef = createConversationRef(callerConversation.conversationScope);
+      if (!callerRef.ok || callerRef.value !== callerConversation.conversationRef) return undefined;
+      const result = await executeInSession(
+        callerAgentId,
+        callerSessionKey,
+        callerConversation,
+        text,
+        [],
+      );
       const trimmed = result.response.trim();
       const isNoReply = !trimmed || trimmed === "NO_REPLY" || trimmed.startsWith("NO_REPLY");
       deps.logger?.debug({
@@ -485,13 +519,7 @@ export function setupCrossSession(deps: {
 
   // Sub-agent runner — async sub-agent spawning with allowlist + auto-archive
   const subAgentRunner = createSubAgentRunner({
-    sessionStore: {
-      save: (key: SessionKey, messages: unknown[], metadata: Record<string, unknown>) =>
-        sessionStore.save(key, messages, metadata),
-      delete: (key: SessionKey) => sessionStore.delete(key),
-      loadByFormattedKey: (formattedKey: string) =>
-        sessionStore.loadByFormattedKey(formattedKey),
-    },
+    sessionStore,
     executeAgent: executeSubAgent,
     sendToChannel,
     announceToParent,
@@ -517,7 +545,6 @@ export function setupCrossSession(deps: {
     logger: deps.logger?.child({ submodule: "sub-agent-runner" }),
     memoryAdapter: deps.memoryAdapter,
     batcher: announcementBatcher,
-    activeRunRegistry: deps.activeRunRegistry,
     sessionResolver: deps.sessionResolver,
     resultCondenser,
     condenserModel: condenserApiKey ? { id: condensationResolution.modelId, provider: condensationResolution.provider } as unknown : undefined,

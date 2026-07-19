@@ -34,7 +34,7 @@ function baselineConfig(): MemoryRecallConfig {
   return {
     maxResults: 10,
     includeTrustLevels: ["system", "learned"],
-    rerank: { enabled: false, maxCandidates: 50, minResults: 3, timeoutMs: 1000 },
+    rerank: { mode: "off", maxCandidates: 50, minResults: 3, timeoutMs: 1000 },
     scoring: { recency: 0, temporal: 0, proof: 0, trust: 0 },
     lanes: {
       fts: { weight: 1.0 },

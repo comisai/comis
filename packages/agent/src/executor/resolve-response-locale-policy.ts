@@ -10,9 +10,12 @@ import { tryCatch } from "@comis/shared";
 export interface ResolveResponseLocalePolicyInput {
   readonly explicitLocale?: string;
   readonly requestLocale?: string;
-  readonly workspaceLocale?: string;
-  readonly conversationLocale?: string;
   readonly translationTarget?: string;
+}
+
+export interface ResolvedLocale {
+  readonly policy: ResponseLocalePolicy;
+  readonly confidence: "high" | "medium" | "low";
 }
 
 export interface ResponseLocaleQualityFinding {
@@ -35,8 +38,6 @@ export function resolveResponseLocalePolicy(
   const candidates: ReadonlyArray<readonly [string | undefined, ResponseLocaleSource, boolean]> = [
     [input.explicitLocale, "explicit", true],
     [input.requestLocale, "request", false],
-    [input.workspaceLocale, "workspace", false],
-    [input.conversationLocale, "conversation", false],
   ];
   const translationTarget = canonicalLocale(input.translationTarget);
   for (const [raw, source, enforceLocale] of candidates) {
@@ -55,6 +56,17 @@ export function resolveResponseLocalePolicy(
     ...(translationTarget === undefined ? {} : { translationTarget }),
     enforceLocale: false,
   };
+}
+
+/** Resolve locale policy and record how authoritative its source is. */
+export function resolveLocale(input: ResolveResponseLocalePolicyInput): ResolvedLocale {
+  const policy = resolveResponseLocalePolicy(input);
+  const confidence = policy.source === "explicit"
+    ? "high" as const
+    : policy.source === "request"
+      ? "medium" as const
+      : "low" as const;
+  return { policy, confidence };
 }
 
 function scriptClassForIsoScript(script: string): ScriptClass | undefined {

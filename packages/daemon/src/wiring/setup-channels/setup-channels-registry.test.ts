@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AppContainer, ChannelPort, NormalizedMessage, SessionKey } from "@comis/core";
+import { runWithContext, type AppContainer, type ChannelPort, type NormalizedMessage, type SessionKey } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
+import { ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -71,7 +72,8 @@ vi.mock("@comis/channels", () => ({
 // preserves the call-assertion pattern; the mocked processInboundMessage is
 // never invoked at call-time because createChannelManager returns the static
 // mockChannelManager.
-vi.mock("@comis/orchestrator", () => ({
+vi.mock("@comis/orchestrator", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@comis/orchestrator")>(),
   createChannelManager: vi.fn(() => mockChannelManager),
   processInboundMessage: vi.fn(async () => {}),
   createMessageRouter: vi.fn(() => ({ resolve: vi.fn() })),
@@ -121,18 +123,18 @@ vi.mock("@comis/agent", () => ({
   }),
 }));
 
-vi.mock("@comis/core", async () => {
+vi.mock("@comis/core", async (importOriginal) => {
   // Production setupChannels imports createDeliveryService and
   // createNoOpDeliveryQueue from @comis/core; the fake mirrors the
   // previously-mocked deliverToChannel behavior (delegate to
   // adapter.sendMessage) so existing assertions keep working.
   return {
+    ...await importOriginal<typeof import("@comis/core")>(),
     formatSessionKey: vi.fn((sk: SessionKey) => `${sk.tenantId}:${sk.userId}:${sk.channelId}`),
     createResolvedRequestContext: vi.fn((input: Record<string, unknown>) => ({
       ok: true as const,
       value: input,
     })),
-    runWithContext: vi.fn(async (_ctx: any, fn: () => any) => fn()),
     // credentials.ts (memory-review gate) consults the keyless
     // allowlist + sentinel; mirror the real @comis/core values so the partial
     // mock resolves them (anthropic provider here is non-keyless → still skips).
@@ -257,7 +259,11 @@ function makeDeps(overrides: Partial<ChannelsDeps> & { container?: AppContainer 
     dataDir: "/tmp/comis-channel-test",
     executors: new Map(),
     defaultAgentId: "agent1",
-    sessionManager: { expire: vi.fn(), loadOrCreate: vi.fn(() => []), save: vi.fn() } as any,
+    sessionManager: {
+      expire: vi.fn(() => ok(undefined)),
+      loadOrCreate: vi.fn(() => ok([])),
+      save: vi.fn(() => ok(undefined)),
+    } as any,
     sessionStore: {} as any,
     logger: makeLogger(),
     channelsLogger: makeLogger(),
@@ -550,7 +556,7 @@ describe("setupChannels", () => {
 
     it("fresh strategy calls sessionManager.expire() and destroySession before executor.execute()", async () => {
       mockAdaptersByType.set("telegram", mockAdapter);
-      const expireSpy = vi.fn();
+      const expireSpy = vi.fn(() => ok(undefined));
       const destroySessionSpy = vi.fn(async () => {});
       const mockExecutor = {
         execute: vi.fn(async () => ({
@@ -564,8 +570,8 @@ describe("setupChannels", () => {
       const executors = new Map([["agent1", mockExecutor as any]]);
       const sessionMgr = {
         expire: expireSpy,
-        loadOrCreate: vi.fn(() => []),
-        save: vi.fn(),
+        loadOrCreate: vi.fn(() => ok([])),
+        save: vi.fn(() => ok(undefined)),
       };
       const piSessionAdapters = new Map([["agent1", {
         getSessionStats: vi.fn(),
@@ -587,10 +593,11 @@ describe("setupChannels", () => {
         sessionStrategy: "fresh",
       });
 
-      const expectedSessionKey = expect.objectContaining({ channelId: "cron:j-fresh" });
+      const expectedConversationScope = expect.objectContaining({ tenantId: "t1", agentId: "agent1" });
+      const expectedSessionKey = expect.objectContaining({ channelId: "scheduler:j-fresh:j-fresh" });
 
       // expire must be called before execute
-      expect(expireSpy).toHaveBeenCalledWith(expectedSessionKey);
+      expect(expireSpy).toHaveBeenCalledWith(expectedConversationScope);
       expect(mockExecutor.execute).toHaveBeenCalled();
       expect(expireSpy.mock.invocationCallOrder[0]).toBeLessThan(
         mockExecutor.execute.mock.invocationCallOrder[0],
@@ -604,7 +611,7 @@ describe("setupChannels", () => {
 
       // session:expired event must be emitted with reason "cron-fresh"
       expect(container.eventBus.emit).toHaveBeenCalledWith("session:expired", {
-        sessionKey: expectedSessionKey,
+        conversationScope: expectedConversationScope,
         reason: "cron-fresh",
       });
     });
@@ -622,9 +629,9 @@ describe("setupChannels", () => {
       };
       const executors = new Map([["agent1", mockExecutor as any]]);
       const sessionMgr = {
-        expire: vi.fn(),
-        loadOrCreate: vi.fn(() => []),
-        save: vi.fn(),
+        expire: vi.fn(() => ok(undefined)),
+        loadOrCreate: vi.fn(() => ok([])),
+        save: vi.fn(() => ok(undefined)),
       };
       // Empty piSessionAdapters -- no adapter for agent1
       const piSessionAdapters = new Map() as any;
@@ -656,7 +663,7 @@ describe("setupChannels", () => {
 
     it("rolling strategy prunes session to maxHistoryTurns after execution", async () => {
       mockAdaptersByType.set("telegram", mockAdapter);
-      const saveSpy = vi.fn();
+      const saveSpy = vi.fn(() => ok(undefined));
       const mockExecutor = {
         execute: vi.fn(async () => ({
           response: "Agent reply",
@@ -682,8 +689,8 @@ describe("setupChannels", () => {
         { role: "assistant", content: "reply5" },
       ];
       const sessionMgr = {
-        expire: vi.fn(),
-        loadOrCreate: vi.fn(() => messages),
+        expire: vi.fn(() => ok(undefined)),
+        loadOrCreate: vi.fn(() => ok(messages)),
         save: saveSpy,
       };
 
@@ -713,8 +720,8 @@ describe("setupChannels", () => {
 
     it("accumulate strategy does not manipulate session", async () => {
       mockAdaptersByType.set("telegram", mockAdapter);
-      const expireSpy = vi.fn();
-      const saveSpy = vi.fn();
+      const expireSpy = vi.fn(() => ok(undefined));
+      const saveSpy = vi.fn(() => ok(undefined));
       const mockExecutor = {
         execute: vi.fn(async () => ({
           response: "Agent reply",
@@ -727,7 +734,7 @@ describe("setupChannels", () => {
       const executors = new Map([["agent1", mockExecutor as any]]);
       const sessionMgr = {
         expire: expireSpy,
-        loadOrCreate: vi.fn(() => []),
+        loadOrCreate: vi.fn(() => ok([])),
         save: saveSpy,
       };
 
@@ -752,7 +759,7 @@ describe("setupChannels", () => {
 
     it("default session strategy is fresh for isolated jobs", async () => {
       mockAdaptersByType.set("telegram", mockAdapter);
-      const expireSpy = vi.fn();
+      const expireSpy = vi.fn(() => ok(undefined));
       const mockExecutor = {
         execute: vi.fn(async () => ({
           response: "Agent reply",
@@ -765,8 +772,8 @@ describe("setupChannels", () => {
       const executors = new Map([["agent1", mockExecutor as any]]);
       const sessionMgr = {
         expire: expireSpy,
-        loadOrCreate: vi.fn(() => []),
-        save: vi.fn(),
+        loadOrCreate: vi.fn(() => ok([])),
+        save: vi.fn(() => ok(undefined)),
       };
 
       const { container, eventHandlers } = makeContainer();
@@ -1353,7 +1360,26 @@ describe("setupChannels", () => {
         agentId: "agent1",
       };
 
-      await expect(cmDeps.handleSlashCommand?.("/new", sessionKey, "agent1"))
+      const turnScope = {
+        conversation: { tenantId: "default", agentId: "agent1", partition: { kind: "agent" as const } },
+        principal: { principalId: "user_a" },
+        endpoint: {
+          channelType: "telegram",
+          channelInstanceId: "test-instance",
+          conversationId: "chat-1",
+          conversationKind: "direct" as const,
+        },
+      };
+      await expect(runWithContext({
+        tenantId: "default",
+        userId: "user_a",
+        agentId: "agent1",
+        sessionKey: "default:agent:agent1:user_a:chat-1",
+        turnScope,
+        traceId: crypto.randomUUID(),
+        startedAt: 1_789_000_100_000,
+        trustLevel: "user",
+      }, () => cmDeps.handleSlashCommand?.("/new", sessionKey, "agent1")))
         .rejects.toBe(destroyError);
 
       expect(container.eventBus.emit).not.toHaveBeenCalledWith(

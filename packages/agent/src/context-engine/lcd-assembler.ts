@@ -56,7 +56,7 @@
  * @module
  */
 
-import { partsToMessage, systemNowMs } from "@comis/core";
+import { partsToMessage } from "@comis/core";
 import { neutralizeForgedMarkersInMessage } from "../session/forged-context-markers.js";
 import type {
   ContextStorePort,
@@ -83,45 +83,39 @@ import {
   boundFreshTailMessages,
   boundProtectedFreshTail,
 } from "./lcd-fresh-tail-bound.js";
-import type { ContextEngine, ContextEngineDeps } from "./types.js";
+import type { ContextEngine } from "./types.js";
+import type { CanonicalContextEngineDeps } from "./canonical-context-engine-types.js";
 
 /**
  * Build the `dag`-mode LCD `ContextEngine`. The caller (`createContextEngine`'s
  * `dag` branch) only invokes this when `deps.contextStore` AND
- * `deps.conversationId` are both wired, so both are asserted non-null here.
+ * `deps.conversationRef` are both wired, so both are asserted non-null here.
  *
  * @param config - the context engine config (reads `freshTailTurns` = the STEP count)
- * @param deps - the injected deps (`contextStore`, `conversationId`, `logger`, …)
+ * @param deps - the injected deps (`contextStore`, `conversationRef`, `logger`, …)
  * @returns a `ContextEngine` whose `transformContext` runs the steps-1-6 assembly
  */
 export function createLcdContextEngine(
   config: ContextEngineConfig,
-  deps: ContextEngineDeps,
+  deps: CanonicalContextEngineDeps,
 ): ContextEngine {
-  // Guaranteed present by the caller branch (context-engine.ts dag seam).
-  const store = deps.contextStore as ContextStorePort;
-  const conversationId = deps.conversationId as string;
-  // Injected wall-clock (the daemon threads its ClockPort via setupContextEngine).
-  // Production never reads the wall clock directly (the globals gate); `systemNowMs`
-  // is the sanctioned system-clock wrapper for the no-injected-clock unit case.
-  const now = (): number => (deps.clock ? deps.clock.now() : systemNowMs());
+  const store: ContextStorePort = deps.contextStore;
+  const conversationRef = deps.conversationRef;
+  const now = (): number => deps.clock.now();
 
   // Build the per-(conversation, agent, tenant) read scope ONCE.
   // FAIL CLOSED (mirrors the store's empty-column guard): if agentId or tenantId
   // is absent we CANNOT safely read (an unscoped read would leak another agent's
   // history within a shared conversation_id), so `readScope` is undefined
   // and the assembler reads NOTHING (an empty history) rather than reading
-  // conversation-wide. The session_key falls back to conversationId (the store
+  // conversation-wide. The session_key falls back to conversationRef (the store
   // never filters on it; the 4th field is carried for shape symmetry).
-  const readScope: ContextStoreScope | undefined =
-    deps.agentId !== undefined && deps.agentId.length > 0 && deps.tenantId !== undefined && deps.tenantId.length > 0
-      ? {
-          conversationId,
-          agentId: deps.agentId,
-          tenantId: deps.tenantId,
-          sessionKey: deps.sessionKey ?? conversationId,
-        }
-      : undefined;
+  const readScope: ContextStoreScope = {
+    conversationRef,
+    agentId: deps.agentId,
+    tenantId: deps.tenantId,
+    sessionKey: deps.sessionKey,
+  };
 
   return {
     lastBreakpointIndex: undefined,
@@ -145,23 +139,7 @@ export function createLcdContextEngine(
       // resolvable history still ships its fresh tail below (the fresh tail is
       // unconditional), so the live turn
       // is never broken; the WARN flags the misconfiguration for an operator.
-      if (readScope === undefined) {
-        deps.logger.warn(
-          {
-            step: "lcd-resolve",
-            conversationId,
-            agentId: deps.agentId,
-            tenantId: deps.tenantId,
-            hint: "LCD dag assembly could not build a full (conversation, agent, tenant) read scope; reading no history this turn to avoid a cross-agent leak — ensure setupContextEngine threads agentId + tenantId",
-            // `as const` so the log-payload-checker TypeChecker resolves this to
-            // the closed `ErrorKind` literal (a bare object-literal string widens
-            // to `string` and trips the closed-union gate). AGENTS.md §2.1.
-            errorKind: "precondition" as const,
-          },
-          "lcd assembly read scope incomplete — failing closed",
-        );
-      }
-      const contextItems: LcdContextItem[] = readScope ? store.getContextItems(readScope) : [];
+      const contextItems: LcdContextItem[] = store.getContextItems(readScope);
       // Collect the refId sets from contextItems FIRST so we can issue
       // bounded IN-clause reads instead of fetching ALL rows for the scope.
       // An empty set short-circuits to [] without any DB query (zero wasted I/O).
@@ -180,12 +158,12 @@ export function createLcdContextEngine(
         .filter((ci) => ci.refKind === "summary")
         .map((ci) => ci.refId);
       const rows: LcdMessage[] =
-        readScope && messageRefIds.length > 0
+        messageRefIds.length > 0
           ? store.getMessagesByIds(readScope, messageRefIds)
           : [];
       const rowById = new Map<string, LcdMessage>(rows.map((row) => [row.id, row]));
       const summaryById = new Map<string, LcdSummary>(
-        (readScope && summaryRefIds.length > 0
+        (summaryRefIds.length > 0
           ? store.getSummariesByIds(readScope, summaryRefIds)
           : []
         ).map((s) => [s.summaryId, s]),
@@ -207,7 +185,7 @@ export function createLcdContextEngine(
       deps.logger.debug(
         {
           step: "lcd-resolve",
-          conversationId,
+          conversationRef,
           historyCount: resolved.length,
           messageRefs: resolved.length - resolvedSummaryCount,
           summaryRefs: resolvedSummaryCount,
@@ -334,7 +312,7 @@ export function createLcdContextEngine(
       // COUNT(*) — one integer, NO O(total-history) row fetch — so assembly is
       // byte-identical to a full `getMessages(readScope).length` read while the
       // row fetch stays O(referenced-ids). Fail-closed: no read scope ⇒ 0.
-      const persistedMsgCount = readScope ? store.countMessages(readScope) : 0;
+      const persistedMsgCount = store.countMessages(readScope);
       const rawOverlap = Math.max(0, persistedMsgCount - tailStart);
       let trailingMessageRefs = 0;
       for (let i = resolvedKinds.length - 1; i >= 0 && resolvedKinds[i] === "message"; i--) {
@@ -434,7 +412,7 @@ export function createLcdContextEngine(
         deps.logger.debug(
           {
             step: "lcd-fresh-tail-bound",
-            conversationId,
+            conversationRef,
             boundedResults,
             boundedMessages,
             charsRemoved,

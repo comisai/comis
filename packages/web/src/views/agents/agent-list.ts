@@ -505,7 +505,7 @@ export class IcAgentList extends LitElement {
   private async _loadModelCatalog(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const result = await this.rpcClient.call<{ providers?: CatalogProvider[]; totalModels?: number }>("models.list");
+      const result = await this.rpcClient.call("models.list");
       if (result.providers) {
         this._catalogProviders = result.providers as CatalogProvider[];
       }

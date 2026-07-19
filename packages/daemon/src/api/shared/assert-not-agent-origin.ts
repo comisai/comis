@@ -58,7 +58,7 @@ import type { EventMap } from "@comis/core";
 export interface AssertNotAgentOriginDeps {
   container: {
     eventBus: { emit: (event: "audit:event", payload: EventMap["audit:event"]) => unknown };
-    config: { tenantId?: string };
+    config: { tenantId: string };
   };
 }
 
@@ -98,7 +98,7 @@ export function assertNotAgentOrigin(
   deps.container.eventBus.emit("audit:event", {
     timestamp: systemNowMs(),
     agentId: String(rawParams._agentId),
-    tenantId: deps.container.config.tenantId ?? "default",
+    tenantId: deps.container.config.tenantId,
     actionType: method,
     kind: "capability_denied",
     outcome: "denied",

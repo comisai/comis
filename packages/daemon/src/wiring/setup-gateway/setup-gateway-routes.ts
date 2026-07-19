@@ -156,7 +156,7 @@ export interface GatewayDeps {
   >;
   /** Complete three-layer conversation forget for slash /new + /reset
    *  (createConversationReset — live finding 2026-06-11). */
-  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
+  destroyConversation?: (scope: import("@comis/core").ConversationScope, key: SessionKey) => Promise<unknown>;
   /** Pre-resolved gateway tokens with secrets (config -> env -> auto-generated).
    *  Optional `mcpClient` block survives resolution so the
    *  TokenStore can surface it on verified TokenClient instances. */

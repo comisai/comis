@@ -5,16 +5,27 @@ import {
   parseDurableRunRecord,
   type DurableRunRecord,
 } from "./durable-run.js";
+import { createConversationRef } from "./conversation-scope.js";
+
+const CONVERSATION_SCOPE = {
+  tenantId: "tenant-a",
+  agentId: "agent-a",
+  partition: { kind: "principal" as const, principalId: "user-a" },
+};
+const conversationReference = createConversationRef(CONVERSATION_SCOPE);
+if (!conversationReference.ok) throw conversationReference.error;
+const CONVERSATION_REF = conversationReference.value;
 
 /** A fully populated record that rejection tests mutate one field at a time. */
 function makeValidRecord(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
   return {
     checkpointId: "checkpoint-abc",
     rootRunId: "root-run-abc",
+    tenantId: "tenant-a",
     agentId: "agent-a",
-    sessionKey: "tenant-a:user-a:chat-a",
-    ownerTenantId: "tenant-a",
-    ownerUserId: "user-a",
+    conversationRef: CONVERSATION_REF,
+    conversationScope: CONVERSATION_SCOPE,
+    principalId: "user-a",
     deliveryOrigin: null,
     spawnTree: ["lease-1", "lease-2"],
     caps: ["orch:read", "orch:message"],
@@ -44,8 +55,11 @@ describe("parseDurableRunRecord domain validation", () => {
     const record: DurableRunRecord = result.value;
     expect(record.checkpointId).toBe("checkpoint-abc");
     expect(record.rootRunId).toBe("root-run-abc");
+    expect(record.tenantId).toBe("tenant-a");
     expect(record.agentId).toBe("agent-a");
-    expect(record.sessionKey).toBe("tenant-a:user-a:chat-a");
+    expect(record.conversationRef).toBe(CONVERSATION_REF);
+    expect(record.conversationScope).toEqual(CONVERSATION_SCOPE);
+    expect(record.principalId).toBe("user-a");
     expect(record.spawnTree).toEqual(["lease-1", "lease-2"]);
     expect(record.caps).toEqual(["orch:read", "orch:message"]);
     expect(record.leaseIds).toEqual(["lease-1", "lease-2"]);
@@ -117,21 +131,19 @@ describe("parseDurableRunRecord domain validation", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("rejects a non-canonical session identity or an empty tree identity", () => {
-    expect(parseDurableRunRecord(makeValidRecord({ sessionKey: "tenant-a:user-a" })).ok).toBe(
-      false,
-    );
+  it("rejects a malformed conversation reference or an empty tree identity", () => {
+    expect(parseDurableRunRecord(makeValidRecord({ conversationRef: "not-a-reference" })).ok).toBe(false);
     expect(parseDurableRunRecord(makeValidRecord({ rootRunId: "" })).ok).toBe(false);
   });
 
-  it("rejects checkpoint owner fields that disagree with the canonical session identity", () => {
-    expect(
-      parseDurableRunRecord(makeValidRecord({ ownerTenantId: "tenant-b" })).ok,
-    ).toBe(false);
-    expect(parseDurableRunRecord(makeValidRecord({ ownerUserId: "user-b" })).ok).toBe(false);
+  it("rejects authority fields that disagree with the canonical conversation scope", () => {
+    expect(parseDurableRunRecord(makeValidRecord({ tenantId: "tenant-b" })).ok).toBe(false);
+    expect(parseDurableRunRecord(makeValidRecord({ agentId: "agent-b" })).ok).toBe(false);
+    expect(parseDurableRunRecord(makeValidRecord({ principalId: "user-b" })).ok).toBe(false);
+    expect(parseDurableRunRecord(makeValidRecord({ conversationRef: `cv_${"b".repeat(43)}` })).ok).toBe(false);
   });
 
-  it("rejects a delivery origin whose tenant or user disagrees with the checkpoint owner", () => {
+  it("rejects a delivery origin whose tenant or user disagrees with the checkpoint authority", () => {
     const origin = {
       channelType: "telegram",
       channelId: "requester-chat",
@@ -150,10 +162,9 @@ describe("parseDurableRunRecord domain validation", () => {
     ).toBe(false);
   });
 
-  it("accepts a requester channel that differs from the internal sub-agent session channel", () => {
+  it("accepts a requester channel independently from the canonical conversation scope", () => {
     const result = parseDurableRunRecord(
       makeValidRecord({
-        sessionKey: "tenant-a:user-a:sub-agent:run-a",
         deliveryOrigin: {
           channelType: "telegram",
           channelId: "requester-chat",

@@ -50,9 +50,9 @@ import {
  */
 export interface ResponsesEndpointDeps {
   /** Tenant used to construct exact failure diagnostics before execution returns. */
-  tenantId?: string;
+  tenantId: string;
   /** Default agent used when model resolution does not select one explicitly. */
-  agentId?: string;
+  agentId: string;
   /** Execute an agent turn with optional streaming callback. */
   executeAgent: (params: {
     message: string;
@@ -108,7 +108,8 @@ function emitResponseDiagnostic(
     channelType: "responses",
     fallbackAgentId: args.agentId,
     fallbackSessionKey: formatSessionKey({
-      tenantId: deps.tenantId ?? "default",
+      tenantId: deps.tenantId,
+      agentId: args.agentId,
       userId: args.sessionKey.userId,
       channelId: args.sessionKey.channelId,
       peerId: args.sessionKey.peerId,
@@ -604,7 +605,7 @@ export function createResponsesRoute(
       const responseId = `resp_${crypto.randomUUID()}`;
       const messageId = `msg_${crypto.randomUUID()}`;
       const traceId = crypto.randomUUID();
-      const agentId = resolvedModel?.agentId ?? deps.agentId ?? "default";
+      const agentId = resolvedModel?.agentId ?? deps.agentId;
 
       // Session key for responses API requests
       const sessionKey = {

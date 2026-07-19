@@ -20,6 +20,7 @@ const internalFieldNames = new Set([
   "_autonomyMode",
   "_callerChannelId",
   "_callerChannelType",
+  "_callerConversationScope",
   "_callerMetadata",
   "_callerSessionKey",
   "_capabilities",
@@ -29,6 +30,8 @@ const internalFieldNames = new Set([
   "_deliveryTarget",
   "_originChannelId",
   "_outwardStepIndex",
+  "_outwardOperationId",
+  "_rootRunId",
   "_sessionKey",
   "_tenantId",
   "_traceId",
@@ -41,12 +44,20 @@ vi.mock("@comis/core", () => ({
   stripInternalFields: (params: Record<string, unknown>) => Object.fromEntries(
     Object.entries(params).filter(([key]) => !internalFieldNames.has(key)),
   ),
-  // Parse "tenantId:channelId:userId" — mirrors the real formatter used in tests.
-  parseFormattedSessionKey: (k: string) => {
-    const [tenantId, channelId, userId] = k.split(":");
-    if (!tenantId || !channelId || !userId) return undefined;
-    return { tenantId, channelId, userId };
-  },
+  conversationScopeToSessionKey: (scope: {
+    tenantId: string;
+    agentId: string;
+    partition: { principalId?: string };
+  }) => ({
+    ok: true,
+    value: {
+      tenantId: scope.tenantId,
+      agentId: scope.agentId,
+      userId: scope.partition.principalId ?? "main",
+      channelId: "telegram",
+      ...(scope.partition.principalId ? { peerId: scope.partition.principalId } : {}),
+    },
+  }),
   // Stand-in autonomy resolver returning the `standard` floor capability set and a
   // `mode` derived from the input config's profile. The real resolver maps each
   // profile to its mode (standard->accept-reversible, unattended->unattended, …)
@@ -78,6 +89,30 @@ vi.mock("@comis/core", () => ({
 }));
 
 const { makeCreateAgentRpcCall } = await import("./setup-tools-capabilities.js");
+
+const TURN_SCOPE = {
+  conversation: {
+    tenantId: "tenant-x",
+    agentId: "agent-1",
+    partition: { kind: "channel-principal", channelType: "telegram", principalId: "user-z" },
+  },
+  principal: { principalId: "user-z" },
+  endpoint: {
+    channelType: "telegram",
+    channelInstanceId: "instance-a",
+    conversationId: "chan-y",
+    conversationKind: "direct",
+  },
+};
+
+function inProcessContext(trustLevel = "user"): Record<string, unknown> {
+  return {
+    agentId: "agent-1",
+    sessionKey: "tenant-x:agent:agent-1:user-z:telegram:peer:user-z",
+    trustLevel,
+    turnScope: TURN_SCOPE,
+  };
+}
 
 describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injection builder", () => {
   it("injects _agentId and the resolved _capabilities into every forwarded rpcCall", async () => {
@@ -277,9 +312,10 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
   it("derives _callerSessionKey, _deliveryTarget, and caller channel metadata from the request context", async () => {
     currentCtx = {
       agentId: "agent-1",
-      sessionKey: "tenant-x:chan-y:user-z",
+      sessionKey: "tenant-x:agent:agent-1:user-z:telegram:peer:user-z",
       channelType: "telegram",
       deliveryOrigin: { channelType: "telegram", channelId: "chan-y" },
+      turnScope: TURN_SCOPE,
     };
     const rpcCall = vi.fn(async () => "ok");
     const create = makeCreateAgentRpcCall({
@@ -291,7 +327,8 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
     await create("agent-1")("cron.add", { schedule: "* * * * *" });
 
     const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
-    expect(forwarded._callerSessionKey).toBe("tenant-x:chan-y:user-z");
+    expect(forwarded._callerSessionKey).toBe("tenant-x:agent:agent-1:user-z:telegram:peer:user-z");
+    expect(forwarded._callerConversationScope).toEqual(currentCtx.turnScope?.conversation);
     expect(forwarded._deliveryTarget).toEqual({
       channelId: "chan-y",
       userId: "user-z",
@@ -351,7 +388,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
   }
 
   it("an in-process-leg outward send (with a sessionKey) gets a real _outwardStepIndex (not absent → not a silent pass-through)", async () => {
-    currentCtx = { agentId: "agent-1", sessionKey: "tenant-x:chan-y:user-z", trustLevel: "user" };
+    currentCtx = inProcessContext();
     const rpcCall = vi.fn(async () => "ok");
     const { outwardLedger } = makeAllocStore();
     const create = makeCreateAgentRpcCall({
@@ -374,7 +411,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
   });
 
   it("two distinct outward sends in one run get _outwardStepIndex 0 then 1 (NOT 0,0)", async () => {
-    currentCtx = { agentId: "agent-1", sessionKey: "tenant-x:chan-y:user-z", trustLevel: "user" };
+    currentCtx = inProcessContext();
     const rpcCall = vi.fn(async () => "ok");
     const { outwardLedger } = makeAllocStore();
     const agentRpc = makeCreateAgentRpcCall({
@@ -397,7 +434,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
   });
 
   it("an in-process response-loss retry reuses one step when the tool call identity is unchanged", async () => {
-    currentCtx = { agentId: "agent-1", sessionKey: "tenant-x:chan-y:user-z", trustLevel: "user" };
+    currentCtx = inProcessContext();
     const rpcCall = vi.fn(async () => "ok");
     const { outwardLedger } = makeAllocStore();
     const agentRpc = makeCreateAgentRpcCall({
@@ -492,9 +529,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
 
   it("fails closed before in-process RPC dispatch when the wired durable counter rejects trust", async () => {
     currentCtx = {
-      agentId: "agent-1",
-      sessionKey: "tenant-x:chan-y:user-z",
-      trustLevel: "guest",
+      ...inProcessContext("guest"),
     };
     const rpcCall = vi.fn(async () => "must-not-dispatch");
     const outwardLedger = {

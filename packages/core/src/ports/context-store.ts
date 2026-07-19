@@ -46,8 +46,8 @@ export interface ContextStorePort {
    * Read path: reconstruct all messages for the `scope`, ordered by seq.
    * Each `LcdMessage` carries its parts; provider-correct block emission is
    * pi-ai's job downstream — this port returns the faithful canonical rows.
-   * Scoped by (conversationId, agentId, tenantId) — full isolation: two
-   * agents sharing one conversation_id never read each other's messages.
+   * Scoped by (conversationRef, agentId, tenantId) — full isolation: two
+   * agents sharing one conversation_ref never read each other's messages.
    */
   getMessages(scope: ContextStoreScope): LcdMessage[];
   /**
@@ -71,7 +71,7 @@ export interface ContextStorePort {
    * ordinals). Lazily seeded 1:1 from lcd_messages on first read for a
    * conversation with no context_items rows (lazy seeding instead of a
    * migration step).
-   * Scoped by (conversationId, agentId, tenantId) — full isolation.
+   * Scoped by (conversationRef, agentId, tenantId) — full isolation.
    */
   getContextItems(scope: ContextStoreScope): LcdContextItem[];
   /**
@@ -80,12 +80,12 @@ export interface ContextStorePort {
    * `content` + pre-computed `tokenCount` when assembling the model-facing
    * context. Returned in insertion order; the assembler keys by id, not order.
    * `content` is the leaf plaintext and is NEVER logged (lossless store).
-   * Scoped by (conversationId, agentId, tenantId) — full isolation.
+   * Scoped by (conversationRef, agentId, tenantId) — full isolation.
    */
   getSummaries(scope: ContextStoreScope): LcdSummary[];
   /**
    * Bounded read path — fetch only the message rows whose ids are in
-   * the provided set. Scoped by (conversationId, agentId, tenantId) — isolation
+   * the provided set. Scoped by (conversationRef, agentId, tenantId) — isolation
    * identical to getMessages. Returns rows ordered by seq, same as getMessages.
    *
    * Returns [] when ids is empty (no DB query issued). Callers must collect
@@ -95,7 +95,7 @@ export interface ContextStorePort {
 
   /**
    * Bounded read path — fetch only the summary rows whose summaryIds are
-   * in the provided set. Scoped by (conversationId, agentId, tenantId) — isolation
+   * in the provided set. Scoped by (conversationRef, agentId, tenantId) — isolation
    * identical to getSummaries. Returns rows ordered by created_at, summary_id.
    *
    * Returns [] when ids is empty (no DB query issued).
@@ -112,7 +112,7 @@ export interface ContextStorePort {
    * summarization (losslessness), so this total stays correct even after the
    * oldest message-refs collapse into summary-refs — unlike `getMessagesByIds`,
    * whose bounded result counts only the still-referenced subset. Scoped by
-   * (conversationId, agentId, tenantId) — full isolation: a different agent
+   * (conversationRef, agentId, tenantId) — full isolation: a different agent
    * sharing the conversation is never counted. Returns 0 for an empty scope.
    */
   countMessages(scope: ContextStoreScope): number;
@@ -121,14 +121,14 @@ export interface ContextStorePort {
    * Region walk: the immediate CHILD summaries of a condensed summary
    * (the lcd_summary_parents condensed→child edge). Returns [] when the
    * summary has no children (a leaf) or does not exist. Scoped by
-   * (conversationId, agentId, tenantId) — full isolation: a different
+   * (conversationRef, agentId, tenantId) — full isolation: a different
    * agent sharing the conversation cannot reach this condensed edge.
    */
   getSummaryChildren(scope: ContextStoreScope, parentSummaryId: string): LcdSummary[];
   /**
    * Region walk: the message ids a LEAF summary covers
    * (the lcd_summary_messages leaf→message edge). Returns [] when the summary
-   * covers no messages or does not exist. Scoped by (conversationId, agentId,
+   * covers no messages or does not exist. Scoped by (conversationRef, agentId,
    * tenantId) — full isolation: a different agent cannot reach the covered
    * ids of another agent's summary within the shared conversation.
    */
@@ -138,9 +138,9 @@ export interface ContextStorePort {
    * store — FTS5 MATCH when available, LIKE scan fallback otherwise. The `query`
    * MUST already be sanitized by the caller (sanitizeFts5Query lives in
    * @comis/skills; @comis/memory cannot import it). Scoped by
-   * (conversationId, agentId) — full isolation: BOTH the FTS path AND the
+   * (conversationRef, agentId) — full isolation: BOTH the FTS path AND the
    * LIKE fallback filter agent_id so a different agent's hits never leak.
-   * The conversation_id prefix carries the tenant boundary.
+   * The conversation_ref prefix carries the tenant boundary.
    *
    * Returns an {@link LcdSearchResult} wrapper: `hits` is the
    * FTS/trigram/scan result array; `lane` names the lane that served the query
@@ -161,9 +161,9 @@ export interface ContextStorePort {
   ): LcdSearchResult;
   /**
    * Per-conversation single-flight: run `fn` on the queue
-   * dedicated to `conversationId`. Serializes the live ingest write and the
+   * dedicated to `conversationRef`. Serializes the live ingest write and the
    * deferred compaction write so they cannot interleave on
-   * (conversation_id, agent_id, tenant_id, seq) / the lcd_context_items ordinals
+   * (conversation_ref, agent_id, tenant_id, seq) / the lcd_context_items ordinals
    * — the integrity boundary the deferred second writer requires.
    * Operations on the same conversation are strictly one-at-a-time; operations
    * on different conversations run concurrently (the queue is per-conversation,
@@ -172,7 +172,7 @@ export interface ContextStorePort {
    * agent has no p-queue dependency, so it reaches the memory-owned per-
    * conversation queue ONLY through this port method (the agent↛memory cut holds).
    */
-  runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T>;
+  runOnConversation<T>(conversationRef: string, fn: () => T | Promise<T>): Promise<T>;
 
   /**
    * Read the durable ingest cursor for this
@@ -207,7 +207,7 @@ export interface ContextStorePort {
    * MUST be called inside runOnConversation so it serializes against live ingest.
    * Never throws; returns 0 on no-op (empty conversation).
    *
-   * The three-column scope filter (conversation_id, agent_id, tenant_id)
+   * The three-column scope filter (conversation_ref, agent_id, tenant_id)
    * on every DELETE statement mirrors the lcd-store selectMsgs read isolation —
    * a cross-tenant or cross-agent wipe is impossible by construction.
    */
@@ -217,7 +217,7 @@ export interface ContextStorePort {
    * Write a provenance row linking a distilled episodic
    * memory to the LCD condensed summary it was distilled from.
    *
-   * Synchronous (better-sqlite3). Scoped via input.conversationId /
+   * Synchronous (better-sqlite3). Scoped via input.conversationRef /
    * agentId / tenantId. No return value — the provenanceId is caller-supplied.
    *
    * OPTIONAL: ContextStorePort implementations (e.g. test stubs) may omit it.
@@ -297,7 +297,7 @@ export interface ContextBrowsePort {
   /**
    * List the distinct LCD conversations owned by ONE agent within ONE tenant,
    * most-recently-updated first, paginated. Filters by `agentId`
-   * AND `tenantId`, so two agents that legitimately share one conversation_id
+   * AND `tenantId`, so two agents that legitimately share one conversation_ref
    * never see each other's conversations, and one tenant never sees another's.
    * Returns a page of metadata rows (IDs/counts/time-bounds only — NEVER any
    * message or summary content) plus the unpaginated `total`.

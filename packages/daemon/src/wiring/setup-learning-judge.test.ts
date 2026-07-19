@@ -26,6 +26,7 @@ vi.mock("@comis/agent", async (importOriginal) => {
 });
 
 import { createOutcomeJudgeSeam } from "@comis/agent";
+import { createConversationLocator } from "@comis/core";
 import { ok } from "@comis/shared";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
@@ -34,6 +35,12 @@ import { buildOutcomeJudgeWiring, maybeUpgradeWithJudge } from "./setup-learning
 const NOW = 1_700_000_000_000;
 const TENANT = "tenant-x";
 const TRACE = "trace-judge-001";
+const JUDGE_CONVERSATION = createConversationLocator({
+  tenantId: TENANT,
+  agentId: "a1",
+  partition: { kind: "principal", principalId: "judge-user" },
+});
+if (!JUDGE_CONVERSATION.ok) throw JUDGE_CONVERSATION.error;
 
 const SCOPE = { tenantId: "t", agentId: "a", sessionId: "s", trajectoryId: "traj" };
 const noopLogger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } as never;
@@ -311,8 +318,8 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
     );
     expect(typeof built.outcomeJudge).toBe("function");
     expect(typeof built.readTurnTranscript).toBe("function");
-    const transcript = built.readTurnTranscript!({ tenantId: TENANT, agentId: "a1", sessionId: "sess-1", trajectoryId: TRACE });
-    expect(lcd.getMessages).toHaveBeenCalledWith({ conversationId: "sess-1", tenantId: TENANT, agentId: "a1", sessionKey: "sess-1" });
+    const transcript = built.readTurnTranscript!({ tenantId: TENANT, agentId: "a1", sessionId: "sess-1", trajectoryId: TRACE, conversationRef: JUDGE_CONVERSATION.value.conversationRef });
+    expect(lcd.getMessages).toHaveBeenCalledWith({ conversationRef: JUDGE_CONVERSATION.value.conversationRef, tenantId: TENANT, agentId: "a1", sessionKey: "sess-1" });
     expect(transcript).toBe("user: please summarize\nassistant: here is the summary");
   });
 

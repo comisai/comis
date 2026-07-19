@@ -66,15 +66,15 @@ export function buildTaskPlanningSection(sepEnabled: boolean, isMinimal: boolean
 
 /**
  * Build the Compressed-context uncertainty clause. Included in the
- * cache-stable system prompt whenever the DAG (LCD) engine is enabled
- * (`dagModeEnabled`), so the model knows its context may contain LOSSY,
+ * cache-stable system prompt whenever compressed context is enabled, so the
+ * model knows its context may contain LOSSY,
  * untrusted summaries and treats them as compressed recall cues -- not proof.
  *
- * **Mode-gated, NOT per-turn.** The clause is gated on the per-session
- * `contextEngine.version === "dag"` (a stable, operator-only config value),
- * NOT on whether a summary is literally present this turn. dag mode guarantees
+ * **Configuration-gated, NOT per-turn.** The clause is gated on the stable
+ * context-engine master toggle, not on whether a summary is present this turn.
+ * Canonical context assembly guarantees
  * summaries WILL appear once history grows past `contextThreshold`, so
- * mode-gating is correct-enough AND keeps the system-prompt prefix cache-stable
+ * configuration gating keeps the system-prompt prefix cache-stable
  * (gating on per-turn store state would thrash the Anthropic prompt cache on
  * every compaction). Mirrors `buildMemoryRecallSection`'s capability-gate shape.
  *
@@ -84,12 +84,12 @@ export function buildTaskPlanningSection(sepEnabled: boolean, isMinimal: boolean
  * `summaryRefToMessage`). The recovery TOOLS (`ctx_*`) are deliberately NOT
  * named here.
  *
- * @param dagModeEnabled - true when `contextEngine.version === "dag"`
+ * @param compressedContextEnabled - true when canonical context assembly is enabled
  * @param isMinimal - minimal (sub-agent) prompt mode
  * @returns Lines for the section, or empty array if disabled
  */
-export function buildLossinessUncertaintySection(dagModeEnabled: boolean, isMinimal: boolean): string[] {
-  if (isMinimal || !dagModeEnabled) return [];
+export function buildLossinessUncertaintySection(compressedContextEnabled: boolean, isMinimal: boolean): string[] {
+  if (isMinimal || !compressedContextEnabled) return [];
   return [
     "## Compressed context",
     "Some earlier turns in your context are shown as LOSSY summaries, marked `trust=untrusted` with a `depth`, a `descendant_count`, and a time-range. Deeper summaries (higher `depth`) are summaries-of-summaries and are even lossier.",

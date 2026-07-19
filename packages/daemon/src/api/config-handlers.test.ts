@@ -98,6 +98,19 @@ describe("config.patch", () => {
     tempConfig.cleanup();
   });
 
+  it.each([
+    ["contributions", "instances.echo"],
+    ["contributions", "activation.enabled"],
+    ["plugins", "plugins.echo.enabled"],
+  ])("rejects contribution topology mutation through config.patch at %s.%s", async (section, key) => {
+    const deps = makeDeps(tempConfig.configPath);
+    const handlers = createConfigHandlers(deps);
+
+    await expect(
+      handlers["config.patch"]!({ section, key, value: true, _trustLevel: "admin" }),
+    ).rejects.toThrow(/immutable/i);
+  });
+
   it("schedules SIGUSR2 restart after successful write", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);
@@ -770,18 +783,17 @@ describe("config.apply", () => {
     expect(killSpy).not.toHaveBeenCalled();
   });
 
-  it("rejects immutable sections", async () => {
-    const deps = makeDeps(tempConfig.configPath);
-    const handlers = createConfigHandlers(deps);
+  it.each(["security", "contributions", "plugins"])(
+    "rejects immutable topology section %s through config.apply",
+    async (section) => {
+      const deps = makeDeps(tempConfig.configPath);
+      const handlers = createConfigHandlers(deps);
 
-    await expect(
-      handlers["config.apply"]!({
-        section: "security",
-        value: {},
-        _trustLevel: "admin",
-      }),
-    ).rejects.toThrow(/immutable/i);
-  });
+      await expect(
+        handlers["config.apply"]!({ section, value: {}, _trustLevel: "admin" }),
+      ).rejects.toThrow(/immutable/i);
+    },
+  );
 
   it("rejects invalid config with validation error", async () => {
     const deps = makeDeps(tempConfig.configPath);

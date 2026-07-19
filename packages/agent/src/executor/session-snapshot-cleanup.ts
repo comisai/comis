@@ -14,7 +14,7 @@
  * @module
  */
 
-import { formatSessionKey, type SessionKey } from "@comis/core";
+import { conversationScopeToSessionKey, formatSessionKey, type ConversationScope } from "@comis/core";
 import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, clearCacheSafeParams } from "./prompt-assembly.js";
 import { clearSessionDeliveredGuides, clearSessionToolSchemaSnapshot, clearSessionToolSchemaSnapshotHash, clearSessionBreakpointIndex, clearSessionCacheWarm, clearSessionLatches, clearSessionEvictionCooldown, clearSessionCacheSavings, clearSessionReactiveSchemaStrip, clearWindowReconcileLogged } from "./executor-session-state.js";
 import { clearSessionTracker } from "./tool-lifecycle.js";
@@ -68,11 +68,11 @@ export function clearSessionState(formattedKey: string): void {
 export function wireSessionStateCleanup(eventBus: {
   on(
     event: "session:expired",
-    handler: (payload: { sessionKey: SessionKey; reason: string }) => void,
+    handler: (payload: { conversationScope: ConversationScope; reason: string }) => void,
   ): void;
 }): void {
   eventBus.on("session:expired", (payload) => {
-    const key = formatSessionKey(payload.sessionKey);
-    clearSessionState(key);
+    const displayKey = conversationScopeToSessionKey(payload.conversationScope);
+    if (displayKey.ok) clearSessionState(formatSessionKey(displayKey.value));
   });
 }

@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { safePath } from "@comis/core";
+import { createConversationRef, safePath } from "@comis/core";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { wrapToolForAutoBackground, type ToolDefinition } from "./auto-background-middleware.js";
 import { createBackgroundTaskManager, type BackgroundTaskManager } from "./background-task-manager.js";
@@ -59,15 +59,46 @@ function toolOk(text: string, details: Record<string, unknown> = {}): AgentToolR
   };
 }
 
-function buildOrigin(overrides: Partial<BackgroundTaskOrigin> = {}): BackgroundTaskOrigin {
-  return {
-    agentId: "default",
-    sessionKey: "default:echo:test:user1",
+function buildOrigin(
+  overrides: Partial<BackgroundTaskOrigin> & { agentId?: string; sessionKey?: string } = {},
+): BackgroundTaskOrigin {
+  const agentId = overrides.agentId ?? "default";
+  const tenantId = overrides.sessionKey?.split(":")[0] ?? "default";
+  const endpoint = {
     channelType: "echo",
-    channelId: "test",
+    channelInstanceId: "test-instance",
+    conversationId: "test",
+    conversationKind: "direct" as const,
+  };
+  const turnScope = {
+    conversation: {
+      tenantId,
+      agentId,
+      partition: {
+        kind: "endpoint-conversation-principal" as const,
+        endpoint,
+        principalId: "user1",
+      },
+    },
+    principal: { principalId: "user1" },
+    endpoint,
+  };
+  const conversationRef = createConversationRef(turnScope.conversation);
+  if (!conversationRef.ok) throw conversationRef.error;
+  return {
+    turnScope,
+    conversationRef: conversationRef.value,
+    deliveryOrigin: {
+      channelType: "echo",
+      channelId: "test",
+      userId: "user1",
+      tenantId,
+    },
     traceId: null,
     backgroundHopCount: 0,
-    ...overrides,
+    ...Object.fromEntries(
+      Object.entries(overrides).filter(([key]) => key !== "agentId" && key !== "sessionKey"),
+    ),
   };
 }
 

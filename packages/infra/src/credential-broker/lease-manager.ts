@@ -46,6 +46,7 @@ import {
   type ClockPort,
   type AgentCapability,
   type DeliveryOrigin,
+  type ResolvedTurnScope,
   type UserTrustLevel,
 } from "@comis/core";
 
@@ -70,6 +71,7 @@ interface LeaseEntry {
   sessionKey: string;
   trustLevel: UserTrustLevel;
   deliveryOrigin?: DeliveryOrigin;
+  turnScope?: ResolvedTurnScope;
   rootRunId: string;
   checkpointId?: string;
   parentLeaseId?: string;
@@ -88,6 +90,8 @@ export interface MintLeaseInput {
   trustLevel: UserTrustLevel;
   /** Immutable requester route captured when this lease is minted. */
   deliveryOrigin?: DeliveryOrigin;
+  /** Canonical conversation, principal, and endpoint authority captured at mint. */
+  turnScope?: ResolvedTurnScope;
   rootRunId: string;
   /** Unique execution checkpoint authorized by this lease, when applicable. */
   checkpointId?: string;
@@ -116,6 +120,8 @@ export interface LeaseInfo {
   trustLevel: UserTrustLevel;
   /** Immutable requester route used to reconstruct a synthetic request boundary. */
   deliveryOrigin?: DeliveryOrigin;
+  /** Canonical conversation, principal, and endpoint authority captured at mint. */
+  turnScope?: ResolvedTurnScope;
   rootRunId: string;
   checkpointId?: string;
   parentLeaseId?: string;
@@ -236,6 +242,16 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
       const deliveryOrigin = input.deliveryOrigin === undefined
         ? undefined
         : Object.freeze({ ...input.deliveryOrigin });
+      const turnScope = input.turnScope === undefined
+        ? undefined
+        : Object.freeze({
+            conversation: Object.freeze({
+              ...input.turnScope.conversation,
+              partition: Object.freeze({ ...input.turnScope.conversation.partition }),
+            }),
+            principal: Object.freeze({ ...input.turnScope.principal }),
+            endpoint: Object.freeze({ ...input.turnScope.endpoint }),
+          });
       // Mint-time defensive validation + copy: callers retain no mutable
       // reference to the authority held by the lease, and a runtime claim that
       // escaped the TypeScript union is dropped rather than broadened.
@@ -251,6 +267,7 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
         sessionKey: input.sessionKey,
         trustLevel: input.trustLevel,
         ...(deliveryOrigin !== undefined ? { deliveryOrigin } : {}),
+        ...(turnScope !== undefined ? { turnScope } : {}),
         rootRunId: input.rootRunId,
         ...(input.checkpointId !== undefined ? { checkpointId: input.checkpointId } : {}),
         ...(input.parentLeaseId !== undefined ? { parentLeaseId: input.parentLeaseId } : {}),
@@ -304,6 +321,7 @@ export function createLeaseManager(deps: LeaseManagerDeps): LeaseManager {
           sessionKey: entry.sessionKey,
           trustLevel: entry.trustLevel,
           ...(entry.deliveryOrigin !== undefined ? { deliveryOrigin: entry.deliveryOrigin } : {}),
+          ...(entry.turnScope !== undefined ? { turnScope: entry.turnScope } : {}),
           rootRunId: entry.rootRunId,
           ...(entry.checkpointId !== undefined ? { checkpointId: entry.checkpointId } : {}),
           ...(entry.parentLeaseId !== undefined ? { parentLeaseId: entry.parentLeaseId } : {}),

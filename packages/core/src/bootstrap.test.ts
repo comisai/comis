@@ -114,12 +114,7 @@ describe("bootstrap", () => {
     }
   });
 
-  it("derives rawAgentRerankEnabled preserving the genuine unset/true/false tri-state", () => {
-    // The parsed config.agents.<id>.rag.rerank.enabled is ALWAYS a
-    // concrete boolean (.default(false)), so the unset signal is erased there. The raw map
-    // must be derived from the PRE-Zod merged config and keep `undefined` for an agent that
-    // never set it — that is what lets the daemon distinguish auto-on (unset + model present)
-    // from explicit force-off. Three agents pin the full tri-state.
+  it("preserves validated rerank modes in container config", () => {
     const dir = makeTmpDir();
     const configPath = writeYaml(
       dir,
@@ -133,12 +128,12 @@ describe("bootstrap", () => {
         "    name: On",
         "    rag:",
         "      rerank:",
-        "        enabled: true",
+        "        mode: on",
         "  offAgent:",
         "    name: Off",
         "    rag:",
         "      rerank:",
-        "        enabled: false",
+        "        mode: off",
         "",
       ].join("\n"),
     );
@@ -147,19 +142,9 @@ describe("bootstrap", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       containers.push(result.value);
-      const raw = result.value.rawAgentRerankEnabled;
-      expect(raw).toBeDefined();
-      // Genuine tri-state survives in the raw map.
-      expect(raw!.get("unsetAgent")).toBeUndefined();
-      expect(raw!.get("onAgent")).toBe(true);
-      expect(raw!.get("offAgent")).toBe(false);
-      // The PARSED config, by contrast, erased the unset agent's signal to a concrete boolean —
-      // the schema default. rag.rerank.enabled's default is ON, so the
-      // unset agent parses to `true`; the raw map still carries `undefined`.
-      expect(result.value.config.agents.unsetAgent!.rag.rerank.enabled).toBe(true);
-      // Proving the raw map is NOT just a view of the parsed config: unset -> undefined,
-      // parsed -> true. That divergence is the whole point of the raw map.
-      expect(raw!.get("unsetAgent")).not.toBe(result.value.config.agents.unsetAgent!.rag.rerank.enabled);
+      expect(result.value.config.agents.unsetAgent!.rag.rerank.mode).toBe("auto");
+      expect(result.value.config.agents.onAgent!.rag.rerank.mode).toBe("on");
+      expect(result.value.config.agents.offAgent!.rag.rerank.mode).toBe("off");
     }
   });
 

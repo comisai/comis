@@ -14,99 +14,21 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, MemoryLifecyclePort, OutcomeSignalPort, MentalModelStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, NormalizedMessage } from "@comis/core";
 import { createDeliveryOrigin, createResolvedRequestContext, runWithContext, systemNowMs } from "@comis/core";
 import { resolveCronJobCredential, cronCredentialSkipHint, cronCustomModelOpt } from "./setup-channels-cron-credential.js";
-import type { ComisLogger } from "@comis/infra";
-import type { AgentExecutor, ComisSessionManager, createSessionLifecycle, ActiveRunRegistry, OperationModelResolution } from "@comis/agent";
-import type { createSessionStore, MemoryApi } from "@comis/memory";
+import type { OperationModelResolution } from "@comis/agent";
 import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, classifyError } from "@comis/agent";
 import { applyToolPolicy } from "@comis/skills";
 import { buildReviewSessionSource } from "./review-session-source.js";
 import { filterResponse } from "@comis/channels";
-import type { ExecutionLogEntry } from "@comis/scheduler";
 import { cronDeliverySuppressedByQuietHoursLogged } from "./cron-delivery-quiet-hours.js";
 import { handleMemoryCronSentinel } from "./setup-channels-memory-crons.js";
 import { buildReflectionCronDeps } from "./setup-channels-skill-synthesis-deps.js";
 import { resolveMemoryOpsCapability } from "./resolve-memory-ops-capability.js";
-
-/** Closure-captured dependencies for the cron delivery listeners. */
-// @optional-field-count: 19 optional fields — CronEventListenerDeps is a composition-root cron-deps bag
-// that accretes the OFFLINE memory-cron sentinels' injected ports (consolidation/triple/userrep/skill
-// stores) alongside the channel/media optionals. Each is an optional injected port (absent on a
-// default-config agent => that sentinel short-circuits). Tightening to required would force every non-cron
-// caller to fabricate stubs; the cap flags undermodeled types, NOT a well-bounded accumulator (mirror BootContext).
-export interface CronEventListenerDeps {
-  container: AppContainer;
-  executors: Map<string, AgentExecutor>;
-  defaultAgentId: string;
-  sessionManager: ReturnType<typeof createSessionLifecycle>;
-  sessionStore: ReturnType<typeof createSessionStore>;
-  logger: ComisLogger;
-  /** Composition-root clock — threaded to runMemoryReview for relative-date resolution. */
-  clock: ClockPort;
-  /** Per-agent auto-refreshing OAuth token resolver (wraps OAuthTokenManager); lets background memory/learning jobs run on an OAuth main provider instead of skipping "no API key". Undefined ⇒ static-key/keyless only. */
-  resolveAccessToken?: (agentId: string, provider: string) => Promise<string | undefined>;
-  adaptersByType: Map<string, ChannelPort>;
-  deliveryService: DeliveryService;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires complex type parameters from pi-ai SDK
-  assembleToolsForAgent?: (agentId: string, options?: { sessionKey?: SessionKey }) => Promise<any[]>;
-  transcriber?: TranscriptionPort;
-  workspaceDirs?: Map<string, string>;
-  memoryAdapter?: MemoryPort;
-  /** LCD read + browse for the review session source (DAG transcripts live in LCD, not the near-empty daemon store). Absent ⇒ daemon-store-only review. */
-  lcdStore?: import("@comis/core").ContextStorePort; contextBrowse?: import("@comis/core").ContextBrowsePort;
-  /** Entity-associative store. Threaded into runMemoryReview so each
-   *  successfully-stored memory's entity mentions are resolved + linked
-   *  (memory_entities / memory_entity_links), scoped to the entry's (tenantId, agentId).
-   *  Absent => entities emitted but not persisted. Built in
-   *  setup-memory on the SAME db handle the memory adapter owns. */
-  entityStore?: MemoryEntityStore;
-  /** Causal store. Threaded into runMemoryReview so each
-   *  successfully-stored memory's extracted cause->effect pairs are linked via linkCausal
-   *  (memory_causal_edges), scoped to the entry's (tenantId, agentId) in SQL — load-bearing
-   *  isolation. Absent => causes parsed but not persisted. Built
-   *  in setup-memory on the SAME db handle the memory adapter owns; the port TYPE (agent↛memory cut). */
-  causalStore?: MemoryCausalStore;
-  /** Consolidation store. ORPHANED — the runMemoryConsolidation job and
-   *  the `__MEMORY_CONSOLIDATION__` sentinel were removed, so the port and its memories table are
-   *  retired. Still threaded (no live writer). Built in setup-memory on the SAME db
-   *  handle the memory adapter owns; injected as the port TYPE (agent↛memory cut). */
-  consolidationStore?: MemoryConsolidationStore;
-  // (The cron-path `tripleStore` field was DELETED — its sole reader was the
-  //  deleted triple-extraction sentinel. The graphSpread recall lane consumes tripleStore via
-  //  the SEPARATE setupAgents deps chain, not this cron forward; the port + lane survive.)
-  // (The cron-path `relationshipStore` field — the __SOCIAL_MODELING__ sentinel's directional-edge
-  //  upsert write path — was DELETED with the rest of the social-modeling subsystem.)
-  /** Memory-lifecycle sweep store — the KEYLESS
-   *  __MEMORY_LIFECYCLE__ sentinel's per-(tenant, agent) DORMANT runLifecycleSweep. Built in
-   *  setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). Threaded
-   *  the full daemon → registry → credentials chain — a missing thread would make the sweep a
-   *  silent no-op (the field-plumbing lesson). Absent => the lifecycle sentinel cannot run, but the
-   *  cron is off-by-default so a default-config agent never reaches it. */
-  memoryLifecycleStore?: MemoryLifecyclePort;
-  // (The cron-path `usefulnessStore` field was DELETED — its sole reader was
-  //  the deleted usefulness-judge sentinel. The recordUsage reward write rides the
-  //  setup-learning.ts deps, not this cron chain; that store is untouched.)
-  outcomeStore?: OutcomeSignalPort; // Reflection: the __REFLECT__ runReflection fail-closed success gate (agent↛memory)
-  learnedSkillStore?: MentalModelStorePort; // Reflection: the __REFLECT__ get/admit target (agent↛memory; off-by-default)
-  /** High-trust source read surface (`inspect`) — the surviving __REFLECT__ sentinel scopes
-   *  its per-(tenant, agent) profile/topic source read over it (the folded profile/topic read path).
-   *  Built in setup-memory; daemon-side (the agent imports no memory package). (The
-   *  __USER_REPRESENTATION__ + __SOCIAL_MODELING__ readers that also used this surface were
-   *  deleted with their subsystems.) */
-  memoryApi?: MemoryApi;
-  tenantId?: string;
-  piSessionAdapters?: Map<string, Pick<
-    ComisSessionManager,
-    "getSessionStats" | "destroySession" | "persistInboundMessage"
-  >>;
-  cronExecutionTrackers?: Map<string, { record(entry: ExecutionLogEntry): Promise<void> }>;
-  // ChannelsDeps fields that flow through from the registry caller — used by
-  // the agent_turn execution branch for tool-policy application + execution-
-  // tracker bookkeeping.
-  activeRunRegistry?: ActiveRunRegistry;
-}
+import { resolveInternalTurnIdentity } from "@comis/orchestrator";
+import type { CronEventListenerDeps } from "./cron-event-listener-deps.js";
+export type { CronEventListenerDeps } from "./cron-event-listener-deps.js";
 
 /**
  * Register the cron-driven event listeners on the daemon event bus.
@@ -183,15 +105,46 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
 
       const workspacePath = deps.workspaceDirs?.get(agentId) ?? "";
       const reviewLogger = logger.child({ agentId, submodule: "memory-review" });
+      const reviewTenantId = deps.tenantId;
+      const reviewIdentity = resolveInternalTurnIdentity({
+        tenantId: reviewTenantId,
+        agentId,
+        originKind: "scheduler",
+        instanceId: payload.jobId,
+        conversationId: `memory-review-${payload.jobId}`,
+        principalId: `scheduler-memory-review-${agentId}`,
+      });
+      if (!reviewIdentity.ok) {
+        logger.error({
+          agentId,
+          hint: "Verify the memory review job and agent identifiers before retrying",
+          errorKind: reviewIdentity.error.errorKind,
+        }, "Memory review authority resolution failed");
+        payload.onComplete?.({ status: "error", error: "Memory review authority resolution failed" });
+        return;
+      }
       const reviewResult = await runMemoryReview({
         agentId,
-        tenantId: deps.tenantId ?? container.config.tenantId ?? "default",
+        tenantId: reviewTenantId,
         agentName: agentConfig.name ?? agentId,
         config: memReviewConfig,
         memoryPort: deps.memoryAdapter!,
+        memoryScope: {
+          turnScope: reviewIdentity.value.turnScope,
+          visibility: { kind: "agent-shared" },
+          operatorPermission: {
+            kind: "operator-memory-visibility",
+            tenantId: reviewTenantId,
+            agentId,
+          },
+        },
         // Capability gate: a small/nano cron model abstains via resolve-memory-ops-capability.ts (never fabricates into trusted storage).
         ...resolveMemoryOpsCapability(resolved, providerEntry?.capabilities),
-        sessionStore: buildReviewSessionSource({ sessionStore: deps.sessionStore as unknown as Parameters<typeof buildReviewSessionSource>[0]["sessionStore"], lcdStore: deps.lcdStore, contextBrowse: deps.contextBrowse, agentId, tenantId: deps.tenantId ?? container.config.tenantId ?? "default" }),
+        sessionStore: buildReviewSessionSource({
+          sessionStore: deps.sessionStore,
+          lcdStore: deps.lcdStore,
+          contextBrowse: deps.contextBrowse,
+        }),
         eventBus: container.eventBus,
         workspacePath,
         provider: resolved.provider,
@@ -323,18 +276,38 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         );
       }
 
-      const sessionKey: SessionKey = { tenantId: deliveryTarget.tenantId, userId: deliveryTarget.userId,
-        channelId: `cron:${payload.jobId}`,
-      };
+      const internalIdentity = resolveInternalTurnIdentity({
+        tenantId: deliveryTarget.tenantId,
+        agentId: payload.agentId,
+        originKind: "scheduler",
+        instanceId: payload.jobId,
+        conversationId: payload.jobId,
+        principalId: `scheduler:${payload.jobId}`,
+      });
+      if (!internalIdentity.ok) {
+        logger.error({
+          agentId: payload.agentId,
+          jobName,
+          hint: "Verify the scheduler job, tenant, and target agent identifiers before retrying the job.",
+          errorKind: internalIdentity.error.errorKind,
+        }, "Cron turn identity resolution failed");
+        payload.onComplete?.({ status: "error", error: "Cron turn identity resolution failed" });
+        return;
+      }
+      const sessionKey = internalIdentity.value.displaySessionKey;
+      const turnScope = internalIdentity.value.turnScope;
       const execStartTs = systemNowMs();
       const cronContext = createResolvedRequestContext({
         traceId: randomUUID(), tenantId: sessionKey.tenantId, userId: sessionKey.userId,
         agentId: payload.agentId, sessionKey, startedAt: execStartTs, trustLevel: "user",
-        channelType: deliveryChannelType,
+        channelType: turnScope.endpoint.channelType,
         deliveryOrigin: createDeliveryOrigin({
-          channelType: deliveryChannelType, channelId: deliveryTarget.channelId,
-          userId: deliveryTarget.userId, tenantId: deliveryTarget.tenantId,
+          channelType: turnScope.endpoint.channelType,
+          channelId: turnScope.endpoint.conversationId,
+          userId: turnScope.principal.principalId,
+          tenantId: turnScope.conversation.tenantId,
         }),
+        turnScope,
       });
       if (!cronContext.ok) {
         logger.error({ agentId: payload.agentId, jobName,
@@ -347,7 +320,17 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       await runWithContext(cronContext.value, async () => {
       // Fresh strategy — expire existing session before each execution
       if (sessionStrategy === "fresh") {
-        sessionManager.expire(sessionKey);
+        const expired = sessionManager.expire(turnScope.conversation);
+        if (!expired.ok) {
+          logger.error({
+            agentId: payload.agentId,
+            jobName,
+            hint: "Inspect session database integrity and retry the scheduler job after storage recovers.",
+            errorKind: expired.error.errorKind,
+          }, "Cron fresh-session deletion failed");
+          payload.onComplete?.({ status: "error", error: "Cron fresh-session deletion failed" });
+          return;
+        }
 
         const piAdapter = deps.piSessionAdapters?.get(payload.agentId)
                        ?? deps.piSessionAdapters?.get(defaultAgentId);
@@ -360,7 +343,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
           );
         }
 
-        container.eventBus.emit("session:expired", { sessionKey, reason: "cron-fresh" });
+        container.eventBus.emit("session:expired", { conversationScope: turnScope.conversation, reason: "cron-fresh" });
       }
 
       const syntheticMsg: NormalizedMessage = {
@@ -417,8 +400,16 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
 
         // Rolling strategy — prune to last N turns after execution
         if (sessionStrategy === "rolling") {
-          const messages = sessionManager.loadOrCreate(sessionKey);
-          if (messages.length > 0) {
+          const messagesResult = sessionManager.loadOrCreate(turnScope.conversation);
+          if (!messagesResult.ok) {
+            logger.warn({
+              agentId: payload.agentId,
+              jobName,
+              hint: "Inspect session database integrity; rolling history pruning will retry on the next scheduler run.",
+              errorKind: messagesResult.error.errorKind,
+            }, "Cron rolling history load failed");
+          } else if (messagesResult.value.length > 0) {
+            const messages = messagesResult.value;
             // Find the start index of the last N turns.
             // A "turn" starts at a user message and includes all following non-user messages.
             // Walk backwards, counting user messages as turn boundaries.
@@ -437,7 +428,15 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
             }
             if (turnCount > maxHistoryTurns) {
               const pruned = messages.slice(keepFromIndex);
-              sessionManager.save(sessionKey, pruned);
+              const saved = sessionManager.save(turnScope.conversation, pruned);
+              if (!saved.ok) {
+                logger.warn({
+                  agentId: payload.agentId,
+                  jobName,
+                  hint: "Inspect session database integrity; rolling history pruning will retry on the next scheduler run.",
+                  errorKind: saved.error.errorKind,
+                }, "Cron rolling history save failed");
+              }
             }
           }
         }

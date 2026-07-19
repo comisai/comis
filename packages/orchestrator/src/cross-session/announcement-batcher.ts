@@ -9,7 +9,7 @@
  * @module
  */
 
-import { parseFormattedSessionKey, scrubSecretsFromText, toSafeErrorLogString, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout } from "@comis/core";
+import { conversationScopeToSessionKey, scrubSecretsFromText, toSafeErrorLogString, type ConversationLocator, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout } from "@comis/core";
 import { err, fromPromise, ok, TimeoutError, withTimeout, type Result } from "@comis/shared";
 import { createDeliveryDedup, type DeliveryDedup } from "@comis/agent";
 import type { ChannelType } from "./announcement-dead-letter.js";
@@ -35,6 +35,8 @@ export interface QueuedAnnouncement {
   announceThreadId?: string;
   callerAgentId: string;
   callerSessionKey: string;
+  /** Canonical parent conversation authority captured at spawn time. */
+  callerConversation: ConversationLocator;
   runId: string;
   /** Idempotency key `${callerSessionKey}::${runId}`. Built once at the delivery entry; opaque here. Undefined for a top-level spawn (no callerSessionKey). */
   idempotencyKey?: string;
@@ -44,6 +46,7 @@ export interface AnnouncementBatcherDeps {
   announceToParent: (
     callerAgentId: string,
     callerSessionKey: SessionKey,
+    callerConversation: ConversationLocator,
     text: string,
     channelType: string,
     channelId: string,
@@ -242,6 +245,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       const boundary = await fromPromise(deps.sendGovernedAnnouncement({
         agentId: item.callerAgentId,
         callerSessionKey: item.callerSessionKey,
+        callerConversation: item.callerConversation,
         runId: item.runId,
         channelType: item.announceChannelType,
         channelId: item.announceChannelId,
@@ -423,11 +427,11 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     const first = items[0]!;
 
     try {
-      const parsedKey = parseFormattedSessionKey(first.callerSessionKey);
-      if (!parsedKey) {
+      const projectedKey = conversationScopeToSessionKey(first.callerConversation.conversationScope);
+      if (!projectedKey.ok) {
         deps.logger?.warn(
-          { batchKey: key, callerSessionKey: first.callerSessionKey, errorKind: "internal" as const, hint: "Invalid parent session key in batched announcement; batch dropped" },
-          "Announcement batch delivery failed: invalid session key",
+          { batchKey: key, errorKind: "internal" as const, hint: "Invalid canonical parent conversation in batched announcement; batch dropped" },
+          "Announcement batch delivery failed: invalid conversation authority",
         );
         return;
       }
@@ -445,7 +449,8 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         const candidate = await withTimeout(
           deps.announceToParent(
             first.callerAgentId,
-            parsedKey,
+            projectedKey.value,
+            first.callerConversation,
             parentInput,
             first.announceChannelType,
             first.announceChannelId,

@@ -13,7 +13,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { wireGeminiCacheCleanup } from "./gemini-cache-lifecycle.js";
 import type { GeminiCacheManager } from "./gemini-cache-manager.js";
-import type { SessionKey } from "@comis/core";
+import { conversationScopeToSessionKey, formatSessionKey, type ConversationScope } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -48,6 +48,29 @@ function createMockCacheManager(): GeminiCacheManager & { dispose: ReturnType<ty
   };
 }
 
+function makeConversationScope(): ConversationScope {
+  return {
+    tenantId: "default",
+    agentId: "agent-1",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: {
+        channelType: "test",
+        channelInstanceId: "test-instance",
+        conversationId: "chan-1",
+        conversationKind: "direct",
+      },
+      principalId: "user-1",
+    },
+  };
+}
+
+function displayKey(scope: ConversationScope): string {
+  const projected = conversationScopeToSessionKey(scope);
+  if (!projected.ok) throw projected.error;
+  return formatSessionKey(projected.value);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -70,18 +93,13 @@ describe("wireGeminiCacheCleanup", () => {
   it("calls cacheManager.dispose with formatted session key on session:expired", () => {
     wireGeminiCacheCleanup(eventBus, cacheManager);
 
-    const sessionKey: SessionKey = {
-      agentId: "agent-1",
-      tenantId: "default",
-      channelId: "chan-1",
-      userId: "user-1",
-    };
+    const conversationScope = makeConversationScope();
 
-    eventBus.emit("session:expired", { sessionKey, reason: "idle" });
+    eventBus.emit("session:expired", { conversationScope, reason: "idle" });
 
     // `formatSessionKey` does not serialize `agentId`; the formatted key is
     // `{tenantId}:{userId}:{channelId}` for keys without optional segments.
-    expect(cacheManager.dispose).toHaveBeenCalledWith("default:user-1:chan-1");
+    expect(cacheManager.dispose).toHaveBeenCalledWith(displayKey(conversationScope));
   });
 
   it("does not throw if dispose rejects (fire-and-forget via suppressError)", () => {
@@ -89,16 +107,11 @@ describe("wireGeminiCacheCleanup", () => {
 
     wireGeminiCacheCleanup(eventBus, cacheManager);
 
-    const sessionKey: SessionKey = {
-      agentId: "agent-1",
-      tenantId: "default",
-      channelId: "chan-1",
-      userId: "user-1",
-    };
+    const conversationScope = makeConversationScope();
 
     // Should not throw -- suppressError swallows the rejection
     expect(() => {
-      eventBus.emit("session:expired", { sessionKey, reason: "daily-reset" });
+      eventBus.emit("session:expired", { conversationScope, reason: "daily-reset" });
     }).not.toThrow();
   });
 });

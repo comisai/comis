@@ -597,7 +597,7 @@ export class IcModelsView extends LitElement {
 
     try {
       // Load config first (required for provider/alias display)
-      const configResult = (await rpc.call<{ config: Record<string, unknown>; sections: string[] }>("config.read")) as {
+      const configResult = (await rpc.call("config.read")) as {
         config: {
           providers: { entries: Record<string, ProviderEntry> };
           models: {
@@ -652,10 +652,10 @@ export class IcModelsView extends LitElement {
           return;
         }
         try {
-          const agentsList = await this.rpcClient.call<{ agents?: string[] }>("agents.list");
+          const agentsList = await this.rpcClient.call("agents.list");
           const agentIds = (agentsList.agents ?? []).slice(0, 20);
           const agentDetails = await Promise.allSettled(
-            agentIds.map((id) => this.rpcClient!.call<{ agentId: string; config: { provider?: string; model?: string } & Record<string, unknown> }>("agents.get", { agentId: id })),
+            agentIds.map((id) => this.rpcClient!.call("agents.get", { agentId: id })),
           );
           this._agents = agentDetails
             .filter((r): r is PromiseFulfilledResult<{ agentId: string; config: { provider?: string; model?: string } }> =>
@@ -704,7 +704,7 @@ export class IcModelsView extends LitElement {
     this._testingProviders = newTesting;
 
     try {
-      const result = (await this.rpcClient.call<{ status: string }>("models.test", { provider: name })) as TestResult;
+      const result = (await this.rpcClient.call("models.test", { provider: name })) as TestResult;
       const newResults = new Map(this._providerTestResults);
       newResults.set(name, result);
       this._providerTestResults = newResults;

@@ -34,7 +34,14 @@
  * @module
  */
 
-import type { OutcomeSignalPort, MentalModelStorePort, ContextStorePort, ContextBrowsePort, AppContainer } from "@comis/core";
+import {
+  type OutcomeSignalPort,
+  type MentalModelStorePort,
+  type ContextStorePort,
+  type ContextBrowsePort,
+  type AppContainer,
+  type SessionStorePort,
+} from "@comis/core";
 import type { ReflectionSourceTrajectory } from "@comis/agent";
 import type { MemoryApi } from "@comis/memory";
 import { buildReviewSessionSource } from "./review-session-source.js";
@@ -43,8 +50,8 @@ import type { ReflectionCronDeps } from "./setup-channels-memory-crons-types.js"
 /** The structural deps subset this helper reads (a slice of CronEventListenerDeps — avoids a cycle). */
 export interface ReflectionDepsInput {
   container: AppContainer;
-  tenantId?: string;
-  sessionStore: { listDetailed(tenantId?: string): unknown[]; loadByFormattedKey(sessionKey: string): unknown };
+  tenantId: string;
+  sessionStore: Pick<SessionStorePort, "listDetailed" | "loadByRef">;
   lcdStore?: Pick<ContextStorePort, "getMessages">;
   contextBrowse?: ContextBrowsePort;
   outcomeStore?: OutcomeSignalPort;
@@ -149,16 +156,18 @@ async function buildSkillSources(
   if (!idsRes.ok || idsRes.value.length === 0) return [];
 
   const source = buildReviewSessionSource({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the review-source sessionStore view
-    sessionStore: deps.sessionStore as any,
+    sessionStore: deps.sessionStore,
     lcdStore: deps.lcdStore,
     contextBrowse: deps.contextBrowse,
-    agentId,
-    tenantId,
   });
-  // sessionKey → sender (userId), from the session view.
+  const listed = source.listDetailed({ tenantId, agentId });
+  if (!listed.ok) return [];
+  const entryBySessionId = new Map<string, (typeof listed.value)[number]>();
   const senderBySession = new Map<string, string>();
-  for (const e of source.listDetailed(tenantId)) senderBySession.set(e.sessionKey, e.userId);
+  for (const entry of listed.value) {
+    entryBySessionId.set(entry.sessionKey, entry);
+    senderBySession.set(entry.sessionKey, entry.principalId ?? "");
+  }
 
   // The per-agent trust derivation inputs (elevatedReply.senderTrustMap
   // + defaultTrustLevel). Read once per run. The config is always default-parsed
@@ -185,8 +194,12 @@ async function buildSkillSources(
   const rowsCache = new Map<string, unknown[] | undefined>();
   const sessionRows = (sessionKey: string): unknown[] | undefined => {
     if (rowsCache.has(sessionKey)) return rowsCache.get(sessionKey);
-    const loaded = source.loadByFormattedKey(sessionKey);
-    const rows = loaded?.messages.filter((m) => contentOf(m).length > 0);
+    const entry = entryBySessionId.get(sessionKey);
+    if (!entry) return undefined;
+    const loaded = source.loadByRef({ tenantId, agentId }, entry.conversationRef);
+    const rows = loaded.ok
+      ? loaded.value?.messages.filter((m) => contentOf(m).length > 0)
+      : undefined;
     const val = rows !== undefined && rows.length > 0 ? rows : undefined;
     rowsCache.set(sessionKey, val);
     return val;

@@ -8,7 +8,6 @@ import type {
   ActivityEntry,
   DeliveryStats,
   GatewayStatus,
-  PipelineSnapshot,
 } from "../api/types/index.js";
 import { SSE_EVENT_TYPES } from "../api/types/index.js";
 import type { ApiClient, SseEventHandler } from "../api/api-client.js";
@@ -117,18 +116,6 @@ interface ContextSummary {
   budgetUtilization: number;
   totalEvictions: number;
   reReads: number;
-}
-
-/** Billing total RPC response (obs.billing.total / obs.billing.byAgent). */
-interface BillingTotalResult {
-  totalCost?: number;
-  totalTokens?: number;
-}
-
-/** Per-hour token-usage histogram entry (obs.billing.usage24h). */
-interface BillingHourlyEntry {
-  hour: number;
-  tokens: number;
 }
 
 /**
@@ -782,15 +769,15 @@ export class IcDashboard extends LitElement {
       pipelineResult,
       sparklineTokenResult,
     ] = await Promise.allSettled([
-      rpc.call<GatewayStatus>("gateway.status"),
-      rpc.call<Record<string, unknown>>("obs.delivery.stats", { sinceMs: 86_400_000 }),
-      rpc.call<Record<string, unknown>>("obs.delivery.stats", { sinceMs: 172_800_000 }),
-      rpc.call<Record<string, unknown>>("obs.billing.total", { sinceMs: 86_400_000 }),
-      rpc.call<Record<string, unknown>>("obs.billing.total", { sinceMs: 172_800_000 }),
-      rpc.call<Record<string, unknown>>("session.list", {}),
-      rpc.call<{ servers: Array<{ name: string; status: string }>; total: number }>("mcp.list"),
-      rpc.call<PipelineSnapshot[]>("obs.context.pipeline", { limit: 50 }),
-      rpc.call<Array<{ hour: number; tokens: number }>>("obs.billing.usage24h"),
+      rpc.call("gateway.status"),
+      rpc.call("obs.delivery.stats", { sinceMs: 86_400_000 }),
+      rpc.call("obs.delivery.stats", { sinceMs: 172_800_000 }),
+      rpc.call("obs.billing.total", { sinceMs: 86_400_000 }),
+      rpc.call("obs.billing.total", { sinceMs: 172_800_000 }),
+      rpc.call("session.list", {}),
+      rpc.call("mcp.list"),
+      rpc.call("obs.context.pipeline", { limit: 50 }),
+      rpc.call("obs.billing.usage24h"),
     ]);
 
     // 1. Gateway status (system health)
@@ -888,7 +875,7 @@ export class IcDashboard extends LitElement {
     if (!this.rpcClient) return;
     const dayMs = 86_400_000;
     const calls = Array.from({ length: 7 }, (_, i) =>
-      this.rpcClient!.call<BillingTotalResult>("obs.billing.total", { sinceMs: dayMs * (i + 1) }),
+      this.rpcClient!.call("obs.billing.total", { sinceMs: dayMs * (i + 1) }),
     );
     const results = await Promise.allSettled(calls);
 
@@ -910,7 +897,7 @@ export class IcDashboard extends LitElement {
 
     await Promise.allSettled([
       (async () => {
-        const usage24h = await this.rpcClient!.call<BillingHourlyEntry[]>("obs.billing.usage24h");
+        const usage24h = await this.rpcClient!.call("obs.billing.usage24h");
         this._tokenSparklineData = usage24h.map((d) => d.tokens);
       })(),
       this._loadCostSparkline(),
@@ -932,7 +919,7 @@ export class IcDashboard extends LitElement {
 
     const results = await Promise.allSettled(
       agentIds.map((agentId) =>
-        this.rpcClient!.call<BillingTotalResult>("obs.billing.byAgent", { agentId }),
+        this.rpcClient!.call("obs.billing.byAgent", { agentId }),
       ),
     );
 

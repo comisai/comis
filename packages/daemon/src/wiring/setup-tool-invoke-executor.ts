@@ -49,11 +49,12 @@ import {
   shouldMaterialize,
   systemNowMs,
   wrapExternalContent,
-  parseFormattedSessionKey,
+  createConversationRef,
   toSafeErrorLogString,
   type AgentCapability,
   type DeliveryOrigin,
   type ResultRef,
+  type ResolvedTurnScope,
   type DurableRunPort,
   type DurableRunRecord,
   type DurableRootBudget,
@@ -70,6 +71,8 @@ export interface ToolInvokeLease {
   caps: readonly AgentCapability[];
   sessionKey: string;
   deliveryOrigin?: DeliveryOrigin;
+  /** Canonical request authority captured in the validated lease. */
+  turnScope?: ResolvedTurnScope;
   /** Exact trust from the validated server-held capability lease. */
   trustLevel: UserTrustLevel;
   /**
@@ -565,15 +568,19 @@ export function createToolInvokeExecutor(
     if (rootRunId === undefined) return errorResult("checkpoint requires a durable run identity");
     const checkpointId = lease.checkpointId;
     if (checkpointId === undefined) return errorResult("checkpoint requires an execution identity");
-    const owner = parseFormattedSessionKey(lease.sessionKey);
-    if (owner === undefined) return errorResult("checkpoint requires a formatted session identity");
+    const turnScope = lease.turnScope;
+    if (turnScope === undefined || turnScope.conversation.agentId !== lease.agentId) {
+      return errorResult("checkpoint requires canonical conversation authority");
+    }
+    const conversationRef = createConversationRef(turnScope.conversation);
+    if (!conversationRef.ok) return errorResult("checkpoint conversation authority is invalid");
     if (
       lease.deliveryOrigin !== undefined
       && (
-        lease.deliveryOrigin.tenantId !== owner.tenantId
-        || lease.deliveryOrigin.userId !== owner.userId
+        lease.deliveryOrigin.tenantId !== turnScope.conversation.tenantId
+        || lease.deliveryOrigin.userId !== turnScope.principal.principalId
       )
-    ) return errorResult("checkpoint delivery origin does not match the session owner");
+    ) return errorResult("checkpoint delivery origin does not match the conversation authority");
     if (!deps.materializeCheckpoint || !deps.durableRuns) {
       return errorResult("checkpoint is unavailable (durable store not wired)");
     }
@@ -600,10 +607,11 @@ export function createToolInvokeExecutor(
     const record: DurableRunRecord = {
       checkpointId,
       rootRunId,
+      tenantId: turnScope.conversation.tenantId,
       agentId: lease.agentId,
-      sessionKey: lease.sessionKey,
-      ownerTenantId: owner.tenantId,
-      ownerUserId: owner.userId,
+      conversationRef: conversationRef.value,
+      conversationScope: turnScope.conversation,
+      principalId: turnScope.principal.principalId,
       deliveryOrigin: lease.deliveryOrigin ?? null,
       spawnTree: [], // a FLAT orchestrate row (not a DAG spawn tree)
       caps: [...lease.caps],

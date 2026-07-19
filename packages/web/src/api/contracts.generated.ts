@@ -29,6 +29,60 @@ export interface ContractMeta {
 }
 
 // ---------------------------------------------------------------------------
+// JSON Schema -> TypeScript projection for the generated RPC method map.
+// The generator emits each schema as a literal, so method names, params, and
+// results stay tied to the one API contract registry without browser imports.
+// ---------------------------------------------------------------------------
+
+type SchemaProperties<S> = S extends { readonly properties: infer P }
+  ? P extends Readonly<Record<string, unknown>>
+    ? P
+    : Record<never, never>
+  : Record<never, never>;
+
+type SchemaRequiredKeys<S> = S extends {
+  readonly required: readonly (infer K)[];
+}
+  ? Extract<K, keyof SchemaProperties<S>>
+  : never;
+
+type JsonObjectValue<S> = {
+  [K in SchemaRequiredKeys<S>]-?: JsonSchemaValue<SchemaProperties<S>[K]>;
+} & {
+  [K in Exclude<keyof SchemaProperties<S>, SchemaRequiredKeys<S>>]?:
+    JsonSchemaValue<SchemaProperties<S>[K]>;
+} & (S extends { readonly additionalProperties: infer A }
+  ? A extends false
+    ? unknown
+    : A extends Readonly<Record<string, unknown>>
+      ? Readonly<Record<string, JsonSchemaValue<A>>>
+      : Readonly<Record<string, unknown>>
+  : Readonly<Record<string, unknown>>);
+
+export type JsonSchemaValue<S> =
+  S extends { readonly anyOf: readonly (infer A)[] }
+    ? JsonSchemaValue<A>
+    : S extends { readonly oneOf: readonly (infer O)[] }
+      ? JsonSchemaValue<O>
+      : S extends { readonly const: infer C }
+        ? C
+        : S extends { readonly enum: readonly (infer E)[] }
+          ? E
+          : S extends { readonly type: "string" }
+            ? string
+            : S extends { readonly type: "number" | "integer" }
+              ? number
+              : S extends { readonly type: "boolean" }
+                ? boolean
+                : S extends { readonly type: "null" }
+                  ? null
+                  : S extends { readonly type: "array"; readonly items: infer I }
+                    ? JsonSchemaValue<I>[]
+                    : S extends { readonly type: "object" }
+                      ? JsonObjectValue<S>
+                      : unknown;
+
+// ---------------------------------------------------------------------------
 // Hand-rolled validator — runs in browser; zero external deps.
 // Returns true iff `v` matches `node`. Errors are caller-side (the caller
 // distinguishes request vs. response and surfaces a method-named error).
@@ -120,16 +174,27 @@ function validateNode(node: JsonSchemaNode, v: unknown): boolean {
 // { unrepresentable: "throw", reused: "inline" }).
 // ---------------------------------------------------------------------------
 
-export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
+export const CONTRACTS = {
   "admin.approval.clearDenialCache": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "sessionKey": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -154,7 +219,22 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -194,6 +274,15 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "string",
           "minLength": 1
         },
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
+          "type": "string"
+        },
         "approved": {
           "type": "boolean"
         },
@@ -206,6 +295,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       },
       "required": [
         "requestId",
+        "tenant_id",
+        "agent_id",
+        "conversation_ref",
         "approved"
       ],
       "additionalProperties": false
@@ -251,7 +343,13 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "sessionKey": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         },
         "approved": {
@@ -265,6 +363,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         }
       },
       "required": [
+        "tenant_id",
+        "agent_id",
+        "conversation_ref",
         "approved"
       ],
       "additionalProperties": false
@@ -2434,7 +2535,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "items": {
             "type": "object",
             "properties": {
-              "conversation_id": {
+              "conversation_ref": {
                 "type": "string"
               },
               "tenant_id": {
@@ -2467,7 +2568,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               }
             },
             "required": [
-              "conversation_id",
+              "conversation_ref",
               "tenant_id",
               "agent_id",
               "session_key",
@@ -2498,12 +2599,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "conversation_id": {
+        "conversation_ref": {
           "type": "string"
         }
       },
       "required": [
-        "conversation_id"
+        "conversation_ref"
       ],
       "additionalProperties": false
     },
@@ -2511,7 +2612,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "conversationId": {
+        "conversationRef": {
           "type": "string"
         },
         "nodes": {
@@ -2572,7 +2673,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         }
       },
       "required": [
-        "conversationId",
+        "conversationRef",
         "nodes",
         "messageCount"
       ],
@@ -5577,10 +5678,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "type": "object",
       "properties": {
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "offset": {
           "type": "number"
@@ -5604,6 +5707,10 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           }
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -5646,6 +5753,55 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "admin"
     ]
   },
+  "memory.change_visibility": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenantId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "visibility": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "tenantId",
+        "agentId",
+        "visibility"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "changed": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "changed"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "memory.delete": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5659,11 +5815,18 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           }
         },
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
-        "ids"
+        "ids",
+        "tenant_id",
+        "agent_id"
       ],
       "additionalProperties": false
     },
@@ -5763,10 +5926,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "type": "object",
       "properties": {
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "limit": {
           "type": "integer",
@@ -5774,6 +5939,10 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "maximum": 1000
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -5825,10 +5994,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "type": "object",
       "properties": {
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "offset": {
           "type": "number"
@@ -5837,6 +6008,10 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "number"
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -5881,12 +6056,18 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "type": "object",
       "properties": {
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -5907,14 +6088,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "type": "string"
             },
             "agentId": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             }
           },
           "required": [
@@ -5994,10 +6168,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "type": "object",
       "properties": {
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "limit": {
           "type": "integer",
@@ -6005,6 +6181,10 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "maximum": 1000
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -6069,14 +6249,18 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "minLength": 1
         },
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
-        "id"
+        "id",
+        "tenant_id",
+        "agent_id"
       ],
       "additionalProperties": false
     },
@@ -6112,10 +6296,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "type": "object",
       "properties": {
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "limit": {
           "type": "integer",
@@ -6123,6 +6309,10 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "maximum": 9007199254740991
         }
       },
+      "required": [
+        "agent_id",
+        "tenant_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -6143,14 +6333,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               "type": "string"
             },
             "agentId": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             }
           },
           "required": [
@@ -6207,7 +6390,8 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "minLength": 1
         },
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "dry_run": {
           "type": "boolean"
@@ -6215,7 +6399,8 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       },
       "required": [
         "entries",
-        "agent_id"
+        "agent_id",
+        "tenant_id"
       ],
       "additionalProperties": false
     },
@@ -6262,12 +6447,18 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "type": "object",
       "properties": {
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -6348,10 +6539,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "string"
         },
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "limit": {
           "type": "integer",
@@ -6359,6 +6552,10 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "maximum": 1000
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -6401,6 +6598,13 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "limit": {
           "type": "number"
+        },
+        "tenantId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agentId": {
+          "type": "string"
         }
       },
       "required": [
@@ -6462,12 +6666,18 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "type": "object",
       "properties": {
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -6499,10 +6709,21 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "trustLevel": {
           "type": "string"
+        },
+        "visibility": {
+          "type": "string"
+        },
+        "tenantId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agentId": {
+          "type": "string"
         }
       },
       "required": [
-        "content"
+        "content",
+        "visibility"
       ],
       "additionalProperties": false
     },
@@ -6538,14 +6759,18 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "minLength": 1
         },
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
-        "id"
+        "id",
+        "tenant_id",
+        "agent_id"
       ],
       "additionalProperties": false
     },
@@ -10837,20 +11062,31 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "session_key": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         },
         "instructions": {
           "type": "string"
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
+      ],
       "additionalProperties": false
     },
     "response": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "sessionKey": {
+        "conversationRef": {
           "type": "string"
         },
         "messageCount": {
@@ -10875,7 +11111,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         }
       },
       "required": [
-        "sessionKey",
+        "conversationRef",
         "messageCount",
         "estimatedTokens",
         "compactionTriggered",
@@ -10892,12 +11128,20 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "session_key": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         }
       },
       "required": [
-        "session_key"
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
       ],
       "additionalProperties": false
     },
@@ -10905,7 +11149,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "sessionKey": {
+        "conversationRef": {
           "type": "string"
         },
         "deleted": {
@@ -10945,7 +11189,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         }
       },
       "required": [
-        "sessionKey",
+        "conversationRef",
         "deleted",
         "transcript"
       ],
@@ -10960,12 +11204,20 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "session_key": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         }
       },
       "required": [
-        "session_key"
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
       ],
       "additionalProperties": false
     },
@@ -10973,7 +11225,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "sessionKey": {
+        "conversationRef": {
           "type": "string"
         },
         "messages": {
@@ -11004,7 +11256,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         }
       },
       "required": [
-        "sessionKey",
+        "conversationRef",
         "messages",
         "metadata",
         "messageCount",
@@ -11022,7 +11274,13 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "session_key": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         },
         "offset": {
@@ -11033,7 +11291,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         }
       },
       "required": [
-        "session_key"
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
       ],
       "additionalProperties": false
     },
@@ -11162,6 +11422,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
         "kind": {
           "type": "string"
         },
@@ -11169,6 +11435,10 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "number"
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -11180,16 +11450,10 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "items": {
             "type": "object",
             "properties": {
-              "sessionKey": {
+              "conversationRef": {
                 "type": "string"
               },
               "agentId": {
-                "type": "string"
-              },
-              "userId": {
-                "type": "string"
-              },
-              "channelId": {
                 "type": "string"
               },
               "kind": {
@@ -11209,10 +11473,8 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
               }
             },
             "required": [
-              "sessionKey",
+              "conversationRef",
               "agentId",
-              "userId",
-              "channelId",
               "kind",
               "messageCount",
               "totalTokens",
@@ -11241,12 +11503,20 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "session_key": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         }
       },
       "required": [
-        "session_key"
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
       ],
       "additionalProperties": false
     },
@@ -11254,7 +11524,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "sessionKey": {
+        "conversationRef": {
           "type": "string"
         },
         "reset": {
@@ -11266,7 +11536,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         }
       },
       "required": [
-        "sessionKey",
+        "conversationRef",
         "reset",
         "previousMessageCount"
       ],
@@ -11281,7 +11551,13 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "session_key": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         },
         "memory": {
@@ -11289,13 +11565,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "purge_derived": {
           "type": "boolean"
-        },
-        "agentId": {
-          "type": "string"
         }
       },
       "required": [
-        "session_key"
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
       ],
       "additionalProperties": false
     },
@@ -11303,7 +11578,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "sessionKey": {
+        "conversationRef": {
           "type": "string"
         },
         "lcdRowsDeleted": {
@@ -11323,7 +11598,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         }
       },
       "required": [
-        "sessionKey",
+        "conversationRef",
         "lcdRowsDeleted",
         "sessionMessagesCleared"
       ],
@@ -11415,6 +11690,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
         "query": {
           "type": "string"
         },
@@ -11428,6 +11709,10 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "boolean"
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -11447,7 +11732,13 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "session_key": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         },
         "text": {
@@ -11461,13 +11752,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "max_turns": {
           "type": "number"
-        },
-        "agent_id": {
-          "type": "string"
         }
       },
       "required": [
-        "session_key",
+        "tenant_id",
+        "agent_id",
+        "conversation_ref",
         "text"
       ],
       "additionalProperties": false
@@ -13125,9 +13415,16 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "admin"
     ]
   }
-} as const;
+} as const satisfies Readonly<Record<string, ContractMeta>>;
 
-export type MethodName = keyof typeof CONTRACTS;
+export type WebRpcMethodMap = {
+  readonly [M in keyof typeof CONTRACTS]: {
+    readonly params: JsonSchemaValue<(typeof CONTRACTS)[M]["request"]>;
+    readonly result: JsonSchemaValue<(typeof CONTRACTS)[M]["response"]>;
+  };
+};
+
+export type MethodName = keyof WebRpcMethodMap;
 
 // ---------------------------------------------------------------------------
 // Public validators — delegate to validateNode against the request/response
@@ -13135,14 +13432,12 @@ export type MethodName = keyof typeof CONTRACTS;
 // caller distinguishes request vs. response.
 // ---------------------------------------------------------------------------
 
-export function validateRequest(method: string, v: unknown): boolean {
-  const entry = (CONTRACTS as Readonly<Record<string, ContractMeta>>)[method];
-  if (!entry) return false;
+export function validateRequest(method: MethodName, v: unknown): boolean {
+  const entry = CONTRACTS[method];
   return validateNode(entry.request, v);
 }
 
-export function validateResponse(method: string, v: unknown): boolean {
-  const entry = (CONTRACTS as Readonly<Record<string, ContractMeta>>)[method];
-  if (!entry) return false;
+export function validateResponse(method: MethodName, v: unknown): boolean {
+  const entry = CONTRACTS[method];
   return validateNode(entry.response, v);
 }

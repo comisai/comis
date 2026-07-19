@@ -15,7 +15,12 @@ import { z } from "zod";
 import type { DeliveryQueuePort, DeliveryQueueEntry, DeliveryQueueEnqueueInput, DeliveryQueueStatusCounts, TypedEventBus } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { AMBIGUOUS_SEND_OUTCOME_ERROR, systemNowMs } from "@comis/core";
+import {
+  AMBIGUOUS_SEND_OUTCOME_ERROR,
+  ChannelEndpointSchema,
+  ConversationRefSchema,
+  systemNowMs,
+} from "@comis/core";
 import { createRowMapper } from "./row-mapper.js";
 import {
   DeliveryQueueDbRowSchema,
@@ -44,6 +49,9 @@ function rowToEntry(row: DeliveryQueueDbRow): DeliveryQueueEntry {
     channelType: row.channel_type,
     channelId: row.channel_id,
     tenantId: row.tenant_id,
+    agentId: row.agent_id,
+    conversationRef: ConversationRefSchema.parse(row.conversation_ref),
+    destinationEndpoint: ChannelEndpointSchema.parse(JSON.parse(row.destination_endpoint)),
     optionsJson: row.options_json,
     origin: row.origin,
     status: row.status as DeliveryQueueEntry["status"],
@@ -80,11 +88,12 @@ export function createSqliteDeliveryQueue(
 
   const insertStmt = db.prepare(`
     INSERT INTO delivery_queue (
-      id, text, channel_type, channel_id, tenant_id, options_json, origin,
+      id, text, channel_type, channel_id, tenant_id, agent_id, conversation_ref,
+      destination_endpoint, options_json, origin,
       status, attempt_count, max_attempts,
       created_at, scheduled_at, expire_at, last_attempt_at, next_retry_at,
       last_error, trace_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, NULL, NULL, NULL, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, NULL, NULL, NULL, ?)
   `);
 
   const ackStmt = db.prepare(`
@@ -142,11 +151,12 @@ export function createSqliteDeliveryQueue(
 
   const insertInFlightStmt = db.prepare(`
     INSERT INTO delivery_queue (
-      id, text, channel_type, channel_id, tenant_id, options_json, origin,
+      id, text, channel_type, channel_id, tenant_id, agent_id, conversation_ref,
+      destination_endpoint, options_json, origin,
       status, attempt_count, max_attempts,
       created_at, scheduled_at, expire_at, last_attempt_at, next_retry_at,
       last_error, trace_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'in_flight', 0, ?, ?, ?, ?, NULL, NULL, NULL, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_flight', 0, ?, ?, ?, ?, NULL, NULL, NULL, ?)
   `);
 
   const recoverInFlightStmt = db.prepare(`
@@ -181,6 +191,9 @@ export function createSqliteDeliveryQueue(
           entry.channelType,
           entry.channelId,
           entry.tenantId,
+          entry.agentId,
+          entry.conversationRef,
+          JSON.stringify(entry.destinationEndpoint),
           entry.optionsJson,
           entry.origin,
           entry.maxAttempts,
@@ -212,6 +225,9 @@ export function createSqliteDeliveryQueue(
           entry.channelType,
           entry.channelId,
           entry.tenantId,
+          entry.agentId,
+          entry.conversationRef,
+          JSON.stringify(entry.destinationEndpoint),
           entry.optionsJson,
           entry.origin,
           entry.maxAttempts,

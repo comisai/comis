@@ -22,7 +22,7 @@
  * @module
  */
 
-import { type KnownProvider } from "@earendil-works/pi-ai";
+import type { BuiltinProvider } from "@earendil-works/pi-ai/compat";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import type { ModelOperationType } from "@comis/core";
 
@@ -134,7 +134,7 @@ function familyKey(id: string): string {
 export function resolveOperationDefaults(provider: string): { fast?: string; mid?: string } {
   if (!_nativeProviderSet.has(provider)) return {};
 
-  const all = getModels(provider as KnownProvider);
+  const all = getModels(provider as BuiltinProvider);
   const textCapableAll = all.filter((m) => m.input?.includes("text"));
   // Operation-tier models must be PINNED, reproducible ids — EXCLUDE floating aliases
   // (`*-latest`). An alias drifts as the provider re-points it and 404s outright once the

@@ -44,12 +44,20 @@ function seedRow(
   status: "pending" | "in_flight",
 ): void {
   const now = Date.now();
+  const conversationRef = `cv_${"d".repeat(43)}`;
+  const destinationEndpoint = JSON.stringify({
+    channelType: "telegram",
+    channelInstanceId: "telegram-test",
+    conversationId: "chat-a",
+    conversationKind: "direct",
+  });
   db.prepare(
     `INSERT INTO delivery_queue (
-       id, text, channel_type, channel_id, tenant_id, options_json, origin,
+       id, text, channel_type, channel_id, tenant_id, agent_id, conversation_ref,
+       destination_endpoint, options_json, origin,
        status, attempt_count, max_attempts, created_at, scheduled_at, expire_at
-     ) VALUES (?, ?, 'telegram', 'chat-a', 'default', '{}', 'agent', ?, 0, 5, ?, ?, ?)`,
-  ).run(id, text, status, now, now, now + 3_600_000);
+     ) VALUES (?, ?, 'telegram', 'chat-a', 'default', 'agent-a', ?, ?, '{}', 'agent', ?, 0, 5, ?, ?, ?)`,
+  ).run(id, text, conversationRef, destinationEndpoint, status, now, now, now + 3_600_000);
 }
 
 function makeBarrierQueue(queue: DeliveryQueuePort): DeliveryQueuePort {

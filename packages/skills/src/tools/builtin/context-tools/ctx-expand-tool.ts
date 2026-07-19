@@ -73,7 +73,7 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       //     LIVE context per-call; fail closed without a fully-scoped
       //     session. NEVER a wiring closure (multi-agent-safe).
       const ctxScope = requireCtxScope();
-      const conversationId = ctxScope.conversationId;
+      const conversationRef = ctxScope.conversationRef;
       const summaryId = readStringParam(params, "summaryId", true)!;
       const t0 = deps.nowMs();
 
@@ -91,7 +91,7 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       //     EVERY edge read passes `ctxScope` (an out-of-scope node is unreachable
       //     by construction) — the depth cap is a wiring-time CAPACITY knob,
       //     but scope is ALWAYS per-call.
-      const bundle = await deps.store.runOnConversation(conversationId, () =>
+      const bundle = await deps.store.runOnConversation(conversationRef, () =>
         ctxExpandWalk(deps.store, ctxScope, summaryId, {
           maxDepth: deps.maxExpandDepth ?? 1,
           maxTokens: deps.maxExpandTokens,
@@ -128,7 +128,7 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
           deps.logger.debug(
             {
               toolName: "ctx_expand",
-              conversationId,
+              conversationRef,
               summaryId,
               recoveredCount: parts.length,
               unrecoverable,
@@ -143,7 +143,7 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
           // GUARDED — a throwing subscriber must never fail this completed
           // spill recovery (see emitExpansionMetric).
           emitExpansionMetric(deps, "ctx_expand", {
-            conversationId: ctxScope.conversationId,
+            conversationRef: ctxScope.conversationRef,
             agentId: ctxScope.agentId,
             sessionKey: ctxScope.sessionKey,
             tool: "ctx_expand",
@@ -170,7 +170,7 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         deps.logger.debug(
           {
             toolName: "ctx_expand",
-            conversationId,
+            conversationRef,
             summaryId,
             recoveredCount: parts.length,
             unrecoverable,
@@ -183,7 +183,7 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         );
         // Content-free expansion-hit metric (GUARDED; ids/counts only).
         emitExpansionMetric(deps, "ctx_expand", {
-          conversationId: ctxScope.conversationId,
+          conversationRef: ctxScope.conversationRef,
           agentId: ctxScope.agentId,
           sessionKey: ctxScope.sessionKey,
           tool: "ctx_expand",
@@ -207,7 +207,7 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       deps.logger.debug(
         {
           toolName: "ctx_expand",
-          conversationId,
+          conversationRef,
           summaryId,
           recoveredCount: parts.length,
           unrecoverable,
@@ -222,7 +222,7 @@ export function createCtxExpandTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       // GUARDED — a throwing subscriber must never fail this completed
       // inline recovery (see emitExpansionMetric).
       emitExpansionMetric(deps, "ctx_expand", {
-        conversationId: ctxScope.conversationId,
+        conversationRef: ctxScope.conversationRef,
         agentId: ctxScope.agentId,
         sessionKey: ctxScope.sessionKey,
         tool: "ctx_expand",

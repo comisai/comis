@@ -47,7 +47,7 @@ function makeDeps(store: ContextStorePort): ContextEngineDeps {
     contextStore: store,
     modelProfile: { ...FAIL_CLOSED_PROFILE, supportsPromptCache: false },
     relevanceFirst: true,
-    conversationId: "conv-a",
+    conversationRef: `cv_${"a".repeat(43)}`,
     agentId: "agent-a",
     tenantId: "tenant-a",
     sessionKey: "conv-a",

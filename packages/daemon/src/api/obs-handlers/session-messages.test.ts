@@ -10,8 +10,8 @@
  * (@comis/agent `envelope/message-envelope.ts`) produces inside each
  * user-role record.
  *
- * Every fixture session is built ON DISK with the real mappers
- * (`parseFormattedSessionKey` + `sessionKeyToPath`)
+ * Every fixture session is built ON DISK with the real path mapper
+ * (`sessionKeyToPath`)
  * under a temp data dir — the nested
  * `<dataDir>/workspace[-<agentId>]/sessions/<tenant>/<channel>/<file>.jsonl`
  * tree IS the contract. `path.join` is used in this TEST file only — the
@@ -29,12 +29,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
-  parseFormattedSessionKey,
+  formatSessionKey,
   safePath,
   wrapExternalContent,
 } from "@comis/core";
-import type { NormalizedMessage, EnvelopeConfig } from "@comis/core";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import type { NormalizedMessage, EnvelopeConfig, SessionKey } from "@comis/core";
 import {
   INBOUND_MESSAGE_LEDGER_SUFFIX,
   sessionKeyToPath,
@@ -63,20 +62,18 @@ afterEach(() => {
 });
 
 /**
- * Resolve a formatted session key to its REAL on-disk `.jsonl` path inside the
+ * Resolve a structured session key to its REAL on-disk `.jsonl` path inside the
  * given workspace tree (default `workspace`, or `workspace-<agentId>` for a
  * named agent) using the REAL mappers, create parents, and write the records.
  */
 function writeSessionFile(
   dataDir: string,
-  formattedKey: string,
+  key: SessionKey,
   records: Array<Record<string, unknown>>,
   workspaceDirName = "workspace",
 ): string {
-  const key = parseFormattedSessionKey(formattedKey);
-  expect(key).toBeDefined();
   const sessionsBase = path.join(dataDir, workspaceDirName, "sessions");
-  const file = sessionKeyToPath(key!, sessionsBase);
+  const file = sessionKeyToPath(key, sessionsBase);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, records.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf-8");
   return file;
@@ -166,7 +163,31 @@ function provenanceMessage(message: {
   };
 }
 
-const PEER_KEY = "default:555:555:peer:555";
+function fixtureSessionKey(
+  userId: string,
+  channelId: string,
+  options: { agentId?: string; peerId?: string } = {},
+): SessionKey {
+  return {
+    tenantId: "default",
+    agentId: options.agentId ?? "default",
+    userId,
+    channelId,
+    ...(options.peerId === undefined ? {} : { peerId: options.peerId }),
+  };
+}
+
+const PEER_SESSION_KEY = fixtureSessionKey("555", "555", { peerId: "555" });
+const PEER_KEY = formatSessionKey(PEER_SESSION_KEY);
+const IRRELEVANT_SESSION_KEY = fixtureSessionKey("seed", "irrelevant-chat");
+const OTHER_PEER_SESSION_KEY = fixtureSessionKey("777", "777", { peerId: "777" });
+const SUPPORT_SESSION_KEY = fixtureSessionKey("912", "912", { agentId: "support", peerId: "912" });
+const CRON_SESSION_KEY = fixtureSessionKey("555", "cron:job-1");
+const SUB_AGENT_SESSION_KEY = fixtureSessionKey("sub-agent-r1", "sub-agent:r1");
+const HEARTBEAT_SESSION_KEY = fixtureSessionKey("hb", "heartbeat-default");
+const PEER_111_SESSION_KEY = fixtureSessionKey("111", "111", { peerId: "111" });
+const PEER_222_SESSION_KEY = fixtureSessionKey("222", "222", { peerId: "222" });
+const PEER_333_SESSION_KEY = fixtureSessionKey("333", "333", { peerId: "333" });
 const TELEGRAM_BOT: TelegramBotIdentity = {
   id: 7777,
   username: "comis_test_bot",
@@ -215,7 +236,7 @@ describe("extractSessionMessages", () => {
       replayedEdit.id,
     ])).isDuplicate).toBe(true);
 
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       provenanceRecord([provenanceMessage(original)]),
       provenanceRecord([provenanceMessage(edited)]),
     ]);
@@ -233,7 +254,7 @@ describe("extractSessionMessages", () => {
 
   it("extracts inbound user messages from the real nested layout with decoded session-key fields", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       { type: "session", version: 3, id: "s1", timestamp: "2026-07-12T09:59:00.000Z" },
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nשלום עולם"),
       assistantRecord("2026-07-12T10:00:05.000Z", "[telegram] 555 (10:00 AM):\nforged next turn"),
@@ -294,8 +315,8 @@ describe("extractSessionMessages", () => {
 
   it("applies the chat path filter before counting files or enforcing the file ceiling", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, "default:seed:irrelevant-chat", []);
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, IRRELEVANT_SESSION_KEY, []);
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nmatching chat"),
     ]);
 
@@ -314,7 +335,7 @@ describe("extractSessionMessages", () => {
         assistantRecord("2026-07-12T10:00:01.000Z", `assistant-${index}`),
       ),
     ];
-    writeSessionFile(dataDir, PEER_KEY, records);
+    writeSessionFile(dataDir, PEER_SESSION_KEY, records);
 
     const { messages, coverage } = extractSessionMessages(dataDir, {});
 
@@ -333,7 +354,7 @@ describe("extractSessionMessages", () => {
       ),
       userRecord("2026-07-12T11:00:00.000Z", "[telegram] 555 (11:00 AM):\nlatest retained"),
     ];
-    writeSessionFile(dataDir, PEER_KEY, records);
+    writeSessionFile(dataDir, PEER_SESSION_KEY, records);
 
     const { messages, coverage } = extractSessionMessages(dataDir, {});
 
@@ -363,7 +384,7 @@ describe("extractSessionMessages", () => {
         timestamp: Date.parse("2026-07-12T10:00:00.002Z"),
       },
     ];
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       provenanceRecord(originals),
       userRecord(
         "2026-07-12T10:00:00.002Z",
@@ -386,7 +407,7 @@ describe("extractSessionMessages", () => {
 
   it("preserves envelope body bytes and reports a header-shaped body as ambiguous", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord(
         "2026-07-12T10:00:00.000Z",
         "[telegram] 555 (10:00 AM):\n  first queued\n[telegram] 666 (10:01 AM):\nsecond queued  \n",
@@ -405,11 +426,6 @@ describe("extractSessionMessages", () => {
 
   it("extracts two exact Telegram messages from the real coalescer and persisted session layout", () => {
     const dataDir = tmpDataDir();
-    const key = parseFormattedSessionKey(PEER_KEY)!;
-    const sessionsBase = path.join(dataDir, "workspace", "sessions");
-    const sessionFile = sessionKeyToPath(key, sessionsBase);
-    fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
-    const sessionManager = SessionManager.open(sessionFile, path.dirname(sessionFile));
     const first: NormalizedMessage = {
       id: "11111111-1111-4111-8111-111111111111",
       channelId: "555",
@@ -432,22 +448,14 @@ describe("extractSessionMessages", () => {
     };
     const coalesced = coalesceMessages([first, second]);
 
-    sessionManager.appendCustomEntry(
-      INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
-      {
-        schemaVersion: 1,
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
+      provenanceRecord(coalesced.originalMessages, {
         batchId: coalesced.id,
-        chunkIndex: 0,
-        chunkCount: 1,
         recordedAt: second.timestamp,
-        messages: coalesced.originalMessages,
-      },
-    );
-    sessionManager.appendMessage({
-      role: "user",
-      content: [{
-        type: "text",
-        text: `[System context]\nreal producer context\n[End system context]\n\n${wrapInEnvelope(
+      }),
+      userRecord(
+        new Date(second.timestamp).toISOString(),
+        wrapInEnvelope(
           coalesced,
           {
             showProvider: true,
@@ -456,15 +464,11 @@ describe("extractSessionMessages", () => {
             showElapsed: true,
             elapsedMaxMs: 86_400_000,
           } as EnvelopeConfig,
-        )}`,
-      }],
-      timestamp: second.timestamp,
-    } as never);
-    sessionManager.appendMessage({
-      role: "assistant",
-      content: [{ type: "text", text: "acknowledged" }],
-      timestamp: second.timestamp + 1,
-    } as never);
+        ),
+        { preamble: "[System context]\nreal producer context\n[End system context]" },
+      ),
+      assistantRecord(new Date(second.timestamp + 1).toISOString(), "acknowledged"),
+    ]);
 
     const { messages, coverage } = extractSessionMessages(dataDir, { channel: "telegram" });
 
@@ -494,7 +498,7 @@ describe("extractSessionMessages", () => {
 
   it("reports malformed structured provenance and fail-closes its synthetic prompt", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       {
         type: "custom",
         customType: INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
@@ -516,7 +520,7 @@ describe("extractSessionMessages", () => {
 
   it("rejects structured provenance whose claimed chat differs from the session path", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       provenanceRecord([{
         id: "11111111-1111-4111-8111-111111111111",
         channelId: "other-chat",
@@ -561,7 +565,7 @@ describe("extractSessionMessages", () => {
         messages: [message],
       },
     };
-    writeSessionFile(dataDir, PEER_KEY, [marker, marker]);
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [marker, marker]);
 
     const { messages, coverage } = extractSessionMessages(dataDir, {});
 
@@ -580,7 +584,7 @@ describe("extractSessionMessages", () => {
       text: "one durable physical message",
       timestamp: Date.parse("2026-07-12T10:00:00.000Z"),
     };
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       provenanceRecord([message], {
         recordedAt: Date.parse("2026-07-12T10:00:01.000Z"),
       }),
@@ -611,7 +615,7 @@ describe("extractSessionMessages", () => {
       text: "first physical message",
       timestamp: Date.parse("2026-07-12T10:00:00.001Z"),
     };
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       provenanceRecord([first], {
         batchId: "22222222-2222-4222-8222-222222222222",
         chunkIndex: 0,
@@ -654,7 +658,7 @@ describe("extractSessionMessages", () => {
       chunkCount: 2,
       recordedAt: second.timestamp,
     };
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       provenanceRecord([first], { ...options, chunkIndex: 0 }),
       provenanceRecord([second], { ...options, chunkIndex: 1 }),
       userRecord(
@@ -692,7 +696,7 @@ describe("extractSessionMessages", () => {
       chunkCount: 3,
       recordedAt: messages[2]!.timestamp,
     };
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       ...messages.map((message, chunkIndex) =>
         provenanceRecord([message], { ...options, chunkIndex })),
       userRecord(
@@ -725,7 +729,7 @@ describe("extractSessionMessages", () => {
       chunkCount: 32,
       recordedAt: messages[31]!.timestamp,
     };
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       ...messages.map((message, chunkIndex) =>
         provenanceRecord([message], { ...options, chunkIndex })),
       userRecord(
@@ -765,7 +769,7 @@ describe("extractSessionMessages", () => {
       text: "dispatch fragment",
       timestamp: Date.parse("2026-07-12T10:00:00.002Z"),
     };
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       provenanceRecord([first], { batchId, chunkIndex: 0, chunkCount: 3 }),
       assistantRecord("2026-07-12T10:00:00.001Z", "setup work separates the copies"),
       provenanceRecord([last], { batchId, chunkIndex: 2, chunkCount: 3 }),
@@ -803,7 +807,7 @@ describe("extractSessionMessages", () => {
       timestamp: Date.parse("2026-07-12T10:00:00.002Z"),
     };
     const options = { batchId, chunkCount: 2, recordedAt: second.timestamp };
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       provenanceRecord([first], { ...options, chunkIndex: 0 }),
       provenanceRecord([first], { ...options, chunkIndex: 0 }),
       provenanceRecord([second], { ...options, chunkIndex: 1 }),
@@ -839,7 +843,7 @@ describe("extractSessionMessages", () => {
       text: "second complete message",
       timestamp: Date.parse("2026-07-12T10:00:00.002Z"),
     };
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       provenanceRecord([first], {
         batchId,
         chunkIndex: 0,
@@ -882,7 +886,7 @@ describe("extractSessionMessages", () => {
       text: "authoritative body",
       timestamp: Date.parse("2026-07-12T10:00:00.001Z"),
     };
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       provenanceRecord([original]),
       assistantRecord("2026-07-12T10:00:00.002Z", "separate occurrence"),
       provenanceRecord([{ ...original, text: "conflicting body" }]),
@@ -906,7 +910,7 @@ describe("extractSessionMessages", () => {
       text: `message-${index + 1}`,
       timestamp: baseTimestamp + index,
     }));
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       ...originals.map((original) => provenanceRecord([original])),
       provenanceRecord([{ ...originals[2]!, text: "conflicting newest body" }]),
     ]);
@@ -937,7 +941,7 @@ describe("extractSessionMessages", () => {
       text: `conflicted-${index + 1}`,
       timestamp: baseTimestamp + index + 100,
     }));
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       ...older.map((message) => provenanceRecord([message])),
       ...laterConflicts.map((message) => provenanceRecord([message])),
       ...laterConflicts.map((message) => provenanceRecord([{
@@ -955,7 +959,7 @@ describe("extractSessionMessages", () => {
 
   it("does not parse a boundary-prefix user record when older records were capped", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       assistantRecord("2026-07-12T09:59:59.000Z", "excluded older prefix"),
       userRecord(
         "2026-07-12T10:00:00.000Z",
@@ -975,7 +979,7 @@ describe("extractSessionMessages", () => {
 
   it("keeps boundary uncertainty across a corrupt prefix until the following user record", () => {
     const dataDir = tmpDataDir();
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, []);
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, []);
     const lines = [
       JSON.stringify(assistantRecord("2026-07-12T09:59:59.000Z", "excluded older prefix")),
       "{not-json",
@@ -1001,7 +1005,7 @@ describe("extractSessionMessages", () => {
 
   it("keeps boundary uncertainty across an oversized prefix until the following user record", () => {
     const dataDir = tmpDataDir();
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, []);
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, []);
     const lines = [
       JSON.stringify(assistantRecord("2026-07-12T09:59:59.000Z", "excluded older prefix")),
       "x".repeat(1_100_000),
@@ -1027,7 +1031,7 @@ describe("extractSessionMessages", () => {
 
   it("reads exact provenance from the sidecar when the main session tail exceeds the byte window", () => {
     const dataDir = tmpDataDir();
-    const key = parseFormattedSessionKey(PEER_KEY)!;
+    const key = PEER_SESSION_KEY;
     const sessionsBase = path.join(dataDir, "workspace", "sessions");
     const original = {
       id: "11111111-1111-4111-8111-111111111111",
@@ -1037,7 +1041,7 @@ describe("extractSessionMessages", () => {
       text: "exact sidecar body",
       timestamp: Date.parse("2026-07-12T10:00:00.001Z"),
     };
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord(
         "2026-07-12T10:00:00.001Z",
         `[telegram] sender-a (10:00 AM):\n${"x".repeat(17 * 1024 * 1024)}`,
@@ -1059,7 +1063,7 @@ describe("extractSessionMessages", () => {
 
   it("accumulates every appended provenance occurrence from an inbound ledger", () => {
     const dataDir = tmpDataDir();
-    const key = parseFormattedSessionKey(PEER_KEY)!;
+    const key = PEER_SESSION_KEY;
     const sessionsBase = path.join(dataDir, "workspace", "sessions");
     const originals = [
       {
@@ -1079,7 +1083,7 @@ describe("extractSessionMessages", () => {
         timestamp: Date.parse("2026-07-12T10:01:00.001Z"),
       },
     ];
-    writeSessionFile(dataDir, PEER_KEY, []);
+    writeSessionFile(dataDir, PEER_SESSION_KEY, []);
     const sessionPath = sessionKeyToPath(key, sessionsBase);
     const ledgerPath = `${sessionPath.slice(0, -".jsonl".length)}${INBOUND_MESSAGE_LEDGER_SUFFIX}`;
     fs.writeFileSync(
@@ -1100,7 +1104,7 @@ describe("extractSessionMessages", () => {
     const dataDir = tmpDataDir();
     const physicalTimestamp = Date.parse("2026-07-12T10:00:00.000Z");
     const recordedAt = Date.parse("2026-07-12T12:00:00.000Z");
-    writeSessionFile(dataDir, PEER_KEY, [provenanceRecord([{
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [provenanceRecord([{
       id: "11111111-1111-4111-8111-111111111111",
       channelId: "555",
       channelType: "telegram",
@@ -1120,7 +1124,7 @@ describe("extractSessionMessages", () => {
 
   it("never extracts a header quoted BEFORE the system-context close (memory-recall decoys)", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nreal message", {
         preamble:
           "[System context]\n[Relevant context from memory: the user once wrote]\n[telegram] 999 (9:00 AM):\nquoted decoy\nx\n[End system context]",
@@ -1147,7 +1151,7 @@ describe("extractSessionMessages", () => {
       "",
       message.content[0]!.text,
     ].join("\n");
-    writeSessionFile(dataDir, PEER_KEY, [record]);
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [record]);
 
     const { messages, coverage } = extractSessionMessages(dataDir, { channel: "telegram" });
 
@@ -1166,7 +1170,7 @@ describe("extractSessionMessages", () => {
       { source: "web_fetch", includeWarning: true },
     );
     const enrichedText = `${originalText}\n\n--- Linked Content ---\n\n${linkedContext}`;
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord(
         "2026-07-12T10:00:00.000Z",
         `[telegram] 555 (10:00 AM):\n${enrichedText}`,
@@ -1181,7 +1185,7 @@ describe("extractSessionMessages", () => {
   it("preserves a linked-content-looking suffix when its wrapper is incomplete", () => {
     const dataDir = tmpDataDir();
     const body = "literal user text\n\n--- Linked Content ---\n\n<<<UNTRUSTED_deadbeef>>>\ntruncated";
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord(
         "2026-07-12T10:00:00.000Z",
         `[telegram] 555 (10:00 AM):\n${body}`,
@@ -1200,7 +1204,7 @@ describe("extractSessionMessages", () => {
       includeWarning: true,
     });
     const body = `literal user text\n\n--- Linked Content ---\n\n${wrapped}`;
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", `[telegram] 555 (10:00 AM):\n${body}`),
     ]);
 
@@ -1216,7 +1220,7 @@ describe("extractSessionMessages", () => {
       source: "voice_transcription",
       includeWarning: true,
     });
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord(
         "2026-07-12T10:00:00.000Z",
         `[telegram] 555 (10:00 AM):\n${wrapped}`,
@@ -1232,7 +1236,7 @@ describe("extractSessionMessages", () => {
     const dataDir = tmpDataDir();
     const telegramToken = `12345678:${"t".repeat(35)}`;
     const bearerToken = `Bearer ${"b".repeat(24)}`;
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord(
         "2026-07-12T10:00:00.000Z",
         `[telegram] ${telegramToken} (${bearerToken}):\ncredential-shaped fallback`,
@@ -1248,7 +1252,7 @@ describe("extractSessionMessages", () => {
 
   it("counts a user record with no parsable envelope instead of dropping it silently", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       // Headerless user record — e.g. envelope.showProvider=false, or a system event payload.
       userRecord("2026-07-12T10:00:00.000Z", "no envelope header here"),
       userRecord("2026-07-12T11:00:00.000Z", "[telegram] 555 (11:00 AM):\nparsed fine"),
@@ -1263,7 +1267,7 @@ describe("extractSessionMessages", () => {
 
   it("excludes persisted compaction summaries from inbound-message parsing with honest coverage", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nreal user message"),
       // Exact durable shape written by llm-compaction.persistCompaction(): the
       // SDK storage role is `user`, but this is synthetic context, not a user-
@@ -1291,10 +1295,10 @@ describe("extractSessionMessages", () => {
 
   it("filters by envelope channel type", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nfrom telegram"),
     ]);
-    writeSessionFile(dataDir, "default:777:777:peer:777", [
+    writeSessionFile(dataDir, OTHER_PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:30:00.000Z", "[discord] 777 (10:30 AM):\nfrom discord"),
     ]);
 
@@ -1307,7 +1311,7 @@ describe("extractSessionMessages", () => {
 
   it("filters by the since/until epoch window (inclusive since, exclusive until)", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T09:00:00.000Z", "[telegram] 555 (9:00 AM):\ntoo early"),
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nat since — included"),
       userRecord("2026-07-12T11:00:00.000Z", "[telegram] 555 (11:00 AM):\ninside"),
@@ -1324,10 +1328,10 @@ describe("extractSessionMessages", () => {
 
   it("filters by chat id and by sender id", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nfrom 555"),
     ]);
-    writeSessionFile(dataDir, "default:777:777:peer:777", [
+    writeSessionFile(dataDir, OTHER_PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:30:00.000Z", "[telegram] 888 (10:30 AM):\nsender 888 in chat 777"),
     ]);
 
@@ -1343,14 +1347,14 @@ describe("extractSessionMessages", () => {
 
   it("scans every agent workspace tree and filters by agent id", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\ndefault-agent message"),
     ]);
     // A NAMED agent's tree lives at `<dataDir>/workspace-<agentId>/sessions/...`
     // (core resolveWorkspaceDir) — the extractor must sweep it too.
     writeSessionFile(
       dataDir,
-      "default:912:912:peer:912",
+      SUPPORT_SESSION_KEY,
       [userRecord("2026-07-12T10:30:00.000Z", "[telegram] 912 (10:30 AM):\nsupport-agent message")],
       "workspace-support",
     );
@@ -1366,18 +1370,18 @@ describe("extractSessionMessages", () => {
 
   it("classifies cron/sub-agent/heartbeat sessions and the system sender as internal and excludes them by default", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nreal user message"),
       // A queue-injected follow-up rides a REAL peer session with the reserved "system" sender.
       userRecord("2026-07-12T10:05:00.000Z", "[telegram] system (10:05 AM):\ninjected follow-up"),
     ]);
-    writeSessionFile(dataDir, "default:555:cron:job-1", [
+    writeSessionFile(dataDir, CRON_SESSION_KEY, [
       userRecord("2026-07-13T05:00:00.000Z", "[telegram] system (5:00 AM):\nscheduled prompt"),
     ]);
-    writeSessionFile(dataDir, "default:sub-agent-r1:sub-agent:r1", [
+    writeSessionFile(dataDir, SUB_AGENT_SESSION_KEY, [
       userRecord("2026-07-13T05:01:00.000Z", "[telegram] parent-agent (5:01 AM):\nsub-agent brief"),
     ]);
-    writeSessionFile(dataDir, "default:hb:heartbeat-default", [
+    writeSessionFile(dataDir, HEARTBEAT_SESSION_KEY, [
       userRecord("2026-07-13T06:00:00.000Z", "[telegram] system (6:00 AM):\nheartbeat prompt"),
     ]);
 
@@ -1390,7 +1394,7 @@ describe("extractSessionMessages", () => {
 
   it("includes internal-origin messages tagged origin=internal when includeInternal is set", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, "default:555:cron:job-1", [
+    writeSessionFile(dataDir, CRON_SESSION_KEY, [
       userRecord("2026-07-13T05:00:00.000Z", "[telegram] system (5:00 AM):\nscheduled prompt"),
     ]);
 
@@ -1404,7 +1408,7 @@ describe("extractSessionMessages", () => {
 
   it("classifies synthetic envelope channels as internal inside a real peer session", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nreal user message"),
       userRecord(
         "2026-07-12T10:01:00.000Z",
@@ -1430,7 +1434,7 @@ describe("extractSessionMessages", () => {
 
   it("keeps the LATEST N messages and flags truncation when limit is exceeded", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\noldest"),
       userRecord("2026-07-12T11:00:00.000Z", "[telegram] 555 (11:00 AM):\nmiddle"),
       userRecord("2026-07-12T12:00:00.000Z", "[telegram] 555 (12:00 PM):\nnewest"),
@@ -1444,13 +1448,13 @@ describe("extractSessionMessages", () => {
 
   it("keeps the globally latest bounded matches across separate session files", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, "default:111:111:peer:111", [
+    writeSessionFile(dataDir, PEER_111_SESSION_KEY, [
       userRecord("2026-07-12T12:00:00.000Z", "[telegram] 111 (12:00 PM):\nnewest"),
     ]);
-    writeSessionFile(dataDir, "default:222:222:peer:222", [
+    writeSessionFile(dataDir, PEER_222_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 222 (10:00 AM):\noldest"),
     ]);
-    writeSessionFile(dataDir, "default:333:333:peer:333", [
+    writeSessionFile(dataDir, PEER_333_SESSION_KEY, [
       userRecord("2026-07-12T11:00:00.000Z", "[telegram] 333 (11:00 AM):\nmiddle"),
     ]);
 
@@ -1462,7 +1466,7 @@ describe("extractSessionMessages", () => {
 
   it("counts corrupt nonblank session records separately from envelope parse failures", () => {
     const dataDir = tmpDataDir();
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nstill extracted"),
     ]);
     fs.appendFileSync(sessionFile, "{not-json\n", "utf-8");
@@ -1476,7 +1480,7 @@ describe("extractSessionMessages", () => {
 
   it("fail-closes a user prompt immediately after a corrupt ordinary record", () => {
     const dataDir = tmpDataDir();
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       { type: "session", version: 3, id: "s1", timestamp: "2026-07-12T09:59:00.000Z" },
     ]);
     fs.appendFileSync(sessionFile, "{corrupted-provenance-marker\n", "utf8");
@@ -1499,7 +1503,7 @@ describe("extractSessionMessages", () => {
 
   it("fail-closes a user prompt immediately after an oversized ordinary record", () => {
     const dataDir = tmpDataDir();
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       { type: "session", version: 3, id: "s1", timestamp: "2026-07-12T09:59:00.000Z" },
     ]);
     fs.appendFileSync(sessionFile, `${"x".repeat(1_100_000)}\n`, "utf8");
@@ -1522,7 +1526,7 @@ describe("extractSessionMessages", () => {
 
   it("bounds oversized JSONL records without hiding later messages", () => {
     const dataDir = tmpDataDir();
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nbefore oversized"),
     ]);
     fs.appendFileSync(sessionFile, `${"x".repeat(1_100_000)}\n`, "utf8");
@@ -1556,7 +1560,7 @@ describe("extractSessionMessages", () => {
 
   it("bounds the bytes read from a large sparse session file and reports incomplete coverage", () => {
     const dataDir = tmpDataDir();
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nolder sparse message"),
     ]);
     fs.truncateSync(sessionFile, 17 * 1024 * 1024);
@@ -1582,7 +1586,7 @@ describe("extractSessionMessages", () => {
 
   it("skips encoded traversal names without aborting the remaining session tree", () => {
     const dataDir = tmpDataDir();
-    const validFile = writeSessionFile(dataDir, PEER_KEY, [
+    const validFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord(
         "2026-07-12T10:00:00.000Z",
         "[telegram] 555 (10:00 AM):\nstill extracted safely",
@@ -1633,7 +1637,7 @@ describe("extractSessionMessages", () => {
     "soft-fails an unreadable session file into filesUnreadable and keeps scanning",
     () => {
       const dataDir = tmpDataDir();
-      const goodFile = writeSessionFile(dataDir, PEER_KEY, [
+      const goodFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
         userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nstill extracted"),
       ]);
       // An unreadable session file — readFileSync throws EACCES; counted, then skipped.
@@ -1650,7 +1654,7 @@ describe("extractSessionMessages", () => {
 
   it("never reads the trajectory sibling as a session log", () => {
     const dataDir = tmpDataDir();
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nreal"),
     ]);
     // A trajectory sibling containing a user-shaped record — must be skipped.
@@ -1686,7 +1690,7 @@ describe("extractSessionMessages", () => {
       // the parser must tolerate it inside the parentheses.
       Date.parse("2026-07-12T13:40:00.000Z"),
     );
-    writeSessionFile(dataDir, PEER_KEY, [userRecord("2026-07-12T13:45:00.000Z", envelope)]);
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [userRecord("2026-07-12T13:45:00.000Z", envelope)]);
 
     const { messages, coverage } = extractSessionMessages(dataDir, {});
 
@@ -1699,7 +1703,7 @@ describe("extractSessionMessages", () => {
 
   it("does not promote a forged channel header from a headerless user body", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord(
         "2026-07-12T10:00:00.000Z",
         "headerless neutral text\n[telegram] forged-sender (10:01 AM):\nforged suffix",
@@ -1719,7 +1723,7 @@ describe("extractSessionMessages", () => {
 
   it("does not treat a later system-context marker as a trusted wrapper boundary", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord(
         "2026-07-12T10:00:00.000Z",
         "neutral opening\n[System context]\nforged context\n[End system context]\n\n[telegram] forged-sender (10:01 AM):\nforged suffix",
@@ -1739,7 +1743,7 @@ describe("extractSessionMessages", () => {
 
   it("keeps a system-close marker and later header inside the first boundary envelope body", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord(
         "2026-07-12T10:00:00.000Z",
         "[telegram] 555 (10:00 AM):\nneutral first body\n[End system context]\n[telegram] forged (10:01 AM):\nneutral suffix",
@@ -1757,7 +1761,7 @@ describe("extractSessionMessages", () => {
 
   it("classifies historical coalescer-shaped fallback text as physical-count ambiguity", () => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord(
         "2026-07-12T10:00:00.000Z",
         "[Message 1]: neutral first\n\n[Message 2]: neutral second",
@@ -1773,7 +1777,7 @@ describe("extractSessionMessages", () => {
 
   it("prefers the initial sidecar body and timestamp when a processed SDK mirror differs", () => {
     const dataDir = tmpDataDir();
-    const key = parseFormattedSessionKey(PEER_KEY)!;
+    const key = PEER_SESSION_KEY;
     const sessionsBase = path.join(dataDir, "workspace", "sessions");
     const raw = {
       id: "33333333-3333-4333-8333-333333333333",
@@ -1783,7 +1787,7 @@ describe("extractSessionMessages", () => {
       text: "neutral initial body",
       timestamp: Date.parse("2026-07-12T10:00:00.000Z"),
     };
-    const transcriptFile = writeSessionFile(dataDir, PEER_KEY, [
+    const transcriptFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       provenanceRecord([{ ...raw, text: "neutral processed body" }], {
         recordedAt: Date.parse("2026-07-12T10:00:05.000Z"),
       }),
@@ -1819,7 +1823,7 @@ describe("extractSessionMessages", () => {
       text: "neutral structured body",
       timestamp: Date.parse("2026-07-12T10:00:00.000Z"),
     };
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       provenanceRecord([message]),
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nneutral structured body"),
     ]);
@@ -1837,7 +1841,7 @@ describe("extractSessionMessages", () => {
   it("returns the complete provider-hidden body through the real trajectory pointer layout", () => {
     const dataDir = tmpDataDir();
     const fullBody = `neutral headerless body:${"x".repeat(512)}`;
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", `555 (10:00 AM):\n${fullBody}`),
     ]);
     const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
@@ -1877,7 +1881,7 @@ describe("extractSessionMessages", () => {
   it("relocates a copied trajectory and excludes SDK-generated user placeholders", () => {
     const dataDir = tmpDataDir();
     const staleRoot = tmpDataDir();
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       { type: "session", version: 3, id: "session-neutral", timestamp: "2026-07-12T09:59:00.000Z" },
       userRecord(
         "2026-07-12T10:00:00.000Z",
@@ -1930,7 +1934,7 @@ describe("extractSessionMessages", () => {
       "[Relevant context from memory: literal user text (recorded 2026-07-11)]",
       "actual user-authored tail",
     ].join("\n");
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       { type: "session", version: 3, id: "session-neutral", timestamp: "2026-07-12T09:59:00.000Z" },
       userRecord("2026-07-12T10:00:00.000Z", body, { preamble: "" }),
     ]);
@@ -1957,7 +1961,7 @@ describe("extractSessionMessages", () => {
 
   it("keeps a headerless body unresolved when trajectory channels disagree", () => {
     const dataDir = tmpDataDir();
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "neutral headerless body"),
     ]);
     const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
@@ -1988,7 +1992,7 @@ describe("extractSessionMessages", () => {
 
   it("keeps a headerless body unresolved when one session-start channel id conflicts", () => {
     const dataDir = tmpDataDir();
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "neutral headerless body"),
     ]);
     const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
@@ -2019,7 +2023,7 @@ describe("extractSessionMessages", () => {
   it("rejects a trajectory pointer that escapes the data directory", () => {
     const dataDir = tmpDataDir();
     const outsideDir = tmpDataDir();
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "neutral headerless body"),
     ]);
     const trajectoryFile = path.join(outsideDir, "outside.trajectory.jsonl");
@@ -2050,7 +2054,7 @@ describe("extractSessionMessages", () => {
   it("accepts a trajectory pointer inside the configured override directory", () => {
     const dataDir = tmpDataDir();
     const trajectoryDir = tmpDataDir();
-    const sessionFile = writeSessionFile(dataDir, PEER_KEY, [
+    const sessionFile = writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "neutral headerless body"),
     ]);
     const trajectoryFile = path.join(trajectoryDir, "configured.trajectory.jsonl");
@@ -2092,7 +2096,7 @@ describe("extractSessionMessages", () => {
     [10_001, 10_001],
   ])("rejects invalid direct-library limit %s without scanning", (limit, reported) => {
     const dataDir = tmpDataDir();
-    writeSessionFile(dataDir, PEER_KEY, [
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [
       userRecord("2026-07-12T10:00:00.000Z", "[telegram] 555 (10:00 AM):\nnot returned"),
     ]);
 

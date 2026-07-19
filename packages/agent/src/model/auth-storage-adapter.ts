@@ -1,20 +1,163 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * AuthStorageAdapter -- bridges Comis's SecretManager to pi-coding-agent's AuthStorage.
+ * Credential store adapter -- bridges Comis's SecretManager to pi-ai's
+ * CredentialStore interface.
  *
- * Creates an in-memory AuthStorage populated with API keys from SecretManager.
- * No filesystem I/O; Comis's SecretManager remains the credential source of truth.
+ * Creates an in-memory ComisCredentialStore populated with API keys from
+ * SecretManager. No filesystem I/O; Comis's SecretManager remains the
+ * credential source of truth. pi's ModelRuntime resolves request auth live
+ * through the async CredentialStore methods on every dispatch, so the sync
+ * mutators here (set/setRuntimeApiKey/…) take effect on the very next
+ * request — the property the rotation adapter and OAuth pre-resolve rely on.
  *
  * @module
  */
 
-import { AuthStorage, InMemoryAuthStorageBackend } from "@earendil-works/pi-coding-agent";
+import type {
+  ApiKeyCredential,
+  Credential,
+  CredentialInfo,
+  CredentialStore,
+} from "@earendil-works/pi-ai";
+import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL, type SecretManager } from "@comis/core";
 
-/** Re-export pi-coding-agent's `AuthStorage` type so daemon consumers (which already
- *  depend on @comis/agent) can reference it without declaring @earendil-works/pi-coding-agent
- *  themselves — it is the return type of `createAuthStorageAdapter` below. */
-export type { AuthStorage } from "@earendil-works/pi-coding-agent";
+/** Options for ComisCredentialStore.getApiKey. */
+export interface GetApiKeyOptions {
+  /**
+   * When false, resolution stops at explicitly stored credentials (runtime
+   * override or stored key) — the ambient environment is never consulted.
+   * Defaults to true.
+   */
+  includeFallback?: boolean;
+}
+
+/**
+ * In-memory credential store implementing pi-ai's CredentialStore.
+ *
+ * Two layers, mirroring the resolution order Comis has always used:
+ * 1. runtime overrides (rotation hot-swaps, OAuth bearer pre-resolve,
+ *    keyless sentinel) — highest priority;
+ * 2. stored credentials (static SecretManager-backed keys, optionally
+ *    carrying provider-scoped env such as Cloudflare routing ids).
+ *
+ * `read()` surfaces the override-first view to pi, preserving the stored
+ * credential's `env` so provider routing values survive a key hot-swap.
+ */
+export class ComisCredentialStore implements CredentialStore {
+  private readonly data = new Map<string, Credential>();
+  private readonly runtimeOverrides = new Map<string, string>();
+  private readonly writeQueues = new Map<string, Promise<unknown>>();
+
+  // ---- Sync surface (Comis-internal writers) ----
+
+  get(provider: string): Credential | undefined {
+    return this.data.get(provider);
+  }
+
+  set(provider: string, credential: Credential): void {
+    this.data.set(provider, credential);
+  }
+
+  remove(provider: string): void {
+    this.data.delete(provider);
+  }
+
+  has(provider: string): boolean {
+    return this.data.has(provider) || this.runtimeOverrides.has(provider);
+  }
+
+  /** True when any credential resolves: override, stored, or ambient env. */
+  hasAuth(provider: string): boolean {
+    return this.has(provider) || getEnvApiKey(provider) !== undefined;
+  }
+
+  setRuntimeApiKey(provider: string, apiKey: string): void {
+    this.runtimeOverrides.set(provider, apiKey);
+  }
+
+  removeRuntimeApiKey(provider: string): void {
+    this.runtimeOverrides.delete(provider);
+  }
+
+  /** Provider-scoped env values from the stored credential (e.g. Cloudflare ids). */
+  getProviderEnv(provider: string): Record<string, string> | undefined {
+    const credential = this.data.get(provider);
+    return credential?.type === "api_key" ? credential.env : undefined;
+  }
+
+  /** Override-first stored key. Never consults the ambient environment. */
+  getStoredApiKey(provider: string): string | undefined {
+    const override = this.runtimeOverrides.get(provider);
+    if (override) return override;
+    const credential = this.data.get(provider);
+    return credential?.type === "api_key" ? credential.key : undefined;
+  }
+
+  /**
+   * Resolve the api key for a provider: runtime override → stored key →
+   * ambient environment (unless includeFallback is false).
+   *
+   * Async for call-site compatibility; resolution itself is synchronous.
+   */
+  async getApiKey(provider: string, options: GetApiKeyOptions = {}): Promise<string | undefined> {
+    const stored = this.getStoredApiKey(provider);
+    if (stored) return stored;
+    if (options.includeFallback === false) return undefined;
+    return getEnvApiKey(provider);
+  }
+
+  // ---- pi-ai CredentialStore ----
+
+  async read(providerId: string): Promise<Credential | undefined> {
+    const override = this.runtimeOverrides.get(providerId);
+    if (override !== undefined) {
+      const env = this.getProviderEnv(providerId);
+      const credential: ApiKeyCredential = { type: "api_key", key: override };
+      return env ? { ...credential, env } : credential;
+    }
+    return this.data.get(providerId);
+  }
+
+  async list(): Promise<readonly CredentialInfo[]> {
+    const infos = new Map<string, CredentialInfo>();
+    for (const [providerId, credential] of this.data) {
+      infos.set(providerId, { providerId, type: credential.type });
+    }
+    for (const providerId of this.runtimeOverrides.keys()) {
+      infos.set(providerId, { providerId, type: "api_key" });
+    }
+    return [...infos.values()];
+  }
+
+  modify(
+    providerId: string,
+    fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+  ): Promise<Credential | undefined> {
+    const previous = this.writeQueues.get(providerId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined) // a failed predecessor must not poison the queue
+      .then(async () => {
+        const updated = await fn(this.data.get(providerId));
+        if (updated !== undefined) this.data.set(providerId, updated);
+        return this.data.get(providerId);
+      });
+    this.writeQueues.set(providerId, next);
+    return next;
+  }
+
+  async delete(providerId: string): Promise<void> {
+    this.data.delete(providerId);
+    this.runtimeOverrides.delete(providerId);
+  }
+}
+
+/**
+ * Transition alias: daemon consumers historically referenced the pi
+ * `AuthStorage` type through @comis/agent. The store is Comis-owned now;
+ * the alias keeps those type references stable.
+ */
+export type AuthStorage = ComisCredentialStore;
 
 /**
  * Static provider credentials copied from SecretManager into pi AuthStorage.
@@ -268,15 +411,15 @@ export function syncCredentialsForSecretChange(
 }
 
 /**
- * Create an AuthStorage populated with API keys from SecretManager.
+ * Create a ComisCredentialStore populated with API keys from SecretManager.
  *
- * Uses InMemoryAuthStorageBackend (no filesystem writes). Iterates all
- * provider keys and copies the first available secret into AuthStorage.
- * Missing keys are silently skipped.
+ * In-memory only (no filesystem writes). Iterates all provider keys and
+ * copies the first available secret into the store. Missing keys are
+ * silently skipped.
  */
-export function createAuthStorageAdapter(options: AuthStorageAdapterOptions): AuthStorage {
+export function createAuthStorageAdapter(options: AuthStorageAdapterOptions): ComisCredentialStore {
   const { secretManager, additionalProviderKeys, customProviderEntries } = options;
-  const storage = AuthStorage.fromStorage(new InMemoryAuthStorageBackend());
+  const storage = new ComisCredentialStore();
 
   const allProviderKeys: Record<string, readonly string[]> = { ...PROVIDER_SECRET_KEYS };
   if (additionalProviderKeys) {

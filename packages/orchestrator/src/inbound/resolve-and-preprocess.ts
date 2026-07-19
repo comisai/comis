@@ -8,11 +8,8 @@
  * @module
  */
 
-import { toSafeErrorLogString, type NormalizedMessage, type SessionKey, type ChannelPort } from "@comis/core";
-// Session-key builder lives at packages/orchestrator/src/session-key/session-key-builder.ts.
-// Orchestrator's own TS build cannot import its own published package name, so the import
-// must use the relative path.
-import { buildScopedSessionKey } from "../session-key/session-key-builder.js";
+import { toSafeErrorLogString, type NormalizedMessage, type ResolvedTurnScope, type SessionKey, type ChannelPort } from "@comis/core";
+import { resolveInboundTurnIdentity } from "./inbound-turn-identity.js";
 import { emitObservationalEvent } from "../execution/execution-event-emitter.js";
 import type { AgentExecutor, InboundMessageProvenancePlan } from "@comis/agent";
 import { isBotMentioned, isGroupMessage, compressAttachments } from "@comis/channels";
@@ -37,6 +34,8 @@ export type ResolveAndPreprocessDeps = Pick<
   | "eventBus"
   | "messageRouter"
   | "sessionManager"
+  | "principalResolver"
+  | "getDmScope"
   | "createExecutor"
   | "persistInboundMessage"
   // Media preprocessing sub-phase:
@@ -55,6 +54,7 @@ export interface ResolveAndPreprocessReady {
   agentId: string;
   executor: AgentExecutor;
   sessionKey: SessionKey;
+  turnScope: ResolvedTurnScope;
   /** Exact occurrence persisted before preprocessing and reused by SDK mirrors. */
   inboundProvenancePlan: InboundMessageProvenancePlan;
   /** Message with content enrichment projected onto authoritative ingress fields. */
@@ -68,6 +68,7 @@ export type ResolveAndPreprocessResult =
       kind: "no_executor";
       agentId: string;
       sessionKey: SessionKey;
+      turnScope: ResolvedTurnScope;
     };
 
 interface VisionImageContent {
@@ -171,21 +172,32 @@ export async function resolveAndPreprocess(
     guildId: msg.metadata?.guildId as string | undefined,
   });
 
-  // 2. senderId is used directly (no cross-platform identity resolution)
+  // 2. Normalize the authenticated endpoint and platform subject exactly once,
+  // then resolve principal and routing policy into the turn authority.
   const effectiveMsg = msg;
-
-  // 3. Build scoped session key (defaults to per-channel-peer DM scope).
-  //    threadId is sourced from a channel-specific metadata key
-  //    (`msteamsThreadId`) rather than the generic thread extractor, so only
-  //    that channel's threads split into separate sessions — every other
-  //    channel stays at threadId:undefined and keeps a thread-less key.
-  const sessionKey = buildScopedSessionKey({
-    msg: effectiveMsg,
-    agentId,
-    adapterChannelId: adapter.channelId,
+  const identity = resolveInboundTurnIdentity({
     tenantId: deps.tenantId,
-    threadId: effectiveMsg.metadata.msteamsThreadId as string | undefined,
+    agentId,
+    adapter,
+    message: effectiveMsg,
+    principalResolver: deps.principalResolver,
+    dmScope: deps.getDmScope(agentId),
   });
+  if (!identity.ok) {
+    deps.logger.warn(
+      {
+        step: "identity-resolution",
+        agentId,
+        channelType: adapter.channelType,
+        hint: "Verify the authenticated channel instance, principal mappings, and per-agent direct-message scope configuration.",
+        errorKind: identity.error.errorKind,
+      },
+      "Inbound turn identity resolution failed",
+    );
+    return Promise.reject(identity.error);
+  }
+  const sessionKey = identity.value.displaySessionKey;
+  const turnScope = identity.value.turnScope;
 
   // 4. Commit the physical inbound before any fallible executor lookup,
   // media, gate, or queue work. Queue-coalesced messages retain their exact
@@ -215,11 +227,24 @@ export async function resolveAndPreprocess(
   const executor = deps.createExecutor(agentId);
   if (!executor) {
     deps.logger.warn({ agentId, channelId: msg.channelId, hint: "Ensure agent executor is registered before processing messages", errorKind: "config" as const }, "No executor configured for agent");
-    return { kind: "no_executor", agentId, sessionKey };
+    return { kind: "no_executor", agentId, sessionKey, turnScope };
   }
 
   // Load or create session
-  deps.sessionManager.loadOrCreate(sessionKey);
+  const sessionLoad = deps.sessionManager.loadOrCreate(turnScope.conversation);
+  if (!sessionLoad.ok) {
+    deps.logger.error(
+      {
+        step: "session-load",
+        agentId,
+        channelType: adapter.channelType,
+        hint: "Inspect session database integrity and restore storage availability before retrying the inbound message.",
+        errorKind: sessionLoad.error.errorKind,
+      },
+      "Inbound session load failed",
+    );
+    return Promise.reject(sessionLoad.error);
+  }
 
   // ===== Phase 1B: Audio preflight + media preprocessing =====
 
@@ -274,7 +299,10 @@ export async function resolveAndPreprocess(
   // NOTE: processedMsg already set above (either original msg or preflight-enriched)
   if (deps.preprocessMessage) {
     try {
-      const preprocessed = await deps.preprocessMessage(structuredClone(processedMsg));
+      const preprocessed = await deps.preprocessMessage(
+        structuredClone(processedMsg),
+        turnScope,
+      );
       processedMsg = projectContentEnrichment(
         processedMsg,
         preprocessed,
@@ -309,6 +337,7 @@ export async function resolveAndPreprocess(
     agentId,
     executor,
     sessionKey,
+    turnScope,
     processedMsg,
     inboundProvenancePlan: persisted.value,
   };

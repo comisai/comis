@@ -19,6 +19,7 @@
  */
 
 import type { z } from "zod";
+import { err, ok, type Result } from "@comis/shared";
 
 import { PerAgentConfigSchema, RoutingConfigSchema } from "./schema-agent/index.js";
 import { ApprovalsConfigSchema } from "./schema-approvals.js";
@@ -110,6 +111,10 @@ export interface SectionRegistryEntry {
   readonly schemaSerializable: boolean;
   /** True if section appears in the field-metadata view (20 sections). */
   readonly fieldMetadataVisible: boolean;
+  /** Ownership is explicit for dynamically linked contribution sections. */
+  readonly owner?:
+    | { readonly kind: "kernel" }
+    | { readonly kind: "contribution"; readonly contributionId: string };
   /**
    * Set on the 3 top-level fully-managed sections (providers, channels,
    * agents). Sub-path redirects (integrations.mcp.servers, gateway.tokens)
@@ -321,6 +326,54 @@ export const SECTION_REGISTRY: Readonly<Record<string, SectionRegistryEntry>> = 
     fieldMetadataVisible: true,
   },
 });
+
+export interface ContributionSectionRegistration {
+  readonly contributionId: string;
+  readonly namespace: string;
+  readonly schema: z.ZodType;
+  readonly schemaSerializable: boolean;
+  readonly fieldMetadataVisible: boolean;
+}
+
+export type SectionRegistrationError =
+  | { readonly kind: "invalid_contribution_id"; readonly contributionId: string }
+  | { readonly kind: "invalid_namespace"; readonly namespace: string }
+  | { readonly kind: "namespace_collision"; readonly namespace: string };
+
+const CONTRIBUTION_ID_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z][a-z0-9]*)+$/u;
+const CONFIG_NAMESPACE_PATTERN = /^[a-z][a-zA-Z0-9]*$/u;
+
+/** Compose linked contribution config sections without mutating kernel state. */
+export function registerContributionSections(
+  registrations: readonly ContributionSectionRegistration[],
+  base: Readonly<Record<string, SectionRegistryEntry>> = SECTION_REGISTRY,
+): Result<Readonly<Record<string, SectionRegistryEntry>>, SectionRegistrationError> {
+  const staged: Record<string, SectionRegistryEntry> = { ...base };
+  for (const registration of registrations) {
+    if (!CONTRIBUTION_ID_PATTERN.test(registration.contributionId)) {
+      return err({
+        kind: "invalid_contribution_id",
+        contributionId: registration.contributionId,
+      });
+    }
+    if (!CONFIG_NAMESPACE_PATTERN.test(registration.namespace)) {
+      return err({ kind: "invalid_namespace", namespace: registration.namespace });
+    }
+    if (staged[registration.namespace] !== undefined) {
+      return err({ kind: "namespace_collision", namespace: registration.namespace });
+    }
+    staged[registration.namespace] = {
+      schema: registration.schema,
+      schemaSerializable: registration.schemaSerializable,
+      fieldMetadataVisible: registration.fieldMetadataVisible,
+      owner: {
+        kind: "contribution",
+        contributionId: registration.contributionId,
+      },
+    };
+  }
+  return ok(Object.freeze(staged));
+}
 
 /**
  * Sub-prefix managed redirects — keys are NOT top-level section names.

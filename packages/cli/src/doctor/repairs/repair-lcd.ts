@@ -65,7 +65,7 @@ import { renderMessageFtsText } from "@comis/memory";
  * self-contained tables (SQLite errors with "content= option required"). Instead:
  *   1. Delete all existing FTS shadow rows
  *   2. Re-derive content from lcd_message_parts using renderMessageFtsText
- *   3. Re-insert one FTS row per message (rowid, content, conversation_id, agent_id, message_id)
+ *   3. Re-insert one FTS row per message (rowid, content, conversation_ref, agent_id, message_id)
  *
  * This mirrors the adapter populate path in lcd-store.ts (the createLcdStore append
  * transaction) exactly — same render fn, same columns, same rowid linkage.
@@ -75,7 +75,7 @@ import { renderMessageFtsText } from "@comis/memory";
  * pre-normalization text). Each twin is delete-all-then-repopulated with
  * `normalizeForSearch(...)` of exactly what the populate path indexes — the SAME
  * renderMessageFtsText output for messages, the raw content column for
- * summaries/memories — at the base row's rowid, copying the base row's R4 scope
+ * summaries/memories — at the base row's rowid, copying the base row's scope
  * columns verbatim. This makes pre-existing history (rows written before the
  * twins' populate path indexed them) trigram-searchable, operator-run. Each twin is independently
  * guarded on its own existence (tableExists), so a trigram-less host skips them all
@@ -141,16 +141,16 @@ export async function repairFtsDrift(
 
       // Walk every lcd_message and re-render its parts into the self-contained index
       const messages = db
-        .prepare("SELECT rowid, id, conversation_id, agent_id FROM lcd_messages ORDER BY rowid")
-        .all() as Array<{ rowid: number; id: string; conversation_id: string; agent_id: string }>;
+        .prepare("SELECT rowid, id, conversation_ref, agent_id FROM lcd_messages ORDER BY rowid")
+        .all() as Array<{ rowid: number; id: string; conversation_ref: string; agent_id: string }>;
 
       const insertFts = db.prepare(
-        "INSERT INTO lcd_messages_fts(rowid, content, conversation_id, agent_id, message_id) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO lcd_messages_fts(rowid, content, conversation_ref, agent_id, message_id) VALUES (?, ?, ?, ?, ?)",
       );
 
       for (const msg of messages) {
         const content = renderMessageContent(msg.id);
-        insertFts.run(msg.rowid, content, msg.conversation_id, msg.agent_id, msg.id);
+        insertFts.run(msg.rowid, content, msg.conversation_ref, msg.agent_id, msg.id);
       }
 
       actions.push(
@@ -169,23 +169,23 @@ export async function repairFtsDrift(
 
     // ── lcd_messages_fts_tri (SELF-CONTAINED TRIGRAM TWIN — NORMALIZED) ─────
     // Backfill the trigram twin from the base rows with NORMALIZED, re-rendered
-    // text at the base rowid, copying R4 scope columns verbatim. Indexes EXACTLY
+    // text at the base rowid, copying scope columns verbatim. Indexes exactly
     // what the populate path indexes: normalizeForSearch(renderMessageFtsText(parts)).
     // 'rebuild' is forbidden (self-contained) — it would re-index raw text.
     if (tableExists("lcd_messages_fts_tri")) {
       db.prepare("DELETE FROM lcd_messages_fts_tri").run();
 
       const messages = db
-        .prepare("SELECT rowid, id, conversation_id, agent_id FROM lcd_messages ORDER BY rowid")
-        .all() as Array<{ rowid: number; id: string; conversation_id: string; agent_id: string }>;
+        .prepare("SELECT rowid, id, conversation_ref, agent_id FROM lcd_messages ORDER BY rowid")
+        .all() as Array<{ rowid: number; id: string; conversation_ref: string; agent_id: string }>;
 
       const insertTri = db.prepare(
-        "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_id, agent_id, message_id) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO lcd_messages_fts_tri(rowid, content, conversation_ref, agent_id, message_id) VALUES (?, ?, ?, ?, ?)",
       );
 
       for (const msg of messages) {
         const content = normalizeForSearch(renderMessageContent(msg.id));
-        insertTri.run(msg.rowid, content, msg.conversation_id, msg.agent_id, msg.id);
+        insertTri.run(msg.rowid, content, msg.conversation_ref, msg.agent_id, msg.id);
       }
 
       actions.push(
@@ -194,32 +194,32 @@ export async function repairFtsDrift(
     }
 
     // ── lcd_summaries_fts_tri (SELF-CONTAINED TRIGRAM TWIN — NORMALIZED) ────
-    // Backfill from lcd_summaries.content normalized, at the base rowid, R4 scope
+    // Backfill from lcd_summaries.content normalized, at the base rowid, scope
     // copied verbatim.
     if (tableExists("lcd_summaries_fts_tri")) {
       db.prepare("DELETE FROM lcd_summaries_fts_tri").run();
 
       const summaries = db
         .prepare(
-          "SELECT rowid, summary_id, conversation_id, agent_id, content FROM lcd_summaries ORDER BY rowid",
+          "SELECT rowid, summary_id, conversation_ref, agent_id, content FROM lcd_summaries ORDER BY rowid",
         )
         .all() as Array<{
         rowid: number;
         summary_id: string;
-        conversation_id: string;
+        conversation_ref: string;
         agent_id: string;
         content: string;
       }>;
 
       const insertTri = db.prepare(
-        "INSERT INTO lcd_summaries_fts_tri(rowid, content, conversation_id, agent_id, summary_id) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO lcd_summaries_fts_tri(rowid, content, conversation_ref, agent_id, summary_id) VALUES (?, ?, ?, ?, ?)",
       );
 
       for (const sum of summaries) {
         insertTri.run(
           sum.rowid,
           normalizeForSearch(sum.content),
-          sum.conversation_id,
+          sum.conversation_ref,
           sum.agent_id,
           sum.summary_id,
         );
@@ -232,21 +232,32 @@ export async function repairFtsDrift(
 
     // ── memory_fts_tri (SELF-CONTAINED TRIGRAM TWIN — NORMALIZED, rowid lane) ─
     // Backfill from memories.content normalized, at the memories rowid. The LTM
-    // trigram lane carries NO scope columns — it scopes via a rowid-JOIN to
-    // memories plus post-fusion tenant/agent filters.
+    // trigram lane carries the same indexed authority token as live writes, so
+    // repair preserves pre-ranking tenant-agent scoping.
     if (tableExists("memory_fts_tri")) {
       db.prepare("DELETE FROM memory_fts_tri").run();
 
       const memories = db
-        .prepare("SELECT rowid, content FROM memories ORDER BY rowid")
-        .all() as Array<{ rowid: number; content: string }>;
+        .prepare(
+          `SELECT m.rowid, m.content, 'authority_' || p.partition_id AS authority_token
+           FROM memories m
+           JOIN memory_authority_partitions p
+             ON p.tenant_id = m.tenant_id AND p.agent_id = m.agent_id
+            AND p.visibility_key = CASE m.visibility
+              WHEN 'conversation' THEN 'conversation:' || m.conversation_ref
+              WHEN 'principal' THEN 'principal:' || m.principal_id
+              ELSE 'agent-shared'
+            END
+           ORDER BY m.rowid`,
+        )
+        .all() as Array<{ rowid: number; content: string; authority_token: string }>;
 
       const insertTri = db.prepare(
-        "INSERT INTO memory_fts_tri(rowid, content) VALUES (?, ?)",
+        "INSERT INTO memory_fts_tri(rowid, content, authority_token) VALUES (?, ?, ?)",
       );
 
       for (const mem of memories) {
-        insertTri.run(mem.rowid, normalizeForSearch(mem.content));
+        insertTri.run(mem.rowid, normalizeForSearch(mem.content), mem.authority_token);
       }
 
       actions.push(
@@ -278,13 +289,13 @@ function safeParseJson(raw: string): unknown {
  *   - ref_kind = 'summary' AND ref_id has no matching lcd_summaries.summary_id
  *   - ref_kind = 'message' AND ref_id has no matching lcd_messages.id
  *
- * An optional conversationId scope can narrow the repair to one conversation.
+ * An optional conversationRef scope can narrow the repair to one conversation.
  *
  * Reads lcd_messages to verify ref existence only (SELECT). NEVER writes to it.
  */
 export async function repairContextItems(
   db: Database.Database,
-  scope?: { conversationId?: string },
+  scope?: { conversationRef?: string },
 ): Promise<Result<string[], Error>> {
   const actions: string[] = [];
   try {
@@ -293,10 +304,10 @@ export async function repairContextItems(
       "DELETE FROM lcd_context_items" +
       " WHERE ref_kind='summary'" +
       " AND ref_id NOT IN (SELECT summary_id FROM lcd_summaries)" +
-      (scope?.conversationId ? " AND conversation_id=?" : "");
+      (scope?.conversationRef ? " AND conversation_ref=?" : "");
 
-    const summaryDangling = scope?.conversationId
-      ? db.prepare(summaryDeleteSql).run(scope.conversationId)
+    const summaryDangling = scope?.conversationRef
+      ? db.prepare(summaryDeleteSql).run(scope.conversationRef)
       : db.prepare(summaryDeleteSql).run();
 
     if (summaryDangling.changes > 0) {
@@ -311,10 +322,10 @@ export async function repairContextItems(
       "DELETE FROM lcd_context_items" +
       " WHERE ref_kind='message'" +
       " AND ref_id NOT IN (SELECT id FROM lcd_messages)" +
-      (scope?.conversationId ? " AND conversation_id=?" : "");
+      (scope?.conversationRef ? " AND conversation_ref=?" : "");
 
-    const messageDangling = scope?.conversationId
-      ? db.prepare(messageDeleteSql).run(scope.conversationId)
+    const messageDangling = scope?.conversationRef
+      ? db.prepare(messageDeleteSql).run(scope.conversationRef)
       : db.prepare(messageDeleteSql).run();
 
     if (messageDangling.changes > 0) {

@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ok } from "@comis/shared";
+import { conversationScopeToSessionKey } from "@comis/core";
 import { createSystemEventQueue } from "../system-events/system-event-queue.js";
 import { createAgentHeartbeatSource } from "./agent-heartbeat-source.js";
 import type { AgentHeartbeatSourceDeps } from "./agent-heartbeat-source.js";
@@ -43,6 +44,38 @@ function makeLogger() {
 
 function makeEventBus() {
   return { emit: vi.fn(), on: vi.fn(), off: vi.fn() } as any;
+}
+
+function resolveTestInternalIdentity(input: {
+  tenantId: string;
+  agentId: string;
+  originKind: "scheduler";
+  instanceId: string;
+  conversationId: string;
+  principalId: string;
+}) {
+  const endpoint = {
+    channelType: input.originKind,
+    channelInstanceId: input.instanceId,
+    conversationId: input.conversationId,
+    conversationKind: "direct" as const,
+  };
+  const turnScope = {
+    conversation: {
+      tenantId: input.tenantId,
+      agentId: input.agentId,
+      partition: {
+        kind: "endpoint-conversation-principal" as const,
+        endpoint,
+        principalId: input.principalId,
+      },
+    },
+    principal: { principalId: input.principalId },
+    endpoint,
+  };
+  const display = conversationScopeToSessionKey(turnScope.conversation);
+  if (!display.ok) return display;
+  return ok({ turnScope, displaySessionKey: display.value });
 }
 
 function makeExecutor(response: string) {
@@ -141,6 +174,7 @@ describe("Integration: heartbeat subsystem wiring", () => {
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       getEffectiveConfig: vi.fn().mockReturnValue(config),
       getAgentConfig: vi.fn().mockReturnValue({ model: "claude-sonnet", tenantId: "default" }),
+      resolveInternalTurnIdentity: resolveTestInternalIdentity,
       resolveModel: makeResolveModel(),
       checkFileGate: vi.fn().mockResolvedValue(false), // non-empty
       systemEventQueue: queue,
@@ -200,6 +234,7 @@ describe("Integration: heartbeat subsystem wiring", () => {
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       getEffectiveConfig: vi.fn().mockReturnValue(config),
       getAgentConfig: vi.fn().mockReturnValue({ model: "claude-sonnet", tenantId: "default" }),
+      resolveInternalTurnIdentity: resolveTestInternalIdentity,
       checkFileGate: vi.fn().mockResolvedValue(false),
       systemEventQueue: queue,
       deliveryBridge,
@@ -261,6 +296,7 @@ describe("Integration: heartbeat subsystem wiring", () => {
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       getEffectiveConfig: vi.fn().mockReturnValue(config),
       getAgentConfig: vi.fn().mockReturnValue({ model: "claude-sonnet", tenantId: "default" }),
+      resolveInternalTurnIdentity: resolveTestInternalIdentity,
       resolveModel: makeResolveModel(),
       checkFileGate: vi.fn().mockResolvedValue(true), // would skip if interval, but cron bypasses
       systemEventQueue: queue,
@@ -270,9 +306,8 @@ describe("Integration: heartbeat subsystem wiring", () => {
 
     const source = createAgentHeartbeatSource(sourceDeps);
 
-    // Enqueue a cron event BEFORE calling onTick -- use the session key that
-    // resolveHeartbeatSessionKey will produce for this agent+config
-    const sessionKey = "default:heartbeat:chat-1";
+    // Enqueue a cron event under the stable explicit scheduler identity.
+    const sessionKey = "default:agent:agent-1:scheduler-heartbeat-agent-1:scheduler:heartbeat:agent-1:peer:scheduler-heartbeat-agent-1";
     queue.enqueue("Backup completed", {
       contextKey: "cron:backup:summary",
       sessionKey,
@@ -321,6 +356,7 @@ describe("Integration: heartbeat subsystem wiring", () => {
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       getEffectiveConfig: vi.fn().mockReturnValue(config),
       getAgentConfig: vi.fn().mockReturnValue({ model: "claude-sonnet", tenantId: "default" }),
+      resolveInternalTurnIdentity: resolveTestInternalIdentity,
       resolveModel: makeResolveModel(),
       checkFileGate: vi.fn().mockResolvedValue(true), // empty
       systemEventQueue: queue,
@@ -338,6 +374,7 @@ describe("Integration: heartbeat subsystem wiring", () => {
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       getEffectiveConfig: vi.fn().mockReturnValue(config),
       getAgentConfig: vi.fn().mockReturnValue({ model: "claude-sonnet", tenantId: "default" }),
+      resolveInternalTurnIdentity: resolveTestInternalIdentity,
       resolveModel: makeResolveModel(),
       checkFileGate: vi.fn().mockResolvedValue(false), // non-empty
       systemEventQueue: queue,
@@ -378,6 +415,7 @@ describe("Integration: heartbeat subsystem wiring", () => {
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       getEffectiveConfig: vi.fn().mockReturnValue(config),
       getAgentConfig: vi.fn().mockReturnValue({ model: "claude-sonnet", tenantId: "default" }),
+      resolveInternalTurnIdentity: resolveTestInternalIdentity,
       resolveModel: makeResolveModel(),
       checkFileGate: vi.fn().mockResolvedValue(false), // non-empty
       systemEventQueue: queue,
@@ -512,6 +550,7 @@ describe("Integration: heartbeat subsystem wiring", () => {
         agentId === "fast-agent" ? fastConfig : slowConfig,
       ),
       getAgentConfig: vi.fn().mockReturnValue({ model: "claude-sonnet", tenantId: "default" }),
+      resolveInternalTurnIdentity: resolveTestInternalIdentity,
       resolveModel: makeResolveModel(),
       checkFileGate: vi.fn().mockResolvedValue(false), // non-empty
       systemEventQueue: queue,

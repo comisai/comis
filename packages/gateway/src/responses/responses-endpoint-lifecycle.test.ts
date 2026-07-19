@@ -79,6 +79,8 @@ function successfulResult(): Record<string, unknown> {
 
 function createDeps(overrides: Record<string, unknown> = {}): ResponsesEndpointDeps {
   return {
+    tenantId: "tenant-a",
+    agentId: "agent-a",
     executeAgent: vi.fn().mockResolvedValue(successfulResult()),
     logger: { info: vi.fn(), error: vi.fn() },
     ...overrides,
@@ -370,7 +372,7 @@ describe("OpenResponses lifecycle diagnostics", () => {
     expect(calls[0]?.[1]).toMatchObject({
       channelType: "responses",
       agentId: "agent-1",
-      sessionKey: expect.stringMatching(/^tenant:responses-api:responses:peer:resp_/),
+      sessionKey: expect.stringMatching(/^tenant:agent:agent-1:responses-api:responses:peer:resp_/),
       traceId: requestedTraceId,
       status: "error",
       failureStage: "execution",

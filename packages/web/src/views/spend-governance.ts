@@ -230,7 +230,7 @@ export class IcSpendGovernanceView extends LitElement {
 
     try {
       // The 179-04 LIVE spend snapshot (locked A1 — the kill-switch value).
-      const raw = await rpc.call<{ snapshot?: Record<string, unknown> }>("obs.spend.snapshot", {});
+      const raw = await rpc.call("obs.spend.snapshot", {});
       this._snapshot = this._narrowSnapshot(raw?.snapshot ?? {});
       this._loadState = "loaded";
     } catch {

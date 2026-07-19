@@ -457,8 +457,7 @@ describe("setupSingleAgent GBNF compat threading (production wiring guard)", () 
 });
 
 // ---------------------------------------------------------------------------
-// Per-agent effective rag.rerank.enabled precedence +
-// the modelPresent threading daemon -> registry -> types -> runtime (Pitfall 4).
+// Per-agent rerank mode resolution and model-presence threading.
 // ---------------------------------------------------------------------------
 
 describe("setupSingleAgent rerank auto-on precedence", () => {
@@ -485,48 +484,30 @@ describe("setupSingleAgent rerank auto-on precedence", () => {
     );
   });
 
-  it("computes effectiveConfig.rag.rerank.enabled via resolveEffectiveRerank (spread preserves siblings)", () => {
+  it("computes effectiveConfig.rag.rerank.mode while preserving sibling settings", () => {
     const fnStart = source.indexOf("export async function setupSingleAgent(");
     expect(fnStart).toBeGreaterThan(-1);
     const fnBody = source.slice(fnStart);
-    // The rag spread must nest correctly so maxCandidates/minResults/timeoutMs
-    // survive and only `enabled` is overridden by the precedence call.
-    expect(fnBody).toContain(
-      "rerank: { ...agentConfig.rag.rerank, enabled: resolveEffectiveRerank(",
-    );
+    expect(fnBody).toContain("...agentConfig.rag.rerank");
+    expect(fnBody).toContain('mode: rerankEnabled ? "on" as const : "off" as const');
   });
 
-  it("feeds resolveEffectiveRerank the GENUINE raw tri-state signal, not the zod-defaulted parse", () => {
-    // The precedence MUST read the RAW (pre-Zod-default) rerank value.
-    // The parsed agentConfig.rag.rerank.enabled is ALWAYS a concrete boolean
-    // (it carries a `.default()` — default-ON), so reading it would
-    // erase the unset signal and make the zero-download auto-on precedence impossible.
-    // The raw value comes from the explicit `rawRerankEnabled` arg (hot-add)
-    // else the daemon-wide map on the container (boot path). The OLD broken code read
-    // `rawAgentConfig.rag?.rerank?.enabled` (a misnomer — that object was already parsed);
-    // assert that dead pattern is GONE.
+  it("feeds resolveEffectiveRerank the validated tri-state mode", () => {
     const fnStart = source.indexOf("export async function setupSingleAgent(");
     const fnBody = source.slice(fnStart);
-    expect(fnBody).not.toContain("rawAgentConfig.rag?.rerank?.enabled");
-    // The resolved raw value (rawRerank) is what feeds resolveEffectiveRerank.
-    const callStart = fnBody.indexOf("enabled: resolveEffectiveRerank(");
-    const callSlice = fnBody.slice(callStart, callStart + 80);
-    expect(callSlice).toContain("rawRerank");
-    expect(callSlice).toContain("deps.rerankerModelPresent");
-    // rawRerank resolves from the explicit arg first, then the container raw map.
-    expect(fnBody).toContain("rawRerankEnabled !== undefined");
-    expect(fnBody).toContain("container.rawAgentRerankEnabled?.get(agentId)");
+    expect(fnBody).toContain("agentConfig.rag.rerank.mode");
+    expect(fnBody).toContain("deps.rerankerModelPresent ?? false");
+    expect(fnBody).not.toContain("rawAgentRerankEnabled");
   });
 
-  it("threads the raw rerank signal from the boot loop and hot-add into setupSingleAgent (one source)", () => {
-    // The boot loop passes container.rawAgentRerankEnabled.get(agentId) as the 4th arg.
-    expect(registrySource).toContain("container.rawAgentRerankEnabled?.get(agentId)");
-    // The build gate (setup-memory) reads the SAME raw map, so the two gates can't desync.
+  it("uses schema modes in both the agent runtime and reranker build gate", () => {
+    expect(registrySource).not.toContain("rawAgentRerankEnabled");
     const memorySource = readFileSync(
       join(__dirname, "..", "setup-memory.ts"),
       "utf-8",
     );
-    expect(memorySource).toContain("container.rawAgentRerankEnabled");
+    expect(memorySource).toContain('mode === "on"');
+    expect(memorySource).toContain('mode === "auto"');
   });
 
   it("still writes the effective config back to container.config.agents[agentId] (downstream contract)", () => {

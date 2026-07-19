@@ -13,14 +13,16 @@ import { describe, it, expect, vi } from "vitest";
 import type {
   ChannelPort,
   NormalizedMessage,
+  ResolvedTurnScope,
   SessionKey,
   DeliveryService,
 } from "@comis/core";
-import { TypedEventBus } from "@comis/core";
+import { createConversationRef, TypedEventBus } from "@comis/core";
 import { ok } from "@comis/shared";
 
 import { evaluateInboundGate } from "./inbound-gate.js";
 import type { GateDeps } from "./inbound-gate.js";
+import { createDeterministicLocalization } from "../localization/deterministic-localization.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -61,11 +63,35 @@ function makeMsg(overrides?: Partial<NormalizedMessage>): NormalizedMessage {
 function makeSessionKey(): SessionKey {
   return {
     tenantId: "default",
+    agentId: "agent-1",
     userId: "user-1",
     channelId: "chat-1",
     peerId: "user-1",
   };
 }
+
+const TURN_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "adapter-1",
+  conversationId: "chat-1",
+  conversationKind: "direct" as const,
+};
+const TURN_SCOPE: ResolvedTurnScope = {
+  conversation: {
+    tenantId: "default",
+    agentId: "agent-1",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: TURN_ENDPOINT,
+      principalId: "user-1",
+    },
+  },
+  principal: { principalId: "user-1" },
+  endpoint: TURN_ENDPOINT,
+};
+const turnConversationRef = createConversationRef(TURN_SCOPE.conversation);
+if (!turnConversationRef.ok) throw turnConversationRef.error;
+const TURN_CONVERSATION_REF = turnConversationRef.value;
 
 function makeFakeDeliveryService(): DeliveryService {
   return {
@@ -119,13 +145,14 @@ function makeDeps(overrides?: Partial<GateDeps>): GateDeps {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     logger: logger as any,
     sessionManager: {
-      loadOrCreate: vi.fn(() => []),
-      save: vi.fn(),
-      isExpired: vi.fn(() => false),
-      expire: vi.fn(() => true),
-      cleanStale: vi.fn(() => 0),
+      loadOrCreate: vi.fn(() => ok([])),
+      save: vi.fn(() => ok(undefined)),
+      isExpired: vi.fn(() => ok(false)),
+      expire: vi.fn(() => ok(true)),
+      cleanStale: vi.fn(() => ok(0)),
     },
     deliveryService: makeFakeDeliveryService(),
+    localization: createDeterministicLocalization(),
     ...overrides,
   } as GateDeps;
 }
@@ -154,6 +181,8 @@ describe("evaluateInboundGate /send command", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       sendOverrides as any,
     );
@@ -177,6 +206,8 @@ describe("evaluateInboundGate /send command", () => {
       makeMsg({ text: "/send on" }),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       {
         get: (key: string) => overrides.get(key),
         set: (key: string, value: "on" | "off" | "inherit") => overrides.set(key, value),
@@ -212,6 +243,8 @@ describe("evaluateInboundGate /send command", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       sendOverrides as any,
     );
@@ -243,6 +276,8 @@ describe("evaluateInboundGate /send command", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       sendOverrides as any,
     );
@@ -269,6 +304,8 @@ describe("evaluateInboundGate /config command interception", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -294,6 +331,8 @@ describe("evaluateInboundGate /config command interception", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -336,6 +375,8 @@ describe("evaluateInboundGate /stop command interception", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -371,6 +412,8 @@ describe("evaluateInboundGate /stop command interception", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -415,6 +458,8 @@ describe("evaluateInboundGate /stop command interception", () => {
       makeMsg({ text: "/stop" }),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       { get: () => undefined, set: vi.fn(), delete: vi.fn() },
     );
 
@@ -473,6 +518,8 @@ describe("evaluateInboundGate /stop command interception", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -500,11 +547,11 @@ describe("evaluateInboundGate /stop command interception", () => {
 describe("evaluateInboundGate reset trigger phrase gate", () => {
   it("expires session and emits session:expired when reset phrase matches", async () => {
     const sessionManager = {
-      loadOrCreate: vi.fn(() => []),
-      save: vi.fn(),
-      isExpired: vi.fn(() => false),
-      expire: vi.fn(() => true),
-      cleanStale: vi.fn(() => 0),
+      loadOrCreate: vi.fn(() => ok([])),
+      save: vi.fn(() => ok(undefined)),
+      isExpired: vi.fn(() => ok(false)),
+      expire: vi.fn(() => ok(true)),
+      cleanStale: vi.fn(() => ok(0)),
     };
     const eventBus = createMockEventBus();
     const deps = makeDeps({
@@ -522,6 +569,8 @@ describe("evaluateInboundGate reset trigger phrase gate", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -548,11 +597,11 @@ describe("evaluateInboundGate reset trigger phrase gate", () => {
     });
     eventBus.on("session:expired", laterObserver);
     const sessionManager = {
-      loadOrCreate: vi.fn(() => []),
-      save: vi.fn(),
-      isExpired: vi.fn(() => false),
-      expire: vi.fn(() => true),
-      cleanStale: vi.fn(() => 0),
+      loadOrCreate: vi.fn(() => ok([])),
+      save: vi.fn(() => ok(undefined)),
+      isExpired: vi.fn(() => ok(false)),
+      expire: vi.fn(() => ok(true)),
+      cleanStale: vi.fn(() => ok(0)),
     };
     const deps = makeDeps({
       eventBus,
@@ -567,6 +616,8 @@ describe("evaluateInboundGate reset trigger phrase gate", () => {
       makeMsg({ text: "reset" }),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       { get: () => undefined, set: vi.fn(), delete: vi.fn() },
     );
 
@@ -610,6 +661,8 @@ describe("evaluateInboundGate handleSlashCommand directives", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -639,6 +692,8 @@ describe("evaluateInboundGate handleSlashCommand directives", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );
@@ -664,6 +719,8 @@ describe("evaluateInboundGate handleSlashCommand directives", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       { get: () => undefined, set: vi.fn(), delete: vi.fn() } as any,
     );

@@ -11,6 +11,8 @@ function createMockDeps(
   overrides?: Partial<OpenaiCompletionsDeps>,
 ): OpenaiCompletionsDeps {
   return {
+    tenantId: "tenant-a",
+    agentId: "agent-a",
     executeAgent: vi.fn().mockResolvedValue({
       response: "Hello from the agent!",
       tokensUsed: { input: 10, output: 20, total: 30 },

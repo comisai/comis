@@ -16,8 +16,10 @@ export type {
   ReconcileSendQuery,
   ReconcileSendOutcome,
 } from "./channel.js";
+export type { PrincipalResolverPort } from "./principal-resolver.js";
 export type {
   MemoryPort,
+  MemoryWriteEntry,
   MemorySearchOptions,
   MemorySearchResult,
 } from "./memory.js";
@@ -62,7 +64,7 @@ export type {
   DeltaOp,
 } from "./reflection-port.js";
 export type { MemoryConsolidationStore } from "./memory-consolidation.js";
-export type { SessionStorePort } from "./session-store.js";
+export type { SessionQueryScope, SessionStorePort } from "./session-store.js";
 export type {
   SessionData,
   SessionListEntry,
@@ -98,6 +100,12 @@ export type {
   WorkspacePolicyPort,
   WorkspacePolicyError,
 } from "./workspace-policy.js";
+export type {
+  LocalizationPort,
+  LocalizationRequest,
+  LocalizationKey,
+  LocalizationError,
+} from "./localization.js";
 export type { ComputeDailyResetNextRun } from "./schedule-callback.js";
 export type {
   TranscriptionPort,
@@ -183,6 +191,7 @@ export type {
 } from "./provider.js";
 export type {
   DeliveryQueuePort,
+  DeliveryAuthority,
   DeliveryQueueEntry,
   DeliveryQueueEnqueueInput,
   DeliveryQueueStatusCounts,

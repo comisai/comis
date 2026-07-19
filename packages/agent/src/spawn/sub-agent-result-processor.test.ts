@@ -5,6 +5,7 @@ import { mkdtemp, writeFile, mkdir, readdir, readFile, utimes } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ok } from "@comis/shared";
+import { createConversationLocator, formatSessionKey } from "@comis/core";
 import { createDeliveryDedup } from "./announce-key.js";
 import {
   sweepResultFiles,
@@ -13,6 +14,12 @@ import {
   deliverFailureNotification,
   classifyErrorContext,
 } from "./sub-agent-result-processor.js";
+
+function makeCallerConversation(agentId = "agent-main", tenantId = "default") {
+  const result = createConversationLocator({ tenantId, agentId, partition: { kind: "agent" } });
+  if (!result.ok) throw result.error;
+  return result.value;
+}
 
 // ---------------------------------------------------------------------------
 // sweepResultFiles
@@ -276,6 +283,7 @@ describe("deliverFailureNotification", () => {
       runId: "run-1",
       callerAgentId: "parent-agent",
       callerSessionKey: "default:user_a:chat-1",
+      callerConversation: makeCallerConversation("parent-agent"),
     }, { sendToChannel, sendGovernedAnnouncement, deliveryDedup });
 
     expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
@@ -300,6 +308,7 @@ describe("deliverFailureNotification", () => {
       runtimeMs: 1_000,
       callerAgentId: "parent-agent",
       callerSessionKey: "default:user_a:chat-1",
+      callerConversation: makeCallerConversation("parent-agent"),
     };
     const falseOutcome = vi.fn().mockResolvedValue(ok({
       delivered: false as const,
@@ -335,6 +344,7 @@ describe("deliverFailureNotification", () => {
       runId: "run-concurrent",
       callerAgentId: "parent-agent",
       callerSessionKey: "default:user_a:chat-1",
+      callerConversation: makeCallerConversation("parent-agent"),
     };
 
     const first = deliverFailureNotification(params, { sendToChannel, sendGovernedAnnouncement });
@@ -635,6 +645,9 @@ describe("deliverFailureNotification idempotency on the shared announce key", ()
 
 describe("deliverAnnouncement / deliverFailureNotification shared dedup without a batcher", () => {
   it("reserves a direct parent decision before its tool-free candidate execution", async () => {
+    const callerSessionKey = formatSessionKey({
+      tenantId: "default", agentId: "agent-main", userId: "user_a", channelId: "chat-1",
+    });
     let finishReservation!: (value: ReturnType<typeof ok>) => void;
     const deadLetterQueue = makeDecisionDeadLetterQueue();
     deadLetterQueue.reserveDecision.mockReturnValue(new Promise((resolve) => {
@@ -651,7 +664,8 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       announceChannelType: "telegram",
       announceChannelId: "chat-1",
       callerAgentId: "agent-main",
-      callerSessionKey: "default:user_a:chat-1",
+      callerSessionKey,
+      callerConversation: makeCallerConversation(),
       runId: "run-reserved",
     }, {
       sendToChannel: vi.fn().mockResolvedValue(true),
@@ -668,7 +682,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     expect(announceToParent).toHaveBeenCalledOnce();
     expect(sendGovernedAnnouncement).toHaveBeenCalledOnce();
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      "default:user_a:chat-1::run-reserved",
+      `${callerSessionKey}::run-reserved`,
       "receipt_committed",
     );
   });
@@ -684,7 +698,10 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       announceChannelType: "telegram",
       announceChannelId: "chat-1",
       callerAgentId: "agent-main",
-      callerSessionKey: "default:user_a:chat-1",
+      callerSessionKey: formatSessionKey({
+        tenantId: "default", agentId: "agent-main", userId: "user_a", channelId: "chat-1",
+      }),
+      callerConversation: makeCallerConversation(),
       runId: "run-restarted",
     }, {
       sendToChannel: vi.fn().mockResolvedValue(true),
@@ -746,6 +763,9 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
 
     const announceToParent = vi.fn().mockResolvedValue(undefined);
     const sendToChannel = vi.fn().mockResolvedValue(true);
+    const callerSessionKey = formatSessionKey({
+      tenantId: "default", agentId: "agent-main", userId: "u2", channelId: "c2",
+    });
 
     await deliverAnnouncement(
       {
@@ -754,7 +774,8 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
         announceChannelId: "chat-1",
         announceThreadId: "topic-42",
         callerAgentId: "agent-main",
-        callerSessionKey: "default:u2:c2",
+        callerSessionKey,
+        callerConversation: makeCallerConversation(),
         runId: "r2",
       },
       { sendToChannel, announceToParent, deliveryDedup },
@@ -764,12 +785,13 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     expect(announceToParent).toHaveBeenCalledWith(
       "agent-main",
       expect.any(Object),
+      makeCallerConversation(),
       expect.any(String),
       "telegram",
       "chat-1",
       { threadId: "topic-42" },
     );
-    expect(deliveryDedup.has("default:u2:c2::r2")).toBe(true);
+    expect(deliveryDedup.has(`${callerSessionKey}::r2`)).toBe(true);
   });
 
   it("routes a parent rewrite through the governed final send before marking delivery", async () => {
@@ -777,6 +799,9 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
     const { createDeliveryDedup } = await import("./announce-key.js");
     const deliveryDedup = createDeliveryDedup();
     const deadLetterQueue = makeDecisionDeadLetterQueue();
+    const callerSessionKey = formatSessionKey({
+      tenantId: "default", agentId: "agent-main", userId: "user_a", channelId: "chat_a",
+    });
     const sendGovernedAnnouncement = vi.fn().mockResolvedValue({
       ok: true,
       value: {
@@ -790,7 +815,8 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       announceChannelType: "telegram",
       announceChannelId: "chat-1",
       callerAgentId: "agent-main",
-      callerSessionKey: "default:user_a:chat_a",
+      callerSessionKey,
+      callerConversation: makeCallerConversation(),
       runId: "run-rewrite",
     }, {
       announceToParent: vi.fn().mockResolvedValue("rewritten"),
@@ -805,10 +831,10 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       runId: "run-rewrite",
     }));
     expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
-      "default:user_a:chat_a::run-rewrite",
+      `${callerSessionKey}::run-rewrite`,
       "receipt_committed",
     );
-    expect(deliveryDedup.has("default:user_a:chat_a::run-rewrite")).toBe(true);
+    expect(deliveryDedup.has(`${callerSessionKey}::run-rewrite`)).toBe(true);
   });
 
   it("blocks a governed completion before any send when caller identity is absent", async () => {
@@ -851,7 +877,10 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
         announceChannelType: "telegram",
         announceChannelId: "chat-1",
         callerAgentId: "agent-main",
-        callerSessionKey: "default:u2:c2",
+        callerSessionKey: formatSessionKey({
+          tenantId: "default", agentId: "agent-main", userId: "u2", channelId: "c2",
+        }),
+        callerConversation: makeCallerConversation(),
         runId: "r-parent-failure",
       },
       { sendToChannel, announceToParent, logger },
@@ -962,6 +991,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
         announceChannelId: "chat-governed",
         callerAgentId: "agent-main",
         callerSessionKey: "default:u6:c6",
+        callerConversation: makeCallerConversation(),
         runId: "r-governed",
       },
       {
@@ -1194,7 +1224,10 @@ describe("deliverAnnouncement idempotency-key threading", () => {
         announceChannelId: "chan-1",
         announceThreadId: "topic-42",
         callerAgentId: "agent-main",
-        callerSessionKey: "default:user1:chan1",
+        callerSessionKey: formatSessionKey({
+          tenantId: "default", agentId: "agent-main", userId: "user1", channelId: "chan1",
+        }),
+        callerConversation: makeCallerConversation(),
         runId: "run-xyz",
       },
       { sendToChannel: vi.fn().mockResolvedValue(true), batcher },
@@ -1205,7 +1238,7 @@ describe("deliverAnnouncement idempotency-key threading", () => {
       idempotencyKey?: string;
       announceThreadId?: string;
     };
-    expect(arg.idempotencyKey).toBe("default:user1:chan1::run-xyz");
+    expect(arg.idempotencyKey).toBe("default:agent:agent-main:user1:chan1::run-xyz");
     expect(arg.announceThreadId).toBe("topic-42");
   });
 

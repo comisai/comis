@@ -693,22 +693,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "array"
   },
   {
-    "default": 5,
-    "immutable": true,
-    "path": "agents.contextEngine.compactionCooldownTurns",
-    "type": "integer"
-  },
-  {
     "default": "",
     "immutable": true,
     "path": "agents.contextEngine.compactionModel",
     "type": "string"
-  },
-  {
-    "default": 2,
-    "immutable": true,
-    "path": "agents.contextEngine.compactionPrefixAnchorTurns",
-    "type": "integer"
   },
   {
     "default": 4,
@@ -747,12 +735,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "boolean"
   },
   {
-    "default": 10,
-    "immutable": true,
-    "path": "agents.contextEngine.ephemeralKeepWindow",
-    "type": "integer"
-  },
-  {
     "default": 15,
     "immutable": true,
     "path": "agents.contextEngine.evictionMinAge",
@@ -762,17 +744,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "default": 8,
     "immutable": true,
     "path": "agents.contextEngine.freshTailTurns",
-    "type": "integer"
-  },
-  {
-    "immutable": true,
-    "path": "agents.contextEngine.historyTurnOverrides",
-    "type": "object"
-  },
-  {
-    "default": 15,
-    "immutable": true,
-    "path": "agents.contextEngine.historyTurns",
     "type": "integer"
   },
   {
@@ -855,24 +826,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "default": 1,
     "immutable": true,
     "path": "agents.contextEngine.memory.distillFromLcd.minDepth",
-    "type": "integer"
-  },
-  {
-    "default": 80000,
-    "immutable": true,
-    "path": "agents.contextEngine.observationDeactivationChars",
-    "type": "integer"
-  },
-  {
-    "default": 25,
-    "immutable": true,
-    "path": "agents.contextEngine.observationKeepWindow",
-    "type": "integer"
-  },
-  {
-    "default": 120000,
-    "immutable": true,
-    "path": "agents.contextEngine.observationTriggerChars",
     "type": "integer"
   },
   {
@@ -1003,12 +956,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.contextEngine.thinkingKeepTurns",
     "type": "integer"
-  },
-  {
-    "default": "dag",
-    "immutable": true,
-    "path": "agents.contextEngine.version",
-    "type": "string"
   },
   {
     "default": {
@@ -1987,9 +1934,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
         "temporalParse": true
       },
       "rerank": {
-        "enabled": true,
         "maxCandidates": 40,
         "minResults": 1,
+        "mode": "auto",
         "timeoutMs": 800
       },
       "scoring": {
@@ -2320,20 +2267,14 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": true,
       "maxCandidates": 40,
       "minResults": 1,
+      "mode": "auto",
       "timeoutMs": 800
     },
     "immutable": true,
     "path": "agents.rag.rerank",
     "type": "object"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "agents.rag.rerank.enabled",
-    "type": "boolean"
   },
   {
     "default": 40,
@@ -2346,6 +2287,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.rag.rerank.minResults",
     "type": "integer"
+  },
+  {
+    "default": "auto",
+    "immutable": true,
+    "path": "agents.rag.rerank.mode",
+    "type": "string"
   },
   {
     "default": 800,
@@ -7459,13 +7406,13 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("plugi
 "[
   {
     "default": true,
-    "immutable": false,
+    "immutable": true,
     "path": "plugins.enabled",
     "type": "boolean"
   },
   {
     "default": {},
-    "immutable": false,
+    "immutable": true,
     "path": "plugins.plugins",
     "type": "object"
   }
@@ -8729,9 +8676,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
             "temporalParse": true
           },
           "rerank": {
-            "enabled": true,
             "maxCandidates": 40,
             "minResults": 1,
+            "mode": "auto",
             "timeoutMs": 800
           },
           "scoring": {
@@ -12190,6 +12137,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
+      "principalMappings": []
+    },
+    "immutable": true,
+    "path": "identity",
+    "type": "object"
+  },
+  {
+    "default": [],
+    "immutable": true,
+    "path": "identity.principalMappings",
+    "type": "array"
+  },
+  {
+    "default": {
       "autoReply": {
         "enabled": false,
         "rules": []
@@ -14379,19 +14340,19 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "enabled": true,
       "plugins": {}
     },
-    "immutable": false,
+    "immutable": true,
     "path": "plugins",
     "type": "object"
   },
   {
     "default": true,
-    "immutable": false,
+    "immutable": true,
     "path": "plugins.enabled",
     "type": "boolean"
   },
   {
     "default": {},
-    "immutable": false,
+    "immutable": true,
     "path": "plugins.plugins",
     "type": "object"
   },
@@ -16976,21 +16937,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           ],
           "type": "object"
         },
-        "compactionCooldownTurns": {
-          "default": 5,
-          "maximum": 50,
-          "minimum": 1,
-          "type": "integer"
-        },
         "compactionModel": {
           "default": "",
           "type": "string"
-        },
-        "compactionPrefixAnchorTurns": {
-          "default": 2,
-          "maximum": 10,
-          "minimum": 0,
-          "type": "integer"
         },
         "condensedMinFanout": {
           "default": 4,
@@ -17024,12 +16973,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "default": true,
           "type": "boolean"
         },
-        "ephemeralKeepWindow": {
-          "default": 10,
-          "maximum": 50,
-          "minimum": 1,
-          "type": "integer"
-        },
         "evictionMinAge": {
           "default": 15,
           "maximum": 50,
@@ -17040,23 +16983,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "default": 8,
           "maximum": 50,
           "minimum": 1,
-          "type": "integer"
-        },
-        "historyTurnOverrides": {
-          "additionalProperties": {
-            "maximum": 100,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "propertyNames": {
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "historyTurns": {
-          "default": 15,
-          "maximum": 100,
-          "minimum": 3,
           "type": "integer"
         },
         "incrementalMaxDepth": {
@@ -17148,24 +17074,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "distillFromLcd"
           ],
           "type": "object"
-        },
-        "observationDeactivationChars": {
-          "default": 80000,
-          "maximum": 500000,
-          "minimum": 20000,
-          "type": "integer"
-        },
-        "observationKeepWindow": {
-          "default": 25,
-          "maximum": 50,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "observationTriggerChars": {
-          "default": 120000,
-          "maximum": 1000000,
-          "minimum": 50000,
-          "type": "integer"
         },
         "outputEscalation": {
           "additionalProperties": false,
@@ -17307,30 +17215,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "maximum": 50,
           "minimum": 1,
           "type": "integer"
-        },
-        "version": {
-          "default": "dag",
-          "enum": [
-            "pipeline",
-            "dag"
-          ],
-          "type": "string"
         }
       },
       "required": [
         "enabled",
-        "version",
         "thinkingKeepTurns",
         "replayDriftIdleMs",
         "compactionModel",
         "evictionMinAge",
-        "historyTurns",
-        "observationKeepWindow",
-        "observationTriggerChars",
-        "observationDeactivationChars",
-        "ephemeralKeepWindow",
-        "compactionCooldownTurns",
-        "compactionPrefixAnchorTurns",
         "outputEscalation",
         "freshTailTurns",
         "contextThreshold",
@@ -18517,9 +18409,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "temporalParse": true
         },
         "rerank": {
-          "enabled": true,
           "maxCandidates": 40,
           "minResults": 1,
+          "mode": "auto",
           "timeoutMs": 800
         },
         "scoring": {
@@ -18889,16 +18781,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "rerank": {
           "additionalProperties": false,
           "default": {
-            "enabled": true,
             "maxCandidates": 40,
             "minResults": 1,
+            "mode": "auto",
             "timeoutMs": 800
           },
           "properties": {
-            "enabled": {
-              "default": true,
-              "type": "boolean"
-            },
             "maxCandidates": {
               "default": 40,
               "exclusiveMinimum": 0,
@@ -18911,6 +18799,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               "minimum": 0,
               "type": "integer"
             },
+            "mode": {
+              "default": "auto",
+              "enum": [
+                "auto",
+                "on",
+                "off"
+              ],
+              "type": "string"
+            },
             "timeoutMs": {
               "default": 800,
               "exclusiveMinimum": 0,
@@ -18919,7 +18816,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             }
           },
           "required": [
-            "enabled",
+            "mode",
             "maxCandidates",
             "minResults",
             "timeoutMs"
@@ -28233,21 +28130,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 ],
                 "type": "object"
               },
-              "compactionCooldownTurns": {
-                "default": 5,
-                "maximum": 50,
-                "minimum": 1,
-                "type": "integer"
-              },
               "compactionModel": {
                 "default": "",
                 "type": "string"
-              },
-              "compactionPrefixAnchorTurns": {
-                "default": 2,
-                "maximum": 10,
-                "minimum": 0,
-                "type": "integer"
               },
               "condensedMinFanout": {
                 "default": 4,
@@ -28281,12 +28166,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "default": true,
                 "type": "boolean"
               },
-              "ephemeralKeepWindow": {
-                "default": 10,
-                "maximum": 50,
-                "minimum": 1,
-                "type": "integer"
-              },
               "evictionMinAge": {
                 "default": 15,
                 "maximum": 50,
@@ -28297,23 +28176,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "default": 8,
                 "maximum": 50,
                 "minimum": 1,
-                "type": "integer"
-              },
-              "historyTurnOverrides": {
-                "additionalProperties": {
-                  "maximum": 100,
-                  "minimum": 1,
-                  "type": "integer"
-                },
-                "propertyNames": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              "historyTurns": {
-                "default": 15,
-                "maximum": 100,
-                "minimum": 3,
                 "type": "integer"
               },
               "incrementalMaxDepth": {
@@ -28405,24 +28267,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "distillFromLcd"
                 ],
                 "type": "object"
-              },
-              "observationDeactivationChars": {
-                "default": 80000,
-                "maximum": 500000,
-                "minimum": 20000,
-                "type": "integer"
-              },
-              "observationKeepWindow": {
-                "default": 25,
-                "maximum": 50,
-                "minimum": 1,
-                "type": "integer"
-              },
-              "observationTriggerChars": {
-                "default": 120000,
-                "maximum": 1000000,
-                "minimum": 50000,
-                "type": "integer"
               },
               "outputEscalation": {
                 "additionalProperties": false,
@@ -28564,30 +28408,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "maximum": 50,
                 "minimum": 1,
                 "type": "integer"
-              },
-              "version": {
-                "default": "dag",
-                "enum": [
-                  "pipeline",
-                  "dag"
-                ],
-                "type": "string"
               }
             },
             "required": [
               "enabled",
-              "version",
               "thinkingKeepTurns",
               "replayDriftIdleMs",
               "compactionModel",
               "evictionMinAge",
-              "historyTurns",
-              "observationKeepWindow",
-              "observationTriggerChars",
-              "observationDeactivationChars",
-              "ephemeralKeepWindow",
-              "compactionCooldownTurns",
-              "compactionPrefixAnchorTurns",
               "outputEscalation",
               "freshTailTurns",
               "contextThreshold",
@@ -29774,9 +29602,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "temporalParse": true
               },
               "rerank": {
-                "enabled": true,
                 "maxCandidates": 40,
                 "minResults": 1,
+                "mode": "auto",
                 "timeoutMs": 800
               },
               "scoring": {
@@ -30146,16 +29974,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "rerank": {
                 "additionalProperties": false,
                 "default": {
-                  "enabled": true,
                   "maxCandidates": 40,
                   "minResults": 1,
+                  "mode": "auto",
                   "timeoutMs": 800
                 },
                 "properties": {
-                  "enabled": {
-                    "default": true,
-                    "type": "boolean"
-                  },
                   "maxCandidates": {
                     "default": 40,
                     "exclusiveMinimum": 0,
@@ -30168,6 +29992,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     "minimum": 0,
                     "type": "integer"
                   },
+                  "mode": {
+                    "default": "auto",
+                    "enum": [
+                      "auto",
+                      "on",
+                      "off"
+                    ],
+                    "type": "string"
+                  },
                   "timeoutMs": {
                     "default": 800,
                     "exclusiveMinimum": 0,
@@ -30176,7 +30009,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   }
                 },
                 "required": [
-                  "enabled",
+                  "mode",
                   "maxCandidates",
                   "minResults",
                   "timeoutMs"
@@ -32122,9 +31955,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "temporalParse": true
             },
             "rerank": {
-              "enabled": true,
               "maxCandidates": 40,
               "minResults": 1,
+              "mode": "auto",
               "timeoutMs": 800
             },
             "scoring": {
@@ -36741,6 +36574,69 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "httpBodyLimitBytes",
         "wsMaxMessageBytes",
         "wsMessageRateLimit"
+      ],
+      "type": "object"
+    },
+    "identity": {
+      "additionalProperties": false,
+      "default": {
+        "principalMappings": []
+      },
+      "properties": {
+        "principalMappings": {
+          "default": [],
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "agentId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "assertion": {
+                "additionalProperties": false,
+                "properties": {
+                  "channelInstanceId": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "channelType": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "platformSubjectId": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "channelType",
+                  "channelInstanceId",
+                  "platformSubjectId"
+                ],
+                "type": "object"
+              },
+              "principalId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "tenantId": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "tenantId",
+              "agentId",
+              "assertion",
+              "principalId"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "principalMappings"
       ],
       "type": "object"
     },
@@ -41772,6 +41668,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
   },
   "required": [
     "tenantId",
+    "identity",
     "logLevel",
     "dataDir",
     "agentDir",

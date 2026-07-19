@@ -30,6 +30,7 @@ import {
   formatSessionKey,
   tryGetContext,
   createDeliveryOrigin,
+  createConversationLocator,
   emitObservationalEventSafely,
   RequestContextSchema,
   wrapExternalContent,
@@ -317,6 +318,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
           const routeChannelId = renderedSessionKey || "webhook";
           const sk: SessionKey = {
             tenantId: container.config.tenantId,
+            agentId: execAgentId,
             userId: "webhook",
             channelId: routeChannelId,
           };
@@ -518,6 +520,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
       const requestChannelId = sessionKey?.peerId ?? turnTraceId;
       const sk: SessionKey = {
         tenantId: container.config.tenantId,
+        agentId: executionAgentId,
         userId: sessionKey?.userId ?? "openai-api",
         channelId: sessionKey?.channelId ?? "openai",
         ...(sessionKey?.peerId !== undefined ? { peerId: sessionKey.peerId } : {}),
@@ -531,6 +534,27 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
         userId: sk.userId,
         tenantId: sk.tenantId,
       });
+      const endpoint = {
+        channelType: "openai",
+        channelInstanceId: "gateway",
+        conversationId: requestChannelId,
+        conversationKind: "direct" as const,
+      };
+      const conversation = createConversationLocator({
+        tenantId: sk.tenantId,
+        agentId: executionAgentId,
+        partition: {
+          kind: "endpoint-conversation-principal",
+          endpoint,
+          principalId: sk.userId,
+        },
+      });
+      if (!conversation.ok) throw conversation.error;
+      const turnScope = {
+        conversation: conversation.value.conversationScope,
+        principal: { principalId: sk.userId },
+        endpoint,
+      };
       return runWithContext(
         {
           traceId: turnTraceId,
@@ -547,6 +571,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
             agentId: executionAgentId,
             trustLevel,
             deliveryOrigin,
+            turnScope,
           });
           if (!resolvedContext.ok) throw resolvedContext.error;
           const cancellation = bindApiExecutionCancellation({
@@ -556,6 +581,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
             channelType: "openai",
             channelId: requestChannelId,
             sessionKey: sk,
+            conversationRef: conversation.value.conversationRef,
             sessionResolver,
             eventBus: container.eventBus,
             logger: gatewayLogger,
@@ -667,6 +693,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
       const requestChannelId = sessionKey?.peerId ?? turnTraceId;
       const sk: SessionKey = {
         tenantId: container.config.tenantId,
+        agentId: executionAgentId,
         userId: sessionKey?.userId ?? "responses-api",
         channelId: sessionKey?.channelId ?? "responses",
         ...(sessionKey?.peerId !== undefined ? { peerId: sessionKey.peerId } : {}),
@@ -680,6 +707,27 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
         userId: sk.userId,
         tenantId: sk.tenantId,
       });
+      const endpoint = {
+        channelType: "responses",
+        channelInstanceId: "gateway",
+        conversationId: requestChannelId,
+        conversationKind: "direct" as const,
+      };
+      const conversation = createConversationLocator({
+        tenantId: sk.tenantId,
+        agentId: executionAgentId,
+        partition: {
+          kind: "endpoint-conversation-principal",
+          endpoint,
+          principalId: sk.userId,
+        },
+      });
+      if (!conversation.ok) throw conversation.error;
+      const turnScope = {
+        conversation: conversation.value.conversationScope,
+        principal: { principalId: sk.userId },
+        endpoint,
+      };
       return runWithContext(
         {
           traceId: turnTraceId,
@@ -696,6 +744,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
             agentId: executionAgentId,
             trustLevel,
             deliveryOrigin,
+            turnScope,
           });
           if (!resolvedContext.ok) throw resolvedContext.error;
           const cancellation = bindApiExecutionCancellation({
@@ -705,6 +754,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
             channelType: "responses",
             channelId: requestChannelId,
             sessionKey: sk,
+            conversationRef: conversation.value.conversationRef,
             sessionResolver,
             eventBus: container.eventBus,
             logger: gatewayLogger,

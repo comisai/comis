@@ -5,8 +5,8 @@
  * Owns:
  *   - Session lifecycle: ResetPolicy, SessionResetPolicy, DmScope, Pruning,
  *     SessionCompaction.
- *   - Context engine: ContextEngineConfig (pipeline + DAG modes; output
- *     escalation; post-batch continuation).
+ *   - Context engine: canonical durable assembly, output escalation, and
+ *     post-batch continuation.
  *   - Context guard: ContextPruningConfig, SourceGateConfig.
  *
  * Imports `CircuitBreakerConfigSchema` from the model leaf (the summarizer
@@ -152,15 +152,11 @@ export type SessionCompactionConfig = z.infer<typeof SessionCompactionConfigSche
 /**
  * Context engine configuration schema.
  *
- * Controls the context engine operating in either **pipeline** mode
- * (sequential layer composition: thinking cleaner, history window,
- * dead content evictor, observation masker, LLM compaction, rehydration)
- * or **DAG** mode (graph-based context management with leaf/condensed
- * nodes, incremental recall, and annotation-driven eviction).
+ * Controls the lossless context assembler with leaf and condensed summaries,
+ * incremental recall, and annotation-driven eviction.
  *
  * All fields have sensible defaults so an empty `{}` is always valid.
- * The flat schema validates all fields regardless of the active `version`
- * to prevent invalid saved configurations.
+ * The schema exposes one canonical context implementation.
  *
  * Only top-level settings are exposed to users; internal budget
  * components (safety margin, output reserve, rot buffer) are
@@ -175,19 +171,7 @@ export const ContextEngineConfigSchema = z.strictObject({
 
   /** Master toggle for the context engine pipeline (enabled by default). */
   enabled: z.boolean().default(true),
-  /** Operating mode: "dag" (= the LCD engine) is the DEFAULT
-   *  working-context engine — it keeps a lossless verbatim history (full faithful
-   *  reconstruction via the parts codec + a verbatim fresh tail of the last N
-   *  steps + transcript repair, multi-tier zoomable compaction, and the in-session
-   *  expansion loop) instead of dropping/masking old content. "pipeline" is the
-   *  first-class opt-in (`version: "pipeline"`): the simpler sequential-layer
-   *  engine, retained as the fallback. The daemon injects the ContextStorePort
-   *  unconditionally, so "dag" "just works" for every daemon agent; a storeless
-   *  context (a non-daemon unit caller) falls back to pipeline with a logged
-   *  warning — behaviorally identical, never a crash. */
-  version: z.enum(["pipeline", "dag"]).default("dag"),
-
-  // --- Shared (both modes) ---
+  // --- Shared turn behavior ---
 
   /** Number of recent assistant turns that retain thinking blocks (older turns get stripped). */
   thinkingKeepTurns: z.number().int().min(1).max(50).default(10),
@@ -207,30 +191,6 @@ export const ContextEngineConfigSchema = z.strictObject({
   /** Minimum age (in tool result positions) before content is eligible for dead content eviction. */
   evictionMinAge: z.number().int().min(3).max(50).default(15),
 
-  // --- Pipeline mode ---
-
-  /** Number of recent user turns to keep in context (default 15). */
-  historyTurns: z.number().int().min(3).max(100).default(15),
-  /** Per-agent or per-channel-type turn count overrides (e.g., { dm: 10, "trader-1": 30 }). */
-  historyTurnOverrides: z.record(
-    z.string(),
-    z.number().int().min(1).max(100),
-  ).optional(),
-  /** Number of most recent tool uses that retain full content (older ones are masked). */
-  observationKeepWindow: z.number().int().min(1).max(50).default(25),
-  /** Character threshold before observation masking activates (below this, masking is skipped). */
-  observationTriggerChars: z.number().int().min(50_000).max(1_000_000).default(120_000),
-  /** Character threshold below which observation masking deactivates (hysteresis). */
-  observationDeactivationChars: z.number().int().min(20_000).max(500_000).default(80_000),
-  /** Keep window for ephemeral-tier tools (web_search, brave_search, web_fetch, link_reader, fetch_url). Shorter than observationKeepWindow. Default: 10. */
-  ephemeralKeepWindow: z.number().int().min(1).max(50).default(10),
-  /** Turns to wait before re-triggering LLM compaction after a successful compaction. */
-  compactionCooldownTurns: z.number().int().min(1).max(50).default(5),
-  /** Number of user-turn cycles at the head of conversation to preserve during
-   *  LLM compaction for cache prefix stability. 0 disables the anchor
-   *  (summarize everything, keep tail only). */
-  compactionPrefixAnchorTurns: z.number().int().min(0).max(10).default(2),
-
   /** Output escalation configuration: auto-retry with higher output budget on max_tokens truncation. */
   outputEscalation: z.strictObject({
     /** Master toggle for output escalation. When false, max_tokens truncation is not retried. */
@@ -239,7 +199,7 @@ export const ContextEngineConfigSchema = z.strictObject({
     escalatedMaxTokens: z.number().int().min(4096).max(128_000).default(32_768),
   }).default({ enabled: true, escalatedMaxTokens: 32_768 }),
 
-  // --- DAG mode ---
+  // --- Durable context assembly ---
 
   /** Number of most recent STEPS (assistant + tool round-trips, NOT user-turns)
    *  always included verbatim in the dag/LCD context. A step = one assistant
@@ -252,7 +212,7 @@ export const ContextEngineConfigSchema = z.strictObject({
    *  0.95). LIVE in dag/LCD mode: at the end of a turn, when total
    *  context tokens / model window exceeds this fraction, the oldest out-of-tail
    *  chunk is summarized into a leaf summary + the context is assembled under the
-   *  token budget. Inert in pipeline mode. */
+   *  token budget. */
   contextThreshold: z.number().min(0.1).max(0.95).default(0.75),
   /** Minimum fan-out for leaf nodes in the DAG. */
   leafMinFanout: z.number().int().min(2).max(20).default(8),
@@ -276,9 +236,9 @@ export const ContextEngineConfigSchema = z.strictObject({
   recallTimeoutMs: z.number().int().min(10_000).max(600_000).default(120_000),
   /** Token threshold above which a file is considered "large" for DAG processing. */
   largeFileTokenThreshold: z.number().int().min(1000).max(200_000).default(25_000),
-  /** Number of most recent annotations retained in DAG mode (analogous to observationKeepWindow). */
+  /** Number of most recent annotations retained during durable assembly. */
   annotationKeepWindow: z.number().int().min(1).max(50).default(15),
-  /** Character threshold before annotation eviction activates in DAG mode. */
+  /** Character threshold before annotation eviction activates. */
   annotationTriggerChars: z.number().int().min(10_000).max(1_000_000).default(200_000),
   /** Optional model override for DAG summary generation in "provider:modelId" format. */
   summaryModel: z.string().optional(),

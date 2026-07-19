@@ -8,7 +8,7 @@
  * @module
  */
 
-import { parseFormattedSessionKey, safePath, systemNowMs, systemDateFrom, toSafeErrorLogString } from "@comis/core";
+import { safePath, systemNowMs, systemDateFrom, toSafeErrorLogString } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { writeRegularFile } from "@comis/observability";
 import { clearAllTimers } from "./graph-cleanup.js";
@@ -177,15 +177,18 @@ export async function handleGraphCompletion(
   // 2c. Write _run-metadata.json to disk
   writeRunMetadata(deps, gs);
 
-  const parsedCaller = gs.callerSessionKey === undefined
-    ? undefined
-    : parseFormattedSessionKey(gs.callerSessionKey);
+  const callerConversation = gs.callerConversationLocator;
+  const callerEndpoint = gs.callerEndpoint;
   const hasCallerIdentity = gs.callerSessionKey !== undefined || gs.callerAgentId !== undefined;
   const hasDeclaredParent = gs.callerSessionKey !== undefined && gs.callerAgentId !== undefined;
   const parentIdentityValid = !hasCallerIdentity || (hasDeclaredParent
-    && parsedCaller !== undefined
-    && parsedCaller.tenantId === deps.tenantId
-    && (gs.announceChannelId === undefined || parsedCaller.channelId === gs.announceChannelId)
+    && callerConversation !== undefined
+    && gs.callerPrincipalId !== undefined
+    && callerEndpoint !== undefined
+    && callerConversation.conversationScope.tenantId === deps.tenantId
+    && callerConversation.conversationScope.agentId === gs.callerAgentId
+    && (gs.announceChannelType === undefined || callerEndpoint.channelType === gs.announceChannelType)
+    && (gs.announceChannelId === undefined || callerEndpoint.conversationId === gs.announceChannelId)
   );
   const hasAnyAnnouncementRoute = gs.announceChannelType !== undefined
     || gs.announceChannelId !== undefined;
@@ -208,6 +211,7 @@ export async function handleGraphCompletion(
   // truncated report, so short outputs do not allocate unused callback targets.
   const callerSessionKey = gs.callerSessionKey;
   const callerAgentId = gs.callerAgentId;
+  const callerPrincipalId = gs.callerPrincipalId;
   const announceChannelType = gs.announceChannelType;
   const announceChannelId = gs.announceChannelId;
   const registerGraphReportCallback = deps.registerGraphReportCallback;
@@ -215,7 +219,9 @@ export async function handleGraphCompletion(
   const registerReportCallback = (): string | undefined => {
     if (
       !parentIdentityValid
-      || parsedCaller === undefined
+      || callerConversation === undefined
+      || callerPrincipalId === undefined
+      || callerEndpoint === undefined
       || callerSessionKey === undefined
       || callerAgentId === undefined
       || announceChannelType === undefined
@@ -225,8 +231,11 @@ export async function handleGraphCompletion(
 
     const registered = tryCatch(() => registerGraphReportCallback({
       graphId: gs.graphId,
-      tenantId: parsedCaller.tenantId,
-      userId: parsedCaller.userId,
+      tenantId: callerConversation.conversationScope.tenantId,
+      conversationRef: callerConversation.conversationRef,
+      resolvingPrincipalId: callerPrincipalId,
+      endpoint: callerEndpoint,
+      userId: callerPrincipalId,
       sessionKey: callerSessionKey,
       agentId: callerAgentId,
       channelType: announceChannelType,
@@ -247,9 +256,9 @@ export async function handleGraphCompletion(
     gs,
     registerReportCallback,
   );
-  const deliveryOptions = parsedCaller?.threadId !== undefined || announcementButtons !== undefined
+  const deliveryOptions = callerEndpoint?.threadId !== undefined || announcementButtons !== undefined
     ? {
-        ...(parsedCaller?.threadId ? { threadId: parsedCaller.threadId } : {}),
+        ...(callerEndpoint?.threadId ? { threadId: callerEndpoint.threadId } : {}),
         ...(announcementButtons
           ? { extra: { buttons: announcementButtons } }
           : {}),
@@ -265,6 +274,7 @@ export async function handleGraphCompletion(
       graphId: gs.graphId,
       agentId: callerAgentId,
       callerSessionKey,
+      callerConversation,
       channelType: announceChannelType,
       channelId: announceChannelId,
       text: finalText,

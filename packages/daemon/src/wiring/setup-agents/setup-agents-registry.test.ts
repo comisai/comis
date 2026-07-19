@@ -27,6 +27,12 @@ describe("setup-agents-registry orchestration", () => {
     expect(source).toContain("export async function setupAgents(deps:");
   });
 
+  it("rejects startup when the canonical context store is missing", async () => {
+    await expect(setupAgents({} as Parameters<typeof setupAgents>[0])).rejects.toThrow(
+      "ContextStorePort",
+    );
+  });
+
   it("setupAgents loop body delegates to setupSingleAgent", () => {
     // Find the for-loop in setupAgents (after the singleAgentDeps construction)
     const loopStart = source.indexOf("for (const [agentId, agentConfig] of Object.entries(agents))");

@@ -6,13 +6,13 @@
  * turn, so afterTurn returns before the compaction's store write
  * completes. That introduces a SECOND writer to a conversation's lossless store
  * (the deferred compaction) which can race the NEXT turn's synchronous ingest on
- * the `(conversation_id, agent_id, tenant_id, seq)` unique index and the
+ * the `(conversation_ref, agent_id, tenant_id, seq)` unique index and the
  * `lcd_context_items` ordinals. This serializer is the integrity
  * boundary between them: BOTH the live ingest write AND the deferred compaction
  * write enqueue onto a per-conversation `PQueue({ concurrency: 1 })`, so on one
  * conversation they are strictly one-at-a-time and can never interleave.
  *
- * Per-conversation (NOT a single global lock): each conversationId lazily gets
+ * Per-conversation (NOT a single global lock): each conversationRef lazily gets
  * its OWN queue, so operations on DIFFERENT conversations run concurrently — a
  * busy conversation never blocks an idle one. This mirrors the SHAPE of
  * `withSessionLock` (per-session lock file, no cross-session blocking) but is a
@@ -44,47 +44,47 @@ import PQueue from "p-queue";
  */
 export interface IngestSerializer {
   /**
-   * Run `fn` on `conversationId`'s single-flight queue. Operations on the same
+   * Run `fn` on `conversationRef`'s single-flight queue. Operations on the same
    * conversation are strictly serialized; operations on different conversations
    * run concurrently. Accepts a synchronous OR async `fn` (the live ingest's
    * better-sqlite3 `append` is synchronous; the deferred compaction is async).
    */
-  runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T>;
+  runOnConversation<T>(conversationRef: string, fn: () => T | Promise<T>): Promise<T>;
 }
 
 /**
  * Create a per-conversation single-flight serializer.
  *
- * Backed by a `Map<conversationId, PQueue>` where each queue has
+ * Backed by a `Map<conversationRef, PQueue>` where each queue has
  * `concurrency: 1` (single-flight). Queues are lazily created on first use for a
  * conversation and retained for the process lifetime (the conversation set is
  * bounded by the active sessions; an unbounded-growth eviction policy is a
  * deferred concern, not a correctness issue here).
  */
 export function createIngestSerializer(): IngestSerializer {
-  // One single-flight queue per conversationId. Lazily created; never a single
+  // One single-flight queue per conversationRef. Lazily created; never a single
   // global queue (that would serialize UNRELATED conversations — the test
-  // "different conversationIds run concurrently" guards against that regression).
+  // "different conversationRefs run concurrently" guards against that regression).
   const queues = new Map<string, PQueue>();
 
-  function queueFor(conversationId: string): PQueue {
-    let queue = queues.get(conversationId);
+  function queueFor(conversationRef: string): PQueue {
+    let queue = queues.get(conversationRef);
     if (queue === undefined) {
       // concurrency: 1 ⇒ strictly one operation at a time for this conversation
       // (the single-flight invariant). A rejecting task frees the slot, so the
       // queue recovers (p-queue does not wedge on a rejected task).
       queue = new PQueue({ concurrency: 1 });
-      queues.set(conversationId, queue);
+      queues.set(conversationRef, queue);
     }
     return queue;
   }
 
   return {
-    runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T> {
+    runOnConversation<T>(conversationRef: string, fn: () => T | Promise<T>): Promise<T> {
       // p-queue's `add` returns Promise<T | void> (void when the task is
       // skipped, which only happens with throwOnTimeout/priority cancellation —
       // neither used here), so the cast to Promise<T> is sound for our usage.
-      return queueFor(conversationId).add(() => fn()) as Promise<T>;
+      return queueFor(conversationRef).add(() => fn()) as Promise<T>;
     },
   };
 }

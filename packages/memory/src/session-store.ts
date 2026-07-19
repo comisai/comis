@@ -1,207 +1,355 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: 10MB session-size guard in SessionStore.save(); consumed by daemon RPC session-handlers (@allow-throw boundary).
-/**
- * Session store for conversation persistence.
- *
- * Provides CRUD operations on the `sessions` table using better-sqlite3
- * prepared statements. Sessions survive process restarts since they are
- * stored in SQLite.
- *
- * Factory function pattern (createSessionStore) consistent with
- * createSecretManager for minimal public surface area.
- */
+/** SQLite session persistence keyed by canonical conversation authority. */
 
 import type Database from "better-sqlite3";
-import { formatSessionKey, systemNowMs, type SessionData, type SessionDetailedEntry, type SessionKey, type SessionListEntry, type SessionStorePort } from "@comis/core";
+import {
+  ConversationRefSchema,
+  ConversationScopeSchema,
+  createConversationRef,
+  SessionStoreError,
+  systemNowMs,
+  type ConversationRef,
+  type ConversationScope,
+  type SessionData,
+  type SessionDetailedEntry,
+  type SessionListEntry,
+  type SessionQueryScope,
+  type SessionStorePort,
+} from "@comis/core";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { z } from "zod";
 import { createRowMapper } from "./row-mapper.js";
 import { SessionRowSchema } from "./row-schemas.js";
 
-// Row mappers
 const sessionRowMapper = createRowMapper(SessionRowSchema);
-const sessionListEntryRowMapper = createRowMapper(
-  z.strictObject({
-    session_key: z.string(),
-    updated_at: z.number(),
-  }),
-);
-const sessionDetailedEntryRowMapper = createRowMapper(
-  z.strictObject({
-    session_key: z.string(),
-    tenant_id: z.string(),
-    user_id: z.string(),
-    channel_id: z.string(),
-    metadata: z.string(),
-    created_at: z.number(),
-    updated_at: z.number(),
-    message_count: z.number(),
-  }),
-);
+const sessionListRowMapper = createRowMapper(z.strictObject({
+  tenant_id: z.string(),
+  agent_id: z.string(),
+  conversation_ref: z.string(),
+  canonical_scope: z.string(),
+  updated_at: z.number(),
+}));
+const sessionDetailedRowMapper = createRowMapper(SessionRowSchema.extend({
+  message_count: z.number(),
+}));
 
 const SessionMessagesSchema = z.array(z.unknown());
 const SessionMetadataSchema = z.record(z.string(), z.unknown());
+const SessionQueryScopeSchema = z.strictObject({
+  tenantId: z.string().min(1),
+  agentId: z.string().min(1),
+});
 
 /** Maximum serialized session size in bytes (10MB). */
 export const MAX_SESSION_BYTES = 10 * 1024 * 1024;
 
-/** Parse JSON-encoded messages with Zod validation, falling back to empty array on corrupt data. */
-function parseMessages(raw: string): unknown[] {
-  try {
-    const result = SessionMessagesSchema.safeParse(JSON.parse(raw));
-    return result.success ? result.data : [];
-  } catch {
-    return [];
-  }
+interface ScopeIdentity {
+  scope: ConversationScope;
+  conversationRef: ConversationRef;
+  canonicalScope: string;
 }
 
-/** Parse JSON-encoded metadata with Zod validation, falling back to empty object on corrupt data. */
-function parseMetadata(raw: string): Record<string, unknown> {
-  try {
-    const result = SessionMetadataSchema.safeParse(JSON.parse(raw));
-    return result.success ? result.data : {};
-  } catch {
-    return {};
-  }
+function storeError(message: string, errorKind: SessionStoreError["errorKind"]): SessionStoreError {
+  return new SessionStoreError(message, errorKind);
 }
 
-// SessionData, SessionListEntry, SessionDetailedEntry, SessionStorePort —
-// canonical home is `@comis/core/src/ports/session-store-types.ts`.
-// Imported above for use in the factory body's internal type narrowing.
+function databaseResult<T>(operation: () => T): Result<T, SessionStoreError> {
+  const result = tryCatch(operation);
+  return result.ok
+    ? ok(result.value)
+    : err(storeError("Session database operation failed", "resource"));
+}
 
-/**
- * Create a SessionStorePort bound to the given database.
- *
- * Assumes `initSchema()` has already been called on the database
- * to create the `sessions` table.
- */
+function resolveIdentity(scope: ConversationScope): Result<ScopeIdentity, SessionStoreError> {
+  const parsed = ConversationScopeSchema.safeParse(scope);
+  if (!parsed.success) return err(storeError("Session operation requires a valid conversation scope", "validation"));
+  const reference = createConversationRef(parsed.data);
+  if (!reference.ok) return err(storeError(reference.error.message, "validation"));
+  return ok({
+    scope: parsed.data,
+    conversationRef: reference.value,
+    canonicalScope: JSON.stringify(parsed.data),
+  });
+}
+
+function parseQueryScope(scope: SessionQueryScope): Result<SessionQueryScope, SessionStoreError> {
+  const parsed = SessionQueryScopeSchema.safeParse(scope);
+  return parsed.success
+    ? ok(parsed.data)
+    : err(storeError("Session query requires explicit tenant and agent authority", "validation"));
+}
+
+function parseStoredScope(raw: string): Result<ConversationScope, SessionStoreError> {
+  const decoded = tryCatch(() => JSON.parse(raw) as unknown);
+  if (!decoded.ok) return err(storeError("Stored session scope is not valid JSON", "internal"));
+  const parsed = ConversationScopeSchema.safeParse(decoded.value);
+  return parsed.success
+    ? ok(parsed.data)
+    : err(storeError("Stored session scope failed validation", "internal"));
+}
+
+function parseMessages(raw: string): Result<unknown[], SessionStoreError> {
+  const decoded = tryCatch(() => JSON.parse(raw) as unknown);
+  if (!decoded.ok) return err(storeError("Stored session messages are not valid JSON", "internal"));
+  const parsed = SessionMessagesSchema.safeParse(decoded.value);
+  return parsed.success
+    ? ok(parsed.data)
+    : err(storeError("Stored session messages failed validation", "internal"));
+}
+
+function parseMetadata(raw: string): Result<Record<string, unknown>, SessionStoreError> {
+  const decoded = tryCatch(() => JSON.parse(raw) as unknown);
+  if (!decoded.ok) return err(storeError("Stored session metadata is not valid JSON", "internal"));
+  const parsed = SessionMetadataSchema.safeParse(decoded.value);
+  return parsed.success
+    ? ok(parsed.data)
+    : err(storeError("Stored session metadata failed validation", "internal"));
+}
+
+function parseReference(raw: string): Result<ConversationRef, SessionStoreError> {
+  const parsed = ConversationRefSchema.safeParse(raw);
+  return parsed.success
+    ? ok(parsed.data)
+    : err(storeError("Stored conversation reference failed validation", "internal"));
+}
+
+function rowToSessionData(
+  row: z.infer<typeof SessionRowSchema>,
+  expectedCanonicalScope?: string,
+): Result<SessionData, SessionStoreError> {
+  if (expectedCanonicalScope !== undefined && row.canonical_scope !== expectedCanonicalScope) {
+    return err(storeError("Conversation reference resolved to a different canonical scope", "internal"));
+  }
+  const scope = parseStoredScope(row.canonical_scope);
+  if (!scope.ok) return scope;
+  if (scope.value.tenantId !== row.tenant_id || scope.value.agentId !== row.agent_id) {
+    return err(storeError("Stored session authority columns disagree with its canonical scope", "internal"));
+  }
+  const reference = parseReference(row.conversation_ref);
+  if (!reference.ok) return reference;
+  const expectedReference = createConversationRef(scope.value);
+  if (!expectedReference.ok || expectedReference.value !== reference.value) {
+    return err(storeError("Stored session reference disagrees with its canonical scope", "internal"));
+  }
+  const messages = parseMessages(row.messages);
+  if (!messages.ok) return messages;
+  const metadata = parseMetadata(row.metadata);
+  if (!metadata.ok) return metadata;
+  return ok({
+    conversationRef: reference.value,
+    conversationScope: scope.value,
+    messages: messages.value,
+    metadata: metadata.value,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+}
+
+/** Create a SessionStorePort bound to an initialized database. */
 export function createSessionStore(db: Database.Database): SessionStorePort {
-  // Prepare statements once for performance
   const upsertStmt = db.prepare(`
-    INSERT INTO sessions (session_key, tenant_id, user_id, channel_id, messages, created_at, updated_at, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(session_key) DO UPDATE SET
+    INSERT INTO sessions (
+      tenant_id, agent_id, conversation_ref, canonical_scope,
+      messages, created_at, updated_at, metadata
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(tenant_id, agent_id, conversation_ref) DO UPDATE SET
       messages = excluded.messages,
       updated_at = excluded.updated_at,
       metadata = excluded.metadata
   `);
+  const loadStmt = db.prepare(`
+    SELECT * FROM sessions
+    WHERE tenant_id = ? AND agent_id = ? AND conversation_ref = ?
+  `);
+  const listStmt = db.prepare(`
+    SELECT tenant_id, agent_id, conversation_ref, canonical_scope, updated_at
+    FROM sessions
+    WHERE tenant_id = ? AND agent_id = ?
+    ORDER BY updated_at DESC
+  `);
+  const listDetailedStmt = db.prepare(`
+    SELECT *, json_array_length(messages) AS message_count
+    FROM sessions
+    WHERE tenant_id = ? AND agent_id = ?
+    ORDER BY updated_at DESC
+  `);
+  const deleteStmt = db.prepare(`
+    DELETE FROM sessions
+    WHERE tenant_id = ? AND agent_id = ? AND conversation_ref = ?
+  `);
+  const deleteStaleStmt = db.prepare(`
+    DELETE FROM sessions
+    WHERE tenant_id = ? AND agent_id = ? AND updated_at < ?
+  `);
 
-  const loadStmt = db.prepare("SELECT * FROM sessions WHERE session_key = ?");
-
-  const listAllStmt = db.prepare(
-    "SELECT session_key, updated_at FROM sessions ORDER BY updated_at DESC",
-  );
-
-  const listByTenantStmt = db.prepare(
-    "SELECT session_key, updated_at FROM sessions WHERE tenant_id = ? ORDER BY updated_at DESC",
-  );
-
-  const deleteStmt = db.prepare("DELETE FROM sessions WHERE session_key = ?");
-
-  const deleteStaleStmt = db.prepare("DELETE FROM sessions WHERE updated_at < ?");
-
-  const loadByKeyStmt = db.prepare("SELECT * FROM sessions WHERE session_key = ?");
-
-  const listDetailedAllStmt = db.prepare(
-    "SELECT session_key, tenant_id, user_id, channel_id, metadata, created_at, updated_at, json_array_length(messages) AS message_count FROM sessions ORDER BY updated_at DESC",
-  );
-  const listDetailedByTenantStmt = db.prepare(
-    "SELECT session_key, tenant_id, user_id, channel_id, metadata, created_at, updated_at, json_array_length(messages) AS message_count FROM sessions WHERE tenant_id = ? ORDER BY updated_at DESC",
-  );
+  function loadRow(
+    queryScope: SessionQueryScope,
+    conversationRef: ConversationRef,
+    expectedCanonicalScope?: string,
+  ): Result<SessionData | undefined, SessionStoreError> {
+    const rowResult = databaseResult(() => loadStmt.get(
+      queryScope.tenantId,
+      queryScope.agentId,
+      conversationRef,
+    ));
+    if (!rowResult.ok) return rowResult;
+    const parsed = sessionRowMapper.parseOptionalRow(rowResult.value);
+    if (!parsed.ok) return err(storeError("Stored session row failed validation", "internal"));
+    if (parsed.value === undefined) return ok(undefined);
+    return rowToSessionData(parsed.value, expectedCanonicalScope);
+  }
 
   return {
-    save(key: SessionKey, messages: unknown[], metadata?: Record<string, unknown>): void {
-      const now = systemNowMs();
-      const sessionKey = formatSessionKey(key);
+    save(scope, messages, metadata) {
+      const identity = resolveIdentity(scope);
+      if (!identity.ok) return identity;
       const messagesJson = JSON.stringify(messages);
       const metadataJson = JSON.stringify(metadata ?? {});
-
-      // Validate serialized session size before storing
-      const totalBytes = Buffer.byteLength(messagesJson, "utf-8") + Buffer.byteLength(metadataJson, "utf-8");
+      const totalBytes = Buffer.byteLength(messagesJson, "utf8") + Buffer.byteLength(metadataJson, "utf8");
       if (totalBytes > MAX_SESSION_BYTES) {
-        throw new Error(
-          `Session data exceeds maximum size: ${totalBytes} bytes > ${MAX_SESSION_BYTES} bytes (10MB limit)`,
-        );
+        return err(storeError(`Session data exceeds the ${MAX_SESSION_BYTES}-byte limit`, "validation"));
       }
-
-      upsertStmt.run(
-        sessionKey,
-        key.tenantId,
-        key.userId,
-        key.channelId,
-        messagesJson,
-        now,
-        now,
-        metadataJson,
-      );
+      const operation = databaseResult(() => db.transaction(() => {
+        const existing = sessionRowMapper.parseOptionalRow(loadStmt.get(
+          identity.value.scope.tenantId,
+          identity.value.scope.agentId,
+          identity.value.conversationRef,
+        ));
+        if (!existing.ok) return err(storeError("Stored session row failed validation", "internal"));
+        if (
+          existing.value !== undefined
+          && existing.value.canonical_scope !== identity.value.canonicalScope
+        ) {
+          return err(storeError("Conversation reference collides with a different canonical scope", "internal"));
+        }
+        const now = systemNowMs();
+        upsertStmt.run(
+          identity.value.scope.tenantId,
+          identity.value.scope.agentId,
+          identity.value.conversationRef,
+          identity.value.canonicalScope,
+          messagesJson,
+          now,
+          now,
+          metadataJson,
+        );
+        return ok(undefined);
+      })());
+      if (!operation.ok) return operation;
+      return operation.value;
     },
 
-    load(key: SessionKey): SessionData | undefined {
-      const sessionKey = formatSessionKey(key);
-      const parsed = sessionRowMapper.parseOptionalRow(loadStmt.get(sessionKey));
-      const row = parsed.ok ? parsed.value : undefined;
-      if (!row) return undefined;
-
-      return {
-        messages: parseMessages(row.messages),
-        metadata: parseMetadata(row.metadata),
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      };
+    load(scope) {
+      const identity = resolveIdentity(scope);
+      if (!identity.ok) return identity;
+      return loadRow(identity.value.scope, identity.value.conversationRef, identity.value.canonicalScope);
     },
 
-    list(tenantId?: string): SessionListEntry[] {
-      const raw =
-        tenantId !== undefined ? listByTenantStmt.all(tenantId) : listAllStmt.all();
-      const parsed = sessionListEntryRowMapper.parseRows(raw);
-      const rows = parsed.ok ? parsed.value : [];
-
-      return rows.map((r) => ({
-        sessionKey: r.session_key,
-        updatedAt: r.updated_at,
-      }));
+    loadByRef(scope, conversationRef) {
+      const query = parseQueryScope(scope);
+      if (!query.ok) return query;
+      const reference = ConversationRefSchema.safeParse(conversationRef);
+      if (!reference.success) return err(storeError("Session lookup requires a valid conversation reference", "validation"));
+      return loadRow(query.value, reference.data);
     },
 
-    delete(key: SessionKey): boolean {
-      const sessionKey = formatSessionKey(key);
-      const result = deleteStmt.run(sessionKey);
-      return result.changes > 0;
+    list(scope) {
+      const query = parseQueryScope(scope);
+      if (!query.ok) return query;
+      const raw = databaseResult(() => listStmt.all(query.value.tenantId, query.value.agentId));
+      if (!raw.ok) return raw;
+      const parsed = sessionListRowMapper.parseRows(raw.value);
+      if (!parsed.ok) return err(storeError("Stored session list failed validation", "internal"));
+      const entries: SessionListEntry[] = [];
+      for (const row of parsed.value) {
+        const conversationRef = parseReference(row.conversation_ref);
+        if (!conversationRef.ok) return conversationRef;
+        const conversationScope = parseStoredScope(row.canonical_scope);
+        if (!conversationScope.ok) return conversationScope;
+        const referenceCheck = createConversationRef(conversationScope.value);
+        if (!referenceCheck.ok || referenceCheck.value !== conversationRef.value) {
+          return err(storeError("Stored session list reference disagrees with canonical scope", "internal"));
+        }
+        entries.push({
+          conversationRef: conversationRef.value,
+          conversationScope: conversationScope.value,
+          updatedAt: row.updated_at,
+        });
+      }
+      return ok(entries);
     },
 
-    deleteStale(maxAgeMs: number): number {
-      const cutoff = systemNowMs() - maxAgeMs;
-      const result = deleteStaleStmt.run(cutoff);
-      return result.changes;
+    delete(scope) {
+      const identity = resolveIdentity(scope);
+      if (!identity.ok) return identity;
+      const operation = databaseResult(() => db.transaction(() => {
+        const loaded = loadRow(identity.value.scope, identity.value.conversationRef, identity.value.canonicalScope);
+        if (!loaded.ok) return loaded;
+        if (loaded.value === undefined) return ok(false);
+        const deleted = deleteStmt.run(
+          identity.value.scope.tenantId,
+          identity.value.scope.agentId,
+          identity.value.conversationRef,
+        );
+        return ok(deleted.changes > 0);
+      })());
+      if (!operation.ok) return operation;
+      return operation.value;
     },
 
-    loadByFormattedKey(sessionKey: string): SessionData | undefined {
-      const parsed = sessionRowMapper.parseOptionalRow(loadByKeyStmt.get(sessionKey));
-      const row = parsed.ok ? parsed.value : undefined;
-      if (!row) return undefined;
-      return {
-        messages: parseMessages(row.messages),
-        metadata: parseMetadata(row.metadata),
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      };
+    deleteByRef(scope, conversationRef) {
+      const query = parseQueryScope(scope);
+      if (!query.ok) return query;
+      const reference = ConversationRefSchema.safeParse(conversationRef);
+      if (!reference.success) return err(storeError("Session deletion requires a valid conversation reference", "validation"));
+      const operation = databaseResult(() => db.transaction(() => {
+        const loaded = loadRow(query.value, reference.data);
+        if (!loaded.ok) return loaded;
+        if (loaded.value === undefined) return ok(false);
+        const deleted = deleteStmt.run(query.value.tenantId, query.value.agentId, reference.data);
+        return ok(deleted.changes > 0);
+      })());
+      if (!operation.ok) return operation;
+      return operation.value;
     },
 
-    listDetailed(tenantId?: string): SessionDetailedEntry[] {
-      const raw =
-        tenantId !== undefined
-          ? listDetailedByTenantStmt.all(tenantId)
-          : listDetailedAllStmt.all();
-      const parsed = sessionDetailedEntryRowMapper.parseRows(raw);
-      const rows = parsed.ok ? parsed.value : [];
-      return rows.map((r) => ({
-        sessionKey: r.session_key,
-        tenantId: r.tenant_id,
-        userId: r.user_id,
-        channelId: r.channel_id,
-        metadata: parseMetadata(r.metadata),
-        createdAt: r.created_at,
-        updatedAt: r.updated_at,
-        messageCount: r.message_count,
-      }));
+    deleteStale(scope, maxAgeMs) {
+      const query = parseQueryScope(scope);
+      if (!query.ok) return query;
+      if (!Number.isFinite(maxAgeMs) || maxAgeMs < 0) {
+        return err(storeError("Session retention age must be a non-negative finite number", "validation"));
+      }
+      const deleted = databaseResult(() => deleteStaleStmt.run(
+        query.value.tenantId,
+        query.value.agentId,
+        systemNowMs() - maxAgeMs,
+      ));
+      return deleted.ok ? ok(deleted.value.changes) : deleted;
+    },
+
+    listDetailed(scope) {
+      const query = parseQueryScope(scope);
+      if (!query.ok) return query;
+      const raw = databaseResult(() => listDetailedStmt.all(query.value.tenantId, query.value.agentId));
+      if (!raw.ok) return raw;
+      const parsed = sessionDetailedRowMapper.parseRows(raw.value);
+      if (!parsed.ok) return err(storeError("Stored detailed session list failed validation", "internal"));
+      const entries: SessionDetailedEntry[] = [];
+      for (const row of parsed.value) {
+        const data = rowToSessionData(row);
+        if (!data.ok) return data;
+        entries.push({
+          conversationRef: data.value.conversationRef,
+          conversationScope: data.value.conversationScope,
+          tenantId: row.tenant_id,
+          agentId: row.agent_id,
+          metadata: data.value.metadata,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          messageCount: row.message_count,
+        });
+      }
+      return ok(entries);
     },
   };
 }

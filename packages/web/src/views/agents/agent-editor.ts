@@ -131,18 +131,10 @@ function createDefaultForm(): Record<string, unknown> {
     "session.compaction.threshold": 50,
     // Context Engine
     "contextEngine.enabled": true,
-    "contextEngine.version": "dag",
     "contextEngine.thinkingKeepTurns": undefined,
     "contextEngine.compactionModel": "",
     "contextEngine.evictionMinAge": undefined,
-    // Pipeline-mode fields
-    "contextEngine.historyTurns": undefined,
-    "contextEngine.observationKeepWindow": undefined,
-    "contextEngine.observationTriggerChars": undefined,
-    "contextEngine.observationDeactivationChars": undefined,
-    "contextEngine.compactionCooldownTurns": undefined,
-    "contextEngine.historyTurnOverrides": "",
-    // DAG-mode fields
+    // Durable context fields
     "contextEngine.freshTailTurns": undefined,
     "contextEngine.contextThreshold": undefined,
     "contextEngine.leafMinFanout": undefined,
@@ -530,7 +522,7 @@ export class IcAgentEditor extends LitElement {
   private async _loadModelCatalog(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const result = await this.rpcClient.call<{ providers?: CatalogProvider[]; totalModels?: number }>("models.list");
+      const result = await this.rpcClient.call("models.list");
       if (result.providers) {
         this._catalogProviders = result.providers;
       }
@@ -543,7 +535,7 @@ export class IcAgentEditor extends LitElement {
   async _loadTopLevelConfig(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const result = await this.rpcClient.call<{ config: Record<string, unknown>; sections: string[] }>("config.read");
+      const result = await this.rpcClient.call("config.read");
       const cfg = result.config;
       this._streamingConfig = (cfg.streaming as Record<string, unknown>) ?? {};
       this._deliveryQueueConfig = (cfg.deliveryQueue as Record<string, unknown>) ?? {};
@@ -609,7 +601,7 @@ export class IcAgentEditor extends LitElement {
     // the stale error bar does not flash through the loading state (P6).
     this._error = "";
     try {
-      const result = await this.rpcClient.call<{ agentId: string; config: Record<string, unknown> }>("agents.get", { agentId: this.agentId });
+      const result = await this.rpcClient.call("agents.get", { agentId: this.agentId });
       const agent = this._mapConfigToDetail(result.agentId, result.config);
       this._populateForm(agent);
       this._loadState = "loaded";
@@ -910,20 +902,10 @@ export class IcAgentEditor extends LitElement {
     const ceDetail = (agent as unknown as Record<string, unknown>).contextEngine as Record<string, unknown> | undefined;
     if (ceDetail) {
       form["contextEngine.enabled"] = ceDetail.enabled ?? true;
-      form["contextEngine.version"] = ceDetail.version ?? "dag";
       form["contextEngine.thinkingKeepTurns"] = ceDetail.thinkingKeepTurns;
       form["contextEngine.compactionModel"] = ceDetail.compactionModel ?? "";
       form["contextEngine.evictionMinAge"] = ceDetail.evictionMinAge;
-      // Pipeline fields
-      form["contextEngine.historyTurns"] = ceDetail.historyTurns;
-      form["contextEngine.observationKeepWindow"] = ceDetail.observationKeepWindow;
-      form["contextEngine.observationTriggerChars"] = ceDetail.observationTriggerChars;
-      form["contextEngine.observationDeactivationChars"] = ceDetail.observationDeactivationChars;
-      form["contextEngine.compactionCooldownTurns"] = ceDetail.compactionCooldownTurns;
-      form["contextEngine.historyTurnOverrides"] = ceDetail.historyTurnOverrides
-        ? JSON.stringify(ceDetail.historyTurnOverrides, null, 2)
-        : "";
-      // DAG fields
+      // Durable context fields
       form["contextEngine.freshTailTurns"] = ceDetail.freshTailTurns;
       form["contextEngine.contextThreshold"] = ceDetail.contextThreshold;
       form["contextEngine.leafMinFanout"] = ceDetail.leafMinFanout;
@@ -1163,8 +1145,6 @@ export class IcAgentEditor extends LitElement {
     // Context Engine
     const ce: Record<string, unknown> = {};
     if (f["contextEngine.enabled"] !== undefined) ce.enabled = Boolean(f["contextEngine.enabled"]);
-    const ceVersion = f["contextEngine.version"] as string;
-    if (ceVersion) ce.version = ceVersion;
 
     // Shared fields
     if (f["contextEngine.thinkingKeepTurns"] !== undefined && f["contextEngine.thinkingKeepTurns"] !== "") {
@@ -1175,31 +1155,7 @@ export class IcAgentEditor extends LitElement {
       ce.evictionMinAge = Number(f["contextEngine.evictionMinAge"]);
     }
 
-    // Pipeline-mode fields (only include when version is pipeline)
-    if (ceVersion === "pipeline") {
-      if (f["contextEngine.historyTurns"] !== undefined && f["contextEngine.historyTurns"] !== "") {
-        ce.historyTurns = Number(f["contextEngine.historyTurns"]);
-      }
-      if (f["contextEngine.observationKeepWindow"] !== undefined && f["contextEngine.observationKeepWindow"] !== "") {
-        ce.observationKeepWindow = Number(f["contextEngine.observationKeepWindow"]);
-      }
-      if (f["contextEngine.observationTriggerChars"] !== undefined && f["contextEngine.observationTriggerChars"] !== "") {
-        ce.observationTriggerChars = Number(f["contextEngine.observationTriggerChars"]);
-      }
-      if (f["contextEngine.observationDeactivationChars"] !== undefined && f["contextEngine.observationDeactivationChars"] !== "") {
-        ce.observationDeactivationChars = Number(f["contextEngine.observationDeactivationChars"]);
-      }
-      if (f["contextEngine.compactionCooldownTurns"] !== undefined && f["contextEngine.compactionCooldownTurns"] !== "") {
-        ce.compactionCooldownTurns = Number(f["contextEngine.compactionCooldownTurns"]);
-      }
-      const htoRaw = (f["contextEngine.historyTurnOverrides"] as string) || "";
-      if (htoRaw) {
-        try { ce.historyTurnOverrides = JSON.parse(htoRaw); } catch { /* skip invalid JSON */ }
-      }
-    }
-
-    // DAG-mode fields (only include when version is dag)
-    if (ceVersion === "dag") {
+    // Durable context fields
       if (f["contextEngine.freshTailTurns"] !== undefined && f["contextEngine.freshTailTurns"] !== "") {
         ce.freshTailTurns = Number(f["contextEngine.freshTailTurns"]);
       }
@@ -1247,8 +1203,6 @@ export class IcAgentEditor extends LitElement {
       }
       if (f["contextEngine.summaryModel"]) ce.summaryModel = f["contextEngine.summaryModel"];
       if (f["contextEngine.summaryProvider"]) ce.summaryProvider = f["contextEngine.summaryProvider"];
-    }
-
     if (Object.keys(ce).length > 0) payload.contextEngine = ce;
 
     return payload;
@@ -1343,7 +1297,7 @@ export class IcAgentEditor extends LitElement {
       const payload = this._buildPayload();
 
       if (this._isNew) {
-        const result = await this.rpcClient.call<{ agentId: string }>("agents.create", {
+        const result = await this.rpcClient.call("agents.create", {
           agentId: this._form.id as string,
           config: payload,
         });
@@ -1416,11 +1370,9 @@ export class IcAgentEditor extends LitElement {
 
     // Context Engine
     const ceEnabled = f["contextEngine.enabled"];
-    const ceVersion = f["contextEngine.version"] as string;
     if (ceEnabled !== undefined) {
       const cePrev: Record<string, unknown> = {
         enabled: Boolean(ceEnabled),
-        version: ceVersion || "dag",
       };
       if (f["contextEngine.thinkingKeepTurns"] !== undefined && f["contextEngine.thinkingKeepTurns"] !== "") {
         cePrev.thinkingKeepTurns = Number(f["contextEngine.thinkingKeepTurns"]);
@@ -1429,11 +1381,8 @@ export class IcAgentEditor extends LitElement {
       if (f["contextEngine.evictionMinAge"] !== undefined && f["contextEngine.evictionMinAge"] !== "") {
         cePrev.evictionMinAge = Number(f["contextEngine.evictionMinAge"]);
       }
-      if (ceVersion === "dag" && f["contextEngine.freshTailTurns"] !== undefined && f["contextEngine.freshTailTurns"] !== "") {
+      if (f["contextEngine.freshTailTurns"] !== undefined && f["contextEngine.freshTailTurns"] !== "") {
         cePrev.freshTailTurns = Number(f["contextEngine.freshTailTurns"]);
-      }
-      if (ceVersion === "pipeline" && f["contextEngine.historyTurns"] !== undefined && f["contextEngine.historyTurns"] !== "") {
-        cePrev.historyTurns = Number(f["contextEngine.historyTurns"]);
       }
       preview.contextEngine = cePrev;
     }

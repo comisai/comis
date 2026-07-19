@@ -29,6 +29,9 @@ function makeRow(overrides?: Partial<MemoryRow>): MemoryRow {
     tenant_id: "default",
     agent_id: "default",
     user_id: "user-1",
+    visibility: "agent-shared",
+    conversation_ref: null,
+    principal_id: null,
     content: "test content",
     trust_level: "learned",
     memory_type: "semantic",
@@ -59,6 +62,7 @@ function makeEntry(overrides?: Partial<MemoryEntry>): MemoryEntry {
     tenantId: overrides?.tenantId ?? "default",
     agentId: overrides?.agentId ?? "default",
     userId: overrides?.userId ?? "user-1",
+    visibility: overrides?.visibility ?? { kind: "agent-shared" },
     content: overrides?.content ?? "test memory content",
     trustLevel: overrides?.trustLevel ?? "learned",
     source: overrides?.source ?? { who: "agent", channel: "telegram" },
@@ -223,17 +227,11 @@ describe("insertMemoryRow", () => {
     expect(row.occurred_at).toBeNull();
   });
 
-  it("defaults agentId to 'default' when undefined", () => {
+  it("rejects a missing agent identifier instead of selecting a storage default", () => {
     const entry = makeEntry({ id: "mem-2" });
-    // Force agentId to undefined to test default path
     (entry as { agentId?: string }).agentId = undefined;
 
-    insertMemoryRow(db, entry, "working");
-
-    const row = db.prepare("SELECT agent_id FROM memories WHERE id = ?").get("mem-2") as {
-      agent_id: string;
-    };
-    expect(row.agent_id).toBe("default");
+    expect(() => insertMemoryRow(db, entry, "working")).toThrow(/agent_id/i);
   });
 
   it("handles null optional fields (source_channel, source_session_key, expires_at)", () => {

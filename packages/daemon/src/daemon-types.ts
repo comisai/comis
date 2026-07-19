@@ -179,19 +179,7 @@ export interface DaemonInstance {
   readonly approvalGate?: ApprovalGate;
   /** Channel health monitor for observability and auto-restart. */
   readonly channelHealthMonitor?: ChannelHealthMonitor;
-  readonly sessionStoreBridge?: {
-    listDetailed: (tenantId?: string) => Array<{
-      sessionKey: string;
-      userId: string;
-      channelId: string;
-      metadata: Record<string, unknown>;
-      createdAt: number;
-      updatedAt: number;
-    }>;
-    loadByFormattedKey: (sessionKey: string) => { messages: unknown[]; metadata: Record<string, unknown>; createdAt: number; updatedAt: number } | undefined;
-    deleteByFormattedKey: (sessionKey: string) => boolean;
-    saveByFormattedKey: (sessionKey: string, messages: unknown[], metadata?: Record<string, unknown>) => void;
-  };
+  readonly sessionStoreBridge?: import("@comis/core").SessionStorePort;
 }
 
 /**
@@ -248,20 +236,7 @@ export interface DaemonOverrides {
  * the type without re-stating the literal. Mirrors the four-method facade
  * consumed by the RPC dispatch layer (rpc-dispatch.ts:88-101).
  */
-export type SessionStoreBridge = {
-  listDetailed: (tenantId?: string) => Array<{
-    sessionKey: string;
-    userId: string;
-    channelId: string;
-    metadata: Record<string, unknown>;
-    createdAt: number;
-    updatedAt: number;
-    messageCount: number;
-  }>;
-  loadByFormattedKey: (sessionKey: string) => { messages: unknown[]; metadata: Record<string, unknown>; createdAt: number; updatedAt: number } | undefined;
-  deleteByFormattedKey: (sessionKey: string) => boolean;
-  saveByFormattedKey: (sessionKey: string, messages: unknown[], metadata?: Record<string, unknown>) => void;
-};
+export type SessionStoreBridge = import("@comis/core").SessionStorePort;
 
 // ---------------------------------------------------------------------------
 // BootContext: single boot-time context
@@ -388,12 +363,7 @@ export interface BootContext {
   /** Entity-associative store — threaded into setupAgents (executor recall
    *  read path) + the cron review (write path). Built in setup-memory on the shared db. */
   entityStore: Awaited<ReturnType<typeof setupMemory>>["entityStore"];
-  /** LCD lossless context store — threaded into setupAgents (the
-   *  executor `contextStore` -> the `dag` branch in context-engine.ts). Built in
-   *  setup-memory on the shared db (`createLcdStore(db)`); injected as the CORE
-   *  `ContextStorePort` TYPE on SingleAgentDeps (agent↛memory cut). The `dag`
-   *  engine is opt-in (`contextEngine.version: "dag"`); the default stays pipeline,
-   *  so absent/unselected this is dormant. */
+  /** Lossless context store injected into every executor through the core port. */
   lcdStore: Awaited<ReturnType<typeof setupMemory>>["lcdStore"];
   /** LCD provenance READ store — threaded into
    *  setupAgents → createPiExecutor → prompt-assembly → createMemoryRecall's
@@ -702,10 +672,7 @@ export interface BootContext {
   // Session store bridge (1 field)
   sessionStoreBridge?: SessionStoreBridge;
   // Hot-add / hot-remove closures (2 fields)
-  // `rawRerankEnabled` is the RAW (pre-Zod-default) rag.rerank.enabled from the
-  // agents.create RPC input — threaded so the hot-added agent's effective-rerank
-  // precedence sees genuine unset (undefined) vs explicit-off, same as the boot path.
-  hotAdd?: (agentId: string, config: PerAgentConfig, rawRerankEnabled?: boolean | undefined) => Promise<void>;
+  hotAdd?: (agentId: string, config: PerAgentConfig) => Promise<void>;
   hotRemove?: (agentId: string) => Promise<void>;
   // RPC dispatch deps (1 field; mutated post-gateway-init for wsConnections/mediaDir/onGatewayAttachment)
   rpcDispatchDeps?: import("./api/rpc-dispatch.js").ApiDispatchDeps;

@@ -17,7 +17,15 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import Database from "better-sqlite3";
 import { initSchema } from "./schema.js";
 import { createSqliteDeliveryQueue } from "./delivery-queue-adapter.js";
-import type { DeliveryQueuePort } from "@comis/core";
+import { ConversationRefSchema, type DeliveryQueuePort } from "@comis/core";
+
+const CONVERSATION_REF = ConversationRefSchema.parse(`cv_${"a".repeat(43)}`);
+const DESTINATION_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "telegram-account",
+  conversationId: "ch-123",
+  conversationKind: "direct" as const,
+};
 
 function createMockEventBus(): {
   emit: ReturnType<typeof vi.fn>;
@@ -45,6 +53,9 @@ describe("SqliteDeliveryQueueAdapter — branch-gap coverage", () => {
       channelType: "telegram",
       channelId: "ch-123",
       tenantId: "default",
+      agentId: "agent-a",
+      conversationRef: CONVERSATION_REF,
+      destinationEndpoint: DESTINATION_ENDPOINT,
       optionsJson: "{}",
       origin: "agent",
       maxAttempts: 5,
@@ -186,16 +197,20 @@ describe("SqliteDeliveryQueueAdapter — branch-gap coverage", () => {
   describe("statusCounts switch statement walks every status", () => {
     function insertWithStatus(status: string, channelType = "telegram") {
       db.prepare(
-        `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
+        `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, agent_id,
+                                       conversation_ref, destination_endpoint, options_json, origin,
                                        status, attempt_count, max_attempts,
                                        created_at, scheduled_at, expire_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         `id-${status}-${channelType}-${Math.random()}`,
         "t",
         channelType,
         "ch-1",
         "default",
+        "agent-a",
+        CONVERSATION_REF,
+        JSON.stringify(DESTINATION_ENDPOINT),
         "{}",
         "agent",
         status,
@@ -255,11 +270,12 @@ describe("SqliteDeliveryQueueAdapter — branch-gap coverage", () => {
       // CHECK constraint is the upstream gate.
       expect(() => {
         db.prepare(
-          `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
+          `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, agent_id,
+                                         conversation_ref, destination_endpoint, options_json, origin,
                                          status, attempt_count, max_attempts,
                                          created_at, scheduled_at, expire_at)
-           VALUES ('weird-id', 't', 'tg', 'c1', 'def', '{}', 'agent', 'mystery_status', 0, 5, ?, ?, ?)`,
-        ).run(now, now, now + 60_000);
+           VALUES ('weird-id', 't', 'tg', 'c1', 'def', 'agent-a', ?, ?, '{}', 'agent', 'mystery_status', 0, 5, ?, ?, ?)`,
+        ).run(CONVERSATION_REF, JSON.stringify(DESTINATION_ENDPOINT), now, now, now + 60_000);
       }).toThrow(/CHECK constraint failed/);
     });
   });

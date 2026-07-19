@@ -127,7 +127,7 @@ export function bindGraphQueryHandlers(deps: GraphHandlerDeps): Record<string, R
       const userParams = stripInternalFields(rawParams);
       const params = GraphListContract.request.parse(userParams);
 
-      const tenantId = deps.tenantId ?? "default";
+      const tenantId = deps.tenantId;
       const listResult = deps.namedGraphStore.list(tenantId, {
         limit: params.limit,
         offset: params.offset,

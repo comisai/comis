@@ -774,7 +774,7 @@ describe("Async request-context ownership", () => {
     await queue.drainAll();
     await queue.shutdown();
 
-    expect(handledBeforeRelease).toEqual(["agent-a"]);
+    expect(handledBeforeRelease).toEqual(["agent-a", "agent-b"]);
     expect(handled).toEqual(["agent-a", "agent-b"]);
   });
 

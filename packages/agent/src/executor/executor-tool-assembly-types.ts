@@ -50,7 +50,9 @@ export interface ToolAssemblyDeps {
   convertTools?: (tools: AgentTool[]) => ToolDefinition[];
   workspaceDir: string;
   /** Immutable workspace policy captured once at the start of this turn. */
-  workspacePolicySnapshot?: WorkspacePolicySnapshot;
+  workspacePolicySnapshot: WorkspacePolicySnapshot;
+  /** Onboarding decision captured once before prompt assembly. */
+  isOnboarding: boolean;
   agentDir: string;
   logger: ComisLogger;
   eventBus: TypedEventBus;
@@ -98,6 +100,7 @@ export interface ToolAssemblyDeps {
   mediaPersistenceEnabled?: boolean;
   autonomousMediaEnabled?: boolean;
   getPromptSkillsXml?: () => string;
+  getPromptSkillLocations?: () => ReadonlyMap<string, string>;
   /** Live MCP instructions resolver forwarded to prompt assembly. */
   getMcpServerInstructions?: () => ReadonlyArray<McpInstructionBlock>;
   subAgentToolNames?: string[];

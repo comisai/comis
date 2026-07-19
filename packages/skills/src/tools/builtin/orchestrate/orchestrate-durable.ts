@@ -48,6 +48,8 @@ import {
   type DeliveryOrigin,
   type AgentCapability,
   type UserTrustLevel,
+  type ConversationRef,
+  type ConversationScope,
 } from "@comis/core";
 import { ok, err, suppressError, type Result } from "@comis/shared";
 
@@ -235,10 +237,11 @@ export interface ResumeSpec {
 }
 
 export interface ResumePrincipal {
+  readonly tenantId: string;
   readonly agentId: string;
-  readonly sessionKey: string;
-  readonly ownerTenantId: string;
-  readonly ownerUserId: string;
+  readonly conversationRef: ConversationRef;
+  readonly conversationScope: ConversationScope;
+  readonly principalId: string;
   readonly deliveryOrigin: DeliveryOrigin | null;
   readonly trustLevel: UserTrustLevel;
   /** Immutable operator-policy snapshot hash captured by the parent turn. */
@@ -257,10 +260,11 @@ export interface DurableRowInput {
   readonly checkpointId: string;
   /** Tree-stable root used for budget and revocation. */
   readonly rootRunId: string;
+  readonly tenantId: string;
   readonly agentId: string;
-  readonly sessionKey: string;
-  readonly ownerTenantId: string;
-  readonly ownerUserId: string;
+  readonly conversationRef: ConversationRef;
+  readonly conversationScope: ConversationScope;
+  readonly principalId: string;
   readonly deliveryOrigin: DeliveryOrigin | null;
   readonly caps: readonly AgentCapability[];
   readonly leaseIds: readonly string[];
@@ -293,10 +297,11 @@ export function buildResumableRow(input: DurableRowInput): DurableRunRecord {
   return {
     checkpointId: input.checkpointId,
     rootRunId: input.rootRunId,
+    tenantId: input.tenantId,
     agentId: input.agentId,
-    sessionKey: input.sessionKey,
-    ownerTenantId: input.ownerTenantId,
-    ownerUserId: input.ownerUserId,
+    conversationRef: input.conversationRef,
+    conversationScope: input.conversationScope,
+    principalId: input.principalId,
     deliveryOrigin: input.deliveryOrigin,
     spawnTree: [],
     caps: [...input.caps],
@@ -613,10 +618,11 @@ export async function loadResumeSpec(
   if (row.status !== "running") return failAfterClaim("the durable run is no longer resumable");
   const principal = input.principal;
   if (
-    row.agentId !== principal.agentId
-    || row.sessionKey !== principal.sessionKey
-    || row.ownerTenantId !== principal.ownerTenantId
-    || row.ownerUserId !== principal.ownerUserId
+    row.tenantId !== principal.tenantId
+    || row.agentId !== principal.agentId
+    || row.conversationRef !== principal.conversationRef
+    || JSON.stringify(row.conversationScope) !== JSON.stringify(principal.conversationScope)
+    || row.principalId !== principal.principalId
     || !sameDeliveryOrigin(row.deliveryOrigin, principal.deliveryOrigin)
   ) {
     return failAfterClaim("resume authorization denied: execution owner mismatch");
@@ -649,10 +655,11 @@ export async function loadResumeSpec(
     language,
     checkpointRef: row.checkpointRef ?? undefined,
     authority: {
+      tenantId: row.tenantId,
       agentId: row.agentId,
-      sessionKey: row.sessionKey,
-      ownerTenantId: row.ownerTenantId,
-      ownerUserId: row.ownerUserId,
+      conversationRef: row.conversationRef,
+      conversationScope: row.conversationScope,
+      principalId: row.principalId,
       deliveryOrigin: row.deliveryOrigin,
       trustLevel: row.trustLevel,
       caps: effectiveCaps,

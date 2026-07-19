@@ -22,6 +22,7 @@ import {
   type NodeStatus,
   type GraphStatus,
   type NodeExecutionState,
+  type ConversationLocator,
   systemNowMs,
 } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
@@ -64,7 +65,7 @@ export interface GraphStateMachine {
   markNodeCompleted(nodeId: string, output?: string): Result<string[], string>;
 
   /** Transition a "running" node to "failed". Returns skipped and newly ready node IDs.
-   *  When the node is retry-eligible, the optional priorSessionKey is stashed on
+   *  When the node is retry-eligible, the optional prior conversation is stashed on
    *  the node state so the retry spawn can re-use the aborted attempt's session,
    *  letting Anthropic cache amortize across retries.
    *  `options.terminal: true` forces a NON-RETRYABLE failure: the retry branch is
@@ -73,7 +74,7 @@ export interface GraphStateMachine {
   markNodeFailed(
     nodeId: string,
     error: string,
-    priorSessionKey?: string,
+    priorConversation?: ConversationLocator,
     options?: { terminal?: boolean },
   ): Result<FailureResult, string>;
 
@@ -477,7 +478,7 @@ function createGraphStateMachineFromState(
   function markNodeFailed(
     nodeId: string,
     error: string,
-    priorSessionKey?: string,
+    priorConversation?: ConversationLocator,
     options?: { terminal?: boolean },
   ): Result<FailureResult, string> {
     const state = getState(nodeId);
@@ -501,19 +502,19 @@ function createGraphStateMachineFromState(
       state.runId = undefined;          // clear stale runId
       state.startedAt = undefined;      // reset timing for next attempt
       state.completedAt = undefined;
-      // Stash the aborted attempt's sessionKey so the retry spawn can reuse
+      // Stash the aborted attempt's conversation so the retry spawn can reuse
       // it. Lets Anthropic cache-read across the failure boundary when the
       // prior run happened to write a breakpoint before aborting. No-op when
       // caller can't resolve the sessionKey (stays undefined, regular spawn).
-      if (priorSessionKey && priorSessionKey.length > 0) {
-        state.priorSessionKey = priorSessionKey;
+      if (priorConversation) {
+        state.priorConversation = priorConversation;
       }
       // Do NOT cascade -- downstream nodes stay pending/ready
       return ok({ skipped: [], newlyReady: [], retrying: [nodeId] });
     }
-    // Terminal failure path: clear any stale priorSessionKey so stale
+    // Terminal failure path: clear any stale prior conversation so stale
     // references don't survive into graph-completion metadata.
-    state.priorSessionKey = undefined;
+    state.priorConversation = undefined;
 
     // Original path: no retries remaining, proceed with failure
     state.status = "failed";

@@ -36,7 +36,6 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { parseFormattedSessionKey } from "@comis/core";
 import { sessionKeyToPath } from "@comis/agent";
 import {
   resolveTrajectoryPointerFilePath,
@@ -48,7 +47,7 @@ import { assembleIncidentReportFromSources } from "./obs-explain.js";
 // The canonical formatted session key (the same one obs-explain-readers.test.ts
 // pins). sessionKeyToPath maps it to tenant="default", channel="678314278",
 // file="678314278~peer~678314278.jsonl".
-const SESSION_KEY = "default:678314278:678314278:peer:678314278";
+const SESSION_KEY = "default:agent:default:678314278:678314278:peer:678314278";
 
 // Every temp dir created — torn down in afterEach so no temp tree leaks.
 const tmpDirs: string[] = [];
@@ -68,9 +67,13 @@ function tmpDataDir(): string {
  */
 function buildRealSessionFile(dataDir: string): string {
   const sessionsBase = path.join(dataDir, "workspace", "sessions");
-  const key = parseFormattedSessionKey(SESSION_KEY);
-  expect(key).toBeDefined();
-  const sessionFile = sessionKeyToPath(key!, sessionsBase);
+  const sessionFile = sessionKeyToPath({
+    tenantId: "default",
+    agentId: "default",
+    userId: "678314278",
+    channelId: "678314278",
+    peerId: "678314278",
+  }, sessionsBase);
   fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
   // The session JSONL itself (message log) — empty is fine; the readers target
   // its trajectory/metadata siblings.
@@ -183,26 +186,4 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     expect(report.offloads[0]!.pointer).not.toBe("<offloaded>");
   });
 
-  it("resolves the trajectory via the co-located fallback when no pointer file is present", async () => {
-    const dataDir = tmpDataDir();
-    const sessionFile = buildRealSessionFile(dataDir);
-
-    // Same layout, but SKIP writeTrajectoryPointerFileBestEffort — the reader
-    // must fall back to the canonical co-located <sessionFile>.trajectory.jsonl
-    // convention and still feed the assembler.
-    fs.writeFileSync(`${sessionFile}.trajectory.jsonl`, trajectoryLines(), "utf-8");
-    expect(fs.existsSync(resolveTrajectoryPointerFilePath(sessionFile))).toBe(false);
-
-    writeRealMetadata(sessionFile);
-
-    const report = await assembleIncidentReportFromSources(
-      makeRealReader(dataDir),
-      dataDir,
-      { sessionKey: SESSION_KEY, depth: "summary" },
-    );
-
-    expect(report.failures.length).toBeGreaterThanOrEqual(1);
-    expect(report.offloads.length).toBe(1);
-    expect(report.offloads[0]!.pointer).toBe("tool-results/call_abc.json");
-  });
 });

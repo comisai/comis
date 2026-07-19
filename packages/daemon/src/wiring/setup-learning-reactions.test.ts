@@ -75,6 +75,7 @@ function makeDeps(over: Partial<LearningReactionsWiringDeps> = {}): {
   const timers = createFakeTimers(NOW);
   const reactionTrajectoryMap = over.reactionTrajectoryMap ?? createReactionTrajectoryMap({ clock, timers });
   const deps: LearningReactionsWiringDeps = {
+    tenantId: "tenant-configured",
     eventBus: over.eventBus ?? new TypedEventBus(),
     outcomeStore: over.outcomeStore ?? store,
     clock,
@@ -452,7 +453,7 @@ describe("wireLearningCorrection — correction → prior-trajectory observe", (
     expect(obs.outcome).toBe("corrected");
     expect(obs.source).toBe("correction");
     expect(obs.trajectoryId).toBe(TRACE); // the prior trajectory recorded under the SAME sessionKey
-    expect(obs.tenantId).toBe(TENANT); // tenant derived from the sessionKey's first segment
+    expect(obs.tenantId).toBe("tenant-configured");
     expect(obs.agentId).toBe(AGENT); // the trajectory's OWN agent (from the diagnostic payload)
     expect(obs.confidence).toBe(0.6); // the capped reward
   });
@@ -585,6 +586,7 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     const { store } = makeStubStore();
     return {
       config: {
+        tenantId: "tenant-configured",
         agents: over.agents ?? {},
         // The master kill-switch is `memory.enabled`.
         memory: { enabled: over.costFeatures ?? true },

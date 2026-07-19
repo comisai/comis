@@ -239,6 +239,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         }
       }
 
+      const requestContext = tryGetContext();
       const coordResult = await deps.graphCoordinator.run({
         graph: finalValidated,
         callerSessionKey: rawParams._callerSessionKey as string | undefined,
@@ -246,7 +247,8 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
         callerCaps: rawParams._capabilities as AgentCapability[] | undefined,
         callerRootRunId: rawParams._rootRunId as string | undefined,
         callerLeaseId: rawParams._leaseId as string | undefined,
-        callerDeliveryOrigin: tryGetContext()?.deliveryOrigin,
+        callerDeliveryOrigin: requestContext?.deliveryOrigin,
+        callerTurnScope: requestContext?.turnScope,
         announceChannelType: rawParams._callerChannelType as string | undefined,
         announceChannelId: rawParams._callerChannelId as string | undefined,
         nodeProgress: userParams.node_progress === true,
@@ -329,7 +331,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       GraphSaveContract.request.parse(userParams);
 
       const id = (rawParams.id as string) ?? randomUUID();
-      const tenantId = deps.tenantId ?? "default";
+      const tenantId = deps.tenantId;
       const agentId = (rawParams.agentId as string) ?? deps.defaultAgentId;
 
       // Validate structure (typeId/typeConfig pairing, DAG sort, Zod schema).
@@ -372,7 +374,7 @@ export function bindGraphMutateHandlers(deps: GraphHandlerDeps): Record<string, 
       const userParams = stripInternalFields(rawParams);
       GraphDeleteContract.request.parse(userParams);
 
-      const tenantId = deps.tenantId ?? "default";
+      const tenantId = deps.tenantId;
       const deleted = deps.namedGraphStore.softDelete(id, tenantId);
       if (!deleted) {
         throw new PreconditionError("Named graph not found");

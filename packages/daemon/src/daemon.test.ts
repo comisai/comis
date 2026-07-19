@@ -76,12 +76,8 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
             maxContextChars: 4000,
             minScore: 0.1,
             includeTrustLevels: ["system", "learned"],
-            // rag.rerank.enabled now defaults ON, but setupSingleAgent
-            // resolves the EFFECTIVE rerank from the raw signal + model-presence — with no
-            // reranker model present in this mock it resolves to false. Set it explicitly
-            // false here so the mock config matches the post-setupAgents effective config
-            // (this test asserts the DaemonInstance shape, not the rerank default).
-            rerank: { enabled: false },
+            // Explicit off keeps this fixture independent of local model presence.
+            rerank: { mode: "off" },
           },
         }),
       },

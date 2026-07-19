@@ -17,11 +17,11 @@ import {
 
 // vi.mock MUST be hoisted — vitest hoists vi.mock calls so the module under
 // test sees the mock, NOT the real implementation.
-vi.mock("@earendil-works/pi-ai/oauth", () => ({
-  loginOpenAICodex: vi.fn(),
+vi.mock("./openai-codex-browser-login.js", () => ({
+  loginOpenAICodexBrowser: vi.fn(),
 }));
 
-import { loginOpenAICodex } from "@earendil-works/pi-ai/oauth";
+import { loginOpenAICodexBrowser } from "./openai-codex-browser-login.js";
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -67,7 +67,7 @@ function makeMockPrompter(opts: {
 }
 
 beforeEach(() => {
-  vi.mocked(loginOpenAICodex).mockReset();
+  vi.mocked(loginOpenAICodexBrowser).mockReset();
 });
 
 afterEach(() => {
@@ -81,7 +81,7 @@ afterEach(() => {
 describe("loginOpenAICodexOAuth — acceptance", () => {
   it("local mode openUrl is called with the authorize URL", async () => {
     const openUrl = vi.fn<(url: string) => Promise<unknown>>().mockResolvedValue({} as never);
-    vi.mocked(loginOpenAICodex).mockImplementation(async (cb: any) => {
+    vi.mocked(loginOpenAICodexBrowser).mockImplementation(async (cb: any) => {
       await cb.onAuth({ url: "https://auth.openai.com/oauth/authorize?state=abc" });
       return {
         access: makeFixtureJwt(),
@@ -106,7 +106,7 @@ describe("loginOpenAICodexOAuth — acceptance", () => {
     const prompter = makeMockPrompter({
       textResponses: ["http://localhost:1455/cb?code=X&state=abc"],
     });
-    vi.mocked(loginOpenAICodex).mockImplementation(async (cb: any) => {
+    vi.mocked(loginOpenAICodexBrowser).mockImplementation(async (cb: any) => {
       await cb.onAuth({ url: "https://auth.openai.com/oauth/authorize?state=abc" });
       // Pi-ai consumes the manual paste via onPrompt; trigger it.
       await cb.onPrompt({ message: "Paste the redirect URL" });
@@ -136,7 +136,7 @@ describe("loginOpenAICodexOAuth — acceptance", () => {
       textResponses: ["http://localhost:1455/cb?code=X&state=abc"],
     });
     // Pi-ai never settles → onManualCodeInput must fire after the timing race.
-    vi.mocked(loginOpenAICodex).mockImplementation(async (cb: any) => {
+    vi.mocked(loginOpenAICodexBrowser).mockImplementation(async (cb: any) => {
       await cb.onAuth({ url: "https://auth.openai.com/oauth/authorize?state=abc" });
       // Simulate pi-ai calling onManualCodeInput (the runner-built handler)
       // when the local callback fails to arrive within the timing budget.
@@ -167,7 +167,7 @@ describe("loginOpenAICodexOAuth — acceptance", () => {
   });
 
   it("unsupported region maps to LoginError code:'unsupported_region' with HTTPS_PROXY hint", async () => {
-    vi.mocked(loginOpenAICodex).mockRejectedValue(
+    vi.mocked(loginOpenAICodexBrowser).mockRejectedValue(
       new Error("unsupported_country_region_territory"),
     );
     const result = await loginOpenAICodexOAuth({
@@ -182,7 +182,7 @@ describe("loginOpenAICodexOAuth — acceptance", () => {
   });
 
   it("state mismatch maps to LoginError code:'callback_validation_failed'", async () => {
-    vi.mocked(loginOpenAICodex).mockRejectedValue(new Error("state mismatch"));
+    vi.mocked(loginOpenAICodexBrowser).mockRejectedValue(new Error("state mismatch"));
     const result = await loginOpenAICodexOAuth({
       prompter: makeMockPrompter(),
       isRemote: false,
@@ -203,7 +203,7 @@ describe("loginOpenAICodexOAuth — edge cases", () => {
     const prompter = makeMockPrompter({
       textResponses: ["http://localhost:1455/cb?code=Y&state=abc"],
     });
-    vi.mocked(loginOpenAICodex).mockImplementation(async (cb: any) => {
+    vi.mocked(loginOpenAICodexBrowser).mockImplementation(async (cb: any) => {
       // No onAuth call (browser callback was unavailable),
       // jump straight to manual paste.
       const code = await cb.onManualCodeInput!();
@@ -226,7 +226,7 @@ describe("loginOpenAICodexOAuth — edge cases", () => {
   it("malformed JWT (identity decode fails) returns LoginError code:'identity_decode_failed'", async () => {
     // Pi-ai itself can throw "Failed to extract accountId from token" if the
     // JWT lacks chatgpt_account_id.
-    vi.mocked(loginOpenAICodex).mockRejectedValue(
+    vi.mocked(loginOpenAICodexBrowser).mockRejectedValue(
       new Error("Failed to extract accountId from token"),
     );
     const result = await loginOpenAICodexOAuth({
@@ -239,24 +239,32 @@ describe("loginOpenAICodexOAuth — edge cases", () => {
     expect(result.error.code).toBe("identity_decode_failed");
   });
 
-  it("originator 'comis' is passed to pi-ai", async () => {
-    vi.mocked(loginOpenAICodex).mockResolvedValue({
+  it("browser path delegates to loginOpenAICodexBrowser (which owns originator='comis' on the wire)", async () => {
+    // The originator guarantee is asserted at wire level in
+    // openai-codex-browser-login.test.ts — the flow module owns it, not a
+    // pass-through parameter. Here we pin the delegation + callback shape.
+    vi.mocked(loginOpenAICodexBrowser).mockResolvedValue({
       access: makeFixtureJwt(),
       refresh: "rt_test",
       expires: Date.now() + 3_600_000,
+      accountId: "acct-test",
     });
     await loginOpenAICodexOAuth({
       prompter: makeMockPrompter(),
       isRemote: false,
       openUrl: vi.fn<(url: string) => Promise<unknown>>().mockResolvedValue({} as never),
     });
-    expect(loginOpenAICodex).toHaveBeenCalledWith(
-      expect.objectContaining({ originator: "comis" }),
+    expect(loginOpenAICodexBrowser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        onAuth: expect.any(Function),
+        onPrompt: expect.any(Function),
+        onManualCodeInput: expect.any(Function),
+      }),
     );
   });
 
   it("success returns profileId 'openai-codex:<email>' derived from JWT", async () => {
-    vi.mocked(loginOpenAICodex).mockResolvedValue({
+    vi.mocked(loginOpenAICodexBrowser).mockResolvedValue({
       access: makeFixtureJwt({
         "https://api.openai.com/profile": { email: "alice@example.com" },
       }),
@@ -280,13 +288,13 @@ describe("loginOpenAICodexOAuth — edge cases", () => {
 // ---------------------------------------------------------------------------
 
 describe("loginOpenAICodexOAuth — method: 'device-code' dispatch", () => {
-  it("when method is 'device-code' it does NOT call pi-ai's loginOpenAICodex (browser path)", async () => {
-    // Stub pi-ai's loginOpenAICodex; if the device-code branch dispatches
+  it("when method is 'device-code' it does NOT call loginOpenAICodexBrowser (browser path)", async () => {
+    // Stub loginOpenAICodexBrowser; if the device-code branch dispatches
     // correctly, this mock is never invoked. The device-code module makes
     // network requests via globalThis.fetch — without a fetchFn injection
     // those will fail; what we assert is purely that the browser path is
     // NOT taken when method === "device-code".
-    vi.mocked(loginOpenAICodex).mockResolvedValue({
+    vi.mocked(loginOpenAICodexBrowser).mockResolvedValue({
       access: makeFixtureJwt(),
       refresh: "rt_test",
       expires: Date.now() + 3_600_000,
@@ -310,7 +318,7 @@ describe("loginOpenAICodexOAuth — method: 'device-code' dispatch", () => {
         method: "device-code",
       });
       // Browser-path mock must NOT have been called.
-      expect(loginOpenAICodex).not.toHaveBeenCalled();
+      expect(loginOpenAICodexBrowser).not.toHaveBeenCalled();
       // Device-code path either returned err or threw; either way result.ok === false.
       expect(result.ok).toBe(false);
     } finally {
@@ -322,7 +330,7 @@ describe("loginOpenAICodexOAuth — method: 'device-code' dispatch", () => {
     // The method default is "browser". The browser tests above already
     // exhaust that path with method omitted; this test is a pin asserting
     // that explicit method:"browser" goes the browser way.
-    vi.mocked(loginOpenAICodex).mockResolvedValue({
+    vi.mocked(loginOpenAICodexBrowser).mockResolvedValue({
       access: makeFixtureJwt(),
       refresh: "rt_test",
       expires: Date.now() + 3_600_000,
@@ -336,6 +344,6 @@ describe("loginOpenAICodexOAuth — method: 'device-code' dispatch", () => {
       method: "browser",
     });
     expect(result.ok).toBe(true);
-    expect(loginOpenAICodex).toHaveBeenCalledTimes(1);
+    expect(loginOpenAICodexBrowser).toHaveBeenCalledTimes(1);
   });
 });

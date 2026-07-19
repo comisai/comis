@@ -84,6 +84,22 @@ function makeNotificationConfig(overrides: Partial<NotificationConfig> = {}): No
   };
 }
 
+function deliveryFields(agentId: string, channelId: string) {
+  return {
+    authority: {
+      tenantId: "tenant-a",
+      agentId,
+      conversationRef: `cv_${"n".repeat(43)}` as never,
+    },
+    destinationEndpoint: {
+      channelType: "discord",
+      channelInstanceId: "discord-test",
+      conversationId: channelId,
+      conversationKind: "direct" as const,
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Build a deps object for `setupNotifications` with sensible test defaults.
 // ---------------------------------------------------------------------------
@@ -108,7 +124,6 @@ function makeDeps(overrides: Partial<Parameters<typeof setupNotifications>[0]> =
     criticalBypass: overrides.criticalBypass ?? false,
     activeAdapterTypes: overrides.activeAdapterTypes ?? new Set<string>(["discord"]),
     logger: overrides.logger ?? createMockLogger(),
-    tenantId: overrides.tenantId ?? "default",
     ...overrides,
   };
   return { deps, deliveryQueue, eventBus };
@@ -170,12 +185,14 @@ describe("setupNotifications -- daemon wiring", () => {
       message: "should not deliver",
       channelType: "discord",
       channelId: "discord-test-channel-2",
+      ...deliveryFields("agent-disabled", "discord-test-channel-2"),
     });
     const defaultResult = await ctx.notificationService.notifyUser({
       agentId: "agent-default",
       message: "should deliver",
       channelType: "discord",
       channelId: "discord-test-channel-3",
+      ...deliveryFields("agent-default", "discord-test-channel-3"),
     });
 
     expect(disabledResult.ok).toBe(false);
@@ -203,6 +220,7 @@ describe("setupNotifications -- daemon wiring", () => {
       priority: "normal",
       channelType: "discord",
       channelId: "discord-test-channel-1",
+      ...deliveryFields("agent-x", "discord-test-channel-1"),
     });
 
     expect(result.ok).toBe(true);
@@ -246,6 +264,7 @@ describe("setupNotifications -- daemon wiring", () => {
       priority: "critical",
       channelType: "discord",
       channelId: "discord-test-channel-1",
+      ...deliveryFields("agent-critical", "discord-test-channel-1"),
     });
 
     expect(result.ok).toBe(true);
@@ -297,12 +316,14 @@ describe("setupNotifications -- daemon wiring", () => {
       message: "evening msg",
       channelType: "discord",
       channelId: "discord-test-channel-1",
+      ...deliveryFields("agent-1", "discord-test-channel-1"),
     });
     await tokyo.ctx.notificationService.notifyUser({
       agentId: "agent-1",
       message: "midday msg",
       channelType: "discord",
       channelId: "discord-test-channel-1",
+      ...deliveryFields("agent-1", "discord-test-channel-1"),
     });
 
     // NYC at 23:00 -- inside the 22:00-07:00 window -> deferred to end-of-quiet.

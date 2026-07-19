@@ -43,6 +43,7 @@ import type {
   ExecutionPlanPort,
   TypedEventBus,
 } from "@comis/core";
+import { formatSessionKey } from "@comis/core";
 
 import { createAcpSessionMap, type AcpSessionMap } from "./acp-session-map.js";
 import { createAcpActivityBridge } from "./acp-activity-bridge.js";
@@ -54,6 +55,9 @@ import { createAcpPlanBridge } from "./acp-plan-bridge.js";
  * Uses function callbacks to keep the gateway decoupled from agent internals.
  */
 export interface AcpServerDeps {
+  /** Explicit deployment authority for this standalone ACP agent. */
+  tenantId: string;
+  agentId: string;
   /** Execute an agent turn and return the response. */
   executeAgent: (params: {
     message: string;
@@ -136,6 +140,8 @@ export interface AcpAgentHandle {
    * the request handler. Returns `undefined` for an unknown / dropped session.
    */
   getConnection(acpSessionId: string): AgentSideConnection | undefined;
+  /** Resolve a display label through the authoritative ACP session registry. */
+  resolveAcpSessionId(agentId: string, sessionKey: string): string | undefined;
   /**
    * Register the `AgentSideConnection` constructed in {@link startAcpServer}.
    * Sessions opened after this call are keyed to the connection, and the
@@ -291,6 +297,19 @@ export function createAcpAgent(deps: AcpServerDeps): AcpAgentHandle {
     return connections.get(acpSessionId);
   }
 
+  function resolveAcpSessionId(agentId: string, sessionKey: string): string | undefined {
+    if (agentId !== deps.agentId) return undefined;
+    for (const [acpSessionId, key] of sessionMap.getAll()) {
+      const displayKey = formatSessionKey({
+        tenantId: deps.tenantId,
+        agentId: deps.agentId,
+        ...key,
+      });
+      if (displayKey === sessionKey) return acpSessionId;
+    }
+    return undefined;
+  }
+
   function registerConnection(connection: AgentSideConnection): void {
     activeConnection = connection;
     // Drop every retained connection when this connection closes (the SDK
@@ -323,7 +342,14 @@ export function createAcpAgent(deps: AcpServerDeps): AcpAgentHandle {
       }
     : undefined;
 
-  return { agent, sessionMap, getConnection, registerConnection, bridges };
+  return {
+    agent,
+    sessionMap,
+    getConnection,
+    resolveAcpSessionId,
+    registerConnection,
+    bridges,
+  };
 }
 
 /**
@@ -380,6 +406,7 @@ export async function startAcpServer(deps: AcpServerDeps): Promise<void> {
         eventBus: deps.eventBus,
         executionPlanPort: deps.executionPlanPort,
         getConnection: handle.getConnection,
+        resolveAcpSessionId: handle.resolveAcpSessionId,
       });
     } else {
       deps.logger.warn(

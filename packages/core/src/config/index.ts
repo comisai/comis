@@ -3,6 +3,8 @@
 
 // Schemas (for direct validation or extension)
 export { AppConfigSchema } from "./schema.js";
+export { IdentityConfigSchema } from "./schema-identity.js";
+export type { IdentityConfig } from "./schema-identity.js";
 export { ApprovalsConfigSchema, ApprovalRuleSchema, checkApprovalsConfig } from "./schema-approvals.js";
 export {
   ToolingConfigSchema,

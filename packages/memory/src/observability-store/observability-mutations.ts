@@ -115,10 +115,11 @@ export function bindMutations(db: Database.Database): ObservabilityMutations {
 
   const insertDeliveryStmt = db.prepare(`
     INSERT INTO obs_delivery (
-      timestamp, trace_id, agent_id, channel_type, channel_id, session_key,
+      timestamp, trace_id, tenant_id, agent_id, conversation_ref, destination_endpoint,
+      channel_type, channel_id, session_key,
       status, latency_ms, error_message, message_preview,
       failure_stage, error_kind, tool_calls, llm_calls, tokens_total, cost_total
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertDiagnosticStmt = db.prepare(`
@@ -183,7 +184,10 @@ export function bindMutations(db: Database.Database): ObservabilityMutations {
     insertDeliveryStmt.run(
       entry.timestamp,
       entry.traceId,
+      entry.tenantId,
       entry.agentId,
+      entry.conversationRef,
+      JSON.stringify(entry.destinationEndpoint),
       entry.channelType,
       entry.channelId,
       entry.sessionKey ?? "",

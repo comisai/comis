@@ -150,10 +150,10 @@ describe("buildMemConfig — Behavior D: rag patched under agents.default with R
     expect(loadValid(p).agents["default"]!.rag.entityLane.enabled).toBe(true);
   });
 
-  it("rerank/mmr/pinned map to rag.<knob>.enabled", () => {
+  it("rerank maps to mode while mmr and pinned map to enabled", () => {
     const p = build({ label: "post", ragConfig: { rerank: true, mmr: false, pinned: true } });
     const rag = loadValid(p).agents["default"]!.rag;
-    expect(rag.rerank.enabled).toBe(true);
+    expect(rag.rerank.mode).toBe("on");
     expect(rag.mmr.enabled).toBe(false);
     expect(rag.pinned.enabled).toBe(true);
   });

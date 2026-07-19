@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import type { ConversationRef } from "../domain/conversation-scope.js";
 /**
  * Row DTOs for the LCD (Lossless Context DAG) ContextStorePort. Type-only.
  *
@@ -117,7 +118,7 @@ export interface LcdMessagePart {
  */
 export interface LcdMessage {
   id: string;
-  conversationId: string;
+  conversationRef: ConversationRef;
   /** Monotonic per conversation. */
   seq: number;
   role: LcdRole;
@@ -136,7 +137,7 @@ export interface LcdMessage {
  * latent cross-tenant hole.
  */
 export interface ContextStoreScope {
-  conversationId: string;
+  conversationRef: ConversationRef;
   tenantId: string;
   agentId: string;
   sessionKey: string;
@@ -184,7 +185,7 @@ export type LcdSummaryKind = "leaf" | "condensed";
  */
 export interface LcdSummary {
   summaryId: string;
-  conversationId: string;
+  conversationRef: ConversationRef;
   /** `"leaf"` (depth-0 condensation of messages) or `"condensed"` (depth>0 summary-of-summaries). */
   kind: LcdSummaryKind;
   /** 0 for a leaf; `max(child depths) + 1` for a condensed summary. */
@@ -254,7 +255,7 @@ export interface ContextBrowseScope {
  * taint-wrapped read).
  */
 export interface LcdConversationSummary {
-  conversationId: string;
+  conversationRef: ConversationRef;
   tenantId: string;
   agentId: string;
   /** Equal to conversationId in the current single-session-per-conversation model. */
@@ -424,7 +425,7 @@ export interface AppendProvenanceInput {
   /** Formatted session key; used by the `session.reset_conversation --memory` delete path. */
   sourceSessionKey: string;
   /** Isolation: tenant+agent+session composite. */
-  conversationId: string;
+  conversationRef: ConversationRef;
   /** Isolation: agent boundary. */
   agentId: string;
   /** Isolation: tenant boundary. */

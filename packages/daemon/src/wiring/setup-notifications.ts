@@ -30,7 +30,6 @@ export interface SetupNotificationDeps {
   criticalBypass: boolean;
   activeAdapterTypes: ReadonlySet<string>;
   logger: ComisLogger;
-  tenantId: string;
 }
 
 /**
@@ -77,7 +76,6 @@ export function setupNotifications(deps: SetupNotificationDeps): NotificationCon
     defaultConfig,
     channelResolverDeps,
     logger: deps.logger,
-    tenantId: deps.tenantId,
   });
 
   return { notificationService, sessionTracker };

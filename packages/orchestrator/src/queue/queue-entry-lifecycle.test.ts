@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { NormalizedMessage, RequestContext } from "@comis/core";
 import {
+  createConversationLocator,
   enrichCurrentContext,
   runWithContext,
   tryGetContext,
@@ -90,11 +91,29 @@ describe("queue entry lifecycle", () => {
       channelType: "telegram",
     };
     const captured = runWithContext(context, () => {
+      const endpoint = {
+        channelType: "telegram",
+        channelInstanceId: "adapter-a",
+        conversationId: "chat-1",
+        conversationKind: "direct" as const,
+      };
+      const conversation = createConversationLocator({
+        tenantId: "default",
+        agentId: "agent-a",
+        partition: {
+          kind: "endpoint-conversation-principal",
+          endpoint,
+          principalId: "user-1",
+        },
+      });
+      expect(conversation.ok).toBe(true);
+      if (!conversation.ok) throw conversation.error;
       const enriched = enrichCurrentContext({
         tenantId: "default",
         userId: "user-1",
         sessionKey: {
           tenantId: "default",
+          agentId: "agent-a",
           userId: "user-1",
           channelId: "chat-1",
         },
@@ -105,6 +124,11 @@ describe("queue entry lifecycle", () => {
           channelId: "chat-1",
           userId: "user-1",
           tenantId: "default",
+        },
+        turnScope: {
+          conversation: conversation.value.conversationScope,
+          principal: { principalId: "user-1" },
+          endpoint,
         },
       });
       expect(enriched.ok).toBe(true);

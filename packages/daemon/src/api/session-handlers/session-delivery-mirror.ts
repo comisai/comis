@@ -3,6 +3,7 @@
 /** Session-lifecycle clearing for prompt-injected delivery-mirror state. */
 
 import type { SessionHandlerDeps } from "./session-helpers.js";
+import type { DeliveryAuthority } from "@comis/core";
 
 type SessionLifecycleMethod =
   | "session.delete"
@@ -16,15 +17,16 @@ type SessionLifecycleMethod =
  */
 export async function clearSessionDeliveryMirror(
   deps: Pick<SessionHandlerDeps, "deliveryMirror" | "logger">,
-  sessionKey: string,
+  authority: DeliveryAuthority,
   method: SessionLifecycleMethod,
 ): Promise<number> {
   if (!deps.deliveryMirror) {
     deps.logger.error(
       {
         method,
-        conversationId: sessionKey,
-        sessionKey,
+        conversationRef: authority.conversationRef,
+        tenantId: authority.tenantId,
+        agentId: authority.agentId,
         submodule: "session-delivery-mirror",
         errorKind: "precondition" as const,
         hint: "Complete daemon startup so the delivery-mirror adapter is wired, then retry the session lifecycle operation",
@@ -34,13 +36,14 @@ export async function clearSessionDeliveryMirror(
     throw new Error("Delivery mirror not available — daemon not fully initialized");
   }
 
-  const result = await deps.deliveryMirror.clearSession(sessionKey);
+  const result = await deps.deliveryMirror.clearSession(authority);
   if (!result.ok) {
     deps.logger.error(
       {
         method,
-        conversationId: sessionKey,
-        sessionKey,
+        conversationRef: authority.conversationRef,
+        tenantId: authority.tenantId,
+        agentId: authority.agentId,
         submodule: "session-delivery-mirror",
         errorKind: "dependency" as const,
         hint: "Delivery mirror entries were not cleared; repair the mirror store and retry the session lifecycle operation before sending another message",

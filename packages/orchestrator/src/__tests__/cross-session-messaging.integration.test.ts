@@ -18,6 +18,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createConversationLocator } from "@comis/core";
+import { ok } from "@comis/shared";
 import {
   createCrossSessionSender,
   type CrossSessionSenderDeps,
@@ -27,38 +29,73 @@ import {
 // Test helper: builds deps with real-ish in-memory session store
 // ---------------------------------------------------------------------------
 
+function conversation(principalId: string, conversationId: string) {
+  const endpoint = {
+    channelType: "test",
+    channelInstanceId: "cross-session-integration",
+    conversationId,
+    conversationKind: "direct" as const,
+  };
+  const locator = createConversationLocator({
+    tenantId: "default",
+    agentId: "default",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint,
+      principalId,
+    },
+  });
+  if (!locator.ok) throw locator.error;
+  return locator.value;
+}
+
+const ALICE = conversation("alice", "ch-alpha");
+const BOB = conversation("bob", "ch-beta");
+const ALICE_QUERY = { tenantId: "default", agentId: "default", conversationRef: ALICE.conversationRef };
+const BOB_QUERY = { tenantId: "default", agentId: "default", conversationRef: BOB.conversationRef };
+
 function buildDeps(overrides?: Partial<CrossSessionSenderDeps>): CrossSessionSenderDeps {
   const sessionData = new Map<
     string,
-    { messages: unknown[]; metadata: Record<string, unknown> }
+    { messages: unknown[]; metadata: Record<string, unknown>; locator: typeof ALICE }
   >();
 
   // Pre-populate two sessions with different keys
-  sessionData.set("default:alice:ch-alpha", {
+  sessionData.set(ALICE.conversationRef, {
     messages: [{ role: "user", content: "prior message", timestamp: 1000 }],
     metadata: { createdAt: 1000 },
+    locator: ALICE,
   });
 
-  sessionData.set("default:bob:ch-beta", {
+  sessionData.set(BOB.conversationRef, {
     messages: [],
     metadata: { createdAt: 2000 },
+    locator: BOB,
   });
 
   const sessionStore: CrossSessionSenderDeps["sessionStore"] = {
-    loadByFormattedKey: vi.fn((key: string) => {
-      const entry = sessionData.get(key);
-      if (!entry) return undefined;
+    loadByRef: vi.fn((_scope, conversationRef) => {
+      const entry = sessionData.get(conversationRef);
+      if (!entry) return ok(undefined);
       // Return a shallow copy so repeated loads reflect prior saves
-      return { messages: [...entry.messages], metadata: { ...entry.metadata } };
+      return ok({
+        ...entry.locator,
+        messages: [...entry.messages],
+        metadata: { ...entry.metadata },
+        createdAt: Number(entry.metadata.createdAt ?? 0),
+        updatedAt: Number(entry.metadata.createdAt ?? 0),
+      });
     }),
     save: vi.fn(
       (
-        key: { tenantId: string; userId: string; channelId: string },
+        scope,
         messages: unknown[],
         metadata: Record<string, unknown>,
       ) => {
-        const formatted = `${key.tenantId}:${key.userId}:${key.channelId}`;
-        sessionData.set(formatted, { messages: [...messages], metadata: { ...metadata } });
+        const locator = scope.partition.kind === "endpoint-conversation-principal"
+          && scope.partition.principalId === "alice" ? ALICE : BOB;
+        sessionData.set(locator.conversationRef, { messages: [...messages], metadata: { ...metadata }, locator });
+        return ok(undefined);
       },
     ),
   };
@@ -102,10 +139,10 @@ describe("cross-session messaging integration", () => {
     const sender = createCrossSessionSender(deps);
 
     const result = await sender.send({
-      targetSessionKey: "default:alice:ch-alpha",
+      target: ALICE_QUERY,
       text: "cross-session ping",
       mode: "fire-and-forget",
-      callerSessionKey: "default:bob:ch-beta",
+      caller: BOB_QUERY,
     });
 
     // Result: sent with no response
@@ -118,7 +155,7 @@ describe("cross-session messaging integration", () => {
     const savedMessages = saveCall[1] as Array<{
       role: string;
       content: string;
-      metadata: { crossSession: boolean; fromSession: string };
+      metadata: { crossSession: boolean; fromConversationRef: string };
     }>;
 
     // Original message + new cross-session message
@@ -127,7 +164,7 @@ describe("cross-session messaging integration", () => {
     expect(injected.role).toBe("user");
     expect(injected.content).toBe("cross-session ping");
     expect(injected.metadata.crossSession).toBe(true);
-    expect(injected.metadata.fromSession).toBe("default:bob:ch-beta");
+    expect(injected.metadata.fromConversationRef).toBe(BOB.conversationRef);
 
     // executeInSession NOT called
     expect(deps.executeInSession).not.toHaveBeenCalled();
@@ -141,17 +178,18 @@ describe("cross-session messaging integration", () => {
     const sender = createCrossSessionSender(deps);
 
     const result = await sender.send({
-      targetSessionKey: "default:alice:ch-alpha",
+      target: ALICE_QUERY,
       text: "need info",
       mode: "wait",
-      callerSessionKey: "default:bob:ch-beta",
+      caller: BOB_QUERY,
     });
 
     // executeInSession called once with correct params
     expect(deps.executeInSession).toHaveBeenCalledTimes(1);
     expect(deps.executeInSession).toHaveBeenCalledWith(
-      "default", // agentId from parsed key
-      { tenantId: "default", userId: "alice", channelId: "ch-alpha" },
+      "default",
+      { tenantId: "default", agentId: "default", userId: "alice", channelId: "test:cross-session-integration:ch-alpha", peerId: "alice" },
+      ALICE,
       "need info",
     );
 
@@ -182,11 +220,11 @@ describe("cross-session messaging integration", () => {
     const sender = createCrossSessionSender(deps);
 
     const result = await sender.send({
-      targetSessionKey: "default:alice:ch-alpha",
+      target: ALICE_QUERY,
       text: "start conversation",
       mode: "ping-pong",
       maxTurns: 2,
-      callerSessionKey: "default:bob:ch-beta",
+      caller: BOB_QUERY,
     });
 
     // 1 initial execution + 2 ping-pong turns = 3 total calls
@@ -215,11 +253,11 @@ describe("cross-session messaging integration", () => {
     const sender = createCrossSessionSender(deps);
 
     const result = await sender.send({
-      targetSessionKey: "default:alice:ch-alpha",
+      target: ALICE_QUERY,
       text: "start",
       mode: "ping-pong",
       maxTurns: 5,
-      callerSessionKey: "default:bob:ch-beta",
+      caller: BOB_QUERY,
     });
 
     // Only the initial execution (no ping-pong turns because first response has ANNOUNCE_SKIP)
@@ -240,10 +278,10 @@ describe("cross-session messaging integration", () => {
 
     await expect(
       sender.send({
-        targetSessionKey: "default:alice:ch-alpha",
+        target: ALICE_QUERY,
         text: "talk to myself",
         mode: "wait",
-        callerSessionKey: "default:alice:ch-alpha",
+        caller: ALICE_QUERY,
       }),
     ).rejects.toThrow(/deadlock|own session/);
   });
@@ -256,10 +294,10 @@ describe("cross-session messaging integration", () => {
     const sender = createCrossSessionSender(deps);
 
     const result = await sender.send({
-      targetSessionKey: "default:alice:ch-alpha",
+      target: ALICE_QUERY,
       text: "note to self",
       mode: "fire-and-forget",
-      callerSessionKey: "default:alice:ch-alpha",
+      caller: ALICE_QUERY,
     });
 
     expect(result.sent).toBe(true);
@@ -275,10 +313,10 @@ describe("cross-session messaging integration", () => {
     const sender = createCrossSessionSender(deps);
 
     const result = await sender.send({
-      targetSessionKey: "default:alice:ch-alpha",
+      target: ALICE_QUERY,
       text: "query",
       mode: "wait",
-      callerSessionKey: "default:bob:ch-beta",
+      caller: BOB_QUERY,
       announceChannelType: "telegram",
       announceChannelId: "chat-789",
     });
@@ -306,10 +344,10 @@ describe("cross-session messaging integration", () => {
     const sender = createCrossSessionSender(deps);
 
     const result = await sender.send({
-      targetSessionKey: "default:alice:ch-alpha",
+      target: ALICE_QUERY,
       text: "do quietly",
       mode: "wait",
-      callerSessionKey: "default:bob:ch-beta",
+      caller: BOB_QUERY,
       announceChannelType: "discord",
       announceChannelId: "guild-42",
     });
@@ -330,10 +368,10 @@ describe("cross-session messaging integration", () => {
 
     // Fire-and-forget
     await sender.send({
-      targetSessionKey: "default:alice:ch-alpha",
+      target: ALICE_QUERY,
       text: "ff",
       mode: "fire-and-forget",
-      callerSessionKey: "default:bob:ch-beta",
+      caller: BOB_QUERY,
     });
 
     expect(deps.eventBus.emit).toHaveBeenCalledWith(
@@ -343,10 +381,10 @@ describe("cross-session messaging integration", () => {
 
     // Wait
     await sender.send({
-      targetSessionKey: "default:alice:ch-alpha",
+      target: ALICE_QUERY,
       text: "w",
       mode: "wait",
-      callerSessionKey: "default:bob:ch-beta",
+      caller: BOB_QUERY,
     });
 
     expect(deps.eventBus.emit).toHaveBeenCalledWith(
@@ -356,11 +394,11 @@ describe("cross-session messaging integration", () => {
 
     // Ping-pong
     await sender.send({
-      targetSessionKey: "default:alice:ch-alpha",
+      target: ALICE_QUERY,
       text: "pp",
       mode: "ping-pong",
       maxTurns: 1,
-      callerSessionKey: "default:bob:ch-beta",
+      caller: BOB_QUERY,
     });
 
     expect(deps.eventBus.emit).toHaveBeenCalledWith(
@@ -389,11 +427,11 @@ describe("cross-session messaging integration", () => {
     const sender = createCrossSessionSender(deps);
 
     const result = await sender.send({
-      targetSessionKey: "default:alice:ch-alpha",
+      target: ALICE_QUERY,
       text: "accumulate",
       mode: "ping-pong",
       maxTurns: 3,
-      callerSessionKey: "default:bob:ch-beta",
+      caller: BOB_QUERY,
     });
 
     // 1 initial + 3 turns = 4 total executions

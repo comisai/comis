@@ -122,7 +122,10 @@ describe("INTEGRATION: memory persistence — SqliteMemoryAdapter roundtrip", ()
     const entry = makeEntry({ content: "to be deleted soon" });
     await adapter.store(entry);
 
-    const deleteResult = await adapter.delete(entry.id);
+    const deleteResult = await adapter.delete(entry.id, {
+      tenantId: entry.tenantId,
+      agentId: entry.agentId,
+    });
     expect(deleteResult.ok).toBe(true);
 
     const searchResult = await adapter.search(DEFAULT_SESSION_KEY, "deleted");

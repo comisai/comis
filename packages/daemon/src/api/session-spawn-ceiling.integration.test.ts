@@ -30,11 +30,12 @@ import { describe, it, expect, vi } from "vitest";
 import {
   createDeliveryOrigin,
   createResolvedRequestContext,
+  createConversationLocator,
+  conversationScopeToSessionKey,
   formatSessionKey,
-  parseFormattedSessionKey,
   resolveAutonomy,
   runWithContext,
-  type SessionKey,
+  type ConversationScope,
 } from "@comis/core";
 import type { LeaseManager } from "@comis/infra";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
@@ -105,7 +106,11 @@ function makeHarness(autonomyOverrides?: Parameters<typeof resolveAutonomy>[0]) 
   );
 
   const runnerDeps: SubAgentRunnerDeps = {
-    sessionStore: { save: vi.fn(), delete: vi.fn(), loadByFormattedKey: vi.fn() },
+    sessionStore: {
+      save: vi.fn().mockReturnValue({ ok: true, value: undefined }),
+      delete: vi.fn().mockReturnValue({ ok: true, value: true }),
+      loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }),
+    },
     executeAgent: executeAgent as unknown as SubAgentRunnerDeps["executeAgent"],
     sendToChannel: vi.fn().mockResolvedValue(true),
     eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
@@ -137,9 +142,9 @@ function makeHarness(autonomyOverrides?: Parameters<typeof resolveAutonomy>[0]) 
     defaultWorkspaceDir: "/tmp/ws",
     sessionStore: {
       listDetailed: () => [],
-      loadByFormattedKey: () => undefined,
-      deleteByFormattedKey: () => false,
-      saveByFormattedKey: vi.fn(),
+      loadByRef: () => ({ ok: true, value: undefined }),
+      delete: () => ({ ok: true, value: false }),
+      save: vi.fn().mockReturnValue({ ok: true, value: undefined }),
     },
     crossSessionSender: { send: vi.fn() } as never,
     subAgentRunner,
@@ -155,7 +160,7 @@ function makeHarness(autonomyOverrides?: Parameters<typeof resolveAutonomy>[0]) 
   /** Drive the production `session.spawn` RPC for a given caller session. */
   async function spawnViaHandler(args: {
     task: string;
-    callerSessionKey: string;
+    callerConversationScope: ConversationScope;
     callerAgentId?: string;
   }): Promise<{ runId: string }> {
     // Advance the clock between spawns so the runner's last-resort
@@ -165,31 +170,56 @@ function makeHarness(autonomyOverrides?: Parameters<typeof resolveAutonomy>[0]) 
     // artifact. A correct fix propagates the tree
     // root EXPLICITLY, so it must hold even when every mint would differ.
     clock.advance(1_000);
-    const parsedCaller = parseFormattedSessionKey(args.callerSessionKey);
-    if (parsedCaller === undefined) throw new Error("Test caller session must be valid");
     const callerAgentId = args.callerAgentId ?? "default";
+    const callerSession = conversationScopeToSessionKey(args.callerConversationScope);
+    if (!callerSession.ok) throw callerSession.error;
+    const callerSessionKey = formatSessionKey(callerSession.value);
+    const callerPrincipalId = args.callerConversationScope.partition.kind === "endpoint-conversation-principal"
+      ? args.callerConversationScope.partition.principalId
+      : callerSession.value.userId;
+    const endpoint = {
+      channelType: "gateway",
+      channelInstanceId: "test-instance",
+      conversationId: "ch",
+      conversationKind: "direct" as const,
+    };
+    const callerConversation = createConversationLocator({
+      tenantId: args.callerConversationScope.tenantId,
+      agentId: callerAgentId,
+      partition: {
+        kind: "endpoint-conversation-principal",
+        endpoint,
+        principalId: callerPrincipalId,
+      },
+    });
+    if (!callerConversation.ok) throw callerConversation.error;
     const deliveryOrigin = createDeliveryOrigin({
-      tenantId: parsedCaller.tenantId,
-      userId: parsedCaller.userId,
+      tenantId: args.callerConversationScope.tenantId,
+      userId: callerPrincipalId,
       channelType: "gateway",
       channelId: "ch",
     });
     const callerContext = createResolvedRequestContext({
-      tenantId: parsedCaller.tenantId,
-      userId: parsedCaller.userId,
-      sessionKey: { ...parsedCaller, agentId: callerAgentId },
+      tenantId: args.callerConversationScope.tenantId,
+      userId: callerPrincipalId,
+      sessionKey: { ...callerSession.value, agentId: callerAgentId },
       agentId: callerAgentId,
       traceId: "50000000-0000-4000-8000-000000000005",
       startedAt: clock.now(),
       trustLevel: "user",
       channelType: "gateway",
       deliveryOrigin,
+      turnScope: {
+        conversation: callerConversation.value.conversationScope,
+        principal: { principalId: callerPrincipalId },
+        endpoint,
+      },
     });
     if (!callerContext.ok) throw callerContext.error;
     const res = (await runWithContext(callerContext.value, () => handlers["session.spawn"]!({
         task: args.task,
         _agentId: callerAgentId,
-        _callerSessionKey: args.callerSessionKey,
+        _callerSessionKey: callerSessionKey,
         _callerChannelType: "gateway",
         _callerChannelId: "ch",
       }))) as { runId: string };
@@ -217,24 +247,36 @@ function makeHarness(autonomyOverrides?: Parameters<typeof resolveAutonomy>[0]) 
   };
 }
 
-const OPERATOR_SESSION = formatSessionKey({ tenantId: "default", userId: "user1", channelId: "ch1" } as SessionKey);
+const OPERATOR_CONVERSATION_SCOPE: ConversationScope = {
+  tenantId: "default",
+  agentId: "default",
+  partition: {
+    kind: "endpoint-conversation-principal",
+    principalId: "user1",
+    endpoint: {
+      channelType: "gateway",
+      channelInstanceId: "test-instance",
+      conversationId: "ch",
+      conversationKind: "direct",
+    },
+  },
+};
 
 describe("tree-wide spawn ceiling — driven through the REAL session.spawn path", () => {
   it("(a) children that re-enter session.spawn WITHOUT a rootRunId inherit the parent's tree root", async () => {
     const h = makeHarness();
 
     // Top-level (operator) spawn → mints/uses the session's stable root.
-    const parent = await h.spawnViaHandler({ task: "parent", callerSessionKey: OPERATOR_SESSION });
+    const parent = await h.spawnViaHandler({ task: "parent", callerConversationScope: OPERATOR_CONVERSATION_SCOPE });
     const parentRun = h.subAgentRunner.getRunStatus(parent.runId);
     expect(parentRun?.rootRunId).toBeTruthy();
     const parentRoot = parentRun!.rootRunId;
 
     // The parent's sub-agent runs under its own child session key. When IT calls
     // sessions_spawn, the dispatcher injects that key as _callerSessionKey.
-    const parentChildSession = parentRun!.sessionKey;
-    expect(parentChildSession.length).toBeGreaterThan(0);
+    const parentChildScope = parentRun!.conversationScope;
 
-    const child = await h.spawnViaHandler({ task: "child", callerSessionKey: parentChildSession });
+    const child = await h.spawnViaHandler({ task: "child", callerConversationScope: parentChildScope });
     const childRun = h.subAgentRunner.getRunStatus(child.runId);
 
     // ONE tree → ONE id. A fresh-root-per-spawn defect fails here.
@@ -257,7 +299,7 @@ describe("tree-wide spawn ceiling — driven through the REAL session.spawn path
     const STORM = 8;
     for (let i = 0; i < STORM; i++) {
       try {
-        await h.spawnViaHandler({ task: `storm-${i}`, callerSessionKey: OPERATOR_SESSION });
+        await h.spawnViaHandler({ task: `storm-${i}`, callerConversationScope: OPERATOR_CONVERSATION_SCOPE });
         admitted++;
       } catch {
         rejected++;
@@ -279,13 +321,13 @@ describe("tree-wide spawn ceiling — driven through the REAL session.spawn path
   it("(c) killByRootRun(parentRoot) reaches children spawned through the handler", async () => {
     const h = makeHarness({ spawn: { maxConcurrentSelfAgents: 10, maxChildrenPerAgent: 50, maxSpawnDepth: 10 } });
 
-    const parent = await h.spawnViaHandler({ task: "parent", callerSessionKey: OPERATOR_SESSION });
+    const parent = await h.spawnViaHandler({ task: "parent", callerConversationScope: OPERATOR_CONVERSATION_SCOPE });
     const parentRun = h.subAgentRunner.getRunStatus(parent.runId)!;
     const parentRoot = parentRun.rootRunId;
 
     // Two children re-enter through the handler under the parent's session.
-    const c1 = await h.spawnViaHandler({ task: "c1", callerSessionKey: parentRun.sessionKey });
-    const c2 = await h.spawnViaHandler({ task: "c2", callerSessionKey: parentRun.sessionKey });
+    const c1 = await h.spawnViaHandler({ task: "c1", callerConversationScope: parentRun.conversationScope });
+    const c2 = await h.spawnViaHandler({ task: "c2", callerConversationScope: parentRun.conversationScope });
 
     const killed = h.subAgentRunner.killByRootRun(parentRoot);
 
@@ -300,12 +342,12 @@ describe("tree-wide spawn ceiling — driven through the REAL session.spawn path
     const h = makeHarness({ spawn: { maxConcurrentSelfAgents: 1, maxChildrenPerAgent: 50, maxSpawnDepth: 10 } });
 
     // First spawn consumes the single slot.
-    const first = await h.spawnViaHandler({ task: "first", callerSessionKey: OPERATOR_SESSION });
+    const first = await h.spawnViaHandler({ task: "first", callerConversationScope: OPERATOR_CONVERSATION_SCOPE });
     const root = h.subAgentRunner.getRunStatus(first.runId)!.rootRunId;
 
     // With the slot held, a second spawn under the same root is rejected.
     await expect(
-      h.spawnViaHandler({ task: "second-while-full", callerSessionKey: OPERATOR_SESSION }),
+      h.spawnViaHandler({ task: "second-while-full", callerConversationScope: OPERATOR_CONVERSATION_SCOPE }),
     ).rejects.toThrow(/ceiling|concurrency/i);
 
     // Complete the first run → its finally must release the slot.
@@ -315,7 +357,7 @@ describe("tree-wide spawn ceiling — driven through the REAL session.spawn path
     );
 
     // The slot is free again: a fresh spawn on the same root succeeds.
-    const third = await h.spawnViaHandler({ task: "third-after-release", callerSessionKey: OPERATOR_SESSION });
+    const third = await h.spawnViaHandler({ task: "third-after-release", callerConversationScope: OPERATOR_CONVERSATION_SCOPE });
     expect(h.subAgentRunner.getRunStatus(third.runId)?.status).toBe("running");
     expect(h.subAgentRunner.getRunStatus(third.runId)?.rootRunId).toBe(root);
   });

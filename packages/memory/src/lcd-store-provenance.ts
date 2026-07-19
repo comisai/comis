@@ -51,12 +51,12 @@ export interface ProvenanceWrites {
  */
 export function buildProvenanceWrites(db: Database.Database): ProvenanceWrites {
   // Column order matches the DDL in schema-lcd.ts (provenance_id, memory_id,
-  // summary_id, source_session_key, conversation_id, agent_id, tenant_id,
+  // summary_id, source_session_key, conversation_ref, agent_id, tenant_id,
   // created_at) — 8 placeholders, 8 args.
   const insertProvenance = db.prepare(
     "INSERT INTO lcd_memory_provenance" +
       " (provenance_id, memory_id, summary_id, source_session_key," +
-      " conversation_id, agent_id, tenant_id, created_at)" +
+      " conversation_ref, agent_id, tenant_id, created_at)" +
       " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   );
 
@@ -77,7 +77,7 @@ export function buildProvenanceWrites(db: Database.Database): ProvenanceWrites {
         input.memoryId,
         input.summaryId,
         input.sourceSessionKey,
-        input.conversationId,
+        input.conversationRef,
         input.agentId,
         input.tenantId,
         input.createdAt,

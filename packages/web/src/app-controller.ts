@@ -278,9 +278,7 @@ export function createAppController(
     // STEP 3: Upgrade ApiClient with RPC support so memory/session methods
     // use WebSocket JSON-RPC instead of REST fallback.
     const rpc = host._rpcClient;
-    host._apiClient = createApiClient(baseUrl, token, (method, params) =>
-      rpc.call(method, params),
-    );
+    host._apiClient = createApiClient(baseUrl, token, rpc.call.bind(rpc));
 
     // STEP 4: Construct globalState + wire RPC status mirror.
     host._globalState = createGlobalState();

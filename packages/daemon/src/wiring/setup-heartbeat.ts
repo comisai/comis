@@ -8,7 +8,7 @@
  */
 
 import { readFile } from "node:fs/promises";
-import type { AppContainer, ChannelPort } from "@comis/core";
+import type { AppContainer, ChannelPort, ConversationRef } from "@comis/core";
 import { safePath, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { isHeartbeatContentEffectivelyEmpty } from "@comis/agent";
@@ -25,6 +25,7 @@ import {
   type SystemEventQueue,
 } from "@comis/scheduler";
 import { applyToolPolicy } from "@comis/skills";
+import { resolveInternalTurnIdentity } from "@comis/orchestrator";
 
 // ---------------------------------------------------------------------------
 // Local type aliases (avoid importing from agent to prevent circular deps)
@@ -38,7 +39,7 @@ import { applyToolPolicy } from "@comis/skills";
  * the resulting object is structurally assignable to this shape.
  */
 interface HeartbeatSessionResolver {
-  hasActiveSession(key: { agentId: string; channelType: string; channelId: string }): boolean;
+  hasActiveSession(conversationRef: ConversationRef): boolean;
 }
 
 /** 8-param executor interface matching AgentExecutor.execute (used in deps map). */
@@ -83,7 +84,7 @@ export interface HeartbeatSetupDeps {
   /** System event queue for trigger resolution. */
   systemEventQueue: SystemEventQueue;
   /** Memory API for fetching memory stats (optional, for heartbeat prompt injection). */
-  memoryApi?: { stats: (tenantId?: string, agentId?: string) => { totalEntries: number; oldestCreatedAt: number | null } };
+  memoryApi?: { stats: (tenantId: string, agentId: string) => { totalEntries: number; oldestCreatedAt: number | null } };
   /** Module-bound logger for scheduler subsystem. */
   schedulerLogger: ComisLogger;
 }
@@ -207,6 +208,7 @@ export function setupHeartbeat(deps: HeartbeatSetupDeps): HeartbeatSetupResult {
       tenantId: container.config.tenantId,
       toolPolicy: agents[agentId]!.skills?.toolPolicy,
     }),
+    resolveInternalTurnIdentity,
     checkFileGate,
     systemEventQueue,
     deliveryBridge: {

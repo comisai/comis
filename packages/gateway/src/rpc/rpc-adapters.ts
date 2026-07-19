@@ -37,13 +37,15 @@ export interface RpcAdapterDeps {
   searchMemory: (params: {
     query: string;
     limit?: number;
-    tenantId?: string;
+    tenantId: string;
+    agentId: string;
   }) => Promise<{ results: Array<{ id: string; content: string; score: number }> }>;
 
   /** Inspect memory (stats or single entry). */
   inspectMemory: (params: {
     id?: string;
-    tenantId?: string;
+    tenantId: string;
+    agentId: string;
   }) => Promise<{ stats?: Record<string, unknown>; entry?: Record<string, unknown> }>;
 
   /** Get config section(s). */
@@ -210,10 +212,14 @@ export function createRpcAdapters(
         if (!p || typeof p.query !== "string" || p.query.length === 0) {
           return { error: "Missing required parameter: query (string)" };
         }
+        if (typeof p.tenantId !== "string" || typeof p.agentId !== "string") {
+          return { error: "Missing required parameters: tenantId and agentId (string)" };
+        }
         return await deps.searchMemory({
           query: p.query as string,
           limit: typeof p.limit === "number" ? p.limit : undefined,
-          tenantId: typeof p.tenantId === "string" ? p.tenantId : undefined,
+          tenantId: p.tenantId,
+          agentId: p.agentId,
         });
       } catch (err) {
         logger.warn(
@@ -232,9 +238,13 @@ export function createRpcAdapters(
     "memory.inspect": async (params) => {
       try {
         const p = (params as Record<string, unknown> | undefined) ?? {};
+        if (typeof p.tenantId !== "string" || typeof p.agentId !== "string") {
+          return { error: "Missing required parameters: tenantId and agentId (string)" };
+        }
         return await deps.inspectMemory({
           id: typeof p.id === "string" ? p.id : undefined,
-          tenantId: typeof p.tenantId === "string" ? p.tenantId : undefined,
+          tenantId: p.tenantId,
+          agentId: p.agentId,
         });
       } catch (err) {
         logger.warn(

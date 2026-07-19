@@ -47,6 +47,7 @@ import {
   createResponsesRoute,
 } from "@comis/gateway";
 import {
+  createConversationLocator,
   formatSessionKey,
   generateStrongToken,
   runWithContext,
@@ -207,6 +208,7 @@ describe("mountGatewayRoutes", () => {
       userId: "webhook",
       sessionKey: formatSessionKey({
         tenantId: "test",
+        agentId: "agent-b",
         userId: "webhook",
         channelId: "hook-session",
       }),
@@ -225,6 +227,7 @@ describe("mountGatewayRoutes", () => {
       agentId: "agent-b",
       sessionKey: formatSessionKey({
         tenantId: "test",
+        agentId: "agent-b",
         userId: "webhook",
         channelId: "hook-session",
       }),
@@ -286,6 +289,7 @@ describe("mountGatewayRoutes", () => {
       userId: "webhook",
       sessionKey: formatSessionKey({
         tenantId: "test",
+        agentId: "agent-b",
         userId: "webhook",
         channelId: "hook-session",
       }),
@@ -451,6 +455,7 @@ describe("mountGatewayRoutes", () => {
       agentId: "default",
       sessionKey: formatSessionKey({
         tenantId: "test",
+        agentId: "default",
         userId: "webhook",
         channelId: "hook:devtask:x",
       }),
@@ -1016,7 +1021,13 @@ describe("OpenAI-compatible request context boundaries", () => {
       tenantId: "test",
       userId: "user_a",
       agentId: "specialist",
-      sessionKey: `test:user_a:${channelId}:peer:peer_a`,
+      sessionKey: formatSessionKey({
+        tenantId: "test",
+        agentId: "specialist",
+        userId: "user_a",
+        channelId,
+        peerId: "peer_a",
+      }),
       trustLevel: "user",
       channelType,
       deliveryOrigin: {
@@ -1461,23 +1472,41 @@ describe("OpenAI-compatible request context boundaries", () => {
     const eventBus = new TypedEventBus();
     const abortA = vi.fn(async () => undefined);
     const abortB = vi.fn(async () => undefined);
-    const readyPeers = new Set<string>();
+    const conversationRefFor = (conversationId: string) => {
+      const locator = createConversationLocator({
+        tenantId: "test",
+        agentId: "default",
+        partition: {
+          kind: "endpoint-conversation-principal",
+          endpoint: {
+            channelType: "openai",
+            channelInstanceId: "gateway",
+            conversationId,
+            conversationKind: "direct",
+          },
+          principalId: "api",
+        },
+      });
+      if (!locator.ok) throw locator.error;
+      return locator.value.conversationRef;
+    };
+    const requestARef = conversationRefFor("request-a");
+    const requestBRef = conversationRefFor("request-b");
+    const readyConversations = new Set<string>();
     const handles = new Map([
-      ["request-a", { abort: abortA }],
-      ["request-b", { abort: abortB }],
+      [requestARef, { abort: abortA }],
+      [requestBRef, { abort: abortB }],
     ]);
-    const resolveActiveSession = vi.fn((key: {
-      agentId: string;
-      channelType: string;
-      channelId: string;
-    }) => readyPeers.has(key.channelId) ? handles.get(key.channelId) : undefined);
+    const resolveActiveSession = vi.fn((conversationRef: string) =>
+      readyConversations.has(conversationRef) ? handles.get(conversationRef) : undefined
+    );
     const promptReleases = new Map<string, () => void>();
     const finishReleases = new Map<string, () => void>();
     const execute = vi.fn(async (message: NormalizedMessage, sessionKey: SessionKey) => {
       await new Promise<void>((resolve) => {
         promptReleases.set(message.channelId, resolve);
       });
-      readyPeers.add(message.channelId);
+      readyConversations.add(conversationRefFor(message.channelId));
       eventBus.emit("prompt:submitted", {
         agentId: "default",
         sessionKey: formatSessionKey(sessionKey),
@@ -1546,11 +1575,7 @@ describe("OpenAI-compatible request context boundaries", () => {
     finishReleases.get("request-a")!();
     finishReleases.get("request-b")!();
     await Promise.all([first, second]);
-    expect(resolveActiveSession).toHaveBeenCalledWith({
-      agentId: "default",
-      channelType: "openai",
-      channelId: "request-a",
-    });
+    expect(resolveActiveSession).toHaveBeenCalledWith(requestARef);
     expect(eventBus.listenerCount("prompt:submitted")).toBe(0);
   });
 });

@@ -368,7 +368,7 @@ describe("IcSchedulerView", () => {
     deleteBtn.click();
     await flush(el);
 
-    expect(rpc.call).toHaveBeenCalledWith("cron.remove", expect.objectContaining({ jobId: "daily-report" }));
+    expect(rpc.call).toHaveBeenCalledWith("cron.remove", { jobName: "Daily Report" });
     // Job should be removed from list (optimistic)
     expect(priv(el)._jobs).toHaveLength(2);
 
@@ -405,7 +405,7 @@ describe("IcSchedulerView", () => {
 
     expect(rpc.call).toHaveBeenCalledWith(
       "cron.add",
-      expect.objectContaining({ id: "new-job", name: "New Job" }),
+      expect.objectContaining({ name: "New Job", agentId: "default" }),
     );
     // New job should be in list
     expect(priv(el)._jobs).toHaveLength(4);

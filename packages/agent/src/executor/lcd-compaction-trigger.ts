@@ -323,7 +323,7 @@ function persistDeterministicLeafFloor(
   // Pass timing + dag_compacted event (counts only — never content).
   const durationMs = Math.max(0, (nowFn?.() ?? now) - passStart);
   eventBus?.emit("context:dag_compacted", {
-    conversationId: scope.conversationId,
+    conversationId: scope.conversationRef,
     agentId: scope.agentId,
     sessionKey: scope.sessionKey,
     leafSummariesCreated: 1,
@@ -334,7 +334,7 @@ function persistDeterministicLeafFloor(
     timestamp: now,
   });
   logger.info(
-    { step: "lcd-leaf", conversationId: scope.conversationId, agentId: scope.agentId, sessionKey: scope.sessionKey, descendantCount: chunkItems.length, escalationLevel: 3, fallback: true, durationMs },
+    { step: "lcd-leaf", conversationRef: scope.conversationRef, agentId: scope.agentId, sessionKey: scope.sessionKey, descendantCount: chunkItems.length, escalationLevel: 3, fallback: true, durationMs },
     completionMessage,
   );
   return { made: true, reason: "compacted" };
@@ -360,7 +360,7 @@ async function runOneLeafPass(
   logger: ComisLogger,
   eventBus: TypedEventBus | undefined,
 ): Promise<LeafPassResult> {
-  const conversationId = scope.conversationId;
+  const conversationRef = scope.conversationRef;
   // Per-pass START clock read (the injected clock CALLABLE — NEVER
   // Date.now()/performance.now(), the globals gate). A second read at emit gives
   // this pass's real elapsed; a scalar-only caller (no nowFn) degrades to 0.
@@ -373,14 +373,14 @@ async function runOneLeafPass(
   // resolve to an ordinal window (it collapses the NEXT chunk, not the already-
   // summarized oldest).
   const { history, ordinalById, resolvedTokens } = resolveContext(store, scope);
-  if (history.length === 0) { logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "empty-history", resolvedTokens, windowTokens: opts.windowTokens }, "lcd leaf pass gate skip"); return { made: false, reason: "empty-history" }; }
+  if (history.length === 0) { logger.debug({ conversationRef, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "empty-history", resolvedTokens, windowTokens: opts.windowTokens }, "lcd leaf pass gate skip"); return { made: false, reason: "empty-history" }; }
 
   // Utilization = resolved context tokens / W. The numerator is the RESOLVED view
   // (summary-ref tokens + surviving message-ref tokens), the same set the assembler
   // budgets — NOT the un-compacted raw history (which never shrinks). Tokens are
   // the stored authority: a re-estimate would EXCLUDE the thinking block.
   const utilization = resolvedTokens / opts.windowTokens;
-  logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", historyLength: history.length, resolvedTokens, windowTokens: opts.windowTokens, utilization: Math.round(utilization * 1000) / 1000, contextThreshold: opts.contextThreshold }, "lcd leaf pass evaluated");
+  logger.debug({ conversationRef, agentId: scope.agentId, step: "lcd-leaf-gate", historyLength: history.length, resolvedTokens, windowTokens: opts.windowTokens, utilization: Math.round(utilization * 1000) / 1000, contextThreshold: opts.contextThreshold }, "lcd leaf pass evaluated");
   if (utilization <= opts.contextThreshold) return { made: false, reason: "below-threshold" }; // drained.
 
   // Build the set of security-pinned message ids (from markers on summarizerDeps).
@@ -395,7 +395,7 @@ async function runOneLeafPass(
     if (pinned.length > 0) {
       pinnedMessageIds = new Set(pinned.map((it) => it.id));
       logger.debug(
-        { conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", securityPinnedCount: pinned.length },
+        { conversationRef, agentId: scope.agentId, step: "lcd-leaf-gate", securityPinnedCount: pinned.length },
         "S4: security-relevant messages excluded from LCD leaf eviction",
       );
     }
@@ -420,7 +420,7 @@ async function runOneLeafPass(
     : opts.leafChunkTokens;
   if (leafChunkCap < opts.leafChunkTokens) {
     // Numbers only — a binding clamp is normal adaptive behavior, never WARN.
-    logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", summarizerWindow, configuredLeafChunkTokens: opts.leafChunkTokens, clampedLeafChunkTokens: leafChunkCap }, "lcd leaf chunk cap clamped to the resolved summarizer window");
+    logger.debug({ conversationRef, agentId: scope.agentId, step: "lcd-leaf-gate", summarizerWindow, configuredLeafChunkTokens: opts.leafChunkTokens, clampedLeafChunkTokens: leafChunkCap }, "lcd leaf chunk cap clamped to the resolved summarizer window");
   }
 
   // Select the oldest out-of-tail chunk (pair-safe, capped at the CLAMPED cap)
@@ -448,7 +448,7 @@ async function runOneLeafPass(
     // the drain (a re-resolve would re-select the same unresolvable chunk).
     logger.warn(
       {
-        conversationId,
+        conversationRef,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
         hint: "leaf chunk message ids did not resolve to a context_items ordinal window; skipping the pass to avoid corrupting ordering",
@@ -460,7 +460,7 @@ async function runOneLeafPass(
     // as a health_signal row (system-lens queryable), not a Pino-only WARN.
     // Identifiers + reason + timing only; injected clock (the globals gate).
     eventBus?.emit("context:dag_degraded", {
-      conversationId,
+      conversationId: conversationRef,
       agentId: scope.agentId,
       sessionKey: scope.sessionKey,
       reason: "leaf_window_divergence",
@@ -504,7 +504,7 @@ async function runOneLeafPass(
     // (nano structured extraction; carries LEAF_FALLBACK_SUMMARY_MARKER).
     logger.warn(
       {
-        conversationId,
+        conversationRef,
         agentId: scope.agentId,
         hint: `C5: capabilityClass=${summarizerDeps.capabilityClass ?? "frontier"} prefers eviction — using deterministic fallback for LCD leaf pass`,
         errorKind: "config" as ErrorKind,
@@ -526,7 +526,7 @@ async function runOneLeafPass(
   // to the bounded deterministic floor instead (no LLM; the full content stays
   // losslessly in the message store). DEBUG, numbers only.
   if (chunk.tokens > leafChunkCap) {
-    logger.debug({ conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "over-cap-chunk", chunkTokens: chunk.tokens, clampedLeafChunkTokens: leafChunkCap }, "lcd leaf chunk exceeds the resolved summarizer cap; deterministic floor (no LLM)");
+    logger.debug({ conversationRef, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "over-cap-chunk", chunkTokens: chunk.tokens, clampedLeafChunkTokens: leafChunkCap }, "lcd leaf chunk exceeds the resolved summarizer cap; deterministic floor (no LLM)");
     return persistDeterministicLeafFloor(
       store, scope, chunkItems, chunk.tokens, window, now, nowFn, passStart, logger, eventBus,
       "LCD leaf summary persisted (over-cap chunk — deterministic floor)",
@@ -581,7 +581,7 @@ async function runOneLeafPass(
   // Emit the existing compaction event ONCE PER PASS (reuse, counts only — never
   // content; honest per-pass counts).
   eventBus?.emit("context:dag_compacted", {
-    conversationId,
+    conversationId: conversationRef,
     agentId: scope.agentId,
     sessionKey: scope.sessionKey,
     leafSummariesCreated: 1,
@@ -596,7 +596,7 @@ async function runOneLeafPass(
   logger.info(
     {
       step: "lcd-leaf",
-      conversationId,
+      conversationRef,
       agentId: scope.agentId,
       sessionKey: scope.sessionKey,
       descendantCount: result.descendantCount,
@@ -628,7 +628,7 @@ async function runOneLeafPass(
  * turn and never loses passes 1..K-1 (each persisted atomically).
  *
  * @param store          The injected core ContextStorePort (daemon-injected concrete store).
- * @param scope          The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
+ * @param scope          The SECURITY scope columns (conversationRef/tenantId/agentId/sessionKey).
  * @param opts           The gating + sizing knobs from `config.contextEngine` (incl. the optional cap).
  * @param summarizerDeps The injected summarizer + model getters (the spend-governance seam). Absent ⇒ no-op.
  * @param now            Injected wall-clock ms (`deps.clock.now()`) — NEVER the ambient time global. Stamps `timestamp`.
@@ -648,8 +648,8 @@ export async function maybeRunLeafPass(
 ): Promise<void> {
   // Gated on the summarizer deps + a positive window (a missing getter / model is a
   // clean skip, not a fault — mirrors the `deps.contextStore` ingest gate).
-  if (summarizerDeps === undefined) { logger.debug({ conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "no-summarizer-deps" }, "lcd leaf pass gate skip"); return; }
-  if (!Number.isFinite(opts.windowTokens) || opts.windowTokens <= 0) { logger.debug({ conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "bad-window", windowTokens: opts.windowTokens }, "lcd leaf pass gate skip"); return; }
+  if (summarizerDeps === undefined) { logger.debug({ conversationRef: scope.conversationRef, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "no-summarizer-deps" }, "lcd leaf pass gate skip"); return; }
+  if (!Number.isFinite(opts.windowTokens) || opts.windowTokens <= 0) { logger.debug({ conversationRef: scope.conversationRef, agentId: scope.agentId, step: "lcd-leaf-gate", reason: "bad-window", windowTokens: opts.windowTokens }, "lcd leaf pass gate skip"); return; }
 
   // The hard cap (the infinite-loop backstop): the supplied knob or the LOW default.
   // Clamp to >= 1 so a misconfigured 0/negative still attempts one pass (a
@@ -675,7 +675,7 @@ export async function maybeRunLeafPass(
     logger.warn(
       {
         err: err instanceof Error ? err.message : String(err),
-        conversationId: scope.conversationId,
+        conversationRef: scope.conversationRef,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
         hint: "LCD leaf pass failed; the turn is unaffected — check the summarizer model/key and LCD store connectivity",

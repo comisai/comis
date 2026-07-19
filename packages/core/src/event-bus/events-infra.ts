@@ -37,8 +37,10 @@ export interface InfraEvents {
     toolName: string;
     action: string;
     params: Record<string, unknown>;
+    tenantId: string;
     agentId: string;
-    sessionKey: string;
+    conversationRef: string;
+    resolvingPrincipalId: string;
     trustLevel: string;
     createdAt: number;
     timeoutMs: number;
@@ -163,6 +165,12 @@ export interface InfraEvents {
     channelId: string;
     channelType: string;
     agentId: string;
+    /** Required for durable delivery persistence; omitted only by unresolved boundaries. */
+    tenantId?: string;
+    /** Opaque conversation authority for durable delivery persistence. */
+    conversationRef?: import("../domain/conversation-scope.js").ConversationRef;
+    /** Immutable outbound destination captured by the resolved boundary. */
+    destinationEndpoint?: import("../domain/conversation-scope.js").ChannelEndpoint;
     sessionKey: string;
     /**
      * The turn's trajectory id (=== traceId, the `comis explain` key). OPTIONAL —

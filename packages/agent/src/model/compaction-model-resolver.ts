@@ -21,7 +21,7 @@
  * @module
  */
 
-import { type KnownProvider } from "@earendil-works/pi-ai";
+import type { BuiltinProvider } from "@earendil-works/pi-ai/compat";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import { resolveOperationDefaults } from "./operation-model-defaults.js";
 
@@ -50,7 +50,7 @@ export function resolveCompactionModel(
   if (configValue.length > 0) return configValue;
 
   const tier = resolveOperationDefaults(primaryProvider);
-  const firstId = getModels(primaryProvider as KnownProvider)[0]?.id;
+  const firstId = getModels(primaryProvider as BuiltinProvider)[0]?.id;
   const modelId = tier.fast ?? firstId;
 
   return modelId ? `${primaryProvider}:${modelId}` : "";

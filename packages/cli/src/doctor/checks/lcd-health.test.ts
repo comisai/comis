@@ -18,7 +18,7 @@ import Database from "better-sqlite3";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ContextStoreScope } from "@comis/core";
+import { createConversationRef, type ContextStoreScope } from "@comis/core";
 import { createLcdStore, initSchema } from "@comis/memory";
 import type { DoctorContext } from "../types.js";
 import { lcdHealthCheck } from "./lcd-health.js";
@@ -52,7 +52,7 @@ function seedLcdSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS lcd_messages (
       id              TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
+      conversation_ref TEXT NOT NULL,
       tenant_id       TEXT NOT NULL,
       agent_id        TEXT NOT NULL,
       session_key     TEXT NOT NULL,
@@ -62,11 +62,11 @@ function seedLcdSchema(db: Database.Database): void {
       created_at      INTEGER NOT NULL
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_lcd_messages_conv_agent_seq
-      ON lcd_messages(conversation_id, agent_id, tenant_id, seq);
+      ON lcd_messages(conversation_ref, agent_id, tenant_id, seq);
 
     CREATE TABLE IF NOT EXISTS lcd_summaries (
       summary_id       TEXT PRIMARY KEY,
-      conversation_id  TEXT NOT NULL,
+      conversation_ref  TEXT NOT NULL,
       tenant_id        TEXT NOT NULL,
       agent_id         TEXT NOT NULL,
       session_key      TEXT NOT NULL,
@@ -82,7 +82,7 @@ function seedLcdSchema(db: Database.Database): void {
       fallback         INTEGER NOT NULL DEFAULT 0,
       created_at       INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_lcd_summaries_conv ON lcd_summaries(conversation_id);
+    CREATE INDEX IF NOT EXISTS idx_lcd_summaries_conv ON lcd_summaries(conversation_ref);
 
     CREATE TABLE IF NOT EXISTS lcd_summary_messages (
       summary_id TEXT NOT NULL REFERENCES lcd_summaries(summary_id) ON DELETE CASCADE,
@@ -98,7 +98,7 @@ function seedLcdSchema(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS lcd_context_items (
       id              TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,
+      conversation_ref TEXT NOT NULL,
       tenant_id       TEXT NOT NULL,
       agent_id        TEXT NOT NULL,
       session_key     TEXT NOT NULL,
@@ -107,16 +107,16 @@ function seedLcdSchema(db: Database.Database): void {
       ref_id          TEXT NOT NULL
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_lcd_ctx_items_conv_agent_ord
-      ON lcd_context_items(conversation_id, agent_id, tenant_id, ordinal);
+      ON lcd_context_items(conversation_ref, agent_id, tenant_id, ordinal);
 
     CREATE TABLE IF NOT EXISTS lcd_ingest_cursor (
-      conversation_id   TEXT    NOT NULL,
+      conversation_ref   TEXT    NOT NULL,
       agent_id          TEXT    NOT NULL,
       tenant_id         TEXT    NOT NULL,
       epoch_anchor      TEXT    NOT NULL,
       ingested_live_len INTEGER NOT NULL,
       updated_at        INTEGER NOT NULL,
-      PRIMARY KEY (conversation_id, agent_id, tenant_id)
+      PRIMARY KEY (conversation_ref, agent_id, tenant_id)
     );
   `);
 }
@@ -124,13 +124,13 @@ function seedLcdSchema(db: Database.Database): void {
 /** Seed a valid message row — no corruption. */
 function seedMessage(
   db: Database.Database,
-  opts: { id?: string; conversationId?: string; tenantId?: string; agentId?: string; role?: string; seq?: number } = {},
+  opts: { id?: string; conversationRef?: string; tenantId?: string; agentId?: string; role?: string; seq?: number } = {},
 ): void {
   db.prepare(`INSERT INTO lcd_messages
-    (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
+    (id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     opts.id ?? "msg-001",
-    opts.conversationId ?? "conv-001",
+    opts.conversationRef ?? "conv-001",
     opts.tenantId ?? "tenant-001",
     opts.agentId ?? "agent-001",
     "session-001",
@@ -144,14 +144,14 @@ function seedMessage(
 /** Seed a valid summary row — no corruption. */
 function seedSummary(
   db: Database.Database,
-  opts: { summaryId?: string; conversationId?: string; tenantId?: string; agentId?: string; fallback?: number; content?: string } = {},
+  opts: { summaryId?: string; conversationRef?: string; tenantId?: string; agentId?: string; fallback?: number; content?: string } = {},
 ): void {
   db.prepare(`INSERT INTO lcd_summaries
-    (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+    (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
      earliest_at, latest_at, descendant_count, token_count, content, fallback, created_at)
     VALUES (?, ?, ?, ?, ?, 'leaf', 0, ?, ?, ?, ?, ?, ?, ?)`).run(
     opts.summaryId ?? "sum-001",
-    opts.conversationId ?? "conv-001",
+    opts.conversationRef ?? "conv-001",
     opts.tenantId ?? "tenant-001",
     opts.agentId ?? "agent-001",
     "session-001",
@@ -173,16 +173,16 @@ function seedContextItem(
     refId?: string;
     refKind?: string;
     ordinal?: number;
-    conversationId?: string;
+    conversationRef?: string;
     tenantId?: string;
     agentId?: string;
   } = {},
 ): void {
   db.prepare(`INSERT INTO lcd_context_items
-    (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id)
+    (id, conversation_ref, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
     opts.id ?? "ci-001",
-    opts.conversationId ?? "conv-001",
+    opts.conversationRef ?? "conv-001",
     opts.tenantId ?? "tenant-001",
     opts.agentId ?? "agent-001",
     "session-001",
@@ -316,8 +316,14 @@ describe("lcdHealthCheck", () => {
     db.pragma("foreign_keys = ON");
     initSchema(db, 1536);
     const store = createLcdStore(db);
+    const conversationRef = createConversationRef({
+      tenantId: "tenant-real",
+      agentId: "agent-real",
+      partition: { kind: "agent" },
+    });
+    if (!conversationRef.ok) throw conversationRef.error;
     const scope: ContextStoreScope = {
-      conversationId: "real-conversation",
+      conversationRef: conversationRef.value,
       tenantId: "tenant-real",
       agentId: "agent-real",
       sessionKey: "tenant-real:telegram:user-real",
@@ -359,7 +365,7 @@ describe("lcdHealthCheck", () => {
       startOrdinal: 1,
       endOrdinal: 2,
     });
-    store.appendCondensedSummary({
+    const condensedRoot = store.appendCondensedSummary({
       ...commonSummary,
       content: "condensed root",
       startOrdinal: 0,
@@ -367,6 +373,36 @@ describe("lcdHealthCheck", () => {
       childSummaryIds: [firstLeaf, secondLeaf],
       depth: 1,
     });
+    expect(
+      db
+        .prepare(
+          "SELECT ordinal, ref_kind, ref_id, conversation_ref, tenant_id, agent_id FROM lcd_context_items ORDER BY ordinal",
+        )
+        .all(),
+    ).toEqual([
+      {
+        ordinal: 0,
+        ref_kind: "summary",
+        ref_id: condensedRoot,
+        conversation_ref: scope.conversationRef,
+        tenant_id: scope.tenantId,
+        agent_id: scope.agentId,
+      },
+    ]);
+    expect(store.getContextItems(scope)).toEqual([
+      { ordinal: 0, refKind: "summary", refId: condensedRoot },
+    ]);
+    expect(
+      db
+        .prepare(
+          "SELECT child_summary_id FROM lcd_summary_parents WHERE parent_summary_id = ? ORDER BY child_summary_id",
+        )
+        .all(condensedRoot),
+    ).toEqual(
+      [firstLeaf, secondLeaf]
+        .sort()
+        .map((childSummaryId) => ({ child_summary_id: childSummaryId })),
+    );
     db.close();
 
     const findings = await lcdHealthCheck.run(makeCtx(dataDir));
@@ -483,7 +519,7 @@ describe("lcdHealthCheck", () => {
     seedMessage(db, { id: "m1", seq: 1 });
     seedMessage(db, { id: "m2", seq: 2 });
     db.prepare(`INSERT INTO lcd_ingest_cursor
-      (conversation_id, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)
+      (conversation_ref, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)
       VALUES (?, ?, ?, ?, ?, ?)`).run("conv-001", "agent-001", "tenant-001", "user:1000000:abc", 5, 1000000);
     db.close();
 
@@ -497,7 +533,7 @@ describe("lcdHealthCheck", () => {
   it("reports the complete cursor over-count instead of truncating at twenty", async () => {
     const { dataDir, db } = makeTempDb();
     const insertCursor = db.prepare(`INSERT INTO lcd_ingest_cursor
-      (conversation_id, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)
+      (conversation_ref, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)
       VALUES (?, 'agent-001', 'tenant-001', 'user:1000000:abc', 1, 1000000)`);
     for (let index = 0; index < 21; index += 1) insertCursor.run(`conv-${index}`);
     db.close();
@@ -515,7 +551,7 @@ describe("lcdHealthCheck", () => {
     seedMessage(db, { id: "m2", seq: 2 });
     seedMessage(db, { id: "m3", seq: 3 });
     db.prepare(`INSERT INTO lcd_ingest_cursor
-      (conversation_id, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)
+      (conversation_ref, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)
       VALUES (?, ?, ?, ?, ?, ?)`).run("conv-001", "agent-001", "tenant-001", "user:1000000:abc", 0, 1000000);
     db.close();
 
@@ -536,14 +572,14 @@ describe("lcdHealthCheck", () => {
       db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS lcd_messages_fts USING fts5(
           content,
-          conversation_id UNINDEXED,
+          conversation_ref UNINDEXED,
           agent_id UNINDEXED,
           message_id UNINDEXED,
           tokenize='porter unicode61'
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS lcd_summaries_fts USING fts5(
           content,
-          conversation_id UNINDEXED,
+          conversation_ref UNINDEXED,
           agent_id UNINDEXED,
           summary_id UNINDEXED,
           content='lcd_summaries',
@@ -581,7 +617,7 @@ describe("lcdHealthCheck", () => {
     db.exec(`
       CREATE TABLE lcd_messages (
         id              TEXT PRIMARY KEY,
-        conversation_id TEXT NOT NULL,
+        conversation_ref TEXT NOT NULL,
         tenant_id       TEXT,
         agent_id        TEXT,
         session_key     TEXT NOT NULL,
@@ -592,7 +628,7 @@ describe("lcdHealthCheck", () => {
       );
     `);
     db.prepare(`INSERT INTO lcd_messages
-      (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
+      (id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
       VALUES (?, ?, NULL, 'agent-001', 'session-001', 1, 'user', 10, 1000000)`).run(
       "msg-null-tenant",
       "conv-001",

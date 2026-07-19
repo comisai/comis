@@ -40,7 +40,7 @@ describe("lcd_memory_provenance DDL", () => {
     expect(names, "memory_id column must exist").toContain("memory_id");
     expect(names, "summary_id column must exist").toContain("summary_id");
     expect(names, "source_session_key column must exist").toContain("source_session_key");
-    expect(names, "conversation_id column must exist").toContain("conversation_id");
+    expect(names, "conversation_ref column must exist").toContain("conversation_ref");
     expect(names, "agent_id column must exist").toContain("agent_id");
     expect(names, "tenant_id column must exist").toContain("tenant_id");
     expect(names, "created_at column must exist").toContain("created_at");
@@ -59,14 +59,14 @@ describe("lcd_memory_provenance DDL", () => {
   it("deletes provenance row when referenced memories row is deleted (ON DELETE CASCADE)", () => {
     // Insert a memories row with the full non-nullable column set
     db.prepare(
-      `INSERT INTO memories (id, content, trust_level, memory_type, user_id, tenant_id, agent_id, source_who, created_at)
-       VALUES ('m1', 'test content', 'learned', 'episodic', 'u1', 't1', 'a1', 'test', 1234567890)`,
+      `INSERT INTO memories (id, content, trust_level, memory_type, user_id, tenant_id, agent_id, visibility, source_who, created_at)
+       VALUES ('m1', 'test content', 'learned', 'episodic', 'u1', 't1', 'a1', 'agent-shared', 'test', 1234567890)`,
     ).run();
 
     // Insert a provenance row referencing m1
     db.prepare(
       `INSERT INTO lcd_memory_provenance
-         (provenance_id, memory_id, summary_id, source_session_key, conversation_id, agent_id, tenant_id, created_at)
+         (provenance_id, memory_id, summary_id, source_session_key, conversation_ref, agent_id, tenant_id, created_at)
        VALUES ('p1', 'm1', 's1', 'sk1', 'c1', 'a1', 't1', 1234567890)`,
     ).run();
 
@@ -92,18 +92,18 @@ describe("lcd_memory_provenance DDL", () => {
     // Insert two memories: M_base (the one whose provenance row we track)
     // and M_subsuming (the one that supersedes it)
     db.prepare(
-      `INSERT INTO memories (id, content, trust_level, memory_type, user_id, tenant_id, agent_id, source_who, created_at)
-       VALUES ('m_base', 'base content', 'learned', 'episodic', 'u1', 't1', 'a1', 'test', 1234567890)`,
+      `INSERT INTO memories (id, content, trust_level, memory_type, user_id, tenant_id, agent_id, visibility, source_who, created_at)
+       VALUES ('m_base', 'base content', 'learned', 'episodic', 'u1', 't1', 'a1', 'agent-shared', 'test', 1234567890)`,
     ).run();
     db.prepare(
-      `INSERT INTO memories (id, content, trust_level, memory_type, user_id, tenant_id, agent_id, source_who, created_at)
-       VALUES ('m_subsuming', 'subsuming content', 'learned', 'episodic', 'u1', 't1', 'a1', 'test', 1234567891)`,
+      `INSERT INTO memories (id, content, trust_level, memory_type, user_id, tenant_id, agent_id, visibility, source_who, created_at)
+       VALUES ('m_subsuming', 'subsuming content', 'learned', 'episodic', 'u1', 't1', 'a1', 'agent-shared', 'test', 1234567891)`,
     ).run();
 
     // Insert provenance row for m_base, marked as superseded by m_subsuming
     db.prepare(
       `INSERT INTO lcd_memory_provenance
-         (provenance_id, memory_id, summary_id, source_session_key, conversation_id, agent_id, tenant_id, created_at, superseded_by)
+         (provenance_id, memory_id, summary_id, source_session_key, conversation_ref, agent_id, tenant_id, created_at, superseded_by)
        VALUES ('p2', 'm_base', 's2', 'sk1', 'c1', 'a1', 't1', 1234567890, 'm_subsuming')`,
     ).run();
 

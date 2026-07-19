@@ -2,11 +2,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createAnnouncementBatcher, sanitizeForUser, type AnnouncementBatcherDeps, type QueuedAnnouncement } from "./announcement-batcher.js";
 import { createDeliveryDedup } from "@comis/agent";
+import { createConversationLocator } from "@comis/core";
 import { err, ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
+
+function makeCallerConversation(agentId = "agent-main", tenantId = "default") {
+  const result = createConversationLocator({ tenantId, agentId, partition: { kind: "agent" } });
+  if (!result.ok) throw result.error;
+  return result.value;
+}
 
 function makeAnnouncement(overrides: Partial<QueuedAnnouncement> = {}): QueuedAnnouncement {
   return {
@@ -15,7 +22,8 @@ function makeAnnouncement(overrides: Partial<QueuedAnnouncement> = {}): QueuedAn
     announceChannelType: "discord",
     announceChannelId: "chan-123",
     callerAgentId: "agent-main",
-    callerSessionKey: "default:user1:chan1",
+    callerSessionKey: "default:agent:agent-main:user1:chan1",
+    callerConversation: makeCallerConversation(),
     runId: "run-1",
     ...overrides,
   };
@@ -66,8 +74,8 @@ describe("AnnouncementBatcher", () => {
 
     expect(deps.announceToParent).toHaveBeenCalledOnce();
     // Single item delivers with original text unmodified
-    expect(deps.announceToParent.mock.calls[0]![2]).toContain("[System Message]");
-    expect(deps.announceToParent.mock.calls[0]![2]).toContain("A background task has completed.");
+    expect(deps.announceToParent.mock.calls[0]![3]).toContain("[System Message]");
+    expect(deps.announceToParent.mock.calls[0]![3]).toContain("A background task has completed.");
   });
 
   it("persists the explicit thread route across the debounce boundary", async () => {
@@ -79,7 +87,8 @@ describe("AnnouncementBatcher", () => {
 
     expect(deps.announceToParent).toHaveBeenCalledWith(
       "agent-main",
-      expect.objectContaining({ tenantId: "default", userId: "user1" }),
+      expect.objectContaining({ tenantId: "default", agentId: "agent-main", userId: "main" }),
+      makeCallerConversation(),
       expect.any(String),
       "discord",
       "chan-123",
@@ -109,7 +118,7 @@ describe("AnnouncementBatcher", () => {
     await vi.advanceTimersByTimeAsync(2000);
 
     expect(deps.announceToParent).toHaveBeenCalledOnce();
-    const combinedText = deps.announceToParent.mock.calls[0]![2] as string;
+    const combinedText = deps.announceToParent.mock.calls[0]![3] as string;
     expect(combinedText).toContain("3 background tasks have completed.");
     expect(combinedText).toContain("### Task 1");
     expect(combinedText).toContain("### Task 2");
@@ -124,12 +133,14 @@ describe("AnnouncementBatcher", () => {
 
     batcher.enqueue(makeAnnouncement({
       callerAgentId: "agent-a",
-      callerSessionKey: "default:userA:chanA",
+      callerSessionKey: "default:agent:agent-a:userA:chanA",
+      callerConversation: makeCallerConversation("agent-a"),
       runId: "run-a",
     }));
     batcher.enqueue(makeAnnouncement({
       callerAgentId: "agent-b",
-      callerSessionKey: "default:userB:chanB",
+      callerSessionKey: "default:agent:agent-b:userB:chanB",
+      callerConversation: makeCallerConversation("agent-b"),
       runId: "run-b",
     }));
 
@@ -151,7 +162,7 @@ describe("AnnouncementBatcher", () => {
     await batcher.flush();
 
     expect(deps.announceToParent).toHaveBeenCalledOnce();
-    const combinedText = deps.announceToParent.mock.calls[0]![2] as string;
+    const combinedText = deps.announceToParent.mock.calls[0]![3] as string;
     expect(combinedText).toContain("2 background tasks have completed.");
   });
 
@@ -165,7 +176,8 @@ describe("AnnouncementBatcher", () => {
     batcher.enqueue(makeAnnouncement({ runId: "run-2" }));
     batcher.enqueue(makeAnnouncement({
       callerAgentId: "other-agent",
-      callerSessionKey: "default:other:chan",
+      callerSessionKey: "default:agent:other-agent:other:chan",
+      callerConversation: makeCallerConversation("other-agent"),
       runId: "run-3",
     }));
 
@@ -198,7 +210,7 @@ describe("AnnouncementBatcher", () => {
     await vi.advanceTimersByTimeAsync(500);
 
     expect(deps.announceToParent).toHaveBeenCalledOnce();
-    const combinedText = deps.announceToParent.mock.calls[0]![2] as string;
+    const combinedText = deps.announceToParent.mock.calls[0]![3] as string;
     expect(combinedText).toContain("2 background tasks have completed.");
   });
 
@@ -483,7 +495,7 @@ describe("AnnouncementBatcher idempotent delivery", () => {
     // One combined announceToParent for the batch; the combined text must NOT
     // contain three "### Task" sections — the duplicate "K" was dropped.
     expect(deps.announceToParent).toHaveBeenCalledOnce();
-    const combined = deps.announceToParent.mock.calls[0]![2] as string;
+    const combined = deps.announceToParent.mock.calls[0]![3] as string;
     expect(combined).toContain("### Task 1");
     expect(combined).toContain("### Task 2");
     expect(combined).not.toContain("### Task 3"); // only 2 unique keys survived

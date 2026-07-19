@@ -23,8 +23,9 @@ import {
   API_CONTRACTS_ORDERED,
   HANDLER_CAPABILITY_MAP,
   CapabilityDeniedError,
+  ConversationScopeSchema,
+  conversationScopeToSessionKey,
   emitObservationalEventSafely,
-  parseFormattedSessionKey,
   // The never-hang mode-aware deny decision. resolveEffectiveMode is the
   // fail-closed primitive (absent/forged/unknown mode → "default");
   // resolveAutonomy is the server-side mode resolve for legs that inject no
@@ -311,7 +312,6 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     // The budget snapshot is omitted when boundedAutonomy is absent (handler guards it).
     ...createCapabilitiesHandlers({
       boundedAutonomy: deps.boundedAutonomy,
-      resolveRootRunId: deps.resolveRootRunId,
       agents: deps.agents,
       defaultAgentId: deps.defaultAgentId,
       logger: deps.logger,
@@ -619,13 +619,16 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       // ≈ the call's run id (the formatted caller session key), if present.
       const callerSessionKey =
         typeof params._callerSessionKey === "string" ? params._callerSessionKey : undefined;
-      // The synthetic per-session root (setup-capability-endpoint-boot.ts). Omit
-      // the whole record when there is no session key + no resolver — never fabricate.
-      const parsedKey = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
+      // The trusted in-process boundary resolves the tree root before dispatch.
+      // Never reconstruct control-plane authority from the display session key.
       const rootRunId =
-        parsedKey !== undefined && agentOrigin !== undefined
-          ? deps.resolveRootRunId?.(agentOrigin, parsedKey)
+        agentOrigin !== undefined && typeof params._rootRunId === "string"
+          ? params._rootRunId
           : undefined;
+      const callerScope = ConversationScopeSchema.safeParse(params._callerConversationScope);
+      const callerSession = callerScope.success
+        ? conversationScopeToSessionKey(callerScope.data)
+        : undefined;
       // Gate the durable audit trail on a real cap + agent origin ONLY —
       // a gated decision is a security fact regardless of tree-root resolution.
       // emitCapabilityAudit emits `audit:event` unconditionally and SUPPRESSES the
@@ -720,9 +723,9 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
               // The Nth consecutive floor-block → ABORT the tree (not an
               // infinite retry loop) + escalate. Mirror bridge-safety-controls.ts's
               // execution:aborted emit shape; the obs layer consumes the reason.
-              if (parsedKey !== undefined) {
+              if (callerSession?.ok) {
                 emitObservationalEventSafely({ eventBus: deps.container.eventBus, logger: deps.logger }, "execution:aborted", {
-                  sessionKey: parsedKey,
+                  sessionKey: callerSession.value,
                   reason: "denial_breaker",
                   agentId: agentOrigin ?? "",
                   timestamp: systemNowMs(),

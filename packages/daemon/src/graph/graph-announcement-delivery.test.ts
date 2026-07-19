@@ -1,13 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
 import { err, ok } from "@comis/shared";
+import { createConversationLocator } from "@comis/core";
 import { deliverGovernedGraphAnnouncement } from "./graph-announcement-delivery.js";
 
 function params() {
+  const locator = createConversationLocator({
+    tenantId: "tenant",
+    agentId: "agent-1",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: {
+        channelType: "telegram",
+        channelInstanceId: "test-instance",
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      },
+      principalId: "user",
+    },
+  });
+  if (!locator.ok) throw locator.error;
   return {
     graphId: "graph-1",
     agentId: "agent-1",
     callerSessionKey: "tenant:user:chat-1",
+    callerConversation: locator.value,
     channelType: "telegram",
     channelId: "chat-1",
     text: "Graph complete",

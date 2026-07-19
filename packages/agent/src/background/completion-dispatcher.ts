@@ -33,9 +33,9 @@
  * @module
  */
 
-import { suppressError } from "@comis/shared";
-import { emitObservationalEventSafely, systemNowMs } from "@comis/core";
-import type { TypedEventBus, BackgroundTaskOrigin } from "@comis/core";
+import { suppressError, type Result } from "@comis/shared";
+import { conversationScopeToSessionKey, emitObservationalEventSafely, formatSessionKey, systemNowMs } from "@comis/core";
+import type { TypedEventBus, BackgroundTaskOrigin, SessionQueryScope, SessionStoreError } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 import type {
   BackgroundTask,
@@ -91,7 +91,7 @@ export interface CompletionDispatcher {
 
 /** Minimal session-store contract the dispatcher needs (active-session check). */
 export interface DispatcherSessionStore {
-  loadByFormattedKey(sessionKey: string): unknown | undefined;
+  loadByRef(scope: SessionQueryScope, conversationRef: BackgroundTaskOrigin["conversationRef"]): Result<unknown | undefined, SessionStoreError>;
 }
 
 /**
@@ -249,6 +249,21 @@ export function createCompletionDispatcher(
     // task.dispatchState === "pending". Decide which transition to make.
     // origin is producer-required; read it directly.
     const origin = task.origin;
+    const agentId = origin.turnScope.conversation.agentId;
+    const queryScope = { tenantId: origin.turnScope.conversation.tenantId, agentId };
+    const projected = conversationScopeToSessionKey(origin.turnScope.conversation);
+    if (!projected.ok) {
+      log.warn({
+        taskId,
+        conversationRef: origin.conversationRef,
+        hint: "Inspect or remove the persisted background task authority before retrying",
+        errorKind: projected.error.errorKind,
+      }, "Completion dispatcher: invalid persisted conversation scope");
+      transitionTo(taskId, "notified");
+      await fireFallback(task, `Background task "${task.toolName}" completed (routing failed).`);
+      return;
+    }
+    const formattedSessionKey = formatSessionKey(projected.value);
 
     // Hop cap (when configured). Recursion limit reached → fallback.
     if (typeof deps.maxBackgroundHops === "number") {
@@ -272,14 +287,14 @@ export function createCompletionDispatcher(
     // Transition to "dispatched" — no notice; the runner's own in-flight
     // check also skips re-entry (the live turn owns consumption; an
     // unconsumed result stays readable via `background_tasks`).
-    if (deps.isTurnInFlight?.(origin.sessionKey) === true) {
+    if (deps.isTurnInFlight?.(formattedSessionKey) === true) {
       transitionTo(taskId, "dispatched");
       emitNotified(task, origin, false, "live_turn_suppressed");
       log.debug(
         {
           taskId,
-          sessionKey: origin.sessionKey,
-          agentId: origin.agentId,
+          sessionKey: formattedSessionKey,
+          agentId,
           toolName: task.toolName,
           traceId: origin.traceId ?? undefined,
           hint: "Origin turn in flight — live turn consumes the result; no fallback notice",
@@ -291,9 +306,17 @@ export function createCompletionDispatcher(
 
     // Active-session check (when configured). No active session → fallback.
     if (deps.sessionStore) {
-      const sessionExists =
-        deps.sessionStore.loadByFormattedKey(origin.sessionKey) !== undefined;
-      if (!sessionExists) {
+      const loaded = deps.sessionStore.loadByRef(queryScope, origin.conversationRef);
+      if (!loaded.ok) {
+        log.warn({
+          taskId,
+          conversationRef: origin.conversationRef,
+          hint: "Inspect session database integrity and retry after storage recovers",
+          errorKind: loaded.error.errorKind,
+        }, "Completion dispatcher: session authority check failed");
+        return;
+      }
+      if (loaded.value === undefined) {
         // The originating session is not currently registered. The
         // completion-runner would skip re-entry (no streaming channel) —
         // fire fallback so the user still sees a notification. The
@@ -317,8 +340,8 @@ export function createCompletionDispatcher(
     log.debug(
       {
         taskId,
-        sessionKey: origin.sessionKey,
-        agentId: origin.agentId,
+        sessionKey: formattedSessionKey,
+        agentId,
         toolName: task.toolName,
         // traceId from origin for log continuity.
         traceId: origin.traceId ?? undefined,
@@ -354,11 +377,13 @@ export function createCompletionDispatcher(
     notified: boolean,
     reason: "no_session" | "hop_cap" | "live_turn_suppressed",
   ): void {
+    const projected = conversationScopeToSessionKey(origin.turnScope.conversation);
+    if (!projected.ok) return;
     emitObservationalEventSafely({ eventBus: deps.eventBus, logger: log }, "background_task:notified", {
-      agentId: origin.agentId,
+      agentId: origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
-      sessionKey: origin.sessionKey,
+      sessionKey: formatSessionKey(projected.value),
       notified,
       reason,
       traceId: origin.traceId ?? null,
@@ -381,7 +406,7 @@ export function createCompletionDispatcher(
     }
     try {
       await fallback({
-        agentId: task.origin.agentId,
+        agentId: task.origin.turnScope.conversation.agentId,
         message,
         priority: "normal",
         origin: "background_task",
@@ -390,7 +415,7 @@ export function createCompletionDispatcher(
       log.warn(
         {
           taskId: task.id,
-          agentId: task.origin.agentId,
+          agentId: task.origin.turnScope.conversation.agentId,
           err,
           // traceId from origin keeps the WARN line threaded.
           traceId: task.origin?.traceId ?? undefined,

@@ -36,6 +36,20 @@ function makeApprovalContext(): RequestContext {
     startedAt: 1,
     trustLevel: "admin",
     channelType: "telegram",
+    turnScope: {
+      conversation: {
+        tenantId: "default",
+        agentId: "test-agent",
+        partition: { kind: "principal", principalId: "principal-test-user" },
+      },
+      principal: { principalId: "principal-test-user" },
+      endpoint: {
+        channelType: "telegram",
+        channelInstanceId: "telegram-account",
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      },
+    },
     deliveryOrigin: Object.freeze({
       tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
     }),
@@ -688,7 +702,8 @@ describe("createPipelineTool", () => {
 
       expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({
         agentId: "test-agent",
-        sessionKey: "default:test-user:chat-1",
+        conversationRef: expect.stringMatching(/^cv_/),
+        resolvingPrincipalId: "principal-test-user",
         callbackOwner: {
           tenantId: "default", userId: "test-user", channelType: "telegram", channelKey: "chat-1",
         },

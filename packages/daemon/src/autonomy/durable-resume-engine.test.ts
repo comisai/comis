@@ -18,6 +18,9 @@ import Database from "better-sqlite3";
 import { ok, err, type Result } from "@comis/shared";
 import {
   TypedEventBus,
+  createConversationRef,
+  conversationScopeToSessionKey,
+  formatSessionKey,
   type OutwardSendLedgerPort,
   type OutwardSendRecord,
   type OutwardSendState,
@@ -381,16 +384,36 @@ describe("reconcileLedgerRow conservative recovery parking", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const VALID_CAPS: DurableRunRecord["caps"] = ["orch:read", "orch:message"];
+const DURABLE_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "telegram-main",
+  conversationId: "chat-a",
+  conversationKind: "direct" as const,
+};
+const DURABLE_SCOPE = {
+  tenantId: "tenant-a",
+  agentId: "agent-a",
+  partition: {
+    kind: "endpoint-conversation-principal" as const,
+    endpoint: DURABLE_ENDPOINT,
+    principalId: "user-a",
+  },
+};
+const durableConversationReference = createConversationRef(DURABLE_SCOPE);
+if (!durableConversationReference.ok) throw durableConversationReference.error;
+const durableDisplaySession = conversationScopeToSessionKey(DURABLE_SCOPE);
+if (!durableDisplaySession.ok) throw durableDisplaySession.error;
 
 function durableRecord(overrides?: Partial<DurableRunRecord>): DurableRunRecord {
   const rootRunId = overrides?.rootRunId ?? "root-1";
   return {
     checkpointId: overrides?.checkpointId ?? `checkpoint-${rootRunId}`,
     rootRunId,
+    tenantId: "tenant-a",
     agentId: "agent-a",
-    sessionKey: "tenant-a:user-a:chat-a",
-    ownerTenantId: "tenant-a",
-    ownerUserId: "user-a",
+    conversationRef: durableConversationReference.value,
+    conversationScope: DURABLE_SCOPE,
+    principalId: "user-a",
     deliveryOrigin: null,
     spawnTree: ["lease-1"],
     caps: VALID_CAPS,
@@ -758,7 +781,7 @@ describe("createDurableResumeEngine resume-or-orphan and bounded recovery", () =
     expect(mintInput.trustLevel).toBe("admin");
     expect(mintInput).toEqual(expect.objectContaining({
       agentId: record.agentId,
-      sessionKey: record.sessionKey,
+      sessionKey: formatSessionKey(durableDisplaySession.value),
       rootRunId: record.rootRunId,
       checkpointId: expect.stringMatching(/^resume-/),
     }));

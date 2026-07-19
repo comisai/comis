@@ -470,7 +470,7 @@ describe("recall-trace redaction (end-to-end)", () => {
         maxResults: 5,
         minScore: 0,
         includeTrustLevels: ["system", "learned"],
-        rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        rerank: { mode: "off", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
         scoring: {
           recencyAlpha: 0.2,
           temporalAlpha: 0.2,
@@ -595,7 +595,7 @@ describe("memory.recall_trace read-back via the REAL production recorder", () =>
         maxResults: 5,
         minScore: 0,
         includeTrustLevels: ["system", "learned"],
-        rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        rerank: { mode: "off", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
         scoring: {
           recencyAlpha: 0.2,
           temporalAlpha: 0.2,

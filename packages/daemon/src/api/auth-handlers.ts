@@ -271,7 +271,7 @@ export function createAuthHandlers(
         deps.container.eventBus.emit("audit:event", {
           timestamp: systemNowMs(),
           agentId: "system",
-          tenantId: deps.container.config.tenantId ?? "default",
+          tenantId: deps.container.config.tenantId,
           actionType: "auth.logout",
           classification: "destructive",
           outcome: "failure",
@@ -295,7 +295,7 @@ export function createAuthHandlers(
       deps.container.eventBus.emit("audit:event", {
         timestamp: systemNowMs(),
         agentId: "system",
-        tenantId: deps.container.config.tenantId ?? "default",
+        tenantId: deps.container.config.tenantId,
         actionType: "auth.logout",
         classification: "destructive",
         outcome: "success",
@@ -398,7 +398,7 @@ export function createAuthHandlers(
       deps.container.eventBus.emit("audit:event", {
         timestamp: systemNowMs(),
         agentId: "system",
-        tenantId: deps.container.config.tenantId ?? "default",
+        tenantId: deps.container.config.tenantId,
         actionType: "auth.set",
         kind: "auth_mutation",
         outcome: "success",

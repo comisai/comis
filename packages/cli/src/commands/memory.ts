@@ -51,15 +51,19 @@ export function registerMemoryCommand(program: Command): void {
   memory
     .command("search <query>")
     .description("Search memory entries")
+    .requiredOption("--tenant <tenantId>", "Tenant authority for memory search")
+    .requiredOption("--agent <agentId>", "Agent authority for memory search")
     .option("--limit <n>", "Maximum results to return", "10")
     .option("--format <format>", "Output format (table|json)", "table")
-    .action(async (query: string, options: { limit: string; format: string }) => {
+    .action(async (query: string, options: { tenant: string; agent: string; limit: string; format: string }) => {
       try {
         const result = await withSpinner("Searching memory...", () =>
           withClient(async (client) =>
             callTyped(client, MemorySearchFilesContract, {
               query,
               limit: Number(options.limit),
+              tenantId: options.tenant,
+              agentId: options.agent,
             }),
           ),
         );
@@ -92,12 +96,18 @@ export function registerMemoryCommand(program: Command): void {
   memory
     .command("inspect <id>")
     .description("Display full details of a memory entry")
+    .requiredOption("--tenant <tenantId>", "Tenant authority for memory inspection")
+    .requiredOption("--agent <agentId>", "Agent authority for memory inspection")
     .option("--format <format>", "Output format (detail|json)", "detail")
-    .action(async (id: string, options: { format: string }) => {
+    .action(async (id: string, options: { tenant: string; agent: string; format: string }) => {
       try {
         const result = await withSpinner("Fetching memory entry...", () =>
           withClient(async (client) =>
-            callTyped(client, MemoryBrowseContract, { limit: 1000 }),
+            callTyped(client, MemoryBrowseContract, {
+              tenant_id: options.tenant,
+              agent_id: options.agent,
+              limit: 1000,
+            }),
           ),
         );
         const entries = (result.entries ?? []) as Array<Record<string, unknown>>;
@@ -131,15 +141,20 @@ export function registerMemoryCommand(program: Command): void {
   memory
     .command("stats")
     .description("Display memory statistics")
+    .requiredOption("--tenant <tenantId>", "Tenant authority for memory statistics")
+    .requiredOption("--agent <agentId>", "Agent authority for memory statistics")
     .option("--format <format>", "Output format (detail|json)", "detail")
-    .action(async (options: { format: string }) => {
+    .action(async (options: { tenant: string; agent: string; format: string }) => {
       try {
         // Routed via MemoryStatsContract — the daemon's memory-statistics
         // surface. Response is a loose record; the values matter, not the
         // precise shape.
         const result = await withSpinner("Fetching memory stats...", () =>
           withClient(async (client) => {
-            return await callTyped(client, MemoryStatsContract, {});
+            return await callTyped(client, MemoryStatsContract, {
+              tenant_id: options.tenant,
+              agent_id: options.agent,
+            });
           }),
         );
 
@@ -159,7 +174,10 @@ export function registerMemoryCommand(program: Command): void {
         let recallStats: Record<string, unknown> | undefined;
         try {
           recallStats = (await withClient(async (client) =>
-            callTyped(client, MemoryRecallStatsContract, {}),
+            callTyped(client, MemoryRecallStatsContract, {
+              tenant_id: options.tenant,
+              agent_id: options.agent,
+            }),
           )) as unknown as Record<string, unknown>;
         } catch (overlayErr) {
           const overlayMsg =
@@ -302,13 +320,14 @@ export function registerMemoryCommand(program: Command): void {
     .command("recall-trace <session>")
     .description("Inspect a session's hybrid-recall trace (admin)")
     .option("--trace-id <id>", "Filter by trace id instead of / alongside the session")
-    .option("--agent <agentId>", "Scope to a specific agent")
+    .requiredOption("--tenant <tenantId>", "Tenant authority for the recall trace")
+    .requiredOption("--agent <agentId>", "Agent authority for the recall trace")
     .option("--limit <n>", "Maximum records to return", "200")
     .option("--format <format>", "Output format (table|json)", "table")
     .action(
       async (
         session: string,
-        options: { traceId?: string; agent?: string; limit: string; format: string },
+        options: { traceId?: string; tenant: string; agent: string; limit: string; format: string },
       ) => {
         try {
           const result = await withSpinner("Fetching recall trace...", () =>
@@ -316,7 +335,8 @@ export function registerMemoryCommand(program: Command): void {
               callTyped(client, MemoryRecallTraceContract, {
                 session_key: session,
                 ...(options.traceId !== undefined ? { trace_id: options.traceId } : {}),
-                ...(options.agent !== undefined ? { agent_id: options.agent } : {}),
+                tenant_id: options.tenant,
+                agent_id: options.agent,
                 limit: Number(options.limit),
               }),
             ),
@@ -365,15 +385,17 @@ export function registerMemoryCommand(program: Command): void {
   memory
     .command("observations")
     .description("List observation provenance (sources + history) (admin)")
-    .option("--agent <agentId>", "Scope to a specific agent")
+    .requiredOption("--tenant <tenantId>", "Tenant authority for observation storage")
+    .requiredOption("--agent <agentId>", "Agent authority for observation storage")
     .option("--limit <n>", "Maximum observations to return", "50")
     .option("--format <format>", "Output format (table|json)", "table")
-    .action(async (options: { agent?: string; limit: string; format: string }) => {
+    .action(async (options: { tenant: string; agent: string; limit: string; format: string }) => {
       try {
         const result = await withSpinner("Fetching observations...", () =>
           withClient(async (client) =>
             callTyped(client, MemoryObservationsContract, {
-              ...(options.agent !== undefined ? { agent_id: options.agent } : {}),
+              tenant_id: options.tenant,
+              agent_id: options.agent,
               limit: Number(options.limit),
             }),
           ),
@@ -411,15 +433,17 @@ export function registerMemoryCommand(program: Command): void {
   memory
     .command("entities")
     .description("List an agent's entity graph, most-mentioned-first (admin)")
-    .option("--agent <agentId>", "Scope to a specific agent")
+    .requiredOption("--tenant <tenantId>", "Tenant authority for entity storage")
+    .requiredOption("--agent <agentId>", "Agent authority for entity storage")
     .option("--limit <n>", "Maximum entities to return", "100")
     .option("--format <format>", "Output format (table|json)", "table")
-    .action(async (options: { agent?: string; limit: string; format: string }) => {
+    .action(async (options: { tenant: string; agent: string; limit: string; format: string }) => {
       try {
         const result = await withSpinner("Fetching entity graph...", () =>
           withClient(async (client) =>
             callTyped(client, MemoryEntitiesContract, {
-              ...(options.agent !== undefined ? { agent_id: options.agent } : {}),
+              tenant_id: options.tenant,
+              agent_id: options.agent,
               limit: Number(options.limit),
             }),
           ),
@@ -455,25 +479,12 @@ export function registerMemoryCommand(program: Command): void {
   // memory clear
   memory
     .command("clear")
-    .description("Clear non-system, non-pinned memory for a tenant or agent")
-    .option("--tenant <tenantId>", "Tenant scope")
-    .option("--agent <agentId>", "Agent scope")
+    .description("Clear non-system, non-pinned memory for one tenant-agent scope")
+    .requiredOption("--tenant <tenantId>", "Tenant authority for the memory entry")
+    .requiredOption("--agent <agentId>", "Agent authority for the memory entry")
     .option("-y, --yes", "Skip confirmation prompt")
-    .action(async (options: { tenant?: string; agent?: string; yes?: boolean }) => {
-      if (!options.tenant && !options.agent) {
-        error(
-          "At least one scope is required (--tenant or --agent). Safety check prevents tenant-wide default clears.",
-        );
-        process.exit(1);
-      }
-
-      const params: { tenant_id?: string; agent_id?: string } = {};
-      if (options.tenant) {
-        params.tenant_id = options.tenant;
-      }
-      if (options.agent) {
-        params.agent_id = options.agent;
-      }
+    .action(async (options: { tenant: string; agent: string; yes?: boolean }) => {
+      const params = { tenant_id: options.tenant, agent_id: options.agent };
 
       // Confirmation check
       if (!options.yes && !process.stdin.isTTY) {
@@ -482,12 +493,7 @@ export function registerMemoryCommand(program: Command): void {
       }
 
       if (!options.yes) {
-        const scopeDesc = [
-          options.tenant ? `tenant=${options.tenant}` : undefined,
-          options.agent ? `agent=${options.agent}` : undefined,
-        ]
-          .filter((scope): scope is string => scope !== undefined)
-          .join(", ");
+        const scopeDesc = `tenant=${options.tenant}, agent=${options.agent}`;
 
         if (
           !(await confirm({
@@ -519,10 +525,11 @@ export function registerMemoryCommand(program: Command): void {
   memory
     .command("export")
     .description("Export agent memory to a versioned JSON envelope (secrets scrubbed at source)")
+    .requiredOption("--tenant <tenantId>", "Tenant authority for the exported memory")
     .requiredOption("--agent <agentId>", "Agent whose memory to export")
     .option("--output <path>", "Output file path (default: comis-memory-<agentId>-<timestamp>.json)")
     .option("--limit <n>", "Maximum entries to export (default: 10000)", "10000")
-    .action(async (options: { agent: string; output?: string; limit: string }) => {
+    .action(async (options: { tenant: string; agent: string; output?: string; limit: string }) => {
       // Guard against non-numeric --limit before the RPC call.
       const exportLimit = parseInt(options.limit, 10);
       if (isNaN(exportLimit) || exportLimit < 1) {
@@ -533,6 +540,7 @@ export function registerMemoryCommand(program: Command): void {
         const result = await withSpinner("Exporting memory...", () =>
           withClient(async (client) =>
             callTyped(client, MemoryPortabilityExportContract, {
+              tenant_id: options.tenant,
               agent_id: options.agent,
               limit: exportLimit,
             }),
@@ -559,9 +567,10 @@ export function registerMemoryCommand(program: Command): void {
   memory
     .command("import <file>")
     .description("Import memory from a comis-memory-export-v1 JSON envelope")
+    .requiredOption("--tenant <tenantId>", "Tenant authority for imported memory")
     .requiredOption("--agent <agentId>", "Target agent to import memory into")
     .option("--dry-run", "Validate and report counts without writing to the store")
-    .action(async (file: string, options: { agent: string; dryRun?: boolean }) => {
+    .action(async (file: string, options: { tenant: string; agent: string; dryRun?: boolean }) => {
       try {
         // CLI validates the envelope before sending to the daemon — fail-closed.
         let raw: unknown;
@@ -589,6 +598,7 @@ export function registerMemoryCommand(program: Command): void {
             withClient(async (client) =>
               callTyped(client, MemoryPortabilityImportContract, {
                 entries: parsed.value.entries as Record<string, unknown>[],
+                tenant_id: options.tenant,
                 agent_id: options.agent,
                 dry_run: options.dryRun,
               }),
@@ -622,16 +632,16 @@ export function registerMemoryCommand(program: Command): void {
   memory
     .command("pin <id>")
     .description("Pin a memory entry (always inject in recall) — admin")
-    .option("--agent <agentId>", "Agent scope")
-    .option("--tenant <tenantId>", "Tenant scope")
-    .action(async (id: string, options: { agent?: string; tenant?: string }) => {
+    .requiredOption("--tenant <tenantId>", "Tenant authority for the memory entry")
+    .requiredOption("--agent <agentId>", "Agent authority for the memory entry")
+    .action(async (id: string, options: { agent: string; tenant: string }) => {
       try {
         const result = await withSpinner("Pinning memory...", () =>
           withClient(async (client) =>
             callTyped(client, MemoryPinContract, {
               id,
-              ...(options.agent ? { agent_id: options.agent } : {}),
-              ...(options.tenant ? { tenant_id: options.tenant } : {}),
+              tenant_id: options.tenant,
+              agent_id: options.agent,
             }),
           ),
         );
@@ -647,16 +657,16 @@ export function registerMemoryCommand(program: Command): void {
   memory
     .command("unpin <id>")
     .description("Unpin a memory entry — admin")
-    .option("--agent <agentId>", "Agent scope")
-    .option("--tenant <tenantId>", "Tenant scope")
-    .action(async (id: string, options: { agent?: string; tenant?: string }) => {
+    .requiredOption("--tenant <tenantId>", "Tenant authority for the memory entry")
+    .requiredOption("--agent <agentId>", "Agent authority for the memory entry")
+    .action(async (id: string, options: { agent: string; tenant: string }) => {
       try {
         const result = await withSpinner("Unpinning memory...", () =>
           withClient(async (client) =>
             callTyped(client, MemoryUnpinContract, {
               id,
-              ...(options.agent ? { agent_id: options.agent } : {}),
-              ...(options.tenant ? { tenant_id: options.tenant } : {}),
+              tenant_id: options.tenant,
+              agent_id: options.agent,
             }),
           ),
         );

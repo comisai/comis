@@ -502,34 +502,22 @@ describe("memory clear no-scope rejection", () => {
     exitSpy.restore();
   });
 
-  it("rejects clear with no scope and no --yes in non-TTY", async () => {
+  it("rejects clear without explicit authority before confirmation", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    try {
-      await program.parseAsync(["node", "test", "memory", "clear"]);
-    } catch (e) {
-      expect((e as Error).message).toBe("process.exit called");
-    }
-
-    expect(exitSpy.spy).toHaveBeenCalledWith(1);
-    const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("At least one scope is required");
+    await expect(
+      program.parseAsync(["node", "test", "memory", "clear"]),
+    ).rejects.toThrow("required option '--tenant <tenantId>' not specified");
   });
 
-  it("rejects clear with --yes but no scope", async () => {
+  it("rejects clear with --yes but no authority", async () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
 
-    try {
-      await program.parseAsync(["node", "test", "memory", "clear", "--yes"]);
-    } catch (e) {
-      expect((e as Error).message).toBe("process.exit called");
-    }
-
-    expect(exitSpy.spy).toHaveBeenCalledWith(1);
-    const errOutput = getSpyOutput(consoleSpy.error);
-    expect(errOutput).toContain("At least one scope is required");
+    await expect(
+      program.parseAsync(["node", "test", "memory", "clear", "--yes"]),
+    ).rejects.toThrow("required option '--tenant <tenantId>' not specified");
   });
 
   it("rejects the unsupported filter option", async () => {
@@ -545,19 +533,23 @@ describe("memory clear no-scope rejection", () => {
         "--filter",
         "badfilter",
         "--yes",
+        "--tenant",
+        "test-tenant",
+        "--agent",
+        "test-agent",
       ]),
     ).rejects.toThrow("unknown option '--filter'");
 
     expect(exitSpy.spy).not.toHaveBeenCalled();
   });
 
-  it("accepts a tenant scope with --yes", async () => {
+  it("accepts an explicit tenant-agent scope with --yes", async () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("memory.flush", {
           flushed: true,
           entriesRemoved: 0,
-          scope: { tenantId: "default", agentId: null },
+          scope: { tenantId: "default", agentId: "default" },
         })
         .build();
       return fn(mockClient);
@@ -572,6 +564,8 @@ describe("memory clear no-scope rejection", () => {
       "memory",
       "clear",
       "--tenant",
+      "default",
+      "--agent",
       "default",
       "--yes",
     ]);

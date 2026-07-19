@@ -33,7 +33,6 @@ import {
 import { toSlackShortname } from "./slack-emoji-map.js";
 import { computeStallThresholds } from "./stall-detector.js";
 import { emitObservationalEventSafely, systemClearTimeout, systemNowMs, systemSetTimeout, toSafeErrorLogString, tryGetContext } from "@comis/core";
-import { parseFormattedSessionKey } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -85,18 +84,15 @@ interface ReactorState {
 // ---------------------------------------------------------------------------
 
 /**
- * Extract channelId from either a formatted string sessionKey or a SessionKey object.
- *
- * - SessionKey object: direct `.channelId` property access
- * - Formatted string: use the canonical session-key parser so channel IDs
- *   containing `:` remain round-trip safe and tagged suffixes are excluded.
+ * Extract channelId only from a structured SessionKey. String labels are
+ * display data and cannot supply routing authority.
  */
 export function extractChannelId(sessionKey: string | SessionKey | undefined): string | undefined {
   if (sessionKey == null) return undefined;
   if (typeof sessionKey === "object" && sessionKey !== null) {
     return sessionKey.channelId;
   }
-  return parseFormattedSessionKey(sessionKey)?.channelId;
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -571,8 +567,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
     const messageKey = messageKeyByTrace.get(JSON.stringify([channelType, event.traceId]));
     if (!messageKey) return;
     const state = messageStates.get(messageKey);
-    const eventChannelId = extractChannelId(event.sessionKey);
-    if (state === undefined || (eventChannelId !== undefined && eventChannelId !== state.channelId)) return;
+    if (state === undefined) return;
 
     const targetPhase = classifyToolPhase(event.toolName);
     transitionPhase(messageKey, targetPhase);
@@ -583,8 +578,7 @@ export function createLifecycleReactor(deps: LifecycleReactorDeps): LifecycleRea
     const messageKey = messageKeyByTrace.get(JSON.stringify([channelType, event.traceId]));
     if (!messageKey) return;
     const state = messageStates.get(messageKey);
-    const eventChannelId = extractChannelId(event.sessionKey);
-    if (state === undefined || (eventChannelId !== undefined && eventChannelId !== state.channelId)) return;
+    if (state === undefined) return;
 
     // Tool completed -- transition back to thinking (LLM is generating again)
     transitionPhase(messageKey, "thinking");

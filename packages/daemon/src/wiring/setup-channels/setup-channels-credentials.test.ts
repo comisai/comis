@@ -274,6 +274,7 @@ describe("setup-channels-credentials", () => {
     await deps.__eventBus.fire("scheduler:job_result", {
       result: "__MEMORY_REVIEW__",
       agentId: "agent-1",
+      jobId: "memory-review-small",
       onComplete,
     });
 
@@ -299,6 +300,7 @@ describe("setup-channels-credentials", () => {
     await deps.__eventBus.fire("scheduler:job_result", {
       result: "__MEMORY_REVIEW__",
       agentId: "agent-1",
+      jobId: "memory-review-override",
       onComplete,
     });
 
@@ -357,6 +359,7 @@ describe("setup-channels-credentials", () => {
     await deps.__eventBus.fire("scheduler:job_result", {
       result: "__MEMORY_REVIEW__",
       agentId: "agent-1",
+      jobId: "memory-review-targetless",
       // no deliveryTarget — the internal, target-less memory-review cron shape
     });
 
@@ -405,7 +408,11 @@ describe("setup-channels-credentials", () => {
     });
     (deps as any).executors = new Map([["agent-1", executor]]);
     (deps as any).adaptersByType = new Map([["telegram", { channelType: "telegram" }]]);
-    (deps as any).sessionManager = { expire: vi.fn(), loadOrCreate: vi.fn(() => []), save: vi.fn() };
+    (deps as any).sessionManager = {
+      expire: vi.fn(() => ({ ok: true, value: false })),
+      loadOrCreate: vi.fn(() => ({ ok: true, value: [] })),
+      save: vi.fn(() => ({ ok: true, value: undefined })),
+    };
     (deps as any).deliveryService = {
       deliverToChannel: vi.fn(async () => ({
         ok: true as const,
@@ -465,9 +472,9 @@ describe("setup-channels-credentials", () => {
     (deps as any).executors = new Map([["agent-1", executor]]);
     (deps as any).adaptersByType = new Map([["telegram", { channelType: "telegram" }]]);
     (deps as any).sessionManager = {
-      expire: vi.fn(),
-      loadOrCreate: vi.fn(() => []),
-      save: vi.fn(),
+      expire: vi.fn(() => ({ ok: true, value: false })),
+      loadOrCreate: vi.fn(() => ({ ok: true, value: [] })),
+      save: vi.fn(() => ({ ok: true, value: undefined })),
     };
     (deps as any).assembleToolsForAgent = vi.fn(async () => {
       observed.push(tryGetContext());
@@ -507,8 +514,10 @@ describe("setup-channels-credentials", () => {
 
     const expectedSessionKey = formatSessionKey({
       tenantId: "tenant-a",
-      userId: "user_a",
-      channelId: "cron:job-context",
+      agentId: "agent-1",
+      userId: "scheduler:job-context",
+      channelId: "scheduler:job-context:job-context",
+      peerId: "scheduler:job-context",
     });
     expect(observed).toHaveLength(3);
     expect(observed[0]).toBeDefined();
@@ -516,13 +525,13 @@ describe("setup-channels-credentials", () => {
     expect(observed[0]).toMatchObject({
       agentId: "agent-1",
       tenantId: "tenant-a",
-      userId: "user_a",
+      userId: "scheduler:job-context",
       sessionKey: expectedSessionKey,
-      channelType: "telegram",
+      channelType: "scheduler",
       deliveryOrigin: {
-        channelType: "telegram",
-        channelId: "chat-1",
-        userId: "user_a",
+        channelType: "scheduler",
+        channelId: "job-context",
+        userId: "scheduler:job-context",
         tenantId: "tenant-a",
       },
     });

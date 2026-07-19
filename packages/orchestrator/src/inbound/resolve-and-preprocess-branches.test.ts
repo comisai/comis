@@ -12,7 +12,9 @@
  * @module
  */
 import { describe, it, expect, vi } from "vitest";
-import type { NormalizedMessage, AutoReplyEngineConfig, ChannelPort } from "@comis/core";
+import { type NormalizedMessage, type AutoReplyEngineConfig, type ChannelPort } from "@comis/core";
+import { ok } from "@comis/shared";
+import { createFakePrincipalResolver } from "../../../../test/support/fake-principal-resolver.js";
 
 import {
   resolveAndPreprocess,
@@ -66,6 +68,7 @@ function makeDeps(overrides?: Partial<ResolveAndPreprocessDeps>): ResolveAndPrep
     execute: vi.fn(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any;
+  const principalResolver = createFakePrincipalResolver();
   const defaults: ResolveAndPreprocessDeps = {
     tenantId: "default",
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -79,9 +82,11 @@ function makeDeps(overrides?: Partial<ResolveAndPreprocessDeps>): ResolveAndPrep
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any,
     sessionManager: {
-      loadOrCreate: vi.fn(),
+      loadOrCreate: vi.fn(() => ok({})),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any,
+    principalResolver,
+    getDmScope: () => ({ mode: "per-account-channel-peer", threadIsolation: true }),
     createExecutor: vi.fn(() => defaultExecutor),
     persistInboundMessage: vi.fn(async () => ({
       ok: true as const,
@@ -134,7 +139,7 @@ describe("resolveAndPreprocess (resolve-side branches)", () => {
   });
 
   it("calls sessionManager.loadOrCreate(sessionKey) after resolution", async () => {
-    const loadOrCreate = vi.fn();
+    const loadOrCreate = vi.fn(() => ok({}));
     const deps = makeDeps({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       sessionManager: { loadOrCreate } as any,
@@ -394,6 +399,10 @@ describe("resolveAndPreprocess preprocess + compression", () => {
     const result = await resolveAndPreprocess(deps, makeAdapter(), makeMsg());
 
     expect(preprocessMessage).toHaveBeenCalledOnce();
+    expect(preprocessMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      result.turnScope,
+    );
     expect(result?.processedMsg.text).toBe("preprocessed");
   });
 

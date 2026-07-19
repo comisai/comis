@@ -192,7 +192,7 @@ describe("appendGraphSpreadLane (the 6th-lane helper)", () => {
     expect(warn?.errorKind).toBe("internal");
   });
 
-  it("falls back to the session key's agent (else 'default') when agentId is undefined", async () => {
+  it("uses the explicitly resolved agent instead of session display metadata", async () => {
     const lanes: FusionLane[] = [];
     const { store, calls } = fakeTripleStore(ok([makeResult("n1")]));
     await appendGraphSpreadLane(
@@ -204,10 +204,9 @@ describe("appendGraphSpreadLane (the 6th-lane helper)", () => {
       8,
       ["alice"],
       SESSION_KEY_OBJ,
-      undefined,
+      "agent-explicit",
       noopLogger,
     );
-    // SESSION_KEY_OBJ carries no agentId → scope.agentId falls back to "default".
-    expect(calls[0]?.scope).toEqual({ tenantId: "tenant_x", agentId: "default" });
+    expect(calls[0]?.scope).toEqual({ tenantId: "tenant_x", agentId: "agent-explicit" });
   });
 });

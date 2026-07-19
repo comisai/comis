@@ -34,7 +34,7 @@
     "@comis/core": "workspace:*",
     "@comis/observability": "workspace:*",
     "@comis/shared": "workspace:*",
-    "@earendil-works/pi-ai": "0.80.6",
+    "@earendil-works/pi-ai": "0.80.10",
     "better-sqlite3": "12.10.0",
     "lru-cache": "11.5.1",
     "node-llama-cpp": "3.18.1",

@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { MemoryEntry, MemoryConfig } from "@comis/core";
-import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
+import { ScopedMemoryTestAdapter as SqliteMemoryAdapter } from "../../../test/support/scoped-memory-adapter.js";
 import { createSqliteMemoryUsefulnessStore } from "./sqlite-memory-usefulness-store.js";
 import type Database from "better-sqlite3";
 
@@ -282,7 +282,7 @@ describe("createSqliteMemoryUsefulnessStore", () => {
       expect(rawRow(m1)).toBeDefined();
 
       // Delete via the existing adapter path (foreign_keys=ON -> CASCADE).
-      const del = await adapter.delete(m1, "tenant_a");
+      const del = await adapter.delete(m1, { tenantId: "tenant_a", agentId: "agent_a" });
       expect(del.ok).toBe(true);
 
       // The usefulness row is gone — no orphan, no sweep job.

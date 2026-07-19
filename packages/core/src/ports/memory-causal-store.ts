@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Result } from "@comis/shared";
 import type { MemorySearchResult } from "./memory.js";
-import type { LearningScope } from "./outcome-signal-port.js";
+import type { MemoryRecallScope } from "../domain/memory-scope.js";
 
 /**
  * MemoryCausalStore: the SEGREGATED hexagonal boundary for causal-edge recall
@@ -42,7 +42,7 @@ import type { LearningScope } from "./outcome-signal-port.js";
  * A thin alias that DERIVES `tenantId`/`agentId` from `LearningScope` and
  * re-narrows the injected clock `now` to REQUIRED (the `linkCausal` write path).
  */
-export type CausalScope = LearningScope & {
+export type CausalScope = MemoryRecallScope & {
   /**
    * Injected wall-clock epoch milliseconds for the edge's `created_at`
    * bookkeeping. REQUIRED on the causal write path. NEVER `Date.now()` — the

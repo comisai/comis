@@ -17,7 +17,7 @@
  *     double-append, no seq collision).
  *   - FAIL-CLOSED on ambiguous transcript identity is the existing
  *     `isScopeSafeForIngest` guard inside `ingestTurnGuarded` (an empty security
- *     column OR conversationId≠sessionKey → refuse + onFailClosed), extending the
+ *     column OR conversationRef≠sessionKey → refuse + onFailClosed), extending the
  *     `live_store_divergence` family — a mis-derived session key can never
  *     silently reattach this transcript to a prior conversation.
  *   - LCD-IS-TRUTH: this is a one-way catch-up SWEEP. The design
@@ -26,7 +26,7 @@
  *     / content hash); the durable LCD store is the single source of truth and is
  *     only appended to, never rewritten or deleted (losslessness).
  *
- * The new code vs the afterTurn site is only: (1) this distinct trigger that runs
+ * The additional behavior at the afterTurn site is only: (1) this distinct trigger that runs
  * ONCE at session start before the first turn, and (2) a distinct content-free
  * DEBUG (`step: "lcd_bootstrap_sweep"`) so an operator can tell a bootstrap
  * recovery from an afterTurn one. The three `context:dag_degraded` emits are the
@@ -34,7 +34,7 @@
  *
  * Architecture cut (agent↛memory): this module imports ONLY the CORE
  * `ContextStorePort`/`ContextStoreScope`/`ComisLogger`/`ClockPort`/`TypedEventBus`
- * TYPES + the in-package `ingestTurnGuarded` + `shouldRunLcdStorePasses`. The
+ * TYPES + the in-package `ingestTurnGuarded` + `shouldRunContextStorePasses`. The
  * concrete `createLcdStore` is injected by the daemon — the memory package is
  * never imported here (the agent depends on the core port type, not the adapter).
  *
@@ -50,7 +50,7 @@ import type {
 } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { ingestTurnGuarded } from "./lcd-ingest.js";
-import { shouldRunLcdStorePasses } from "./executor-post-execution.js";
+import { shouldRunContextStorePasses } from "./executor-post-execution.js";
 
 /**
  * Arguments for {@link bootstrapLcdSweep}. The shape carries the same fields the
@@ -59,9 +59,9 @@ import { shouldRunLcdStorePasses } from "./executor-post-execution.js";
  * object) so the trigger is unit-testable without the full executor.
  */
 export interface BootstrapLcdSweepArgs {
-  /** The injected core ContextStorePort (the concrete store is daemon-injected). May be absent (no store → no-op). */
-  store: ContextStorePort | undefined;
-  /** The SECURITY scope columns — conversationId === sessionKey === formattedKey (the well-formed invariant). */
+  /** The injected core ContextStorePort (the concrete store is daemon-injected). */
+  store: ContextStorePort;
+  /** Canonical authority columns plus a display-only session key. */
   scope: ContextStoreScope;
   /** The JSONL-loaded live canonical AgentMessage[] (session.agent.state.messages). */
   live: AgentMessage[];
@@ -71,15 +71,14 @@ export interface BootstrapLcdSweepArgs {
   logger: ComisLogger;
   /** For the three content-free context:dag_degraded health signals. */
   eventBus: TypedEventBus;
-  /** Read by `shouldRunLcdStorePasses` — only dag mode reads the LCD store. */
-  config: { contextEngine?: { version?: "pipeline" | "dag" } };
+  /** Read by `shouldRunContextStorePasses`; disabled context assembly skips the sweep. */
+  config: { contextEngine?: { enabled?: boolean } };
 }
 
 /**
  * Run the bootstrap crash-recovery sweep ONCE at session start, before the first
- * turn proceeds. Gated EXACTLY like the afterTurn ingest (`store` present AND
- * `shouldRunLcdStorePasses(config)` — dag mode): a pipeline agent or a
- * store-absent session does no sweep work (no read, no event). Steady-state (no
+ * turn proceeds. Gated exactly like afterTurn ingest: explicitly disabled
+ * context assembly does no sweep work (no read, no event). Steady-state (no
  * gap) is a no-op — `ingestTurnGuarded`'s delta is empty, byte-identical to not
  * running it.
  *
@@ -91,10 +90,9 @@ export interface BootstrapLcdSweepArgs {
 export async function bootstrapLcdSweep(args: BootstrapLcdSweepArgs): Promise<void> {
   const { store, scope, live, clock, logger, eventBus, config } = args;
 
-  // Same gate as the afterTurn block: only dag mode READS the LCD store, and a
-  // missing store skips cleanly (the daemon injects it unconditionally; a
-  // pipeline agent does not read it). No store read, no event when gated off.
-  if (!store || !shouldRunLcdStorePasses(config)) return;
+  // Same gate as the afterTurn block. No store read or event when context
+  // assembly is explicitly disabled.
+  if (!shouldRunContextStorePasses(config)) return;
 
   // Time the sweep with two clock reads (entry → emit), like the afterTurn site —
   // bound to the injected ClockPort, never Date.now().
@@ -104,7 +102,7 @@ export async function bootstrapLcdSweep(args: BootstrapLcdSweepArgs): Promise<vo
   // the cursor + rows land in the same serialized slot (atomic; the unique
   // (conversation, agent, tenant, seq) index is the final guard). The sweep is a
   // fast synchronous append — it shares the queue with any deferred compaction.
-  await store.runOnConversation(scope.conversationId, () =>
+  await store.runOnConversation(scope.conversationRef, () =>
     ingestTurnGuarded(
       store,
       scope,
@@ -117,7 +115,7 @@ export async function bootstrapLcdSweep(args: BootstrapLcdSweepArgs): Promise<vo
       // reason (identifiers + reason + durationMs only — NEVER message content).
       () => {
         eventBus.emit("context:dag_degraded", {
-          conversationId: scope.conversationId,
+          conversationId: scope.conversationRef,
           agentId: scope.agentId,
           sessionKey: scope.sessionKey,
           reason: "fail_closed_rollover",
@@ -130,7 +128,7 @@ export async function bootstrapLcdSweep(args: BootstrapLcdSweepArgs): Promise<vo
       // live_store_divergence health signal, same as the afterTurn site.
       () => {
         eventBus.emit("context:dag_degraded", {
-          conversationId: scope.conversationId,
+          conversationId: scope.conversationRef,
           agentId: scope.agentId,
           sessionKey: scope.sessionKey,
           reason: "live_store_divergence",
@@ -143,7 +141,7 @@ export async function bootstrapLcdSweep(args: BootstrapLcdSweepArgs): Promise<vo
       // at bootstrap) — a correct continuation, not degradation. Content-free session_rebase.
       () => {
         eventBus.emit("context:dag_degraded", {
-          conversationId: scope.conversationId,
+          conversationId: scope.conversationRef,
           agentId: scope.agentId,
           sessionKey: scope.sessionKey,
           reason: "session_rebase",
@@ -161,7 +159,7 @@ export async function bootstrapLcdSweep(args: BootstrapLcdSweepArgs): Promise<vo
   logger.debug(
     {
       step: "lcd_bootstrap_sweep",
-      conversationId: scope.conversationId,
+      conversationRef: scope.conversationRef,
       agentId: scope.agentId,
       sessionKey: scope.sessionKey,
       liveLen: live.length,

@@ -34,7 +34,7 @@ import {
   signCallbackData,
   generateStrongToken,
   INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME,
-  parseFormattedSessionKey,
+  formatSessionKey,
 } from "@comis/core";
 import type {
   SecretStorePort,
@@ -227,7 +227,6 @@ export function createInteractiveCallbackWiring(deps: {
     const request = approvalGate.getRequestByShortId(approval.shortId);
     if (
       request === undefined
-      || request.sessionKey !== event.sessionKey
       || request.agentId !== event.agentId
     ) return undefined;
     const choice: ApprovalLinkChoice = "approve";
@@ -238,7 +237,11 @@ export function createInteractiveCallbackWiring(deps: {
       {
         shortId: approval.shortId,
         choice,
-        sessionKey: request.sessionKey,
+        tenantId: request.tenantId,
+        conversationRef: request.conversationRef,
+        resolvingPrincipalId: request.resolvingPrincipalId,
+        inboundUserId: request.callbackOwner.userId,
+        ...(request.callbackOwner.threadId === undefined ? {} : { threadId: request.callbackOwner.threadId }),
         channelType: request.callbackOwner.channelType,
         channelKey: request.callbackOwner.channelKey,
         agentId: request.agentId,
@@ -257,22 +260,26 @@ export function createInteractiveCallbackWiring(deps: {
   // the gateway route before this is called (single-use), so a failure here never
   // re-arms it. Returns true iff the router resolved the approval.
   const resolveApproval = async (entry: PendingApprovalToken): Promise<boolean> => {
-    const ownerSession = parseFormattedSessionKey(entry.sessionKey);
-    if (
-      ownerSession === undefined
-      || ownerSession.channelId !== entry.channelKey
-    ) return false;
     const rendered = router.render(entry.choice, entry.shortId);
     if (!rendered.ok) return false;
+    const displaySessionKey = formatSessionKey({
+      tenantId: entry.tenantId,
+      agentId: entry.agentId,
+      userId: entry.inboundUserId,
+      channelId: entry.channelKey,
+      ...(entry.threadId === undefined ? {} : { threadId: entry.threadId }),
+    });
     const result = await router.route({
-      tenantId: ownerSession.tenantId,
+      tenantId: entry.tenantId,
       channelType: entry.channelType,
       channelKey: entry.channelKey,
-      ...(ownerSession.threadId === undefined ? {} : { threadId: ownerSession.threadId }),
+      ...(entry.threadId === undefined ? {} : { threadId: entry.threadId }),
       agentId: entry.agentId,
-      sessionKey: entry.sessionKey,
+      conversationRef: entry.conversationRef,
+      resolvingPrincipalId: entry.resolvingPrincipalId,
+      sessionKey: displaySessionKey,
       rawData: rendered.value,
-      inboundUserId: ownerSession.userId,
+      inboundUserId: entry.inboundUserId,
     });
     // route() is Result<_, never> — always ok; inspect the resolution kind.
     return result.ok && result.value.kind === "resolved";

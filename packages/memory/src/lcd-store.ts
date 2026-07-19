@@ -103,7 +103,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   // round-trip test).
   const insertMsg = db.prepare(`
     INSERT INTO lcd_messages
-      (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
+      (id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
@@ -114,12 +114,12 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   `);
 
   // Every base-table read filters by agent_id AND tenant_id in
-  // addition to conversation_id — two agents legitimately share one
-  // conversation_id (formatSessionKey omits agentId), so agent A must never read
-  // agent B's rows. Bound params for the scope; the conversation_id prefix
+  // addition to conversation_ref — two agents legitimately share one
+  // conversation_ref (formatSessionKey omits agentId), so agent A must never read
+  // agent B's rows. Bound params for the scope; the conversation_ref prefix
   // already encodes the tenant, the explicit tenant_id is defense-in-depth.
   const selectMsgs = db.prepare(
-    "SELECT * FROM lcd_messages WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ? ORDER BY seq",
+    "SELECT * FROM lcd_messages WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ? ORDER BY seq",
   );
 
   const selectParts = db.prepare(
@@ -133,12 +133,12 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   // range-coverage / time-range source. (We re-select created_at by ordinal
   // range below rather than re-deriving it from getMessages, keeping it pure SQL.)
   const selectMsgSeed = db.prepare(
-    "SELECT id, created_at FROM lcd_messages WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ? ORDER BY seq",
+    "SELECT id, created_at FROM lcd_messages WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ? ORDER BY seq",
   );
 
   const insertSummary = db.prepare(`
     INSERT INTO lcd_summaries
-      (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+      (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
        earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
     VALUES (?, ?, ?, ?, ?, 'leaf', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
@@ -149,7 +149,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   // condensed inserts stay independent.
   const insertCondensedSummary = db.prepare(`
     INSERT INTO lcd_summaries
-      (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth,
+      (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth,
        earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
@@ -165,45 +165,45 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
 
   const insertCtxItem = db.prepare(`
     INSERT INTO lcd_context_items
-      (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id)
+      (id, conversation_ref, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const selectCtxItems = db.prepare(
-    "SELECT * FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ? ORDER BY ordinal",
+    "SELECT * FROM lcd_context_items WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ? ORDER BY ordinal",
   );
 
   // Every leaf summary for a (conversation, agent), oldest-first — the assembler
   // keys the result by summaryId to resolve a context_items `summary`-ref to its
   // content. Scoped by agent_id + tenant_id.
   const selectSummaries = db.prepare(
-    "SELECT * FROM lcd_summaries WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ? ORDER BY created_at, summary_id",
+    "SELECT * FROM lcd_summaries WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ? ORDER BY created_at, summary_id",
   );
 
   // ── Region-walk statements: edge-table reads, scoped by
-  //    (conversation_id, agent_id, tenant_id). Static SQL, bound
+  //    (conversation_ref, agent_id, tenant_id). Static SQL, bound
   //    params, no interpolated identifiers.
   // The immediate CHILD summaries of a condensed summary (lcd_summary_parents
   // condensed→child edge), joined back to lcd_summaries for the full DTO. Scoped
-  // by the child's (conversation_id, agent_id, tenant_id) so a different agent
+  // by the child's (conversation_ref, agent_id, tenant_id) so a different agent
   // sharing the conversation cannot walk this condensed edge.
   const selectSummaryChildren = db.prepare(`
     SELECT s.* FROM lcd_summaries s
     JOIN lcd_summary_parents p ON p.child_summary_id = s.summary_id
-    WHERE p.parent_summary_id = ? AND s.conversation_id = ? AND s.agent_id = ? AND s.tenant_id = ?
+    WHERE p.parent_summary_id = ? AND s.conversation_ref = ? AND s.agent_id = ? AND s.tenant_id = ?
     ORDER BY s.created_at, s.summary_id
   `);
 
   // The message ids a LEAF summary covers (lcd_summary_messages leaf→message
   // edge), seq-ordered via the join to lcd_messages. The summary is scoped by
-  // (conversation_id, agent_id, tenant_id) through the JOIN (the messages carry
+  // (conversation_ref, agent_id, tenant_id) through the JOIN (the messages carry
   // the scope columns) — a different agent cannot reach another agent's covered
   // ids within the shared conversation.
   const selectSummaryMessageIds = db.prepare(`
     SELECT sm.message_id AS message_id
     FROM lcd_summary_messages sm
     JOIN lcd_messages m ON m.id = sm.message_id
-    WHERE sm.summary_id = ? AND m.conversation_id = ? AND m.agent_id = ? AND m.tenant_id = ?
+    WHERE sm.summary_id = ? AND m.conversation_ref = ? AND m.agent_id = ? AND m.tenant_id = ?
     ORDER BY m.seq
   `);
 
@@ -220,30 +220,30 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   // the message refIds the new summary links + to count descendants. The
   // model-facing view is per (conversation, agent, tenant), so the range ops are
   // agent-scoped — a leaf/condense pass must touch ONLY the acting agent's view
-  // (the UNIQUE index is now (conversation_id, agent_id, tenant_id, ordinal)).
+  // (the UNIQUE index is now (conversation_ref, agent_id, tenant_id, ordinal)).
   const selectCtxItemsInRange = db.prepare(
-    "SELECT * FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ? AND ordinal >= ? AND ordinal <= ? ORDER BY ordinal",
+    "SELECT * FROM lcd_context_items WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ? AND ordinal >= ? AND ordinal <= ? ORDER BY ordinal",
   );
 
   const deleteCtxItemsInRange = db.prepare(
-    "DELETE FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ? AND ordinal >= ? AND ordinal <= ?",
+    "DELETE FROM lcd_context_items WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ? AND ordinal >= ? AND ordinal <= ?",
   );
 
   // The ordinals strictly above the replaced range, ascending — shifted DOWN
   // one row at a time (smallest source first → smallest, already-vacated target
-  // first) so the UNIQUE (conversation_id, agent_id, tenant_id, ordinal) index
+  // first) so the UNIQUE (conversation_ref, agent_id, tenant_id, ordinal) index
   // never sees a transient duplicate (the delete above vacated the [start,end]
   // slots). Agent-scoped so the shift stays within the acting agent's view.
   const selectCtxOrdinalsAbove = db.prepare(
-    "SELECT ordinal FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ? AND ordinal > ? ORDER BY ordinal",
+    "SELECT ordinal FROM lcd_context_items WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ? AND ordinal > ? ORDER BY ordinal",
   );
 
   const updateCtxItemOrdinal = db.prepare(
-    "UPDATE lcd_context_items SET ordinal = ? WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ? AND ordinal = ?",
+    "UPDATE lcd_context_items SET ordinal = ? WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ? AND ordinal = ?",
   );
 
   const countCtxItems = db.prepare(
-    "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
+    "SELECT COUNT(*) AS c FROM lcd_context_items WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ?",
   );
 
   // The highest ordinal currently in the (conversation, agent, tenant)
@@ -251,7 +251,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   // `MAX` over zero rows is SQL NULL (the nullable mapper handles it). Scoped
   // by agent_id+tenant_id so each agent keeps its OWN dense 0..N-1 sequence.
   const selectMaxCtxOrdinal = db.prepare(
-    "SELECT MAX(ordinal) AS maxOrdinal FROM lcd_context_items WHERE conversation_id = ? AND agent_id = ? AND tenant_id = ?",
+    "SELECT MAX(ordinal) AS maxOrdinal FROM lcd_context_items WHERE conversation_ref = ? AND agent_id = ? AND tenant_id = ?",
   );
 
   // Incremental backfill: the seq-ordered (id, created_at) of THIS agent's
@@ -266,16 +266,16 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   const selectUnseededMsgs = db.prepare(`
     SELECT m.id AS id, m.created_at AS created_at
     FROM lcd_messages m
-    WHERE m.conversation_id = ? AND m.agent_id = ? AND m.tenant_id = ?
+    WHERE m.conversation_ref = ? AND m.agent_id = ? AND m.tenant_id = ?
       AND m.id NOT IN (
         SELECT ci.ref_id FROM lcd_context_items ci
-        WHERE ci.conversation_id = ? AND ci.agent_id = ? AND ci.tenant_id = ?
+        WHERE ci.conversation_ref = ? AND ci.agent_id = ? AND ci.tenant_id = ?
           AND ci.ref_kind = 'message'
       )
       AND m.id NOT IN (
         SELECT sm.message_id FROM lcd_summary_messages sm
         JOIN lcd_summaries s ON s.summary_id = sm.summary_id
-        WHERE s.conversation_id = ? AND s.agent_id = ? AND s.tenant_id = ?
+        WHERE s.conversation_ref = ? AND s.agent_id = ? AND s.tenant_id = ?
       )
     ORDER BY m.seq
   `);
@@ -284,17 +284,17 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
   // Two prepared statements: an upsert (INSERT … ON CONFLICT DO UPDATE) and a
   // point-select for the two cursor fields. Static SQL, bound params, no
   // interpolated identifiers. The primary key is the three-column
-  // isolation scope (conversation_id, agent_id, tenant_id) — identical to every
+  // isolation scope (conversation_ref, agent_id, tenant_id) — identical to every
   // other lcd_* table so a cross-tenant/cross-agent wipe is impossible.
   const upsertCursorStmt = db.prepare(
-    "INSERT INTO lcd_ingest_cursor (conversation_id, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)" +
+    "INSERT INTO lcd_ingest_cursor (conversation_ref, agent_id, tenant_id, epoch_anchor, ingested_live_len, updated_at)" +
     " VALUES (?,?,?,?,?,?)" +
-    " ON CONFLICT(conversation_id,agent_id,tenant_id)" +
+    " ON CONFLICT(conversation_ref,agent_id,tenant_id)" +
     " DO UPDATE SET epoch_anchor=excluded.epoch_anchor, ingested_live_len=excluded.ingested_live_len, updated_at=excluded.updated_at",
   );
 
   const selectCursorStmt = db.prepare(
-    "SELECT epoch_anchor, ingested_live_len FROM lcd_ingest_cursor WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
+    "SELECT epoch_anchor, ingested_live_len FROM lcd_ingest_cursor WHERE conversation_ref=? AND agent_id=? AND tenant_id=?",
   );
 
   // lcd_memory_provenance writes (extracted helper).
@@ -316,53 +316,53 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     // 1. lcd_summary_messages: RESTRICT FK on message_id — must delete BEFORE lcd_messages.
     db.prepare(
       "DELETE FROM lcd_summary_messages WHERE summary_id IN" +
-      " (SELECT summary_id FROM lcd_summaries WHERE conversation_id=? AND agent_id=? AND tenant_id=?)",
-    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+      " (SELECT summary_id FROM lcd_summaries WHERE conversation_ref=? AND agent_id=? AND tenant_id=?)",
+    ).run(scope.conversationRef, scope.agentId, scope.tenantId);
     // 2. lcd_summary_parents: CASCADE FK on parent_summary_id — safe to delete before/after lcd_summaries.
     db.prepare(
       "DELETE FROM lcd_summary_parents WHERE parent_summary_id IN" +
-      " (SELECT summary_id FROM lcd_summaries WHERE conversation_id=? AND agent_id=? AND tenant_id=?)",
-    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+      " (SELECT summary_id FROM lcd_summaries WHERE conversation_ref=? AND agent_id=? AND tenant_id=?)",
+    ).run(scope.conversationRef, scope.agentId, scope.tenantId);
     // 3. lcd_context_items (no FK dependency on messages/summaries order).
     db.prepare(
-      "DELETE FROM lcd_context_items WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
-    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+      "DELETE FROM lcd_context_items WHERE conversation_ref=? AND agent_id=? AND tenant_id=?",
+    ).run(scope.conversationRef, scope.agentId, scope.tenantId);
     // 4. lcd_summaries: after lcd_summary_messages + lcd_summary_parents rows are gone.
     db.prepare(
-      "DELETE FROM lcd_summaries WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
-    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+      "DELETE FROM lcd_summaries WHERE conversation_ref=? AND agent_id=? AND tenant_id=?",
+    ).run(scope.conversationRef, scope.agentId, scope.tenantId);
     // 5. lcd_messages: CASCADE deletes lcd_message_parts rows (ON DELETE CASCADE on message_id).
     const info = db.prepare(
-      "DELETE FROM lcd_messages WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
-    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+      "DELETE FROM lcd_messages WHERE conversation_ref=? AND agent_id=? AND tenant_id=?",
+    ).run(scope.conversationRef, scope.agentId, scope.tenantId);
     // 6. lcd_ingest_cursor: clear the durable epoch cursor for this scope.
     db.prepare(
-      "DELETE FROM lcd_ingest_cursor WHERE conversation_id=? AND agent_id=? AND tenant_id=?",
-    ).run(scope.conversationId, scope.agentId, scope.tenantId);
+      "DELETE FROM lcd_ingest_cursor WHERE conversation_ref=? AND agent_id=? AND tenant_id=?",
+    ).run(scope.conversationRef, scope.agentId, scope.tenantId);
     // 7. Wipe the three self-contained FTS objects. Each is
     // guarded — the table is ABSENT on an FTS5-less / trigram-less host (nothing
     // indexed → nothing to wipe); vtables have no FK so the order is free. The
-    // scope is TWO-column: the FTS tables carry NO tenant_id — conversation_id
+    // scope is TWO-column: the FTS tables carry NO tenant_id — conversation_ref
     // encodes the tenant. The word lane has no AFTER DELETE
     // trigger (adapter-populated), so this explicit wipe is the ONLY forget for it.
     try {
       db.prepare(
-        "DELETE FROM lcd_messages_fts WHERE conversation_id=? AND agent_id=?",
-      ).run(scope.conversationId, scope.agentId);
+        "DELETE FROM lcd_messages_fts WHERE conversation_ref=? AND agent_id=?",
+      ).run(scope.conversationRef, scope.agentId);
     } catch {
       // Word-lane FTS table absent (FTS5 not compiled) — nothing indexed, nothing to wipe.
     }
     try {
       db.prepare(
-        "DELETE FROM lcd_messages_fts_tri WHERE conversation_id=? AND agent_id=?",
-      ).run(scope.conversationId, scope.agentId);
+        "DELETE FROM lcd_messages_fts_tri WHERE conversation_ref=? AND agent_id=?",
+      ).run(scope.conversationRef, scope.agentId);
     } catch {
       // Message trigram twin absent (trigram tokenizer not compiled) — nothing to wipe.
     }
     try {
       db.prepare(
-        "DELETE FROM lcd_summaries_fts_tri WHERE conversation_id=? AND agent_id=?",
-      ).run(scope.conversationId, scope.agentId);
+        "DELETE FROM lcd_summaries_fts_tri WHERE conversation_ref=? AND agent_id=?",
+      ).run(scope.conversationRef, scope.agentId);
     } catch {
       // Summary trigram twin absent (trigram tokenizer not compiled) — nothing to wipe.
     }
@@ -383,24 +383,24 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
    * duplicating — `selectUnseededMsgs` excludes anything already in the view or
    * already collapsed into a summary, and the running ordinal starts past the
    * current max. Every read/write below is agent-scoped, so two
-   * agents sharing a conversation_id each backfill a DENSE view over their OWN
+   * agents sharing a conversation_ref each backfill a DENSE view over their OWN
    * uncovered messages (the UNIQUE index keys on all three scope columns). Caller
    * runs this inside a txn. Skips silently when the agent has nothing to seed.
    */
   function seedContextItems(scope: ContextStoreScope): void {
     const maxRow = ctxMaxOrdinalRowMapper.parseOptionalRow(
-      selectMaxCtxOrdinal.get(scope.conversationId, scope.agentId, scope.tenantId),
+      selectMaxCtxOrdinal.get(scope.conversationRef, scope.agentId, scope.tenantId),
     );
     // The next dense ordinal: continue past the current max (NULL/absent → -1 → 0).
     let ordinal = (maxRow.ok && maxRow.value ? maxRow.value.maxOrdinal ?? -1 : -1) + 1;
     for (const rawMsg of selectUnseededMsgs.all(
-      scope.conversationId,
+      scope.conversationRef,
       scope.agentId,
       scope.tenantId,
-      scope.conversationId,
+      scope.conversationRef,
       scope.agentId,
       scope.tenantId,
-      scope.conversationId,
+      scope.conversationRef,
       scope.agentId,
       scope.tenantId,
     )) {
@@ -408,7 +408,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       if (!parsed.ok || !parsed.value) continue; // skip only the bad message row
       insertCtxItem.run(
         randomUUID(),
-        scope.conversationId,
+        scope.conversationRef,
         scope.tenantId,
         scope.agentId,
         scope.sessionKey,
@@ -471,7 +471,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     const messageId = randomUUID();
     insertMsg.run(
       messageId,
-      input.scope.conversationId,
+      input.scope.conversationRef,
       input.scope.tenantId,
       input.scope.agentId,
       input.scope.sessionKey,
@@ -505,16 +505,16 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     // that grows with appends (the seed-once read-time guard used to freeze it at
     // the first read while lcd_messages kept growing). The new row
     // stamps the SAME scope columns as the message row, so two agents sharing a
-    // conversation_id each keep their own dense 0..N-1 view (the UNIQUE index keys
-    // on conversation_id+agent_id+tenant_id+ordinal). `MAX(ordinal)` over
+    // conversation_ref each keep their own dense 0..N-1 view (the UNIQUE index keys
+    // on conversation_ref+agent_id+tenant_id+ordinal). `MAX(ordinal)` over
     // zero rows is NULL → nextOrdinal 0 for the first message.
     const maxRow = ctxMaxOrdinalRowMapper.parseOptionalRow(
-      selectMaxCtxOrdinal.get(input.scope.conversationId, input.scope.agentId, input.scope.tenantId),
+      selectMaxCtxOrdinal.get(input.scope.conversationRef, input.scope.agentId, input.scope.tenantId),
     );
     const nextOrdinal = (maxRow.ok && maxRow.value ? maxRow.value.maxOrdinal ?? -1 : -1) + 1;
     insertCtxItem.run(
       randomUUID(),
-      input.scope.conversationId,
+      input.scope.conversationRef,
       input.scope.tenantId,
       input.scope.agentId,
       input.scope.sessionKey,
@@ -557,7 +557,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       // the typed `append` — it requires on-disk corruption / schema drift.
       const out: LcdMessage[] = [];
 
-      for (const rawMsg of selectMsgs.all(scope.conversationId, scope.agentId, scope.tenantId)) {
+      for (const rawMsg of selectMsgs.all(scope.conversationRef, scope.agentId, scope.tenantId)) {
         const parsedMsg = messageRowMapper.parseOptionalRow(rawMsg);
         if (!parsedMsg.ok || !parsedMsg.value) continue; // skip only the bad message row
         const row = parsedMsg.value;
@@ -580,7 +580,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
 
         out.push({
           id: row.id,
-          conversationId: row.conversation_id,
+          conversationRef: row.conversation_ref,
           seq: row.seq,
           role: row.role as LcdRole,
           tokenCount: row.token_count,
@@ -611,7 +611,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       // over its OWN messages within a shared conversation. The count read
       // goes through ctxCountRowMapper, not a raw count cast (§6.8 untyped-sqlite).
       const countRow = ctxCountRowMapper.parseOptionalRow(
-        countCtxItems.get(scope.conversationId, scope.agentId, scope.tenantId),
+        countCtxItems.get(scope.conversationRef, scope.agentId, scope.tenantId),
       );
       if (countRow.ok && countRow.value && countRow.value.c === 0) {
         seedTxn(scope);
@@ -624,7 +624,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       // design: the memory package has no infra-logging dependency (AGENTS.md
       // §2.4); the boundary observability line is agent-side.
       const out: LcdContextItem[] = [];
-      for (const raw of selectCtxItems.all(scope.conversationId, scope.agentId, scope.tenantId)) {
+      for (const raw of selectCtxItems.all(scope.conversationRef, scope.agentId, scope.tenantId)) {
         const parsed = ctxItemRowMapper.parseOptionalRow(raw);
         if (!parsed.ok || !parsed.value) continue; // skip only the bad row
         out.push({
@@ -645,13 +645,13 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       // store NEVER logs the summary `content` (lossless store). Scoped
       // by agent_id + tenant_id.
       const out: LcdSummary[] = [];
-      for (const raw of selectSummaries.all(scope.conversationId, scope.agentId, scope.tenantId)) {
+      for (const raw of selectSummaries.all(scope.conversationRef, scope.agentId, scope.tenantId)) {
         const parsed = summaryRowMapper.parseOptionalRow(raw);
         if (!parsed.ok || !parsed.value) continue; // skip only the bad row
         const row = parsed.value;
         out.push({
           summaryId: row.summary_id,
-          conversationId: row.conversation_id,
+          conversationRef: row.conversation_ref,
           kind: row.kind as LcdSummaryKind,
           depth: row.depth,
           earliestAt: row.earliest_at,
@@ -687,17 +687,17 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       // Region walk: the immediate child summaries of a condensed summary
       // (lcd_summary_parents condensed→child edge). Same map-to-DTO discipline as
       // getSummaries — reuse summaryRowMapper, per-row parseOptionalRow +
-      // skip-bad-row (NEVER parseRows). Scoped by (conversation_id,
+      // skip-bad-row (NEVER parseRows). Scoped by (conversation_ref,
       // agent_id, tenant_id) in the JOIN's WHERE (a wrong/stale id OR a different
       // agent → []); the store never logs content.
       const out: LcdSummary[] = [];
-      for (const raw of selectSummaryChildren.all(parentSummaryId, scope.conversationId, scope.agentId, scope.tenantId)) {
+      for (const raw of selectSummaryChildren.all(parentSummaryId, scope.conversationRef, scope.agentId, scope.tenantId)) {
         const parsed = summaryRowMapper.parseOptionalRow(raw);
         if (!parsed.ok || !parsed.value) continue; // skip only the bad row
         const row = parsed.value;
         out.push({
           summaryId: row.summary_id,
-          conversationId: row.conversation_id,
+          conversationRef: row.conversation_ref,
           kind: row.kind as LcdSummaryKind,
           depth: row.depth,
           earliestAt: row.earliest_at,
@@ -717,10 +717,10 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
     getSummaryMessages(scope: ContextStoreScope, summaryId: string): string[] {
       // Region walk: the message ids a LEAF summary covers (lcd_summary_messages
       // leaf→message edge), seq-ordered. Per-row parseOptionalRow + skip-bad-row
-      // (NEVER parseRows). Scoped by (conversation_id, agent_id,
+      // (NEVER parseRows). Scoped by (conversation_ref, agent_id,
       // tenant_id) via the JOIN; unknown summaryId OR a different agent → [].
       const out: string[] = [];
-      for (const raw of selectSummaryMessageIds.all(summaryId, scope.conversationId, scope.agentId, scope.tenantId)) {
+      for (const raw of selectSummaryMessageIds.all(summaryId, scope.conversationRef, scope.agentId, scope.tenantId)) {
         const parsed = summaryMessageIdRowMapper.parseOptionalRow(raw);
         if (!parsed.ok || !parsed.value) continue; // skip only the bad row
         out.push(parsed.value.message_id);
@@ -736,22 +736,22 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       // Search: delegate the FTS5-MATCH-with-LIKE-fallback branch to lcd-fts.ts
       // (the extract that keeps this file under the 800-line cap). The `query`
       // arrives pre-sanitized (the tool sanitizes — the cut bars memory from the
-      // skills sanitizer). Scoped by (conversation_id, agent_id) — BOTH the
+      // skills sanitizer). Scoped by (conversation_ref, agent_id) — BOTH the
       // FTS MATCH path AND the LIKE fallback filter agent_id;
-      // the conversation_id prefix carries the tenant boundary. Never throws.
+      // the conversation_ref prefix carries the tenant boundary. Never throws.
       // Returns LcdSearchResult: { hits, cjkZeroHit } — propagated
       // directly from searchLcdImpl; no transformation needed.
-      return searchLcdImpl(db, scope.conversationId, scope.agentId, query, opts);
+      return searchLcdImpl(db, scope.conversationRef, scope.agentId, query, opts);
     },
 
-    runOnConversation<T>(conversationId: string, fn: () => T | Promise<T>): Promise<T> {
+    runOnConversation<T>(conversationRef: string, fn: () => T | Promise<T>): Promise<T> {
       // Serialize the live ingest write and the deferred
       // compaction write per conversation so they cannot interleave on the
-      // (conversation_id, agent_id, tenant_id, seq) unique index / context_items
+      // (conversation_ref, agent_id, tenant_id, seq) unique index / context_items
       // ordinals. Different conversations run concurrently (the
       // queue is per-conversation). The store does not log here — observability
       // is agent-side.
-      return ingestSerializer.runOnConversation(conversationId, fn);
+      return ingestSerializer.runOnConversation(conversationRef, fn);
     },
 
     // ── Durable ingest cursor ────────────────────────────────────────────────
@@ -760,7 +760,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       // Point-select the cursor row for this (conversation, agent, tenant) scope.
       // Returns null when no row exists (new conversation or first run after upgrade).
       // Per-row parseOptionalRow + skip on validation failure (never throws).
-      const row = selectCursorStmt.get(scope.conversationId, scope.agentId, scope.tenantId);
+      const row = selectCursorStmt.get(scope.conversationRef, scope.agentId, scope.tenantId);
       if (!row) return null;
       const parsed = cursorRowMapper.parseOptionalRow(row);
       if (!parsed.ok || !parsed.value) return null;
@@ -775,7 +775,7 @@ export function createLcdStore(db: Database.Database): ContextStorePort {
       // Atomically upsert — INSERT on first use, UPDATE on subsequent writes.
       // Must be called inside runOnConversation by the caller.
       upsertCursorStmt.run(
-        scope.conversationId,
+        scope.conversationRef,
         scope.agentId,
         scope.tenantId,
         cursor.epochAnchor,

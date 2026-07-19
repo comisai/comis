@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: durable-run schema preflight rejects formatted-session authority before boot; initSchema is consumed at the daemon boundary.
 /**
  * The `durable_run_checkpoints` table DDL — the durable checkpoint spine the resume engine
  * scans on boot. A long-running agent run
@@ -40,6 +41,15 @@
  */
 
 import type Database from "better-sqlite3";
+import { requireTableInfoRows } from "./schema-introspection.js";
+
+const REQUIRED_DURABLE_AUTHORITY_COLUMNS = [
+  "tenant_id",
+  "agent_id",
+  "conversation_ref",
+  "canonical_scope",
+  "principal_id",
+] as const;
 
 /**
  * Create the `durable_run_checkpoints` table + its boot-resume index idempotently.
@@ -50,14 +60,32 @@ import type Database from "better-sqlite3";
  * @param db - An open better-sqlite3 Database instance
  */
 export function ensureDurableRunTable(db: Database.Database): void {
+  const exists = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'durable_run_checkpoints'",
+  ).get() !== undefined;
+  if (exists) {
+    const columns = new Set(
+      requireTableInfoRows(
+        db.prepare("PRAGMA table_info(durable_run_checkpoints)").all(),
+        "durable_run_checkpoints",
+      ).map((row) => row.name),
+    );
+    const missing = REQUIRED_DURABLE_AUTHORITY_COLUMNS.filter((column) => !columns.has(column));
+    if (missing.length > 0) {
+      throw new Error(
+        `durable_run_checkpoints database schema is incompatible: missing ${missing.join(", ")}. Back up the database, then recreate it with the current Comis schema.`,
+      );
+    }
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS durable_run_checkpoints (
       checkpoint_id      TEXT PRIMARY KEY NOT NULL,
       root_run_id        TEXT NOT NULL,
+      tenant_id          TEXT NOT NULL,
       agent_id           TEXT NOT NULL,
-      session_key        TEXT NOT NULL,
-      owner_tenant_id    TEXT NOT NULL,
-      owner_user_id      TEXT NOT NULL,
+      conversation_ref   TEXT NOT NULL,
+      canonical_scope    TEXT NOT NULL,
+      principal_id       TEXT NOT NULL,
       delivery_origin    TEXT,
       spawn_tree         TEXT NOT NULL,
       caps               TEXT NOT NULL,

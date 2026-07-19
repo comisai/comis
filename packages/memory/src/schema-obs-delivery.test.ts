@@ -2,9 +2,10 @@
 import { describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { initSchema } from "./schema.js";
+import { ensureObsDeliveryColumns } from "./schema-obs-delivery.js";
 
-describe("obs_delivery schema migration", () => {
-  it("real initSchema adds structured failure columns to an existing delivery table", () => {
+describe("obs_delivery schema preflight", () => {
+  it("rejects an authority-incomplete delivery table with a backup instruction", () => {
     const db = new Database(":memory:");
     db.exec(`
       CREATE TABLE obs_delivery (
@@ -31,26 +32,21 @@ describe("obs_delivery schema migration", () => {
         'error', 25);
     `);
 
-    initSchema(db, 384);
+    expect(() => initSchema(db, 384)).toThrow(/obs_delivery.*Back up the database/i);
 
-    const columns = db
-      .prepare("PRAGMA table_info(obs_delivery)")
-      .all() as Array<{ name: string }>;
+    db.close();
+  });
+
+  it("adds optional delivery failure classifications to an existing current table", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE obs_delivery (id INTEGER PRIMARY KEY)");
+
+    ensureObsDeliveryColumns(db);
+
+    const columns = db.prepare("PRAGMA table_info(obs_delivery)").all() as Array<{ name: string }>;
     expect(columns.map((column) => column.name)).toEqual(
       expect.arrayContaining(["failure_stage", "error_kind"]),
     );
-    expect(
-      db.prepare(`
-        SELECT trace_id, failure_stage, error_kind
-        FROM obs_delivery
-        WHERE trace_id = 'trace-existing'
-      `).get(),
-    ).toEqual({
-      trace_id: "trace-existing",
-      failure_stage: null,
-      error_kind: null,
-    });
-
     db.close();
   });
 });

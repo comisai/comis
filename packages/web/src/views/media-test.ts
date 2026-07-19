@@ -354,7 +354,7 @@ export class IcMediaTestView extends LitElement {
   private async _loadProviders(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const res = await this.rpcClient.call<MediaProvidersInfo>("media.providers");
+      const res = await this.rpcClient.call("media.providers");
       this._providers = res;
     } catch {
       // media.providers handler may not exist -- degrade gracefully
@@ -384,7 +384,7 @@ export class IcMediaTestView extends LitElement {
     try {
       const buffer = await file.arrayBuffer();
       const base64 = arrayBufferToBase64(buffer);
-      const res = await this.rpcClient.call<SttTestResult>("media.test.stt", {
+      const res = await this.rpcClient.call("media.test.stt", {
         audio: base64,
         mimeType: file.type || "audio/wav",
       });
@@ -415,7 +415,7 @@ export class IcMediaTestView extends LitElement {
     }
 
     try {
-      const res = await this.rpcClient.call<TtsTestResult>("media.test.tts", {
+      const res = await this.rpcClient.call("media.test.tts", {
         text: this._ttsText,
         voice: this._ttsVoice || undefined,
       });
@@ -464,7 +464,7 @@ export class IcMediaTestView extends LitElement {
     try {
       const buffer = await file.arrayBuffer();
       const base64 = arrayBufferToBase64(buffer);
-      const res = await this.rpcClient.call<VisionTestResult>("media.test.vision", {
+      const res = await this.rpcClient.call("media.test.vision", {
         image: base64,
         mimeType: file.type || "image/jpeg",
         prompt: this._visionPrompt || undefined,
@@ -501,7 +501,7 @@ export class IcMediaTestView extends LitElement {
     try {
       const buffer = await file.arrayBuffer();
       const base64 = arrayBufferToBase64(buffer);
-      const res = await this.rpcClient.call<DocumentTestResult>("media.test.document", {
+      const res = await this.rpcClient.call("media.test.document", {
         file: base64,
         mimeType: file.type || "application/octet-stream",
         fileName: file.name,
@@ -538,7 +538,7 @@ export class IcMediaTestView extends LitElement {
     try {
       const buffer = await file.arrayBuffer();
       const base64 = arrayBufferToBase64(buffer);
-      const res = await this.rpcClient.call<VideoTestResult>("media.test.video", {
+      const res = await this.rpcClient.call("media.test.video", {
         video: base64,
         mimeType: file.type || "video/mp4",
         prompt: this._videoPrompt || undefined,
@@ -565,7 +565,7 @@ export class IcMediaTestView extends LitElement {
     this._linkResult = null;
 
     try {
-      const res = await this.rpcClient.call<LinkTestResult>("media.test.link", {
+      const res = await this.rpcClient.call("media.test.link", {
         url: this._linkUrl,
       });
       this._linkResult = res;

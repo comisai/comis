@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
-  parseFormattedSessionKey,
+  createConversationRef,
   tryGetContext,
+  type ConversationRef,
   type ApprovalCallbackOwner,
   type UserTrustLevel,
 } from "@comis/core";
@@ -9,8 +10,10 @@ import { err, ok, tryCatch, type Result } from "@comis/shared";
 
 /** Framework-resolved identity used to scope an approval decision. */
 export interface ApprovalRequestContext {
+  readonly tenantId: string;
   readonly agentId: string;
-  readonly sessionKey: string;
+  readonly conversationRef: ConversationRef;
+  readonly resolvingPrincipalId: string;
   readonly trustLevel: UserTrustLevel;
   readonly callbackOwner: ApprovalCallbackOwner;
 }
@@ -28,7 +31,7 @@ export function resolveApprovalRequestContext(): Result<ApprovalRequestContext, 
         tenantId: context.tenantId,
         userId: context.userId,
         agentId: context.agentId,
-        sessionKey: context.sessionKey,
+        turnScope: context.turnScope,
         trustLevel: context.trustLevel,
         channelType: context.channelType,
         deliveryOrigin: context.deliveryOrigin,
@@ -37,36 +40,39 @@ export function resolveApprovalRequestContext(): Result<ApprovalRequestContext, 
     return err(new Error("Approval requires a resolved request identity"));
   }
   const identity = captured.value;
-  const { userId, agentId, sessionKey, trustLevel } = identity;
+  const { userId, agentId, turnScope, trustLevel } = identity;
   if (
     typeof userId !== "string"
     || userId.length === 0
     || typeof agentId !== "string"
     || agentId.length === 0
-    || typeof sessionKey !== "string"
-    || sessionKey.length === 0
+    || turnScope === undefined
     || !["admin", "user", "guest"].includes(trustLevel)
   ) {
     return err(new Error("Approval requires a resolved request identity"));
   }
 
-  const session = parseFormattedSessionKey(sessionKey);
   const origin = identity.deliveryOrigin;
   const originIsLocked = tryCatch(() => origin !== undefined && Object.isFrozen(origin));
   if (
-    session === undefined
-    || origin === undefined
+    origin === undefined
     || !originIsLocked.ok
     || !originIsLocked.value
     || identity.tenantId !== origin.tenantId
     || identity.userId !== origin.userId
     || identity.channelType !== origin.channelType
-    || session.tenantId !== origin.tenantId
-    || session.userId !== origin.userId
-    || session.channelId !== origin.channelId
-    || session.threadId !== origin.threadId
+    || turnScope.conversation.tenantId !== origin.tenantId
+    || turnScope.conversation.agentId !== agentId
+    || turnScope.endpoint.channelType !== origin.channelType
+    || turnScope.endpoint.conversationId !== origin.channelId
+    || turnScope.endpoint.threadId !== origin.threadId
   ) {
     return err(new Error("Approval requires an immutable matching delivery origin"));
+  }
+
+  const conversationRef = createConversationRef(turnScope.conversation);
+  if (!conversationRef.ok) {
+    return err(new Error("Approval conversation authority is invalid"));
   }
 
   const callbackOwner: ApprovalCallbackOwner = Object.freeze({
@@ -78,8 +84,10 @@ export function resolveApprovalRequestContext(): Result<ApprovalRequestContext, 
   });
 
   return ok({
+    tenantId: origin.tenantId,
     agentId,
-    sessionKey,
+    conversationRef: conversationRef.value,
+    resolvingPrincipalId: turnScope.principal.principalId,
     trustLevel,
     callbackOwner,
   });

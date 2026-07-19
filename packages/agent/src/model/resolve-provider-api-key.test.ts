@@ -1,29 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { AuthStorage } from "@earendil-works/pi-coding-agent";
+import type { ComisCredentialStore } from "./auth-storage-adapter.js";
 import type { PerAgentConfig } from "@comis/core";
 import { ok, err } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
-// Mock pi-ai OAuth module BEFORE importing the SUT — the SUT imports
-// `getOAuthProvider` at module init.
+// Mock the provider OAuth catalog BEFORE importing the SUT — the SUT imports
+// `getProviderOAuth` (from @comis/core) at module init.
 // ---------------------------------------------------------------------------
 
-vi.mock("@earendil-works/pi-ai/oauth", () => ({
-  getOAuthProvider: vi.fn(),
-}));
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
+  return {
+    ...actual,
+    getProviderOAuth: vi.fn(),
+  };
+});
 
-import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { getProviderOAuth } from "@comis/core";
 import { resolveProviderApiKey } from "./resolve-provider-api-key.js";
 import type { OAuthTokenManager, OAuthError } from "./oauth-token-manager.js";
 
-const mockGetOAuthProvider = vi.mocked(getOAuthProvider);
+const mockGetOAuthProvider = vi.mocked(getProviderOAuth);
 
 // ---------------------------------------------------------------------------
 // Helpers — minimal stubs typed via Pick to avoid full SDK surface
 // ---------------------------------------------------------------------------
 
-function makeAuthStorage(): Pick<AuthStorage, "getApiKey" | "setRuntimeApiKey"> {
+function makeAuthStorage(): Pick<ComisCredentialStore, "getApiKey" | "setRuntimeApiKey"> {
   return {
     getApiKey: vi.fn(),
     setRuntimeApiKey: vi.fn(),

@@ -47,7 +47,7 @@ import type { FusionLane } from "./fuse.js";
  * @param fanOut        The per-node expansion cap (cfg.lanes.graphSpread.fanOut, default 8).
  * @param seedSubjects  The seed subject strings (the caller sliced the top base hits' content to seedCount).
  * @param sessionKey    The recall session key (tenant scope).
- * @param agentId       The recall agent (agent scope; falls back to the session key's, else "default").
+ * @param agentId       The explicitly resolved recall agent scope.
  * @param logger        Structural logger (a non-fatal WARN on lane err).
  * @returns the graph-spread candidate count (0 on the err / empty-lane / no-seed no-op paths).
  */
@@ -60,14 +60,14 @@ export async function appendGraphSpreadLane(
   fanOut: number,
   seedSubjects: string[],
   sessionKey: SessionKey,
-  agentId: string | undefined,
+  agentId: string,
   logger: ComisLogger,
 ): Promise<number> {
   if (seedSubjects.length === 0) return 0;
   // Scope mirrors the entity/causal/temporal lanes / memoryPort.search: tenant from the
-  // session key, agent from the recall arg (else the session key's agent, else "default").
+  // session key and agent from the resolved recall authority.
   // The CTE's recursive-arm WHERE enforces this in SQL — the load-bearing isolation.
-  const scope = { tenantId: sessionKey.tenantId, agentId: agentId ?? sessionKey.agentId ?? "default" };
+  const scope = { tenantId: sessionKey.tenantId, agentId };
   const laneRes = await store.spreadLane(seedSubjects, scope, maxDepth, fanOut, maxResults);
   if (!laneRes.ok) {
     logger.warn(

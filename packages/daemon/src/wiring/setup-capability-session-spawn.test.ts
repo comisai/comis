@@ -1,19 +1,51 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
 import { createLeaseManager } from "@comis/infra";
-import { tryGetContext, type AgentCapability } from "@comis/core";
+import {
+  conversationScopeToSessionKey,
+  formatSessionKey,
+  tryGetContext,
+  type AgentCapability,
+} from "@comis/core";
 import { bindSessionMutateHandlers } from "../api/session-handlers/session-mutate.js";
 import type { SessionHandlerDeps } from "../api/session-handlers/session-helpers.js";
 import { createCapabilityEndpoint } from "./setup-capability-endpoint.js";
 import { dispatchValidatedLeaseRpc } from "./setup-capability-session-spawn.js";
 
 describe("capability session.spawn strict-handler integration", () => {
+  function authority(agentId: string, conversationId: string, threadId?: string) {
+    const endpoint = {
+      channelType: "telegram",
+      channelInstanceId: "telegram-main",
+      conversationId,
+      ...(threadId === undefined ? {} : { threadId }),
+      conversationKind: "direct" as const,
+    };
+    const turnScope = {
+      conversation: {
+        tenantId: "tenant-a",
+        agentId,
+        partition: {
+          kind: "endpoint-conversation-principal" as const,
+          endpoint,
+          principalId: "user-a",
+        },
+      },
+      principal: { principalId: "user-a" },
+      endpoint,
+    };
+    const display = conversationScopeToSessionKey(turnScope.conversation);
+    if (!display.ok) throw display.error;
+    return { turnScope, sessionKey: formatSessionKey(display.value) };
+  }
+
   it("strips a forged operation identity and injects the validated socket identity", async () => {
     const dispatch = vi.fn(async () => "ok");
+    const resolved = authority("agent-a", "chat-a");
     const lease = {
       agentId: "agent-a",
       caps: ["orch:spawn"] as AgentCapability[],
-      sessionKey: "tenant-a:user-a:chat-a",
+      ...resolved,
       rootRunId: "root-a",
       leaseId: "lease-a",
       budgetRef: "budget-a",
@@ -54,7 +86,7 @@ describe("capability session.spawn strict-handler integration", () => {
         },
       },
       sessionStore: {
-        loadByFormattedKey: vi.fn().mockReturnValue(undefined),
+        loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }),
       },
       subAgentRunner: {
         spawn,
@@ -85,11 +117,13 @@ describe("capability session.spawn strict-handler integration", () => {
       tenantId: "tenant-a",
       threadId: "parent-topic",
     };
+    const resolved = authority("socket-child", "parent-chat", "parent-topic");
     const { bearer } = leaseManager.mintLease({
       agentId: "socket-child",
       caps: ["orch:spawn"] as AgentCapability[],
       budgetRef: "budget-child",
-      sessionKey: "tenant-a:user-a:sub-agent:parent-run",
+      sessionKey: resolved.sessionKey,
+      turnScope: resolved.turnScope,
       rootRunId: "root-child",
       trustLevel,
       deliveryOrigin,
@@ -110,7 +144,7 @@ describe("capability session.spawn strict-handler integration", () => {
       agentId: "nested-worker",
       callerType: "agent",
       callerAgentId: "socket-child",
-      callerSessionKey: "tenant-a:user-a:sub-agent:parent-run",
+      callerSessionKey: resolved.sessionKey,
       announceChannelType: "telegram",
       announceChannelId: "parent-chat",
       requesterOrigin: deliveryOrigin,

@@ -13,6 +13,7 @@ import {
   type DeliveryQueuePort,
   type DeliveryQueueEntry,
   type DeliveryAdapter,
+  ConversationRefSchema,
 } from "@comis/core";
 import type { DeliveryMirrorPort, DeliveryMirrorEntry, PluginPort, PluginRegistryApi } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
@@ -29,6 +30,14 @@ function makeEntry(overrides: Partial<DeliveryQueueEntry> = {}): DeliveryQueueEn
     channelType: "telegram",
     channelId: "chat-1",
     tenantId: "default",
+    agentId: "agent-default",
+    conversationRef: ConversationRefSchema.parse(`cv_${"a".repeat(43)}`),
+    destinationEndpoint: {
+      channelType: "telegram",
+      channelInstanceId: "test-instance",
+      conversationId: "chat-1",
+      conversationKind: "direct",
+    },
     optionsJson: "{}",
     origin: "test",
     status: "pending",
@@ -919,11 +928,21 @@ describe("setupDeliveryQueue", () => {
       const now = Date.now();
       const seedRow = (id: string, status: "pending" | "in_flight"): void => {
         db.prepare(
-          `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
+          `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, agent_id,
+                                         conversation_ref, destination_endpoint, options_json, origin,
                                          status, attempt_count, max_attempts,
                                          created_at, scheduled_at, expire_at)
-           VALUES (?, ?, 'telegram', 'ch-1', 'def', '{}', 'channel', ?, 0, 5, ?, ?, ?)`,
-        ).run(id, `msg-${id}`, status, now, now, now + 60_000);
+           VALUES (?, ?, 'telegram', 'ch-1', 'def', 'agent-a', ?, ?, '{}', 'channel', ?, 0, 5, ?, ?, ?)`,
+        ).run(
+          id,
+          `msg-${id}`,
+          `cv_${"a".repeat(43)}`,
+          JSON.stringify({ channelType: "telegram", channelInstanceId: "test-instance", conversationId: "ch-1", conversationKind: "direct" }),
+          status,
+          now,
+          now,
+          now + 60_000,
+        );
       };
 
       // 100 in_flight rows that the drainer MUST NOT pick.
@@ -1012,8 +1031,8 @@ describe("setupDeliveryQueue", () => {
         channelType: "telegram",
         text: "agent reply",
         tenantId: "tenant-x",
+        agentId: "agent-1",
         traceId: "trace-abc",
-        optionsJson: JSON.stringify({ agentId: "agent-1" }),
       });
       const queue = createMockQueue();
       vi.mocked(queue.pendingEntries).mockResolvedValueOnce(ok([entry]));
@@ -1037,6 +1056,7 @@ describe("setupDeliveryQueue", () => {
         tenantId: "tenant-x",
         agentId: "agent-1",
         sessionId: "trace-abc",
+        participantId: undefined,
       });
     });
 
@@ -1084,18 +1104,17 @@ describe("setupDeliveryQueue", () => {
       expect(recordOutboundMessage).not.toHaveBeenCalled();
     });
 
-    it("records a NON-'default' agentId from optionsJson (real agent, never the tenantId fallback)", async () => {
+    it("records a non-default agent from the structured queue authority", async () => {
       const { drainDeliveryQueue } = await import("./setup-delivery.js");
-      // The enqueue (delivery-service.ts) persists the request-context agentId
-      // into optionsJson. A multi-agent daemon's agent (mldag) differs from the
-      // tenant ("default") — the drain must attribute to mldag, not the tenant.
+      // A multi-agent daemon's agent differs from the tenant; the structured
+      // queue column is the authority source for drain attribution.
       const entry = makeEntry({
         id: "e1",
         channelType: "telegram",
         text: "agent reply",
         tenantId: "default",
+        agentId: "mldag",
         traceId: "trace-abc",
-        optionsJson: JSON.stringify({ agentId: "mldag" }),
       });
       const queue = createMockQueue();
       vi.mocked(queue.pendingEntries).mockResolvedValueOnce(ok([entry]));
@@ -1119,19 +1138,18 @@ describe("setupDeliveryQueue", () => {
         tenantId: "default",
         agentId: "mldag",
         sessionId: "trace-abc",
+        participantId: undefined,
       });
     });
 
-    it("fail-closed: an outbound whose optionsJson carries NO agentId is NOT mapped (never falls back to the tenantId)", async () => {
+    it("ignores optionsJson agent metadata and uses the required queue authority", async () => {
       const { drainDeliveryQueue } = await import("./setup-delivery.js");
-      // optionsJson without agentId (e.g. a pre-executor/non-agent send). The
-      // capture is fail-closed: rather than mis-attribute under the
-      // tenantId, the drain skips the mapping entirely.
       const entry = makeEntry({
         id: "e1",
         channelType: "telegram",
         text: "no-agent send",
         tenantId: "default",
+        agentId: "agent-structured",
         traceId: "trace-xyz",
         optionsJson: JSON.stringify({ replyTo: "m-1" }),
       });
@@ -1151,7 +1169,13 @@ describe("setupDeliveryQueue", () => {
         recordOutboundMessage,
       });
 
-      expect(recordOutboundMessage).not.toHaveBeenCalled();
+      expect(recordOutboundMessage).toHaveBeenCalledWith("platform-msg-8", {
+        traceId: "trace-xyz",
+        tenantId: "default",
+        agentId: "agent-structured",
+        sessionId: "trace-xyz",
+        participantId: undefined,
+      });
     });
   });
 });
@@ -1232,7 +1256,17 @@ describe("setupDeliveryMirror", () => {
       durationMs: 50,
       origin: "agent",
     };
-    const ctx = { sessionKey: "agent-1:telegram:chat-1" };
+    const conversationRef = ConversationRefSchema.parse(`cv_${"b".repeat(43)}`);
+    const destinationEndpoint = {
+      channelType: "telegram",
+      channelInstanceId: "test-instance",
+      conversationId: "chat-1",
+      conversationKind: "direct" as const,
+    };
+    const ctx = {
+      deliveryAuthority: { tenantId: "tenant-a", agentId: "agent-1", conversationRef },
+      destinationEndpoint,
+    };
 
     await hookHandler!(event, ctx);
 
@@ -1240,7 +1274,10 @@ describe("setupDeliveryMirror", () => {
     expect(mockSqliteMirror.record).toHaveBeenCalledTimes(1);
     const recordCall = mockSqliteMirror.recordCalls[0];
     expect(recordCall).toMatchObject({
-      sessionKey: "agent-1:telegram:chat-1",
+      tenantId: "tenant-a",
+      agentId: "agent-1",
+      conversationRef,
+      destinationEndpoint,
       text: "Hello world",
       mediaUrls: [],
       channelType: "telegram",
@@ -1248,7 +1285,7 @@ describe("setupDeliveryMirror", () => {
       origin: "agent",
     });
     // Verify idempotencyKey is a string with expected format
-    expect(recordCall!.idempotencyKey).toMatch(/^agent-1:telegram:chat-1:[a-f0-9]{16}:\d+$/);
+    expect(recordCall!.idempotencyKey).toMatch(/^cv_[A-Za-z0-9_-]{43}:[a-f0-9]{16}:\d+$/);
 
     result.shutdown();
   });

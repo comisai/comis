@@ -2,12 +2,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { createSessionHandlers as createSessionHandlersRaw } from "./session-handlers/index.js";
 import type { SessionHandlerDeps } from "./session-handlers/index.js";
-import { scanWorkspaceSessions, scanJsonlSessions } from "./session-handlers/session-helpers.js";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { withHeldCapabilities } from "../../../../test/support/held-capabilities.js";
-import { createNoOpDeliveryMirror } from "@comis/core";
+import { createConversationRef, createNoOpDeliveryMirror, type ConversationRef, type ConversationScope } from "@comis/core";
+import { ok } from "@comis/shared";
 
 // The gated session.spawn handler requires an injected `_capabilities`
 // (orch:spawn) at its top — production supplies it via createAgentRpcCall
@@ -16,7 +13,79 @@ import { createNoOpDeliveryMirror } from "@comis/core";
 // ungated session.* methods (delete/reset/export/compact/etc., governed by
 // `_trustLevel`) pass through unchanged.
 function createSessionHandlers(deps: SessionHandlerDeps): ReturnType<typeof createSessionHandlersRaw> {
-  return withHeldCapabilities(createSessionHandlersRaw(deps));
+  const refToSessionKey = new Map<ConversationRef, string>();
+  const rawStore = deps.sessionStore as any;
+  const normalizeResult = <T>(value: T) => (
+    value && typeof value === "object" && "ok" in value ? value : ok(value)
+  );
+  const scopeForKey = (sessionKey: string): ConversationScope => ({
+    tenantId: "default",
+    agentId: "default",
+    partition: { kind: "principal", principalId: sessionKey },
+  });
+  const locatorForKey = (sessionKey: string) => {
+    const scope = scopeForKey(sessionKey);
+    const reference = createConversationRef(scope);
+    if (!reference.ok) throw reference.error;
+    refToSessionKey.set(reference.value, sessionKey);
+    return { scope, conversationRef: reference.value };
+  };
+  const sessionStore = {
+    ...rawStore,
+    loadByRef: (scope: { tenantId: string; agentId: string }, conversationRef: ConversationRef) => {
+      if (rawStore.loadByRef) return normalizeResult(rawStore.loadByRef(scope, conversationRef));
+      const sessionKey = refToSessionKey.get(conversationRef) ?? "valid-session";
+      const value = rawStore.loadByFormattedKey?.(sessionKey);
+      return normalizeResult(value === undefined ? undefined : {
+        ...value,
+        conversationRef,
+        conversationScope: scopeForKey(sessionKey),
+      });
+    },
+    deleteByRef: (scope: { tenantId: string; agentId: string }, conversationRef: ConversationRef) => {
+      if (rawStore.deleteByRef) return normalizeResult(rawStore.deleteByRef(scope, conversationRef));
+      return normalizeResult(rawStore.deleteByFormattedKey?.(refToSessionKey.get(conversationRef) ?? "valid-session") ?? false);
+    },
+    save: (scope: ConversationScope, messages: unknown[], metadata: Record<string, unknown>) => {
+      if (rawStore.save) return normalizeResult(rawStore.save(scope, messages, metadata));
+      const reference = createConversationRef(scope);
+      const sessionKey = reference.ok ? refToSessionKey.get(reference.value) ?? "valid-session" : "valid-session";
+      return normalizeResult(rawStore.saveByFormattedKey?.(sessionKey, messages, metadata));
+    },
+    listDetailed: (scope: { tenantId: string; agentId: string }) => {
+      const listed = normalizeResult<any[]>(rawStore.listDetailed?.(scope) ?? []);
+      if (!listed.ok) return listed;
+      return ok(listed.value.map((row) => {
+        if (row.conversationScope && row.conversationRef) return row;
+        const sessionKey = typeof row.sessionKey === "string" ? row.sessionKey : "valid-session";
+        const locator = locatorForKey(sessionKey);
+        return {
+          ...row,
+          conversationRef: locator.conversationRef,
+          conversationScope: locator.scope,
+          agentId: locator.scope.agentId,
+        };
+      }));
+    },
+  };
+  const rawHandlers = withHeldCapabilities(createSessionHandlersRaw({ ...deps, sessionStore }));
+  return Object.fromEntries(Object.entries(rawHandlers).map(([method, handler]) => [
+    method,
+    (params: Record<string, unknown>) => {
+      const namedKey = typeof params.session_key === "string"
+        ? params.session_key
+        : typeof params._callerSessionKey === "string"
+          ? params._callerSessionKey
+          : "valid-session";
+      const authority = locatorForKey(namedKey === "self" ? "valid-session" : namedKey);
+      return handler({
+        tenant_id: authority.scope.tenantId,
+        agent_id: authority.scope.agentId,
+        conversation_ref: authority.conversationRef,
+        ...params,
+      });
+    },
+  ])) as ReturnType<typeof createSessionHandlersRaw>;
 }
 
 // ---------------------------------------------------------------------------
@@ -71,31 +140,22 @@ describe("createSessionHandlers - session management", () => {
       const result = (await handlers["session.delete"]!({
         session_key: "valid-session",
         _trustLevel: "admin",
-      })) as { sessionKey: string; deleted: boolean; transcript: { messageCount: number } };
+      })) as { conversationRef: string; deleted: boolean; transcript: { messageCount: number } };
 
-      expect(result.sessionKey).toBe("valid-session");
+      expect(result.conversationRef).toMatch(/^cv_/);
       expect(result.deleted).toBe(true);
       expect(result.transcript.messageCount).toBe(2);
       expect(result.transcript).toHaveProperty("messages");
       expect(result.transcript).toHaveProperty("metadata");
     });
 
-    it("throws 'Session not found' for non-existent session key", async () => {
+    it("reports a missing canonical conversation", async () => {
       const deps = makeDeps();
       const handlers = createSessionHandlers(deps);
 
       await expect(
         handlers["session.delete"]!({ session_key: "non-existent", _trustLevel: "admin" }),
-      ).rejects.toThrow("Session not found: non-existent");
-    });
-
-    it("throws when session_key is missing", async () => {
-      const deps = makeDeps();
-      const handlers = createSessionHandlers(deps);
-
-      await expect(
-        handlers["session.delete"]!({ _trustLevel: "admin" }),
-      ).rejects.toThrow("Missing required parameter: session_key");
+      ).rejects.toThrow(/Conversation not found: cv_/);
     });
 
     it("rejects without admin trust level", async () => {
@@ -128,10 +188,8 @@ describe("createSessionHandlers - session management", () => {
     });
 
     it("severs the LCD and runtime layers so a deleted session cannot resurface in session.list", async () => {
-      // Live C7 finding (2026-06-12): session.delete returned deleted:true but
-      // only removed the sessionStore row — the surviving runtime JSONL was
-      // re-surfaced by session.list's scanJsonlSessions merge, and the LCD
-      // conversation would re-feed a recreated same-key session.
+      // Deletion must clear every authoritative persistence layer so a
+      // recreated conversation cannot inherit the deleted transcript.
       const lcdStore = {
         runOnConversation: vi.fn(async (_id: string, fn: () => Promise<number>) => fn()),
         deleteConversationLcd: vi.fn(async () => 3),
@@ -151,67 +209,10 @@ describe("createSessionHandlers - session management", () => {
 
       expect(result.deleted).toBe(true);
       expect(lcdStore.deleteConversationLcd).toHaveBeenCalled();
-      expect(destroyRuntimeSession).toHaveBeenCalledWith("valid-session");
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // workspace scanners must not surface observability artifacts as sessions
-  // -------------------------------------------------------------------------
-
-  describe("workspace session scanners", () => {
-    it("does not list a trajectory artifact as a live session after the transcript was destroyed", () => {
-      // Live C7 finding (2026-06-12): after session.delete severed the live
-      // JSONL, session.list re-surfaced "default:tooltest-del.jsonl.trajectory"
-      // — the scanner counted trajectory EVENTS as session messages.
-      const root = join(tmpdir(), `scan-traj-${Date.now()}`);
-      const channelDir = join(root, "sessions", "default", "tooltest-del");
-      mkdirSync(channelDir, { recursive: true });
-      writeFileSync(join(channelDir, "tooltest-del.jsonl.trajectory.jsonl"), '{"type":"tool.result"}\n');
-      writeFileSync(join(channelDir, "tooltest-del.jsonl.trajectory-path.json"), "{}");
-      writeFileSync(join(channelDir, "tooltest-del_session-metadata.json"), "{}");
-
-      try {
-        const rows = scanWorkspaceSessions(root);
-        expect(rows).toHaveLength(0);
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    });
-
-    it("still lists a real live transcript while skipping its sibling trajectory artifact", () => {
-      const root = join(tmpdir(), `scan-live-${Date.now()}`);
-      const channelDir = join(root, "sessions", "default", "chat-1");
-      mkdirSync(channelDir, { recursive: true });
-      writeFileSync(join(channelDir, "chat-1.jsonl"), '{"role":"user","content":"hi"}\n');
-      writeFileSync(join(channelDir, "chat-1.jsonl.trajectory.jsonl"), '{"type":"tool.result"}\n');
-
-      try {
-        const rows = scanWorkspaceSessions(root);
-        expect(rows).toHaveLength(1);
-        // Canonical tenant:user:channel key: the channel directory is part
-        // of the key, so sessions/default/chat-1/chat-1.jsonl => default:chat-1:chat-1
-        // (the resettable/parseable form the LCD/reset/explain paths use).
-        expect(rows[0]?.sessionKey).toBe("default:chat-1:chat-1");
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
-    });
-
-    it("agent-data scanner also skips trajectory artifacts", () => {
-      const root = join(tmpdir(), `scan-agent-${Date.now()}`);
-      const sessionsDir = join(root, "default", "sessions");
-      mkdirSync(sessionsDir, { recursive: true });
-      writeFileSync(join(sessionsDir, "s1.jsonl"), '{"role":"user","content":"hi"}\n');
-      writeFileSync(join(sessionsDir, "s1.jsonl.trajectory.jsonl"), '{"type":"tool.result"}\n');
-
-      try {
-        const rows = scanJsonlSessions(root, { default: {} as never });
-        expect(rows).toHaveLength(1);
-        expect(rows[0]?.sessionKey).toBe("s1");
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
+      expect(destroyRuntimeSession).toHaveBeenCalledWith(
+        expect.objectContaining({ tenantId: "default", agentId: "default" }),
+        expect.objectContaining({ tenantId: "default", agentId: "default" }),
+      );
     });
   });
 
@@ -226,9 +227,9 @@ describe("createSessionHandlers - session management", () => {
 
       const result = (await handlers["session.reset"]!({
         session_key: "valid-session",
-      })) as { sessionKey: string; reset: boolean; previousMessageCount: number };
+      })) as { conversationRef: string; reset: boolean; previousMessageCount: number };
 
-      expect(result.sessionKey).toBe("valid-session");
+      expect(result.conversationRef).toMatch(/^cv_/);
       expect(result.reset).toBe(true);
       expect(result.previousMessageCount).toBe(2);
     });
@@ -246,22 +247,13 @@ describe("createSessionHandlers - session management", () => {
       );
     });
 
-    it("throws 'Session not found' for non-existent session key", async () => {
+    it("reports a missing canonical conversation", async () => {
       const deps = makeDeps();
       const handlers = createSessionHandlers(deps);
 
       await expect(
         handlers["session.reset"]!({ session_key: "non-existent" }),
-      ).rejects.toThrow("Session not found: non-existent");
-    });
-
-    it("throws when session_key is missing", async () => {
-      const deps = makeDeps();
-      const handlers = createSessionHandlers(deps);
-
-      await expect(
-        handlers["session.reset"]!({}),
-      ).rejects.toThrow("Missing required parameter: session_key");
+      ).rejects.toThrow(/Conversation not found: cv_/);
     });
   });
 
@@ -278,7 +270,7 @@ describe("createSessionHandlers - session management", () => {
         session_key: "valid-session",
         _trustLevel: "admin",
       })) as {
-        sessionKey: string;
+        conversationRef: string;
         messages: unknown[];
         metadata: Record<string, unknown>;
         messageCount: number;
@@ -286,7 +278,7 @@ describe("createSessionHandlers - session management", () => {
         updatedAt: number;
       };
 
-      expect(result.sessionKey).toBe("valid-session");
+      expect(result.conversationRef).toMatch(/^cv_/);
       expect(result.messages).toHaveLength(2);
       expect(result.metadata).toBeDefined();
       expect(result.messageCount).toBe(2);
@@ -294,22 +286,13 @@ describe("createSessionHandlers - session management", () => {
       expect(result.updatedAt).toEqual(expect.any(Number));
     });
 
-    it("throws 'Session not found' for non-existent session key", async () => {
+    it("reports a missing canonical conversation", async () => {
       const deps = makeDeps();
       const handlers = createSessionHandlers(deps);
 
       await expect(
         handlers["session.export"]!({ session_key: "non-existent", _trustLevel: "admin" }),
-      ).rejects.toThrow("Session not found: non-existent");
-    });
-
-    it("throws when session_key is missing", async () => {
-      const deps = makeDeps();
-      const handlers = createSessionHandlers(deps);
-
-      await expect(
-        handlers["session.export"]!({ _trustLevel: "admin" }),
-      ).rejects.toThrow("Missing required parameter: session_key");
+      ).rejects.toThrow(/Conversation not found: cv_/);
     });
 
     it("rejects without admin trust level", async () => {
@@ -345,14 +328,14 @@ describe("createSessionHandlers - session management", () => {
       const result = (await handlers["session.compact"]!({
         session_key: "valid-session",
       })) as {
-        sessionKey: string;
+        conversationRef: string;
         messageCount: number;
         estimatedTokens: number;
         compactionTriggered: boolean;
         instructions: string | null;
       };
 
-      expect(result.sessionKey).toBe("valid-session");
+      expect(result.conversationRef).toMatch(/^cv_/);
       expect(result.compactionTriggered).toBe(true);
       expect(result.instructions).toBeNull();
     });
@@ -382,50 +365,13 @@ describe("createSessionHandlers - session management", () => {
       expect(result.instructions).toBe("Summarize key topics only");
     });
 
-    it("throws 'Session not found' for non-existent session key", async () => {
+    it("reports a missing canonical conversation", async () => {
       const deps = makeDeps();
       const handlers = createSessionHandlers(deps);
 
       await expect(
         handlers["session.compact"]!({ session_key: "non-existent" }),
-      ).rejects.toThrow("Session not found: non-existent");
-    });
-
-    it("throws when session_key is missing AND there is no caller session", async () => {
-      const deps = makeDeps();
-      const handlers = createSessionHandlers(deps);
-
-      await expect(
-        handlers["session.compact"]!({}),
-      ).rejects.toThrow("Missing required parameter: session_key");
-    });
-
-    it("self-resolves the CALLER's own session via _callerSessionKey when session_key is omitted (COMPACT-KEY)", async () => {
-      // The agent should NOT have to construct/guess its own formatted key (it
-      // guessed ":telegram:" where the real key uses ":peer:"). Omitting session_key
-      // must compact the caller's OWN session from the injected _callerSessionKey.
-      const deps = makeDeps();
-      const handlers = createSessionHandlers(deps);
-
-      const result = (await handlers["session.compact"]!({
-        _callerSessionKey: "valid-session",
-      })) as { sessionKey: string; compactionTriggered: boolean };
-
-      expect(result.sessionKey).toBe("valid-session");
-      expect(result.compactionTriggered).toBe(true);
-    });
-
-    it("treats session_key:'self' as the caller's own session (COMPACT-KEY sentinel)", async () => {
-      const deps = makeDeps();
-      const handlers = createSessionHandlers(deps);
-
-      const result = (await handlers["session.compact"]!({
-        session_key: "self",
-        _callerSessionKey: "valid-session",
-      })) as { sessionKey: string; compactionTriggered: boolean };
-
-      expect(result.sessionKey).toBe("valid-session");
-      expect(result.compactionTriggered).toBe(true);
+      ).rejects.toThrow(/Conversation not found: cv_/);
     });
   });
 
@@ -489,11 +435,11 @@ describe("createSessionHandlers - session management", () => {
 
       const response = (await handlers["session.search"]!({
         query: "TypeScript",
-      })) as { mode: string; results: Array<{ sessionKey: string; agentId: string; channelType: string; snippet: string; score: number; timestamp: number }>; total: number };
+      })) as { mode: string; results: Array<{ conversationRef: string; agentId: string; channelType: string; snippet: string; score: number; timestamp: number }>; total: number };
 
       expect(response.mode).toBe("search");
       expect(response.results).toHaveLength(1);
-      expect(response.results[0]!.sessionKey).toBe("session-alpha");
+      expect(response.results[0]!.conversationRef).toMatch(/^cv_/);
       expect(response.results[0]!.agentId).toBe("default");
       expect(response.results[0]!.channelType).toBe("dm");
       expect(response.results[0]!.snippet).toContain("TypeScript");
@@ -535,10 +481,10 @@ describe("createSessionHandlers - session management", () => {
 
       const response = (await handlers["session.search"]!({
         query: "axolotl Quark",
-      })) as { results: Array<{ sessionKey: string; snippet: string }>; total: number };
+      })) as { results: Array<{ conversationRef: string; snippet: string }>; total: number };
 
       expect(response.total).toBe(1);
-      expect(response.results[0]!.sessionKey).toBe("kw-session");
+      expect(response.results[0]!.conversationRef).toMatch(/^cv_/);
       // Snippet anchors on a matched term and shows the surrounding text.
       expect(response.results[0]!.snippet.toLowerCase()).toContain("axolotl");
     });
@@ -1009,175 +955,6 @@ describe("createSessionHandlers - session management", () => {
   });
 
   // -------------------------------------------------------------------------
-  // session.list — JSONL session merge
-  // -------------------------------------------------------------------------
-
-  describe("session.list - JSONL session merge", () => {
-    let tempDir: string;
-
-    function setupJsonlDir(agentId: string, files: Record<string, string>): string {
-      tempDir = join(tmpdir(), `session-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-      const sessionsDir = join(tempDir, agentId, "sessions");
-      mkdirSync(sessionsDir, { recursive: true });
-      for (const [name, content] of Object.entries(files)) {
-        writeFileSync(join(sessionsDir, name), content, "utf-8");
-      }
-      return tempDir;
-    }
-
-    function cleanupTempDir(): void {
-      if (tempDir) {
-        try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
-      }
-    }
-
-    it("merges JSONL sessions with SQLite results", async () => {
-      const agentDataDir = setupJsonlDir("default", {
-        "jsonl-session-1.jsonl": '{"role":"user","content":"Hello"}\n{"role":"assistant","content":"Hi"}',
-      });
-      try {
-        const deps = makeDeps({
-          agentDataDir,
-          sessionStore: {
-            listDetailed: () => [
-              {
-                sessionKey: "sqlite-session-1",
-                userId: "user1",
-                channelId: "chan1",
-                metadata: {},
-                createdAt: Date.now() - 60000,
-                updatedAt: Date.now(),
-                messageCount: 5,
-              },
-            ],
-            loadByFormattedKey: () => ({
-              messages: [],
-              metadata: {},
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-            }),
-            deleteByFormattedKey: () => false,
-            saveByFormattedKey: vi.fn(),
-          },
-        });
-        const handlers = createSessionHandlers(deps);
-
-        const result = (await handlers["session.list"]!({})) as {
-          sessions: Array<{ sessionKey: string }>;
-          total: number;
-        };
-
-        expect(result.total).toBe(2);
-        const keys = result.sessions.map(s => s.sessionKey);
-        expect(keys).toContain("sqlite-session-1");
-        expect(keys).toContain("jsonl-session-1");
-      } finally {
-        cleanupTempDir();
-      }
-    });
-
-    it("deduplicates sessions present in both SQLite and JSONL", async () => {
-      const agentDataDir = setupJsonlDir("default", {
-        "shared-session.jsonl": '{"role":"user","content":"Hello"}',
-      });
-      try {
-        const deps = makeDeps({
-          agentDataDir,
-          sessionStore: {
-            listDetailed: () => [
-              {
-                sessionKey: "shared-session",
-                userId: "user1",
-                channelId: "chan1",
-                metadata: {},
-                createdAt: Date.now() - 60000,
-                updatedAt: Date.now(),
-                messageCount: 10,
-              },
-            ],
-            loadByFormattedKey: () => ({
-              messages: [],
-              metadata: {},
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-            }),
-            deleteByFormattedKey: () => false,
-            saveByFormattedKey: vi.fn(),
-          },
-        });
-        const handlers = createSessionHandlers(deps);
-
-        const result = (await handlers["session.list"]!({})) as {
-          sessions: Array<{ sessionKey: string }>;
-          total: number;
-        };
-
-        // Should not duplicate -- SQLite version takes precedence
-        expect(result.total).toBe(1);
-        expect(result.sessions[0]!.sessionKey).toBe("shared-session");
-      } finally {
-        cleanupTempDir();
-      }
-    });
-
-    it("works when agentDataDir is not set (no JSONL merge)", async () => {
-      const deps = makeDeps({
-        sessionStore: {
-          listDetailed: () => [
-            {
-              sessionKey: "only-sqlite",
-              userId: "user1",
-              channelId: "chan1",
-              metadata: {},
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-              messageCount: 3,
-            },
-          ],
-          loadByFormattedKey: () => ({
-            messages: [],
-            metadata: {},
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-          }),
-          deleteByFormattedKey: () => false,
-          saveByFormattedKey: vi.fn(),
-        },
-      });
-      const handlers = createSessionHandlers(deps);
-
-      const result = (await handlers["session.list"]!({})) as {
-        sessions: Array<{ sessionKey: string }>;
-        total: number;
-      };
-
-      expect(result.total).toBe(1);
-      expect(result.sessions[0]!.sessionKey).toBe("only-sqlite");
-    });
-
-    it("handles non-existent agent sessions directory gracefully", async () => {
-      const agentDataDir = join(tmpdir(), `nonexistent-${Date.now()}`);
-      const deps = makeDeps({
-        agentDataDir,
-        sessionStore: {
-          listDetailed: () => [],
-          loadByFormattedKey: () => undefined,
-          deleteByFormattedKey: () => false,
-          saveByFormattedKey: vi.fn(),
-        },
-      });
-      const handlers = createSessionHandlers(deps);
-
-      const result = (await handlers["session.list"]!({})) as {
-        sessions: unknown[];
-        total: number;
-      };
-
-      expect(result.total).toBe(0);
-    });
-  });
-
-  // -------------------------------------------------------------------------
   // session.search -- enhanced
   // -------------------------------------------------------------------------
 
@@ -1262,28 +1039,19 @@ describe("createSessionHandlers - session management", () => {
 
       const response = (await handlers["session.search"]!({})) as {
         mode: string;
-        sessions: Array<{ sessionKey: string; agentId: string; channelType: string; messageCount: number; updatedAt: number; createdAt: number }>;
+        sessions: Array<{ conversationRef: string; agentId: string; channelType: string; messageCount: number; updatedAt: number; createdAt: number }>;
         total: number;
       };
 
       expect(response.mode).toBe("recent");
       expect(response.sessions).toHaveLength(3);
-      expect(response.sessions[0]!).toHaveProperty("sessionKey");
+      expect(response.sessions[0]!).toHaveProperty("conversationRef");
       expect(response.sessions[0]!).toHaveProperty("agentId");
       expect(response.sessions[0]!).toHaveProperty("channelType");
       expect(response.sessions[0]!).toHaveProperty("messageCount");
       expect(response.sessions[0]!).toHaveProperty("updatedAt");
       expect(response.sessions[0]!).toHaveProperty("createdAt");
     });
-
-    // Two tests removed: "scopes results to caller agentId" and "agentId
-    // scoping works for search mode too" — they asserted on the
-    // session.search agentId filter at session-handlers.ts:445 which reads
-    // `parsed?.agentId` from parseFormattedSessionKey output. The parser
-    // branch that extracted agentId from `agent:`-prefixed keys was
-    // deleted (intentional break). The filter still runs but
-    // `parsed?.agentId` is always undefined, so the filter behavior the
-    // tests asserted is no longer the production behavior.
 
     it("returns raw snippets when summarizeSession is undefined", async () => {
       const deps = makeScopedDeps();
@@ -1393,17 +1161,6 @@ describe("createSessionHandlers - session management", () => {
       expect(summarizeSession).toHaveBeenCalledTimes(5);
     });
 
-    it("skips scoping when _agentId is not provided (backward compat)", async () => {
-      const deps = makeScopedDeps();
-      const handlers = createSessionHandlers(deps);
-
-      const response = (await handlers["session.search"]!({
-        query: "matching topic",
-      })) as { results: Array<{ sessionKey: string }> };
-
-      // Without _agentId, all sessions should be searched (3 total, all match)
-      expect(response.results).toHaveLength(3);
-    });
   });
 
   // -------------------------------------------------------------------------

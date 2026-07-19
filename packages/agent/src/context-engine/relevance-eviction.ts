@@ -101,7 +101,13 @@ export function rankMiddleBandByRelevance(
   // --- Degrade floor: empty band / no store / no scorer / degraded query → recency. ---
   const store = deps.contextStore;
   const scorer = deps.relevanceScorer;
-  if (middleBand.length === 0 || store === undefined || scorer === undefined || query.degraded) {
+  if (
+    middleBand.length === 0
+    || store === undefined
+    || scorer === undefined
+    || query.degraded
+    || deps.conversationRef === undefined
+  ) {
     return evictHistoryUnderBudget(middleBand, poolTokens);
   }
 
@@ -132,10 +138,10 @@ export function rankMiddleBandByRelevance(
   // back to recency within the chronological restore. NB: the snippet is read ONLY for the
   // legacy id-less fallback association, never logged/returned.
   const scope: ContextStoreScope = {
-    conversationId: deps.conversationId ?? "",
+    conversationRef: deps.conversationRef,
     agentId: deps.agentId ?? "",
     tenantId: deps.tenantId ?? "",
-    sessionKey: deps.sessionKey ?? deps.conversationId ?? "",
+    sessionKey: deps.sessionKey ?? deps.conversationRef ?? "",
   };
   // OR-join the (already alphanumeric, stopworded) terms so ANY term match ranks a message
   // (FTS5 MATCH of space-separated terms is implicit AND — an AND of the whole query almost

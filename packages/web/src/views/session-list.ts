@@ -6,7 +6,7 @@ import type { ApiClient } from "../api/api-client.js";
 import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
-import type { SessionListItem, SessionSearchResult } from "../api/types/index.js";
+import type { SessionListItem } from "../api/types/index.js";
 import { computeSessionStatus } from "../utils/session-key-parser.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 import { systemClearTimeout, systemNowMs, systemSetTimeout } from "@comis/core";
@@ -349,7 +349,7 @@ export class IcSessionListView extends LitElement {
   private async _performRpcSearch(query: string): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const results = await this.rpcClient.call<SessionSearchResult[]>(
+      const results = await this.rpcClient.call(
         "session.search",
         { query, limit: 50 },
       );

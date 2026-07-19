@@ -328,7 +328,7 @@ export class IcIncidentView extends LitElement {
     void this._loadPrometheusFlag(rpc);
 
     try {
-      const raw = await rpc.call<IncidentReportView>("obs.explain", { ...ref, depth: "summary" });
+      const raw = await rpc.call("obs.explain", { ...ref, depth: "summary" });
       this._report = raw;
       this._loadState = "loaded";
     } catch {
@@ -338,7 +338,7 @@ export class IcIncidentView extends LitElement {
 
   private async _loadPrometheusFlag(rpc: RpcClient): Promise<void> {
     try {
-      const cfg = await rpc.call<{ config?: Record<string, unknown> }>("config.read");
+      const cfg = await rpc.call("config.read");
       const obs = (cfg.config?.observability ?? {}) as Record<string, unknown>;
       const prom = (obs.prometheus ?? {}) as Record<string, unknown>;
       this._prometheusEnabled = prom.enabled === true;

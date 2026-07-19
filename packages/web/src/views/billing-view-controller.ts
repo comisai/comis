@@ -241,14 +241,14 @@ export function createBillingViewController(rpcClient: RpcClient): BillingViewCo
   return {
     async loadTotalLevel(sinceMs, onAsyncUpdate): Promise<BillingTotalData> {
       // Primary data for the stat cards — awaited so the view can render.
-      const raw = await rpcClient.call<Record<string, unknown>>("obs.billing.total", { sinceMs });
+      const raw = await rpcClient.call("obs.billing.total", { sinceMs });
       const total = toBillingTotal(raw);
 
       // Cumulative (for deltas) + provider breakdown load in the background;
       // the view re-renders via onAsyncUpdate when they settle.
       void Promise.allSettled([
-        rpcClient.call<Record<string, unknown>>("obs.billing.total", { sinceMs: sinceMs * 2 }),
-        rpcClient.call<unknown>("obs.billing.byProvider", { sinceMs }),
+        rpcClient.call("obs.billing.total", { sinceMs: sinceMs * 2 }),
+        rpcClient.call("obs.billing.byProvider", { sinceMs }),
       ]).then(([cumulativeResult, providersResult]) => {
         const partial: { previousTotal?: BillingTotalData; providers?: BillingByProvider[] } = {};
         if (cumulativeResult.status === "fulfilled") {
@@ -271,12 +271,12 @@ export function createBillingViewController(rpcClient: RpcClient): BillingViewCo
     },
 
     async loadProviderLevel(sinceMs): Promise<BillingByProvider[]> {
-      const raw = await rpcClient.call<unknown>("obs.billing.byProvider", { sinceMs });
+      const raw = await rpcClient.call("obs.billing.byProvider", { sinceMs });
       return narrowProviders(raw);
     },
 
     async loadAgentLevel(sinceMs): Promise<AgentLevelData> {
-      const listResult = await rpcClient.call<Record<string, unknown>>("agents.list");
+      const listResult = await rpcClient.call("agents.list");
       const agentData = Array.isArray(listResult)
         ? listResult
         : Array.isArray((listResult as Record<string, unknown>).agents)
@@ -289,7 +289,7 @@ export function createBillingViewController(rpcClient: RpcClient): BillingViewCo
 
       const results = await Promise.allSettled(
         agentIds.map((id) =>
-          rpcClient.call<Record<string, unknown>>("obs.billing.byAgent", { agentId: id, sinceMs }),
+          rpcClient.call("obs.billing.byAgent", { agentId: id, sinceMs }),
         ),
       );
 
@@ -323,7 +323,7 @@ export function createBillingViewController(rpcClient: RpcClient): BillingViewCo
     async loadSessionLevel(sinceMs, agentId): Promise<BillingBySession[]> {
       if (!agentId) return [];
       try {
-        const raw = await rpcClient.call<unknown>("obs.billing.bySession", {
+        const raw = await rpcClient.call("obs.billing.bySession", {
           sessionKey: "all",
           agentId,
           sinceMs,

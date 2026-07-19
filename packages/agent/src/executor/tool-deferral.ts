@@ -74,7 +74,6 @@ export interface DeferralContext {
   capabilityClass: CapabilityClass;
   recentlyUsedToolNames: Set<string>;
   toolNames: string[];
-  contextEngineVersion?: string;
   /** Tool names demoted by lifecycle management. When provided, these tools
    *  are treated as an additional deferral source so discover_tools covers them. */
   lifecycleDemotedNames?: Set<string>;

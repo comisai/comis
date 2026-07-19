@@ -131,6 +131,6 @@ describe("live-coverage-matrix — coverage-matrix invariant enforcement", () =>
 
   it("COVERAGE_DIMENSIONS is non-empty and contains expected known dimensions", () => {
     expect(COVERAGE_DIMENSIONS.length).toBeGreaterThan(0);
-    expect(COVERAGE_DIMENSIONS).toContain("contextEngine.version");
+    expect(COVERAGE_DIMENSIONS).toContain("contextEngine.contextThreshold");
   });
 });

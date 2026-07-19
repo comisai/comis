@@ -54,7 +54,7 @@ import { resolveLeanDescriptionsForAgent, buildSharedConvertTools } from "./setu
 import { runBootWindowHonestyChecks } from "./setup-agents-boot-window.js";
 import { createAcpWiring } from "./setup-acp-wiring.js";
 import { wireAuthProvider } from "./setup-agents-oauth.js";
-import { renderLearnedSkillsXml } from "./learned-skill-surface.js";
+import { buildPromptSkillLocationIndex, renderLearnedSkillsXml } from "./learned-skill-surface.js";
 import { wireAgentLearnedSkillSurface } from "./learned-skill-surface-registry.js";
 import type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
 // Re-export types so consumers preserve the historic import shape (parity-tests + setup-agents.test.ts inspect by name).
@@ -68,15 +68,11 @@ export type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js
  * On validation failure the Zod error propagates to the caller.
  * Extracted from the setupAgents() loop body so it can be called independently
  * for hot-add (adding an agent at runtime without daemon restart).
- *
- * `rawRerankEnabled` is the RAW (pre-Zod-default) `rag.rerank.enabled`
- * (`undefined` = operator unset) — see the resolution site below.
  */
 export async function setupSingleAgent(
   agentId: string,
   agentConfigInput: PerAgentConfig,
   deps: SingleAgentDeps,
-  rawRerankEnabled?: boolean | undefined,
 ): Promise<SingleAgentResult> {
   // Validate agent config with Zod before any runtime setup
   const agentConfig = PerAgentConfigSchema.parse(agentConfigInput);
@@ -86,17 +82,21 @@ export async function setupSingleAgent(
   // Resolve "default" model/provider: per-agent config → YAML models.* → pi-ai catalog heuristic.
   const modelsConfig = container.config.models;
   const resolved = resolveAgentModel(agentConfig, modelsConfig);
-  // EFFECTIVE rag.rerank.enabled — explicit wins, unset auto-ons
-  // iff the model is present. The explicit signal MUST be RAW (parsed agentConfig defaults
-  // unset to false, erasing it): explicit arg (hot-add) else the daemon-wide container map
-  // (boot) — the SAME source the build gate reads. Spread keeps sibling knobs.
-  const rawRerank =
-    rawRerankEnabled !== undefined ? rawRerankEnabled : container.rawAgentRerankEnabled?.get(agentId);
+  const rerankEnabled = resolveEffectiveRerank(
+    agentConfig.rag.rerank.mode,
+    deps.rerankerModelPresent ?? false,
+  );
   const effectiveConfig = {
     ...agentConfig,
     model: resolved.model,
     provider: resolved.provider,
-    rag: { ...agentConfig.rag, rerank: { ...agentConfig.rag.rerank, enabled: resolveEffectiveRerank(rawRerank, deps.rerankerModelPresent ?? false) } },
+    rag: {
+      ...agentConfig.rag,
+      rerank: {
+        ...agentConfig.rag.rerank,
+        mode: rerankEnabled ? "on" as const : "off" as const,
+      },
+    },
   };
 
 
@@ -105,9 +105,7 @@ export async function setupSingleAgent(
   // see the resolved model/provider instead of the placeholder "default".
   container.config.agents[agentId] = effectiveConfig;
 
-  // Surface the locally-gated auto-on once at the boundary (booleans
-  // only). Now LIVE: fires ONLY for unset + model-present (not for explicit-on).
-  if (rawRerank === undefined && effectiveConfig.rag.rerank.enabled === true) {
+  if (agentConfig.rag.rerank.mode === "auto" && rerankEnabled) {
     agentLogger.info({ agentId, rerankAutoEnabled: true }, "Reranker auto-enabled (model present, unset config)");
   }
 
@@ -209,7 +207,7 @@ export async function setupSingleAgent(
     agentLogger,
   });
 
-  const piModelRegistry = createModelRegistryAdapter(piAuthStorage);
+  const { registry: piModelRegistry, modelRuntime } = await createModelRegistryAdapter(piAuthStorage);
   const { registered: customProviderCount, providerAliases } = registerCustomProviders(
     piModelRegistry,
     customProviderEntries,
@@ -410,6 +408,7 @@ export async function setupSingleAgent(
   const { holder: executionPlanHolder } = createAcpWiring({ eventBus: container.eventBus, logger: perAgentLogger });
 
   const executor = createPiExecutor(effectiveConfig, {
+    agentId,
     circuitBreaker,
     providerHealth: deps.providerHealth,
     executionPlanHolder,
@@ -431,6 +430,7 @@ export async function setupSingleAgent(
     // OAuth tokens via resolveProviderApiKey.
     oauthManager: authProvider.oauth,
     modelRegistry: piModelRegistry,
+    modelRuntime,
     providerAliases,
     fallbackModels: fallbackModelStrings.length > 0 ? fallbackModelStrings : undefined,
     authRotation,
@@ -449,7 +449,7 @@ export async function setupSingleAgent(
     memoryPort: memoryAdapter,
     reranker: deps.rerankerPort,  // Cross-encoder reranker (built in setup-memory only when an agent enables rerank).
     entityStore: deps.entityStore, temporalStore: deps.temporalStore, causalStore: deps.causalStore, tripleStore: deps.tripleStore, embeddingStore: deps.embeddingStore, usefulnessStore: deps.usefulnessStore, pinnedStore: deps.pinnedStore, provenanceStore: deps.provenanceStore, mentalModelStore: deps.learnedSkillStore,  // rag.entityLane + rag.lanes.temporal + rag.lanes.causal + rag.lanes.graphSpread + rag.mmr + rag.feedback + rag.pinned (the pinned-first lane; pinnedStore is the same memoryAdapter cast as MemoryPinnedStore) + provenance down-weighting (provenanceStore is the LcdProvenanceReadStore from buildProvenanceReadStore) + mentalModelStore is the kind:"profile" read source for the <user_profile> block (the SAME MentalModelStorePort already wired for the learned-skill surface).
-    contextStore: deps.lcdStore,  // LCD store (ContextStorePort) -> PiExecutorDeps.contextStore -> setupContextEngine -> the `dag` branch (context-engine.ts). The daemon-injected CONCRETE createLcdStore; the agent sees only the core port TYPE (agent↛memory cut). Opt-in (version: "dag"); default stays pipeline. Absent ⇒ pipeline fallback.
+    contextStore: deps.lcdStore,  // canonical store; executor sees only the core port type
     summarizerSpendBreaker: deps.summarizerSpendBreaker,  // the daemon-owned per-tenant summarizer spend+breaker -> PiExecutorDeps.summarizerSpendBreaker -> setupContextEngine (getSummarizerDeps wraps the leaf seam with gate(tenantId, inner) → truncation-only degrade on open-breaker/over-cap). ONE daemon instance, partitions by tenantId.
     secretManager: scopedManager,
     envelopeConfig: container.config.envelope,
@@ -459,6 +459,7 @@ export async function setupSingleAgent(
     mediaPersistenceEnabled: container.config.integrations.media.persistence.enabled,
     autonomousMediaEnabled: deps.autonomousMediaEnabled,
     getPromptSkillsXml: () => renderLearnedSkillsXml({ skillRegistry, learnedSkills: learnedSurface.current, workspaceDir: dir }),
+    getPromptSkillLocations: () => buildPromptSkillLocationIndex({ skillRegistry, learnedSkills: learnedSurface.current, workspaceDir: dir }),
     getMcpServerInstructions: () => deps.mcpClientManager.getAllConnections().flatMap((connection) => {
       const instructions = connection.instructions?.trim();
       return connection.status === "connected" && instructions && connection.instructionHash

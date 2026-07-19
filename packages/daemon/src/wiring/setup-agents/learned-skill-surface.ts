@@ -195,6 +195,21 @@ export function renderLearnedSkillsXml(args: {
   return mergeLearnedSkillsXml(snapshot.skills, learnedSkills, workspaceDir);
 }
 
+/** Build typed read-path attribution beside the display-only XML listing. */
+export function buildPromptSkillLocationIndex(args: {
+  skillRegistry: Pick<SkillRegistry, "getSnapshot">;
+  learnedSkills: readonly MentalModel[];
+  workspaceDir: string;
+}): ReadonlyMap<string, string> {
+  const entries: Array<readonly [string, string]> = args.skillRegistry.getSnapshot().skills
+    .filter((skill) => skill.disableModelInvocation !== true)
+    .map((skill) => [skill.location, skill.name] as const);
+  for (const skill of args.learnedSkills.filter(isSurfaceable)) {
+    entries.push([materializedLocation(args.workspaceDir, skill.name), skill.name]);
+  }
+  return new Map(entries);
+}
+
 /**
  * The ASYNCHRONOUS half (runs out-of-band of the sync seam). Reads
  * `learnedSkillStore.list(scope)`, materializes the surfaceable skills WHOLESALE,

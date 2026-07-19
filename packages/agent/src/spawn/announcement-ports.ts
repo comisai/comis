@@ -22,6 +22,7 @@
  */
 
 import type { Result } from "@comis/shared";
+import type { ConversationLocator } from "@comis/core";
 
 export interface AnnouncementOperationIdentity {
   agentId: string;
@@ -32,6 +33,7 @@ export interface AnnouncementOperationIdentity {
 export interface GovernedCompletionAnnouncementRequest {
   agentId: string;
   callerSessionKey: string;
+  callerConversation: ConversationLocator;
   runId: string;
   channelType: string;
   channelId: string;
@@ -57,9 +59,8 @@ export type SendGovernedCompletionAnnouncement = (
  * `packages/orchestrator/src/cross-session/announcement-batcher.ts` (the
  * `enqueue` argument that the batcher consumes).
  *
- * NOTE: `callerSessionKey` is the FORMATTED string form (caller uses
- * `parseFormattedSessionKey` to convert it to `SessionKey` when needed),
- * matching the orchestrator's `QueuedAnnouncement.callerSessionKey: string`.
+ * `callerSessionKey` is a display and idempotency projection; canonical
+ * conversation authority travels separately in `callerConversation`.
  */
 export interface QueuedAnnouncementShape {
   announcementText: string;
@@ -68,6 +69,7 @@ export interface QueuedAnnouncementShape {
   announceThreadId?: string;
   callerAgentId: string;
   callerSessionKey: string;
+  callerConversation: ConversationLocator;
   runId: string;
   /** Idempotency key `${callerSessionKey}::${runId}`. Mirrors QueuedAnnouncement.idempotencyKey — keep in lockstep. */
   idempotencyKey?: string;

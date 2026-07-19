@@ -23,6 +23,7 @@ export type {
   ChannelCapability,
   ChannelStatus,
   MemoryPort,
+  MemoryWriteEntry,
   MemorySearchOptions,
   MemorySearchResult,
   EmbeddingPort,
@@ -58,6 +59,7 @@ export type {
   DeltaOp,
   MemoryConsolidationStore,
   SessionStorePort,
+  SessionQueryScope,
   SessionData,
   SessionListEntry,
   SessionDetailedEntry,
@@ -138,6 +140,7 @@ export type {
   OAuthCredentialStorePort,
   OAuthProfile,
   DeliveryQueuePort,
+  DeliveryAuthority,
   DeliveryQueueEntry,
   DeliveryQueueEnqueueInput,
   DeliveryQueueStatusCounts,
@@ -164,11 +167,15 @@ export type {
   TimerHandle,
   WorkspacePolicyPort,
   WorkspacePolicyError,
+  LocalizationPort,
+  LocalizationRequest,
+  LocalizationKey,
+  LocalizationError,
   CaManagerPort,
   EgressControlPort,
   EgressMaterialization,
+  PrincipalResolverPort,
 } from "../ports/index.js";
-
 // LCD parts <-> pi-ai Message codec. Runtime VALUES (not types) — the pure
 // round-trip functions the memory adapter and context ingest consume. The port
 // + DTO TYPES are in the export-type block above; these two functions are the

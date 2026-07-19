@@ -13,6 +13,8 @@ pi-mono (pi-agent-core, pi-ai, pi-coding-agent)
   Copyright Mario Zechner
   Licensed under MIT
   https://github.com/badlogic/pi-mono
+  packages/core/src/oauth/openai-codex-browser-login.ts contains an
+  OAuth flow implementation derived from pi-ai (MIT).
 
 OpenClaw - Open-source personal AI agent
   Copyright OpenClaw contributors

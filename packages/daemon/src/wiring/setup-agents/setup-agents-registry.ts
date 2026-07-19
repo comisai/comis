@@ -172,12 +172,8 @@ export async function setupAgents(deps: {
   /** Entity-associative store. Threaded into each per-agent createPiExecutor
    *  like memoryPort (the recall read path). Built in setup-memory on the shared db. */
   entityStore?: import("@comis/core").MemoryEntityStore;
-  /** LCD lossless context store. Threaded into each per-agent
-   *  createPiExecutor like entityStore — as `contextStore` (the dag-mode assembly
-   *  read path -> context-engine.ts `dag` branch). Built in setup-memory on the
-   *  shared db (`createLcdStore(db)`); injected as the core `ContextStorePort` TYPE
-   *  (agent↛memory cut). Opt-in (`contextEngine.version: "dag"`); default pipeline. */
-  lcdStore?: import("@comis/core").ContextStorePort;
+  /** Canonical lossless context store injected into every executor. */
+  lcdStore: import("@comis/core").ContextStorePort;
   /** The daemon-owned per-tenant summarizer spend+breaker; threaded
    *  into each per-agent createPiExecutor -> setupContextEngine (the getSummarizerDeps
    *  leaf-seam gate). ONE daemon instance, partitions by tenantId. */
@@ -264,6 +260,11 @@ export async function setupAgents(deps: {
    *  daemon's viable-floor loop after setupTools. */
   agentBootWindowInfo?: Map<string, import("@comis/agent").AgentBootWindowInfo>;
 }): Promise<AgentsResult> {
+  if (!deps.lcdStore) {
+    throw new Error(
+      "Agent startup requires a ContextStorePort; inject durable storage or createInMemoryContextStore() explicitly",
+    );
+  }
   const { container, memoryAdapter, sessionStore, agentLogger } = deps;
 
   // Inject module-level logger for response sanitization pipeline
@@ -491,17 +492,7 @@ export async function setupAgents(deps: {
   };
 
   for (const [agentId, agentConfig] of Object.entries(agents)) {
-    // Pass the RAW (pre-Zod-default) rerank signal from the
-    // daemon-wide map so the per-agent effective-rerank precedence sees genuine
-    // unset (undefined) vs explicit-off (false). `agentConfig` here is the PARSED
-    // config — its rag.rerank.enabled is always a concrete boolean and would erase
-    // the unset signal if read directly.
-    const result = await setupSingleAgent(
-      agentId,
-      agentConfig,
-      singleAgentDeps,
-      container.rawAgentRerankEnabled?.get(agentId),
-    );
+    const result = await setupSingleAgent(agentId, agentConfig, singleAgentDeps);
     executors.set(agentId, result.executor);
     workspaceDirs.set(agentId, result.workspaceDir);
     costTrackers.set(agentId, result.costTracker);

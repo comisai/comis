@@ -214,38 +214,22 @@ describe("resolveAgentMainProvider", () => {
 });
 
 describe("resolveEffectiveRerank", () => {
-  // The full 2x3 truth table for the pure
-  // precedence fn: the explicit operator value (true | false | undefined-if-unset)
-  // crossed with the model-present probe result. Explicit ALWAYS wins both
-  // directions; unset (undefined) falls through to the presence signal.
-
   it.each([
-    // [explicit, present, expected, why]
-    [true, true, true, "explicit true wins when model present"],
-    [true, false, true, "explicit true wins even when model absent (opt-in download case)"],
-    [false, true, false, "explicit false wins even when model present (operator force-off)"],
-    [false, false, false, "explicit false wins when model absent"],
-    [undefined, true, true, "unset -> auto-on iff model present"],
-    [undefined, false, false, "unset + absent -> off (fresh-install posture)"],
+    ["on", true, true, "on wins when model present"],
+    ["on", false, true, "on permits an explicit download"],
+    ["off", true, false, "off wins when model present"],
+    ["off", false, false, "off wins when model absent"],
+    ["auto", true, true, "auto enables only for a local model"],
+    ["auto", false, false, "auto stays off on a fresh install"],
   ] as const)(
     "resolveEffectiveRerank(%s, %s) === %s — %s",
-    (explicit, present, expected) => {
-      expect(resolveEffectiveRerank(explicit, present)).toBe(expected);
+    (mode, present, expected) => {
+      expect(resolveEffectiveRerank(mode, present)).toBe(expected);
     },
   );
 
-  it("explicit true returns true regardless of presence (explicit wins, on-direction)", () => {
-    expect(resolveEffectiveRerank(true, true)).toBe(true);
-    expect(resolveEffectiveRerank(true, false)).toBe(true);
-  });
-
-  it("explicit false returns false regardless of presence (explicit wins, off-direction)", () => {
-    expect(resolveEffectiveRerank(false, true)).toBe(false);
-    expect(resolveEffectiveRerank(false, false)).toBe(false);
-  });
-
-  it("unset (undefined) mirrors the model-present signal exactly (auto-on gate)", () => {
-    expect(resolveEffectiveRerank(undefined, true)).toBe(true);
-    expect(resolveEffectiveRerank(undefined, false)).toBe(false);
+  it("returns the model-present signal exactly in auto mode", () => {
+    expect(resolveEffectiveRerank("auto", true)).toBe(true);
+    expect(resolveEffectiveRerank("auto", false)).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import Database from "better-sqlite3";
+import type { ConversationRef, MemoryRecallScope } from "@comis/core";
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   initSchema,
@@ -32,7 +33,11 @@ describe("initSchema", () => {
     const colNames = columns.map((c) => c.name);
     expect(colNames).toContain("id");
     expect(colNames).toContain("tenant_id");
+    expect(colNames).toContain("agent_id");
     expect(colNames).toContain("user_id");
+    expect(colNames).toContain("visibility");
+    expect(colNames).toContain("conversation_ref");
+    expect(colNames).toContain("principal_id");
     expect(colNames).toContain("content");
     expect(colNames).toContain("trust_level");
     expect(colNames).toContain("memory_type");
@@ -47,16 +52,60 @@ describe("initSchema", () => {
     expect(colNames).toContain("has_embedding");
   });
 
+  it("an existing memories table without visibility requires backup and recreation", () => {
+    db.exec(`
+      CREATE TABLE memories (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        content TEXT NOT NULL
+      )
+    `);
+
+    expect(() => initSchema(db, 4)).toThrow(/Back up the database, then recreate it/);
+  });
+
+  it("rebuilds tenant-agent derived indexes into visibility partitions", () => {
+    initSchema(db, 4);
+    const conversationRef = `cv_${"A".repeat(43)}`;
+    db.prepare(`
+      INSERT INTO memories (
+        id, tenant_id, agent_id, user_id, visibility, conversation_ref,
+        principal_id, content, trust_level, source_who, created_at
+      ) VALUES (?, ?, ?, ?, 'conversation', ?, NULL, ?, 'learned', 'user_a', ?)
+    `).run("memory-a", "tenant-a", "agent-a", "user-a", conversationRef, "orchid rebuild fact", 1);
+    db.exec(`
+      DROP TABLE memory_authority_partitions;
+      CREATE TABLE memory_authority_partitions (
+        partition_id INTEGER PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        UNIQUE (tenant_id, agent_id)
+      );
+      INSERT INTO memory_authority_partitions (tenant_id, agent_id) VALUES ('tenant-a', 'agent-a');
+    `);
+
+    expect(() => initSchema(db, 4)).not.toThrow();
+    const columns = (db.prepare("PRAGMA table_info(memory_authority_partitions)").all() as Array<{ name: string }>)
+      .map((column) => column.name);
+    expect(columns).toContain("visibility_key");
+    expect(
+      db.prepare("SELECT visibility_key FROM memory_authority_partitions WHERE tenant_id = ? AND agent_id = ?")
+        .get("tenant-a", "agent-a"),
+    ).toEqual({ visibility_key: `conversation:${conversationRef}` });
+  });
+
   it("creates the sessions table", () => {
     initSchema(db, 1536);
 
     const columns = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
 
     const colNames = columns.map((c) => c.name);
-    expect(colNames).toContain("session_key");
     expect(colNames).toContain("tenant_id");
-    expect(colNames).toContain("user_id");
-    expect(colNames).toContain("channel_id");
+    expect(colNames).toContain("agent_id");
+    expect(colNames).toContain("conversation_ref");
+    expect(colNames).toContain("canonical_scope");
     expect(colNames).toContain("messages");
     expect(colNames).toContain("created_at");
     expect(colNames).toContain("updated_at");
@@ -113,16 +162,15 @@ describe("initSchema", () => {
       .all() as Array<{ name: string }>;
 
     const indexNames = indexes.map((i) => i.name);
-    expect(indexNames).toContain("idx_sessions_tenant");
-    expect(indexNames).toContain("idx_sessions_updated");
+    expect(indexNames).toContain("idx_sessions_authority_updated");
   });
 
   it("FTS5 trigger fires on INSERT", () => {
     initSchema(db, 1536);
 
     db.prepare(
-      `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-       VALUES ('m1', 'default', 'u1', 'the quick brown fox', 'learned', 'semantic', 'agent', '[]', 1000)`,
+      `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at)
+       VALUES ('m1', 'default', 'default', 'u1', 'agent-shared', 'the quick brown fox', 'learned', 'semantic', 'agent', '[]', 1000)`,
     ).run();
 
     const ftsRows = db
@@ -137,8 +185,8 @@ describe("initSchema", () => {
     initSchema(db, 1536);
 
     db.prepare(
-      `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-       VALUES ('m1', 'default', 'u1', 'the quick brown fox', 'learned', 'semantic', 'agent', '[]', 1000)`,
+      `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at)
+       VALUES ('m1', 'default', 'default', 'u1', 'agent-shared', 'the quick brown fox', 'learned', 'semantic', 'agent', '[]', 1000)`,
     ).run();
 
     // Verify it's in FTS
@@ -157,8 +205,8 @@ describe("initSchema", () => {
     initSchema(db, 1536);
 
     db.prepare(
-      `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-       VALUES ('m1', 'default', 'u1', 'the quick brown fox', 'learned', 'semantic', 'agent', '[]', 1000)`,
+      `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at)
+       VALUES ('m1', 'default', 'default', 'u1', 'agent-shared', 'the quick brown fox', 'learned', 'semantic', 'agent', '[]', 1000)`,
     ).run();
 
     // Update content
@@ -181,8 +229,8 @@ describe("initSchema", () => {
 
     expect(() => {
       db.prepare(
-        `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-         VALUES ('m1', 'default', 'u1', 'test', 'invalid', 'semantic', 'agent', '[]', 1000)`,
+        `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at)
+         VALUES ('m1', 'default', 'default', 'u1', 'agent-shared', 'test', 'invalid', 'semantic', 'agent', '[]', 1000)`,
       ).run();
     }).toThrow();
   });
@@ -192,8 +240,8 @@ describe("initSchema", () => {
 
     expect(() => {
       db.prepare(
-        `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-         VALUES ('m1', 'default', 'u1', 'test', 'learned', 'invalid_type', 'agent', '[]', 1000)`,
+        `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at)
+         VALUES ('m1', 'default', 'default', 'u1', 'agent-shared', 'test', 'learned', 'invalid_type', 'agent', '[]', 1000)`,
       ).run();
     }).toThrow();
   });
@@ -250,7 +298,7 @@ describe("initSchema", () => {
 
     expect(colNames).toContain("id");
     // Tenant/agent scoping columns: present from day 1.
-    expect(colNames).toContain("conversation_id");
+    expect(colNames).toContain("conversation_ref");
     expect(colNames).toContain("tenant_id");
     expect(colNames).toContain("agent_id");
     expect(colNames).toContain("session_key");
@@ -289,17 +337,17 @@ describe("initSchema", () => {
       .all() as Array<{ name: string }>;
 
     // seq is monotonic PER (conversation, agent, tenant) so two
-    // agents sharing one conversation_id own independent seq sequences.
+    // agents sharing one conversation_ref own independent seq sequences.
     expect(indexes.map((i) => i.name)).toContain("idx_lcd_messages_conv_agent_seq");
 
-    // The SAME (conversation_id, seq) for the SAME agent collides...
+    // The SAME (conversation_ref, seq) for the SAME agent collides...
     db.prepare(
-      "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES ('m1','conv-1','t','agent-a','s',0,'user',1,1)",
+      "INSERT INTO lcd_messages (id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES ('m1','conv-1','t','agent-a','s',0,'user',1,1)",
     ).run();
     expect(() =>
       db
         .prepare(
-          "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES ('m2','conv-1','t','agent-a','s',0,'user',1,1)",
+          "INSERT INTO lcd_messages (id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES ('m2','conv-1','t','agent-a','s',0,'user',1,1)",
         )
         .run(),
     ).toThrow(/UNIQUE constraint/i);
@@ -307,7 +355,7 @@ describe("initSchema", () => {
     expect(() =>
       db
         .prepare(
-          "INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES ('m3','conv-1','t','agent-b','s',0,'user',1,1)",
+          "INSERT INTO lcd_messages (id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at) VALUES ('m3','conv-1','t','agent-b','s',0,'user',1,1)",
         )
         .run(),
     ).not.toThrow();
@@ -349,7 +397,7 @@ describe("initSchema", () => {
     db.pragma("foreign_keys = ON");
 
     db.prepare(
-      `INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
+      `INSERT INTO lcd_messages (id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
        VALUES ('msg-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 0, 'assistant', 12, 1700000000000)`,
     ).run();
     db.prepare(
@@ -377,7 +425,7 @@ describe("initSchema", () => {
   // leaf→message link with ON DELETE RESTRICT on the message FK (RESTRICT
   // ENFORCES losslessness; the store never deletes a summarized lcd_messages
   // row); lcd_context_items is the ordered model-facing view with a UNIQUE
-  // (conversation_id, ordinal) index keeping ordinals dense + gap-free.
+  // (conversation_ref, ordinal) index keeping ordinals dense + gap-free.
 
   it("initSchema creates the lcd_summaries, lcd_summary_messages and lcd_context_items tables", () => {
     initSchema(db, 1536);
@@ -403,7 +451,7 @@ describe("initSchema", () => {
 
     expect(colNames).toContain("summary_id");
     // Tenant/agent scoping columns: present from day 1.
-    expect(colNames).toContain("conversation_id");
+    expect(colNames).toContain("conversation_ref");
     expect(colNames).toContain("tenant_id");
     expect(colNames).toContain("agent_id");
     expect(colNames).toContain("session_key");
@@ -427,7 +475,7 @@ describe("initSchema", () => {
     const insertBadKind = () =>
       db
         .prepare(
-          "INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO lcd_summaries (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .run("s_bad", "conv-1", "t1", "a1", "sess-1", "bogus", 1, 1, 2, 3, 10, "x", "[]", 0, 0, 1000);
     expect(insertBadKind).toThrow(/CHECK constraint/i);
@@ -436,7 +484,7 @@ describe("initSchema", () => {
     const insertLeaf = () =>
       db
         .prepare(
-          "INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO lcd_summaries (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .run("s_leaf", "conv-1", "t1", "a1", "sess-1", "leaf", 0, 1, 2, 3, 10, "x", "[]", 0, 0, 1000);
     expect(insertLeaf).not.toThrow();
@@ -445,7 +493,7 @@ describe("initSchema", () => {
     const insertCondensed = () =>
       db
         .prepare(
-          "INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO lcd_summaries (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .run("s_cond", "conv-1", "t1", "a1", "sess-1", "condensed", 1, 1, 2, 3, 10, "x", "[]", 0, 0, 1000);
     expect(insertCondensed).not.toThrow();
@@ -470,11 +518,11 @@ describe("initSchema", () => {
     db.pragma("foreign_keys = ON"); // production sets this via openSqliteDatabase
 
     db.prepare(
-      `INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
+      `INSERT INTO lcd_messages (id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
        VALUES ('msg-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 0, 'assistant', 12, 1700000000000)`,
     ).run();
     db.prepare(
-      `INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+      `INSERT INTO lcd_summaries (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
        VALUES ('sum-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 'leaf', 0, 1, 2, 1, 10, 'leaf', '[]', 0, 0, 1700000000000)`,
     ).run();
     db.prepare(
@@ -498,11 +546,11 @@ describe("initSchema", () => {
     db.pragma("foreign_keys = ON");
 
     db.prepare(
-      `INSERT INTO lcd_messages (id, conversation_id, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
+      `INSERT INTO lcd_messages (id, conversation_ref, tenant_id, agent_id, session_key, seq, role, token_count, created_at)
        VALUES ('msg-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 0, 'assistant', 12, 1700000000000)`,
     ).run();
     db.prepare(
-      `INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+      `INSERT INTO lcd_summaries (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
        VALUES ('sum-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 'leaf', 0, 1, 2, 1, 10, 'leaf', '[]', 0, 0, 1700000000000)`,
     ).run();
     db.prepare(
@@ -546,11 +594,11 @@ describe("initSchema", () => {
     db.pragma("foreign_keys = ON"); // production sets this via openSqliteDatabase
 
     db.prepare(
-      `INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+      `INSERT INTO lcd_summaries (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
        VALUES ('leaf-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 'leaf', 0, 1, 2, 1, 10, 'leaf', '[]', 0, 0, 1700000000000)`,
     ).run();
     db.prepare(
-      `INSERT INTO lcd_summaries (summary_id, conversation_id, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
+      `INSERT INTO lcd_summaries (summary_id, conversation_ref, tenant_id, agent_id, session_key, kind, depth, earliest_at, latest_at, descendant_count, token_count, content, file_ids, taint, fallback, created_at)
        VALUES ('cond-1', 'conv-1', 'tenant-1', 'agent-1', 'sess-1', 'condensed', 1, 1, 2, 1, 12, 'cond', '[]', 0, 0, 1700000001000)`,
     ).run();
     db.prepare(
@@ -577,7 +625,7 @@ describe("initSchema", () => {
     ).map((c) => c.name);
 
     expect(colNames).toContain("id");
-    expect(colNames).toContain("conversation_id");
+    expect(colNames).toContain("conversation_ref");
     expect(colNames).toContain("tenant_id");
     expect(colNames).toContain("agent_id");
     expect(colNames).toContain("session_key");
@@ -592,7 +640,7 @@ describe("initSchema", () => {
     const insertBad = () =>
       db
         .prepare(
-          "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO lcd_context_items (id, conversation_ref, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .run("ci_bad", "conv-1", "t1", "a1", "sess-1", 0, "bogus", "ref-1");
     expect(insertBad).toThrow(/CHECK constraint/i);
@@ -601,7 +649,7 @@ describe("initSchema", () => {
       expect(() =>
         db
           .prepare(
-            "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO lcd_context_items (id, conversation_ref, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .run(`ci_${kind}`, "conv-1", "t1", "a1", "sess-1", kind === "message" ? 0 : 1, kind, "ref-1"),
       ).not.toThrow();
@@ -620,14 +668,14 @@ describe("initSchema", () => {
     // each agent's ordinals are dense + gap-free over ITS OWN items.
     expect(indexes).toContain("idx_lcd_ctx_items_conv_agent_ord");
 
-    // The index is UNIQUE: same (conversation_id, agent_id, tenant_id, ordinal) collides.
+    // The index is UNIQUE: same (conversation_ref, agent_id, tenant_id, ordinal) collides.
     db.prepare(
-      "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('a', 'conv-1', 't', 'agent-a', 's', 0, 'message', 'm1')",
+      "INSERT INTO lcd_context_items (id, conversation_ref, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('a', 'conv-1', 't', 'agent-a', 's', 0, 'message', 'm1')",
     ).run();
     expect(() =>
       db
         .prepare(
-          "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('b', 'conv-1', 't', 'agent-a', 's', 0, 'message', 'm2')",
+          "INSERT INTO lcd_context_items (id, conversation_ref, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('b', 'conv-1', 't', 'agent-a', 's', 0, 'message', 'm2')",
         )
         .run(),
     ).toThrow(/UNIQUE constraint/i);
@@ -635,7 +683,7 @@ describe("initSchema", () => {
     expect(() =>
       db
         .prepare(
-          "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('c', 'conv-2', 't', 'agent-a', 's', 0, 'message', 'm3')",
+          "INSERT INTO lcd_context_items (id, conversation_ref, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('c', 'conv-2', 't', 'agent-a', 's', 0, 'message', 'm3')",
         )
         .run(),
     ).not.toThrow();
@@ -644,7 +692,7 @@ describe("initSchema", () => {
     expect(() =>
       db
         .prepare(
-          "INSERT INTO lcd_context_items (id, conversation_id, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('d', 'conv-1', 't', 'agent-b', 's', 0, 'message', 'm4')",
+          "INSERT INTO lcd_context_items (id, conversation_ref, tenant_id, agent_id, session_key, ordinal, ref_kind, ref_id) VALUES ('d', 'conv-1', 't', 'agent-b', 's', 0, 'message', 'm4')",
         )
         .run(),
     ).not.toThrow();
@@ -695,6 +743,7 @@ describe("initSchema", () => {
           tenant_id TEXT NOT NULL DEFAULT 'default',
           agent_id TEXT NOT NULL DEFAULT 'default',
           user_id TEXT NOT NULL,
+          visibility TEXT NOT NULL,
           content TEXT NOT NULL,
           trust_level TEXT NOT NULL,
           memory_type TEXT NOT NULL DEFAULT 'semantic',
@@ -714,8 +763,8 @@ describe("initSchema", () => {
       // Simulate a live DB created before the occurred_at feature — no occurred_at column.
       createLegacyMemoriesTable(db);
       db.prepare(
-        `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-         VALUES ('pre-1', 'default', 'u1', 'an existing fact', 'learned', 'semantic', 'agent', '[]', 1000)`,
+        `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at)
+         VALUES ('pre-1', 'default', 'default', 'u1', 'agent-shared', 'an existing fact', 'learned', 'semantic', 'agent', '[]', 1000)`,
       ).run();
 
       // Pre-condition: occurred_at is genuinely absent.
@@ -762,8 +811,8 @@ describe("initSchema", () => {
       initSchema(db, 1536);
       expect(() => {
         db.prepare(
-          `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-           VALUES ('no-occ', 'default', 'u1', 'no event time', 'learned', 'semantic', 'agent', '[]', 1000)`,
+          `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at)
+           VALUES ('no-occ', 'default', 'default', 'u1', 'agent-shared', 'no event time', 'learned', 'semantic', 'agent', '[]', 1000)`,
         ).run();
       }).not.toThrow();
 
@@ -776,8 +825,8 @@ describe("initSchema", () => {
     it("occurred_at accepts an explicit epoch-ms event time distinct from created_at", () => {
       initSchema(db, 1536);
       db.prepare(
-        `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, occurred_at)
-         VALUES ('with-occ', 'default', 'u1', 'an event', 'learned', 'semantic', 'agent', '[]', 1700000000000, 1699000000000)`,
+        `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at, occurred_at)
+         VALUES ('with-occ', 'default', 'default', 'u1', 'agent-shared', 'an event', 'learned', 'semantic', 'agent', '[]', 1700000000000, 1699000000000)`,
       ).run();
 
       const row = db
@@ -813,6 +862,7 @@ describe("initSchema", () => {
           tenant_id TEXT NOT NULL DEFAULT 'default',
           agent_id TEXT NOT NULL DEFAULT 'default',
           user_id TEXT NOT NULL,
+          visibility TEXT NOT NULL,
           content TEXT NOT NULL,
           trust_level TEXT NOT NULL,
           memory_type TEXT NOT NULL DEFAULT 'semantic',
@@ -832,8 +882,8 @@ describe("initSchema", () => {
     it("adds the five observation columns to a pre-existing table WITHOUT them, non-destructively", () => {
       createPreObservationTable(db);
       db.prepare(
-        `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-         VALUES ('pre-obs', 'default', 'u1', 'an existing raw fact', 'learned', 'semantic', 'agent', '[]', 1000)`,
+        `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at)
+         VALUES ('pre-obs', 'default', 'default', 'u1', 'agent-shared', 'an existing raw fact', 'learned', 'semantic', 'agent', '[]', 1000)`,
       ).run();
 
       const before = (
@@ -922,6 +972,7 @@ describe("initSchema", () => {
           tenant_id TEXT NOT NULL DEFAULT 'default',
           agent_id TEXT NOT NULL DEFAULT 'default',
           user_id TEXT NOT NULL,
+          visibility TEXT NOT NULL,
           content TEXT NOT NULL,
           trust_level TEXT NOT NULL,
           memory_type TEXT NOT NULL DEFAULT 'semantic',
@@ -946,8 +997,8 @@ describe("initSchema", () => {
     it("adds observation_kind + pattern_type to a pre-existing table WITHOUT them, non-destructively (existing row -> NULL = merge)", () => {
       createPreReasoningTable(db);
       db.prepare(
-        `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-         VALUES ('pre-reason', 'default', 'u1', 'an existing pre-typed-observation fact', 'learned', 'semantic', 'agent', '[]', 1000)`,
+        `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at)
+         VALUES ('pre-reason', 'default', 'default', 'u1', 'agent-shared', 'an existing pre-typed-observation fact', 'learned', 'semantic', 'agent', '[]', 1000)`,
       ).run();
 
       const before = (
@@ -1016,9 +1067,10 @@ describe("initSchema", () => {
     float32[0] = 1.0;
 
     expect(() => {
-      db.prepare("INSERT INTO vec_memories(memory_id, embedding) VALUES (?, ?)").run(
+      db.prepare("INSERT INTO vec_memories(memory_id, embedding, authority_partition_id) VALUES (?, ?, ?)").run(
         "test-id",
         float32,
+        1n,
       );
     }).not.toThrow();
 
@@ -1040,9 +1092,10 @@ describe("initSchema", () => {
     wrongFloat32[0] = 1.0;
 
     expect(() => {
-      db.prepare("INSERT INTO vec_memories(memory_id, embedding) VALUES (?, ?)").run(
+      db.prepare("INSERT INTO vec_memories(memory_id, embedding, authority_partition_id) VALUES (?, ?, ?)").run(
         "test-wrong",
         wrongFloat32,
+        1n,
       );
     }).toThrow();
   });
@@ -1054,8 +1107,8 @@ describe("initSchema", () => {
     for (const level of levels) {
       expect(() => {
         db.prepare(
-          `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-           VALUES (?, 'default', 'u1', 'test', ?, 'semantic', 'agent', '[]', 1000)`,
+          `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at)
+           VALUES (?, 'default', 'default', 'u1', 'agent-shared', 'test', ?, 'semantic', 'agent', '[]', 1000)`,
         ).run(`m-${level}`, level);
       }).not.toThrow();
     }
@@ -1068,8 +1121,8 @@ describe("initSchema", () => {
     for (const type of types) {
       expect(() => {
         db.prepare(
-          `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-           VALUES (?, 'default', 'u1', 'test', 'learned', ?, 'agent', '[]', 1000)`,
+          `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at)
+           VALUES (?, 'default', 'default', 'u1', 'agent-shared', 'test', 'learned', ?, 'agent', '[]', 1000)`,
         ).run(`m-${type}`, type);
       }).not.toThrow();
     }
@@ -1203,8 +1256,8 @@ describe("initSchema", () => {
       // `memory_usefulness.memory_id` has a FK → memories(id), enforced on this
       // connection, so insert the parent memory row first.
       db.prepare(
-        `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-         VALUES ('m-fc', 'default', 'u1', 'a usefulness-tracked fact', 'learned', 'semantic', 'agent', '[]', 1000)`,
+        `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, created_at)
+         VALUES ('m-fc', 'default', 'default', 'u1', 'agent-shared', 'a usefulness-tracked fact', 'learned', 'semantic', 'agent', '[]', 1000)`,
       ).run();
       db.prepare(
         `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count)
@@ -1309,8 +1362,8 @@ describe("ensureEntityTables", () => {
   it("cascades link deletion when the parent memory is deleted (no orphans)", () => {
     initSchema(db, 1536);
     db.prepare(
-      `INSERT INTO memories (id, user_id, content, trust_level, source_who, created_at)
-       VALUES ('m1', 'u1', 'about Istanbul', 'learned', 'agent', 1)`,
+      `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, source_who, created_at)
+       VALUES ('m1', 'default', 'default', 'u1', 'agent-shared', 'about Istanbul', 'learned', 'agent', 1)`,
     ).run();
     db.prepare(
       `INSERT INTO memory_entities
@@ -1603,8 +1656,8 @@ describe("ensureUsefulnessTable intent column", () => {
   it("FRESH DB: the PRIMARY KEY is (tenant_id, agent_id, memory_id, intent) — two rows differing ONLY in intent on one (tenant,agent,memory) both persist", () => {
     initSchema(db, 1536);
     db.prepare(
-      `INSERT INTO memories (id, user_id, content, trust_level, source_who, created_at)
-       VALUES ('m1', 'u1', 'a fact', 'learned', 'agent', 1)`,
+      `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, source_who, created_at)
+       VALUES ('m1', 'default', 'default', 'u1', 'agent-shared', 'a fact', 'learned', 'agent', 1)`,
     ).run();
 
     // Two rows: same (tenant, agent, memory), DIFFERENT intent ('' global + 'temporal').
@@ -1805,15 +1858,24 @@ describe("initSchema vec dimension reconciliation", () => {
     db = new Database(":memory:");
   });
 
+  const recallScope: MemoryRecallScope = {
+    tenantId: "default",
+    agentId: "default",
+    conversationRef: `cv_${"A".repeat(43)}` as ConversationRef,
+    principalId: "u1",
+    includeAgentShared: true,
+  };
+
   /** Seed one memory row flagged as embedded plus its vec twin at the given dimension. */
   function seedEmbeddedMemory(dimensions: number): void {
     db.prepare(
-      `INSERT INTO memories (id, user_id, content, trust_level, source_who, created_at, has_embedding)
-       VALUES ('m1', 'u1', 'hello world', 'learned', 'user', 0, 1)`,
+      `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, content, trust_level, source_who, created_at, has_embedding)
+       VALUES ('m1', 'default', 'default', 'u1', 'agent-shared', 'hello world', 'learned', 'user', 0, 1)`,
     ).run();
-    db.prepare("INSERT INTO vec_memories(memory_id, embedding) VALUES (?, ?)").run(
+    db.prepare("INSERT INTO vec_memories(memory_id, embedding, authority_partition_id) VALUES (?, ?, ?)").run(
       "m1",
       new Float32Array(dimensions),
+      1n,
     );
   }
 
@@ -1859,7 +1921,7 @@ describe("initSchema vec dimension reconciliation", () => {
 
     // Incident-replay probe: the production KNN path at the new dimension
     // must return empty instead of throwing.
-    expect(() => searchByVector(db, new Array(1536).fill(0), 3)).not.toThrow();
+    expect(() => searchByVector(db, new Array(1536).fill(0), 3, recallScope)).not.toThrow();
   });
 
   it("preserves vec rows and has_embedding flags when dimensions are unchanged across boots", () => {

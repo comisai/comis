@@ -976,7 +976,7 @@ describe("IcChatConsole", () => {
     (el as any)._inputValue = "";
     (el as any)._transcribing = true;
 
-    const result = await rpc.call<{ text: string }>("audio.transcribe", { audio: "base64", format: "webm" });
+    const result = await rpc.call("audio.transcribe", { audio: "base64", format: "webm" });
     if (result?.text) {
       (el as any)._inputValue = result.text;
     }

@@ -59,6 +59,8 @@ export interface CondenseParams {
   task: string;
   /** Unique run identifier. */
   runId: string;
+  /** Explicit tenant authority for result persistence. */
+  tenantId: string;
   /** Parent session key (may contain colons). */
   sessionKey: string;
   /** Agent identifier for logging. */
@@ -207,8 +209,7 @@ async function condenseInternal(params: CondenseParams, deps: ResultCondenserDep
 
   // Compute disk path eagerly.
   // Simplified directory naming for new runs: {tenantId}/{runId}.json
-  const tenantId = sessionKey.split(":")[0] ?? "default";
-  const diskPath = safePath(deps.dataDir, "subagent-results", tenantId, `${runId}.json`);
+  const diskPath = safePath(deps.dataDir, "subagent-results", params.tenantId, `${runId}.json`);
 
   // Determine condensation level.
   let level: 1 | 2 | 3;

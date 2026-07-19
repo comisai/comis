@@ -30,8 +30,9 @@ import { fromPromise, suppressError, tryCatch, type Result } from "@comis/shared
 import {
   createDeliveryOrigin,
   createResolvedRequestContext,
+  conversationScopeToSessionKey,
   emitObservationalEventSafely,
-  parseFormattedSessionKey,
+  formatSessionKey,
   RequestContextSchema,
   runWithContext,
   systemNowMs,
@@ -42,6 +43,8 @@ import {
   type RequestContext,
   type ResolvedRequestContextSeed,
   type SessionKey,
+  type SessionQueryScope,
+  type SessionStoreError,
   type TypedEventBus,
 } from "@comis/core";
 import type { AgentExecutor } from "../executor/types.js";
@@ -57,7 +60,7 @@ export interface BackgroundCompletionRunner {
 
 /** Minimal session-store contract the runner needs (fallback gate). */
 export interface RunnerSessionStore {
-  loadByFormattedKey(sessionKey: string): unknown | undefined;
+  loadByRef(scope: SessionQueryScope, conversationRef: BackgroundTaskOrigin["conversationRef"]): Result<unknown | undefined, SessionStoreError>;
 }
 
 export interface BackgroundCompletionRunnerDeps {
@@ -102,22 +105,18 @@ function createReentryContext(
   const built = tryCatch(() => {
     const persistedTrace = RequestContextSchema.shape.traceId.safeParse(origin.traceId);
     const traceId = persistedTrace.success ? persistedTrace.data : randomUUID();
-    const deliveryOrigin = createDeliveryOrigin({
-      channelType: origin.channelType,
-      channelId: origin.channelId,
-      userId: parsedKey.userId,
-      tenantId: parsedKey.tenantId,
-    });
+    const deliveryOrigin = createDeliveryOrigin(origin.deliveryOrigin);
     const seed: ResolvedRequestContextSeed = {
-      tenantId: parsedKey.tenantId,
+      tenantId: origin.turnScope.conversation.tenantId,
       userId: parsedKey.userId,
       sessionKey: parsedKey,
-      agentId: origin.agentId,
+      agentId: origin.turnScope.conversation.agentId,
       traceId,
       startedAt: systemNowMs(),
       trustLevel: "guest" as const,
       channelType: deliveryOrigin.channelType,
       deliveryOrigin,
+      turnScope: origin.turnScope,
     };
     return seed;
   });
@@ -186,6 +185,24 @@ export function createBackgroundCompletionRunner(
     // origin is producer-required (background-task-manager promote()
     // rejects missing-origin) so we read it directly.
     const origin = task.origin;
+    const agentId = origin.turnScope.conversation.agentId;
+    const queryScope = {
+      tenantId: origin.turnScope.conversation.tenantId,
+      agentId,
+    };
+    const projectedSession = conversationScopeToSessionKey(origin.turnScope.conversation);
+    if (!projectedSession.ok) {
+      log.warn({
+        taskId,
+        conversationRef: origin.conversationRef,
+        hint: "Inspect or remove the persisted background task authority before retrying",
+        errorKind: projectedSession.error.errorKind,
+      }, "Background completion: invalid persisted conversation scope");
+      await fallbackForTask(task.id, agentId, task.toolName, `Background task "${task.toolName}" completed (routing failed).`);
+      return;
+    }
+    const parsedKey = projectedSession.value;
+    const formattedSessionKey = formatSessionKey(parsedKey);
 
     // Hop cap. Read incoming hop count from origin (schema field populated
     // by the originResolver).
@@ -195,7 +212,7 @@ export function createBackgroundCompletionRunner(
         {
           taskId,
           toolName: task.toolName,
-          agentId: origin.agentId,
+          agentId,
           hopCount: nextHopCount,
           max: deps.maxBackgroundHops,
           // traceId from origin keeps operator logs threaded.
@@ -205,7 +222,7 @@ export function createBackgroundCompletionRunner(
       );
       await fallbackForTask(
         task.id,
-        origin.agentId,
+        agentId,
         task.toolName,
         `Background task "${task.toolName}" completed but follow-up was skipped — recursion limit reached. Run again or check the result manually.`,
       );
@@ -217,11 +234,11 @@ export function createBackgroundCompletionRunner(
     // would only serialize a redundant continuation behind the live turn. The
     // dispatcher's matching check already suppressed the fallback notice; the
     // result stays readable via `background_tasks` if the live turn raced past it.
-    if (deps.isTurnInFlight?.(origin.sessionKey) === true) {
+    if (deps.isTurnInFlight?.(formattedSessionKey) === true) {
       log.debug(
         {
           taskId,
-          sessionKey: origin.sessionKey,
+          sessionKey: formattedSessionKey,
           traceId: origin.traceId ?? undefined,
           hint: "Origin turn in flight — live turn owns consumption; no re-entry",
         },
@@ -235,12 +252,21 @@ export function createBackgroundCompletionRunner(
     // in JSONL but not be currently registered. Either way, there is no
     // streaming channel to inject into, so skip fallback (which would only
     // produce a WARN from notification-service).
-    const sessionExists = deps.sessionStore.loadByFormattedKey(origin.sessionKey) !== undefined;
-    if (!sessionExists) {
+    const loadedSession = deps.sessionStore.loadByRef(queryScope, origin.conversationRef);
+    if (!loadedSession.ok) {
+      log.warn({
+        taskId,
+        conversationRef: origin.conversationRef,
+        hint: "Inspect session database integrity and retry after storage recovers",
+        errorKind: loadedSession.error.errorKind,
+      }, "Background completion: session authority check failed");
+      return;
+    }
+    if (loadedSession.value === undefined) {
       log.info(
         {
           taskId,
-          sessionKey: origin.sessionKey,
+          sessionKey: formattedSessionKey,
           // traceId from origin so this INFO log line stays threaded with the
           // originating request's trace stream even though the runner runs in a
           // background context (the ALS traceId at this point may differ from
@@ -253,30 +279,12 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    // Reconstruct the SessionKey object for executor.execute().
-    const parsedKey = parseFormattedSessionKey(origin.sessionKey);
-    if (!parsedKey) {
-      log.warn(
-        {
-          taskId,
-          sessionKey: origin.sessionKey,
-          // traceId from origin keeps operator logs threaded.
-          traceId: origin.traceId ?? undefined,
-          hint: "Persisted sessionKey is malformed; cannot route announcement",
-          errorKind: "internal" as const,
-        },
-        "Background completion: invalid sessionKey",
-      );
-      await fallbackForTask(task.id, origin.agentId, task.toolName, `Background task "${task.toolName}" completed (routing failed).`);
-      return;
-    }
-
     const reentryContext = createReentryContext(origin, parsedKey);
     if (!reentryContext.ok) {
       log.warn(
         {
           taskId,
-          sessionKey: origin.sessionKey,
+          sessionKey: formattedSessionKey,
           hint: "Persisted completion route is invalid; inspect or remove the task state before retrying",
           errorKind: "validation" as const,
         },
@@ -284,7 +292,7 @@ export function createBackgroundCompletionRunner(
       );
       await fallbackForTask(
         task.id,
-        origin.agentId,
+        agentId,
         task.toolName,
         `Background task "${task.toolName}" completed (routing failed).`,
       );
@@ -297,7 +305,7 @@ export function createBackgroundCompletionRunner(
     // Construct the synthetic NormalizedMessage (hop counter in metadata).
     const syntheticMsg: NormalizedMessage = {
       id: randomUUID(),
-      channelId: origin.channelId,
+      channelId: origin.deliveryOrigin.channelId,
       channelType: "background_task",
       senderId: "background-task-runner",
       text: announcement,
@@ -307,7 +315,7 @@ export function createBackgroundCompletionRunner(
         backgroundHopCount: nextHopCount,
         backgroundTaskId: task.id,
         toolName: task.toolName,
-        agentId: origin.agentId,
+        agentId,
         traceId: reentryContext.value.traceId,
       },
     };
@@ -318,8 +326,8 @@ export function createBackgroundCompletionRunner(
         log.debug(
           {
             taskId,
-            sessionKey: origin.sessionKey,
-            agentId: origin.agentId,
+            sessionKey: formattedSessionKey,
+            agentId,
             toolName: task.toolName,
             hopCount: nextHopCount,
             traceId: reentryContext.value.traceId,
@@ -331,22 +339,22 @@ export function createBackgroundCompletionRunner(
         // latency from background_task:completed.timestamp to this event.
         emitObservationalEventSafely({ eventBus: deps.eventBus, logger: log }, "background_task:reentered", {
           taskId: task.id,
-          agentId: origin.agentId,
-          sessionKey: origin.sessionKey,
+          agentId,
+          sessionKey: formattedSessionKey,
           hopCount: nextHopCount,
           traceId: reentryContext.value.traceId,
           timestamp: systemNowMs(),
         });
 
         // One turn per event. Existing session lock orders concurrent calls.
-        const executor = tryCatch(() => deps.getExecutor(origin.agentId));
+        const executor = tryCatch(() => deps.getExecutor(agentId));
         if (!executor.ok) return executor;
         const execution = tryCatch(() => executor.value.execute(
           syntheticMsg,
           parsedKey,
           undefined,
           undefined,
-          origin.agentId,
+          agentId,
         ));
         if (!execution.ok) return execution;
         return fromPromise(execution.value);

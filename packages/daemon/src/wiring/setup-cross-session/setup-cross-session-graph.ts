@@ -2,18 +2,13 @@
 /**
  * Graph-execution wiring for cross-session sub-agent spawns.
  *
- * Hosts the `executeSubAgent` closure builder + graph-tree primitives:
- * `resolveGraphCacheRetention` (depth-aware leaf-node retention), and
- * `MIN_SUB_AGENT_STEPS` (the step budget floor that protects boot-sequence
- * consumption). `SUB_AGENT_TOOL_DENYLIST` is imported from `@comis/core`
- * (moved there so @comis/agent can import it without a cycle).
- *
- * The runtime leaf wires the resulting executeSubAgent into createSubAgentRunner.
+ * Hosts the `executeSubAgent` closure builder, depth-aware cache retention,
+ * and the step-budget floor used by the sub-agent runner.
  *
  * @module
  */
-import type { AgentCapability, NormalizedMessage, SessionKey, SpawnPacket, AppContainer, AgentConfig, FileLockPort } from "@comis/core";
-import { tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+import type { AgentCapability, NormalizedMessage, SessionKey, SpawnPacket, AppContainer, AgentConfig, FileLockPort, ConversationLocator, SessionStorePort } from "@comis/core";
+import { ConversationRefSchema, ConversationScopeSchema, tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import {
   createStepCounter,
@@ -31,9 +26,6 @@ import type { WorktreeRegistry } from "../setup-worktree-sweep.js";
 import { resolveGraphCacheRetention } from "./graph-cache-retention.js";
 import { maybePrepareWorktreeForSpawn } from "./worktree-spawn-run.js";
 export { resolveGraphCacheRetention } from "./graph-cache-retention.js";
-// ---------------------------------------------------------------------------
-// Sub-agent step floor
-// ---------------------------------------------------------------------------
 /** Minimum step budget for sub-agent spawns — prevents boot sequence from consuming all steps. */
 export const MIN_SUB_AGENT_STEPS = 30;
 
@@ -46,9 +38,7 @@ export const MIN_SUB_AGENT_STEPS = 30;
  */
 export interface ExecuteSubAgentDeps {
   container: AppContainer;
-  sessionStore: {
-    loadByFormattedKey(key: string): { messages: unknown[]; metadata: Record<string, unknown> } | undefined;
-  };
+  sessionStore: Pick<SessionStorePort, "load" | "loadByRef">;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires complex type parameters from pi-ai SDK
   assembleToolsForAgent: (agentId: string, options?: import("../setup-tools.js").AssembleToolsOptions) => Promise<any[]>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentExecutor.execute has complex signature crossing package boundaries
@@ -74,10 +64,11 @@ export interface ExecuteSubAgentDeps {
 export type ExecuteSubAgentFn = (
   agentId: string,
   sessionKey: SessionKey,
+  conversation: ConversationLocator,
   task: string,
   maxSteps?: number,
   callerAgentId?: string,
-  graphOverrides?: { graphId?: string; nodeId?: string; reuseSessionKey?: string; graphNodeDepth?: number },
+  graphOverrides?: { graphId?: string; nodeId?: string; reuseConversation?: ConversationLocator; graphNodeDepth?: number },
   /** Per-spawn token budget — rides executionOverrides into the child's
    *  BudgetGuard per-execution cap. Absent ⇒ no per-execution cap. */
   tokenBudget?: number,
@@ -109,6 +100,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
   return async (
     agentId,
     sessionKey,
+    conversation,
     task,
     maxSteps,
     callerAgentId,
@@ -122,7 +114,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       channelId: sessionKey.channelId,
       maxSteps,
       isGraphSpawn: !!graphOverrides?.graphId,
-      isReuseSession: !!graphOverrides?.reuseSessionKey,
+      isReuseSession: !!graphOverrides?.reuseConversation,
       graphNodeDepth: graphOverrides?.graphNodeDepth,
     }, "executeSubAgent invoked");
 
@@ -153,11 +145,13 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
 
     // Read spawn packet fields from session metadata
     const formattedKey = formatSessionKey(sessionKey);
-    const sessionData = sessionStore.loadByFormattedKey(formattedKey);
+    const loadedSession = sessionStore.load(conversation.conversationScope);
+    if (!loadedSession.ok) throw loadedSession.error;
+    const sessionData = loadedSession.value;
     const meta = sessionData?.metadata ?? {};
 
     // Detect reuse-session spawns for persistent multi-round drivers
-    const isReuseSession = !!graphOverrides?.reuseSessionKey;
+    const isReuseSession = !!graphOverrides?.reuseConversation;
 
     // Per-spawn toolGroups override config default (can only narrow, never widen)
     const configToolGroups = container.config.security.agentToAgent.subAgentToolGroups;
@@ -351,9 +345,17 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
 
     // Generate parent context summary when includeParentHistory is "summary"
     let parentSummary: string | undefined;
-    if (meta.includeParentHistory === "summary" && meta.parentSessionKey) {
-      const parentSession = sessionStore.loadByFormattedKey(meta.parentSessionKey as string);
-      if (parentSession?.messages?.length) {
+    if (meta.includeParentHistory === "summary" && meta.parentConversationRef && meta.parentConversationScope) {
+      const parentScope = ConversationScopeSchema.safeParse(meta.parentConversationScope);
+      const parentRef = ConversationRefSchema.safeParse(meta.parentConversationRef);
+      const parentLoaded = parentScope.success && parentRef.success
+        ? sessionStore.loadByRef(
+            { tenantId: parentScope.data.tenantId, agentId: parentScope.data.agentId },
+            parentRef.data,
+          )
+        : undefined;
+      const parentSession = parentLoaded?.ok ? parentLoaded.value : undefined;
+      if (parentSession?.messages.length) {
         try {
           const subagentCtxConfig = container.config.security.agentToAgent.subagentContext;
           const agentConfig = container.config.agents[agentId] ?? container.config.agents["default"];

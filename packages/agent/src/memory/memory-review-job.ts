@@ -16,11 +16,11 @@
  */
 
 import { ok, err, fromPromise, type Result } from "@comis/shared";
-import { safePath, systemDateFrom, systemSetTimeout, systemClearTimeout, validateMemoryWrite } from "@comis/core";
+import { createMemoryRecallScope, safePath, systemDateFrom, systemSetTimeout, systemClearTimeout, validateMemoryWrite } from "@comis/core";
 import type { MemoryReviewConfig } from "@comis/core";
 import { resolveMemoryOpsStrategy } from "./memory-capability-router.js";
 import type { CapabilityClass } from "../executor/model-profile.js";
-import type { MemoryPort, MemorySearchOptions } from "@comis/core";
+import type { MemoryPort, MemorySearchOptions, MemoryWriteEntry, MemoryWriteScope } from "@comis/core";
 // The SEGREGATED entity-store port — imported as a TYPE ONLY.
 // The concrete adapter lives in the memory package; the agent↛memory build cut
 // forbids importing that package here (architecture-graph.test.ts). The daemon
@@ -29,8 +29,8 @@ import type { MemoryPort, MemorySearchOptions } from "@comis/core";
 // The agent reaches it as a @comis/core port type (NEVER `@comis/memory`); the
 // daemon injects the concrete adapter via `MemoryReviewDeps.causalStore`.
 import type { MemoryEntityStore, MemoryCausalStore } from "@comis/core";
-import type { MemoryEntry, MemorySource, TrustLevel, ClockPort } from "@comis/core";
-import type { SessionData, SessionKey } from "@comis/core";
+import type { MemorySource, TrustLevel, ClockPort } from "@comis/core";
+import type { ConversationRef, SessionQueryScope, SessionStoreError } from "@comis/core";
 import { STRUCTURED_PROMPT, parseExtractionResult, resolveOccurredAt } from "./memory-extraction.js";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { resolveJudgeModel, temperatureOption, type CustomCompletionsModelSpec } from "./judge-model-resolver.js";
@@ -41,18 +41,6 @@ import { randomUUID } from "node:crypto";
 // Public types
 // ---------------------------------------------------------------------------
 
-/** Session detail entry shape (matches SessionStorePort.listDetailed output). */
-export interface SessionDetailedEntry {
-  sessionKey: string;
-  tenantId: string;
-  userId: string;
-  channelId: string;
-  metadata: Record<string, unknown> | null;
-  createdAt: number;
-  updatedAt: number;
-  messageCount: number;
-}
-
 /** Dependencies injected into the memory review handler. */
 export interface MemoryReviewDeps {
   agentId: string;
@@ -60,6 +48,8 @@ export interface MemoryReviewDeps {
   agentName: string;
   config: MemoryReviewConfig;
   memoryPort: MemoryPort;
+  /** Pre-resolved authority for this background service's memory reads and writes. */
+  memoryScope: MemoryWriteScope;
   /**
    * OPTIONAL entity-associative store. When injected, each
    * memory's emitted entity mentions are resolved + linked AFTER a successful
@@ -83,8 +73,8 @@ export interface MemoryReviewDeps {
    */
   causalStore?: MemoryCausalStore;
   sessionStore: {
-    listDetailed(tenantId?: string): SessionDetailedEntry[];
-    loadByFormattedKey(sessionKey: string): SessionData | undefined;
+    listDetailed(scope: SessionQueryScope): Result<MemoryReviewSessionEntry[], SessionStoreError>;
+    loadByRef(scope: SessionQueryScope, conversationRef: ConversationRef): Result<MemoryReviewSessionData | undefined, SessionStoreError>;
   };
   eventBus: { emit(event: string, payload: unknown): void };
   workspacePath: string;
@@ -109,6 +99,25 @@ export interface MemoryReviewDeps {
    * Optional; defaults to false.
    */
   hasCapableModelOverride?: boolean;
+}
+
+/** Minimal ref-authorized transcript metadata consumed by the review job. */
+export interface MemoryReviewSessionEntry {
+  conversationRef: ConversationRef;
+  tenantId: string;
+  agentId: string;
+  metadata: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+}
+
+/** Minimal transcript payload consumed by the review job. */
+export interface MemoryReviewSessionData {
+  messages: unknown[];
+  metadata: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /**
@@ -183,23 +192,20 @@ async function saveWatermark(watermarkPath: string, watermark: ReviewWatermark):
 // ---------------------------------------------------------------------------
 
 function filterSessions(
-  sessions: SessionDetailedEntry[],
+  sessions: MemoryReviewSessionEntry[],
   config: MemoryReviewConfig,
   watermark: ReviewWatermark,
-): SessionDetailedEntry[] {
-  // Session keys do not carry an `agent:<agentId>:` prefix, so there is no
-  // per-agent prefix filter. Memory review iterates every session in the
-  // agent's tenant (the caller passes `tenantId` to
-  // `sessionStore.listDetailed`); per-agent isolation is handled by the
-  // per-agent workspace-scoped watermark file
-  // (`safePath(workspacePath, ".memory-review-watermark")`).
+): MemoryReviewSessionEntry[] {
+  // The store query is already constrained by the explicit tenant-agent
+  // authority. The workspace-scoped watermark only records progress; it does
+  // not participate in authorization.
   return sessions
     .filter((s) => {
       // Skip sessions below minMessages threshold
       if (s.messageCount < config.minMessages) return false;
 
       // Skip sessions not updated since last watermark
-      const lastReviewed = watermark.sessions[s.sessionKey] ?? 0;
+      const lastReviewed = watermark.sessions[s.conversationRef] ?? 0;
       if (s.updatedAt <= lastReviewed) return false;
 
       return true;
@@ -329,7 +335,20 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
   const watermark = await loadWatermark(watermarkPath);
 
   // List and filter sessions
-  const allSessions = sessionStore.listDetailed(tenantId);
+  const queryScope = { tenantId, agentId };
+  const recallScopeResult = createMemoryRecallScope(deps.memoryScope.turnScope, true);
+  if (!recallScopeResult.ok) return recallScopeResult;
+  const recallScope = recallScopeResult.value;
+  const listed = sessionStore.listDetailed(queryScope);
+  if (!listed.ok) {
+    logger.error({
+      agentId,
+      hint: "Inspect session database integrity and retry the memory review after storage recovers",
+      errorKind: listed.error.errorKind,
+    }, "Memory review session listing failed");
+    return err(listed.error);
+  }
+  const allSessions = listed.value;
   const qualifyingSessions = filterSessions(allSessions, config, watermark);
 
   // Early-exit counts ride an INFO line so a no-op nightly run is visible at the default log level.
@@ -352,13 +371,22 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
   // Build batch prompt
   const maxChars = config.maxReviewTokens * 4; // ~4 chars per token
   let batchContent = "Sessions to review:\n\n";
-  const reviewedSessions: SessionDetailedEntry[] = [];
+  const reviewedSessions: MemoryReviewSessionEntry[] = [];
 
   for (const session of qualifyingSessions) {
-    const data = sessionStore.loadByFormattedKey(session.sessionKey);
-    const messages = data?.messages ?? [];
+    const loaded = sessionStore.loadByRef(queryScope, session.conversationRef);
+    if (!loaded.ok) {
+      logger.error({
+        agentId,
+        conversationRef: session.conversationRef,
+        hint: "Inspect session database integrity and retry the memory review after storage recovers",
+        errorKind: loaded.error.errorKind,
+      }, "Memory review session load failed");
+      return err(loaded.error);
+    }
+    const messages = loaded.value?.messages ?? [];
     let summary = buildSessionSummary(
-      session.sessionKey,
+      session.conversationRef,
       session.messageCount,
       session.updatedAt,
       messages,
@@ -372,18 +400,18 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       const MIN_USEFUL_SUMMARY_CHARS = 500;
       if (reviewedSessions.length === 0 && remaining >= MIN_USEFUL_SUMMARY_CHARS) {
         logger.warn(
-          { agentId, sessionKey: session.sessionKey, summaryChars: summary.length, budgetChars: remaining, errorKind: "validation" as const, hint: "session summary truncated to the review batch budget — raise memoryReview.maxReviewTokens to review more of it per run" },
+          { agentId, conversationRef: session.conversationRef, summaryChars: summary.length, budgetChars: remaining, errorKind: "validation" as const, hint: "session summary truncated to the review batch budget — raise memoryReview.maxReviewTokens to review more of it per run" },
           "Session summary exceeds review budget — truncated to fit",
         );
         summary = summary.slice(0, remaining);
       } else {
         if (reviewedSessions.length === 0) {
           logger.warn(
-            { agentId, sessionKey: session.sessionKey, summaryChars: summary.length, budgetChars: remaining, errorKind: "config" as const, hint: "memoryReview.maxReviewTokens is too small to review ANY session — this session will be skipped on every run until the budget is raised" },
+            { agentId, conversationRef: session.conversationRef, summaryChars: summary.length, budgetChars: remaining, errorKind: "config" as const, hint: "memoryReview.maxReviewTokens is too small to review ANY session — this session will be skipped on every run until the budget is raised" },
             "Review budget cannot fit any session summary — skipping",
           );
         } else {
-          logger.debug({ agentId, sessionKey: session.sessionKey }, "Skipping session -- batch token budget exceeded");
+          logger.debug({ agentId, conversationRef: session.conversationRef }, "Skipping session -- batch token budget exceeded");
         }
         break;
       }
@@ -424,7 +452,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     );
     // Advance watermark for reviewed sessions so we don't reprocess on the next run.
     for (const session of reviewedSessions) {
-      watermark.sessions[session.sessionKey] = session.updatedAt;
+      watermark.sessions[session.conversationRef] = session.updatedAt;
     }
     await saveWatermark(watermarkPath, watermark);
     eventBus.emit("memory:review_completed", {
@@ -502,7 +530,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       "Structured extraction returned invalid output, skipping",
     );
     for (const session of reviewedSessions) {
-      watermark.sessions[session.sessionKey] = session.updatedAt;
+      watermark.sessions[session.conversationRef] = session.updatedAt;
     }
     await saveWatermark(watermarkPath, watermark);
     eventBus.emit("memory:review_completed", {
@@ -525,17 +553,11 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
 
   // The fixed review session key — structured memories carry no per-message
   // `session` field, so dedup search/store scope to one review-owned key.
-  const reviewSessionKey: SessionKey = {
-    tenantId,
-    userId: "system",
-    channelId: "memory-review",
-  };
   const searchOpts: MemorySearchOptions = {
     limit: 1,
     minScore: config.dedupThreshold,
     trustLevel: "system",
     tags: ["auto-review"],
-    agentId,
   };
 
   // Dedup, validate, and store each structured memory.
@@ -594,7 +616,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     // `fromPromise` so a rejection becomes an `err` Result instead of an
     // exception escaping `runMemoryReview` before the watermark saves — which
     // would reprocess the same sessions every cron tick (the watermark stall).
-    const searchOutcome = await fromPromise(memoryPort.search(reviewSessionKey, m.content, searchOpts));
+    const searchOutcome = await fromPromise(memoryPort.search(recallScope, m.content, searchOpts));
     if (!searchOutcome.ok) {
       // Dedup unavailable (adapter rejected) — skip this item rather than store
       // blind (we can't confirm it isn't a duplicate). Non-fatal: the loop and
@@ -625,11 +647,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     // value; NO `entities` field is persisted (the strict
     // MemoryRowSchema has no entity column; entities are emit-only below).
     const memorySource: MemorySource = { who: "system", channel: "memory-review" };
-    const entry: MemoryEntry = {
+    const entry: MemoryWriteEntry = {
       id: randomUUID(),
-      tenantId,
-      agentId,
-      userId: "system",
       content: m.content,
       trustLevel,
       source: memorySource,
@@ -648,14 +667,14 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     // rejecting `store` (locked DB, disk-full) must NOT escape before the
     // watermark saves. `fromPromise` collapses a rejection into an `err` that
     // the existing non-fatal branch logs; the loop and watermark advance survive.
-    const storeOutcome = await fromPromise(memoryPort.store(entry));
+    const storeOutcome = await fromPromise(memoryPort.store(entry, deps.memoryScope));
     const storeResult = storeOutcome.ok ? storeOutcome.value : storeOutcome;
     if (storeResult.ok) {
       memoriesExtracted++;
       // Emit the entity mentions on the in-memory result with the
       // SAME inherited trust + provenance. NOT persisted — for the entity-link handoff.
       extractedEntities.push({
-        memoryId: entry.id,
+        memoryId: storeResult.value.id,
         entities: m.entities.map((e) => ({ name: e.name, trustLevel, source: memorySource })),
       });
 
@@ -677,7 +696,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       if (deps.entityStore) {
         for (const e of m.entities) {
           const linked = await fromPromise(
-            deps.entityStore.resolveAndLink(entry.id, e.name, { tenantId, agentId, now: clock.now() }),
+            deps.entityStore.resolveAndLink(storeResult.value.id, e.name, { tenantId, agentId, now: clock.now() }),
           );
           if (!linked.ok || !linked.value.ok) {
             logger.warn(
@@ -713,7 +732,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       if (deps.causalStore && m.causes.length > 0) {
         for (const c of m.causes) {
           const linked = await fromPromise(
-            deps.causalStore.linkCausal(entry.id, c.effect, { tenantId, agentId, now: clock.now() }, 1),
+            deps.causalStore.linkCausal(storeResult.value.id, c.effect, { ...recallScope, now: clock.now() }, 1),
           );
           if (!linked.ok || !linked.value.ok) {
             logger.warn(
@@ -770,7 +789,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
 
   // Update watermark per-session (success path — runs on every terminating path).
   for (const session of reviewedSessions) {
-    watermark.sessions[session.sessionKey] = session.updatedAt;
+    watermark.sessions[session.conversationRef] = session.updatedAt;
   }
   await saveWatermark(watermarkPath, watermark);
 

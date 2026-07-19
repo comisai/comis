@@ -13,8 +13,12 @@
  * @module
  */
 
+import type { ConversationRef, ConversationScope } from "../domain/conversation-scope.js";
+
 /** Data returned when loading a session. */
 export interface SessionData {
+  conversationRef: ConversationRef;
+  conversationScope: ConversationScope;
   messages: unknown[];
   metadata: Record<string, unknown>;
   createdAt: number;
@@ -23,16 +27,17 @@ export interface SessionData {
 
 /** Session listing entry. */
 export interface SessionListEntry {
-  sessionKey: string;
+  conversationRef: ConversationRef;
+  conversationScope: ConversationScope;
   updatedAt: number;
 }
 
 /** Detailed session listing entry with all fields needed for kind derivation. */
 export interface SessionDetailedEntry {
-  sessionKey: string;
+  conversationRef: ConversationRef;
+  conversationScope: ConversationScope;
   tenantId: string;
-  userId: string;
-  channelId: string;
+  agentId: string;
   metadata: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;

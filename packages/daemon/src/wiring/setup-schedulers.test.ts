@@ -62,7 +62,8 @@ vi.mock("@comis/skills", () => ({
 
 const mockResolveAutonomy = vi.hoisted(() => vi.fn((_autonomy?: unknown) => ({ enabled: false, capabilities: [] as string[] })));
 
-vi.mock("@comis/core", () => ({
+vi.mock("@comis/core", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@comis/core")>(),
   safePath: mockSafePath,
   SkillsConfigSchema: { parse: mockSkillsConfigSchemaParse },
   formatSessionKey: vi.fn(() => "test|heartbeat|hb-agent-1"),
@@ -80,7 +81,8 @@ vi.mock("@comis/core", () => ({
     toggle !== undefined ? toggle : scriptSurfaceOn === true,
 }));
 
-vi.mock("node:fs/promises", () => ({
+vi.mock("node:fs/promises", async (importOriginal) => ({
+  ...await importOriginal<typeof import("node:fs/promises")>(),
   mkdir: mockMkdir,
 }));
 
@@ -175,7 +177,10 @@ describe("setupSchedulers", () => {
   // 1. No cron schedulers when cron.enabled is false
   // -------------------------------------------------------------------------
 
-  it("creates no cron schedulers when cron.enabled is false", async () => {
+  // The first dynamic import loads the scheduler wiring graph through Vitest's
+  // transformer; full parallel coverage runs can spend more than five seconds
+  // there before this otherwise immediate assertion executes.
+  it("creates no cron schedulers when cron.enabled is false", { timeout: 30_000 }, async () => {
     const setupSchedulers = await getSetupSchedulers();
     const result = await setupSchedulers(createMinimalDeps({ cronEnabled: false }));
 

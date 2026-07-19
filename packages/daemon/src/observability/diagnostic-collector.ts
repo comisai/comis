@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from "node:crypto";
-import { formatSessionKey, systemNowMs } from "@comis/core";
+import { createConversationRef, formatSessionKey, systemNowMs } from "@comis/core";
 import type { TypedEventBus, EventMap, EventHandler } from "@comis/core";
 import type { HandlerRef } from "./index.js";
 
@@ -22,6 +22,11 @@ export interface DiagnosticEvent {
   sessionKey: string | undefined;
   traceId?: string;
   data: Record<string, unknown>;
+}
+
+function diagnosticConversationRef(scope: EventMap["session:expired"]["conversationScope"]): string | undefined {
+  const reference = createConversationRef(scope);
+  return reference.ok ? reference.value : undefined;
 }
 
 /**
@@ -153,7 +158,7 @@ export function createDiagnosticCollector(deps: {
   }));
 
   subscribe("session:expired", "session", (p) => ({
-    sessionKey: formatSessionKey(p.sessionKey),
+    sessionKey: diagnosticConversationRef(p.conversationScope),
     timestamp: undefined,
     data: {},
   }));

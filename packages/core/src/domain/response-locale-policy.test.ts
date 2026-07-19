@@ -32,8 +32,18 @@ describe("ResponseLocalePolicy", () => {
   it("rejects malformed locale tags", () => {
     expect(ResponseLocalePolicySchema.safeParse({
       locale: "not_a_locale",
-      source: "workspace",
+      source: "request",
       enforceLocale: false,
     }).success).toBe(false);
+  });
+
+  it("rejects workspace and conversation inference sources", () => {
+    for (const source of ["workspace", "conversation"]) {
+      expect(ResponseLocalePolicySchema.safeParse({
+        locale: "en",
+        source,
+        enforceLocale: false,
+      }).success).toBe(false);
+    }
   });
 });

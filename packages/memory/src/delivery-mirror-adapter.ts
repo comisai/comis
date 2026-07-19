@@ -14,7 +14,11 @@ import type Database from "better-sqlite3";
 import type { DeliveryMirrorPort, DeliveryMirrorEntry, DeliveryMirrorRecordInput } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import { systemNowMs } from "@comis/core";
+import {
+  ChannelEndpointSchema,
+  ConversationRefSchema,
+  systemNowMs,
+} from "@comis/core";
 import type { z } from "zod";
 import { createRowMapper } from "./row-mapper.js";
 import { DeliveryMirrorDbRowSchema } from "./row-schemas.js";
@@ -34,7 +38,10 @@ const deliveryMirrorMapper = createRowMapper(DeliveryMirrorDbRowSchema);
 function rowToEntry(row: DeliveryMirrorDbRow): DeliveryMirrorEntry {
   return {
     id: row.id,
-    sessionKey: row.session_key,
+    tenantId: row.tenant_id,
+    agentId: row.agent_id,
+    conversationRef: ConversationRefSchema.parse(row.conversation_ref),
+    destinationEndpoint: ChannelEndpointSchema.parse(JSON.parse(row.destination_endpoint)),
     text: row.text,
     mediaUrls: JSON.parse(row.media_urls) as string[],
     channelType: row.channel_type,
@@ -65,14 +72,15 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
 
   const insertStmt = db.prepare(`
     INSERT OR IGNORE INTO delivery_mirror (
-      id, session_key, text, media_urls, channel_type, channel_id,
+      id, tenant_id, agent_id, conversation_ref, destination_endpoint,
+      text, media_urls, channel_type, channel_id,
       origin, idempotency_key, status, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
   `);
 
   const pendingStmt = db.prepare(`
     SELECT * FROM delivery_mirror
-    WHERE session_key = ? AND status = 'pending'
+    WHERE tenant_id = ? AND agent_id = ? AND conversation_ref = ? AND status = 'pending'
     ORDER BY created_at ASC
   `);
 
@@ -83,7 +91,8 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
   `);
 
   const clearSessionStmt = db.prepare(`
-    DELETE FROM delivery_mirror WHERE session_key = ?
+    DELETE FROM delivery_mirror
+    WHERE tenant_id = ? AND agent_id = ? AND conversation_ref = ?
   `);
 
   const pruneStmt = db.prepare(`
@@ -98,7 +107,10 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
         const id = randomUUID();
         insertStmt.run(
           id,
-          input.sessionKey,
+          input.tenantId,
+          input.agentId,
+          input.conversationRef,
+          JSON.stringify(input.destinationEndpoint),
           input.text,
           JSON.stringify(input.mediaUrls),
           input.channelType,
@@ -113,9 +125,13 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
       }
     },
 
-    pending(sessionKey: string): Promise<Result<DeliveryMirrorEntry[], Error>> {
+    pending(authority): Promise<Result<DeliveryMirrorEntry[], Error>> {
       try {
-        const parsed = deliveryMirrorMapper.parseRows(pendingStmt.all(sessionKey));
+        const parsed = deliveryMirrorMapper.parseRows(pendingStmt.all(
+          authority.tenantId,
+          authority.agentId,
+          authority.conversationRef,
+        ));
         if (!parsed.ok) {
           return Promise.resolve(
             err(new Error(`Row validation failed: ${parsed.error.message}`)),
@@ -142,9 +158,13 @@ export function createSqliteDeliveryMirror(db: Database.Database): DeliveryMirro
       }
     },
 
-    clearSession(sessionKey: string): Promise<Result<number, Error>> {
+    clearSession(authority): Promise<Result<number, Error>> {
       try {
-        const result = clearSessionStmt.run(sessionKey);
+        const result = clearSessionStmt.run(
+          authority.tenantId,
+          authority.agentId,
+          authority.conversationRef,
+        );
         return Promise.resolve(ok(result.changes));
       } catch (e) {
         return Promise.resolve(err(e instanceof Error ? e : new Error(String(e))));

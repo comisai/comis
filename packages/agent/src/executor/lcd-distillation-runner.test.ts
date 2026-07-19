@@ -22,6 +22,7 @@ import type {
   TypedEventBus,
   AppendProvenanceInput,
 } from "@comis/core";
+import { createConversationRef } from "@comis/core";
 import type { MemorySearchResult } from "@comis/core";
 import {
   LEAF_FALLBACK_SUMMARY_MARKER,
@@ -38,12 +39,51 @@ import {
 // ---------------------------------------------------------------------------
 
 function makeScope(overrides: Partial<ContextStoreScope> = {}): ContextStoreScope {
+  const tenantId = overrides.tenantId ?? "tenant-a";
+  const agentId = overrides.agentId ?? "agent-a";
+  const conversation = {
+    tenantId,
+    agentId,
+    partition: {
+      kind: "endpoint-conversation-principal" as const,
+      endpoint: TEST_ENDPOINT,
+      principalId: "user-a",
+    },
+  };
+  const reference = createConversationRef(conversation);
+  if (!reference.ok) throw reference.error;
   return {
-    conversationId: "conv-1",
-    tenantId: "tenant-a",
-    agentId: "agent-a",
-    sessionKey: "tenant-a::agent-a::conv-1",
+    conversationRef: reference.value,
+    tenantId,
+    agentId,
+    sessionKey: `${tenantId}:${agentId}:conversation-a`,
     ...overrides,
+  };
+}
+
+const TEST_ENDPOINT = {
+  channelType: "test",
+  channelInstanceId: "instance-a",
+  conversationId: "conversation-a",
+  conversationKind: "direct" as const,
+};
+
+function makeMemoryScope(scope: ContextStoreScope): RunDistillationPassParams["memoryScope"] {
+  return {
+    turnScope: {
+      conversation: {
+        tenantId: scope.tenantId,
+        agentId: scope.agentId,
+        partition: {
+          kind: "endpoint-conversation-principal",
+          endpoint: TEST_ENDPOINT,
+          principalId: "user-a",
+        },
+      },
+      principal: { principalId: "user-a" },
+      endpoint: TEST_ENDPOINT,
+    },
+    visibility: { kind: "agent-shared" },
   };
 }
 
@@ -88,10 +128,11 @@ function makeEventBus(): TypedEventBus {
 }
 
 function makeParams(overrides: Partial<RunDistillationPassParams> = {}): RunDistillationPassParams {
-  const scope = makeScope();
+  const scope = overrides.scope ?? makeScope();
   return {
     summaryId: "summary-1",
     scope,
+    memoryScope: overrides.memoryScope ?? makeMemoryScope(scope),
     content: "This is a valid condensed summary of the conversation.",
     fallback: false,
     depth: 1,
@@ -313,7 +354,7 @@ describe("runDistillationPassAfterTurn — scope isolation", () => {
     const lcdStore = makeLcdStore();
     const params = makeParams({
       scope: {
-        conversationId: "conv-1",
+        conversationRef: "conv-1",
         tenantId: "tenant-a",
         agentId: "", // null/empty agentId
         sessionKey: "tenant-a:::: ::conv-1",
@@ -344,12 +385,17 @@ describe("runDistillationPassAfterTurn — scope isolation", () => {
     });
     await runDistillationPassAfterTurn(params);
     expect(memoryPort.store).toHaveBeenCalledWith(
-      expect.objectContaining({ agentId: "agent-a" }),
+      expect.any(Object),
+      expect.objectContaining({
+        turnScope: expect.objectContaining({
+          conversation: expect.objectContaining({ agentId: "agent-a" }),
+        }),
+      }),
     );
     // The store must NEVER be called with agent-b
     const allCalls = (memoryPort.store as ReturnType<typeof vi.fn>).mock.calls;
-    for (const [entry] of allCalls) {
-      expect((entry as { agentId: string }).agentId).not.toBe("agent-b");
+    for (const [, authority] of allCalls) {
+      expect((authority as RunDistillationPassParams["memoryScope"]).turnScope.conversation.agentId).not.toBe("agent-b");
     }
   });
 
@@ -366,11 +412,16 @@ describe("runDistillationPassAfterTurn — scope isolation", () => {
     });
     await runDistillationPassAfterTurn(params);
     expect(memoryPort.store).toHaveBeenCalledWith(
-      expect.objectContaining({ tenantId: "tenant-a" }),
+      expect.any(Object),
+      expect.objectContaining({
+        turnScope: expect.objectContaining({
+          conversation: expect.objectContaining({ tenantId: "tenant-a" }),
+        }),
+      }),
     );
     const allCalls = (memoryPort.store as ReturnType<typeof vi.fn>).mock.calls;
-    for (const [entry] of allCalls) {
-      expect((entry as { tenantId: string }).tenantId).not.toBe("tenant-b");
+    for (const [, authority] of allCalls) {
+      expect((authority as RunDistillationPassParams["memoryScope"]).turnScope.conversation.tenantId).not.toBe("tenant-b");
     }
   });
 });
@@ -401,8 +452,11 @@ describe("runDistillationPassAfterTurn — closed-loop", () => {
       expect.objectContaining({
         memoryType: "episodic",
         trustLevel: "learned",
-        tenantId: "tenant-a",
-        agentId: "agent-a",
+      }),
+      expect.objectContaining({
+        turnScope: expect.objectContaining({
+          conversation: expect.objectContaining({ tenantId: "tenant-a", agentId: "agent-a" }),
+        }),
       }),
     );
 
@@ -412,7 +466,7 @@ describe("runDistillationPassAfterTurn — closed-loop", () => {
     expect(provenanceCall.summaryId).toBe("summary-1");
     expect(provenanceCall.agentId).toBe("agent-a");
     expect(provenanceCall.tenantId).toBe("tenant-a");
-    expect(provenanceCall.conversationId).toBe("conv-1");
+    expect(provenanceCall.conversationRef).toBe(params.scope.conversationRef);
   });
 
   it("stamps a `summary:<id>` tag on the distilled memory so the precise-provenance recall branch can key on it", async () => {
@@ -581,9 +635,7 @@ describe("runDistillationPassAfterTurn — dedup", () => {
   // applies the `agent_id = ?` predicate from (sessionKey.agentId is ignored by
   // search()). Without it, a near-duplicate distilled memory belonging to a
   // DIFFERENT agent in the same tenant suppresses this agent's legitimate write
-  // (cross-agent dedup false positive) — a read-isolation gap. This test
-  // fails on the pre-fix code because the options object omitted agentId.
-  it("dedup search passes agentId in the search OPTIONS (the load-bearing agent-isolation filter)", async () => {
+  it("dedup search carries agentId in the explicit recall scope", async () => {
     const searchSpy = vi.fn().mockResolvedValue({ ok: true, value: [] });
     const memoryPort = makeMemoryPort({ search: searchSpy });
     const params = makeParams({
@@ -598,10 +650,8 @@ describe("runDistillationPassAfterTurn — dedup", () => {
     await runDistillationPassAfterTurn(params);
 
     expect(searchSpy).toHaveBeenCalledOnce();
-    // 3rd arg is the MemorySearchOptions — agentId MUST be present here (the
-    // adapter only honours options.agentId, never sessionKey.agentId).
-    const optionsArg = searchSpy.mock.calls[0]![2] as { agentId?: string };
-    expect(optionsArg.agentId).toBe("agent-a");
+    const recallScope = searchSpy.mock.calls[0]![0] as { agentId?: string };
+    expect(recallScope.agentId).toBe("agent-a");
   });
 });
 

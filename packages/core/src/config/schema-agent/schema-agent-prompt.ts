@@ -15,7 +15,7 @@
  * @module
  */
 import { z } from "zod";
-import { TrustLevelSchema } from "../../domain/memory-entry.js";
+import { TrustLevelSchema } from "../../domain/memory-trust.js";
 
 // ── Agent Configuration Schema ─────────────────────────────────────────
 
@@ -71,16 +71,10 @@ export const RagConfigSchema = z.strictObject({
     ),
     /** Trust levels to include in retrieval (external excluded by default for security) */
     includeTrustLevels: z.array(TrustLevelSchema).default(["system", "learned"]),
-    /** Cross-encoder reranking. Opt-out posture: default-ON as a
-     *  $0-at-recall capability. The daemon resolves the EFFECTIVE rerank via the RAW
-     *  pre-Zod signal (`rawAgentRerankEnabled` → resolveEffectiveRerank): an UNSET config
-     *  auto-ons only when the model is locally present (zero-download posture),
-     *  so this schema default is the bare-parse value, NOT a forced download. */
+    /** Cross-encoder reranking. Auto activates only when the model is local. */
     rerank: z
       .strictObject({
-        /** Opt-out posture: default-ON. The daemon's effective-rerank
-         *  precedence (raw-signal + model-present) still governs the auto-on/download path. */
-        enabled: z.boolean().default(true),
+        mode: z.enum(["auto", "on", "off"]).default("auto"),
         /** Candidate cap bounding worst-case rerank latency (~29ms/candidate). */
         maxCandidates: z.number().int().positive().default(40),
         /** Skip reranking when fewer than this many candidates are present. */
@@ -88,7 +82,7 @@ export const RagConfigSchema = z.strictObject({
         /** Rerank wall-clock timeout (ms); on timeout fall back to fusion order. */
         timeoutMs: z.number().int().positive().default(800),
       })
-      .default(() => ({ enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 })),
+      .default(() => ({ mode: "auto" as const, maxCandidates: 40, minResults: 1, timeoutMs: 800 })),
     /** Multiplicative scoring boosts applied to the reranked-or-fused score. */
     scoring: z
       .strictObject({

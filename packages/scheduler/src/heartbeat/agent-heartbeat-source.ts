@@ -20,8 +20,8 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { SessionKey, NormalizedMessage } from "@comis/core";
-import { createDeliveryOrigin, createResolvedRequestContext, formatSessionKey, runWithContext, systemNowMs } from "@comis/core";
+import type { ConversationRef, ResolvedTurnScope, SessionKey, NormalizedMessage } from "@comis/core";
+import { createConversationRef, createDeliveryOrigin, createResolvedRequestContext, formatSessionKey, runWithContext, systemNowMs } from "@comis/core";
 import type { SchedulerLogger } from "../shared-types.js";
 import type { SystemEventQueue } from "../system-events/system-event-queue.js";
 import type { EffectiveHeartbeatConfig } from "./heartbeat-config.js";
@@ -34,6 +34,7 @@ import { resolveHeartbeatTriggerKind, buildHeartbeatPrompt } from "./prompt-buil
 import { processHeartbeatResponse } from "./response-processor.js";
 import type { HeartbeatResponseOutcome } from "./response-processor.js";
 import { classifyHeartbeatResult } from "./relevance-filter.js";
+import type { Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Types for injected dependencies (scheduler cannot import agent)
@@ -63,7 +64,7 @@ interface HeartbeatExecutor {
  * the resulting object is structurally assignable to this shape.
  */
 interface HeartbeatSessionResolver {
-  hasActiveSession(key: { agentId: string; channelType: string; channelId: string }): boolean;
+  hasActiveSession(conversationRef: ConversationRef): boolean;
 }
 
 /** Tool policy filter function signature -- matches applyToolPolicy from @comis/skills.
@@ -109,6 +110,15 @@ export interface AgentHeartbeatSourceDeps {
     tenantId: string;
     toolPolicy?: { profile: string; allow: string[]; deny: string[] };
   };
+  /** Resolve the scheduler's explicit internal endpoint and principal. */
+  resolveInternalTurnIdentity: (input: {
+    tenantId: string;
+    agentId: string;
+    originKind: "scheduler";
+    instanceId: string;
+    conversationId: string;
+    principalId: string;
+  }) => Result<{ turnScope: ResolvedTurnScope; displaySessionKey: SessionKey }, Error>;
   /** Returns true if HEARTBEAT.md is effectively empty (should skip LLM). */
   checkFileGate: (agentId: string) => Promise<boolean>;
   /** Session-scoped system event queue. */
@@ -164,35 +174,10 @@ export function resolveHeartbeatModel(
  */
 export function isQueueBusy(
   sessionResolver: HeartbeatSessionResolver | undefined,
-  composite: { agentId: string; channelType: string; channelId: string },
+  conversationRef: ConversationRef,
 ): boolean {
   if (!sessionResolver) return false;
-  return sessionResolver.hasActiveSession(composite);
-}
-
-/**
- * Resolve the SessionKey for a heartbeat tick.
- *
- * When a delivery target is configured, uses the target's chatId as channelId
- * and config.session as userId. Falls back to synthetic heartbeat identifiers.
- */
-export function resolveHeartbeatSessionKey(
-  agentId: string,
-  config: EffectiveHeartbeatConfig,
-  tenantId: string,
-): SessionKey {
-  if (config.target) {
-    return {
-      tenantId,
-      userId: config.session ?? "heartbeat",
-      channelId: config.target.chatId,
-    };
-  }
-  return {
-    tenantId,
-    userId: "heartbeat",
-    channelId: `heartbeat-${agentId}`,
-  };
+  return sessionResolver.hasActiveSession(conversationRef);
 }
 
 // ---------------------------------------------------------------------------
@@ -214,11 +199,36 @@ export function createAgentHeartbeatSource(
       const config = deps.getEffectiveConfig(agentId);
       const agentConfig = deps.getAgentConfig(agentId);
 
-      // 2. Resolve session key
-      const sessionKey = resolveHeartbeatSessionKey(agentId, config, agentConfig.tenantId);
+      // 2. Resolve an explicit internal scheduler identity. The delivery target
+      // is a destination, never the authority of the executing heartbeat turn.
+      const internalIdentity = deps.resolveInternalTurnIdentity({
+        tenantId: agentConfig.tenantId,
+        agentId,
+        originKind: "scheduler",
+        instanceId: "heartbeat",
+        conversationId: agentId,
+        principalId: `scheduler-heartbeat-${agentId}`,
+      });
+      if (!internalIdentity.ok) {
+        logger.error({
+          agentId,
+          hint: "Verify the scheduler tenant and agent identifiers before retrying the heartbeat",
+          errorKind: "validation" as const,
+        }, "Heartbeat internal identity resolution failed");
+        return;
+      }
+      const sessionKey = internalIdentity.value.displaySessionKey;
+      const turnScope = internalIdentity.value.turnScope;
+      const conversationRef = createConversationRef(turnScope.conversation);
+      if (!conversationRef.ok) {
+        logger.error({
+          agentId,
+          hint: "Verify the scheduler conversation authority before retrying the heartbeat",
+          errorKind: "validation" as const,
+        }, "Heartbeat conversation authority resolution failed");
+        return;
+      }
       const formattedKey = formatSessionKey(sessionKey);
-      const heartbeatChannelType = config.target?.channelType ?? "heartbeat";
-
       const heartbeatContext = createResolvedRequestContext({
         traceId: randomUUID(),
         tenantId: sessionKey.tenantId,
@@ -227,13 +237,14 @@ export function createAgentHeartbeatSource(
         sessionKey,
         startedAt: systemNowMs(),
         trustLevel: "user",
-        channelType: heartbeatChannelType,
+        channelType: turnScope.endpoint.channelType,
         deliveryOrigin: createDeliveryOrigin({
-          channelType: heartbeatChannelType,
-          channelId: sessionKey.channelId,
-          userId: sessionKey.userId,
+          channelType: turnScope.endpoint.channelType,
+          channelId: turnScope.endpoint.conversationId,
+          userId: turnScope.principal.principalId,
           tenantId: sessionKey.tenantId,
         }),
+        turnScope,
       });
       if (!heartbeatContext.ok) {
         logger.error({
@@ -267,11 +278,7 @@ export function createAgentHeartbeatSource(
       // delivery target is wired). channelId is sessionKey.channelId
       // (matches resolveHeartbeatSessionKey above).
       if (
-        isQueueBusy(deps.sessionResolver, {
-          agentId,
-          channelType: heartbeatChannelType,
-          channelId: sessionKey.channelId,
-        })
+        isQueueBusy(deps.sessionResolver, conversationRef.value)
       ) {
         logger.debug(
           { agentId, formattedKey },

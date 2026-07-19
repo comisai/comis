@@ -8,7 +8,7 @@
  * AgentCapability union (a tampered cap string cannot rehydrate), `status` is a
  * closed four-state set, and `strictObject` rejects any column the store DDL
  * adds without a matching field. Cross-field validation also binds the
- * canonical session tenant/user to the persisted owner and delivery origin.
+ * canonical conversation authority to the persisted principal and delivery origin.
  *
  * `caps` reuses the single AGENT_CAPABILITIES tuple from
  * `security/capability.ts` (the SSOT) via `z.enum(...)` — the same construction
@@ -24,11 +24,15 @@ import { AGENT_CAPABILITIES } from "../security/capability.js";
 import { UserTrustLevelSchema } from "../context/context.js";
 import { DeliveryOriginSchema } from "./delivery-origin.js";
 import {
+  ConversationRefSchema,
+  ConversationScopeSchema,
+  createConversationRef,
+} from "./conversation-scope.js";
+import {
   ExecutionGraphSchema,
   NodeExecutionStateSchema,
   NodeStatusSchema,
 } from "./execution-graph.js";
-import { parseFormattedSessionKey } from "./session-key.js";
 
 /**
  * The closed AgentCapability union as a Zod schema, built from the single
@@ -166,14 +170,16 @@ export const DurableRunRecordSchema = z.strictObject({
   checkpointId: z.string().min(1),
   /** Tree identity shared by descendants for budgets and revocation. */
   rootRunId: z.string().min(1),
+  /** Authenticated tenant that owns this execution. */
+  tenantId: z.string().min(1),
   /** Authenticated agent that owns this execution. */
   agentId: z.string().min(1),
-  /** Canonically formatted session identity. */
-  sessionKey: z.string().min(1),
-  /** Authenticated tenant owner. */
-  ownerTenantId: z.string().min(1),
-  /** Authenticated user owner. */
-  ownerUserId: z.string().min(1),
+  /** Opaque canonical conversation reference used for resume authorization. */
+  conversationRef: ConversationRefSchema,
+  /** Canonical structured scope persisted beside the opaque reference. */
+  conversationScope: ConversationScopeSchema,
+  /** Authenticated principal allowed to resume this execution. */
+  principalId: z.string().min(1),
   /** Exact channel origin inherited by a resumed execution, when present. */
   deliveryOrigin: DeliveryOriginSchema.nullable(),
   /**
@@ -240,47 +246,59 @@ export const DurableRunRecordSchema = z.strictObject({
       message: "graph checkpoints require a protected checkpointRef artifact",
     });
   }
-  const session = parseFormattedSessionKey(record.sessionKey);
-  if (session === undefined) {
+  if (record.conversationScope.tenantId !== record.tenantId) {
     ctx.addIssue({
       code: "custom",
-      path: ["sessionKey"],
-      message: "sessionKey must be a canonical formatted session identity",
-    });
-    return;
-  }
-  if (session.tenantId !== record.ownerTenantId) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["ownerTenantId"],
-      message: "ownerTenantId must match the canonical session tenant",
+      path: ["tenantId"],
+      message: "tenantId must match the canonical conversation scope",
     });
   }
-  if (session.userId !== record.ownerUserId) {
+  if (record.conversationScope.agentId !== record.agentId) {
     ctx.addIssue({
       code: "custom",
-      path: ["ownerUserId"],
-      message: "ownerUserId must match the canonical session user",
+      path: ["agentId"],
+      message: "agentId must match the canonical conversation scope",
+    });
+  }
+  const expectedRef = createConversationRef(record.conversationScope);
+  if (!expectedRef.ok || expectedRef.value !== record.conversationRef) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["conversationRef"],
+      message: "conversationRef must match the canonical conversation scope",
+    });
+  }
+  const partition = record.conversationScope.partition;
+  if (
+    (partition.kind === "principal"
+      || partition.kind === "channel-principal"
+      || partition.kind === "endpoint-conversation-principal")
+    && partition.principalId !== record.principalId
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["principalId"],
+      message: "principalId must match the canonical principal partition",
     });
   }
   if (
     record.deliveryOrigin !== null
-    && record.deliveryOrigin.tenantId !== record.ownerTenantId
+    && record.deliveryOrigin.tenantId !== record.tenantId
   ) {
     ctx.addIssue({
       code: "custom",
       path: ["deliveryOrigin", "tenantId"],
-      message: "delivery origin tenant must match the checkpoint owner",
+      message: "delivery origin tenant must match the checkpoint authority",
     });
   }
   if (
     record.deliveryOrigin !== null
-    && record.deliveryOrigin.userId !== record.ownerUserId
+    && record.deliveryOrigin.userId !== record.principalId
   ) {
     ctx.addIssue({
       code: "custom",
       path: ["deliveryOrigin", "userId"],
-      message: "delivery origin user must match the checkpoint owner",
+      message: "delivery origin user must match the checkpoint principal",
     });
   }
 });

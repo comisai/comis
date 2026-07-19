@@ -22,9 +22,11 @@ import {
   type PerAgentConfig,
   type TypedEventBus,
   type MemoryPort,
+  type MemoryWriteScope,
   type ClockPort,
   type ContextStorePort,
   type ContextStoreScope,
+  type ConversationRef,
   tryGetContext,
   // Secret-egress guard (the keystone). Used to gate the paired-conversation
   // memory write so user-pasted secrets never reach the memories table / vector
@@ -34,6 +36,7 @@ import {
   // finds a redaction.
   validateMemoryWrite,
   type ResponseLocalePolicy,
+  createConversationRef,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
 import { suppressError, isSilentResponse } from "@comis/shared";
@@ -231,9 +234,8 @@ export interface PostExecutionParams {
   responseLocalePolicy: ResponseLocalePolicy;
   sessionKey: SessionKey;
   formattedKey: string;
-  /** Resolver-aligned key for activeRunRegistry.deregister. Must match the
-   *  formula used at the corresponding register call site. */
-  resolverRegisterKey: string;
+  /** Conversation authority used for active-run deregistration. */
+  resolverRegisterKey: ConversationRef;
   agentId: string | undefined;
   executionStartMs: number;
   executionId: string;
@@ -305,17 +307,14 @@ export interface PostExecutionParams {
   discoveryTracker?: DiscoveryTracker;
   // Deps
   deps: {
+    agentId: string;
     eventBus: TypedEventBus;
     logger: ComisLogger;
     memoryPort?: MemoryPort;
-    /** Optional LCD context store (the dag-mode write-path). Present
-     *  ⇒ the turn's NEW messages are ingested at afterTurn; absent ⇒ skipped
-     *  cleanly. TYPE-only core port (the agent↛memory cut). */
-    contextStore?: ContextStorePort;
-    /** Tenant id for the LCD ingest scope. Threaded from PiExecutorDeps.tenantId
-     *  at the call site so the scope's SECURITY column is never empty.
-     *  Falls back to the session key tenant when absent. */
-    tenantId?: string;
+    /** Canonical durable context store. TYPE-only core port. */
+    contextStore: ContextStorePort;
+    /** Tenant id for the context-store scope. */
+    tenantId: string;
     /** Getter for the leaf-summarizer deps. Present ⇒ the
      *  afterTurn leaf pass is wired live (over threshold ⇒ a leaf summary is
      *  persisted); absent ⇒ the pass is gated off cleanly. Sourced from the
@@ -476,6 +475,7 @@ interface PairedStoreLogger {
 /** Args for {@link storePairedConversationMemory}. */
 export interface StorePairedConversationMemoryArgs {
   memoryPort: MemoryPort;
+  memoryScope: MemoryWriteScope;
   /** The built "[user] …\n[agent] …" paired content (already quality-gated + deduped). */
   pairedContent: string;
   effectiveAgentId: string;
@@ -523,7 +523,7 @@ export async function storePairedConversationMemory(
   args: StorePairedConversationMemoryArgs,
 ): Promise<void> {
   const {
-    memoryPort, pairedContent, effectiveAgentId, sessionKey,
+    memoryPort, memoryScope, pairedContent, effectiveAgentId, sessionKey,
     channelType, formattedKey, now, logger, embeddingEnqueue,
   } = args;
 
@@ -555,9 +555,6 @@ export async function storePairedConversationMemory(
     const userEntryId = randomUUID();
     const userStoreResult = await memoryPort.store({
       id: userEntryId,
-      tenantId: sessionKey.tenantId,
-      agentId: effectiveAgentId,
-      userId: sessionKey.userId,
       content: pairedContent,
       trustLevel: "learned",
       source: {
@@ -567,7 +564,7 @@ export async function storePairedConversationMemory(
       },
       tags: ["conversation", "paired"],
       createdAt: now,
-    });
+    }, memoryScope);
     if (!userStoreResult.ok) {
       logger.warn(
         { err: userStoreResult.error.message, hint: "Check database connectivity and disk space", errorKind: "dependency" as ErrorKind },
@@ -582,33 +579,16 @@ export async function storePairedConversationMemory(
 }
 
 /**
- * Decide whether the LCD afterTurn store passes (ingest + leaf + condense) run
- * for this turn, based on the agent's effective context-engine version.
- *
- * The daemon injects the LCD ContextStorePort UNCONDITIONALLY
- * (setup-agents-runtime.ts), but ONLY the dag engine READS the store: the
- * assembler's dag branch (context-engine.ts — gated `version === "dag"`) and the
- * ctx_* expansion tools (setup-tools.ts — gated `version === "dag" && lcdStore`).
- * A pipeline agent therefore must NOT write `lcd_messages` or fire leaf/condense
- * LLM summarization — that work is pure wasted cost + latency because nothing
- * reads it.
- *
- * Symmetry with the read side: the executor resolves an ABSENT
- * `config.contextEngine` via `ContextEngineConfigSchema.parse({})`, whose
- * `version` defaults to "dag" (executor-context-engine-setup.ts). So an absent
- * contextEngine (and an absent `version` within a present contextEngine) is
- * treated as dag — exactly what the assembler does — and only an EXPLICIT
- * `version: "pipeline"` skips the passes. This keeps write and read in agreement
- * and makes the dag default flip non-breaking. The gate reads per-turn config,
- * so flipping an agent pipeline→dag later takes effect on the very next turn (the
- * first dag turn catches up via the ingest delta from an empty store).
+ * Decide whether the context-store afterTurn passes (ingest + leaf + condense)
+ * run for this turn. The durable store is the canonical context source, so only
+ * the explicit master toggle can suppress these passes.
  *
  * Pure: no I/O, no side effects. Exported for unit tests.
  */
-export function shouldRunLcdStorePasses(config: {
-  contextEngine?: { version?: "pipeline" | "dag" };
+export function shouldRunContextStorePasses(config: {
+  contextEngine?: { enabled?: boolean };
 }): boolean {
-  return (config.contextEngine?.version ?? "dag") === "dag";
+  return config.contextEngine?.enabled !== false;
 }
 
 /**
@@ -1019,7 +999,7 @@ export {
  */
 export async function postExecution(params: PostExecutionParams): Promise<void> {
   const {
-    result, session, sm, config, msg, sessionKey, formattedKey, resolverRegisterKey, agentId,
+    result, session, sm, config, msg, sessionKey, formattedKey, resolverRegisterKey,
     executionStartMs, executionId,
     bridge, unsubscribe,
     contextEngineRef, ceSetup, streamSetup,
@@ -1036,7 +1016,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // downstream branches (silent-sentinel gate, memory-store path, drainAt
   // call site, skip-log debug branches) share the same normalized value.
   // Multi-agent isolation requires uniformity across all paths.
-  const effectiveAgentId = agentId ?? "default";
+  const effectiveAgentId = deps.agentId;
 
   unsubscribe();
   // Clear per-execution cache retention to prevent state leakage
@@ -1525,6 +1505,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   //
   // Non-blocking, non-fatal -- execution never fails due to memory store errors.
   const operationType = params.executionOverrides?.operationType;
+  const pairedTurnScope = tryGetContext()?.turnScope;
   const skipMemoryForOperation =
     operationType != null && MEMORY_SKIP_OPERATIONS.has(operationType);
 
@@ -1544,6 +1525,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     deps.memoryPort &&
     result.response &&
     msg.text &&
+    pairedTurnScope !== undefined &&
     !skipMemoryForOperation &&
     shouldStorePairedMemory(msg.text, result.response)
   ) {
@@ -1565,6 +1547,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       // content stores unchanged. Helper is exported for unit-testing the gate.
       await storePairedConversationMemory({
         memoryPort: deps.memoryPort,
+        memoryScope: { turnScope: pairedTurnScope, visibility: { kind: "conversation" } },
         pairedContent,
         effectiveAgentId,
         sessionKey: { tenantId: sessionKey.tenantId, userId: sessionKey.userId },
@@ -1590,37 +1573,34 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     }
   }
 
-  // LCD afterTurn ingest (the dag-mode write-path). Mirrors the
-  // memoryPort persist above: gated on `deps.contextStore` presence, off the
+  // Context-store afterTurn ingest. Mirrors the memoryPort persist above: off the
   // injected clock, non-fatal (ingestTurn wraps each append per-entry). The
   // body lives in lcd-ingest.ts (this file is over the 800L cap).
   //
-  // The block is gated on BOTH the store's presence AND the effective
-  // engine being dag (`shouldRunLcdStorePasses`). The daemon injects the store
-  // unconditionally, but ONLY dag mode READS it (the assembler's dag branch +
-  // the ctx_* tools). A pipeline agent that wrote `lcd_messages` and fired
-  // leaf/condense LLM summarization here paid pure wasted cost + latency because
-  // nothing reads the store in pipeline mode. The version decision mirrors the
-  // read side exactly (absent contextEngine ⇒ dag, matching the executor's
-  // `ContextEngineConfigSchema.parse({})` default); only an explicit
-  // `version: "pipeline"` skips the passes. See shouldRunLcdStorePasses.
+  // The master context-engine toggle gates both reads and writes through
+  // `shouldRunContextStorePasses`.
   //
-  // Idempotency: the high-water mark `getMessages(conversationId).length`
+  // Idempotency: the high-water mark `getMessages(conversationRef).length`
   // is the persisted count (survives restarts); the delta `live.slice(persisted)`
   // appends only the not-yet-persisted tail. A retry with no new messages appends
   // nothing. `ingestTurnGuarded` also guards the shrink edge: if a heal ever
   // reassigns `state.messages` SHORTER than the store, it skips the append and
   // WARNs (errorKind `precondition`) rather than slicing past the end and either
-  // persisting nothing forever or colliding on the unique (conversationId, seq)
+  // persisting nothing forever or colliding on the unique (conversationRef, seq)
   // index.
-  if (deps.contextStore && shouldRunLcdStorePasses(config)) {
-    const conversationId = formattedKey;
+  const turnScope = tryGetContext()?.turnScope;
+  const turnConversation = turnScope?.conversation;
+  const resolvedConversationRef = turnConversation === undefined
+    ? undefined
+    : createConversationRef(turnConversation);
+  if (shouldRunContextStorePasses(config) && resolvedConversationRef?.ok && turnScope) {
+    const conversationRef = resolvedConversationRef.value;
     const scope: ContextStoreScope = {
-      conversationId,
+      conversationRef,
       // The scope's SECURITY columns must never be empty. tenantId
       // prefers the explicitly-threaded deps.tenantId, falling back to the
       // session key's tenant (the same source the memoryPort persist uses).
-      tenantId: deps.tenantId ?? sessionKey.tenantId,
+      tenantId: deps.tenantId,
       agentId: effectiveAgentId,
       sessionKey: formattedKey,
     };
@@ -1642,7 +1622,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     // returns (the ingest write is a fast synchronous append — it does not block
     // on the deferred compaction, which rides the same queue BEHIND it).
     const ingestStart = deps.clock.now();
-    await store.runOnConversation(conversationId, () =>
+    await store.runOnConversation(conversationRef, () =>
       ingestTurnGuarded(
         store,
         scope,
@@ -1651,7 +1631,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         deps.logger,
         () => {
           deps.eventBus.emit("context:dag_degraded", {
-            conversationId: scope.conversationId,
+            conversationId: scope.conversationRef,
             agentId: scope.agentId,
             sessionKey: scope.sessionKey,
             reason: "fail_closed_rollover",
@@ -1664,7 +1644,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         // (queryable by the system health view) instead of being a Pino-only WARN.
         () => {
           deps.eventBus.emit("context:dag_degraded", {
-            conversationId: scope.conversationId,
+            conversationId: scope.conversationRef,
             agentId: scope.agentId,
             sessionKey: scope.sessionKey,
             reason: "live_store_divergence",
@@ -1678,7 +1658,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         // restart/JSONL-housekeeping" from "skipped due to corruption".
         () => {
           deps.eventBus.emit("context:dag_degraded", {
-            conversationId: scope.conversationId,
+            conversationId: scope.conversationRef,
             agentId: scope.agentId,
             sessionKey: scope.sessionKey,
             reason: "session_rebase",
@@ -1737,6 +1717,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
               void runDistillationPassAfterTurn({
                 summaryId,
                 scope,
+                memoryScope: { turnScope, visibility: { kind: "conversation" } },
                 content,
                 fallback: fallbackFlag,
                 depth: condensedDepth,
@@ -1783,7 +1764,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
       // outlive the session. (Lifetime contract, documented on
       // snapshotSummarizerDepsForDefer.)
       const deferredSummarizerGetter = snapshotSummarizerDepsForDefer(deps.getSummarizerDeps);
-      const deferred = store.runOnConversation(conversationId, () =>
+      const deferred = store.runOnConversation(conversationRef, () =>
         runDeferredPasses(deferredSummarizerGetter),
       );
       suppressError(deferred, "postExecution deferred LCD compaction");

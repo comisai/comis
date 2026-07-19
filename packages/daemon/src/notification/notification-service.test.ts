@@ -5,12 +5,12 @@
  * rate limiting, deduplication, event emission, and delivery queue enqueue.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TypedEventBus } from "@comis/core";
+import { createConversationRef, TypedEventBus } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import type { DeliveryQueuePort, DeliveryQueueEnqueueInput, NotificationConfig } from "@comis/core";
 import type { QuietHoursConfig } from "@comis/scheduler";
-import { createNotificationService } from "./notification-service.js";
-import type { NotificationServiceDeps } from "./notification-service.js";
+import { createNotificationService as createRawNotificationService } from "./notification-service.js";
+import type { NotificationService, NotificationServiceDeps, NotifyUserOptions } from "./notification-service.js";
 import type { ChannelResolverDeps } from "./channel-resolver.js";
 
 function createMockDeliveryQueue(): DeliveryQueuePort {
@@ -71,6 +71,35 @@ function createDefaultDeps(overrides?: Partial<NotificationServiceDeps>): Notifi
   };
 }
 
+function createNotificationService(deps: NotificationServiceDeps): NotificationService {
+  const service = createRawNotificationService(deps);
+  return {
+    notifyUser(opts: NotifyUserOptions) {
+      const endpoint = {
+        channelType: opts.channelType ?? "telegram",
+        channelInstanceId: "notification-test",
+        conversationId: opts.channelId ?? "chat-456",
+        conversationKind: "direct" as const,
+      };
+      const conversationRef = createConversationRef({
+        tenantId: "default",
+        agentId: opts.agentId,
+        partition: { kind: "endpoint-conversation", endpoint },
+      });
+      if (!conversationRef.ok) throw conversationRef.error;
+      return service.notifyUser({
+        authority: {
+          tenantId: "default",
+          agentId: opts.agentId,
+          conversationRef: conversationRef.value,
+        },
+        destinationEndpoint: endpoint,
+        ...opts,
+      });
+    },
+  };
+}
+
 describe("NotificationService", () => {
   let deps: NotificationServiceDeps;
   let emitSpy: ReturnType<typeof vi.spyOn>;
@@ -105,6 +134,34 @@ describe("NotificationService", () => {
         origin: "notification",
       }),
     );
+  });
+
+  it("refuses a resolved channel that differs from the bound destination endpoint", async () => {
+    const service = createRawNotificationService(deps);
+    const endpoint = {
+      channelType: "telegram",
+      channelInstanceId: "notification-test",
+      conversationId: "chat-bound",
+      conversationKind: "direct" as const,
+    };
+    const ref = createConversationRef({
+      tenantId: "default",
+      agentId: "agent-1",
+      partition: { kind: "endpoint-conversation", endpoint },
+    });
+    if (!ref.ok) throw ref.error;
+
+    const result = await service.notifyUser({
+      agentId: "agent-1",
+      message: "must not cross routes",
+      channelType: "discord",
+      channelId: "chat-other",
+      authority: { tenantId: "default", agentId: "agent-1", conversationRef: ref.value },
+      destinationEndpoint: endpoint,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(deps.deliveryQueue.enqueue).not.toHaveBeenCalled();
   });
 
   it("channel resolution fails: returns err, notification:suppressed emitted with reason no_channel", async () => {

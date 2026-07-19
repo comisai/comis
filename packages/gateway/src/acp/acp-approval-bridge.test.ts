@@ -12,9 +12,9 @@
  *   - The `options` array carries one entry per choice with `optionId ===
  *     choice.id`, `name === choice.defaultLabel`, and `kind` mapped
  *     (`approve→"allow_once"`, `deny→"reject_once"`, `details→"allow_once"`).
- *   - `requestPermission` targets `sessionId ===
- *     parseFormattedSessionKey(sessionKey).peerId` and `toolCall.toolCallId ===`
- *     the event's `toolCallId` (or `activityId` fallback).
+ *   - `requestPermission` targets the explicitly subscribed `sessionId`, and
+ *     `toolCall.toolCallId` equals the event's `toolCallId` (or `activityId`
+ *     fallback).
  *   - §19.6 SECURITY: the `toolCall` carries NO `rawInput`/`rawOutput`, and
  *     `JSON.stringify(req)` contains no injected raw-param sentinel (the source
  *     ApprovalCorrelation deliberately has no full request id — only `shortId`).
@@ -42,9 +42,10 @@ import { createAcpApprovalBridge } from "./acp-approval-bridge.js";
 /** The ACP session id (= AcpSessionKey.peerId; the connection-registry key). */
 const ACP_SESSION_ID = "peer-9876";
 
-/** A sessionKey whose peerId reverse-resolves to ACP_SESSION_ID (acp-session-map idiom). */
+/** A display label used for event correlation only. */
 const ACP_SESSION_KEY = formatSessionKey({
   tenantId: "default",
+  agentId: "a1",
   userId: "ide-user",
   channelId: "acp",
   peerId: ACP_SESSION_ID,
@@ -214,7 +215,7 @@ describe("createAcpApprovalBridge (kind:'approval' ActivityEvent → SDK request
       activityStreamPort: stream.port,
       getConnection: (id) => (id === ACP_SESSION_ID ? connection : undefined),
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     stream.emit(makeApprovalEvent());
     await flush();
@@ -231,7 +232,7 @@ describe("createAcpApprovalBridge (kind:'approval' ActivityEvent → SDK request
       activityStreamPort: stream.port,
       getConnection: () => connection,
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     stream.emit(makeApprovalEvent());
     await flush();
@@ -251,7 +252,7 @@ describe("createAcpApprovalBridge (kind:'approval' ActivityEvent → SDK request
       activityStreamPort: stream.port,
       getConnection: (id) => (id === ACP_SESSION_ID ? connection : undefined),
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     stream.emit(makeApprovalEvent({ toolCallId: "tc-explicit" }));
     await flush();
@@ -267,7 +268,7 @@ describe("createAcpApprovalBridge (kind:'approval' ActivityEvent → SDK request
       activityStreamPort: stream.port,
       getConnection: () => connection,
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     stream.emit(makeApprovalEvent({ toolCallId: undefined }));
     await flush();
@@ -284,7 +285,7 @@ describe("createAcpApprovalBridge (kind:'approval' ActivityEvent → SDK request
       activityStreamPort: stream.port,
       getConnection: () => connection,
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     // Inject the sentinel into a field the bridge could (wrongly) forward.
     stream.emit(
@@ -313,7 +314,7 @@ describe("createAcpApprovalBridge (kind:'approval' ActivityEvent → SDK request
       getConnection: () => connection,
       logger,
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     expect(() => stream.emit(makeApprovalEvent())).not.toThrow();
     await flush();
@@ -334,7 +335,7 @@ describe("createAcpApprovalBridge (kind:'approval' ActivityEvent → SDK request
       activityStreamPort: stream.port,
       getConnection: () => undefined,
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     expect(() => stream.emit(makeApprovalEvent())).not.toThrow();
     await flush();
@@ -348,7 +349,7 @@ describe("createAcpApprovalBridge (kind:'approval' ActivityEvent → SDK request
       activityStreamPort: stream.port,
       getConnection: () => connection,
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     stream.emit(makeToolEvent());
     await flush();
@@ -365,7 +366,7 @@ describe("createAcpApprovalBridge (kind:'approval' ActivityEvent → SDK request
       activityStreamPort: stream.port,
       getConnection: () => connection,
     });
-    const unsubscribe = bridge.subscribe(makeTurnContext());
+    const unsubscribe = bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     expect(stream.unsubscribeCalls()).toBe(0);
     unsubscribe();
@@ -411,7 +412,7 @@ describe("createAcpApprovalBridge (kind:'approval' ActivityEvent → SDK request
       getConnection: () => connection,
       logger,
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     // First approval triggers the rejecting requestPermission.
     stream.emit(makeApprovalEvent({ toolCallId: "fail" }));

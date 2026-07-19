@@ -18,13 +18,15 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type {
+  ConversationScope,
   NormalizedMessage,
   SessionKey,
+  SessionStorePort,
   QueueConfig,
   TypedEventBus,
 } from "@comis/core";
 import { QueueConfigSchema } from "@comis/core";
-import type { SessionStore, SessionData } from "@comis/memory";
+import { ok } from "@comis/shared";
 // queue/ lives under @comis/orchestrator; this test exercises CommandQueue
 // serialization in tandem with agent's session lifecycle + write-lock
 // helpers, which remain at @comis/agent.
@@ -81,13 +83,13 @@ interface StoredSession {
   updatedAt: number;
 }
 
-function createFakeSessionStore(): SessionStore & {
+function createFakeSessionStore(): SessionStorePort & {
   _sessions: Map<string, StoredSession>;
 } {
   const sessions = new Map<string, StoredSession>();
 
-  function keyStr(key: SessionKey): string {
-    return `${key.tenantId}:${key.userId}:${key.channelId}`;
+  function keyStr(scope: ConversationScope): string {
+    return JSON.stringify(scope);
   }
 
   return {
@@ -103,85 +105,49 @@ function createFakeSessionStore(): SessionStore & {
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       });
+      return ok(undefined);
     },
 
-    load(key): SessionData | undefined {
+    load(key) {
       const k = keyStr(key);
       const s = sessions.get(k);
-      if (!s) return undefined;
-      return {
+      if (!s) return ok(undefined);
+      return ok({
+        conversationRef: `cv_${"s".repeat(43)}` as never,
+        conversationScope: key,
         messages: s.messages,
         metadata: s.metadata,
         createdAt: s.createdAt,
         updatedAt: s.updatedAt,
-      };
+      });
     },
 
-    list(tenantId?) {
-      const entries: Array<{ sessionKey: string; updatedAt: number }> = [];
-      for (const [k, v] of sessions) {
-        if (tenantId === undefined || k.startsWith(tenantId + ":")) {
-          entries.push({ sessionKey: k, updatedAt: v.updatedAt });
-        }
-      }
-      return entries.sort((a, b) => b.updatedAt - a.updatedAt);
-    },
+    list: vi.fn().mockReturnValue(ok([])),
+    loadByRef: vi.fn().mockReturnValue(ok(undefined)),
 
     delete(key) {
       const k = keyStr(key);
-      return sessions.delete(k);
+      return ok(sessions.delete(k));
     },
 
-    deleteStale(maxAgeMs) {
+    deleteStale(queryScope, maxAgeMs) {
       const cutoff = Date.now() - maxAgeMs;
       let deleted = 0;
       for (const [k, v] of sessions) {
-        if (v.updatedAt < cutoff) {
+        const scope = JSON.parse(k) as ConversationScope;
+        if (
+          v.updatedAt < cutoff &&
+          scope.tenantId === queryScope.tenantId &&
+          scope.agentId === queryScope.agentId
+        ) {
           sessions.delete(k);
           deleted++;
         }
       }
-      return deleted;
+      return ok(deleted);
     },
-
-    loadByFormattedKey(sessionKey: string): SessionData | undefined {
-      const s = sessions.get(sessionKey);
-      if (!s) return undefined;
-      return {
-        messages: s.messages,
-        metadata: s.metadata,
-        createdAt: s.createdAt,
-        updatedAt: s.updatedAt,
-      };
-    },
-
-    listDetailed(tenantId?: string) {
-      const entries: Array<{
-        sessionKey: string;
-        tenantId: string;
-        userId: string;
-        channelId: string;
-        metadata: Record<string, unknown>;
-        createdAt: number;
-        updatedAt: number;
-      }> = [];
-      for (const [k, v] of sessions) {
-        const parts = k.split(":");
-        const tid = parts[0] ?? "";
-        if (tenantId === undefined || tid === tenantId) {
-          entries.push({
-            sessionKey: k,
-            tenantId: tid,
-            userId: parts[1] ?? "",
-            channelId: parts[2] ?? "",
-            metadata: v.metadata,
-            createdAt: v.createdAt,
-            updatedAt: v.updatedAt,
-          });
-        }
-      }
-      return entries.sort((a, b) => b.updatedAt - a.updatedAt);
-    },
+    deleteByRef: vi.fn().mockReturnValue(ok(false)),
+    listDetailed: vi.fn().mockReturnValue(ok([])),
   };
 }
 
@@ -192,6 +158,7 @@ function createFakeSessionStore(): SessionStore & {
 describe("-- PQueue session serialization", () => {
   const SESSION_KEY: SessionKey = {
     tenantId: "default",
+    agentId: "agent-1",
     userId: "user-1",
     channelId: "ch-1",
   };
@@ -403,6 +370,7 @@ describe("-- Stale lock recovery", () => {
 describe("-- Session deletion during active execution", () => {
   const SESSION_KEY: SessionKey = {
     tenantId: "default",
+    agentId: "agent-1",
     userId: "user-1",
     channelId: "ch-1",
   };
@@ -413,9 +381,14 @@ describe("-- Session deletion during active execution", () => {
     const queue = createCommandQueue({ eventBus, config });
     const store = createFakeSessionStore();
     const mgr = createSessionLifecycle(store);
+    const conversationScope: ConversationScope = {
+      tenantId: SESSION_KEY.tenantId,
+      agentId: SESSION_KEY.agentId,
+      partition: { kind: "principal", principalId: SESSION_KEY.userId },
+    };
 
     // Save initial session data
-    mgr.save(SESSION_KEY, [{ role: "user", content: "hello" }]);
+    mgr.save(conversationScope, [{ role: "user", content: "hello" }]);
 
     // Create a "started" signal so we know the handler is running
     let resolveStarted: () => void;
@@ -450,7 +423,7 @@ describe("-- Session deletion during active execution", () => {
     await started;
 
     // Delete the session mid-execution
-    mgr.expire(SESSION_KEY);
+    mgr.expire(conversationScope);
 
     // Now await the enqueue to completion
     await enqueuePromise;
@@ -459,8 +432,10 @@ describe("-- Session deletion during active execution", () => {
     expect(executionCompleted).toBe(true);
 
     // The session was deleted, so loadOrCreate returns empty (new session)
-    const messages = mgr.loadOrCreate(SESSION_KEY);
-    expect(messages).toEqual([]);
+    const messages = mgr.loadOrCreate(conversationScope);
+    expect(messages.ok).toBe(true);
+    if (!messages.ok) throw messages.error;
+    expect(messages.value).toEqual([]);
 
     await queue.shutdown();
   });

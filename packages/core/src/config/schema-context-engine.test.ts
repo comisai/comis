@@ -16,7 +16,6 @@ describe("ContextEngineConfigSchema", () => {
     expect(result).toEqual({
       // Core
       enabled: true,
-      version: "dag",
       // Shared
       thinkingKeepTurns: 10,
       replayDriftIdleMs: 30 * 60_000,
@@ -24,16 +23,8 @@ describe("ContextEngineConfigSchema", () => {
       // provider via pi-ai catalog (resolveCompactionModel).
       compactionModel: "",
       evictionMinAge: 15,
-      // Pipeline
-      historyTurns: 15,
-      observationKeepWindow: 25,
-      observationTriggerChars: 120_000,
-      observationDeactivationChars: 80_000,
-      ephemeralKeepWindow: 10,
-      compactionCooldownTurns: 5,
-      compactionPrefixAnchorTurns: 2,
       outputEscalation: { enabled: true, escalatedMaxTokens: 32_768 },
-      // DAG
+      // Durable context
       freshTailTurns: 8,
       contextThreshold: 0.75,
       leafMinFanout: 8,
@@ -64,20 +55,12 @@ describe("ContextEngineConfigSchema", () => {
     });
   });
 
-  it("accepts full override including DAG fields", () => {
+  it("accepts full override including durable context fields", () => {
     const result = ContextEngineConfigSchema.parse({
       enabled: false,
-      version: "dag",
       thinkingKeepTurns: 5,
       compactionModel: "groq:llama-3.3-70b-versatile",
       evictionMinAge: 20,
-      historyTurns: 20,
-      historyTurnOverrides: { dm: 10, group: 5, "trader-1": 30 },
-      observationKeepWindow: 30,
-      observationTriggerChars: 300_000,
-      observationDeactivationChars: 200_000,
-      compactionCooldownTurns: 10,
-      compactionPrefixAnchorTurns: 4,
       outputEscalation: { enabled: false, escalatedMaxTokens: 16_384 },
       freshTailTurns: 12,
       contextThreshold: 0.85,
@@ -99,19 +82,10 @@ describe("ContextEngineConfigSchema", () => {
     });
     expect(result).toEqual({
       enabled: false,
-      version: "dag",
       thinkingKeepTurns: 5,
       replayDriftIdleMs: 30 * 60_000,
       compactionModel: "groq:llama-3.3-70b-versatile",
       evictionMinAge: 20,
-      historyTurns: 20,
-      historyTurnOverrides: { dm: 10, group: 5, "trader-1": 30 },
-      observationKeepWindow: 30,
-      observationTriggerChars: 300_000,
-      observationDeactivationChars: 200_000,
-      ephemeralKeepWindow: 10,
-      compactionCooldownTurns: 10,
-      compactionPrefixAnchorTurns: 4,
       outputEscalation: { enabled: false, escalatedMaxTokens: 16_384 },
       freshTailTurns: 12,
       contextThreshold: 0.85,
@@ -207,42 +181,6 @@ describe("ContextEngineConfigSchema", () => {
   });
 
   // -------------------------------------------------------------------------
-  // version
-  // -------------------------------------------------------------------------
-
-  describe("version", () => {
-    it("version defaults to 'dag' when unset (the default working-context engine)", () => {
-      // The lossless LCD (dag) engine is the default for every agent
-      // that omits `version`; the simpler sequential-layer pipeline engine is
-      // the first-class opt-in. This is the durable regression gate for that
-      // default.
-      const result = ContextEngineConfigSchema.parse({});
-      expect(result.version).toBe("dag");
-    });
-
-    it("accepts the explicit 'pipeline' version value", () => {
-      const result = ContextEngineConfigSchema.parse({ version: "pipeline" });
-      expect(result.version).toBe("pipeline");
-    });
-
-    it("explicit version 'dag' parses to 'dag' (the default LCD engine, explicitly pinned)", () => {
-      // "dag" (the LCD engine) is the default; pinning it
-      // explicitly is equivalent to omitting `version`. Selecting it does not
-      // throw; with a context store wired the factory builds the LCD engine,
-      // and a storeless caller falls back to pipeline with a logged warning
-      // (covered in packages/agent/src/context-engine/context-engine.test.ts).
-      expect(() => ContextEngineConfigSchema.parse({ version: "dag" })).not.toThrow();
-      const result = ContextEngineConfigSchema.parse({ version: "dag" });
-      expect(result.version).toBe("dag");
-    });
-
-    it("rejects unknown version string", () => {
-      const result = ContextEngineConfigSchema.safeParse({ version: "unknown" });
-      expect(result.success).toBe(false);
-    });
-  });
-
-  // -------------------------------------------------------------------------
   // thinkingKeepTurns
   // -------------------------------------------------------------------------
 
@@ -333,213 +271,6 @@ describe("ContextEngineConfigSchema", () => {
     it("rejects non-integer values", () => {
       const result = ContextEngineConfigSchema.safeParse({ evictionMinAge: 10.5 });
       expect(result.success).toBe(false);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // historyTurns
-  // -------------------------------------------------------------------------
-
-  describe("historyTurns", () => {
-    it("defaults historyTurns to 15 when unset", () => {
-      const result = ContextEngineConfigSchema.parse({});
-      expect(result.historyTurns).toBe(15);
-    });
-
-    it("accepts valid int in range [3, 100]", () => {
-      const low = ContextEngineConfigSchema.parse({ historyTurns: 3 });
-      expect(low.historyTurns).toBe(3);
-
-      const mid = ContextEngineConfigSchema.parse({ historyTurns: 50 });
-      expect(mid.historyTurns).toBe(50);
-
-      const high = ContextEngineConfigSchema.parse({ historyTurns: 100 });
-      expect(high.historyTurns).toBe(100);
-    });
-
-    it("rejects values below 3", () => {
-      const result = ContextEngineConfigSchema.safeParse({ historyTurns: 2 });
-      expect(result.success).toBe(false);
-    });
-
-    it("rejects values above 100", () => {
-      const result = ContextEngineConfigSchema.safeParse({ historyTurns: 101 });
-      expect(result.success).toBe(false);
-    });
-
-    it("rejects non-integer values", () => {
-      const result = ContextEngineConfigSchema.safeParse({ historyTurns: 10.5 });
-      expect(result.success).toBe(false);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // historyTurnOverrides
-  // -------------------------------------------------------------------------
-
-  describe("historyTurnOverrides", () => {
-    it("accepts { dm: 10, group: 5 }", () => {
-      const result = ContextEngineConfigSchema.parse({
-        historyTurnOverrides: { dm: 10, group: 5 },
-      });
-      expect(result.historyTurnOverrides).toEqual({ dm: 10, group: 5 });
-    });
-
-    it("is optional (omission is valid)", () => {
-      const result = ContextEngineConfigSchema.parse({});
-      expect(result.historyTurnOverrides).toBeUndefined();
-    });
-
-    it("rejects override values below 1", () => {
-      const result = ContextEngineConfigSchema.safeParse({
-        historyTurnOverrides: { dm: 0 },
-      });
-      expect(result.success).toBe(false);
-    });
-
-    it("rejects override values above 100", () => {
-      const result = ContextEngineConfigSchema.safeParse({
-        historyTurnOverrides: { dm: 101 },
-      });
-      expect(result.success).toBe(false);
-    });
-
-    it("accepts per-agent overrides (Record<string, number>)", () => {
-      const result = ContextEngineConfigSchema.parse({
-        historyTurnOverrides: { "trader-1": 30, "trader-2": 25 },
-      });
-      expect(result.historyTurnOverrides).toEqual({ "trader-1": 30, "trader-2": 25 });
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // observationKeepWindow
-  // -------------------------------------------------------------------------
-
-  describe("observationKeepWindow", () => {
-    it("defaults observationKeepWindow to 25 when unset", () => {
-      const result = ContextEngineConfigSchema.parse({});
-      expect(result.observationKeepWindow).toBe(25);
-    });
-
-    it("accepts custom override", () => {
-      const result = ContextEngineConfigSchema.parse({ observationKeepWindow: 30 });
-      expect(result.observationKeepWindow).toBe(30);
-    });
-
-    it("accepts boundary values (1 and 50)", () => {
-      const min = ContextEngineConfigSchema.parse({ observationKeepWindow: 1 });
-      expect(min.observationKeepWindow).toBe(1);
-
-      const max = ContextEngineConfigSchema.parse({ observationKeepWindow: 50 });
-      expect(max.observationKeepWindow).toBe(50);
-    });
-
-    it("rejects 0 (below minimum)", () => {
-      const result = ContextEngineConfigSchema.safeParse({ observationKeepWindow: 0 });
-      expect(result.success).toBe(false);
-    });
-
-    it("rejects 51 (above maximum)", () => {
-      const result = ContextEngineConfigSchema.safeParse({ observationKeepWindow: 51 });
-      expect(result.success).toBe(false);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // observationTriggerChars
-  // -------------------------------------------------------------------------
-
-  describe("observationTriggerChars", () => {
-    it("defaults observationTriggerChars to 120000 when unset", () => {
-      const result = ContextEngineConfigSchema.parse({});
-      expect(result.observationTriggerChars).toBe(120_000);
-    });
-
-    it("accepts custom override", () => {
-      const result = ContextEngineConfigSchema.parse({ observationTriggerChars: 500_000 });
-      expect(result.observationTriggerChars).toBe(500_000);
-    });
-
-    it("accepts boundary values (50000 and 1000000)", () => {
-      const min = ContextEngineConfigSchema.parse({ observationTriggerChars: 50_000 });
-      expect(min.observationTriggerChars).toBe(50_000);
-
-      const max = ContextEngineConfigSchema.parse({ observationTriggerChars: 1_000_000 });
-      expect(max.observationTriggerChars).toBe(1_000_000);
-    });
-
-    it("rejects 49999 (below minimum)", () => {
-      const result = ContextEngineConfigSchema.safeParse({ observationTriggerChars: 49_999 });
-      expect(result.success).toBe(false);
-    });
-
-    it("rejects 1000001 (above maximum)", () => {
-      const result = ContextEngineConfigSchema.safeParse({ observationTriggerChars: 1_000_001 });
-      expect(result.success).toBe(false);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // compactionCooldownTurns
-  // -------------------------------------------------------------------------
-
-  describe("compactionCooldownTurns", () => {
-    it("defaults compactionCooldownTurns to 5 when unset", () => {
-      const result = ContextEngineConfigSchema.parse({});
-      expect(result.compactionCooldownTurns).toBe(5);
-    });
-
-    it("accepts custom override", () => {
-      const result = ContextEngineConfigSchema.parse({ compactionCooldownTurns: 10 });
-      expect(result.compactionCooldownTurns).toBe(10);
-    });
-
-    it("accepts boundary values (1 and 50)", () => {
-      const min = ContextEngineConfigSchema.parse({ compactionCooldownTurns: 1 });
-      expect(min.compactionCooldownTurns).toBe(1);
-
-      const max = ContextEngineConfigSchema.parse({ compactionCooldownTurns: 50 });
-      expect(max.compactionCooldownTurns).toBe(50);
-    });
-
-    it("rejects 0 (below minimum)", () => {
-      const result = ContextEngineConfigSchema.safeParse({ compactionCooldownTurns: 0 });
-      expect(result.success).toBe(false);
-    });
-
-    it("rejects 51 (above maximum)", () => {
-      const result = ContextEngineConfigSchema.safeParse({ compactionCooldownTurns: 51 });
-      expect(result.success).toBe(false);
-    });
-
-    it("rejects non-integer values", () => {
-      const result = ContextEngineConfigSchema.safeParse({ compactionCooldownTurns: 3.5 });
-      expect(result.success).toBe(false);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // compactionPrefixAnchorTurns
-  // -------------------------------------------------------------------------
-
-  describe("compactionPrefixAnchorTurns", () => {
-    it("defaults compactionPrefixAnchorTurns to 2 when unset", () => {
-      const result = ContextEngineConfigSchema.parse({});
-      expect(result.compactionPrefixAnchorTurns).toBe(2);
-    });
-
-    it("validates compactionPrefixAnchorTurns range (0-10)", () => {
-      // min boundary
-      expect(() => ContextEngineConfigSchema.parse({ compactionPrefixAnchorTurns: 0 })).not.toThrow();
-      // max boundary
-      expect(() => ContextEngineConfigSchema.parse({ compactionPrefixAnchorTurns: 10 })).not.toThrow();
-      // below min -- negative
-      expect(() => ContextEngineConfigSchema.parse({ compactionPrefixAnchorTurns: -1 })).toThrow();
-      // above max
-      expect(() => ContextEngineConfigSchema.parse({ compactionPrefixAnchorTurns: 11 })).toThrow();
-      // non-integer
-      expect(() => ContextEngineConfigSchema.parse({ compactionPrefixAnchorTurns: 1.5 })).toThrow();
     });
   });
 

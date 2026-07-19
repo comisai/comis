@@ -31,6 +31,23 @@ export {
   MemoryExtractionResultSchema,
   MemoryEntitySchema,
 } from "./memory-entry.js";
+export {
+  MemoryVisibilityRequestSchema,
+  MemoryVisibilitySchema,
+  MemoryVisibilityPermissionSchema,
+  MemoryWriteScopeSchema,
+  MemoryRecallScopeSchema,
+  MemoryScopeError,
+  createMemoryRecallScope,
+  resolveMemoryVisibility,
+} from "./memory-scope.js";
+export type {
+  MemoryVisibilityRequest,
+  MemoryVisibility,
+  MemoryVisibilityPermission,
+  MemoryWriteScope,
+  MemoryRecallScope,
+} from "./memory-scope.js";
 export type {
   TrustLevel,
   MemoryEntry,
@@ -52,6 +69,7 @@ export type { ToolCall, TokenUsage, AgentResponse } from "./agent-response.js";
 
 export { SessionKeySchema, parseSessionKey, formatSessionKey, parseFormattedSessionKey } from "./session-key.js";
 export type { SessionKey } from "./session-key.js";
+export { SessionStoreError } from "./session-store-error.js";
 
 export {
   PollInputSchema,
@@ -231,3 +249,34 @@ export type { UnreachableToolEntry } from "./sub-agent-tool-denylist.js";
 // (warn, never internal/ERROR) at every log layer.
 export { classifyTypedRpcError } from "./rpc-error-classification.js";
 export type { TypedRpcErrorKind, TypedRpcErrorClassification } from "./rpc-error-classification.js";
+
+export {
+  ChannelEndpointSchema,
+  PrincipalScopeSchema,
+  PlatformPrincipalAssertionSchema,
+  ConversationPartitionSchema,
+  ConversationScopeSchema,
+  ResolvedTurnScopeSchema,
+  ConversationRefSchema,
+  ConversationLocatorSchema,
+  ConversationScopeError,
+  encodeConversationScope,
+  createConversationRef,
+  createConversationLocator,
+  conversationScopeToSessionKey,
+} from "./conversation-scope.js";
+export type {
+  ChannelEndpoint,
+  PrincipalScope,
+  PlatformPrincipalAssertion,
+  ConversationPartition,
+  ConversationScope,
+  ResolvedTurnScope,
+  ConversationRef,
+  ConversationLocator,
+} from "./conversation-scope.js";
+export {
+  PrincipalMappingSchema,
+  createPrincipalResolver,
+} from "./principal-resolver.js";
+export type { PrincipalMapping } from "./principal-resolver.js";

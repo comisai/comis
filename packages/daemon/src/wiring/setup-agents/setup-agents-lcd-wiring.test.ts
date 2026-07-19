@@ -44,7 +44,7 @@ vi.mock("@comis/agent", () => ({
   createComisSessionManager: vi.fn(() => mockSessionAdapter),
   cleanupStaleLocks: vi.fn(async () => 0),
   createAuthStorageAdapter: vi.fn(() => ({ getApiKey: vi.fn() })),
-  createModelRegistryAdapter: vi.fn(() => ({ find: vi.fn() })),
+  createModelRegistryAdapter: vi.fn(async () => ({ registry: { find: vi.fn() }, modelRuntime: {} })),
   registerCustomProviders: vi.fn(() => ({ registered: 0, providerAliases: new Map() })),
   createAuthProfileManager: vi.fn(() => ({})),
   createAuthRotationAdapter: vi.fn(() => ({})),
@@ -129,7 +129,6 @@ function makeContainer(agentId: string): AppContainer {
     } as any,
     eventBus: { on: vi.fn(), emit: vi.fn() } as any,
     secretManager: { get: vi.fn(() => undefined), has: vi.fn(() => false) } as any,
-    rawAgentRerankEnabled: new Map<string, boolean | undefined>(),
     hookRunner: {} as any,
   } as unknown as AppContainer;
 }

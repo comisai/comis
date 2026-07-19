@@ -295,11 +295,11 @@ export function spawnNode(
     return;
   }
 
-  // On retry spawn, reuse the aborted attempt's sessionKey so Anthropic cache
-  // can amortize across the failure boundary (priorSessionKey is set by
+  // On retry spawn, reuse the aborted attempt's conversation so Anthropic cache
+  // can amortize across the failure boundary (priorConversation is set by
   // graph-state-machine markNodeFailed on retry-eligible failures).
   const nodeStateForRetry = gs.stateMachine.getNodeState(nodeId);
-  const reuseSessionKeyOnRetry = nodeStateForRetry?.priorSessionKey;
+  const reuseConversationOnRetry = nodeStateForRetry?.priorConversation;
 
   // Regular node spawn wrapped in gatedSpawn for global concurrency
   gatedSpawn(state, deps, config, gs, nodeId, () => {
@@ -329,7 +329,7 @@ export function spawnNode(
         nodeId,
         graphNodeDepth: node.dependsOn.length === 0 ? 0 : 1,
         isLeafNode: !gs.graph.graph.nodes.some((n) => n.dependsOn.includes(nodeId)),
-        ...(reuseSessionKeyOnRetry ? { reuseSessionKey: reuseSessionKeyOnRetry } : {}),
+        ...(reuseConversationOnRetry ? { reuseConversation: reuseConversationOnRetry } : {}),
         ...(nodeDiscoveredTools && nodeDiscoveredTools.length > 0 && { discoveredDeferredTools: nodeDiscoveredTools }),
         ...(reservedRunId !== undefined ? { reservedRunId } : {}),
       });
@@ -690,7 +690,15 @@ export function handleSubAgentCompleted(
   // abort (BudgetGuard rejected the next call before the overage → spend <= cap,
   // finishReason "budget_exceeded") still terminal-fails the node + emits
   // subagent:budget_exceeded — not just the post-hoc spend > cap overage.
-  const budgetBreach = applyNodeBudgetBreach(deps, config, gs, nodeId, event.tokensUsed ?? 0, run?.sessionKey, run?.result?.finishReason);
+  const budgetBreach = applyNodeBudgetBreach(
+    deps,
+    config,
+    gs,
+    nodeId,
+    event.tokensUsed ?? 0,
+    run ? { conversationScope: run.conversationScope, conversationRef: run.conversationRef } : undefined,
+    run?.result?.finishReason,
+  );
 
   // 6. Synchronous state machine update
   if (budgetBreach.breached) {
@@ -723,9 +731,13 @@ export function handleSubAgentCompleted(
     // Original failure path -- no partial completion detected
     const errorText = run?.error ?? "Unknown error";
     // Pass the failed run's sessionKey so retry spawns can reuse it
-    // (see resolveGraphCacheRetention / reuseSessionKey — lets Anthropic cache
+    // (see resolveGraphCacheRetention / reuseConversation — lets Anthropic cache
     // amortize across a retry instead of cold-starting on every attempt).
-    const result = gs.stateMachine.markNodeFailed(nodeId, errorText, run?.sessionKey);
+    const result = gs.stateMachine.markNodeFailed(
+      nodeId,
+      errorText,
+      run ? { conversationScope: run.conversationScope, conversationRef: run.conversationRef } : undefined,
+    );
     if (!result.ok) {
       deps.logger?.warn(
         { graphId: gs.graphId, nodeId, error: toSafeErrorLogString(result.error), hint: "Node may have been concurrently updated; harmless if graph reaches terminal state", errorKind: "internal" as const },

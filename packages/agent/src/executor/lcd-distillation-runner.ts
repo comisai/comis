@@ -23,10 +23,10 @@ import type {
   ErrorKind,
   TypedEventBus,
   MemoryPort,
+  MemoryWriteScope,
   AppendProvenanceInput,
-  SessionKey,
 } from "@comis/core";
-import { validateMemoryWrite } from "@comis/core";
+import { createMemoryRecallScope, validateMemoryWrite } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import {
   LEAF_FALLBACK_SUMMARY_MARKER,
@@ -47,8 +47,10 @@ import {
 export interface RunDistillationPassParams {
   /** The summaryId returned by store.appendCondensedSummary — the hook point. */
   summaryId: string;
-  /** SECURITY scope columns (conversationId/tenantId/agentId/sessionKey). */
+  /** SECURITY scope columns (conversationRef/tenantId/agentId/sessionKey). */
   scope: ContextStoreScope;
+  /** Snapshot of the originating turn authority for scoped recall and persistence. */
+  memoryScope: MemoryWriteScope;
   /** The condensed summary text (NEVER logged by this module). */
   content: string;
   /** True ⇒ content is a deterministic truncation, not a real summary. */
@@ -100,12 +102,12 @@ export interface RunDistillationPassParams {
  * unexpected failure — the live turn is NEVER affected.
  */
 export async function runDistillationPassAfterTurn(params: RunDistillationPassParams): Promise<void> {
-  const { summaryId, scope, content, fallback, depth, now, deps } = params;
+  const { summaryId, scope, memoryScope, content, fallback, depth, now, deps } = params;
 
   // GATE 1: fail-closed scope isolation — incomplete scope → return without any write.
-  // An empty agentId, tenantId, or conversationId is a misconfigured session;
+  // An empty agentId, tenantId, or conversationRef is a misconfigured session;
   // never write cross-scope memory rows from an unknown scope.
-  if (!scope.tenantId || !scope.agentId || !scope.conversationId) {
+  if (!scope.tenantId || !scope.agentId || !scope.conversationRef) {
     return;
   }
 
@@ -237,18 +239,12 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
     // and would let a different agent's near-duplicate in the same tenant suppress
     // this agent's write (a cross-agent dedup false positive + a read-isolation gap).
     const dedupThreshold = deps.distillConfig?.dedupCosineThreshold ?? 0.92;
-    // The SessionKey only carries the tenant filter into search(); userId and
-    // channelId are required-by-type fields the adapter does NOT consume here.
-    const searchSessionKey: SessionKey = {
-      tenantId: scope.tenantId,
-      userId: scope.agentId, // unused by search() — kept only to satisfy the type
-      channelId: scope.conversationId, // unused by search()
-      agentId: scope.agentId, // unused by search() — the real filter is the option below
-    };
+    const recallScope = createMemoryRecallScope(memoryScope.turnScope, false);
+    if (!recallScope.ok || recallScope.value.conversationRef !== scope.conversationRef) return;
     const searchResult = await deps.memoryPort.search(
-      searchSessionKey,
+      recallScope.value,
       content,
-      { limit: 1, minScore: dedupThreshold, agentId: scope.agentId }, // <-- the actual agent-isolation filter
+      { limit: 1, minScore: dedupThreshold },
     );
     if (searchResult.ok && searchResult.value.length > 0) {
       const topScore = searchResult.value[0]?.score ?? 0;
@@ -268,9 +264,6 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
     const entryId = randomUUID();
     const storeResult = await deps.memoryPort.store({
       id: entryId,
-      tenantId: scope.tenantId,
-      agentId: scope.agentId,
-      userId: scope.tenantId, // distillation writes at the tenant scope (deliberate: not per-user)
       content,
       trustLevel: "learned",    // LOCKED: distilled rows always carry learned trust
       memoryType: "episodic",    // LOCKED: distilled rows are always episodic
@@ -285,7 +278,7 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
       // only — NO content ever rides in a tag.
       tags: ["lcd_distilled", `depth:${depth}`, `summary:${summaryId}`],
       createdAt: now,
-    });
+    }, memoryScope);
     if (!storeResult.ok) {
       deps.logger.warn(
         {
@@ -311,7 +304,7 @@ export async function runDistillationPassAfterTurn(params: RunDistillationPassPa
       memoryId: entryId,
       summaryId,
       sourceSessionKey: scope.sessionKey,
-      conversationId: scope.conversationId,
+      conversationRef: scope.conversationRef,
       agentId: scope.agentId,
       tenantId: scope.tenantId,
       createdAt: now,

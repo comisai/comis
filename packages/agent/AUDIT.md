@@ -12,8 +12,6 @@ This audit lives co-located with the agent package; `files: ["dist"]` in `packag
 
 The audit enumerates all 21 fields of `SubAgentRunnerDeps`. Every required field appears in every production construction call; every optional field has a real production absent-mode code path (either an `if (deps.X)` guard or a `deps.X?.method()` chain whose absent-branch falls through to a no-op).
 
-The structural audit found ONE candidate stale-fallback field: `activeRunRegistry?`. The daemon construction site wires it (`setup-cross-session.ts:829: activeRunRegistry: deps.activeRunRegistry`), but the sub-agent runner production source never accesses `deps.activeRunRegistry` — only `deps.sessionResolver` reads from the activeRunRegistry indirectly via `createBackgroundSessionResolver({activeRunRegistry})` (per JSDoc at sub-agent-runner.ts:196-203). The classification retains `activeRunRegistry` as `optional` because (a) the daemon construction site still wires it for structural type completeness with the cross-package resolver chain, and (b) deletion is a behavior-changing diff that should be scoped to a dedicated cleanup commit. The `When-absent` cell documents the supersession.
-
 The architecture-test invariants enforced by `packages/agent/src/__tests__/architecture.test.ts` hold: bidirectional set equality between this table and `SubAgentRunnerDeps`; every classification is `required` or `optional`; classification matches the interface's `?` marker; every row has a non-empty evidence-link cell.
 
 ## Field Classification
@@ -38,7 +36,6 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | deadLetterQueue | optional | failed announcement deliveries are lost (no persistence; line 596 `if (deps.deadLetterQueue)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:191 |
 | sendGovernedAnnouncement | optional | direct completion fallback uses the unledgered channel sender; the daemon wires this whenever the outward ledger is available | packages/agent/src/spawn/sub-agent-runner.ts:317 |
 | deliveryDedup | optional | failure-path dedup falls back to the batcher's set when present; absent + no batcher → no cross-path dedup (deps.deliveryDedup?. optional-chain in deliverAnnouncement/deliverFailureNotification) | packages/agent/src/spawn/sub-agent-runner.ts:204 |
-| activeRunRegistry | optional | superseded by sessionResolver when present; structural-only retention for daemon construction-site type compatibility (no direct deps.activeRunRegistry access in runner — see JSDoc at lines 196-203) | packages/agent/src/spawn/sub-agent-runner.ts:193 |
 | sessionResolver | optional | abort path falls back to no-op when neither resolver nor registry resolves a handle (line 545 `if (deps.sessionResolver)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:205 |
 | resultCondenser | optional | sub-agent result delivered verbatim without condensation (line 1015 `if (deps.resultCondenser)` guard) | packages/agent/src/spawn/sub-agent-runner.ts:209 |
 | condenserModel | optional | resultCondenser receives undefined model (condenser uses internal default if any) | packages/agent/src/spawn/sub-agent-runner.ts:239 |
@@ -58,7 +55,6 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 **None.** Every interface field whose construction-site value is omitted by the daemon has a real production absent-mode code path. The audit verified this empirically by counting `deps.<field>` references across `packages/agent/src/spawn/{sub-agent-runner.ts, sub-agent-result-processor.ts}` for each candidate optional field; every candidate had at least one production reference whose absent-branch IS the production behavior.
 
-The candidate stale-fallback field `activeRunRegistry` was retained as `optional` rather than removed because (a) the daemon construction site at `setup-cross-session.ts:829` still wires it for structural type compatibility with the cross-package resolver chain, and (b) deletion would constitute a behavior-changing API diff outside the scope of this audit. The `When-absent` cell documents the supersession by `sessionResolver`; future cleanup may delete the field in a dedicated commit.
 
 ## Summary
 

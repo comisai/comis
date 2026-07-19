@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: capability lease minting is a security boundary; an invalid
+// persisted resume scope is caught by the orchestrate tool boundary and refused.
 /**
  * `setup-tools-autonomy` — the dormancy-activation tool wiring,
  * extracted from `setup-tools.ts` to keep it under the 800-line cap (mirrors the
@@ -27,6 +29,8 @@ import {
   resolveAutonomy,
   degradeAutonomy,
   attenuateCaps,
+  createConversationRef,
+  conversationScopeToSessionKey,
   systemNowMs,
   formatSessionKey,
   type ApprovalGate,
@@ -34,6 +38,7 @@ import {
   type ComisLogger,
   type DeliveryOrigin,
   type PerAgentConfig,
+  type ResolvedTurnScope,
   type SessionKey,
   type TypedEventBus,
   type UserTrustLevel,
@@ -86,6 +91,8 @@ export interface AutonomyToolInputs {
   readonly namespacePreflightOk?: boolean;
   /** The session key the lease is minted for, or undefined (heartbeat/cron). */
   readonly sessionKey: SessionKey | undefined;
+  /** Canonical request authority; formatted session keys remain display-only. */
+  readonly turnScope?: ResolvedTurnScope;
   /** Exact framework-authenticated trust for this assembly lease and its children. */
   readonly trustLevel: UserTrustLevel;
   /** Immutable requester route paired with {@link sessionKey} on the lease. */
@@ -220,20 +227,28 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
   const budgetRef = `run-${input.agentId}-${systemNowMs().toString(36)}`;
   const formattedSessionKey = input.sessionKey ? formatSessionKey(input.sessionKey) : undefined;
   const sessionKey = formattedSessionKey ?? input.agentId;
-  const durablePrincipal = input.sessionKey !== undefined
-    && formattedSessionKey !== undefined
+  const durableConversationRef = input.turnScope === undefined
+    ? undefined
+    : createConversationRef(input.turnScope.conversation);
+  const durablePrincipal = input.turnScope !== undefined
+    && input.turnScope.conversation.agentId === input.agentId
+    && durableConversationRef?.ok === true
     && (
       input.requesterOrigin === undefined
       || (
-        input.requesterOrigin.tenantId === input.sessionKey.tenantId
-        && input.requesterOrigin.userId === input.sessionKey.userId
+        input.requesterOrigin.tenantId === input.turnScope.conversation.tenantId
+        && input.requesterOrigin.userId === input.turnScope.principal.principalId
+        && input.requesterOrigin.channelType === input.turnScope.endpoint.channelType
+        && input.requesterOrigin.channelId === input.turnScope.endpoint.conversationId
+        && input.requesterOrigin.threadId === input.turnScope.endpoint.threadId
       )
     )
     ? {
+        tenantId: input.turnScope.conversation.tenantId,
         agentId: input.agentId,
-        sessionKey: formattedSessionKey,
-        ownerTenantId: input.sessionKey.tenantId,
-        ownerUserId: input.sessionKey.userId,
+        conversationRef: durableConversationRef.value,
+        conversationScope: input.turnScope.conversation,
+        principalId: input.turnScope.principal.principalId,
         deliveryOrigin: input.requesterOrigin ?? null,
         trustLevel: input.trustLevel,
         caps: effectiveCaps,
@@ -261,6 +276,7 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
           ...(input.requesterOrigin !== undefined
             ? { deliveryOrigin: input.requesterOrigin }
             : {}),
+          ...(input.turnScope !== undefined ? { turnScope: input.turnScope } : {}),
           rootRunId,
           // Anchor the tree root in the bounded-autonomy service right after the
           // mint (the per-root budget wall-clock + the rootRunId↔leaseId index).
@@ -297,13 +313,28 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
     | undefined =
     handle && resolved.enabled && assemblyLeaseId !== undefined
       ? (runId, ttlMs, resumeAuthority) => {
+          const resumePartition = resumeAuthority?.conversationScope.partition;
+          const resumeTurnScope = resumeAuthority !== undefined
+            && resumePartition?.kind === "endpoint-conversation-principal"
+            ? {
+                conversation: resumeAuthority.conversationScope,
+                principal: { principalId: resumeAuthority.principalId },
+                endpoint: resumePartition.endpoint,
+              }
+            : undefined;
+          const resumeDisplay = resumeAuthority === undefined
+            ? undefined
+            : conversationScopeToSessionKey(resumeAuthority.conversationScope);
+          if (resumeAuthority !== undefined && (!resumeDisplay?.ok || resumeTurnScope === undefined)) {
+            throw new Error("Persisted durable authority cannot mint a resolved resume lease");
+          }
           // runId is the runner's correlator; the child lease minted here is
           // correlated by its OWN fresh leaseId + the inherited rootRunId.
           const issued = handle.leaseManager.mintLease({
             agentId: resumeAuthority?.agentId ?? input.agentId,
             caps: resumeAuthority?.caps ?? effectiveCaps,
             budgetRef,
-            sessionKey: resumeAuthority?.sessionKey ?? sessionKey,
+            sessionKey: resumeDisplay?.ok ? formatSessionKey(resumeDisplay.value) : sessionKey,
             trustLevel: resumeAuthority?.trustLevel ?? input.trustLevel,
             ...(resumeAuthority?.deliveryOrigin !== undefined
               && resumeAuthority.deliveryOrigin !== null
@@ -311,6 +342,11 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
               : resumeAuthority === undefined && input.requesterOrigin !== undefined
               ? { deliveryOrigin: input.requesterOrigin }
               : {}),
+            ...(resumeTurnScope !== undefined
+              ? { turnScope: resumeTurnScope }
+              : input.turnScope !== undefined
+                ? { turnScope: input.turnScope }
+                : {}),
             rootRunId: resumeAuthority?.rootRunId ?? rootRunId,
             checkpointId: runId,
             ...(resumeAuthority === undefined ? { parentLeaseId: assemblyLeaseId } : {}),

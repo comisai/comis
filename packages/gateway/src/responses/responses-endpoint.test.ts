@@ -8,6 +8,8 @@ function createMockDeps(
   overrides: Partial<ResponsesEndpointDeps> = {},
 ): ResponsesEndpointDeps {
   return {
+    tenantId: "tenant-a",
+    agentId: "agent-a",
     executeAgent: vi.fn(async () => ({
       response: "Hello from Comis!",
       tokensUsed: { input: 10, output: 20, total: 30 },

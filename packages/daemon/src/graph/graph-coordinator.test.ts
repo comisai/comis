@@ -11,6 +11,8 @@ import {
   validateAndSortGraph,
   TypedEventBus,
   runWithContext,
+  createConversationRef,
+  type ResolvedTurnScope,
 } from "@comis/core";
 import { err, ok, type Result } from "@comis/shared";
 import { createNodeTypeRegistry } from "./node-type-registry.js";
@@ -266,6 +268,46 @@ async function waitForMicrotask(): Promise<void> {
   await new Promise((resolve) => queueMicrotask(resolve));
 }
 
+function makeCallerTurnScope(
+  channelType: string,
+  conversationId: string,
+  agentId = "test-agent",
+): ResolvedTurnScope {
+  const endpoint = {
+    channelType,
+    channelInstanceId: "test-instance",
+    conversationId,
+    conversationKind: "direct" as const,
+  };
+  return {
+    conversation: {
+      tenantId: "test-tenant",
+      agentId,
+      partition: {
+        kind: "endpoint-conversation-principal",
+        endpoint,
+        principalId: "user_a",
+      },
+    },
+    principal: { principalId: "user_a" },
+    endpoint,
+  };
+}
+
+function makeCallerLocator(
+  channelType: string,
+  conversationId: string,
+  agentId = "test-agent",
+) {
+  const turnScope = makeCallerTurnScope(channelType, conversationId, agentId);
+  const reference = createConversationRef(turnScope.conversation);
+  if (!reference.ok) throw reference.error;
+  return {
+    conversationScope: turnScope.conversation,
+    conversationRef: reference.value,
+  };
+}
+
 function createTestDeps(
   overrides?: Partial<GraphCoordinatorDeps>,
 ): { deps: GraphCoordinatorDeps; runner: MockSubAgentRunner; eventBus: TypedEventBus; sendToChannel: ReturnType<typeof vi.fn> } {
@@ -382,10 +424,12 @@ describe("createGraphCoordinator", () => {
         startedAt: Date.now(),
         trustLevel: "user",
         resolvedLanguage: "he",
+        turnScope: makeCallerTurnScope("telegram", "chat_a", "parent-agent"),
       }, () => coordinator.run({
         graph,
         callerAgentId: "parent-agent",
         callerSessionKey: "test-tenant:user_a:telegram:chat_a",
+        callerTurnScope: makeCallerTurnScope("telegram", "chat_a", "parent-agent"),
       }));
 
       expect(result.ok).toBe(true);
@@ -416,6 +460,7 @@ describe("createGraphCoordinator", () => {
         startedAt: Date.now(),
         trustLevel: "user",
         deliveryOrigin: origin,
+        turnScope: makeCallerTurnScope("telegram", "chat_a", "parent-agent"),
       }, () => coordinator.run({
         graph,
         callerAgentId: "parent-agent",
@@ -423,6 +468,7 @@ describe("createGraphCoordinator", () => {
         callerCaps: ["orch:read"],
         callerLeaseId: "lease-parent",
         callerDeliveryOrigin: origin,
+        callerTurnScope: makeCallerTurnScope("telegram", "chat_a", "parent-agent"),
       }));
 
       expect(result.ok).toBe(true);
@@ -864,6 +910,7 @@ describe("createGraphCoordinator", () => {
         graph,
         callerAgentId: "test-agent",
         callerSessionKey: "test-tenant:user_a:chan-123",
+        callerTurnScope: makeCallerTurnScope("discord", "chan-123"),
         announceChannelType: "discord",
         announceChannelId: "chan-123",
         nodeProgress: true,
@@ -970,6 +1017,7 @@ describe("createGraphCoordinator", () => {
         graph,
         callerAgentId: "test-agent",
         callerSessionKey: "test-tenant:user_a:chan-graphid",
+        callerTurnScope: makeCallerTurnScope("discord", "chan-graphid"),
         announceChannelType: "discord",
         announceChannelId: "chan-graphid",
       });
@@ -1000,6 +1048,7 @@ describe("createGraphCoordinator", () => {
         graph,
         callerAgentId: "parent-agent",
         callerSessionKey: "test-tenant:user_a:chan-123",
+        callerTurnScope: makeCallerTurnScope("discord", "chan-123", "parent-agent"),
         announceChannelType: "discord",
         announceChannelId: "chan-123",
       });
@@ -1030,6 +1079,7 @@ describe("createGraphCoordinator", () => {
         graph,
         callerAgentId: "parent-agent",
         callerSessionKey: "test-tenant:user_a:chan-123",
+        callerTurnScope: makeCallerTurnScope("discord", "chan-123", "parent-agent"),
         announceChannelType: "discord",
         announceChannelId: "chan-123",
       });
@@ -1058,6 +1108,7 @@ describe("createGraphCoordinator", () => {
         graph,
         callerAgentId: "test-agent",
         callerSessionKey: "test-tenant:user_a:chan-trunc",
+        callerTurnScope: makeCallerTurnScope("discord", "chan-trunc"),
         announceChannelType: "discord",
         announceChannelId: "chan-trunc",
       });
@@ -2672,6 +2723,7 @@ describe("createGraphCoordinator", () => {
         graph,
         callerAgentId: "parent-agent",
         callerSessionKey: "test-tenant:user_a:chan-timeout",
+        callerTurnScope: makeCallerTurnScope("discord", "chan-timeout", "parent-agent"),
         announceChannelType: "discord",
         announceChannelId: "chan-timeout",
       });
@@ -3504,6 +3556,9 @@ describe("createGraphCoordinator", () => {
         runningCount: 0,
         callerSessionKey: "test-tenant:user_a:chan-1",
         callerAgentId: "agent-1",
+        callerConversationLocator: makeCallerLocator("telegram", "chan-1", "agent-1"),
+        callerPrincipalId: "user_a",
+        callerEndpoint: makeCallerTurnScope("telegram", "chan-1", "agent-1").endpoint,
         announceChannelType: "telegram",
         announceChannelId: "chan-1",
         nodeProgress: false,
@@ -4308,13 +4363,15 @@ function createRecordingDurableRuns(): DurableRunPort & {
 function makeDurableGraphRecord(
   overrides: Partial<DurableRunRecord> = {},
 ): DurableRunRecord {
+  const locator = makeCallerLocator("telegram", "chat_a");
   return {
     checkpointId: "checkpoint-graph",
     rootRunId: "root-graph",
+    tenantId: "test-tenant",
     agentId: "test-agent",
-    sessionKey: "test-tenant:user_a:telegram:chat_a",
-    ownerTenantId: "test-tenant",
-    ownerUserId: "user_a",
+    conversationRef: locator.conversationRef,
+    conversationScope: locator.conversationScope,
+    principalId: "user_a",
     deliveryOrigin: null,
     spawnTree: [],
     caps: [],
@@ -4404,10 +4461,12 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         agentId: "test-agent",
         startedAt: Date.now(),
         trustLevel: "user",
+        turnScope: makeCallerTurnScope("telegram", "chat_a"),
       }, () => coordinator.run({
         graph: buildGraph([{ nodeId: "A" }]),
         callerSessionKey,
         callerAgentId: "test-agent",
+        callerTurnScope: makeCallerTurnScope("telegram", "chat_a"),
       }));
 
       await runningCheckpointSeen;
@@ -4457,10 +4516,12 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         agentId: "test-agent",
         startedAt: Date.now(),
         trustLevel: "user",
+        turnScope: makeCallerTurnScope("telegram", "chat_a"),
       }, () => coordinator.run({
         graph: buildGraph([{ nodeId: "A" }, { nodeId: "B" }]),
         callerSessionKey,
         callerAgentId: "test-agent",
+        callerTurnScope: makeCallerTurnScope("telegram", "chat_a"),
       }));
       expect(started.ok).toBe(true);
       expect(runner._getSpawnCalls().map((call) => call.nodeId)).toEqual(["A"]);
@@ -4515,10 +4576,12 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         agentId: "test-agent",
         startedAt: Date.now(),
         trustLevel: "user",
+        turnScope: makeCallerTurnScope("telegram", "chat_a"),
       }, () => coordinator.run({
         graph: buildGraph([{ nodeId: "A" }]),
         callerSessionKey,
         callerAgentId: "test-agent",
+        callerTurnScope: makeCallerTurnScope("telegram", "chat_a"),
       }));
       await runningCheckpointSeen;
 
@@ -4566,10 +4629,12 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         agentId: "test-agent",
         startedAt: Date.now(),
         trustLevel: "user",
+        turnScope: makeCallerTurnScope("telegram", "chat-1"),
       }, () => coordinator.run({
         graph: buildGraph([{ nodeId: "A" }]),
         callerSessionKey,
         callerAgentId: "test-agent",
+        callerTurnScope: makeCallerTurnScope("telegram", "chat-1"),
         announceChannelType: "telegram",
         announceChannelId: "chat-1",
       }));
@@ -4618,7 +4683,13 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         agentId: "test-agent",
         startedAt: Date.now(),
         trustLevel: "user",
-      }, () => coordinator.run({ graph, callerSessionKey, callerAgentId: "test-agent" }));
+        turnScope: makeCallerTurnScope("telegram", "chat_a"),
+      }, () => coordinator.run({
+        graph,
+        callerSessionKey,
+        callerAgentId: "test-agent",
+        callerTurnScope: makeCallerTurnScope("telegram", "chat_a"),
+      }));
 
       // A spawned (running boundary) → a checkpoint was written.
       const aRun = runner._getSpawnCalls()[0]!._runId as string;
@@ -4703,7 +4774,13 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         agentId: "test-agent",
         startedAt: Date.now(),
         trustLevel: "user",
-      }, () => coordinator.run({ graph, callerSessionKey, callerAgentId: "test-agent" }));
+        turnScope: makeCallerTurnScope("telegram", "chat_a"),
+      }, () => coordinator.run({
+        graph,
+        callerSessionKey,
+        callerAgentId: "test-agent",
+        callerTurnScope: makeCallerTurnScope("telegram", "chat_a"),
+      }));
       expect(runResult.ok).toBe(true);
       if (!runResult.ok) return;
       const aRun = runner._getSpawnCalls()[0]!._runId as string;
@@ -4741,7 +4818,13 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         agentId: "test-agent",
         startedAt: Date.now(),
         trustLevel: "user",
-      }, () => coordinator.run({ graph, callerSessionKey, callerAgentId: "test-agent" }));
+        turnScope: makeCallerTurnScope("telegram", "chat_a"),
+      }, () => coordinator.run({
+        graph,
+        callerSessionKey,
+        callerAgentId: "test-agent",
+        callerTurnScope: makeCallerTurnScope("telegram", "chat_a"),
+      }));
       await waitForMicrotask();
       const aRun = runner._getSpawnCalls()[0]!._runId as string;
 
@@ -4787,7 +4870,13 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         agentId: "test-agent",
         startedAt: Date.now(),
         trustLevel: "user",
-      }, () => coordinator.run({ graph, callerSessionKey, callerAgentId: "test-agent" }));
+        turnScope: makeCallerTurnScope("telegram", "chat_a"),
+      }, () => coordinator.run({
+        graph,
+        callerSessionKey,
+        callerAgentId: "test-agent",
+        callerTurnScope: makeCallerTurnScope("telegram", "chat_a"),
+      }));
       await waitForMicrotask();
       const aRun = runner._getSpawnCalls()[0]!._runId as string;
       upsert.mockImplementationOnce(async () => err(new Error("private database detail")));
@@ -4844,10 +4933,12 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         agentId: "test-agent",
         startedAt: Date.now(),
         trustLevel: "user",
+        turnScope: makeCallerTurnScope("telegram", "chat_a"),
       }, () => coordinator.run({
         graph: buildGraph([{ nodeId: "A" }]),
         callerSessionKey,
         callerAgentId: "test-agent",
+        callerTurnScope: makeCallerTurnScope("telegram", "chat_a"),
         announceChannelType: "telegram",
         announceChannelId: "chat_a",
       }));
@@ -4900,10 +4991,12 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
         agentId: "test-agent",
         startedAt: Date.now(),
         trustLevel: "user",
+        turnScope: makeCallerTurnScope("telegram", "chat_a"),
       }, () => coordinator.run({
         graph: buildGraph([{ nodeId: "A" }]),
         callerSessionKey,
         callerAgentId: "test-agent",
+        callerTurnScope: makeCallerTurnScope("telegram", "chat_a"),
       }));
       expect(runResult.ok).toBe(true);
       await waitForMicrotask();

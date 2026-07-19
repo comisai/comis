@@ -8,12 +8,14 @@ import type { SecretManager } from "./security/index.js";
 import type { PluginRegistry } from "./hooks/plugin-registry.js";
 import type { HookRunner } from "./hooks/hook-runner.js";
 import type { WorkspacePolicyPort } from "./ports/workspace-policy.js";
+import type { PrincipalResolverPort } from "./ports/principal-resolver.js";
 import { loadLayered } from "./config/layered.js";
 import { buildGatewayEnvLayer } from "./config/env-layer.js";
 import { TypedEventBus } from "./event-bus/index.js";
 import { createSecretManager, safePath } from "./security/index.js";
 import { createPluginRegistry } from "./hooks/plugin-registry.js";
 import { createHookRunner } from "./hooks/hook-runner.js";
+import { createPrincipalResolver } from "./domain/principal-resolver.js";
 
 /** Default base directory: ~/.comis */
 const DEFAULT_DATA_DIR = safePath(os.homedir(), ".comis");
@@ -58,42 +60,6 @@ export function resolveConfigRuntimePaths(
 }
 
 /**
- * Extract the per-agent RAW (pre-Zod-default) `rag.rerank.enabled` from the
- * merged-but-unvalidated config tree. Reads `agents.<id>.rag.rerank.enabled`
- * defensively (any level may be absent), coercing only genuine booleans — any
- * non-boolean (string, number, null) is treated as "unset" (`undefined`), which
- * is the safe default-off posture; the subsequent Zod parse is what would reject
- * a malformed value with a precise error. The returned map preserves the
- * tri-state the parsed config destroys (see AppContainer.rawAgentRerankEnabled).
- */
-function deriveRawAgentRerankEnabled(
-  rawMerged: Record<string, unknown> | undefined,
-): Map<string, boolean | undefined> {
-  const out = new Map<string, boolean | undefined>();
-  const agents = rawMerged?.["agents"];
-  if (agents === null || typeof agents !== "object" || Array.isArray(agents)) {
-    return out;
-  }
-  for (const [agentId, agentRaw] of Object.entries(agents as Record<string, unknown>)) {
-    if (agentRaw === null || typeof agentRaw !== "object") {
-      out.set(agentId, undefined);
-      continue;
-    }
-    const rag = (agentRaw as Record<string, unknown>)["rag"];
-    const rerank =
-      rag !== null && typeof rag === "object"
-        ? (rag as Record<string, unknown>)["rerank"]
-        : undefined;
-    const enabled =
-      rerank !== null && typeof rerank === "object"
-        ? (rerank as Record<string, unknown>)["enabled"]
-        : undefined;
-    out.set(agentId, typeof enabled === "boolean" ? enabled : undefined);
-  }
-  return out;
-}
-
-/**
  * Options for bootstrapping the application container.
  */
 export interface BootstrapOptions {
@@ -120,21 +86,6 @@ export interface BootstrapOptions {
 export interface AppContainer {
   /** Current application configuration */
   readonly config: AppConfig;
-  /**
-   * Per-agent RAW (pre-Zod-default) `rag.rerank.enabled` signal, keyed by
-   * agentId. `true`/`false` = the operator set it explicitly; `undefined` (or a
-   * missing key) = the operator left it UNSET. The reranker activation logic
-   * needs this because the parsed `config.agents.<id>.rag.rerank.enabled` always carries a
-   * concrete boolean (`RagConfigSchema.rerank.enabled` has `.default(false)`),
-   * which erases the unset signal — so auto-on (unset + model present) could
-   * never be distinguished from explicit-off. Both the daemon's per-agent
-   * effective-rerank precedence (setup-agents-runtime) AND the reranker build
-   * gate (setup-memory) read THIS one map, so the two gates can never disagree
-   * on what "explicitly on" means (no parsed-vs-raw drift). Optional because
-   * non-bootstrap AppContainer constructions (CLI sub-commands, tests) may not
-   * populate it — absent maps degrade to "no raw signal" (treated as unset).
-   */
-  readonly rawAgentRerankEnabled?: ReadonlyMap<string, boolean | undefined>;
   /** Typed inter-module event bus */
   readonly eventBus: TypedEventBus;
   /** Centralized credential access */
@@ -151,6 +102,8 @@ export interface AppContainer {
   readonly pluginRegistry: PluginRegistry;
   /** Lifecycle hook execution engine */
   readonly hookRunner: HookRunner;
+  /** Pure operator-configured platform-principal resolver used at ingress. */
+  readonly principalResolver: PrincipalResolverPort;
   /** Immutable per-turn operator-policy loader, when the runtime supplies its filesystem adapter. */
   readonly workspacePolicyPort?: WorkspacePolicyPort;
   /** Graceful shutdown — cleans up resources */
@@ -185,17 +138,12 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
   // still be on the deny surface (never resolvable via user-facing secret-ref
   // tools). The interactive-callback signing secret backs every signed channel.
   referencedNames.add(INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME);
-  // Capture the merged RAW config (pre-Zod) so the genuine per-agent
-  // rag.rerank.enabled tri-state survives — the parsed config below defaults
-  // unset to a concrete `false` and erases it.
-  const rawMergedOut: { value?: Record<string, unknown> } = {};
   const configResult = loadLayered(options.configPaths, {
     getSecret: (key) => {
       referencedNames.add(key);
       return secretManager.get(key);
     },
     envLayer: buildGatewayEnvLayer(env),
-    rawMergedOut,
   });
   if (!configResult.ok) {
     return err(configResult.error);
@@ -212,9 +160,6 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
     if (entry.apiKeyName.length > 0) referencedNames.add(entry.apiKeyName);
   }
 
-  // Derive the raw per-agent rerank signal once, from the captured merged tree.
-  const rawAgentRerankEnabled = deriveRawAgentRerankEnabled(rawMergedOut.value);
-
   // 3. Create event bus
   const eventBus = new TypedEventBus();
 
@@ -222,16 +167,24 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
   const pluginRegistry = createPluginRegistry();
   const hookRunner = createHookRunner(pluginRegistry, { eventBus, catchErrors: true });
   const workspacePolicyPort = options.workspacePolicyPortFactory?.(config);
+  const principalResolver = createPrincipalResolver(config.identity.principalMappings);
+  if (!principalResolver.ok) {
+    return err({
+      code: "VALIDATION_ERROR",
+      message: principalResolver.error.message,
+      path: "identity.principalMappings",
+    });
+  }
 
   // 4. Return container
   const container: AppContainer = {
     config,
-    rawAgentRerankEnabled,
     eventBus,
     secretManager,
     platformSecretNames: referencedNames,
     pluginRegistry,
     hookRunner,
+    principalResolver: principalResolver.value,
     ...(workspacePolicyPort !== undefined ? { workspacePolicyPort } : {}),
     shutdown: async () => {
       await pluginRegistry.deactivateAll();

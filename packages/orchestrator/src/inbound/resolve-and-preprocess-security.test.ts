@@ -7,6 +7,8 @@ import type {
   RequestContext,
 } from "@comis/core";
 import { runWithContext, tryGetContext, TypedEventBus } from "@comis/core";
+import { ok } from "@comis/shared";
+import { createFakePrincipalResolver } from "../../../../test/support/fake-principal-resolver.js";
 
 import {
   resolveAndPreprocess,
@@ -61,6 +63,7 @@ function makeDeps(
   overrides: Partial<ResolveAndPreprocessDeps> = {},
 ): ResolveAndPreprocessDeps {
   const emit = vi.fn();
+  const principalResolver = createFakePrincipalResolver();
   return {
     tenantId: "default",
     logger: {
@@ -85,7 +88,9 @@ function makeDeps(
       }),
     } as never,
     messageRouter: { resolve: vi.fn(() => "ordinary-agent") } as never,
-    sessionManager: { loadOrCreate: vi.fn() } as never,
+    sessionManager: { loadOrCreate: vi.fn(() => ok({})) } as never,
+    principalResolver,
+    getDmScope: () => ({ mode: "per-account-channel-peer", threadIsolation: true }),
     createExecutor: vi.fn(() => ({ execute: vi.fn() }) as never),
     persistInboundMessage: vi.fn(async () => ({
       ok: true as const,
@@ -151,9 +156,8 @@ describe("resolveAndPreprocess enrichment boundary", () => {
 
     expect(result?.sessionKey).toMatchObject({
       tenantId: "tenant-production",
-      userId: "ordinary-user",
-      channelId: "trusted-chat",
     });
+    expect(result?.sessionKey.userId).toBe(result?.turnScope.principal.principalId);
     expect(deps.sessionManager.loadOrCreate).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: "tenant-production" }),
     );
@@ -380,14 +384,16 @@ describe("inbound preprocessing trust boundary", () => {
       new Map(),
     ));
 
+    const principalId = observedContext?.turnScope?.principal.principalId;
+    expect(principalId).toBeDefined();
     expect(observedContext).toMatchObject({
-      userId: "ordinary-user",
+      userId: principalId,
       agentId: "ordinary-agent",
       trustLevel: "guest",
       deliveryOrigin: {
         channelType: "telegram",
         channelId: "trusted-chat",
-        userId: "ordinary-user",
+        userId: principalId,
         threadId: "trusted-thread",
       },
     });

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
 import type { InboundPipelineDeps } from "./inbound-pipeline.js";
+import { createDeterministicLocalization } from "../localization/deterministic-localization.js";
 import type { ApprovalRequest, ChannelPort, NormalizedMessage, DeliveryService, RequestContext } from "@comis/core";
-import { runWithContext, tryGetContext } from "@comis/core";
+import { createConversationRef, formatSessionKey, runWithContext, tryGetContext } from "@comis/core";
 import { ok } from "@comis/shared";
 import { randomUUID } from "node:crypto";
 
@@ -345,12 +346,16 @@ function makeMinimalDeps(overrides?: Partial<InboundPipelineDeps>): InboundPipel
       updateConfig: vi.fn(),
     },
     sessionManager: {
-      loadOrCreate: vi.fn(() => []),
-      save: vi.fn(),
-      isExpired: vi.fn(() => false),
-      expire: vi.fn(() => true),
-      cleanStale: vi.fn(() => 0),
+      loadOrCreate: vi.fn(() => ok([])),
+      save: vi.fn(() => ok(undefined)),
+      isExpired: vi.fn(() => ok(false)),
+      expire: vi.fn(() => ok(true)),
+      cleanStale: vi.fn(() => ok(0)),
     },
+    principalResolver: {
+      resolve: vi.fn((_tenantId, _agentId, assertion) => ok({ principalId: assertion.platformSubjectId })),
+    },
+    getDmScope: vi.fn(() => ({ mode: "per-account-channel-peer", threadIsolation: true })),
     createExecutor: vi.fn(() => ({
       execute: vi.fn(async () => ({
         response: "ok",
@@ -367,6 +372,7 @@ function makeMinimalDeps(overrides?: Partial<InboundPipelineDeps>): InboundPipel
     })),
     // Per-test injected DeliveryService fake (see the helper at file top).
     deliveryService: makeFakeDeliveryService(),
+    localization: createDeterministicLocalization(),
     ...overrides,
   };
 }
@@ -496,7 +502,13 @@ describe("resolved inbound request context", () => {
     expect(ingressContext).toMatchObject({
       tenantId: "default",
       userId: "user-1",
-      sessionKey: "default:user-1:chat-1:peer:user-1",
+      sessionKey: formatSessionKey({
+        tenantId: "default",
+        agentId: "agent-default",
+        userId: "user-1",
+        channelId: "telegram:adapter-1:chat-1",
+        peerId: "user-1",
+      }),
       agentId: "agent-default",
       trustLevel: "admin",
       deliveryOrigin: {
@@ -522,23 +534,46 @@ function makeMockApprovalGate(
     getRequest: vi.fn((id: string) => pendingRequests.find((r) => r.requestId === id)),
     // Read helpers — the inbound shortId slash path + button router source.
     getRequestByShortId: vi.fn((sid: string) => pendingRequests.find((r) => r.shortId === sid)),
-    pendingForSession: vi.fn((sk: string) => pendingRequests.filter((r) => r.sessionKey === sk)),
+    pendingForAuthority: vi.fn((authority: {
+      tenantId: string;
+      agentId: string;
+      conversationRef: string;
+      resolvingPrincipalId: string;
+    }) => pendingRequests.filter((request) =>
+      request.tenantId === authority.tenantId
+      && request.agentId === authority.agentId
+      && request.conversationRef === authority.conversationRef
+      && request.resolvingPrincipalId === authority.resolvingPrincipalId
+    )),
   };
 }
 
 describe("/approve and /deny command interception", () => {
-  // The test msg has senderId: "user-1", channelId: "chat-1", telegramChatType: "private"
-  // buildScopedSessionKey (DM, per-channel-peer) produces { tenantId: "default", userId: "user-1", channelId: "chat-1", peerId: "user-1" }
-  // formatSessionKey produces "default:user-1:chat-1:peer:user-1"
-  const TEST_SESSION_KEY = "default:user-1:chat-1:peer:user-1";
+  const testConversationRef = createConversationRef({
+    tenantId: "default",
+    agentId: "agent-default",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: {
+        channelType: "telegram",
+        channelInstanceId: "adapter-1",
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      },
+      principalId: "user-1",
+    },
+  });
+  if (!testConversationRef.ok) throw testConversationRef.error;
   const PENDING_REQUEST: ApprovalRequest = {
     requestId: "aaaa1234-bbbb-cccc-dddd-eeeeeeeeeeee",
     shortId: "AAAA1234bbbb",
-    sessionKey: TEST_SESSION_KEY,
     action: "agents.delete",
     toolName: "agents_manage",
     params: {},
+    tenantId: "default",
     agentId: "agent-default",
+    conversationRef: testConversationRef.value,
+    resolvingPrincipalId: "user-1",
     trustLevel: "admin",
     callbackOwner: {
       tenantId: "default",
@@ -563,6 +598,12 @@ describe("/approve and /deny command interception", () => {
       deps, adapter, makeMsg({ text: "/approve AAAA1234bbbb" }), new Set(), new Map() as any,
     );
 
+    expect(gate.pendingForAuthority).toHaveBeenCalledWith({
+      tenantId: "default",
+      agentId: "agent-default",
+      conversationRef: testConversationRef.value,
+      resolvingPrincipalId: "user-1",
+    });
     expect(gate.resolveApproval).toHaveBeenCalledWith(
       PENDING_REQUEST.requestId, true, "chat:user-1",
     );
@@ -596,13 +637,31 @@ describe("/approve and /deny command interception", () => {
     expect(executorFn).not.toHaveBeenCalled();
   });
 
+  it("/help renders a deterministic localized command reply without model dispatch", async () => {
+    const adapter = makeAdapterForTest();
+    const executorFn = vi.fn();
+    const deps = makeMinimalDeps({
+      createExecutor: vi.fn(() => ({ execute: executorFn })),
+    });
+
+    await processInboundMessage(
+      deps, adapter, makeMsg({ text: "/help", metadata: { locale: "en" } }), new Set(), new Map() as any,
+    );
+
+    expect(adapter.sendMessage).toHaveBeenCalledWith(
+      "chat-1",
+      expect.stringContaining("/approve"),
+    );
+    expect(executorFn).not.toHaveBeenCalled();
+  });
+
   it("/approve all resolves all pending approvals for session", async () => {
     const req1 = { ...PENDING_REQUEST, requestId: "11111111-1111-1111-1111-111111111111" };
     const req2 = { ...PENDING_REQUEST, requestId: "22222222-2222-2222-2222-222222222222" };
     const req3 = {
       ...PENDING_REQUEST,
       requestId: "33333333-3333-3333-3333-333333333333",
-      sessionKey: "other:tenant:key",
+      tenantId: "other",
       action: "files.write",
       toolName: "file_ops",
       callbackOwner: {
@@ -695,7 +754,6 @@ describe("/approve and /deny command interception", () => {
       ...PENDING_REQUEST,
       requestId: "ambig0001-aaaa-bbbb-cccc-111111111111",
       shortId: "AMBIG001aaaa",
-      sessionKey: TEST_SESSION_KEY,
       action: "agents.delete",
       toolName: "agents_manage",
     };
@@ -703,7 +761,6 @@ describe("/approve and /deny command interception", () => {
       ...PENDING_REQUEST,
       requestId: "ambig0002-aaaa-bbbb-cccc-222222222222",
       shortId: "AMBIG002bbbb",
-      sessionKey: TEST_SESSION_KEY,
       action: "files.write",
       toolName: "file_ops",
     };
@@ -743,7 +800,6 @@ describe("/approve and /deny command interception", () => {
       ...PENDING_REQUEST,
       requestId: "denyamb01-aaaa-bbbb-cccc-333333333333",
       shortId: "DENYAMB1cccc",
-      sessionKey: TEST_SESSION_KEY,
       action: "agents.delete",
       toolName: "agents_manage",
     };
@@ -751,7 +807,6 @@ describe("/approve and /deny command interception", () => {
       ...PENDING_REQUEST,
       requestId: "denyamb02-aaaa-bbbb-cccc-444444444444",
       shortId: "DENYAMB2dddd",
-      sessionKey: TEST_SESSION_KEY,
       action: "files.write",
       toolName: "file_ops",
     };
@@ -1022,8 +1077,9 @@ describe("general slash command interception", () => {
       message,
       expect.objectContaining({
         tenantId: "default",
+        agentId: "agent-default",
         userId: "user-1",
-        channelId: "chat-1",
+        channelId: "telegram:adapter-1:chat-1",
       }),
     );
     expect(callOrder).toEqual(["persist", "received", "gate"]);

@@ -502,8 +502,8 @@ export class IcSessionDetail extends LitElement {
     try {
       const agentId = this._session.agentId;
       const [pipelineResult, dagResult] = await Promise.all([
-        rpc.call<PipelineSnapshot[]>("obs.context.pipeline", { agentId, limit: 100 }),
-        rpc.call<DagCompactionSnapshot[]>("obs.context.dag", { agentId, limit: 50 }),
+        rpc.call("obs.context.pipeline", { agentId, limit: 100 }),
+        rpc.call("obs.context.dag", { agentId, limit: 50 }),
       ]);
 
       // Client-side filter by sessionKey
@@ -538,7 +538,7 @@ export class IcSessionDetail extends LitElement {
     }
 
     try {
-      const result = await this.rpcClient.call<{ totalTokens: number; totalCost: number; callCount: number }>(
+      const result = await this.rpcClient.call(
         "obs.billing.bySession",
         { sessionKey: this.sessionKey },
       );

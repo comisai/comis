@@ -362,8 +362,8 @@ export async function drainDeliveryQueue(deps: {
 
       // Capture (platform messageId → trajectory scope) for
       // inbound-reaction resolution. Agent-authored OUTBOUND only (the delivery
-      // queue is outbound); entry.traceId === trajectoryId AND options.agentId are
-      // both set from the request ALS at enqueue (delivery-service.ts). The
+      // queue is outbound); entry.traceId === trajectoryId and entry.agentId are
+      // both persisted from the resolved delivery authority at enqueue. The
       // agentId is the load-bearing (tenant, agent) isolation partition the
       // reaction observe()s under — it must be the REAL agent, NEVER the tenantId.
       // A null traceId (no trajectory) OR an absent agentId (a pre-executor /
@@ -371,8 +371,7 @@ export async function drainDeliveryQueue(deps: {
       // tenantId would corrupt cross-agent isolation, so we record
       // nothing rather than fall back. The callback is undefined when
       // learning-outcome is disabled for all agents → zero extra work (byte-identity).
-      const recordAgentId = typeof options.agentId === "string" ? options.agentId : undefined;
-      if (entry.traceId !== null && recordAgentId !== undefined && recordOutboundMessage !== undefined) {
+      if (entry.traceId !== null && recordOutboundMessage !== undefined) {
         // Carry the conversation participant (the inbound sender) persisted
         // into optionsJson at enqueue (delivery-service.ts) so a reaction resolved
         // via this drain path is participant-aware — an unmapped group bystander
@@ -383,7 +382,7 @@ export async function drainDeliveryQueue(deps: {
         recordOutboundMessage(sendResult.value, {
           traceId: entry.traceId,
           tenantId: entry.tenantId,
-          agentId: recordAgentId,
+          agentId: entry.agentId,
           sessionId: entry.traceId, // session identity falls back to the trajectory id (scope-consistent)
           participantId: recordParticipantId,
         });
@@ -392,7 +391,7 @@ export async function drainDeliveryQueue(deps: {
       // Emit notification:delivered for notification-origin entries
       if (options.origin === "notification") {
         emitObservationalEventSafely({ eventBus, logger }, "notification:delivered", {
-          agentId: (options.agentId as string) ?? entry.tenantId ?? "unknown",
+          agentId: entry.agentId,
           channelType: entry.channelType,
           channelId: entry.channelId,
           messageId: sendResult.value,
@@ -560,11 +559,28 @@ export async function setupDeliveryMirror(deps: {
     version: "1.0.0",
     register(api) {
       api.registerHook("after_delivery", async (event, ctx) => {
-        if (!ctx.sessionKey) return; // No session context -- skip
+        if (ctx.deliveryAuthority === undefined || ctx.destinationEndpoint === undefined) {
+          logger.warn(
+            {
+              channelType: event.channelType,
+              hint: "Ensure every delivery originates from a resolved turn or an explicit internal authority boundary",
+              errorKind: "precondition" as const,
+            },
+            "Delivery mirror record omitted because authority is unavailable",
+          );
+          return;
+        }
         const now = systemNowMs();
-        const idempotencyKey = computeIdempotencyKey(ctx.sessionKey, event.text, now);
+        const idempotencyKey = computeIdempotencyKey(
+          ctx.deliveryAuthority.conversationRef,
+          event.text,
+          now,
+        );
         const result = await deliveryMirror.record({
-          sessionKey: ctx.sessionKey,
+          tenantId: ctx.deliveryAuthority.tenantId,
+          agentId: ctx.deliveryAuthority.agentId,
+          conversationRef: ctx.deliveryAuthority.conversationRef,
+          destinationEndpoint: ctx.destinationEndpoint,
           text: event.text,
           mediaUrls: [],  // HookAfterDeliveryEvent has no mediaUrls field; media URL mirroring deferred
           channelType: event.channelType,
@@ -573,7 +589,11 @@ export async function setupDeliveryMirror(deps: {
           idempotencyKey,
         });
         if (result.ok) {
-          logger.debug({ sessionKey: ctx.sessionKey, channelType: event.channelType, idempotencyKey }, "Mirror entry recorded");
+          logger.debug({
+            conversationRef: ctx.deliveryAuthority.conversationRef,
+            channelType: event.channelType,
+            idempotencyKey,
+          }, "Mirror entry recorded");
         }
         // Recording failures are silently tolerated (fire-and-forget hook)
       });

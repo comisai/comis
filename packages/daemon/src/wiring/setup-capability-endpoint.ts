@@ -432,6 +432,7 @@ export function createCapabilityEndpoint(deps: CapabilityEndpointDeps): Capabili
               ...(lease.deliveryOrigin !== undefined
                 ? { deliveryOrigin: lease.deliveryOrigin }
                 : {}),
+              ...(lease.turnScope !== undefined ? { turnScope: lease.turnScope } : {}),
               // Thread the tree-stable rootRunId so the budgetHook charges the flat web
               // call against the right per-root meter.
               rootRunId: lease.rootRunId,

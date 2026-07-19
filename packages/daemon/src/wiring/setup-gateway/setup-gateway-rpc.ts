@@ -8,6 +8,7 @@ import {
   runWithContext,
   createDeliveryOrigin,
   emitObservationalEventSafely,
+  createMemoryRecallScope,
   sanitizeLogString,
   systemNowMs,
 } from "@comis/core";
@@ -23,11 +24,10 @@ import {
   type RpcAdapterDeps,
 } from "@comis/gateway";
 import { randomUUID } from "node:crypto";
-import { tryCatch } from "@comis/shared";
 import type { ApiDispatchDeps } from "../../api/rpc-dispatch.js";
 import { createRpcDispatch, classifyRpcError } from "../../api/rpc-dispatch.js";
 import { registerRpcMethods } from "../setup-gateway-api.js";
-import { agentSummaries, channelSummaries } from "./non-secret-projections.js";
+import { agentSummaries, channelSummaries, safeConfigProjection } from "./non-secret-projections.js";
 import {
   buildExecutionRequestedLogFields,
   buildSlashCommandDeps,
@@ -37,17 +37,8 @@ import {
   handleConfigChatCommand,
   resolveExecAgentId,
 } from "./setup-gateway-admin.js";
-import { gatewaySessionOwnershipError, resolveGatewaySessionKey } from "./gateway-session-principal.js";
+import { resolveGatewayTurnIdentity } from "./gateway-session-principal.js";
 import { persistGatewayInboundMessage, type GatewaySessionAdapter } from "./gateway-inbound-provenance.js";
-/**
- * Non-secret section allowlist for the `getConfig` RPC (a security
- * sign-off). Exactly the scalar/projected fields the safe default object
- * emits — sections carrying credentials (`agents` auth/model profiles,
- * `security.secrets`, `channels` tokens, `providers` keys, raw `gateway.tokens`) are absent.
- */
-const NON_SECRET_SECTIONS = ["tenantId", "logLevel", "gateway"] as const;
-type NonSecretSection = (typeof NON_SECRET_SECTIONS)[number];
-// RPC Bridge (deferred dispatch wiring) ----------------------------------
 /** All services produced by the RPC bridge setup. */
 export interface RpcBridgeResult {
   /** rpcCall — delegates to inner dispatch once wired. */
@@ -75,7 +66,7 @@ export function setupRpcBridge(deps: {
       return await rpcCallInner(method, params);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      // Pass the error OBJECT (not err.message) so classifyRpcError's typed-refusal recognition resolves (OBS-RPC-REFUSAL-CLASS).
+      // Preserve the typed error so refusal classification remains exact.
       const classified = classifyRpcError(err);
       gatewayLogger.debug({
         method,
@@ -94,8 +85,6 @@ export function setupRpcBridge(deps: {
 
   return { rpcCall, wireDispatch };
 }
-
-// RPC adapter deps builder -------------------------------------------------
 
 /** Inputs the RPC adapter builder needs to wire each callback closure. */
 export interface RpcAdapterBuilderDeps {
@@ -119,10 +108,8 @@ export interface RpcAdapterBuilderDeps {
   activeExecutions: Map<string, { agentId: string; startedAt: number }>;
   /** Unused; preserves GatewayDeps optional surface for consumer parity. */
   _memoryAdapter?: SqliteMemoryAdapter;
-  /** Complete three-layer conversation forget for slash /new + /reset
-   *  (createConversationReset — live finding 2026-06-11: runtime-only destroy
-   *  left the LCD context the DAG re-presented). */
-  destroyConversation?: (agentId: string, key: SessionKey) => Promise<unknown>;
+  /** Clear every prompt-bearing conversation layer for slash /new and /reset. */
+  destroyConversation?: (scope: import("@comis/core").ConversationScope, key: SessionKey) => Promise<unknown>;
 }
 
 /**
@@ -134,7 +121,6 @@ export interface RpcAdapterBuilderDeps {
 export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps {
   const {
     container,
-    gwConfig,
     agents,
     defaultAgentId,
     gatewayLogger,
@@ -174,11 +160,22 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
         "Agent execution requested",
       );
 
-      const sk = resolveGatewaySessionKey({
+      const identity = resolveGatewayTurnIdentity({
         tenantId: container.config.tenantId,
+        agentId: execAgentId,
         clientId: params.clientId,
         sessionKey: params.sessionKey,
       });
+      if (!identity.ok) {
+        gatewayLogger.error({
+          agentId: execAgentId,
+          hint: "Verify the gateway client and conversation identifiers before retrying",
+          errorKind: identity.error.errorKind,
+        }, "Gateway RPC identity resolution failed");
+        return Promise.reject(identity.error);
+      }
+      const sk = identity.value.displaySessionKey;
+      const conversationScope = identity.value.turnScope.conversation;
       const requestStartedAt = systemNowMs();
       const requestContext = createResolvedRequestContext({
         traceId: randomUUID(),
@@ -196,6 +193,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
           userId: sk.userId,
           tenantId: sk.tenantId,
         }),
+        turnScope: identity.value.turnScope,
       });
       if (!requestContext.ok) {
         gatewayLogger.error({
@@ -209,23 +207,18 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
         );
         return Promise.reject(requestContext.error);
       }
-      const existingSession = tryCatch(() => sessionStore.load(sk));
-      const ownershipError = gatewaySessionOwnershipError(
-        existingSession,
-        execAgentId,
-        params.clientId,
-      );
-      if (ownershipError !== undefined) {
+      const existingSession = sessionStore.load(conversationScope);
+      if (!existingSession.ok) {
         gatewayLogger.error({
           agentId: execAgentId,
-          hint: "Use a new gateway session key for this agent or inspect the session store",
-          errorKind: "precondition" as const,
-        }, "Gateway RPC session ownership rejected");
+          hint: "Inspect session database integrity and retry after storage recovers",
+          errorKind: existingSession.error.errorKind,
+        }, "Gateway RPC session authority check failed");
         emitObservationalEventSafely(
           { eventBus: container.eventBus, logger: gatewayLogger }, "system:error",
-          { error: ownershipError, source: "gateway-rpc-session-owner" },
+          { error: existingSession.error, source: "gateway-rpc-session-owner" },
         );
-        return Promise.reject(ownershipError);
+        return Promise.reject(existingSession.error);
       }
 
       return runWithContext(
@@ -269,31 +262,44 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
           );
           const userHistoryMessage = { role: "user", content: msg.text, timestamp: msg.timestamp };
           let userHistoryPersisted = false;
-          try {
-            const existingSession = sessionStore.load(sk);
-            const messages: unknown[] = [...(existingSession?.messages ?? []), userHistoryMessage];
-            sessionStore.save(sk, messages, {
-              ...(existingSession?.metadata ?? {}),
+          const userHistory = sessionStore.load(conversationScope);
+          if (userHistory.ok) {
+            const messages: unknown[] = [...(userHistory.value?.messages ?? []), userHistoryMessage];
+            const saved = sessionStore.save(conversationScope, messages, {
+              ...(userHistory.value?.metadata ?? {}),
               agentId: execAgentId,
               ...(params.clientId !== undefined
                 ? { gatewayClientId: params.clientId }
                 : {}),
             });
-            userHistoryPersisted = true;
-            gatewayLogger.debug(
-              { agentId: execAgentId, sessionKey: formatSessionKey(sk), messageCount: messages.length },
-              "Gateway user history persisted",
-            );
-          } catch (error) {
+            if (saved.ok) {
+              userHistoryPersisted = true;
+              gatewayLogger.debug(
+                { agentId: execAgentId, sessionKey: formatSessionKey(sk), messageCount: messages.length },
+                "Gateway user history persisted",
+              );
+            } else {
+              gatewayLogger.warn({
+                conversationRef: userHistory.value?.conversationRef,
+                step: "gateway-history-user",
+                err: sanitizeLogString(saved.error.message),
+                hint: "Check SQLite session storage health and available disk space",
+                errorKind: saved.error.errorKind,
+              }, "Gateway session history persistence failed");
+              emitObservationalEventSafely({ eventBus: container.eventBus, logger: gatewayLogger }, "system:error", {
+                error: saved.error,
+                source: "gateway-session-history",
+              });
+            }
+          } else {
             gatewayLogger.warn({
-              err: sanitizeLogString(error instanceof Error ? error.message : String(error)),
               sessionKey: formatSessionKey(sk),
               step: "gateway-history-user",
               hint: "Check SQLite session storage health and available disk space",
-              errorKind: "resource" as const,
+              errorKind: userHistory.error.errorKind,
             }, "Gateway session history persistence failed");
             emitObservationalEventSafely({ eventBus: container.eventBus, logger: gatewayLogger }, "system:error", {
-              error: new Error("Gateway session history persistence failed"),
+              error: userHistory.error,
               source: "gateway-session-history",
             });
           }
@@ -331,9 +337,9 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
           // Attachment delivery persists its marker during execution. Reloading
           // here preserves the ordered user → attachment → response sequence.
           if (result.response) {
-            try {
-              const existingSession = sessionStore.load(sk);
-              const messages: unknown[] = [...(existingSession?.messages ?? [])];
+            const responseHistory = sessionStore.load(conversationScope);
+            if (responseHistory.ok) {
+              const messages: unknown[] = [...(responseHistory.value?.messages ?? [])];
               if (!userHistoryPersisted) {
                 const hasUserMessage = messages.some((message) => {
                   const candidate = message as Partial<typeof userHistoryMessage>;
@@ -344,27 +350,40 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
                 if (!hasUserMessage) messages.unshift(userHistoryMessage);
               }
               messages.push({ role: "assistant", content: result.response, timestamp: systemNowMs() });
-              sessionStore.save(sk, messages, {
-                ...(existingSession?.metadata ?? {}),
+              const saved = sessionStore.save(conversationScope, messages, {
+                ...(responseHistory.value?.metadata ?? {}),
                 agentId: execAgentId,
                 ...(params.clientId !== undefined
                   ? { gatewayClientId: params.clientId }
                   : {}),
               });
-              gatewayLogger.debug(
-                { agentId: execAgentId, sessionKey: formatSessionKey(sk), messageCount: messages.length },
-                "Gateway response history persisted",
-              );
-            } catch (error) {
+              if (saved.ok) {
+                gatewayLogger.debug(
+                  { agentId: execAgentId, sessionKey: formatSessionKey(sk), messageCount: messages.length },
+                  "Gateway response history persisted",
+                );
+              } else {
+                gatewayLogger.warn({
+                  conversationRef: responseHistory.value?.conversationRef,
+                  step: "gateway-history-response",
+                  err: sanitizeLogString(saved.error.message),
+                  hint: "Check SQLite session storage health and available disk space",
+                  errorKind: saved.error.errorKind,
+                }, "Gateway session history persistence failed");
+                emitObservationalEventSafely({ eventBus: container.eventBus, logger: gatewayLogger }, "system:error", {
+                  error: saved.error,
+                  source: "gateway-session-history",
+                });
+              }
+            } else {
               gatewayLogger.warn({
-                err: sanitizeLogString(error instanceof Error ? error.message : String(error)),
                 sessionKey: formatSessionKey(sk),
                 step: "gateway-history-response",
                 hint: "Check SQLite session storage health and available disk space",
-                errorKind: "resource" as const,
+                errorKind: responseHistory.error.errorKind,
               }, "Gateway session history persistence failed");
               emitObservationalEventSafely({ eventBus: container.eventBus, logger: gatewayLogger }, "system:error", {
-                error: new Error("Gateway session history persistence failed"),
+                error: responseHistory.error,
                 source: "gateway-session-history",
               });
             }
@@ -394,9 +413,17 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
       );
     },
     searchMemory: async (params) => {
+      const identity = resolveGatewayTurnIdentity({
+        tenantId: params.tenantId,
+        agentId: params.agentId,
+        sessionKey: { channelId: "memory-search" },
+      });
+      if (!identity.ok) return Promise.reject(identity.error);
+      const scope = createMemoryRecallScope(identity.value.turnScope, true);
+      if (!scope.ok) return Promise.reject(scope.error);
       const results = await memoryApi.search(params.query, {
         limit: params.limit,
-        tenantId: params.tenantId ?? container.config.tenantId,
+        scope: scope.value,
       });
       return {
         results: results.map((r) => ({
@@ -411,7 +438,11 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
     },
     inspectMemory: async (params) => {
       if (params.id) {
-        const entries = memoryApi.inspect({ limit: 1 });
+        const entries = memoryApi.inspect({
+          tenantId: params.tenantId,
+          agentId: params.agentId,
+          limit: 1,
+        });
         const entry = entries.find((e) => e.id === params.id);
         return {
           entry: entry
@@ -424,51 +455,17 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
             : undefined,
         };
       }
-      const stats = memoryApi.stats(params.tenantId ?? container.config.tenantId);
+      const stats = memoryApi.stats(params.tenantId, params.agentId);
       return { stats: stats as unknown as Record<string, unknown> };
     },
-    getConfig: async (params) => {
-      // A non-secret section ALLOWLIST is enforced.
-      // The prior top-level-key passthrough returned ANY requested section
-      // verbatim — including `agents` (per-provider auth/model profiles) and
-      // `security.secrets` — a real secret-egress path. Only the
-      // exact fields the safe default object already emits are returnable, and
-      // each is projected the SAME way the default does (gateway → {enabled,
-      // host,port}, NOT the raw object, which carries bearer `tokens`). A
-      // non-allowlisted section falls through to the safe default object —
-      // the prior verbatim-passthrough path is removed outright, with no
-      // opt-out flag preserving the old behaviour (no-BC policy).
-      const safeDefault = {
-        tenantId: container.config.tenantId,
-        logLevel: container.config.logLevel,
-        gateway: { enabled: gwConfig.enabled, host: gwConfig.host, port: gwConfig.port },
-      };
-      // Closed allowlist — extend ONLY with sections proven to carry no secrets.
-      const section = params?.section;
-      if (section !== undefined && NON_SECRET_SECTIONS.includes(section as NonSecretSection)) {
-        // Project each allowlisted section exactly as the safe default does
-        // (closed union → exhaustive switch, no dynamic key indexing).
-        switch (section as NonSecretSection) {
-          case "tenantId":
-            return { tenantId: safeDefault.tenantId };
-          case "logLevel":
-            return { logLevel: safeDefault.logLevel };
-          case "gateway":
-            return { gateway: safeDefault.gateway };
-        }
-      }
-      // Non-allowlisted (incl. agents/security/channels/providers) → safe default.
-      return safeDefault;
-    },
-    // Non-secret projections for the dashboard's GET /api/agents and
-    // /api/channels — `agents`/`channels` were dropped from getConfig's
-    // allowlist, so these (not getConfig) are the REST source. See
-    // non-secret-projections.ts: id/name/provider/model + name/enabled only.
+    getConfig: async (params) => safeConfigProjection(container.config, params?.section),
+    // Dashboard projections expose only non-secret agent and channel fields.
     listAgentSummaries: () => agentSummaries(container.config.agents),
     listChannelSummaries: () => channelSummaries(container.config.channels),
     getSessionHistory: async (params) => {
-      const sk = resolveGatewaySessionKey({
+      const identity = resolveGatewayTurnIdentity({
         tenantId: container.config.tenantId,
+        agentId: defaultAgentId,
         clientId: params.clientId,
         sessionKey: params.channelId === undefined
           ? undefined
@@ -477,8 +474,11 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
               peerId: params.peerId,
             },
       });
-      const data = sessionStore.load(sk);
-      if (!data) {
+      if (!identity.ok) return Promise.reject(identity.error);
+      const loaded = sessionStore.load(identity.value.turnScope.conversation);
+      if (!loaded.ok) return Promise.reject(loaded.error);
+      const data = loaded.value;
+      if (data === undefined) {
         return { messages: [] };
       }
       // Extract user/assistant messages from pi-agent-core format
@@ -521,11 +521,14 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
     handleSlashCommand: async (params) => {
       const execAgentId = params.agentId ?? defaultAgentId;
       const execAgentConfig = agents[execAgentId] ?? agents[defaultAgentId];
-      const sk = resolveGatewaySessionKey({
+      const identity = resolveGatewayTurnIdentity({
         tenantId: container.config.tenantId,
+        agentId: execAgentId,
         clientId: params.clientId,
         sessionKey: params.sessionKey,
       });
+      if (!identity.ok) return Promise.reject(identity.error);
+      const sk = identity.value.displaySessionKey;
 
       const parsed = parseSlashCommand(params.message);
       if (!parsed.found) return { handled: false };
@@ -544,6 +547,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
         costTrackers,
         workspaceDirs,
         logger: gatewayLogger,
+        conversationScope: identity.value.turnScope.conversation,
         piSessionAdapters,
         destroyConversation,
       });
@@ -554,10 +558,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
       // If session reset command succeeded, try LLM greeting
       if (result.handled && (parsed.command === "new" || parsed.command === "reset") && greetingGenerator) {
         const greetingAgentConfig = agents[params.agentId ?? defaultAgentId] ?? agents[defaultAgentId];
-        // Interactivity signal: a concrete channel surface
-        // (Discord/Telegram/…) is interactive; the bare "gateway" sentinel
-        // (the headless RPC default applied when no channelId is supplied —
-        // see `sk` above) marks the non-interactive/onboarding-limited path.
+        // Concrete channels are interactive; the gateway sentinel is headless.
         const interactive = (params.sessionKey?.channelId ?? "gateway") !== "gateway";
         const trigger = detectGreetingTrigger({ agentConfig: greetingAgentConfig, interactive });
         const greetingResult = await greetingGenerator.generate(greetingAgentConfig?.name ?? "Comis", trigger);
@@ -572,8 +573,6 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
     logger: gatewayLogger,
   };
 }
-// Dynamic router construction + RPC method registration -------------------
-
 /**
  * Build the dynamic-method router and register all RPC methods. Returns the
  * router handle for the gateway server.

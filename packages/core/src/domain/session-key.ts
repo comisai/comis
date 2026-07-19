@@ -5,20 +5,20 @@ import { z } from "zod";
 /**
  * SessionKey: Uniquely identifies a conversation context.
  *
- * The combination of tenantId + userId + channelId locates the session.
+ * This is a human-readable projection only. Durable authority uses
+ * ConversationScope + ConversationRef.
  * Optional peerId and guildId support group/thread scenarios.
- * Optional agentId enables multi-agent session isolation.
  * Optional threadId enables forum/thread session isolation.
  * Used by MemoryPort to scope memory retrieval and by the agent to
  * maintain per-conversation state.
  */
 export const SessionKeySchema = z.strictObject({
-    tenantId: z.string().min(1).default("default"),
+    tenantId: z.string().min(1),
+    agentId: z.string().min(1),
     userId: z.string().min(1),
     channelId: z.string().min(1),
     peerId: z.string().optional(),
     guildId: z.string().optional(),
-    agentId: z.string().optional(),
     threadId: z.string().optional(),
   });
 
@@ -38,17 +38,15 @@ export function parseSessionKey(raw: unknown): Result<SessionKey, z.ZodError> {
 /**
  * Format a SessionKey into a deterministic string for use as a cache/lookup key.
  *
- * Format: `{tenantId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]`
+ * Format: `{tenantId}:agent:{agentId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]`
  * where each tagged suffix is emitted only when the corresponding optional
  * field is set. Symmetric with `parseFormattedSessionKey`.
  *
- * The `SessionKey.agentId` field is intentionally NOT serialized — agent
- * isolation is handled out-of-band (per-agent workspace dirs, per-agent
- * watermark files, etc.) and there is no matching parser branch. Setting
- * `key.agentId` has no effect on the formatted output.
+ * The required agent segment keeps display/cache labels collision-free across
+ * agents. It does not make this string an authorization credential.
  */
 export function formatSessionKey(key: SessionKey): string {
-  let formatted = `${key.tenantId}:${key.userId}:${key.channelId}`;
+  let formatted = `${key.tenantId}:agent:${key.agentId}:${key.userId}:${key.channelId}`;
   if (key.peerId !== undefined) {
     formatted += `:peer:${key.peerId}`;
   }
@@ -65,8 +63,9 @@ export function formatSessionKey(key: SessionKey): string {
  * Parse a formatted session key string back into a SessionKey object.
  * Symmetric inverse of `formatSessionKey`.
  *
- * Accepted format: `{tenantId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]`
- * The first two unescaped segments are always tenantId and userId. channelId
+ * Accepted format: `{tenantId}:agent:{agentId}:{userId}:{channelId}[:peer:{peerId}][:guild:{guildId}][:thread:{threadId}]`
+ * The leading unescaped segments are tenantId, the `agent` marker, agentId,
+ * and userId. channelId
  * may contain colons and consumes segments before the first reserved suffix
  * marker. Suffix markers are unique and ordered peer → guild → thread; each
  * value consumes colon-bearing segments until the next marker. Those marker
@@ -74,7 +73,7 @@ export function formatSessionKey(key: SessionKey): string {
  * segments inside channel or suffix values.
  *
  * Because the wire format is unescaped, a producer that embeds a colon in
- * tenantId or userId cannot be inverted unambiguously. Such producers must keep
+ * tenantId, agentId, or userId cannot be inverted unambiguously. Such producers must keep
  * their structured identity outside those first two segments.
  *
  * @returns SessionKey if the format is valid, undefined otherwise
@@ -82,10 +81,11 @@ export function formatSessionKey(key: SessionKey): string {
 export function parseFormattedSessionKey(formatted: string): SessionKey | undefined {
   if (!formatted || typeof formatted !== "string") return undefined;
   const parts = formatted.split(":");
-  if (parts.length < 3) return undefined;
+  if (parts.length < 5 || parts.at(1) !== "agent") return undefined;
   const tenantId = parts.at(0);
-  const userId = parts.at(1);
-  if (!tenantId || !userId) return undefined;
+  const agentId = parts.at(2);
+  const userId = parts.at(3);
+  if (!tenantId || !agentId || !userId) return undefined;
 
   const suffixOrder = (part: string): 0 | 1 | 2 | undefined => {
     if (part === "peer") return 0;
@@ -97,17 +97,17 @@ export function parseFormattedSessionKey(formatted: string): SessionKey | undefi
   // Suffix marker tokens are reserved after tenant/user. A marker before any
   // channel segment therefore fails the required non-empty channel invariant.
   let suffixStart = parts.length;
-  for (let i = 2; i < parts.length; i++) {
+  for (let i = 4; i < parts.length; i++) {
     if (suffixOrder(parts.at(i)!) !== undefined) {
       suffixStart = i;
       break;
     }
   }
 
-  const channelId = parts.slice(2, suffixStart).join(":");
+  const channelId = parts.slice(4, suffixStart).join(":");
   if (channelId.length === 0) return undefined;
 
-  const key: SessionKey = { tenantId, userId, channelId };
+  const key: SessionKey = { tenantId, agentId, userId, channelId };
 
   let cursor = suffixStart;
   let previousOrder = -1;

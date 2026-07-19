@@ -15,6 +15,7 @@ import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createRowMapper } from "./row-mapper.js";
 import { isVecAvailable } from "./schema.js";
+import { requireMemoryAuthorityPartitionForMemory } from "./memory-authority.js";
 
 const unembeddedMemoryMapper = createRowMapper(
   z.strictObject({ id: z.string(), content: z.string() }),
@@ -113,7 +114,7 @@ export function createBatchIndexer(
 
         if (result.ok) {
           const insertVec = db.prepare(
-            "INSERT OR REPLACE INTO vec_memories(memory_id, embedding) VALUES (?, ?)",
+            "INSERT OR REPLACE INTO vec_memories(memory_id, embedding, authority_partition_id) VALUES (?, ?, ?)",
           );
           const updateFlag = db.prepare(
             "UPDATE memories SET has_embedding = 1 WHERE id = ?",
@@ -136,7 +137,8 @@ export function createBatchIndexer(
                 continue;
               }
               if (isVecAvailable()) {
-                insertVec.run(rows[i].id, new Float32Array(vec));
+                const partitionId = requireMemoryAuthorityPartitionForMemory(db, rows[i].id);
+                insertVec.run(rows[i].id, new Float32Array(vec), BigInt(partitionId));
               }
               updateFlag.run(rows[i].id);
               indexed++;

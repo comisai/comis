@@ -56,6 +56,7 @@ describe("createDiagnosticCollector", () => {
       },
       sessionKey: {
         tenantId: "default",
+        agentId: "agent-1",
         userId: "user-1",
         channelId: "ch-1",
       },
@@ -140,6 +141,7 @@ describe("createDiagnosticCollector", () => {
     bus.emit("session:created", {
       sessionKey: {
         tenantId: "default",
+        agentId: "agent-1",
         userId: "user-1",
         channelId: "ch-1",
       },
@@ -149,7 +151,7 @@ describe("createDiagnosticCollector", () => {
     const recent = collector.getRecent({ category: "session" });
     expect(recent).toHaveLength(1);
     expect(recent[0]!.category).toBe("session");
-    expect(recent[0]!.sessionKey).toBe("default:user-1:ch-1");
+    expect(recent[0]!.sessionKey).toBe("default:agent:agent-1:user-1:ch-1");
   });
 
   it("ring buffer evicts oldest when full", () => {

@@ -298,20 +298,26 @@ describe("workspace-umbrella domain contracts", () => {
       expect(AdminApprovalResolveContract.method).toBe("admin.approval.resolve");
     });
 
-    it("accepts valid request: { requestId, approved, approvedBy?, reason? }", () => {
+    it("accepts a resolution with explicit conversation authority", () => {
       expect(() =>
         AdminApprovalResolveContract.request.parse({
           requestId: "req-001",
+          tenant_id: "tenant-1",
+          agent_id: "agent-1",
+          conversation_ref: "conversation-ref-1",
           approved: true,
           approvedBy: "admin",
         }),
       ).not.toThrow();
     });
 
-    it("accepts request without approvedBy + reason (both optional)", () => {
+    it("accepts a scoped request without optional attribution", () => {
       expect(() =>
         AdminApprovalResolveContract.request.parse({
           requestId: "req-001",
+          tenant_id: "tenant-1",
+          agent_id: "agent-1",
+          conversation_ref: "conversation-ref-1",
           approved: true,
         }),
       ).not.toThrow();

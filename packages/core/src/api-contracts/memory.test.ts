@@ -12,6 +12,7 @@ import {
   MemorySearchFilesContract,
   MemoryGetFileContract,
   MemoryStoreContract,
+  MemoryChangeVisibilityContract,
   MemoryStatsContract,
   MemoryBrowseContract,
   MemoryDeleteContract,
@@ -32,12 +33,12 @@ describe("memory + context domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("MEMORY_CONTRACTS has exactly 17 entries (9 memory + 2 portability + 2 pinning + 4 diagnostics)", () => {
+  it("MEMORY_CONTRACTS has exactly 18 registered handler contracts", () => {
     // The portability (export/import), pinning (pin/unpin), diagnostic, and
     // memory.ask contracts are spread in alongside the core memory-handlers.ts
     // contracts; every entry has a matching daemon handler, so the registry ↔
     // handler set stays 1:1.
-    expect(MEMORY_CONTRACTS.length).toBe(17);
+    expect(MEMORY_CONTRACTS.length).toBe(18);
   });
 
   it("MEMORY_CONTRACTS method names cover every handler-factory method", () => {
@@ -159,17 +160,44 @@ describe("memory + context domain contracts", () => {
     expect(() => MemoryStoreContract.request.parse({ content: "" })).toThrow();
   });
 
-  it("memory.store: request accepts content + optional tags + trustLevel", () => {
+  it("memory.store: request requires an explicit visibility", () => {
     expect(() =>
       MemoryStoreContract.request.parse({ content: "hello" }),
-    ).not.toThrow();
+    ).toThrow();
     expect(() =>
       MemoryStoreContract.request.parse({
         content: "hello",
         tags: ["topic-a"],
         trustLevel: "external",
+        visibility: "conversation",
       }),
     ).not.toThrow();
+  });
+
+  it("memory.store: request accepts explicit public tenant and agent authority", () => {
+    expect(() =>
+      MemoryStoreContract.request.parse({
+        content: "hello",
+        visibility: "agent-shared",
+        tenantId: "tenant-a",
+        agentId: "agent-a",
+      }),
+    ).not.toThrow();
+  });
+
+  it("memory.change_visibility: request requires explicit tenant and agent authority", () => {
+    expect(() => MemoryChangeVisibilityContract.request.parse({ id: "memory-a", visibility: "conversation" })).toThrow();
+    expect(() => MemoryChangeVisibilityContract.request.parse({
+      id: "memory-a",
+      agentId: "agent-a",
+      visibility: "conversation",
+    })).toThrow();
+    expect(() => MemoryChangeVisibilityContract.request.parse({
+      id: "memory-a",
+      tenantId: "tenant-a",
+      agentId: "agent-a",
+      visibility: "conversation",
+    })).not.toThrow();
   });
 
   it("memory.store: response shape requires literal stored:true + id", () => {
@@ -185,8 +213,10 @@ describe("memory + context domain contracts", () => {
   // memory.stats
   // -------------------------------------------------------------------------
 
-  it("memory.stats: request accepts empty + tenant_id + agent_id", () => {
-    expect(() => MemoryStatsContract.request.parse({})).not.toThrow();
+  it("memory.stats: request requires explicit tenant and agent authority", () => {
+    expect(() => MemoryStatsContract.request.parse({})).toThrow();
+    expect(() => MemoryStatsContract.request.parse({ tenant_id: "t1" })).toThrow();
+    expect(() => MemoryStatsContract.request.parse({ agent_id: "a1" })).toThrow();
     expect(() =>
       MemoryStatsContract.request.parse({ tenant_id: "t1", agent_id: "a1" }),
     ).not.toThrow();
@@ -205,6 +235,13 @@ describe("memory + context domain contracts", () => {
   // -------------------------------------------------------------------------
   // memory.browse
   // -------------------------------------------------------------------------
+
+  it("memory.browse: request requires explicit tenant and agent authority", () => {
+    expect(() => MemoryBrowseContract.request.parse({})).toThrow();
+    expect(() =>
+      MemoryBrowseContract.request.parse({ tenant_id: "t1", agent_id: "a1" }),
+    ).not.toThrow();
+  });
 
   it("memory.browse: response requires entries[], total, offset, limit, hasMore", () => {
     expect(() =>
@@ -235,13 +272,19 @@ describe("memory + context domain contracts", () => {
     expect(() => MemoryDeleteContract.request.parse({ ids: [] })).toThrow();
   });
 
-  it("memory.delete: request accepts ids + optional tenant_id", () => {
+  it("memory.delete: request requires the target agent authority", () => {
     expect(() =>
       MemoryDeleteContract.request.parse({ ids: ["mem-1"] }),
-    ).not.toThrow();
+    ).toThrow();
     expect(() =>
-      MemoryDeleteContract.request.parse({ ids: ["mem-1"], tenant_id: "t1" }),
+      MemoryDeleteContract.request.parse({ ids: ["mem-1"], tenant_id: "t1", agent_id: "a1" }),
     ).not.toThrow();
+  });
+
+  it("memory.delete: request requires explicit tenant authority", () => {
+    expect(() =>
+      MemoryDeleteContract.request.parse({ ids: ["mem-1"], agent_id: "a1" }),
+    ).toThrow();
   });
 
   it("memory.delete: response shape carries deleted/failed/total counters", () => {
@@ -254,14 +297,15 @@ describe("memory + context domain contracts", () => {
   // memory.flush
   // -------------------------------------------------------------------------
 
-  it("memory.flush: response carries flushed:true + entriesRemoved + scope", () => {
+  it("memory.flush: request requires explicit tenant and agent authority", () => {
+    expect(() => MemoryFlushContract.request.parse({})).toThrow();
+    expect(() => MemoryFlushContract.request.parse({ tenant_id: "t1" })).toThrow();
     expect(() =>
-      MemoryFlushContract.response.parse({
-        flushed: true,
-        entriesRemoved: 5,
-        scope: { tenantId: "t1", agentId: null },
-      }),
+      MemoryFlushContract.request.parse({ tenant_id: "t1", agent_id: "a1" }),
     ).not.toThrow();
+  });
+
+  it("memory.flush: response carries flushed:true + entriesRemoved + scope", () => {
     expect(() =>
       MemoryFlushContract.response.parse({
         flushed: true,
@@ -276,7 +320,7 @@ describe("memory + context domain contracts", () => {
       MemoryFlushContract.response.parse({
         flushed: false,
         entriesRemoved: 0,
-        scope: { tenantId: "t1", agentId: null },
+        scope: { tenantId: "t1", agentId: "a1" },
       }),
     ).toThrow();
   });
@@ -284,6 +328,13 @@ describe("memory + context domain contracts", () => {
   // -------------------------------------------------------------------------
   // memory.export
   // -------------------------------------------------------------------------
+
+  it("memory.export: request requires explicit tenant and agent authority", () => {
+    expect(() => MemoryExportContract.request.parse({})).toThrow();
+    expect(() =>
+      MemoryExportContract.request.parse({ tenant_id: "t1", agent_id: "a1" }),
+    ).not.toThrow();
+  });
 
   it("memory.export: response carries entries[], total, offset, limit", () => {
     expect(() =>
@@ -357,14 +408,14 @@ describe("memory diagnostic contracts — admin-scoped", () => {
     expect(MemoryRecallTraceContract.scopes).toEqual(["admin"]);
   });
 
-  it("memory.recall_trace: request accepts session_key OR trace_id plus optional scoping (at-least-one enforced in handler)", () => {
+  it("memory.recall_trace: request requires explicit tenant and agent authority", () => {
     // Both modelled optional (the "at least one" rule is enforced in the
     // handler, mirroring obs.trace.search's messageId/traceId pattern).
     expect(() =>
-      MemoryRecallTraceContract.request.parse({ session_key: "t1:u1:c1" }),
+      MemoryRecallTraceContract.request.parse({ session_key: "scope-ref", tenant_id: "t1", agent_id: "a1" }),
     ).not.toThrow();
     expect(() =>
-      MemoryRecallTraceContract.request.parse({ trace_id: "trace-1" }),
+      MemoryRecallTraceContract.request.parse({ trace_id: "trace-1", tenant_id: "t1", agent_id: "a1" }),
     ).not.toThrow();
     expect(() =>
       MemoryRecallTraceContract.request.parse({
@@ -374,8 +425,10 @@ describe("memory diagnostic contracts — admin-scoped", () => {
         limit: 25,
       }),
     ).not.toThrow();
-    // An empty object parses (the handler raises the at-least-one error).
-    expect(() => MemoryRecallTraceContract.request.parse({})).not.toThrow();
+    // The trace selector is checked by the handler, but agent authority is a
+    // contract-level requirement.
+    expect(() => MemoryRecallTraceContract.request.parse({ trace_id: "trace-1", agent_id: "a1" })).toThrow();
+    expect(() => MemoryRecallTraceContract.request.parse({})).toThrow();
   });
 
   it("memory.recall_trace: rejects a non-integer, negative, or oversized limit (bounded limit)", () => {
@@ -383,22 +436,22 @@ describe("memory diagnostic contracts — admin-scoped", () => {
     // (defense-in-depth — a malformed bound would otherwise flow straight
     // into the file scan / `LIMIT ?`). A small positive integer still parses.
     expect(() =>
-      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: 50 }),
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", tenant_id: "t1", agent_id: "a1", limit: 50 }),
     ).not.toThrow();
     // Non-integer is rejected at parse time.
     expect(() =>
-      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: 3.5 }),
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", agent_id: "a1", limit: 3.5 }),
     ).toThrow();
     // Negative / zero is rejected.
     expect(() =>
-      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: -1 }),
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", agent_id: "a1", limit: -1 }),
     ).toThrow();
     expect(() =>
-      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: 0 }),
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", agent_id: "a1", limit: 0 }),
     ).toThrow();
     // Oversized (beyond the cap) is rejected.
     expect(() =>
-      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: 1_000_000_000 }),
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", agent_id: "a1", limit: 1_000_000_000 }),
     ).toThrow();
   });
 
@@ -406,16 +459,16 @@ describe("memory diagnostic contracts — admin-scoped", () => {
     // The two SQL-backed diagnostics thread `limit` straight into `LIMIT ?`,
     // so the same positive-integer-with-cap fence applies to them.
     expect(() =>
-      MemoryObservationsContract.request.parse({ limit: 3.5 }),
+      MemoryObservationsContract.request.parse({ agent_id: "a1", limit: 3.5 }),
     ).toThrow();
     expect(() =>
-      MemoryObservationsContract.request.parse({ limit: 1_000_000_000 }),
+      MemoryObservationsContract.request.parse({ agent_id: "a1", limit: 1_000_000_000 }),
     ).toThrow();
     expect(() =>
-      MemoryEntitiesContract.request.parse({ limit: -5 }),
+      MemoryEntitiesContract.request.parse({ agent_id: "a1", limit: -5 }),
     ).toThrow();
     expect(() =>
-      MemoryEntitiesContract.request.parse({ limit: 1_000_000_000 }),
+      MemoryEntitiesContract.request.parse({ agent_id: "a1", limit: 1_000_000_000 }),
     ).toThrow();
   });
 
@@ -436,10 +489,10 @@ describe("memory diagnostic contracts — admin-scoped", () => {
   // memory.observations
   // -------------------------------------------------------------------------
 
-  it("memory.observations: method + admin scope + optional scoping request", () => {
+  it("memory.observations: method + admin scope + explicit agent request", () => {
     expect(MemoryObservationsContract.method).toBe("memory.observations");
     expect(MemoryObservationsContract.scopes).toEqual(["admin"]);
-    expect(() => MemoryObservationsContract.request.parse({})).not.toThrow();
+    expect(() => MemoryObservationsContract.request.parse({})).toThrow();
     expect(() =>
       MemoryObservationsContract.request.parse({ tenant_id: "t1", agent_id: "a1", limit: 10 }),
     ).not.toThrow();
@@ -473,10 +526,10 @@ describe("memory diagnostic contracts — admin-scoped", () => {
   // memory.entities
   // -------------------------------------------------------------------------
 
-  it("memory.entities: method + admin scope + optional scoping request", () => {
+  it("memory.entities: method + admin scope + explicit agent request", () => {
     expect(MemoryEntitiesContract.method).toBe("memory.entities");
     expect(MemoryEntitiesContract.scopes).toEqual(["admin"]);
-    expect(() => MemoryEntitiesContract.request.parse({})).not.toThrow();
+    expect(() => MemoryEntitiesContract.request.parse({})).toThrow();
     expect(() =>
       MemoryEntitiesContract.request.parse({ tenant_id: "t1", agent_id: "a1", limit: 50 }),
     ).not.toThrow();
@@ -500,10 +553,10 @@ describe("memory diagnostic contracts — admin-scoped", () => {
   // memory.recall_stats
   // -------------------------------------------------------------------------
 
-  it("memory.recall_stats: method + admin scope + optional scoping request", () => {
+  it("memory.recall_stats: method + admin scope + explicit authority", () => {
     expect(MemoryRecallStatsContract.method).toBe("memory.recall_stats");
     expect(MemoryRecallStatsContract.scopes).toEqual(["admin"]);
-    expect(() => MemoryRecallStatsContract.request.parse({})).not.toThrow();
+    expect(() => MemoryRecallStatsContract.request.parse({})).toThrow();
     expect(() =>
       MemoryRecallStatsContract.request.parse({ tenant_id: "t1", agent_id: "a1" }),
     ).not.toThrow();

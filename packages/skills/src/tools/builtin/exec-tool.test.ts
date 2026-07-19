@@ -2230,6 +2230,20 @@ function makeApprovalContext(): RequestContext {
     startedAt: Date.now(),
     trustLevel: "admin",
     channelType: "telegram",
+    turnScope: {
+      conversation: {
+        tenantId: "default",
+        agentId: "test-agent",
+        partition: { kind: "principal", principalId: "principal-test-user" },
+      },
+      principal: { principalId: "principal-test-user" },
+      endpoint: {
+        channelType: "telegram",
+        channelInstanceId: "telegram-account",
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      },
+    },
     deliveryOrigin: Object.freeze({
       tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
     }),

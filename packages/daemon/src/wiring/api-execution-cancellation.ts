@@ -6,6 +6,7 @@ import {
   systemScheduleTimeout,
   tryGetContext,
   type ComisLogger,
+  type ConversationRef,
   type EventMap,
   type SessionKey,
   type TypedEventBus,
@@ -42,6 +43,7 @@ export function bindApiExecutionCancellation(args: {
   channelType: "openai" | "responses";
   channelId: string;
   sessionKey: SessionKey;
+  conversationRef: ConversationRef;
   sessionResolver: BackgroundSessionResolver;
   eventBus: Pick<TypedEventBus, "on" | "off">;
   logger: Pick<ComisLogger, "warn">;
@@ -81,11 +83,7 @@ export function bindApiExecutionCancellation(args: {
   };
 
   const resolveActiveRun = (): RunHandle | undefined => {
-    const resolved = tryCatch(() => args.sessionResolver.resolveActiveSession({
-      agentId: args.agentId,
-      channelType: args.channelType,
-      channelId: args.channelId,
-    }));
+    const resolved = tryCatch(() => args.sessionResolver.resolveActiveSession(args.conversationRef));
     if (!resolved.ok) {
       logCancellationFailure(
         resolved.error,

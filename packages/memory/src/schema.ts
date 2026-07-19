@@ -18,16 +18,35 @@ import { ensureOutwardLedgerTable } from "./schema-outward-ledger.js";
 import { ensureMsTeamsConversationTable } from "./schema-msteams-conversation.js";
 import { ensureOutcomeEventsTable } from "./schema-outcome-events.js";
 import { ensureMentalModelsTable } from "./schema-mental-models.js";
-import { reconcileVecTableDimension, type VecTableRebuild } from "./vec-dimension.js";
+import type { VecTableRebuild } from "./vec-dimension.js";
+import { ensureMemoryRecallIndexes } from "./memory-recall-indexes.js";
+import { ensureSessionTable } from "./schema-sessions.js";
 import { ensureUsefulnessFailureColumn } from "./schema-usefulness.js";
 import { ensureObsTokenColumns, ensureObsAuditTable } from "./schema-obs-token.js";
 import { ensureObsDeliveryColumns } from "./schema-obs-delivery.js";
+import { preflightDeliveryAuthorityTables } from "./schema-delivery-authority.js";
 import { requireTableInfoRows } from "./schema-introspection.js";
 import { createRowMapper } from "./sqlite-row-mapper.js";
 
 /** Module-level flag tracking whether sqlite-vec loaded successfully. */
 let vecAvailable = false;
 const vecVersionMapper = createRowMapper(z.strictObject({ v: z.string() }));
+const tableNameMapper = createRowMapper(z.strictObject({ name: z.string() }));
+
+function preflightMemoryVisibilityTable(db: Database.Database): void {
+  const existing = tableNameMapper.parseOptionalRow(
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memories'").get(),
+  );
+  if (!existing.ok || existing.value === undefined) return;
+  const columns = new Set(
+    requireTableInfoRows(db.prepare("PRAGMA table_info(memories)").all(), "memories").map((row) => row.name),
+  );
+  const required = ["visibility", "conversation_ref", "principal_id"];
+  if (required.every((column) => columns.has(column))) return;
+  throw new Error(
+    "The memories table predates explicit visibility authority. Back up the database, then recreate it before starting Comis.",
+  );
+}
 
 /**
  * Check whether the sqlite-vec extension was loaded successfully
@@ -390,6 +409,9 @@ export function initSchema(
     );
   }
 
+  preflightDeliveryAuthorityTables(db);
+  preflightMemoryVisibilityTable(db);
+
   // --- Load sqlite-vec extension (graceful degradation) ---
   let localVecAvailable = false;
   try {
@@ -413,9 +435,12 @@ export function initSchema(
   db.exec(`
     CREATE TABLE IF NOT EXISTS memories (
       id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL DEFAULT 'default',
-      agent_id TEXT NOT NULL DEFAULT 'default',
+      tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
+      visibility TEXT NOT NULL CHECK(visibility IN ('conversation', 'principal', 'agent-shared')),
+      conversation_ref TEXT,
+      principal_id TEXT,
       content TEXT NOT NULL,
       trust_level TEXT NOT NULL CHECK(trust_level IN ('system', 'learned', 'external')),
       memory_type TEXT NOT NULL DEFAULT 'semantic' CHECK(memory_type IN ('working', 'episodic', 'semantic', 'procedural')),
@@ -426,7 +451,12 @@ export function initSchema(
       created_at INTEGER NOT NULL,
       updated_at INTEGER,
       expires_at INTEGER,
-      has_embedding INTEGER NOT NULL DEFAULT 0
+      has_embedding INTEGER NOT NULL DEFAULT 0,
+      CHECK(
+        (visibility = 'conversation' AND conversation_ref IS NOT NULL AND principal_id IS NULL)
+        OR (visibility = 'principal' AND conversation_ref IS NULL AND principal_id IS NOT NULL)
+        OR (visibility = 'agent-shared' AND conversation_ref IS NULL AND principal_id IS NULL)
+      )
     );
   `);
 
@@ -442,87 +472,12 @@ export function initSchema(
   // Index for agent-scoped queries
   db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_agent ON memories(agent_id);`);
 
-  // --- Vector search table (sqlite-vec) ---
-  const vecRebuilt: VecTableRebuild[] = [];
-  if (localVecAvailable) {
-    // vec0 bakes the dimension into the DDL, so IF NOT EXISTS alone cannot
-    // migrate an existing table when the embedder dimension changes — the
-    // stale table would reject every INSERT/KNN at the new dimension. Drop +
-    // recreate, and reset has_embedding so the batch indexer re-embeds every
-    // row into the fresh table (vectors are derived data).
-    const fromDimensions = reconcileVecTableDimension(db, "vec_memories", embeddingDimensions);
-    if (fromDimensions !== undefined) {
-      db.exec("UPDATE memories SET has_embedding = 0");
-      vecRebuilt.push({
-        table: "vec_memories",
-        fromDimensions,
-        toDimensions: embeddingDimensions,
-      });
-    }
-    db.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
-        memory_id TEXT PRIMARY KEY,
-        embedding float[${embeddingDimensions}] distance_metric=cosine
-      );
-    `);
-  }
+  // Derived recall indexes carry the tenant-agent authority partition inside
+  // their candidate query substrate. They are rebuilt from authoritative
+  // memories rows when an older unpartitioned shape is found.
+  const vecRebuilt = ensureMemoryRecallIndexes(db, embeddingDimensions, localVecAvailable);
 
-  // --- FTS5 full-text search (external content) ---
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-      content,
-      content='memories',
-      content_rowid='rowid',
-      tokenize='porter unicode61'
-    );
-  `);
-
-  // Rebuild FTS5 index to ensure consistency with external content table.
-  // This is safe to call on empty tables (no-op) and essential after
-  // reopening a database where the FTS5 index may be stale from a
-  // previous unclean shutdown. For small databases (test scenarios),
-  // this is effectively instant.
-  try {
-    db.exec(`INSERT INTO memory_fts(memory_fts) VALUES('rebuild')`);
-  } catch {
-    // Rebuild may fail if the table was just created (no content yet) -- safe to ignore
-  }
-
-  // --- FTS5 sync triggers ---
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-      INSERT INTO memory_fts(rowid, content) VALUES (new.rowid, new.content);
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-      INSERT INTO memory_fts(memory_fts, rowid, content) VALUES('delete', old.rowid, old.content);
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE OF content ON memories BEGIN
-      INSERT INTO memory_fts(memory_fts, rowid, content) VALUES('delete', old.rowid, old.content);
-      INSERT INTO memory_fts(rowid, content) VALUES (new.rowid, new.content);
-    END;
-  `);
-
-  // --- Sessions table ---
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS sessions (
-      session_key TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL DEFAULT 'default',
-      user_id TEXT NOT NULL,
-      channel_id TEXT NOT NULL,
-      messages TEXT NOT NULL DEFAULT '[]',
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      metadata TEXT NOT NULL DEFAULT '{}'
-    );
-  `);
-
-  // --- Indexes on sessions ---
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_sessions_tenant ON sessions(tenant_id);
-    CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at);
-  `);
+  ensureSessionTable(db);
 
   // NOTE: the DAG context-store tables (ctx_*) were removed when the LCD store
   // replaced them — only the schema-create call is gone (no reverse migration; existing DBs keep harmless orphaned tables).
@@ -611,7 +566,10 @@ export function initSchema(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       timestamp INTEGER NOT NULL,
       trace_id TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
       agent_id TEXT NOT NULL,
+      conversation_ref TEXT NOT NULL,
+      destination_endpoint TEXT NOT NULL,
       channel_type TEXT NOT NULL,
       channel_id TEXT NOT NULL,
       session_key TEXT DEFAULT '',
@@ -688,7 +646,10 @@ export function initSchema(
       text TEXT NOT NULL,
       channel_type TEXT NOT NULL,
       channel_id TEXT NOT NULL,
-      tenant_id TEXT NOT NULL DEFAULT 'default',
+      tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      conversation_ref TEXT NOT NULL,
+      destination_endpoint TEXT NOT NULL,
       options_json TEXT NOT NULL DEFAULT '{}',
       origin TEXT NOT NULL DEFAULT 'unknown',
       status TEXT NOT NULL DEFAULT 'pending'
@@ -712,7 +673,10 @@ export function initSchema(
   db.exec(`
     CREATE TABLE IF NOT EXISTS delivery_mirror (
       id TEXT PRIMARY KEY,
-      session_key TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      conversation_ref TEXT NOT NULL,
+      destination_endpoint TEXT NOT NULL,
       text TEXT NOT NULL,
       media_urls TEXT NOT NULL DEFAULT '[]',
       channel_type TEXT NOT NULL,
@@ -726,8 +690,8 @@ export function initSchema(
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_dm_idempotency
       ON delivery_mirror(idempotency_key);
-    CREATE INDEX IF NOT EXISTS idx_dm_session_status
-      ON delivery_mirror(session_key, status)
+    CREATE INDEX IF NOT EXISTS idx_dm_authority_status
+      ON delivery_mirror(tenant_id, agent_id, conversation_ref, status)
       WHERE status = 'pending';
     CREATE INDEX IF NOT EXISTS idx_dm_created
       ON delivery_mirror(created_at);

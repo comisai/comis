@@ -24,6 +24,7 @@
  */
 
 import {
+  createConversationRef,
   tryGetContext,
   type TypedEventBus,
   type OutcomeSignalPort,
@@ -33,9 +34,9 @@ import {
   type ClockPort,
   type ComisLogger,
   type AppConfig,
+  type ConversationRef,
 } from "@comis/core";
 
-import { deriveTenantFromSessionKey } from "./setup-memory-usefulness-wiring.js";
 import { createSkillTrendTracker } from "./setup-learning-skill-trend.js";
 import { markTrajectoryResolved } from "./setup-learning-dedup.js";
 import {
@@ -54,6 +55,8 @@ export { failureCorroborated, CORROBORATION_MIN_INDEPENDENT, MAX_TRACKED_FAILURE
 
 /** Dependencies for {@link wireLearningOutcome}. */
 export interface LearningOutcomeWiringDeps {
+  /** Configured deployment tenant used when an event fires outside request context. */
+  tenantId: string;
   /** The daemon's typed event bus (source of the tool/graph completion events). */
   eventBus: TypedEventBus;
   /** The sole @comis/memory adapter for the outcome port (the observe/resolve target). */
@@ -155,6 +158,7 @@ interface OutcomeScope {
   agentId: string;
   sessionId: string;
   trajectoryId: string;
+  conversationRef?: ConversationRef;
   workspacePolicyHash?: string;
 }
 
@@ -163,22 +167,25 @@ interface OutcomeScope {
  * fields win when present (tool:executed / memory:skill_used / diagnostic:message_
  * processed all carry agentId/traceId/sessionKey); ALS is the fallback (graph:completed
  * carries only graphId). Returns `undefined` when neither source yields an agentId AND a
- * trajectory identity (caller skips). Tenant defaults to "default" only when absent; the
- * agentId is NEVER collapsed across agents (cross-agent isolation).
+ * trajectory identity (caller skips). Tenant authority comes from ALS when present
+ * and otherwise from deployment configuration; display session keys never select it.
  */
 function resolveScope(payload: {
   agentId?: string;
   traceId?: string;
   sessionKey?: string;
   workspacePolicyHash?: string;
-}): OutcomeScope | undefined {
+}, configuredTenantId: string): OutcomeScope | undefined {
   const ctx = tryGetContext();
   const agentId = payload.agentId ?? ctx?.agentId;
   const trajectoryId = payload.traceId ?? ctx?.traceId;
   if (agentId === undefined || agentId.length === 0) return undefined;
   if (trajectoryId === undefined || trajectoryId.length === 0) return undefined;
   const sessionKey = payload.sessionKey ?? ctx?.sessionKey;
-  const tenantId = deriveTenantFromSessionKey(sessionKey) ?? ctx?.tenantId ?? "default";
+  const tenantId = ctx?.tenantId ?? configuredTenantId;
+  const conversationRef = ctx?.turnScope === undefined
+    ? undefined
+    : createConversationRef(ctx.turnScope.conversation);
   // sessionId is the conversation identity; the events carry sessionKey (not a
   // distinct sessionId). Use sessionKey when present, else fall back to the
   // trajectory identity (a stable, scope-consistent key).
@@ -188,6 +195,7 @@ function resolveScope(payload: {
     agentId,
     sessionId,
     trajectoryId,
+    ...(conversationRef?.ok ? { conversationRef: conversationRef.value } : {}),
     ...(payload.workspacePolicyHash === undefined
       ? {}
       : { workspacePolicyHash: payload.workspacePolicyHash }),
@@ -514,7 +522,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     const agentId = p.agentId ?? tryGetContext()?.agentId;
     if (agentId === undefined || !deps.learningOutcomeEnabled(agentId)) return;
 
-    const scope = resolveScope(p);
+    const scope = resolveScope(p, deps.tenantId);
     if (scope === undefined) return;
 
     // The failure signal is the real `success` boolean field. A transport-level
@@ -551,7 +559,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
       agentId: p.agentId,
       traceId: p.traceId,
       sessionKey: p.sessionKey,
-    });
+    }, deps.tenantId);
     if (scope === undefined) return;
 
     // ATTRIBUTION_CONFIDENCE: a neutral, low-confidence `explicit`/`unknown` carrier —
@@ -575,7 +583,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     const agentId = p.agentId ?? tryGetContext()?.agentId;
     if (agentId === undefined || !deps.learningOutcomeEnabled(agentId)) return;
     if (p.usedIds.length === 0) return; // nothing recalled+used → no carrier row
-    const scope = resolveScope({ agentId: p.agentId, traceId: p.traceId, sessionKey: p.sessionKey });
+    const scope = resolveScope({ agentId: p.agentId, traceId: p.traceId, sessionKey: p.sessionKey }, deps.tenantId);
     if (scope === undefined) return;
     void observeNonFatal(deps, scope, "unknown", "explicit", ATTRIBUTION_CONFIDENCE, undefined, p.usedIds);
   });
@@ -597,7 +605,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     const agentId = tryGetContext()?.agentId;
     if (agentId === undefined || !deps.learningOutcomeEnabled(agentId)) return;
     if (!p.toolSequence || p.toolSequence.length === 0) return; // no descriptor → no carrier row
-    const scope = resolveScope({ agentId, traceId: p.traceId, sessionKey: p.sessionKey });
+    const scope = resolveScope({ agentId, traceId: p.traceId, sessionKey: p.sessionKey }, deps.tenantId);
     if (scope === undefined) return;
     void observeNonFatal(deps, scope, "unknown", "explicit", ATTRIBUTION_CONFIDENCE, undefined, undefined, p.toolSequence);
   });
@@ -615,7 +623,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     if (agentId === undefined || !deps.learningOutcomeEnabled(agentId)) return;
 
     // graph:completed carries only graphId — recover the scope from ALS.
-    const scope = resolveScope({});
+    const scope = resolveScope({}, deps.tenantId);
     if (scope === undefined) return;
 
     // Success ONLY on a CLEAN completion; failed/cancelled/running → failure.
@@ -642,7 +650,7 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
       traceId: p.traceId,
       sessionKey: p.sessionKey,
       workspacePolicyHash: p.workspacePolicyHash,
-    });
+    }, deps.tenantId);
     if (scope === undefined) return; // no trajectory identity (absent traceId) → skip
     resolveAndConsume(scope, deps.clock.now());
   });
@@ -779,6 +787,7 @@ export function setupLearningOutcomeWiring(deps: SetupLearningOutcomeDeps): void
   const learningEnabled = (agentId: string): boolean =>
     costFeaturesEnabled && agents[agentId]?.learning?.enabled === true;
   wireLearningOutcome({
+    tenantId: deps.config.tenantId,
     eventBus: deps.eventBus,
     outcomeStore: deps.outcomeStore,
     usefulnessStore: deps.usefulnessStore,

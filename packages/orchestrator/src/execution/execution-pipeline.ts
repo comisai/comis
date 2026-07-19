@@ -12,7 +12,7 @@ import type { ChannelPort, NormalizedMessage, SessionKey, TypedEventBus, Deliver
 import type { PerChannelStreamingConfig, StreamingConfig } from "@comis/core";
 import { ERROR_KINDS } from "@comis/core";
 import type { SendPolicyConfig, ElevatedReplyConfig } from "@comis/core";
-import { formatSessionKey, tryGetContext, systemNowMs, narrowChatType, toSafeErrorLogString } from "@comis/core";
+import { createConversationRef, formatSessionKey, tryGetContext, systemNowMs, narrowChatType, toSafeErrorLogString } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
 // The orchestrator imports ONLY the core activity port + types (never
 // the @comis/observability implementation). The ActivityStreamPort
@@ -228,11 +228,22 @@ export async function executeAndDeliver(
     );
     const executionDurationMs = boundedExecutionCompletedAt - boundedExecutionStartedAt;
     const totalDurationMs = boundedCompletedAt - receivedAt;
+    const requestContext = tryGetContext();
+    const conversationRef = requestContext?.turnScope === undefined
+      ? undefined
+      : createConversationRef(requestContext.turnScope.conversation);
     emitObservationalEvent(deps, "diagnostic:message_processed", {
         messageId: effectiveMsg.id,
         channelId: effectiveMsg.channelId,
         channelType: adapter.channelType,
         agentId,
+        ...(requestContext?.turnScope !== undefined && conversationRef?.ok === true
+          ? {
+              tenantId: requestContext.tenantId,
+              conversationRef: conversationRef.value,
+              destinationEndpoint: requestContext.turnScope.endpoint,
+            }
+          : {}),
         sessionKey: formatSessionKey(sessionKey),
         // Carry the turn's trajectory id so the Verified Learning correction
         // writer can record the prior completed trajectory for a single-agent turn

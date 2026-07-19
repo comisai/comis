@@ -36,9 +36,13 @@ import {
   API_CONTRACTS_ORDERED,
   requireCapability,
   CapabilityDeniedError,
+  conversationScopeToSessionKey,
+  formatSessionKey,
   tryGetContext,
   type AgentCapability,
   type ClockPort,
+  type DeliveryOrigin,
+  type ResolvedTurnScope,
 } from "@comis/core";
 import { resolveAutonomy } from "@comis/core";
 import { assertNotAgentOrigin } from "../api/shared/assert-not-agent-origin.js";
@@ -69,6 +73,35 @@ function createTestClock(startMs = 1_700_000_000_000): ClockPort & { advance(ms:
       nowMs += ms;
     },
   };
+}
+
+function leaseIdentity(agentId: string, origin: DeliveryOrigin): {
+  turnScope: ResolvedTurnScope;
+  sessionKey: string;
+} {
+  const endpoint = {
+    channelType: origin.channelType,
+    channelInstanceId: "capability-test",
+    conversationId: origin.channelId,
+    ...(origin.threadId !== undefined ? { threadId: origin.threadId } : {}),
+    conversationKind: "direct" as const,
+  };
+  const turnScope: ResolvedTurnScope = {
+    conversation: {
+      tenantId: origin.tenantId,
+      agentId,
+      partition: {
+        kind: "endpoint-conversation-principal",
+        endpoint,
+        principalId: origin.userId,
+      },
+    },
+    principal: { principalId: origin.userId },
+    endpoint,
+  };
+  const projected = conversationScopeToSessionKey(turnScope.conversation);
+  if (!projected.ok) throw projected.error;
+  return { turnScope, sessionKey: formatSessionKey(projected.value) };
 }
 
 /** The set of admin-scoped RPC methods, derived EXACTLY as rpc-dispatch.ts:159-161 does. */
@@ -115,12 +148,37 @@ function mintValidLease(
   caps: AgentCapability[],
   agentId = "agent-test",
 ): string {
+  const endpoint = {
+    channelType: "internal",
+    channelInstanceId: "capability-test",
+    conversationId: "user",
+    conversationKind: "direct" as const,
+  };
   const { bearer } = mgr.mintLease({
     agentId,
     caps,
     budgetRef: "budget-1",
     sessionKey: "tenant:channel:user",
     trustLevel: "user",
+    deliveryOrigin: {
+      channelType: endpoint.channelType,
+      channelId: endpoint.conversationId,
+      userId: "user",
+      tenantId: "tenant",
+    },
+    turnScope: {
+      conversation: {
+        tenantId: "tenant",
+        agentId,
+        partition: {
+          kind: "endpoint-conversation-principal",
+          endpoint,
+          principalId: "user",
+        },
+      },
+      principal: { principalId: "user" },
+      endpoint,
+    },
     rootRunId: "run-1",
   });
   return bearer;
@@ -201,28 +259,31 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
     expect(calledParams._capabilities).toEqual(["orch:cron"]);
     // Forged values are replaced by the validated lease principal.
     expect(calledParams._trustLevel).toBe("user");
-    expect(calledParams._userId).toBe("channel");
-    expect("_callerChannelId" in calledParams).toBe(false);
+    expect(calledParams._userId).toBe("user");
+    expect(calledParams._callerChannelId).toBe("user");
     expect(calledParams._tenantId).toBe("tenant");
   });
 
   it("dispatches session.spawn inside a locked principal derived only from the validated lease", async () => {
     const clock = createTestClock();
     const leaseManager = createLeaseManager({ clock });
+    const deliveryOrigin = {
+      channelType: "telegram",
+      channelId: "chat-a",
+      userId: "user-a",
+      tenantId: "tenant-a",
+      threadId: "topic-a",
+    };
+    const identity = leaseIdentity("parent-agent", deliveryOrigin);
     const leaseInput = {
       agentId: "parent-agent",
       caps: ["orch:spawn"] as AgentCapability[],
       budgetRef: "budget-spawn",
-      sessionKey: "tenant-a:user-a:chat-a:thread:topic-a",
+      sessionKey: identity.sessionKey,
       trustLevel: "user" as const,
       rootRunId: "root-spawn",
-      deliveryOrigin: {
-        channelType: "telegram",
-        channelId: "chat-a",
-        userId: "user-a",
-        tenantId: "tenant-a",
-        threadId: "topic-a",
-      },
+      deliveryOrigin,
+      turnScope: identity.turnScope,
     };
     const { bearer } = leaseManager.mintLease(leaseInput);
     const rpcCall = vi.fn(async (_method: string, params: Record<string, unknown>) => {
@@ -230,7 +291,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
       expect(context).toMatchObject({
         tenantId: "tenant-a",
         userId: "user-a",
-        sessionKey: "tenant-a:user-a:chat-a:thread:topic-a",
+        sessionKey: identity.sessionKey,
         agentId: "parent-agent",
         channelType: "telegram",
         trustLevel: "user",
@@ -259,7 +320,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
       task: "bounded task",
       agent_id: "child-agent",
       _agentId: "parent-agent",
-      _callerSessionKey: "tenant-a:user-a:chat-a:thread:topic-a",
+      _callerSessionKey: identity.sessionKey,
       _callerChannelType: "telegram",
       _callerChannelId: "chat-a",
       _capabilities: ["orch:spawn"],
@@ -274,6 +335,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
       userId: "user-a",
       tenantId: "tenant-a",
     };
+    const identity = leaseIdentity("agent-a", deliveryOrigin);
     const issued = leaseManager.mintLease({
       agentId: "agent-a",
       caps: ["orch:cron"],
@@ -281,6 +343,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
       sessionKey: "tenant-a:user-a:chat-a",
       trustLevel: "user",
       deliveryOrigin,
+      ...identity,
       rootRunId: "root-a",
       checkpointId: "checkpoint-a",
       parentLeaseId: "lease-parent",
@@ -289,7 +352,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
       expect(tryGetContext()).toMatchObject({
         tenantId: "tenant-a",
         userId: "user-a",
-        sessionKey: "tenant-a:user-a:chat-a",
+        sessionKey: identity.sessionKey,
         agentId: "agent-a",
         trustLevel: "user",
         deliveryOrigin,
@@ -302,7 +365,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
         _parentLeaseId: "lease-parent",
         _checkpointId: "checkpoint-a",
         _trustLevel: "user",
-        _callerSessionKey: "tenant-a:user-a:chat-a",
+        _callerSessionKey: identity.sessionKey,
         _callerChannelType: "telegram",
         _callerChannelId: "chat-a",
         _deliveryTarget: {
@@ -331,6 +394,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
       userId: "user-a",
       tenantId: "tenant-a",
     };
+    const identity = leaseIdentity("agent-a", deliveryOrigin);
     const issued = leaseManager.mintLease({
       agentId: "agent-a",
       caps: ["orch:read"],
@@ -338,6 +402,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
       sessionKey: "tenant-a:user-a:chat-a",
       trustLevel: "guest",
       deliveryOrigin,
+      ...identity,
       rootRunId: "root-a",
       checkpointId: "checkpoint-a",
     });
@@ -353,7 +418,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
         _agentId: "agent-a",
         _rootRunId: "root-a",
         _checkpointId: "checkpoint-a",
-        _callerSessionKey: "tenant-a:user-a:chat-a",
+        _callerSessionKey: identity.sessionKey,
         _callerChannelId: "chat-a",
       });
       return { matches: [] };
@@ -376,14 +441,16 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
       tenantId: "tenant-a",
       threadId: "parent-topic",
     };
+    const identity = leaseIdentity("child-agent", deliveryOrigin);
     const leaseInput = {
       agentId: "child-agent",
       caps: ["orch:spawn"] as AgentCapability[],
       budgetRef: "budget-child",
-      sessionKey: "tenant-a:user-a:sub-agent:run-1",
+      sessionKey: identity.sessionKey,
       trustLevel: "user" as const,
       rootRunId: "root-spawn",
       deliveryOrigin,
+      turnScope: identity.turnScope,
     };
     const { bearer } = leaseManager.mintLease(leaseInput);
     const rpcCall = vi.fn(async (_method: string, params: Record<string, unknown>) => {
@@ -663,6 +730,7 @@ describe("createCapabilityEndpoint deny-matrix and dispatch", () => {
       sessionKey: "tenant-a:user-a:chat-a",
       trustLevel: "admin",
       deliveryOrigin,
+      ...leaseIdentity("admin-agent", deliveryOrigin),
       rootRunId: "root-admin",
     });
     const handler = vi.fn(async (params: Record<string, unknown>) => {

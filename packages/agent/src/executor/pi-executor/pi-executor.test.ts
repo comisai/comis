@@ -8,7 +8,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ok, err } from "@comis/shared";
 import { resolveModelProfile } from "../model-profile.js";
-import type { PerAgentConfig, SessionKey, NormalizedMessage } from "@comis/core";
+import type { ContextStorePort, PerAgentConfig, SessionKey, NormalizedMessage } from "@comis/core";
 import {
   createDeliveryOrigin,
   formatSessionKey,
@@ -363,6 +363,7 @@ const mockAppendFileSync = vi.mocked(appendFileSync);
 
 const testSessionKey: SessionKey = {
   tenantId: "t1",
+  agentId: "agent-1",
   channelId: "c1",
   userId: "u1",
 };
@@ -388,6 +389,54 @@ function makeInboundProvenanceOverrides(
   };
 }
 
+function withTestTurnScope<T>(agentId: string, fn: () => T): T {
+  const endpoint = {
+    channelType: "test",
+    channelInstanceId: "test-instance",
+    conversationId: testSessionKey.channelId,
+    conversationKind: "direct" as const,
+  };
+  return runWithContext({
+    tenantId: testSessionKey.tenantId,
+    userId: testSessionKey.userId,
+    sessionKey: formatSessionKey(testSessionKey),
+    agentId,
+    turnScope: {
+      conversation: {
+        tenantId: testSessionKey.tenantId,
+        agentId,
+        partition: { kind: "agent" as const },
+      },
+      principal: { principalId: testSessionKey.userId },
+      endpoint,
+    },
+    traceId: "00000000-0000-4000-8000-000000000001",
+    startedAt: 1,
+    trustLevel: "admin",
+  }, fn);
+}
+
+function makeContextStore(): ContextStorePort {
+  return {
+    append: vi.fn(),
+    getMessages: vi.fn(() => []),
+    appendLeafSummary: vi.fn(() => "leaf"),
+    appendCondensedSummary: vi.fn(() => "condensed"),
+    getContextItems: vi.fn(() => []),
+    getSummaries: vi.fn(() => []),
+    getMessagesByIds: vi.fn(() => []),
+    getSummariesByIds: vi.fn(() => []),
+    countMessages: vi.fn(() => 0),
+    getSummaryChildren: vi.fn(() => []),
+    getSummaryMessages: vi.fn(() => []),
+    searchLcd: vi.fn(() => ({ hits: [], lane: "word", matchErrored: false, cjkZeroHit: false, scanCapped: false })),
+    runOnConversation: vi.fn(async (_conversationRef, fn) => fn()),
+    getIngestCursor: vi.fn(() => null),
+    upsertIngestCursor: vi.fn(),
+    deleteConversationLcd: vi.fn(() => 0),
+  };
+}
+
 const testConfig: PerAgentConfig = {
   name: "test-agent",
   model: "claude-sonnet-4-5-20250929",
@@ -404,7 +453,11 @@ const testConfig: PerAgentConfig = {
 
 function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
   const emit = vi.fn();
+  const boundAgentId = overrides?.agentId ?? "agent-1";
   return {
+    agentId: boundAgentId,
+    tenantId: "tenant-1",
+    contextStore: makeContextStore(),
     circuitBreaker: {
       isOpen: vi.fn().mockReturnValue(false),
       recordSuccess: vi.fn(),
@@ -470,6 +523,10 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
       getAll: vi.fn().mockReturnValue([]),
       getAvailable: vi.fn().mockReturnValue([]),
     } as any,
+    modelRuntime: {
+      getAuth: vi.fn().mockResolvedValue(undefined),
+      setRuntimeApiKey: vi.fn().mockResolvedValue(undefined),
+    } as any,
     sessionAdapter: {
       withSession: vi.fn().mockImplementation(
         async (_sk: SessionKey, fn: (sm: any) => Promise<any>) => {
@@ -479,7 +536,9 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
             appendCustomEntry: mockAppendCustomEntry,
             getSessionDir: vi.fn().mockReturnValue("/tmp/test-session"),
           };
-          const value = await fn(mockSm);
+          const value = tryGetContext()?.turnScope
+            ? await fn(mockSm)
+            : await withTestTurnScope(boundAgentId, () => fn(mockSm));
           return ok(value);
         },
       ),
@@ -492,6 +551,11 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
     },
     workspaceDir: "/tmp/test-workspace",
     agentDir: "/tmp/test-agent-dir",
+    workspacePolicySnapshot: {
+      agentId: boundAgentId,
+      sections: [],
+      combinedHash: "a".repeat(64),
+    },
     customTools: [],
     // REQUIRED on PiExecutorDeps. Stub returns gate-enabled + empty defaults —
     // assembleTools() will invoke buildCapabilityIndexContext, which sees zero
@@ -616,13 +680,16 @@ describe("PiExecutor", () => {
         combinedHash: "a".repeat(64),
       };
       const load = vi.fn().mockResolvedValue(ok(snapshot));
-      const deps = createMockDeps({ workspacePolicyPort: { load, get: vi.fn() } });
+      const deps = createMockDeps({
+        workspacePolicySnapshot: undefined,
+        workspacePolicyPort: { load, get: vi.fn() },
+      });
       const executor = createPiExecutor(testConfig, deps);
 
       const result = await executor.execute(testMessage, testSessionKey);
 
       expect(load).toHaveBeenCalledTimes(1);
-      expect(load).toHaveBeenCalledWith(testSessionKey.agentId ?? "default");
+      expect(load).toHaveBeenCalledWith("agent-1");
       expect(result.workspacePolicyHash).toBe(snapshot.combinedHash);
     });
 
@@ -631,7 +698,10 @@ describe("PiExecutor", () => {
         kind: "agent_not_found" as const,
         agentId: "agent-1",
       }));
-      const deps = createMockDeps({ workspacePolicyPort: { load, get: vi.fn() } });
+      const deps = createMockDeps({
+        workspacePolicySnapshot: undefined,
+        workspacePolicyPort: { load, get: vi.fn() },
+      });
       const executor = createPiExecutor(testConfig, deps);
 
       const result = await executor.execute(testMessage, testSessionKey);
@@ -647,6 +717,20 @@ describe("PiExecutor", () => {
         }),
         "Workspace policy snapshot load failed",
       );
+    });
+
+    it("stops before model dispatch when no workspace policy source is configured", async () => {
+      const deps = createMockDeps({
+        workspacePolicySnapshot: undefined,
+        workspacePolicyPort: undefined,
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(testMessage, testSessionKey);
+
+      expect(result.finishReason).toBe("error");
+      expect(result.errorContext?.errorType).toBe("WorkspacePolicyError");
+      expect(createAgentSession).not.toHaveBeenCalled();
     });
 
     it("calls withSession with correct sessionKey", async () => {
@@ -670,8 +754,7 @@ describe("PiExecutor", () => {
       expect(createAgentSession).toHaveBeenCalledWith(
         expect.objectContaining({
           cwd: deps.workspaceDir,
-          authStorage: deps.authStorage,
-          modelRegistry: deps.modelRegistry,
+          modelRuntime: deps.modelRuntime,
           customTools: deps.customTools,
         }),
       );
@@ -1437,7 +1520,8 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-fallback");
+      await withTestTurnScope(deps.agentId, () =>
+        executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId));
 
       const infoCalls = (deps.logger.info as Mock).mock.calls;
       const bookendCall = infoCalls.find(
@@ -1465,7 +1549,8 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-codex");
+      await withTestTurnScope(deps.agentId, () =>
+        executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId));
 
       const infoCalls = (deps.logger.info as Mock).mock.calls;
       const bookendCall = infoCalls.find(
@@ -1484,7 +1569,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-zero");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       const infoCalls = (deps.logger.info as Mock).mock.calls;
       const bookendCall = infoCalls.find(
@@ -1589,7 +1674,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-l4");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       const infoCalls = (deps.logger.info as Mock).mock.calls;
       const bookendCall = infoCalls.find(
@@ -1650,7 +1735,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-sep");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       const infoCalls = (deps.logger.info as Mock).mock.calls;
       const bookendCall = infoCalls.find(
@@ -1682,7 +1767,8 @@ describe("PiExecutor", () => {
       const deps = createMockDeps({ fallbackModels: [] });
       const executor = createPiExecutor(testConfig, deps);
 
-      const result = await executor.execute(testMessage, testSessionKey);
+      const result = await withTestTurnScope(deps.agentId, () =>
+        executor.execute(testMessage, testSessionKey));
 
       expect(result.finishReason).toBe("error");
       // Raw error details must NOT leak to user
@@ -1698,7 +1784,8 @@ describe("PiExecutor", () => {
       const deps = createMockDeps({ fallbackModels: [] });
       const executor = createPiExecutor(testConfig, deps);
 
-      const result = await executor.execute(testMessage, testSessionKey);
+      const result = await withTestTurnScope(deps.agentId, () =>
+        executor.execute(testMessage, testSessionKey));
 
       expect(result.finishReason).toBe("error");
       expect(result.response).toBe("An error occurred while processing your request. Please try again.");
@@ -2160,7 +2247,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-x");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2183,26 +2270,34 @@ describe("PiExecutor", () => {
       );
     });
 
-    it("loads bootstrap files and passes to assembler", async () => {
-      const mockBootstrapFiles = [
-        { name: "SOUL.md", path: "/tmp/SOUL.md", content: "soul content", missing: false },
-      ];
+    it("compiles bootstrap files from the captured workspace snapshot without rereading the workspace", async () => {
       const mockContextFiles = [
         { path: "SOUL.md", content: "soul content" },
       ];
-      mockLoadWorkspaceBootstrapFiles.mockResolvedValueOnce(mockBootstrapFiles);
       mockBuildBootstrapContextFiles.mockReturnValueOnce(mockContextFiles);
 
-      const deps = createMockDeps();
+      const deps = createMockDeps({
+        workspacePolicySnapshot: {
+          agentId: "agent-1",
+          combinedHash: "b".repeat(64),
+          sections: [{
+            id: "workspace:soul",
+            sourceKind: "operator",
+            trust: "trusted",
+            stability: "stable",
+            content: "soul content",
+            contentHash: "c".repeat(64),
+            maxChars: 100,
+          }],
+        },
+      });
       const executor = createPiExecutor(testConfig, deps);
 
       await executor.execute(testMessage, testSessionKey);
 
-      expect(mockLoadWorkspaceBootstrapFiles).toHaveBeenCalledWith(
-        "/tmp/test-workspace",
-      );
+      expect(mockLoadWorkspaceBootstrapFiles).not.toHaveBeenCalled();
       expect(mockBuildBootstrapContextFiles).toHaveBeenCalledWith(
-        mockBootstrapFiles,
+        [expect.objectContaining({ name: "SOUL.md", content: "soul content" })],
         expect.objectContaining({ maxChars: 20_000 }),
       );
       expect(mockAssembleRichSystemPrompt).toHaveBeenCalledWith(
@@ -2227,21 +2322,28 @@ describe("PiExecutor", () => {
       // pool size (limit = maxResults) and fusion order.
       const ragConfig = {
         enabled: true, maxResults: 5, minScore: 0.5, maxContextChars: 5000, includeTrustLevels: ["system"],
-        rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        rerank: { mode: "off", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
         scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 },
       };
       const configWithRag = { ...testConfig, rag: ragConfig } as PerAgentConfig;
       const deps = createMockDeps({ memoryPort: mockMemoryPort as any });
       const executor = createPiExecutor(configWithRag, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-rag");
+      await withTestTurnScope(deps.agentId, () =>
+        executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId));
 
       // Recall resolves results via MemoryPort.search + the hybrid injector.
       // With rerank OFF the search limit is maxResults (default pool size unchanged).
       expect(mockMemoryPort.search).toHaveBeenCalledWith(
-        testSessionKey,
+        {
+          tenantId: testSessionKey.tenantId,
+          agentId: deps.agentId,
+          principalId: testSessionKey.userId,
+          conversationRef: expect.stringMatching(/^cv_/),
+          includeAgentShared: true,
+        },
         "hello world",
-        { limit: 5, minScore: 0.5, agentId: "agent-rag" },
+        { limit: 5, minScore: 0.5 },
       );
       expect(mockCreateHybridMemoryInjector).toHaveBeenCalled();
       const compilerInput = mockAssembleRichSystemPrompt.mock.calls[0][0];
@@ -2256,14 +2358,15 @@ describe("PiExecutor", () => {
 
       const ragConfig = {
         enabled: true, maxResults: 5, minScore: 0.5, maxContextChars: 5000, includeTrustLevels: ["system"],
-        rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        rerank: { mode: "off", maxCandidates: 40, minResults: 1, timeoutMs: 800 },
         scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 },
       };
       const configWithRag = { ...testConfig, rag: ragConfig } as PerAgentConfig;
       const deps = createMockDeps({ memoryPort: mockMemoryPort as any });
       const executor = createPiExecutor(configWithRag, deps);
 
-      const result = await executor.execute(testMessage, testSessionKey);
+      const result = await withTestTurnScope(deps.agentId, () =>
+        executor.execute(testMessage, testSessionKey));
 
       // Execution should still complete successfully
       expect(result.finishReason).toBe("stop");
@@ -2348,12 +2451,12 @@ describe("PiExecutor", () => {
       const deps = createMockDeps({ hookRunner: mockHookRunner as any });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "hook-agent");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       expect(mockHookRunner.runBeforeAgentStart).toHaveBeenCalledWith(
         { systemPrompt: "assembled system prompt", messages: [] },
         expect.objectContaining({
-          agentId: "hook-agent",
+          agentId: deps.agentId,
           sessionKey: testSessionKey,
           workspaceDir: "/tmp/test-workspace",
         }),
@@ -3199,10 +3302,7 @@ describe("PiExecutor", () => {
 
       expect(mockRegistry.register).toHaveBeenCalledTimes(1);
       const [registeredKey, registeredHandle] = mockRegistry.register.mock.calls[0];
-      // Register key mirrors BackgroundSessionResolver.formatComposite:
-      //   formatSessionKey({tenantId: "default", channelId: "test:c1", userId: "c1"}) = "default:c1:test:c1"
-      // testSessionKey {tenantId: "t1", userId: "u1", channelId: "c1"} → no longer the register key.
-      expect(registeredKey).toBe("default:c1:test:c1");
+      expect(registeredKey).toMatch(/^cv_/);
       // Verify handle has all required methods
       expect(typeof registeredHandle.steer).toBe("function");
       expect(typeof registeredHandle.followUp).toBe("function");
@@ -3218,7 +3318,7 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey);
 
-      expect(mockRegistry.deregister).toHaveBeenCalledWith("default:c1:test:c1");
+      expect(mockRegistry.deregister).toHaveBeenCalledWith(expect.stringMatching(/^cv_/));
       // Deregister must be called before dispose
       const deregisterOrder = mockRegistry.deregister.mock.invocationCallOrder[0];
       const disposeOrder = mockDispose.mock.invocationCallOrder[0];
@@ -3233,7 +3333,7 @@ describe("PiExecutor", () => {
 
       await executor.execute(testMessage, testSessionKey);
 
-      expect(mockRegistry.deregister).toHaveBeenCalledWith("default:c1:test:c1");
+      expect(mockRegistry.deregister).toHaveBeenCalledWith(expect.stringMatching(/^cv_/));
     });
 
     it("RunHandle.steer delegates to session.steer", async () => {
@@ -3310,7 +3410,7 @@ describe("PiExecutor", () => {
 
       expect(deps.logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
-          sessionKey: "default:c1:test:c1",
+          conversationRef: expect.stringMatching(/^cv_/),
           hint: expect.stringContaining("already has an active run"),
           errorKind: "resource",
         }),
@@ -3347,7 +3447,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(configWithThinking, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-think");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       const warnCalls = (deps.logger.warn as Mock).mock.calls;
       const thinkWarn = warnCalls.find(
@@ -3464,7 +3564,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(messageWithImages, testSessionKey, undefined, undefined, "agent-v");
+      await executor.execute(messageWithImages, testSessionKey, undefined, undefined, deps.agentId);
 
       // Verify prompt was called with images and the image hint prefix
       const promptCall = mockPrompt.mock.calls[0];
@@ -3502,7 +3602,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(messageWithImages, testSessionKey, undefined, undefined, "agent-nv");
+      await executor.execute(messageWithImages, testSessionKey, undefined, undefined, deps.agentId);
 
       // Verify prompt was called WITHOUT images
       const promptCall = mockPrompt.mock.calls[0];
@@ -3538,7 +3638,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      const result = await executor.execute(messageWithImages, testSessionKey, undefined, undefined, "agent-undef");
+      const result = await executor.execute(messageWithImages, testSessionKey, undefined, undefined, deps.agentId);
 
       // Should not crash
       expect(result.finishReason).toBe("stop");
@@ -3569,7 +3669,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-noimg");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       // No image-related INFO or WARN logs
       const infoCalls = (deps.logger.info as Mock).mock.calls;
@@ -3605,7 +3705,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-notrace");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       // No "JSONL tracing enabled" log should be emitted
       const infoCalls = (deps.logger.info as Mock).mock.calls;
@@ -3634,7 +3734,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(configWithTracing, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-trace");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       // "JSONL api-payload tracing enabled" INFO log should be emitted.
       // Tracing is split across two artifacts: api-payload remains under
@@ -3672,7 +3772,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(configWithTracing, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-cache04");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       // Verify wrapper names from the summary log.
       // wrapperNames array order matches the wrappers array (outermost first):
@@ -3739,7 +3839,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(configWithTracing, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-sid");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       // Exercise the wrapped streamFn -- triggers the api-payload trace writer.
       const wrappedStreamFn = mockSession.agent.streamFn;
@@ -3752,14 +3852,12 @@ describe("PiExecutor", () => {
       const jsonlCalls = mockAppendFileSync.mock.calls;
       expect(jsonlCalls.length).toBeGreaterThanOrEqual(1);
 
-      // testSessionKey = { tenantId: "t1", userId: "u1", channelId: "c1" }
-      // formatSessionKey produces "t1:u1:c1"
-      const expectedSessionId = "t1:u1:c1";
+      const expectedSessionId = "t1:agent:agent-1:u1:c1";
 
       const apiPayloadLine = JSON.parse((jsonlCalls[0][1] as string).trim());
       expect(apiPayloadLine.type).toBe("api_payload");
       expect(apiPayloadLine.sessionId).toBe(expectedSessionId);
-      expect(apiPayloadLine.agentId).toBe("agent-sid");
+      expect(apiPayloadLine.agentId).toBe(deps.agentId);
     });
 
     it("passes tracingDefaults maxSize/maxFiles to trace wrapper configs", async () => {
@@ -3772,7 +3870,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(configWithTracing, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-rot");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       // Exercise the wrapped streamFn -- this triggers the api-payload
       // trace writer, which calls appendJsonlLine -> rotation check ->
@@ -4134,7 +4232,7 @@ describe("PiExecutor", () => {
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-err");
+      await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
       expect(deps.logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -4277,7 +4375,8 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(memoryTestMessage, testSessionKey, undefined, undefined, "test-agent");
+      await withTestTurnScope(deps.agentId, () =>
+        executor.execute(memoryTestMessage, testSessionKey, undefined, undefined, deps.agentId));
 
       expect(mockStore).toHaveBeenCalledTimes(1);
 
@@ -4299,7 +4398,8 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      const result = await executor.execute(memoryTestMessage, testSessionKey);
+      const result = await withTestTurnScope(deps.agentId, () =>
+        executor.execute(memoryTestMessage, testSessionKey));
 
       expect(result.finishReason).toBe("stop");
       expect(result.response).toBe("test response");
@@ -4415,7 +4515,7 @@ describe("PiExecutor", () => {
       });
       const executor = createPiExecutor(testConfig, deps);
 
-      await executor.execute(thresholdMsg, testSessionKey);
+      await withTestTurnScope(deps.agentId, () => executor.execute(thresholdMsg, testSessionKey));
 
       expect(mockStore).toHaveBeenCalledTimes(1);
     });
@@ -4432,11 +4532,11 @@ describe("PiExecutor", () => {
     ): Promise<ExecutionResult> {
       const msg = { ...testMessage, text } as NormalizedMessage;
       const executor = createPiExecutor(testConfig, deps);
-      return executor.execute(
-        msg, testSessionKey, undefined, undefined, "test-agent",
+      return withTestTurnScope(deps.agentId, () => executor.execute(
+        msg, testSessionKey, undefined, undefined, deps.agentId,
         undefined, undefined,
         { operationType } as any,
-      );
+      ));
     }
 
     it.each([
@@ -5774,6 +5874,7 @@ describe("ExcludeDeferralResult wiring", () => {
     it("RequestContextSchema accepts resolvedModel as optional string", async () => {
       const { RequestContextSchema } = await import("@comis/core");
       const validCtx = RequestContextSchema.parse({
+        tenantId: "tenant-a",
         userId: "u1",
         sessionKey: "s1",
         traceId: crypto.randomUUID(),
@@ -5786,6 +5887,7 @@ describe("ExcludeDeferralResult wiring", () => {
     it("RequestContextSchema allows omitting resolvedModel", async () => {
       const { RequestContextSchema } = await import("@comis/core");
       const validCtx = RequestContextSchema.parse({
+        tenantId: "tenant-a",
         userId: "u1",
         sessionKey: "s1",
         traceId: crypto.randomUUID(),
@@ -5798,6 +5900,7 @@ describe("ExcludeDeferralResult wiring", () => {
       const { RequestContextSchema } = await import("@comis/core");
       expect(() =>
         RequestContextSchema.parse({
+          tenantId: "tenant-a",
           userId: "u1",
           sessionKey: "s1",
           traceId: crypto.randomUUID(),
@@ -7310,7 +7413,7 @@ describe("served-window gate on per-execution provider identity", () => {
     const executor = createPiExecutor(ollamaConfig, deps);
 
     await executor.execute(
-      testMessage, testSessionKey, undefined, undefined, "agent-wr02",
+      testMessage, testSessionKey, undefined, undefined, deps.agentId,
       undefined, undefined, { model: "anthropic:claude-sonnet-4-5-20250929" },
     );
 
@@ -7330,7 +7433,7 @@ describe("served-window gate on per-execution provider identity", () => {
     });
     const executor = createPiExecutor(ollamaConfig, deps);
 
-    await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-wr02");
+    await executor.execute(testMessage, testSessionKey, undefined, undefined, deps.agentId);
 
     const reconcile = findReconcileDebug(deps);
     expect(reconcile).toBeDefined();
@@ -7349,7 +7452,7 @@ describe("served-window gate on per-execution provider identity", () => {
     const executor = createPiExecutor(ollamaConfig, deps);
 
     await executor.execute(
-      testMessage, testSessionKey, undefined, undefined, "agent-wr02",
+      testMessage, testSessionKey, undefined, undefined, deps.agentId,
       undefined, undefined, { model: `${OLLAMA_PRIMARY}:qwen3.6:4b` },
     );
 

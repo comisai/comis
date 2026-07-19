@@ -39,12 +39,27 @@ describe("IMMUTABLE_CONFIG_PREFIXES", () => {
     expect(IMMUTABLE_CONFIG_PREFIXES).toContain("tooling");
   });
 
+  it("rejects runtime mutation of principal identity mappings", () => {
+    expect(IMMUTABLE_CONFIG_PREFIXES).toContain("identity");
+    expect(isImmutableConfigPath("identity", "principalMappings")).toBe(true);
+  });
+
+  it.each([
+    ["contributions", "instances.echo"],
+    ["contributions", "activation.enabled"],
+    ["contributions", "definitions.echo"],
+    ["plugins", "enabled"],
+    ["plugins", "plugins.echo.enabled"],
+  ])("rejects runtime mutation of contribution topology at %s.%s", (section, key) => {
+    expect(isImmutableConfigPath(section, key)).toBe(true);
+  });
+
   it("contains immutable prefix: browser.allowLoopbackNavigation", () => {
     expect(IMMUTABLE_CONFIG_PREFIXES).toContain("browser.allowLoopbackNavigation");
   });
 
-  it("has exactly 15 entries", () => {
-    expect(IMMUTABLE_CONFIG_PREFIXES).toHaveLength(15);
+  it("has exactly 18 entries", () => {
+    expect(IMMUTABLE_CONFIG_PREFIXES).toHaveLength(18);
   });
 });
 
@@ -535,54 +550,6 @@ describe("executor section is operator-only (broker anti-exfiltration guard)", (
   });
 });
 
-// ---------------------------------------------------------------------------
-// SECURITY: contextEngine.version is OPERATOR-ONLY (immutable to the
-// agent config.patch RPC). The pipeline<->dag switch is applied by an OPERATOR
-// config RELOAD (re-runs setupSingleAgent), NEVER by the agent's own
-// config.patch, which MUST reject. This locks the anti-self-escalation posture:
-// an agent cannot self-switch into DAG to widen its own ctx_* tool exposure
-// (the DAG-mode force-include of ctx_* tools would otherwise be self-exploitable).
-//
-// These are REGRESSION / BOUNDARY LOCKS (AGENTS.md §2.10): the boundary already
-// holds, so they are GREEN on arrival. They FAIL only if a future change
-// WEAKENS it — e.g. adding `agents.*.contextEngine.version` to
-// MUTABLE_CONFIG_OVERRIDES (override-wins would then make it agent-mutable).
-// Verified negative control: with that entry added, the not-in-overrides
-// asserts below flip to red — proving these are real locks, not no-ops.
-// DO NOT add contextEngine.version to MUTABLE_CONFIG_OVERRIDES.
-// ---------------------------------------------------------------------------
-describe("contextEngine.version is operator-only (immutable to config.patch)", () => {
-  it("rejects agents.default.contextEngine.version (config.patch must NOT switch engine mode)", () => {
-    expect(isImmutableConfigPath("agents", "default.contextEngine.version")).toBe(true);
-  });
-
-  it("rejects an arbitrary agentId: agents.trader-1.contextEngine.version (fail-closed under 'agents')", () => {
-    expect(isImmutableConfigPath("agents", "trader-1.contextEngine.version")).toBe(true);
-  });
-
-  it("rejects the full-path form: agents.default.contextEngine.version", () => {
-    expect(isImmutableConfigPath("agents.default.contextEngine.version")).toBe(true);
-  });
-
-  it("rejects the parent path too: agents.default.contextEngine", () => {
-    expect(isImmutableConfigPath("agents", "default.contextEngine")).toBe(true);
-  });
-
-  it("MUTABLE_CONFIG_OVERRIDES does NOT contain agents.*.contextEngine.version (operator-only boundary locked)", () => {
-    expect(MUTABLE_CONFIG_OVERRIDES).not.toContain("agents.*.contextEngine.version");
-  });
-
-  it("no MUTABLE_CONFIG_OVERRIDES entry mentions contextEngine (anti-self-escalation lock)", () => {
-    expect(MUTABLE_CONFIG_OVERRIDES.some((p) => p.includes("contextEngine"))).toBe(false);
-  });
-
-  it("getMutableOverridesForSection('agents', <id>) yields no contextEngine-bearing path", () => {
-    const paths = getMutableOverridesForSection("agents", "trader-1");
-    for (const p of paths) {
-      expect(p).not.toMatch(/contextEngine/);
-    }
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Operator-only per-agent security-posture sub-paths.

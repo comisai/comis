@@ -11,7 +11,7 @@ import { systemClearTimeout, systemDateFrom, systemNowMs, systemSetTimeout } fro
 // Canonical DTOs from the api-types barrel — reusing them in the view
 // surfaces a compile error if the daemon contract evolves rather than
 // allowing the view's inline literal to silently drift.
-import type { ChannelObsResponse, DeliveryQueueStatus, PlatformCapabilities } from "../api/types/index.js";
+import type { DeliveryQueueStatus, PlatformCapabilities } from "../api/types/index.js";
 
 // Side-effect registrations for sub-components
 import "../components/nav/ic-breadcrumb.js";
@@ -680,7 +680,7 @@ export class IcChannelDetail extends LitElement {
 
     try {
       // Config is required
-      const config = await rpc.call<Record<string, unknown>>("channels.get", { channel_type: this.channelType });
+      const config = await rpc.call("channels.get", { channel_type: this.channelType });
 
       this._config = config ?? {};
       // Determine enabled: explicit `enabled` field, or infer from status (running/connected = enabled)
@@ -692,14 +692,14 @@ export class IcChannelDetail extends LitElement {
 
       // Fire all optional data loads in parallel
       const [mediaResult, deliveryResult, activityResult, queueResult, capabilitiesResult] = await Promise.allSettled([
-        rpc.call<Record<string, Record<string, unknown>>>("config.read", { section: "channels" }),
-        rpc.call<{ deliveries: DeliveryTraceEntry[] }>("obs.delivery.recent", {
+        rpc.call("config.read", { section: "channels" }),
+        rpc.call("obs.delivery.recent", {
           channelType: this.channelType,
           limit: 10,
         }),
-        rpc.call<ChannelObsResponse>("obs.channels.all"),
-        rpc.call<DeliveryQueueStatus>("delivery.queue.status", { channel_type: this.channelType }),
-        rpc.call<{ channelType: string; features: PlatformCapabilities }>("channels.capabilities", { channel_type: this.channelType }),
+        rpc.call("obs.channels.all"),
+        rpc.call("delivery.queue.status", { channel_type: this.channelType }),
+        rpc.call("channels.capabilities", { channel_type: this.channelType }),
       ]);
 
       // Media processing config

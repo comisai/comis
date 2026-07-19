@@ -7,23 +7,38 @@
 // subscribes to `background_task:completed`, and inspects
 // `task.dispatchState` before firing the notify fallback.
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { ok } from "@comis/shared";
 import type { BackgroundTask } from "./background-task-types.js";
-import { TypedEventBus, type BackgroundTaskOrigin } from "@comis/core";
+import { conversationScopeToSessionKey, createConversationRef, formatSessionKey, TypedEventBus, type BackgroundTaskOrigin } from "@comis/core";
 
 function createFakeEventBus() {
   return new TypedEventBus();
 }
 
-function buildOrigin(over: Partial<BackgroundTaskOrigin> = {}): BackgroundTaskOrigin {
+function buildOrigin(over: Partial<BackgroundTaskOrigin> & { agentId?: string; sessionKey?: string } = {}): BackgroundTaskOrigin {
+  const agentId = over.agentId ?? "default";
+  const tenantId = over.sessionKey?.split(":")[0] ?? "default";
+  const endpoint = { channelType: "echo", channelInstanceId: "test-instance", conversationId: "test", conversationKind: "direct" as const };
+  const turnScope = {
+    conversation: { tenantId, agentId, partition: { kind: "endpoint-conversation-principal" as const, endpoint, principalId: "user1" } },
+    principal: { principalId: "user1" }, endpoint,
+  };
+  const conversationRef = createConversationRef(turnScope.conversation);
+  if (!conversationRef.ok) throw conversationRef.error;
   return {
-    agentId: "default",
-    sessionKey: "default:echo:test:user1",
-    channelType: "echo",
-    channelId: "test",
+    turnScope,
+    conversationRef: conversationRef.value,
+    deliveryOrigin: { channelType: "echo", channelId: "test", userId: "user1", tenantId },
     traceId: null,
     backgroundHopCount: 0,
-    ...over,
+    ...Object.fromEntries(Object.entries(over).filter(([key]) => key !== "agentId" && key !== "sessionKey")),
   };
+}
+
+function originSessionKey(origin: BackgroundTaskOrigin): string {
+  const projected = conversationScopeToSessionKey(origin.turnScope.conversation);
+  if (!projected.ok) throw projected.error;
+  return formatSessionKey(projected.value);
 }
 
 function buildTask(over: Partial<BackgroundTask> & { dispatchState?: string } = {}): BackgroundTask & { dispatchState?: string } {
@@ -102,7 +117,7 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
     });
 
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       durationMs: 1,
@@ -134,7 +149,7 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
     });
 
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       durationMs: 1,
@@ -169,9 +184,9 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
       fallbackNotifyFn,
       logger: makeLogger(),
       // The DAG-mode live-incident shape: the persistent store misses the LIVE session…
-      sessionStore: { loadByFormattedKey: vi.fn(() => undefined) },
+      sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
       // …but the origin turn is demonstrably in flight.
-      isTurnInFlight: vi.fn((key: string) => key === task.origin.sessionKey),
+      isTurnInFlight: vi.fn((key: string) => key === originSessionKey(task.origin)),
     });
 
     // OBSERVABILITY: the suppression must be visible from the trajectory in one
@@ -181,7 +196,7 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
     eventBus.on("background_task:notified", (d) => notifiedEvents.push(d as Record<string, unknown>));
 
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       durationMs: 1,
@@ -196,7 +211,7 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
     expect(notifiedEvents[0]).toMatchObject({
       taskId: task.id,
       toolName: task.toolName,
-      sessionKey: task.origin.sessionKey,
+      sessionKey: originSessionKey(task.origin),
       notified: false,
       reason: "live_turn_suppressed",
     });
@@ -216,14 +231,14 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
       taskManager: { getTask: taskManager.getTask, transitionDispatchState },
       fallbackNotifyFn,
       logger: makeLogger(),
-      sessionStore: { loadByFormattedKey: vi.fn(() => undefined) },
+      sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
       isTurnInFlight: vi.fn(() => false),
     });
     const notifiedEvents: Array<Record<string, unknown>> = [];
     eventBus.on("background_task:notified", (d) => notifiedEvents.push(d as Record<string, unknown>));
 
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       durationMs: 1,
@@ -258,12 +273,12 @@ describe("createCompletionDispatcher: at-most-once routing via dispatchState", (
       eventBus,
       taskManager,
       fallbackNotifyFn,
-      sessionStore: { loadByFormattedKey: () => undefined },
+      sessionStore: { loadByRef: () => ok(undefined) },
       logger,
     });
 
     eventBus.emit("background_task:completed", {
-      agentId: task.origin.agentId,
+      agentId: task.origin.turnScope.conversation.agentId,
       taskId: task.id,
       toolName: task.toolName,
       durationMs: 1,

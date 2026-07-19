@@ -294,14 +294,17 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps): Record<stri
       // Best-effort memory cleanup: remove stale entries referencing the deleted file
       if (deps.memoryApi && deps.memoryAdapter && deps.tenantId) {
         try {
-          const results = await deps.memoryApi.search(params.filePath, {
+          const results = deps.memoryApi.inspect({
             tenantId: deps.tenantId,
             agentId: params.agentId,
             limit: 50,
-          });
+          }).map((entry) => ({ entry }));
           const stale = results.filter((r) => r.entry.content.includes(params.filePath));
           for (const r of stale) {
-            await deps.memoryAdapter.delete(r.entry.id, deps.tenantId);
+            await deps.memoryAdapter.delete(r.entry.id, {
+              tenantId: deps.tenantId,
+              agentId: params.agentId,
+            });
           }
         } catch (cleanupErr: unknown) {
           deps.logger.warn(

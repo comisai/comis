@@ -29,7 +29,7 @@ import type { WizardPrompter } from "../prompter.js";
 import { updateState } from "../state.js";
 import { sectionSeparator, info } from "../theme.js";
 import { validateApiKey, getKeyPrefix } from "../validators/api-key.js";
-import { type KnownProvider } from "@earendil-works/pi-ai";
+import type { BuiltinProvider } from "@earendil-works/pi-ai/compat";
 import { getModels } from "@earendil-works/pi-ai/compat";
 
 import { systemClearTimeout, systemSetTimeout } from "@comis/core";
@@ -138,7 +138,7 @@ function getValidationEndpoint(
   // eslint-disable-next-line security/detect-object-injection -- read of static const map indexed by validated provider string
   const path = PROVIDER_VALIDATION_PATHS[provider];
   if (!path) return undefined;
-  const baseUrl = getModels(provider as KnownProvider)[0]?.baseUrl;
+  const baseUrl = getModels(provider as BuiltinProvider)[0]?.baseUrl;
   if (!baseUrl) return undefined;
   return { baseUrl, path };
 }

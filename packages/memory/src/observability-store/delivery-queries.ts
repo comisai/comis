@@ -43,7 +43,31 @@ const DELIVERY_VALID_ROW_SQL = `
   typeof(id) = 'integer' AND id BETWEEN 0 AND ${JAVASCRIPT_MAX_SAFE_INTEGER}
   AND typeof(timestamp) = 'integer' AND timestamp BETWEEN 0 AND ${JAVASCRIPT_MAX_SAFE_INTEGER}
   AND typeof(trace_id) = 'text'
+  AND typeof(tenant_id) = 'text' AND length(tenant_id) > 0
   AND typeof(agent_id) = 'text'
+  AND typeof(conversation_ref) = 'text'
+  AND length(conversation_ref) = 46
+  AND substr(conversation_ref, 1, 3) = 'cv_'
+  AND substr(conversation_ref, 4) NOT GLOB '*[^A-Za-z0-9_-]*'
+  AND typeof(destination_endpoint) = 'text'
+  AND json_valid(destination_endpoint)
+  AND json_type(destination_endpoint) = 'object'
+  AND json_type(destination_endpoint, '$.channelType') = 'text'
+  AND length(json_extract(destination_endpoint, '$.channelType')) > 0
+  AND json_type(destination_endpoint, '$.channelInstanceId') = 'text'
+  AND length(json_extract(destination_endpoint, '$.channelInstanceId')) > 0
+  AND json_type(destination_endpoint, '$.conversationId') = 'text'
+  AND length(json_extract(destination_endpoint, '$.conversationId')) > 0
+  AND (json_type(destination_endpoint, '$.threadId') IS NULL
+    OR (json_type(destination_endpoint, '$.threadId') = 'text'
+      AND length(json_extract(destination_endpoint, '$.threadId')) > 0))
+  AND json_extract(destination_endpoint, '$.conversationKind') IN ('direct', 'shared')
+  AND NOT EXISTS (
+    SELECT 1 FROM json_each(destination_endpoint)
+    WHERE key NOT IN ('channelType', 'channelInstanceId', 'conversationId', 'threadId', 'conversationKind')
+  )
+  AND json_extract(destination_endpoint, '$.channelType') = channel_type
+  AND json_extract(destination_endpoint, '$.conversationId') = channel_id
   AND typeof(channel_type) = 'text'
   AND typeof(channel_id) = 'text'
   AND typeof(session_key) = 'text'
@@ -155,7 +179,13 @@ export function bindDeliveryQueries(
           }
           continue;
         }
-        rows.push(deliveryFromRow(parsed.value));
+        const delivery = deliveryFromRow(parsed.value);
+        if (!delivery.ok) {
+          invalidRows += 1;
+          firstErrorPath ??= delivery.error.message;
+          continue;
+        }
+        rows.push(delivery.value);
         if (rows.length === limit) break;
       }
 

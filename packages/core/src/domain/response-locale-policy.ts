@@ -15,8 +15,6 @@ export const CanonicalLocaleSchema = z.string().trim().min(2).max(128).refine(
 export const ResponseLocaleSourceSchema = z.enum([
   "request",
   "explicit",
-  "workspace",
-  "conversation",
   "unset",
 ]);
 

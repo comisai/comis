@@ -10,6 +10,7 @@
 
 // Inbound pipeline
 export * from "./inbound/inbound-pipeline.js";
+export { createDeterministicLocalization } from "./localization/deterministic-localization.js";
 export * from "./inbound/setup-and-route.js";
 export * from "./inbound/resolve-and-preprocess.js";
 export * from "./inbound/inbound-gate.js";
@@ -128,8 +129,14 @@ export type {
 // dm-scope-integration.test.ts live here — other session files
 // (session-lifecycle, session-write-lock, session-reset-policy,
 // session-label-store, comis-session-manager) stay in agent.
-export { buildScopedSessionKey, extractThreadId } from "./session-key/session-key-builder.js";
-export type { DmScopeMode, ScopedSessionKeyParams } from "./session-key/session-key-builder.js";
+export { resolveRoutingPolicy, RoutingPolicyError } from "./routing/routing-policy-resolver.js";
+export type { RoutingPolicyInput } from "./routing/routing-policy-resolver.js";
+export {
+  resolveInternalTurnIdentity,
+  InternalTurnIdentityError,
+  type InternalTurnIdentity,
+  type InternalOriginKind,
+} from "./routing/internal-turn-identity.js";
 
 export {
   classifyExecutionAbortReason,

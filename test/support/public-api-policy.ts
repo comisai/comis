@@ -31,6 +31,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
   new Map<string, ReadonlySet<string>>([
     // @comis/agent: baseline orphans tracked here (SessionLifecycleOptions remains — no in-repo consumer yet).
     ["@comis/agent", new Set<string>([
+      // Credential-store class + registry-adapter result type: daemon wiring
+      // consumes the factory functions and the AuthStorage type alias; the
+      // class value and the result type have no out-of-package consumer yet.
+      "ComisCredentialStore",
+      "ModelRegistryAdapter",
       "ExecutionResult",
       "ExecutionOverrides",
       "StepCounter",
@@ -2004,6 +2009,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "loginOpenAICodexDeviceCode",
       "DeviceCodeVerificationPrompt",
       "LoginOpenAICodexDeviceCodeOptions",
+      // Comis-owned Codex browser OAuth flow: the login runner consumes the
+      // implementation as an in-package sibling import, so the barrel export
+      // is a planned orphan until an out-of-package consumer materializes.
+      "loginOpenAICodexBrowser",
+      "CodexBrowserLoginCredentials",
+      "LoginOpenAICodexBrowserOptions",
+      // resolveOAuthApiKey result/deps types: the function itself is consumed
+      // by @comis/agent's OAuth token manager; only the types are orphans.
+      "ResolvedOAuthApiKey",
+      "ResolveOAuthApiKeyDeps",
       // CLI + daemon consume createModelCatalog + workspace helpers from
       // @comis/core — only the subset of relocated symbols WITHOUT in-repo
       // consumers remains in policy. Each entry below tracks a specific

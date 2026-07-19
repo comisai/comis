@@ -579,6 +579,29 @@ describe("createToolInvokeExecutor — checkpoint/resume (durable specialized wr
     agentId: "agent-7",
     caps: ["orch:read", "orch:write"] as const,
     sessionKey: "tenant-7:user-7:sub-agent:run-7",
+    turnScope: {
+      conversation: {
+        tenantId: "tenant-7",
+        agentId: "agent-7",
+        partition: {
+          kind: "endpoint-conversation-principal" as const,
+          endpoint: {
+            channelType: "sub-agent",
+            channelInstanceId: "orchestrate",
+            conversationId: "run-7",
+            conversationKind: "direct" as const,
+          },
+          principalId: "user-7",
+        },
+      },
+      principal: { principalId: "user-7" },
+      endpoint: {
+        channelType: "sub-agent",
+        channelInstanceId: "orchestrate",
+        conversationId: "run-7",
+        conversationKind: "direct" as const,
+      },
+    },
     trustLevel: "admin" as const,
     rootRunId: "root-abc",
     checkpointId: "checkpoint-abc",
@@ -666,6 +689,11 @@ describe("createToolInvokeExecutor — checkpoint/resume (durable specialized wr
     const record = durableRuns.upsertCheckpoint.mock.calls[0][0] as Record<string, unknown>;
     expect(record.checkpointId).toBe("checkpoint-abc");
     expect(record.rootRunId).toBe("root-abc");
+    expect(record.tenantId).toBe("tenant-7");
+    expect(record.agentId).toBe("agent-7");
+    expect(record.principalId).toBe("user-7");
+    expect(record.conversationScope).toEqual(RESUME_LEASE.turnScope.conversation);
+    expect(record.conversationRef).toMatch(/^cv_/);
     expect(record.checkpointRef).toBe("results/ckpt-0.json");
     expect(record.trustLevel).toBe("admin");
     expect(record.status).toBe("running");

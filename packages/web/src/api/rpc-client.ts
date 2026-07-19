@@ -12,6 +12,18 @@
  */
 
 import type { ConnectionStatus } from "./types/index.js";
+import {
+  validateRequest,
+  validateResponse,
+  type MethodName,
+  type WebRpcMethodMap,
+} from "./contracts.generated.js";
+
+/** Params are optional only when the generated request contract accepts `{}`. */
+export type RpcCallArgs<M extends MethodName> =
+  Record<never, never> extends WebRpcMethodMap[M]["params"]
+    ? [params?: WebRpcMethodMap[M]["params"]]
+    : [params: WebRpcMethodMap[M]["params"]];
 /** Pending RPC request tracker */
 interface PendingRequest {
   readonly resolve: (value: unknown) => void;
@@ -46,10 +58,13 @@ export interface RpcClient {
   /**
    * Send a JSON-RPC 2.0 request and await the response.
    *
-   * Compile-time method-name validation runs via the generated CONTRACTS
-   * dispatch table (`./contracts.generated.ts`) and its `typedCall` helper.
+   * Method names, request params, and result types come from the generated
+   * contract map. The transport's raw string dispatch stays module-private.
    */
-  call<T>(method: string, params?: unknown): Promise<T>;
+  call<M extends MethodName>(
+    method: M,
+    ...args: RpcCallArgs<M>
+  ): Promise<WebRpcMethodMap[M]["result"]>;
   /** Subscribe to connection status changes. Returns an unsubscribe function. */
   onStatusChange(handler: (status: ConnectionStatus) => void): () => void;
   /** Subscribe to server-pushed notifications (method present, no id). Returns an unsubscribe function. */
@@ -70,6 +85,11 @@ const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 /** Maximum number of reconnect attempts */
 const MAX_RETRIES = 10;
+
+function isDevValidationActive(): boolean {
+  const meta = import.meta as { env?: { DEV?: boolean } };
+  return meta.env?.DEV === true;
+}
 
 /**
  * Create a WebSocket JSON-RPC 2.0 client.
@@ -102,25 +122,25 @@ export function createRpcClient(): RpcClient {
 
   function clearHeartbeat(): void {
     if (heartbeatTimer !== null) {
-      clearInterval(heartbeatTimer);
+      globalThis.clearInterval(heartbeatTimer);
       heartbeatTimer = null;
     }
     if (heartbeatTimeoutTimer !== null) {
-      clearTimeout(heartbeatTimeoutTimer);
+      globalThis.clearTimeout(heartbeatTimeoutTimer);
       heartbeatTimeoutTimer = null;
     }
   }
 
   function clearReconnectTimer(): void {
     if (reconnectTimer !== null) {
-      clearTimeout(reconnectTimer);
+      globalThis.clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
   }
 
   function rejectAllPending(reason: string): void {
     for (const [id, req] of pending) {
-      clearTimeout(req.timer);
+      globalThis.clearTimeout(req.timer);
       req.reject(new Error(reason));
       pending.delete(id);
     }
@@ -128,14 +148,14 @@ export function createRpcClient(): RpcClient {
 
   function startHeartbeat(): void {
     clearHeartbeat();
-    heartbeatTimer = setInterval(() => {
+    heartbeatTimer = globalThis.setInterval(() => {
       if (ws === null || ws.readyState !== globalThis.WebSocket.OPEN) return;
 
       const pingId = nextId++;
       ws.send(JSON.stringify({ jsonrpc: "2.0", method: "system.ping", id: pingId }));
 
       // Set a timeout for the pong response
-      heartbeatTimeoutTimer = setTimeout(() => {
+      heartbeatTimeoutTimer = globalThis.setTimeout(() => {
         // No pong received -- connection is dead
         pending.delete(pingId);
         if (ws !== null) {
@@ -147,18 +167,18 @@ export function createRpcClient(): RpcClient {
       pending.set(pingId, {
         resolve: () => {
           if (heartbeatTimeoutTimer !== null) {
-            clearTimeout(heartbeatTimeoutTimer);
+            globalThis.clearTimeout(heartbeatTimeoutTimer);
             heartbeatTimeoutTimer = null;
           }
         },
         reject: () => {
           // Any response (even error) proves the connection is alive - clear timeout
           if (heartbeatTimeoutTimer !== null) {
-            clearTimeout(heartbeatTimeoutTimer);
+            globalThis.clearTimeout(heartbeatTimeoutTimer);
             heartbeatTimeoutTimer = null;
           }
         },
-        timer: setTimeout(() => {
+        timer: globalThis.setTimeout(() => {
           // Cleanup stale ping entry (should not normally fire since
           // heartbeat timeout handles it first)
           pending.delete(pingId);
@@ -180,7 +200,7 @@ export function createRpcClient(): RpcClient {
     const delay = Math.min(BACKOFF_BASE_MS * Math.pow(2, reconnectAttempt), BACKOFF_MAX_MS);
     reconnectAttempt++;
 
-    reconnectTimer = setTimeout(() => {
+    reconnectTimer = globalThis.setTimeout(() => {
       openConnection(currentUrl, currentToken);
     }, delay);
   }
@@ -226,7 +246,7 @@ export function createRpcClient(): RpcClient {
       if (response.id != null) {
         const req = pending.get(response.id);
         if (req) {
-          clearTimeout(req.timer);
+          globalThis.clearTimeout(req.timer);
           pending.delete(response.id);
 
           if (response.error) {
@@ -262,6 +282,42 @@ export function createRpcClient(): RpcClient {
     };
   }
 
+  function dispatchRaw(method: string, params: unknown): Promise<unknown> {
+    return new Promise<unknown>((resolve, reject) => {
+      if (ws === null || ws.readyState !== globalThis.WebSocket.OPEN) {
+        reject(new Error("Not connected"));
+        return;
+      }
+
+      const id = nextId++;
+      const timer = globalThis.setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`RPC request timed out after ${REQUEST_TIMEOUT_MS}ms`));
+      }, REQUEST_TIMEOUT_MS);
+
+      pending.set(id, {
+        resolve,
+        reject,
+        timer,
+      });
+
+      const message = JSON.stringify({
+        jsonrpc: "2.0",
+        method,
+        ...(params !== undefined ? { params } : {}),
+        id,
+      });
+
+      try {
+        ws.send(message);
+      } catch (err) {
+        globalThis.clearTimeout(timer);
+        pending.delete(id);
+        reject(new Error("Send failed: " + (err instanceof Error ? err.message : String(err))));
+      }
+    });
+  }
+
   return {
     get status(): ConnectionStatus {
       return _status;
@@ -288,39 +344,19 @@ export function createRpcClient(): RpcClient {
       }
     },
 
-    call<T>(method: string, params?: unknown): Promise<T> {
-      return new Promise<T>((resolve, reject) => {
-        if (ws === null || ws.readyState !== globalThis.WebSocket.OPEN) {
-          reject(new Error("Not connected"));
-          return;
+    call<M extends MethodName>(
+      method: M,
+      ...args: RpcCallArgs<M>
+    ): Promise<WebRpcMethodMap[M]["result"]> {
+      const params = args[0] ?? {};
+      if (isDevValidationActive() && !validateRequest(method, params)) {
+        return Promise.reject(new Error(`Invalid RPC request for ${method}`));
+      }
+      return dispatchRaw(method, args[0]).then((raw) => {
+        if (isDevValidationActive() && !validateResponse(method, raw)) {
+          return Promise.reject(new Error(`Invalid RPC response for ${method}`));
         }
-
-        const id = nextId++;
-        const timer = setTimeout(() => {
-          pending.delete(id);
-          reject(new Error(`RPC request timed out after ${REQUEST_TIMEOUT_MS}ms`));
-        }, REQUEST_TIMEOUT_MS);
-
-        pending.set(id, {
-          resolve: resolve as (value: unknown) => void,
-          reject,
-          timer,
-        });
-
-        const message = JSON.stringify({
-          jsonrpc: "2.0",
-          method,
-          ...(params !== undefined ? { params } : {}),
-          id,
-        });
-
-        try {
-          ws.send(message);
-        } catch (err) {
-          clearTimeout(timer);
-          pending.delete(id);
-          reject(new Error("Send failed: " + (err instanceof Error ? err.message : String(err))));
-        }
+        return raw as WebRpcMethodMap[M]["result"];
       });
     },
 

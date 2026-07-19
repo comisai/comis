@@ -198,7 +198,7 @@ export function createSecretsHandlers(
         deps.container.eventBus.emit("audit:event", {
           timestamp: systemNowMs(),
           agentId: "system",
-          tenantId: deps.container.config.tenantId ?? "default",
+          tenantId: deps.container.config.tenantId,
           actionType: "secrets.get",
           kind: "secret_access",
           outcome: "failure",
@@ -222,7 +222,7 @@ export function createSecretsHandlers(
       deps.container.eventBus.emit("audit:event", {
         timestamp: systemNowMs(),
         agentId: "system",
-        tenantId: deps.container.config.tenantId ?? "default",
+        tenantId: deps.container.config.tenantId,
         actionType: "secrets.get",
         kind: "secret_access",
         outcome: "success",
@@ -357,7 +357,7 @@ export function createSecretsHandlers(
         deps.container.eventBus.emit("audit:event", {
           timestamp: systemNowMs(),
           agentId: "system",
-          tenantId: deps.container.config.tenantId ?? "default",
+          tenantId: deps.container.config.tenantId,
           actionType: "secrets.set",
           // A secret MUTATION is a security signal — set `kind`
           // explicitly (mirror secrets.get) so it persists as a security-signal
@@ -385,7 +385,7 @@ export function createSecretsHandlers(
       deps.container.eventBus.emit("audit:event", {
         timestamp: systemNowMs(),
         agentId: "system",
-        tenantId: deps.container.config.tenantId ?? "default",
+        tenantId: deps.container.config.tenantId,
         actionType: "secrets.set",
         // Security-signal kind for the secret mutation.
         kind: "secret_access",
@@ -542,7 +542,7 @@ export function createSecretsHandlers(
         deps.container.eventBus.emit("audit:event", {
           timestamp: systemNowMs(),
           agentId: "system",
-          tenantId: deps.container.config.tenantId ?? "default",
+          tenantId: deps.container.config.tenantId,
           actionType: "secrets.delete",
           // Security-signal kind for the secret mutation.
           kind: "secret_access",
@@ -568,7 +568,7 @@ export function createSecretsHandlers(
       deps.container.eventBus.emit("audit:event", {
         timestamp: systemNowMs(),
         agentId: "system",
-        tenantId: deps.container.config.tenantId ?? "default",
+        tenantId: deps.container.config.tenantId,
         actionType: "secrets.delete",
         // Security-signal kind for the secret mutation.
         kind: "secret_access",

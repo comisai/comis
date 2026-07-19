@@ -86,13 +86,9 @@ describe("reset sessions via RPC", () => {
   });
 
   it("deletes all sessions via RPC when daemon is running", async () => {
-    // SessionListContract.response = { sessions: SessionInfo[], total }
-    // SessionDeleteContract.response = { sessionKey, deleted: true, transcript: {...} }
-    const makeSession = (sessionKey: string) => ({
-      sessionKey,
+    const makeSession = (conversationRef: string) => ({
+      conversationRef,
       agentId: "default",
-      userId: "u",
-      channelId: "c",
       kind: "discord",
       messageCount: 0,
       totalTokens: 0,
@@ -104,8 +100,8 @@ describe("reset sessions via RPC", () => {
         sessions: [makeSession("s1"), makeSession("s2")],
         total: 2,
       })
-      .mockImplementation(async (_method: string, params: { session_key: string }) => ({
-        sessionKey: params.session_key,
+      .mockImplementation(async (_method: string, params: { conversation_ref: string }) => ({
+        conversationRef: params.conversation_ref,
         deleted: true,
         transcript: { messages: [], metadata: {}, messageCount: 0 },
       }));
@@ -113,12 +109,26 @@ describe("reset sessions via RPC", () => {
       return fn({ call: mockCall, close: vi.fn() });
     });
 
-    await parseReset(["node", "test", "reset", "sessions", "--yes"]);
+    await parseReset([
+      "node", "test", "reset", "sessions", "--yes",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     expect(withClient).toHaveBeenCalled();
-    expect(mockCall).toHaveBeenCalledWith("session.list", {});
-    expect(mockCall).toHaveBeenCalledWith("session.delete", { session_key: "s1" });
-    expect(mockCall).toHaveBeenCalledWith("session.delete", { session_key: "s2" });
+    expect(mockCall).toHaveBeenCalledWith("session.list", {
+      tenant_id: "test-tenant",
+      agent_id: "default",
+    });
+    expect(mockCall).toHaveBeenCalledWith("session.delete", {
+      tenant_id: "test-tenant",
+      agent_id: "default",
+      conversation_ref: "s1",
+    });
+    expect(mockCall).toHaveBeenCalledWith("session.delete", {
+      tenant_id: "test-tenant",
+      agent_id: "default",
+      conversation_ref: "s2",
+    });
 
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("sessions deleted");
@@ -131,9 +141,15 @@ describe("reset sessions via RPC", () => {
       return fn({ call: mockCall, close: vi.fn() });
     });
 
-    await parseReset(["node", "test", "reset", "sessions", "--yes"]);
+    await parseReset([
+      "node", "test", "reset", "sessions", "--yes",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
-    expect(mockCall).toHaveBeenCalledWith("session.list", {});
+    expect(mockCall).toHaveBeenCalledWith("session.list", {
+      tenant_id: "test-tenant",
+      agent_id: "default",
+    });
     expect(mockCall).toHaveBeenCalledTimes(1);
 
     const output = getSpyOutput(consoleSpy.log);
@@ -149,7 +165,10 @@ describe("reset sessions via RPC", () => {
     });
 
     try {
-      await parseReset(["node", "test", "reset", "sessions", "--yes"]);
+      await parseReset([
+        "node", "test", "reset", "sessions", "--yes",
+        "--tenant", "test-tenant", "--agent", "default",
+      ]);
     } catch {
       // process.exit called
     }
@@ -185,7 +204,10 @@ describe("reset sessions fallback to database file", () => {
     // unlinkSync succeeds
     vi.mocked(fs.unlinkSync).mockImplementation(() => undefined);
 
-    await parseReset(["node", "test", "reset", "sessions", "--yes"]);
+    await parseReset([
+      "node", "test", "reset", "sessions", "--yes",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     // Assert unlinkSync was called with path containing memory.db
     const unlinkCalls = vi.mocked(fs.unlinkSync).mock.calls.map((c) => String(c[0]));
@@ -226,7 +248,10 @@ describe("reset sessions no database file", () => {
       throw enoent;
     });
 
-    await parseReset(["node", "test", "reset", "sessions", "--yes"]);
+    await parseReset([
+      "node", "test", "reset", "sessions", "--yes",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     // Assert output contains "nothing to reset"
     const output = getSpyOutput(consoleSpy.log);
@@ -332,7 +357,10 @@ describe("reset requires confirmation and respects --yes", () => {
       return fn({ call: mockCall, close: vi.fn() });
     });
 
-    await parseReset(["node", "test", "reset", "sessions", "--yes"]);
+    await parseReset([
+      "node", "test", "reset", "sessions", "--yes",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     // Assert p.confirm was NOT called
     expect(p.confirm).not.toHaveBeenCalled();
@@ -350,7 +378,10 @@ describe("reset requires confirmation and respects --yes", () => {
       return fn({ call: mockCall, close: vi.fn() });
     });
 
-    await parseReset(["node", "test", "reset", "sessions"]);
+    await parseReset([
+      "node", "test", "reset", "sessions",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     // Assert p.confirm WAS called with message about sessions
     expect(p.confirm).toHaveBeenCalledWith(
@@ -368,7 +399,10 @@ describe("reset requires confirmation and respects --yes", () => {
       (value) => value === cancelSymbol,
     );
 
-    await parseReset(["node", "test", "reset", "sessions"]);
+    await parseReset([
+      "node", "test", "reset", "sessions",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     // Assert p.cancel was called
     expect(p.cancel).toHaveBeenCalledWith("Reset cancelled.");
@@ -382,7 +416,10 @@ describe("reset requires confirmation and respects --yes", () => {
     vi.mocked(p.confirm).mockResolvedValue(false);
     vi.mocked(p.isCancel).mockReturnValue(false);
 
-    await parseReset(["node", "test", "reset", "sessions"]);
+    await parseReset([
+      "node", "test", "reset", "sessions",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     // Assert p.cancel was called
     expect(p.cancel).toHaveBeenCalledWith("Reset cancelled.");

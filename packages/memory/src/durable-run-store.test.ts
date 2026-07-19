@@ -4,11 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
-import { parseDurableRunRecord, type DurableRunRecord } from "@comis/core";
+import { createConversationRef, parseDurableRunRecord, type DurableRunRecord } from "@comis/core";
 import { initSchema } from "./schema.js";
 import { ensureDurableRunTable } from "./schema-durable-runs.js";
 import { createSqliteDurableRunStore } from "./durable-run-store.js";
 import type { DurableRunPort } from "@comis/core";
+
+const conversationScope = {
+  tenantId: "tenant-a",
+  agentId: "agent-a",
+  partition: { kind: "principal" as const, principalId: "user-a" },
+};
+const conversationReference = createConversationRef(conversationScope);
+if (!conversationReference.ok) throw conversationReference.error;
+const conversationRef = conversationReference.value;
 
 // The durable checkpoint store — the SQLite-backed DurableRunPort the resume
 // engine scans on boot. Modeled on the crash-safe video-job store
@@ -21,16 +30,16 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
   let store: DurableRunPort;
   let now: number;
   const nowMs = () => now;
-
   /** Build a minimal checkpoint record (defaults to a healthy running run). */
   function makeRecord(overrides: Partial<DurableRunRecord> = {}): DurableRunRecord {
     const rootRunId = overrides.rootRunId ?? "run-root-1";
     const budgetConsumed = overrides.budgetConsumed ?? overrides.rootBudget?.usdConsumed ?? 1.25;
     return {
+      tenantId: "tenant-a",
       agentId: "agent-a",
-      sessionKey: "tenant-a:user-a:telegram:chat-a",
-      ownerTenantId: "tenant-a",
-      ownerUserId: "user-a",
+      conversationRef,
+      conversationScope,
+      principalId: "user-a",
       deliveryOrigin: {
         channelType: "telegram",
         channelId: "chat-a",
@@ -134,7 +143,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       expect(afterSecond.ok && afterSecond.value?.status).toBe("revoked");
     });
 
-    it("persists the authenticated owner, session, origin, trust ceiling, and cap ceiling", async () => {
+    it("persists canonical conversation authority origin trust ceiling and cap ceiling", async () => {
       const record = makeRecord({ checkpointId: "checkpoint-principal" });
       expect((await store.upsertCheckpoint(record)).ok).toBe(true);
 
@@ -148,10 +157,11 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       for (const column of [
         "checkpoint_id",
         "root_run_id",
+        "tenant_id",
         "agent_id",
-        "session_key",
-        "owner_tenant_id",
-        "owner_user_id",
+        "conversation_ref",
+        "canonical_scope",
+        "principal_id",
         "delivery_origin",
       ]) {
         expect(columns.has(column)).toBe(true);
@@ -455,7 +465,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
 
   describe("idempotent upsert", () => {
     it("rejects an inconsistent runtime checkpoint before it reaches SQLite", async () => {
-      const inconsistent = makeRecord({ ownerUserId: "different-user" });
+      const inconsistent = makeRecord({ principalId: "different-user" });
 
       const result = await store.upsertCheckpoint(inconsistent);
 
@@ -554,7 +564,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
         makeRecord({ checkpointId: "checkpoint-corrupt", rootRunId: "root-corrupt" }),
       );
       db.prepare(
-        "UPDATE durable_run_checkpoints SET owner_user_id = ? WHERE checkpoint_id = ?",
+        "UPDATE durable_run_checkpoints SET principal_id = ? WHERE checkpoint_id = ?",
       ).run("different-user", "checkpoint-corrupt");
 
       const scan = await store.listResumable();
@@ -677,9 +687,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
         replacementCheckpointId: "checkpoint-same",
         principal: {
           agentId: "agent-a",
-          sessionKey: "tenant-a:user-a:telegram:chat-a",
-          ownerTenantId: "tenant-a",
-          ownerUserId: "user-a",
+          tenantId: "tenant-a",
+          conversationRef,
+          conversationScope,
+          principalId: "user-a",
           deliveryOrigin: null,
           trustLevel: "user",
           caps: [],
@@ -696,9 +707,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
         replacementCheckpointId: "checkpoint-missing-replacement",
         principal: {
           agentId: "agent-a",
-          sessionKey: "tenant-a:user-a:telegram:chat-a",
-          ownerTenantId: "tenant-a",
-          ownerUserId: "user-a",
+          tenantId: "tenant-a",
+          conversationRef,
+          conversationScope,
+          principalId: "user-a",
           deliveryOrigin: null,
           trustLevel: "user",
           caps: [],
@@ -718,9 +730,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
         replacementCheckpointId: "checkpoint-terminal-replacement",
         principal: {
           agentId: terminal.agentId,
-          sessionKey: terminal.sessionKey,
-          ownerTenantId: terminal.ownerTenantId,
-          ownerUserId: terminal.ownerUserId,
+          tenantId: terminal.tenantId,
+          conversationRef: terminal.conversationRef,
+          conversationScope: terminal.conversationScope,
+          principalId: terminal.principalId,
           deliveryOrigin: terminal.deliveryOrigin,
           trustLevel: terminal.trustLevel,
           caps: terminal.caps,
@@ -743,9 +756,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
         replacementCheckpointId: "checkpoint-admin-replacement",
         principal: {
           agentId: source.agentId,
-          sessionKey: source.sessionKey,
-          ownerTenantId: source.ownerTenantId,
-          ownerUserId: source.ownerUserId,
+          tenantId: source.tenantId,
+          conversationRef: source.conversationRef,
+          conversationScope: source.conversationScope,
+          principalId: source.principalId,
           deliveryOrigin: null,
           trustLevel: "guest",
           caps: source.caps,
@@ -774,9 +788,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
         replacementCheckpointId: "checkpoint-null-origin-replacement",
         principal: {
           agentId: source.agentId,
-          sessionKey: source.sessionKey,
-          ownerTenantId: source.ownerTenantId,
-          ownerUserId: source.ownerUserId,
+          tenantId: source.tenantId,
+          conversationRef: source.conversationRef,
+          conversationScope: source.conversationScope,
+          principalId: source.principalId,
           deliveryOrigin: null,
           trustLevel: "admin",
           caps: source.caps,
@@ -798,9 +813,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
         replacementCheckpointId: target.checkpointId,
         principal: {
           agentId: source.agentId,
-          sessionKey: source.sessionKey,
-          ownerTenantId: source.ownerTenantId,
-          ownerUserId: source.ownerUserId,
+          tenantId: source.tenantId,
+          conversationRef: source.conversationRef,
+          conversationScope: source.conversationScope,
+          principalId: source.principalId,
           deliveryOrigin: source.deliveryOrigin,
           trustLevel: source.trustLevel,
           caps: source.caps,
@@ -821,9 +837,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
         replacementCheckpointId: "checkpoint-should-not-exist",
         principal: {
           agentId: source.agentId,
-          sessionKey: source.sessionKey,
-          ownerTenantId: source.ownerTenantId,
-          ownerUserId: source.ownerUserId,
+          tenantId: source.tenantId,
+          conversationRef: source.conversationRef,
+          conversationScope: source.conversationScope,
+          principalId: source.principalId,
           deliveryOrigin: source.deliveryOrigin,
           trustLevel: source.trustLevel,
           caps: source.caps,
@@ -851,9 +868,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
         replacementCheckpointId: "checkpoint-older-heartbeat",
         principal: {
           agentId: source.agentId,
-          sessionKey: source.sessionKey,
-          ownerTenantId: source.ownerTenantId,
-          ownerUserId: source.ownerUserId,
+          tenantId: source.tenantId,
+          conversationRef: source.conversationRef,
+          conversationScope: source.conversationScope,
+          principalId: source.principalId,
           deliveryOrigin: source.deliveryOrigin,
           trustLevel: source.trustLevel,
           caps: source.caps,
@@ -884,9 +902,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       expect((await store.upsertCheckpoint(source)).ok).toBe(true);
       const principal = {
         agentId: source.agentId,
-        sessionKey: source.sessionKey,
-        ownerTenantId: source.ownerTenantId,
-        ownerUserId: source.ownerUserId,
+        tenantId: source.tenantId,
+        conversationRef: source.conversationRef,
+        conversationScope: source.conversationScope,
+        principalId: source.principalId,
         deliveryOrigin: source.deliveryOrigin,
         trustLevel: source.trustLevel,
         caps: source.caps,
@@ -933,9 +952,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
 
         const principal = {
           agentId: source.agentId,
-          sessionKey: source.sessionKey,
-          ownerTenantId: source.ownerTenantId,
-          ownerUserId: source.ownerUserId,
+          tenantId: source.tenantId,
+          conversationRef: source.conversationRef,
+          conversationScope: source.conversationScope,
+          principalId: source.principalId,
           deliveryOrigin: source.deliveryOrigin,
           trustLevel: source.trustLevel,
           caps: ["orch:read" as const],
@@ -1008,9 +1028,10 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
         replacementCheckpointId: "checkpoint-budget-replacement",
         principal: {
           agentId: staleSource.agentId,
-          sessionKey: staleSource.sessionKey,
-          ownerTenantId: staleSource.ownerTenantId,
-          ownerUserId: staleSource.ownerUserId,
+          tenantId: staleSource.tenantId,
+          conversationRef: staleSource.conversationRef,
+          conversationScope: staleSource.conversationScope,
+          principalId: staleSource.principalId,
           deliveryOrigin: staleSource.deliveryOrigin,
           trustLevel: staleSource.trustLevel,
           caps: staleSource.caps,
@@ -1298,9 +1319,10 @@ describe("createSqliteDurableRunStore — store-error resilience (every method r
     checkpointId: "run-err",
     rootRunId: "run-err",
     agentId: "agent-a",
-    sessionKey: "tenant-a:user-a:telegram:chat-a",
-    ownerTenantId: "tenant-a",
-    ownerUserId: "user-a",
+    tenantId: "tenant-a",
+    conversationRef,
+    conversationScope,
+    principalId: "user-a",
     deliveryOrigin: null,
     spawnTree: ["n"],
     caps: ["orch:read"],
@@ -1363,9 +1385,10 @@ describe("createSqliteDurableRunStore — store-error resilience (every method r
       replacementCheckpointId: "run-replacement",
       principal: {
         agentId: rec.agentId,
-        sessionKey: rec.sessionKey,
-        ownerTenantId: rec.ownerTenantId,
-        ownerUserId: rec.ownerUserId,
+        tenantId: rec.tenantId,
+        conversationRef: rec.conversationRef,
+        conversationScope: rec.conversationScope,
+        principalId: rec.principalId,
         deliveryOrigin: rec.deliveryOrigin,
         trustLevel: rec.trustLevel,
         caps: rec.caps,

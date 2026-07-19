@@ -325,7 +325,7 @@ export class IcApprovalQueue extends LitElement {
   private async _loadApprovals(): Promise<void> {
     if (!this.rpc) return;
     try {
-      const result = await this.rpc.call<{ requests: BackendApprovalRequest[]; total: number }>("admin.approval.pending");
+      const result = await this.rpc.call("admin.approval.pending");
       this._pendingApprovals = (result.requests ?? []).map(mapBackendRequest);
     } catch {
       // Silently ignore -- parent handles top-level error state
@@ -398,7 +398,7 @@ export class IcApprovalQueue extends LitElement {
   private async _handleResolveAll(approved: boolean): Promise<void> {
     if (!this.rpc || this._pendingApprovals.length === 0) return;
     try {
-      const result = await this.rpc.call<{ resolved: number; requestIds: string[] }>("admin.approval.resolveAll", {
+      const result = await this.rpc.call("admin.approval.resolveAll", {
         approved,
         approvedBy: "operator",
         reason: approved ? "Bulk approved by operator" : "Bulk denied by operator",

@@ -152,7 +152,7 @@ function baseRecallConfig(): MemoryRecallConfig {
     maxResults: 10,
     minScore: 0,
     includeTrustLevels: ["system", "learned"],
-    rerank: { enabled: false, maxCandidates: 20, minResults: 2, timeoutMs: 5000 },
+    rerank: { mode: "off", maxCandidates: 20, minResults: 2, timeoutMs: 5000 },
     // All alphas 0 so the ONLY ordering signals are the lane-fusion weights + the IQ knob
     // under test (no recency/temporal/proof/trust/usefulness boost confound). usefulnessAlpha
     // MUST be present (ScoringAlphas requires it) — omitting it makes the per-result score NaN

@@ -394,12 +394,37 @@ describe("constructCapabilityLayer — replay recorder wiring", () => {
     const result = await constructCapabilityLayer(deps as Parameters<typeof constructCapabilityLayer>[0]);
     cleanups.push(() => result.capEndpointHandle?.boundedAutonomy?.destroy());
     cleanups.push(() => result.capEndpointStop?.());
+    const endpoint = {
+      channelType: "internal",
+      channelInstanceId: "capability-boot-test",
+      conversationId: "user",
+      conversationKind: "direct" as const,
+    };
     const { bearer } = leaseManager.mintLease({
       agentId: "a1",
       caps: ["orch:cron"],
       budgetRef: "budget-1",
       sessionKey: "t:c:u",
       trustLevel: "user",
+      deliveryOrigin: {
+        channelType: endpoint.channelType,
+        channelId: endpoint.conversationId,
+        userId: "user",
+        tenantId: "t",
+      },
+      turnScope: {
+        conversation: {
+          tenantId: "t",
+          agentId: "a1",
+          partition: {
+            kind: "endpoint-conversation-principal",
+            endpoint,
+            principalId: "user",
+          },
+        },
+        principal: { principalId: "user" },
+        endpoint,
+      },
       rootRunId: "run-rec",
     });
     // cron.add is an orch:cron method (in audience); rpcCall is mocked to succeed,

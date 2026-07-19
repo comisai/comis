@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import {
   safePath,
+  createConversationLocator,
   type BackgroundTaskOrigin,
   type ClockPort,
   type TimerPort,
@@ -106,15 +107,42 @@ function makeLogger() {
   } as unknown as import("@comis/infra").ComisLogger;
 }
 
-function buildOrigin(over: Partial<BackgroundTaskOrigin> = {}): BackgroundTaskOrigin {
-  return {
-    agentId: "default",
-    sessionKey: "default:echo:test:user1",
+function buildOrigin(
+  over: Partial<BackgroundTaskOrigin> & { agentId?: string } = {},
+): BackgroundTaskOrigin {
+  const { agentId = "default", ...authorityOverrides } = over;
+  const endpoint = {
     channelType: "echo",
-    channelId: "test",
+    channelInstanceId: "test-instance",
+    conversationId: "test",
+    conversationKind: "direct" as const,
+  };
+  const locator = createConversationLocator({
+    tenantId: "default",
+    agentId,
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint,
+      principalId: "user1",
+    },
+  });
+  if (!locator.ok) throw locator.error;
+  return {
+    turnScope: {
+      conversation: locator.value.conversationScope,
+      principal: { principalId: "user1" },
+      endpoint,
+    },
+    conversationRef: locator.value.conversationRef,
+    deliveryOrigin: {
+      tenantId: "default",
+      userId: "user1",
+      channelType: "echo",
+      channelId: "test",
+    },
     traceId: null,
     backgroundHopCount: 0,
-    ...over,
+    ...authorityOverrides,
   };
 }
 
@@ -123,7 +151,7 @@ describe("setupBackgroundCompletionRunner", () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
-      sessionStore: { loadByFormattedKey: vi.fn() },
+      sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
       maxBackgroundHops: 3,
@@ -138,7 +166,7 @@ describe("setupBackgroundCompletionRunner", () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
-      sessionStore: { loadByFormattedKey: vi.fn() },
+      sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
       maxBackgroundHops: 3,
@@ -151,7 +179,7 @@ describe("setupBackgroundCompletionRunner", () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
-      sessionStore: { loadByFormattedKey: vi.fn() },
+      sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
       taskManager: { getTask: vi.fn() } as unknown as import("@comis/agent").BackgroundTaskManager,
       fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
       maxBackgroundHops: 3,
@@ -173,7 +201,7 @@ describe("setupBackgroundCompletionRunner", () => {
       setupBackgroundCompletionRunner({
         eventBus: recording.bus,
         getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
-        sessionStore: { loadByFormattedKey: vi.fn() },
+        sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
         taskManager: {
           getTask: vi.fn(),
           transitionDispatchState: vi.fn(),
@@ -196,7 +224,7 @@ describe("setupBackgroundCompletionRunner", () => {
       const ctx = setupBackgroundCompletionRunner({
         eventBus: makeFakeEventBus(),
         getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
-        sessionStore: { loadByFormattedKey: vi.fn() },
+        sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
         taskManager: {
           getTask: vi.fn(),
           transitionDispatchState: vi.fn(),
@@ -240,7 +268,7 @@ describe("setupBackgroundCompletionRunner", () => {
       setupBackgroundCompletionRunner({
         eventBus: recording.bus,
         getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
-        sessionStore: { loadByFormattedKey: vi.fn().mockReturnValue({ messages: [] }) },
+        sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: { messages: [] } }) },
         taskManager: {
           getTask: getTaskMock,
           transitionDispatchState,
@@ -308,7 +336,7 @@ describe("setupBackgroundCompletionRunner", () => {
         dispatchState: "notified",
         notificationPolicy: "deferred",
       };
-      const agentDir = safePath(dataDir, origin.agentId);
+      const agentDir = safePath(dataDir, origin.turnScope.conversation.agentId);
       mkdirSync(agentDir, { recursive: true });
       const filePath = safePath(agentDir, `${seeded.id as string}.json`);
       writeFileSync(filePath, JSON.stringify(seeded, null, 2), "utf-8");
@@ -370,7 +398,7 @@ describe("setupBackgroundCompletionRunner", () => {
         origin,
         // No dispatchState — represents legacy file format.
       };
-      const agentDir = safePath(dataDir, origin.agentId);
+      const agentDir = safePath(dataDir, origin.turnScope.conversation.agentId);
       mkdirSync(agentDir, { recursive: true });
       const filePath = safePath(agentDir, `${seeded.id as string}.json`);
       writeFileSync(filePath, JSON.stringify(seeded, null, 2), "utf-8");

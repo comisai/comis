@@ -13,12 +13,17 @@
 
 import {
   formatSessionKey,
-  parseFormattedSessionKey,
+  conversationScopeToSessionKey,
+  createConversationLocator,
   createDeliveryOrigin,
   createResolvedRequestContext,
   runWithContext,
   tryGetContext,
   type SessionKey,
+  type ConversationLocator,
+  type ConversationRef,
+  type ConversationScope,
+  type SessionStorePort,
   type TypedEventBus,
   type AgentToAgentConfig,
   type DeliveryOrigin,
@@ -35,6 +40,9 @@ import {
   type UnreachableToolEntry,
   type SubAgentSpawnRejectedEvent,
   type UserTrustLevel,
+  type MemoryWriteEntry,
+  type MemoryWriteScope,
+  type ResolvedTurnScope,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import {
@@ -91,7 +99,7 @@ const SHUTDOWN_NOTICE_GRACE_MS = 5_000;
  *   - channelType-> run.announceChannelType ?? "gateway"  (announce runs
  *                   propagate announceChannelType into ALS as deliveryOrigin
  *                   -- line 1267/1286; no-announce runs default to "gateway")
- *   - channelId  -> parseFormattedSessionKey(run.sessionKey)?.channelId
+ *   - channelId  -> the run's canonical caller endpoint
  *                   ?? run.sessionKey  (the PARSED sub-session channelId, NOT
  *                   run.announceChannelId -- the executor keys on
  *                   subSessionKey.channelId, never the announce channelId; the
@@ -108,17 +116,40 @@ const SHUTDOWN_NOTICE_GRACE_MS = 5_000;
  * steer-run.ts:deriveCompositeForRun — the resolution spike
  * (sub-agent-runner.steer-resolve.spike.test.ts) fails loudly on drift.
  */
-function deriveCompositeForRun(run: SubAgentRun): {
-  agentId: string;
-  channelType: string;
-  channelId: string;
-} {
-  const parsed = parseFormattedSessionKey(run.sessionKey);
-  return {
-    agentId: run.agentId,
-    channelType: run.announceChannelType ?? "gateway",
-    channelId: parsed?.channelId ?? run.sessionKey,
-  };
+function createSubAgentConversation(
+  tenantId: string,
+  agentId: string,
+  runId: string,
+  principalId: string,
+): ConversationLocator {
+  const locator = createConversationLocator({
+    tenantId,
+    agentId,
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: {
+        channelType: "sub-agent",
+        channelInstanceId: "runtime",
+        conversationId: runId,
+        conversationKind: "direct",
+      },
+      principalId,
+    },
+  });
+  if (!locator.ok) {
+    // @allow-throw: the runner mints these fields from validated non-empty ids; failure is an internal construction invariant at the spawn boundary.
+    throw locator.error;
+  }
+  return locator.value;
+}
+
+function displayKeyForConversation(locator: ConversationLocator): { key: SessionKey; formatted: string } {
+  const projected = conversationScopeToSessionKey(locator.conversationScope);
+  if (!projected.ok) {
+    // @allow-throw: persisted sub-agent conversation scopes are validated before this boundary.
+    throw projected.error;
+  }
+  return { key: projected.value, formatted: formatSessionKey(projected.value) };
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +170,8 @@ export interface SubAgentRun {
   trustLevel: UserTrustLevel;
   task: string;
   sessionKey: string;
+  conversationScope: ConversationScope;
+  conversationRef: ConversationLocator["conversationRef"];
   startedAt: number;
   completedAt?: number;
   /** Timestamp when this run was placed in the spawn queue. */
@@ -167,6 +200,7 @@ export interface SubAgentRun {
   leaseId?: string;
   /** Session key of the caller agent, used for active children counting. */
   callerSessionKey?: string;
+  callerConversation?: ConversationLocator;
   /** Authenticated caller agent that owns completion delivery. */
   callerAgentId?: string;
   /** Announce channel type for failure notifications (stored at spawn for ghost sweep access). */
@@ -197,21 +231,15 @@ export interface SubAgentRunnerLogger {
 }
 
 export interface SubAgentRunnerDeps {
-  sessionStore: {
-    save(key: SessionKey, messages: unknown[], metadata: Record<string, unknown>): void;
-    delete(key: SessionKey): void;
-    /** Read persisted ownership before a multi-round run reuses a session. */
-    loadByFormattedKey(formattedKey: string): {
-      metadata: Record<string, unknown>;
-    } | undefined;
-  };
+  sessionStore: Pick<SessionStorePort, "save" | "delete" | "loadByRef">;
   executeAgent: (
     agentId: string,
     sessionKey: SessionKey,
+    conversation: ConversationLocator,
     task: string,
     maxSteps?: number,
     callerAgentId?: string,
-    overrides?: { graphId?: string; nodeId?: string; reuseSessionKey?: string; graphNodeDepth?: number },
+    overrides?: { graphId?: string; nodeId?: string; reuseConversation?: ConversationLocator; graphNodeDepth?: number },
     /** Per-spawn token budget — becomes the child's BudgetGuard per-execution cap. */
     tokenBudget?: number,
     /** Exact parent authority used to attenuate the child's own tool assembly. */
@@ -246,6 +274,7 @@ export interface SubAgentRunnerDeps {
   announceToParent?: (
     callerAgentId: string,
     callerSessionKey: SessionKey,
+    callerConversation: ConversationLocator,
     text: string,
     channelType: string,
     channelId: string,
@@ -299,18 +328,7 @@ export interface SubAgentRunnerDeps {
   logger?: SubAgentRunnerLogger;
   /** Optional memory adapter for persisting sub-agent completion summaries. */
   memoryAdapter?: {
-    store(entry: {
-      id: string;
-      tenantId: string;
-      agentId: string;
-      userId: string;
-      content: string;
-      trustLevel: "system" | "learned" | "external";
-      source: { who: string; channel?: string; sessionKey?: string };
-      tags: string[];
-      createdAt: number;
-      sourceType?: "system" | "conversation" | "tool" | "web" | "api" | "unknown";
-    }): Promise<{ ok: boolean }>;
+    store(entry: MemoryWriteEntry, scope: MemoryWriteScope): Promise<{ ok: boolean }>;
   };
   /** Optional announcement batcher for coalescing near-simultaneous completions. */
   batcher?: AnnouncementBatcher;
@@ -324,21 +342,9 @@ export interface SubAgentRunnerDeps {
    * not a batcher is wired. The daemon injects the SAME instance the batcher uses.
    */
   deliveryDedup?: DeliveryDedup;
-  /** Optional active run registry for aborting in-flight SDK sessions on kill. */
-  activeRunRegistry?: {
-    get(sessionKey: string): { abort(): Promise<void> } | undefined;
-  };
-  /**
-   * Optional composite-key resolver. When provided, supersedes
-   * `activeRunRegistry.get(sessionKey)` for production aborts: the resolver
-   * accepts `{ agentId, channelType, channelId }` so multi-agent /
-   * multi-channel sessions are distinguishable. Locally re-declared to a
-   * structural minimum (avoids a daemon -> agent type-only import cycle in
-   * this leaf module). The daemon wires it via
-   * `createBackgroundSessionResolver({activeRunRegistry})`.
-   */
+  /** Optional live-run resolver for aborting in-flight SDK sessions on kill. */
   sessionResolver?: {
-    resolveActiveSession(key: { agentId: string; channelType: string; channelId: string }): { abort(): Promise<void> } | undefined;
+    resolveActiveSession(conversationRef: ConversationRef): { abort(): Promise<void> } | undefined;
   };
   /** Optional result condenser for compressing subagent output */
   resultCondenser?: {
@@ -346,6 +352,7 @@ export interface SubAgentRunnerDeps {
       fullResult: string;
       task: string;
       runId: string;
+      tenantId: string;
       sessionKey: string;
       agentId: string;
       model?: unknown;
@@ -504,6 +511,7 @@ export interface SpawnParams {
   task: string;
   agentId: string;
   callerSessionKey?: string;
+  callerConversation?: ConversationLocator;
   callerAgentId?: string;
   announceChannelType?: string;
   announceChannelId?: string;
@@ -613,7 +621,7 @@ export interface SpawnParams {
   /** Sorted tool name superset for graph sub-agent cache prefix sharing. */
   graphToolNames?: string[];
   /** Reuse an existing session key for multi-round driver spawns. */
-  reuseSessionKey?: string;
+  reuseConversation?: ConversationLocator;
   /** Graph node depth: 0 = root node (dependsOn=[]), 1+ = downstream.
    *  Used for depth-aware cache retention in setup-cross-session. */
   graphNodeDepth?: number;
@@ -725,16 +733,16 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       usdConsumed: 0,
     };
     const cronOrigin = deriveCronOrigin(params);
-    const owner = parseFormattedSessionKey(run.sessionKey);
-    if (owner === undefined) {
+    const partition = run.conversationScope.partition;
+    if (partition.kind !== "endpoint-conversation-principal") {
       deps.logger?.warn(
         {
           runId: run.runId,
           rootRunId,
-          hint: "Persist the child with a valid formatted session key before starting durability",
+          hint: "Persist the child with the canonical sub-agent principal partition before starting durability",
           errorKind: "validation" as const,
         },
-        "Durable checkpoint skipped: invalid child session identity",
+        "Durable checkpoint skipped: invalid child conversation authority",
       );
       return;
     }
@@ -742,10 +750,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       .upsertCheckpoint({
         checkpointId: run.runId,
         rootRunId,
+        tenantId: run.conversationScope.tenantId,
         agentId: run.agentId,
-        sessionKey: run.sessionKey,
-        ownerTenantId: owner.tenantId,
-        ownerUserId: owner.userId,
+        conversationRef: run.conversationRef,
+        conversationScope: run.conversationScope,
+        principalId: partition.principalId,
         deliveryOrigin: run.requesterOrigin ?? null,
         spawnTree: [run.runId],
         // Copy into mutable arrays — DurableRunRecord's caps/leaseIds are mutable
@@ -1025,15 +1034,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         run.completedAt !== undefined &&
         now - run.completedAt > retentionMs
       ) {
-        // Parse session key back to components for deletion
-        const parts = run.sessionKey.split(":");
-        if (parts.length >= 3) {
-          const sessionKey: SessionKey = {
-            tenantId: parts[0]!,
-            userId: parts[1]!,
-            channelId: parts[2]!,
-          };
-          deps.sessionStore.delete(sessionKey);
+        const deleted = deps.sessionStore.delete(run.conversationScope);
+        if (!deleted.ok) {
+          deps.logger?.warn({
+            runId,
+            conversationRef: run.conversationRef,
+            hint: "Inspect session database integrity; the retention sweep will retry on its next pass",
+            errorKind: deleted.error.errorKind,
+          }, "Sub-agent session archive failed");
+          continue;
         }
 
         deps.eventBus.emit("session:sub_agent_archived", {
@@ -1159,7 +1168,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
       // Abort SDK session (best-effort, composite-key resolver)
       if (deps.sessionResolver) {
-        const handle = deps.sessionResolver.resolveActiveSession(deriveCompositeForRun(run));
+        const handle = deps.sessionResolver.resolveActiveSession(run.conversationRef);
         if (handle) {
           // eslint-disable-next-line no-restricted-syntax -- intentional fire-and-forget
           handle.abort().catch(() => { /* best-effort */ });
@@ -1190,6 +1199,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           ),
           callerAgentId: run.callerAgentId,
           callerSessionKey: run.callerSessionKey,  // shared dedup key
+          callerConversation: run.callerConversation,
         }, deps));
       }
 
@@ -1258,9 +1268,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     const callerContext = tryGetContext();
     const hasExplicitAnnouncementRoute = params.announceChannelType !== undefined
       || params.announceChannelId !== undefined;
-    const parsedReuseSession = params.reuseSessionKey
-      ? parseFormattedSessionKey(params.reuseSessionKey)
-      : undefined;
+    const reuseConversation = params.reuseConversation;
 
     const rejectCallerPrincipal = (): never => {
       deps.logger?.warn({
@@ -1282,23 +1290,24 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       rejectCallerPrincipal();
     }
     if (!isContextIndependentSpawn && callerContext !== undefined) {
-      const parsedCallerSession = params.callerSessionKey === undefined
+      const contextualCaller = callerContext.turnScope === undefined
         ? undefined
-        : parseFormattedSessionKey(params.callerSessionKey);
+        : createConversationLocator(callerContext.turnScope.conversation);
       if (
         callerContext.userId === undefined
         || callerContext.sessionKey === undefined
         || callerContext.agentId === undefined
+        || callerContext.turnScope === undefined
         || params.callerSessionKey !== callerContext.sessionKey
         || params.callerAgentId !== callerContext.agentId
-        || parsedCallerSession === undefined
-        || parsedCallerSession.tenantId !== callerContext.tenantId
-        || parsedCallerSession.userId !== callerContext.userId
+        || params.callerConversation === undefined
+        || contextualCaller === undefined
+        || !contextualCaller.ok
+        || params.callerConversation.conversationRef !== contextualCaller.value.conversationRef
         || (
-          parsedReuseSession !== undefined
+          reuseConversation !== undefined
           && (
-            parsedReuseSession.tenantId !== callerContext.tenantId
-            || parsedReuseSession.userId !== callerContext.userId
+            reuseConversation.conversationScope.tenantId !== callerContext.tenantId
           )
         )
       ) {
@@ -1345,9 +1354,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           || params.announceChannelType !== requesterOrigin.channelType
           || params.announceChannelId !== requesterOrigin.channelId
         ))
-        || (parsedReuseSession !== undefined && (
-          parsedReuseSession.tenantId !== requesterOrigin.tenantId
-          || parsedReuseSession.userId !== requesterOrigin.userId
+        || (reuseConversation !== undefined && (
+          reuseConversation.conversationScope.tenantId !== requesterOrigin.tenantId
         ))
       );
     if (announcementRouteMismatch) {
@@ -1372,8 +1380,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       ? params.callerTrustLevel ?? "guest"
       : callerContext?.trustLevel ?? "guest";
 
-    if (parsedReuseSession !== undefined) {
-      if (parsedReuseSession.tenantId !== deps.tenantId) {
+    if (reuseConversation !== undefined) {
+      if (reuseConversation.conversationScope.tenantId !== deps.tenantId) {
         deps.logger?.warn({
           agentId: params.agentId,
           reason: "reused_session_tenant_mismatch",
@@ -1383,14 +1391,16 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // @allow-throw: spawn() is a daemon RPC boundary and rejects cross-tenant session reuse before creating a run.
         throw new Error("Spawn rejected: reused session tenant does not match the configured tenant");
       }
-      const reuseSessionKey = params.reuseSessionKey ?? rejectCallerPrincipal();
-      const persistedSession = deps.sessionStore.loadByFormattedKey(reuseSessionKey);
-      if (persistedSession !== undefined) {
-        const persistedAgentId = typeof persistedSession.metadata.agentId === "string"
-          && persistedSession.metadata.agentId.length > 0
-          ? persistedSession.metadata.agentId
-          : undefined;
-        if (persistedAgentId !== params.agentId) {
+      const persistedSession = deps.sessionStore.loadByRef(
+        {
+          tenantId: reuseConversation.conversationScope.tenantId,
+          agentId: reuseConversation.conversationScope.agentId,
+        },
+        reuseConversation.conversationRef,
+      );
+      if (!persistedSession.ok) throw persistedSession.error;
+      if (persistedSession.value !== undefined) {
+        if (persistedSession.value.conversationScope.agentId !== params.agentId) {
           deps.logger?.warn({
             agentId: params.agentId,
             reason: "reused_session_owner_mismatch",
@@ -1647,6 +1657,18 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
         // Queue the spawn
         const queuedRunId = randomUUID();
+        const queuedPrincipalId = params.callerConversation?.conversationScope.partition.kind
+          === "endpoint-conversation-principal"
+          ? params.callerConversation.conversationScope.partition.principalId
+          : params.requesterOrigin?.userId ?? `sub-agent:${queuedRunId}`;
+        const queuedConversation = params.reuseConversation
+          ?? createSubAgentConversation(
+            deps.tenantId,
+            params.agentId,
+            queuedRunId,
+            queuedPrincipalId,
+          );
+        const queuedDisplay = displayKeyForConversation(queuedConversation);
         const now = clock.now();
         const queuedRun: SubAgentRun = {
           runId: queuedRunId,
@@ -1654,7 +1676,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           agentId: params.agentId,
           trustLevel: acceptedTrustLevel,
           task: params.task,
-          sessionKey: "",
+          sessionKey: queuedDisplay.formatted,
+          conversationScope: queuedConversation.conversationScope,
+          conversationRef: queuedConversation.conversationRef,
           startedAt: 0,
           queuedAt: now,
           requesterOrigin: params.requesterOrigin,
@@ -1663,6 +1687,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           caps: acceptedCaps,
           ...(params.parentLeaseId !== undefined ? { parentLeaseId: params.parentLeaseId } : {}),
           callerSessionKey: params.callerSessionKey,
+          callerConversation: params.callerConversation,
           callerAgentId: params.callerAgentId,
           announceChannelType: params.announceChannelType,
           announceChannelId: params.announceChannelId,
@@ -1796,16 +1821,32 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     const runId = isGraphSpawn && params.reservedRunId !== undefined
       ? params.reservedRunId
       : randomUUID();
+    const runPrincipalId = params.callerConversation?.conversationScope.partition.kind
+      === "endpoint-conversation-principal"
+      ? params.callerConversation.conversationScope.partition.principalId
+      : params.requesterOrigin?.userId ?? `sub-agent:${runId}`;
+    const runConversation = params.reuseConversation
+      ?? createSubAgentConversation(
+        deps.tenantId,
+        params.agentId,
+        runId,
+        runPrincipalId,
+      );
+    const runDisplay = displayKeyForConversation(runConversation);
     const run: SubAgentRun = {
       runId, status: "running", agentId: params.agentId,
       trustLevel: acceptedTrustLevel,
-      task: params.task, sessionKey: "", startedAt: clock.now(),
+      task: params.task, sessionKey: runDisplay.formatted,
+      conversationScope: runConversation.conversationScope,
+      conversationRef: runConversation.conversationRef,
+      startedAt: clock.now(),
       requesterOrigin: params.requesterOrigin,
       depth: currentDepth,
       rootRunId,
       caps: acceptedCaps,
       ...(params.parentLeaseId !== undefined ? { parentLeaseId: params.parentLeaseId } : {}),
       callerSessionKey: params.callerSessionKey,
+      callerConversation: params.callerConversation,
       callerAgentId: params.callerAgentId,
       announceChannelType: params.announceChannelType,
       announceChannelId: params.announceChannelId,
@@ -1842,68 +1883,19 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     currentDepth: number,
     maxDepth: number,
   ): void {
-    // Create sub-agent session
-    let subSessionKey: SessionKey;
-    let formattedKey: string;
+    const display = displayKeyForConversation({
+      conversationScope: run.conversationScope,
+      conversationRef: run.conversationRef,
+    });
+    const subSessionKey = display.key;
+    const formattedKey = display.formatted;
 
-    if (params.reuseSessionKey) {
-      // Reuse existing persistent session -- skip session creation.
-      // The session already has prior round conversation history on disk.
-      const parsed = parseFormattedSessionKey(params.reuseSessionKey);
-      if (!parsed) {
-        deps.logger?.error(
-          { runId, reuseSessionKey: params.reuseSessionKey, hint: "Invalid reuseSessionKey format, falling back to new session", errorKind: "validation" as const },
-          "Failed to parse reuseSessionKey",
-        );
-        // Fall through to normal session creation
-        subSessionKey = {
-          tenantId: deps.tenantId,
-          userId: params.requesterOrigin?.userId ?? `sub-agent-${runId}`,
-          channelId: `sub-agent:${runId}`,
-        };
-        formattedKey = formatSessionKey(subSessionKey);
-        deps.sessionStore.save(subSessionKey, [], {
-          agentId: params.agentId,
-          parentSessionKey: params.callerSessionKey,
-          spawnedByAgent: params.callerAgentId,
-          spawnedAt: clock.now(),
-          taskDescription: params.task,
-          runId,
-          modelOverride: params.model,
-          spawnDepth: currentDepth + 1,
-          maxSpawnDepth: maxDepth,
-          artifactRefs: params.artifactRefs ?? [],
-          objective: params.objective ?? "",
-          language: params.resolvedLanguage,
-          domainKnowledge: params.domainKnowledge ?? [],
-          toolGroups: params.toolGroups ?? [],
-          includeParentHistory: params.includeParentHistory ?? "none",
-          graphSharedDir: params.graphSharedDir ?? "",
-          discoveredDeferredTools: params.discoveredDeferredTools ?? [],
-          graphToolNames: params.graphToolNames ?? [],
-          graphNodeDepth: params.graphNodeDepth,
-          isLeafNode: params.isLeafNode ?? false,
-        });
-      } else {
-        formattedKey = params.reuseSessionKey;
-        subSessionKey = { ...parsed, agentId: params.agentId };
-        deps.logger?.info(
-          { runId, reuseSessionKey: params.reuseSessionKey, agentId: params.agentId },
-          "Reusing persistent session for multi-round driver",
-        );
-        // Do NOT call sessionStore.save -- session already exists with prior messages
-      }
-    } else {
-      // Normal path: create new session
-      subSessionKey = {
-        tenantId: deps.tenantId,
-        userId: params.requesterOrigin?.userId ?? `sub-agent-${runId}`,
-        channelId: `sub-agent:${runId}`,
-      };
-      formattedKey = formatSessionKey(subSessionKey);
-      deps.sessionStore.save(subSessionKey, [], {
+    if (!params.reuseConversation) {
+      const saved = deps.sessionStore.save(run.conversationScope, [], {
         agentId: params.agentId,
         parentSessionKey: params.callerSessionKey,
+        parentConversationRef: params.callerConversation?.conversationRef,
+        parentConversationScope: params.callerConversation?.conversationScope,
         spawnedByAgent: params.callerAgentId,
         spawnedAt: clock.now(),
         taskDescription: params.task,
@@ -1928,6 +1920,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // Defaults to false so the no-worktree path stays byte-identical.
         worktree: params.worktree ?? false,
       });
+      if (!saved.ok) {
+        // @allow-throw: session creation is part of the synchronous spawn admission boundary.
+        throw saved.error;
+      }
+    } else {
+      deps.logger?.info(
+        { runId, conversationRef: run.conversationRef, agentId: params.agentId },
+        "Reusing persistent conversation for multi-round driver",
+      );
     }
 
     // Update run with session info and running status
@@ -2020,6 +2021,16 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             })
           : undefined;
 
+        const childPartition = run.conversationScope.partition;
+        if (childPartition.kind !== "endpoint-conversation-principal") {
+          // @allow-throw: sub-agent conversations are minted with this exact internal partition at admission.
+          throw new Error("Sub-agent conversation authority has an invalid partition");
+        }
+        const childTurnScope: ResolvedTurnScope = {
+          conversation: run.conversationScope,
+          principal: { principalId: childPartition.principalId },
+          endpoint: childPartition.endpoint,
+        };
         const childContext = createResolvedRequestContext({
           traceId,
           tenantId: childTenantId,
@@ -2031,6 +2042,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           // Propagate channel context for downstream tool RPC injection
           ...(subDeliveryOrigin && { channelType: subDeliveryOrigin.channelType }),
           ...(subDeliveryOrigin && { deliveryOrigin: subDeliveryOrigin }),
+          turnScope: childTurnScope,
         });
         if (!childContext.ok) {
           deps.logger?.error({
@@ -2046,11 +2058,16 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         const result = await runWithContext(
           childContext.value,
           () => deps.executeAgent(
-            params.agentId, subSessionKey, params.task, params.max_steps, params.callerAgentId,
+            params.agentId,
+            subSessionKey,
+            { conversationScope: run.conversationScope, conversationRef: run.conversationRef },
+            params.task,
+            params.max_steps,
+            params.callerAgentId,
             params.graphId && params.nodeId
-              ? { graphId: params.graphId, nodeId: params.nodeId, reuseSessionKey: params.reuseSessionKey, graphNodeDepth: params.graphNodeDepth }
-              : params.reuseSessionKey
-                ? { reuseSessionKey: params.reuseSessionKey }
+              ? { graphId: params.graphId, nodeId: params.nodeId, reuseConversation: params.reuseConversation, graphNodeDepth: params.graphNodeDepth }
+              : params.reuseConversation
+                ? { reuseConversation: params.reuseConversation }
                 : undefined,
             params.tokenBudget,
             {
@@ -2117,6 +2134,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               fullResult: result.response,
               task: params.task,
               runId,
+              tenantId: run.conversationScope.tenantId,
               sessionKey: formattedKey,
               agentId: params.agentId,
               model: deps.condenserModel,
@@ -2316,15 +2334,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
             await deps.memoryAdapter.store({
               id: randomUUID(),
-              tenantId: deps.tenantId,
-              agentId: params.agentId,
-              userId: "system",
               content,
               trustLevel: "system",
               source: { who: "sub-agent-runner", sessionKey: formattedKey },
               tags: ["sub-agent-result", "task-completion", ...(abortClassification ? ["aborted"] : [])],
               createdAt: clock.now(),
               sourceType: "tool",
+            }, {
+              turnScope: childTurnScope,
+              visibility: { kind: "agent-shared" },
             });
 
             deps.logger?.debug({ runId, agentId: params.agentId }, "Sub-agent completion persisted to memory");
@@ -2361,6 +2379,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               ),
               callerAgentId: params.callerAgentId,
               callerSessionKey: params.callerSessionKey,  // shared dedup key
+              callerConversation: params.callerConversation,
             }, deps);
           }
         } else if (params.announceChannelType && params.announceChannelId) {
@@ -2414,6 +2433,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               ),
               callerAgentId: params.callerAgentId,
               callerSessionKey: params.callerSessionKey,
+              callerConversation: params.callerConversation,
               runId,
             }, deps);
           }
@@ -2541,6 +2561,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             ),
             callerAgentId: params.callerAgentId,
             callerSessionKey: params.callerSessionKey,  // shared dedup key
+            callerConversation: params.callerConversation,
           }, deps);
         } else {
           // Log explicit reason when failure announcement cannot be routed
@@ -2638,7 +2659,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       // resolver makes the `(agentId, channelType, channelId)` triple
       // explicit so multi-agent collisions are distinguishable.
       if (deps.sessionResolver) {
-        const handle = deps.sessionResolver.resolveActiveSession(deriveCompositeForRun(run));
+        const handle = deps.sessionResolver.resolveActiveSession(run.conversationRef);
         if (handle) {
           handle.abort().catch((abortErr: unknown) => {
             deps.logger?.debug({ runId, err: abortErr }, "Watchdog SDK abort best-effort failed");
@@ -2670,6 +2691,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           ),
           callerAgentId: params.callerAgentId,
           callerSessionKey: params.callerSessionKey,  // shared dedup key
+          callerConversation: params.callerConversation,
         }, deps));
       }
 
@@ -2877,7 +2899,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     // Abort the in-flight SDK session via composite-key resolver
     // (best-effort).
     if (deps.sessionResolver) {
-      const handle = deps.sessionResolver.resolveActiveSession(deriveCompositeForRun(run));
+      const handle = deps.sessionResolver.resolveActiveSession(run.conversationRef);
       if (handle) {
         handle.abort().catch((abortErr: unknown) => {
           deps.logger?.debug(
@@ -2927,6 +2949,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         ),
         callerAgentId: run.callerAgentId,
         callerSessionKey: run.callerSessionKey,  // shared dedup key
+        callerConversation: run.callerConversation,
         detail: killedBy === "health_monitor"
           ? `The background task was stopped by the daemon health monitor${opts?.idleMs !== undefined ? ` after ${Math.round(opts.idleMs / 1000)}s without progress` : ""}${opts?.thresholdMs !== undefined ? ` (security.agentToAgent.subagentContext.stuckKillThresholdMs=${opts.thresholdMs})` : ""}.`
           : `The background task was stopped (${killedBy}).`,
@@ -2999,9 +3022,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
    * narrowed `{ abort(): Promise<void> }` (the kill path only needs abort, and
    * the narrow type avoids a daemon→agent import cycle in those Deps). steerRun
    * needs the FULL RunHandle (steer/followUp/isStreaming/isCompacting). The
-   * RUNTIME handle is complete — pi-executor.ts:1161 builds all five and
-   * registers it under the SAME key the resolver composes (pinned by
-   * sub-agent-runner.steer-resolve.spike.test.ts). So
+   * RUNTIME handle is complete — PiExecutor builds all five and registers it
+   * under the canonical conversation ref. So
    * we re-type the lookups to the full RunHandle at this boundary; this is a
    * pure TS surface widening over an object that already has the methods, not
    * a behavior change.
@@ -3019,10 +3041,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       // Deps type omits steer/followUp/isStreaming/isCompacting that the runtime
       // object carries — re-type to the full RunHandle for the inject delegation.
       sessionResolver: deps.sessionResolver as
-        | { resolveActiveSession(key: { agentId: string; channelType: string; channelId: string }): RunHandle | undefined }
-        | undefined,
-      activeRunRegistry: deps.activeRunRegistry as
-        | { get(sessionKey: string): RunHandle | undefined }
+        | { resolveActiveSession(conversationRef: ConversationRef): RunHandle | undefined }
         | undefined,
       logger: deps.logger,
     };
@@ -3083,6 +3102,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               ),
               callerAgentId: run.callerAgentId,
               callerSessionKey: run.callerSessionKey,
+              callerConversation: run.callerConversation,
               detail: "The background task finished, but result delivery was stopped during daemon shutdown.",
             }, deps));
           }

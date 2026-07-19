@@ -7,8 +7,6 @@ import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import type {
   ChannelDetailInfo,
-  ChannelObsResponse,
-  ChannelStaleResponse,
 } from "../api/types/index.js";
 import { sharedStyles, focusStyles } from "../styles/shared.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
@@ -242,8 +240,8 @@ export class IcChannelList extends LitElement {
       // Enrich with RPC observability data in the background
       if (this.rpcClient && this.rpcClient.status === "connected") {
         Promise.allSettled([
-          this.rpcClient.call<ChannelObsResponse>("obs.channels.all"),
-          this.rpcClient.call<ChannelStaleResponse>("obs.channels.stale"),
+          this.rpcClient.call("obs.channels.all"),
+          this.rpcClient.call("obs.channels.stale"),
         ]).then(([obsResult, staleResult]) => {
           const obsData = obsResult.status === "fulfilled" ? obsResult.value : null;
           const staleData = staleResult.status === "fulfilled" ? staleResult.value : null;

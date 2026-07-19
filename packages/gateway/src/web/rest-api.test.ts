@@ -316,7 +316,7 @@ describe("createRestApi", () => {
       const deps = createApiDeps();
       const api = createRestApi(deps);
 
-      const res = await api.request("/memory/search?q=dentist", { headers: authHeaders() });
+      const res = await api.request("/memory/search?q=dentist&tenant=tenant-a&agent=agent-a", { headers: authHeaders() });
       expect(res.status).toBe(200);
 
       const body = await res.json();
@@ -324,6 +324,8 @@ describe("createRestApi", () => {
       expect(deps.rpcAdapterDeps.searchMemory).toHaveBeenCalledWith({
         query: "dentist",
         limit: 10,
+        tenantId: "tenant-a",
+        agentId: "agent-a",
       });
     });
 
@@ -331,13 +333,15 @@ describe("createRestApi", () => {
       const deps = createApiDeps();
       const api = createRestApi(deps);
 
-      const res = await api.request("/memory/search?q=test&limit=5", {
+      const res = await api.request("/memory/search?q=test&limit=5&tenant=tenant-a&agent=agent-a", {
         headers: authHeaders(),
       });
       expect(res.status).toBe(200);
       expect(deps.rpcAdapterDeps.searchMemory).toHaveBeenCalledWith({
         query: "test",
         limit: 5,
+        tenantId: "tenant-a",
+        agentId: "agent-a",
       });
     });
 
@@ -356,12 +360,15 @@ describe("createRestApi", () => {
       const deps = createApiDeps();
       const api = createRestApi(deps);
 
-      const res = await api.request("/memory/stats", { headers: authHeaders() });
+      const res = await api.request("/memory/stats?tenant=tenant-a&agent=agent-a", { headers: authHeaders() });
       expect(res.status).toBe(200);
 
       const body = await res.json();
       expect(body.stats).toBeDefined();
-      expect(deps.rpcAdapterDeps.inspectMemory).toHaveBeenCalledWith({});
+      expect(deps.rpcAdapterDeps.inspectMemory).toHaveBeenCalledWith({
+        tenantId: "tenant-a",
+        agentId: "agent-a",
+      });
     });
   });
 

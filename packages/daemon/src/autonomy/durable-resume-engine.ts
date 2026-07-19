@@ -42,6 +42,8 @@ import { ok, err, type Result } from "@comis/shared";
 import { randomUUID } from "node:crypto";
 import {
   emitObservationalEventSafely,
+  conversationScopeToSessionKey,
+  formatSessionKey,
   parseDurableRunRecord,
   toSafeErrorLogString,
   type OutwardSendLedgerPort,
@@ -53,6 +55,7 @@ import {
   type ComisLogger,
   type TypedEventBus,
   type UserTrustLevel,
+  type ResolvedTurnScope,
 } from "@comis/core";
 
 /**
@@ -75,6 +78,7 @@ export interface MintLeaseInput {
   readonly sessionKey: string;
   readonly trustLevel: UserTrustLevel;
   readonly deliveryOrigin?: import("@comis/core").DeliveryOrigin;
+  readonly turnScope?: ResolvedTurnScope;
   readonly rootRunId: string;
   readonly checkpointId: string;
   readonly parentLeaseId?: string;
@@ -552,10 +556,11 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
           checkpointId,
           replacementCheckpointId,
           principal: {
+            tenantId: sourceRecord.tenantId,
             agentId: sourceRecord.agentId,
-            sessionKey: sourceRecord.sessionKey,
-            ownerTenantId: sourceRecord.ownerTenantId,
-            ownerUserId: sourceRecord.ownerUserId,
+            conversationRef: sourceRecord.conversationRef,
+            conversationScope: sourceRecord.conversationScope,
+            principalId: sourceRecord.principalId,
             deliveryOrigin: sourceRecord.deliveryOrigin,
             trustLevel: sourceRecord.trustLevel,
             caps: sourceRecord.caps,
@@ -649,13 +654,33 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
         // from a live parent (the persisted set IS the attenuated result; a
         // re-attenuation against a stale/broadened parent would resurrect or
         // broaden authority).
+        const displaySession = conversationScopeToSessionKey(record.conversationScope);
+        const partition = record.conversationScope.partition;
+        const endpoint = partition.kind === "endpoint-conversation-principal"
+          ? partition.endpoint
+          : undefined;
+        if (!displaySession.ok || endpoint === undefined) {
+          await orphan(
+            record,
+            "invalid durable record authority",
+            "the persisted conversation authority cannot reconstruct a resolved resume turn",
+          );
+          orphaned++;
+          continue;
+        }
+        const turnScope: ResolvedTurnScope = {
+          conversation: record.conversationScope,
+          principal: { principalId: record.principalId },
+          endpoint,
+        };
         const lease = remintLease({
           agentId: record.agentId,
           caps: record.caps,
           budgetRef: DEFAULT_BUDGET_REF,
-          sessionKey: record.sessionKey,
+          sessionKey: formatSessionKey(displaySession.value),
           trustLevel: record.trustLevel,
           ...(record.deliveryOrigin !== null ? { deliveryOrigin: record.deliveryOrigin } : {}),
+          turnScope,
           rootRunId,
           checkpointId: record.checkpointId,
         });

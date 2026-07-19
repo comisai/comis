@@ -17,6 +17,9 @@ export {
   TrustLevelSchema,
   MemorySourceSchema,
   MemoryEntrySchema,
+  MemoryWriteScopeSchema,
+  createMemoryRecallScope,
+  resolveMemoryVisibility,
   // Structured extraction + domain target
   ExtractedEntitySchema,
   StructuredMemorySchema,
@@ -30,7 +33,7 @@ export {
   SessionKeySchema,
   parseSessionKey,
   formatSessionKey,
-  parseFormattedSessionKey,
+  SessionStoreError,
   // Poll
   PollInputSchema,
   PollOptionResultSchema,
@@ -100,6 +103,13 @@ export {
   MemoryExportEnvelopeSchema,
   MemoryExportEntrySchema,
   parseMemoryExportEnvelope,
+  ChannelEndpointSchema,
+  ConversationScopeSchema,
+  ResolvedTurnScopeSchema,
+  ConversationRefSchema,
+  createConversationRef,
+  createConversationLocator,
+  conversationScopeToSessionKey,
 } from "../domain/index.js";
 
 export { BackgroundTaskOriginSchema } from "../domain/background-task-origin.js";
@@ -114,6 +124,9 @@ export type {
   NormalizedReaction,
   TrustLevel,
   MemoryEntry,
+  MemoryVisibilityRequest,
+  MemoryWriteScope,
+  MemoryRecallScope,
   // MemoryExportEnvelope
   MemoryExportEnvelope,
   MemoryExportEntry,
@@ -186,4 +199,10 @@ export type {
   ProviderCapabilities,
   // Sub-agent tool governance
   UnreachableToolEntry,
+  ChannelEndpoint,
+  PrincipalScope,
+  ConversationScope,
+  ResolvedTurnScope,
+  ConversationRef,
+  ConversationLocator,
 } from "../domain/index.js";

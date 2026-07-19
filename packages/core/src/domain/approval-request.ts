@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
 import { err, ok, type Result } from "@comis/shared";
+import { ConversationRefSchema } from "./conversation-scope.js";
 
 /**
  * ApprovalRequest: A pending approval for a privileged agent action.
@@ -41,8 +42,12 @@ export const ApprovalRequestSchema = z.strictObject({
   params: z.record(z.string(), z.unknown()),
   /** The agent that triggered the action */
   agentId: z.string(),
-  /** Session context identifier */
-  sessionKey: z.string(),
+  /** Tenant that owns the conversation. */
+  tenantId: z.string().min(1),
+  /** Opaque conversation authority anchor. */
+  conversationRef: ConversationRefSchema,
+  /** Canonical principal allowed to resolve this approval. */
+  resolvingPrincipalId: z.string().min(1),
   /** Trust level of the requesting user */
   trustLevel: z.enum(["admin", "user", "guest"]),
   /** Immutable principal allowed to answer this request through a channel callback. */
@@ -89,7 +94,9 @@ export const SerializedApprovalRequestSchema = z.strictObject({
   action: z.string(),
   params: z.record(z.string(), z.unknown()),
   agentId: z.string(),
-  sessionKey: z.string(),
+  tenantId: z.string().min(1),
+  conversationRef: ConversationRefSchema,
+  resolvingPrincipalId: z.string().min(1),
   trustLevel: z.enum(["admin", "user", "guest"]),
   callbackOwner: ApprovalRequestSchema.shape.callbackOwner,
   createdAt: z.number(),

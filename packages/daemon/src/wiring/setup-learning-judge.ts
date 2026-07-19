@@ -38,6 +38,7 @@ import {
   type OutcomeSignalPort,
   type ResolvedOutcome,
   type WorkspacePolicyPort,
+  type ConversationRef,
 } from "@comis/core";
 import {
   createOutcomeJudgeSeam,
@@ -104,6 +105,7 @@ export interface JudgeScope {
   agentId: string;
   sessionId: string;
   trajectoryId: string;
+  conversationRef?: ConversationRef;
   workspacePolicyHash?: string;
 }
 
@@ -288,8 +290,9 @@ export function buildOutcomeJudgeWiring(
   // The LCD transcript reader — most-recent user/assistant text for the scope's sessionId.
   const readTurnTranscript = lcdStore
     ? (scope: JudgeScope): string | undefined => {
+        if (scope.conversationRef === undefined) return undefined;
         const messages = lcdStore.getMessages({
-          conversationId: scope.sessionId,
+          conversationRef: scope.conversationRef,
           tenantId: scope.tenantId,
           agentId: scope.agentId,
           sessionKey: scope.sessionId,

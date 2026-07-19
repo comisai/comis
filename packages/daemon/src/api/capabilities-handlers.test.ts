@@ -54,9 +54,7 @@ const SNAPSHOT = {
   leaseIds: ["L1"],
 };
 
-function createMockDeps(
-  overrides: { resolveRootRunId?: (sk: never) => string } = {},
-): CapabilitiesHandlerDeps {
+function createMockDeps(): CapabilitiesHandlerDeps {
   return {
     boundedAutonomy: {
       snapshot: vi.fn().mockReturnValue(SNAPSHOT),
@@ -64,7 +62,6 @@ function createMockDeps(
     agents: AGENTS,
     defaultAgentId: "default",
     logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), child: vi.fn().mockReturnThis() },
-    ...overrides,
   } as unknown as CapabilitiesHandlerDeps;
 }
 
@@ -98,18 +95,14 @@ describe("createCapabilitiesHandlers — capabilities.introspect", () => {
   // (honest) when no root is live (in-process pre-spawn).
   // -------------------------------------------------------------------------
   it("includes budget + outwardQuota from the snapshot when a live rootRunId resolves", async () => {
-    const resolveRootRunId = vi.fn().mockReturnValue("root-session-X");
-    deps = createMockDeps({ resolveRootRunId: resolveRootRunId as never });
+    deps = createMockDeps();
     handlers = createCapabilitiesHandlers(deps);
 
     const result = (await handlers["capabilities.introspect"]!({
       _agentId: "agent-a",
-      // A valid formatted session key (tenant:user:channel) so
-      // parseFormattedSessionKey resolves it → resolveRootRunId is consulted.
-      _callerSessionKey: "default:user:peer123",
+      _rootRunId: "root-session-X",
     })) as { budget?: unknown; outwardQuota?: unknown };
 
-    expect(resolveRootRunId).toHaveBeenCalled();
     expect(deps.boundedAutonomy.snapshot).toHaveBeenCalledWith("root-session-X", "agent-a", "");
     expect(result.budget).toEqual(SNAPSHOT.budget);
     expect(result.outwardQuota).toEqual(SNAPSHOT.outwardQuota);

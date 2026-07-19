@@ -107,6 +107,14 @@ export const IMMUTABLE_CONFIG_PREFIXES: readonly string[] = [
   // capability map or detour policy.
   "tooling",
 
+  // Authenticated platform-subject mappings define storage authority.
+  "identity",
+
+  // Linked contribution selection and instance activation are boot topology.
+  "contributions",
+  // Existing plugin activation is the current linked-extension topology.
+  "plugins",
+
   // Broker anti-exfiltration guard — executor section is
   // operator-only. An agent must NOT be able to self-configure
   // executor.broker.bindings to route credentials to an attacker-controlled

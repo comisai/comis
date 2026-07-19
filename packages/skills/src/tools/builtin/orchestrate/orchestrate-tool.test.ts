@@ -27,9 +27,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
 
-import { runWithContext } from "@comis/core";
+import { createConversationRef, runWithContext } from "@comis/core";
 import type { AgentCapability, ComisLogger, DurableRunRecord, DurableRunResumeClaimOutcome, RequestContext } from "@comis/core";
 import { err, ok, type Result } from "@comis/shared";
+
+const DURABLE_CONVERSATION_SCOPE = {
+  tenantId: "tenant-a",
+  agentId: "agent-a",
+  partition: { kind: "principal" as const, principalId: "user-a" },
+};
+const durableConversationReference = createConversationRef(DURABLE_CONVERSATION_SCOPE);
+if (!durableConversationReference.ok) throw durableConversationReference.error;
+const DURABLE_CONVERSATION_REF = durableConversationReference.value;
 
 import {
   createOrchestrateTool,
@@ -64,17 +73,36 @@ function makeLogger(): ComisLogger {
 }
 
 function makeApprovalContext(): RequestContext {
+  const endpoint = {
+    channelType: "telegram",
+    channelInstanceId: "telegram-main",
+    conversationId: "chat-1",
+    conversationKind: "direct" as const,
+  };
   return {
-    tenantId: "default",
+    tenantId: "tenant-test",
     userId: "test-user",
     agentId: "test-agent",
-    sessionKey: "default:test-user:chat-1",
+    sessionKey: "tenant-test:test-user:chat-1",
     traceId: "10000000-0000-4000-8000-000000000001",
     startedAt: 1,
     trustLevel: "guest",
     channelType: "telegram",
+    turnScope: {
+      conversation: {
+        tenantId: "tenant-test",
+        agentId: "test-agent",
+        partition: {
+          kind: "endpoint-conversation-principal",
+          endpoint,
+          principalId: "test-user",
+        },
+      },
+      principal: { principalId: "test-user" },
+      endpoint,
+    },
     deliveryOrigin: Object.freeze({
-      tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
+      tenantId: "tenant-test", userId: "test-user", channelType: "telegram", channelId: "chat-1",
     }),
   };
 }
@@ -173,7 +201,6 @@ describe("orchestrate-tool", () => {
   }) {
     const cleanupRun = over?.cleanupRun ?? vi.fn(async () => {});
     const durableTrust = over?.trustLevel ?? "user";
-    const durableSessionKey = over?.sessionKey ?? "tenant-a:user-a:chat-a";
     return {
       deps: {
         logger: over?.logger ?? makeLogger(),
@@ -225,10 +252,11 @@ describe("orchestrate-tool", () => {
           ? {
               durableRuns: over.durableRuns,
               durablePrincipal: {
+                tenantId: "tenant-a",
                 agentId: "agent-a",
-                sessionKey: durableSessionKey,
-                ownerTenantId: "tenant-a",
-                ownerUserId: "user-a",
+                conversationRef: DURABLE_CONVERSATION_REF,
+                conversationScope: DURABLE_CONVERSATION_SCOPE,
+                principalId: "user-a",
                 deliveryOrigin: null,
                 trustLevel: durableTrust,
                 caps: over.allowedCaps ?? [],
@@ -1523,10 +1551,11 @@ describe("orchestrate-tool", () => {
         getRow: {
           checkpointId: "checkpoint-resume",
           rootRunId: "root-resume",
+          tenantId: "tenant-a",
           agentId: "agent-a",
-          sessionKey: "tenant-a:user-a:chat-a",
-          ownerTenantId: "tenant-a",
-          ownerUserId: "user-a",
+          conversationRef: DURABLE_CONVERSATION_REF,
+          conversationScope: DURABLE_CONVERSATION_SCOPE,
+          principalId: "user-a",
           deliveryOrigin: null,
           spawnTree: [],
           caps: [],
@@ -1588,10 +1617,11 @@ describe("orchestrate-tool", () => {
         getRow: {
           checkpointId: "checkpoint-claimed-source",
           rootRunId: "root-claimed-source",
+          tenantId: "tenant-a",
           agentId: "agent-a",
-          sessionKey: "tenant-a:user-a:chat-a",
-          ownerTenantId: "tenant-a",
-          ownerUserId: "user-a",
+          conversationRef: DURABLE_CONVERSATION_REF,
+          conversationScope: DURABLE_CONVERSATION_SCOPE,
+          principalId: "user-a",
           deliveryOrigin: null,
           spawnTree: [],
           caps: [],
@@ -1641,10 +1671,11 @@ describe("orchestrate-tool", () => {
         getRow: {
           checkpointId: "checkpoint-revoked-source",
           rootRunId: "root-revoked",
+          tenantId: "tenant-a",
           agentId: "agent-a",
-          sessionKey: "tenant-a:user-a:chat-a",
-          ownerTenantId: "tenant-a",
-          ownerUserId: "user-a",
+          conversationRef: DURABLE_CONVERSATION_REF,
+          conversationScope: DURABLE_CONVERSATION_SCOPE,
+          principalId: "user-a",
           deliveryOrigin: null,
           spawnTree: [],
           caps: [],

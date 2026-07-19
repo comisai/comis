@@ -22,7 +22,14 @@ import type {
   ChannelSnapshotRow,
   SystemPromptReportRow,
 } from "./observability-store-types.js";
-import type { DeliveryFailureStage, DeliveryStatus, ErrorKind } from "@comis/core";
+import {
+  ChannelEndpointSchema,
+  ConversationRefSchema,
+  type DeliveryFailureStage,
+  type DeliveryStatus,
+  type ErrorKind,
+} from "@comis/core";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // snake_case row types (internal: what SQLite returns)
@@ -64,7 +71,10 @@ export interface DeliveryDbRow {
   id: number;
   timestamp: number;
   trace_id: string;
+  tenant_id: string;
   agent_id: string;
+  conversation_ref: string;
+  destination_endpoint: string;
   channel_type: string;
   channel_id: string;
   session_key: string;
@@ -180,12 +190,26 @@ function parseToolTag(raw: string | null): string[] | undefined {
   }
 }
 
-export function deliveryFromRow(row: DeliveryDbRow): DeliveryRow {
-  return {
+export function deliveryFromRow(row: DeliveryDbRow): Result<DeliveryRow, Error> {
+  const conversationRef = ConversationRefSchema.safeParse(row.conversation_ref);
+  if (!conversationRef.success) return err(new Error("conversation_ref"));
+  const decodedEndpoint = tryCatch(() => JSON.parse(row.destination_endpoint) as unknown);
+  if (!decodedEndpoint.ok) return err(new Error("destination_endpoint"));
+  const destinationEndpoint = ChannelEndpointSchema.safeParse(decodedEndpoint.value);
+  if (!destinationEndpoint.success) return err(new Error("destination_endpoint"));
+  if (
+    destinationEndpoint.data.channelType !== row.channel_type
+    || destinationEndpoint.data.conversationId !== row.channel_id
+  ) return err(new Error("destination_endpoint"));
+
+  return ok({
     id: row.id,
     timestamp: row.timestamp,
     traceId: row.trace_id,
+    tenantId: row.tenant_id,
     agentId: row.agent_id,
+    conversationRef: conversationRef.data,
+    destinationEndpoint: destinationEndpoint.data,
     channelType: row.channel_type,
     channelId: row.channel_id,
     sessionKey: row.session_key,
@@ -199,7 +223,7 @@ export function deliveryFromRow(row: DeliveryDbRow): DeliveryRow {
     llmCalls: row.llm_calls,
     tokensTotal: row.tokens_total,
     costTotal: row.cost_total,
-  };
+  });
 }
 
 export function diagnosticFromRow(row: DiagnosticDbRow): DiagnosticRow {

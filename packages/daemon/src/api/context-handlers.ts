@@ -35,6 +35,7 @@
 import {
   ContextConversationsContract,
   ContextTreeContract,
+  ConversationRefSchema,
   stripInternalFields,
   systemDateFrom,
   systemGetEnv,
@@ -91,7 +92,7 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
 
       const result = {
         conversations: page.conversations.map((c) => ({
-          conversation_id: c.conversationId,
+          conversation_ref: c.conversationRef,
           tenant_id: c.tenantId,
           agent_id: c.agentId,
           session_key: c.sessionKey,
@@ -119,23 +120,25 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
       const agentId = (rawParams._agentId as string | undefined) ?? deps.defaultAgentId;
       const userParams = stripInternalFields(rawParams);
       const params = ContextTreeContract.request.parse(userParams);
-      const conversationId = params.conversation_id;
+      const parsedConversationRef = ConversationRefSchema.safeParse(params.conversation_ref);
+      if (!parsedConversationRef.success) throw new Error("Invalid conversation reference");
+      const conversationRef = parsedConversationRef.data;
 
       if (!deps.lcdStore) {
-        const empty = { conversationId, nodes: [], messageCount: 0 };
+        const empty = { conversationRef, nodes: [], messageCount: 0 };
         if (IS_DEV) ContextTreeContract.response.parse(empty);
         return empty;
       }
 
-      // Agent+tenant read scope. sessionKey == conversationId in the current single-
+      // Agent+tenant read scope. sessionKey == conversationRef in the current single-
       // session-per-conversation model; the LCD read filters on
       // (conversation_id, agent_id, tenant_id), so sessionKey is unused for
       // these reads but is required by the ContextStoreScope shape.
       const scope: ContextStoreScope = {
-        conversationId,
+        conversationRef,
         tenantId: deps.tenantId,
         agentId,
-        sessionKey: conversationId,
+        sessionKey: conversationRef,
       };
 
       const summaries = deps.lcdStore.getSummaries(scope);
@@ -178,12 +181,12 @@ export function createContextHandlers(deps: ContextHandlerDeps): Record<string, 
         .getContextItems(scope)
         .filter((item) => item.refKind === "message").length;
 
-      const result = { conversationId, nodes, messageCount };
+      const result = { conversationRef, nodes, messageCount };
 
       // ids/counts only — NEVER the summary content (lossless store; the
       // bounded preview rides the response, not the log line).
       deps.logger.debug(
-        { method: "context.tree", agentId, conversationId, nodeCount: nodes.length, messageCount, step: "context-browse" },
+        { method: "context.tree", agentId, conversationRef, nodeCount: nodes.length, messageCount, step: "context-browse" },
         "context.tree resolved",
       );
       if (IS_DEV) ContextTreeContract.response.parse(result);

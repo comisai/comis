@@ -34,8 +34,8 @@
  * @module
  */
 
-import type { ContextStorePort, SessionKey } from "@comis/core";
-import { formatSessionKey, parseFormattedSessionKey } from "@comis/core";
+import type { ContextStorePort, ConversationScope, SessionKey, SessionStorePort } from "@comis/core";
+import { createConversationRef, formatSessionKey } from "@comis/core";
 
 /** Minimal logger surface (info/warn/debug). */
 interface ResetLogger {
@@ -44,11 +44,8 @@ interface ResetLogger {
   debug: (obj: Record<string, unknown>, msg: string) => void;
 }
 
-/** Minimal daemon sessionStore surface (the formatted-key transcript API). */
-export interface ResetSessionStore {
-  loadByFormattedKey(key: string): { messages: unknown[]; metadata?: Record<string, unknown> } | undefined;
-  saveByFormattedKey(key: string, messages: unknown[], metadata?: Record<string, unknown>): void;
-}
+/** Minimal daemon session-store transcript surface. */
+export type ResetSessionStore = Pick<SessionStorePort, "load" | "save">;
 
 /** Minimal pi session adapter surface (runtime layer). */
 export interface ResetRuntimeAdapter {
@@ -60,7 +57,6 @@ export interface ConversationResetDeps {
   lcdStore?: Pick<ContextStorePort, "runOnConversation" | "deleteConversationLcd">;
   sessionStore?: ResetSessionStore;
   piSessionAdapters?: Pick<Map<string, ResetRuntimeAdapter>, "get">;
-  tenantId: string;
   logger: ResetLogger;
 }
 
@@ -79,12 +75,12 @@ export interface ConversationReset {
    * Used by `session.reset_conversation` (which performs L1+L2 itself and
    * reports per-layer counts).
    */
-  destroyRuntimeSession(agentId: string, formattedSessionKey: string): Promise<boolean>;
+  destroyRuntimeSession(scope: ConversationScope, key: SessionKey): Promise<boolean>;
   /**
    * L1+L2+L3: the complete three-layer forget for slash `/new` + `/reset`.
    * Accepts the SessionKey object those call sites already hold.
    */
-  destroyConversationCompletely(agentId: string, key: SessionKey): Promise<ConversationResetResult>;
+  destroyConversationCompletely(scope: ConversationScope, key: SessionKey): Promise<ConversationResetResult>;
 }
 
 /**
@@ -92,7 +88,7 @@ export interface ConversationReset {
  * LCD store, daemon sessionStore, and pi session adapters all live).
  */
 export function createConversationReset(deps: ConversationResetDeps): ConversationReset {
-  const { lcdStore, sessionStore, piSessionAdapters, tenantId, logger } = deps;
+  const { lcdStore, sessionStore, piSessionAdapters, logger } = deps;
 
   async function destroyRuntime(agentId: string, key: SessionKey, formattedKey: string): Promise<boolean> {
     const adapter = piSessionAdapters?.get(agentId);
@@ -127,33 +123,28 @@ export function createConversationReset(deps: ConversationResetDeps): Conversati
   }
 
   return {
-    async destroyRuntimeSession(agentId: string, formattedSessionKey: string): Promise<boolean> {
-      const parsed = parseFormattedSessionKey(formattedSessionKey);
-      if (!parsed) {
-        logger.warn(
-          {
-            agentId,
-            sessionKey: formattedSessionKey,
-            errorKind: "validation" as const,
-            hint: "session key did not parse — runtime transcript NOT destroyed",
-          },
-          "Conversation reset: unparseable session key",
-        );
-        return false;
-      }
-      return destroyRuntime(agentId, parsed, formattedSessionKey);
+    async destroyRuntimeSession(scope: ConversationScope, key: SessionKey): Promise<boolean> {
+      return destroyRuntime(scope.agentId, key, formatSessionKey(key));
     },
 
-    async destroyConversationCompletely(agentId: string, key: SessionKey): Promise<ConversationResetResult> {
+    async destroyConversationCompletely(scopeAuthority: ConversationScope, key: SessionKey): Promise<ConversationResetResult> {
+      const agentId = scopeAuthority.agentId;
       const formattedKey = formatSessionKey(key);
 
       // L1: LCD rows + ingest cursor (serialized against concurrent ingest).
       let lcdRowsDeleted = 0;
       if (lcdStore) {
         try {
-          const scope = { conversationId: formattedKey, agentId, tenantId, sessionKey: formattedKey };
+          const conversationRef = createConversationRef(scopeAuthority);
+          if (!conversationRef.ok) throw conversationRef.error;
+          const scope = {
+            conversationRef: conversationRef.value,
+            agentId,
+            tenantId: scopeAuthority.tenantId,
+            sessionKey: formattedKey,
+          };
           lcdRowsDeleted = await lcdStore.runOnConversation(
-            scope.conversationId,
+            scope.conversationRef,
             () => lcdStore.deleteConversationLcd(scope),
           );
         } catch (e: unknown) {
@@ -168,10 +159,14 @@ export function createConversationReset(deps: ConversationResetDeps): Conversati
       let sessionMessagesCleared = 0;
       if (sessionStore) {
         try {
-          const data = sessionStore.loadByFormattedKey(formattedKey);
-          if (data) {
-            sessionMessagesCleared = data.messages.length;
-            sessionStore.saveByFormattedKey(formattedKey, [], data.metadata);
+          const data = sessionStore.load(scopeAuthority);
+          if (!data.ok) {
+            throw data.error;
+          }
+          if (data.value) {
+            sessionMessagesCleared = data.value.messages.length;
+            const saved = sessionStore.save(scopeAuthority, [], data.value.metadata);
+            if (!saved.ok) throw saved.error;
           }
         } catch (e: unknown) {
           logger.warn(

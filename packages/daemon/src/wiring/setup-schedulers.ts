@@ -24,13 +24,12 @@ import {
   createCronStore,
   createExecutionTracker,
   isInQuietHours,
-  resolveEffectiveHeartbeatConfig,
-  resolveHeartbeatSessionKey,
   type CronScheduler,
   type CronJob,
   type SystemEventQueue,
   type ExecutionTracker,
 } from "@comis/scheduler";
+import { resolveInternalTurnIdentity } from "@comis/orchestrator";
 import type { ComputeDailyResetNextRun } from "@comis/core";
 import type { SessionTrajectoryHandleRegistry } from "@comis/observability";
 import type { WakeGateRunner } from "./wake-gate-runner.js";
@@ -204,13 +203,16 @@ export async function setupSchedulers(deps: {
 
   /** Resolve the formatted session key for an agent's main heartbeat session. */
   function resolveMainSessionKey(agentId: string): string {
-    const agentConfig = agents[agentId];
-    const effectiveConfig = resolveEffectiveHeartbeatConfig(
-      schedulerConfig.heartbeat,
-      agentConfig?.scheduler?.heartbeat,
-    );
-    const sessionKey = resolveHeartbeatSessionKey(agentId, effectiveConfig, container.config.tenantId);
-    return formatSessionKey(sessionKey);
+    const identity = resolveInternalTurnIdentity({
+      tenantId: container.config.tenantId,
+      agentId,
+      originKind: "scheduler",
+      instanceId: "heartbeat",
+      conversationId: agentId,
+      principalId: `scheduler-heartbeat-${agentId}`,
+    });
+    if (!identity.ok) throw identity.error;
+    return formatSessionKey(identity.value.displaySessionKey);
   }
 
   // Initialize per-agent CronSchedulers
@@ -916,6 +918,7 @@ export async function setupSchedulers(deps: {
       computeDailyResetNextRun,
       nowMs: clock.now.bind(clock),
       timers,
+      listQueryScopes: () => [{ tenantId: container.config.tenantId, agentId }],
     });
 
     scheduler.start();

@@ -66,7 +66,7 @@ export { stripMarkup, stripHeartbeatToken, stripResponsePrefix, classifyHeartbea
 export type { HeartbeatResponseOutcome, ClassifyHeartbeatInput, ProcessHeartbeatInput } from "./heartbeat/index.js";
 
 // Agent heartbeat source
-export { createAgentHeartbeatSource, isQueueBusy, resolveHeartbeatSessionKey } from "./heartbeat/index.js";
+export { createAgentHeartbeatSource, isQueueBusy } from "./heartbeat/index.js";
 export type { AgentHeartbeatSourceDeps, HeartbeatSessionOps } from "./heartbeat/index.js";
 
 // System events queue

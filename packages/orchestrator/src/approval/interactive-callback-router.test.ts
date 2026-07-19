@@ -13,12 +13,12 @@
  *   5. !verifyCallbackData(...)                     → invalid_signature (constant-time, no throw)
  *   6. details → details_requested (no resolve); approve/deny → resolveApproval + resolved
  *
- * Plain-text branch: pendingForSession + agent filter + case-insensitive verb (+ optional shortId
+ * Plain-text branch: pendingForAuthority + case-insensitive verb (+ optional shortId
  * suffix); exactly-one → resolve; multiple-no-suffix → ambiguous; none → unknown. HMAC skipped
  * for this branch only; replay protection still from pending-table removal.
  */
 import { describe, it, expect } from "vitest";
-import { signCallbackData } from "@comis/core";
+import { ConversationRefSchema, signCallbackData } from "@comis/core";
 import type { ApprovalRequest, ApprovalGate, ClockPort } from "@comis/core";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import {
@@ -30,7 +30,9 @@ import {
 const SECRET = "test-signing-secret-32-bytes-aaaaaaaaaaaa";
 const SHORT_ID = "abc123XYZ789"; // 12 base62 chars
 const REQUEST_ID = "11111111-1111-4111-8111-111111111111";
-const SESSION_K = "tenant-a:user-a:chat-1:thread:thread-1";
+const SESSION_K = "tenant-a:agent:agent-1:user-a:chat-1:thread:thread-1";
+const CONVERSATION_REF = ConversationRefSchema.parse(`cv_${"a".repeat(43)}`);
+const OTHER_CONVERSATION_REF = ConversationRefSchema.parse(`cv_${"b".repeat(43)}`);
 const CREATED_AT = 1_000_000;
 const TIMEOUT_MS = 300_000; // expiresAt = 1_300_000
 
@@ -75,8 +77,12 @@ function makeFakeGate(seed: ApprovalRequest[]): {
     pending: () => Array.from(byRequestId.values()),
     getRequest: (requestId) => byRequestId.get(requestId),
     getRequestByShortId: (shortId) => byShortId.get(shortId),
-    pendingForSession: (sessionKey) =>
-      Array.from(byRequestId.values()).filter((r) => r.sessionKey === sessionKey),
+    pendingForAuthority: (authority) =>
+      Array.from(byRequestId.values()).filter((request) =>
+        request.tenantId === authority.tenantId
+        && request.agentId === authority.agentId
+        && request.conversationRef === authority.conversationRef
+        && request.resolvingPrincipalId === authority.resolvingPrincipalId),
     clearDenialCache: () => {},
     clearApprovalCache: () => {},
     serializePending: () => [],
@@ -96,8 +102,10 @@ function makeRequest(over: Partial<ApprovalRequest> = {}): ApprovalRequest {
     toolName: "shell",
     action: "shell.exec",
     params: {},
+    tenantId: "tenant-a",
     agentId: "agent-1",
-    sessionKey: SESSION_K,
+    conversationRef: CONVERSATION_REF,
+    resolvingPrincipalId: "principal-user-a",
     trustLevel: "untrusted",
     callbackOwner: {
       tenantId: "tenant-a",
@@ -123,6 +131,8 @@ function inbound(rawData: string, over: Partial<InboundCallback> = {}): InboundC
     channelType: "telegram",
     channelKey: "chat-1",
     agentId: "agent-1",
+    conversationRef: CONVERSATION_REF,
+    resolvingPrincipalId: "principal-user-a",
     sessionKey: SESSION_K,
     rawData,
     inboundUserId: "user-a",
@@ -183,11 +193,11 @@ describe("InteractiveCallbackRouter — signed branch", () => {
     expect(resolveCalls).toHaveLength(0);
   });
 
-  it("cross-session: inbound sessionKey ≠ the pending entry's sessionKey → {kind:'unknown'} and NOT resolved", async () => {
+  it("cross-conversation: inbound canonical ref cannot resolve another conversation", async () => {
     const { router, resolveCalls } = makeRouter([makeRequest()]);
     // room B presents room A's shortId
     const res = await router.route(
-      inbound(signedPayload("approve"), { sessionKey: "telegram:999:888" }),
+      inbound(signedPayload("approve"), { conversationRef: OTHER_CONVERSATION_REF }),
     );
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toEqual({ kind: "unknown" });
@@ -219,7 +229,7 @@ describe("InteractiveCallbackRouter — signed branch", () => {
 
     const res = await router.route(inbound(signedPayload("approve"), {
       threadId: "thread-2",
-      sessionKey: "tenant-a:user-a:chat-1:thread:thread-2",
+      sessionKey: "tenant-a:agent:agent-1:user-a:chat-1:thread:thread-2",
     } as Partial<InboundCallback>));
 
     expect(res.ok).toBe(true);
@@ -343,8 +353,17 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
   const reportOwner = {
     graphId: "11111111-2222-4333-8444-555555555555",
     tenantId: "tenant-a",
+    conversationRef: CONVERSATION_REF,
+    resolvingPrincipalId: "principal-user-a",
+    endpoint: {
+      channelType: "telegram",
+      channelInstanceId: "telegram-main",
+      conversationId: "chat-1",
+      threadId: "thread-1",
+      conversationKind: "shared",
+    },
     userId: "user-a",
-    sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+    sessionKey: SESSION_K,
     agentId: "agent-1",
     channelType: "telegram",
     channelKey: "chat-1",
@@ -379,7 +398,7 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
     const delivered = await restarted.route(inbound(registered.value, {
       channelType: "telegram",
       channelKey: "chat-1",
-      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      sessionKey: SESSION_K,
       agentId: "agent-1",
       inboundUserId: "user-a",
     }));
@@ -392,7 +411,7 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
     const replay = await afterConsumptionRestart.route(inbound(registered.value, {
       channelType: "telegram",
       channelKey: "chat-1",
-      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      sessionKey: SESSION_K,
       agentId: "agent-1",
       inboundUserId: "user-a",
     }));
@@ -435,7 +454,7 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
     const unresolved = await router.route(inbound(registered.value, {
       channelType: "telegram",
       channelKey: "chat-1",
-      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      sessionKey: SESSION_K,
       agentId: "agent-1",
       inboundUserId: "user-a",
     }));
@@ -444,7 +463,7 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
     const replayAfterRestart = await makeRouter([], undefined, store).router.route(inbound(registered.value, {
       channelType: "telegram",
       channelKey: "chat-1",
-      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      sessionKey: SESSION_K,
       agentId: "agent-1",
       inboundUserId: "user-a",
     }));
@@ -469,7 +488,7 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
     const routed = await router.route(inbound(refreshed.value, {
       channelType: "telegram",
       channelKey: "chat-1",
-      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      sessionKey: SESSION_K,
       agentId: "agent-1",
       inboundUserId: "user-a",
     }));
@@ -507,7 +526,7 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
     const first = await router.route(inbound(registered.value, {
       channelType: "telegram",
       channelKey: "chat-1",
-      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      sessionKey: SESSION_K,
       agentId: "agent-1",
       inboundUserId: "user-a",
     }));
@@ -522,7 +541,7 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
     const replay = await router.route(inbound(registered.value, {
       channelType: "telegram",
       channelKey: "chat-1",
-      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      sessionKey: SESSION_K,
       agentId: "agent-1",
     }));
     expect(replay.ok).toBe(true);
@@ -531,18 +550,18 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
 
   it.each([
     ["sender", {
-      sessionKey: "tenant-a:other-user:chat-1:thread:thread-1",
+      sessionKey: "tenant-a:agent:agent-1:other-user:chat-1:thread:thread-1",
       inboundUserId: "other-user",
     }],
     ["agent", { agentId: "agent-2" }],
     ["channel type", { channelType: "discord" }],
     ["channel route", {
       channelKey: "chat-2",
-      sessionKey: "tenant-a:user-a:chat-2:thread:thread-1",
+      sessionKey: "tenant-a:agent:agent-1:user-a:chat-2:thread:thread-1",
     }],
     ["thread", {
       threadId: "thread-2",
-      sessionKey: "tenant-a:user-a:chat-1:thread:thread-2",
+      sessionKey: "tenant-a:agent:agent-1:user-a:chat-1:thread:thread-2",
     }],
   ])("rejects an otherwise valid report callback from the wrong %s", async (_label, override) => {
     const { router } = makeRouter([]);
@@ -553,7 +572,7 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
     const rejected = await router.route(inbound(registered.value, {
       channelType: "telegram",
       channelKey: "chat-1",
-      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      sessionKey: SESSION_K,
       agentId: "agent-1",
       ...override,
     }));
@@ -564,7 +583,7 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
     const ownerRetry = await router.route(inbound(registered.value, {
       channelType: "telegram",
       channelKey: "chat-1",
-      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      sessionKey: SESSION_K,
       agentId: "agent-1",
     }));
     expect(ownerRetry.ok).toBe(true);
@@ -582,7 +601,7 @@ describe("InteractiveCallbackRouter — graph report callbacks", () => {
     const result = await router.route(inbound(registered.value, {
       channelType: "telegram",
       channelKey: "chat-1",
-      sessionKey: "tenant-a:user-a:chat-1:thread:thread-1",
+      sessionKey: SESSION_K,
       agentId: "agent-1",
     }));
 
@@ -685,7 +704,7 @@ describe("InteractiveCallbackRouter — plain-text branch", () => {
   });
 
   it("plain-text scoping: pending in ANOTHER session is not visible → 'approve' → {kind:'unknown'}", async () => {
-    const otherSession = makeRequest({ sessionKey: "telegram:777:777" });
+    const otherSession = makeRequest({ conversationRef: OTHER_CONVERSATION_REF });
     const { router, resolveCalls } = makeRouter([otherSession]);
     const res = await router.route(inbound("approve")); // inbound sessionKey = SESSION_K
     expect(res.ok).toBe(true);

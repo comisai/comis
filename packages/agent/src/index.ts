@@ -384,8 +384,9 @@ export type { PiEventBridgeDeps, PiEventBridgeResult, BoundedAutonomyBudgetHolde
 // Adapters (re-export for daemon wiring convenience)
 // ---------------------------------------------------------------------------
 
-// Auth storage adapter (SecretManager to pi-coding-agent AuthStorage)
+// Credential store adapter (SecretManager to pi-ai CredentialStore)
 export {
+  ComisCredentialStore,
   createAuthStorageAdapter,
   getMissingProviderCredentialNames,
   getProviderSecretNames,
@@ -396,7 +397,7 @@ export type { AuthStorage, AuthStorageAdapterOptions } from "./model/auth-storag
 
 // Model registry adapter (ModelRegistry creation + initial model resolution)
 export { createModelRegistryAdapter, registerCustomProviders, resolveInitialModel, normalizeOpenAICompatBaseUrl } from "./model/model-registry-adapter.js";
-export type { CustomProviderRegistration, CustomProviderLogger, RegisterCustomProvidersResult } from "./model/model-registry-adapter.js";
+export type { CustomProviderRegistration, CustomProviderLogger, RegisterCustomProvidersResult, ModelRegistryAdapter } from "./model/model-registry-adapter.js";
 
 // Session key mapper (SessionKey to/from filesystem path)
 export {

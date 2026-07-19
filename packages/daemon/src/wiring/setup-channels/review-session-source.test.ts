@@ -1,36 +1,44 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Unit tests for the LCD-merged review session source: in DAG mode
- * the daemon session store is near-empty, so the
- * nightly memory-review extraction was a silent no-op — zero entities /
- * causal edges on a live daemon with days of conversations. The adapter
- * presents the union of the daemon store and the LCD store through the view
- * `runMemoryReview` consumes.
- */
-
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  createConversationRef,
+  type ConversationRef,
+  type ConversationScope,
+  type SessionDetailedEntry,
+} from "@comis/core";
+import { ok } from "@comis/shared";
 import { buildReviewSessionSource } from "./review-session-source.js";
-import type { ReviewSessionEntry } from "./review-session-source.js";
 
-const TENANT = "default";
-const AGENT = "default";
+const TENANT = "tenant-a";
+const AGENT = "agent-a";
+const QUERY_SCOPE = { tenantId: TENANT, agentId: AGENT };
 
-function storeEntry(sessionKey: string, messageCount: number): ReviewSessionEntry {
+function conversationScope(principalId: string): ConversationScope {
+  return { tenantId: TENANT, agentId: AGENT, partition: { kind: "principal", principalId } };
+}
+
+function conversationRef(scope: ConversationScope): ConversationRef {
+  const result = createConversationRef(scope);
+  if (!result.ok) throw result.error;
+  return result.value;
+}
+
+function storeEntry(scope: ConversationScope, messageCount: number): SessionDetailedEntry {
   return {
-    sessionKey,
+    conversationRef: conversationRef(scope),
+    conversationScope: scope,
     tenantId: TENANT,
-    userId: "u",
-    channelId: "c",
-    metadata: null,
+    agentId: AGENT,
+    metadata: {},
     createdAt: 1,
     updatedAt: 2,
     messageCount,
   };
 }
 
-function lcdConversation(sessionKey: string, messageCount: number) {
+function lcdConversation(ref: ConversationRef, sessionKey: string, messageCount: number) {
   return {
-    conversationId: sessionKey,
+    conversationRef: ref,
     tenantId: TENANT,
     agentId: AGENT,
     sessionKey,
@@ -41,78 +49,89 @@ function lcdConversation(sessionKey: string, messageCount: number) {
   };
 }
 
-function lcdTextMessage(role: "user" | "assistant" | "toolResult", text: string, seq: number) {
+function lcdTextMessage(role: "user" | "assistant" | "toolResult", content: string, seq: number) {
   return {
     id: `m${seq}`,
-    conversationId: "k",
+    conversationRef: `cv_${"m".repeat(43)}`,
     seq,
     role,
     tokenCount: 1,
     createdAt: 100 + seq,
     parts: [
-      { kind: "text" as const, metadata: { raw: { type: "text", text } } },
+      { kind: "text" as const, metadata: { raw: { type: "text", text: content } } },
       { kind: "tool_use" as const, metadata: { raw: { type: "toolCall" } } },
     ],
   };
 }
 
-function makeDeps(over: Record<string, unknown> = {}) {
+function makeDeps(overrides: Record<string, unknown> = {}) {
   return {
     sessionStore: {
-      listDetailed: vi.fn().mockReturnValue([] as ReviewSessionEntry[]),
-      loadByFormattedKey: vi.fn().mockReturnValue(undefined),
+      listDetailed: vi.fn().mockReturnValue(ok([])),
+      loadByRef: vi.fn().mockReturnValue(ok(undefined)),
     },
-    agentId: AGENT,
-    tenantId: TENANT,
-    ...over,
+    ...overrides,
   };
 }
 
-describe("the nightly review sees DAG conversations, not just the near-empty daemon store", () => {
-  it("lists LCD conversations the daemon store has never heard of", () => {
+describe("authority-scoped review session source", () => {
+  it("lists an LCD conversation absent from the session store", () => {
+    const scope = conversationScope("principal-lcd");
+    const ref = conversationRef(scope);
     const deps = makeDeps({
       lcdStore: { getMessages: vi.fn().mockReturnValue([]) },
       contextBrowse: {
         listConversations: vi.fn().mockReturnValue({
-          conversations: [lcdConversation("default:openai-api:openai", 38)],
+          conversations: [lcdConversation(ref, "display-lcd", 38)],
           total: 1,
         }),
       },
     });
 
-    const entries = buildReviewSessionSource(deps as never).listDetailed(TENANT);
+    const result = buildReviewSessionSource(deps as never).listDetailed(QUERY_SCOPE);
 
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({
-      sessionKey: "default:openai-api:openai",
-      userId: "openai-api",
-      channelId: "openai",
-      messageCount: 38,
-    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw result.error;
+    expect(result.value).toEqual([
+      expect.objectContaining({
+        conversationRef: ref,
+        sessionKey: "display-lcd",
+        tenantId: TENANT,
+        agentId: AGENT,
+        messageCount: 38,
+      }),
+    ]);
   });
 
-  it("prefers the richer row when both stores know the session — the minMessages gate sees the real size", () => {
+  it("uses the larger LCD count for a conversation known to both stores", () => {
+    const scope = conversationScope("principal-shared");
+    const entry = storeEntry(scope, 2);
     const deps = makeDeps({
       sessionStore: {
-        listDetailed: vi.fn().mockReturnValue([storeEntry("t:u:c", 2)]),
-        loadByFormattedKey: vi.fn(),
+        listDetailed: vi.fn().mockReturnValue(ok([entry])),
+        loadByRef: vi.fn().mockReturnValue(ok(undefined)),
       },
       lcdStore: { getMessages: vi.fn().mockReturnValue([]) },
       contextBrowse: {
         listConversations: vi.fn().mockReturnValue({
-          conversations: [lcdConversation("t:u:c", 40)],
+          conversations: [lcdConversation(entry.conversationRef, "display-shared", 40)],
           total: 1,
         }),
       },
     });
 
-    const entries = buildReviewSessionSource(deps as never).listDetailed();
+    const result = buildReviewSessionSource(deps as never).listDetailed(QUERY_SCOPE);
 
-    expect(entries).toHaveLength(1);
-    expect(entries[0]!.messageCount).toBe(40);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw result.error;
+    expect(result.value).toHaveLength(1);
+    expect(result.value[0]!.messageCount).toBe(40);
+    expect(result.value[0]!.principalId).toBe("principal-shared");
   });
 
-  it("loads LCD messages as {role, content} text — tool parts and non-conversational roles dropped", () => {
+  it("loads LCD text by explicit query scope and conversation ref", () => {
+    const scope = conversationScope("principal-load");
+    const ref = conversationRef(scope);
     const getMessages = vi.fn().mockReturnValue([
       lcdTextMessage("user", "my dog is Biscuit", 1),
       lcdTextMessage("toolResult", "tool noise", 2),
@@ -120,50 +139,82 @@ describe("the nightly review sees DAG conversations, not just the near-empty dae
     ]);
     const deps = makeDeps({
       lcdStore: { getMessages },
-      contextBrowse: { listConversations: vi.fn().mockReturnValue({ conversations: [], total: 0 }) },
+      contextBrowse: {
+        listConversations: vi.fn().mockReturnValue({
+          conversations: [lcdConversation(ref, "display-load", 3)],
+          total: 1,
+        }),
+      },
     });
 
-    const data = buildReviewSessionSource(deps as never).loadByFormattedKey("t:u:c");
+    const result = buildReviewSessionSource(deps as never).loadByRef(QUERY_SCOPE, ref);
 
-    expect(getMessages).toHaveBeenCalledWith({ conversationId: "t:u:c", tenantId: TENANT, agentId: AGENT, sessionKey: "t:u:c" });
-    expect(data!.messages).toEqual([
-      // `createdAt` (the LCD row timestamp) rides through so the reflection
-      // skill-source builder can window a session's rows PER TURN.
-      { role: "user", content: "my dog is Biscuit", createdAt: 101 },
-      { role: "assistant", content: "noted!", createdAt: 103 },
-    ]);
+    expect(getMessages).toHaveBeenCalledWith({
+      conversationRef: ref,
+      tenantId: TENANT,
+      agentId: AGENT,
+      sessionKey: "display-load",
+    });
+    expect(result).toEqual(ok({
+      messages: [
+        { role: "user", content: "my dog is Biscuit", createdAt: 101 },
+        { role: "assistant", content: "noted!", createdAt: 103 },
+      ],
+      metadata: {},
+      createdAt: 101,
+      updatedAt: 103,
+    }));
   });
 
-  it("the daemon store wins when it actually has the transcript (pipeline mode unchanged)", () => {
-    const fromStore = { messages: [{ role: "user", content: "hi" }], metadata: {}, createdAt: 1, updatedAt: 2 };
+  it("returns a populated session-store transcript without reading LCD content", () => {
+    const scope = conversationScope("principal-store");
+    const ref = conversationRef(scope);
+    const fromStore = {
+      conversationRef: ref,
+      conversationScope: scope,
+      messages: [{ role: "user", content: "hi" }],
+      metadata: {},
+      createdAt: 1,
+      updatedAt: 2,
+    };
     const getMessages = vi.fn();
     const deps = makeDeps({
       sessionStore: {
-        listDetailed: vi.fn().mockReturnValue([]),
-        loadByFormattedKey: vi.fn().mockReturnValue(fromStore),
+        listDetailed: vi.fn().mockReturnValue(ok([])),
+        loadByRef: vi.fn().mockReturnValue(ok(fromStore)),
       },
       lcdStore: { getMessages },
-      contextBrowse: { listConversations: vi.fn().mockReturnValue({ conversations: [], total: 0 }) },
+      contextBrowse: { listConversations: vi.fn() },
     });
 
-    const data = buildReviewSessionSource(deps as never).loadByFormattedKey("t:u:c");
+    const result = buildReviewSessionSource(deps as never).loadByRef(QUERY_SCOPE, ref);
 
-    expect(data).toBe(fromStore);
+    expect(result).toEqual(ok(fromStore));
     expect(getMessages).not.toHaveBeenCalled();
   });
 
-  it("absent LCD deps degrade to the daemon view unchanged (byte-identical pipeline deployments)", () => {
-    const base = [storeEntry("t:u:c", 7)];
+  it("projects session-store metadata without requiring LCD dependencies", () => {
+    const scope = conversationScope("principal-base");
+    const entry = storeEntry(scope, 7);
     const deps = makeDeps({
       sessionStore: {
-        listDetailed: vi.fn().mockReturnValue(base),
-        loadByFormattedKey: vi.fn().mockReturnValue(undefined),
+        listDetailed: vi.fn().mockReturnValue(ok([entry])),
+        loadByRef: vi.fn().mockReturnValue(ok(undefined)),
       },
     });
-
     const source = buildReviewSessionSource(deps as never);
 
-    expect(source.listDetailed()).toEqual(base);
-    expect(source.loadByFormattedKey("t:u:c")).toBeUndefined();
+    expect(source.listDetailed(QUERY_SCOPE)).toEqual(ok([{
+      conversationRef: entry.conversationRef,
+      sessionKey: "tenant-a:agent:agent-a:principal-base:dm:peer:principal-base",
+      principalId: "principal-base",
+      tenantId: TENANT,
+      agentId: AGENT,
+      metadata: {},
+      createdAt: 1,
+      updatedAt: 2,
+      messageCount: 7,
+    }]));
+    expect(source.loadByRef(QUERY_SCOPE, entry.conversationRef)).toEqual(ok(undefined));
   });
 });

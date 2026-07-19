@@ -26,12 +26,14 @@ import type {
   SessionKey,
   DeliveryService,
   ApprovalRequest,
+  ResolvedTurnScope,
 } from "@comis/core";
-import { formatSessionKey } from "@comis/core";
+import { createConversationRef, formatSessionKey } from "@comis/core";
 import { ok } from "@comis/shared";
 
 import { evaluateInboundGate } from "./inbound-gate.js";
 import type { GateDeps } from "./inbound-gate.js";
+import { createDeterministicLocalization } from "../localization/deterministic-localization.js";
 import type {
   InteractiveCallbackRouter,
   CallbackResolution,
@@ -77,12 +79,38 @@ function makeMsg(overrides?: Partial<NormalizedMessage>): NormalizedMessage {
 function makeSessionKey(overrides: Partial<SessionKey> = {}): SessionKey {
   return {
     tenantId: "default",
+    agentId: "agent-1",
     userId: "user-1",
     channelId: "chat-1",
     peerId: "user-1",
     ...overrides,
   };
 }
+
+const TURN_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "adapter-1",
+  conversationId: "chat-1",
+  conversationKind: "direct" as const,
+};
+
+const TURN_SCOPE: ResolvedTurnScope = {
+  conversation: {
+    tenantId: "default",
+    agentId: "agent-1",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: TURN_ENDPOINT,
+      principalId: "principal-user-1",
+    },
+  },
+  principal: { principalId: "principal-user-1" },
+  endpoint: TURN_ENDPOINT,
+};
+
+const turnConversationRef = createConversationRef(TURN_SCOPE.conversation);
+if (!turnConversationRef.ok) throw turnConversationRef.error;
+const TURN_CONVERSATION_REF = turnConversationRef.value;
 
 function makeFakeDeliveryService(): DeliveryService {
   return {
@@ -132,6 +160,7 @@ function makeDeps(overrides?: Partial<GateDeps>): GateDeps {
       cleanStale: vi.fn(() => 0),
     },
     deliveryService: makeFakeDeliveryService(),
+    localization: createDeterministicLocalization(),
     ...overrides,
   } as GateDeps;
 }
@@ -171,6 +200,8 @@ describe("evaluateInboundGate history serialization", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       SEND_OVERRIDES as never,
       sourceTerminalScope,
     );
@@ -194,8 +225,10 @@ function makeRequest(overrides?: Partial<ApprovalRequest>): ApprovalRequest {
     toolName: "agents.delete",
     action: "agents.delete",
     params: {},
+    tenantId: "default",
     agentId: "agent-1",
-    sessionKey: formatSessionKey(makeSessionKey()),
+    conversationRef: TURN_CONVERSATION_REF,
+    resolvingPrincipalId: TURN_SCOPE.principal.principalId,
     trustLevel: "user",
     callbackOwner: {
       tenantId: "default",
@@ -218,7 +251,16 @@ function makeFakeGate(pending: ApprovalRequest[]) {
       pending: () => pending,
       getRequest: (id: string) => pending.find((r) => r.requestId === id),
       getRequestByShortId: (sid: string) => pending.find((r) => r.shortId === sid),
-      pendingForSession: (sk: string) => pending.filter((r) => r.sessionKey === sk),
+      pendingForAuthority: (authority: {
+        tenantId: string;
+        agentId: string;
+        conversationRef: string;
+        resolvingPrincipalId: string;
+      }) => pending.filter((request) =>
+        request.tenantId === authority.tenantId
+        && request.agentId === authority.agentId
+        && request.conversationRef === authority.conversationRef
+        && request.resolvingPrincipalId === authority.resolvingPrincipalId),
     },
     resolveApproval,
   };
@@ -267,6 +309,8 @@ describe("evaluateInboundGate button-callback intercept", () => {
       msg,
       sessionKey,
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -306,6 +350,8 @@ describe("evaluateInboundGate button-callback intercept", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -345,6 +391,8 @@ describe("evaluateInboundGate button-callback intercept", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -373,12 +421,28 @@ describe("evaluateInboundGate button-callback intercept", () => {
       },
     });
 
+    const ownerThreadScope: ResolvedTurnScope = {
+      ...TURN_SCOPE,
+      endpoint: { ...TURN_SCOPE.endpoint, threadId: "owner-topic" },
+      conversation: {
+        ...TURN_SCOPE.conversation,
+        partition: {
+          kind: "endpoint-conversation-principal",
+          endpoint: { ...TURN_SCOPE.endpoint, threadId: "owner-topic" },
+          principalId: TURN_SCOPE.principal.principalId,
+        },
+      },
+    };
+    const ownerThreadRef = createConversationRef(ownerThreadScope.conversation);
+    if (!ownerThreadRef.ok) throw ownerThreadRef.error;
     const result = await evaluateInboundGate(
       deps,
       adapter,
       msg,
       makeSessionKey({ threadId: "owner-topic" }),
       "agent-1",
+      ownerThreadScope,
+      ownerThreadRef.value,
       SEND_OVERRIDES as never,
     );
 
@@ -430,6 +494,8 @@ describe("evaluateInboundGate button-callback intercept", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       SEND_OVERRIDES as never,
     );
 
@@ -463,6 +529,8 @@ describe("evaluateInboundGate /approve shortId slash path", () => {
       makeMsg({ text: "/approve abc123XYZ789" }),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       SEND_OVERRIDES as never,
     );
 
@@ -495,6 +563,8 @@ describe("evaluateInboundGate /approve shortId slash path", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -530,6 +600,8 @@ describe("evaluateInboundGate /approve shortId slash path", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -565,6 +637,8 @@ describe("evaluateInboundGate /approve shortId slash path", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -594,6 +668,8 @@ describe("evaluateInboundGate /approve shortId slash path", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -626,6 +702,8 @@ describe("evaluateInboundGate /approve shortId slash path", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );
@@ -655,6 +733,8 @@ describe("evaluateInboundGate /approve shortId slash path", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       SEND_OVERRIDES as any,
     );

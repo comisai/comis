@@ -92,7 +92,7 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       //     LIVE context per-call; fail closed without a fully-scoped
       //     session. NEVER a wiring closure (multi-agent-safe).
       const ctxScope = requireCtxScope();
-      const conversationId = ctxScope.conversationId;
+      const conversationRef = ctxScope.conversationRef;
 
       // (2) SANITIZE — strip FTS5 special chars in the tool, before the store sees it.
       const q = sanitizeFts5Query(readStringParam(params, "query", true)!);
@@ -151,7 +151,7 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
         // search. Payload carries the closed `scriptClass`/`lane` enums + ids +
         // timestamp ONLY — the query string is intentionally ABSENT.
         emitScriptZeroHit(deps, {
-          conversationId: ctxScope.conversationId,
+          conversationRef: ctxScope.conversationRef,
           agentId: ctxScope.agentId,
           sessionKey: ctxScope.sessionKey,
           scriptClass: result.scriptZeroHit,
@@ -162,7 +162,7 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       deps.logger.debug(
         {
           toolName: "ctx_search",
-          conversationId,
+          conversationRef,
           scope,
           hitCount: hits.length,
           durationMs: endMs - t0,
@@ -180,7 +180,7 @@ export function createCtxSearchTool(deps: ContextToolDeps): AgentTool<typeof Ctx
       // it (best-effort, content-free), mirroring the afterTurn emitters'
       // non-fatal contract: observability can NEVER fail the recovery.
       emitExpansionMetric(deps, "ctx_search", {
-        conversationId: ctxScope.conversationId,
+        conversationRef: ctxScope.conversationRef,
         agentId: ctxScope.agentId,
         sessionKey: ctxScope.sessionKey,
         tool: "ctx_search",

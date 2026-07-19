@@ -50,16 +50,14 @@ const clackPrompts = await import("@clack/prompts");
  * Session data matching `SessionListContract.response`:
  * `{ sessions: SessionInfo[], total }` where SessionInfo carries
  * `sessionKey/agentId/userId/channelId/kind/messageCount/totalTokens/updatedAt/createdAt`.
- * The CLI reads `sessionKey ?? key`, `userId ?? user`, `updatedAt ?? lastActive` —
- * contract-shape data flows through always-on response.parse unchanged.
+ * The CLI renders the canonical conversation reference and agent partition
+ * returned by the session list contract.
  */
 const SESSIONS_DATA = {
   sessions: [
     {
-      sessionKey: "test-tenant:user-1:discord-main",
+      conversationRef: "conversation-ref-1",
       agentId: "default",
-      userId: "user-1",
-      channelId: "discord-main",
       kind: "discord",
       messageCount: 42,
       totalTokens: 1000,
@@ -67,10 +65,8 @@ const SESSIONS_DATA = {
       createdAt: Date.now() - 60 * 60 * 1000,
     },
     {
-      sessionKey: "test-tenant:user-2:telegram-bot",
+      conversationRef: "conversation-ref-2",
       agentId: "default",
-      userId: "user-2",
-      channelId: "telegram-bot",
       kind: "telegram",
       messageCount: 7,
       totalTokens: 200,
@@ -78,10 +74,8 @@ const SESSIONS_DATA = {
       createdAt: Date.now() - 3 * 60 * 60 * 1000,
     },
     {
-      sessionKey: "other-tenant:user-3:slack-ws",
+      conversationRef: "conversation-ref-3",
       agentId: "default",
-      userId: "user-3",
-      channelId: "slack-ws",
       kind: "slack",
       messageCount: 1,
       totalTokens: 50,
@@ -114,28 +108,24 @@ describe("sessions list table output", () => {
     exitSpy.restore();
   });
 
-  it("renders sessions in table format with session key, channel, user, and relative time columns", async () => {
+  it("renders sessions with conversation reference agent kind and relative time", async () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
-    await program.parseAsync(["node", "test", "sessions", "list"]);
+    await program.parseAsync([
+      "node", "test", "sessions", "list",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     const output = getSpyOutput(consoleSpy.log);
 
-    // Session keys
-    expect(output).toContain("test-tenant:user-1:discord-main");
-    expect(output).toContain("test-tenant:user-2:telegram-bot");
-    expect(output).toContain("other-tenant:user-3:slack-ws");
-
-    // Channel names
-    expect(output).toContain("discord-main");
-    expect(output).toContain("telegram-bot");
-    expect(output).toContain("slack-ws");
-
-    // User names
-    expect(output).toContain("user-1");
-    expect(output).toContain("user-2");
-    expect(output).toContain("user-3");
+    expect(output).toContain("conversation-ref-1");
+    expect(output).toContain("conversation-ref-2");
+    expect(output).toContain("conversation-ref-3");
+    expect(output).toContain("default");
+    expect(output).toContain("discord");
+    expect(output).toContain("telegram");
+    expect(output).toContain("slack");
 
     // Relative time strings
     expect(output).toContain("5m ago");
@@ -174,7 +164,10 @@ describe("sessions list empty", () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
-    await program.parseAsync(["node", "test", "sessions", "list"]);
+    await program.parseAsync([
+      "node", "test", "sessions", "list",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("No sessions found");
@@ -207,28 +200,29 @@ describe("sessions list --format json", () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
-    await program.parseAsync(["node", "test", "sessions", "list", "--format", "json"]);
+    await program.parseAsync([
+      "node", "test", "sessions", "list", "--format", "json",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     const output = getSpyOutput(consoleSpy.log);
-    // Post-validation, the JSON output carries the contract field names
-    // (sessionKey/channelId/userId), not the legacy (key/channel/user) names.
     const parsed = JSON.parse(output) as Array<{
-      sessionKey: string;
-      channelId: string;
-      userId: string;
+      conversationRef: string;
+      agentId: string;
+      kind: string;
     }>;
 
     expect(Array.isArray(parsed)).toBe(true);
     expect(parsed).toHaveLength(3);
-    expect(parsed[0]!.sessionKey).toBe("test-tenant:user-1:discord-main");
-    expect(parsed[0]!.channelId).toBe("discord-main");
-    expect(parsed[0]!.userId).toBe("user-1");
-    expect(parsed[1]!.sessionKey).toBe("test-tenant:user-2:telegram-bot");
-    expect(parsed[2]!.sessionKey).toBe("other-tenant:user-3:slack-ws");
+    expect(parsed[0]!.conversationRef).toBe("conversation-ref-1");
+    expect(parsed[0]!.agentId).toBe("default");
+    expect(parsed[0]!.kind).toBe("discord");
+    expect(parsed[1]!.conversationRef).toBe("conversation-ref-2");
+    expect(parsed[2]!.conversationRef).toBe("conversation-ref-3");
   });
 });
 
-describe("sessions list --tenant filters by tenant", () => {
+describe("sessions list explicit authority", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
   let callSpy: ReturnType<typeof vi.fn>;
@@ -250,17 +244,19 @@ describe("sessions list --tenant filters by tenant", () => {
     exitSpy.restore();
   });
 
-  it("calls session.list RPC (--tenant CLI flag is a no-op against the contract)", async () => {
-    // The CLI's --tenant flag is a no-op against the SessionListContract
-    // surface. Tenant scoping flows through the dispatcher-injected
-    // `_tenantId` internal (auth-context-derived), NOT a public request
-    // field.
+  it("calls session.list with explicit tenant and agent authority", async () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
-    await program.parseAsync(["node", "test", "sessions", "list", "--tenant", "test-tenant"]);
+    await program.parseAsync([
+      "node", "test", "sessions", "list",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
-    expect(callSpy).toHaveBeenCalledWith("session.list", {});
+    expect(callSpy).toHaveBeenCalledWith("session.list", {
+      tenant_id: "test-tenant",
+      agent_id: "default",
+    });
   });
 });
 
@@ -394,12 +390,9 @@ describe("sessions delete with --yes sends RPC", () => {
     exitSpy.restore();
   });
 
-  it("sends session.delete RPC with correct session_key when --yes provided", async () => {
-    // The contract uses `session_key` (snake_case — matches the daemon
-    // handler's actual parameter name); any other key name would make the
-    // handler throw "Missing required parameter: session_key".
+  it("sends session.delete with explicit authority and conversation reference", async () => {
     callSpy.mockResolvedValue({
-      sessionKey: "test-tenant:user-1:discord-main",
+      conversationRef: "conversation-ref-1",
       deleted: true,
       transcript: { messages: [], metadata: {}, messageCount: 0 },
     });
@@ -407,9 +400,16 @@ describe("sessions delete with --yes sends RPC", () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
-    await program.parseAsync(["node", "test", "sessions", "delete", "test-tenant:user-1:discord-main", "--yes"]);
+    await program.parseAsync([
+      "node", "test", "sessions", "delete", "conversation-ref-1", "--yes",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
-    expect(callSpy).toHaveBeenCalledWith("session.delete", { session_key: "test-tenant:user-1:discord-main" });
+    expect(callSpy).toHaveBeenCalledWith("session.delete", {
+      tenant_id: "test-tenant",
+      agent_id: "default",
+      conversation_ref: "conversation-ref-1",
+    });
 
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("deleted");
@@ -445,7 +445,7 @@ describe("sessions delete without --yes prompts and confirms", () => {
 
   it("prompts for confirmation and sends RPC when confirmed", async () => {
     callSpy.mockResolvedValue({
-      sessionKey: "test-key",
+      conversationRef: "conversation-ref-1",
       deleted: true,
       transcript: { messages: [], metadata: {}, messageCount: 0 },
     });
@@ -453,12 +453,15 @@ describe("sessions delete without --yes prompts and confirms", () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
-    await program.parseAsync(["node", "test", "sessions", "delete", "test-key"]);
+    await program.parseAsync([
+      "node", "test", "sessions", "delete", "conversation-ref-1",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     // Confirm was called with message containing the key and warning
     expect(vi.mocked(clackPrompts.confirm)).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: expect.stringContaining("test-key"),
+        message: expect.stringContaining("conversation-ref-1"),
       }),
     );
     expect(vi.mocked(clackPrompts.confirm)).toHaveBeenCalledWith(
@@ -467,9 +470,11 @@ describe("sessions delete without --yes prompts and confirms", () => {
       }),
     );
 
-    // RPC was sent after confirmation. Uses contract field name
-    // `session_key` (snake_case).
-    expect(callSpy).toHaveBeenCalledWith("session.delete", { session_key: "test-key" });
+    expect(callSpy).toHaveBeenCalledWith("session.delete", {
+      tenant_id: "test-tenant",
+      agent_id: "default",
+      conversation_ref: "conversation-ref-1",
+    });
 
     const output = getSpyOutput(consoleSpy.log);
     expect(output).toContain("deleted");
@@ -508,7 +513,10 @@ describe("sessions delete cancelled by user", () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
-    await program.parseAsync(["node", "test", "sessions", "delete", "test-key"]);
+    await program.parseAsync([
+      "node", "test", "sessions", "delete", "conversation-ref-1",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     // RPC should NOT have been called
     expect(callSpy).not.toHaveBeenCalled();
@@ -553,7 +561,10 @@ describe("sessions delete cancelled via Ctrl+C (isCancel)", () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
-    await program.parseAsync(["node", "test", "sessions", "delete", "test-key"]);
+    await program.parseAsync([
+      "node", "test", "sessions", "delete", "conversation-ref-1",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     // RPC should NOT have been called
     expect(callSpy).not.toHaveBeenCalled();
@@ -584,9 +595,9 @@ describe("sessions delete preserves complex keys", () => {
     exitSpy.restore();
   });
 
-  it("preserves full key with multiple colons in RPC call", async () => {
+  it("preserves an opaque conversation reference in the RPC call", async () => {
     callSpy.mockResolvedValue({
-      sessionKey: "complex:key:with:colons",
+      conversationRef: "opaque:reference:with:colons",
       deleted: true,
       transcript: { messages: [], metadata: {}, messageCount: 0 },
     });
@@ -594,10 +605,16 @@ describe("sessions delete preserves complex keys", () => {
     const program = createTestProgram();
     registerSessionsCommand(program);
 
-    await program.parseAsync(["node", "test", "sessions", "delete", "complex:key:with:colons", "--yes"]);
+    await program.parseAsync([
+      "node", "test", "sessions", "delete", "opaque:reference:with:colons", "--yes",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
-    // Uses contract field name `session_key`.
-    expect(callSpy).toHaveBeenCalledWith("session.delete", { session_key: "complex:key:with:colons" });
+    expect(callSpy).toHaveBeenCalledWith("session.delete", {
+      tenant_id: "test-tenant",
+      agent_id: "default",
+      conversation_ref: "opaque:reference:with:colons",
+    });
   });
 });
 
@@ -629,7 +646,10 @@ describe("session commands handle daemon offline", () => {
     registerSessionsCommand(program);
 
     try {
-      await program.parseAsync(["node", "test", "sessions", "list"]);
+      await program.parseAsync([
+        "node", "test", "sessions", "list",
+        "--tenant", "test-tenant", "--agent", "default",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }
@@ -659,7 +679,10 @@ describe("session commands handle daemon offline", () => {
     registerSessionsCommand(program);
 
     try {
-      await program.parseAsync(["node", "test", "sessions", "delete", "test-key", "--yes"]);
+      await program.parseAsync([
+        "node", "test", "sessions", "delete", "conversation-ref-1", "--yes",
+        "--tenant", "test-tenant", "--agent", "default",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }

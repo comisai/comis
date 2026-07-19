@@ -4,6 +4,18 @@ import Database from "better-sqlite3";
 import { initSchema } from "./schema.js";
 import { createObservabilityStore } from "./observability-store/index.js";
 import type { ObservabilityStore } from "./observability-store/index.js";
+import { ConversationRefSchema } from "@comis/core";
+
+const DELIVERY_SCOPE = {
+  tenantId: "tenant-a",
+  conversationRef: ConversationRefSchema.parse(`cv_${"a".repeat(43)}`),
+  destinationEndpoint: {
+    channelType: "telegram",
+    channelInstanceId: "telegram-account",
+    conversationId: "chat_a",
+    conversationKind: "direct" as const,
+  },
+};
 
 describe("ObservabilityStore", () => {
   let db: Database.Database;
@@ -25,17 +37,22 @@ describe("ObservabilityStore", () => {
     llmCalls?: unknown;
     tokensTotal?: unknown;
     costTotal?: unknown;
+    destinationEndpoint?: unknown;
   }): void {
     db.prepare(`
       INSERT INTO obs_delivery (
-        id, timestamp, trace_id, agent_id, channel_type, channel_id, status,
+        id, timestamp, trace_id, tenant_id, agent_id, conversation_ref,
+        destination_endpoint, channel_type, channel_id, status,
         latency_ms, tool_calls, llm_calls, tokens_total, cost_total
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id ?? null,
       input.timestamp,
       input.traceId,
+      DELIVERY_SCOPE.tenantId,
       "agent-a",
+      DELIVERY_SCOPE.conversationRef,
+      JSON.stringify(input.destinationEndpoint ?? DELIVERY_SCOPE.destinationEndpoint),
       "telegram",
       "chat_a",
       input.status,
@@ -261,11 +278,13 @@ describe("ObservabilityStore", () => {
 
   describe("delivery", () => {
     const baseDelivery = {
+      ...DELIVERY_SCOPE,
       timestamp: 1710000000000,
       traceId: "trace-d1",
       agentId: "agent-a",
       channelType: "telegram",
       channelId: "tg-123",
+      destinationEndpoint: { ...DELIVERY_SCOPE.destinationEndpoint, conversationId: "tg-123" },
       sessionKey: "sess-1",
       status: "success",
       latencyMs: 350,
@@ -315,7 +334,11 @@ describe("ObservabilityStore", () => {
 
     it("queries with channelType filter", () => {
       store.insertDelivery({ ...baseDelivery, channelType: "telegram" });
-      store.insertDelivery({ ...baseDelivery, channelType: "discord" });
+      store.insertDelivery({
+        ...baseDelivery,
+        channelType: "discord",
+        destinationEndpoint: { ...baseDelivery.destinationEndpoint, channelType: "discord" },
+      });
 
       const rows = store.queryDelivery({ channelType: "telegram" });
       expect(rows).toHaveLength(1);
@@ -333,9 +356,9 @@ describe("ObservabilityStore", () => {
     });
 
     it("applies channel and exclusive beforeMs filters before the limit", () => {
-      store.insertDelivery({ ...baseDelivery, timestamp: 100, channelId: "ch-a" });
-      store.insertDelivery({ ...baseDelivery, timestamp: 200, channelId: "ch-a" });
-      store.insertDelivery({ ...baseDelivery, timestamp: 300, channelId: "ch-b" });
+      store.insertDelivery({ ...baseDelivery, timestamp: 100, channelId: "ch-a", destinationEndpoint: { ...baseDelivery.destinationEndpoint, conversationId: "ch-a" } });
+      store.insertDelivery({ ...baseDelivery, timestamp: 200, channelId: "ch-a", destinationEndpoint: { ...baseDelivery.destinationEndpoint, conversationId: "ch-a" } });
+      store.insertDelivery({ ...baseDelivery, timestamp: 300, channelId: "ch-b", destinationEndpoint: { ...baseDelivery.destinationEndpoint, conversationId: "ch-b" } });
 
       const rows = store.queryDelivery({ channelId: "ch-a", beforeMs: 250, limit: 1 });
 
@@ -368,6 +391,30 @@ describe("ObservabilityStore", () => {
 
       expect(rows.map((row) => row.traceId)).toEqual(["valid-newer", "valid-older"]);
       expect(rows.map((row) => row.status)).toEqual(["success", "error"]);
+    });
+
+    it("queryDelivery and deliveryStats omit a JSON-valid but invalid endpoint snapshot", () => {
+      insertRawDelivery({
+        timestamp: 200,
+        traceId: "invalid-endpoint",
+        status: "success",
+        latencyMs: 900,
+        destinationEndpoint: { channelType: "telegram" },
+      });
+      insertRawDelivery({
+        timestamp: 100,
+        traceId: "valid-endpoint",
+        status: "success",
+        latencyMs: 100,
+      });
+
+      expect(store.queryDelivery().map((row) => row.traceId)).toEqual(["valid-endpoint"]);
+      expect(store.deliveryStats()).toMatchObject({
+        total: 1,
+        attempted: 1,
+        success: 1,
+        attemptedLatencyMs: 100,
+      });
     });
 
     it("returns the newest valid row when malformed records fill the queryDelivery limit", () => {
@@ -404,11 +451,13 @@ describe("ObservabilityStore", () => {
   describe("deliveryStats", () => {
     it("returns correct counts and avg latency", () => {
       const base = {
+        ...DELIVERY_SCOPE,
         timestamp: 1000,
         traceId: "t1",
         agentId: "a1",
         channelType: "telegram",
         channelId: "ch-1",
+        destinationEndpoint: { ...DELIVERY_SCOPE.destinationEndpoint, conversationId: "ch-1" },
         latencyMs: 100,
       };
 
@@ -432,10 +481,12 @@ describe("ObservabilityStore", () => {
 
     it("applies the exclusive historical cutoff before aggregation", () => {
       const base = {
+        ...DELIVERY_SCOPE,
         traceId: "t1",
         agentId: "a1",
         channelType: "telegram",
         channelId: "ch-1",
+        destinationEndpoint: { ...DELIVERY_SCOPE.destinationEndpoint, conversationId: "ch-1" },
         latencyMs: 100,
       };
       store.insertDelivery({ ...base, timestamp: 999, status: "success" });
@@ -493,6 +544,7 @@ describe("ObservabilityStore", () => {
 
     it("counts every authoritative error kind as a valid delivery row", () => {
       store.insertDelivery({
+        ...DELIVERY_SCOPE,
         timestamp: 100,
         traceId: "sandbox-unavailable",
         agentId: "agent-a",
@@ -913,20 +965,24 @@ describe("ObservabilityStore", () => {
       store.insertTokenUsage({ ...tokenBase, timestamp: recentTs });
 
       store.insertDelivery({
+        ...DELIVERY_SCOPE,
         timestamp: oldTs,
         traceId: "t1",
         agentId: "a1",
         channelType: "telegram",
         channelId: "ch-1",
+        destinationEndpoint: { ...DELIVERY_SCOPE.destinationEndpoint, conversationId: "ch-1" },
         status: "success",
         latencyMs: 100,
       });
       store.insertDelivery({
+        ...DELIVERY_SCOPE,
         timestamp: recentTs,
         traceId: "t1",
         agentId: "a1",
         channelType: "telegram",
         channelId: "ch-1",
+        destinationEndpoint: { ...DELIVERY_SCOPE.destinationEndpoint, conversationId: "ch-1" },
         status: "success",
         latencyMs: 100,
       });
@@ -980,11 +1036,13 @@ describe("ObservabilityStore", () => {
       store.insertTokenUsage(tokenBase);
       store.insertTokenUsage({ ...tokenBase, timestamp: 2000 });
       store.insertDelivery({
+        ...DELIVERY_SCOPE,
         timestamp: 1000,
         traceId: "t1",
         agentId: "a1",
         channelType: "telegram",
         channelId: "ch-1",
+        destinationEndpoint: { ...DELIVERY_SCOPE.destinationEndpoint, conversationId: "ch-1" },
         status: "success",
         latencyMs: 100,
       });
@@ -1029,11 +1087,13 @@ describe("ObservabilityStore", () => {
 
       store.insertTokenUsage(tokenBase);
       store.insertDelivery({
+        ...DELIVERY_SCOPE,
         timestamp: 1000,
         traceId: "t1",
         agentId: "a1",
         channelType: "telegram",
         channelId: "ch-1",
+        destinationEndpoint: { ...DELIVERY_SCOPE.destinationEndpoint, conversationId: "ch-1" },
         status: "success",
         latencyMs: 100,
       });
@@ -1055,11 +1115,13 @@ describe("ObservabilityStore", () => {
 
     it("supports all table names", () => {
       store.insertDelivery({
+        ...DELIVERY_SCOPE,
         timestamp: 1000,
         traceId: "t1",
         agentId: "a1",
         channelType: "telegram",
         channelId: "ch-1",
+        destinationEndpoint: { ...DELIVERY_SCOPE.destinationEndpoint, conversationId: "ch-1" },
         status: "success",
         latencyMs: 100,
       });

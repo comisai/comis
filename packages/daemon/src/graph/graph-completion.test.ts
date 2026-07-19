@@ -17,6 +17,7 @@ import {
   type ValidatedGraph,
   type ExecutionGraph,
   validateAndSortGraph,
+  createConversationLocator,
 } from "@comis/core";
 import { createGraphStateMachine } from "./graph-state-machine.js";
 import type { GraphRunState } from "./graph-coordinator-state.js";
@@ -104,6 +105,34 @@ function createMinimalGraphRunState(
     nodeTokenSpend: new Map(),
     nodeCost: new Map(),
   };
+}
+
+function authorizeGraphState(
+  gs: GraphRunState,
+  channelType: string,
+  conversationId: string,
+  threadId?: string,
+): void {
+  const endpoint = {
+    channelType,
+    channelInstanceId: "test-instance",
+    conversationId,
+    ...(threadId === undefined ? {} : { threadId }),
+    conversationKind: "direct" as const,
+  };
+  const locator = createConversationLocator({
+    tenantId: "tenant-a",
+    agentId: "agent-1",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint,
+      principalId: "user-a",
+    },
+  });
+  if (!locator.ok) throw locator.error;
+  gs.callerConversationLocator = locator.value;
+  gs.callerPrincipalId = "user-a";
+  gs.callerEndpoint = endpoint;
 }
 
 // ---------------------------------------------------------------------------
@@ -421,6 +450,7 @@ describe("handleGraphCompletion report ownership and parent identity", () => {
     gs.callerAgentId = "agent-1";
     gs.announceChannelType = "telegram";
     gs.announceChannelId = "chat-1";
+    authorizeGraphState(gs, "telegram", "chat-1", "topic-1");
     const {
       deps,
       registerGraphReportCallback,
@@ -482,6 +512,7 @@ describe("handleGraphCompletion report ownership and parent identity", () => {
       gs.callerAgentId = "agent-1";
       gs.announceChannelType = "telegram";
       gs.announceChannelId = "chat-1";
+      authorizeGraphState(gs, "telegram", "chat-1", "topic-1");
       const {
         deps,
         registerGraphReportCallback,
@@ -515,6 +546,7 @@ describe("handleGraphCompletion report ownership and parent identity", () => {
     gs.callerAgentId = "agent-1";
     gs.announceChannelType = "telegram";
     gs.announceChannelId = "chat-1";
+    authorizeGraphState(gs, "telegram", "chat-1");
     const { deps, sendGovernedAnnouncement, sendToChannel, logger } = completionDeps();
     sendGovernedAnnouncement.mockResolvedValueOnce(err(
       new Error("Authorization: Bearer PRIVATE_GRAPH_DELIVERY_SENTINEL"),
@@ -539,6 +571,7 @@ describe("handleGraphCompletion report ownership and parent identity", () => {
     gs.callerAgentId = "agent-1";
     gs.announceChannelType = "telegram";
     gs.announceChannelId = "chat-1";
+    authorizeGraphState(gs, "telegram", "chat-1", "topic-1");
     const batcher = { enqueue: vi.fn(), flush: vi.fn() };
     const { deps, announceToParent, sendGovernedAnnouncement, sendToChannel } = completionDeps({ batcher });
 
@@ -569,6 +602,7 @@ describe("handleGraphCompletion report ownership and parent identity", () => {
     gs.callerAgentId = "agent-1";
     gs.announceChannelType = "custom-plugin";
     gs.announceChannelId = "chat-1";
+    authorizeGraphState(gs, "custom-plugin", "chat-1");
     const batcher = { enqueue: vi.fn() };
     const { deps, announceToParent, sendGovernedAnnouncement, sendToChannel } = completionDeps({ batcher });
 
@@ -593,6 +627,7 @@ describe("handleGraphCompletion report ownership and parent identity", () => {
     gs.callerAgentId = "agent-1";
     gs.announceChannelType = "telegram";
     gs.announceChannelId = "chat-1";
+    authorizeGraphState(gs, "telegram", "chat-1");
     const { deps, sendGovernedAnnouncement, sendToChannel, logger } = completionDeps();
     sendGovernedAnnouncement.mockResolvedValueOnce(ok({
       delivered: false as const,
@@ -616,7 +651,7 @@ describe("handleGraphCompletion report ownership and parent identity", () => {
     );
   });
 
-  it("fails closed on an invalid caller key without registering or delivering the report", async () => {
+  it("fails closed without canonical caller authority even when a display key is present", async () => {
     const gs = createMinimalGraphRunState([
       { nodeId: "final", output: "Analysis ".repeat(500) },
     ]);
@@ -654,6 +689,7 @@ describe("handleGraphCompletion report ownership and parent identity", () => {
     gs.callerAgentId = "agent-1";
     gs.announceChannelType = "telegram";
     gs.announceChannelId = "other-chat";
+    authorizeGraphState(gs, "telegram", "owner-chat");
     const { deps, announceToParent, sendToChannel, sendGovernedAnnouncement } = completionDeps();
 
     const result = await handleGraphCompletion({} as never, deps, gs);

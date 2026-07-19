@@ -1447,7 +1447,8 @@ interface ApprovalCall {
   params: Record<string, unknown>;
   fingerprintParams: Record<string, unknown>;
   agentId: string;
-  sessionKey: string;
+  conversationRef: string;
+  resolvingPrincipalId: string;
   trustLevel: string;
   callbackOwner: {
     tenantId: string;
@@ -1468,6 +1469,20 @@ function makeTerminalApprovalContext(): RequestContext {
     startedAt: 1,
     trustLevel: "guest",
     channelType: "telegram",
+    turnScope: {
+      conversation: {
+        tenantId: "default",
+        agentId: "agent-1",
+        partition: { kind: "principal", principalId: "principal-test-user" },
+      },
+      principal: { principalId: "principal-test-user" },
+      endpoint: {
+        channelType: "telegram",
+        channelInstanceId: "telegram-account",
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      },
+    },
     deliveryOrigin: Object.freeze({
       tenantId: "default", userId: "test-user", channelType: "telegram", channelId: "chat-1",
     }),
@@ -1609,7 +1624,8 @@ describe("terminal-tools — approveOnCreate gates session_create on the approva
     expect(call.fingerprintParams).toEqual(registry.createCalls[0]);
     expect(call.agentId).toBe("agent-1");
     expect(call.agentId).not.toBe("test-user");
-    expect(call.sessionKey).toBe("default:test-user:chat-1");
+    expect(call.conversationRef).toMatch(/^cv_/);
+    expect(call.resolvingPrincipalId).toBe("principal-test-user");
     expect(call.callbackOwner).toEqual({
       tenantId: "default", userId: "test-user", channelType: "telegram", channelKey: "chat-1",
     });

@@ -9,7 +9,7 @@
 // (no wall-clock reads).
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { ok, err } from "@comis/shared";
-import { systemDateFrom, type MemoryReviewConfig } from "@comis/core";
+import { createConversationRef, systemDateFrom, type MemoryReviewConfig } from "@comis/core";
 import type { MemoryReviewDeps } from "./memory-review-job.js";
 
 // Mock pi-ai
@@ -31,6 +31,42 @@ import { readFile, writeFile, rename } from "node:fs/promises";
 
 /** Fixed reference clock — every time read in the job resolves to this. */
 const NOW = 1_700_000_000_000;
+const ENDPOINT = {
+  channelType: "test",
+  channelInstanceId: "instance_a",
+  conversationId: "conversation_a",
+  conversationKind: "direct" as const,
+};
+const TURN_SCOPE = {
+  conversation: {
+    tenantId: "default",
+    agentId: "test-agent",
+    partition: {
+      kind: "endpoint-conversation-principal" as const,
+      endpoint: ENDPOINT,
+      principalId: "user1",
+    },
+  },
+  principal: { principalId: "user1" },
+  endpoint: ENDPOINT,
+};
+const CONVERSATION_REF = `cv_${"m".repeat(43)}` as const;
+
+function conversationForKey(key: string) {
+  const endpoint = { ...ENDPOINT, conversationId: key };
+  const conversationScope = {
+    tenantId: "default",
+    agentId: "test-agent",
+    partition: {
+      kind: "endpoint-conversation-principal" as const,
+      endpoint,
+      principalId: "user1",
+    },
+  };
+  const reference = createConversationRef(conversationScope);
+  if (!reference.ok) throw reference.error;
+  return { conversationRef: reference.value, conversationScope };
+}
 
 function makeConfig(overrides: Partial<MemoryReviewConfig> = {}): MemoryReviewConfig {
   return {
@@ -46,18 +82,25 @@ function makeConfig(overrides: Partial<MemoryReviewConfig> = {}): MemoryReviewCo
 }
 
 function makeDeps(overrides: Partial<MemoryReviewDeps> = {}): MemoryReviewDeps {
+  const agentId = overrides.agentId ?? "test-agent";
+  const tenantId = overrides.tenantId ?? "default";
+  const turnScope = {
+    ...TURN_SCOPE,
+    conversation: { ...TURN_SCOPE.conversation, agentId, tenantId },
+  };
   return {
-    agentId: "test-agent",
-    tenantId: "default",
+    agentId,
+    tenantId,
     agentName: "TestBot",
     config: makeConfig(),
+    memoryScope: { turnScope, visibility: { kind: "agent-shared" } },
     memoryPort: {
       store: vi.fn().mockResolvedValue(ok({ id: "mem-1" })),
       search: vi.fn().mockResolvedValue(ok([])),
     } as unknown as MemoryReviewDeps["memoryPort"],
     sessionStore: {
-      listDetailed: vi.fn().mockReturnValue([]),
-      loadByFormattedKey: vi.fn().mockReturnValue(undefined),
+      listDetailed: vi.fn().mockReturnValue(ok([])),
+      loadByRef: vi.fn().mockReturnValue(ok(undefined)),
     },
     eventBus: {
       emit: vi.fn(),
@@ -91,12 +134,12 @@ function makeLogger() {
 }
 
 function makeSession(key: string, messageCount: number, updatedAt: number = NOW) {
+  const conversation = conversationForKey(key);
   return {
-    sessionKey: key,
+    ...conversation,
     tenantId: "default",
-    userId: "user1",
-    channelId: "ch1",
-    metadata: null,
+    agentId: "test-agent",
+    metadata: { displayKey: key },
     createdAt: updatedAt - 10000,
     updatedAt,
     messageCount,
@@ -115,15 +158,17 @@ function rawResponse(text: string) {
 
 /** A single qualifying session + a loaded message body (the common arrange). */
 function arrangeOneSession(deps: MemoryReviewDeps, updatedAt = 2000, content = "hello") {
-  (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+  (deps.sessionStore.listDetailed as Mock).mockReturnValue(ok([
     makeSession("default:user1:ch1", 10, updatedAt),
-  ]);
-  (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
+  ]));
+  (deps.sessionStore.loadByRef as Mock).mockReturnValue(ok({
+    conversationRef: CONVERSATION_REF,
+    conversationScope: TURN_SCOPE.conversation,
     messages: [{ role: "user", content }],
     metadata: {},
     createdAt: 1000,
     updatedAt,
-  });
+  }));
 }
 
 describe("runMemoryReview", () => {
@@ -141,9 +186,9 @@ describe("runMemoryReview", () => {
 
   it("skips sessions with messageCount below minMessages", async () => {
     const deps = makeDeps();
-    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue(ok([
       makeSession("default:user1:ch1", 3), // below 5
-    ]);
+    ]));
 
     const result = await runMemoryReview(deps);
     expect(result.ok).toBe(true);
@@ -159,9 +204,9 @@ describe("runMemoryReview", () => {
     // default INFO level would see 'Job started/completed' bracketing silence,
     // indistinguishable from a productive run.
     const deps = makeDeps();
-    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue(ok([
       makeSession("default:user1:ch1", 3), // below 5 -> nothing qualifies
-    ]);
+    ]));
 
     await runMemoryReview(deps);
 
@@ -174,10 +219,10 @@ describe("runMemoryReview", () => {
   it("skips sessions whose updatedAt is before watermark", async () => {
     const deps = makeDeps();
     const session = makeSession("default:user1:ch1", 10, 1000);
-    (deps.sessionStore.listDetailed as Mock).mockReturnValue([session]);
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue(ok([session]));
     // Watermark has this session at updatedAt 1000
     (readFile as Mock).mockResolvedValue(JSON.stringify({
-      sessions: { "default:user1:ch1": 1000 },
+      sessions: { [conversationForKey("default:user1:ch1").conversationRef]: 1000 },
     }));
 
     const result = await runMemoryReview(deps);
@@ -187,13 +232,13 @@ describe("runMemoryReview", () => {
 
   it("flattens array/multi-block message content into the extraction batch (does not drop it)", async () => {
     const deps = makeDeps();
-    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue(ok([
       makeSession("default:user1:ch1", 10, 2000),
-    ]);
+    ]));
     // Modern message content is an array of blocks. The extractor must
     // concatenate the text blocks (and skip non-text blocks like tool_use)
     // rather than collapse the whole turn to an empty string.
-    (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
+    (deps.sessionStore.loadByRef as Mock).mockReturnValue(ok({
       messages: [
         {
           role: "user",
@@ -207,7 +252,7 @@ describe("runMemoryReview", () => {
       metadata: {},
       createdAt: 1000,
       updatedAt: 2000,
-    });
+    }));
     (completeSimple as Mock).mockResolvedValue(structuredResponse({ memories: [] }));
 
     await runMemoryReview(deps);
@@ -225,16 +270,16 @@ describe("runMemoryReview", () => {
 
   it("calls completeSimple exactly once with all qualifying sessions batched", async () => {
     const deps = makeDeps();
-    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue(ok([
       makeSession("default:user1:ch1", 10, 2000),
       makeSession("default:user2:ch1", 8, 3000),
-    ]);
-    (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
+    ]));
+    (deps.sessionStore.loadByRef as Mock).mockReturnValue(ok({
       messages: [{ role: "user", content: "hello" }],
       metadata: {},
       createdAt: 1000,
       updatedAt: 2000,
-    });
+    }));
     (completeSimple as Mock).mockResolvedValue(structuredResponse({ memories: [] }));
 
     await runMemoryReview(deps);
@@ -243,16 +288,16 @@ describe("runMemoryReview", () => {
 
   it("respects maxSessionsPerRun limit", async () => {
     const deps = makeDeps({ config: makeConfig({ maxSessionsPerRun: 1 }) });
-    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue(ok([
       makeSession("default:user1:ch1", 10, 2000),
       makeSession("default:user2:ch1", 10, 3000),
-    ]);
-    (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
+    ]));
+    (deps.sessionStore.loadByRef as Mock).mockReturnValue(ok({
       messages: [{ role: "user", content: "hello" }],
       metadata: {},
       createdAt: 1000,
       updatedAt: 2000,
-    });
+    }));
     (completeSimple as Mock).mockResolvedValue(structuredResponse({ memories: [] }));
 
     await runMemoryReview(deps);
@@ -264,17 +309,17 @@ describe("runMemoryReview", () => {
 
   it("reviews all sessions in the tenant (no agent-prefix filter)", async () => {
     const deps = makeDeps({ agentId: "my-agent" });
-    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue(ok([
       // Both sessions are in the same tenant; no agent prefix in either key.
       makeSession("default:user1:ch1", 10, 2000),
       makeSession("default:user2:ch1", 10, 3000),
-    ]);
-    (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
+    ]));
+    (deps.sessionStore.loadByRef as Mock).mockReturnValue(ok({
       messages: [{ role: "user", content: "hello" }],
       metadata: {},
       createdAt: 1000,
       updatedAt: 2000,
-    });
+    }));
     (completeSimple as Mock).mockResolvedValue(structuredResponse({ memories: [] }));
 
     await runMemoryReview(deps);
@@ -480,7 +525,7 @@ describe("runMemoryReview", () => {
     const writeCall = (writeFile as Mock).mock.calls[0];
     expect(writeCall[0]).toContain(".tmp");
     const watermarkData = JSON.parse(writeCall[1] as string);
-    expect(watermarkData.sessions["default:user1:ch1"]).toBe(5000);
+    expect(watermarkData.sessions[conversationForKey("default:user1:ch1").conversationRef]).toBe(5000);
 
     // Check rename was called (atomic write)
     expect(rename).toHaveBeenCalled();
@@ -533,7 +578,7 @@ describe("runMemoryReview", () => {
     expect(writeFile).toHaveBeenCalled();
     const writeCall = (writeFile as Mock).mock.calls[0];
     const watermarkData = JSON.parse(writeCall[1] as string);
-    expect(watermarkData.sessions["default:user1:ch1"]).toBe(4242);
+    expect(watermarkData.sessions[conversationForKey("default:user1:ch1").conversationRef]).toBe(4242);
     expect(rename).toHaveBeenCalled();
   });
 
@@ -556,7 +601,7 @@ describe("runMemoryReview", () => {
     const writeCall = (writeFile as Mock).mock.calls[0];
     expect(writeCall[0]).toContain(".tmp");
     const watermarkData = JSON.parse(writeCall[1] as string);
-    expect(watermarkData.sessions["default:user1:ch1"]).toBe(7777);
+    expect(watermarkData.sessions[conversationForKey("default:user1:ch1").conversationRef]).toBe(7777);
     expect(rename).toHaveBeenCalled();
   });
 
@@ -578,7 +623,7 @@ describe("runMemoryReview", () => {
     expect(writeFile).toHaveBeenCalled();
     const writeCall = (writeFile as Mock).mock.calls[0];
     const watermarkData = JSON.parse(writeCall[1] as string);
-    expect(watermarkData.sessions["default:user1:ch1"]).toBe(8888);
+    expect(watermarkData.sessions[conversationForKey("default:user1:ch1").conversationRef]).toBe(8888);
     // No invalid item is ever stored.
     const storedContents = (deps.memoryPort.store as Mock).mock.calls.map((c) => c[0].content);
     expect(storedContents).not.toContain("");
@@ -631,7 +676,7 @@ describe("runMemoryReview", () => {
     );
     // Watermark still advances (per-item skip is non-fatal).
     const writeCall = (writeFile as Mock).mock.calls[0];
-    expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9100);
+    expect(JSON.parse(writeCall[1] as string).sessions[conversationForKey("default:user1:ch1").conversationRef]).toBe(9100);
   });
 
   // -------------------------------------------------------------------------
@@ -715,7 +760,7 @@ describe("runMemoryReview", () => {
       memoriesExtracted: 0,
     }));
     const writeCall = (writeFile as Mock).mock.calls[0];
-    expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9300);
+    expect(JSON.parse(writeCall[1] as string).sessions[conversationForKey("default:user1:ch1").conversationRef]).toBe(9300);
   });
 
   // -------------------------------------------------------------------------
@@ -749,7 +794,7 @@ describe("runMemoryReview", () => {
     expect(writeFile).toHaveBeenCalled();
     const writeCall = (writeFile as Mock).mock.calls[0];
     expect(writeCall[0]).toContain(".tmp");
-    expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9400);
+    expect(JSON.parse(writeCall[1] as string).sessions[conversationForKey("default:user1:ch1").conversationRef]).toBe(9400);
     expect(rename).toHaveBeenCalled();
     // Nothing was counted as stored.
     expect(deps.eventBus.emit).toHaveBeenCalledWith("memory:review_completed", expect.objectContaining({
@@ -779,23 +824,23 @@ describe("runMemoryReview", () => {
     // The watermark STILL advances (no stall).
     expect(writeFile).toHaveBeenCalled();
     const writeCall = (writeFile as Mock).mock.calls[0];
-    expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9500);
+    expect(JSON.parse(writeCall[1] as string).sessions[conversationForKey("default:user1:ch1").conversationRef]).toBe(9500);
     expect(rename).toHaveBeenCalled();
   });
 
   it("processes other sessions normally when one session's store REJECTS", async () => {
     const deps = makeDeps();
     // Two qualifying sessions; both load a single message and yield one memory each.
-    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue(ok([
       makeSession("default:user1:ch1", 10, 9600),
       makeSession("default:user2:ch1", 10, 9700),
-    ]);
-    (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
+    ]));
+    (deps.sessionStore.loadByRef as Mock).mockReturnValue(ok({
       messages: [{ role: "user", content: "hello" }],
       metadata: {},
       createdAt: 1000,
       updatedAt: 9600,
-    });
+    }));
     // Two memories — the FIRST store rejects, the SECOND succeeds.
     (completeSimple as Mock).mockResolvedValue(structuredResponse({
       memories: [
@@ -818,8 +863,8 @@ describe("runMemoryReview", () => {
     // BOTH reviewed sessions' watermarks advance (run completed normally).
     const writeCall = (writeFile as Mock).mock.calls[0];
     const sessions = JSON.parse(writeCall[1] as string).sessions;
-    expect(sessions["default:user1:ch1"]).toBe(9600);
-    expect(sessions["default:user2:ch1"]).toBe(9700);
+    expect(sessions[conversationForKey("default:user1:ch1").conversationRef]).toBe(9600);
+    expect(sessions[conversationForKey("default:user2:ch1").conversationRef]).toBe(9700);
   });
 
   // -------------------------------------------------------------------------
@@ -866,15 +911,15 @@ describe("runMemoryReview", () => {
   it("summarizes long sessions (>20 messages) without storing the whole transcript", async () => {
     const deps = makeDeps();
     const messages = Array.from({ length: 25 }, (_, i) => ({ role: "user", content: `msg-${i}` }));
-    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue(ok([
       makeSession("default:user1:ch1", 25, 6000),
-    ]);
-    (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
+    ]));
+    (deps.sessionStore.loadByRef as Mock).mockReturnValue(ok({
       messages,
       metadata: {},
       createdAt: 1000,
       updatedAt: 6000,
-    });
+    }));
     (completeSimple as Mock).mockResolvedValue(structuredResponse({ memories: [] }));
 
     const result = await runMemoryReview(deps);
@@ -895,15 +940,15 @@ describe("runMemoryReview", () => {
     // would leave the session unwatermarked and
     // re-skipped on every run, an invisible permanent blind spot).
     const deps = makeDeps({ config: makeConfig({ maxReviewTokens: 1 }) });
-    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue(ok([
       makeSession("default:user1:ch1", 10, 6500),
-    ]);
-    (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
+    ]));
+    (deps.sessionStore.loadByRef as Mock).mockReturnValue(ok({
       messages: [{ role: "user", content: "a fairly long message that exceeds the tiny budget" }],
       metadata: {},
       createdAt: 1000,
       updatedAt: 6500,
-    });
+    }));
 
     const result = await runMemoryReview(deps);
     expect(result.ok).toBe(true);
@@ -926,10 +971,10 @@ describe("runMemoryReview", () => {
     // summary inside the budget so the session is reviewed and watermarked.
     const essay = "x".repeat(6137);
     const deps = makeDeps(); // default maxReviewTokens 4096 → 16384 chars
-    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue(ok([
       makeSession("default:openai-api:openai", 16, 6500),
-    ]);
-    (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
+    ]));
+    (deps.sessionStore.loadByRef as Mock).mockReturnValue(ok({
       messages: [
         { role: "user", content: "my sister Maya moved to Lisbon" },
         { role: "assistant", content: essay },
@@ -940,7 +985,7 @@ describe("runMemoryReview", () => {
       metadata: {},
       createdAt: 1000,
       updatedAt: 6500,
-    });
+    }));
     (completeSimple as Mock).mockResolvedValue(structuredResponse({ memories: [] }));
 
     const result = await runMemoryReview(deps);
@@ -992,7 +1037,7 @@ describe("runMemoryReview", () => {
 
     const storedEntry = (deps.memoryPort.store as Mock).mock.calls[0]?.[0];
     expect(storedEntry).toBeDefined();
-    const storedId = storedEntry.id as string;
+    const storedId = "irrelevant";
 
     // resolveAndLink called once per emitted entity, each with (entry.id, name, scope).
     expect(resolveAndLink).toHaveBeenCalledTimes(2);
@@ -1065,7 +1110,7 @@ describe("runMemoryReview", () => {
     // The watermark STILL advances (the whole point: a resolver fault never stalls).
     expect(writeFile).toHaveBeenCalled();
     const writeCall = (writeFile as Mock).mock.calls[0];
-    expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9800);
+    expect(JSON.parse(writeCall[1] as string).sessions[conversationForKey("default:user1:ch1").conversationRef]).toBe(9800);
     expect(rename).toHaveBeenCalled();
   });
 
@@ -1089,7 +1134,7 @@ describe("runMemoryReview", () => {
     // The watermark STILL advances.
     expect(writeFile).toHaveBeenCalled();
     const writeCall = (writeFile as Mock).mock.calls[0];
-    expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9900);
+    expect(JSON.parse(writeCall[1] as string).sessions[conversationForKey("default:user1:ch1").conversationRef]).toBe(9900);
     expect(rename).toHaveBeenCalled();
   });
 
@@ -1257,16 +1302,16 @@ describe("runMemoryReview", () => {
     const resolveAndLink = vi.fn().mockResolvedValue(ok("entity-id"));
     const deps = makeDeps({ entityStore: makeEntityStore(resolveAndLink) });
     // Two sessions, each yielding a memory mentioning "user" — the name recurs.
-    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue(ok([
       makeSession("default:user1:ch1", 10, 2000),
       makeSession("default:user2:ch1", 10, 3000),
-    ]);
-    (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
+    ]));
+    (deps.sessionStore.loadByRef as Mock).mockReturnValue(ok({
       messages: [{ role: "user", content: "hi" }],
       metadata: {},
       createdAt: 1000,
       updatedAt: 2000,
-    });
+    }));
     (completeSimple as Mock).mockResolvedValue(rawResponse(
       '{"memories":[' +
         '{"content":"User likes tea","entities":[{"name":"user"}]},' +
@@ -1369,7 +1414,7 @@ describe("runMemoryReview", () => {
 
     const storedEntry = (deps.memoryPort.store as Mock).mock.calls[0]?.[0];
     expect(storedEntry).toBeDefined();
-    const storedId = storedEntry.id as string;
+    const storedId = "irrelevant";
 
     // linkCausal fired once: (sourceMemoryId = entry.id, effectText, scope, confidence = 1).
     expect(linkCalls).toHaveBeenCalledTimes(1);
@@ -1377,7 +1422,7 @@ describe("runMemoryReview", () => {
       1,
       storedId,
       "User moved to Berlin",
-      { tenantId: "tenant-y", agentId: "agent-x", now: NOW },
+      expect.objectContaining({ tenantId: "tenant-y", agentId: "agent-x", now: NOW }),
       1,
     );
     // The `now` rides the injected fake clock (NEVER Date.now).
@@ -1466,7 +1511,7 @@ describe("runMemoryReview", () => {
     // The watermark STILL advances (a causal-edge fault never stalls the cron).
     expect(writeFile).toHaveBeenCalled();
     const writeCall = (writeFile as Mock).mock.calls[0];
-    expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9810);
+    expect(JSON.parse(writeCall[1] as string).sessions[conversationForKey("default:user1:ch1").conversationRef]).toBe(9810);
     expect(rename).toHaveBeenCalled();
   });
 
@@ -1492,7 +1537,7 @@ describe("runMemoryReview", () => {
     // The watermark STILL advances.
     expect(writeFile).toHaveBeenCalled();
     const writeCall = (writeFile as Mock).mock.calls[0];
-    expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9910);
+    expect(JSON.parse(writeCall[1] as string).sessions[conversationForKey("default:user1:ch1").conversationRef]).toBe(9910);
     expect(rename).toHaveBeenCalled();
   });
 

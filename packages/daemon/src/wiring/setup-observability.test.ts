@@ -416,7 +416,7 @@ describe("setupObservability", () => {
   };
 
   function makeConfigWithSpend(): any {
-    return { observability: { spend: spendConfig } };
+    return { tenantId: "configured-tenant", observability: { spend: spendConfig } };
   }
 
   it("constructs exactly ONE daemon-wide spend accumulator when clock + config are provided", async () => {
@@ -441,7 +441,7 @@ describe("setupObservability", () => {
     expect((result as any).spendAccumulator).toBe(mockSpendAccumulator);
   });
 
-  it("increments the accumulator live from observability:token_usage, deriving tenant via parseFormattedSessionKey (NOT agentId)", async () => {
+  it("increments the accumulator with configured tenant authority instead of parsing the display session key", async () => {
     const eventBus = createMockEventBus();
     const setupObservability = await getSetupObservability();
 
@@ -452,7 +452,6 @@ describe("setupObservability", () => {
       config: makeConfigWithSpend(),
     } as any);
 
-    // A formatted sessionKey "tenantX:user1:channel1" → tenantId "tenantX".
     eventBus.emit("observability:token_usage", {
       agentId: "agent-1",
       channelId: "channel1",
@@ -465,7 +464,7 @@ describe("setupObservability", () => {
     });
 
     expect(mockSpendAccumulator.recordSpend).toHaveBeenCalledWith(
-      { tenantId: "tenantX", agentId: "agent-1" }, // L1: tenant from the parser, NOT agentId
+      { tenantId: "configured-tenant", agentId: "agent-1" },
       0.05,
     );
   });
@@ -490,7 +489,10 @@ describe("setupObservability", () => {
   // -------------------------------------------------------------------------
 
   function configWith(observability: Record<string, unknown>): any {
-    return { observability: { spend: spendConfig, ...observability } };
+    return {
+      tenantId: "configured-tenant",
+      observability: { spend: spendConfig, ...observability },
+    };
   }
 
   it("loads the otel extension + resolves an otelHandle when observability.otel.enabled:true", async () => {

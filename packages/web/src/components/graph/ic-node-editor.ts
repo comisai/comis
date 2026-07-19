@@ -477,11 +477,11 @@ export class IcNodeEditor extends LitElement {
     const rpc = this.rpcClient;
 
     try {
-      const listResult = await rpc.call<{ agents: string[] }>("agents.list");
+      const listResult = await rpc.call("agents.list");
       const agentIds = listResult.agents ?? [];
 
       const settled = await Promise.allSettled(
-        agentIds.map((agentId) => rpc.call<{ agentId: string; config: { model?: string; provider?: string }; suspended?: boolean }>("agents.get", { agentId })),
+        agentIds.map((agentId) => rpc.call("agents.get", { agentId })),
       );
 
       this._agents = settled
@@ -516,7 +516,7 @@ export class IcNodeEditor extends LitElement {
     }
 
     try {
-      const result = await this.rpcClient.call<{ providers: Array<{ name: string; models: Array<string | { modelId: string }> }> }>("models.list", {});
+      const result = await this.rpcClient.call("models.list", {});
 
       this._models = (result.providers ?? []).flatMap((p) =>
         (p.models ?? []).map((m) => ({
@@ -537,7 +537,7 @@ export class IcNodeEditor extends LitElement {
     if (this._allowListLoaded || !this.rpcClient) return;
 
     try {
-      const result = await this.rpcClient.call<{ agentToAgent?: { allowAgents?: string[] } }>("config.read", { section: "security" });
+      const result = await this.rpcClient.call("config.read", { section: "security" });
 
       this._allowAgents = result?.agentToAgent?.allowAgents ?? [];
       this._allowListLoaded = true;

@@ -3,7 +3,20 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import Database from "better-sqlite3";
 import { initSchema } from "./schema.js";
 import { createSqliteDeliveryQueue } from "./delivery-queue-adapter.js";
-import { AMBIGUOUS_SEND_OUTCOME_ERROR, TypedEventBus, type DeliveryQueuePort } from "@comis/core";
+import {
+  AMBIGUOUS_SEND_OUTCOME_ERROR,
+  ConversationRefSchema,
+  TypedEventBus,
+  type DeliveryQueuePort,
+} from "@comis/core";
+
+const CONVERSATION_REF = ConversationRefSchema.parse(`cv_${"a".repeat(43)}`);
+const DESTINATION_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "telegram-account",
+  conversationId: "ch-123",
+  conversationKind: "direct" as const,
+};
 
 // Inline mock event bus -- adapter only needs Pick<TypedEventBus, "emit">,
 // so an 8-line spy is sufficient. Mirrors the local-mock pattern used in
@@ -38,6 +51,9 @@ describe("SqliteDeliveryQueueAdapter", () => {
       channelType: "telegram",
       channelId: "ch-123",
       tenantId: "default",
+      agentId: "agent-a",
+      conversationRef: CONVERSATION_REF,
+      destinationEndpoint: DESTINATION_ENDPOINT,
       optionsJson: "{}",
       origin: "agent",
       maxAttempts: 5,
@@ -467,17 +483,19 @@ describe("SqliteDeliveryQueueAdapter", () => {
     it("parks all stale in_flight rows as failed with a content-free uncertainty reason", async () => {
       // Two crashed rows directly via raw SQL
       db.prepare(
-        `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
+        `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, agent_id,
+                                       conversation_ref, destination_endpoint, options_json, origin,
                                        status, attempt_count, max_attempts,
                                        created_at, scheduled_at, expire_at, last_error)
-         VALUES ('crashed-1', 't', 'tg', 'c1', 'def', '{}', 'channel', 'in_flight', 0, 5, ?, ?, ?, 'crashed mid-send')`,
-      ).run(now, now, now + 60_000);
+         VALUES ('crashed-1', 't', 'tg', 'c1', 'def', 'agent-a', ?, ?, '{}', 'channel', 'in_flight', 0, 5, ?, ?, ?, 'crashed mid-send')`,
+      ).run(CONVERSATION_REF, JSON.stringify(DESTINATION_ENDPOINT), now, now, now + 60_000);
       db.prepare(
-        `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, options_json, origin,
+        `INSERT INTO delivery_queue (id, text, channel_type, channel_id, tenant_id, agent_id,
+                                       conversation_ref, destination_endpoint, options_json, origin,
                                        status, attempt_count, max_attempts,
                                        created_at, scheduled_at, expire_at, last_error)
-         VALUES ('crashed-2', 't', 'tg', 'c1', 'def', '{}', 'channel', 'in_flight', 0, 5, ?, ?, ?, NULL)`,
-      ).run(now, now, now + 60_000);
+         VALUES ('crashed-2', 't', 'tg', 'c1', 'def', 'agent-a', ?, ?, '{}', 'channel', 'in_flight', 0, 5, ?, ?, ?, NULL)`,
+      ).run(CONVERSATION_REF, JSON.stringify(DESTINATION_ENDPOINT), now, now, now + 60_000);
       // One pending row via the public API (still works after constructor change)
       await queue.enqueue(makeEntry({ text: "fresh" }));
 

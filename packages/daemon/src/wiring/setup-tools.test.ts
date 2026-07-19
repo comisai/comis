@@ -65,7 +65,6 @@ const mockCreateFileStateTracker = vi.hoisted(() => vi.fn(() => ({
 })));
 const mockSanitizeLogString = vi.hoisted(() => vi.fn((s: string) => s));
 const mockTryGetContext = vi.hoisted(() => vi.fn(() => undefined));
-const mockParseFormattedSessionKey = vi.hoisted(() => vi.fn(() => undefined));
 const mockSessionKeyToPath = vi.hoisted(() => vi.fn((_key: unknown, baseDir: string) => baseDir + "/tenant/channel/user.jsonl"));
 const mockSkillsConfigSchemaParse = vi.hoisted(() => vi.fn(() => ({
   builtinTools: { browser: false, exec: false, process: false },
@@ -230,7 +229,25 @@ vi.mock("@comis/skills/platform-tools", () => ({
 vi.mock("@comis/core", () => ({
   SkillsConfigSchema: { parse: mockSkillsConfigSchemaParse },
   tryGetContext: mockTryGetContext,
-  parseFormattedSessionKey: mockParseFormattedSessionKey,
+  conversationScopeToSessionKey: (scope: {
+    tenantId: string;
+    agentId: string;
+    partition: { endpoint: { channelType: string; channelInstanceId: string; conversationId: string; threadId?: string }; principalId: string };
+  }) => ({
+    ok: true,
+    value: {
+      tenantId: scope.tenantId,
+      agentId: scope.agentId,
+      userId: scope.partition.principalId,
+      channelId: `${scope.partition.endpoint.channelType}:${scope.partition.endpoint.channelInstanceId}:${scope.partition.endpoint.conversationId}`,
+      peerId: scope.partition.principalId,
+      ...(scope.partition.endpoint.threadId === undefined ? {} : { threadId: scope.partition.endpoint.threadId }),
+    },
+  }),
+  createConversationRef: () => ({
+    ok: true,
+    value: "cv_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  }),
   stripInternalFields: (params: Record<string, unknown>) => Object.fromEntries(
     Object.entries(params).filter(([key]) => !key.startsWith("_")),
   ),
@@ -241,8 +258,15 @@ vi.mock("@comis/core", () => ({
   safePath: (...segments: string[]) => segments.join("/"),
   // Trivial stub for session-lifetime tracker resolution path. Real impl lives
   // in @comis/core/session-key; this test only needs a deterministic string.
-  formatSessionKey: (k: { tenantId: string; channelId: string; userId: string }) =>
-    `${k.tenantId}:${k.channelId}:${k.userId}`,
+  formatSessionKey: (k: { tenantId: string; agentId?: string; channelId: string; userId: string; peerId?: string; threadId?: string }) =>
+    [
+      k.tenantId,
+      ...(k.agentId === undefined ? [] : ["agent", k.agentId]),
+      k.userId,
+      k.channelId,
+      ...(k.peerId === undefined ? [] : ["peer", k.peerId]),
+      ...(k.threadId === undefined ? [] : ["thread", k.threadId]),
+    ].join(":"),
   // Workspace helpers live in @comis/core; setup-tools.ts imports them
   // via @comis/core, so tests must mock them on the @comis/core surface.
   // Consumed by setup-tools at assembleToolsForAgent time to pre-register
@@ -1979,7 +2003,7 @@ describe("setupTools", () => {
   // dag-gated ctx_* in-session expansion-loop wiring
   // -------------------------------------------------------------------------
 
-  describe("ctx_* in-session expansion tools (dag-gated wiring)", () => {
+  describe("ctx_* in-session expansion tools", () => {
     const CTX_NAMES = ["ctx_search", "ctx_inspect", "ctx_expand"];
 
     /** A no-op ContextStorePort double (only the wiring identity matters here). */
@@ -1993,8 +2017,7 @@ describe("setupTools", () => {
       } as any;
     }
 
-    /** Build a deps object with the agent pinned to a given contextEngine version. */
-    function depsWithVersion(version: "dag" | "pipeline", lcdStore?: unknown) {
+    function depsWithContextStore(lcdStore?: unknown) {
       return createMinimalDeps({
         agents: {
           "agent-1": {
@@ -2004,15 +2027,15 @@ describe("setupTools", () => {
               discoveryPaths: [],
               execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
             },
-            contextEngine: { version, maxExpandTokens: 4_000 },
+            contextEngine: { maxExpandTokens: 4_000 },
           } as any,
         },
         ...(lcdStore !== undefined ? { lcdStore: lcdStore as any } : {}),
       });
     }
 
-    it("wires ctx_search/ctx_inspect/ctx_expand when contextEngine version is dag and a store is present", async () => {
-      const deps = depsWithVersion("dag", makeFakeLcdStore());
+    it("wires ctx_search/ctx_inspect/ctx_expand when a store is present", async () => {
+      const deps = depsWithContextStore(makeFakeLcdStore());
       const setupTools = await getSetupTools();
       const { assembleToolsForAgent } = setupTools(deps);
 
@@ -2025,8 +2048,8 @@ describe("setupTools", () => {
       }
     });
 
-    it("does NOT wire the ctx_* tools in pipeline mode (even with a store present)", async () => {
-      const deps = depsWithVersion("pipeline", makeFakeLcdStore());
+    it("does NOT wire the ctx_* tools when no context store is injected", async () => {
+      const deps = depsWithContextStore();
       const setupTools = await getSetupTools();
       const { assembleToolsForAgent } = setupTools(deps);
 
@@ -2039,26 +2062,7 @@ describe("setupTools", () => {
       }
     });
 
-    it("does NOT wire the ctx_* tools in dag mode when no lcdStore is injected", async () => {
-      const deps = depsWithVersion("dag"); // no lcdStore on ToolsDeps
-      const setupTools = await getSetupTools();
-      const { assembleToolsForAgent } = setupTools(deps);
-
-      await assembleToolsForAgent("agent-1");
-
-      const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
-      const toolNames = tools.map((t: any) => t.name);
-      for (const name of CTX_NAMES) {
-        expect(toolNames).not.toContain(name);
-      }
-    });
-
-    // A BARE agent config (no explicit contextEngine.version) writes
-    // the LCD store by default (shouldRunLcdStorePasses defaults missing version → "dag"), so
-    // the ctx_* recovery tools MUST be wired under the SAME default — otherwise the agent
-    // writes durable history it can never read back in-session. Aligns the ctx-tool gate
-    // default to "dag" to match the store-writes default.
-    it("wires the ctx_* tools for a BARE agent config (no contextEngine.version) when a store is present", async () => {
+    it("wires the ctx_* tools for a bare agent config when a store is present", async () => {
       const deps = createMinimalDeps({
         agents: {
           "agent-1": {
@@ -2167,6 +2171,26 @@ describe("setupTools", () => {
     });
 
     it("binds an ambient resolved session and delivery origin into the minted capability lease", async () => {
+      const endpoint = Object.freeze({
+        channelType: "telegram",
+        channelInstanceId: "telegram-main",
+        conversationId: "chat-1",
+        threadId: "topic-1",
+        conversationKind: "direct" as const,
+      });
+      const turnScope = Object.freeze({
+        conversation: {
+          tenantId: "tenant-1",
+          agentId: "agent-1",
+          partition: {
+            kind: "endpoint-conversation-principal" as const,
+            endpoint,
+            principalId: "user-1",
+          },
+        },
+        principal: { principalId: "user-1" },
+        endpoint,
+      });
       const deliveryOrigin = Object.freeze({
         channelType: "telegram",
         channelId: "chat-1",
@@ -2177,19 +2201,14 @@ describe("setupTools", () => {
       mockTryGetContext.mockReturnValue({
         tenantId: "tenant-1",
         userId: "user-1",
-        sessionKey: "tenant-1:user-1:chat-1:thread:topic-1",
+        sessionKey: "tenant-1:agent:agent-1:user-1:telegram:telegram-main:chat-1:peer:user-1:thread:topic-1",
         agentId: "agent-1",
         traceId: "30000000-0000-4000-8000-000000000003",
         startedAt: 1_700_000_000_000,
         trustLevel: "user",
         channelType: "telegram",
+        turnScope,
         deliveryOrigin,
-      });
-      mockParseFormattedSessionKey.mockReturnValue({
-        tenantId: "tenant-1",
-        userId: "user-1",
-        channelId: "chat-1",
-        threadId: "topic-1",
       });
       const handle = mockCapHandle();
       const deps = createMinimalDeps({
@@ -2204,8 +2223,9 @@ describe("setupTools", () => {
       mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
       expect(handle.leaseManager.mintLease).toHaveBeenCalledWith(expect.objectContaining({
-        sessionKey: "tenant-1:chat-1:user-1",
+        sessionKey: "tenant-1:agent:agent-1:user-1:telegram:telegram-main:chat-1:peer:user-1:thread:topic-1",
         deliveryOrigin,
+        turnScope,
       }));
     });
   });

@@ -8,7 +8,14 @@
  */
 import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
-import type { TypedEventBus, DeliveryQueuePort, DeliveryQueueEnqueueInput, NotificationConfig } from "@comis/core";
+import type {
+  ChannelEndpoint,
+  DeliveryAuthority,
+  DeliveryQueueEnqueueInput,
+  DeliveryQueuePort,
+  NotificationConfig,
+  TypedEventBus,
+} from "@comis/core";
 import { isInQuietHours, parseTimeToMinutes, getCurrentMinutesInTimezone, createDuplicateDetector } from "@comis/scheduler";
 import type { QuietHoursConfig } from "@comis/scheduler";
 import { createRateLimiter } from "./rate-limiter.js";
@@ -24,6 +31,10 @@ export interface NotifyUserOptions {
   channelType?: string;
   channelId?: string;
   origin?: string;
+  /** Explicit authority minted by the originating turn or internal boundary. */
+  authority?: DeliveryAuthority;
+  /** Exact immutable outbound destination. */
+  destinationEndpoint?: ChannelEndpoint;
 }
 
 /** Dependencies injected into the notification service factory. */
@@ -40,7 +51,6 @@ export interface NotificationServiceDeps {
     warn(obj: Record<string, unknown>, msg: string): void;
   };
   nowMs?: () => number;
-  tenantId: string;
 }
 
 /** The notification service interface returned by the factory. */
@@ -104,6 +114,13 @@ export function createNotificationService(deps: NotificationServiceDeps): Notifi
       const now = getNow();
       const priority = opts.priority ?? "normal";
       const origin = opts.origin ?? "notification";
+      if (
+        opts.authority === undefined
+        || opts.destinationEndpoint === undefined
+        || opts.authority.agentId !== opts.agentId
+      ) {
+        return err(new Error("Notification delivery requires explicit matching authority and destination endpoint"));
+      }
 
       // Step 1: Get agent's notification config
       const config = deps.notificationConfigs.get(opts.agentId) ?? deps.defaultConfig;
@@ -143,6 +160,18 @@ export function createNotificationService(deps: NotificationServiceDeps): Notifi
       }
 
       const { channelType, channelId } = channelResult.value;
+      if (
+        opts.destinationEndpoint.channelType !== channelType
+        || opts.destinationEndpoint.conversationId !== channelId
+      ) {
+        deps.logger.warn({
+          agentId: opts.agentId,
+          channelType,
+          errorKind: "precondition" as const,
+          hint: "Resolve the notification destination from the same authority-bound endpoint before retrying",
+        }, "Notification destination did not match resolved channel");
+        return err(new Error("Notification destination does not match the resolved channel"));
+      }
 
       // Step 4: Check quiet hours
       let scheduledAt = now;
@@ -217,7 +246,10 @@ export function createNotificationService(deps: NotificationServiceDeps): Notifi
         text: opts.message,
         channelType,
         channelId,
-        tenantId: deps.tenantId,
+        tenantId: opts.authority.tenantId,
+        agentId: opts.authority.agentId,
+        conversationRef: opts.authority.conversationRef,
+        destinationEndpoint: opts.destinationEndpoint,
         origin,
         maxAttempts: 3,
         createdAt: now,

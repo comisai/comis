@@ -31,10 +31,11 @@ import { UserTrustLevelSchema } from "@comis/core";
 export const DurableRunDbRowSchema = z.strictObject({
   checkpoint_id: z.string(),
   root_run_id: z.string(),
+  tenant_id: z.string(),
   agent_id: z.string(),
-  session_key: z.string(),
-  owner_tenant_id: z.string(),
-  owner_user_id: z.string(),
+  conversation_ref: z.string(),
+  canonical_scope: z.string(),
+  principal_id: z.string(),
   delivery_origin: z.string().nullable(),
   // JSON TEXT columns — the store JSON.parses these into arrays at the domain
   // boundary (spawn_tree is the flat string[] OR DAG {nodeId,status,runId?}[]).

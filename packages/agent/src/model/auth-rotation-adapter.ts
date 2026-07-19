@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Auth Rotation Adapter: Bridges AuthProfileManager with AuthStorage for
+ * Auth Rotation Adapter: Bridges AuthProfileManager with the credential store for
  * runtime API key rotation on rate-limit or auth errors.
  *
  * When a key fails, records the failure (exponential cooldown), retrieves
  * the next available key from AuthProfileManager, and hot-swaps it into
- * the AuthStorage via setRuntimeApiKey().
+ * the credential store via setRuntimeApiKey().
  *
  * Auth profile rotation with cooldown for rate-limited providers.
  *
  * @module
  */
 
-import type { AuthStorage } from "@earendil-works/pi-coding-agent";
+import type { ComisCredentialStore } from "./auth-storage-adapter.js";
 import type { AuthProfileManager } from "./auth-profile.js";
 
 // ---------------------------------------------------------------------------
@@ -45,8 +45,8 @@ export interface AuthRotationAdapter {
 
 /** Options for creating an auth rotation adapter. */
 export interface AuthRotationAdapterOptions {
-  /** The AuthStorage to hot-swap keys in. */
-  authStorage: AuthStorage;
+  /** The credential store to hot-swap keys in. */
+  authStorage: ComisCredentialStore;
   /** The AuthProfileManager managing multiple keys with cooldown. */
   profileManager: AuthProfileManager;
 }
@@ -63,7 +63,7 @@ export interface AuthRotationAdapterOptions {
  * 2. Gets next available key from AuthProfileManager
  * 3. Calls authStorage.setRuntimeApiKey() to hot-swap
  *
- * @param options - AuthStorage and AuthProfileManager
+ * @param options - Credential store and AuthProfileManager
  */
 export function createAuthRotationAdapter(options: AuthRotationAdapterOptions): AuthRotationAdapter {
   const { authStorage, profileManager } = options;
@@ -107,7 +107,7 @@ export function createAuthRotationAdapter(options: AuthRotationAdapterOptions): 
         }
       }
 
-      // Hot-swap the key in AuthStorage
+      // Hot-swap the key in the credential store
       authStorage.setRuntimeApiKey(provider, nextKeyValue);
       return true;
     },

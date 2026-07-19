@@ -51,9 +51,9 @@ interface OpenaiCompletionsEnv extends Env {
  */
 export interface OpenaiCompletionsDeps {
   /** Tenant used to construct exact failure diagnostics before execution returns. */
-  tenantId?: string;
+  tenantId: string;
   /** Default agent used when model resolution does not select one explicitly. */
-  agentId?: string;
+  agentId: string;
   /** Execute an agent turn with optional streaming callback. */
   executeAgent: (params: {
     message: string;
@@ -103,9 +103,11 @@ type GatewaySessionKey = { userId: string; channelId: string; peerId: string };
 function fallbackSessionKey(
   deps: OpenaiCompletionsDeps,
   sessionKey: GatewaySessionKey,
+  agentId: string,
 ): string {
   return formatSessionKey({
-    tenantId: deps.tenantId ?? "default",
+    tenantId: deps.tenantId,
+    agentId,
     userId: sessionKey.userId,
     channelId: sessionKey.channelId,
     peerId: sessionKey.peerId,
@@ -130,7 +132,7 @@ function emitCompletionDiagnostic(
     channelId: "openai",
     channelType: "openai",
     fallbackAgentId: args.agentId,
-    fallbackSessionKey: fallbackSessionKey(deps, args.sessionKey),
+    fallbackSessionKey: fallbackSessionKey(deps, args.sessionKey, args.agentId),
     fallbackTraceId: args.traceId,
     result: args.result,
     receivedAt: args.receivedAt,
@@ -569,7 +571,7 @@ export function createOpenaiCompletionsRoute(
       const completionId = `chatcmpl-${crypto.randomUUID()}`;
       const created = Math.floor(systemNowMs() / 1000);
       const traceId = crypto.randomUUID();
-      const agentId = resolvedModel?.agentId ?? deps.agentId ?? "default";
+      const agentId = resolvedModel?.agentId ?? deps.agentId;
 
       // Build session key for OpenAI compat requests
       const sessionKey = {

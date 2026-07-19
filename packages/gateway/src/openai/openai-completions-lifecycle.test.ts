@@ -57,6 +57,8 @@ function createDeps(
   overrides: Partial<OpenaiCompletionsDeps> = {},
 ): OpenaiCompletionsDeps {
   return {
+    tenantId: "tenant-a",
+    agentId: "agent-a",
     executeAgent: vi.fn().mockResolvedValue({
       response: "Hello",
       tokensUsed: { input: 2, output: 3, total: 5 },
@@ -152,7 +154,7 @@ describe("OpenAI completion lifecycle diagnostics", () => {
     expect(calls[0]?.[1]).toMatchObject({
       channelType: "openai",
       agentId: "agent-1",
-      sessionKey: expect.stringMatching(/^tenant:openai-api:openai:peer:chatcmpl-/),
+      sessionKey: expect.stringMatching(/^tenant:agent:agent-1:openai-api:openai:peer:chatcmpl-/),
       traceId: requestedTraceId,
       status: "error",
       failureStage: "execution",

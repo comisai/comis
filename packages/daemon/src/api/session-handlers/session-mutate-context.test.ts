@@ -1,12 +1,39 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
 import {
+  createConversationRef,
   createDeliveryOrigin,
   runWithContext,
+  type ConversationScope,
   type RequestContext,
 } from "@comis/core";
+import { ok } from "@comis/shared";
 import { bindSessionMutateHandlers } from "./session-mutate.js";
 import type { SessionHandlerDeps } from "./session-helpers.js";
+
+const scopesByRef = new Map<string, ConversationScope>();
+
+function targetAuthority(sessionKey: string, agentId: string) {
+  const [tenantId = "tenant_a", principalId = "user_a", conversationId = "target_chat"] = sessionKey.split(":");
+  const conversationScope: ConversationScope = {
+    tenantId,
+    agentId,
+    partition: {
+      kind: "endpoint-conversation-principal",
+      principalId,
+      endpoint: {
+        channelType: "telegram",
+        channelInstanceId: "telegram-account",
+        conversationId,
+        conversationKind: "direct",
+      },
+    },
+  };
+  const reference = createConversationRef(conversationScope);
+  if (!reference.ok) throw reference.error;
+  scopesByRef.set(reference.value, conversationScope);
+  return { tenant_id: tenantId, agent_id: agentId, conversation_ref: reference.value };
+}
 
 function createDeps(): {
   deps: SessionHandlerDeps;
@@ -33,6 +60,16 @@ function createDeps(): {
     },
     sessionStore: {
       loadByFormattedKey,
+      loadByRef: vi.fn((query: { tenantId: string; agentId: string }, conversationRef: string) => {
+        const raw = loadByFormattedKey(conversationRef);
+        if (raw === undefined) return ok(undefined);
+        const conversationScope = scopesByRef.get(conversationRef) ?? {
+          tenantId: query.tenantId,
+          agentId: query.agentId,
+          partition: { kind: "principal" as const, principalId: "user_a" },
+        };
+        return ok({ ...raw, conversationScope, conversationRef });
+      }),
     },
     subAgentRunner: {
       spawn,
@@ -62,6 +99,29 @@ function context(overrides: Partial<RequestContext> = {}): RequestContext {
     startedAt: 1,
     trustLevel: "user",
     channelType: "telegram",
+    turnScope: {
+      conversation: {
+        tenantId: "tenant_a",
+        agentId: "parent-agent",
+        partition: {
+          kind: "endpoint-conversation-principal",
+          principalId: "user_a",
+          endpoint: {
+            channelType: "telegram",
+            channelInstanceId: "telegram-account",
+            conversationId: "chat_a",
+            conversationKind: "direct",
+          },
+        },
+      },
+      principal: { principalId: "user_a" },
+      endpoint: {
+        channelType: "telegram",
+        channelInstanceId: "telegram-account",
+        conversationId: "chat_a",
+        conversationKind: "direct",
+      },
+    },
     ...overrides,
   };
 }
@@ -79,8 +139,14 @@ function spawnParams(overrides: Record<string, unknown> = {}): Record<string, un
 }
 
 function sendParams(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const sessionKey = typeof overrides.session_key === "string"
+    ? overrides.session_key
+    : "tenant_a:user_a:target_chat";
+  const agentId = typeof overrides.agent_id === "string"
+    ? overrides.agent_id
+    : "parent-agent";
   return {
-    session_key: "tenant_a:user_a:target_chat",
+    ...targetAuthority(sessionKey, agentId),
     text: "send this safely",
     _agentId: "parent-agent",
     _callerSessionKey: "tenant_a:user_a:chat_a",
@@ -106,9 +172,9 @@ describe("session.send target principal authorization", () => {
       .resolves.toEqual({ sent: true });
 
     expect(send).toHaveBeenCalledWith(expect.objectContaining({
-      targetSessionKey: "tenant_a:user_a:target_chat",
+      target: expect.objectContaining({ tenantId: "tenant_a", agentId: "parent-agent" }),
       callerSessionKey: "tenant_a:user_a:chat_a",
-      agentId: "parent-agent",
+      callerAgentId: "parent-agent",
       announceOperationId: "sessions-send-call-1",
     }));
   });
@@ -176,7 +242,7 @@ describe("session.send target principal authorization", () => {
     });
     const handler = bindSessionMutateHandlers(deps)["session.send"]!;
 
-    await expect(runWithContext(context(), () => handler(sendParams())))
+    await expect(runWithContext(context(), () => handler(sendParams({ agent_id: "other-agent" }))))
       .rejects.toThrow(/target agent.*request principal/i);
     expect(send).not.toHaveBeenCalled();
   });
@@ -188,16 +254,18 @@ describe("session.send target principal authorization", () => {
       metadata: {
         agentId: "child-agent",
         spawnedByAgent: "parent-agent",
-        parentSessionKey: "tenant_a:user_a:chat_a",
+        parentConversationRef: targetAuthority("tenant_a:user_a:chat_a", "parent-agent").conversation_ref,
       },
       createdAt: 1,
       updatedAt: 1,
     });
     const handler = bindSessionMutateHandlers(deps)["session.send"]!;
 
-    await expect(runWithContext(context(), () => handler(sendParams())))
+    await expect(runWithContext(context(), () => handler(sendParams({ agent_id: "child-agent" }))))
       .resolves.toEqual({ sent: true });
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ agentId: "child-agent" }));
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      target: expect.objectContaining({ agentId: "child-agent" }),
+    }));
   });
 
   it("rejects an agent-origin send when no live request context exists", async () => {
@@ -228,34 +296,25 @@ describe("session.send target principal authorization", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("rejects a target whose agent ownership cannot be proven", async () => {
-    const { deps, send, loadByFormattedKey } = createDeps();
-    loadByFormattedKey.mockReturnValue({
-      messages: [],
-      metadata: {},
-      createdAt: 1,
-      updatedAt: 1,
-    });
-    const handler = bindSessionMutateHandlers(deps)["session.send"]!;
-
-    await expect(runWithContext(context(), () => handler(sendParams())))
-      .rejects.toThrow(/target agent ownership.*required/i);
-    expect(send).not.toHaveBeenCalled();
-  });
-
-  it("keeps the no-agent control-plane path explicit and unchanged", async () => {
+  it("keeps the authenticated control-plane path explicitly scoped", async () => {
     const { deps, send } = createDeps();
     const handler = bindSessionMutateHandlers(deps)["session.send"]!;
+    const authority = targetAuthority(
+      "tenant_b:operator_target:chat_b",
+      "operator-selected-agent",
+    );
 
     await expect(handler({
-      session_key: "tenant_b:operator_target:chat_b",
+      ...authority,
       text: "operator-directed message",
-      agent_id: "operator-selected-agent",
     })).resolves.toEqual({ sent: true });
 
     expect(send).toHaveBeenCalledWith(expect.objectContaining({
-      targetSessionKey: "tenant_b:operator_target:chat_b",
-      agentId: "operator-selected-agent",
+      target: {
+        tenantId: "tenant_b",
+        agentId: "operator-selected-agent",
+        conversationRef: authority.conversation_ref,
+      },
     }));
   });
 });

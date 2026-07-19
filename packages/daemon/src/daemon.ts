@@ -15,12 +15,12 @@ import {
   createApprovalGate,
   createAuditAggregator,
   createConfigGitManager,
-  parseFormattedSessionKey,
   parseConfigPaths,
   envSubset,
   createInjectionRateLimiter,
   checkApprovalsConfig,
   formatSessionKey,
+  conversationScopeToSessionKey,
   safePath,
   resolveConfigSecretRefs,
   validateMemoryWrite,
@@ -221,7 +221,8 @@ function wirePostAgentsCleanup(deps: {
   // across turns. Registered trackers are released on session:expired.
   const sessionTrackerRegistry = createSessionTrackerRegistry(createFileStateTracker);
   eventBus.on("session:expired", (payload) => {
-    sessionTrackerRegistry.release(formatSessionKey(payload.sessionKey));
+    const displayKey = conversationScopeToSessionKey(payload.conversationScope);
+    if (displayKey.ok) sessionTrackerRegistry.release(formatSessionKey(displayKey.value));
   });
   // Dispose Gemini cache on session expiry (fire-and-forget)
   wireGeminiCacheCleanup(eventBus, geminiCacheManager);
@@ -310,7 +311,7 @@ function buildChannelManagerDeps(deps: {
     return r.ok ? r.value : undefined;
   };
   // Complete three-layer forget for channel /new + /reset.
-  const channelConversationReset = createConversationReset({ lcdStore: agents.lcdStore, piSessionAdapters, tenantId: container.config.tenantId, logger });
+  const channelConversationReset = createConversationReset({ lcdStore: agents.lcdStore, piSessionAdapters, logger });
   // Build exportSessionBundle DI closure for the /export-trajectory slash
   // command. Delegates to exportSessionBundleFromKey, which pointer-resolves the
   // real session `.jsonl` before calling exportTrajectoryBundle — the session
@@ -609,21 +610,19 @@ type PostChannelsBootContext = BootContext & Required<Pick<BootContext,
 function createHotAdd(deps: {
   channels: PostChannelsBootContext;
   shutdownRef: { value?: { readonly isShuttingDown: boolean } };
-}): (agentId: string, config: PerAgentConfig, rawRerankEnabled?: boolean | undefined) => Promise<void> {
+}): (agentId: string, config: PerAgentConfig) => Promise<void> {
   const { channels, shutdownRef } = deps;
   const {
     singleAgentDeps, executors, workspaceDirs, costTrackers, budgetGuards,
     stepCounters, piSessionAdapters, skillWatcherHandles, skillRegistries,
     toolCapabilityPorts, container, daemonLogger,
   } = channels;
-  return async (agentId, config, rawRerankEnabled) => {
+  return async (agentId, config) => {
     const startMs = systemNowMs();
     if (shutdownRef.value?.isShuttingDown) {
       throw new Error("Cannot hot-add agent during shutdown");
     }
-    // forward the RAW rerank signal from the agents.create RPC input
-    // so the hot-added agent's effective-rerank precedence matches the boot path.
-    const result = await setupSingleAgent(agentId, config, singleAgentDeps, rawRerankEnabled);
+    const result = await setupSingleAgent(agentId, config, singleAgentDeps);
     executors.set(agentId, result.executor);
     workspaceDirs.set(agentId, result.workspaceDir);
     costTrackers.set(agentId, result.costTracker);
@@ -730,7 +729,7 @@ function buildRpcDispatchDeps(deps: {
   const recallCounters = c.recallCounters;
   const dialecticWiring = buildDialecticWiring(dialecticWiringDepsFromBoot(c)); // the memory.ask seam + per-agent recall factory (setup-dialectic.ts owns the wiring; the cost gate returns {} when off). Spread into the dispatch deps below; the forward-presence belt locks the spread.
   // L3 destroy for session.reset_conversation — without it, runtime session state resurrects the conversation the reset was meant to forget.
-  const conversationReset = createConversationReset({ lcdStore: c.lcdStore, sessionStore: g.sessionStoreBridge, piSessionAdapters: c.piSessionAdapters, tenantId: c.container.config.tenantId, logger: c.logger });
+  const conversationReset = createConversationReset({ lcdStore: c.lcdStore, sessionStore: g.sessionStoreBridge, piSessionAdapters: c.piSessionAdapters, logger: c.logger });
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
@@ -747,7 +746,7 @@ function buildRpcDispatchDeps(deps: {
     // SAME object satisfies SessionsApiDeps.memoryPort. consolidationStore (the
     // unlink/purge surface) is already on the spread below.
     memoryPort: c.memoryAdapter,
-    destroyRuntimeSession: (formattedSessionKey: string) => conversationReset.destroyRuntimeSession(c.defaultAgentId, formattedSessionKey),
+    destroyRuntimeSession: conversationReset.destroyRuntimeSession,
     // session.reset_conversation / session.delete drop
     // the executor's session-scoped state (tool-schema snapshots, the
     // tool-schema strip-retry once-gate, JIT-guide delivery, cache latches) through the
@@ -1607,7 +1606,7 @@ async function bootAgents(
     rerankerPort, // built in setup-memory; threaded into setupAgents -> createPiExecutor
     rerankerModelPresent, // model-present probe result; threaded into setupAgents -> per-agent effective rerank precedence (same value as the build gate)
     entityStore, // threaded into setupAgents -> createPiExecutor (recall read path) + the cron review (write path)
-    lcdStore, // the LCD store; threaded into setupAgents -> createPiExecutor (contextStore) -> setupContextEngine -> the `dag` branch (context-engine.ts). Opt-in (version: "dag"); default pipeline. The agent receives the core ContextStorePort TYPE only (agent↛memory cut)
+    lcdStore, // canonical context store threaded into setupAgents -> createPiExecutor -> setupContextEngine; the agent receives only the core port type
     provenanceStore, // the provenance read side; threaded into setupAgents -> createPiExecutor -> prompt-assembly -> createMemoryRecall's post-fusion provenance down-weighting pass. The agent receives the core LcdProvenanceReadStore TYPE only (agent↛memory cut)
     summarizerSpendBreaker, // daemon-owned per-tenant breaker; threaded into setupAgents -> createPiExecutor -> setupContextEngine so getSummarizerDeps gates the leaf seam per tenant (truncation-only degrade on open-breaker/over-cap)
     spendAccumulator, temporalStore, // spendAccumulator = the dollars kill-switch (threaded setupAgents -> createPiExecutor -> bridge); temporalStore -> createMemoryRecall (recall temporal-spread read; dormant until rag.lanes.temporal.enabled)
@@ -2018,7 +2017,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const {
     container, sessionStore, db, daemonLogger, agentLogger, schedulerLogger,
     skillsLogger, logger, memoryAdapter, memoryApi,
-    activeRunRegistry, sessionResolver, channelPluginsRef, backgroundTaskManager,
+    sessionResolver, channelPluginsRef, backgroundTaskManager,
     bgNotifyRef, bgNotifyFn,
     defaultAgentId, defaultWorkspaceDir, executors, workspaceDirs,
     agentsConfig: agents, toolCapabilityPorts, mcpClientManager,
@@ -2120,9 +2119,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     subprocessEnv: handle.execToolEnv, onSuspiciousContent: handle.onSuspiciousContent,
     // The daemon TimerPort drives the terminal-driver reaper sweep.
     timers: handle.timers,
-    // The concrete LCD store, so assembleToolsForAgent can wire the
-    // dag-mode ctx_* tools (gated on version === "dag" && a present store). The agent
-    // receives only the core ContextStorePort TYPE (the agent-to-store cut holds).
+    // The concrete context store lets assembleToolsForAgent wire ctx_* tools.
     lcdStore,
     mcpClientManager,
     // Fresh accessor for per-server tool filtering — read live so
@@ -2222,7 +2219,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     quietHoursConfig: container.config.scheduler.quietHours,
     criticalBypass: container.config.scheduler.quietHours.criticalBypass,
     activeAdapterTypes: new Set(adaptersByType.keys()),
-    logger: daemonLogger, tenantId: container.config.tenantId,
+    logger: daemonLogger,
   });
   sessionTrackerSlot.current = notificationContext.sessionTracker;
   bgNotifyRef.ref = notificationContext.notificationService;
@@ -2289,7 +2286,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const { crossSessionSender, subAgentRunner, sendToChannel, sendGovernedAnnouncement, announceToParent, deadLetterQueue, announcementBatcher, proxyTypingCleanup } = setupCrossSession({
     sessionStore, container, assembleToolsForAgent, getExecutor: handle.getExecutor, adaptersByType,
     logger: agentLogger, memoryAdapter, gatewaySend: gatewaySendRef,
-    activeRunRegistry, sessionResolver, deliveryQueue, deliveryService,
+    sessionResolver, deliveryQueue, deliveryService,
     fileLock: singleAgentDeps.fileLock,
     clock: handle.clock, timers: handle.timers,
     // Thread the worktree seam + the shared registry.
@@ -2482,20 +2479,7 @@ async function bootGateway(
   const resolvedGatewayTokens = resolveGatewayTokens({ container, daemonLogger });
 
   // 6.7.0.5. Session store bridge (shared between RPC dispatch and DaemonInstance return)
-  const sessionStoreBridge: SessionStoreBridge = {
-    listDetailed: (tenantId?: string) => sessionStore.listDetailed(tenantId),
-    loadByFormattedKey: (key: string) => sessionStore.loadByFormattedKey(key),
-    deleteByFormattedKey: (key: string) => {
-      const parsed = parseFormattedSessionKey(key);
-      if (!parsed) return false;
-      return sessionStore.delete(parsed);
-    },
-    saveByFormattedKey: (key: string, messages: unknown[], metadata?: Record<string, unknown>) => {
-      const parsed = parseFormattedSessionKey(key);
-      if (!parsed) return;
-      sessionStore.save(parsed, messages, metadata);
-    },
-  };
+  const sessionStoreBridge: SessionStoreBridge = sessionStore;
 
   // Mutable shutdown ref for hot-add guard. Populated by bootShutdown --
   // closures read .value at RPC call time, not definition time.
@@ -2536,7 +2520,7 @@ async function bootGateway(
     costTrackers, workspaceDirs,
     _createGatewayServer, piSessionAdapters,
     // Complete three-layer forget for gateway slash /new + /reset.
-    destroyConversation: createConversationReset({ lcdStore: channels.lcdStore, sessionStore: sessionStoreBridge, piSessionAdapters, tenantId: container.config.tenantId, logger: gatewayLogger }).destroyConversationCompletely,
+    destroyConversation: createConversationReset({ lcdStore: channels.lcdStore, sessionStore: sessionStoreBridge, piSessionAdapters, logger: gatewayLogger }).destroyConversationCompletely,
     resolvedTokens: resolvedGatewayTokens,
     daemonVersion: boot.daemonVersion,
     suspendedAgents,

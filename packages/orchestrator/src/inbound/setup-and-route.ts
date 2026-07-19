@@ -10,10 +10,12 @@
 
 import type {
   ChannelPort,
+  ConversationRef,
   EventMap,
   NormalizedMessage,
   SessionKey,
   PerChannelStreamingConfig,
+  ResolvedTurnScope,
 } from "@comis/core";
 import {
   formatSessionKey,
@@ -161,6 +163,8 @@ export async function setupAndRoute(
   originalMsg: NormalizedMessage,
   sessionKey: SessionKey,
   agentId: string,
+  turnScope: ResolvedTurnScope,
+  conversationRef: ConversationRef,
   executor: AgentExecutor,
   activePacers: Set<BlockPacer>,
   sendOverrides: SendOverrideStore,
@@ -330,11 +334,7 @@ export async function setupAndRoute(
 
       if (effectiveMode === "steer+followup") {
         const formattedKey = formatSessionKey(sessionKey);
-        const runHandle = deps.sessionResolver.resolveActiveSession({
-          agentId,
-          channelType: adapter.channelType,
-          channelId: msg.channelId,
-        });
+        const runHandle = deps.sessionResolver.resolveActiveSession(conversationRef);
 
         if (runHandle) {
           const messageText = msg.text ?? "";
@@ -467,11 +467,7 @@ export async function setupAndRoute(
         const resolveActiveRun = (): RunHandle | undefined => {
           const sessionResolver = deps.sessionResolver;
           if (!sessionResolver) return undefined;
-          const resolved = tryCatch(() => sessionResolver.resolveActiveSession({
-            agentId,
-            channelType: adapter.channelType,
-            channelId: effectiveMsg.channelId,
-          }));
+          const resolved = tryCatch(() => sessionResolver.resolveActiveSession(conversationRef));
           if (!resolved.ok) {
             logCancellationFailure(
               resolved.error,

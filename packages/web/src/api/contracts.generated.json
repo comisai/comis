@@ -4,10 +4,21 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "sessionKey": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -32,7 +43,22 @@
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -72,6 +98,15 @@
           "type": "string",
           "minLength": 1
         },
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
+          "type": "string"
+        },
         "approved": {
           "type": "boolean"
         },
@@ -84,6 +119,9 @@
       },
       "required": [
         "requestId",
+        "tenant_id",
+        "agent_id",
+        "conversation_ref",
         "approved"
       ],
       "additionalProperties": false
@@ -129,7 +167,13 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "sessionKey": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         },
         "approved": {
@@ -143,6 +187,9 @@
         }
       },
       "required": [
+        "tenant_id",
+        "agent_id",
+        "conversation_ref",
         "approved"
       ],
       "additionalProperties": false
@@ -2312,7 +2359,7 @@
           "items": {
             "type": "object",
             "properties": {
-              "conversation_id": {
+              "conversation_ref": {
                 "type": "string"
               },
               "tenant_id": {
@@ -2345,7 +2392,7 @@
               }
             },
             "required": [
-              "conversation_id",
+              "conversation_ref",
               "tenant_id",
               "agent_id",
               "session_key",
@@ -2376,12 +2423,12 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "conversation_id": {
+        "conversation_ref": {
           "type": "string"
         }
       },
       "required": [
-        "conversation_id"
+        "conversation_ref"
       ],
       "additionalProperties": false
     },
@@ -2389,7 +2436,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "conversationId": {
+        "conversationRef": {
           "type": "string"
         },
         "nodes": {
@@ -2450,7 +2497,7 @@
         }
       },
       "required": [
-        "conversationId",
+        "conversationRef",
         "nodes",
         "messageCount"
       ],
@@ -5455,10 +5502,12 @@
       "type": "object",
       "properties": {
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "offset": {
           "type": "number"
@@ -5482,6 +5531,10 @@
           }
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -5524,6 +5577,55 @@
       "admin"
     ]
   },
+  "memory.change_visibility": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tenantId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "visibility": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "tenantId",
+        "agentId",
+        "visibility"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "changed": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "changed"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "memory.delete": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5537,11 +5639,18 @@
           }
         },
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
+        },
+        "agent_id": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
-        "ids"
+        "ids",
+        "tenant_id",
+        "agent_id"
       ],
       "additionalProperties": false
     },
@@ -5641,10 +5750,12 @@
       "type": "object",
       "properties": {
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "limit": {
           "type": "integer",
@@ -5652,6 +5763,10 @@
           "maximum": 1000
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -5703,10 +5818,12 @@
       "type": "object",
       "properties": {
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "offset": {
           "type": "number"
@@ -5715,6 +5832,10 @@
           "type": "number"
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -5759,12 +5880,18 @@
       "type": "object",
       "properties": {
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -5785,14 +5912,7 @@
               "type": "string"
             },
             "agentId": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             }
           },
           "required": [
@@ -5872,10 +5992,12 @@
       "type": "object",
       "properties": {
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "limit": {
           "type": "integer",
@@ -5883,6 +6005,10 @@
           "maximum": 1000
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -5947,14 +6073,18 @@
           "minLength": 1
         },
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
-        "id"
+        "id",
+        "tenant_id",
+        "agent_id"
       ],
       "additionalProperties": false
     },
@@ -5990,10 +6120,12 @@
       "type": "object",
       "properties": {
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "limit": {
           "type": "integer",
@@ -6001,6 +6133,10 @@
           "maximum": 9007199254740991
         }
       },
+      "required": [
+        "agent_id",
+        "tenant_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -6021,14 +6157,7 @@
               "type": "string"
             },
             "agentId": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string"
             }
           },
           "required": [
@@ -6085,7 +6214,8 @@
           "minLength": 1
         },
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "dry_run": {
           "type": "boolean"
@@ -6093,7 +6223,8 @@
       },
       "required": [
         "entries",
-        "agent_id"
+        "agent_id",
+        "tenant_id"
       ],
       "additionalProperties": false
     },
@@ -6140,12 +6271,18 @@
       "type": "object",
       "properties": {
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -6226,10 +6363,12 @@
           "type": "string"
         },
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "limit": {
           "type": "integer",
@@ -6237,6 +6376,10 @@
           "maximum": 1000
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -6279,6 +6422,13 @@
         },
         "limit": {
           "type": "number"
+        },
+        "tenantId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agentId": {
+          "type": "string"
         }
       },
       "required": [
@@ -6340,12 +6490,18 @@
       "type": "object",
       "properties": {
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -6377,10 +6533,21 @@
         },
         "trustLevel": {
           "type": "string"
+        },
+        "visibility": {
+          "type": "string"
+        },
+        "tenantId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agentId": {
+          "type": "string"
         }
       },
       "required": [
-        "content"
+        "content",
+        "visibility"
       ],
       "additionalProperties": false
     },
@@ -6416,14 +6583,18 @@
           "minLength": 1
         },
         "tenant_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "agent_id": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
-        "id"
+        "id",
+        "tenant_id",
+        "agent_id"
       ],
       "additionalProperties": false
     },
@@ -10715,20 +10886,31 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "session_key": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         },
         "instructions": {
           "type": "string"
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
+      ],
       "additionalProperties": false
     },
     "response": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "sessionKey": {
+        "conversationRef": {
           "type": "string"
         },
         "messageCount": {
@@ -10753,7 +10935,7 @@
         }
       },
       "required": [
-        "sessionKey",
+        "conversationRef",
         "messageCount",
         "estimatedTokens",
         "compactionTriggered",
@@ -10770,12 +10952,20 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "session_key": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         }
       },
       "required": [
-        "session_key"
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
       ],
       "additionalProperties": false
     },
@@ -10783,7 +10973,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "sessionKey": {
+        "conversationRef": {
           "type": "string"
         },
         "deleted": {
@@ -10823,7 +11013,7 @@
         }
       },
       "required": [
-        "sessionKey",
+        "conversationRef",
         "deleted",
         "transcript"
       ],
@@ -10838,12 +11028,20 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "session_key": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         }
       },
       "required": [
-        "session_key"
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
       ],
       "additionalProperties": false
     },
@@ -10851,7 +11049,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "sessionKey": {
+        "conversationRef": {
           "type": "string"
         },
         "messages": {
@@ -10882,7 +11080,7 @@
         }
       },
       "required": [
-        "sessionKey",
+        "conversationRef",
         "messages",
         "metadata",
         "messageCount",
@@ -10900,7 +11098,13 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "session_key": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         },
         "offset": {
@@ -10911,7 +11115,9 @@
         }
       },
       "required": [
-        "session_key"
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
       ],
       "additionalProperties": false
     },
@@ -11040,6 +11246,12 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
         "kind": {
           "type": "string"
         },
@@ -11047,6 +11259,10 @@
           "type": "number"
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -11058,16 +11274,10 @@
           "items": {
             "type": "object",
             "properties": {
-              "sessionKey": {
+              "conversationRef": {
                 "type": "string"
               },
               "agentId": {
-                "type": "string"
-              },
-              "userId": {
-                "type": "string"
-              },
-              "channelId": {
                 "type": "string"
               },
               "kind": {
@@ -11087,10 +11297,8 @@
               }
             },
             "required": [
-              "sessionKey",
+              "conversationRef",
               "agentId",
-              "userId",
-              "channelId",
               "kind",
               "messageCount",
               "totalTokens",
@@ -11119,12 +11327,20 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "session_key": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         }
       },
       "required": [
-        "session_key"
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
       ],
       "additionalProperties": false
     },
@@ -11132,7 +11348,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "sessionKey": {
+        "conversationRef": {
           "type": "string"
         },
         "reset": {
@@ -11144,7 +11360,7 @@
         }
       },
       "required": [
-        "sessionKey",
+        "conversationRef",
         "reset",
         "previousMessageCount"
       ],
@@ -11159,7 +11375,13 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "session_key": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         },
         "memory": {
@@ -11167,13 +11389,12 @@
         },
         "purge_derived": {
           "type": "boolean"
-        },
-        "agentId": {
-          "type": "string"
         }
       },
       "required": [
-        "session_key"
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
       ],
       "additionalProperties": false
     },
@@ -11181,7 +11402,7 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "sessionKey": {
+        "conversationRef": {
           "type": "string"
         },
         "lcdRowsDeleted": {
@@ -11201,7 +11422,7 @@
         }
       },
       "required": [
-        "sessionKey",
+        "conversationRef",
         "lcdRowsDeleted",
         "sessionMessagesCleared"
       ],
@@ -11293,6 +11514,12 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
         "query": {
           "type": "string"
         },
@@ -11306,6 +11533,10 @@
           "type": "boolean"
         }
       },
+      "required": [
+        "tenant_id",
+        "agent_id"
+      ],
       "additionalProperties": false
     },
     "response": {
@@ -11325,7 +11556,13 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
-        "session_key": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "conversation_ref": {
           "type": "string"
         },
         "text": {
@@ -11339,13 +11576,12 @@
         },
         "max_turns": {
           "type": "number"
-        },
-        "agent_id": {
-          "type": "string"
         }
       },
       "required": [
-        "session_key",
+        "tenant_id",
+        "agent_id",
+        "conversation_ref",
         "text"
       ],
       "additionalProperties": false

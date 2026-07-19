@@ -5,7 +5,7 @@
  * Gated by the `COMIS_TEST_SILENT_FAIL_FLAG` environment variable (which
  * names a file path). When the env var is set AND that file exists, the
  * next call to tryInjectSilentFailure() consumes the file atomically and * returns a synthetic silent-LLM-failure result. This lets operators
- * validate the silent-failure retry / reuseSessionKey code path
+ * validate the silent-failure retry and conversation-reuse path
  * end-to-end without waiting for Anthropic's real API to fail silently.
  *
  * Safety:

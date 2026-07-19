@@ -1,146 +1,90 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
+import { createConversationRef, type ResolvedTurnScope } from "./conversation-scope.js";
 import { BackgroundTaskOriginSchema } from "./background-task-origin.js";
 
+const TURN_SCOPE: ResolvedTurnScope = {
+  conversation: {
+    tenantId: "tenant-1",
+    agentId: "agent-1",
+    partition: { kind: "agent" },
+  },
+  principal: { principalId: "principal-1" },
+  endpoint: {
+    channelType: "echo",
+    channelInstanceId: "echo-main",
+    conversationId: "conversation-1",
+    conversationKind: "direct",
+  },
+};
+
+const reference = createConversationRef(TURN_SCOPE.conversation);
+if (!reference.ok) throw reference.error;
+
+function makeOrigin(overrides: Record<string, unknown> = {}) {
+  return {
+    turnScope: TURN_SCOPE,
+    conversationRef: reference.value,
+    deliveryOrigin: {
+      channelType: "echo",
+      channelId: "conversation-1",
+      userId: "principal-1",
+      tenantId: "tenant-1",
+    },
+    traceId: "abc-123",
+    backgroundHopCount: 0,
+    ...overrides,
+  };
+}
+
 describe("BackgroundTaskOriginSchema", () => {
-  it("accepts valid input with all fields", () => {
-    const result = BackgroundTaskOriginSchema.parse({
-      agentId: "default",
-      sessionKey: "default:echo:test:user1",
-      channelType: "echo",
-      channelId: "test",
-      traceId: "abc-123",
-      backgroundHopCount: 0,
+  it("accepts a coherent resolved origin", () => {
+    expect(BackgroundTaskOriginSchema.parse(makeOrigin())).toEqual(makeOrigin());
+  });
+
+  it("accepts a nullable trace identifier", () => {
+    expect(BackgroundTaskOriginSchema.parse(makeOrigin({ traceId: null })).traceId).toBeNull();
+  });
+
+  it("defaults the background hop count to zero", () => {
+    const { backgroundHopCount: _backgroundHopCount, ...origin } = makeOrigin();
+    expect(BackgroundTaskOriginSchema.parse(origin).backgroundHopCount).toBe(0);
+  });
+
+  it("accepts a positive integer background hop count", () => {
+    expect(BackgroundTaskOriginSchema.parse(makeOrigin({ backgroundHopCount: 2 })).backgroundHopCount).toBe(2);
+  });
+
+  it("rejects a negative background hop count", () => {
+    expect(() => BackgroundTaskOriginSchema.parse(makeOrigin({ backgroundHopCount: -1 }))).toThrow();
+  });
+
+  it("rejects a fractional background hop count", () => {
+    expect(() => BackgroundTaskOriginSchema.parse(makeOrigin({ backgroundHopCount: 1.5 }))).toThrow();
+  });
+
+  it("rejects missing resolved authority", () => {
+    expect(() => BackgroundTaskOriginSchema.parse({ traceId: null })).toThrow();
+  });
+
+  it("rejects a conversation reference for a different scope", () => {
+    const other = createConversationRef({
+      tenantId: "tenant-1",
+      agentId: "agent-2",
+      partition: { kind: "agent" },
     });
-    expect(result).toEqual({
-      agentId: "default",
-      sessionKey: "default:echo:test:user1",
-      channelType: "echo",
-      channelId: "test",
-      traceId: "abc-123",
-      backgroundHopCount: 0,
-    });
+    if (!other.ok) throw other.error;
+    expect(() => BackgroundTaskOriginSchema.parse(makeOrigin({ conversationRef: other.value }))).toThrow();
   });
 
-  it("accepts traceId: null (optional/nullable)", () => {
-    const result = BackgroundTaskOriginSchema.parse({
-      agentId: "default",
-      sessionKey: "default:echo:test:user1",
-      channelType: "echo",
-      channelId: "test",
-      traceId: null,
-      backgroundHopCount: 0,
-    });
-    expect(result.traceId).toBeNull();
-  });
-
-  it("backgroundHopCount defaults to 0 when omitted", () => {
-    const result = BackgroundTaskOriginSchema.parse({
-      agentId: "default",
-      sessionKey: "default:echo:test:user1",
-      channelType: "echo",
-      channelId: "test",
-      traceId: null,
-    });
-    expect(result.backgroundHopCount).toBe(0);
-  });
-
-  it("accepts backgroundHopCount: 2 (positive integer)", () => {
-    const result = BackgroundTaskOriginSchema.parse({
-      agentId: "default",
-      sessionKey: "default:echo:test:user1",
-      channelType: "echo",
-      channelId: "test",
-      traceId: null,
-      backgroundHopCount: 2,
-    });
-    expect(result.backgroundHopCount).toBe(2);
-  });
-
-  it("rejects backgroundHopCount: -1 (negative)", () => {
-    expect(() =>
-      BackgroundTaskOriginSchema.parse({
-        agentId: "default",
-        sessionKey: "default:echo:test:user1",
-        channelType: "echo",
-        channelId: "test",
-        traceId: null,
-        backgroundHopCount: -1,
-      }),
-    ).toThrow();
-  });
-
-  it("rejects backgroundHopCount: 1.5 (fraction)", () => {
-    expect(() =>
-      BackgroundTaskOriginSchema.parse({
-        agentId: "default",
-        sessionKey: "default:echo:test:user1",
-        channelType: "echo",
-        channelId: "test",
-        traceId: null,
-        backgroundHopCount: 1.5,
-      }),
-    ).toThrow();
-  });
-
-  it("rejects missing required fields", () => {
-    expect(() =>
-      BackgroundTaskOriginSchema.parse({ agentId: "default" }),
-    ).toThrow();
-  });
-
-  it("rejects empty strings for required fields", () => {
-    expect(() =>
-      BackgroundTaskOriginSchema.parse({
-        agentId: "",
-        sessionKey: "default:echo:test:user1",
-        channelType: "echo",
-        channelId: "test",
-        traceId: null,
-      }),
-    ).toThrow();
-
-    expect(() =>
-      BackgroundTaskOriginSchema.parse({
-        agentId: "default",
-        sessionKey: "",
-        channelType: "echo",
-        channelId: "test",
-        traceId: null,
-      }),
-    ).toThrow();
-
-    expect(() =>
-      BackgroundTaskOriginSchema.parse({
-        agentId: "default",
-        sessionKey: "default:echo:test:user1",
-        channelType: "",
-        channelId: "test",
-        traceId: null,
-      }),
-    ).toThrow();
-
-    expect(() =>
-      BackgroundTaskOriginSchema.parse({
-        agentId: "default",
-        sessionKey: "default:echo:test:user1",
-        channelType: "echo",
-        channelId: "",
-        traceId: null,
-      }),
-    ).toThrow();
-  });
-
-  it("rejects unknown fields (z.strictObject)", () => {
-    expect(() =>
-      BackgroundTaskOriginSchema.parse({
-        agentId: "default",
-        sessionKey: "default:echo:test:user1",
-        channelType: "echo",
-        channelId: "test",
-        traceId: null,
-        unknownField: "should-fail",
-      }),
-    ).toThrow();
+  it("rejects a delivery origin that conflicts with turn authority", () => {
+    expect(() => BackgroundTaskOriginSchema.parse(makeOrigin({
+      deliveryOrigin: {
+        channelType: "telegram",
+        channelId: "conversation-1",
+        userId: "principal-1",
+        tenantId: "tenant-1",
+      },
+    }))).toThrow();
   });
 });

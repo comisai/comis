@@ -62,7 +62,6 @@ export type {
 } from "./completion-dispatcher.js";
 export { createBackgroundSessionResolver } from "./session-resolver.js";
 export type {
-  ActiveSessionKey,
   BackgroundSessionResolver,
   BackgroundSessionResolverDeps,
 } from "./session-resolver.js";

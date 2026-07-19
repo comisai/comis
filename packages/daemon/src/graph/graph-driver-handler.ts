@@ -11,7 +11,6 @@ import {
   type NodeDriverAction,
   type SessionKey,
   type NormalizedMessage,
-  parseFormattedSessionKey,
   safePath,
   toSafeErrorLogString,
   systemNowMs,
@@ -73,15 +72,18 @@ export function handleDriverTurnCompleted(
   // Capture result immediately (capture before sweep)
   const run = deps.subAgentRunner.getRunStatus(event.runId);
 
-  // Capture the first round's session key for driver reuse on subsequent rounds.
-  // This MUST happen here (not in executeDriverAction) because spawn() sets run.sessionKey
+  // Capture the first round's conversation for driver reuse on subsequent rounds.
+  // This MUST happen here (not in executeDriverAction) because spawn() sets the locator
   // asynchronously inside startExecution via queueMicrotask. By the time handleDriverTurnCompleted
-  // fires, the run has completed and sessionKey is guaranteed populated.
-  if (ds && !ds.persistentSessionKey && run?.sessionKey) {
-    ds.persistentSessionKey = run.sessionKey;
+  // fires, the run has completed and the locator is guaranteed populated.
+  if (ds && !ds.persistentConversation && run) {
+    ds.persistentConversation = {
+      conversationScope: run.conversationScope,
+      conversationRef: run.conversationRef,
+    };
     deps.logger?.debug(
-      { graphId: gs.graphId, nodeId, persistentSessionKey: run.sessionKey },
-      "Captured persistent session key from first driver round",
+      { graphId: gs.graphId, nodeId, conversationRef: run.conversationRef },
+      "Captured persistent conversation from first driver round",
     );
   }
 
@@ -441,11 +443,7 @@ export function handleWaitForInput(
   }
 
   // Extract the caller's userId for identity matching
-  let callerUserId: string | undefined;
-  if (gs.callerSessionKey) {
-    const parsed = parseFormattedSessionKey(gs.callerSessionKey);
-    callerUserId = parsed?.userId;
-  }
+  const callerUserId = gs.callerPrincipalId;
 
   // Create synthetic runId for routing the reply through handleDriverTurnCompleted
   const syntheticRunId = `__user_reply__:${nodeId}`;
@@ -597,11 +595,11 @@ export function executeDriverAction(
 
   switch (action.action) {
     case "spawn": {
-      // Auto-inject persistent session key for multi-round driver reuse.
-      // After the first round completes, handleDriverTurnCompleted captures ds.persistentSessionKey.
+      // Auto-inject the persistent conversation for multi-round driver reuse.
+      // After the first round completes, handleDriverTurnCompleted captures it.
       // Subsequent spawns reuse that session for cache prefix continuity.
-      // If the driver explicitly provides reuseSessionKey, use that instead.
-      const effectiveReuseKey = action.reuseSessionKey ?? ds.persistentSessionKey;
+      // If the driver explicitly provides a conversation, use that instead.
+      const effectiveReuseConversation = action.reuseConversation ?? ds.persistentConversation;
 
       gatedSpawn(state, deps, config, gs, nodeId, () => {
         const runId = deps.subAgentRunner.spawn({
@@ -625,7 +623,7 @@ export function executeDriverAction(
           graphId: gs.graphId,
           nodeId,
           graphToolNames: gs.graphToolNames,  // Propagate tool superset for driver spawns
-          reuseSessionKey: effectiveReuseKey,  // Undefined on first spawn, populated on subsequent rounds
+          reuseConversation: effectiveReuseConversation,
           // Propagate leaf-node signal to the driver's inner sub-agents too —
           // e.g. the final round of a debate on a leaf node should not pay the
           // 1h cache premium since nothing reads the prefix afterwards.
@@ -635,7 +633,7 @@ export function executeDriverAction(
         ds.currentRunId = runId;
         gs.driverRunIdMap.set(runId, { nodeId, agentId: action.agentId });
         deps.logger?.debug(
-          { graphId: gs.graphId, nodeId, runId, agentId: action.agentId, reuseSession: !!effectiveReuseKey },
+          { graphId: gs.graphId, nodeId, runId, agentId: action.agentId, reuseSession: !!effectiveReuseConversation },
           "Driver spawned sub-agent",
         );
       });

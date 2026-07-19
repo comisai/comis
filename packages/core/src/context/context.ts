@@ -8,6 +8,8 @@ import { DeliveryOriginSchema } from "../domain/delivery-origin.js";
 import type { DeliveryOrigin } from "../domain/delivery-origin.js";
 import { formatSessionKey, parseSessionKey } from "../domain/session-key.js";
 import type { SessionKey } from "../domain/session-key.js";
+import { ResolvedTurnScopeSchema, createConversationRef } from "../domain/conversation-scope.js";
+import type { ResolvedTurnScope } from "../domain/conversation-scope.js";
 
 /**
  * User trust level for authorization decisions.
@@ -29,7 +31,7 @@ export type UserTrustLevel = z.infer<typeof UserTrustLevelSchema>;
  * Every inbound request (message, API call, scheduled task) runs within
  * a context that carries tenant, user, session, and trace identity.
  *
- * tenantId defaults to "default" for single-tenant deployments.
+ * tenantId is injected explicitly by ingress from deployment configuration.
  * traceId is a UUID for distributed tracing / log correlation.
  * trustLevel defaults to "guest" so an unparsed or provisional request never
  * gains privileges before its authenticated sender mapping is resolved.
@@ -40,11 +42,13 @@ export type UserTrustLevel = z.infer<typeof UserTrustLevelSchema>;
  * Empty strings remain invalid; only undefined represents unresolved identity.
  */
 export const RequestContextSchema = z.strictObject({
-    tenantId: z.string().min(1).default("default"),
+    tenantId: z.string().min(1),
     userId: z.string().min(1).optional(),
     sessionKey: z.string().min(1).optional(),
     /** Resolved agent id for the turn, filled by the inbound pipeline. */
     agentId: z.string().min(1).optional(),
+    /** Validated endpoint, principal, and conversation authority for the turn. */
+    turnScope: ResolvedTurnScopeSchema.optional(),
     /** Authenticated gateway client identity for request-scoped, client-targeted delivery. */
     clientId: z.string().min(1).optional(),
     traceId: z.guid(),
@@ -74,6 +78,7 @@ export interface ResolvedRequestContext {
   agentId: string;
   trustLevel: UserTrustLevel;
   deliveryOrigin: DeliveryOrigin;
+  turnScope?: ResolvedTurnScope;
 }
 
 /** Complete identity for a freshly-created synthetic request boundary. */
@@ -92,6 +97,7 @@ export interface ResolvedRequestContextSeed {
   resolvedModel?: string;
   resolvedLanguage?: string;
   workspacePolicyHash?: string;
+  turnScope?: ResolvedTurnScope;
 }
 
 /**
@@ -107,6 +113,7 @@ const lockedContextFields = [
   "userId",
   "sessionKey",
   "agentId",
+  "turnScope",
   "clientId",
   "traceId",
   "startedAt",
@@ -193,11 +200,23 @@ function lockResolvedContext(
     if (parsed.deliveryOrigin !== undefined) {
       Object.freeze(parsed.deliveryOrigin);
     }
+    if (parsed.turnScope !== undefined) {
+      const partition = parsed.turnScope.conversation.partition;
+      if (partition.kind === "endpoint-conversation" || partition.kind === "endpoint-conversation-principal") {
+        Object.freeze(partition.endpoint);
+      }
+      Object.freeze(partition);
+      Object.freeze(parsed.turnScope.conversation);
+      Object.freeze(parsed.turnScope.principal);
+      Object.freeze(parsed.turnScope.endpoint);
+      Object.freeze(parsed.turnScope);
+    }
     const lockedValues: ReadonlyArray<readonly [keyof RequestContext, unknown]> = [
       ["tenantId", parsed.tenantId],
       ["userId", parsed.userId],
       ["sessionKey", parsed.sessionKey],
       ["agentId", parsed.agentId],
+      ["turnScope", parsed.turnScope],
       ["clientId", parsed.clientId],
       ["traceId", parsed.traceId],
       ["startedAt", parsed.startedAt],
@@ -258,6 +277,7 @@ export function createResolvedRequestContext(
     resolvedModel: seed.resolvedModel,
     resolvedLanguage: seed.resolvedLanguage,
     workspacePolicyHash: seed.workspacePolicyHash,
+    turnScope: seed.turnScope,
   }));
   if (!captured.ok) {
     return err(new Error("Resolved request context could not be inspected safely"));
@@ -315,6 +335,15 @@ export function createResolvedRequestContext(
     return err(new Error("Resolved request context failed validation"));
   }
   const context = parsedResult.value.data;
+  if (
+    context.turnScope !== undefined
+    && (
+      context.turnScope.conversation.tenantId !== context.tenantId
+      || context.turnScope.conversation.agentId !== context.agentId
+    )
+  ) {
+    return err(new Error("Resolved turn scope is inconsistent with request identity"));
+  }
   const inspectionResult = inspectContext(context);
   if (!inspectionResult.ok) return inspectionResult;
   return lockResolvedContext(context, inspectionResult.value, context);
@@ -374,11 +403,22 @@ export function enrichCurrentContext(
     agentId: enrichment.agentId,
     trustLevel: enrichment.trustLevel,
     deliveryOrigin: enrichment.deliveryOrigin,
+    turnScope: enrichment.turnScope,
   }));
   if (!enrichmentResult.ok) {
     return err(new Error("Resolved request context could not be inspected safely"));
   }
   const resolved = enrichmentResult.value;
+
+  if (
+    resolved.turnScope !== undefined
+    && (
+      resolved.turnScope.conversation.tenantId !== resolved.tenantId
+      || resolved.turnScope.conversation.agentId !== resolved.agentId
+    )
+  ) {
+    return err(new Error("Resolved turn scope is inconsistent with request identity"));
+  }
 
   const sessionResult = tryCatch(() => parseSessionKey(resolved.sessionKey));
   if (!sessionResult.ok || !sessionResult.value.ok) {
@@ -420,6 +460,7 @@ export function enrichCurrentContext(
     userId: resolved.userId,
     sessionKey: formattedSessionKey,
     agentId: resolved.agentId,
+    turnScope: resolved.turnScope,
     trustLevel: resolved.trustLevel,
     channelType: existingChannelType ?? deliveryOrigin.channelType,
     deliveryOrigin,
@@ -436,12 +477,14 @@ export function enrichCurrentContext(
     userId: inspectedValue(inspection, "userId"),
     sessionKey: inspectedValue(inspection, "sessionKey"),
     agentId: inspectedValue(inspection, "agentId"),
+    turnScope: inspectedValue(inspection, "turnScope"),
     clientId: inspectedValue(inspection, "clientId"),
     trustLevel: inspectedValue(inspection, "trustLevel"),
     deliveryOrigin: inspectedValue(inspection, "deliveryOrigin"),
     authorizationAlreadyResolved: inspectedValue(inspection, "userId") !== undefined
       || inspectedValue(inspection, "clientId") !== undefined
       || inspectedValue(inspection, "agentId") !== undefined
+      || inspectedValue(inspection, "turnScope") !== undefined
       || inspectedValue(inspection, "sessionKey") !== undefined
       || inspectedValue(inspection, "deliveryOrigin") !== undefined,
   };
@@ -462,6 +505,28 @@ export function enrichCurrentContext(
   }
   if (snapshot.agentId !== undefined && snapshot.agentId !== parsed.data.agentId) {
     return err(new Error("Resolved request context conflicts with existing agentId"));
+  }
+  if (snapshot.turnScope !== undefined) {
+    const existingTurn = ResolvedTurnScopeSchema.safeParse(snapshot.turnScope);
+    const resolvedTurn = parsed.data.turnScope;
+    if (!existingTurn.success || resolvedTurn === undefined) {
+      return err(new Error("Existing request turn scope failed validation"));
+    }
+    const existingRef = createConversationRef(existingTurn.data.conversation);
+    const resolvedRef = createConversationRef(resolvedTurn.conversation);
+    if (
+      !existingRef.ok
+      || !resolvedRef.ok
+      || existingRef.value !== resolvedRef.value
+      || existingTurn.data.principal.principalId !== resolvedTurn.principal.principalId
+      || existingTurn.data.endpoint.channelType !== resolvedTurn.endpoint.channelType
+      || existingTurn.data.endpoint.channelInstanceId !== resolvedTurn.endpoint.channelInstanceId
+      || existingTurn.data.endpoint.conversationId !== resolvedTurn.endpoint.conversationId
+      || existingTurn.data.endpoint.threadId !== resolvedTurn.endpoint.threadId
+      || existingTurn.data.endpoint.conversationKind !== resolvedTurn.endpoint.conversationKind
+    ) {
+      return err(new Error("Resolved request context conflicts with existing turnScope"));
+    }
   }
   const existingOriginResult = snapshot.deliveryOrigin === undefined
     ? undefined

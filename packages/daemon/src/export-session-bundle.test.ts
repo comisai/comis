@@ -24,7 +24,7 @@ import { ok } from "@comis/shared";
 import { exportTrajectoryBundle, writeTrajectoryPointerFileBestEffort } from "@comis/observability";
 import { exportSessionBundleFromKey } from "./export-session-bundle.js";
 
-const SESSION_KEY = "default:678314278:678314278:peer:678314278";
+const SESSION_KEY = "default:agent:default:678314278:678314278:peer:678314278";
 const REAL_TENANT = "default";
 const REAL_CHANNEL = "678314278";
 const REAL_SESSION_FILE = "678314278~peer~678314278.jsonl";

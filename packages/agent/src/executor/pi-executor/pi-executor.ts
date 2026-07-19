@@ -58,6 +58,7 @@ import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { CacheRetention } from "@earendil-works/pi-ai";
 import {
   formatSessionKey,
+  createConversationRef,
   emitObservationalEventSafely,
   safePath,
   toSafeErrorLogString,
@@ -93,8 +94,9 @@ import { setupContextEngine } from "../executor-context-engine-setup.js";
 import { runPrompt } from "../prompt-runner/index.js";
 import { wrapToolResultWithGuide } from "../jit-guide-injector.js";
 import { postExecution } from "../executor-post-execution.js";
-import { resolveResponseLocalePolicy } from "../resolve-response-locale-policy.js";
+import { resolveLocale, resolveResponseLocalePolicy } from "../resolve-response-locale-policy.js";
 import { assembleTools } from "../executor-tool-assembly.js";
+import { assembleModelRequest, prepareTurn } from "../turn-preparation.js";
 import {
   getDeliveredGuides,
   setDeliveredGuides,
@@ -238,13 +240,13 @@ export function createPiExecutor(
       // model, tool, or session work. An unresolved agentId remains unresolved
       // here; only the inbound boundary may enrich authorization identity.
       const alsCtx = tryGetContext();
+      const requestedAgentMismatch = agentId !== undefined && agentId !== deps.agentId;
       const contextAgentMismatch = alsCtx?.agentId !== undefined
-        && agentId !== undefined
-        && alsCtx.agentId !== agentId;
+        && alsCtx.agentId !== deps.agentId;
       const contextSessionMismatch = alsCtx?.sessionKey !== undefined
         && alsCtx.sessionKey !== formatSessionKey(sessionKey);
-      if (contextAgentMismatch || contextSessionMismatch) {
-        const rejectedAgentId = agentId ?? alsCtx?.agentId ?? "unknown";
+      if (requestedAgentMismatch || contextAgentMismatch || contextSessionMismatch) {
+        const rejectedAgentId = agentId ?? alsCtx?.agentId ?? deps.agentId;
         deps.logger.warn(
           {
             step: "request-context-identity",
@@ -277,6 +279,8 @@ export function createPiExecutor(
           },
         };
       }
+
+      agentId = deps.agentId;
 
       // 1. Bootstrap: OAuth pre-resolve + ExecutionResult init + SEP plan ref
       //    (closure-extracted)
@@ -597,7 +601,7 @@ interface RunSessionLockedContext {
   readonly sessionKey: SessionKey;
   readonly tools: AgentTool[] | undefined;
   readonly onDelta: ((delta: string, kind: "text" | "thinking") => void) | undefined;
-  readonly agentId: string | undefined;
+  readonly agentId: string;
   readonly _directives: CommandDirectives | undefined;
   readonly _prevTimestamp: number | undefined;
   readonly executionOverrides: ExecutionOverrides | undefined;
@@ -636,6 +640,29 @@ async function runSessionLocked(
     sessionAdapter,
     cacheRetentionRef, adaptiveRetentionRef, minTokensOverrideRef,
   } = ctx;
+  const executionTurnScope = tryGetContext()?.turnScope;
+  const executionConversationRef = executionTurnScope === undefined
+    ? undefined
+    : createConversationRef(executionTurnScope.conversation);
+  if (executionTurnScope === undefined || !executionConversationRef?.ok) {
+    deps.logger.error(
+      {
+        step: "context-authority",
+        agentId: deps.agentId,
+        hint: "Resolve the canonical turn scope before selecting and running the executor",
+        errorKind: "precondition" as const,
+      },
+      "Agent execution stopped because context authority was unavailable",
+    );
+    result.finishReason = "error";
+    result.response = "The request could not be prepared safely because its conversation authority was unavailable.";
+    result.errorContext = {
+      errorType: "ContextAuthorityUnavailable",
+      retryable: false,
+      originalError: "Canonical turn scope was unavailable",
+    };
+    return result;
+  }
   // The per-run workspace jail. A `spawn --worktree` child runs in an
   // isolated git worktree (executionOverrides.workspaceDir, confined under the
   // agent's own jailed workspace), so the SDK session cwd + the
@@ -779,7 +806,7 @@ async function runSessionLocked(
 
   let workspacePolicySnapshot = deps.workspacePolicySnapshot;
   if (workspacePolicySnapshot === undefined && deps.workspacePolicyPort !== undefined) {
-    const policyAgentId = agentId ?? sessionKey.agentId ?? "default";
+    const policyAgentId = deps.agentId;
     const policyLoadStartMs = deps.clock.now();
     const policyResult = await deps.workspacePolicyPort.load(policyAgentId);
     const durationMs = Math.max(0, deps.clock.now() - policyLoadStartMs);
@@ -826,11 +853,32 @@ async function runSessionLocked(
       (activeContext as Record<string, unknown>).workspacePolicyHash = workspacePolicySnapshot.combinedHash;
     }
   }
+  if (workspacePolicySnapshot === undefined) {
+    deps.logger.error(
+      {
+        agentId: deps.agentId,
+        step: "workspace-policy-load",
+        hint: "Wire a workspace policy snapshot or WorkspacePolicyPort before starting the agent.",
+        errorKind: "precondition" as const,
+      },
+      "Workspace policy snapshot is required",
+    );
+    result.finishReason = "error";
+    result.response = "The agent policy is unavailable. Please try again.";
+    result.errorContext = {
+      errorType: "WorkspacePolicyError",
+      retryable: false,
+      originalError: "Workspace policy snapshot is required",
+    };
+    return result;
+  }
 
   // Capture prompt skills XML once at execution start.
   // Skills registered during tool calls (e.g., skill-creator creating stock-scanner)
   // do not mutate the system prompt until the next execution.
   const frozenPromptSkillsXml = deps.getPromptSkillsXml?.();
+  const frozenPromptSkillLocations = deps.getPromptSkillLocations?.();
+  const frozenMcpInstructions = deps.getMcpServerInstructions?.() ?? [];
   const stableGetPromptSkillsXml = frozenPromptSkillsXml !== undefined
     ? () => frozenPromptSkillsXml
     : deps.getPromptSkillsXml;
@@ -838,7 +886,12 @@ async function runSessionLocked(
   const frozenDeps = {
     ...deps,
     getPromptSkillsXml: stableGetPromptSkillsXml,
-    ...(workspacePolicySnapshot !== undefined ? { workspacePolicySnapshot } : {}),
+    ...(frozenPromptSkillLocations === undefined
+      ? {}
+      : { getPromptSkillLocations: () => frozenPromptSkillLocations }),
+    getMcpServerInstructions: () => frozenMcpInstructions,
+    workspacePolicySnapshot,
+    isOnboarding,
   };
 
   // Tool assembly pipeline: merge, settings, prompt, deferral, JIT, pruning, snapshot, normalization, serializer
@@ -866,6 +919,90 @@ async function runSessionLocked(
     responseLocalePolicy,
   } = promptResult;
 
+  const preparedTurnResult = await prepareTurn({
+    scope: tryGetContext()?.turnScope,
+    locale: resolveLocale({
+      explicitLocale: responseLocalePolicy.source === "explicit" ? responseLocalePolicy.locale : undefined,
+      requestLocale: responseLocalePolicy.source === "request" ? responseLocalePolicy.locale : undefined,
+      translationTarget: responseLocalePolicy.translationTarget,
+    }),
+    selectedSkills: typeof msg.metadata?.promptSkillContent === "string"
+      ? [{ id: "turn:selected-skill", content: msg.metadata.promptSkillContent }]
+      : [],
+    externalInstructions: frozenMcpInstructions.map((instruction) => ({
+      id: `mcp:${instruction.serverId}`,
+      content: instruction.instructions,
+    })),
+    resolvers: {
+      resolveWorkspacePolicy: async () => ok(workspacePolicySnapshot),
+      captureCapabilities: () => ok({
+        tools: mergedCustomTools.map((tool) => ({
+          name: tool.name,
+          ...(tool.description === undefined ? {} : { description: tool.description }),
+        })),
+      }),
+      assembleConversation: async () => ok({
+        history: sessionContext.messages,
+        currentRequest: msg,
+      }),
+      selectRecall: async () => ok({
+        ...(inlineMemory === undefined ? {} : { inlineMemory }),
+        memories: recalledMemories ?? [],
+      }),
+    },
+  });
+  if (!preparedTurnResult.ok) {
+    deps.logger.error(
+      {
+        agentId: deps.agentId,
+        step: "turn-preparation",
+        failureKind: preparedTurnResult.error.kind,
+        hint: "Ensure workspace policy, turn authority, capability inventory, conversation storage, and recall services are available.",
+        errorKind: "precondition" as const,
+      },
+      "Turn preparation failed",
+    );
+    result.finishReason = "error";
+    result.response = "The request could not be prepared safely. Please try again.";
+    result.errorContext = {
+      errorType: "TurnPreparationError",
+      retryable: false,
+      originalError: preparedTurnResult.error.kind,
+    };
+    return result;
+  }
+  const modelRequestResult = assembleModelRequest({
+    preparedTurn: preparedTurnResult.value,
+    compiledPrompt: { systemPrompt },
+  });
+  if (!modelRequestResult.ok) {
+    deps.logger.error(
+      {
+        agentId: deps.agentId,
+        step: "model-request-assembly",
+        failureKind: modelRequestResult.error.kind,
+        hint: "Ensure the assembled conversation contains the attributed current request.",
+        errorKind: "precondition" as const,
+      },
+      "Model request assembly failed",
+    );
+    result.finishReason = "error";
+    result.response = "The request could not be assembled safely. Please try again.";
+    result.errorContext = {
+      errorType: "ModelRequestAssemblyError",
+      retryable: false,
+      originalError: modelRequestResult.error.kind,
+    };
+    return result;
+  }
+  const assembledCurrentRequest = modelRequestResult.value.conversation.at(-1) as
+    | { role: "user"; content: string }
+    | undefined;
+  const dispatchMessage: NormalizedMessage = {
+    ...msg,
+    text: assembledCurrentRequest?.content ?? "",
+  };
+
   const resourceLoader = new DefaultResourceLoader(resourceLoaderOptions);
   await resourceLoader.reload();
 
@@ -889,8 +1026,7 @@ async function runSessionLocked(
   //      build (`agent-session.js:1810-1813` in pi-coding-agent@0.68.0).
   const sessionOptions: CreateAgentSessionOptions = {
     cwd: effectiveWorkspaceDir,
-    authStorage: deps.authStorage,
-    modelRegistry: deps.modelRegistry,
+    modelRuntime: deps.modelRuntime,
     model: resolvedModel ?? undefined,
     sessionManager: sm,
     settingsManager,
@@ -1285,16 +1421,13 @@ async function runSessionLocked(
   // accessible at runtime. Same pattern as streamFn override above.
   const ceSetup = setupContextEngine({
     config, deps: frozenDeps, formattedKey, sessionKey: formattedKey,
+    conversationRef: executionConversationRef.value,
     // The dag assembler's LCD read scope tenant — the SAME source
     // executor-post-execution uses for the ingest scope (deps.tenantId ?? the
     // session key's tenant), so read + write scopes agree.
     tenantId: frozenDeps.tenantId ?? sessionKey.tenantId,
-    // The dag assembler's LCD read scope agentId — the SAME
-    // `effectiveAgentId = agentId ?? "default"` expression executor-post-execution
-    // uses for the LCD ingest WRITE scope, so the read scope == the write scope and
-    // the assembler stops failing closed (the positional turn agentId never reaches
-    // frozenDeps, so deps.agentId would be undefined on this path).
-    agentId: agentId ?? "default",
+    // The selected executor owns the agent authority used by both LCD reads and writes.
+    agentId: deps.agentId,
     msg, sm, session,
     resolvedModel, executionOverrides,
     cacheBreakDetector,
@@ -1400,18 +1533,19 @@ async function runSessionLocked(
   // via the durable cursor, so skipping them removes per-turn LCD single-flight overhead.
   // Extracted to `maybeRunBootstrapSweep` (state-first helper) to keep the in-lock
   // body from accreting another wiring block; the recovery itself (the EXISTING
-  // ingestTurnGuarded path + the shouldRunLcdStorePasses dag gate) lives in
+  // ingestTurnGuarded path + the canonical context-store gate) lives in
   // `bootstrapLcdSweep`. The scope is built exactly as the afterTurn block does so read
-  // scope == write scope: conversationId === sessionKey ===
-  // formattedKey, agentId === `agentId ?? "default"`. The JSONL-loaded live array is the
+  // scope == write scope: conversationId === sessionKey === formattedKey and
+  // agentId is the executor-bound authority. The JSONL-loaded live array is the
   // same ref executor-post-execution reads at the afterTurn site (typed unknown on
   // AgentSession — no public SDK type for it).
   await maybeRunBootstrapSweep({
     isFirstMessageInSession,
     contextStore: frozenDeps.contextStore,
     formattedKey,
+    conversationRef: executionConversationRef.value,
     tenantId: frozenDeps.tenantId ?? sessionKey.tenantId,
-    agentId: agentId ?? "default",
+    agentId: deps.agentId,
     live: ((session.agent as unknown as { state?: { messages?: unknown[] } }).state
       ?.messages ?? []) as AgentMessage[],
     clock: frozenDeps.clock,
@@ -1420,18 +1554,7 @@ async function runSessionLocked(
     config,
   });
 
-  // Align register/deregister key shape with
-  // BackgroundSessionResolver.formatComposite so production lookups via
-  // resolveActiveSession({agentId, channelType, channelId}) find the
-  // handle this execute() call registers. session-resolver.test.ts
-  // locks the formula — drift on either side breaks that test.
-  // NormalizedMessageSchema enforces channelType / channelId are
-  // non-empty (z.string().min(1)), so this composition is unconditional.
-  const resolverRegisterKey = formatSessionKey({
-    tenantId: agentId ?? "default",
-    channelId: `${msg.channelType}:${msg.channelId}`,
-    userId: msg.channelId,
-  });
+  const resolverRegisterKey = executionConversationRef.value;
 
   // Register active run for mid-execution steering
   if (deps.activeRunRegistry) {
@@ -1445,7 +1568,7 @@ async function runSessionLocked(
     const registered = deps.activeRunRegistry.register(resolverRegisterKey, handle);
     if (!registered) {
       deps.logger.warn(
-        { sessionKey: resolverRegisterKey, hint: "Session already has an active run; concurrent execution may cause issues", errorKind: "resource" as const },
+        { conversationRef: resolverRegisterKey, hint: "Session already has an active run; concurrent execution may cause issues", errorKind: "resource" as const },
         "Active run already registered",
       );
     }
@@ -1602,7 +1725,7 @@ async function runSessionLocked(
       ? {
           spendAccumulator: deps.spendAccumulator,
           spendConfig: deps.spendConfig,
-          spendScope: { tenantId: sessionKey.tenantId ?? "default", agentId: agentId ?? "default" },
+          spendScope: { tenantId: sessionKey.tenantId, agentId: deps.agentId },
         }
       : {}),
     // Thread the late-bound per-root budget holder +
@@ -1620,7 +1743,7 @@ async function runSessionLocked(
     circuitBreaker: deps.circuitBreaker,
     turnLoopDetector,
     sessionKey,
-    agentId: agentId ?? "default",
+    agentId: deps.agentId,
     channelId: msg.channelId ?? "",
     inboundMessageId: msg.id,
     executionId,
@@ -1640,6 +1763,9 @@ async function runSessionLocked(
     homeDir: os.homedir(),
     onDelta: onDeltaWithStallReset,
     memoryPort: deps.memoryPort,
+    ...(executionTurnScope !== undefined
+      ? { memoryScope: { turnScope: executionTurnScope, visibility: { kind: "conversation" } as const } }
+      : {}),
     onAbort: () => {
       session.abortCompaction();
       suppressError(session.abort(), "session abort on compaction cancel");
@@ -1899,14 +2025,14 @@ async function runSessionLocked(
   // background-continuation context (which lacks these locals).
   if (deps.backgroundTaskManager && config.backgroundTasks?.enabled !== false) {
     const bgConfig = BackgroundTasksConfigSchema.parse(config.backgroundTasks ?? {});
-    const resolvedAgentId = agentId ?? "default";
     const originResolver = (): BackgroundTaskOrigin | undefined => {
       // Defensive: if any required field is unexpectedly missing, fall through
       // to foreground execution (no background promotion). Promotion requires
       // a complete origin.
-      if (!formattedKey || formattedKey.length === 0) return undefined;
-      if (!msg.channelType || msg.channelType.length === 0) return undefined;
-      if (!msg.channelId || msg.channelId.length === 0) return undefined;
+      const context = tryGetContext();
+      if (!context?.turnScope || !context.deliveryOrigin) return undefined;
+      const conversationRef = createConversationRef(context.turnScope.conversation);
+      if (!conversationRef.ok) return undefined;
       // Read incoming hop count off msg.metadata so the runner can enforce
       // the recursion bound. Top-level user messages have no
       // metadata.backgroundHopCount -> default to 0.
@@ -1916,10 +2042,9 @@ async function runSessionLocked(
         ? Math.floor(rawHopCount)
         : 0;
       return {
-        agentId: resolvedAgentId,
-        sessionKey: formattedKey,
-        channelType: msg.channelType,
-        channelId: msg.channelId,
+        turnScope: context.turnScope,
+        conversationRef: conversationRef.value,
+        deliveryOrigin: context.deliveryOrigin,
         traceId: executionId ?? null,
         backgroundHopCount: incomingHopCount,
       };
@@ -1949,7 +2074,7 @@ async function runSessionLocked(
       recordProvenanceFailure(dispatchProvenanceWrite.error, "resource");
     } else {
       const promptRunResult = await runPrompt({
-        msg, session, config, sessionKey, formattedKey, agentId, result,
+        msg: dispatchMessage, session, config, sessionKey, formattedKey, agentId, result,
         executionOverrides, executionStartMs, effectiveTimeout, executionId,
         bridge, dynamicPreamble, responseLocalePolicy, deferredContext, capabilityIndexResult, inlineMemory,
         systemPrompt,
@@ -2037,12 +2162,12 @@ async function runSessionLocked(
       providerFamily: resolveProviderCapabilities(resolvedModel?.provider ?? config.provider).providerFamily,
       deferralResult, mergedCustomTools, deliveredGuides,
       deps: {
+        agentId: deps.agentId,
         eventBus: deps.eventBus,
         logger: deps.logger,
         memoryPort: deps.memoryPort,
-        // The dag-mode afterTurn ingest write-path. Both the store
-        // and tenantId thread through so postExecution's ingest scope has a
-        // real tenant; absent ⇒ ingest skipped cleanly.
+        // Canonical afterTurn ingest authority. Both the store and tenant id
+        // thread through so postExecution's scope is complete.
         contextStore: deps.contextStore,
         tenantId: deps.tenantId,
         // The leaf-summarizer deps getter sourced from the

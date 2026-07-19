@@ -8,8 +8,12 @@
  * eliminate duplicate rowToEntry implementations and INSERT SQL.
  */
 
-import type { MemoryEntry } from "@comis/core";
+import type { ConversationRef, MemoryEntry } from "@comis/core";
 import { normalizeForSearch } from "@comis/core";
+import {
+  memoryAuthorityToken,
+  requireMemoryAuthorityPartitionForMemory,
+} from "./memory-authority.js";
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import type { MemoryRow } from "./types.js";
@@ -88,6 +92,11 @@ export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry {
     tenantId: row.tenant_id,
     agentId: row.agent_id,
     userId: row.user_id,
+    visibility: row.visibility === "conversation"
+      ? { kind: "conversation", conversationRef: row.conversation_ref as ConversationRef }
+      : row.visibility === "principal"
+        ? { kind: "principal", principalId: row.principal_id as string }
+        : { kind: "agent-shared" },
     content: row.content,
     trustLevel: row.trust_level as MemoryEntry["trustLevel"],
     source: {
@@ -139,13 +148,16 @@ export function insertMemoryRow(
   memoryType: string,
 ): void {
   db.prepare(
-    `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_channel, source_session_key, tags, created_at, occurred_at, proof_count, source_ids, consolidated_at, confidence, history, updated_at, expires_at, observation_kind, pattern_type, has_embedding)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    `INSERT INTO memories (id, tenant_id, agent_id, user_id, visibility, conversation_ref, principal_id, content, trust_level, memory_type, source_who, source_channel, source_session_key, tags, created_at, occurred_at, proof_count, source_ids, consolidated_at, confidence, history, updated_at, expires_at, observation_kind, pattern_type, has_embedding)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
   ).run(
     entry.id,
     entry.tenantId,
-    entry.agentId ?? "default",
+    entry.agentId,
     entry.userId,
+    entry.visibility.kind,
+    entry.visibility.kind === "conversation" ? entry.visibility.conversationRef : null,
+    entry.visibility.kind === "principal" ? entry.visibility.principalId : null,
     entry.content,
     entry.trustLevel,
     memoryType,
@@ -181,9 +193,10 @@ export function insertMemoryRow(
   // systemNowMs cross-package value-import precedent) so the index side folds
   // through the EXACT symbol the query side (searchByText routing) uses.
   try {
+    const partitionId = requireMemoryAuthorityPartitionForMemory(db, entry.id);
     db.prepare(
-      "INSERT INTO memory_fts_tri(rowid, content) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?)",
-    ).run(entry.id, normalizeForSearch(entry.content));
+      "INSERT INTO memory_fts_tri(rowid, content, authority_token) VALUES ((SELECT rowid FROM memories WHERE id = ?), ?, ?)",
+    ).run(entry.id, normalizeForSearch(entry.content), memoryAuthorityToken(partitionId));
   } catch {
     // The trigram twin is absent on this host (FTS5 present but the trigram
     // tokenizer is not compiled in → ensureTrigramTwins skipped it), or a
@@ -213,9 +226,13 @@ export function storeEmbedding(
   if (!vecIsAvailable) return;
 
   const float32 = new Float32Array(embedding);
-  db.prepare("INSERT INTO vec_memories(memory_id, embedding) VALUES (?, ?)").run(
+  const partitionId = requireMemoryAuthorityPartitionForMemory(db, entryId);
+  db.prepare(
+    "INSERT INTO vec_memories(memory_id, embedding, authority_partition_id) VALUES (?, ?, ?)",
+  ).run(
     entryId,
     float32,
+    BigInt(partitionId),
   );
   db.prepare("UPDATE memories SET has_embedding = 1 WHERE id = ?").run(entryId);
 }

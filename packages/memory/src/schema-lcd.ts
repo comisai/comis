@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: LCD schema preflight rejects an authority-incomplete database before boot; initSchema is consumed at the daemon boundary.
 /**
  * LCD (Lossless Context DAG) lossless-store schema.
  *
@@ -14,6 +15,7 @@
 import type Database from "better-sqlite3";
 
 import { ensureTrigramTwins } from "./schema-trigram.js";
+import { requireTableInfoRows } from "./schema-introspection.js";
 
 /**
  * Idempotently create the LCD (Lossless Context DAG) lossless message store:
@@ -38,11 +40,11 @@ import { ensureTrigramTwins } from "./schema-trigram.js";
  *
  * ## Isolation scope
  *
- * `lcd_messages` carries `conversation_id` (the tenant+agent+session composite)
+ * `lcd_messages` carries `conversation_ref` (the tenant+agent+session composite)
  * plus the three broken-out `tenant_id` / `agent_id` / `session_key` columns and
- * the `(conversation_id, seq)` UNIQUE index from day 1. Every read FILTERS by
- * `agent_id` AND `tenant_id` (not just `conversation_id`), closing the
- * cross-agent gap (two agents legitimately share one `conversation_id` since
+ * the `(conversation_ref, seq)` UNIQUE index from day 1. Every read FILTERS by
+ * `agent_id` AND `tenant_id` (not just `conversation_ref`), closing the
+ * cross-agent gap (two agents legitimately share one `conversation_ref` since
  * `formatSessionKey` omits agentId). The FTS5 vtables carry an
  * `agent_id UNINDEXED` column so the MATCH path filters agent_id too
  * (forward-only `CREATE VIRTUAL TABLE IF NOT EXISTS` — a pre-existing dev DB
@@ -65,10 +67,24 @@ import { ensureTrigramTwins } from "./schema-trigram.js";
  *   it may be created in any order relative to the other ensure* tables.
  */
 export function ensureLcdTables(db: Database.Database): void {
+  const messagesExists = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'lcd_messages'",
+  ).get() !== undefined;
+  if (messagesExists) {
+    const columns = new Set(
+      requireTableInfoRows(db.prepare("PRAGMA table_info(lcd_messages)").all(), "lcd_messages")
+        .map((row) => row.name),
+    );
+    if (!columns.has("conversation_ref")) {
+      throw new Error(
+        "LCD database schema is incompatible: conversation_ref authority is missing. Back up the database, then recreate it with the current Comis schema.",
+      );
+    }
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS lcd_messages (
       id              TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,            -- tenant+agent+session composite (isolation scoping)
+      conversation_ref TEXT NOT NULL,            -- tenant+agent+session composite (isolation scoping)
       tenant_id       TEXT NOT NULL,
       agent_id        TEXT NOT NULL,
       session_key     TEXT NOT NULL,
@@ -79,14 +95,14 @@ export function ensureLcdTables(db: Database.Database): void {
       created_at      INTEGER NOT NULL          -- caller-supplied epoch ms (the store does not stamp it)
     );
     -- seq is monotonic PER (conversation, agent, tenant). Two agents
-    -- legitimately share one conversation_id (formatSessionKey omits agentId), so
+    -- legitimately share one conversation_ref (formatSessionKey omits agentId), so
     -- each agent owns an independent seq sequence (its agent-scoped high-water
-    -- mark) — a conversation-global (conversation_id, seq) index would collide
+    -- mark) — a conversation-global (conversation_ref, seq) index would collide
     -- when both agents append. Per-agent uniqueness; the per-conversation
     -- serializer still guards interleaved writes. For the common
     -- one-agent-per-conversation case this is identical to the old index.
     CREATE UNIQUE INDEX IF NOT EXISTS idx_lcd_messages_conv_agent_seq
-      ON lcd_messages(conversation_id, agent_id, tenant_id, seq);
+      ON lcd_messages(conversation_ref, agent_id, tenant_id, seq);
 
     CREATE TABLE IF NOT EXISTS lcd_message_parts (
       id           TEXT PRIMARY KEY,
@@ -114,7 +130,7 @@ export function ensureLcdTables(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS lcd_summaries (
       summary_id       TEXT PRIMARY KEY,
-      conversation_id  TEXT NOT NULL,            -- tenant+agent+session composite (isolation scoping)
+      conversation_ref  TEXT NOT NULL,            -- tenant+agent+session composite (isolation scoping)
       tenant_id        TEXT NOT NULL,
       agent_id         TEXT NOT NULL,
       session_key      TEXT NOT NULL,
@@ -131,7 +147,7 @@ export function ensureLcdTables(db: Database.Database): void {
       fallback         INTEGER NOT NULL DEFAULT 0, -- 0/1 Level-3 deterministic-truncation marker
       created_at       INTEGER NOT NULL          -- caller-supplied epoch ms (the store does not stamp it)
     );
-    CREATE INDEX IF NOT EXISTS idx_lcd_summaries_conv ON lcd_summaries(conversation_id);
+    CREATE INDEX IF NOT EXISTS idx_lcd_summaries_conv ON lcd_summaries(conversation_ref);
 
     CREATE TABLE IF NOT EXISTS lcd_summary_messages (
       summary_id TEXT NOT NULL REFERENCES lcd_summaries(summary_id) ON DELETE CASCADE,
@@ -157,7 +173,7 @@ export function ensureLcdTables(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS lcd_context_items (
       id              TEXT PRIMARY KEY,
-      conversation_id TEXT NOT NULL,             -- tenant+agent+session composite (isolation scoping)
+      conversation_ref TEXT NOT NULL,             -- tenant+agent+session composite (isolation scoping)
       tenant_id       TEXT NOT NULL,
       agent_id        TEXT NOT NULL,
       session_key     TEXT NOT NULL,
@@ -168,17 +184,17 @@ export function ensureLcdTables(db: Database.Database): void {
     );
     -- The model-facing view is per (conversation, agent, tenant) —
     -- each agent's ordinals are dense + gap-free over ITS OWN items. A
-    -- conversation-global (conversation_id, ordinal) index would collide when two
-    -- agents sharing a conversation_id each seed a dense 0..N-1 sequence; scoping
+    -- conversation-global (conversation_ref, ordinal) index would collide when two
+    -- agents sharing a conversation_ref each seed a dense 0..N-1 sequence; scoping
     -- the index by agent_id+tenant_id keeps both dense + isolated. Identical to
     -- the old index for the common one-agent-per-conversation case.
     CREATE UNIQUE INDEX IF NOT EXISTS idx_lcd_ctx_items_conv_agent_ord
-      ON lcd_context_items(conversation_id, agent_id, tenant_id, ordinal);
+      ON lcd_context_items(conversation_ref, agent_id, tenant_id, ordinal);
 
     -- ── Durable per-conversation ingest cursor ────────────────
     -- Stores the durable per-conversation epoch cursor used by the afterTurn
     -- ingest to detect JSONL re-bases (a fresh/disjoint live transcript) and
-    -- continue-append without a gap. Primary key = (conversation_id, agent_id,
+    -- continue-append without a gap. Primary key = (conversation_ref, agent_id,
     -- tenant_id) — the same three-column isolation scope as lcd_messages.
     -- updated_at is caller-supplied epoch ms (the store never reads the clock).
     -- Forward-only, re-run-safe (CREATE … IF NOT EXISTS only; NO DROP TABLE /
@@ -186,13 +202,13 @@ export function ensureLcdTables(db: Database.Database): void {
     -- the next boot; existing conversations have no cursor row (first-turn after
     -- upgrade detects null → treats as epoch A with ingestedLiveLen=0, correct).
     CREATE TABLE IF NOT EXISTS lcd_ingest_cursor (
-      conversation_id   TEXT    NOT NULL,
+      conversation_ref   TEXT    NOT NULL,
       agent_id          TEXT    NOT NULL,
       tenant_id         TEXT    NOT NULL,
       epoch_anchor      TEXT    NOT NULL,       -- messageEpochAnchor(live[0]): "role:ts:fp"
       ingested_live_len INTEGER NOT NULL,       -- ingestedLiveLen at last successful ingest
       updated_at        INTEGER NOT NULL,       -- caller-supplied epoch ms
-      PRIMARY KEY (conversation_id, agent_id, tenant_id)
+      PRIMARY KEY (conversation_ref, agent_id, tenant_id)
     );
   `);
 
@@ -220,7 +236,7 @@ export function ensureLcdTables(db: Database.Database): void {
         REFERENCES memories(id) ON DELETE CASCADE,
       summary_id         TEXT    NOT NULL,     -- NOT FK into lcd_summaries (survives LCD resets)
       source_session_key TEXT    NOT NULL,     -- for the --memory delete path
-      conversation_id    TEXT    NOT NULL,     -- tenant/agent isolation column
+      conversation_ref    TEXT    NOT NULL,     -- tenant/agent isolation column
       agent_id           TEXT    NOT NULL,     -- tenant/agent isolation column
       tenant_id          TEXT    NOT NULL,     -- tenant/agent isolation column
       created_at         INTEGER NOT NULL,
@@ -268,7 +284,7 @@ export function ensureLcdTables(db: Database.Database): void {
     db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS lcd_summaries_fts USING fts5(
         content,
-        conversation_id UNINDEXED,
+        conversation_ref UNINDEXED,
         agent_id UNINDEXED,          -- per-agent read isolation; flat AND agent_id = ?
         summary_id UNINDEXED,
         content='lcd_summaries',
@@ -279,7 +295,7 @@ export function ensureLcdTables(db: Database.Database): void {
     db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS lcd_messages_fts USING fts5(
         content,
-        conversation_id UNINDEXED,
+        conversation_ref UNINDEXED,
         agent_id UNINDEXED,          -- per-agent read isolation; adapter-populated on append
         message_id UNINDEXED,
         tokenize='porter unicode61'
@@ -299,12 +315,12 @@ export function ensureLcdTables(db: Database.Database): void {
     // the parts JSON cannot be rendered in SQL).
     db.exec(`
       CREATE TRIGGER IF NOT EXISTS lcd_summaries_ai AFTER INSERT ON lcd_summaries BEGIN
-        INSERT INTO lcd_summaries_fts(rowid, content, conversation_id, agent_id, summary_id)
-        VALUES (new.rowid, new.content, new.conversation_id, new.agent_id, new.summary_id);
+        INSERT INTO lcd_summaries_fts(rowid, content, conversation_ref, agent_id, summary_id)
+        VALUES (new.rowid, new.content, new.conversation_ref, new.agent_id, new.summary_id);
       END;
       CREATE TRIGGER IF NOT EXISTS lcd_summaries_ad AFTER DELETE ON lcd_summaries BEGIN
-        INSERT INTO lcd_summaries_fts(lcd_summaries_fts, rowid, content, conversation_id, agent_id, summary_id)
-        VALUES ('delete', old.rowid, old.content, old.conversation_id, old.agent_id, old.summary_id);
+        INSERT INTO lcd_summaries_fts(lcd_summaries_fts, rowid, content, conversation_ref, agent_id, summary_id)
+        VALUES ('delete', old.rowid, old.content, old.conversation_ref, old.agent_id, old.summary_id);
       END;
     `);
   } catch {

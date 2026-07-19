@@ -842,9 +842,9 @@ export class IcSchedulerView extends LitElement {
       return;
     }
     try {
-      const result = (await this.rpcClient.call<{ jobs?: SchedulerCronJob[] } | SchedulerCronJob[]>(
+      const result = (await this.rpcClient.call(
         "cron.list",
-        { _agentId: this._selectedAgentId || undefined },
+        { agentId: this._selectedAgentId || undefined },
       ));
       this._jobs = Array.isArray(result) ? result : (result.jobs ?? []);
       this._jobsLoaded = true;
@@ -864,7 +864,7 @@ export class IcSchedulerView extends LitElement {
   private async _loadHeartbeatConfig(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const config = await this.rpcClient.call<Record<string, unknown>>("config.read", { section: "scheduler" });
+      const config = await this.rpcClient.call("config.read", { section: "scheduler" });
       const heartbeat = config?.heartbeat as { enabled?: boolean; intervalMs?: number } | undefined;
       if (heartbeat) {
         this._heartbeatEnabled = heartbeat.enabled ?? false;
@@ -878,7 +878,7 @@ export class IcSchedulerView extends LitElement {
   private async _loadAgentIds(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const config = await this.rpcClient.call<Record<string, unknown>>("config.read", { section: "agents" });
+      const config = await this.rpcClient.call("config.read", { section: "agents" });
       if (config && typeof config === "object") {
         this._configAgentIds = Object.keys(config);
       }
@@ -893,9 +893,9 @@ export class IcSchedulerView extends LitElement {
   private async _loadCronStatus(): Promise<void> {
     if (!this.rpcClient || !this._selectedAgentId) return;
     try {
-      const result = await this.rpcClient.call<{ running: boolean; jobCount: number }>(
+      const result = await this.rpcClient.call(
         "cron.status",
-        { _agentId: this._selectedAgentId || undefined },
+        { agentId: this._selectedAgentId || undefined },
       );
       this._cronEnabled = result?.running ?? null;
       this._cronJobCount = result?.jobCount ?? 0;
@@ -907,7 +907,7 @@ export class IcSchedulerView extends LitElement {
   private async _loadHeartbeatStates(): Promise<void> {
     if (!this.rpcClient) return;
     try {
-      const result = await this.rpcClient.call<{ agents?: HeartbeatAgentCard[] }>("heartbeat.states", {});
+      const result = await this.rpcClient.call("heartbeat.states", {});
       this._heartbeatAgents = result?.agents ?? [];
     } catch {
       // heartbeat.states may not exist in older daemons -- silently ignore
@@ -967,12 +967,17 @@ export class IcSchedulerView extends LitElement {
         this._jobs = updated;
       }
       try {
-        // Spread jobData FIRST so the positional jobId / _agentId arguments
-        // win over any same-named keys (defensive sanitization).
         await this.rpcClient.call("cron.update", {
-          ...(jobData as unknown as Record<string, unknown>),
           jobId: this._editingJob.id,
-          _agentId: this._selectedAgentId || undefined,
+          name: jobData.name,
+          enabled: jobData.enabled,
+          sessionTarget: jobData.sessionTarget,
+          schedule: jobData.schedule,
+          message: jobData.message,
+          ...(jobData.deliveryTarget !== undefined
+            ? { deliveryTarget: jobData.deliveryTarget }
+            : {}),
+          ...(jobData.wakeGate !== undefined ? { wakeGate: jobData.wakeGate } : {}),
         });
         this._editorOpen = false;
         this._editingJob = null;
@@ -997,10 +1002,17 @@ export class IcSchedulerView extends LitElement {
       };
       this._jobs = [...this._jobs, tempJob];
       try {
-        const result = await this.rpcClient.call<{ jobId: string }>("cron.add", {
-          ...(jobData as unknown as Record<string, unknown>),
-          _agentId: this._selectedAgentId || undefined,
-          _deliveryTarget: jobData.deliveryTarget,
+        const result = await this.rpcClient.call("cron.add", {
+          name: jobData.name,
+          agentId: jobData.agentId || this._selectedAgentId || undefined,
+          schedule: jobData.schedule,
+          message: jobData.message,
+          sessionTarget: jobData.sessionTarget,
+          enabled: jobData.enabled,
+          ...(jobData.deliveryTarget !== undefined
+            ? { deliveryTarget: jobData.deliveryTarget }
+            : {}),
+          ...(jobData.wakeGate !== undefined ? { wakeGate: jobData.wakeGate } : {}),
         });
         // Update the temp job with the server-returned ID if different
         if (result?.jobId && result.jobId !== tempJob.id) {
@@ -1025,12 +1037,13 @@ export class IcSchedulerView extends LitElement {
     if (!window.confirm("Delete this job?")) return;
 
     const originalJobs = [...this._jobs];
+    const job = originalJobs.find((candidate) => candidate.id === jobId);
+    if (!job) return;
     this._jobs = this._jobs.filter((j) => j.id !== jobId);
 
     try {
       await this.rpcClient.call("cron.remove", {
-        jobId,
-        _agentId: this._selectedAgentId || undefined,
+        jobName: job.name,
       });
     } catch (err) {
       this._jobs = originalJobs;
@@ -1043,7 +1056,7 @@ export class IcSchedulerView extends LitElement {
     const newValue = !this._heartbeatEnabled;
     this._heartbeatEnabled = newValue;
     try {
-      await this.rpcClient.call("config.set", {
+      await this.rpcClient.call("config.patch", {
         section: "scheduler",
         key: "heartbeat.enabled",
         value: newValue,
@@ -1059,7 +1072,7 @@ export class IcSchedulerView extends LitElement {
     try {
       await this.rpcClient.call("cron.run", {
         jobName,
-        _agentId: this._selectedAgentId || undefined,
+        agentId: this._selectedAgentId || undefined,
       });
       IcToast.show("Job triggered", "success");
     } catch (err) {

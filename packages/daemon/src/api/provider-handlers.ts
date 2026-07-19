@@ -42,7 +42,7 @@ import type { ProviderEntry, PerAgentConfig } from "@comis/core";
  * the in-handler logic, not the contract parse.
  */
 const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
-import { type KnownProvider } from "@earendil-works/pi-ai";
+import type { BuiltinProvider } from "@earendil-works/pi-ai/compat";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { checkBuiltInProviderRedundancy } from "./shared/builtin-provider-guard.js";
 import { persistToConfig } from "./shared/persist-to-config.js";
@@ -163,7 +163,7 @@ function normalizeProviderEntry(
   const native = new Set<string>(getProviders());
   if (!native.has(providerId)) return config;
 
-  const catalog = getModels(providerId as KnownProvider);
+  const catalog = getModels(providerId as BuiltinProvider);
   const nativeBaseUrl = catalog[0]?.baseUrl;
 
   const isPassthroughType = !config.type || config.type === "openai";

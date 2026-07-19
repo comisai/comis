@@ -11,11 +11,13 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type {
   ChannelPort,
+  ConversationRef,
   NormalizedMessage,
+  ResolvedTurnScope,
   SessionKey,
   DeliveryService,
 } from "@comis/core";
-import { QueueConfigSchema, runWithContext, TypedEventBus } from "@comis/core";
+import { createConversationRef, formatSessionKey, QueueConfigSchema, runWithContext, TypedEventBus } from "@comis/core";
 import type { AgentExecutor } from "@comis/agent";
 import { ok } from "@comis/shared";
 
@@ -64,11 +66,36 @@ function makeMsg(overrides?: Partial<NormalizedMessage>): NormalizedMessage {
 function makeSessionKey(): SessionKey {
   return {
     tenantId: "default",
+    agentId: "agent-1",
     userId: "user-1",
     channelId: "chat-1",
     peerId: "user-1",
   };
 }
+
+const TURN_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "adapter-1",
+  conversationId: "chat-1",
+  conversationKind: "direct" as const,
+};
+const TURN_SCOPE: ResolvedTurnScope = {
+  conversation: {
+    tenantId: "default",
+    agentId: "agent-1",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: TURN_ENDPOINT,
+      principalId: "user-1",
+    },
+  },
+  principal: { principalId: "user-1" },
+  endpoint: TURN_ENDPOINT,
+};
+const turnConversationRef = createConversationRef(TURN_SCOPE.conversation);
+if (!turnConversationRef.ok) throw turnConversationRef.error;
+const TURN_CONVERSATION_REF: ConversationRef = turnConversationRef.value;
+const EMPTY_INBOUND_PROVENANCE = { payloads: [], ledgerContent: "" } as const;
 
 function makeFakeDeliveryService(): DeliveryService {
   return {
@@ -168,11 +195,14 @@ describe("setupAndRoute typing controller behavior", () => {
       makeMsg({ channelType: "irc" }),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     // Typing controller never started -> no typing:started event emitted
@@ -203,11 +233,14 @@ describe("setupAndRoute typing controller behavior", () => {
       makeMsg({ channelType: "echo" }),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     const typingEmits = eventBus.emit.mock.calls.filter(
@@ -237,11 +270,14 @@ describe("setupAndRoute typing controller behavior", () => {
       makeMsg({ metadata: { isHeartbeat: true } }),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     const typingEmits = eventBus.emit.mock.calls.filter(
@@ -284,11 +320,14 @@ describe("setupAndRoute typing controller behavior", () => {
       makeMsg(),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     expect(laterObserver).toHaveBeenCalledWith(
@@ -324,11 +363,14 @@ describe("setupAndRoute typing controller behavior", () => {
       makeMsg({ metadata: { telegramChatType: "group", isBotMentioned: false } }),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     const typingEmits = eventBus.emit.mock.calls.filter(
@@ -379,11 +421,14 @@ describe("setupAndRoute typing controller behavior", () => {
       }),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     // Mentioned in group + instant mode -> typing:started should be emitted
@@ -472,11 +517,14 @@ describe("setupAndRoute steer+followup routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     expect(runHandle.steer).toHaveBeenCalledWith("hello");
@@ -520,11 +568,14 @@ describe("setupAndRoute steer+followup routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     expect(runHandle.steer).toHaveBeenCalledOnce();
@@ -564,11 +615,14 @@ describe("setupAndRoute steer+followup routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     expect(logger.warn).toHaveBeenCalledWith(
@@ -611,11 +665,14 @@ describe("setupAndRoute steer+followup routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     // No steer when compacting
@@ -661,11 +718,14 @@ describe("setupAndRoute steer+followup routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     expect(eventBus.emitSafely).toHaveBeenCalledWith(
@@ -704,11 +764,14 @@ describe("setupAndRoute steer+followup routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     expect(runHandle.followUp).toHaveBeenCalledOnce();
@@ -750,11 +813,14 @@ describe("setupAndRoute steer+followup routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     expect(logger.warn).toHaveBeenCalledWith(
@@ -788,11 +854,14 @@ describe("setupAndRoute steer+followup routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     // With mode override to "queue", sessionResolver MUST NOT be queried
@@ -839,11 +908,14 @@ describe("setupAndRoute command-queue routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     expect(logger.warn).toHaveBeenCalledWith(
@@ -906,10 +978,13 @@ describe("setupAndRoute command-queue routing", () => {
       msg,
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       executor,
       new Set(),
       new Map() as never,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
     expect(executor.execute).not.toHaveBeenCalled();
@@ -967,10 +1042,13 @@ describe("setupAndRoute command-queue routing", () => {
       waitingMessage,
       sessionKey,
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       makeExecutor(),
       new Set(),
       new Map() as never,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
     await Promise.resolve();
     const shutdown = commandQueue.shutdown();
@@ -1055,18 +1133,17 @@ describe("setupAndRoute command-queue routing", () => {
       makeMsg(),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       executor,
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     );
 
-    expect(sessionResolver.resolveActiveSession).toHaveBeenCalledWith({
-      agentId: "agent-1",
-      channelType: "telegram",
-      channelId: "chat-1",
-    });
+    expect(sessionResolver.resolveActiveSession).toHaveBeenCalledWith(TURN_CONVERSATION_REF);
     expect(runHandle.abort).toHaveBeenCalledOnce();
   });
 
@@ -1134,7 +1211,7 @@ describe("setupAndRoute command-queue routing", () => {
       controller.abort();
       eventBus.emit("prompt:submitted", {
         agentId: "another-agent",
-        sessionKey: "default:user-1:chat-1:peer:user-1",
+        sessionKey: formatSessionKey(makeSessionKey()),
         traceId: promptExecutionId,
         promptChars: 1,
         provider: "test",
@@ -1147,7 +1224,7 @@ describe("setupAndRoute command-queue routing", () => {
       expect(sessionResolver.resolveActiveSession).toHaveBeenCalledOnce();
       eventBus.emit("prompt:submitted", {
         agentId: "agent-1",
-        sessionKey: "default:user-1:chat-1:peer:user-1",
+        sessionKey: formatSessionKey(makeSessionKey()),
         traceId: promptExecutionId,
         promptChars: 1,
         provider: "test",
@@ -1180,11 +1257,14 @@ describe("setupAndRoute command-queue routing", () => {
       makeMsg(),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       executor,
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       new Map() as any,
       undefined,
+      EMPTY_INBOUND_PROVENANCE,
     ));
 
     expect(sessionResolver.resolveActiveSession).toHaveBeenCalledTimes(2);
@@ -1236,6 +1316,8 @@ describe("setupAndRoute command-queue routing", () => {
       makeMsg(),
       makeSessionKey(),
       "agent-1",
+      TURN_SCOPE,
+      TURN_CONVERSATION_REF,
       executor,
       new Set(),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

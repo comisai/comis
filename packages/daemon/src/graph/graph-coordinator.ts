@@ -8,9 +8,6 @@ import {
 } from "./graph-state-machine.js";
 import {
   safePath,
-  type AgentCapability,
-  type DeliveryOrigin,
-  type GraphStatus,
   type ValidatedGraph,
   type DurableRunRecord,
   systemNowMs,
@@ -18,7 +15,8 @@ import {
   systemClearInterval,
   systemSetTimeout,
   tryGetContext,
-  parseFormattedSessionKey,
+  createConversationRef,
+  conversationScopeToSessionKey,
   validateAndSortGraph,
   parseDurableRunRecord,
   toSafeErrorLogString,
@@ -68,55 +66,16 @@ import type {
   GraphRunState,
   CoordinatorConfig,
 } from "./graph-coordinator-state.js";
-
-export interface GraphRunParams {
-  graph: import("@comis/core").ValidatedGraph;
-  callerSessionKey?: string;
-  callerAgentId?: string;
-  /** Authenticated capability ceiling supplied by the RPC boundary. */
-  callerCaps?: readonly AgentCapability[];
-  /** Authenticated lease authorizing this graph submission. */
-  callerLeaseId?: string;
-  /** Authenticated tree root supplied by the RPC boundary. */
-  callerRootRunId?: string;
-  /** Authenticated delivery origin supplied by the RPC boundary. */
-  callerDeliveryOrigin?: DeliveryOrigin;
-  announceChannelType?: string;
-  announceChannelId?: string;
-  /** Send per-node completion progress messages to the channel. Default: false. */
-  nodeProgress?: boolean;
-}
-
-export interface GraphRunSummary {
-  graphId: string;
-  label?: string;
-  status: GraphStatus;
-  startedAt: number;
-  completedAt?: number;
-}
-
-export interface GraphCoordinator {
-  run(params: GraphRunParams): Promise<Result<string, string>>;
-  getStatus(graphId: string): GraphExecutionSnapshot | undefined;
-  cancel(graphId: string): boolean;
-  listGraphs(recentMinutes?: number): GraphRunSummary[];
-  shutdown(): Promise<void>;
-  getConcurrencyStats(): { globalActiveSubAgents: number; maxGlobalSubAgents: number; queueDepth: number };
-  /** Direct notification when a graph-owned subagent is killed.
-   *  Bypasses event bus for reliability during session cleanup. Idempotent. */
-  notifyNodeFailed(graphId: string, nodeId: string, runId: string, error: string): void;
-  /**
-   * Resume a DAG run from its durable checkpoint after a daemon restart.
-   * Non-terminal nodes re-enter through the normal node-lifecycle path;
-   * completed, skipped, and failed nodes retain their exact persisted state.
-   * The durable resume engine calls this only after its root-wide outward-effect
-   * uncertainty gate has allowed execution to continue.
-   */
-  resumeGraph(
-    record: DurableRunRecord,
-    authority?: { leaseId: string; bearer: string },
-  ): Promise<Result<void, Error>>;
-}
+import type {
+  GraphCoordinator,
+  GraphRunParams,
+  GraphRunSummary,
+} from "./graph-coordinator-contract.js";
+export type {
+  GraphCoordinator,
+  GraphRunParams,
+  GraphRunSummary,
+} from "./graph-coordinator-contract.js";
 
 /** Create a graph coordinator that executes validated graphs end-to-end. */
 export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordinator {
@@ -148,24 +107,12 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     if (
       !deps.durableRuns
       || gs.rootRunId === undefined
-      || gs.callerSessionKey === undefined
       || gs.callerAgentId === undefined
+      || gs.callerConversationLocator === undefined
+      || gs.callerPrincipalId === undefined
     ) return true;
     const store = deps.durableRuns;
     const rootRunId = gs.rootRunId;
-    const owner = parseFormattedSessionKey(gs.callerSessionKey);
-    if (owner === undefined) {
-      deps.logger?.warn(
-        {
-          graphId: gs.graphId,
-          rootRunId,
-          hint: "Reject the durable transition and verify the caller session key is canonical",
-          errorKind: "precondition" as const,
-        },
-        "Graph durable checkpoint has no canonical owner",
-      );
-      return false;
-    }
     const terminal = gs.stateMachine.isTerminal();
     const graphCheckpoint = createDurableGraphCheckpoint(gs);
     const checkpointArtifact = writeDurableGraphCheckpoint(
@@ -200,10 +147,11 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     const record: DurableRunRecord = {
       checkpointId: gs.graphId,
       rootRunId,
+      tenantId: gs.callerConversationLocator.conversationScope.tenantId,
       agentId: gs.callerAgentId,
-      sessionKey: gs.callerSessionKey,
-      ownerTenantId: owner.tenantId,
-      ownerUserId: owner.userId,
+      conversationRef: gs.callerConversationLocator.conversationRef,
+      conversationScope: gs.callerConversationLocator.conversationScope,
+      principalId: gs.callerPrincipalId,
       deliveryOrigin: gs.callerDeliveryOrigin ?? null,
       spawnTree: snapshotToSpawnTree(gs.stateMachine.snapshot()),
       caps: [...gs.callerCaps],
@@ -247,8 +195,9 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
   function requiresDurableBoundary(gs: GraphRunState): boolean {
     return deps.durableRuns !== undefined
       && gs.rootRunId !== undefined
-      && gs.callerSessionKey !== undefined
-      && gs.callerAgentId !== undefined;
+      && gs.callerAgentId !== undefined
+      && gs.callerConversationLocator !== undefined
+      && gs.callerPrincipalId !== undefined;
   }
 
   function releaseDurableRetention(gs: GraphRunState): void {
@@ -421,11 +370,41 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       }, "Graph caller context mismatch");
       return err("Graph caller session does not match the request context");
     }
-    const callerPrincipalMatches = callerContext !== undefined
+    const declaredTurnScope = params.callerTurnScope;
+    if (
+      callerContext?.turnScope !== undefined
+      && declaredTurnScope !== undefined
+      && (
+        callerContext.turnScope.conversation.tenantId !== declaredTurnScope.conversation.tenantId
+        || callerContext.turnScope.conversation.agentId !== declaredTurnScope.conversation.agentId
+        || callerContext.turnScope.principal.principalId !== declaredTurnScope.principal.principalId
+        || callerContext.turnScope.endpoint.channelType !== declaredTurnScope.endpoint.channelType
+        || callerContext.turnScope.endpoint.channelInstanceId !== declaredTurnScope.endpoint.channelInstanceId
+        || callerContext.turnScope.endpoint.conversationId !== declaredTurnScope.endpoint.conversationId
+        || callerContext.turnScope.endpoint.threadId !== declaredTurnScope.endpoint.threadId
+        || callerContext.turnScope.endpoint.conversationKind !== declaredTurnScope.endpoint.conversationKind
+      )
+    ) {
+      deps.logger?.warn({
+        method: "graph.run",
+        mismatchField: "turn-scope",
+        hint: "Reject the graph and verify the RPC injector preserves canonical conversation authority",
+        errorKind: "precondition" as const,
+      }, "Graph caller context mismatch");
+      return err("Graph caller turn scope does not match the request context");
+    }
+    const callerAuthorityValid = declaredTurnScope !== undefined
       && params.callerAgentId !== undefined
       && params.callerSessionKey !== undefined
-      && callerContext.agentId === params.callerAgentId
-      && callerContext.sessionKey === params.callerSessionKey;
+      && declaredTurnScope.conversation.agentId === params.callerAgentId
+      && (callerContext === undefined || (
+        callerContext.agentId === params.callerAgentId
+        && callerContext.sessionKey === params.callerSessionKey
+      ));
+    const callerTurnScope = callerAuthorityValid ? declaredTurnScope : undefined;
+    const callerConversationRef = callerTurnScope === undefined
+      ? undefined
+      : createConversationRef(callerTurnScope.conversation);
     const graphId = randomUUID();
     const graphTraceId = randomUUID();
 
@@ -445,15 +424,15 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     const graphParentRun = params.callerSessionKey
       ? deps.subAgentRunner.getRunBySessionKey?.(params.callerSessionKey)
       : undefined;
-    const graphParsedCaller = params.callerSessionKey
-      ? parseFormattedSessionKey(params.callerSessionKey)
-      : undefined;
-    const graphRootRunId = callerPrincipalMatches
+    const projectedCallerSession = callerTurnScope === undefined
+      ? undefined
+      : conversationScopeToSessionKey(callerTurnScope.conversation);
+    const graphRootRunId = callerAuthorityValid
       ? params.callerRootRunId
         ?? graphParentRun?.rootRunId
         ?? (
-          graphParsedCaller && params.callerAgentId
-            ? deps.resolveRootRunId?.(params.callerAgentId, graphParsedCaller)
+          projectedCallerSession?.ok === true && params.callerAgentId
+            ? deps.resolveRootRunId?.(params.callerAgentId, projectedCallerSession.value)
             : undefined
         )
       : undefined;
@@ -465,15 +444,15 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       // child completion callback, so consulting ambient ALS later would read
       // the wrong principal. Only an exact declared caller match can carry
       // authorization or request annotations into the graph.
-      callerTrustLevel: callerPrincipalMatches ? callerContext.trustLevel : "guest",
-      callerCaps: callerPrincipalMatches ? [...(params.callerCaps ?? [])] : [],
-      ...(callerPrincipalMatches && params.callerLeaseId !== undefined
+      callerTrustLevel: callerAuthorityValid && callerContext !== undefined ? callerContext.trustLevel : "guest",
+      callerCaps: callerAuthorityValid ? [...(params.callerCaps ?? [])] : [],
+      ...(callerAuthorityValid && params.callerLeaseId !== undefined
         ? { parentLeaseId: params.callerLeaseId }
         : {}),
-      ...(callerPrincipalMatches && params.callerDeliveryOrigin !== undefined
+      ...(callerAuthorityValid && params.callerDeliveryOrigin !== undefined
         ? { callerDeliveryOrigin: params.callerDeliveryOrigin }
         : {}),
-      ...(callerPrincipalMatches && callerContext.workspacePolicyHash !== undefined
+      ...(callerAuthorityValid && callerContext?.workspacePolicyHash !== undefined
         ? { workspacePolicyHash: callerContext.workspacePolicyHash }
         : {}),
       ...(graphRootRunId !== undefined ? { rootRunId: graphRootRunId } : {}),
@@ -488,10 +467,20 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       runningCount: 0,
       callerSessionKey: params.callerSessionKey,
       callerAgentId: params.callerAgentId,
+      ...(callerConversationRef?.ok === true && callerTurnScope !== undefined
+        ? {
+            callerConversationLocator: {
+              conversationScope: callerTurnScope.conversation,
+              conversationRef: callerConversationRef.value,
+            },
+            callerPrincipalId: callerTurnScope.principal.principalId,
+            callerEndpoint: callerTurnScope.endpoint,
+          }
+        : {}),
       // Graph submission carries no inbound NormalizedMessage, so resolve
       // the reply language once from the caller's RequestContext.resolvedLanguage — set by the
       // parent executor — and thread it to every node envelope via buildContextEnvelope.
-      resolvedLanguage: callerPrincipalMatches ? callerContext.resolvedLanguage : undefined,
+      resolvedLanguage: callerAuthorityValid ? callerContext?.resolvedLanguage : undefined,
       announceChannelType: params.announceChannelType,
       announceChannelId: params.announceChannelId,
       nodeProgress: params.nodeProgress ?? false,
@@ -885,8 +874,19 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
       ...(validRecord.workspacePolicyHash === undefined
         ? {}
         : { workspacePolicyHash: validRecord.workspacePolicyHash }),
-      callerSessionKey: validRecord.sessionKey,
       callerAgentId: validRecord.agentId,
+      callerConversationLocator: {
+        conversationScope: validRecord.conversationScope,
+        conversationRef: validRecord.conversationRef,
+      },
+      callerPrincipalId: validRecord.principalId,
+      ...(() => {
+        const partition = validRecord.conversationScope.partition;
+        return partition.kind === "endpoint-conversation"
+          || partition.kind === "endpoint-conversation-principal"
+          ? { callerEndpoint: partition.endpoint }
+          : {};
+      })(),
       rootRunId, // tree-stable durable key shared by recovered node attempts
       ...(validRecord.deliveryOrigin !== null
         ? {

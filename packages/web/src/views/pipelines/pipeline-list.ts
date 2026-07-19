@@ -3,7 +3,7 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import type { RpcClient } from "../../api/rpc-client.js";
-import type { PipelineListEntry, PipelineNode, SavedGraphSummary } from "../../api/types/index.js";
+import type { PipelineListEntry, PipelineNode } from "../../api/types/index.js";
 import { IcToast } from "../../components/feedback/ic-toast.js";
 import "../../components/nav/ic-breadcrumb.js";
 import type { BreadcrumbItem } from "../../components/nav/ic-breadcrumb.js";
@@ -417,8 +417,8 @@ export class IcPipelineList extends LitElement {
       const rpc = this.rpcClient;
       // Fire both independent RPC calls in parallel
       const [savedResult, executedResult] = await Promise.allSettled([
-        rpc.call<{ entries?: SavedGraphSummary[]; total?: number }>("graph.list", { limit: 100 }),
-        rpc.call<{ graphs?: Array<{ graphId: string; label?: string; status: string; startedAt?: number; completedAt?: number }> }>("graph.status", {}),
+        rpc.call("graph.list", { limit: 100 }),
+        rpc.call("graph.status", {}),
       ]);
 
       // Source 1: server-saved named graphs
@@ -645,7 +645,7 @@ export class IcPipelineList extends LitElement {
       );
       if (hasApprovalGate) {
         try {
-          const channelData = await rpc.call<{ channels: Array<{ channelId: string; channelType: string }> } | Array<{ channelId: string; channelType: string }>>("obs.channels.all");
+          const channelData = await rpc.call("obs.channels.all");
           const channels = Array.isArray(channelData) ? channelData : channelData?.channels ?? [];
           if (channels.length > 0) {
             payload._callerChannelType = channels[0]!.channelType;
@@ -654,7 +654,7 @@ export class IcPipelineList extends LitElement {
         } catch { /* best-effort - server will reject if still missing */ }
       }
 
-      const result = await rpc.call<{ graphId?: string }>("graph.execute", payload);
+      const result = await rpc.call("graph.execute", payload);
 
       if (result?.graphId) {
         IcToast.show("Pipeline started", "success");

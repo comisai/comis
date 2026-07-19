@@ -12,7 +12,7 @@
  */
 
 import { createHmac } from "node:crypto";
-import { type KnownProvider } from "@earendil-works/pi-ai";
+import type { BuiltinProvider } from "@earendil-works/pi-ai/compat";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import { resolveOperationDefaults } from "@comis/agent";
 import { TOOL_PROFILES } from "@comis/skills";
@@ -60,7 +60,7 @@ export function resolveAgentModel(
       );
     }
     provider = allProviders
-      .map((p) => ({ p, n: getModels(p as KnownProvider).length }))
+      .map((p) => ({ p, n: getModels(p as BuiltinProvider).length }))
       .sort((a, b) => b.n - a.n)[0]!.p;
   }
 
@@ -75,7 +75,7 @@ export function resolveAgentModel(
     // (catalog-derived, cost-aware), fall back to first model id when
     // resolveOperationDefaults returns {} (custom YAML providers).
     const tier = resolveOperationDefaults(provider);
-    const firstId = getModels(provider as KnownProvider)[0]?.id;
+    const firstId = getModels(provider as BuiltinProvider)[0]?.id;
     const candidate = tier.mid ?? firstId;
     if (!candidate) {
       throw new Error(
@@ -122,18 +122,14 @@ export function resolveAgentMainProvider(
 }
 
 /**
- * Resolve the EFFECTIVE rag.rerank.enabled for an agent.
- * Explicit operator value wins both directions; unset → auto-on iff the model
- * is locally present. `explicit` MUST be read from the RAW (pre-zod-default)
- * config — see setup-agents-runtime.ts — because RagConfigSchema.rerank.enabled
- * carries a `.default()` (default-ON), so a parsed value can
- * never be `undefined` and would erase the genuine unset signal. Threading the
- * raw tri-state keeps the zero-download posture: an unset config with
- * the model ABSENT stays effective-off, so a bare default-ON config does NOT
- * trigger a 606MB fetch.
+ * Resolve the configured tri-state rerank mode against local model presence.
  */
-export function resolveEffectiveRerank(explicit: boolean | undefined, present: boolean): boolean {
-  if (explicit !== undefined) return explicit;
+export function resolveEffectiveRerank(
+  mode: "auto" | "on" | "off",
+  present: boolean,
+): boolean {
+  if (mode === "on") return true;
+  if (mode === "off") return false;
   return present;
 }
 

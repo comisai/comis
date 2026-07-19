@@ -238,7 +238,7 @@ export class IcDurableAuditLog extends LitElement {
     const rpc = this.rpcClient;
 
     try {
-      const raw = await rpc.call<{ rows?: unknown[] }>("obs.audit.query", this._buildRequest());
+      const raw = await rpc.call("obs.audit.query", this._buildRequest());
       const wireRows = Array.isArray(raw?.rows) ? raw.rows : [];
       this._rows = wireRows.map((r) => this._narrowRow(r as Record<string, unknown>));
       this._loadState = "loaded";

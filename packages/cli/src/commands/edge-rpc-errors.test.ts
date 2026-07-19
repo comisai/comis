@@ -174,7 +174,10 @@ describe("RPC failure exit code 1", () => {
     registerSessionsCommand(program);
 
     try {
-      await program.parseAsync(["node", "test", "sessions", "list"]);
+      await program.parseAsync([
+        "node", "test", "sessions", "list",
+        "--tenant", "test-tenant", "--agent", "test-agent",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }
@@ -204,7 +207,10 @@ describe("RPC failure exit code 1", () => {
     registerSessionsCommand(program);
 
     try {
-      await program.parseAsync(["node", "test", "sessions", "delete", "some-key", "--yes"]);
+      await program.parseAsync([
+        "node", "test", "sessions", "delete", "some-key", "--yes",
+        "--tenant", "test-tenant", "--agent", "test-agent",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }
@@ -224,7 +230,10 @@ describe("RPC failure exit code 1", () => {
     vi.mocked(withClient).mockRejectedValue(new Error("gateway unreachable"));
 
     try {
-      await program.parseAsync(["node", "test", "memory", "search", "test"]);
+      await program.parseAsync([
+        "node", "test", "memory", "search", "test",
+        "--tenant", "test-tenant", "--agent", "test-agent",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }
@@ -240,7 +249,10 @@ describe("RPC failure exit code 1", () => {
     vi.mocked(withClient).mockRejectedValue(new Error("gateway unreachable"));
 
     try {
-      await program.parseAsync(["node", "test", "memory", "inspect", "abc-123"]);
+      await program.parseAsync([
+        "node", "test", "memory", "inspect", "abc-123",
+        "--tenant", "test-tenant", "--agent", "test-agent",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }
@@ -255,7 +267,10 @@ describe("RPC failure exit code 1", () => {
     registerMemoryCommand(program);
 
     try {
-      await program.parseAsync(["node", "test", "memory", "stats"]);
+      await program.parseAsync([
+        "node", "test", "memory", "stats",
+        "--tenant", "test-tenant", "--agent", "test-agent",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }
@@ -374,7 +389,10 @@ describe("null/empty RPC response handling", () => {
 
     const program = createTestProgram();
     registerSessionsCommand(program);
-    await program.parseAsync(["node", "test", "sessions", "list"]);
+    await program.parseAsync([
+      "node", "test", "sessions", "list",
+      "--tenant", "test-tenant", "--agent", "test-agent",
+    ]);
 
     expect(exitSpy.spy).not.toHaveBeenCalled();
     const output = getSpyOutput(consoleSpy.log);
@@ -397,7 +415,10 @@ describe("null/empty RPC response handling", () => {
 
     const program = createTestProgram();
     registerSessionsCommand(program);
-    await program.parseAsync(["node", "test", "sessions", "list"]);
+    await program.parseAsync([
+      "node", "test", "sessions", "list",
+      "--tenant", "test-tenant", "--agent", "test-agent",
+    ]);
 
     expect(exitSpy.spy).not.toHaveBeenCalled();
     const output = getSpyOutput(consoleSpy.log);
@@ -417,7 +438,10 @@ describe("null/empty RPC response handling", () => {
 
     const program = createTestProgram();
     registerSessionsCommand(program);
-    await program.parseAsync(["node", "test", "sessions", "list"]);
+    await program.parseAsync([
+      "node", "test", "sessions", "list",
+      "--tenant", "test-tenant", "--agent", "test-agent",
+    ]);
 
     expect(exitSpy.spy).not.toHaveBeenCalled();
     const output = getSpyOutput(consoleSpy.log);
@@ -441,7 +465,10 @@ describe("null/empty RPC response handling", () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
     try {
-      await program.parseAsync(["node", "test", "memory", "search", "test"]);
+      await program.parseAsync([
+        "node", "test", "memory", "search", "test",
+        "--tenant", "test-tenant", "--agent", "test-agent",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }
@@ -452,7 +479,10 @@ describe("null/empty RPC response handling", () => {
     const program = createTestProgram();
     registerMemoryCommand(program);
     try {
-      await program.parseAsync(["node", "test", "memory", "inspect", "abc-123"]);
+      await program.parseAsync([
+        "node", "test", "memory", "inspect", "abc-123",
+        "--tenant", "test-tenant", "--agent", "test-agent",
+      ]);
     } catch (e) {
       expect((e as Error).message).toBe("process.exit called");
     }
@@ -472,7 +502,10 @@ describe("null/empty RPC response handling", () => {
 
     const program = createTestProgram();
     registerMemoryCommand(program);
-    await program.parseAsync(["node", "test", "memory", "stats"]);
+    await program.parseAsync([
+      "node", "test", "memory", "stats",
+      "--tenant", "test-tenant", "--agent", "test-agent",
+    ]);
 
     expect(exitSpy.spy).not.toHaveBeenCalled();
     const output = getSpyOutput(consoleSpy.log);

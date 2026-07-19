@@ -6,6 +6,7 @@ import {
   emitObservationalEventSafely,
   systemNowMs,
   type ComisLogger,
+  type ConversationLocator,
   type OutwardSendLedgerPort,
   type OutwardSendRecord,
   type TypedEventBus,
@@ -72,6 +73,7 @@ export type SendGovernedAnnouncement = (
 export interface CompletionAnnouncementSendRequest {
   agentId: string;
   callerSessionKey: string;
+  callerConversation: ConversationLocator;
   runId: string;
   channelType: string;
   channelId: string;

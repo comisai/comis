@@ -10,7 +10,14 @@
  */
 
 import {
-  parseFormattedSessionKey,
+  conversationScopeToSessionKey,
+  type ConversationLocator,
+  formatSessionKey,
+  type ConversationRef,
+  type ConversationScope,
+  type SessionData,
+  type SessionQueryScope,
+  type SessionStoreError,
   type SessionKey,
   type TypedEventBus,
   type AgentToAgentConfig,
@@ -18,7 +25,7 @@ import {
   systemNowMs,
   systemSetTimeout,
 } from "@comis/core";
-import { fromPromise } from "@comis/shared";
+import { fromPromise, type Result } from "@comis/shared";
 import type { SendGovernedCompletionAnnouncement } from "./announcement-outward-operation.js";
 
 // ---------------------------------------------------------------------------
@@ -27,12 +34,13 @@ import type { SendGovernedCompletionAnnouncement } from "./announcement-outward-
 
 export interface CrossSessionSenderDeps {
   sessionStore: {
-    loadByFormattedKey(key: string): { messages: unknown[]; metadata: Record<string, unknown> } | undefined;
-    save(key: SessionKey, messages: unknown[], metadata: Record<string, unknown>): void;
+    loadByRef(scope: SessionQueryScope, conversationRef: ConversationRef): Result<SessionData | undefined, SessionStoreError>;
+    save(scope: ConversationScope, messages: unknown[], metadata: Record<string, unknown>): Result<void, SessionStoreError>;
   };
   executeInSession: (
     agentId: string,
     sessionKey: SessionKey,
+    conversation: ConversationLocator,
     text: string,
   ) => Promise<{
     response: string;
@@ -49,20 +57,20 @@ export interface CrossSessionSenderDeps {
 }
 
 export interface CrossSessionSendParams {
-  targetSessionKey: string;
+  target: SessionQueryScope & { conversationRef: ConversationRef };
   text: string;
   mode: "fire-and-forget" | "wait" | "ping-pong";
   timeoutMs?: number;
   maxTurns?: number;
+  caller?: SessionQueryScope & { conversationRef: ConversationRef };
   callerSessionKey?: string;
+  callerConversation?: ConversationLocator;
   /** Framework-authenticated agent that owns the caller session. */
   callerAgentId?: string;
   /** Stable identity of the originating sessions_send tool call. */
   announceOperationId?: string;
   announceChannelType?: string;
   announceChannelId?: string;
-  /** Target agent ID for wait/ping-pong execution. Overrides session key agentId inference. */
-  agentId?: string;
 }
 
 export interface CrossSessionSendResult {
@@ -84,6 +92,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
     text: string,
     callerAgentId: string | undefined,
     callerSessionKey: string | undefined,
+    callerConversation: ConversationLocator | undefined,
     announceOperationId: string | undefined,
   ): Promise<boolean> {
     if (!channelType || !channelId) return false;
@@ -92,7 +101,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
     if (!sendGovernedAnnouncement) {
       return deps.sendToChannel(channelType, channelId, text);
     }
-    if (callerAgentId === undefined || callerSessionKey === undefined) {
+    if (callerAgentId === undefined || callerSessionKey === undefined || callerConversation === undefined) {
       deps.logger?.error(
         {
           step: "completion-announcement",
@@ -121,6 +130,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
     const boundary = await fromPromise(sendGovernedAnnouncement({
       agentId: callerAgentId,
       callerSessionKey,
+      callerConversation,
       runId: announceOperationId,
       channelType,
       channelId,
@@ -152,32 +162,30 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
 
   return {
     async send(params: CrossSessionSendParams): Promise<CrossSessionSendResult> {
-      // 1. Parse and validate target session key
-      const parsedKey = parseFormattedSessionKey(params.targetSessionKey);
-      if (!parsedKey) {
-        throw new Error(`Invalid session key: ${params.targetSessionKey}`);
-      }
-
-      // 2. Load target session
-      const data = deps.sessionStore.loadByFormattedKey(params.targetSessionKey);
-      if (!data) {
-        throw new Error(`Session not found: ${params.targetSessionKey}`);
-      }
+      const loadedTarget = deps.sessionStore.loadByRef(params.target, params.target.conversationRef);
+      if (!loadedTarget.ok) throw loadedTarget.error;
+      const data = loadedTarget.value;
+      if (!data) throw new Error(`Target conversation not found: ${params.target.conversationRef}`);
+      const projectedTarget = conversationScopeToSessionKey(data.conversationScope);
+      if (!projectedTarget.ok) throw projectedTarget.error;
+      const targetSessionKey = projectedTarget.value;
+      const targetDisplayKey = formatSessionKey(targetSessionKey);
 
       // 3. Inject synthetic user message into target session
       const newMessage = {
         role: "user",
         content: params.text,
         timestamp: systemNowMs(),
-        metadata: { crossSession: true, fromSession: params.callerSessionKey },
+        metadata: { crossSession: true, fromConversationRef: params.caller?.conversationRef },
       };
       const updatedMessages = [...data.messages, newMessage];
-      deps.sessionStore.save(parsedKey, updatedMessages, data.metadata);
+      const saved = deps.sessionStore.save(data.conversationScope, updatedMessages, data.metadata);
+      if (!saved.ok) throw saved.error;
 
       // 4. Emit cross-send event
       deps.eventBus.emit("session:cross_send", {
         fromSessionKey: params.callerSessionKey ?? "unknown",
-        toSessionKey: params.targetSessionKey,
+        toSessionKey: targetDisplayKey,
         mode: params.mode,
         timestamp: systemNowMs(),
       });
@@ -188,19 +196,25 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       }
 
       // 6. Self-targeting guard for wait/ping-pong modes
-      if (params.callerSessionKey === params.targetSessionKey) {
+      if (
+        params.caller?.tenantId === params.target.tenantId
+        && params.caller.agentId === params.target.agentId
+        && params.caller.conversationRef === params.target.conversationRef
+      ) {
         throw new Error(
           "Cannot send to own session in wait/ping-pong mode (deadlock risk). Use fire-and-forget mode instead.",
         );
       }
 
-      // 7. Execute target agent (use explicit agentId if provided, else infer from key, else "default")
-      const agentId = params.agentId ?? parsedKey.agentId ?? "default";
+      const agentId = data.conversationScope.agentId;
       const startMs = systemNowMs();
       const timeoutMs = params.timeoutMs ?? deps.config.waitTimeoutMs;
 
       const execResult = await Promise.race([
-        deps.executeInSession(agentId, parsedKey, params.text),
+        deps.executeInSession(agentId, targetSessionKey, {
+          conversationScope: data.conversationScope,
+          conversationRef: data.conversationRef,
+        }, params.text),
         new Promise<never>((_, reject) =>
           systemSetTimeout(() => reject(new Error("Cross-session wait timed out")), timeoutMs),
         ),
@@ -215,7 +229,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
         const announced = hadSkip
           ? false
-          : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.announceOperationId);
+          : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.announceOperationId);
         return {
           sent: true,
           response: stripped,
@@ -231,8 +245,11 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       // 9. Ping-pong mode: loop alternating between sessions
       const maxTurns = params.maxTurns ?? deps.config.maxPingPongTurns;
       let turnsCompleted = 0;
-      let currentTarget = params.callerSessionKey!;
-      let currentSource = params.targetSessionKey;
+      if (!params.caller) {
+        throw new Error("Ping-pong mode requires explicit caller conversation authority");
+      }
+      let currentTarget = params.caller;
+      let currentSource = params.target;
 
       while (turnsCompleted < maxTurns) {
         // Check for ANNOUNCE_SKIP escape in last response
@@ -240,11 +257,16 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
           break;
         }
 
-        const targetKey = parseFormattedSessionKey(currentTarget);
-        if (!targetKey) break;
-
-        const turnAgentId = targetKey.agentId ?? "default";
-        const turnResult = await deps.executeInSession(turnAgentId, targetKey, lastResponse);
+        const loaded = deps.sessionStore.loadByRef(currentTarget, currentTarget.conversationRef);
+        if (!loaded.ok) throw loaded.error;
+        if (!loaded.value) break;
+        const targetKey = conversationScopeToSessionKey(loaded.value.conversationScope);
+        if (!targetKey.ok) throw targetKey.error;
+        const turnAgentId = loaded.value.conversationScope.agentId;
+        const turnResult = await deps.executeInSession(turnAgentId, targetKey.value, {
+          conversationScope: loaded.value.conversationScope,
+          conversationRef: loaded.value.conversationRef,
+        }, lastResponse);
 
         totalTokens += turnResult.tokensUsed.total;
         totalCost += turnResult.cost.total;
@@ -253,8 +275,8 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
 
         // Emit ping-pong turn event
         deps.eventBus.emit("session:ping_pong_turn", {
-          fromSessionKey: currentSource,
-          toSessionKey: currentTarget,
+          fromSessionKey: currentSource.conversationRef,
+          toSessionKey: currentTarget.conversationRef,
           turnNumber: turnsCompleted,
           totalTurns: maxTurns,
           tokensUsed: turnResult.tokensUsed.total,
@@ -269,7 +291,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
       const announced = hadSkip
         ? false
-        : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.announceOperationId);
+        : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.announceOperationId);
 
       return {
         sent: true,

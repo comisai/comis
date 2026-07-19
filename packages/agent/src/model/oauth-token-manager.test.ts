@@ -14,17 +14,21 @@ import { createOAuthTokenManager, type OAuthTokenManager, type OAuthError } from
 // Mock pi-ai OAuth module
 // ---------------------------------------------------------------------------
 
-vi.mock("@earendil-works/pi-ai/oauth", () => ({
-  getOAuthProvider: vi.fn(),
-  getOAuthApiKey: vi.fn(),
-  getOAuthProviders: vi.fn(),
-}));
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@comis/core")>();
+  return {
+    ...actual,
+    getProviderOAuth: vi.fn(),
+    resolveOAuthApiKey: vi.fn(),
+    listOAuthProviderIds: vi.fn(),
+  };
+});
 
 import {
-  getOAuthProvider,
-  getOAuthApiKey,
-  getOAuthProviders,
-} from "@earendil-works/pi-ai/oauth";
+  getProviderOAuth,
+  resolveOAuthApiKey,
+  listOAuthProviderIds,
+} from "@comis/core";
 import type { FileLockPort } from "@comis/core";
 
 // The production OAuthTokenManager does not import `@comis/scheduler`'s
@@ -56,9 +60,9 @@ function makeFileLockStub(): FileLockPort {
   };
 }
 
-const mockGetOAuthProvider = vi.mocked(getOAuthProvider);
-const mockGetOAuthApiKey = vi.mocked(getOAuthApiKey);
-const mockGetOAuthProviders = vi.mocked(getOAuthProviders);
+const mockGetOAuthProvider = vi.mocked(getProviderOAuth);
+const mockGetOAuthApiKey = vi.mocked(resolveOAuthApiKey);
+const mockGetOAuthProviders = vi.mocked(listOAuthProviderIds);
 
 // ---------------------------------------------------------------------------
 // Shared helpers (used by both the original 13-test block and the port-backed
@@ -79,11 +83,10 @@ function makeSecretManager(secrets: Record<string, string>): SecretManager {
 
 function makeFakeProvider(id: string) {
   return {
-    id,
     name: `Provider ${id}`,
     login: vi.fn(),
-    refreshToken: vi.fn(),
-    getApiKey: vi.fn(),
+    refresh: vi.fn(),
+    toAuth: vi.fn(),
   };
 }
 
@@ -399,14 +402,14 @@ describe("createOAuthTokenManager", () => {
     );
   });
 
-  it("getSupportedProviders returns provider IDs from pi-ai", () => {
+  it("getSupportedProviders returns provider IDs from the provider catalog", () => {
     mockGetOAuthProviders.mockReturnValue([
-      makeFakeProvider("anthropic"),
-      makeFakeProvider("github-copilot"),
-      makeFakeProvider("google-gemini-cli"),
-      makeFakeProvider("google-antigravity"),
-      makeFakeProvider("openai-codex"),
-    ] as unknown as ReturnType<typeof getOAuthProviders>);
+      "anthropic",
+      "github-copilot",
+      "google-gemini-cli",
+      "google-antigravity",
+      "openai-codex",
+    ]);
 
     const secretManager = makeSecretManager({});
     const manager = createOAuthTokenManager({ secretManager, eventBus, ...legacyOAuthDeps() });
@@ -1831,11 +1834,11 @@ type OAuthTokenManagerDepsLike = Parameters<typeof createOAuthTokenManager>[0];
 // =============================================================================
 // refresh_token_reused detection via openai-codex bypass
 //
-// The token manager bypasses pi-ai's getOAuthApiKey for openai-codex so the
+// The token manager bypasses resolveOAuthApiKey for openai-codex so the
 // refresh-failure response body is available for clean classification. These
-// tests drive the bypass by mocking globalThis.fetch — the existing module-
-// level mock of @earendil-works/pi-ai/oauth (lines 17-21) keeps non-Codex
-// providers on the pi-ai path so we can verify pure fall-through.
+// tests drive the bypass by mocking globalThis.fetch — the module-level
+// partial mock of @comis/core keeps non-Codex providers on the catalog path
+// so we can verify pure fall-through.
 // =============================================================================
 
 describe("refresh_token_reused detection", () => {

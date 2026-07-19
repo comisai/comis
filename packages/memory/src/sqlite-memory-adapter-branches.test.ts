@@ -22,7 +22,7 @@ import type { Result } from "@comis/shared";
 import { err, ok } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { isVecAvailable } from "./schema.js";
-import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
+import { ScopedMemoryTestAdapter as SqliteMemoryAdapter } from "../../../test/support/scoped-memory-adapter.js";
 
 const testConfig: MemoryConfig = {
   enabled: true,
@@ -319,7 +319,7 @@ describe("SqliteMemoryAdapter — branch-gap coverage", () => {
       vi.spyOn(db, "prepare").mockImplementationOnce(() => {
         throw "non-error-in-delete";
       });
-      const result = await adapter.delete("any-id");
+      const result = await adapter.delete("any-id", { tenantId: "default", agentId: "default" });
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error).toBeInstanceOf(Error);

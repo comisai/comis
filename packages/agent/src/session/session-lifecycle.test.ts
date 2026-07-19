@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { SessionKey, HookRunner } from "@comis/core";
-import type { SessionStore, SessionData } from "@comis/memory";
+import type { ConversationScope, HookRunner, SessionStorePort } from "@comis/core";
+import { ok } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createSessionLifecycle } from "./session-lifecycle.js";
@@ -16,20 +16,20 @@ interface StoredSession {
   updatedAt: number;
 }
 
-function createFakeSessionStore(): SessionStore & {
+function createFakeSessionStore(): SessionStorePort & {
   _sessions: Map<string, StoredSession>;
 } {
   const sessions = new Map<string, StoredSession>();
 
-  function keyStr(key: SessionKey): string {
-    return `${key.tenantId}:${key.userId}:${key.channelId}`;
+  function keyStr(scope: ConversationScope): string {
+    return JSON.stringify(scope);
   }
 
   return {
     _sessions: sessions,
 
-    save(key, messages, metadata) {
-      const k = keyStr(key);
+    save(scope, messages, metadata) {
+      const k = keyStr(scope);
       const existing = sessions.get(k);
       const now = Date.now();
       sessions.set(k, {
@@ -38,85 +38,42 @@ function createFakeSessionStore(): SessionStore & {
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       });
+      return ok(undefined);
     },
 
-    load(key): SessionData | undefined {
-      const k = keyStr(key);
+    load(scope) {
+      const k = keyStr(scope);
       const s = sessions.get(k);
-      if (!s) return undefined;
-      return {
+      if (!s) return ok(undefined);
+      return ok({
+        conversationRef: `cv_${"s".repeat(43)}` as never,
+        conversationScope: scope,
         messages: s.messages,
         metadata: s.metadata,
         createdAt: s.createdAt,
         updatedAt: s.updatedAt,
-      };
+      });
     },
 
-    list(tenantId?) {
-      const entries: Array<{ sessionKey: string; updatedAt: number }> = [];
-      for (const [k, v] of sessions) {
-        if (tenantId === undefined || k.startsWith(tenantId + ":")) {
-          entries.push({ sessionKey: k, updatedAt: v.updatedAt });
-        }
-      }
-      return entries.sort((a, b) => b.updatedAt - a.updatedAt);
+    delete(scope) {
+      return ok(sessions.delete(keyStr(scope)));
     },
 
-    delete(key) {
-      const k = keyStr(key);
-      return sessions.delete(k);
-    },
-
-    deleteStale(maxAgeMs) {
+    deleteStale(queryScope, maxAgeMs) {
       const cutoff = Date.now() - maxAgeMs;
       let deleted = 0;
       for (const [k, v] of sessions) {
-        if (v.updatedAt < cutoff) {
+        if (v.updatedAt < cutoff && JSON.parse(k).tenantId === queryScope.tenantId && JSON.parse(k).agentId === queryScope.agentId) {
           sessions.delete(k);
           deleted++;
         }
       }
-      return deleted;
+      return ok(deleted);
     },
-
-    loadByFormattedKey(sessionKey: string): SessionData | undefined {
-      const s = sessions.get(sessionKey);
-      if (!s) return undefined;
-      return {
-        messages: s.messages,
-        metadata: s.metadata,
-        createdAt: s.createdAt,
-        updatedAt: s.updatedAt,
-      };
-    },
-
-    listDetailed(tenantId?: string) {
-      const entries: Array<{
-        sessionKey: string;
-        tenantId: string;
-        userId: string;
-        channelId: string;
-        metadata: Record<string, unknown>;
-        createdAt: number;
-        updatedAt: number;
-      }> = [];
-      for (const [k, v] of sessions) {
-        const parts = k.split(":");
-        const tid = parts[0] ?? "";
-        if (tenantId === undefined || tid === tenantId) {
-          entries.push({
-            sessionKey: k,
-            tenantId: tid,
-            userId: parts[1] ?? "",
-            channelId: parts[2] ?? "",
-            metadata: v.metadata,
-            createdAt: v.createdAt,
-            updatedAt: v.updatedAt,
-          });
-        }
-      }
-      return entries.sort((a, b) => b.updatedAt - a.updatedAt);
-    },
+    loadByRef: vi.fn().mockReturnValue(ok(undefined)),
+    list: vi.fn().mockReturnValue(ok([])),
+    deleteByRef: vi.fn().mockReturnValue(ok(false)),
+    listDetailed: vi.fn().mockReturnValue(ok([])),
   };
 }
 
@@ -124,13 +81,14 @@ function createFakeSessionStore(): SessionStore & {
 // Test helpers
 // ---------------------------------------------------------------------------
 
-function testKey(overrides: Partial<SessionKey> = {}): SessionKey {
+function testKey(overrides: Partial<ConversationScope> & { userId?: string } = {}): ConversationScope {
+  const principalId = overrides.userId ?? "user-1";
   return {
     tenantId: "default",
-    userId: "user-1",
-    channelId: "chan-1",
+    agentId: "agent-1",
+    partition: { kind: "principal", principalId },
     ...overrides,
-  };
+  } as ConversationScope;
 }
 
 // ---------------------------------------------------------------------------
@@ -150,14 +108,14 @@ describe("createSessionLifecycle", () => {
     it("returns empty array for new session (no existing data)", () => {
       const mgr = createSessionLifecycle(store);
       const messages = mgr.loadOrCreate(testKey());
-      expect(messages).toEqual([]);
+      expect(messages).toEqual(ok([]));
     });
 
     it("returns existing messages if session exists", () => {
       store.save(testKey(), [{ role: "user", content: "hello" }]);
       const mgr = createSessionLifecycle(store);
       const messages = mgr.loadOrCreate(testKey());
-      expect(messages).toEqual([{ role: "user", content: "hello" }]);
+      expect(messages).toEqual(ok([{ role: "user", content: "hello" }]));
     });
   });
 
@@ -169,15 +127,14 @@ describe("createSessionLifecycle", () => {
       const msgs = [{ role: "assistant", content: "hi" }];
       mgr.save(testKey(), msgs);
       const data = store.load(testKey());
-      expect(data).toBeDefined();
-      expect(data!.messages).toEqual(msgs);
+      expect(data.ok && data.value?.messages).toEqual(msgs);
     });
 
     it("passes metadata through to sessionStore.save()", () => {
       const mgr = createSessionLifecycle(store);
       mgr.save(testKey(), [], { agentId: "agent-1" });
       const data = store.load(testKey());
-      expect(data!.metadata).toEqual({ agentId: "agent-1" });
+      expect(data.ok && data.value?.metadata).toEqual({ agentId: "agent-1" });
     });
   });
 
@@ -186,7 +143,7 @@ describe("createSessionLifecycle", () => {
   describe("isExpired", () => {
     it("returns true if session not found", () => {
       const mgr = createSessionLifecycle(store);
-      expect(mgr.isExpired(testKey())).toBe(true);
+      expect(mgr.isExpired(testKey())).toEqual(ok(true));
     });
 
     it("returns true if session updatedAt + idleTimeoutMs < now", () => {
@@ -196,20 +153,20 @@ describe("createSessionLifecycle", () => {
       session.updatedAt = Date.now() - 20_000; // 20 seconds ago
 
       const mgr = createSessionLifecycle(store);
-      expect(mgr.isExpired(testKey(), 10_000)).toBe(true); // 10s timeout
+      expect(mgr.isExpired(testKey(), 10_000)).toEqual(ok(true)); // 10s timeout
     });
 
     it("returns false if session is recent", () => {
       store.save(testKey(), []);
       const mgr = createSessionLifecycle(store);
-      expect(mgr.isExpired(testKey(), 60_000)).toBe(false); // 60s timeout
+      expect(mgr.isExpired(testKey(), 60_000)).toEqual(ok(false)); // 60s timeout
     });
 
     it("uses defaultIdleTimeoutMs when no timeout argument provided", () => {
       store.save(testKey(), []);
       // Default is 4 hours = 14_400_000ms. Just-saved session should not be expired.
       const mgr = createSessionLifecycle(store);
-      expect(mgr.isExpired(testKey())).toBe(false);
+      expect(mgr.isExpired(testKey())).toEqual(ok(false));
     });
 
     it("uses custom defaultIdleTimeoutMs from options", () => {
@@ -218,7 +175,7 @@ describe("createSessionLifecycle", () => {
       session.updatedAt = Date.now() - 5_000; // 5 seconds ago
 
       const mgr = createSessionLifecycle(store, { defaultIdleTimeoutMs: 3_000 });
-      expect(mgr.isExpired(testKey())).toBe(true); // 3s default timeout, 5s old
+      expect(mgr.isExpired(testKey())).toEqual(ok(true)); // 3s default timeout, 5s old
     });
   });
 
@@ -229,13 +186,13 @@ describe("createSessionLifecycle", () => {
       store.save(testKey(), [{ role: "user", content: "delete me" }]);
       const mgr = createSessionLifecycle(store);
       const result = mgr.expire(testKey());
-      expect(result).toBe(true);
-      expect(store.load(testKey())).toBeUndefined();
+      expect(result).toEqual(ok(true));
+      expect(store.load(testKey())).toEqual(ok(undefined));
     });
 
     it("returns false if session was not found", () => {
       const mgr = createSessionLifecycle(store);
-      expect(mgr.expire(testKey())).toBe(false);
+      expect(mgr.expire(testKey())).toEqual(ok(false));
     });
   });
 
@@ -251,16 +208,16 @@ describe("createSessionLifecycle", () => {
       store.save(testKey({ userId: "new" }), []);
 
       const mgr = createSessionLifecycle(store);
-      const deleted = mgr.cleanStale(50_000);
-      expect(deleted).toBe(1);
+      const deleted = mgr.cleanStale({ tenantId: "default", agentId: "agent-1" }, 50_000);
+      expect(deleted).toEqual(ok(1));
     });
 
     it("uses defaultIdleTimeoutMs when no maxAgeMs argument provided", () => {
       store.save(testKey(), []);
       const mgr = createSessionLifecycle(store, { defaultIdleTimeoutMs: 14_400_000 });
       // Session is fresh, so nothing should be deleted
-      const deleted = mgr.cleanStale();
-      expect(deleted).toBe(0);
+      const deleted = mgr.cleanStale({ tenantId: "default", agentId: "agent-1" });
+      expect(deleted).toEqual(ok(0));
     });
   });
 
@@ -296,7 +253,7 @@ describe("createSessionLifecycle", () => {
 
       expect(logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({ err: hookError }),
-        "Session start hook error suppressed",
+        "Session lifecycle hook failed",
       );
     });
 
@@ -317,7 +274,7 @@ describe("createSessionLifecycle", () => {
 
       expect(logger.debug).toHaveBeenCalledWith(
         expect.objectContaining({ err: hookError }),
-        "Session end hook error suppressed",
+        "Session lifecycle hook failed",
       );
     });
 

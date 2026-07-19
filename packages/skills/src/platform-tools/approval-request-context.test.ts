@@ -1,14 +1,46 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
-import { createDeliveryOrigin, runWithContext, type RequestContext } from "@comis/core";
+import {
+  createConversationRef,
+  createDeliveryOrigin,
+  runWithContext,
+  type RequestContext,
+  type ResolvedTurnScope,
+} from "@comis/core";
 import { resolveApprovalRequestContext } from "./approval-request-context.js";
+
+const TURN_ENDPOINT = {
+  channelType: "telegram",
+  channelInstanceId: "telegram-account",
+  conversationId: "chat-1",
+  threadId: "thread-1",
+  conversationKind: "direct" as const,
+};
+
+const TURN_SCOPE: ResolvedTurnScope = {
+  conversation: {
+    tenantId: "default",
+    agentId: "resolved-agent",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: TURN_ENDPOINT,
+      principalId: "principal-human-user",
+    },
+  },
+  principal: { principalId: "principal-human-user" },
+  endpoint: TURN_ENDPOINT,
+};
+
+const conversationRef = createConversationRef(TURN_SCOPE.conversation);
+if (!conversationRef.ok) throw conversationRef.error;
 
 function makeContext(overrides: Partial<RequestContext> = {}): RequestContext {
   return {
     tenantId: "default",
     userId: "human-user",
     agentId: "resolved-agent",
-    sessionKey: "default:human-user:chat-1:thread:thread-1",
+    sessionKey: "default:agent:resolved-agent:human-user:chat-1:thread:thread-1",
+    turnScope: TURN_SCOPE,
     traceId: "40000000-0000-4000-8000-000000000004",
     startedAt: 1,
     trustLevel: "admin",
@@ -31,8 +63,10 @@ describe("resolveApprovalRequestContext", () => {
     expect(result).toEqual({
       ok: true,
       value: {
+        tenantId: "default",
         agentId: "resolved-agent",
-        sessionKey: "default:human-user:chat-1:thread:thread-1",
+        conversationRef: conversationRef.value,
+        resolvingPrincipalId: "principal-human-user",
         trustLevel: "admin",
         callbackOwner: {
           tenantId: "default",
@@ -85,9 +119,14 @@ describe("resolveApprovalRequestContext", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("fails closed when the session thread differs from the locked delivery origin", () => {
+  it("fails closed when the resolved endpoint thread differs from the locked delivery origin", () => {
     const result = runWithContext(
-      makeContext({ sessionKey: "default:human-user:chat-1:thread:other-thread" }),
+      makeContext({
+        turnScope: {
+          ...TURN_SCOPE,
+          endpoint: { ...TURN_SCOPE.endpoint, threadId: "other-thread" },
+        },
+      }),
       resolveApprovalRequestContext,
     );
 

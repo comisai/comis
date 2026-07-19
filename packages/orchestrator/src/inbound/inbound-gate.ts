@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { ChannelPort, NormalizedMessage, SessionKey, AutoReplyEngineConfig } from "@comis/core";
+import type { ChannelPort, ConversationRef, NormalizedMessage, ResolvedTurnScope, SessionKey, AutoReplyEngineConfig } from "@comis/core";
 import { emitObservationalEventSafely, formatSessionKey, systemNowMs } from "@comis/core";
 // Command parsers/matchers live inside this orchestrator package; use local
 // relative imports so the gate does not pull them via @comis/agent.
@@ -24,6 +24,8 @@ import { handleExportTrajectory } from "../commands/export-trajectory.js";
 import { approvalRequestIsOwnedByInbound } from "../approval/index.js";
 import type { InboundCallback } from "../approval/index.js";
 import type { SourceTerminalScope } from "../source-message-terminal.js";
+import { renderLocalized } from "../localization/deterministic-localization.js";
+import type { LocalizationKey } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Deps narrowing
@@ -46,6 +48,7 @@ export type GateDeps = Pick<
   | "activeRunRegistry"
   | "sessionResolver"
   | "deliveryService"
+  | "localization"
 > & {
   /**
    * Bundle export DI. Injected by daemon wiring.
@@ -55,6 +58,19 @@ export type GateDeps = Pick<
    */
   exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
 };
+
+function localized(
+  deps: GateDeps,
+  msg: NormalizedMessage,
+  key: LocalizationKey,
+  values?: Readonly<Record<string, string | number>>,
+): string {
+  return renderLocalized(deps.localization, {
+    key,
+    ...(typeof msg.metadata?.locale === "string" ? { locale: msg.metadata.locale } : {}),
+    ...(values === undefined ? {} : { values }),
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Result types
@@ -73,6 +89,8 @@ async function routeInteractiveCallback(
   msg: NormalizedMessage,
   sessionKey: SessionKey,
   agentId: string,
+  turnScope: ResolvedTurnScope,
+  conversationRef: ConversationRef,
 ): Promise<boolean> {
   if (
     msg.metadata?.isButtonCallback !== true
@@ -86,6 +104,8 @@ async function routeInteractiveCallback(
     channelKey: msg.channelId,
     ...(sessionKey.threadId === undefined ? {} : { threadId: sessionKey.threadId }),
     agentId,
+    conversationRef,
+    resolvingPrincipalId: turnScope.principal.principalId,
     sessionKey: formatSessionKey(sessionKey),
     rawData: msg.metadata.callbackData,
     inboundUserId: msg.senderId,
@@ -108,7 +128,7 @@ async function routeInteractiveCallback(
       }
       await deps.deliveryService.deliverToChannel(
         adapter, msg.channelId,
-        "This report is no longer available.",
+        localized(deps, msg, "error.report_unavailable"),
         { skipChunking: true },
       );
       break;
@@ -119,7 +139,7 @@ async function routeInteractiveCallback(
     case "ambiguous":
       await deps.deliveryService.deliverToChannel(
         adapter, msg.channelId,
-        "This callback is no longer valid (it may have already been resolved or expired).",
+        localized(deps, msg, "error.callback_invalid"),
         { skipChunking: true },
       );
       break;
@@ -146,6 +166,8 @@ export async function evaluateInboundGate(
   processedMsg: NormalizedMessage,
   sessionKey: SessionKey,
   agentId: string,
+  turnScope: ResolvedTurnScope,
+  conversationRef: ConversationRef,
   sendOverrides: SendOverrideStore,
   sourceTerminalScope?: SourceTerminalScope,
 ): Promise<GateDecision> {
@@ -154,7 +176,15 @@ export async function evaluateInboundGate(
   // Sender allowlists and principal/session resolution run in the outer inbound
   // pipeline before this gate. Callback verification belongs before auto-reply:
   // a legitimate button in a mention-gated group is control input, not chat history.
-  if (await routeInteractiveCallback(deps, adapter, msg, sessionKey, agentId)) {
+  if (await routeInteractiveCallback(
+    deps,
+    adapter,
+    msg,
+    sessionKey,
+    agentId,
+    turnScope,
+    conversationRef,
+  )) {
     return { action: "handled" };
   }
 
@@ -222,9 +252,10 @@ export async function evaluateInboundGate(
           async () => {
             // No-op execution: serialized with concurrent executions via queue.
             // Lightweight save to append message as history context.
-            const existing = deps.sessionManager.loadOrCreate(sessionKey);
-            deps.sessionManager.save(sessionKey, [
-              ...existing.slice(-(arConfig.maxHistoryInjections - 1)),
+            const existing = deps.sessionManager.loadOrCreate(turnScope.conversation);
+            if (!existing.ok) return;
+            deps.sessionManager.save(turnScope.conversation, [
+              ...existing.value.slice(-(arConfig.maxHistoryInjections - 1)),
               { role: "user" as const, content: `[${msg.senderId}]: ${msg.text ?? ""}` },
             ]);
           },
@@ -300,7 +331,15 @@ export async function evaluateInboundGate(
   // /approve and /deny COMMAND INTERCEPTION
   // -------------------------------------------------------------------
   if (msg.text && deps.approvalGate) {
-    const result = await handleApprovalCommand(deps, adapter, msg, sessionKey, agentId);
+    const result = await handleApprovalCommand(
+      deps,
+      adapter,
+      msg,
+      sessionKey,
+      agentId,
+      turnScope,
+      conversationRef,
+    );
     if (result) return { action: "handled" };
   }
 
@@ -328,11 +367,7 @@ export async function evaluateInboundGate(
       // `formattedKey` is retained as a diagnostic log field so
       // operators can correlate /stop-aborts with session traces.
       const formattedKey = formatSessionKey(sessionKey);
-      const runHandle = deps.sessionResolver?.resolveActiveSession({
-        agentId,
-        channelType: adapter.channelType,
-        channelId: msg.channelId,
-      });
+      const runHandle = deps.sessionResolver?.resolveActiveSession(conversationRef);
       if (runHandle) {
         try {
           await runHandle.abort();
@@ -397,6 +432,16 @@ export async function evaluateInboundGate(
   // -------------------------------------------------------------------
   // GENERAL SLASH COMMAND INTERCEPTION
   // -------------------------------------------------------------------
+  if (/^\/help\s*$/iu.test(msg.text ?? "")) {
+    await deps.deliveryService.deliverToChannel(
+      adapter,
+      msg.channelId,
+      localized(deps, msg, "help.commands"),
+      { skipChunking: true },
+    );
+    return { action: "handled" };
+  }
+
   if (msg.text && deps.handleSlashCommand) {
     const cmdResult = await deps.handleSlashCommand(msg.text, sessionKey, agentId);
     if (cmdResult) {
@@ -431,14 +476,21 @@ export async function evaluateInboundGate(
       agentId,
       channelType: adapter.channelType,
     }, "Reset trigger matched");
-    deps.sessionManager.expire(sessionKey);
-    emitObservationalEventSafely(deps, "session:expired", {
-      sessionKey,
-      reason: "auto-reset:trigger-phrase",
-    });
+    const expired = deps.sessionManager.expire(turnScope.conversation);
+    if (expired.ok && expired.value) {
+      emitObservationalEventSafely(deps, "session:expired", {
+        conversationScope: turnScope.conversation,
+        reason: "auto-reset:trigger-phrase",
+      });
+    }
     // greetingGenerator deps slot has been deleted; static reset message
     // matches the production absent-mode behavior.
-    await deps.deliveryService.deliverToChannel(adapter, msg.channelId, "Session reset.", { skipChunking: true });
+    await deps.deliveryService.deliverToChannel(
+      adapter,
+      msg.channelId,
+      localized(deps, msg, "session.reset"),
+      { skipChunking: true },
+    );
     return { action: "handled" }; // Do not route to agent
   }
 
@@ -464,6 +516,8 @@ async function handleApprovalCommand(
   msg: NormalizedMessage,
   sessionKey: SessionKey,
   agentId: string,
+  turnScope: ResolvedTurnScope,
+  conversationRef: ConversationRef,
 ): Promise<boolean> {
   const text = msg.text!.trim();
   const gate = deps.approvalGate!;
@@ -474,11 +528,18 @@ async function handleApprovalCommand(
     channelKey: msg.channelId,
     ...(sessionKey.threadId === undefined ? {} : { threadId: sessionKey.threadId }),
     agentId,
+    conversationRef,
+    resolvingPrincipalId: turnScope.principal.principalId,
     sessionKey: formattedKey,
     rawData: text,
     inboundUserId: msg.senderId,
   };
-  const ownedPending = () => gate.pendingForSession(formattedKey)
+  const ownedPending = () => gate.pendingForAuthority({
+    tenantId: sessionKey.tenantId,
+    agentId,
+    conversationRef,
+    resolvingPrincipalId: turnScope.principal.principalId,
+  })
     .filter((request) => approvalRequestIsOwnedByInbound(request, callbackPrincipal));
 
   // Bare command (no arguments) -- auto-resolve if unambiguous
@@ -490,14 +551,17 @@ async function handleApprovalCommand(
     const matches = ownedPending();
 
     if (matches.length === 0) {
-      await deps.deliveryService.deliverToChannel(adapter, msg.channelId, "No pending approvals.", { skipChunking: true });
+      await deps.deliveryService.deliverToChannel(adapter, msg.channelId, localized(deps, msg, "approval.none_pending"), { skipChunking: true });
     } else if (matches.length === 1) {
       const approvedBy = `chat:${msg.senderId}`;
       gate.resolveApproval(matches[0].requestId, isApprove, approvedBy);
-      const verb = isApprove ? "Approved" : "Denied";
       await deps.deliveryService.deliverToChannel(
         adapter, msg.channelId,
-        `${verb}: ${matches[0].toolName ?? matches[0].action} (${matches[0].shortId})`,
+        localized(deps, msg, "approval.resolved_one", {
+          outcome: isApprove ? "approved" : "denied",
+          action: matches[0].toolName ?? matches[0].action,
+          id: matches[0].shortId,
+        }),
         { skipChunking: true },
       );
     } else {
@@ -507,7 +571,10 @@ async function handleApprovalCommand(
       const cmd = isApprove ? "/approve" : "/deny";
       await deps.deliveryService.deliverToChannel(
         adapter, msg.channelId,
-        `Multiple pending approvals. Specify an ID or use "${cmd} all":\n${lines.join("\n")}`,
+        localized(deps, msg, "approval.multiple", {
+          command: cmd,
+          choices: lines.join("\n"),
+        }),
         { skipChunking: true },
       );
     }
@@ -531,15 +598,17 @@ async function handleApprovalCommand(
       const matches = ownedPending();
 
       if (matches.length === 0) {
-        await deps.deliveryService.deliverToChannel(adapter, msg.channelId, "No pending approvals to resolve.", { skipChunking: true });
+        await deps.deliveryService.deliverToChannel(adapter, msg.channelId, localized(deps, msg, "approval.none_pending_resolve"), { skipChunking: true });
       } else {
         for (const req of matches) {
           gate.resolveApproval(req.requestId, isApprove, approvedBy);
         }
-        const verb = isApprove ? "Approved" : "Denied";
         await deps.deliveryService.deliverToChannel(
           adapter, msg.channelId,
-          `${verb} ${matches.length} pending approval(s).`,
+          localized(deps, msg, "approval.resolved_many", {
+            outcome: isApprove ? "approved" : "denied",
+            count: matches.length,
+          }),
           { skipChunking: true },
         );
       }
@@ -553,15 +622,18 @@ async function handleApprovalCommand(
       if (match === undefined) {
         await deps.deliveryService.deliverToChannel(
           adapter, msg.channelId,
-          `No pending approval found for ID: ${arg} (may have already been resolved or timed out).`,
+          localized(deps, msg, "approval.not_found", { id: arg }),
           { skipChunking: true },
         );
       } else {
         gate.resolveApproval(match.requestId, isApprove, approvedBy);
-        const verb = isApprove ? "Approved" : "Denied";
         await deps.deliveryService.deliverToChannel(
           adapter, msg.channelId,
-          `${verb}: ${match.toolName ?? match.action} (${match.shortId})`,
+          localized(deps, msg, "approval.resolved_one", {
+            outcome: isApprove ? "approved" : "denied",
+            action: match.toolName ?? match.action,
+            id: match.shortId,
+          }),
           { skipChunking: true },
         );
       }

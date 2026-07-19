@@ -14,6 +14,14 @@
  */
 
 import type { Result } from "@comis/shared";
+import type { ChannelEndpoint, ConversationRef } from "../domain/conversation-scope.js";
+
+/** Stable authority attached to every persisted delivery record. */
+export interface DeliveryAuthority {
+  readonly tenantId: string;
+  readonly agentId: string;
+  readonly conversationRef: ConversationRef;
+}
 
 /**
  * Per-status count breakdown for delivery queue observability.
@@ -37,6 +45,9 @@ export interface DeliveryQueueEntry {
   readonly channelType: string;
   readonly channelId: string;
   readonly tenantId: string;
+  readonly agentId: string;
+  readonly conversationRef: ConversationRef;
+  readonly destinationEndpoint: ChannelEndpoint;
   /** Serialized DeliverToChannelOptions */
   readonly optionsJson: string;
   readonly origin: string;

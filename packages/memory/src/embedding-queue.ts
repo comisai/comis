@@ -17,6 +17,7 @@ import { suppressError } from "@comis/shared";
 import { isVecAvailable } from "./schema.js";
 import { truncateForEmbedding } from "./embedding-batch-indexer.js";
 import { isVecDimensionMismatch } from "./vec-dimension.js";
+import { requireMemoryAuthorityPartitionForMemory } from "./memory-authority.js";
 
 /**
  * EmbeddingQueue provides fire-and-forget embedding generation.
@@ -96,9 +97,10 @@ export function createEmbeddingQueue(
             const float32 = new Float32Array(result.value);
 
             if (isVecAvailable()) {
+              const partitionId = requireMemoryAuthorityPartitionForMemory(db, entryId);
               db.prepare(
-                "INSERT OR REPLACE INTO vec_memories(memory_id, embedding) VALUES (?, ?)",
-              ).run(entryId, float32);
+                "INSERT OR REPLACE INTO vec_memories(memory_id, embedding, authority_partition_id) VALUES (?, ?, ?)",
+              ).run(entryId, float32, BigInt(partitionId));
             }
 
             db.prepare("UPDATE memories SET has_embedding = 1 WHERE id = ?").run(entryId);

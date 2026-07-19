@@ -12,7 +12,7 @@ interface ParentRunAuthority {
 export function resolveSessionSpawnAuthority(input: {
   rawParams: Record<string, unknown>;
   parentRun?: ParentRunAuthority;
-  parsedCallerKey?: SessionKey;
+  callerSession?: SessionKey;
   callerAgentId?: string;
   resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
 }): {
@@ -31,8 +31,8 @@ export function resolveSessionSpawnAuthority(input: {
     : [];
   const rootRunId = input.parentRun?.rootRunId
     ?? injectedRootRunId
-    ?? (input.parsedCallerKey !== undefined && input.callerAgentId !== undefined
-      ? input.resolveRootRunId?.(input.callerAgentId, input.parsedCallerKey)
+    ?? (input.callerSession !== undefined && input.callerAgentId !== undefined
+      ? input.resolveRootRunId?.(input.callerAgentId, input.callerSession)
       : undefined);
   const parentLeaseId = input.parentRun?.leaseId
     ?? injectedLeaseId

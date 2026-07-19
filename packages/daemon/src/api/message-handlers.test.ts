@@ -368,21 +368,48 @@ describe("message.attach gateway channel_type", () => {
     const filePath = join(workspaceDir, "photo.png");
     const requestSessionKey: SessionKey = {
       tenantId: "tenant-a",
+      agentId: "agent-a",
       userId: "user_a",
-      channelId: "web-chat",
+      channelId: "gateway:dashboard-a:web-chat",
+      peerId: "user_a",
+    };
+    const turnScope = {
+      conversation: {
+        tenantId: "tenant-a",
+        agentId: "agent-a",
+        partition: {
+          kind: "endpoint-conversation-principal" as const,
+          endpoint: {
+            channelType: "gateway",
+            channelInstanceId: "dashboard-a",
+            conversationId: "web-chat",
+            conversationKind: "direct" as const,
+          },
+          principalId: "user_a",
+        },
+      },
+      principal: { principalId: "user_a" },
+      endpoint: {
+        channelType: "gateway",
+        channelInstanceId: "dashboard-a",
+        conversationId: "web-chat",
+        conversationKind: "direct" as const,
+      },
     };
 
     const result = await runWithContext({
       tenantId: requestSessionKey.tenantId,
       userId: requestSessionKey.userId,
       sessionKey: formatSessionKey(requestSessionKey),
+      agentId: "agent-a",
+      turnScope,
       traceId: "550e8400-e29b-41d4-a716-446655440000",
       startedAt: 1_700_000_000_000,
       trustLevel: "user",
       clientId: "dashboard-a",
     }, () => handlers["message.attach"]({
         channel_type: "gateway",
-        channel_id: "web-chat",
+        channel_id: "gateway:dashboard-a:web-chat",
         attachment_url: filePath,
         attachment_type: "image",
         mime_type: "image/png",
@@ -392,7 +419,7 @@ describe("message.attach gateway channel_type", () => {
 
     // Returns the gateway media ID as a tracked attachment receipt.
     expect(result).toHaveProperty("receipt.kind", "tracked");
-    expect(result).toHaveProperty("channelId", "web-chat");
+    expect(result).toHaveProperty("channelId", "gateway:dashboard-a:web-chat");
     const messageId = (result as {
       receipt: { kind: "tracked"; messageId: string };
     }).receipt.messageId;
@@ -411,8 +438,8 @@ describe("message.attach gateway channel_type", () => {
     expect(meta.size).toBe(Buffer.from("fake-png-content").length);
 
     expect(sendToClientId).toHaveBeenCalledWith("dashboard-a", "notification.attachment", expect.objectContaining({
-      sessionKey: "tenant-a:user_a:web-chat",
-      channelId: "web-chat",
+      sessionKey: "tenant-a:agent:agent-a:user_a:gateway:dashboard-a:web-chat:peer:user_a",
+      channelId: "gateway:dashboard-a:web-chat",
       url: `/media/${messageId}`,
       type: "image",
       mimeType: "image/png",
@@ -422,8 +449,8 @@ describe("message.attach gateway channel_type", () => {
     expect(broadcast).not.toHaveBeenCalled();
 
     expect(persistAttachment).toHaveBeenCalledOnce();
-    const [persistedSessionKey, persistedContent] = persistAttachment.mock.calls[0] as [SessionKey, string];
-    expect(persistedSessionKey).toEqual(requestSessionKey);
+    const [persistedScope, persistedContent] = persistAttachment.mock.calls[0] as [typeof turnScope.conversation, string];
+    expect(persistedScope).toEqual(turnScope.conversation);
     const markerMatch = persistedContent.match(/^A nice photo\n\n<!-- attachment:(\{.*\}) -->$/s);
     expect(markerMatch).not.toBeNull();
     expect(JSON.parse(markerMatch![1])).toEqual({

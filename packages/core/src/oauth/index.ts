@@ -45,6 +45,25 @@ export type {
   LoginOpenAICodexDeviceCodeOptions,
 } from "./oauth-device-code.js";
 
+// Comis-owned Codex browser OAuth flow — the runner's protocol layer.
+export { loginOpenAICodexBrowser, extractCodexAccountId } from "./openai-codex-browser-login.js";
+export type {
+  CodexBrowserLoginCredentials,
+  LoginOpenAICodexBrowserOptions,
+} from "./openai-codex-browser-login.js";
+
+// Provider-owned OAuth lookup over the pi-ai builtin catalog. The agent's
+// OAuthTokenManager and daemon eligibility checks build on these.
+export {
+  getProviderOAuth,
+  listOAuthProviderIds,
+  resolveOAuthApiKey,
+} from "./provider-oauth-catalog.js";
+export type {
+  ResolvedOAuthApiKey,
+  ResolveOAuthApiKeyDeps,
+} from "./provider-oauth-catalog.js";
+
 // The CLI doctor's oauth-health check imports runOAuthTlsPreflight; this
 // symbol lives in core so packages/cli/src/ has zero @comis/agent imports.
 // Pure function — imports nothing itself.

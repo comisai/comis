@@ -24,7 +24,7 @@
  * Idempotency is the CALLER's responsibility: it derives `startSeq` from the
  * store's persisted count and passes ONLY the not-yet-persisted delta. This
  * helper appends exactly `messages.length` rows starting at `startSeq`; an
- * empty delta appends nothing. The store's unique index on `(conversationId,
+ * empty delta appends nothing. The store's unique index on `(conversationRef,
  * seq)` is the final guard against a duplicate seq.
  *
  * Architecture cut (agent↛memory): this module imports ONLY the CORE
@@ -35,7 +35,7 @@
  * @module
  */
 
-import { messageToParts } from "@comis/core"; // CORE codec (allowed; the agent↛memory cut keeps the concrete store injected)
+import { ConversationRefSchema, messageToParts } from "@comis/core"; // CORE codec + authority validator
 import { stripInlineRecalledMemory } from "../rag/hybrid-memory-injector.js";
 import { neutralizeForgedMarkersInMessage } from "../session/forged-context-markers.js";
 import type { ContextStorePort, ContextStoreScope, ComisLogger, ErrorKind } from "@comis/core";
@@ -49,7 +49,7 @@ import { estimateMessageTokens } from "../safety/token-estimator.js";
  * via the codec. See the module header for the full contract.
  *
  * @param store    The injected core ContextStorePort (the concrete store is daemon-injected).
- * @param scope    The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
+ * @param scope    The SECURITY scope columns (conversationRef/tenantId/agentId/sessionKey).
  * @param startSeq The first seq to assign — the caller derives it from the store's persisted count.
  * @param messages The NOT-YET-PERSISTED delta (the caller slices it against the store count).
  * @param now      Injected wall-clock ms (`deps.clock.now()` from the caller) — NOT Date.now().
@@ -139,7 +139,7 @@ export function ingestTurn(
           err: err instanceof Error ? err.message : String(err),
           hint: "Check LCD store connectivity and disk space",
           errorKind: "dependency" as ErrorKind,
-          conversationId: scope.conversationId,
+          conversationRef: scope.conversationRef,
           seq: currentSeq,
         },
         "LCD ingest append failed for one message (non-fatal)",
@@ -155,7 +155,7 @@ export function ingestTurn(
     logger.warn(
       {
         step: "lcd-ingest",
-        conversationId: scope.conversationId,
+        conversationRef: scope.conversationRef,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
         forgedMarkersStripped,
@@ -171,7 +171,7 @@ export function ingestTurn(
     logger.debug(
       {
         step: "lcd-ingest",
-        conversationId: scope.conversationId,
+        conversationRef: scope.conversationRef,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
         appended,
@@ -193,16 +193,14 @@ export function ingestTurn(
  * stamp cross-session-readable / mis-attached rows.
  *
  * Two refusal conditions (conservative — refuse, never guess):
- *  1. **Empty/blank security column.** Each of conversationId / agentId /
+ *  1. **Invalid authority column.** The opaque conversation reference must
+ *     satisfy `ConversationRefSchema`; agentId / tenantId / sessionKey must
  *     tenantId / sessionKey MUST be a non-empty TRIMMED string (SECURITY
  *     columns must never be empty; mirrors the
  *     {@link ingestTurnGuarded} shrink-guard skip+WARN shape). An empty column produces
  *     a row reachable by an unrelated scope.
- *  2. **conversationId ↔ sessionKey conflict.** The codebase invariant is
- *     `conversationId === sessionKey === formattedKey`
- *     (executor-post-execution.ts:894, where `conversationId = formattedKey` and
- *     `sessionKey: formattedKey`). A mismatch is internally inconsistent —
- *     refuse rather than GUESS which conversation to attach to.
+ *  2. The formatted session key remains display/path metadata. It is not storage
+ *     authority and is therefore never compared with the opaque reference.
  *
  * Returns a discriminated result so the caller can log the specific `reason`.
  *
@@ -212,17 +210,12 @@ export function ingestTurn(
 export function isScopeSafeForIngest(
   scope: ContextStoreScope,
 ): { ok: true } | { ok: false; reason: string } {
-  // Condition 1: every security column must be a non-empty trimmed string.
-  if (scope.conversationId.trim() === "") return { ok: false, reason: "empty conversationId" };
+  if (!ConversationRefSchema.safeParse(scope.conversationRef).success) {
+    return { ok: false, reason: "invalid conversationRef" };
+  }
   if (scope.agentId.trim() === "") return { ok: false, reason: "empty agentId" };
   if (scope.tenantId.trim() === "") return { ok: false, reason: "empty tenantId" };
   if (scope.sessionKey.trim() === "") return { ok: false, reason: "empty sessionKey" };
-  // Condition 2: conversationId must equal sessionKey (the formattedKey invariant).
-  // A mismatch means the scope is internally inconsistent — refuse rather than
-  // reattach to either candidate conversation (fail closed, never guess).
-  if (scope.conversationId !== scope.sessionKey) {
-    return { ok: false, reason: "conversationId/sessionKey conflict" };
-  }
   return { ok: true };
 }
 
@@ -283,7 +276,7 @@ export function messageEpochAnchor(msg: AgentMessage): string {
  * serializer guarantees cursor + rows are written in the same serialized slot.
  *
  * @param store        The injected core ContextStorePort.
- * @param scope        The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
+ * @param scope        The SECURITY scope columns (conversationRef/tenantId/agentId/sessionKey).
  * @param live         The live canonical AgentMessage[] (the full conversation).
  * @param now          Injected wall-clock ms (`deps.clock.now()`).
  * @param logger       For the divergence WARN + the delegated ingest logs.
@@ -316,7 +309,7 @@ export function ingestTurnGuarded(
   if (!safe.ok) {
     logger.warn(
       {
-        conversationId: scope.conversationId,
+        conversationRef: scope.conversationRef,
         agentId: scope.agentId,
         errorKind: "precondition" as ErrorKind,
         hint: "ambiguous/malformed LCD scope — refusing the ingest write to avoid a cross-session reattach; check the session-key derivation",
@@ -371,7 +364,7 @@ export function ingestTurnGuarded(
     // is observable. onRebase is NOT called (this is not a re-base; the anchor matched).
     logger.warn(
       {
-        conversationId: scope.conversationId,
+        conversationRef: scope.conversationRef,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
         liveLen: live.length,

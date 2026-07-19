@@ -152,6 +152,20 @@ describe("wrapExternalContent - session-stable delimiter (prompt-cache friendlin
     expect(r1).toMatch(/<<<UNTRUSTED_[a-f0-9]{24}>>>/);
     expect(r1).not.toBe(r2);
   });
+
+  it("does not stabilize a delimiter for a malformed context missing tenant authority", () => {
+    const malformed = {
+      sessionKey: "missing-tenant:user:channel",
+      traceId: randomUUID(),
+      startedAt: Date.now(),
+      trustLevel: "user",
+    } as unknown as RequestContext;
+
+    const r1 = runWithContext(malformed, () => wrapExternalContent("x", { source: "unknown" }));
+    const r2 = runWithContext(malformed, () => wrapExternalContent("x", { source: "unknown" }));
+
+    expect(r1).not.toBe(r2);
+  });
 });
 
 describe("ExternalContentSource - document source", () => {

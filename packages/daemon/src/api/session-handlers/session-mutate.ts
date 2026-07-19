@@ -19,32 +19,17 @@ import {
   requireCapability,
   computeReachableToolNames,
   tryGetContext,
-  parseFormattedSessionKey,
+  ConversationRefSchema,
+  conversationScopeToSessionKey,
+  createConversationRef,
 } from "@comis/core";
 import type { RpcHandler } from "../types.js";
-import { IS_DEV, loadSessionAnyStore, type SessionHandlerDeps } from "./session-helpers.js";
+import { IS_DEV, loadAuthorizedSession, type SessionHandlerDeps } from "./session-helpers.js";
 import { resolveSessionSpawnAuthority } from "./session-spawn-authority.js";
-type CallerContextMismatchField =
-  | "request context" | "resolved principal"
-  | "session" | "session identity" | "agent"
-  | "delivery origin tenant" | "delivery origin user"
-  | "delivery origin channel type" | "delivery origin channel id"
-  | "announcement route";
-type SessionSendAuthorizationFailure =
-  | "request context is required for an agent-origin call"
-  | "caller session is required for an agent-origin call"
-  | "caller agent does not match the request principal"
-  | "caller session does not match the request principal"
-  | "caller session identity does not match the request principal"
-  | "target session key is invalid"
-  | "target tenant does not match the request principal"
-  | "target user does not match the request principal"
-  | "target session metadata is required"
-  | "target agent ownership is required"
-  | "target agent ownership is inconsistent"
-  | "target delegation is inconsistent"
-  | "target agent hint does not match session ownership"
-  | "target agent does not match the request principal";
+import type {
+  CallerContextMismatchField,
+  SessionSendAuthorizationFailure,
+} from "./session-authority.js";
 /**
  * Bind the session mutation handlers. Object-spread compatible with
  * `Record<string, RpcHandler>`.
@@ -69,7 +54,15 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       const userParams = stripInternalFields(rawParams);
       const params = SessionSendContract.request.parse(userParams);
 
-      let authorizedTargetAgentId = params.agent_id;
+      const targetRef = ConversationRefSchema.safeParse(params.conversation_ref);
+      if (!targetRef.success) throw new Error("Invalid target conversation reference");
+      const target = {
+        tenantId: params.tenant_id,
+        agentId: params.agent_id,
+        conversationRef: targetRef.data,
+      };
+      let callerAuthority: typeof target | undefined;
+      let callerConversation: import("@comis/core").ConversationLocator | undefined;
       if (callerAgentId !== undefined) {
         const rejectAuthorization = (
           failure: SessionSendAuthorizationFailure,
@@ -97,77 +90,70 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         // authenticated control-plane path and remain governed by gateway scope.
         const callerContext = tryGetContext()
           ?? rejectAuthorization("request context is required for an agent-origin call");
-        const resolvedCallerSessionKey = callerSessionKey
-          ?? rejectAuthorization("caller session is required for an agent-origin call");
         if (callerContext.agentId !== callerAgentId) {
           rejectAuthorization("caller agent does not match the request principal");
         }
-        if (callerContext.sessionKey !== resolvedCallerSessionKey) {
+        if (callerSessionKey !== callerContext.sessionKey) {
           rejectAuthorization("caller session does not match the request principal");
         }
-
-        const parsedCaller = parseFormattedSessionKey(resolvedCallerSessionKey);
-        if (
-          parsedCaller === undefined
-          || parsedCaller.tenantId !== callerContext.tenantId
-          || parsedCaller.userId !== callerContext.userId
-        ) {
+        const callerTurnScope = callerContext.turnScope
+          ?? rejectAuthorization("caller session identity does not match the request principal");
+        const callerRef = createConversationRef(callerTurnScope.conversation);
+        if (!callerRef.ok) {
           rejectAuthorization("caller session identity does not match the request principal");
         }
-        const parsedTarget = parseFormattedSessionKey(params.session_key)
-          ?? rejectAuthorization("target session key is invalid");
-        if (parsedTarget.tenantId !== callerContext.tenantId) {
+        callerAuthority = {
+          tenantId: callerTurnScope.conversation.tenantId,
+          agentId: callerTurnScope.conversation.agentId,
+          conversationRef: callerRef.ok
+            ? callerRef.value
+            : rejectAuthorization("caller session identity does not match the request principal"),
+        };
+        callerConversation = {
+          conversationScope: callerTurnScope.conversation,
+          conversationRef: callerAuthority.conversationRef,
+        };
+        if (target.tenantId !== callerContext.tenantId) {
           rejectAuthorization("target tenant does not match the request principal");
         }
-        if (parsedTarget.userId !== callerContext.userId) {
+        const loadedTarget = deps.sessionStore.loadByRef(target, target.conversationRef);
+        if (!loadedTarget.ok) throw loadedTarget.error;
+        const targetSession = loadedTarget.value
+          ?? rejectAuthorization("target session metadata is required");
+        const targetPartition = targetSession.conversationScope.partition;
+        const targetPrincipalId = targetPartition.kind === "principal"
+          || targetPartition.kind === "channel-principal"
+          || targetPartition.kind === "endpoint-conversation-principal"
+          ? targetPartition.principalId
+          : undefined;
+        if (
+          targetPrincipalId !== undefined
+          && targetPrincipalId !== callerTurnScope.principal.principalId
+        ) {
           rejectAuthorization("target user does not match the request principal");
         }
-
-        const targetSession = deps.sessionStore.loadByFormattedKey(params.session_key)
-          ?? rejectAuthorization("target session metadata is required");
-        const metadataAgentId = typeof targetSession.metadata.agentId === "string"
-          && targetSession.metadata.agentId.length > 0
-          ? targetSession.metadata.agentId
-          : undefined;
-        const targetRun = deps.subAgentRunner.getRunBySessionKey?.(params.session_key);
-        const runAgentId = targetRun?.agentId;
-        const resolvedTargetAgentId = metadataAgentId
-          ?? rejectAuthorization("target agent ownership is required");
-        if (runAgentId !== undefined && runAgentId !== resolvedTargetAgentId) {
-          rejectAuthorization("target agent ownership is inconsistent");
-        }
-        if (
-          targetRun !== undefined
-          && targetSession.metadata.parentSessionKey !== targetRun.callerSessionKey
-        ) {
-          rejectAuthorization("target delegation is inconsistent");
-        }
-        if (params.agent_id !== undefined && params.agent_id !== resolvedTargetAgentId) {
-          rejectAuthorization("target agent hint does not match session ownership");
-        }
-
-        const delegatedChild = resolvedTargetAgentId !== callerAgentId
+        const delegatedChild = target.agentId !== callerAgentId
           && targetSession.metadata.spawnedByAgent === callerAgentId
-          && targetSession.metadata.parentSessionKey === resolvedCallerSessionKey;
-        if (resolvedTargetAgentId !== callerAgentId && !delegatedChild) {
+          && targetSession.metadata.parentConversationRef === callerAuthority.conversationRef;
+        if (target.agentId !== callerAgentId && !delegatedChild) {
           rejectAuthorization("target agent does not match the request principal");
         }
-        authorizedTargetAgentId = resolvedTargetAgentId;
       }
 
       const mode = params.mode ?? "fire-and-forget";
       const result = await deps.crossSessionSender.send({
-        targetSessionKey: params.session_key,
+        target,
         text: params.text,
         mode: mode as "fire-and-forget" | "wait" | "ping-pong",
         timeoutMs: params.timeout_ms,
         maxTurns: params.max_turns,
         callerSessionKey,
+        ...(callerAuthority ? { caller: callerAuthority } : {}),
+        ...(callerConversation ? { callerConversation } : {}),
         ...(callerAgentId !== undefined ? { callerAgentId } : {}),
         ...(announceOperationId !== undefined ? { announceOperationId } : {}),
         announceChannelType: callerChannelType,
         announceChannelId: callerChannelId,
-        agentId: authorizedTargetAgentId,
       });
       return result;
     },
@@ -253,11 +239,11 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         const contextOrigin = resolvedContext.deliveryOrigin
           ?? rejectCallerContextMismatch("resolved principal");
 
-        const parsedCallerSession = parseFormattedSessionKey(resolvedCallerSessionKey);
+        const resolvedTurnScope = resolvedContext.turnScope
+          ?? rejectCallerContextMismatch("session identity");
         if (
-          parsedCallerSession === undefined
-          || parsedCallerSession.tenantId !== resolvedContext.tenantId
-          || parsedCallerSession.userId !== resolvedUserId
+          resolvedTurnScope.conversation.tenantId !== resolvedContext.tenantId
+          || resolvedTurnScope.conversation.agentId !== resolvedAgentId
         ) {
           rejectCallerContextMismatch("session identity");
         }
@@ -331,9 +317,20 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       const announceChannelId = requesterOrigin?.channelId ?? explicitAnnounceId;
 
       // Read caller's spawn depth from session metadata for depth propagation
-      const callerSession = callerSessionKey
-        ? deps.sessionStore.loadByFormattedKey(callerSessionKey)
-        : undefined;
+      let callerSession: import("@comis/core").SessionData | undefined;
+      if (callerContext?.turnScope) {
+        const callerRef = createConversationRef(callerContext.turnScope.conversation);
+        if (callerRef.ok) {
+          const loaded = deps.sessionStore.loadByRef(
+            {
+              tenantId: callerContext.turnScope.conversation.tenantId,
+              agentId: callerContext.turnScope.conversation.agentId,
+            },
+            callerRef.value,
+          );
+          if (loaded.ok) callerSession = loaded.value;
+        }
+      }
       const callerDepth = typeof callerSession?.metadata?.spawnDepth === "number"
         ? callerSession.metadata.spawnDepth as number
         : 0;
@@ -368,11 +365,22 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       if (parentRun !== undefined) {
         requireCapability(parentRun.caps, "orch:spawn");
       }
-      const parsedCallerKey = callerSessionKey ? parseFormattedSessionKey(callerSessionKey) : undefined;
+      const projectedCallerKey = callerContext?.turnScope
+        ? conversationScopeToSessionKey(callerContext.turnScope.conversation)
+        : undefined;
+      if (projectedCallerKey !== undefined && !projectedCallerKey.ok) {
+        throw projectedCallerKey.error;
+      }
+      const callerConversationRef = callerContext?.turnScope
+        ? createConversationRef(callerContext.turnScope.conversation)
+        : undefined;
+      if (callerConversationRef !== undefined && !callerConversationRef.ok) {
+        throw callerConversationRef.error;
+      }
       const inheritedAuthority = resolveSessionSpawnAuthority({
         rawParams,
         ...(parentRun !== undefined ? { parentRun } : {}),
-        ...(parsedCallerKey !== undefined ? { parsedCallerKey } : {}),
+        ...(projectedCallerKey?.ok ? { callerSession: projectedCallerKey.value } : {}),
         ...(callerAgentIdInternal !== undefined ? { callerAgentId: callerAgentIdInternal } : {}),
         ...(deps.resolveRootRunId !== undefined ? { resolveRootRunId: deps.resolveRootRunId } : {}),
       });
@@ -384,6 +392,14 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         callerType: hasInjectedCallerIdentity ? "agent" : "control-plane",
         callerSessionKey,
         callerAgentId: callerAgentIdInternal,
+        ...(callerContext?.turnScope !== undefined && callerConversationRef?.ok === true
+          ? {
+              callerConversation: {
+                conversationScope: callerContext.turnScope.conversation,
+                conversationRef: callerConversationRef.value,
+              },
+            }
+          : {}),
         ...inheritedAuthority,
         announceChannelType,
         announceChannelId,
@@ -433,32 +449,23 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
     },
 
     [SessionCompactContract.method]: async (rawParams) => {
-      // Self-resolve the CALLER's own session. An
-      // agent should NOT have to construct/guess its own formatted key (it guessed
-      // ":telegram:" where the real key uses ":peer:"). Read the dispatcher-injected
-      // `_callerSessionKey` BEFORE the strip (the same internal field session.send
-      // reads); when `session_key` is omitted or the "self"/"current" sentinel, use
-      // it. An explicit key still targets that session.
-      const callerSessionKey = rawParams._callerSessionKey as string | undefined;
-      const requestedKey = rawParams.session_key as string | undefined;
-      const wantsSelf = !requestedKey || requestedKey === "self" || requestedKey === "current";
-      const sessionKey = wantsSelf ? callerSessionKey : requestedKey;
-      if (!sessionKey) {
-        throw new Error(
-          "Missing required parameter: session_key (omit it to compact your own session — only available from an in-process session call)",
-        );
-      }
-
       const userParams = stripInternalFields(rawParams);
       const params = SessionCompactContract.request.parse(userParams);
+      const conversationRef = ConversationRefSchema.safeParse(params.conversation_ref);
+      if (!conversationRef.success) throw new Error("Invalid conversation reference");
+      const authority = { tenantId: params.tenant_id, agentId: params.agent_id };
+      const callerAgentId = rawParams._agentId as string | undefined;
+      if (callerAgentId !== undefined && callerAgentId !== authority.agentId) {
+        throw new Error("Session compaction agent does not match the authenticated caller");
+      }
 
       const instructions = params.instructions;
 
       // Read from EITHER store — a live channel
       // chat is file-JSONL-only (the SQLite sessions table is empty for it), so a
       // SQLite-only read threw "Session not found" for the active session.
-      const data = loadSessionAnyStore(deps, sessionKey);
-      if (!data) throw new Error(`Session not found: ${sessionKey}`);
+      const data = loadAuthorizedSession(deps, authority, conversationRef.data);
+      if (!data) throw new Error(`Conversation not found: ${params.conversation_ref}`);
 
       const messageCount = data.messages.length;
       const estimatedTokens = Math.round(
@@ -469,7 +476,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       );
 
       const result = {
-        sessionKey,
+        conversationRef: conversationRef.data,
         messageCount,
         estimatedTokens,
         compactionTriggered: true as const,

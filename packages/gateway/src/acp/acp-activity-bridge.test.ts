@@ -14,7 +14,7 @@
  *   - phase:"progress" | phase:"end" → `sessionUpdate:"tool_call_update"`; status
  *     maps completed→"completed", failed→"failed", otherwise "in_progress".
  *   - sessionUpdate is the SINGLE-ARG call `{ sessionId, update }` whose sessionId
- *     is the acpSessionId resolved via `parseFormattedSessionKey(sessionKey).peerId`.
+ *     is supplied explicitly when the turn subscription is registered.
  *   - events drain through the local 256 queue in enqueue order (e1→e2→e3).
  *   - when `getConnection(sessionId)` returns undefined the bridge no-ops.
  */
@@ -38,9 +38,10 @@ const RAW_PARAM_SENTINEL = "RAW_SECRET_abc123";
 /** The ACP session id (= AcpSessionKey.peerId; the connection-registry key). */
 const ACP_SESSION_ID = "peer-1234";
 
-/** A sessionKey whose peerId reverse-resolves to ACP_SESSION_ID (acp-session-map idiom). */
+/** A display label used for event correlation only. */
 const ACP_SESSION_KEY = formatSessionKey({
   tenantId: "default",
+  agentId: "a1",
   userId: "ide-user",
   channelId: "acp",
   peerId: ACP_SESSION_ID,
@@ -153,7 +154,7 @@ describe("createAcpActivityBridge (redacted ActivityEvent → SDK session/update
       activityStreamPort: stream.port,
       getConnection: (id) => (id === ACP_SESSION_ID ? connection : undefined),
     });
-    const unsubscribe = bridge.subscribe(makeTurnContext());
+    const unsubscribe = bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     stream.emit(makeActivityEvent({ phase: "start", status: "running" }));
     stream.emit(makeActivityEvent({ phase: "progress", status: "running" }));
@@ -178,7 +179,7 @@ describe("createAcpActivityBridge (redacted ActivityEvent → SDK session/update
       activityStreamPort: stream.port,
       getConnection: () => connection,
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     stream.emit(
       makeActivityEvent({ phase: "start", status: "running", toolCallId: "tc-start" }),
@@ -201,7 +202,7 @@ describe("createAcpActivityBridge (redacted ActivityEvent → SDK session/update
       activityStreamPort: stream.port,
       getConnection: () => connection,
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     stream.emit(makeActivityEvent({ phase: "progress", status: "running" }));
     stream.emit(makeActivityEvent({ phase: "end", status: "completed" }));
@@ -225,7 +226,7 @@ describe("createAcpActivityBridge (redacted ActivityEvent → SDK session/update
       activityStreamPort: stream.port,
       getConnection: (id) => (id === ACP_SESSION_ID ? connection : undefined),
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     stream.emit(makeActivityEvent({ phase: "start" }));
     await flush();
@@ -246,7 +247,7 @@ describe("createAcpActivityBridge (redacted ActivityEvent → SDK session/update
       activityStreamPort: stream.port,
       getConnection: () => connection,
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     stream.emit(makeActivityEvent({ phase: "start", toolCallId: "e1" }));
     stream.emit(makeActivityEvent({ phase: "progress", toolCallId: "e2" }));
@@ -263,7 +264,7 @@ describe("createAcpActivityBridge (redacted ActivityEvent → SDK session/update
       activityStreamPort: stream.port,
       getConnection: () => undefined,
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     expect(() => stream.emit(makeActivityEvent({ phase: "start" }))).not.toThrow();
     await flush();
@@ -277,7 +278,7 @@ describe("createAcpActivityBridge (redacted ActivityEvent → SDK session/update
       activityStreamPort: stream.port,
       getConnection: () => connection,
     });
-    const unsubscribe = bridge.subscribe(makeTurnContext());
+    const unsubscribe = bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     expect(stream.unsubscribeCalls()).toBe(0);
     unsubscribe();
@@ -324,7 +325,7 @@ describe("createAcpActivityBridge (redacted ActivityEvent → SDK session/update
       getConnection: () => connection,
       logger,
     });
-    bridge.subscribe(makeTurnContext());
+    bridge.subscribe(makeTurnContext(), ACP_SESSION_ID);
 
     // First frame triggers the rejecting sessionUpdate.
     stream.emit(makeActivityEvent({ phase: "start", toolCallId: "fail" }));

@@ -224,12 +224,20 @@ describe("buildSlashCommandDeps destroySession emits session:expired", () => {
       costTrackers: new Map(),
       workspaceDirs: new Map(),
       destroyConversation,
+      conversationScope: {
+        tenantId: "default",
+        agentId: "agent_a",
+        partition: { kind: "principal", principalId: "user_a" },
+      },
       logger: logger as never,
     });
     const key = { tenantId: "default", userId: "user_a", channelId: "gateway" };
 
     expect(() => deps.destroySession(key)).not.toThrow();
-    expect(destroyConversation).toHaveBeenCalledWith("agent_a", key);
+    expect(destroyConversation).toHaveBeenCalledWith(expect.objectContaining({
+      tenantId: "default",
+      agentId: "agent_a",
+    }), key);
     expect(laterObserver).toHaveBeenCalledOnce();
     await new Promise((resolve) => setImmediate(resolve));
   });

@@ -12,7 +12,7 @@
 import type { AgentCapability, PerAgentConfig, OutwardSendLedgerPort, SessionKey, ComisLogger } from "@comis/core";
 import {
   attenuateCaps,
-  parseFormattedSessionKey,
+  conversationScopeToSessionKey,
   resolveAutonomy,
   stripInternalFields,
   toSafeErrorLogString,
@@ -117,17 +117,19 @@ export function makeCreateAgentRpcCall(
       const trustedContext = ctx?.agentId === agentId ? ctx : undefined;
       // Build delivery target from context for cron job routing
       let deliveryTarget: { channelId: string; userId: string; tenantId: string; channelType?: string } | undefined;
-      const parsedSession = trustedContext?.sessionKey
-        ? parseFormattedSessionKey(trustedContext.sessionKey)
+      const origin = trustedContext?.deliveryOrigin;
+      const projectedSession = trustedContext?.turnScope
+        ? conversationScopeToSessionKey(trustedContext.turnScope.conversation)
         : undefined;
-      const rootRunId = resolveRootRunId && parsedSession && trustedContext
-        ? resolveRootRunId(agentId, parsedSession)
+      const callerSession = projectedSession?.ok ? projectedSession.value : undefined;
+      const rootRunId = resolveRootRunId && callerSession && trustedContext
+        ? resolveRootRunId(agentId, callerSession)
         : undefined;
-      if (parsedSession) {
+      if (callerSession && trustedContext?.turnScope) {
         deliveryTarget = {
-          channelId: parsedSession.channelId,
-          userId: parsedSession.userId,
-          tenantId: parsedSession.tenantId,
+          channelId: origin?.channelId ?? callerSession.channelId,
+          userId: trustedContext.turnScope.principal.principalId,
+          tenantId: callerSession.tenantId,
           channelType: trustedContext?.channelType,
         };
       }
@@ -152,7 +154,7 @@ export function makeCreateAgentRpcCall(
           );
           return Promise.reject(failure);
         }
-        if (!resolveRootRunId || !parsedSession || !trustedContext) {
+        if (!resolveRootRunId || !callerSession || !trustedContext) {
           const failure = new Error("durable outward call requires an exact request principal and root resolver");
           logger?.error(
             { method, agentId, errorKind: "precondition" as const, hint: "the outward call was blocked before RPC dispatch; restore the request context and durable root resolver, then retry" },
@@ -175,10 +177,13 @@ export function makeCreateAgentRpcCall(
         outwardStepIndex = allocated.value;
       }
       // Extract caller channel metadata from DeliveryOrigin
-      const origin = trustedContext?.deliveryOrigin;
       return rpcCall(method, {
         ...stripInternalFields(params),
         _agentId: agentId,
+        ...(trustedContext?.turnScope !== undefined && {
+          _tenantId: trustedContext.turnScope.conversation.tenantId,
+          _callerConversationScope: trustedContext.turnScope.conversation,
+        }),
         _capabilities: heldCapabilities,
         // The trusted autonomy mode for THIS run, from the
         // same resolve as caps. Always injected (resolveAutonomy always yields a

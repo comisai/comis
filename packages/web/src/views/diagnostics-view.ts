@@ -303,7 +303,7 @@ export class IcDiagnosticsView extends LitElement {
     const rpc = this.rpcClient;
 
     try {
-      const raw = await rpc.call<Record<string, unknown>>("obs.diagnostics", {
+      const raw = await rpc.call("obs.diagnostics", {
         sinceMs: this._sinceMs,
         limit: 500,
       });

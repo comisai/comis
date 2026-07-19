@@ -1,22 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Persist gateway attachment markers under the exact request session key.
- *
- * The channel ID alone is not a session identity: SessionStorePort keys also
- * include tenant and user identity. The caller therefore supplies the
- * request-scoped SessionKey resolved by the message handler.
- */
+/** Persist gateway attachment markers under explicit conversation authority. */
 
 import {
-  formatSessionKey,
-  sanitizeLogString,
+  createConversationRef,
   type ClockPort,
   type ComisLogger,
-  type SessionKey,
+  type ConversationScope,
   type SessionStorePort,
 } from "@comis/core";
 
-export type GatewayAttachmentPersister = (sessionKey: SessionKey, marker: string) => void;
+export type GatewayAttachmentPersister = (scope: ConversationScope, marker: string) => void;
 
 export function createGatewayAttachmentPersister(deps: {
   sessionStore: Pick<SessionStorePort, "load" | "save">;
@@ -24,20 +17,30 @@ export function createGatewayAttachmentPersister(deps: {
   logger: ComisLogger;
   emitSystemError: (payload: { error: Error; source: string }) => void;
 }): GatewayAttachmentPersister {
-  return (sessionKey, marker) => {
-    try {
-      const existing = deps.sessionStore.load(sessionKey);
-      const messages: unknown[] = [...(existing?.messages ?? [])];
-
-      messages.push({ role: "assistant", content: marker, timestamp: deps.clock.now() });
-      deps.sessionStore.save(sessionKey, messages, existing?.metadata);
-    } catch (error) {
-      const errorMessage = sanitizeLogString(error instanceof Error ? error.message : String(error));
+  return (scope, marker) => {
+    const existing = deps.sessionStore.load(scope);
+    if (!existing.ok) {
+      const reference = createConversationRef(scope);
       deps.logger.warn({
-        err: errorMessage,
-        sessionKey: formatSessionKey(sessionKey),
-        hint: "Check SQLite session storage health and available disk space",
-        errorKind: "resource" as const,
+        conversationRef: reference.ok ? reference.value : undefined,
+        hint: "Check SQLite session storage integrity and available disk space.",
+        errorKind: existing.error.errorKind,
+      }, "Gateway attachment history persistence failed");
+      deps.emitSystemError({
+        error: new Error("Gateway attachment history persistence failed"),
+        source: "gateway-attachment-history",
+      });
+      return;
+    }
+    const messages: unknown[] = [...(existing.value?.messages ?? [])];
+    messages.push({ role: "assistant", content: marker, timestamp: deps.clock.now() });
+    const saved = deps.sessionStore.save(scope, messages, existing.value?.metadata);
+    if (!saved.ok) {
+      const reference = createConversationRef(scope);
+      deps.logger.warn({
+        conversationRef: reference.ok ? reference.value : undefined,
+        hint: "Check SQLite session storage integrity and available disk space.",
+        errorKind: saved.error.errorKind,
       }, "Gateway attachment history persistence failed");
       deps.emitSystemError({
         error: new Error("Gateway attachment history persistence failed"),

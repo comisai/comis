@@ -51,7 +51,7 @@ describe("IcContextDagBrowser render() — load-state branches", () => {
     document.body.appendChild(el);
     priv(el)._loadState = "loaded";
     priv(el)._conversations = [
-      { conversation_id: "c1", agent_id: "alpha", session_key: "k", updated_at: 1_000 },
+      { conversation_ref: "c1", agent_id: "alpha", session_key: "k", updated_at: 1_000 },
     ];
     await el.updateComplete;
     expect(el.shadowRoot?.querySelector(".header-title")?.textContent).toContain(
@@ -67,7 +67,7 @@ describe("IcContextDagBrowser render() — load-state branches", () => {
     document.body.appendChild(el);
     priv(el)._loadState = "loaded";
     priv(el)._conversations = [
-      { conversation_id: "c1", agent_id: "alpha", session_key: "k", updated_at: 1_000 },
+      { conversation_ref: "c1", agent_id: "alpha", session_key: "k", updated_at: 1_000 },
     ];
     priv(el)._selectedConvId = "c1";
     await el.updateComplete;
@@ -79,7 +79,7 @@ describe("IcContextDagBrowser render() — load-state branches", () => {
     document.body.appendChild(el);
     priv(el)._loadState = "loaded";
     priv(el)._conversations = [
-      { conversation_id: "c1", agent_id: "alpha", session_key: "k", updated_at: 1_000 },
+      { conversation_ref: "c1", agent_id: "alpha", session_key: "k", updated_at: 1_000 },
     ];
     priv(el)._selectedConvId = null;
     await el.updateComplete;
@@ -107,8 +107,8 @@ describe("IcContextDagBrowser _renderConversationList — empty vs populated bra
     document.body.appendChild(el);
     priv(el)._loadState = "loaded";
     priv(el)._conversations = [
-      { conversation_id: "c1", agent_id: "alpha", session_key: "short", updated_at: 1_000 },
-      { conversation_id: "c2", agent_id: "beta", session_key: "short", updated_at: 2_000 },
+      { conversation_ref: "c1", agent_id: "alpha", session_key: "short", updated_at: 1_000 },
+      { conversation_ref: "c2", agent_id: "beta", session_key: "short", updated_at: 2_000 },
     ];
     await el.updateComplete;
     const cards = el.shadowRoot?.querySelectorAll(".conv-card");
@@ -121,7 +121,7 @@ describe("IcContextDagBrowser _renderConversationList — empty vs populated bra
     document.body.appendChild(el);
     priv(el)._loadState = "loaded";
     priv(el)._conversations = [
-      { conversation_id: "c1", agent_id: "alpha", session_key: longKey, updated_at: 1_000 },
+      { conversation_ref: "c1", agent_id: "alpha", session_key: longKey, updated_at: 1_000 },
     ];
     await el.updateComplete;
     const sessionDiv = el.shadowRoot?.querySelector(".conv-session");
@@ -134,8 +134,8 @@ describe("IcContextDagBrowser _renderConversationList — empty vs populated bra
     document.body.appendChild(el);
     priv(el)._loadState = "loaded";
     priv(el)._conversations = [
-      { conversation_id: "c1", agent_id: "alpha", session_key: "k", updated_at: 1_000 },
-      { conversation_id: "c2", agent_id: "beta", session_key: "k", updated_at: 2_000 },
+      { conversation_ref: "c1", agent_id: "alpha", session_key: "k", updated_at: 1_000 },
+      { conversation_ref: "c2", agent_id: "beta", session_key: "k", updated_at: 2_000 },
     ];
     priv(el)._selectedConvId = "c2";
     await el.updateComplete;
@@ -150,7 +150,7 @@ describe("IcContextDagBrowser _renderConversationList — empty vs populated bra
     priv(el)._loadState = "loaded";
     priv(el)._conversations = [
       {
-        conversation_id: "c1",
+        conversation_ref: "c1",
         agent_id: "alpha",
         session_key: "k",
         title: "My Conversation Title",
@@ -171,7 +171,7 @@ describe("IcContextDagBrowser _renderTree — loading / empty / populated branch
   function selectConv(): void {
     priv(el)._loadState = "loaded";
     priv(el)._conversations = [
-      { conversation_id: "c1", agent_id: "alpha", session_key: "k", updated_at: 1_000 },
+      { conversation_ref: "c1", agent_id: "alpha", session_key: "k", updated_at: 1_000 },
     ];
     priv(el)._selectedConvId = "c1";
   }
@@ -245,7 +245,7 @@ describe("IcContextDagBrowser _renderSearchResults — loading / empty / populat
   function selectConv(): void {
     priv(el)._loadState = "loaded";
     priv(el)._conversations = [
-      { conversation_id: "c1", agent_id: "alpha", session_key: "k", updated_at: 1_000 },
+      { conversation_ref: "c1", agent_id: "alpha", session_key: "k", updated_at: 1_000 },
     ];
     priv(el)._selectedConvId = "c1";
   }

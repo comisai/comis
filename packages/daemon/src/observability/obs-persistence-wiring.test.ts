@@ -43,7 +43,7 @@ import {
 import type { AuditRowSink } from "./obs-audit-sink.js";
 import type { AuditEventRow } from "@comis/memory";
 import type { ComisLogger } from "@comis/infra";
-import type { EventMap } from "@comis/core";
+import type { ConversationRef, EventMap } from "@comis/core";
 import { runWithContext } from "@comis/core";
 import Database from "better-sqlite3";
 import * as fs from "node:fs";
@@ -51,6 +51,19 @@ import * as os from "node:os";
 import * as nodePath from "node:path";
 import { initSchema, createObservabilityStore, queryCacheBreakRateByReason } from "@comis/memory";
 import type { DiagnosticEvent } from "./diagnostic-collector.js";
+
+function deliveryAuthorityEventFields(channelType: string, conversationId: string) {
+  return {
+    tenantId: "tenant-observability",
+    conversationRef: `cv_${"A".repeat(43)}` as ConversationRef,
+    destinationEndpoint: {
+      channelType,
+      channelInstanceId: "test-instance",
+      conversationId,
+      conversationKind: "direct" as const,
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // tokenUsageEventToRow
@@ -266,6 +279,7 @@ describe("tokenUsageEventToRow", () => {
 describe("deliveryEventToRow", () => {
   it("preserves success status with no failure metadata", () => {
     const payload: EventMap["diagnostic:message_processed"] = {
+      ...deliveryAuthorityEventFields("telegram", "chan-1"),
       messageId: "msg-1",
       channelId: "chan-1",
       channelType: "telegram",
@@ -301,6 +315,7 @@ describe("deliveryEventToRow", () => {
 
   it("preserves error status, failure stage, kind, and finish reason", () => {
     const payload: EventMap["diagnostic:message_processed"] = {
+      ...deliveryAuthorityEventFields("discord", "chan-2"),
       messageId: "msg-2",
       channelId: "chan-2",
       channelType: "discord",
@@ -335,6 +350,7 @@ describe("deliveryEventToRow", () => {
 
   it("stores a stable delivery failure reason instead of the successful executor reason", () => {
     const payload: EventMap["diagnostic:message_processed"] = {
+      ...deliveryAuthorityEventFields("telegram", "chan-2"),
       messageId: "msg-delivery-error",
       channelId: "chan-2",
       channelType: "telegram",
@@ -365,6 +381,7 @@ describe("deliveryEventToRow", () => {
 
   it("stores stable late-abort reasons instead of the executor stop reason", () => {
     const aborted = deliveryEventToRow({
+      ...deliveryAuthorityEventFields("telegram", "chat-a"),
       messageId: "msg-aborted",
       channelId: "chat-a",
       channelType: "telegram",
@@ -384,6 +401,7 @@ describe("deliveryEventToRow", () => {
       timestamp: 1_000,
     });
     const denied = deliveryEventToRow({
+      ...deliveryAuthorityEventFields("telegram", "chat-a"),
       messageId: "msg-denied",
       channelId: "chat-a",
       channelType: "telegram",
@@ -2110,6 +2128,7 @@ describe("setupObsPersistence", () => {
 
     // Emit a message processed event
     eventBus.emit("diagnostic:message_processed", {
+      ...deliveryAuthorityEventFields("telegram", "c1"),
       messageId: "m1",
       channelId: "c1",
       channelType: "telegram",
@@ -2193,6 +2212,7 @@ describe("setupObsPersistence", () => {
     });
 
     eventBus.emit("diagnostic:message_processed", {
+      ...deliveryAuthorityEventFields("telegram", "c1"),
       messageId: "m1", channelId: "c1", channelType: "telegram",
       agentId: "a1", sessionKey: "sk-1", receivedAt: 900,
       toolCalls: null, llmCalls: null,

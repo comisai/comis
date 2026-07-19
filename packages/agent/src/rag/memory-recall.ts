@@ -71,14 +71,15 @@ export { passesBaseFloor } from "./recall-security-prefilter.js";
  * Build a recall orchestrator from injected deps + recall config.
  *
  * The returned `recall` composes search -> fuse -> rerank -> score -> trust-filter ->
- * dedup. With `rerank.enabled=false` (the default), the rerank stage is skipped and the
+ * dedup. With `rerank.mode="off"`, the rerank stage is skipped and the
  * single-lane fuse is order-preserving, so the output equals the documented default
  * order (fusion order + boosts + trust filter + dedup) — pinned by the default-off
  * characterization test.
  */
 export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConfig): MemoryRecall {
   return {
-    async recall(query, sessionKey, agentId) {
+    async recall(query, memoryScope, sessionKey) {
+      const agentId = memoryScope.agentId;
       // Trace capture is ADDITIVE: collected into local accumulators at the existing
       // stage snapshot points, assembled into ONE record at the end. When neither
       // deps.recallTrace nor deps.eventBus is present, these locals are computed but
@@ -99,10 +100,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const cfg_pinned = cfg.pinned;
       if (cfg_pinned?.enabled === true && deps.pinnedStore !== undefined) {
         const pinnedStart = deps.clock.now();
-        const scope = {
-          tenantId: sessionKey.tenantId,
-          agentId: agentId ?? sessionKey.agentId ?? "default",
-        };
+        const scope = { tenantId: memoryScope.tenantId, agentId: memoryScope.agentId };
         const p = await deps.pinnedStore.listPinned(scope, cfg_pinned.maxPinnedInjection);
         if (p.ok && p.value.length > 0) {
           pinnedResults.push(...p.value);
@@ -150,7 +148,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const prefilterAcc: PrefilterAccumulator = { trustDroppedIds: [], floorDroppedIds: [] };
 
       // 1. SEARCH — overfetch only when rerank is enabled (default pool size unchanged).
-      const limit = cfg.rerank.enabled
+      const limit = cfg.rerank.mode === "on"
         ? Math.max(cfg.maxResults, cfg.rerank.maxCandidates)
         : cfg.maxResults;
 
@@ -185,9 +183,8 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         // searchQuery is the synonym-expanded query (or the original when off); the spread
         // adds occurredAtRange ONLY when temporalParse parsed one (so OFF ⇒ the options object is
         // byte-identical to today — byte-identity by construction, never `occurredAtRange: undefined`).
-        const laneRes = await deps.memoryPort.searchLanes(sessionKey, searchQuery, {
+        const laneRes = await deps.memoryPort.searchLanes(memoryScope, searchQuery, {
           limit,
-          agentId,
           ...(occurredAtRange !== undefined ? { occurredAtRange } : {}),
         });
         if (!laneRes.ok) {
@@ -249,10 +246,9 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         // slice(0, limit=maxResults) cap and the minScore filter internally, so searched.value
         // is ALREADY the capped+filtered base — wrap it verbatim (no second cap/filter here).
         // Same searchQuery + spread-guarded occurredAtRange as the searchLanes path above.
-        const searched = await deps.memoryPort.search(sessionKey, searchQuery, {
+        const searched = await deps.memoryPort.search(memoryScope, searchQuery, {
           limit,
           minScore: cfg.minScore,
-          agentId,
           ...(occurredAtRange !== undefined ? { occurredAtRange } : {}),
         });
         if (!searched.ok) return searched;
@@ -316,8 +312,8 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           // from the recall arg (else the session key's agent, else "default"). The
           // lane's WHERE enforces this in SQL — the load-bearing isolation.
           const scope = {
-            tenantId: sessionKey.tenantId,
-            agentId: agentId ?? sessionKey.agentId ?? "default",
+            tenantId: memoryScope.tenantId,
+            agentId: memoryScope.agentId,
           };
           const laneRes = await deps.entityStore.associativeLane(seedIds, scope, el.perEntityCap);
           if (laneRes.ok) {
@@ -369,8 +365,8 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           // agent from the recall arg (else the session key's agent, else "default"). The
           // lane's WHERE enforces this in SQL — the load-bearing isolation.
           const scope = {
-            tenantId: sessionKey.tenantId,
-            agentId: agentId ?? sessionKey.agentId ?? "default",
+            tenantId: memoryScope.tenantId,
+            agentId: memoryScope.agentId,
           };
           const windowMs = tl.windowDays * 86_400_000;
           const laneRes = await deps.temporalStore.spreadLane(seedTimes, scope, windowMs, cfg.maxResults);
@@ -402,7 +398,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       if (cl?.enabled === true && deps.causalStore !== undefined && seedPool.length > 0) {
         const seedIds = seedPool.slice(0, cfg.entityLane?.seedCount ?? 5).map((r) => r.entry.id);
         // Reweight the causal lane (1.0 off; no boosted intent today → 1.0 by construction).
-        causalCandidates = await appendCausalLane(lanes, deps.causalStore, laneWeight(cl.weight, "causal"), cfg.maxResults, seedIds, sessionKey, agentId, deps.logger);
+        causalCandidates = await appendCausalLane(lanes, deps.causalStore, laneWeight(cl.weight, "causal"), cfg.maxResults, seedIds, memoryScope, deps.logger);
       }
 
       // 2d. GRAPH-SPREAD lane — the 6th fused lane (…, causal, graphSpread), in
@@ -467,8 +463,8 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         // The spread adds the per-intent bucket ONLY when `intent` is defined (intentReweight
         // on); omitted -> the adapter's global ('') bucket (degrade-to-global, byte-identity off).
         const scope = {
-          tenantId: sessionKey.tenantId,
-          agentId: agentId ?? sessionKey.agentId ?? "default",
+          tenantId: memoryScope.tenantId,
+          agentId: memoryScope.agentId,
           ...(intent !== undefined ? { intent } : {}),
         };
         const u = await deps.usefulnessStore.readUsefulness(ids, scope);
@@ -518,7 +514,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // (PiExecutorDeps.timers); this guards the optional-deps surface only.
       const timers = deps.timers;
       if (
-        cfg.rerank.enabled &&
+        cfg.rerank.mode === "on" &&
         timers !== undefined &&
         deps.reranker?.isAvailable() === true &&
         ranked.length >= cfg.rerank.minResults
@@ -689,8 +685,8 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       if (cfg.mmr?.enabled === true && deps.embeddingStore !== undefined && ranked.length >= 2) {
         const ids = ranked.map((r) => r.entry.id);
         const scope = {
-          tenantId: sessionKey.tenantId,
-          agentId: agentId ?? sessionKey.agentId ?? "default",
+          tenantId: memoryScope.tenantId,
+          agentId: memoryScope.agentId,
         };
         const e = await deps.embeddingStore.readEmbeddings(ids, scope);
         if (e.ok) {
@@ -729,13 +725,13 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       if (deps.provenanceStore != null) {
         try {
           const provenanceScope: ContextStoreScope = {
-            tenantId: sessionKey.tenantId,
-            agentId: agentId ?? sessionKey.agentId ?? "default",
-            // conversationId/sessionKey are not load-bearing for the (tenant, agent)-scoped
+            tenantId: memoryScope.tenantId,
+            agentId: memoryScope.agentId,
+            // conversationRef/sessionKey are not load-bearing for the (tenant, agent)-scoped
             // getProvenanceForSummary read, but the port takes a full scope — fill them from
             // the session key so the adapter's scope filter has the complete context.
             // Must be formatSessionKey (not String(sessionKey) → "[object Object]").
-            conversationId: sessionKey.channelId ?? "",
+            conversationRef: memoryScope.conversationRef,
             sessionKey: formatSessionKey(sessionKey),
           };
           ranked = applyProvenanceDownweighting(ranked, deps.provenanceStore, provenanceScope);

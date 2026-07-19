@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
+import type { ConversationLocator } from "./conversation-scope.js";
 
 // ---------------------------------------------------------------------------
 // Node Driver Action
@@ -13,7 +14,7 @@ import { z } from "zod";
  */
 export type NodeDriverAction =
   /** Ask the coordinator to start one sub-agent. */
-  | { action: "spawn"; agentId: string; task: string; model?: string; maxSteps?: number; reuseSessionKey?: string }
+  | { action: "spawn"; agentId: string; task: string; model?: string; maxSteps?: number; reuseConversation?: ConversationLocator }
   /** Start multiple sub-agents in parallel. */
   | { action: "spawn_all"; spawns: Array<{ agentId: string; task: string; model?: string; maxSteps?: number }> }
   /** Node finished successfully with output text and optional artifacts. */

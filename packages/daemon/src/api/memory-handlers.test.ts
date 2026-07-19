@@ -1,15 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
 import { ok } from "@comis/shared";
-import type { MemorySearchResult, ComisLogger, ClockPort } from "@comis/core";
+import {
+  runWithContext,
+  type MemorySearchResult,
+  type ComisLogger,
+  type ClockPort,
+} from "@comis/core";
+import { resolveInternalTurnIdentity } from "@comis/orchestrator";
 import {
   createDialecticSeam,
   type DialecticSeamDeps,
   type DialecticParsed,
   type MemoryRecall,
 } from "@comis/agent";
-import { createMemoryHandlers } from "./memory-handlers.js";
-import { bindMemoryAskHandler } from "./memory-ask-handlers.js";
+import { createMemoryHandlers as createRawMemoryHandlers } from "./memory-handlers.js";
+import { bindMemoryAskHandler as bindRawMemoryAskHandler } from "./memory-ask-handlers.js";
 import type { MemoryHandlerDeps } from "./memory-handlers.js";
 // The empty-content rejection must be a typed ValidationError so the RPC
 // dispatcher classifies it as warn/validation (not error/internal).
@@ -18,7 +24,7 @@ import { classifyRpcError } from "./rpc-dispatch.js";
 // Portability handlers are composed at the dispatch layer (rpc-dispatch.ts), not
 // via memory-handlers.ts (handler-sibling invariant). These blocks exercise the
 // portability unit directly.
-import { createMemoryPortabilityHandlers } from "./memory-portability-handlers.js";
+import { createMemoryPortabilityHandlers as createRawMemoryPortabilityHandlers } from "./memory-portability-handlers.js";
 
 // ---------------------------------------------------------------------------
 // Helper: create isolated deps per test to avoid shared state
@@ -36,6 +42,7 @@ function makeDeps(overrides?: Partial<MemoryHandlerDeps>): MemoryHandlerDeps {
           content: "Test memory content that is longer than needed for browse truncation tests",
           memoryType: "episodic",
           trustLevel: "learned",
+          visibility: { kind: "agent-shared" },
           tags: ["test"],
           agentId: "default",
           userId: "user1",
@@ -62,6 +69,83 @@ function makeDeps(overrides?: Partial<MemoryHandlerDeps>): MemoryHandlerDeps {
     } as never,
     tenantId: "default",
     ...overrides,
+  };
+}
+
+function withTestTurnScope<T>(
+  deps: MemoryHandlerDeps,
+  params: Record<string, unknown>,
+  fn: () => T,
+): T {
+  const agentId = params["_agentId"];
+  if (typeof agentId !== "string") return fn();
+  const identity = resolveInternalTurnIdentity({
+    tenantId: deps.tenantId,
+    agentId,
+    originKind: "control-plane",
+    instanceId: "memory-handler-test",
+    conversationId: String(params["_callerSessionKey"] ?? "memory-handler-test"),
+    principalId: "test-user",
+  });
+  if (!identity.ok) throw identity.error;
+  return runWithContext({
+    tenantId: deps.tenantId,
+    userId: "test-user",
+    sessionKey: identity.value.displaySessionKey,
+    agentId,
+    turnScope: identity.value.turnScope,
+    traceId: "00000000-0000-4000-8000-000000000001",
+    startedAt: 1,
+    trustLevel: "admin",
+  }, fn);
+}
+
+function createMemoryHandlers(deps: MemoryHandlerDeps) {
+  const handlers = createRawMemoryHandlers(deps);
+  const store = handlers["memory.store"]!;
+  const scoped = Object.fromEntries(
+    Object.entries(handlers).map(([method, handler]) => [
+      method,
+      (params: Record<string, unknown>) => handler({
+        ...(!method.startsWith("memory.embedding") && method !== "memory.store"
+          ? { tenant_id: deps.tenantId, agent_id: deps.defaultAgentId }
+          : {}),
+        ...(typeof params["_agentId"] === "string" ? { _tenantId: deps.tenantId } : {}),
+        ...params,
+      }),
+    ]),
+  );
+  return {
+    ...scoped,
+    "memory.store": (params: Record<string, unknown>) =>
+      withTestTurnScope(deps, params, () => store({
+        ...(typeof params["_agentId"] === "string" ? { _tenantId: deps.tenantId } : {}),
+        ...params,
+      })),
+  };
+}
+
+function createMemoryPortabilityHandlers(deps: MemoryHandlerDeps) {
+  const handlers = createRawMemoryPortabilityHandlers(deps);
+  return Object.fromEntries(
+    Object.entries(handlers).map(([method, handler]) => [
+      method,
+      (params: Record<string, unknown>) => handler({
+        tenant_id: deps.tenantId,
+        agent_id: deps.defaultAgentId,
+        ...params,
+      }),
+    ]),
+  );
+}
+
+function bindMemoryAskHandler(deps: MemoryHandlerDeps) {
+  const handlers = bindRawMemoryAskHandler(deps);
+  const ask = handlers["memory.ask"]!;
+  return {
+    ...handlers,
+    "memory.ask": (params: Record<string, unknown>) =>
+      withTestTurnScope(deps, params, () => ask(params)),
   };
 }
 
@@ -105,13 +189,12 @@ describe("createMemoryHandlers - memory management", () => {
       );
     });
 
-    it("uses deps.tenantId as fallback when no tenant_id param", async () => {
+    it("rejects a statistics request without explicit tenant and agent authority", async () => {
       const deps = makeDeps();
-      const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
+      const handlers = createRawMemoryHandlers(deps);
 
-      await handlers["memory.stats"]!({});
-
-      expect(deps.memoryApi.stats).toHaveBeenCalledWith("default", undefined);
+      await expect(handlers["memory.stats"]!({})).rejects.toThrow();
+      expect(deps.memoryApi.stats).not.toHaveBeenCalled();
     });
 
     it("works without _trustLevel (agent-level operation)", async () => {
@@ -276,12 +359,26 @@ describe("createMemoryHandlers - memory management", () => {
 
       const result = (await handlers["memory.delete"]!({
         ids: ["mem-1", "mem-2"],
+        agent_id: "agent-1",
         _trustLevel: "admin",
       })) as { deleted: number; failed: number; total: number };
 
       expect(result.deleted).toBe(2);
       expect(result.failed).toBe(0);
       expect(result.total).toBe(2);
+    });
+
+    it("rejects deletion without explicit agent authority", async () => {
+      const deps = makeDeps();
+      const handlers = createRawMemoryHandlers(deps);
+
+      await expect(handlers["memory.delete"]!({
+        ids: ["mem-1"],
+        tenant_id: "default",
+        _trustLevel: "admin",
+      }))
+        .rejects.toThrow();
+      expect(deps.memoryAdapter.delete).not.toHaveBeenCalled();
     });
 
     it("throws on empty ids array", async () => {
@@ -318,6 +415,7 @@ describe("createMemoryHandlers - memory management", () => {
 
       const result = (await handlers["memory.delete"]!({
         ids: ["mem-1", "mem-2", "mem-3"],
+        agent_id: "agent-1",
         _trustLevel: "admin",
       })) as { deleted: number; failed: number; total: number };
 
@@ -346,6 +444,7 @@ describe("createMemoryHandlers - memory management", () => {
 
       const result = (await handlers["memory.delete"]!({
         ids: ["real-id", "nonexistent-id"],
+        agent_id: "agent-1",
         _trustLevel: "admin",
       })) as { deleted: number; failed: number; total: number };
 
@@ -378,7 +477,7 @@ describe("createMemoryHandlers - memory management", () => {
       ).rejects.toThrow("Admin access required");
     });
 
-    it("flushes entries for tenant scope and returns entriesRemoved", async () => {
+    it("flushes entries for one explicit tenant-agent scope", async () => {
       const deps = makeDeps();
       const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
@@ -387,13 +486,13 @@ describe("createMemoryHandlers - memory management", () => {
       })) as {
         flushed: boolean;
         entriesRemoved: number;
-        scope: { tenantId: string; agentId: string | null };
+        scope: { tenantId: string; agentId: string };
       };
 
       expect(result.flushed).toBe(true);
       expect(result.entriesRemoved).toBe(3);
       expect(result.scope.tenantId).toBe("default");
-      expect(result.scope.agentId).toBeNull();
+      expect(result.scope.agentId).toBe("default");
     });
 
     it("passes agentId when provided", async () => {
@@ -412,15 +511,19 @@ describe("createMemoryHandlers - memory management", () => {
       expect(result.scope.agentId).toBe("custom-agent");
     });
 
-    it("uses deps.tenantId as default scope", async () => {
+    it("forwards the explicit tenant-agent scope to the memory API", async () => {
       const deps = makeDeps({ tenantId: "my-tenant" });
       const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
-      await handlers["memory.flush"]!({ _trustLevel: "admin" });
+      await handlers["memory.flush"]!({
+        tenant_id: "target-tenant",
+        agent_id: "target-agent",
+        _trustLevel: "admin",
+      });
 
       expect(deps.memoryApi.clear).toHaveBeenCalledWith({
-        tenantId: "my-tenant",
-        agentId: undefined,
+        tenantId: "target-tenant",
+        agentId: "target-agent",
       });
     });
   });
@@ -521,12 +624,28 @@ describe("createMemoryHandlers - memory management", () => {
 // ---------------------------------------------------------------------------
 
 describe("memory.store - write validation", () => {
-  it("stores normally without validator (backwards compat)", async () => {
+  it("rejects a store request without explicit tenant authority even when deployment config has one", async () => {
+    const deps = makeDeps({ tenantId: "deployment-tenant" });
+    const handlers = createRawMemoryHandlers(deps);
+
+    await expect(withTestTurnScope(deps, { _agentId: "default" }, () =>
+      handlers["memory.store"]!({
+        content: "safe content",
+        visibility: "agent-shared",
+        _agentId: "default",
+      }),
+    )).rejects.toThrow("Memory store requires explicit tenant authority");
+    expect(deps.memoryAdapter.store).not.toHaveBeenCalled();
+  });
+
+  it("stores an explicitly scoped entry without a validator", async () => {
     const deps = makeDeps();
     const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     const result = (await handlers["memory.store"]!({
       content: "safe content",
+      visibility: "agent-shared",
+      _agentId: "default",
     })) as { stored: boolean; id: string };
 
     expect(result.stored).toBe(true);
@@ -535,35 +654,40 @@ describe("memory.store - write validation", () => {
         trustLevel: "learned",
         content: "safe content",
       }),
+      expect.anything(),
     );
   });
 
-  it("attributes a tool-stored fact to the conversation's real user, not the literal 'agent'", async () => {
-    // Without this, agent-stored rows carry user_id "agent" while the paired
-    // auto-captures carry the real session user — "who is this fact about"
-    // is lost on the tool path. The dispatcher injects _callerSessionKey;
-    // the handler recovers the userId from it.
+  it("attributes a tool-stored fact to the explicitly authorized agent", async () => {
     const deps = makeDeps();
     const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await handlers["memory.store"]!({
       content: "user fact stored via tool",
+      visibility: "conversation",
+      _agentId: "default",
       _callerSessionKey: "default:user-42:openai",
     });
 
     expect(deps.memoryAdapter.store).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: "user-42" }),
+      expect.objectContaining({ source: expect.objectContaining({ who: "default" }) }),
+      expect.anything(),
     );
   });
 
-  it("falls back to 'agent' attribution when no caller session key is present", async () => {
+  it("stores with explicit agent authority when no display session key is present", async () => {
     const deps = makeDeps();
     const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
-    await handlers["memory.store"]!({ content: "fact without session context" });
+    await handlers["memory.store"]!({
+      content: "fact without session context",
+      visibility: "agent-shared",
+      _agentId: "default",
+    });
 
     expect(deps.memoryAdapter.store).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: "agent" }),
+      expect.objectContaining({ source: expect.objectContaining({ who: "default" }) }),
+      expect.anything(),
     );
   });
 
@@ -577,12 +701,13 @@ describe("memory.store - write validation", () => {
     });
     const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
-    await handlers["memory.store"]!({ content: "clean content" });
+    await handlers["memory.store"]!({ content: "clean content", visibility: "agent-shared", _agentId: "default" });
 
     expect(deps.memoryAdapter.store).toHaveBeenCalledWith(
       expect.objectContaining({
         trustLevel: "learned",
       }),
+      expect.anything(),
     );
     // Should NOT include security-tainted tag
     const storeCall = (deps.memoryAdapter.store as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { tags: string[] };
@@ -601,12 +726,13 @@ describe("memory.store - write validation", () => {
     });
     const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
-    await handlers["memory.store"]!({ content: "suspicious content" });
+    await handlers["memory.store"]!({ content: "suspicious content", visibility: "agent-shared", _agentId: "default" });
 
     expect(deps.memoryAdapter.store).toHaveBeenCalledWith(
       expect.objectContaining({
         trustLevel: "external",
       }),
+      expect.anything(),
     );
     const storeCall = (deps.memoryAdapter.store as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { tags: string[] };
     expect(storeCall.tags).toContain("security-tainted");
@@ -625,7 +751,7 @@ describe("memory.store - write validation", () => {
     const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await expect(
-      handlers["memory.store"]!({ content: "dangerous content" }),
+      handlers["memory.store"]!({ content: "dangerous content", visibility: "agent-shared", _agentId: "default" }),
     ).rejects.toThrow("Memory store blocked: content contains critical security patterns");
 
     // memoryAdapter.store should NOT have been called
@@ -645,7 +771,7 @@ describe("memory.store - write validation", () => {
     });
     const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
-    await handlers["memory.store"]!({ content: "warn content" });
+    await handlers["memory.store"]!({ content: "warn content", visibility: "agent-shared", _agentId: "default" });
 
     expect(mockEmit).toHaveBeenCalledWith(
       "security:memory_tainted",
@@ -672,7 +798,7 @@ describe("memory.store - write validation", () => {
     const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
     await expect(
-      handlers["memory.store"]!({ content: "critical content" }),
+      handlers["memory.store"]!({ content: "critical content", visibility: "agent-shared", _agentId: "default" }),
     ).rejects.toThrow();
 
     expect(mockEmit).toHaveBeenCalledWith(
@@ -700,7 +826,7 @@ describe("memory.store - write validation", () => {
       logger: { warn: mockWarn, info: mockInfo },
     });
     const warnHandlers = createMemoryHandlers(warnDeps);
-    await warnHandlers["memory.store"]!({ content: "warn content" });
+    await warnHandlers["memory.store"]!({ content: "warn content", visibility: "agent-shared", _agentId: "default" });
 
     expect(mockWarn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -724,7 +850,7 @@ describe("memory.store - write validation", () => {
     });
     const critHandlers = createMemoryHandlers(critDeps);
     await expect(
-      critHandlers["memory.store"]!({ content: "critical content" }),
+      critHandlers["memory.store"]!({ content: "critical content", visibility: "agent-shared", _agentId: "default" }),
     ).rejects.toThrow();
 
     expect(criticalInfo).toHaveBeenCalledWith(
@@ -741,6 +867,8 @@ describe("memory.store - write validation", () => {
 
     const result = (await handlers["memory.store"]!({
       content: "agent store content",
+      visibility: "agent-shared",
+      _agentId: "default",
     })) as { stored: boolean };
 
     expect(result.stored).toBe(true);
@@ -947,22 +1075,23 @@ describe("createMemoryHandlers - diagnostics", () => {
 
       const result = (await handlers["memory.observations"]!({
         _trustLevel: "admin",
+        agent_id: "agent-x",
       })) as { observations: Array<{ content: string }> };
 
       expect(result.observations[0]!.content.length).toBeLessThanOrEqual(500);
     });
 
-    it("honors an explicit tenant_id and the default agent + limit", async () => {
+    it("honors an explicit tenant_id and explicit agent with the default limit", async () => {
       const { deps, listObservations } = makeDiagDeps();
       const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
       await handlers["memory.observations"]!({
         _trustLevel: "admin",
         tenant_id: "tenant-explicit",
+        agent_id: "agent-explicit",
       });
 
-      // Default agent (deps.defaultAgentId) + default limit (50) applied.
-      expect(listObservations).toHaveBeenCalledWith("default", "tenant-explicit", 50);
+      expect(listObservations).toHaveBeenCalledWith("agent-explicit", "tenant-explicit", 50);
     });
   });
 
@@ -992,13 +1121,13 @@ describe("createMemoryHandlers - diagnostics", () => {
       });
     });
 
-    it("applies the default agent + default limit (100)", async () => {
+    it("applies the default limit with explicit agent authority", async () => {
       const { deps, listEntities } = makeDiagDeps();
       const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
-      await handlers["memory.entities"]!({ _trustLevel: "admin" });
+      await handlers["memory.entities"]!({ _trustLevel: "admin", agent_id: "agent-explicit" });
 
-      expect(listEntities).toHaveBeenCalledWith("default", "tenant-1", 100);
+      expect(listEntities).toHaveBeenCalledWith("agent-explicit", "tenant-1", 100);
     });
   });
 
@@ -1074,6 +1203,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
+        agent_id: "default",
         session_key: "sess-A",
       })) as { records: unknown[]; tracingEnabled?: boolean; hint?: string };
 
@@ -1088,6 +1218,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
+        agent_id: "default",
         session_key: "sess-A",
       })) as { records: unknown[]; tracingEnabled?: boolean; hint?: string };
 
@@ -1105,6 +1236,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
+        agent_id: "default",
         session_key: "sess-A",
       })) as { records: unknown[]; tracingEnabled?: boolean; hint?: string };
 
@@ -1117,7 +1249,7 @@ describe("createMemoryHandlers - diagnostics", () => {
       const { deps } = makeDiagDeps();
       const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
       await expect(
-        handlers["memory.recall_trace"]!({ _trustLevel: "admin" }),
+        handlers["memory.recall_trace"]!({ _trustLevel: "admin", agent_id: "default" }),
       ).rejects.toThrow(/at least one of session_key|session_key.*trace_id|required/i);
     });
 
@@ -1136,6 +1268,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
+        agent_id: "default",
         session_key: "sess-A",
       })) as { records: Array<Record<string, unknown>> };
 
@@ -1155,6 +1288,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
+        agent_id: "default",
         session_key: "tenant-1:user:chan",
       })) as { records: Array<Record<string, unknown>> };
 
@@ -1178,6 +1312,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
+        agent_id: "default",
         trace_id: "t-X",
         limit: 2,
       })) as { records: Array<Record<string, unknown>> };
@@ -1201,6 +1336,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
+        agent_id: "default",
         session_key: "sk-A",
       })) as { records: Array<Record<string, unknown>> };
 
@@ -1221,6 +1357,7 @@ describe("createMemoryHandlers - diagnostics", () => {
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
+        agent_id: "default",
         session_key: "sess-A",
       })) as { records: Array<Record<string, unknown>> };
 
@@ -1489,10 +1626,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(result.citations).toEqual([]);
   });
 
-  it("an external RPC caller (CLI/dashboard, no _agentId) gets a real answer scoped to the default agent — not a silent abstain", async () => {
-    // Live finding 2026-06-11: memory.ask over raw WS RPC returned the bare
-    // abstain sentinel for a fact the chat path recalled fine — the handler
-    // treated the missing dispatcher-injected _agentId as "abstain".
+  it("an external RPC caller without agent authority abstains before recall", async () => {
     const recall = makeRecall([memResult("id-a", "dentist appointment June 25", "learned")]);
     const seam = makeSeam({ abstain: false, answer: "June 25", citedIds: ["id-a"] });
     const deps = makeDeps({
@@ -1507,10 +1641,8 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       // NO _agentId — external caller.
     })) as AskResult;
 
-    expect(result.abstained).toBe(false);
-    expect(result.answer).toBe("June 25");
-    // Recall ran under the DEFAULT agent scope (deps.defaultAgentId).
-    expect(recall.buildCalls).toEqual(["default"]);
+    expect(result).toEqual({ answer: "", citations: [], abstained: true, reason: "no_agent_scope" });
+    expect(recall.buildCalls).toEqual([]);
   });
 
   it("grounding lines carry the code-derived recorded date so same-trust conflicts have a recency signal", async () => {
@@ -1531,12 +1663,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(seam.grounding()).toMatch(/^\[id-a\] \(recorded \d{4}-\d{2}-\d{2}\) /);
   });
 
-  it("recall runs with a REAL tenant-scoped SessionKey — never a smuggled string (the scope that made every ask return empty)", async () => {
-    // Live finding 2026-06-11 (post reason-coding): memory.ask abstained
-    // empty_recall for a fact the chat path recalled fine — the handler passed
-    // `(callerSessionKey ?? "") as unknown as SessionKey` (a STRING), so
-    // sessionKey.tenantId was undefined and the adapter's tenant-scoped
-    // hydration matched nothing, for EVERY caller.
+  it("recall receives a tenant-scoped SessionKey derived from resolved authority", async () => {
     const captured: unknown[] = [];
     const recall = {
       build: (_agentId: string) => ({
@@ -1554,17 +1681,17 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     });
     const handlers = { ...createMemoryHandlers(deps), ...bindMemoryAskHandler(deps) };
 
-    // Agent path: formatted caller session key → parsed back to the object.
     await handlers["memory.ask"]!({
       question: "q",
       _agentId: "agent-1",
       _callerSessionKey: "tenant-x:user-1:chan-1",
     });
-    expect(captured[0]).toMatchObject({ tenantId: "tenant-x", userId: "user-1", channelId: "chan-1" });
-
-    // External path (no caller key): synthetic key carrying the daemon tenant.
-    await handlers["memory.ask"]!({ question: "q" });
-    expect(captured[1]).toMatchObject({ tenantId: "default" });
+    expect(captured[0]).toMatchObject({
+      tenantId: "default",
+      principalId: "test-user",
+      agentId: "agent-1",
+    });
+    expect(captured).toHaveLength(1);
   });
 
   it("a synthesis-level abstain is distinguishable from an infrastructure abstain via reason", async () => {
@@ -2009,6 +2136,7 @@ describe("memory.portability.export — scrubber", () => {
             id: "mem-001",
             content: SECRET_CONTENT,
             trustLevel: "learned",
+            visibility: { kind: "agent-shared" },
             tags: [],
             source: { who: "user", channel: undefined, sessionKey: undefined },
             createdAt: 1748000000000,
@@ -2047,7 +2175,7 @@ describe("memory.portability.import — CRITICAL firewall", () => {
     const result = await (handlers["memory.portability.import"] as Function)({
       entries: [{
         id: "e1", content: SECRET_CONTENT, trust_level: "learned",
-        memory_type: "semantic", tags: [], source_who: "user",
+        memory_type: "semantic", visibility: "agent-shared", tags: [], source_who: "user",
         source_channel: null, source_session_key: null, created_at: 1748000000000,
         occurred_at: null, proof_count: null, source_ids: null,
         confidence: null, observation_kind: null, pattern_type: null,
@@ -2075,7 +2203,7 @@ describe("memory.portability.import — CRITICAL firewall", () => {
       (handlers["memory.portability.import"] as Function)({
         entries: [{
           id: "e1", content: SECRET_CONTENT, trust_level: "learned",
-          memory_type: "semantic", tags: [], source_who: "user",
+          memory_type: "semantic", visibility: "agent-shared", tags: [], source_who: "user",
           source_channel: null, source_session_key: null, created_at: 1748000000000,
           occurred_at: null, proof_count: null, source_ids: null,
           confidence: null, observation_kind: null, pattern_type: null,
@@ -2092,7 +2220,7 @@ describe("memory.portability.import — duplicate-content idempotency", () => {
   const cleanValidator = vi.fn(() => ({ severity: "clean" as const, patterns: [], criticalPatterns: [] }));
   function importEntry(content: string, id: string) {
     return {
-      id, content, trust_level: "learned", memory_type: "semantic", tags: [], source_who: "user",
+      id, content, trust_level: "learned", memory_type: "semantic", visibility: "agent-shared", tags: [], source_who: "user",
       source_channel: null, source_session_key: null, created_at: 1748000000000, occurred_at: null,
       proof_count: null, source_ids: null, confidence: null, observation_kind: null, pattern_type: null,
     };
@@ -2102,7 +2230,7 @@ describe("memory.portability.import — duplicate-content idempotency", () => {
     const storeMock = vi.fn(async () => ({ ok: true as const, value: true as const }));
     const deps = makeDeps({
       // target already has "already here" → a re-import of it must be skipped, not duplicated.
-      memoryApi: { inspect: vi.fn(() => [{ id: "x", content: "already here", trustLevel: "learned", tags: [], agentId: "agent1", userId: "u", source: {}, createdAt: 1 }]) } as never,
+      memoryApi: { inspect: vi.fn(() => [{ id: "x", content: "already here", trustLevel: "learned", visibility: { kind: "agent-shared" }, tags: [], agentId: "agent1", userId: "u", source: {}, createdAt: 1 }]) } as never,
       memoryAdapter: { store: storeMock, delete: vi.fn(async () => ({ ok: true as const, value: true as const })) } as never,
       memoryWriteValidator: cleanValidator,
     });
@@ -2152,7 +2280,7 @@ describe("memory.portability.import — WARN downgrade", () => {
     await (handlers["memory.portability.import"] as Function)({
       entries: [{
         id: "e2", content: JAILBREAK_CONTENT, trust_level: "learned",
-        memory_type: "semantic", tags: [], source_who: "user",
+        memory_type: "semantic", visibility: "agent-shared", tags: [], source_who: "user",
         source_channel: null, source_session_key: null, created_at: 1748000000000,
         occurred_at: null, proof_count: null, source_ids: null,
         confidence: null, observation_kind: null, pattern_type: null,
@@ -2179,18 +2307,25 @@ describe("memory.portability.import — re-stamp scope + dry-run", () => {
     await (handlers["memory.portability.import"] as Function)({
       entries: [{
         id: "e3", content: "clean memory about the project", trust_level: "learned",
-        memory_type: "semantic", tags: [], source_who: "user",
+        memory_type: "semantic", visibility: "agent-shared", tags: [], source_who: "user",
         source_channel: null, source_session_key: null, created_at: 1748000000000,
         occurred_at: null, proof_count: null, source_ids: null,
         confidence: null, observation_kind: null, pattern_type: null,
       }],
       agent_id: "target-agent",
-      tenant_id: undefined,
+      tenant_id: "correct-tenant",
       _trustLevel: "admin",
     });
     const storedEntry = storeMock.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(storedEntry["tenantId"]).toBe("correct-tenant");
-    expect(storedEntry["agentId"]).toBe("target-agent");
+    const writeScope = storeMock.mock.calls[0]?.[1] as {
+      turnScope: { conversation: { tenantId: string; agentId: string } };
+    };
+    expect(storedEntry).not.toHaveProperty("tenantId");
+    expect(storedEntry).not.toHaveProperty("agentId");
+    expect(writeScope.turnScope.conversation).toMatchObject({
+      tenantId: "correct-tenant",
+      agentId: "target-agent",
+    });
   });
 
   it("dry-run does not call memoryAdapter.store but still reports blocked/downgraded counts", async () => {
@@ -2204,7 +2339,7 @@ describe("memory.portability.import — re-stamp scope + dry-run", () => {
     });
     const handlers = createMemoryPortabilityHandlers(deps);
     const makeEntry = (id: string, content: string) => ({
-      id, content, trust_level: "learned", memory_type: "semantic", tags: [],
+      id, content, trust_level: "learned", memory_type: "semantic", visibility: "agent-shared", tags: [],
       source_who: "user", source_channel: null, source_session_key: null,
       created_at: 1748000000000, occurred_at: null, proof_count: null,
       source_ids: null, confidence: null, observation_kind: null, pattern_type: null,
@@ -2243,6 +2378,7 @@ describe("memory.portability.export — source fields + tags are scrubbed", () =
             id: "mem-export-who",
             content: "harmless content",
             trustLevel: "learned",
+            visibility: { kind: "agent-shared" },
             tags: [],
             source: { who: secretWho, channel: undefined, sessionKey: undefined },
             createdAt: 1748000000000,
@@ -2274,6 +2410,7 @@ describe("memory.portability.export — source fields + tags are scrubbed", () =
             id: "mem-export-tag",
             content: "harmless content",
             trustLevel: "learned",
+            visibility: { kind: "agent-shared" },
             tags: [secretTag, "normal-tag"],
             source: { who: "operator", channel: undefined, sessionKey: undefined },
             createdAt: 1748000000000,
@@ -2318,7 +2455,7 @@ describe("memory.portability.import — non-string tags are filtered before stor
     await (handlers["memory.portability.import"] as Function)({
       entries: [{
         id: "e-wr03", content: "clean content", trust_level: "learned",
-        memory_type: "semantic",
+        memory_type: "semantic", visibility: "agent-shared",
         tags: ["string-tag", 42, null, { nested: true }, "another-string"],
         source_who: "user", source_channel: null, source_session_key: null,
         created_at: 1748000000000, occurred_at: null, proof_count: null,

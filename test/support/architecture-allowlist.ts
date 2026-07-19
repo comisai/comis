@@ -350,12 +350,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "deferred",
   },
   {
-    file: "packages/agent/src/executor/prompt-assembly.ts",
-    lines: 1100,
-    reason: "Executor-adjacent file (1,100L re-measured; -5L drift from prior measurement); direct-global retargeting closed; no obvious natural seam at this size; defer pending further audit (default-defer)",
-    removedIn: "deferred",
-  },
-  {
     file: "packages/agent/src/executor/tool-deferral.ts",
     lines: 1035,
     reason: "Executor-adjacent file (1,035L re-measured; +2L drift from prior measurement); BM25/cosine ranking algorithm conceptually separate from deferral orchestration; split sensible but not urgent (default-defer)",
@@ -1507,7 +1501,7 @@ export const optionalFieldAllowlist: readonly OptionalFieldAllowlistEntry[] = [
     file: "packages/skills/src/platform-tools/registry.ts",
     typeName: "PlatformToolBuildContext",
     optionalCount: 13,
-    reason: "(a) Tool-specific predicate signals (per file:95 JSDoc): each `?` corresponds to ONE platform tool's wiring requirement (approvalGate for tools needing approval, imageGenProvider for image_generate, backgroundTaskManager for background_tasks, toolCapabilityPort for capability index, contextEngineVersion for unified_context (gated on 'dag'), builtinToolsBrowserEnabled + browserSanitizeImage + browserPersistMedia + browserWorkspaceDir for the browser tool). Each descriptor's `conditional(ctx)` predicate inspects only the field it needs; marking all required would force unrelated tools to receive `undefined`-equivalent fabricated values..",
+    reason: "(a) Tool-specific predicate signals: each optional field corresponds to one platform tool's wiring requirement (approvalGate for tools needing approval, imageGenProvider for image_generate, backgroundTaskManager for background_tasks, toolCapabilityPort for capability index, and the browser signals for browser tools). Each descriptor inspects only the field it needs; marking all required would force unrelated tools to receive fabricated values.",
     removedIn: "phase-D",
   },
 ] as const;

@@ -32,6 +32,7 @@ export const INTERNAL_FIELD_NAMES = [
   "_autonomyMode",
   "_callerChannelId",
   "_callerChannelType",
+  "_callerConversationScope",
   "_callerMetadata",
   "_callerSessionKey",
   // The trusted in-process caller's resolved orchestration capabilities.

@@ -33,7 +33,7 @@
 
 import { Hono } from "hono";
 import { systemSetTimeout, systemClearTimeout } from "@comis/core";
-import type { SystemTimeoutHandle } from "@comis/core";
+import type { ConversationRef, SystemTimeoutHandle } from "@comis/core";
 import type { GatewayLogger } from "../server/gateway-logger.js";
 
 // ---------------------------------------------------------------------------
@@ -56,7 +56,7 @@ export type ApprovalLinkChoice = "approve" | "deny";
  * removed) by the route handler on the first touch of `/approve/:token`.
  *
  * Carries ONLY the server-side correlation needed to resolve the approval — the
- * shortId, the chosen outcome, and the originating session/channel/agent so the
+ * shortId, the chosen outcome, and the originating authority/channel so the
  * injected resolver can route it. The full pending-request UUID never appears.
  */
 export interface PendingApprovalToken {
@@ -64,8 +64,11 @@ export interface PendingApprovalToken {
   shortId: string;
   /** The outcome this link encodes (approve/deny). */
   choice: ApprovalLinkChoice;
-  /** Orchestrator-derived session key (trusted; used for cross-session scoping). */
-  sessionKey: string;
+  tenantId: string;
+  conversationRef: ConversationRef;
+  resolvingPrincipalId: string;
+  inboundUserId: string;
+  threadId?: string;
   /** Originating channel type (e.g. "email"). */
   channelType: string;
   /** Originating channel key (recipient id). */

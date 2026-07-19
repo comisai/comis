@@ -154,14 +154,6 @@ export interface SkillEventRecord {
   reason?: string;
 }
 
-/** Result shape from config.read RPC (wraps full config) */
-interface ConfigReadResult {
-  config: {
-    agents?: Record<string, { skills?: SkillsConfig }>;
-  };
-  sections: string[];
-}
-
 /**
  * Extract agent ID from a skill's location path.
  * Agent workspace paths follow the pattern: .../workspace-{agentId}/skills/...
@@ -374,7 +366,7 @@ export function createSkillsController(
     async loadData(): Promise<void> {
       _mutate({ loadState: "loading", error: "" });
       try {
-        const result = await rpcClient.call<ConfigReadResult>("config.read");
+        const result = await rpcClient.call("config.read");
         const agents = result.config?.agents;
         const agentIds = agents ? Object.keys(agents) : [];
         let targetAgentId = state.targetAgentId;
@@ -408,7 +400,7 @@ export function createSkillsController(
         // Fetch discovered prompt skills in the background (non-blocking).
         if (targetAgentId) {
           rpcClient
-            .call<{ skills: DiscoveredSkill[] }>("skills.list", {
+            .call("skills.list", {
               agentId: targetAgentId,
             })
             .then((skillsResult) => {
@@ -421,7 +413,7 @@ export function createSkillsController(
           // "All Agents" mode: fetch from every agent and merge.
           Promise.allSettled(
             agentIds.map((id) =>
-              rpcClient.call<{ skills: DiscoveredSkill[] }>("skills.list", {
+              rpcClient.call("skills.list", {
                 agentId: id,
               }),
             ),
@@ -451,7 +443,7 @@ export function createSkillsController(
 
     async refreshSkills(): Promise<void> {
       try {
-        const result = await rpcClient.call<{ skills: DiscoveredSkill[] }>(
+        const result = await rpcClient.call(
           "skills.list",
           { agentId: state.targetAgentId },
         );
@@ -602,11 +594,7 @@ export function createSkillsController(
       if (!url || state.isImportingSkill) return;
       _mutate({ isImportingSkill: true });
       try {
-        const result = await rpcClient.call<{
-          ok: boolean;
-          name?: string;
-          fileCount?: number;
-        }>("skills.import", {
+        const result = await rpcClient.call("skills.import", {
           url,
           agentId:
             state.installScope === "agent"

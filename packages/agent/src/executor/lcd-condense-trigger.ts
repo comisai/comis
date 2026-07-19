@@ -122,7 +122,7 @@ function previousSummaryAtDepth(summaries: LcdSummary[], depth: number): string 
  * header for the full contract.
  *
  * @param store          The injected core ContextStorePort (daemon-injected concrete store).
- * @param scope          The SECURITY scope columns (conversationId/tenantId/agentId/sessionKey).
+ * @param scope          The SECURITY scope columns (conversationRef/tenantId/agentId/sessionKey).
  * @param opts           The gating + sizing knobs from `config.contextEngine`.
  * @param summarizerDeps The injected summarizer + model getters (the spend-governance seam). Absent ⇒ no-op.
  * @param now            Injected wall-clock ms (`deps.clock.now()`) — NEVER the ambient time global. Stamps `timestamp`.
@@ -149,13 +149,13 @@ export async function maybeRunCondensePass(
     // breadcrumb the leaf gate leaves, so a disarmed condense pass is
     // diagnosable from logs alone (invariant: no silent trigger disarm).
     logger.debug(
-      { conversationId: scope.conversationId, agentId: scope.agentId, step: "lcd-condense-gate", reason: "bad-window", windowTokens: opts.windowTokens },
+      { conversationRef: scope.conversationRef, agentId: scope.agentId, step: "lcd-condense-gate", reason: "bad-window", windowTokens: opts.windowTokens },
       "lcd condense pass gate skip",
     );
     return;
   }
 
-  const conversationId = scope.conversationId;
+  const conversationRef = scope.conversationRef;
   // Capture a pass-START clock read at entry (the injected clock CALLABLE —
   // NEVER Date.now()/performance.now(), the globals gate). The second read at
   // emit gives the real elapsed; a scalar-only caller degrades to 0.
@@ -190,7 +190,7 @@ export async function maybeRunCondensePass(
     if (run.endOrdinal < run.startOrdinal) {
       logger.warn(
         {
-          conversationId,
+          conversationRef,
           agentId: scope.agentId,
           sessionKey: scope.sessionKey,
           hint: "condense run produced an inverted ordinal window; skipping the pass to avoid corrupting ordering",
@@ -205,7 +205,7 @@ export async function maybeRunCondensePass(
       // emit below). Reuse the injected clock (the globals gate bans Date.now());
       // a scalar-only caller degrades durationMs to 0.
       eventBus?.emit("context:dag_degraded", {
-        conversationId,
+        conversationId: conversationRef,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
         reason: "condense_window_divergence",
@@ -258,7 +258,7 @@ export async function maybeRunCondensePass(
           // observable via a content-free DEBUG with both numbers,
           // never WARN spam, never a throw.
           logger.debug(
-            { conversationId, agentId: scope.agentId, step: "lcd-condense-clamp", summarizerWindow, childTokenBudget, firstChildTokens: run.children[0]!.tokenCount },
+            { conversationRef, agentId: scope.agentId, step: "lcd-condense-clamp", summarizerWindow, childTokenBudget, firstChildTokens: run.children[0]!.tokenCount },
             "lcd condense pass skipped: summarizer window cannot fit a 2-child run",
           );
           return;
@@ -276,7 +276,7 @@ export async function maybeRunCondensePass(
         };
         // Numbers only — per-pass DEBUG, never WARN (the trim is normal adaptive behavior).
         logger.debug(
-          { conversationId, agentId: scope.agentId, step: "lcd-condense-clamp", summarizerWindow, childTokenBudget, keptChildren: keep, trimmedChildren: run.children.length - keep },
+          { conversationRef, agentId: scope.agentId, step: "lcd-condense-clamp", summarizerWindow, childTokenBudget, keptChildren: keep, trimmedChildren: run.children.length - keep },
           "lcd condense run prefix-trimmed to the resolved summarizer window",
         );
       }
@@ -342,7 +342,7 @@ export async function maybeRunCondensePass(
       logger.warn(
         {
           err: hookErr instanceof Error ? hookErr.message : String(hookErr),
-          conversationId,
+          conversationRef,
           agentId: scope.agentId,
           sessionKey: scope.sessionKey,
           hint: "onCondensed callback threw — distillation hook error is non-fatal; condense pass is unaffected",
@@ -375,7 +375,7 @@ export async function maybeRunCondensePass(
     // leaf pass hardcodes condensedSummariesCreated:0 / maxDepthReached:0 — the
     // condense pass fills them). Counts only — never content.
     eventBus?.emit("context:dag_compacted", {
-      conversationId,
+      conversationId: conversationRef,
       agentId: scope.agentId,
       sessionKey: scope.sessionKey,
       leafSummariesCreated: 0,
@@ -390,7 +390,7 @@ export async function maybeRunCondensePass(
     logger.info(
       {
         step: "lcd-condense",
-        conversationId,
+        conversationRef,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
         childCount: effectiveRun.children.length,
@@ -408,7 +408,7 @@ export async function maybeRunCondensePass(
     logger.warn(
       {
         err: err instanceof Error ? err.message : String(err),
-        conversationId,
+        conversationRef,
         agentId: scope.agentId,
         sessionKey: scope.sessionKey,
         hint: "LCD condense pass failed; the turn is unaffected — check the summarizer model/key and LCD store connectivity",

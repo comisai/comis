@@ -2,7 +2,7 @@
 /** Receipt-aware completion-announcement delivery wiring. */
 
 import {
-  parseFormattedSessionKey,
+  conversationScopeToSessionKey,
   resolvePlatformDeliveryResult,
   type ComisLogger,
   type DeliverToChannelOptions,
@@ -146,19 +146,21 @@ export function createAnnouncementDelivery(
       );
       return ok({ delivered: false, failure: "allocation_blocked" });
     }
-    const parsedSession = parseFormattedSessionKey(request.callerSessionKey);
-    if (!parsedSession) {
+    const projectedSession = conversationScopeToSessionKey(
+      request.callerConversation.conversationScope,
+    );
+    if (!projectedSession.ok) {
       deps.logger?.error(
         {
           errorKind: "validation" as const,
-          hint: "retry with the authenticated formatted caller session key",
+          hint: "retry with the authenticated canonical caller conversation",
           step: "completion-announcement-outward-ledger",
         },
-        "Completion announcement caller session key invalid",
+        "Completion announcement caller conversation invalid",
       );
       return ok({ delivered: false, failure: "allocation_blocked" });
     }
-    const resolvedRoot = tryCatch(() => resolveRootRunId(request.agentId, parsedSession));
+    const resolvedRoot = tryCatch(() => resolveRootRunId(request.agentId, projectedSession.value));
     if (!resolvedRoot.ok || resolvedRoot.value.length === 0) {
       deps.logger?.error(
         {

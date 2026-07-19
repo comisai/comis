@@ -81,7 +81,11 @@ function createRecordingStore(): RecordingStore {
 
 function createDeps(over: Partial<SubAgentRunnerDeps> = {}): SubAgentRunnerDeps {
   return {
-    sessionStore: { save: vi.fn(), delete: vi.fn(), loadByFormattedKey: vi.fn() },
+    sessionStore: {
+      save: vi.fn(() => ok(undefined)),
+      delete: vi.fn(() => ok(false)),
+      loadByRef: vi.fn(() => ok(undefined)),
+    },
     // A never-resolving executeAgent keeps the run RUNNING so the heartbeat can
     // tick before terminal settle (each test that needs completion overrides it).
     executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
@@ -195,9 +199,9 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
 
   it("records the child assembly lease and further-attenuated capabilities for descendants", async () => {
     const store = createRecordingStore();
-    let receivedContext: Parameters<SubAgentRunnerDeps["executeAgent"]>[7];
+    let receivedContext: Parameters<SubAgentRunnerDeps["executeAgent"]>[8];
     const executeAgent: SubAgentRunnerDeps["executeAgent"] = vi.fn(async (...args) => {
-      receivedContext = args[7];
+      receivedContext = args[8];
       receivedContext?.onAssemblyAuthority({
         rootRunId: "root-child",
         leaseId: "lease-child",

@@ -461,7 +461,19 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   });
 
   eventBus.on("diagnostic:message_processed", (payload) => {
-    deliveryBuffer.push(deliveryEventToRow(payload));
+    const deliveryRow = deliveryEventToRow(payload);
+    if (deliveryRow === undefined) {
+      logger?.warn(
+        {
+          agentId: payload.agentId,
+          hint: "Ensure the request boundary resolves tenant, conversation authority, and destination endpoint before execution",
+          errorKind: "precondition" as const,
+        },
+        "Delivery observability row omitted because authority is unavailable",
+      );
+    } else {
+      deliveryBuffer.push(deliveryRow);
+    }
 
     // Construct a DiagnosticEvent-like object for the diagnostic buffer
     diagnosticBuffer.push(diagnosticEventToRow({

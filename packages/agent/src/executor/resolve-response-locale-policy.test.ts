@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   evaluateResponseLocale,
+  resolveLocale,
   resolveResponseLocalePolicy,
 } from "./resolve-response-locale-policy.js";
 
@@ -17,7 +18,6 @@ describe("resolveResponseLocalePolicy", () => {
   it("uses typed resolution order and keeps translation target separate", () => {
     expect(resolveResponseLocalePolicy({
       requestLocale: "fr-CA",
-      workspaceLocale: "de-DE",
       translationTarget: "ja-JP",
     })).toEqual({
       locale: "fr-CA",
@@ -27,10 +27,36 @@ describe("resolveResponseLocalePolicy", () => {
     });
   });
 
-  it("returns unset for invalid or absent hints instead of coercing script to English", () => {
-    expect(resolveResponseLocalePolicy({ workspaceLocale: "not a locale" })).toEqual({
+  it("returns unset for invalid or absent request hints instead of coercing script to English", () => {
+    expect(resolveResponseLocalePolicy({ requestLocale: "not a locale" })).toEqual({
       source: "unset",
       enforceLocale: false,
+    });
+  });
+
+  it("records deterministic locale source confidence", () => {
+    expect(resolveLocale({ explicitLocale: "he-IL", requestLocale: "fr-CA" })).toEqual({
+      policy: { locale: "he-IL", source: "explicit", enforceLocale: true },
+      confidence: "high",
+    });
+    expect(resolveLocale({ requestLocale: "fr-CA" })).toEqual({
+      policy: { locale: "fr-CA", source: "request", enforceLocale: false },
+      confidence: "medium",
+    });
+    expect(resolveLocale({})).toEqual({
+      policy: { source: "unset", enforceLocale: false },
+      confidence: "low",
+    });
+  });
+
+  it("does not accept workspace or conversation prose as locale input", () => {
+    const proseHints = {
+      workspaceLocale: "de-DE",
+      conversationLocale: "ja-JP",
+    } as unknown as Parameters<typeof resolveLocale>[0];
+    expect(resolveLocale(proseHints)).toEqual({
+      policy: { source: "unset", enforceLocale: false },
+      confidence: "low",
     });
   });
 

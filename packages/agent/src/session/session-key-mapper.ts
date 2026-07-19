@@ -149,13 +149,13 @@ export function sessionKeyToInboundMessageLedgerPath(
  *
  * @param filePath - Absolute path to a JSONL session file
  * @param baseDir - The same baseDir used in sessionKeyToPath
- * @param agentId - Optional agentId to set on the returned SessionKey
+ * @param agentId - Agent identity supplied by the containing workspace tree
  * @returns SessionKey if the path is valid, undefined otherwise
  */
 export function pathToSessionKey(
   filePath: string,
   baseDir: string,
-  agentId?: string,
+  agentId: string,
 ): SessionKey | undefined {
   if (!filePath) return undefined;
 
@@ -196,6 +196,7 @@ export function pathToSessionKey(
 
   const key: SessionKey = {
     tenantId: decodeComponent(encodedTenant!),
+    agentId,
     userId: decodeComponent(segments[0]),
     channelId: decodeComponent(encodedChannel!),
   };
@@ -216,10 +217,6 @@ export function pathToSessionKey(
     }
   }
 
-  if (agentId !== undefined) {
-    key.agentId = agentId;
-  }
-
   return key;
 }
 
@@ -230,7 +227,7 @@ export function pathToSessionKey(
 export function inboundMessageLedgerPathToSessionKey(
   filePath: string,
   baseDir: string,
-  agentId?: string,
+  agentId: string,
 ): SessionKey | undefined {
   if (!filePath.endsWith(INBOUND_MESSAGE_LEDGER_SUFFIX)) return undefined;
 

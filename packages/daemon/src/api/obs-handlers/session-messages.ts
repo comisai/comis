@@ -308,12 +308,12 @@ export function extractSessionMessages(
         for (const file of sessionFiles) {
           const { name, path: filePath } = file;
           if (!name.endsWith(".jsonl") || name.endsWith(".trajectory.jsonl")) continue;
-          const ledgerKey = inboundMessageLedgerPathToSessionKey(filePath, sessionsBase);
+          const ledgerKey = inboundMessageLedgerPathToSessionKey(filePath, sessionsBase, tree.agentId);
           const isLedger = ledgerKey !== undefined;
           const transcriptFile = isLedger
             ? `${filePath.slice(0, -INBOUND_MESSAGE_LEDGER_SUFFIX.length)}.jsonl`
             : filePath;
-          const key = ledgerKey ?? pathToSessionKey(filePath, sessionsBase);
+          const key = ledgerKey ?? pathToSessionKey(filePath, sessionsBase, tree.agentId);
           if (key === undefined) continue; // Not a session-log filename shape.
           if (filter.chat !== undefined && filter.chat !== key.channelId) continue;
           if (coverage.filesScanned >= MAX_SESSION_FILES) {

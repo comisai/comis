@@ -83,7 +83,10 @@ describe("generic runtime specialization boundary", () => {
   });
 
   it("wraps server instructions before prompt exposure", () => {
-    const promptAssembly = source("packages/agent/src/executor/prompt-assembly.ts");
+    const promptAssembly = [
+      source("packages/agent/src/executor/prompt-assembly-shared.ts"),
+      source("packages/agent/src/executor/prompt-dynamic-preamble.ts"),
+    ].join("\n");
     expect(promptAssembly).toContain("compileMcpInstructionSection");
     expect(promptAssembly).toMatch(/wrapExternalContent\([\s\S]*server/iu);
   });
@@ -98,6 +101,20 @@ describe("generic runtime specialization boundary", () => {
       "packages/agent/src/executor/stream-wrappers/request-body/tool-result-clearing.ts",
     ]) {
       expect(source(path)).not.toMatch(/response language|reply language/iu);
+    }
+  });
+
+  it("does not recover control state from workspace headings or rendered skill xml", () => {
+    for (const path of [
+      "packages/agent/src/executor/prompt-assembly-shared.ts",
+      "packages/agent/src/executor/prompt-assembly-runtime.ts",
+      "packages/agent/src/executor/prompt-parent-cache.ts",
+      "packages/agent/src/executor/prompt-dynamic-preamble.ts",
+      "packages/agent/src/executor/prompt-compiler.ts",
+    ]) {
+      const text = source(path);
+      expect(text).not.toMatch(/parse(?:d|s|r)?[^\n]*(?:skill[^\n]*xml|xml[^\n]*skill)/iu);
+      expect(text).not.toMatch(/unescapeXml|extractUserLanguage|preferred-language field|reply-language tier/iu);
     }
   });
 });

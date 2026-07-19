@@ -1,12 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createApprovalHandlers } from "./approval-handlers.js";
-import type { ApprovalGate } from "@comis/core";
+import { ConversationRefSchema, type ApprovalGate } from "@comis/core";
 import type { ApprovalRequest } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Mock helpers
 // ---------------------------------------------------------------------------
+
+const CONVERSATION_REF = ConversationRefSchema.parse(`cv_${"a".repeat(43)}`);
+const OTHER_CONVERSATION_REF = ConversationRefSchema.parse(`cv_${"b".repeat(43)}`);
+const AUTH_PARAMS = {
+  tenant_id: "tenant-a",
+  agent_id: "agent-1",
+  conversation_ref: CONVERSATION_REF,
+};
 
 function makePendingRequest(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
   return {
@@ -16,7 +24,9 @@ function makePendingRequest(overrides: Partial<ApprovalRequest> = {}): ApprovalR
     action: overrides.action ?? "agents.restart",
     params: overrides.params ?? { agentId: "bot-1" },
     agentId: overrides.agentId ?? "agent-1",
-    sessionKey: overrides.sessionKey ?? "default:user1:discord",
+    tenantId: overrides.tenantId ?? "tenant-a",
+    conversationRef: overrides.conversationRef ?? CONVERSATION_REF,
+    resolvingPrincipalId: overrides.resolvingPrincipalId ?? "principal-1",
     trustLevel: overrides.trustLevel ?? "user",
     callbackOwner: overrides.callbackOwner ?? {
       tenantId: "default",
@@ -56,7 +66,7 @@ describe("createApprovalHandlers", () => {
       mockGate = createMockApprovalGate([]);
       handlers = createApprovalHandlers({ approvalGate: mockGate });
 
-      const result = await handlers["admin.approval.pending"]!({});
+      const result = await handlers["admin.approval.pending"]!(AUTH_PARAMS);
 
       expect(result).toEqual({ requests: [], total: 0 });
     });
@@ -66,7 +76,7 @@ describe("createApprovalHandlers", () => {
       mockGate = createMockApprovalGate([req]);
       handlers = createApprovalHandlers({ approvalGate: mockGate });
 
-      const result = (await handlers["admin.approval.pending"]!({})) as {
+      const result = (await handlers["admin.approval.pending"]!(AUTH_PARAMS)) as {
         requests: ApprovalRequest[];
         total: number;
       };
@@ -83,7 +93,7 @@ describe("createApprovalHandlers", () => {
       mockGate = createMockApprovalGate([req1, req2, req3]);
       handlers = createApprovalHandlers({ approvalGate: mockGate });
 
-      const result = (await handlers["admin.approval.pending"]!({})) as {
+      const result = (await handlers["admin.approval.pending"]!(AUTH_PARAMS)) as {
         requests: ApprovalRequest[];
         total: number;
       };
@@ -107,6 +117,7 @@ describe("createApprovalHandlers", () => {
 
     it("approve returns success object with requestId and approved: true", async () => {
       const result = (await handlers["admin.approval.resolve"]!({
+        ...AUTH_PARAMS,
         requestId: "req-resolve",
         approved: true,
         approvedBy: "admin",
@@ -120,6 +131,7 @@ describe("createApprovalHandlers", () => {
 
     it("deny returns success object with reason", async () => {
       const result = (await handlers["admin.approval.resolve"]!({
+        ...AUTH_PARAMS,
         requestId: "req-resolve",
         approved: false,
         reason: "Denied",
@@ -156,6 +168,7 @@ describe("createApprovalHandlers", () => {
     it("non-boolean approved (string 'true') throws Error", async () => {
       await expect(
         handlers["admin.approval.resolve"]!({
+          ...AUTH_PARAMS,
           requestId: "req-1",
           approved: "true",
         }),
@@ -165,6 +178,7 @@ describe("createApprovalHandlers", () => {
     it("unknown requestId throws Error with 'not found' message", async () => {
       await expect(
         handlers["admin.approval.resolve"]!({
+          ...AUTH_PARAMS,
           requestId: "nonexistent-id",
           approved: true,
         }),
@@ -183,6 +197,7 @@ describe("createApprovalHandlers", () => {
       handlers = createApprovalHandlers({ approvalGate: mockGate });
 
       const result = (await handlers["admin.approval.resolve"]!({
+        ...AUTH_PARAMS,
         requestId: "req-default",
         approved: true,
       })) as { approvedBy: string };
@@ -205,12 +220,13 @@ describe("createApprovalHandlers", () => {
       ).rejects.toThrow(/Missing required parameter: approved/i);
     });
 
-    it("resolves every pending request when no sessionKey filter is provided in resolveAll params", async () => {
+    it("resolves every pending request within the supplied conversation authority", async () => {
       const r1 = makePendingRequest({ requestId: "ra-1" });
       const r2 = makePendingRequest({ requestId: "ra-2" });
       mockGate = createMockApprovalGate([r1, r2]);
       handlers = createApprovalHandlers({ approvalGate: mockGate });
       const result = (await handlers["admin.approval.resolveAll"]!({
+        ...AUTH_PARAMS,
         approved: true,
         approvedBy: "ops",
       })) as { resolved: number; requestIds: string[] };
@@ -219,14 +235,14 @@ describe("createApprovalHandlers", () => {
       expect(mockGate.resolveApproval).toHaveBeenCalledTimes(2);
     });
 
-    it("resolves only requests matching the provided sessionKey filter in resolveAll params", async () => {
-      const ra = makePendingRequest({ requestId: "match-1", sessionKey: "tenant-a:user1:slack" });
-      const rb = makePendingRequest({ requestId: "miss-1", sessionKey: "tenant-b:user2:discord" });
+    it("resolves only requests matching the provided conversation authority", async () => {
+      const ra = makePendingRequest({ requestId: "match-1" });
+      const rb = makePendingRequest({ requestId: "miss-1", tenantId: "tenant-b", conversationRef: OTHER_CONVERSATION_REF });
       mockGate = createMockApprovalGate([ra, rb]);
       handlers = createApprovalHandlers({ approvalGate: mockGate });
       const result = (await handlers["admin.approval.resolveAll"]!({
+        ...AUTH_PARAMS,
         approved: false,
-        sessionKey: "tenant-a:user1:slack",
         reason: "bulk-deny",
       })) as { resolved: number; requestIds: string[] };
       expect(result.resolved).toBe(1);
@@ -239,6 +255,7 @@ describe("createApprovalHandlers", () => {
       mockGate = createMockApprovalGate([]);
       handlers = createApprovalHandlers({ approvalGate: mockGate });
       const result = (await handlers["admin.approval.resolveAll"]!({
+        ...AUTH_PARAMS,
         approved: true,
       })) as { resolved: number; requestIds: string[] };
       expect(result.resolved).toBe(0);
@@ -251,24 +268,27 @@ describe("createApprovalHandlers", () => {
   // -------------------------------------------------------------------------
 
   describe("admin.approval.clearDenialCache", () => {
-    it("forwards sessionKey to ApprovalGate.clearDenialCache and returns cleared:true on success", async () => {
+    it("forwards conversation authority to ApprovalGate.clearDenialCache", async () => {
       const clearDenialCache = vi.fn();
       mockGate = { ...createMockApprovalGate([]), clearDenialCache } as ApprovalGate;
       handlers = createApprovalHandlers({ approvalGate: mockGate });
       const result = (await handlers["admin.approval.clearDenialCache"]!({
-        sessionKey: "t1:u1:slack",
+        ...AUTH_PARAMS,
       })) as { cleared: true };
       expect(result.cleared).toBe(true);
-      expect(clearDenialCache).toHaveBeenCalledWith("t1:u1:slack");
+      expect(clearDenialCache).toHaveBeenCalledWith({
+        tenantId: "tenant-a",
+        agentId: "agent-1",
+        conversationRef: CONVERSATION_REF,
+      });
     });
 
-    it("passes undefined sessionKey to clearDenialCache when sessionKey param is omitted entirely", async () => {
+    it("rejects clearing denial cache without explicit conversation authority", async () => {
       const clearDenialCache = vi.fn();
       mockGate = { ...createMockApprovalGate([]), clearDenialCache } as ApprovalGate;
       handlers = createApprovalHandlers({ approvalGate: mockGate });
-      const result = (await handlers["admin.approval.clearDenialCache"]!({})) as { cleared: true };
-      expect(result.cleared).toBe(true);
-      expect(clearDenialCache).toHaveBeenCalledWith(undefined);
+      await expect(handlers["admin.approval.clearDenialCache"]!({})).rejects.toThrow();
+      expect(clearDenialCache).not.toHaveBeenCalled();
     });
   });
 });

@@ -26,11 +26,14 @@ import type {
   ApprovalGate,
   ApprovalRequest,
   ClockPort,
+  ChannelEndpoint,
+  ConversationRef,
   CallbackChoice,
   CallbackRenderError,
 } from "@comis/core";
 import {
-  parseFormattedSessionKey,
+  ConversationRefSchema,
+  ChannelEndpointSchema,
   parseCallbackData,
   verifyCallbackData,
   renderCallbackData,
@@ -48,6 +51,10 @@ export type InboundCallback = {
   threadId?: string;
   /** Agent selected by the inbound router before callback dispatch. */
   agentId: string;
+  /** Opaque conversation authority resolved by the inbound router. */
+  conversationRef: ConversationRef;
+  /** Canonical principal resolved from the platform assertion. */
+  resolvingPrincipalId: string;
   /** Orchestrator-derived from channelKey BEFORE calling route() — trusted, never on the wire. */
   sessionKey: string;
   /** Platform-echoed signed callback payload OR a plain-text reply. */
@@ -84,6 +91,9 @@ export interface InteractiveCallbackRouter {
 export interface GraphReportCallbackRegistration {
   graphId: string;
   tenantId: string;
+  conversationRef: ConversationRef;
+  resolvingPrincipalId: string;
+  endpoint: ChannelEndpoint;
   userId: string;
   sessionKey: string;
   agentId: string;
@@ -147,8 +157,11 @@ function canonicalGraphReportIdentity(
     agentId: registration.agentId,
     channelKey: registration.channelKey,
     channelType: registration.channelType,
+    conversationRef: registration.conversationRef,
+    endpoint: registration.endpoint,
     graphId: registration.graphId,
     kind: "graph_report",
+    resolvingPrincipalId: registration.resolvingPrincipalId,
     sessionKey: registration.sessionKey,
     tenantId: registration.tenantId,
     userId: registration.userId,
@@ -190,6 +203,9 @@ function parseStoredGraphReportRegistration(raw: unknown): GraphReportCallbackRe
   if (
     typeof candidate.graphId !== "string"
     || typeof candidate.tenantId !== "string"
+    || typeof candidate.conversationRef !== "string"
+    || typeof candidate.resolvingPrincipalId !== "string"
+    || typeof candidate.endpoint !== "object"
     || typeof candidate.userId !== "string"
     || typeof candidate.sessionKey !== "string"
     || typeof candidate.agentId !== "string"
@@ -197,9 +213,15 @@ function parseStoredGraphReportRegistration(raw: unknown): GraphReportCallbackRe
     || typeof candidate.channelKey !== "string"
     || typeof candidate.expiresAt !== "number"
   ) return undefined;
+  const conversationRef = ConversationRefSchema.safeParse(candidate.conversationRef);
+  const endpoint = ChannelEndpointSchema.safeParse(candidate.endpoint);
+  if (!conversationRef.success || !endpoint.success) return undefined;
   return {
     graphId: candidate.graphId,
     tenantId: candidate.tenantId,
+    conversationRef: conversationRef.data,
+    resolvingPrincipalId: candidate.resolvingPrincipalId,
+    endpoint: endpoint.data,
     userId: candidate.userId,
     sessionKey: candidate.sessionKey,
     agentId: candidate.agentId,
@@ -210,11 +232,14 @@ function parseStoredGraphReportRegistration(raw: unknown): GraphReportCallbackRe
 }
 
 function graphReportOwnerIsValid(registration: GraphReportCallbackRegistration): boolean {
-  const parsedSession = parseFormattedSessionKey(registration.sessionKey);
-  return parsedSession !== undefined
-    && parsedSession.tenantId === registration.tenantId
-    && parsedSession.userId === registration.userId
-    && parsedSession.channelId === registration.channelKey
+  return typeof registration.conversationRef === "string"
+    && registration.conversationRef.length > 0
+    && registration.resolvingPrincipalId.length > 0
+    && registration.tenantId.length > 0
+    && registration.userId.length > 0
+    && registration.sessionKey.length > 0
+    && registration.endpoint.channelType === registration.channelType
+    && registration.endpoint.conversationId === registration.channelKey
     && registration.graphId.length > 0
     && registration.agentId.length > 0
     && registration.channelType.length > 0
@@ -243,9 +268,7 @@ function parsePlainText(
 }
 
 function inboundPrincipalIsConsistent(inbound: InboundCallback): boolean {
-  const session = parseFormattedSessionKey(inbound.sessionKey);
-  return session !== undefined
-    && typeof inbound.tenantId === "string"
+  return typeof inbound.tenantId === "string"
     && inbound.tenantId.length > 0
     && typeof inbound.inboundUserId === "string"
     && inbound.inboundUserId.length > 0
@@ -255,10 +278,12 @@ function inboundPrincipalIsConsistent(inbound: InboundCallback): boolean {
     && inbound.channelKey.length > 0
     && typeof inbound.agentId === "string"
     && inbound.agentId.length > 0
-    && session.tenantId === inbound.tenantId
-    && session.userId === inbound.inboundUserId
-    && session.channelId === inbound.channelKey
-    && session.threadId === inbound.threadId;
+    && typeof inbound.conversationRef === "string"
+    && inbound.conversationRef.length > 0
+    && typeof inbound.resolvingPrincipalId === "string"
+    && inbound.resolvingPrincipalId.length > 0
+    && typeof inbound.sessionKey === "string"
+    && inbound.sessionKey.length > 0;
 }
 
 export function approvalRequestIsOwnedByInbound(
@@ -267,8 +292,10 @@ export function approvalRequestIsOwnedByInbound(
 ): boolean {
   const owner = request.callbackOwner;
   return inboundPrincipalIsConsistent(inbound)
-    && request.sessionKey === inbound.sessionKey
+    && request.tenantId === inbound.tenantId
     && request.agentId === inbound.agentId
+    && request.conversationRef === inbound.conversationRef
+    && request.resolvingPrincipalId === inbound.resolvingPrincipalId
     && owner.tenantId === inbound.tenantId
     && owner.userId === inbound.inboundUserId
     && owner.channelType === inbound.channelType
@@ -281,12 +308,14 @@ function graphReportIsOwnedByInbound(
   inbound: InboundCallback,
 ): boolean {
   return inboundPrincipalIsConsistent(inbound)
-    && report.sessionKey === inbound.sessionKey
+    && report.conversationRef === inbound.conversationRef
+    && report.resolvingPrincipalId === inbound.resolvingPrincipalId
     && report.agentId === inbound.agentId
     && report.tenantId === inbound.tenantId
     && report.userId === inbound.inboundUserId
     && report.channelType === inbound.channelType
-    && report.channelKey === inbound.channelKey;
+    && report.channelKey === inbound.channelKey
+    && report.endpoint.threadId === inbound.threadId;
 }
 
 /**
@@ -473,7 +502,12 @@ export function createInteractiveCallbackRouter(
     if (command === null) return { kind: "unknown" };
 
     const { verb, shortIdSuffix } = command;
-    const pend = gate.pendingForSession(inbound.sessionKey)
+    const pend = gate.pendingForAuthority({
+      tenantId: inbound.tenantId,
+      agentId: inbound.agentId,
+      conversationRef: inbound.conversationRef,
+      resolvingPrincipalId: inbound.resolvingPrincipalId,
+    })
       .filter((request) => approvalRequestIsOwnedByInbound(request, inbound));
 
     if (shortIdSuffix !== undefined) {

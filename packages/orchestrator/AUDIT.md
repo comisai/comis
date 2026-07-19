@@ -1,9 +1,9 @@
 # ChannelManagerDeps Audit
 
 **Generated:** 2026-05-11
-**Interface source:** `packages/orchestrator/src/channel-manager.ts` (45-field interface)
+**Interface source:** `packages/orchestrator/src/channel-manager.ts` (48-field interface)
 **Construction site:** `packages/daemon/src/wiring/setup-channels/setup-channels-runtime.ts` (single site — `createChannelManager({`)
-**Field count:** 45 (9 required + 36 optional + 0 stale-fallback)
+**Field count:** 48 (12 required + 36 optional + 0 stale-fallback)
 
 This file is co-located with the orchestrator package. `files: ["dist"]` in `packages/orchestrator/package.json` excludes it from the npm tarball.
 
@@ -23,6 +23,9 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | eventBus | required | — | packages/orchestrator/src/channel-manager.ts:79 |
 | messageRouter | required | — | packages/orchestrator/src/channel-manager.ts:80 |
 | sessionManager | required | — | packages/orchestrator/src/channel-manager.ts:81 |
+| principalResolver | required | — | packages/orchestrator/src/channel-manager.ts:159 |
+| localization | required | — | packages/orchestrator/src/channel-manager.ts:160 |
+| getDmScope | required | — | packages/orchestrator/src/channel-manager.ts:161 |
 | createExecutor | required | — | packages/orchestrator/src/channel-manager.ts:82 |
 | persistInboundMessage | required | — | packages/orchestrator/src/channel-manager.ts:161 |
 | adapters | optional | channelRegistry plugins are the sole adapter source (production path when adapters is empty) | packages/orchestrator/src/channel-manager.ts:84 |
@@ -71,7 +74,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Summary
 
-- **Total fields:** 45 (9 required + 36 optional)
+- **Total fields:** 48 (12 required + 36 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value)
 

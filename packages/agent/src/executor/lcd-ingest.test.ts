@@ -15,7 +15,7 @@
  *  - Parts via codec: each `append` carries `messageToParts(msg)` — a
  *    `tool_use` block survives as a STRUCTURED block (NOT flattened to text).
  *  - Scope correct: the SECURITY scope columns
- *    `{ conversationId, tenantId, agentId, sessionKey }` are all populated.
+ *    `{ conversationRef, tenantId, agentId, sessionKey }` are all populated.
  *  - Non-fatal: a throwing `append` does NOT propagate out of
  *    `ingestTurn` — it logs + continues (subsequent messages still attempted).
  *  - Round-trip integration (the load-bearing proof): a multi-step
@@ -30,6 +30,7 @@ import {
   type AppendMessageInput,
   type ContextStorePort,
   type ContextStoreScope,
+  type ConversationRef,
   messageToParts,
 } from "@comis/core";
 import type { Message } from "@earendil-works/pi-ai";
@@ -48,18 +49,13 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 // ---------------------------------------------------------------------------
 
 const FIXED_NOW = 1000;
-const CONVERSATION_ID = "conv-ingest";
+const CONVERSATION_ID = `cv_${"a".repeat(43)}` as ConversationRef;
 
 const SCOPE: ContextStoreScope = {
-  conversationId: CONVERSATION_ID,
+  conversationRef: CONVERSATION_ID,
   tenantId: "tenant_a",
   agentId: "agent_a",
-  // The codebase invariant is conversationId === sessionKey === formattedKey
-  // (executor-post-execution.ts:894). The fail-closed predicate
-  // refuses a conversationId/sessionKey CONFLICT, so the shared fixture must
-  // satisfy the invariant — the shrink-guard tests below exercise the SHRINK
-  // path, not the fail-closed path.
-  sessionKey: CONVERSATION_ID,
+  sessionKey: "tenant_a:agent_a:user_a:channel_a",
 };
 
 function userMsg(text: string): Message {
@@ -158,7 +154,7 @@ function roleOf(m: AgentMessage): string {
 }
 
 const dagConfig = (freshTailTurns: number) =>
-  ({ enabled: true, thinkingKeepTurns: 10, historyTurns: 15, version: "dag", freshTailTurns }) as unknown as Parameters<typeof createLcdContextEngine>[0];
+  ({ enabled: true, thinkingKeepTurns: 10, freshTailTurns }) as unknown as Parameters<typeof createLcdContextEngine>[0];
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -278,7 +274,7 @@ describe("ingestTurn", () => {
     const scope = appended[0]!.scope;
     // No undefined/empty scoping column — a missing one would create a
     // cross-session-readable row (the scope-isolation threat).
-    expect(scope.conversationId).toBeTruthy();
+    expect(scope.conversationRef).toBeTruthy();
     expect(scope.tenantId).toBeTruthy();
     expect(scope.agentId).toBeTruthy();
     expect(scope.sessionKey).toBeTruthy();
@@ -341,10 +337,11 @@ describe("ingestTurn", () => {
       logger: mockLogger as unknown as ContextEngineDeps["logger"],
       getModel: () => ({ reasoning: true, contextWindow: 200_000, maxTokens: 8_192 }),
       contextStore: store,
-      conversationId: CONVERSATION_ID,
+      conversationRef: CONVERSATION_ID,
       agentId: "agent_a",
       tenantId: "tenant_a", // the assembler reads with the full scope (else it fails closed)
-      sessionKey: CONVERSATION_ID, // conversationId === sessionKey invariant
+      sessionKey: "tenant_a:agent_a:user_a:channel_a",
+      clock: { now: () => FIXED_NOW } as ContextEngineDeps["clock"],
     };
     const engine = createLcdContextEngine(dagConfig(1), deps);
     const out = await engine.transformContext(turn);
@@ -382,10 +379,11 @@ describe("ingestTurn", () => {
       logger: createMockLogger() as unknown as ContextEngineDeps["logger"],
       getModel: () => ({ reasoning: true, contextWindow: 200_000, maxTokens: 8_192 }),
       contextStore: store,
-      conversationId: CONVERSATION_ID,
+      conversationRef: CONVERSATION_ID,
       agentId: "agent_a",
       tenantId: "tenant_a",
-      sessionKey: CONVERSATION_ID,
+      sessionKey: "tenant_a:agent_a:user_a:channel_a",
+      clock: { now: () => FIXED_NOW } as ContextEngineDeps["clock"],
     };
     return createLcdContextEngine(dagConfig(freshTailTurns), deps);
   }
@@ -446,9 +444,9 @@ describe("ingestTurn", () => {
     expect(logger.debug).toHaveBeenCalledWith(
       expect.objectContaining({
         step: "lcd-ingest",
-        conversationId: CONVERSATION_ID,
+        conversationRef: CONVERSATION_ID,
         agentId: "agent_a",
-        sessionKey: CONVERSATION_ID,
+        sessionKey: "tenant_a:agent_a:user_a:channel_a",
         appended: 1,
       }),
       expect.any(String),
@@ -461,7 +459,7 @@ describe("ingestTurn", () => {
 // SKIP cleanly (with a WARN) when the live array is shorter than the store's
 // persisted high-water mark, rather than slicing past the end and either
 // persisting nothing forever or re-appending at an existing seq (the unique
-// (conversationId, seq) index would throw, the per-entry catch would swallow it,
+// (conversationRef, seq) index would throw, the per-entry catch would swallow it,
 // and the turn's messages would be silently never persisted).
 // ---------------------------------------------------------------------------
 
@@ -540,7 +538,7 @@ describe("ingestTurnGuarded (shrink guard)", () => {
         liveLen: 4,
         ingestedLiveLen: 6,
         hint: expect.any(String),
-        conversationId: CONVERSATION_ID,
+        conversationRef: CONVERSATION_ID,
       }),
       expect.any(String),
     );
@@ -637,11 +635,9 @@ describe("ingestTurnGuarded (shrink guard)", () => {
 // Fail-closed rollover predicate: an
 // ambiguous/malformed scope must REFUSE the ingest write (skip + WARN,
 // errorKind "precondition") rather than silently reattach a turn's messages to
-// the WRONG (prior) conversation. The codebase invariant is
-// conversationId === sessionKey === formattedKey (executor-post-execution.ts:894);
-// an empty security column OR a conversationId/sessionKey conflict is internally
-// inconsistent — refuse, never guess. Without the predicate, a malformed
-// scope's write would PROCEED.
+// the wrong conversation. Invalid authority columns are refused; the formatted
+// session key is display metadata and is deliberately not compared with the
+// opaque conversation reference.
 // ---------------------------------------------------------------------------
 
 describe("ingestTurnGuarded (fail-closed rollover predicate)", () => {
@@ -663,7 +659,7 @@ describe("ingestTurnGuarded (fail-closed rollover predicate)", () => {
       expect.objectContaining({
         errorKind: "precondition",
         hint: expect.any(String),
-        conversationId: CONVERSATION_ID,
+        conversationRef: CONVERSATION_ID,
       }),
       expect.any(String),
     );
@@ -687,7 +683,7 @@ describe("ingestTurnGuarded (fail-closed rollover predicate)", () => {
     const { store, appended } = makeStoreWithPersistedCount(0);
     const logger = createMockLogger();
     // A whitespace-only column is as ambiguous as an empty one — trim before the check.
-    const scope: ContextStoreScope = { ...SCOPE, sessionKey: "   ", conversationId: "   " };
+    const scope: ContextStoreScope = { ...SCOPE, sessionKey: "   " };
 
     ingestTurnGuarded(store, scope, LIVE, FIXED_NOW, logger);
 
@@ -698,10 +694,10 @@ describe("ingestTurnGuarded (fail-closed rollover predicate)", () => {
     );
   });
 
-  it("an empty conversationId is refused (write SKIPPED) and WARNs", () => {
+  it("an empty conversationRef is refused (write SKIPPED) and WARNs", () => {
     const { store, appended } = makeStoreWithPersistedCount(0);
     const logger = createMockLogger();
-    const scope: ContextStoreScope = { ...SCOPE, conversationId: "" };
+    const scope: ContextStoreScope = { ...SCOPE, conversationRef: "" };
 
     ingestTurnGuarded(store, scope, LIVE, FIXED_NOW, logger);
 
@@ -712,13 +708,10 @@ describe("ingestTurnGuarded (fail-closed rollover predicate)", () => {
     );
   });
 
-  it("a conversationId that conflicts with its sessionKey is refused rather than reattached", () => {
+  it("an invalid opaque conversation reference is refused", () => {
     const { store, appended } = makeStoreWithPersistedCount(0);
     const logger = createMockLogger();
-    // The codebase invariant is conversationId === sessionKey (both = formattedKey).
-    // A mismatch is internally inconsistent — refuse rather than guess WHICH
-    // conversation to attach to (the silent-cross-session-merge threat).
-    const scope: ContextStoreScope = { ...SCOPE, conversationId: "conv-A", sessionKey: "conv-B" };
+    const scope: ContextStoreScope = { ...SCOPE, conversationRef: "not-an-authority-ref" as ConversationRef };
 
     ingestTurnGuarded(store, scope, LIVE, FIXED_NOW, logger);
 
@@ -729,15 +722,14 @@ describe("ingestTurnGuarded (fail-closed rollover predicate)", () => {
     );
   });
 
-  it("a well-formed, consistent scope still ingests (the predicate does not over-refuse)", () => {
+  it("a valid opaque reference and distinct display key ingest successfully", () => {
     const { store, appended } = makeStoreWithPersistedCount(0);
     const logger = createMockLogger();
-    // conversationId === sessionKey, all columns populated → safe → ingest proceeds.
     const scope: ContextStoreScope = {
-      conversationId: "sess-ok",
+      conversationRef: CONVERSATION_ID,
       tenantId: "tenant_a",
       agentId: "agent_a",
-      sessionKey: "sess-ok",
+      sessionKey: "tenant_a:agent_a:user_a:channel_a",
     };
 
     ingestTurnGuarded(store, scope, LIVE, FIXED_NOW, logger);
@@ -753,18 +745,18 @@ describe("ingestTurnGuarded (fail-closed rollover predicate)", () => {
   it("isScopeSafeForIngest reports ok for a consistent scope and not-ok with a reason for a malformed one", () => {
     expect(
       isScopeSafeForIngest({
-        conversationId: "k",
+        conversationRef: CONVERSATION_ID,
         tenantId: "t",
         agentId: "a",
-        sessionKey: "k",
+        sessionKey: "display-key",
       }),
     ).toEqual({ ok: true });
 
     const bad = isScopeSafeForIngest({
-      conversationId: "k",
+      conversationRef: CONVERSATION_ID,
       tenantId: "",
       agentId: "a",
-      sessionKey: "k",
+      sessionKey: "display-key",
     });
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(typeof bad.reason).toBe("string");

@@ -48,7 +48,7 @@ import type { AgentCapability, ComisLogger, TypedEventBus } from "@comis/core";
 export interface EmitCapabilityAuditDeps {
   container: {
     eventBus: Pick<TypedEventBus, "emitSafely">;
-    config: { tenantId?: string };
+    config: { tenantId: string };
   };
   logger?: Pick<ComisLogger, "warn">;
 }
@@ -137,7 +137,7 @@ export function emitCapabilityAudit(
 ): void {
   const isDeny = record.decision === "deny";
   const timestamp = systemNowMs();
-  const tenantId = deps.container.config.tenantId ?? "default";
+  const tenantId = deps.container.config.tenantId;
 
   // The action class for the durable trail: a DENY is the destructive-intent
   // signal; an ALLOW derives a read|mutate from the capability's mutation

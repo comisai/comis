@@ -16,6 +16,35 @@
  * @module
  */
 
+import type { AppConfig } from "@comis/core";
+
+const NON_SECRET_SECTIONS = ["tenantId", "logLevel", "gateway"] as const;
+type NonSecretSection = (typeof NON_SECRET_SECTIONS)[number];
+
+/** Project a config read to the closed set of credential-free fields. */
+export function safeConfigProjection(
+  config: AppConfig,
+  section?: string,
+): Record<string, unknown> {
+  const safeDefault = {
+    tenantId: config.tenantId,
+    logLevel: config.logLevel,
+    gateway: {
+      enabled: config.gateway.enabled,
+      host: config.gateway.host,
+      port: config.gateway.port,
+    },
+  };
+  if (section === undefined || !NON_SECRET_SECTIONS.includes(section as NonSecretSection)) {
+    return safeDefault;
+  }
+  switch (section as NonSecretSection) {
+    case "tenantId": return { tenantId: safeDefault.tenantId };
+    case "logLevel": return { logLevel: safeDefault.logLevel };
+    case "gateway": return { gateway: safeDefault.gateway };
+  }
+}
+
 /** Non-secret per-agent summary surfaced by GET /api/agents. */
 export interface AgentSummary {
   id: string;

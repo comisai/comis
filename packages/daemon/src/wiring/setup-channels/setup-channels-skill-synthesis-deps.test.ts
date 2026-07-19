@@ -19,6 +19,39 @@
 
 import { describe, it, expect, vi } from "vitest";
 
+vi.mock("./review-session-source.js", () => ({
+  buildReviewSessionSource: (deps: {
+    sessionStore: {
+      listDetailed(scope?: unknown): unknown;
+      loadByFormattedKey?(key?: unknown): unknown;
+      loadByRef?(scope?: unknown, ref?: unknown): unknown;
+    };
+  }) => ({
+    listDetailed: (scope: unknown) => {
+      const raw = deps.sessionStore.listDetailed(scope) as
+        | { ok: boolean; value?: unknown[] }
+        | Array<Record<string, unknown>>;
+      if (!Array.isArray(raw)) return raw;
+      return {
+        ok: true,
+        value: raw.map((entry, index) => ({
+          ...entry,
+          conversationRef: `cv_${String(index).padEnd(43, "r")}`,
+          principalId: entry.userId,
+        })),
+      };
+    },
+    loadByRef: (scope: unknown, ref: unknown) => {
+      const raw = deps.sessionStore.loadByFormattedKey
+        ? deps.sessionStore.loadByFormattedKey(ref)
+        : deps.sessionStore.loadByRef?.(scope, ref);
+      return raw && typeof raw === "object" && "ok" in raw
+        ? raw
+        : { ok: true, value: raw };
+    },
+  }),
+}));
+
 import { buildReflectionCronDeps, type ReflectionDepsInput } from "./setup-channels-skill-synthesis-deps.js";
 
 function makeInput(over: Partial<ReflectionDepsInput> = {}): ReflectionDepsInput {

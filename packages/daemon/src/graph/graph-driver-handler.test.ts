@@ -8,7 +8,7 @@ import type {
   CoordinatorConfig,
   GraphCoordinatorDeps,
 } from "./graph-coordinator-state.js";
-import type { NodeTypeDriver, NodeDriverContext, NodeDriverAction } from "@comis/core";
+import { createConversationLocator, type NodeTypeDriver, type NodeDriverContext, type NodeDriverAction } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Module mock for node:fs (prevents real file writes from persistArtifacts)
@@ -90,6 +90,19 @@ function createMockCallbacks() {
   };
 }
 
+function createDriverConversation() {
+  const locator = createConversationLocator({
+    tenantId: "default",
+    agentId: "bull",
+    partition: {
+      kind: "principal",
+      principalId: "debate-node1",
+    },
+  });
+  if (!locator.ok) throw locator.error;
+  return locator.value;
+}
+
 function createMinimalGraphRunState(overrides?: Partial<GraphRunState>): GraphRunState {
   return {
     graphId: "graph-1",
@@ -159,11 +172,13 @@ describe("handleDriverTurnCompleted captures persistentSessionKey", () => {
     const gs = createMinimalGraphRunState();
     gs.driverStates.set("debate-node", ds);
 
-    // Mock getRunStatus to return a completed run with sessionKey
+    const conversation = createDriverConversation();
     vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
       status: "completed",
       result: { response: "I argue that..." },
       sessionKey: "default:debate-node1:debategraph1node1",
+      conversationScope: conversation.conversationScope,
+      conversationRef: conversation.conversationRef,
     });
 
     const state: CoordinatorSharedState = {
@@ -179,13 +194,12 @@ describe("handleDriverTurnCompleted captures persistentSessionKey", () => {
       cost: 0.01,
     }, callbacks);
 
-    // persistentSessionKey should be captured from the first completed run
-    expect(ds.persistentSessionKey).toBe("default:debate-node1:debategraph1node1");
+    expect(ds.persistentConversation).toEqual(conversation);
 
     // Logger should record the capture
     expect(deps.logger!.debug).toHaveBeenCalledWith(
-      expect.objectContaining({ persistentSessionKey: "default:debate-node1:debategraph1node1" }),
-      expect.stringContaining("Captured persistent session key from first driver round"),
+      expect.objectContaining({ conversationRef: conversation.conversationRef }),
+      expect.stringContaining("Captured persistent conversation from first driver round"),
     );
   });
 
@@ -242,7 +256,7 @@ describe("executeDriverAction passes reuseSessionKey to spawn", () => {
     callbacks = createMockCallbacks();
   });
 
-  it("passes reuseSessionKey and graphToolNames to subAgentRunner.spawn", () => {
+  it("passes reuse conversation and graph tool names to sub-agent spawn", () => {
     const driver = createMockDriver();
     const ds: DriverNodeState = {
       driver,
@@ -268,19 +282,19 @@ describe("executeDriverAction passes reuseSessionKey to spawn", () => {
       spawnQueue: [],
     };
 
+    const reuseConversation = createDriverConversation();
     const action: NodeDriverAction = {
       action: "spawn",
       agentId: "bull",
       task: "round 2 argument",
-      reuseSessionKey: "default:debate-node1:debategraph1node1",
+      reuseConversation,
     };
 
     executeDriverAction(state, deps, config, gs, "debate-node", action, callbacks);
 
-    // spawn should be called with reuseSessionKey
     expect(deps.subAgentRunner.spawn).toHaveBeenCalledWith(
       expect.objectContaining({
-        reuseSessionKey: "default:debate-node1:debategraph1node1",
+        reuseConversation,
         graphToolNames: ["tool-a", "tool-b"],
         task: "round 2 argument",
         agentId: "bull",

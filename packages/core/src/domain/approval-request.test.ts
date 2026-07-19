@@ -13,6 +13,7 @@ import {
 
 const VALID_SHORT_ID = "Ab3Xy9Qz0Lmp"; // 12 chars, base62
 const VALID_REQUEST_ID = "2a5cc745-9900-4165-864e-611542a1e753"; // valid RFC-4122 v4
+const VALID_CONVERSATION_REF = `cv_${"a".repeat(43)}`;
 
 function baseRequest(): Record<string, unknown> {
   return {
@@ -22,7 +23,9 @@ function baseRequest(): Record<string, unknown> {
     action: "agents.delete",
     params: { agent_id: "bot-1" },
     agentId: "agent-1",
-    sessionKey: "default:user1:discord",
+    tenantId: "tenant-a",
+    conversationRef: VALID_CONVERSATION_REF,
+    resolvingPrincipalId: "principal-a",
     trustLevel: "user",
     callbackOwner: {
       tenantId: "default",
@@ -44,6 +47,10 @@ function without(obj: Record<string, unknown>, key: string): Record<string, unkn
 }
 
 describe("ApprovalRequestSchema shortId", () => {
+  it("binds approval authority to tenant agent conversation and resolving principal", () => {
+    expect(ApprovalRequestSchema.safeParse(baseRequest()).success).toBe(true);
+  });
+
   it("requires the full callback owner principal", () => {
     const result = ApprovalRequestSchema.safeParse(without(baseRequest(), "callbackOwner"));
     expect(result.success).toBe(false);

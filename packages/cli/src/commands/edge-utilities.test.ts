@@ -364,7 +364,10 @@ describe("SIGINT during interactive prompts", () => {
 
     const initialWsCount = MockWebSocket.instances.length;
 
-    await program.parseAsync(["node", "test", "sessions", "delete", "some-key"]);
+    await program.parseAsync([
+      "node", "test", "sessions", "delete", "some-key",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     // Verify: withClient was NOT called (no new WebSocket created)
     expect(MockWebSocket.instances.length).toBe(initialWsCount);
@@ -383,7 +386,10 @@ describe("SIGINT during interactive prompts", () => {
 
     const initialWsCount = MockWebSocket.instances.length;
 
-    await program.parseAsync(["node", "test", "reset", "sessions"]);
+    await program.parseAsync([
+      "node", "test", "reset", "sessions",
+      "--tenant", "test-tenant", "--agent", "default",
+    ]);
 
     // Verify: withClient was NOT called (no new WebSocket created)
     expect(MockWebSocket.instances.length).toBe(initialWsCount);

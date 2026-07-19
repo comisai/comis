@@ -13,7 +13,7 @@ import type { ComisLogger } from "@comis/infra";
 import {
   SkillsConfigSchema,
   tryGetContext,
-  parseFormattedSessionKey,
+  conversationScopeToSessionKey,
   safePath,
   formatSessionKey,
   systemNowMs,
@@ -199,9 +199,7 @@ export interface ToolsDeps {
   /** The daemon's injected `TimerPort` — threaded toward the terminal reaper
    *  closure so the idle-TTL/max-sessions sweep composes. Absent ⇒ no terminal reaper. */
   timers?: TimerPort;
-  /** The concrete LCD `ContextStorePort` (`createLcdStore`) from setupMemory — injected so
-   *  assembleToolsForAgent wires the dag-mode `ctx_*` tools; the agent sees only the
-   *  core port TYPE (the agent-to-store cut). Absent ⇒ ctx_* not wired. */
+  /** The concrete `ContextStorePort` from setupMemory. */
   lcdStore?: ContextStorePort;
   /** The KEPT capability-layer handle (lease + cap socket + outputGuard),
    *  present when ANY agent is autonomy-bearing. buildAutonomyToolWiring (setup-tools-autonomy.ts)
@@ -501,12 +499,6 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         videoStatusEnabled: deps.videoStatusEnabled, // gates the video_status descriptor
         backgroundTaskManager: deps.backgroundTaskManager,
         toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
-        // Default "dag" — the canonical default (schema `version.default("dag")` +
-        // setup-context-tools.ts's `?? "dag"` gate). `contextEngine` is optional/undefaulted,
-        // so a no-block agent lands here with version=undefined; using "pipeline" was a skew
-        // that would mis-signal any future consumer (the field is currently unused, so this is
-        // a defensive alignment, not a behavior change).
-        contextEngineVersion: agentConfig?.contextEngine?.version ?? "dag",
         builtinToolsBrowserEnabled: skillsConfig.builtinTools.browser,
         // Opt-in gate for the memory_ask (dialectic) tool. `=== true` so an
         // absent/typo'd `dialectic` block is OFF (default-OFF byte-identity — the tool
@@ -564,11 +556,12 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       const agentWorkspaceDir = workspaceDirs.get(agentId) ?? defaultWorkspaceDir;
       const getToolResultsDir = (): string | undefined => {
         const alsCtx = tryGetContext();
-        if (!alsCtx?.sessionKey) return undefined;
-        const parsed = parseFormattedSessionKey(alsCtx.sessionKey);
-        if (!parsed) return undefined;
-        // FIX: derive the spill dir from the session DIR (sessionKeyToPath returns the .jsonl FILE path → ENOTDIR).
-        return toolResultsDirFromSessionPath(sessionKeyToPath(parsed, safePath(agentWorkspaceDir, "sessions")));
+        if (alsCtx?.turnScope === undefined) return undefined;
+        const projected = conversationScopeToSessionKey(alsCtx.turnScope.conversation);
+        if (!projected.ok) return undefined;
+        return toolResultsDirFromSessionPath(
+          sessionKeyToPath(projected.value, safePath(agentWorkspaceDir, "sessions")),
+        );
       };
 
       // Build per-agent sandbox config from daemon provider + agent config
@@ -630,13 +623,20 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       const assemblyTrustLevel = requestContext?.agentId === agentId
         ? requestContext.trustLevel
         : "guest" as const;
-      const ambientSessionKey = requestContext?.agentId === agentId && requestContext.sessionKey
-        ? parseFormattedSessionKey(requestContext.sessionKey)
+      const ambientSessionProjection = requestContext?.agentId === agentId
+        && requestContext.turnScope !== undefined
+        ? conversationScopeToSessionKey(requestContext.turnScope.conversation)
+        : undefined;
+      const ambientSessionKey = ambientSessionProjection?.ok
+        ? ambientSessionProjection.value
         : undefined;
       const { brokerSpawnEnv, orchestrateTool, assemblyAuthority } = buildAutonomyToolWiring({
         agentConfig, agentId, agentWorkspaceDir, capEndpointHandle: deps.capEndpointHandle,
         brokerContext: deps.brokerContext, sandboxProvider, namespacePreflightOk: deps.namespacePreflightOk,
         sessionKey: options?.sessionKey ?? ambientSessionKey,
+        ...(requestContext?.agentId === agentId && requestContext.turnScope !== undefined
+          ? { turnScope: requestContext.turnScope }
+          : {}),
         trustLevel: assemblyTrustLevel,
         ...(options?.requesterOrigin !== undefined
           ? { requesterOrigin: options.requesterOrigin }
@@ -713,7 +713,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // wired inside). wireAgentTerminalTools folds the base deps + operator config in one call.
       wireAgentTerminalTools(tools, terminalRegistries, agentId, { dataDir, skillsLogger, eventBus, sandboxProvider, approvalGate, ...terminalEgress, timers: deps.timers, agentWorkspaceDir: workspaceDirs.get(agentId) ?? defaultWorkspaceDir }, skillsConfig.terminal);
 
-      // Context expansion tools: dag-gated ctx_* wiring — the gate + depth resolution live in maybeWireContextTools (file-size cap; see its doc).
+      // Context expansion tools; depth resolution lives in maybeWireContextTools.
       maybeWireContextTools(tools, deps.lcdStore, agentId, agentConfig, {
         skillsLogger, nowMs: systemNowMs, getToolResultsDir, eventBus,
         capabilityClassOverride: deps.getProviderCapabilityClass?.(agentConfig?.provider),

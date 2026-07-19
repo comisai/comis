@@ -4,10 +4,11 @@ import type { AgentExecutor, SessionLifecycle } from "@comis/agent";
 // because orchestrator cannot import its own published name.
 import type { MessageRouter } from "./routing/message-router.js";
 import type { CommandQueue } from "./queue/command-queue.js";
-import type { ChannelPort, NormalizedMessage, MessageHandler, DeliveryService } from "@comis/core";
+import { type ChannelPort, type NormalizedMessage, type MessageHandler, type DeliveryService } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockLogger } from "../../../test/support/mock-logger.js";
+import { createFakePrincipalResolver } from "../../../test/support/fake-principal-resolver.js";
 import { createChannelManager, type ChannelManagerDeps } from "./channel-manager.js";
 import { processInboundMessage as realProcessInboundMessage } from "./inbound/inbound-pipeline.js";
 
@@ -166,11 +167,11 @@ function makeRouter(): MessageRouter {
 
 function makeSessionManager(): SessionLifecycle {
   return {
-    loadOrCreate: vi.fn(() => []),
-    save: vi.fn(),
+    loadOrCreate: vi.fn(() => ok([])),
+    save: vi.fn(() => ok(undefined)),
     isExpired: vi.fn(() => false),
-    expire: vi.fn(() => true),
-    cleanStale: vi.fn(() => 0),
+    expire: vi.fn(() => ok(undefined)),
+    cleanStale: vi.fn(() => ok(0)),
   };
 }
 
@@ -225,10 +226,13 @@ function makeEventBus() {
 
 function makeDeps(overrides?: Partial<ChannelManagerDeps>): ChannelManagerDeps {
   const executor = makeExecutor();
+  const principalResolver = createFakePrincipalResolver();
   return {
     tenantId: "default",
     eventBus: makeEventBus(),
     messageRouter: makeRouter(),
+    principalResolver,
+    getDmScope: () => ({ mode: "per-account-channel-peer", threadIsolation: true }),
     sessionManager: makeSessionManager(),
     createExecutor: vi.fn(() => executor),
     persistInboundMessage: vi.fn(async (_agentId, message) => ({
@@ -384,9 +388,10 @@ describe("createChannelManager", () => {
         msg,
         expect.objectContaining({
           tenantId: "default",
-          userId: "user-42",
-          channelId: "chat-99",
-          peerId: "user-42",
+          agentId: "agent-default",
+          userId: expect.stringMatching(/^platform_/),
+          channelId: "telegram:telegram-123:chat-99",
+          peerId: expect.stringMatching(/^platform_/),
         }),
         undefined, // no assembleToolsForAgent provided
         expect.any(Function), // onDelta
@@ -669,8 +674,13 @@ describe("createChannelManager", () => {
       const msg = makeMessage({ text: "original text" });
       await adapter._handlers[0](msg);
 
-      // preprocessMessage should have been called with the original message
-      expect(mockPreprocess).toHaveBeenCalledWith(msg);
+      // Preprocessing receives the original message plus the resolved turn authority.
+      expect(mockPreprocess).toHaveBeenCalledWith(
+        msg,
+        expect.objectContaining({
+          conversation: expect.objectContaining({ tenantId: "default", agentId: "agent-default" }),
+        }),
+      );
 
       // executor should receive the enriched message
       const executeCall = vi.mocked(executor.execute).mock.calls[0];

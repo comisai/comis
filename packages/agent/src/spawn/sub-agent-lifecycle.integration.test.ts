@@ -24,6 +24,7 @@ import {
   type SubAgentRunnerDeps,
 } from "./sub-agent-runner.js";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+import { ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Lightweight port wrappers that delegate to globals.
@@ -62,30 +63,11 @@ const testTimers: TimerPort = {
 // ---------------------------------------------------------------------------
 
 function buildDeps(overrides?: Partial<SubAgentRunnerDeps>): SubAgentRunnerDeps {
-  const sessionData = new Map<
-    string,
-    { messages: unknown[]; metadata: Record<string, unknown> }
-  >();
-
   return {
     sessionStore: {
-      save: vi.fn(
-        (
-          key: { tenantId: string; userId: string; channelId: string },
-          messages: unknown[],
-          metadata: Record<string, unknown>,
-        ) => {
-          const formatted = `${key.tenantId}:${key.userId}:${key.channelId}`;
-          sessionData.set(formatted, { messages: [...messages], metadata: { ...metadata } });
-        },
-      ),
-      delete: vi.fn(
-        (key: { tenantId: string; userId: string; channelId: string }) => {
-          const formatted = `${key.tenantId}:${key.userId}:${key.channelId}`;
-          sessionData.delete(formatted);
-        },
-      ),
-      loadByFormattedKey: vi.fn((formattedKey: string) => sessionData.get(formattedKey)),
+      save: vi.fn(() => ok(undefined)),
+      delete: vi.fn(() => ok(false)),
+      loadByRef: vi.fn(() => ok(undefined)),
     },
     executeAgent: vi.fn().mockResolvedValue({
       response: "task completed successfully",
@@ -368,10 +350,14 @@ describe("sub-agent lifecycle integration", () => {
     const saveCall = vi.mocked(deps.sessionStore.save).mock.calls[0]!;
 
     // Session key contains sub-agent-{runId}
-    const sessionKeyArg = saveCall[0] as { tenantId: string; userId: string; channelId: string };
-    expect(sessionKeyArg.userId).toContain("sub-agent-");
-    expect(sessionKeyArg.channelId).toContain("sub-agent:");
+    const sessionKeyArg = saveCall[0];
+    expect(sessionKeyArg.partition.kind).toBe("endpoint-conversation-principal");
+    if (sessionKeyArg.partition.kind !== "endpoint-conversation-principal") return;
+    expect(sessionKeyArg.partition.principalId).toContain("sub-agent:");
+    expect(sessionKeyArg.partition.endpoint.channelType).toBe("sub-agent");
+    expect(sessionKeyArg.partition.endpoint.conversationId).toBe(runId);
     expect(sessionKeyArg.tenantId).toBe("test-tenant");
+    expect(sessionKeyArg.agentId).toBe("researcher");
 
     // Metadata contains expected fields
     const metadata = saveCall[2] as Record<string, unknown>;

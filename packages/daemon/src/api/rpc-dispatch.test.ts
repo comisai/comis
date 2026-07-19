@@ -945,9 +945,6 @@ describe("createRpcDispatch", () => {
         eventBus: createEventBusMock(emit),
         config: { providers: { entries: {} }, tenantId: "tenant-a" },
       },
-      // The synthetic per-session root resolver (setup-capability-endpoint-boot.ts).
-      resolveRootRunId: (_agentId: string, key: { tenantId: string; userId: string; channelId: string }) =>
-        `root-session-${key.tenantId}:${key.userId}:${key.channelId}`,
     } as never;
     const pull = (name: string) =>
       emit.mock.calls.filter((c) => c[0] === name).map((c) => c[1] as Record<string, unknown>);
@@ -970,6 +967,7 @@ describe("createRpcDispatch", () => {
         _agentId: "agentA",
         _capabilities: ["orch:message"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
       }),
     ).resolves.toBeDefined();
 
@@ -996,6 +994,7 @@ describe("createRpcDispatch", () => {
       _agentId: "agentA",
       _capabilities: ["orch:message"],
       _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
     });
 
     const tree = capAudited();
@@ -1030,6 +1029,7 @@ describe("createRpcDispatch", () => {
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
       }),
     ).rejects.toBeInstanceOf((await import("@comis/core")).CapabilityDeniedError);
 
@@ -1082,6 +1082,7 @@ describe("createRpcDispatch", () => {
       _agentId: "agentA",
       _capabilities: ["orch:message"],
       _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
       // hostile content the audit MUST NOT echo:
       text: "the actual chat message body",
       apiKey: "sk-PLANTED-SECRET",
@@ -1110,6 +1111,7 @@ describe("createRpcDispatch", () => {
     await dispatch("session.list", {
       _agentId: "agentA",
       _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
     });
     expect(auditEvents()).toHaveLength(0);
     expect(capAudited()).toHaveLength(0);
@@ -1255,6 +1257,12 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
+        _callerConversationScope: {
+          tenantId: "tenant-a",
+          agentId: "agentA",
+          partition: { kind: "principal", principalId: "user-7" },
+        },
         _autonomyMode: "unattended",
       }),
     ).rejects.toBeInstanceOf(CapabilityDeniedError);
@@ -1291,6 +1299,12 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
+        _callerConversationScope: {
+          tenantId: "tenant-a",
+          agentId: "agentA",
+          partition: { kind: "principal", principalId: "user-7" },
+        },
         _autonomyMode: "unattended",
       }),
     ).rejects.toBeInstanceOf(CapabilityDeniedError);
@@ -1318,6 +1332,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _capabilities: ["orch:message"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         _autonomyMode: "unattended",
       }),
     ).rejects.toBeInstanceOf(CapabilityDeniedError);
@@ -1342,6 +1357,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         _autonomyMode: "accept-reversible", // standard, NOT unattended
       }),
     ).rejects.toBeInstanceOf(CapabilityDeniedError);
@@ -1365,6 +1381,12 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
+        _callerConversationScope: {
+          tenantId: "tenant-a",
+          agentId: "agentA",
+          partition: { kind: "principal", principalId: "user-7" },
+        },
         _autonomyMode: "unattended",
       });
     };
@@ -1426,6 +1448,12 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
       _agentId: "agentA",
       _capabilities: ["orch:read"],
       _callerSessionKey: "tenant-a:user-7:chan-9",
+      _rootRunId: "root-session-tenant-a:user-7:chan-9",
+      _callerConversationScope: {
+        tenantId: "tenant-a",
+        agentId: "agentA",
+        partition: { kind: "principal", principalId: "user-7" },
+      },
       _autonomyMode: "unattended",
     })).rejects.toBeInstanceOf(CapabilityDeniedError);
     await new Promise((resolve) => setImmediate(resolve));
@@ -1451,6 +1479,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _trustLevel: "user",
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         _autonomyMode: "unattended",
         name: "X",
         value: "Y",
@@ -1475,6 +1504,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
       dispatch("cron.add", {
         _agentId: "agentA",
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         _autonomyMode: "unattended",
       }),
     ).rejects.toThrow("Scheduler not available");
@@ -1493,6 +1523,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         _autonomyMode: "unattended",
       });
     };
@@ -1503,6 +1534,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         _agentId: "agentA",
         _capabilities: ["orch:message"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         _autonomyMode: "unattended",
       });
     };
@@ -1599,6 +1631,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
     _agentId: "agentA",
     _capabilities: ["orch:read"], // missing orch:message → deny
     _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
     _autonomyMode: "unattended",
   } as const;
 
@@ -1661,6 +1694,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
       }),
     ).rejects.toBeInstanceOf(CapabilityDeniedError);
     expect(
@@ -1678,6 +1712,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         _autonomyMode: "bogus", // unparseable → resolveEffectiveMode → "default"
       }),
     ).rejects.toBeInstanceOf(CapabilityDeniedError);
@@ -1712,6 +1747,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
         _agentId: "agentA",
         _capabilities: ["orch:read"],
         _callerSessionKey: "tenant-a:user-7:chan-9",
+        _rootRunId: "root-session-tenant-a:user-7:chan-9",
         // NO _autonomyMode — the server-resolve from deps.agents is the source.
       }),
     ).rejects.toBeInstanceOf(CapabilityDeniedError);

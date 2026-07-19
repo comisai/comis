@@ -146,14 +146,6 @@ const PLATFORM_ACTIONS: Record<string, PlatformActionGroup[]> = {
   ],
 };
 
-/** Map platform to its RPC method name for actions. */
-const PLATFORM_RPC_METHOD: Record<string, string> = {
-  discord: "discord.action",
-  telegram: "telegram.action",
-  slack: "slack.action",
-  whatsapp: "whatsapp.action",
-};
-
 /**
  * Message center view for the Comis operator console.
  *
@@ -477,7 +469,7 @@ export class IcMessageCenter extends LitElement {
     const rpc = this.rpcClient;
 
     try {
-      const result = await rpc.call<{ channels: ChannelListEntry[]; total: number }>("channels.list");
+      const result = await rpc.call("channels.list");
       if (!this._isCurrentAutoSelect(revision, rpc)) return;
       const channels = result?.channels ?? [];
       this._channelList = channels;
@@ -523,9 +515,9 @@ export class IcMessageCenter extends LitElement {
       // (rpcClient guarded above at the function entry)
       const rpc = this.rpcClient;
       const [listResult, capResult, configResult] = await Promise.allSettled([
-        rpc.call<{ channels: Array<{ channelType: string; channelId?: string; status: string }>; total: number }>("channels.list").then((r) => r?.channels ?? []),
-        rpc.call<{ channelType: string; features: PlatformCapabilities }>("channels.capabilities", { channel_type: channel }).then((r) => r?.features ?? null),
-        rpc.call<Record<string, unknown>>("channels.get", { channel_type: channel }).then((r) => r ?? null),
+        rpc.call("channels.list").then((r) => r?.channels ?? []),
+        rpc.call("channels.capabilities", { channel_type: channel }).then((r) => r?.features ?? null),
+        rpc.call("channels.get", { channel_type: channel }).then((r) => r ?? null),
       ]);
       if (!this._isCurrentChannel(revision, channel)) return;
 
@@ -608,7 +600,7 @@ export class IcMessageCenter extends LitElement {
     if (!this.rpcClient || !channel) return;
 
     try {
-      const obsResult = await this.rpcClient.call<{ channels: Array<{ channelId: string; channelType: string; messagesSent: number; messagesReceived: number; lastActiveAt: number }> }>("obs.channels.all");
+      const obsResult = await this.rpcClient.call("obs.channels.all");
       if (!this._isCurrentChannel(revision, channel)) return;
       const channels = obsResult?.channels ?? [];
       const chatMap = new Map<string, string>(); // chatId -> label
@@ -654,7 +646,7 @@ export class IcMessageCenter extends LitElement {
     // Path 1: Platform supports native fetchHistory - use message.fetch as before
     if (this._capabilities?.fetchHistory) {
       try {
-        const fetchResult = await this.rpcClient.call<{ messages: FetchedMessage[]; channelId: string }>("message.fetch", {
+        const fetchResult = await this.rpcClient.call("message.fetch", {
           channel_type: channel,
           channel_id: selectedChatId || channel,
           limit: 50,
@@ -678,7 +670,7 @@ export class IcMessageCenter extends LitElement {
 
     // Path 2: No fetchHistory - fall back to stored session data
     try {
-      const sessionsResult = await this.rpcClient.call<{ sessions: Array<{ sessionKey: string; channelId: string; updatedAt: number }> }>("session.list", { kind: "all" });
+      const sessionsResult = await this.rpcClient.call("session.list", { kind: "all" });
       if (!this._isCurrentMessageRequest(revision, requestRevision, channel, selectedChatId)) return;
       const sessions = sessionsResult?.sessions ?? [];
       // Filter to sessions whose channelId matches the currently selected chat
@@ -699,7 +691,7 @@ export class IcMessageCenter extends LitElement {
       const bestSession = matching[0]!;
 
       // Fetch conversation history from session store
-      const histResult = await this.rpcClient.call<{ messages: Array<{ role: string; content: string; timestamp: number }>; total: number }>("session.history", {
+      const histResult = await this.rpcClient.call("session.history", {
         session_key: bestSession.sessionKey,
         limit: 50,
       });
@@ -1117,9 +1109,6 @@ export class IcMessageCenter extends LitElement {
     const context = this._captureActionContext();
     if (!context) return;
 
-    const rpcMethod = PLATFORM_RPC_METHOD[context.channel];
-    if (!rpcMethod) return;
-
     // Build params
     const params: Record<string, unknown> = { action: platformAction.action };
 
@@ -1149,10 +1138,26 @@ export class IcMessageCenter extends LitElement {
     this._platformActionPending = true;
     this._actionResult = "";
     try {
-      const result = await context.rpcClient.call(rpcMethod, params);
+      let result: Readonly<Record<string, unknown>>;
+      switch (context.channel) {
+        case "discord":
+          result = await context.rpcClient.call("discord.action", params);
+          break;
+        case "telegram":
+          result = await context.rpcClient.call("telegram.action", params);
+          break;
+        case "slack":
+          result = await context.rpcClient.call("slack.action", params);
+          break;
+        case "whatsapp":
+          result = await context.rpcClient.call("whatsapp.action", params);
+          break;
+        default:
+          return;
+      }
       if (!this._isCurrentActionContext(context)) return;
       IcToast.show("Action completed", "success");
-      this._actionResult = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+      this._actionResult = JSON.stringify(result, null, 2);
     } catch (err) {
       if (!this._isCurrentActionContext(context)) return;
       const msg = err instanceof Error ? err.message : "Action failed";

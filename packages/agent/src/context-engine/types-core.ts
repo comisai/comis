@@ -217,7 +217,7 @@ export interface ContextEngineDeps {
   /** Formatted session key for event correlation and structured logging. */
   sessionKey?: string;
   /** Tenant ID for the LCD read scope. The dag assembler builds a
-   *  ContextStoreScope { conversationId, agentId, tenantId, sessionKey } from it
+   *  ContextStoreScope { conversationRef, agentId, tenantId, sessionKey } from it
    *  so reads filter by tenant + agent. Threaded from
    *  executor-context-engine-setup.ts (the same source executor-post-execution
    *  uses: deps.tenantId ?? sessionKey.tenantId). */
@@ -284,9 +284,9 @@ export interface ContextEngineDeps {
    *  `@comis/memory` (the agent↛memory architecture cut); the daemon injects
    *  the concrete `createLcdStore`. Absent ⇒ dag falls back to the pipeline. */
   contextStore?: import("@comis/core").ContextStorePort;
-  /** Conversation id for the dag-mode store read (= `formatSessionKey(sessionKey)`).
+  /** Opaque conversation reference for the dag-mode store read.
    *  Absent ⇒ dag falls back to the pipeline. */
-  conversationId?: string;
+  conversationRef?: import("@comis/core").ConversationRef;
   /** Injected wall-clock for the dag-mode assembler's timestamps (assembly
    *  duration + the synthesized-tool-result `timestamp` in transcript repair).
    *  Production code never calls `Date.now()` directly (the globals gate); the

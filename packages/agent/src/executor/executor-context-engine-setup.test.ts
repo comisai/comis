@@ -65,7 +65,7 @@ import {
 } from "./executor-session-state.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
-import { TypedEventBus } from "@comis/core";
+import { createConversationRef, TypedEventBus } from "@comis/core";
 import type { ContextEngineSetupParams, ContextEngineSetupDeps } from "./executor-context-engine-setup.js";
 import { SummarizerDegradeError, type SummarizerSpendBreaker } from "../safety/summarizer-spend-breaker.js";
 import type { LeafSummarizer } from "../context-engine/lcd-leaf-summarizer.js";
@@ -82,6 +82,7 @@ function makeDeps(overrides?: Partial<ContextEngineSetupDeps>): ContextEngineSet
     logger: createMockLogger(),
     eventBus: new TypedEventBus(),
     agentId: "agent-1",
+    contextStore: {} as never,
     workspaceDir: "/tmp/workspace",
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AuthStorage is SDK type
     authStorage: { getApiKey: vi.fn().mockResolvedValue("test-key") } as any,
@@ -94,21 +95,25 @@ function makeDeps(overrides?: Partial<ContextEngineSetupDeps>): ContextEngineSet
 
 function makeParams(overrides?: Partial<ContextEngineSetupParams>): ContextEngineSetupParams {
   const deps = overrides?.deps ?? makeDeps();
+  const conversationRef = createConversationRef({
+    tenantId: "tenant-a",
+    agentId: deps.agentId,
+    partition: { kind: "agent" },
+  });
+  if (!conversationRef.ok) throw conversationRef.error;
   return {
     config: {
       name: "test-agent",
       provider: "anthropic",
       model: "claude-sonnet-4-5-20250929",
-      contextEngine: { enabled: true, version: "pipeline" },
+      contextEngine: { enabled: true },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PerAgentConfig has many fields not exercised here
     } as any,
     deps,
     formattedKey: "tenant-a:user_a:chan-a",
     sessionKey: "tenant-a:user_a:chan-a",
-    // The turn agentId param defaults to undefined so the existing
-    // deps.agentId-fallback tests still resolve through deps; the turn-agentId
-    // tests override it explicitly.
-    agentId: undefined,
+    conversationRef: conversationRef.value,
+    agentId: deps.agentId,
     msg: { channelType: "test", channelId: "chan-a" },
     sm: { fileEntries: [] },
     session: {
@@ -163,23 +168,9 @@ describe("setupContextEngine — createContextEngine() dependency wiring", () =>
     expect(captured.calls[0].deps.agentId).toBe("agent-xyz");
   });
 
-  // ── On the executeAgent path the turn's agentId
-  //    arrives as the positional execute() arg (the ALS RequestContext) and is
-  //    NEVER set onto frozenDeps, so `deps.agentId` is undefined → the assembler
-  //    would build no read scope and fail closed (recall 0 history). setupContextEngine
-  //    must accept the turn agentId as an explicit param and prefer it.
-  it("createContextEngine receives the turn agentId from params.agentId even when deps.agentId is undefined (the executeAgent positional path)", () => {
-    setupContextEngine(
-      makeParams({ deps: makeDeps({ agentId: undefined }), agentId: "agent-positional" }),
-    );
-    // The read scope agentId is the caller-supplied turn agentId, NOT undefined.
-    expect(captured.calls[0].deps.agentId).toBe("agent-positional");
-  });
-
-  it("params.agentId ?? deps.agentId — the deps.agentId fallback is preserved for non-executeAgent callers", () => {
-    setupContextEngine(makeParams({ deps: makeDeps({ agentId: "agent-from-deps" }) }));
-    // No explicit params.agentId → fall back to deps.agentId (unchanged behavior).
-    expect(captured.calls[0].deps.agentId).toBe("agent-from-deps");
+  it("uses the executor-bound agent authority for the context-engine read scope", () => {
+    setupContextEngine(makeParams({ agentId: "agent-authority" }));
+    expect(captured.calls[0].deps.agentId).toBe("agent-authority");
   });
 
   it("forwards the formattedKey (sessionKey string) into the createContextEngine deps wiring object", () => {
@@ -516,7 +507,7 @@ describe("setupContextEngine — getSummarizerDeps per-tenant spend+breaker wiri
     // The event is emitted exactly once with the closed reason — and is content-free.
     expect(events).toHaveLength(1);
     expect(events[0].reason).toBe("spend_cap");
-    expect(events[0].conversationId).toBe("tenant-cap:user_a:chan-a");
+    expect(events[0].conversationId).toMatch(/^cv_/);
     expect(typeof events[0].durationMs).toBe("number");
     // No summary/message content on the payload (ids/reason/durationMs only).
     expect(JSON.stringify(events[0])).not.toContain("content");

@@ -176,7 +176,8 @@ async function deliveryProbe() {
   const Database = requireCodeRoot("better-sqlite3");
   const db = new Database(`${rig.dataDir}/memory.db`, { readonly: true, fileMustExist: true });
   const mirror = db.prepare(
-    "SELECT text, status, session_key, created_at FROM delivery_mirror ORDER BY created_at DESC LIMIT 1",
+    "SELECT tenant_id, agent_id, conversation_ref, destination_endpoint, text, status, created_at "
+    + "FROM delivery_mirror ORDER BY created_at DESC LIMIT 1",
   ).get();
   db.close();
   const wireText = wire?.text ?? "";
@@ -216,7 +217,12 @@ async function deliveryProbe() {
         .map((button) => sha256(button.callback_data)),
     },
     mirrorStatus: mirror?.status,
-    sessionKey: mirror?.session_key,
+    authority: mirror === undefined ? undefined : {
+      tenantId: mirror.tenant_id,
+      agentId: mirror.agent_id,
+      conversationRef: mirror.conversation_ref,
+      destinationEndpointHash: sha256(mirror.destination_endpoint),
+    },
   };
 }
 
@@ -249,13 +255,22 @@ async function approvalProbe() {
 }
 
 function receiptsProbe() {
-  const sessionDir = `${rig.dataDir}/workspace/sessions/default/${rig.chatId}`;
-  const latest = readdirSync(sessionDir)
-    .filter((name) => name.endsWith(".jsonl.trajectory.jsonl"))
-    .map((name) => ({ name, mtimeMs: statSync(`${sessionDir}/${name}`).mtimeMs }))
+  const sessionsDir = `${rig.dataDir}/workspace/sessions`;
+  const trajectoryFiles = [];
+  const visit = (directory) => {
+    if (!existsSync(directory)) return;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) visit(path);
+      else if (entry.name.endsWith(".jsonl.trajectory.jsonl")) trajectoryFiles.push(path);
+    }
+  };
+  visit(sessionsDir);
+  const latest = trajectoryFiles
+    .map((path) => ({ path, mtimeMs: statSync(path).mtimeMs }))
     .sort((left, right) => right.mtimeMs - left.mtimeMs)[0];
   if (!latest) return { trajectoryFound: false, receipts: [] };
-  const events = readFileSync(`${sessionDir}/${latest.name}`, "utf8")
+  const events = readFileSync(latest.path, "utf8")
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
@@ -266,7 +281,7 @@ function receiptsProbe() {
   const turn = events.slice(start);
   return {
     trajectoryFound: true,
-    trajectoryFile: latest.name,
+    trajectoryFile: latest.path.slice(`${sessionsDir}/`.length),
     receipts: turn
       .filter((event) => event.type === "tool.call" || event.type === "tool.result")
       .map((event) => ({

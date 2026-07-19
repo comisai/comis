@@ -25,7 +25,12 @@ function makeContext(trustLevel: "admin" | "user" | "guest"): RequestContext {
     tenantId: "default",
     userId: "test-user",
     agentId: "test-agent",
-    sessionKey: "default:test-user:chat-1",
+    sessionKey: "default:agent:test-agent:test-user:chat-1",
+    turnScope: {
+      conversation: { tenantId: "default", agentId: "test-agent", partition: { kind: "agent" } },
+      principal: { principalId: "test-user" },
+      endpoint: { channelType: "telegram", channelInstanceId: "test-instance", conversationId: "chat-1", conversationKind: "direct" },
+    },
     traceId: crypto.randomUUID(),
     startedAt: Date.now(),
     trustLevel,

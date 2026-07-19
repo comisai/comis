@@ -3,7 +3,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { RequiredToolsUnreachableError } from "@comis/core";
+import {
+  conversationScopeToSessionKey,
+  createConversationLocator,
+  formatSessionKey,
+  RequiredToolsUnreachableError,
+  type ConversationLocator,
+} from "@comis/core";
 import { SandboxDowngradeError } from "./sandbox-posture.js";
 import { mkdtemp, writeFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -76,17 +82,62 @@ const testTimers: TimerPort = {
   setInterval: (cb, ms) => wrapTimerHandle(setInterval(cb, ms)),
 };
 
+function createMockSessionStore(): SubAgentRunnerDeps["sessionStore"] {
+  return {
+    save: vi.fn().mockReturnValue(ok(undefined)),
+    delete: vi.fn().mockReturnValue(ok(true)),
+    loadByRef: vi.fn().mockReturnValue(ok(undefined)),
+  };
+}
+
+function createTestConversation(overrides: {
+  tenantId?: string;
+  agentId?: string;
+  principalId?: string;
+  conversationId?: string;
+} = {}): ConversationLocator {
+  const locator = createConversationLocator({
+    tenantId: overrides.tenantId ?? "default",
+    agentId: overrides.agentId ?? "parent",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: {
+        channelType: "test",
+        channelInstanceId: "test-instance",
+        conversationId: overrides.conversationId ?? "channel1",
+        conversationKind: "direct",
+      },
+      principalId: overrides.principalId ?? "user1",
+    },
+  });
+  if (!locator.ok) throw locator.error;
+  return locator.value;
+}
+
+function formattedConversation(locator: ConversationLocator): string {
+  const sessionKey = conversationScopeToSessionKey(locator.conversationScope);
+  if (!sessionKey.ok) throw sessionKey.error;
+  return formatSessionKey(sessionKey.value);
+}
+
+function persistedConversation(locator: ConversationLocator) {
+  return {
+    conversationRef: locator.conversationRef,
+    conversationScope: locator.conversationScope,
+    messages: [],
+    metadata: {},
+    createdAt: 1,
+    updatedAt: 1,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Mock helpers
 // ---------------------------------------------------------------------------
 
 function createMockDeps(): SubAgentRunnerDeps {
   return {
-    sessionStore: {
-      save: vi.fn(),
-      delete: vi.fn(),
-      loadByFormattedKey: vi.fn(),
-    },
+    sessionStore: createMockSessionStore(),
     executeAgent: vi.fn().mockResolvedValue({
       response: "task completed successfully",
       tokensUsed: { total: 200 },
@@ -345,10 +396,12 @@ describe("createSubAgentRunner", () => {
   // -----------------------------------------------------------------------
   it("emits events on spawn and completion", async () => {
     const runner = createSubAgentRunner(deps);
+    const callerConversation = createTestConversation({ agentId: "parent-agent" });
     const runId = runner.spawn({
       task: "event test",
       agentId: "researcher",
-      callerSessionKey: "default:user1:channel1",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
     });
 
     // Spawn event emitted immediately
@@ -358,7 +411,7 @@ describe("createSubAgentRunner", () => {
         runId,
         agentId: "researcher",
         task: "event test",
-        parentSessionKey: "default:user1:channel1",
+        parentSessionKey: formattedConversation(callerConversation),
       }),
     );
 
@@ -495,11 +548,13 @@ describe("createSubAgentRunner", () => {
     };
 
     const runner = createSubAgentRunner(deps);
+    const callerConversation = createTestConversation({ agentId: "parent-agent" });
     runner.spawn({
       task: "complete during shutdown",
       agentId: "child-agent",
       callerAgentId: "parent-agent",
-      callerSessionKey: "default:user1:channel1",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
       announceChannelType: "telegram",
       announceChannelId: "channel1",
     });
@@ -552,11 +607,13 @@ describe("createSubAgentRunner", () => {
     };
 
     const runner = createSubAgentRunner(deps);
+    const callerConversation = createTestConversation({ agentId: "parent-agent" });
     runner.spawn({
       task: "hang until bounded shutdown",
       agentId: "child-agent",
       callerAgentId: "parent-agent",
-      callerSessionKey: "default:user1:channel1",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
       announceChannelType: "telegram",
       announceChannelId: "channel1",
     });
@@ -601,11 +658,13 @@ describe("createSubAgentRunner", () => {
     };
 
     const runner = createSubAgentRunner(deps);
+    const callerConversation = createTestConversation({ agentId: "parent-agent" });
     runner.spawn({
       task: "hang through shutdown notice grace",
       agentId: "child-agent",
       callerAgentId: "parent-agent",
-      callerSessionKey: "default:user1:channel1",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
       announceChannelType: "telegram",
       announceChannelId: "channel1",
     });
@@ -650,11 +709,13 @@ describe("createSubAgentRunner", () => {
       markDelivered: vi.fn(),
     };
     const runner = createSubAgentRunner(deps);
+    const callerConversation = createTestConversation({ agentId: "parent-agent" });
     runner.spawn({
       task: "complete before post-processing stalls",
       agentId: "child-agent",
       callerAgentId: "parent-agent",
-      callerSessionKey: "default:user1:channel1",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
       announceChannelType: "telegram",
       announceChannelId: "channel1",
     });
@@ -705,11 +766,13 @@ describe("createSubAgentRunner", () => {
       markDelivered: vi.fn(),
     };
     const runner = createSubAgentRunner(deps);
+    const callerConversation = createTestConversation({ agentId: "parent-agent" });
     runner.spawn({
       task: "halt before post-processing stalls",
       agentId: "child-agent",
       callerAgentId: "parent-agent",
-      callerSessionKey: "default:user1:channel1",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
       announceChannelType: "telegram",
       announceChannelId: "channel1",
     });
@@ -904,13 +967,15 @@ describe("createSubAgentRunner", () => {
   it("spawn uses announceToParent when available and callerSessionKey present", async () => {
     const announceToParent = vi.fn().mockResolvedValue(undefined);
     deps.announceToParent = announceToParent;
+    const callerConversation = createTestConversation();
 
     const runner = createSubAgentRunner(deps);
     runner.spawn({
       task: "delegated work",
       agentId: "default",
       callerAgentId: "parent",
-      callerSessionKey: "default:user1:channel1",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
       announceChannelType: "discord",
       announceChannelId: "ch1",
     });
@@ -922,8 +987,10 @@ describe("createSubAgentRunner", () => {
     expect(deps.sendToChannel).not.toHaveBeenCalled();
 
     // Text argument starts with [System Message]
-    const text = announceToParent.mock.calls[0]![2];
+    const text = announceToParent.mock.calls[0]![3];
     expect(text).toMatch(/^\[System Message\]/);
+
+    expect(announceToParent.mock.calls[0]![2]).toEqual(callerConversation);
 
     // Session key was parsed correctly
     const callerSk = announceToParent.mock.calls[0]![1];
@@ -931,7 +998,7 @@ describe("createSubAgentRunner", () => {
       expect.objectContaining({
         tenantId: "default",
         userId: "user1",
-        channelId: "channel1",
+        agentId: "parent",
       }),
     );
   });
@@ -964,13 +1031,15 @@ describe("createSubAgentRunner", () => {
   it("spawn does not raw-fallback when announceToParent throws", async () => {
     const announceToParent = vi.fn().mockRejectedValue(new Error("Parent session unavailable"));
     deps.announceToParent = announceToParent;
+    const callerConversation = createTestConversation();
 
     const runner = createSubAgentRunner(deps);
     runner.spawn({
       task: "error fallback",
       agentId: "default",
       callerAgentId: "parent",
-      callerSessionKey: "default:user1:channel1",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
       announceChannelType: "discord",
       announceChannelId: "ch1",
     });
@@ -1264,12 +1333,8 @@ describe("createSubAgentRunner", () => {
 
     const result = runner.killRun(runId);
     expect(result.killed).toBe(true);
-    // Contract is composite-key {agentId, channelType, channelId} -- the
-    // exact triple is derived in deriveCompositeForRun. We assert the
-    // agentId is forwarded; channelType/channelId come from
-    // run.announceChannelType / parseFormattedSessionKey (best-effort).
     expect(resolverMock.resolveActiveSession).toHaveBeenCalledWith(
-      expect.objectContaining({ agentId: "default" }),
+      runner.getRunStatus(runId)!.conversationRef,
     );
     expect(abortMock).toHaveBeenCalledTimes(1);
   });
@@ -1455,6 +1520,10 @@ describe("createSubAgentRunner", () => {
     expect(deps.executeAgent).toHaveBeenCalledWith(
       "default",
       expect.objectContaining({ tenantId: "default" }),
+      expect.objectContaining({
+        conversationScope: expect.objectContaining({ tenantId: "default", agentId: "default" }),
+        conversationRef: expect.any(String),
+      }),
       "limited steps task",
       30,
       undefined,
@@ -1483,6 +1552,10 @@ describe("createSubAgentRunner", () => {
     expect(deps.executeAgent).toHaveBeenCalledWith(
       "default",
       expect.objectContaining({ tenantId: "default" }),
+      expect.objectContaining({
+        conversationScope: expect.objectContaining({ tenantId: "default", agentId: "default" }),
+        conversationRef: expect.any(String),
+      }),
       "budgeted task",
       undefined,
       undefined,
@@ -1541,7 +1614,7 @@ describe("createSubAgentRunner", () => {
       expect(deps.executeAgent).toHaveBeenCalled();
     });
     const call = (deps.executeAgent as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(call[4]).toBe("parent-agent");
+    expect(call[5]).toBe("parent-agent");
   });
 
   it("passes undefined callerAgentId when not provided", async () => {
@@ -1563,11 +1636,7 @@ describe("createSubAgentRunner", () => {
   describe("spawn limits", () => {
     function createLimitDeps(): SubAgentRunnerDeps {
       return {
-        sessionStore: {
-          save: vi.fn(),
-          delete: vi.fn(),
-          loadByFormattedKey: vi.fn(),
-        },
+        sessionStore: createMockSessionStore(),
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves -- keeps children "running"
         sendToChannel: vi.fn().mockResolvedValue(true),
         eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
@@ -1805,7 +1874,7 @@ describe("createSubAgentRunner", () => {
       // Use maxChildrenPerAgent: 1 for simplicity
       let resolveExec1!: (v: unknown) => void;
       const limitDeps: SubAgentRunnerDeps = {
-        sessionStore: { save: vi.fn(), delete: vi.fn(), loadByFormattedKey: vi.fn() },
+        sessionStore: createMockSessionStore(),
         executeAgent: vi.fn().mockReturnValueOnce(
           new Promise((resolve) => { resolveExec1 = resolve; }),
         ).mockResolvedValue({
@@ -1858,7 +1927,7 @@ describe("createSubAgentRunner", () => {
 
     it("throws when queue is full (maxQueuedPerAgent exceeded)", () => {
       const limitDeps: SubAgentRunnerDeps = {
-        sessionStore: { save: vi.fn(), delete: vi.fn(), loadByFormattedKey: vi.fn() },
+        sessionStore: createMockSessionStore(),
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
         sendToChannel: vi.fn().mockResolvedValue(true),
         eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
@@ -1896,7 +1965,7 @@ describe("createSubAgentRunner", () => {
 
     it("maxQueuedPerAgent: 0 preserves old throw behavior", () => {
       const limitDeps: SubAgentRunnerDeps = {
-        sessionStore: { save: vi.fn(), delete: vi.fn(), loadByFormattedKey: vi.fn() },
+        sessionStore: createMockSessionStore(),
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
         sendToChannel: vi.fn().mockResolvedValue(true),
         eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
@@ -1931,7 +2000,7 @@ describe("createSubAgentRunner", () => {
     it("queued spawns timeout after queueTimeoutMs", () => {
       vi.useFakeTimers();
       const limitDeps: SubAgentRunnerDeps = {
-        sessionStore: { save: vi.fn(), delete: vi.fn(), loadByFormattedKey: vi.fn() },
+        sessionStore: createMockSessionStore(),
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
         sendToChannel: vi.fn().mockResolvedValue(true),
         eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
@@ -2178,11 +2247,7 @@ describe("createSubAgentRunner", () => {
   describe("graph-scoped abort group", () => {
     function createAbortGroupDeps(): SubAgentRunnerDeps {
       return {
-        sessionStore: {
-          save: vi.fn(),
-          delete: vi.fn(),
-          loadByFormattedKey: vi.fn(),
-        },
+        sessionStore: createMockSessionStore(),
         executeAgent: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves -- keeps children "running"
         sendToChannel: vi.fn().mockResolvedValue(true),
         eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
@@ -2524,9 +2589,7 @@ describe("createSubAgentRunner", () => {
       deps.config.subagentContext = { maxRunTimeoutMs: 2_000, perStepTimeoutMs: 1_000 } as typeof deps.config.subagentContext;
       vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
       const mockAbort = vi.fn().mockResolvedValue(undefined);
-      // Abort flows through the composite-key resolver (`{agentId,
-      // channelType, channelId}`) rather than the single-arg
-      // activeRunRegistry.
+      // Abort flows through the canonical conversation resolver.
       deps.sessionResolver = { resolveActiveSession: vi.fn().mockReturnValue({ abort: mockAbort }) };
       deps.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
 
@@ -2541,9 +2604,8 @@ describe("createSubAgentRunner", () => {
 
       await vi.advanceTimersByTimeAsync(2_000);
 
-      // Resolver was queried with a composite key forwarding agentId.
       expect(deps.sessionResolver.resolveActiveSession).toHaveBeenCalledWith(
-        expect.objectContaining({ agentId: "default" }),
+        runner.getRunStatus(runId)!.conversationRef,
       );
       expect(mockAbort).toHaveBeenCalledOnce();
     });
@@ -3270,8 +3332,9 @@ describe("abort wiring in spawn", () => {
     expect(entry.tags).toContain("sub-agent-result");
     expect(entry.tags).toContain("task-completion");
     expect(entry.tags).not.toContain("aborted");
-    expect(entry.agentId).toBe("default");
-    expect(entry.tenantId).toBe("default");
+    const authority = mockStore.mock.calls[0][1];
+    expect(authority.turnScope.conversation.agentId).toBe("default");
+    expect(authority.turnScope.conversation.tenantId).toBe("default");
   });
 
   it("persists completion summary with abort info on budget exceeded", async () => {
@@ -3570,11 +3633,7 @@ describe("spawn rejection WARN logs", () => {
       debug: vi.fn(),
     };
     return {
-      sessionStore: {
-        save: vi.fn(),
-        delete: vi.fn(),
-        loadByFormattedKey: vi.fn(),
-      },
+      sessionStore: createMockSessionStore(),
       executeAgent: vi.fn().mockReturnValue(new Promise(() => {})), // never resolves
       sendToChannel: vi.fn().mockResolvedValue(true),
       eventBus: { emit: vi.fn() } as unknown as SubAgentRunnerDeps["eventBus"],
@@ -4089,12 +4148,14 @@ describe("deliverAnnouncement timeout quarantine", () => {
     const hangingAnnounce = vi.fn().mockReturnValue(new Promise(() => {}));
     deps.announceToParent = hangingAnnounce;
     deps.logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const callerConversation = createTestConversation({ agentId: "caller-agent" });
 
     const runner = createSubAgentRunner(deps);
     const runId = runner.spawn({
       task: "task that completes but announce hangs",
       agentId: "default",
-      callerSessionKey: "default:user1:channel1",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
       callerAgentId: "caller-agent",
       announceChannelType: "discord",
       announceChannelId: "chan-timeout",
@@ -4180,7 +4241,7 @@ describe("discoveredDeferredTools inheritance", () => {
 // Persistent session reuse tests
 // ---------------------------------------------------------------------------
 
-describe("persistent session reuse", () => {
+describe("persistent conversation reuse", () => {
   let deps: SubAgentRunnerDeps;
 
   beforeEach(() => {
@@ -4192,149 +4253,97 @@ describe("persistent session reuse", () => {
     vi.useRealTimers();
   });
 
-  it("reuseSessionKey skips sessionStore.save and uses provided session key", async () => {
-    const reuseKey = "default:debate-node1:debate:graph:node:peer:room:zone:guild:room:zone:thread:topic:zone";
-    const loadByFormattedKey = vi.fn().mockReturnValue({
-      messages: [],
-      metadata: { agentId: "bull" },
+  it("reuseConversation skips session creation and preserves the provided authority", async () => {
+    const reuseConversation = createTestConversation({
+      agentId: "bull",
+      principalId: "debate-node1",
+      conversationId: "debate-round",
     });
-    Reflect.set(deps.sessionStore, "loadByFormattedKey", loadByFormattedKey);
+    vi.mocked(deps.sessionStore.loadByRef).mockReturnValue(
+      ok(persistedConversation(reuseConversation)),
+    );
     const runner = createSubAgentRunner(deps);
     const runId = runner.spawn({
       task: "round 2 debate",
       agentId: "bull",
-      reuseSessionKey: reuseKey,
+      reuseConversation,
     });
 
-    // sessionStore.save should NOT be called -- session already exists
     expect(deps.sessionStore.save).not.toHaveBeenCalled();
-    expect(loadByFormattedKey).toHaveBeenCalledWith(reuseKey);
+    expect(deps.sessionStore.loadByRef).toHaveBeenCalledWith(
+      { tenantId: "default", agentId: "bull" },
+      reuseConversation.conversationRef,
+    );
 
-    // The run's sessionKey should match the reuse key
     const run = runner.getRunStatus(runId);
-    expect(run).toBeDefined();
-    expect(run!.sessionKey).toBe(reuseKey);
+    expect(run?.conversationRef).toBe(reuseConversation.conversationRef);
+    expect(run?.sessionKey).toBe(formattedConversation(reuseConversation));
 
-    // executeAgent should receive the parsed SessionKey
     await vi.advanceTimersByTimeAsync(0);
     expect(deps.executeAgent).toHaveBeenCalledTimes(1);
     const callArgs = vi.mocked(deps.executeAgent).mock.calls[0]!;
-    // sessionKey arg (2nd param) should match parsed reuseKey
-    expect(callArgs[1]).toEqual({
-      tenantId: "default",
-      userId: "debate-node1",
-      channelId: "debate:graph:node",
-      peerId: "room:zone",
-      guildId: "room:zone",
-      threadId: "topic:zone",
-      agentId: "bull",
-    });
+    expect(callArgs[2]).toEqual(reuseConversation);
   });
 
-  it("reuseSessionKey threads to executeAgent overrides with graphId/nodeId", async () => {
-    const reuseKey = "default:debate-node1:debategraph1node1";
-    Reflect.set(deps.sessionStore, "loadByFormattedKey", vi.fn().mockReturnValue({
-      messages: [],
-      metadata: { agentId: "bull" },
-    }));
+  it("reuseConversation threads to executeAgent graph overrides", async () => {
+    const reuseConversation = createTestConversation({ agentId: "bull" });
+    vi.mocked(deps.sessionStore.loadByRef).mockReturnValue(
+      ok(persistedConversation(reuseConversation)),
+    );
     const runner = createSubAgentRunner(deps);
     runner.spawn({
       task: "round 2 debate",
       agentId: "bull",
-      reuseSessionKey: reuseKey,
+      reuseConversation,
       graphId: "g1",
       nodeId: "n1",
     });
 
     await vi.advanceTimersByTimeAsync(0);
     const callArgs = vi.mocked(deps.executeAgent).mock.calls[0]!;
-    // 6th arg = overrides
-    expect(callArgs[5]).toEqual({
+    expect(callArgs[6]).toEqual({
       graphId: "g1",
       nodeId: "n1",
-      reuseSessionKey: reuseKey,
+      reuseConversation,
+      graphNodeDepth: undefined,
     });
   });
 
   it("rejects reuse when persisted session ownership differs from the requested agent", async () => {
-    const reuseKey = "default:debate-node1:debategraph1node1";
-    Reflect.set(deps.sessionStore, "loadByFormattedKey", vi.fn().mockReturnValue({
-      messages: [],
-      metadata: { agentId: "bear" },
-    }));
+    const requestedConversation = createTestConversation({ agentId: "bull" });
+    const persistedOwner = createTestConversation({ agentId: "bear" });
+    vi.mocked(deps.sessionStore.loadByRef).mockReturnValue(
+      ok(persistedConversation(persistedOwner)),
+    );
     const runner = createSubAgentRunner(deps);
 
     expect(() => runner.spawn({
       task: "round 2 debate",
       agentId: "bull",
-      reuseSessionKey: reuseKey,
+      reuseConversation: requestedConversation,
     })).toThrow(/session ownership/i);
 
     expect(deps.executeAgent).not.toHaveBeenCalled();
     expect(deps.sessionStore.save).not.toHaveBeenCalled();
   });
 
-  it("rejects reuse when persisted session ownership is absent", async () => {
-    const reuseKey = "default:debate-node1:debategraph1node1";
-    Reflect.set(deps.sessionStore, "loadByFormattedKey", vi.fn().mockReturnValue({
-      messages: [],
-      metadata: {},
-    }));
-    const runner = createSubAgentRunner(deps);
-
-    expect(() => runner.spawn({
-      task: "round 2 debate",
-      agentId: "bull",
-      reuseSessionKey: reuseKey,
-    })).toThrow(/session ownership/i);
-
-    expect(deps.executeAgent).not.toHaveBeenCalled();
-  });
-
   it("rejects reuse of a persisted session from another tenant", async () => {
-    const reuseKey = "other_tenant:debate-node1:debategraph1node1";
-    Reflect.set(deps.sessionStore, "loadByFormattedKey", vi.fn().mockReturnValue({
-      messages: [],
-      metadata: { agentId: "bull" },
-    }));
+    const reuseConversation = createTestConversation({
+      tenantId: "other_tenant",
+      agentId: "bull",
+    });
     const runner = createSubAgentRunner(deps);
 
     expect(() => runner.spawn({
       task: "round 2 debate",
       agentId: "bull",
-      reuseSessionKey: reuseKey,
+      reuseConversation,
     })).toThrow(/tenant/i);
 
     expect(deps.executeAgent).not.toHaveBeenCalled();
   });
 
-  it("invalid reuseSessionKey falls back to normal session creation", async () => {
-    deps.logger = {
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      debug: vi.fn(),
-    };
-    const runner = createSubAgentRunner(deps);
-    runner.spawn({
-      task: "round 2 debate",
-      agentId: "bull",
-      reuseSessionKey: "invalid-key-format",
-    });
-
-    // sessionStore.save SHOULD be called (fallback to normal session)
-    expect(deps.sessionStore.save).toHaveBeenCalledTimes(1);
-    const saveCall = vi.mocked(deps.sessionStore.save).mock.calls[0]!;
-    expect((saveCall[2] as Record<string, unknown>).agentId).toBe("bull");
-
-    // logger.error should have been called with reuseSessionKey parse failure
-    expect(deps.logger.error).toHaveBeenCalledWith(
-      expect.objectContaining({ reuseSessionKey: "invalid-key-format" }),
-      expect.stringContaining("Failed to parse reuseSessionKey"),
-    );
-  });
-
-  it("normal spawn without reuseSessionKey still creates session (regression guard)", async () => {
+  it("normal spawn without reuse authority still creates a scoped session", async () => {
     const runner = createSubAgentRunner(deps);
     const runId = runner.spawn({
       task: "research topic",
@@ -4345,15 +4354,18 @@ describe("persistent session reuse", () => {
     // sessionStore.save SHOULD be called for normal spawns
     expect(deps.sessionStore.save).toHaveBeenCalledTimes(1);
     const saveCall = vi.mocked(deps.sessionStore.save).mock.calls[0]!;
-    const sessionKey = saveCall[0] as { tenantId: string; userId: string; channelId: string };
-    expect(sessionKey.tenantId).toBe("default");
-    expect(sessionKey.userId).toContain("sub-agent-");
-    expect(sessionKey.channelId).toContain("sub-agent:");
+    const conversationScope = saveCall[0];
+    expect(conversationScope.tenantId).toBe("default");
+    expect(conversationScope.agentId).toBe("researcher");
+    expect(conversationScope.partition.kind).toBe("endpoint-conversation-principal");
+    if (conversationScope.partition.kind !== "endpoint-conversation-principal") return;
+    expect(conversationScope.partition.principalId).toContain("sub-agent:");
+    expect(conversationScope.partition.endpoint.channelType).toBe("sub-agent");
 
     // The run's sessionKey should match the standard format
     const run = runner.getRunStatus(runId);
     expect(run).toBeDefined();
-    expect(run!.sessionKey).toContain("default:sub-agent-");
+    expect(run!.conversationRef).toMatch(/^cv_/);
   });
 });
 
@@ -4697,7 +4709,7 @@ describe("sandbox no-downgrade gate", () => {
     overrides: Partial<SubAgentRunnerDeps> = {},
   ): SubAgentRunnerDeps {
     return {
-      sessionStore: { save: vi.fn(), delete: vi.fn(), loadByFormattedKey: vi.fn() },
+      sessionStore: createMockSessionStore(),
       // never resolves -- keeps children "running" so the children-limit path is reachable
       executeAgent: vi.fn().mockReturnValue(new Promise(() => {})),
       sendToChannel: vi.fn().mockResolvedValue(true),

@@ -27,12 +27,12 @@ import { resolve } from "node:path";
 
 import {
   createAgentSession,
-  AuthStorage,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { ComisCredentialStore } from "../../model/auth-storage-adapter.js";
 
 import { hostileMcpTool, wellFormedTool } from "../../provider/tool-schema/gbnf-hostile-fixtures.js";
 import {
@@ -375,12 +375,15 @@ describe("in-place strip propagation decider — REAL SDK boundary", () => {
     // scratch agentDir (no reads from the operator's ~/.pi), no model entry
     // (construction does not require auth or network — it is session
     // construction, not prompting).
-    const authStorage = AuthStorage.inMemory();
+    const modelRuntime = await ModelRuntime.create({
+      credentials: new ComisCredentialStore(),
+      modelsPath: null,
+      allowModelNetwork: false,
+    });
     const { session } = await createAgentSession({
       cwd: scratchDir,
       agentDir: scratchDir,
-      authStorage,
-      modelRegistry: ModelRegistry.inMemory(authStorage),
+      modelRuntime,
       sessionManager: SessionManager.inMemory(scratchDir),
       settingsManager: SettingsManager.inMemory(),
       tools: [hostileMcpTool.name],

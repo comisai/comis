@@ -37,8 +37,6 @@ import {
   CapabilityDeniedError,
   systemGetEnv,
   systemNowMs,
-  formatSessionKey,
-  parseFormattedSessionKey,
   tryGetContext,
   resolvePlatformDeliveryResult,
 } from "@comis/core";
@@ -540,17 +538,19 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         );
 
         const requestContext = tryGetContext();
-        const sessionKey = requestContext?.sessionKey
-          ? parseFormattedSessionKey(requestContext.sessionKey)
-          : undefined;
-        const hasMatchingSession = sessionKey?.channelId === channelId;
+        const endpoint = requestContext?.turnScope?.endpoint;
+        const endpointDisplayId = endpoint === undefined
+          ? undefined
+          : `${endpoint.channelType}:${endpoint.channelInstanceId}:${endpoint.conversationId}`;
+        const hasMatchingSession = endpoint?.conversationId === channelId
+          || endpointDisplayId === channelId;
 
         const attachmentType = (rawParams.attachment_type as string) ?? "file";
         const fileName = (rawParams.file_name as string | undefined) ?? basename(attachmentUrl);
         const caption = rawParams.caption as string | undefined;
-        if (hasMatchingSession && requestContext?.clientId && sessionKey) {
+        if (hasMatchingSession && requestContext?.clientId && requestContext.sessionKey) {
           deps.wsConnections.sendToClientId(requestContext.clientId, "notification.attachment", {
-            sessionKey: formatSessionKey(sessionKey),
+            sessionKey: requestContext.sessionKey,
             channelId,
             url: `/media/${mediaId}`,
             type: attachmentType,
@@ -573,8 +573,8 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
           const marker = caption
             ? `${caption}\n\n<!-- attachment:${json} -->`
             : `<!-- attachment:${json} -->`;
-          if (hasMatchingSession && sessionKey) {
-            deps.onGatewayAttachment(sessionKey, marker);
+          if (hasMatchingSession && requestContext?.turnScope) {
+            deps.onGatewayAttachment(requestContext.turnScope.conversation, marker);
           } else {
             deps.logger.warn({
               channelId,

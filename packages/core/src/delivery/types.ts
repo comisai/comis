@@ -10,6 +10,8 @@
  */
 
 import type { SendMessageOptions } from "../ports/channel.js";
+import type { ChannelEndpoint } from "../domain/conversation-scope.js";
+import type { DeliveryAuthority } from "../ports/delivery-queue.js";
 import { ok, type Result } from "@comis/shared";
 
 // -------------------------------------------------------------------------
@@ -39,7 +41,12 @@ export interface DeliveryAdapter {
 // -------------------------------------------------------------------------
 
 /** Options for a single delivery call. */
+// @optional-field-count: 13 conditional per-call overrides; absence delegates to resolved-turn authority and service policy.
 export interface DeliverToChannelOptions {
+  /** Explicit authority for deliveries created outside an active resolved turn. */
+  authority?: DeliveryAuthority;
+  /** Immutable destination endpoint captured when the delivery is created. */
+  destinationEndpoint?: ChannelEndpoint;
   /** Reply-to message ID (platform-specific). Applied to first chunk only. */
   replyTo?: string;
   /** Reply subject (email forms a "Re: <subject>" reply subject from this).

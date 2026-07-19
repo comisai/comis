@@ -249,7 +249,7 @@ describe.skipIf(!COMIS_BENCH)("BEAM scale probe (gated)", () => {
         maxResults: 10,
         minScore: 0,
         includeTrustLevels: ["system", "learned"],
-        rerank: { enabled: !!rerankerPort, maxCandidates: 20, minResults: 2, timeoutMs: 5000 },
+        rerank: { mode: rerankerPort ? "on" : "off", maxCandidates: 20, minResults: 2, timeoutMs: 5000 },
         scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
       },
     );

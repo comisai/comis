@@ -25,6 +25,10 @@ registerActivityLabelSpec("memory_store", {
 
 const MemoryStoreParams = Type.Object({
   content: Type.String({ description: "The text content to store in memory" }),
+  visibility: Type.Union(
+    [Type.Literal("conversation"), Type.Literal("principal"), Type.Literal("agent-shared")],
+    { description: "Who may recall this memory" },
+  ),
   tags: Type.Optional(
     Type.Array(Type.String(), { description: "Optional tags for categorisation (e.g. ['preference', 'fact'])" }),
   ),
@@ -52,11 +56,12 @@ export function createMemoryStoreTool(rpcCall: RpcCall): AgentTool<typeof Memory
     ): Promise<AgentToolResult<unknown>> {
       try {
         const content = readStringParam(params, "content");
+        const visibility = readStringParam(params, "visibility");
         const tags = Array.isArray(params.tags)
           ? (params.tags as unknown[]).filter((t): t is string => typeof t === "string")
           : [];
 
-        const result = await rpcCall("memory.store", { content, tags });
+        const result = await rpcCall("memory.store", { content, tags, visibility });
 
         // Secret check now handled by validateMemoryWrite in @comis/core.
         // The daemon-side validator (memory-write-validator.ts) calls scrubSecretsFromText

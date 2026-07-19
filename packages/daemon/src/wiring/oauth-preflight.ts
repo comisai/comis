@@ -6,7 +6,7 @@
  *
  *   1. `hasAnyOAuthAgent(agents)` — runtime gate. Returns `true` iff at least
  *      one entry in the per-agent map declares a `provider` value that
- *      pi-ai's `getOAuthProvider` recognises as an OAuth provider. Used to
+ *      the provider OAuth catalog recognises as an OAuth provider. Used to
  *      skip the entire preflight (and any outbound network probe) when no
  *      OAuth-using agent is configured.
  *
@@ -34,7 +34,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { runOAuthTlsPreflight } from "@comis/core";
-import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { getProviderOAuth } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { PerAgentConfig } from "@comis/core";
 
@@ -46,14 +46,14 @@ const MODULE_NAME = "oauth-tls-preflight";
 
 /**
  * Returns `true` iff at least one agent's `provider` is recognised by pi-ai's
- * `getOAuthProvider` as an OAuth-using provider.
+ * the provider OAuth catalog as an OAuth-using provider.
  *
  * Single-source-of-truth check — avoids drift with pi-ai's provider catalogue.
  * When this returns `false`, the daemon skips the preflight entirely (zero
  * outbound probes during boot for OAuth-less deployments).
  */
 export function hasAnyOAuthAgent(agents: Record<string, PerAgentConfig>): boolean {
-  return Object.values(agents).some((agent) => Boolean(getOAuthProvider(agent.provider)));
+  return Object.values(agents).some((agent) => Boolean(getProviderOAuth(agent.provider)));
 }
 
 interface OsRelease {

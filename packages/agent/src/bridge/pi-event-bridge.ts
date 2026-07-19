@@ -25,7 +25,7 @@ import {
   type SessionKey,
   type TypedEventBus,
   type MemoryPort,
-  type MemoryEntry,
+  type MemoryWriteScope,
   type ModelOperationType,
   type ErrorKind,
   // Classification data for "Tool X not found" enrichment.
@@ -335,6 +335,8 @@ export interface PiEventBridgeDeps {
   logger: ComisLogger;
   /** Optional memory port for flushing compaction summaries to long-term memory. */
   memoryPort?: MemoryPort;
+  /** Snapshot of the current turn authority for compaction-summary persistence. */
+  memoryScope?: MemoryWriteScope;
   /** Called with streaming text deltas for real-time response forwarding.
    *  kind='text' for visible text_delta events; kind='thinking' for thinking_delta events.
    *  Consumers must only accumulate kind==='text' — thinking deltas must never reach the channel. */
@@ -369,8 +371,7 @@ export interface PiEventBridgeDeps {
    */
   spendAccumulator?: SpendAccumulator;
   /**
-   * The resolved `(tenant, agent)` this bridge reserves spend against — derived
-   * at the daemon composition root via `parseFormattedSessionKey`. Required
+   * The resolved `(tenant, agent)` this bridge reserves spend against. Required
    * whenever `spendAccumulator` is present.
    */
   spendScope?: SpendScope;
@@ -2490,12 +2491,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
           // Flush compaction summary to long-term memory
           let memoriesWritten = 0;
-          if (compactionEvent.result?.summary && deps.memoryPort) {
+          if (compactionEvent.result?.summary && deps.memoryPort && deps.memoryScope) {
             const entry = {
               id: randomUUID(),
-              tenantId: deps.sessionKey.tenantId,
-              userId: deps.sessionKey.userId,
-              agentId: deps.agentId,
               content: compactionEvent.result.summary,
               trustLevel: "learned" as const,
               source: { who: "compaction", channel: deps.channelId },
@@ -2503,7 +2501,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               createdAt: systemNowMs(),
             };
             // Fire-and-forget: never block event processing on memory I/O
-            suppressError(deps.memoryPort.store(entry as MemoryEntry), "compaction memory flush");
+            suppressError(deps.memoryPort.store(entry, deps.memoryScope), "compaction memory flush");
             memoriesWritten = 1;
           }
 
