@@ -9,7 +9,7 @@ import {
   WORKSPACE_FILE_NAMES,
   type WorkspaceFileName,
 } from "./templates.js";
-import { readWorkspaceState, writeWorkspaceState, isIdentityFilled } from "./workspace-state.js";
+import { readWorkspaceState, writeWorkspaceState } from "./workspace-state.js";
 import type { WorkspaceState } from "./workspace-state.js";
 import { systemNowMs } from "../runtime/system-time.js";
 
@@ -324,15 +324,10 @@ export async function getWorkspaceStatus(dir: string): Promise<WorkspaceStatus> 
   // Read workspace lifecycle state
   const state = exists ? await readWorkspaceState(dir) : { version: 1 as const };
 
-  // Check identity-filled as an alternative completion signal
-  let identityFilled = false;
-  if (exists) {
-    const identityPath = safePath(dir, "IDENTITY.md");
-    identityFilled = await isIdentityFilled(identityPath);
-  }
-
-  // Detect and record onboarding completion (fires once)
-  const isComplete = !bootstrapHasContent || identityFilled;
+  // BOOTSTRAP.md is the sole completion signal. An identity can be collected
+  // before role, user preferences, and boundaries, so it cannot complete the
+  // staged setup by itself.
+  const isComplete = !bootstrapHasContent;
   if (isComplete && state.bootstrapSeededAt && !state.onboardingCompletedAt) {
     const now = systemNowMs();
     await writeWorkspaceState(dir, { onboardingCompletedAt: now });

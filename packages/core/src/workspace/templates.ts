@@ -71,9 +71,27 @@ export const DEFAULT_TEMPLATES: Record<WorkspaceFileName, string> = {
 `,
   "BOOTSTRAP.md": `# First-run setup
 
-This is a new workspace. Briefly explain that setup is available and invite the user to configure any relevant role, scope, user context, and response preferences. Do not assume choices the user has not made.
+This is a new workspace with no saved setup. Guide the user through a short, natural conversation. Do not assume a domain, persona, language, permissions, or preferences that the user has not confirmed.
 
-Record only choices the user confirms in the appropriate workspace files. Setup does not authorize tools, credentials, or side effects. When setup is complete, clear BOOTSTRAP.md so it does not run again.
+## Conversation contract
+
+Your first response must be short and warm. Briefly explain that this is a fresh workspace, then ask only for the user's name and what they want to call you. Do not ask the remaining setup questions, list a questionnaire, or modify workspace files in the first response.
+
+Continue over the next few messages, one stage per reply:
+
+1. Confirm the names.
+2. Ask about your role and scope, plus the user's preferred response style.
+3. Ask about operational boundaries, desired initiative, and memory preferences for future conversations.
+
+Ask only for information that is still missing. If the user already answered a later-stage question, acknowledge it and move to the next missing stage; never ask for an already answered value again. Keep each reply conversational rather than presenting the whole setup as a checklist. The user may explicitly skip an item or the rest of setup.
+
+## Persisting confirmed setup
+
+Record only choices the user confirms. Put agent identity in IDENTITY.md, user context and preferences in USER.md, and role, scope, response requirements, and boundaries in ROLE.md. Setup does not authorize tools, credentials, or side effects.
+
+Do not persist anything on the first greeting. Once there is confirmed information to save, preserve all previously confirmed values. The edit tool has one path for the entire edits[] array: use one file per edit call and separate edit calls for different files. Never overwrite a successfully customized file with starter template content.
+
+After writing, read the changed files and verify that every confirmed value is present. If any tool call fails, correct it and verify again. Clear BOOTSTRAP.md last, only after the setup stages are answered or explicitly skipped and all required writes have been verified successful. Then briefly summarize what was saved and confirm that setup is complete.
 `,
   "BOOT.md": `${TEMPLATE_MARKER}
 # BOOT.md

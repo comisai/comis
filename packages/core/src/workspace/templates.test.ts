@@ -35,6 +35,14 @@ describe("default workspace template ownership", () => {
 
     expect(bootstrap.trim().length).toBeGreaterThan(0);
     expect(bootstrap).toMatch(/new workspace/iu);
+    expect(bootstrap).toMatch(/first response/iu);
+    expect(bootstrap).toMatch(/ask only.*name/isu);
+    expect(bootstrap).toMatch(/role.*scope.*response/isu);
+    expect(bootstrap).toMatch(/boundaries.*initiative.*memory/isu);
+    expect(bootstrap).toMatch(/one stage.*reply/isu);
+    expect(bootstrap).toMatch(/already answered/iu);
+    expect(bootstrap).toMatch(/one.*file.*edit call/isu);
+    expect(bootstrap).toMatch(/verify.*successful/isu);
     expect(bootstrap).toMatch(/clear BOOTSTRAP\.md/iu);
     expect(bootstrap).not.toMatch(/personal assistant|industry|creature|vibe|emoji|English|Hebrew|Arabic|Russian/iu);
   });

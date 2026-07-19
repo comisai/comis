@@ -689,7 +689,7 @@ describe("workspace-manager", () => {
       expect(status.state!.onboardingCompletedAt).toBeGreaterThan(0);
     });
 
-    it("records onboardingCompletedAt when IDENTITY.md is filled", async () => {
+    it("does not record onboarding completion from identity alone while BOOTSTRAP.md remains pending", async () => {
       const dir = await makeTempDir();
       await ensureWorkspace({ dir });
 
@@ -705,8 +705,8 @@ describe("workspace-manager", () => {
 
       const status = await getWorkspaceStatus(dir);
 
-      expect(status.state!.onboardingCompletedAt).toBeTypeOf("number");
-      expect(status.isBootstrapped).toBe(true);
+      expect(status.state!.onboardingCompletedAt).toBeUndefined();
+      expect(status.isBootstrapped).toBe(false);
     });
 
     it("does not re-record onboardingCompletedAt on subsequent calls", async () => {
@@ -724,7 +724,7 @@ describe("workspace-manager", () => {
       expect(second.state!.onboardingCompletedAt).toBe(firstTimestamp);
     });
 
-    it("reports isBootstrapped: true when IDENTITY.md filled but BOOTSTRAP.md present", async () => {
+    it("reports isBootstrapped: false when IDENTITY.md is filled but BOOTSTRAP.md remains pending", async () => {
       const dir = await makeTempDir();
       await ensureWorkspace({ dir });
 
@@ -739,7 +739,7 @@ describe("workspace-manager", () => {
       // BOOTSTRAP.md still exists, but identity is filled
       const bootstrapExists = status.files.find((f) => f.name === "BOOTSTRAP.md");
       expect(bootstrapExists?.present).toBe(true);
-      expect(status.isBootstrapped).toBe(true);
+      expect(status.isBootstrapped).toBe(false);
     });
 
     it("returns default state for non-existent directory", async () => {

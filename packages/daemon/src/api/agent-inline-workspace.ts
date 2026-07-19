@@ -49,8 +49,8 @@ export interface AgentInlineWorkspaceResult {
 
 export type AgentInlineWorkspaceError =
   | { kind: "oversize"; file: "ROLE.md" | "IDENTITY.md"; limit: number; actual: number }
-  | { kind: "path_traversal"; file: "ROLE.md" | "IDENTITY.md"; message: string }
-  | { kind: "io"; file: "ROLE.md" | "IDENTITY.md"; message: string };
+  | { kind: "path_traversal"; file: "ROLE.md" | "IDENTITY.md" | "BOOTSTRAP.md"; message: string }
+  | { kind: "io"; file: "ROLE.md" | "IDENTITY.md" | "BOOTSTRAP.md"; message: string };
 
 export interface AgentInlineWorkspaceDeps {
   logger: ComisLogger;
@@ -75,7 +75,7 @@ const IDENTITY_MAX = 4096;
  */
 function resolveTarget(
   workspaceDir: string,
-  filename: "ROLE.md" | "IDENTITY.md",
+  filename: "ROLE.md" | "IDENTITY.md" | "BOOTSTRAP.md",
 ): Result<string, AgentInlineWorkspaceError> {
   try {
     return ok(safePath(workspaceDir, filename));
@@ -97,7 +97,7 @@ function resolveTarget(
 async function attemptWrite(
   deps: AgentInlineWorkspaceDeps,
   agentId: string,
-  filename: "ROLE.md" | "IDENTITY.md",
+  filename: "ROLE.md" | "IDENTITY.md" | "BOOTSTRAP.md",
   targetPath: string,
   content: string,
 ): Promise<Result<void, AgentInlineWorkspaceError>> {
@@ -113,7 +113,7 @@ async function attemptWrite(
         agentId,
         file: filename,
         err: e,
-        hint: "Inline ROLE.md/IDENTITY.md write failed; agent exists with template files. User can call write() to customize.",
+        hint: "Inline workspace setup write failed; inspect the named file and complete the agent setup before use.",
         errorKind: "resource" as const,
       },
       "Inline workspace file write failed",
@@ -187,6 +187,22 @@ export async function writeInlineWorkspaceFiles(
     if (!writeResult.ok) return writeResult;
     identityWritten = true;
     bytesWritten += params.identity.length;
+  }
+
+  // A fully configured programmatic agent does not need the interactive setup.
+  // Clear the authoritative pending-state file only after both required inline
+  // files were written successfully.
+  if (roleWritten && identityWritten) {
+    const targetResult = resolveTarget(params.workspaceDir, "BOOTSTRAP.md");
+    if (!targetResult.ok) return targetResult;
+    const writeResult = await attemptWrite(
+      deps,
+      params.agentId,
+      "BOOTSTRAP.md",
+      targetResult.value,
+      "",
+    );
+    if (!writeResult.ok) return writeResult;
   }
 
   // Emit canonical INFO log only when at least one file was written.

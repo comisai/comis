@@ -20,7 +20,7 @@ export const WorkspaceStateSchema = z.object({
   bootstrapSeededAt: z.number().optional(),
   /** Epoch ms when onboarding completion was first detected. */
   onboardingCompletedAt: z.number().optional(),
-  /** Number of messages sent during onboarding (for attempt cap). */
+  /** Number of messages seen while onboarding was active (diagnostic only). */
   onboardingMessageCount: z.number().optional(),
 });
 
@@ -72,8 +72,8 @@ export async function writeWorkspaceState(
  * Increment the onboarding message counter and return the new count.
  *
  * Reads the current state (defaulting to 0 if unset), increments by one,
- * persists the update, and returns the new count. Used by the onboarding
- * detector to enforce an attempt cap.
+ * persists the update, and returns the new count. The count is diagnostic;
+ * onboarding remains active until BOOTSTRAP.md is cleared.
  */
 export async function incrementOnboardingCount(workspaceDir: string): Promise<number> {
   const state = await readWorkspaceState(workspaceDir);

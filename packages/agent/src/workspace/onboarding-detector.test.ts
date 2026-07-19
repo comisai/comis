@@ -43,12 +43,11 @@ describe("detectOnboardingState", () => {
     const result = await detectOnboardingState("/workspace");
 
     expect(result).toBe(true);
-    expect(mockReadWorkspaceState).toHaveBeenCalledWith("/workspace");
     expect(mockReadFile).toHaveBeenCalledWith("/workspace/BOOTSTRAP.md", "utf-8");
     expect(mockIncrementOnboardingCount).toHaveBeenCalledWith("/workspace");
   });
 
-  it("returns false when onboardingCompletedAt is set (even if BOOTSTRAP.md exists)", async () => {
+  it("keeps onboarding active when BOOTSTRAP.md has pending state despite a stale completion timestamp", async () => {
     mockReadWorkspaceState.mockResolvedValue({
       version: 1,
       onboardingCompletedAt: 1710000000000,
@@ -57,9 +56,9 @@ describe("detectOnboardingState", () => {
 
     const result = await detectOnboardingState("/workspace");
 
-    expect(result).toBe(false);
-    // Should short-circuit before checking filesystem
-    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(result).toBe(true);
+    expect(mockReadFile).toHaveBeenCalledWith("/workspace/BOOTSTRAP.md", "utf-8");
+    expect(mockIncrementOnboardingCount).toHaveBeenCalledWith("/workspace");
   });
 
   it("returns false when BOOTSTRAP.md is missing (file absent)", async () => {
@@ -105,18 +104,18 @@ describe("detectOnboardingState", () => {
     expect(mockIncrementOnboardingCount).not.toHaveBeenCalled();
   });
 
-  it("returns false when BOOTSTRAP.md exists but IDENTITY.md is already filled", async () => {
+  it("keeps onboarding active when identity is filled but the remaining setup is pending", async () => {
     mockReadWorkspaceState.mockResolvedValue({ version: 1 });
     mockReadFile.mockResolvedValue("# BOOTSTRAP.md\nContent");
     mockIsIdentityFilled.mockResolvedValue(true);
 
     const result = await detectOnboardingState("/workspace");
 
-    expect(result).toBe(false);
-    expect(mockIsIdentityFilled).toHaveBeenCalledWith("/workspace/IDENTITY.md");
+    expect(result).toBe(true);
+    expect(mockIsIdentityFilled).not.toHaveBeenCalled();
   });
 
-  it("does not check identity when onboardingCompletedAt is set", async () => {
+  it("does not use identity as an onboarding completion signal", async () => {
     mockReadWorkspaceState.mockResolvedValue({
       version: 1,
       onboardingCompletedAt: 1710000000000,
@@ -124,7 +123,7 @@ describe("detectOnboardingState", () => {
 
     const result = await detectOnboardingState("/workspace");
 
-    expect(result).toBe(false);
+    expect(result).toBe(true);
     expect(mockIsIdentityFilled).not.toHaveBeenCalled();
   });
 
@@ -148,7 +147,7 @@ describe("detectOnboardingState", () => {
     expect(mockIsIdentityFilled).not.toHaveBeenCalled();
   });
 
-  it("auto-completes and returns false when count exceeds threshold", async () => {
+  it("does not abandon a staged onboarding conversation after three messages", async () => {
     mockReadWorkspaceState.mockResolvedValue({ version: 1 });
     mockReadFile.mockResolvedValue("# BOOTSTRAP.md\nContent");
     mockIsIdentityFilled.mockResolvedValue(false);
@@ -156,13 +155,11 @@ describe("detectOnboardingState", () => {
 
     const result = await detectOnboardingState("/workspace");
 
-    expect(result).toBe(false);
-    expect(mockWriteWorkspaceState).toHaveBeenCalledWith("/workspace", {
-      onboardingCompletedAt: expect.any(Number),
-    });
+    expect(result).toBe(true);
+    expect(mockWriteWorkspaceState).not.toHaveBeenCalled();
   });
 
-  it("does not increment count when onboardingCompletedAt is set", async () => {
+  it("increments diagnostic message count when a stale completion timestamp accompanies pending setup", async () => {
     mockReadWorkspaceState.mockResolvedValue({
       version: 1,
       onboardingCompletedAt: 1710000000000,
@@ -170,7 +167,7 @@ describe("detectOnboardingState", () => {
 
     await detectOnboardingState("/workspace");
 
-    expect(mockIncrementOnboardingCount).not.toHaveBeenCalled();
+    expect(mockIncrementOnboardingCount).toHaveBeenCalledWith("/workspace");
   });
 
   it("does not increment count when BOOTSTRAP.md is missing", async () => {
