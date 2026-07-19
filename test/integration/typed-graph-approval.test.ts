@@ -226,9 +226,15 @@ describe("Typed Graph Approval-Gate Integration", () => {
             timestamp: Date.now(),
             isBot: false,
             attachments: [],
+            // Channel-agnostic metadata bag is a required NormalizedMessage
+            // field (schema defaults it to {} only when parsed; a hand-crafted
+            // event bypasses that). Inbound subscribers read metadata.traceId
+            // non-optionally, so it must be present.
+            metadata: {},
           },
           sessionKey: {
             tenantId: "test",
+            agentId: "default",
             userId: "test-user",
             channelId: "test-approval-ch",
             peerId: "test-user",

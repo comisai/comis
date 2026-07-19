@@ -3,15 +3,17 @@
  * Integration test: memory portability export → import round-trip.
  *
  * Tests the full CLI→daemon→adapter path:
- * 1. Store a clean entry via memory.store RPC (default agent scope)
- * 2. Export via memory.portability.export RPC (no agent_id filter = all entries)
- * 3. Import to a specific target agentId via memory.portability.import RPC
+ * 1. Seed a clean entry via memory.store, in-process within a resolved request context
+ * 2. Export that agent's memory via memory.portability.export RPC (gateway)
+ * 3. Import to a specific target agentId via memory.portability.import RPC (gateway)
  * 4. Verify the imported entry preserves trust_level, memory_type, tags, provenance
  *
- * Note: memory.store uses _agentId injected by the dispatcher (from the
- * authenticated session), NOT an agent_id request param — extra params are
- * stripped by the contract Zod parse. Exports without agent_id filter return
- * all tenant-scoped entries, ensuring the stored entry is included.
+ * Note: under the explicit-authority contracts, memory.store binds each write to the
+ * ambient resolved turnScope (as the production agent tool path does) plus explicit
+ * tenant/agent and an explicit visibility — the admin gateway leg establishes no such
+ * scope, so the seed store runs in-process. The export re-emits the visibility as a
+ * string the import reconstructs. Portability export/import both require explicit
+ * agent_id + tenant_id (export is per-agent — there is no "all agents" mode).
  *
  * Requires: pnpm build (imports @comis/* from dist/)
  * Pool: forks (maxConcurrency: 1)
@@ -34,19 +36,54 @@ import {
 import {
   MemoryPortabilityExportContract,
   MemoryPortabilityImportContract,
-  MemoryStoreContract,
   parseMemoryExportEnvelope,
+  runWithContext,
 } from "@comis/core";
+import { resolveInternalTurnIdentity } from "@comis/orchestrator";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const CONFIG_PATH = resolve(__dirname, "../config/config.test-memory-portability.yaml");
 
+// memory.store binds each write to the resolved request authority: the handler reads
+// the ambient turnScope (tryGetContext) and requires it to match the explicit
+// tenant/agent, exactly as the production agent tool path does (that tool runs inside
+// the agent turn's resolved scope). The admin gateway leg establishes no such scope, so
+// the seed store is driven in-process through a resolved request context. Export/import
+// are operator RPC and derive their own authority from explicit params, so they stay on
+// the gateway leg. Mirrors packages/daemon/src/api/memory-handlers.test.ts.
+function withResolvedRequestContext<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
+  const identity = resolveInternalTurnIdentity({
+    tenantId: "test",
+    agentId,
+    originKind: "control-plane",
+    instanceId: "memory-portability-roundtrip",
+    conversationId: "memory-portability-roundtrip-store",
+    principalId: "test-operator",
+  });
+  if (!identity.ok) throw identity.error;
+  return runWithContext(
+    {
+      tenantId: "test",
+      userId: "test-operator",
+      sessionKey: identity.value.displaySessionKey,
+      agentId,
+      turnScope: identity.value.turnScope,
+      traceId: "00000000-0000-4000-8000-000000000001",
+      startedAt: 1,
+      trustLevel: "admin",
+    },
+    fn,
+  );
+}
+
 describe("memory portability round-trip (export → import, CLI→daemon→adapter)", () => {
   let handle: TestDaemonHandle;
+  let rpcCall: TestDaemonHandle["daemon"]["rpcCall"];
 
   beforeAll(async () => {
     handle = await startTestDaemon({ configPath: CONFIG_PATH });
+    rpcCall = handle.daemon.rpcCall;
     process.env["COMIS_GATEWAY_URL"] = `ws://127.0.0.1:${handle.daemon.container.config.gateway.port}/ws`;
     process.env["COMIS_GATEWAY_TOKEN"] = handle.authToken;
     process.env["COMIS_CLI_E2E"] = "true";
@@ -67,23 +104,32 @@ describe("memory portability round-trip (export → import, CLI→daemon→adapt
   }, 30_000);
 
   it("exports a stored entry and import preserves trust_level, memory_type, tags, and provenance", async () => {
-    // memory.store scopes to the dispatcher-injected _agentId (not a contract param).
-    // Export without agent_id returns all tenant-scope entries, which includes this entry.
+    const TENANT_ID = "test";
+    const SOURCE_AGENT = "default";
     const TARGET_AGENT = "portability-target-agent";
     const TEST_CONTENT = "The capital of France is Paris — a test memory for portability round-trip";
     const TEST_TAGS = ["geography", "europe", "portability-test"];
 
-    // Step 1: Store a test entry (scoped to default agent via dispatcher _agentId)
-    await withClient(async (client) =>
-      callTyped(client, MemoryStoreContract, {
+    // Step 1: Seed a test entry under the source agent scope, in-process within a
+    // resolved request context (the store binds to the ambient turnScope). Explicit
+    // visibility is required and the export re-emits it for the import path.
+    await withResolvedRequestContext(SOURCE_AGENT, () =>
+      rpcCall("memory.store", {
         content: TEST_CONTENT,
         tags: TEST_TAGS,
+        visibility: "agent-shared",
+        tenantId: TENANT_ID,
+        agentId: SOURCE_AGENT,
       }),
     );
 
-    // Step 2: Export all memory (no agent_id filter = full tenant scope)
+    // Step 2: Export the source agent's memory (export is per-agent — the contract
+    // requires explicit agent_id + tenant_id).
     const exportResult = await withClient(async (client) =>
-      callTyped(client, MemoryPortabilityExportContract, {}),
+      callTyped(client, MemoryPortabilityExportContract, {
+        agent_id: SOURCE_AGENT,
+        tenant_id: TENANT_ID,
+      }),
     );
 
     expect(exportResult.schemaVersion).toBe("comis-memory-export-v1");
@@ -99,6 +145,7 @@ describe("memory portability round-trip (export → import, CLI→daemon→adapt
       callTyped(client, MemoryPortabilityImportContract, {
         entries: exportResult.entries as Record<string, unknown>[],
         agent_id: TARGET_AGENT,
+        tenant_id: TENANT_ID,
         dry_run: false,
       }),
     );
@@ -111,6 +158,7 @@ describe("memory portability round-trip (export → import, CLI→daemon→adapt
     const verifyResult = await withClient(async (client) =>
       callTyped(client, MemoryPortabilityExportContract, {
         agent_id: TARGET_AGENT,
+        tenant_id: TENANT_ID,
       }),
     );
 
@@ -127,11 +175,16 @@ describe("memory portability round-trip (export → import, CLI→daemon→adapt
   });
 
   it("dry-run import reports counts without persisting any entries", async () => {
+    const TENANT_ID = "test";
+    const SOURCE_AGENT = "default";
     const DRY_AGENT = "portability-dry-run-agent";
 
-    // Export all tenant-scope entries (includes the previously stored test entry)
+    // Export the source agent's entries (includes the previously stored test entry).
     const exportResult = await withClient(async (client) =>
-      callTyped(client, MemoryPortabilityExportContract, {}),
+      callTyped(client, MemoryPortabilityExportContract, {
+        agent_id: SOURCE_AGENT,
+        tenant_id: TENANT_ID,
+      }),
     );
     expect(exportResult.entryCount).toBeGreaterThanOrEqual(1);
 
@@ -139,6 +192,7 @@ describe("memory portability round-trip (export → import, CLI→daemon→adapt
       callTyped(client, MemoryPortabilityImportContract, {
         entries: exportResult.entries as Record<string, unknown>[],
         agent_id: DRY_AGENT,
+        tenant_id: TENANT_ID,
         dry_run: true,
       }),
     );
@@ -150,6 +204,7 @@ describe("memory portability round-trip (export → import, CLI→daemon→adapt
     const check = await withClient(async (client) =>
       callTyped(client, MemoryPortabilityExportContract, {
         agent_id: DRY_AGENT,
+        tenant_id: TENANT_ID,
       }),
     );
     expect(check.entryCount).toBe(0);

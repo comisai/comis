@@ -21,7 +21,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { SqliteMemoryAdapter } from "@comis/memory";
-import type { MemoryConfig, MemoryEntry, SessionKey } from "@comis/core";
+import { createMemoryRecallScope } from "@comis/core";
+import type {
+  MemoryConfig,
+  MemoryEntry,
+  MemoryRecallScope,
+  MemoryWriteScope,
+  ResolvedTurnScope,
+} from "@comis/core";
 
 function makeTestConfig(dbPath: string): MemoryConfig {
   return {
@@ -36,11 +43,30 @@ function makeTestConfig(dbPath: string): MemoryConfig {
   } as MemoryConfig;
 }
 
-const DEFAULT_SESSION_KEY: SessionKey = {
-  tenantId: "default",
-  userId: "user_a",
-  channelId: "default",
+// Explicit resolved authority for the store/search paths. Production signatures are
+// two-arg: store(entry, MemoryWriteScope) and search(MemoryRecallScope, query). Entries
+// are written agent-shared, so recall sets includeAgentShared=true to see them.
+const TURN_SCOPE: ResolvedTurnScope = {
+  conversation: { tenantId: "default", agentId: "default", partition: { kind: "agent" } },
+  principal: { principalId: "user_a" },
+  endpoint: {
+    channelType: "test",
+    channelInstanceId: "memory-int-fixture",
+    conversationId: "memory-int-fixture",
+    conversationKind: "direct",
+  },
 };
+
+const WRITE_SCOPE: MemoryWriteScope = {
+  turnScope: TURN_SCOPE,
+  visibility: { kind: "agent-shared" },
+};
+
+function recallScope(): MemoryRecallScope {
+  const resolved = createMemoryRecallScope(TURN_SCOPE, true);
+  if (!resolved.ok) throw resolved.error;
+  return resolved.value;
+}
 
 function makeEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
   return {
@@ -76,10 +102,10 @@ describe("INTEGRATION: memory persistence — SqliteMemoryAdapter roundtrip", ()
   it("stores entry, search returns the persisted payload", async () => {
     const adapter = new SqliteMemoryAdapter(makeTestConfig(dbPath));
     const entry = makeEntry({ content: "the quick brown fox" });
-    const storeResult = await adapter.store(entry);
+    const storeResult = await adapter.store(entry, WRITE_SCOPE);
     expect(storeResult.ok).toBe(true);
 
-    const searchResult = await adapter.search(DEFAULT_SESSION_KEY, "quick");
+    const searchResult = await adapter.search(recallScope(), "quick");
     expect(searchResult.ok).toBe(true);
     if (searchResult.ok) {
       const ids = searchResult.value.map((r) => r.entry.id);
@@ -98,6 +124,7 @@ describe("INTEGRATION: memory persistence — SqliteMemoryAdapter roundtrip", ()
       const adapter = new SqliteMemoryAdapter(config);
       const r = await adapter.store(
         makeEntry({ id: entryId, content: "persistent-content" }),
+        WRITE_SCOPE,
       );
       expect(r.ok).toBe(true);
       adapter.close();
@@ -106,7 +133,7 @@ describe("INTEGRATION: memory persistence — SqliteMemoryAdapter roundtrip", ()
     // Read-back phase with a fresh adapter on the same file
     {
       const adapter = new SqliteMemoryAdapter(config);
-      const r = await adapter.search(DEFAULT_SESSION_KEY, "persistent");
+      const r = await adapter.search(recallScope(), "persistent");
       expect(r.ok).toBe(true);
       if (r.ok) {
         const hit = r.value.find((x) => x.entry.id === entryId);
@@ -120,7 +147,7 @@ describe("INTEGRATION: memory persistence — SqliteMemoryAdapter roundtrip", ()
   it("delete removes entry from store; subsequent search does not return it", async () => {
     const adapter = new SqliteMemoryAdapter(makeTestConfig(dbPath));
     const entry = makeEntry({ content: "to be deleted soon" });
-    await adapter.store(entry);
+    await adapter.store(entry, WRITE_SCOPE);
 
     const deleteResult = await adapter.delete(entry.id, {
       tenantId: entry.tenantId,
@@ -128,7 +155,7 @@ describe("INTEGRATION: memory persistence — SqliteMemoryAdapter roundtrip", ()
     });
     expect(deleteResult.ok).toBe(true);
 
-    const searchResult = await adapter.search(DEFAULT_SESSION_KEY, "deleted");
+    const searchResult = await adapter.search(recallScope(), "deleted");
     expect(searchResult.ok).toBe(true);
     if (searchResult.ok) {
       const stillThere = searchResult.value.some(
@@ -140,12 +167,12 @@ describe("INTEGRATION: memory persistence — SqliteMemoryAdapter roundtrip", ()
 
   it("search returns previously-stored entries via FTS query", async () => {
     const adapter = new SqliteMemoryAdapter(makeTestConfig(dbPath));
-    await adapter.store(makeEntry({ content: "alpha needle search target" }));
-    await adapter.store(makeEntry({ content: "beta haystack distractor" }));
-    await adapter.store(makeEntry({ content: "gamma irrelevant text" }));
+    await adapter.store(makeEntry({ content: "alpha needle search target" }), WRITE_SCOPE);
+    await adapter.store(makeEntry({ content: "beta haystack distractor" }), WRITE_SCOPE);
+    await adapter.store(makeEntry({ content: "gamma irrelevant text" }), WRITE_SCOPE);
 
     const searchResult = await adapter.search(
-      DEFAULT_SESSION_KEY,
+      recallScope(),
       "needle",
       { limit: 10 },
     );

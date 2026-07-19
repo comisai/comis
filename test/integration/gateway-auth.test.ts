@@ -124,7 +124,7 @@ describe("Gateway Auth: Health, Rejection & REST API", () => {
   });
 
   it("authenticated GET /api/memory/stats returns stats", async () => {
-    const response = await fetch(`${handle.gatewayUrl}/api/memory/stats`, {
+    const response = await fetch(`${handle.gatewayUrl}/api/memory/stats?tenant=test&agent=default`, {
       headers: makeAuthHeaders(handle.authToken),
     });
     expect(response.status).toBe(200);
@@ -133,7 +133,7 @@ describe("Gateway Auth: Health, Rejection & REST API", () => {
   });
 
   it("authenticated GET /api/memory/search returns results", async () => {
-    const response = await fetch(`${handle.gatewayUrl}/api/memory/search?q=test`, {
+    const response = await fetch(`${handle.gatewayUrl}/api/memory/search?q=test&tenant=test&agent=default`, {
       headers: makeAuthHeaders(handle.authToken),
     });
     expect(response.status).toBe(200);

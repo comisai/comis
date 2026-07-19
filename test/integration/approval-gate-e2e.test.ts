@@ -28,7 +28,9 @@ import {
 import { openAuthenticatedWebSocket, sendJsonRpc } from "../support/ws-helpers.js";
 import { RPC_FAST_MS } from "../support/timeouts.js";
 import type { ApprovalGate } from "@comis/core";
-import { createResolvedRequestContext, runWithContext } from "@comis/core";
+import { createResolvedRequestContext, runWithContext, ConversationRefSchema } from "@comis/core";
+import { resolveRoutingPolicy } from "@comis/orchestrator";
+import { createHash } from "node:crypto";
 // Platform-tool factories live on the `./platform-tools` subpath; daemon
 // consumes them via the registry. Integration tests that exercise
 // individual factories must import from this subpath — the `.` subpath
@@ -51,9 +53,27 @@ const SOURCE_CONFIG_PATH = resolve(
 // YAML. To keep the checked-in fixture pristine across runs, the test copies
 // the source config to a tmp path and starts the daemon against that copy.
 const CONFIG_PATH = "/tmp/comis-test-approval-gate-e2e-config.yaml";
+
+// Approval requests + the admin.approval.* RPCs now address a request by
+// explicit conversation authority (tenant + agent + opaque conversation_ref)
+// rather than a formatted session_key string. This single triple is shared by
+// the direct-gate requestApproval calls and the RPC pending/resolve queries so
+// the handler's authority filter matches.
+const APPROVAL_TENANT_ID = "test";
+const APPROVAL_AGENT_ID = "test-user";
+const APPROVAL_CONVERSATION_REF = ConversationRefSchema.parse(
+  `cv_${createHash("sha256").update("test:test-user:test-chan").digest("base64url")}`,
+);
+const APPROVAL_AUTHORITY_PARAMS = {
+  tenant_id: APPROVAL_TENANT_ID,
+  agent_id: APPROVAL_AGENT_ID,
+  conversation_ref: APPROVAL_CONVERSATION_REF,
+};
 const DIRECT_APPROVAL_IDENTITY = {
-  agentId: "test-user",
-  sessionKey: "test:test-user:test-chan",
+  tenantId: APPROVAL_TENANT_ID,
+  agentId: APPROVAL_AGENT_ID,
+  conversationRef: APPROVAL_CONVERSATION_REF,
+  resolvingPrincipalId: "principal:test-user",
   trustLevel: "admin" as const,
   callbackOwner: Object.freeze({
     tenantId: "test",
@@ -64,10 +84,27 @@ const DIRECT_APPROVAL_IDENTITY = {
 };
 
 function makeToolApprovalContext(channelId: string) {
+  // The gated-tool approval path derives its conversation authority from the
+  // context's turnScope and cross-checks it against the delivery origin, so the
+  // resolved context must carry a ResolvedTurnScope consistent with the origin
+  // (same tenant/agent, and an endpoint whose channelType/conversationId match).
+  const turnScope = resolveRoutingPolicy({
+    tenantId: "test",
+    agentId: "default",
+    endpoint: {
+      channelType: "echo",
+      channelInstanceId: "echo-instance",
+      conversationId: channelId,
+      conversationKind: "direct",
+    },
+    principal: { principalId: "principal:admin-operator" },
+    dmScopeMode: "per-account-channel-peer",
+  });
+  if (!turnScope.ok) throw turnScope.error;
   const context = createResolvedRequestContext({
     tenantId: "test",
     userId: "admin-operator",
-    sessionKey: { tenantId: "test", userId: "admin-operator", channelId },
+    sessionKey: { tenantId: "test", agentId: "default", userId: "admin-operator", channelId },
     agentId: "default",
     traceId: randomUUID(),
     startedAt: Date.now(),
@@ -79,6 +116,7 @@ function makeToolApprovalContext(channelId: string) {
       channelType: "echo",
       channelId,
     },
+    turnScope: turnScope.value,
   });
   if (!context.ok) throw context.error;
   return context.value;
@@ -233,7 +271,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
     it(
       "admin.approval.pending returns empty when no requests pending",
       async () => {
-        const result = (await rpcCall("admin.approval.pending", { _trustLevel: "admin" })) as {
+        const result = (await rpcCall("admin.approval.pending", { ...APPROVAL_AUTHORITY_PARAMS, _trustLevel: "admin" })) as {
           requests: unknown[];
           total: number;
         };
@@ -267,7 +305,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
         await new Promise((resolve) => setTimeout(resolve, 50));
 
         // 3. Call rpcCall to list pending requests
-        const pendingResult = (await rpcCall("admin.approval.pending", { _trustLevel: "admin" })) as {
+        const pendingResult = (await rpcCall("admin.approval.pending", { ...APPROVAL_AUTHORITY_PARAMS, _trustLevel: "admin" })) as {
           requests: Array<{
             requestId: string;
             toolName: string;
@@ -287,6 +325,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
 
         // 5. Resolve via RPC
         await rpcCall("admin.approval.resolve", {
+          ...APPROVAL_AUTHORITY_PARAMS,
           requestId: pendingReq.requestId,
           approved: true,
           approvedBy: "test-operator",
@@ -300,7 +339,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
         expect(resolution.requestId).toBe(pendingReq.requestId);
 
         // 7. Verify pending is now empty
-        const afterResult = (await rpcCall("admin.approval.pending", { _trustLevel: "admin" })) as {
+        const afterResult = (await rpcCall("admin.approval.pending", { ...APPROVAL_AUTHORITY_PARAMS, _trustLevel: "admin" })) as {
           requests: unknown[];
           total: number;
         };
@@ -332,7 +371,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
         await new Promise((resolve) => setTimeout(resolve, 50));
 
         // Get the pending request
-        const pendingResult = (await rpcCall("admin.approval.pending", { _trustLevel: "admin" })) as {
+        const pendingResult = (await rpcCall("admin.approval.pending", { ...APPROVAL_AUTHORITY_PARAMS, _trustLevel: "admin" })) as {
           requests: Array<{ requestId: string }>;
           total: number;
         };
@@ -341,6 +380,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
 
         // Deny with reason
         await rpcCall("admin.approval.resolve", {
+          ...APPROVAL_AUTHORITY_PARAMS,
           requestId,
           approved: false,
           approvedBy: "test-operator",
@@ -355,7 +395,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
         expect(resolution.reason).toBe("Not safe to disable");
 
         // Verify pending is empty
-        const afterResult = (await rpcCall("admin.approval.pending", { _trustLevel: "admin" })) as {
+        const afterResult = (await rpcCall("admin.approval.pending", { ...APPROVAL_AUTHORITY_PARAMS, _trustLevel: "admin" })) as {
           total: number;
         };
         expect(afterResult.total).toBe(0);
@@ -512,6 +552,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
         // 3. RPC handler throws for already-resolved request (not found in pending)
         await expect(
           rpcCall("admin.approval.resolve", {
+            ...APPROVAL_AUTHORITY_PARAMS,
             requestId,
             approved: false,
             approvedBy: "rpc-operator",
@@ -542,7 +583,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
           const emptyResponse = (await sendJsonRpc(
             ws,
             "admin.approval.pending",
-            {},
+            { ...APPROVAL_AUTHORITY_PARAMS },
             1,
             { timeoutMs: RPC_FAST_MS },
           )) as { result: { requests: unknown[]; total: number } };
@@ -565,7 +606,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
           const pendingResponse = (await sendJsonRpc(
             ws,
             "admin.approval.pending",
-            {},
+            { ...APPROVAL_AUTHORITY_PARAMS },
             2,
             { timeoutMs: RPC_FAST_MS },
           )) as { result: { requests: Array<{ requestId: string; toolName: string }>; total: number } };
@@ -579,6 +620,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
             ws,
             "admin.approval.resolve",
             {
+              ...APPROVAL_AUTHORITY_PARAMS,
               requestId,
               approved: true,
               approvedBy: "ws-operator",
@@ -657,8 +699,17 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
         // 3. Wait briefly for the approval request to be registered
         await new Promise((r) => setTimeout(r, 200));
 
-        // 4. Verify a pending approval exists via RPC
-        const pending = (await rpcCall("admin.approval.pending", { _trustLevel: "admin" })) as {
+        // 4. The tool derives its conversation authority from the run context;
+        // read it back off the gate, then verify the request surfaces through
+        // the authority-scoped admin.approval.pending RPC.
+        const gateReq = approvalGate.pending().find((r) => r.action === "agents.create");
+        expect(gateReq).toBeDefined();
+        const toolAuthority = {
+          tenant_id: gateReq!.tenantId,
+          agent_id: gateReq!.agentId,
+          conversation_ref: gateReq!.conversationRef,
+        };
+        const pending = (await rpcCall("admin.approval.pending", { ...toolAuthority, _trustLevel: "admin" })) as {
           requests: Array<{
             requestId: string;
             toolName: string;
@@ -674,6 +725,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
 
         // 5. Approve it via RPC
         await rpcCall("admin.approval.resolve", {
+          ...toolAuthority,
           requestId: pending.requests[0]!.requestId,
           approved: true,
           _trustLevel: "admin",
@@ -737,8 +789,17 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
         // 3. Wait briefly for the approval request to be registered
         await new Promise((r) => setTimeout(r, 200));
 
-        // 4. Verify a pending approval exists via RPC
-        const pending = (await rpcCall("admin.approval.pending", { _trustLevel: "admin" })) as {
+        // 4. The tool derives its conversation authority from the run context;
+        // read it back off the gate, then verify the request surfaces through
+        // the authority-scoped admin.approval.pending RPC.
+        const gateReq = approvalGate.pending().find((r) => r.action === "agents.create");
+        expect(gateReq).toBeDefined();
+        const toolAuthority = {
+          tenant_id: gateReq!.tenantId,
+          agent_id: gateReq!.agentId,
+          conversation_ref: gateReq!.conversationRef,
+        };
+        const pending = (await rpcCall("admin.approval.pending", { ...toolAuthority, _trustLevel: "admin" })) as {
           requests: Array<{
             requestId: string;
             toolName: string;
@@ -753,6 +814,7 @@ describe("APPROVAL GATE E2E: Full Lifecycle Integration", () => {
 
         // 5. Deny it via RPC with a reason
         await rpcCall("admin.approval.resolve", {
+          ...toolAuthority,
           requestId: pending.requests[0]!.requestId,
           approved: false,
           reason: "E2E deny test",

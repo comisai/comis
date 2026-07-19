@@ -214,12 +214,16 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
     it(
       "session.list returns session list with total count",
       async () => {
-        const result = (await rpcCall("session.list", {})) as {
+        const result = (await rpcCall("session.list", {
+          tenant_id: "default",
+          agent_id: "default",
+        })) as {
           sessions: Array<{
-            sessionKey: string;
-            userId: string;
-            channelId: string;
+            conversationRef: string;
+            agentId: string;
             kind: string;
+            messageCount: number;
+            totalTokens: number;
             updatedAt: number;
             createdAt: number;
           }>;
@@ -233,10 +237,11 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
 
         // Verify session shape if any exist
         for (const session of result.sessions) {
-          expect(typeof session.sessionKey).toBe("string");
-          expect(typeof session.userId).toBe("string");
-          expect(typeof session.channelId).toBe("string");
+          expect(typeof session.conversationRef).toBe("string");
+          expect(typeof session.agentId).toBe("string");
           expect(["dm", "group", "sub-agent"]).toContain(session.kind);
+          expect(typeof session.messageCount).toBe("number");
+          expect(typeof session.totalTokens).toBe("number");
           expect(typeof session.updatedAt).toBe("number");
           expect(typeof session.createdAt).toBe("number");
         }
@@ -253,6 +258,8 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
       async () => {
         // dm filter
         const dmResult = (await rpcCall("session.list", {
+          tenant_id: "default",
+          agent_id: "default",
           kind: "dm",
         })) as { sessions: unknown[]; total: number };
         expect(Array.isArray(dmResult.sessions)).toBe(true);
@@ -260,12 +267,16 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
 
         // group filter
         const groupResult = (await rpcCall("session.list", {
+          tenant_id: "default",
+          agent_id: "default",
           kind: "group",
         })) as { sessions: unknown[]; total: number };
         expect(Array.isArray(groupResult.sessions)).toBe(true);
 
         // sub-agent filter
         const subAgentResult = (await rpcCall("session.list", {
+          tenant_id: "default",
+          agent_id: "default",
           kind: "sub-agent",
         })) as { sessions: unknown[]; total: number };
         expect(Array.isArray(subAgentResult.sessions)).toBe(true);
@@ -277,6 +288,8 @@ describe("TOOLS: Comprehensive Agent Tools Platform Integration", () => {
       "session.list accepts since_minutes recency filter",
       async () => {
         const result = (await rpcCall("session.list", {
+          tenant_id: "default",
+          agent_id: "default",
           since_minutes: 5,
         })) as { sessions: unknown[]; total: number };
 

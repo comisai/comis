@@ -28,6 +28,7 @@ import {
 
 import { TypedEventBus } from "@comis/core";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+import { ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Lightweight port wrappers that delegate to globals.
@@ -266,8 +267,9 @@ describe("resilience E2E: dead-letter queue retry pipeline", () => {
 
     const runnerDeps: SubAgentRunnerDeps & { eventBus: TypedEventBus } = {
       sessionStore: {
-        save: vi.fn(),
-        delete: vi.fn(),
+        save: vi.fn().mockReturnValue(ok(undefined)),
+        delete: vi.fn().mockReturnValue(ok(true)),
+        loadByRef: vi.fn().mockReturnValue(ok(undefined)),
       },
       executeAgent: vi.fn().mockResolvedValue({
         response: "Research complete. Found 3 key findings.",

@@ -69,11 +69,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import {
-  SqliteMemoryAdapter,
   createSqliteMentalModelStore,
   createSqliteOutcomeStore,
   createSqliteMemoryLifecycleStore,
 } from "@comis/memory";
+// Explicit-authority bridge: accepts the legacy single-arg store()/SessionKey
+// search() and synthesizes the resolved MemoryWriteScope for these fixtures.
+import { ScopedMemoryTestAdapter as SqliteMemoryAdapter } from "../support/scoped-memory-adapter.js";
 // The REAL reflection engine (the ONLY thing we mock is its injected `reflect`).
 import { runReflection } from "@comis/agent";
 // The REAL resolve-seam promote loop (NOT a store-only shortcut).
@@ -251,7 +253,7 @@ describe("CROSS-SESSION RECALL (sever the LCD → a fresh session recalls the fa
     // NOTE: the real-provider vec+FTS hybrid recall against a running daemon is the
     // operator drive; here we assert the durable-row recall through the
     // adapter's content search — ground truth, not a chat reply.
-    const sessionB: SessionKey = { tenantId: TENANT, userId: "user-2", channelId: "a-different-channel" };
+    const sessionB: SessionKey = { tenantId: TENANT, agentId: AGENT, userId: "user-2", channelId: "a-different-channel" };
     const found = await adapter.search(sessionB, "who is the on-call engineer Mallory", { limit: 10 });
     expect(found.ok).toBe(true);
     const hit = found.ok ? found.value.find((r) => r.entry.id === "fact_xsession") : undefined;
@@ -625,10 +627,12 @@ function insertMemory(
   db: ReturnType<SqliteMemoryAdapter["getDb"]>,
   opts: { id: string; content: string; occurredAt: number; proofCount?: number | null; pinned?: boolean; trustLevel?: string },
 ): void {
+  // visibility is NOT NULL; 'agent-shared' satisfies the CHECK with
+  // conversation_ref + principal_id both absent (the default here).
   db.prepare(
     `INSERT INTO memories
-       (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, occurred_at, proof_count, pinned)
-     VALUES (?, ?, ?, 'u1', ?, ?, 'semantic', 'agent', '[]', ?, ?, ?, ?)`,
+       (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, occurred_at, proof_count, pinned, visibility)
+     VALUES (?, ?, ?, 'u1', ?, ?, 'semantic', 'agent', '[]', ?, ?, ?, ?, 'agent-shared')`,
   ).run(
     opts.id,
     TENANT,

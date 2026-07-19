@@ -35,8 +35,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteDeliveryQueue, initSchema } from "@comis/memory";
-import { StreamingConfigSchema } from "@comis/core";
-import type { TypedEventBus } from "@comis/core";
+import { StreamingConfigSchema, ConversationRefSchema } from "@comis/core";
+import type { TypedEventBus, DeliveryQueueEnqueueInput } from "@comis/core";
 import { runDbOracle } from "../../assert/db-oracle.js";
 import {
   buildStreamingConfig,
@@ -61,26 +61,24 @@ function freshDbPath(): string {
   return join(dir, "memory.db");
 }
 
-/** Minimal DeliveryQueueEnqueueInput (mirrors delivery-queue-adapter.test.ts makeEntry). */
-function makeEntry(over: Record<string, unknown> = {}): {
-  text: string;
-  channelType: string;
-  channelId: string;
-  tenantId: string;
-  optionsJson: string;
-  origin: string;
-  maxAttempts: number;
-  createdAt: number;
-  scheduledAt: number;
-  expireAt: number;
-  traceId: string;
-} {
+/** A full DeliveryQueueEnqueueInput — the queue persists the authority triple
+ *  (tenantId, agentId, conversationRef) + the destination-endpoint snapshot into
+ *  dedicated NOT-NULL columns, so every enqueue must carry them. */
+function makeEntry(over: Partial<DeliveryQueueEnqueueInput> = {}): DeliveryQueueEnqueueInput {
   const now = Date.now();
   return {
     text: "hi",
     channelType: "telegram",
     channelId: "ch-1",
     tenantId: "default",
+    agentId: "default",
+    conversationRef: ConversationRefSchema.parse(`cv_${"a".repeat(43)}`),
+    destinationEndpoint: {
+      channelType: "telegram",
+      channelInstanceId: "primary-account",
+      conversationId: "ch-1",
+      conversationKind: "shared" as const,
+    },
     optionsJson: "{}",
     origin: "agent",
     maxAttempts: 5,

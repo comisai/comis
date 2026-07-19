@@ -100,7 +100,7 @@ function freshDbPath(): string {
 
 /**
  * Create the outcome_events table with the REAL schema (verbatim from
- * packages/memory/src/schema-outcome-events.ts:48-65) — every NOT-NULL column +
+ * schema-outcome-events.ts's ensureOutcomeEventsTable) — every NOT-NULL column +
  * the outcome/source CHECK closed enums + the UNIQUE idempotency tuple + the
  * scope index, so a fixture write mirrors exactly what the product writes (and a
  * wrong source/outcome is rejected by the real CHECK). The store's prepared
@@ -120,6 +120,7 @@ function freshOutcomeDb(): string {
       source          TEXT NOT NULL CHECK (source IN ('tool','pipeline','correction','judge','reaction','explicit')),
       confidence      REAL NOT NULL DEFAULT 0.5,
       sender_trust    TEXT,
+      sender_trust_explicit INTEGER CHECK (sender_trust_explicit IN (0,1)),
       recalled_ids    TEXT,
       used_skill_ids  TEXT,
       procedure_descriptor TEXT,

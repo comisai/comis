@@ -18,8 +18,9 @@
  * @module
  */
 
+import { createHash } from "node:crypto";
 import { describe, it, expect, afterEach } from "vitest";
-import { GatewayTokenSchema, createApprovalGate, TypedEventBus } from "@comis/core";
+import { GatewayTokenSchema, createApprovalGate, ConversationRefSchema, TypedEventBus } from "@comis/core";
 import type { ApprovalGate } from "@comis/core";
 
 const isLive = !!process.env["COMIS_LIVE"];
@@ -125,13 +126,21 @@ describe("SEC-05 Stage-B — approval gate pause → resolve", () => {
       fingerprintSecret: "test-approval-fingerprint-secret",
     });
 
+    // Approval requests now carry the canonical conversation authority
+    // (tenant + agent + opaque conversationRef + resolving principal) rather
+    // than a formatted session-key string. The ref is a branded cv_ digest.
+    const conversationRef = ConversationRefSchema.parse(
+      `cv_${createHash("sha256").update("default:user-1:channel-1").digest("base64url")}`,
+    );
     const pending = gate.requestApproval({
       toolName: "agents.delete",
       action: "agents.delete",
       params: {},
       fingerprintParams: {},
+      tenantId: "default",
       agentId: "agent-1",
-      sessionKey: "default:user-1:channel-1",
+      conversationRef,
+      resolvingPrincipalId: "principal:user-1",
       trustLevel: "user",
       callbackOwner: {
         tenantId: "default",

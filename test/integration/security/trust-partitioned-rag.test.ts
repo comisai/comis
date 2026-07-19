@@ -26,8 +26,15 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { ok, type Result } from "@comis/shared";
-import { validateMemoryWrite } from "@comis/core";
-import type { MemoryEntry, MemoryConfig, SessionKey, EmbeddingPort } from "@comis/core";
+import { validateMemoryWrite, createMemoryRecallScope } from "@comis/core";
+import type {
+  MemoryEntry,
+  MemoryConfig,
+  EmbeddingPort,
+  MemoryWriteScope,
+  MemoryRecallScope,
+  ResolvedTurnScope,
+} from "@comis/core";
 import {
   SqliteMemoryAdapter,
   createMemoryApi,
@@ -52,11 +59,32 @@ const memoryConfig: MemoryConfig = {
   retention: { maxAgeDays: 0 },
 };
 
-const tenantA: SessionKey = {
-  tenantId: "tenant_a",
-  userId: "user_a",
-  channelId: "chan_001",
-};
+// `store(entry, scope)` derives the row's tenantId/agentId from
+// `scope.turnScope.conversation` (the AUTHORITATIVE partition), and `search`
+// takes a `MemoryRecallScope`, NOT a bare session key. Build BOTH from ONE turn
+// scope so the write visibility (conversation) and the read conversation_ref
+// line up — the trust-level filtering under test is orthogonal to that scope.
+function turnScopeFor(tenantId: string, agentId: string): ResolvedTurnScope {
+  const endpoint = {
+    channelType: "test",
+    channelInstanceId: "test-main",
+    conversationId: `conv-${tenantId}-${agentId}`,
+    conversationKind: "shared" as const,
+  };
+  return {
+    conversation: { tenantId, agentId, partition: { kind: "endpoint-conversation", endpoint } },
+    principal: { principalId: "user_a" },
+    endpoint,
+  };
+}
+
+const turnA: ResolvedTurnScope = turnScopeFor("tenant_a", "default");
+const writeA: MemoryWriteScope = { turnScope: turnA, visibility: { kind: "conversation" } };
+const recallA: MemoryRecallScope = (() => {
+  const scope = createMemoryRecallScope(turnA, false);
+  if (!scope.ok) throw scope.error;
+  return scope.value;
+})();
 
 function makeEntry(overrides: Partial<MemoryEntry>): MemoryEntry {
   return {
@@ -119,7 +147,7 @@ async function seedAllTrustLevels(adapter: SqliteMemoryAdapter): Promise<{
   });
 
   for (const e of [systemEntry, learnedEntry, externalEntry]) {
-    const r = await adapter.store(e);
+    const r = await adapter.store(e, writeA);
     expect(r.ok).toBe(true);
   }
 
@@ -154,7 +182,7 @@ describe("Trust-partitioned memory -- search filtering", () => {
 
   it("returns entries from all trust levels when no filter is given", async () => {
     const ids = await seedAllTrustLevels(adapter);
-    const r = await adapter.search(tenantA, "coffee", { limit: 50 });
+    const r = await adapter.search(recallA, "coffee", { limit: 50 });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const found = new Set(r.value.map((row) => row.entry.id));
@@ -165,7 +193,7 @@ describe("Trust-partitioned memory -- search filtering", () => {
 
   it("excludes external + learned when trustLevel='system'", async () => {
     await seedAllTrustLevels(adapter);
-    const r = await adapter.search(tenantA, "user", {
+    const r = await adapter.search(recallA, "user", {
       trustLevel: "system",
       limit: 50,
     });
@@ -178,7 +206,7 @@ describe("Trust-partitioned memory -- search filtering", () => {
 
   it("excludes system + external when trustLevel='learned'", async () => {
     await seedAllTrustLevels(adapter);
-    const r = await adapter.search(tenantA, "coffee", {
+    const r = await adapter.search(recallA, "coffee", {
       trustLevel: "learned",
       limit: 50,
     });
@@ -191,7 +219,7 @@ describe("Trust-partitioned memory -- search filtering", () => {
 
   it("returns only external when trustLevel='external'", async () => {
     await seedAllTrustLevels(adapter);
-    const r = await adapter.search(tenantA, "coffee", {
+    const r = await adapter.search(recallA, "coffee", {
       trustLevel: "external",
       limit: 50,
     });
@@ -251,7 +279,7 @@ describe("Memory write validator -- pre-storage gate", () => {
     if (result.severity === "critical") {
       // Caller path: do NOT call adapter.store(). We verify the search index
       // is empty AFTER the (skipped) write.
-      const r = await adapter.search(tenantA, "rm -rf", { limit: 10 });
+      const r = await adapter.search(recallA, "rm -rf", { limit: 10 });
       expect(r.ok).toBe(true);
       if (!r.ok) return;
       expect(r.value.length).toBe(0);
@@ -271,10 +299,10 @@ describe("Memory write validator -- pre-storage gate", () => {
       content: suspicious,
       trustLevel: "external",
     });
-    const stored = await adapter.store(downgraded);
+    const stored = await adapter.store(downgraded, writeA);
     expect(stored.ok).toBe(true);
 
-    const search = await adapter.search(tenantA, "ignore", {
+    const search = await adapter.search(recallA, "ignore", {
       trustLevel: "external",
       limit: 10,
     });
@@ -284,7 +312,7 @@ describe("Memory write validator -- pre-storage gate", () => {
     expect(hits.length).toBe(1);
 
     // Same query without explicit trust filter: still found.
-    const broad = await adapter.search(tenantA, "ignore", { limit: 10 });
+    const broad = await adapter.search(recallA, "ignore", { limit: 10 });
     expect(broad.ok).toBe(true);
     if (!broad.ok) return;
     expect(

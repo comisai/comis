@@ -30,6 +30,7 @@ import {
 } from "@comis/orchestrator";
 import {
   QueueConfigSchema,
+  DmScopeConfigSchema,
   createDeliveryService,
   createNoOpDeliveryQueue,
   createHookRunner,
@@ -37,6 +38,7 @@ import {
 } from "@comis/core";
 import type { NormalizedMessage, ChannelPort, ComisLogger } from "@comis/core";
 import { ok } from "@comis/shared";
+import { createFakePrincipalResolver } from "../support/fake-principal-resolver.js";
 import { ASYNC_SETTLE_MS } from "../support/timeouts.js";
 
 /**
@@ -133,14 +135,23 @@ function makeMinimalDeps(
 
   const eventBus = makeEventBus();
   return {
+    // Turn identity now flows through resolveInboundTurnIdentity, which needs
+    // the configured tenant authority, a principal resolver, and the per-agent
+    // DM-scope lookup — mirroring production wiring in
+    // setup-channels-runtime.ts (getDmScope parses DmScopeConfigSchema).
+    tenantId: "default",
+    principalResolver: createFakePrincipalResolver(),
+    getDmScope: () => DmScopeConfigSchema.parse({}),
     eventBus,
     messageRouter: { resolve: vi.fn(() => "default"), updateConfig: vi.fn() },
+    // SessionLifecycle methods return Result now; loadOrCreate is .ok-checked
+    // by resolve-and-preprocess before the executor runs.
     sessionManager: {
-      loadOrCreate: vi.fn(() => []),
-      save: vi.fn(),
-      isExpired: vi.fn(() => false),
-      expire: vi.fn(() => true),
-      cleanStale: vi.fn(() => 0),
+      loadOrCreate: vi.fn(() => ok([])),
+      save: vi.fn(() => ok(undefined)),
+      isExpired: vi.fn(() => ok(false)),
+      expire: vi.fn(() => ok(true)),
+      cleanStale: vi.fn(() => ok(0)),
     },
     createExecutor: vi.fn(() => executor),
     adapters,

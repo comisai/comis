@@ -51,7 +51,11 @@ import type {
   ClockPort,
   ComisLogger,
   SessionKey,
+  MemoryWriteScope,
+  MemoryRecallScope,
+  ResolvedTurnScope,
 } from "@comis/core";
+import { createMemoryRecallScope } from "@comis/core";
 import {
   SqliteMemoryAdapter,
   createSqliteMemoryEntityStore,
@@ -130,6 +134,35 @@ function deterministicEmbeddingPort(): EmbeddingPort {
   };
 }
 
+// A resolved turn scope for a (tenant, agent) pair. `store(entry, scope)` derives
+// the row's tenantId/agentId from `scope.turnScope.conversation` (the AUTHORITATIVE
+// partition, NOT the caller-supplied entry fields), and the recall path reads back
+// through the matching `MemoryRecallScope`. Building both from the same turn scope
+// keeps the conversation_ref consistent across the write + read sides.
+function turnScopeFor(tenantId: string, agentId: string, principalId = "user_a"): ResolvedTurnScope {
+  const endpoint = {
+    channelType: "test",
+    channelInstanceId: "test-main",
+    conversationId: `conv-${tenantId}-${agentId}`,
+    conversationKind: "shared" as const,
+  };
+  return {
+    conversation: { tenantId, agentId, partition: { kind: "endpoint-conversation", endpoint } },
+    principal: { principalId },
+    endpoint,
+  };
+}
+
+function writeScopeFor(tenantId: string, agentId: string): MemoryWriteScope {
+  return { turnScope: turnScopeFor(tenantId, agentId), visibility: { kind: "conversation" } };
+}
+
+function recallScopeFor(tenantId: string, agentId: string): MemoryRecallScope {
+  const scope = createMemoryRecallScope(turnScopeFor(tenantId, agentId), false);
+  if (!scope.ok) throw scope.error;
+  return scope.value;
+}
+
 const noopLogger = {
   debug() {},
   info() {},
@@ -186,7 +219,7 @@ describe("Recall diagnostics -- cross-scope isolation through the wired stores +
 
   async function seedMemory(overrides: Partial<MemoryEntry>): Promise<string> {
     const entry = makeEntry(overrides);
-    const r = await adapter.store(entry);
+    const r = await adapter.store(entry, writeScopeFor(entry.tenantId, entry.agentId));
     expect(r.ok).toBe(true);
     return entry.id;
   }
@@ -211,7 +244,7 @@ describe("Recall diagnostics -- cross-scope isolation through the wired stores +
       confidence: 0.9,
       consolidatedAt: 1_700_000_100_000,
     });
-    const stored = await adapter.store(observation);
+    const stored = await adapter.store(observation, writeScopeFor(scope.tenantId, scope.agentId));
     expect(stored.ok).toBe(true);
     // Mark the source consolidated_at (scoped) — the side effect the retired
     // applyConsolidation used to perform, kept so the source leaves the raw pool.
@@ -261,12 +294,14 @@ describe("Recall diagnostics -- cross-scope isolation through the wired stores +
     );
     const obsResp = (await handlers["memory.observations"]({
       _trustLevel: "admin",
+      tenant_id: SCOPE_1.tenantId,
       agent_id: SCOPE_1.agentId,
     })) as { observations: Array<{ id: string }> };
     expect(obsResp.observations.map((o) => o.id)).toContain(obsId);
 
     const entResp = (await handlers["memory.entities"]({
       _trustLevel: "admin",
+      tenant_id: SCOPE_1.tenantId,
       agent_id: SCOPE_1.agentId,
     })) as { entities: Array<{ name: string }> };
     expect(entResp.entities.some((e) => e.name === SHARED_ENTITY)).toBe(true);
@@ -310,6 +345,7 @@ describe("Recall diagnostics -- cross-scope isolation through the wired stores +
     );
     const r1 = (await h1["memory.observations"]({
       _trustLevel: "admin",
+      tenant_id: SCOPE_1.tenantId,
       agent_id: SCOPE_1.agentId,
     })) as { observations: Array<{ id: string }> };
     expect(r1.observations.map((o) => o.id)).not.toContain(oC);
@@ -319,6 +355,7 @@ describe("Recall diagnostics -- cross-scope isolation through the wired stores +
     );
     const r2 = (await h2["memory.observations"]({
       _trustLevel: "admin",
+      tenant_id: SCOPE_2.tenantId,
       agent_id: SCOPE_2.agentId,
     })) as { observations: Array<{ id: string }> };
     expect(r2.observations.map((o) => o.id)).not.toContain(oA);
@@ -365,6 +402,7 @@ describe("Recall diagnostics -- cross-scope isolation through the wired stores +
     );
     const r1 = (await h1["memory.entities"]({
       _trustLevel: "admin",
+      tenant_id: SCOPE_1.tenantId,
       agent_id: SCOPE_1.agentId,
     })) as { entities: Array<{ id: string }> };
     expect(r1.entities.map((e) => e.id)).not.toContain(l2.value);
@@ -442,6 +480,7 @@ describe("recall-trace redaction (end-to-end)", () => {
         trustLevel: "learned",
         createdAt: 1_700_000_000_000,
       }),
+      writeScopeFor(SESSION_KEY.tenantId as string, SESSION_KEY.agentId as string),
     );
     expect(stored.ok).toBe(true);
 
@@ -490,7 +529,11 @@ describe("recall-trace redaction (end-to-end)", () => {
     // Query with the secret token itself so the FTS lane surfaces the memory —
     // this also proves the raw QUERY never lands on disk (it is recorded as a
     // sha256 digest, never raw text).
-    const result = await recall.recall(SECRET, SESSION_KEY, SESSION_KEY.agentId as string);
+    const result = await recall.recall(
+      SECRET,
+      recallScopeFor(SESSION_KEY.tenantId as string, SESSION_KEY.agentId as string),
+      SESSION_KEY,
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     // The seeded memory was actually surfaced (so the trace recorded a non-empty recall).
@@ -570,6 +613,7 @@ describe("memory.recall_trace read-back via the REAL production recorder", () =>
         trustLevel: "learned",
         createdAt: 1_700_000_000_000,
       }),
+      writeScopeFor(scope.tenantId as string, scope.agentId as string),
     );
     expect(stored.ok).toBe(true);
 
@@ -611,7 +655,11 @@ describe("memory.recall_trace read-back via the REAL production recorder", () =>
         },
       },
     );
-    const result = await recall.recall("quarterly plan", scope, scope.agentId as string);
+    const result = await recall.recall(
+      "quarterly plan",
+      recallScopeFor(scope.tenantId as string, scope.agentId as string),
+      scope,
+    );
     expect(result.ok).toBe(true);
     await recallTrace.flush();
     return memId;
@@ -635,6 +683,8 @@ describe("memory.recall_trace read-back via the REAL production recorder", () =>
     const resp = (await handlers["memory.recall_trace"]({
       _trustLevel: "admin",
       session_key: SESSION_KEY_STR,
+      tenant_id: SESSION_KEY.tenantId as string,
+      agent_id: SESSION_KEY.agentId as string,
     })) as { records: Array<Record<string, unknown>> };
 
     // THE BINDING ASSERTION: the production recorder's record is RETURNED.
@@ -671,6 +721,10 @@ describe("memory.recall_trace read-back via the REAL production recorder", () =>
     const resp = (await handlers["memory.recall_trace"]({
       _trustLevel: "admin",
       session_key: SESSION_KEY_STR,
+      // Query as a DIFFERENT tenant — the read-side rec.tenantId filter must
+      // exclude the recorded tenant's record even though the session_key matches.
+      tenant_id: "tenant_OTHER",
+      agent_id: SESSION_KEY.agentId as string,
     })) as { records: Array<Record<string, unknown>> };
 
     expect(resp.records).toHaveLength(0);

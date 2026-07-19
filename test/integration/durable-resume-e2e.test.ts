@@ -70,6 +70,7 @@ import {
   ensureDurableRunTable,
   ensureOutwardLedgerTable,
 } from "@comis/memory";
+import { createConversationRef } from "@comis/core";
 import type { DurableRunRecord, DurableRunPort, OutwardSendLedgerPort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -133,12 +134,37 @@ async function withStores<T>(
 
 /** A minimal running DurableRunRecord for the structural cases. */
 function runningRecord(overrides: Partial<DurableRunRecord> & { rootRunId: string }): DurableRunRecord {
+  // Canonical conversation authority the current DurableRunRecordSchema requires
+  // (tenantId + conversationScope + conversationRef + principalId). superRefine
+  // enforces conversationScope.tenantId === tenantId, conversationScope.agentId
+  // === agentId, and conversationRef === createConversationRef(conversationScope).
+  const tenantId = "test";
+  const agentId = "default";
+  const principalId = "chaos-user";
+  const endpoint = {
+    channelType: "test",
+    channelInstanceId: "durable-checkpoint",
+    conversationId: "durable-checkpoint",
+    conversationKind: "direct" as const,
+  };
+  const conversationScope = {
+    tenantId,
+    agentId,
+    partition: {
+      kind: "endpoint-conversation-principal" as const,
+      endpoint,
+      principalId,
+    },
+  };
+  const ref = createConversationRef(conversationScope);
+  if (!ref.ok) throw ref.error;
   const merged = {
     checkpointId: overrides.checkpointId ?? overrides.rootRunId,
-    agentId: "default",
-    sessionKey: "test:chaos-user:durable-checkpoint",
-    ownerTenantId: "test",
-    ownerUserId: "chaos-user",
+    agentId,
+    tenantId,
+    principalId,
+    conversationScope,
+    conversationRef: ref.value,
     deliveryOrigin: null,
     spawnTree: [`lease-${overrides.rootRunId}`],
     caps: [],

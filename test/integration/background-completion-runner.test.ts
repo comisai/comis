@@ -30,14 +30,16 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestDaemon, type TestDaemonHandle } from "../support/daemon-harness.js";
 import { EchoChannelAdapter } from "@comis/channels";
+import { createConversationRef } from "@comis/core";
 import type { BackgroundTaskOrigin } from "@comis/core";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const configPath = resolve(__dirname, "../config/config.test-background-completion.yaml");
 
-// Formatted session key for the test session.
-// Format: "{tenantId}:{userId}:{channelId}" (matches formatSessionKey output)
+// Colon-joined identity string the tests use as a compact source for the
+// tenantId/userId components of the origin's conversation scope. Segments are
+// "{tenantId}:{userId}:{channelId}".
 const TEST_SESSION_KEY = "test:test-user:bg-completion-test";
 const TEST_AGENT_ID = "default";
 const TEST_CHANNEL_TYPE = "echo";
@@ -45,17 +47,62 @@ const TEST_CHANNEL_ID = "bg-completion-test";
 
 /**
  * Build a BackgroundTaskOrigin for test use.
- * backgroundHopCount=0 means this is a first-generation background task.
+ *
+ * The origin carries the canonical conversation authority
+ * (turnScope + conversationRef + deliveryOrigin); the completion runner
+ * projects a query scope from it and looks the session up via
+ * loadByRef(scope, conversationRef). Callers may override the identity via
+ * flat helper args (agentId/sessionKey/channelType/channelId/userId), which
+ * are folded into the scope; any BackgroundTaskOrigin field passed through
+ * overrides wins. backgroundHopCount=0 means a first-generation background task.
  */
-function makeTestOrigin(overrides?: Partial<BackgroundTaskOrigin>): BackgroundTaskOrigin {
+function makeTestOrigin(
+  over: Partial<BackgroundTaskOrigin> & {
+    agentId?: string;
+    sessionKey?: string;
+    channelType?: string;
+    channelId?: string;
+    userId?: string;
+  } = {},
+): BackgroundTaskOrigin {
+  const agentId = over.agentId ?? TEST_AGENT_ID;
+  const sessionParts = (over.sessionKey ?? TEST_SESSION_KEY).split(":");
+  const tenantId = sessionParts[0] ?? "test";
+  const userId = over.userId ?? sessionParts[1] ?? "test-user";
+  const channelType = over.channelType ?? TEST_CHANNEL_TYPE;
+  const channelId = over.channelId ?? TEST_CHANNEL_ID;
+  const endpoint = {
+    channelType,
+    channelInstanceId: "test-instance",
+    conversationId: channelId,
+    conversationKind: "direct" as const,
+  };
+  const turnScope = {
+    conversation: {
+      tenantId,
+      agentId,
+      partition: {
+        kind: "endpoint-conversation-principal" as const,
+        endpoint,
+        principalId: userId,
+      },
+    },
+    principal: { principalId: userId },
+    endpoint,
+  };
+  const conversationRef = createConversationRef(turnScope.conversation);
+  if (!conversationRef.ok) throw conversationRef.error;
   return {
-    agentId: TEST_AGENT_ID,
-    sessionKey: TEST_SESSION_KEY,
-    channelType: TEST_CHANNEL_TYPE,
-    channelId: TEST_CHANNEL_ID,
+    turnScope,
+    conversationRef: conversationRef.value,
+    deliveryOrigin: { channelType, channelId, userId, tenantId },
     traceId: null,
     backgroundHopCount: 0,
-    ...overrides,
+    ...Object.fromEntries(
+      Object.entries(over).filter(
+        ([key]) => !["agentId", "sessionKey", "channelType", "channelId", "userId"].includes(key),
+      ),
+    ),
   };
 }
 
@@ -126,14 +173,17 @@ describe("background-task completion re-triggers agent session (integration)", (
     handle.daemon.deliveryAdapters.set(TEST_CHANNEL_TYPE, echoAdapter);
 
     // Seed the session store so the completion runner's
-    // sessionStore.loadByFormattedKey(TEST_SESSION_KEY) returns non-undefined
-    // (runner falls back to notifyFn if the session is absent).
+    // loadByRef(queryScope, origin.conversationRef) returns non-undefined
+    // (runner falls back to notifyFn if the session is absent). Save at the
+    // exact conversation scope makeTestOrigin() projects, so the runner's
+    // scope+ref lookup resolves it. Empty message history is sufficient for
+    // the runner's existence check.
     if (handle.daemon.sessionStoreBridge) {
-      handle.daemon.sessionStoreBridge.saveByFormattedKey(
-        TEST_SESSION_KEY,
-        [], // empty message history is sufficient for the runner's existence check
-        { agentId: TEST_AGENT_ID, channelType: TEST_CHANNEL_TYPE },
+      const seeded = handle.daemon.sessionStoreBridge.save(
+        makeTestOrigin().turnScope.conversation,
+        [],
       );
+      if (!seeded.ok) throw seeded.error;
     }
   }, 120_000);
 
@@ -396,19 +446,20 @@ describe("background-task completion re-triggers agent session (integration)", (
       // Use a fresh session key for this test to isolate from prior state.
       const restartSessionKey = "test:restart-user:bg-restart-test";
 
-      // Seed a session so the runner finds it and calls executor.execute().
-      if (handle.daemon.sessionStoreBridge) {
-        handle.daemon.sessionStoreBridge.saveByFormattedKey(
-          restartSessionKey,
-          [],
-          { agentId: TEST_AGENT_ID, channelType: TEST_CHANNEL_TYPE },
-        );
-      }
-
       const origin = makeTestOrigin({
         sessionKey: restartSessionKey,
         channelId: "bg-restart-test",
       });
+
+      // Seed a session at this origin's scope so the runner finds it and calls
+      // executor.execute() (loadByRef(queryScope, origin.conversationRef)).
+      if (handle.daemon.sessionStoreBridge) {
+        const seeded = handle.daemon.sessionStoreBridge.save(
+          origin.turnScope.conversation,
+          [],
+        );
+        if (!seeded.ok) throw seeded.error;
+      }
 
       const { taskId, failTask } = promoteSyntheticTask(
         handle,

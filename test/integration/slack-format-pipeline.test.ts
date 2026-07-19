@@ -13,7 +13,12 @@
 
 import { describe, it, expect } from "vitest";
 import { formatForChannel } from "@comis/core";
-import type { DeliveryAdapter } from "@comis/core";
+import type {
+  DeliveryAdapter,
+  DeliveryAuthority,
+  ChannelEndpoint,
+  ConversationRef,
+} from "@comis/core";
 import { ok } from "@comis/shared";
 import type { Result } from "@comis/shared";
 import { makeDeliveryService } from "../support/factories.js";
@@ -98,11 +103,27 @@ describe("Slack Format Pipeline E2E", () => {
     const adapter = createMockSlackAdapter();
     const service = makeDeliveryService();
 
+    // Delivery persistence requires explicit conversation authority + an exact
+    // destination-endpoint snapshot (there is no active resolved-turn context in
+    // this direct-call test). The endpoint must mirror adapter.channelType +
+    // channelId so resolveDeliveryPersistenceScope accepts it.
+    const authority: DeliveryAuthority = {
+      tenantId: "tenant-test",
+      agentId: "agent-test",
+      conversationRef: `cv_${"A".repeat(43)}` as ConversationRef,
+    };
+    const destinationEndpoint: ChannelEndpoint = {
+      channelType: adapter.channelType,
+      channelInstanceId: "test-instance",
+      conversationId: "C-test-channel",
+      conversationKind: "direct",
+    };
+
     const result = await service.deliverToChannel(
       adapter,
       "C-test-channel",
       "Hello **bold** and [link](https://example.com)",
-      { origin: "test:slack-fmt-03" },
+      { origin: "test:slack-fmt-03", authority, destinationEndpoint },
     );
 
     expect(result.ok).toBe(true);

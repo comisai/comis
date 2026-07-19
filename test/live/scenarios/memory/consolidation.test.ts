@@ -13,11 +13,14 @@
  * plus a direct INSERT for the observation row. This tests the non-destruction invariant
  * at the substrate level — more deterministic than the high-level API.
  *
- * DDL constraints (packages/memory/src/schema.ts lines 488-506):
+ * DDL constraints (packages/memory/src/schema.ts memories table):
  *   trust_level CHECK IN ('system','learned','external') — 'high' is INVALID; use 'learned'.
  *   memory_type CHECK IN ('working','episodic','semantic','procedural') — 'observation' is INVALID;
  *     use 'semantic'. An observation row is identified by proof_count IS NOT NULL, not memory_type.
  *   created_at INTEGER NOT NULL (no default) — must be bound in every INSERT.
+ *   visibility TEXT NOT NULL CHECK IN ('conversation','principal','agent-shared') — bound to
+ *     'agent-shared', which the cross-field CHECK pairs with conversation_ref IS NULL AND
+ *     principal_id IS NULL (both omitted from the INSERT → default NULL).
  *
  * The strength column IS present (row-schemas.ts line 68). No silent catch.
  * PRAGMA table_info asserts the column exists first; assertions run unconditionally.
@@ -40,12 +43,15 @@ const MEM_TABLES = ["memories", "vec_memories", "memory_fts"];
 //   trust_level: 'learned'  — CHECK IN ('system','learned','external'); 'high' is INVALID.
 //   memory_type: 'semantic' — CHECK IN ('working','episodic','semantic','procedural'); 'observation' is INVALID.
 //     (Observation rows are identified by proof_count IS NOT NULL, not by memory_type.)
+//   visibility: 'agent-shared' — NOT NULL CHECK IN ('conversation','principal','agent-shared'); the
+//     cross-field CHECK pairs 'agent-shared' with conversation_ref IS NULL AND principal_id IS NULL
+//     (both omitted here → default NULL). Omitting visibility fails NOT NULL constraint.
 //   created_at: bound as ?  — INTEGER NOT NULL with NO DEFAULT; omitting causes constraint failure.
 // Each prepared statement that uses these constants must bind: (id, content, created_at).
 const REQUIRED_COLS =
-  "id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, has_embedding, created_at";
+  "id, tenant_id, agent_id, user_id, visibility, content, trust_level, memory_type, source_who, tags, has_embedding, created_at";
 const REQUIRED_VALS =
-  "?, 'tenant-1', 'agent-a', 'user-1', ?, 'learned', 'semantic', 'user', '[]', 0, ?";
+  "?, 'tenant-1', 'agent-a', 'user-1', 'agent-shared', ?, 'learned', 'semantic', 'user', '[]', 0, ?";
 
 describe("MEM-06 Stage-A — FOLD atomicity + pinned immunity + FadeMem (no COMIS_LIVE)", () => {
   it("FOLD non-destruction: consolidated_at UPDATE never deletes source rows (direct SQL)", () => {

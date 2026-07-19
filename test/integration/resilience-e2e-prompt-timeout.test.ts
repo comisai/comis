@@ -28,6 +28,7 @@ import {
 } from "@comis/agent";
 import { TypedEventBus } from "@comis/core";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
+import { ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Lightweight port wrappers that delegate to globals.
@@ -93,8 +94,9 @@ function buildIntegrationDeps(
 
   return {
     sessionStore: {
-      save: vi.fn(),
-      delete: vi.fn(),
+      save: vi.fn().mockReturnValue(ok(undefined)),
+      delete: vi.fn().mockReturnValue(ok(true)),
+      loadByRef: vi.fn().mockReturnValue(ok(undefined)),
     },
     executeAgent: vi.fn().mockResolvedValue({
       response: "Done",

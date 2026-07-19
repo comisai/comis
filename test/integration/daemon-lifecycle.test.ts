@@ -147,6 +147,13 @@ describe("Daemon Lifecycle", () => {
         // but cannot run it because unprivileged user-namespace cloning is
         // restricted at the kernel level — informational on test runners)
         if (msg.includes("bwrap installed but smoke test failed")) return false;
+        // Same userns-restriction root cause as the bwrap warning above: when
+        // the namespace preflight fails, the jail cannot be built and agent
+        // autonomy downshifts to the 'assistant' profile. INVARIANT: fires only
+        // where userns is unavailable (macOS, or a userns-restricted CI host);
+        // on a userns-enabled host this WARN must not appear, and the functional
+        // Linux jail tests are the regression guard. Exact message match.
+        if (msg.includes("Agent autonomy downshifted to the 'assistant' profile: the namespace preflight failed")) return false;
         // Exclude OAuth hot-reload notice (oauth.storage defaults to
         // "encrypted"; the daemon emits a one-shot operator notice that
         // hot-reload is unsupported on encrypted SQLite WAL — fires

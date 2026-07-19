@@ -36,10 +36,24 @@ import {
   type InboundPipelineDeps,
   createCommandQueue,
 } from "@comis/orchestrator";
-import { QueueConfigSchema, runWithContext, TypedEventBus } from "@comis/core";
+import { QueueConfigSchema, DmScopeConfigSchema, runWithContext, TypedEventBus } from "@comis/core";
 import type { NormalizedMessage, ChannelPort } from "@comis/core";
 import { ok } from "@comis/shared";
 import { emitStartupInvariants } from "@comis/daemon";
+import { createFakePrincipalResolver } from "../support/fake-principal-resolver.js";
+
+/**
+ * Identity deps added to every real-pipeline fixture below: the inbound turn
+ * identity resolver requires an explicit tenant, a principal resolver, and the
+ * per-agent DM-scope lookup (production parses DmScopeConfigSchema in
+ * setup-channels-runtime.ts). Kept as one shared spread so the three layers
+ * stay wired identically to production.
+ */
+const identityDeps = {
+  tenantId: "default",
+  principalResolver: createFakePrincipalResolver(),
+  getDmScope: () => DmScopeConfigSchema.parse({}),
+};
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -244,15 +258,16 @@ describe("duplicate-adapter replay — deduplication event", () => {
       })),
     };
     const minimalDeps: InboundPipelineDeps = {
+      ...identityDeps,
       eventBus,
       logger: logger as any,
       messageRouter: { resolve: vi.fn(() => "default") } as any,
       sessionManager: {
-        loadOrCreate: vi.fn(() => []),
-        save: vi.fn(),
-        isExpired: vi.fn(() => false),
-        expire: vi.fn(() => true),
-        cleanStale: vi.fn(() => 0),
+        loadOrCreate: vi.fn(() => ok([])),
+        save: vi.fn(() => ok(undefined)),
+        isExpired: vi.fn(() => ok(false)),
+        expire: vi.fn(() => ok(true)),
+        cleanStale: vi.fn(() => ok(0)),
       } as any,
       createExecutor: vi.fn(() => executorStub) as any,
       commandQueue,
@@ -346,15 +361,16 @@ describe("duplicate-adapter replay — queue ownership", () => {
     };
 
     const pipelineDeps: InboundPipelineDeps = {
+      ...identityDeps,
       eventBus,
       logger: logger as any,
       messageRouter: { resolve: vi.fn(() => "default") } as any,
       sessionManager: {
-        loadOrCreate: vi.fn(() => []),
-        save: vi.fn(),
-        isExpired: vi.fn(() => false),
-        expire: vi.fn(() => true),
-        cleanStale: vi.fn(() => 0),
+        loadOrCreate: vi.fn(() => ok([])),
+        save: vi.fn(() => ok(undefined)),
+        isExpired: vi.fn(() => ok(false)),
+        expire: vi.fn(() => ok(true)),
+        cleanStale: vi.fn(() => ok(0)),
       } as any,
       createExecutor: vi.fn(() => executorStub) as any,
       commandQueue,

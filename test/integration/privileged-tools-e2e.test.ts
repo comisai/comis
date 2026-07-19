@@ -39,6 +39,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runWithContext, createConversationRef, type ConversationScope } from "@comis/core";
+import { resolveInternalTurnIdentity } from "@comis/orchestrator";
 import {
   startTestDaemon,
   type TestDaemonHandle,
@@ -54,6 +56,67 @@ const CONFIG_PATH = resolve(
   __dirname,
   "../config/config.test-privileged-tools-e2e.yaml",
 );
+
+// memory.store binds each write to the resolved request authority: the handler
+// reads the ambient turnScope (tryGetContext) and requires it to match the
+// explicit tenant/agent, exactly as the production agent tool path does (that
+// tool runs inside the agent turn's resolved scope). This suite drives rpcCall
+// in-process, so no channel/gateway leg establishes a scope — the store calls
+// must enter one, mirroring packages/daemon/src/api/memory-handlers.test.ts.
+function withResolvedRequestContext<T>(fn: () => Promise<T>): Promise<T> {
+  const identity = resolveInternalTurnIdentity({
+    tenantId: "test",
+    agentId: "default",
+    originKind: "control-plane",
+    instanceId: "privileged-tools-e2e",
+    conversationId: "privileged-tools-e2e-memory-store",
+    principalId: "test-operator",
+  });
+  if (!identity.ok) throw identity.error;
+  return runWithContext(
+    {
+      tenantId: "test",
+      userId: "test-operator",
+      sessionKey: identity.value.displaySessionKey,
+      agentId: "default",
+      turnScope: identity.value.turnScope,
+      traceId: "00000000-0000-4000-8000-000000000001",
+      startedAt: 1,
+      trustLevel: "admin",
+    },
+    fn,
+  );
+}
+
+// Session RPCs address a conversation by explicit authority (tenant_id +
+// agent_id + opaque conversation_ref), never a formatted session_key string.
+// Resolving the same ConversationScope the production turn resolver produces
+// means the ref a test seeds under matches the one the handler derives on
+// lookup (the sqlite session store keys rows by createConversationRef(scope)).
+function resolveConversation(conversationId: string): {
+  scope: ConversationScope;
+  conversationRef: string;
+} {
+  const identity = resolveInternalTurnIdentity({
+    tenantId: "test",
+    agentId: "default",
+    originKind: "control-plane",
+    instanceId: "privileged-tools-e2e",
+    conversationId,
+    principalId: "e2e-session-user",
+  });
+  if (!identity.ok) throw identity.error;
+  const scope = identity.value.turnScope.conversation;
+  const ref = createConversationRef(scope);
+  if (!ref.ok) throw ref.error;
+  return { scope, conversationRef: ref.value };
+}
+
+const SEEDED_CONVERSATION = resolveConversation("e2e-seeded-conversation");
+// A well-formed authority whose conversation was never persisted, so the
+// handler reaches its store lookup and reports the conversation as not found.
+const NONEXISTENT_CONVERSATION_REF =
+  resolveConversation("e2e-never-seeded-conversation").conversationRef;
 
 // ---------------------------------------------------------------------------
 // Test suite
@@ -325,7 +388,10 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     it(
       "memory.stats returns stats shape",
       async () => {
-        const result = (await rpcCall("memory.stats", {})) as Record<
+        const result = (await rpcCall("memory.stats", {
+          tenant_id: "test",
+          agent_id: "default",
+        })) as Record<
           string,
           unknown
         >;
@@ -341,28 +407,43 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
       "memory.store creates entries",
       async () => {
         // Store 3 test entries
-        const entry1 = (await rpcCall("memory.store", {
-          content: "Test memory entry one for E2E testing",
-          tags: ["e2e-test", "entry-one"],
-        })) as { stored: boolean; id: string };
+        const entry1 = (await withResolvedRequestContext(() =>
+          rpcCall("memory.store", {
+            content: "Test memory entry one for E2E testing",
+            tags: ["e2e-test", "entry-one"],
+            tenantId: "test",
+            agentId: "default",
+            visibility: "agent-shared",
+          }),
+        )) as { stored: boolean; id: string };
 
         expect(entry1.stored).toBe(true);
         expect(typeof entry1.id).toBe("string");
         storedEntryIds.push(entry1.id);
 
-        const entry2 = (await rpcCall("memory.store", {
-          content: "Test memory entry two for E2E testing",
-          tags: ["e2e-test", "entry-two"],
-        })) as { stored: boolean; id: string };
+        const entry2 = (await withResolvedRequestContext(() =>
+          rpcCall("memory.store", {
+            content: "Test memory entry two for E2E testing",
+            tags: ["e2e-test", "entry-two"],
+            tenantId: "test",
+            agentId: "default",
+            visibility: "agent-shared",
+          }),
+        )) as { stored: boolean; id: string };
 
         expect(entry2.stored).toBe(true);
         expect(typeof entry2.id).toBe("string");
         storedEntryIds.push(entry2.id);
 
-        const entry3 = (await rpcCall("memory.store", {
-          content: "Test memory entry three for E2E testing",
-          tags: ["e2e-test", "entry-three"],
-        })) as { stored: boolean; id: string };
+        const entry3 = (await withResolvedRequestContext(() =>
+          rpcCall("memory.store", {
+            content: "Test memory entry three for E2E testing",
+            tags: ["e2e-test", "entry-three"],
+            tenantId: "test",
+            agentId: "default",
+            visibility: "agent-shared",
+          }),
+        )) as { stored: boolean; id: string };
 
         expect(entry3.stored).toBe(true);
         expect(typeof entry3.id).toBe("string");
@@ -378,6 +459,8 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
       async () => {
         // Browse with limit 2
         const result = (await rpcCall("memory.browse", {
+          tenant_id: "test",
+          agent_id: "default",
           limit: 2,
         })) as {
           entries: Array<{
@@ -412,6 +495,8 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
 
         // Browse with offset
         const page2 = (await rpcCall("memory.browse", {
+          tenant_id: "test",
+          agent_id: "default",
           limit: 2,
           offset: 2,
         })) as {
@@ -430,7 +515,10 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     it(
       "memory.export returns all entries as JSON",
       async () => {
-        const result = (await rpcCall("memory.export", {})) as {
+        const result = (await rpcCall("memory.export", {
+          tenant_id: "test",
+          agent_id: "default",
+        })) as {
           entries: Array<{
             id: string;
             content: string;
@@ -474,6 +562,8 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
         const entryToDelete = storedEntryIds[2]!;
         const deleteResult = (await rpcCall("memory.delete", {
           ids: [entryToDelete],
+          tenant_id: "test",
+          agent_id: "default",
           _trustLevel: "admin",
         })) as {
           deleted: number;
@@ -487,6 +577,8 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
 
         // Verify the entry is gone from browse
         const browseResult = (await rpcCall("memory.browse", {
+          tenant_id: "test",
+          agent_id: "default",
           limit: 100,
         })) as {
           entries: Array<{ id: string }>;
@@ -505,19 +597,28 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
       "memory.flush clears all entries",
       async () => {
         // Verify we have entries before flush
-        const beforeStats = (await rpcCall("memory.stats", {})) as Record<
+        const beforeStats = (await rpcCall("memory.stats", {
+          tenant_id: "test",
+          agent_id: "default",
+        })) as Record<
           string,
           unknown
         >;
         expect(beforeStats).toBeDefined();
 
         const beforeBrowse = (await rpcCall("memory.browse", {
+          tenant_id: "test",
+          agent_id: "default",
           limit: 100,
         })) as { entries: unknown[]; total: number };
         expect(beforeBrowse.total).toBeGreaterThan(0);
 
         // Flush all entries
-        const flushResult = (await rpcCall("memory.flush", { _trustLevel: "admin" })) as {
+        const flushResult = (await rpcCall("memory.flush", {
+          tenant_id: "test",
+          agent_id: "default",
+          _trustLevel: "admin",
+        })) as {
           flushed: boolean;
           entriesRemoved: number;
           scope: { tenantId: string; agentId: string | null };
@@ -529,6 +630,8 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
 
         // Verify browse returns empty after flush
         const afterBrowse = (await rpcCall("memory.browse", {
+          tenant_id: "test",
+          agent_id: "default",
           limit: 100,
         })) as { entries: unknown[]; total: number };
         expect(afterBrowse.total).toBe(0);
@@ -546,12 +649,16 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     it(
       "session.list returns sessions shape",
       async () => {
-        const result = (await rpcCall("session.list", {})) as {
+        const result = (await rpcCall("session.list", {
+          tenant_id: "test",
+          agent_id: "default",
+        })) as {
           sessions: Array<{
-            sessionKey: string;
-            userId: string;
-            channelId: string;
+            conversationRef: string;
+            agentId: string;
             kind: string;
+            messageCount: number;
+            totalTokens: number;
             updatedAt: number;
             createdAt: number;
           }>;
@@ -565,10 +672,11 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
 
         // Verify session shape if any exist
         for (const session of result.sessions) {
-          expect(typeof session.sessionKey).toBe("string");
-          expect(typeof session.userId).toBe("string");
-          expect(typeof session.channelId).toBe("string");
-          expect(["dm", "group", "sub-agent"]).toContain(session.kind);
+          expect(typeof session.conversationRef).toBe("string");
+          expect(typeof session.agentId).toBe("string");
+          expect(typeof session.kind).toBe("string");
+          expect(typeof session.messageCount).toBe("number");
+          expect(typeof session.totalTokens).toBe("number");
           expect(typeof session.updatedAt).toBe("number");
           expect(typeof session.createdAt).toBe("number");
         }
@@ -581,23 +689,26 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
     // -----------------------------------------------------------------------
 
     describe.sequential("Session Lifecycle (seeded)", () => {
-      const SESSION_KEY = "test:e2e-session-user:e2e-channel";
+      const CONVERSATION_REF = SEEDED_CONVERSATION.conversationRef;
 
       it(
         "session seed and export returns messages",
         async () => {
-          // 1. Seed a session via sessionStoreBridge
-          sessionStoreBridge.saveByFormattedKey(SESSION_KEY, [
+          // 1. Seed a session directly in the store under the resolved scope.
+          const saved = sessionStoreBridge.save(SEEDED_CONVERSATION.scope, [
             { role: "user", content: "Hello from E2E" },
             { role: "assistant", content: "Hello back" },
           ]);
+          expect(saved.ok).toBe(true);
 
-          // 2. Export the session via RPC
+          // 2. Export the session via RPC (addressed by explicit authority).
           const result = (await rpcCall("session.export", {
-            session_key: SESSION_KEY,
+            tenant_id: "test",
+            agent_id: "default",
+            conversation_ref: CONVERSATION_REF,
             _trustLevel: "admin",
           })) as {
-            sessionKey: string;
+            conversationRef: string;
             messages: Array<{ role: string; content: string }>;
             metadata: Record<string, unknown>;
             messageCount: number;
@@ -606,7 +717,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
           };
 
           // 3. Assert export shape and content
-          expect(result.sessionKey).toBe(SESSION_KEY);
+          expect(result.conversationRef).toBe(CONVERSATION_REF);
           expect(result.messages).toHaveLength(2);
           expect(result.messageCount).toBe(2);
           expect(typeof result.createdAt).toBe("number");
@@ -626,9 +737,11 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
         async () => {
           // 1. Compact the session
           const result = (await rpcCall("session.compact", {
-            session_key: SESSION_KEY,
+            tenant_id: "test",
+            agent_id: "default",
+            conversation_ref: CONVERSATION_REF,
           })) as {
-            sessionKey: string;
+            conversationRef: string;
             messageCount: number;
             estimatedTokens: number;
             compactionTriggered: boolean;
@@ -636,7 +749,7 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
           };
 
           // 2. Assert compact response shape
-          expect(result.sessionKey).toBe(SESSION_KEY);
+          expect(result.conversationRef).toBe(CONVERSATION_REF);
           expect(result.messageCount).toBe(2);
           expect(typeof result.estimatedTokens).toBe("number");
           expect(result.estimatedTokens).toBeGreaterThan(0);
@@ -651,22 +764,26 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
         async () => {
           // 1. Reset the session
           const result = (await rpcCall("session.reset", {
-            session_key: SESSION_KEY,
+            tenant_id: "test",
+            agent_id: "default",
+            conversation_ref: CONVERSATION_REF,
             _trustLevel: "admin",
           })) as {
-            sessionKey: string;
+            conversationRef: string;
             reset: boolean;
             previousMessageCount: number;
           };
 
           // 2. Assert reset response
-          expect(result.sessionKey).toBe(SESSION_KEY);
+          expect(result.conversationRef).toBe(CONVERSATION_REF);
           expect(result.reset).toBe(true);
           expect(result.previousMessageCount).toBe(2);
 
           // 3. Verify by exporting: messages should be empty
           const exported = (await rpcCall("session.export", {
-            session_key: SESSION_KEY,
+            tenant_id: "test",
+            agent_id: "default",
+            conversation_ref: CONVERSATION_REF,
             _trustLevel: "admin",
           })) as {
             messages: unknown[];
@@ -683,10 +800,12 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
         async () => {
           // 1. Delete the session
           const result = (await rpcCall("session.delete", {
-            session_key: SESSION_KEY,
+            tenant_id: "test",
+            agent_id: "default",
+            conversation_ref: CONVERSATION_REF,
             _trustLevel: "admin",
           })) as {
-            sessionKey: string;
+            conversationRef: string;
             deleted: boolean;
             transcript: {
               messages: unknown[];
@@ -696,15 +815,20 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
           };
 
           // 2. Assert delete response
-          expect(result.sessionKey).toBe(SESSION_KEY);
+          expect(result.conversationRef).toBe(CONVERSATION_REF);
           expect(result.deleted).toBe(true);
           expect(result.transcript).toBeDefined();
           expect(result.transcript.messageCount).toBe(0); // Was reset above
 
-          // 3. Verify: export should now throw "Session not found"
+          // 3. Verify: export should now throw "Conversation not found"
           await expect(
-            rpcCall("session.export", { session_key: SESSION_KEY, _trustLevel: "admin" }),
-          ).rejects.toThrow(/Session not found/);
+            rpcCall("session.export", {
+              tenant_id: "test",
+              agent_id: "default",
+              conversation_ref: CONVERSATION_REF,
+              _trustLevel: "admin",
+            }),
+          ).rejects.toThrow(/Conversation not found/);
         },
         10_000,
       );
@@ -715,6 +839,8 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
       async () => {
         // dm filter
         const dmResult = (await rpcCall("session.list", {
+          tenant_id: "test",
+          agent_id: "default",
           kind: "dm",
         })) as { sessions: unknown[]; total: number };
         expect(Array.isArray(dmResult.sessions)).toBe(true);
@@ -722,12 +848,16 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
 
         // group filter
         const groupResult = (await rpcCall("session.list", {
+          tenant_id: "test",
+          agent_id: "default",
           kind: "group",
         })) as { sessions: unknown[]; total: number };
         expect(Array.isArray(groupResult.sessions)).toBe(true);
 
         // sub-agent filter
         const subAgentResult = (await rpcCall("session.list", {
+          tenant_id: "test",
+          agent_id: "default",
           kind: "sub-agent",
         })) as { sessions: unknown[]; total: number };
         expect(Array.isArray(subAgentResult.sessions)).toBe(true);
@@ -740,10 +870,12 @@ describe("PRIVILEGED TOOLS E2E: Agent, Memory, and Session Management", () => {
       async () => {
         await expect(
           rpcCall("session.export", {
-            session_key: "test:nonexistent:nonexistent",
+            tenant_id: "test",
+            agent_id: "default",
+            conversation_ref: NONEXISTENT_CONVERSATION_REF,
             _trustLevel: "admin",
           }),
-        ).rejects.toThrow(/Session not found/);
+        ).rejects.toThrow(/Conversation not found/);
       },
       10_000,
     );
