@@ -112,6 +112,14 @@ export interface AnnouncementBatcher {
   hasDelivered(key: string): boolean;
   /** Mark an idempotency key delivered. Caller marks ONLY after a successful send (never before the await) so a transient retry is preserved. */
   markDelivered(key: string): void;
+  /**
+   * Is this idempotency key still OWNED by the announcement pipeline — queued
+   * awaiting flush, mid-admission, or retained-uncertain? While true, the
+   * failure sweep must not send its own notice for the key (the enqueued
+   * completion announcement is the one message the recipient gets), closing
+   * the shutdown race where a notice fired for an enqueued-but-unflushed run.
+   */
+  hasPending?(key: string): boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +218,10 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const deliveryTails = new Map<string, Promise<void>>();
   const pendingAdmissions = new Set<Promise<Result<"queued" | "retained", Error>>>();
+  // Keys whose enqueue admission has not yet settled — consulted by hasPending
+  // alongside the materialized queues so the failure sweep never fires inside
+  // the admission await window.
+  const admissionKeys = new Set<string>();
   const admittedDecisionKeys = new Set<string>();
   let accepting = true;
   let shutdownPromise: Promise<void> | undefined;
@@ -628,10 +640,15 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     }
     const admission = enqueueAccepted(params);
     pendingAdmissions.add(admission);
-    void admission.then(
-      () => pendingAdmissions.delete(admission),
-      () => pendingAdmissions.delete(admission),
-    );
+    // Track the key across the async admission so hasPending covers the
+    // window where the item is neither in `queues` yet nor rejected — the
+    // failure sweep may run concurrently with a governed admission await.
+    if (params.idempotencyKey) admissionKeys.add(params.idempotencyKey);
+    const settleAdmission = (): void => {
+      pendingAdmissions.delete(admission);
+      if (params.idempotencyKey) admissionKeys.delete(params.idempotencyKey);
+    };
+    void admission.then(settleAdmission, settleAdmission);
     return admission;
   }
 
@@ -677,6 +694,17 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     hasDelivered: (key: string) => deliveredKeys.has(key),
     markDelivered: (key: string) => {
       deliveredKeys.mark(key);
+    },
+    hasPending: (key: string) => {
+      if (admissionKeys.has(key)) return true;
+      for (const queue of queues.values()) {
+        if (queue.some((item) => item.idempotencyKey === key)) return true;
+      }
+      // A retained-uncertain key (accepted side effect whose completion was
+      // not observed) is still owned by the announcement pipeline — a failure
+      // notice on top of it could duplicate a message the user already got.
+      // A DELIVERED key is deliberately NOT pending: hasDelivered covers it.
+      return retainedKeys.has(key) && !deliveredKeys.has(key);
     },
   };
 }

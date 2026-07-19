@@ -875,10 +875,20 @@ async function deliverFailureNotificationOnce(
   // underlying set in production; checking either suppresses a double-notify.
   const alreadyDelivered = announceKey !== undefined
     && (deps.batcher?.hasDelivered(announceKey) === true || deps.deliveryDedup?.has(announceKey) === true);
-  if (alreadyDelivered) {
+  // A completion announcement that is enqueued-but-unflushed (or
+  // retained-uncertain) still OWNS delivery for this key — hasDelivered is
+  // false only because the flush hasn't run yet. Sending the failure notice
+  // now would double-notify the recipient once the batch drains (the
+  // daemon-shutdown race: the run enqueued its announcement, then the
+  // shutdown sweep suppressed the run and routed here).
+  const announcementOwnsDelivery = announceKey !== undefined
+    && deps.batcher?.hasPending?.(announceKey) === true;
+  if (alreadyDelivered || announcementOwnsDelivery) {
     deps.logger?.debug({
       runId: params.runId,
-      hint: "duplicate failure notification suppressed",
+      hint: announcementOwnsDelivery
+        ? "pending completion announcement owns delivery; failure notification suppressed"
+        : "duplicate failure notification suppressed",
     }, "Failure notification dedup no-op");
     return;
   }

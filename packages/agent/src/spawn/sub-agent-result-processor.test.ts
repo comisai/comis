@@ -612,6 +612,36 @@ describe("deliverFailureNotification idempotency on the shared announce key", ()
     expect(batcher.markDelivered).not.toHaveBeenCalled();
   });
 
+  it("defers to a still-pending batched announcement instead of double-notifying", async () => {
+    // The daemon-shutdown race: the run's completion announcement is already
+    // enqueued with the batcher (not yet flushed, so hasDelivered is false)
+    // when the shutdown sweep fires deliverFailureNotification for the same
+    // key. The pending announcement owns delivery — the failure notice must
+    // NOT also go out, or the recipient gets both messages for one runId.
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    const batcher = {
+      ...makeStubBatcher(),
+      hasPending: vi.fn((key: string) => key === "default:u1:c1::r1"),
+    };
+
+    await deliverFailureNotification(
+      {
+        channelType: "discord",
+        channelId: "chan-1",
+        task: "shutdown-straddled task",
+        runtimeMs: 1234,
+        runId: "r1",
+        callerSessionKey: "default:u1:c1",
+      },
+      { sendToChannel, logger, batcher },
+    );
+
+    expect(batcher.hasPending).toHaveBeenCalledWith("default:u1:c1::r1");
+    expect(sendToChannel).not.toHaveBeenCalled();
+    expect(batcher.markDelivered).not.toHaveBeenCalled();
+  });
+
   it("always sends when deps.batcher is absent (no dedup sink is consulted, never throws)", async () => {
     const sendToChannel = vi.fn().mockResolvedValue(true);
 

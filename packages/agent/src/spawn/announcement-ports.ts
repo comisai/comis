@@ -89,6 +89,12 @@ export interface AnnouncementBatcher {
   hasDelivered(key: string): boolean;
   /** Mark an idempotency key delivered (success only). Mirrors the orchestrator batcher — keep in lockstep. */
   markDelivered(key: string): void;
+  /**
+   * Is this key still owned by the announcement pipeline (queued/mid-admission/
+   * retained-uncertain)? While true the failure sweep must not send its own
+   * notice for the key. Mirrors the orchestrator batcher — keep in lockstep.
+   */
+  hasPending?(key: string): boolean;
 }
 
 /**
