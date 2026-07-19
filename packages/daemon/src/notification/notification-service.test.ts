@@ -9,7 +9,7 @@ import { createConversationRef, TypedEventBus } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import type { DeliveryQueuePort, DeliveryQueueEnqueueInput, NotificationConfig } from "@comis/core";
 import type { QuietHoursConfig } from "@comis/scheduler";
-import { createNotificationService as createRawNotificationService } from "./notification-service.js";
+import { createNotificationService as createRawNotificationService, resolveNotificationDestination } from "./notification-service.js";
 import type { NotificationService, NotificationServiceDeps, NotifyUserOptions } from "./notification-service.js";
 import type { ChannelResolverDeps } from "./channel-resolver.js";
 
@@ -61,6 +61,11 @@ function createDefaultDeps(overrides?: Partial<NotificationServiceDeps>): Notifi
     notificationConfigs: new Map(),
     defaultConfig,
     channelResolverDeps,
+    // The resolved adapter's instance id per channel type (ingress-consistent).
+    resolveChannelInstanceId: (channelType: string) =>
+      channelType === "telegram" ? "telegram-account"
+      : channelType === "discord" ? "discord-account"
+      : undefined,
     logger: {
       info: vi.fn(),
       warn: vi.fn(),
@@ -74,6 +79,10 @@ function createDefaultDeps(overrides?: Partial<NotificationServiceDeps>): Notifi
 function createNotificationService(deps: NotificationServiceDeps): NotificationService {
   const service = createRawNotificationService(deps);
   return {
+    // Delegate resolveDestination to the real service (it mints from deps.tenantId
+    // + the resolution chain); only notifyUser is wrapped to auto-mint for the
+    // existing enqueue-behavior tests below.
+    ...service,
     notifyUser(opts: NotifyUserOptions) {
       const endpoint = {
         channelType: opts.channelType ?? "telegram",
@@ -428,5 +437,133 @@ describe("NotificationService", () => {
     }
     // No enqueue, no events
     expect(deps.deliveryQueue.enqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveNotificationDestination — the mint helper", () => {
+  function mintDeps(overrides?: Partial<NotificationServiceDeps>) {
+    const d = createDefaultDeps(overrides);
+    return {
+      channelResolverDeps: d.channelResolverDeps,
+      notificationConfigs: d.notificationConfigs,
+      defaultConfig: d.defaultConfig,
+      resolveChannelInstanceId: d.resolveChannelInstanceId,
+    };
+  }
+
+  it("explicit channel: mints authority (tenant/agent) + a matching endpoint, deterministically", () => {
+    const r = resolveNotificationDestination(mintDeps(), {
+      tenantId: "default",
+      agentId: "agent-1",
+      channelType: "telegram",
+      channelId: "chat-42",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.authority.tenantId).toBe("default");
+    expect(r.value.authority.agentId).toBe("agent-1");
+    // The endpoint mirrors the resolved channel — this is what notifyUser
+    // cross-checks (channelType + conversationId) at send time.
+    expect(r.value.destinationEndpoint.channelType).toBe("telegram");
+    expect(r.value.destinationEndpoint.conversationId).toBe("chat-42");
+    // channelInstanceId is the RESOLVED ADAPTER's instance id (ingress-consistent),
+    // not the conversation id or a sentinel.
+    expect(r.value.destinationEndpoint.channelInstanceId).toBe("telegram-account");
+    // Deterministic per (tenant, agent, channelType, channelId) — never random.
+    const again = resolveNotificationDestination(mintDeps(), {
+      tenantId: "default",
+      agentId: "agent-1",
+      channelType: "telegram",
+      channelId: "chat-42",
+    });
+    expect(again.ok && again.value.authority.conversationRef).toBe(r.value.authority.conversationRef);
+  });
+
+  it("primaryChannel fallback: resolves the agent's configured primary channel when none is passed", () => {
+    const configs = new Map<string, NotificationConfig>([
+      [
+        "agent-1",
+        {
+          enabled: true,
+          maxPerHour: 30,
+          dedupeWindowMs: 300_000,
+          maxChainDepth: 0,
+          primaryChannel: { channelType: "discord", channelId: "guild-7" },
+        },
+      ],
+    ]);
+    const r = resolveNotificationDestination(mintDeps({ notificationConfigs: configs }), {
+      tenantId: "default",
+      agentId: "agent-1",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.destinationEndpoint.channelType).toBe("discord");
+    expect(r.value.destinationEndpoint.conversationId).toBe("guild-7");
+    expect(r.value.destinationEndpoint.channelInstanceId).toBe("discord-account");
+  });
+
+  it("no registered adapter: channelInstanceId falls back to the resolved channel id", () => {
+    // "signal" has no adapter → resolveChannelInstanceId returns undefined.
+    const r = resolveNotificationDestination(mintDeps(), {
+      tenantId: "default",
+      agentId: "agent-1",
+      channelType: "signal",
+      channelId: "sig-9",
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.destinationEndpoint.channelInstanceId).toBe("sig-9");
+    expect(r.value.destinationEndpoint.conversationId).toBe("sig-9");
+  });
+
+  it("no channel resolvable: propagates the resolver error verbatim", () => {
+    const noChannel = {
+      channelResolverDeps: {
+        activeAdapterTypes: new Set<string>(),
+        getRecentSessionChannel: () => undefined,
+        getMostRecentSession: () => undefined,
+      },
+      notificationConfigs: new Map<string, NotificationConfig>(),
+      defaultConfig: { enabled: true, maxPerHour: 30, dedupeWindowMs: 300_000, maxChainDepth: 0 } as NotificationConfig,
+      resolveChannelInstanceId: () => undefined,
+    };
+    const r = resolveNotificationDestination(noChannel, { tenantId: "default", agentId: "agent-1" });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.message).toContain("No channel resolved");
+  });
+});
+
+describe("notifyUser authority guard (unwrapped service)", () => {
+  it("rejects a bare call with no authority (the invariant that keeps callers honest)", async () => {
+    const service = createRawNotificationService(createDefaultDeps());
+    const r = await service.notifyUser({
+      agentId: "agent-1",
+      message: "hi",
+      channelType: "telegram",
+      channelId: "chat-42",
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.message).toContain("explicit matching authority");
+  });
+
+  it("rejects when authority.agentId does not match the notified agentId", async () => {
+    const service = createRawNotificationService(createDefaultDeps());
+    const dest = service.resolveDestination({ agentId: "agent-1", channelType: "telegram", channelId: "chat-42" });
+    expect(dest.ok).toBe(true);
+    if (!dest.ok) return;
+    const r = await service.notifyUser({
+      agentId: "different-agent",
+      message: "hi",
+      channelType: "telegram",
+      channelId: "chat-42",
+      authority: dest.value.authority,
+      destinationEndpoint: dest.value.destinationEndpoint,
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.message).toContain("explicit matching authority");
   });
 });

@@ -307,6 +307,38 @@ describe("continuous delivery-queue drainer (integration)", () => {
   );
 
   // -------------------------------------------------------------------------
+  // primaryChannel-fallback path: a notification.send with NO channel params
+  // mints its destination from the agent's notification.primaryChannel and
+  // delivers through the same recurring drainer -> echo adapter chain. This is
+  // the second of the two resolution paths (explicit channel is covered above).
+  // -------------------------------------------------------------------------
+
+  it(
+    "notification.send with no channel params resolves via the agent's primaryChannel and delivers",
+    async () => {
+      const beforeCount = echoAdapter.getSentMessages().length;
+
+      // No channel_type / channel_id: the handler mints the destination from
+      // agents.default.notification.primaryChannel (echo / delivery-recurring-test).
+      const response = (await sendNotification(
+        handle,
+        { message: "primary-channel fallback delivery", origin: "test" },
+        nextRpcId++,
+      )) as { result?: { success?: boolean }; error?: unknown };
+
+      expect(response.error).toBeUndefined();
+      expect(response.result?.success).toBe(true);
+
+      await new Promise((r) => setTimeout(r, 1_000));
+
+      const sent = echoAdapter.getSentMessages();
+      expect(sent.length).toBe(beforeCount + 1);
+      expect(sent[sent.length - 1]!.text).toContain("primary-channel fallback delivery");
+    },
+    20_000,
+  );
+
+  // -------------------------------------------------------------------------
   // Deferred-row latency. A notification with a future scheduled_at is not
   // delivered before its time. This integration check is sanity-only -- the
   // unit test in setup-delivery.test.ts is the canonical proof; here we just

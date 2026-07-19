@@ -108,7 +108,8 @@ import {
 import { resolveAgentMainProvider } from "./wiring/setup-agents/setup-agents-tooling.js";
 import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-bundled-skills.js";
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
-import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
+import { createModelCatalog, resolveWorkspaceDir, type AppConfig } from "@comis/core";
+import { createWorkspacePolicyResolveDir } from "./wiring/workspace-policy-resolve-dir.js";
 import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
 import { reapNeverTaskedDrives as reapNeverTaskedDrivesInRegistry, createOrchestrateReplayRespawn } from "@comis/skills/tools";
 import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // the sandbox/capability endpoint layer
@@ -1185,16 +1186,20 @@ async function bootFoundation(
   const activityBreaker = createActivityCircuitBreaker(clock);
   // Shared-map SecretManager: construct BEFORE bootstrap; same Map → AppContainer + mutableHandle.
   const { secretManager: sharedSecretManager, mutableHandle } = setupSecretManager(mergedEnv);
+  // Live config holder for the workspace-policy adapter. Boot structuredClone-s
+  // the config for secret-ref resolution (below) and later hot-adds agents into
+  // the resulting `container.config.agents`; the adapter must resolve against
+  // that live map, not the pre-clone config handed to the factory. Populated
+  // right after the container is finalized; the bootstrap config is the fallback
+  // for the boot window before any turn runs.
+  const workspacePolicyLiveConfig: { current: AppConfig | undefined } = { current: undefined };
   const wrappedBootstrap = (opts: Parameters<typeof _bootstrap>[0]) => _bootstrap({
     ...opts,
     secretManager: sharedSecretManager,
     workspacePolicyPortFactory: (config) => createFilesystemWorkspacePolicyAdapter({
-      resolveWorkspaceDir: (agentId) => {
-        const agentConfig = config.agents[agentId];
-        return agentConfig === undefined
-          ? undefined
-          : resolveWorkspaceDir(agentConfig, agentId, config.dataDir || undefined);
-      },
+      resolveWorkspaceDir: createWorkspacePolicyResolveDir(
+        () => workspacePolicyLiveConfig.current ?? config,
+      ),
     }),
   });
   // 1. Bootstrap core container. (security.storage pre-read in step 0 before encrypted-store bootstrap.)
@@ -1212,6 +1217,9 @@ async function bootFoundation(
     throw new Error(`SecretRef resolution failed: ${refResult.error.message}`);
   }
   const container = { ...initialContainer, config: refResult.value as unknown as typeof initialContainer.config };
+  // Point the workspace-policy adapter at the live post-clone config so it
+  // resolves hot-added agents (agents.create) written to container.config.agents.
+  workspacePolicyLiveConfig.current = container.config as unknown as AppConfig;
 
   // Stage-2 scrub: remove config-managed secret names from process.env after config parsing.
   for (const name of container.platformSecretNames) {
@@ -1495,11 +1503,20 @@ async function bootFoundation(
   // Deferred notification ref + bgNotifyFn closure
   const bgNotifyRef: { ref?: import("./notification/notification-service.js").NotificationService } = {};
   const bgNotifyFn = async (opts: { agentId: string; message: string; priority: "normal"; origin: "background_task" }) => {
-    await bgNotifyRef.ref?.notifyUser({
+    const service = bgNotifyRef.ref;
+    if (!service) return;
+    // Internal boundary: mint the delivery authority + destination endpoint the
+    // notifyUser guard requires (no originating turn context here). A no-channel
+    // resolution is non-fatal — the background notification is simply dropped.
+    const destination = service.resolveDestination({ agentId: opts.agentId });
+    if (!destination.ok) return;
+    await service.notifyUser({
       agentId: opts.agentId,
       message: opts.message,
       priority: opts.priority,
       origin: opts.origin,
+      authority: destination.value.authority,
+      destinationEndpoint: destination.value.destinationEndpoint,
     });
   };
 
@@ -2219,6 +2236,10 @@ async function bootChannels(boot: BootContext): Promise<void> {
     quietHoursConfig: container.config.scheduler.quietHours,
     criticalBypass: container.config.scheduler.quietHours.criticalBypass,
     activeAdapterTypes: new Set(adaptersByType.keys()),
+    tenantId: container.config.tenantId,
+    // Live lookup (adaptersByType is mutated as adapters register): the resolved
+    // channel type's adapter instance id, mirroring ingress's channelInstanceId.
+    resolveChannelInstanceId: (channelType) => adaptersByType.get(channelType)?.channelId,
     logger: daemonLogger,
   });
   sessionTrackerSlot.current = notificationContext.sessionTracker;

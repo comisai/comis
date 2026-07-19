@@ -29,6 +29,10 @@ export interface SetupNotificationDeps {
   quietHoursConfig: { enabled: boolean; start: string; end: string; timezone: string };
   criticalBypass: boolean;
   activeAdapterTypes: ReadonlySet<string>;
+  /** The tenant every minted notification authority is bound to. */
+  tenantId: string;
+  /** Resolve a channel type to its registered adapter's instance id (ChannelPort.channelId). */
+  resolveChannelInstanceId: (channelType: string) => string | undefined;
   logger: ComisLogger;
 }
 
@@ -75,6 +79,8 @@ export function setupNotifications(deps: SetupNotificationDeps): NotificationCon
     notificationConfigs,
     defaultConfig,
     channelResolverDeps,
+    tenantId: deps.tenantId,
+    resolveChannelInstanceId: deps.resolveChannelInstanceId,
     logger: deps.logger,
   });
 

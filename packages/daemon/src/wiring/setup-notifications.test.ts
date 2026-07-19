@@ -123,6 +123,8 @@ function makeDeps(overrides: Partial<Parameters<typeof setupNotifications>[0]> =
     },
     criticalBypass: overrides.criticalBypass ?? false,
     activeAdapterTypes: overrides.activeAdapterTypes ?? new Set<string>(["discord"]),
+    tenantId: overrides.tenantId ?? "tenant-a",
+    resolveChannelInstanceId: overrides.resolveChannelInstanceId ?? ((channelType: string) => `${channelType}-instance`),
     logger: overrides.logger ?? createMockLogger(),
     ...overrides,
   };
