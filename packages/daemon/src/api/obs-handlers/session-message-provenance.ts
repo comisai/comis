@@ -63,10 +63,25 @@ const EMPTY_UPDATE = (): ProvenanceAssemblyUpdate => ({
   completed: [],
 });
 
-/** Decode and path-bind one possible provenance custom entry. */
+/** Whether physical channel identity is compatible with a projected session channel. */
+function messageMatchesSessionChannel(
+  message: OriginalInboundMessage,
+  sessionChannelId: string,
+): boolean {
+  // Direct projections store the physical conversation id.
+  if (message.channelId === sessionChannelId) return true;
+  // A channel-principal projection stores the channel type (for example,
+  // "telegram") while the provenance retains the physical chat id.
+  if (message.channelType === sessionChannelId) return true;
+  // Endpoint projections encode channel type, instance, and conversation.
+  return sessionChannelId.startsWith(`${message.channelType}:`)
+    && sessionChannelId.endsWith(`:${message.channelId}`);
+}
+
+/** Decode and bind one possible provenance custom entry to its session projection. */
 export function decodeProvenanceRecord(
   record: Record<string, unknown>,
-  expectedChannelId: string,
+  sessionChannelId: string,
 ): DecodedProvenanceRecord {
   if (
     record["type"] !== "custom" ||
@@ -76,7 +91,8 @@ export function decodeProvenanceRecord(
   }
   const parsed = parseInboundMessageProvenanceBatch(record["data"]);
   if (!parsed.ok) return { kind: "invalid" };
-  if (parsed.value.messages.some((message) => message.channelId !== expectedChannelId)) {
+  if (parsed.value.messages.some((message) =>
+    !messageMatchesSessionChannel(message, sessionChannelId))) {
     return { kind: "invalid" };
   }
   return {

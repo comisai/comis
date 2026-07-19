@@ -496,6 +496,31 @@ describe("extractSessionMessages", () => {
     expect(coverage.unparsedUserRecords).toBe(0);
   });
 
+  it("accepts Telegram provenance from the current principal-scoped session layout", () => {
+    const dataDir = tmpDataDir();
+    const principalId = "platform_b5jwOgRRncaj9XuyyAyp-HS4OxLpRnuetXeX9QqNZw8";
+    const key = fixtureSessionKey(principalId, "telegram", { peerId: principalId });
+    const message = {
+      id: "11111111-1111-4111-8111-111111111111",
+      channelId: "678314278",
+      channelType: "telegram",
+      senderId: "678314278",
+      text: "current routed session message",
+      timestamp: Date.parse("2026-07-19T14:54:00.000Z"),
+    };
+    writeSessionFile(dataDir, key, [provenanceRecord([message])]);
+
+    const { messages, coverage } = extractSessionMessages(dataDir, { channel: "telegram" });
+
+    expect(messages.map(({ messageId, chatId, text }) => ({ messageId, chatId, text }))).toEqual([{
+      messageId: message.id,
+      chatId: message.channelId,
+      text: message.text,
+    }]);
+    expect(coverage.invalidProvenanceRecords).toBe(0);
+    expect(coverage.structuredProvenanceRecordsSeen).toBe(1);
+  });
+
   it("reports malformed structured provenance and fail-closes its synthetic prompt", () => {
     const dataDir = tmpDataDir();
     writeSessionFile(dataDir, PEER_SESSION_KEY, [
