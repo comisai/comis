@@ -25,6 +25,10 @@ const SKIP_DIRECTORIES = new Set([
   "node_modules",
   "runs",
 ]);
+// Live-drive campaign targets describe concrete operator deployments; their domain
+// vocabulary is the fixture content those drives configure into operator workspaces,
+// not runtime behavior. The rest of the live kit (harness, sim, scripts) stays scanned.
+const SKIP_PATHS = ["test/live/self-driving/targets"] as const;
 
 function listTextFiles(path: string): string[] {
   const entries = readdirSync(path, { withFileTypes: true });
@@ -42,6 +46,9 @@ function scannedFiles(): string[] {
   return SCANNED_ROOTS.flatMap((entry) => {
     const fullPath = resolve(REPO_ROOT, entry);
     return entry.includes(".") ? [fullPath] : listTextFiles(fullPath);
+  }).filter((file) => {
+    const rel = relative(REPO_ROOT, file);
+    return !SKIP_PATHS.some((prefix) => rel === prefix || rel.startsWith(`${prefix}/`));
   });
 }
 
