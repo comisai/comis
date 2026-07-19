@@ -223,10 +223,11 @@ monitor.
 
 ### BOOTSTRAP.md -- First-run conversation
 
-A one-time setup conversation. This file guides your agent through its first
-interaction with you -- picking a name, figuring out its personality, learning
-about you. Once onboarding is complete, the agent deletes this file. It is not
-used again.
+A one-time setup conversation. A new or recreated workspace receives a neutral
+starter that offers to configure its role, scope, user context, and response
+preferences without assuming any of them. Once onboarding is complete, the
+agent clears this file. Normal restarts preserve the cleared file; deleting the
+workspace causes the starter to be created again.
 
 **What to put in it:** Conversation prompts for the agent's first session --
 questions to ask you, things to figure out together, and files to update
@@ -235,19 +236,13 @@ afterward.
 **Example (abbreviated):**
 
 ```markdown title="BOOTSTRAP.md"
-# Hello, World
+# First-run setup
 
-You just woke up. Time to figure out who you are.
+This is a new workspace. Explain that setup is available and invite the user
+to configure the details that matter for this deployment. Record only confirmed
+choices, and do not treat them as permission to use tools or credentials.
 
-Start with something like: "Hey. I just came online. Who am I? Who are you?"
-
-Then figure out together:
-1. Your name
-2. Your nature -- what kind of creature are you?
-3. Your vibe -- formal? casual? snarky? warm?
-4. Your emoji -- everyone needs a signature
-
-When you're done, delete this file.
+When setup is complete, clear this file.
 ```
 
 ### BOOT.md -- Session startup instructions

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   AGENT_STATE_FILES,
   DEFAULT_TEMPLATES,
+  isUntouchedWorkspaceTemplate,
   OPERATOR_OWNED_FILES,
   TEMPLATE_MARKER,
   WORKSPACE_FILE_NAMES,
@@ -29,8 +30,22 @@ describe("default workspace template ownership", () => {
     expect(combined).not.toContain("e.g.");
   });
 
-  it("starts BOOTSTRAP.md empty so onboarding state is not injected by default", () => {
-    expect(DEFAULT_TEMPLATES["BOOTSTRAP.md"]).toBe("");
+  it("starts BOOTSTRAP.md with neutral first-run setup state", () => {
+    const bootstrap = DEFAULT_TEMPLATES["BOOTSTRAP.md"];
+
+    expect(bootstrap.trim().length).toBeGreaterThan(0);
+    expect(bootstrap).toMatch(/new workspace/iu);
+    expect(bootstrap).toMatch(/clear BOOTSTRAP\.md/iu);
+    expect(bootstrap).not.toMatch(/personal assistant|industry|creature|vibe|emoji|English|Hebrew|Arabic|Russian/iu);
+  });
+
+  it("classifies only operator placeholders as untouched", () => {
+    for (const fileName of OPERATOR_OWNED_FILES) {
+      expect(isUntouchedWorkspaceTemplate(fileName, DEFAULT_TEMPLATES[fileName])).toBe(true);
+    }
+    expect(
+      isUntouchedWorkspaceTemplate("BOOTSTRAP.md", DEFAULT_TEMPLATES["BOOTSTRAP.md"]),
+    ).toBe(false);
   });
 
   it("has no second agent-package copy of the canonical templates", () => {

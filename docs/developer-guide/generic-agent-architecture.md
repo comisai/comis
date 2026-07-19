@@ -19,7 +19,7 @@ Skills, memories, files, web content, media text, API overrides, tool results, a
 
 `WorkspacePolicyPort` loads operator-owned workspace files once at turn start and returns a strict `WorkspacePolicySnapshot`. The snapshot contains typed sections and a deterministic combined hash. Prompt compilation, execution diagnostics, durable checkpoints, and outcome evaluation use that exact snapshot; they do not reread mutable workspace files during the turn. An asynchronous consumer that cannot resolve the recorded hash returns an unknown result instead of substituting current or partial policy.
 
-Workspace starters are neutral comments, created only when absent, and omitted from prompts while untouched. `BOOTSTRAP.md` is agent state, remains untrusted, and is never promoted to operator policy.
+Operator-owned workspace starters are neutral comments, created only when absent, and omitted from prompts while untouched. A newly created workspace receives neutral first-run state in `BOOTSTRAP.md`; it invites operator-guided setup without assuming a domain, identity, locale, or permissions. `BOOTSTRAP.md` remains untrusted agent state, is never promoted to operator policy, and is cleared when setup completes. Because files are created only when absent, normal startup preserves a cleared file while deleting and recreating the workspace starts onboarding again.
 
 ## Identity and storage scope
 

@@ -69,7 +69,12 @@ export const DEFAULT_TEMPLATES: Record<WorkspaceFileName, string> = {
 
 <!-- Optional operator-authored periodic-work policy. -->
 `,
-  "BOOTSTRAP.md": "",
+  "BOOTSTRAP.md": `# First-run setup
+
+This is a new workspace. Briefly explain that setup is available and invite the user to configure any relevant role, scope, user context, and response preferences. Do not assume choices the user has not made.
+
+Record only choices the user confirms in the appropriate workspace files. Setup does not authorize tools, credentials, or side effects. When setup is complete, clear BOOTSTRAP.md so it does not run again.
+`,
   "BOOT.md": `${TEMPLATE_MARKER}
 # BOOT.md
 
@@ -77,10 +82,11 @@ export const DEFAULT_TEMPLATES: Record<WorkspaceFileName, string> = {
 `,
 };
 
-/** Untouched starters are omitted from prompts instead of becoming policy. */
+/** Untouched operator starters are omitted instead of becoming policy. */
 export function isUntouchedWorkspaceTemplate(
   name: WorkspaceFileName,
   content: string,
 ): boolean {
-  return content === DEFAULT_TEMPLATES[name];
+  return OPERATOR_OWNED_FILES.some((operatorFile) => operatorFile === name)
+    && content === DEFAULT_TEMPLATES[name];
 }

@@ -17,6 +17,7 @@ This file records user-visible changes to Comis. Detailed release history is ava
 
 ### Fixed
 
+- New and recreated workspaces now enter first-run onboarding, and the active bootstrap state reaches prompt assembly instead of being omitted as an unchanged operator placeholder.
 - Provider status, CLI setup guidance, token-limit labels, and degraded-response instructions now reflect the runtime behavior.
 - Dashboard controls have clearer accessible names and reduce accidental secret exposure.
 - Gateway RPC failures no longer return internal exception details to clients.

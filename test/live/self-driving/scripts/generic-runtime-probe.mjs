@@ -54,8 +54,11 @@ function workspaceProbe() {
     workspaceDir,
     files,
     allPresent: files.every((file) => file.exists),
-    allUntouched: files.every((file) => file.untouched === true),
-    bootstrapEmpty: readFileSync(`${workspaceDir}/BOOTSTRAP.md`, "utf8").length === 0,
+    operatorStartersUntouched: files
+      .filter((file) => file.name !== "BOOTSTRAP.md")
+      .every((file) => file.untouched === true),
+    bootstrapClassifiedAsActive: files.find((file) => file.name === "BOOTSTRAP.md")?.untouched === false,
+    onboardingPending: readFileSync(`${workspaceDir}/BOOTSTRAP.md`, "utf8").trim().length > 0,
     starterHasPersonaOrVertical: /\b(persona|industry|campaign|finance|healthcare|legal)\b/u.test(templateCorpus),
     starterHasLanguageMandate: /\b(always|must)\b[^\n]{0,40}\b(language|english|hebrew|arabic)\b/u.test(templateCorpus),
   };

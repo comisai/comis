@@ -130,6 +130,22 @@ describe("workspace-manager", () => {
       expect(state.bootstrapSeededAt).toBeGreaterThan(0);
     });
 
+    it("recreates pending onboarding state after the workspace directory is deleted", async () => {
+      const dir = await makeTempDir();
+      await ensureWorkspace({ dir, initGit: false });
+      await fs.writeFile(path.join(dir, "BOOTSTRAP.md"), "", "utf-8");
+
+      await fs.rm(dir, { recursive: true, force: true });
+      await ensureWorkspace({ dir, initGit: false });
+
+      const bootstrap = await fs.readFile(path.join(dir, "BOOTSTRAP.md"), "utf-8");
+      const state = await readWorkspaceState(dir);
+      expect(bootstrap).toBe(DEFAULT_TEMPLATES["BOOTSTRAP.md"]);
+      expect(bootstrap.trim().length).toBeGreaterThan(0);
+      expect(state.bootstrapSeededAt).toBeTypeOf("number");
+      expect(state.onboardingCompletedAt).toBeUndefined();
+    });
+
     it("does not overwrite bootstrapSeededAt on second run", async () => {
       const dir = await makeTempDir();
       await ensureWorkspace({ dir });
@@ -630,14 +646,14 @@ describe("workspace-manager", () => {
       expect(status.isBootstrapped).toBe(true);
     });
 
-    it("reports isBootstrapped: true for the neutral empty BOOTSTRAP.md starter", async () => {
+    it("reports isBootstrapped: false for a newly created workspace", async () => {
       const dir = await makeTempDir();
       await ensureWorkspace({ dir });
 
       const status = await getWorkspaceStatus(dir);
 
-      expect(status.isBootstrapped).toBe(true);
-      expect(status.state!.onboardingCompletedAt).toBeTypeOf("number");
+      expect(status.isBootstrapped).toBe(false);
+      expect(status.state!.onboardingCompletedAt).toBeUndefined();
     });
 
     it("reports isBootstrapped: false when BOOTSTRAP.md contains setup state", async () => {

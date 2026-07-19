@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 describe("createFilesystemWorkspacePolicyAdapter", () => {
-  it("omits untouched starter templates from the operator policy snapshot", async () => {
+  it("omits operator placeholders while retaining canonical onboarding agent state", async () => {
     const dir = await makeWorkspace();
     await Promise.all(Object.entries(DEFAULT_TEMPLATES).map(([name, content]) => (
       writeFile(join(dir, name), content, "utf-8")
@@ -32,7 +32,15 @@ describe("createFilesystemWorkspacePolicyAdapter", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.sections).toEqual([]);
+      expect(result.value.sections).toEqual([
+        expect.objectContaining({
+          id: "workspace:bootstrap",
+          sourceKind: "agent_state",
+          trust: "untrusted",
+          stability: "turn",
+          content: DEFAULT_TEMPLATES["BOOTSTRAP.md"],
+        }),
+      ]);
       expect(result.value.combinedHash).toMatch(/^[a-f0-9]{64}$/u);
     }
   });

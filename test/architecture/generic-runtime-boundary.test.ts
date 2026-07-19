@@ -82,11 +82,12 @@ describe("generic runtime specialization boundary", () => {
     expect(violations).toEqual([]);
   });
 
-  it("keeps starter workspaces neutral and omits unchanged placeholders", () => {
+  it("keeps starter workspaces neutral while seeding generic first-run setup", () => {
     const templates = source("packages/core/src/workspace/templates.ts");
-    expect(templates).toContain('"BOOTSTRAP.md": ""');
+    expect(templates).not.toContain('"BOOTSTRAP.md": ""');
+    expect(templates).toMatch(/"BOOTSTRAP\.md":[\s\S]*new workspace/iu);
     expect(templates).toContain("isUntouchedWorkspaceTemplate");
-    expect(templates).not.toMatch(/personal assistant|industry|preferred language/iu);
+    expect(templates).not.toMatch(/personal assistant|industry|preferred language|creature|vibe|emoji/iu);
   });
 
   it("wraps server instructions before prompt exposure", () => {
