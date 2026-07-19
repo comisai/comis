@@ -17,7 +17,10 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { Hono } from "hono";
+import { serve } from "@hono/node-server";
+import type { AddressInfo } from "node:net";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import {
   mountMcpServerEndpoint,
   type McpServerEndpointDeps,
@@ -264,6 +267,114 @@ describe("mountMcpServerEndpoint -- body-size limit", () => {
 // in addition to literal `"admin"`. Defense-in-depth: a config-load bypass
 // should not silently let a wildcard-scoped token reach the McpServer factory.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Response-already-sent contract (regression: ERR_HTTP_HEADERS_SENT double-write)
+//
+// The MCP SDK's StreamableHTTPServerTransport writes the FULL response (SSE or
+// JSON) directly on the raw Node ServerResponse (`c.env.outgoing`). The route
+// handler must therefore return a Response that tells `@hono/node-server` to
+// leave `outgoing` untouched (the `x-hono-already-sent` sentinel). Returning a
+// plain `c.body(null)` instead makes the node adapter call `outgoing.writeHead`
+// a SECOND time — throwing `ERR_HTTP_HEADERS_SENT` and destroying the socket
+// mid-response, which corrupts/truncates every MCP reply.
+//
+// The `app.request()` harness used by the tests above never runs through the
+// real node adapter (no `c.env.incoming/outgoing`), so it cannot observe this
+// double-write. This block boots a real `@hono/node-server` listener and drives
+// a real POST /mcp/v1 so the adapter's response path executes.
+// ---------------------------------------------------------------------------
+
+function serveMountedApp(opts: {
+  bodyLimitBytes?: number;
+  tokenScopes?: string[];
+}): Promise<{ baseUrl: string; token: string; close: () => Promise<void> }> {
+  const { app, token } = mountForTest({
+    bodyLimitBytes: opts.bodyLimitBytes ?? 1_048_576,
+    tokenScopes: opts.tokenScopes,
+  });
+  return new Promise((resolvePromise) => {
+    const server = serve(
+      { fetch: app.fetch, hostname: "127.0.0.1", port: 0 },
+      (info: AddressInfo) => {
+        resolvePromise({
+          baseUrl: `http://127.0.0.1:${info.port}`,
+          token,
+          close: () =>
+            new Promise<void>((res, rej) =>
+              server.close((err) => (err ? rej(err) : res())),
+            ),
+        });
+      },
+    );
+  });
+}
+
+describe("mountMcpServerEndpoint -- response-already-sent (no double-write)", () => {
+  it("does not re-write headers after the SDK transport sent the response", async () => {
+    // `@hono/node-server` logs the double-write failure via `console.error(err)`
+    // (err.code === 'ERR_HTTP_HEADERS_SENT'). Capture those calls; the contract
+    // is that NONE fire.
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    const { baseUrl, token, close } = await serveMountedApp({});
+    let fetchError: unknown;
+    let status = 0;
+    let body = "";
+    try {
+      const res = await fetch(`${baseUrl}/mcp/v1`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+          // StreamableHTTP requires BOTH content types in Accept.
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: LATEST_PROTOCOL_VERSION,
+            capabilities: {},
+            clientInfo: { name: "double-write-regression", version: "0.0.0" },
+          },
+        }),
+      });
+      status = res.status;
+      body = await res.text();
+    } catch (err) {
+      // A torn-down socket (outgoing.destroy after the failed second write)
+      // surfaces here as a fetch network error on some timings.
+      fetchError = err;
+    } finally {
+      // Let the node adapter's post-handler write attempt settle onto the
+      // microtask/tick queue so a late console.error is captured before assert.
+      await new Promise((r) => setTimeout(r, 50));
+      await close();
+    }
+
+    const headerErrors = consoleErrorSpy.mock.calls.filter((callArgs) =>
+      callArgs.some(
+        (a) =>
+          a instanceof Error &&
+          ((a as NodeJS.ErrnoException).code === "ERR_HTTP_HEADERS_SENT" ||
+            a.message.includes("Cannot write headers")),
+      ),
+    );
+    consoleErrorSpy.mockRestore();
+
+    // Primary, deterministic pin: the node adapter must never attempt a second
+    // writeHead on the transport-owned ServerResponse.
+    expect(headerErrors).toEqual([]);
+    // The transport-written response must reach the client intact.
+    expect(fetchError).toBeUndefined();
+    expect(status).toBe(200);
+    expect(body.length).toBeGreaterThan(0);
+  }, 20_000);
+});
 
 describe("mountMcpServerEndpoint -- wildcard admin-equivalent runtime gate", () => {
   it("mountMcpServerEndpoint Gate 4 rejects a token with wildcard star and mcp-client co-issued", async () => {

@@ -65,6 +65,24 @@ type NodeHttpBindings = {
   outgoing: ServerResponse;
 };
 
+/**
+ * `@hono/node-server`'s internal "response already sent" header sentinel.
+ *
+ * When a returned Response carries this header (with no body), the node
+ * adapter's `responseViaResponseObject` skips writing to the raw
+ * `ServerResponse` entirely — the same mechanism the adapter's own
+ * `RESPONSE_ALREADY_SENT` export is built from. The MCP SDK transport writes
+ * the full response (SSE or JSON) directly on `c.env.outgoing`, so the route
+ * MUST return this sentinel; any other Response (including `c.body(null)`)
+ * makes the adapter call `outgoing.writeHead()` a SECOND time, throwing
+ * `ERR_HTTP_HEADERS_SENT` and destroying the socket mid-response.
+ *
+ * Pinned to the literal header string because `@hono/node-server@1.19.14`
+ * does not export the `RESPONSE_ALREADY_SENT` constant; the version is
+ * exact-pinned in package.json so the internal name cannot drift underneath us.
+ */
+const RESPONSE_ALREADY_SENT_HEADER = "x-hono-already-sent";
+
 // ---------------------------------------------------------------------------
 // Deps
 // ---------------------------------------------------------------------------
@@ -311,11 +329,26 @@ export function mountMcpServerEndpoint(
           500,
         );
       }
+      // Headers already shipped by the transport mid-stream — fall through to
+      // the response-already-sent sentinel below so the node adapter does not
+      // try to write them a second time.
     }
 
-    // The transport writes the response stream directly on `outgoing`
-    // (StreamableHTTPServerTransport supports both SSE + JSON modes). Return
-    // a null body so Hono does not attempt to overwrite the response.
+    // The transport wrote the full response (SSE or JSON) directly on the raw
+    // Node ServerResponse. Signal `@hono/node-server` to leave `outgoing`
+    // untouched via the response-already-sent header sentinel. Returning any
+    // other Response (including `c.body(null)`) makes the node adapter call
+    // `outgoing.writeHead()` a SECOND time — throwing ERR_HTTP_HEADERS_SENT and
+    // destroying the socket mid-response, corrupting/truncating every reply.
+    if (outgoing.headersSent) {
+      return new Response(null, {
+        headers: { [RESPONSE_ALREADY_SENT_HEADER]: "true" },
+      });
+    }
+
+    // The transport returned without writing anything (not expected for a
+    // valid MCP POST). Emit a normal empty response so the client is not left
+    // waiting on an open socket.
     return c.body(null);
   });
 
