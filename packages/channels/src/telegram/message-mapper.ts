@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { Attachment, NormalizedMessage } from "@comis/core";
+import { tryCatch } from "@comis/shared";
 import type { Message, MessageEntity } from "grammy/types";
 import { createHash } from "node:crypto";
 import { buildAttachments } from "./media-handler.js";
@@ -190,6 +191,18 @@ export function mapGrammyToNormalized(
     : msg.from !== undefined
       ? "user"
       : "unknown";
+  // The sender's client UI locale — the request-tier response-locale signal
+  // consumed by resolveResponseLocalePolicy and the inbound gate's localized
+  // replies. Telegram sends lowercase IETF tags ("pt-br");
+  // NormalizedMessageSchema requires the CANONICAL BCP-47 form, so
+  // canonicalize here and drop invalid tags rather than fail the message.
+  const rawLocale = msg.from?.language_code;
+  if (rawLocale !== undefined) {
+    const canonical = tryCatch(() => Intl.getCanonicalLocales(rawLocale));
+    if (canonical.ok && canonical.value.length === 1) {
+      metadata.locale = canonical.value[0];
+    }
+  }
   if (updateKind === "edited_message" && msg.edit_date !== undefined) {
     metadata.telegramEditDate = msg.edit_date;
   }

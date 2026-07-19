@@ -92,7 +92,7 @@ Every non-Latin capability has a working, visible, lower-fidelity floor — noth
 | Summarizer model weak in the source language | dag mode: the extractive/deterministic floor preserves source spans verbatim; pipeline mode: the weak-class path skips summarization (passthrough — nothing mistranslated); distillation is already gated (see [Local and small models](#local-and-small-models-non-latin)) |
 | Small or local summarizer silently ignores the language instruction (Hebrew in → English out) | The recall hole would reopen invisibly → the `summary_language_mismatch` system signal makes it a count; the remedy is `strongerSummarizerModel` (language-capable), no gating |
 | No phrase-table entry for the resolved reply language | English degraded-reply strings (never throws) |
-| Ambiguous or mixed-script inbound for reply-language resolution | Config → USER.md → English; the script default fires only on a strict majority of non-neutral codepoints, and only for `he`/`ar`/`ru` |
+| Ambiguous or mixed-script inbound for reply-language resolution | Config → channel-supplied request locale → current-message script → unset; the script fallback fires only when non-Latin codepoints dominate the current message, and yields a script-only locale (`und-Hebr`, `und-Cyrl`, …) — never a guessed language |
 | Conversation history not yet indexed by the trigram twins | Reachable via the word lane exactly as before; the `comis doctor` twin-backfill (normalized) makes it trigram-searchable, operator-run |
 | Conversation rows with stored token under-counts | The pre-flight is corrected immediately via the assembler's read-time `max(stored, factored-live)`; trigger sums self-heal as new rows dominate (a late condense is non-destructive) |
 | Trigram-lane snippets | Show the *normalized* stored text (niqqud-stripped, finals-folded) — cosmetic only, behavioral parity with the existing message-lane snippet SQL |
@@ -145,22 +145,25 @@ in mind.
 Two config keys carry the multilingual surface; both are documented in the
 [config reference](/reference/config-yaml).
 
-- **`agents.<id>.language`** — the reply language for the deterministic degraded replies (the
-  context-exhausted and output-starved notices). Accepts a BCP-47 tag (`"he"`) or an English
-  display name (`"Hebrew"`). When omitted, Comis resolves it from the USER.md preferred language,
-  then the inbound message script — **Hebrew, Arabic, and Russian/Cyrillic only**. It does **not**
-  affect the live agent reply, which always follows the user's language. See the
+- **`agents.<id>.language`** — the explicit response locale, consumed by the deterministic
+  degraded replies (the context-exhausted and output-starved notices) and by locale-quality
+  observability. Accepts a **canonical BCP-47 tag** (`"he"`, `"pt-BR"`) — config validation
+  rejects anything else. When omitted, Comis resolves the turn's locale from the
+  channel-supplied request locale (e.g. the Telegram client's `language_code`, carried on the
+  inbound message metadata), then from the dominant script of the current message (non-Latin
+  scripts only, as a script-only locale such as `und-Hebr`), and otherwise leaves it unset. It
+  does **not** affect the live agent reply, which always follows the user's language. See the
   [`agents` reference](/reference/config-yaml#agents).
 - **`embedding.multilingual`** — an advisory boolean for the `comis system-health` model-health line
   (see [Embedding and reranker](#embedding-and-reranker)). It does not gate search. See the
   [configuration reference](/reference/config-yaml).
 
-**The Cyrillic-to-`ru` coarseness.** The script default maps Cyrillic to `ru` — coarse, because
-Ukrainian (and other Cyrillic-script languages) also exist. That coarseness is intentional: it is
-the floor of last resort, and the explicit `agents.<id>.language` key or the USER.md preferred
-language is how you pin a precise language above it. CJK deliberately maps to *nothing* for reply
-resolution (Chinese, Japanese, and Korean share Han codepoints, so guessing `zh` for a Japanese
-user is worse than falling back to English) — set `agents.<id>.language` explicitly for CJK.
+**Script-only fallback, never a guessed language.** The script fallback deliberately yields a
+script-only locale (`und-Cyrl`, `und-Hebr`, `und-Hani`, …), not a language: Cyrillic covers
+Ukrainian as well as Russian, and Han codepoints are shared by Chinese and Japanese, so guessing
+a language tag from script alone would misname real users. Pin a precise language with the
+explicit `agents.<id>.language` key, or let the channel-supplied request locale (the user's own
+client setting) carry it.
 
 ## Summarizer language capability
 

@@ -31,6 +31,36 @@ function stubTextMessage(overrides: Partial<Message> = {}): Message {
   } as Message;
 }
 
+describe("message-mapper / mapGrammyToNormalized locale enrichment", () => {
+  it("maps the sender's client locale into metadata.locale", () => {
+    const msg = stubTextMessage({
+      from: { id: 99, is_bot: false, first_name: "Alice", language_code: "es" },
+    });
+    expect(mapGrammyToNormalized(msg, 123).metadata?.locale).toBe("es");
+  });
+
+  it("canonicalizes Telegram's lowercase region tags to BCP-47", () => {
+    // Telegram sends lowercase IETF tags (pt-br); NormalizedMessageSchema
+    // requires the CANONICAL form, so the producer must canonicalize.
+    const msg = stubTextMessage({
+      from: { id: 99, is_bot: false, first_name: "Alice", language_code: "pt-br" },
+    });
+    expect(mapGrammyToNormalized(msg, 123).metadata?.locale).toBe("pt-BR");
+  });
+
+  it("omits metadata.locale when the sender carries no language_code", () => {
+    const msg = stubTextMessage();
+    expect(mapGrammyToNormalized(msg, 123).metadata).not.toHaveProperty("locale");
+  });
+
+  it("drops an invalid language_code instead of emitting a non-canonical locale", () => {
+    const msg = stubTextMessage({
+      from: { id: 99, is_bot: false, first_name: "Alice", language_code: "!!" },
+    });
+    expect(mapGrammyToNormalized(msg, 123).metadata).not.toHaveProperty("locale");
+  });
+});
+
 describe("message-mapper / mapGrammyToNormalized", () => {
   it("maps a text message with correct fields", () => {
     const msg = stubTextMessage();
