@@ -226,19 +226,16 @@ function findSessionFileByPointerSessionId(
 
 /**
  * Resolve the absolute `.jsonl` session-file path for a formatted sessionKey
- * under the workspace sessions base, via the authoritative `sessionKeyToPath`
- * mapper (`<sessionsBase>/<tenantId>/<channelId>/<file>.jsonl`).
+ * under the workspace sessions base, via the on-disk pointer scan
+ * ({@link findSessionFileByPointerSessionId}): each session's
+ * `<file>.jsonl.trajectory-path.json` pointer carries the verbatim formatted
+ * key in `sessionId`, and the scan returns the session `.jsonl` whose pointer
+ * matches EXACTLY. No display-label parsing happens here — the on-disk pointer
+ * is the authoritative key→file mapping.
  *
- * Two-stage: (1) the FAST PATH — a clean display-label round-trip
- * whose computed artifacts exist on disk (telegram + any single-colon-field key);
- * (2) the FALLBACK — when the fast-path artifacts are absent, the key may have a
- * colon-bearing userId the parser mis-split (webhook sessions), so resolve via the
- * on-disk pointer whose `sessionId` matches verbatim.
- *
- * Returns `undefined` when the key is not a parseable formatted sessionKey
- * (the reader then soft-fails to `[]`/`null`). `sessionKeyToPath` runs every
- * field through `safePath`, so a traversal-bearing key is collapsed and stays
- * inside `sessionsBase`.
+ * Returns `undefined` on a scan miss (the reader then soft-fails to
+ * `[]`/`null`). Traversal-safe: the untrusted key is used only for the `===`
+ * comparison, never for path construction.
  */
 function resolveSessionFile(sessionKey: string, sessionsBase: string): string | undefined {
   return findSessionFileByPointerSessionId(sessionKey, sessionsBase);

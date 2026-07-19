@@ -44,7 +44,8 @@ import { assertNotAgentOrigin } from "./shared/assert-not-agent-origin.js";
 // The per-cap audit emitter — emits audit:event (the durable security-audit
 // trail) + capability:audited (the spawn-tree producer) for an
 // allowed AND a denied gated call at THIS chokepoint. The in-process leg has no
-// lease: rootRunId via resolveRootRunId, leaseId honestly absent.
+// lease: rootRunId arrives pre-resolved on the trusted `_rootRunId` param,
+// leaseId honestly absent.
 import { emitCapabilityAudit } from "./shared/emit-capability-audit.js";
 
 import { createCronHandlers } from "./cron-handlers.js";
@@ -608,7 +609,7 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       // "ungated" + "deny-by-origin" — the latter already audits via
       // assertNotAgentOrigin above, so excluding it here avoids the double-audit
       // for the admin path). The in-process leg has NO lease: source
-      // rootRunId from the synthetic-root resolver; leaseId is honestly ABSENT.
+      // rootRunId from the trusted injected `_rootRunId`; leaseId is honestly ABSENT.
       const classification = HANDLER_CAPABILITY_MAP[method as keyof typeof HANDLER_CAPABILITY_MAP];
       const isCapGated =
         classification !== undefined &&

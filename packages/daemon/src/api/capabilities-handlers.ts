@@ -29,8 +29,9 @@
  * back to re-resolving the caller's OWN `PerAgentConfig.autonomy` — with NO
  * cross-agent `defaultAgentId` fallback, so an unknown `_agentId` is never
  * reported with the default agent's caps under its own id. Budget/quota
- * come from `BoundedAutonomy.snapshot` ONLY when a live `rootRunId` resolves from
- * the caller session key; in-process pre-spawn (no live root) leaves both ABSENT
+ * come from `BoundedAutonomy.snapshot` ONLY when the trusted in-process boundary
+ * injected a live `_rootRunId` (a display session key is never parsed here to
+ * recover authority); in-process pre-spawn (no live root) leaves both ABSENT
  * (optional, honest — never a fabricated zero snapshot, which would be a false
  * posture). Content-free §2.7 logging (the agentId + cap COUNT only — never the
  * caps themselves are needed beyond the response, never a body).
@@ -69,7 +70,7 @@ const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
  * The narrow deps the capabilities handler reads. `ApiDispatchDeps` (the
  * dispatcher's superset) is assignable to this by structural subtyping —
  * `boundedAutonomy` rides ChannelsApiDeps (gated at the wiring site),
- * `agents`/`defaultAgentId`/`resolveRootRunId` ride SessionsApiDeps, and
+ * `agents`/`defaultAgentId` ride SessionsApiDeps, and
  * `logger` is required on every slice.
  */
 export interface CapabilitiesHandlerDeps {

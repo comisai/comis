@@ -142,13 +142,13 @@ Pino auto-redacts credentials (`apiKey`, `token`, `password`, `secret`, `authori
 
 | Symptom / question | First command | What it answers |
 |---|---|---|
-| "Review the production logs" / daemon-wide health | `system --since <N>` | degraded rate, top errorKinds, breaker trips, cost, + the `health_signal`/`model_health`/`config_posture` findings (the worst session to drill into) |
+| "Review the production logs" / daemon-wide health | `system-health --since <N>` | degraded rate, top errorKinds, breaker trips, cost, + the `health_signal`/`model_health`/`config_posture` findings (the worst session to drill into) |
 | One bad/degraded session (you have a sessionKey or traceId) | `explain "<sessionKey\|traceId>"` | deterministic `likelyRootCause` + outcome/cost/failures(+provenance)/breaker timeline/contextBudget/offloads |
-| "Which model/provider actually ran?" / a phantom capability profile | `system` → look for `config_posture:chimeric_model` | a NATIVE provider (anthropic/openai/google) paired with a foreign model family — named in one look |
+| "Which model/provider actually ran?" / a phantom capability profile | `system-health` → look for `config_posture:chimeric_model` | a NATIVE provider (anthropic/openai/google) paired with a foreign model family — named in one look |
 | A **non-default** agent's cron/conversation (multi-agent daemon) | pass an explicit `agentId` (below) | which agent the op acted on (never a silent default) |
 | Recall surfaced the wrong/no memory, or "is this agent- or user-scoped recall?" | trajectory `memory.*` records + `~/.comis/memory.db` (the recall lens is the obs-excellence roadmap — see `.planning/design/observability-excellence.md`) | the ranked set / scope used |
 | Who accessed a secret / what command was blocked / an injection-detection (the security audit) | `security audit-log` | the durable, scrubbed `obs_audit_events` trail — filter by kind/agent/tenant/outcome; also `obs_query {action:"audit"}` + the optional `audit?` IncidentReport section |
-| A spend ceiling tripped / a session killed for cost | `explain "<sessionKey\|traceId>"` | the `spend_exceeded` `likelyRootCause` verdict + the `spend?` section; `system` surfaces `config_posture:pricing_gap` (unknown-priced spend) |
+| A spend ceiling tripped / a session killed for cost | `explain "<sessionKey\|traceId>"` | the `spend_exceeded` `likelyRootCause` verdict + the `spend?` section; `system-health` surfaces `config_posture:pricing_gap` (unknown-priced spend) |
 | "Pull up the messages users sent" (per channel / chat / date window) | `messages --channel telegram --date <YYYY-MM-DD>` (offline; `--format text\|jsonl` for full bodies) | the inbound messages users typed, parsed from the raw session jsonl for you — never hand-grep `workspace/sessions` for this again; internal cron/sub-agent dispatch excluded + counted |
 
 **Ground-truth read-order (never trust a surface reply alone):** surface reply → the session **trajectory** (`*.jsonl.trajectory.jsonl`, resolved via the `.trajectory-path.json` pointer) + `_session-metadata.json` rollup → offline `obs.explain` (`assembleIncidentReportFromSources`) → `comis system-health` → only then a raw `daemon.log` grep. A false success is the worst outcome — corroborate every claim against the db/trajectory.
@@ -166,7 +166,7 @@ It returns a bounded, digest-only `IncidentReport` (outcome, cost, per-tool `{ok
 **For daemon-wide / cross-session triage — when asked to "review the production logs" — start with `comis system-health`, NOT a `daemon.log` grep.** `obs.explain` sees ONE session; `obs.system.health` sees the **whole daemon over the last N hours** — the automated version of a by-hand log sweep. CLI is not on PATH:
 
 ```bash
-node packages/cli/dist/cli.js system --since 24 [--format table|json]    # default window 24h
+node packages/cli/dist/cli.js system-health --since 24 [--format table|json]    # default window 24h
 ```
 
 Returns a bounded, admin-gated, deterministic `SystemHealthReport` — **counts + hints only, never raw WARN bodies or secrets** (so it is safe to paste into a review): cross-session degraded rate, top errorKinds, breaker trips, cost, plus the signals that used to be log-file-only — `health_signal` (LCD-divergence + MCP churn/reconnect/budget), `model_health` (embedding-provider / GGUF load / reranker presence at boot), `config_posture` (TLS-off / stranded-secret-**count** / canary-fallback / `served_below_configured` / `chimeric_model` — a native-provider+foreign-model mismatch). Same report via the `obs_query` `system_health` action + the permission-gated `obs_system_health` MCP tool + the `obs.system.health` RPC. Docs: `docs/reference/cli.mdx` (`comis system-health`) + `docs/reference/json-rpc.mdx` (`obs.system.health`).

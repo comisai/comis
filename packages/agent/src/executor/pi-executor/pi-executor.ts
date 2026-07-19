@@ -1535,8 +1535,10 @@ async function runSessionLocked(
   // body from accreting another wiring block; the recovery itself (the EXISTING
   // ingestTurnGuarded path + the canonical context-store gate) lives in
   // `bootstrapLcdSweep`. The scope is built exactly as the afterTurn block does so read
-  // scope == write scope: conversationId === sessionKey === formattedKey and
-  // agentId is the executor-bound authority. The JSONL-loaded live array is the
+  // scope == write scope: the opaque `conversationRef` is the storage authority,
+  // `sessionKey` (formattedKey) rides along as display/path metadata — the two are
+  // distinct values, never compared — and agentId is the executor-bound
+  // authority. The JSONL-loaded live array is the
   // same ref executor-post-execution reads at the afterTurn site (typed unknown on
   // AgentSession — no public SDK type for it).
   await maybeRunBootstrapSweep({

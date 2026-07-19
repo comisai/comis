@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Orchestrator approval surface: the server-side InteractiveCallbackRouter
- * (parse → lookup → cross-session → expiry → verify → dispatch). Channels never
+ * (parse → lookup → cross-principal → expiry → verify → dispatch). Channels never
  * import this — they reach signing via the `@comis/core` primitive.
  *
  * @module

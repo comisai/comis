@@ -664,10 +664,12 @@ export async function constructCapabilityLayer(
     // (NOT a mutable setter on a security boundary). The bounded-autonomy service
     // backs the executor's real budgetHook (the flat web charge).
     const toolInvokeExecutor = buildToolInvokeExecutor(deps, resultRefStore, boundedAutonomy);
-    // Step 1b: build the content-free replay recorder over the SAME workspace
-    // resolver + ResultRef store, and inject it below — the SOLE writer of
-    // results/replay.jsonl. Without this, recordReplay short-circuits on every
-    // dispatch and a later deterministic replay diverges on the first cap call.
+    // Step 1b: build the content-free replay recorder over the daemon-owned
+    // recording root (`<dataDir>/replay-recordings` — never the agent's jailed
+    // workspace) + ResultRef store, and inject it below — the SOLE writer of
+    // `<dataDir>/replay-recordings/results/<run>/replay.jsonl`. Without this,
+    // recordReplay short-circuits on every dispatch and a later deterministic
+    // replay diverges on the first cap call.
     const replayRecorder = buildReplayRecorder(deps, resultRefStore);
     // Thread the daemon logger so the socket boundary is observable: a
     // post-listen server error and per-connection errors are logged with the

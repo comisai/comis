@@ -341,11 +341,13 @@ export function createPerRootBudget(deps: {
       // An unregistered root has no anchor → 0 elapsed (full wall-clock allowance);
       // the read does NOT anchor a window (unlike reserveBudget's first-call write).
       const elapsedMs = startMs === undefined ? 0 : clock.now() - startMs;
-      // The $ remaining is computed from the SAME per-root accumulator
-      // the $-gate enforces against — `aggregateUsd` minus the per-root scope's
-      // recorded (priced) spend. The scope key is `_root ${rootRunId}` (the
-      // `${tenantId} ${agentId}` format `agentKeyOf` uses, tenantId "_root"). A
-      // REAL number, so the read matches the gate.
+      // The $ remaining reads `usdTotals` — a per-root mirror of the priced
+      // spend the $-gate enforces against via `perRootUsdAccumulator` (scope key
+      // `_root ${rootRunId}`). TWO-COUNTER DISCIPLINE: the mirror is kept in
+      // sync by hand — every path that records spend into the accumulator
+      // (reserveBudget's ok-branches, rehydrate) MUST also bump `usdTotals`,
+      // or this read silently over-reports remaining budget while the gate
+      // keeps enforcing the real cap.
       const usedUsd = usdTotals.get(rootRunId) ?? 0;
       return {
         tokensRemaining: Math.max(0, config.tokens - usedTokens),

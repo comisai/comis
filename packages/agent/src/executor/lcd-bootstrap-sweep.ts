@@ -16,10 +16,13 @@
  *     already there and appends only genuinely-new messages (no
  *     double-append, no seq collision).
  *   - FAIL-CLOSED on ambiguous transcript identity is the existing
- *     `isScopeSafeForIngest` guard inside `ingestTurnGuarded` (an empty security
- *     column OR conversationRef≠sessionKey → refuse + onFailClosed), extending the
- *     `live_store_divergence` family — a mis-derived session key can never
- *     silently reattach this transcript to a prior conversation.
+ *     `isScopeSafeForIngest` guard inside `ingestTurnGuarded` (an invalid
+ *     `conversationRef` per `ConversationRefSchema`, OR an empty
+ *     agentId/tenantId/sessionKey security column → refuse + onFailClosed),
+ *     extending the `live_store_divergence` family — a scope with a missing or
+ *     malformed authority column can never silently reattach this transcript
+ *     to a prior conversation. (The formatted sessionKey is display/path
+ *     metadata and is never compared with the opaque conversationRef.)
  *   - LCD-IS-TRUTH: this is a one-way catch-up SWEEP. The design
  *     explicitly REJECTS reconciling the JSONL and the store as co-equal
  *     authorities (no comparison of the JSONL's byte position / modification time

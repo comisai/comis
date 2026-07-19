@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SessionLane: Per-session queue state for command serialization.
+ * SessionLane: Per-principal queue state for command serialization.
  *
- * Each active session gets a dedicated lane with its own PQueue
- * (concurrency=1) to serialize agent executions. The lane tracks
+ * Each active (session, principal) pair gets a dedicated lane, but all lanes
+ * of the same base session share ONE PQueue (concurrency=1) — agent
+ * executions for a session are serialized across principals. The lane tracks
  * pending messages, execution state, and last activity time for
  * idle cleanup.
  */

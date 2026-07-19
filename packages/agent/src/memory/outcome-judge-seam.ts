@@ -3,7 +3,7 @@
  * The daemon-injected OPTIONAL, cost-gated outcome-judge seam.
  *
  * {@link createOutcomeJudgeSeam} wraps a cheap resolved model into a
- * `judge({ trajectoryContent, policyContext })` seam — the FALLBACK outcome source for
+ * `judge({ trajectoryContent, policySnapshot })` seam — the FALLBACK outcome source for
  * verified learning. When NO deterministic tool/pipeline signal exists for
  * a finished trajectory AND the per-agent judge is enabled, the daemon
  * runs ONE cheap-model pass over the trajectory and gets back a
@@ -253,7 +253,7 @@ function parseVerdict(raw: string, audit: VerdictAuditMetadata): OutcomeVerdict 
 /**
  * Build the OPTIONAL outcome-judge seam from a cheap resolved model.
  *
- * Returns the `judge({ trajectoryContent, policyContext })` function the daemon injects when the
+ * Returns the `judge({ trajectoryContent, policySnapshot })` function the daemon injects when the
  * per-agent judge is enabled. It wraps the UNTRUSTED trajectory via
  * `wrapExternalContent({ source: "outcome_judge" })`, issues ONE cheap-model call
  * asking for a success/failure verdict, parses the response via the

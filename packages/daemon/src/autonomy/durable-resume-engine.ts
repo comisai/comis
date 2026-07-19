@@ -33,7 +33,7 @@
  * line (with durationMs) + an eventBus event; every failure branch carries
  * `hint` + `errorKind` (the closed precondition|dependency|platform|internal
  * union). Content-free: rootRunId/stepIndex/state/reconcileOutcome/counts ONLY —
- * never the message body (the reconcile query keys on a contentDigest).
+ * never the message body (park-only recovery never reads content history).
  *
  * @module
  */

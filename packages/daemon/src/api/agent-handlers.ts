@@ -2,7 +2,7 @@
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
  * Agent management RPC handler module.
- * Provides 6 handlers for runtime agent agent administration:
+ * Provides 6 handlers for runtime agent administration:
  *   agents.create  — Create a new runtime agent with validated config
  *   agents.get     — Retrieve agent config and runtime state
  *   agents.update  — Patch an existing agent config

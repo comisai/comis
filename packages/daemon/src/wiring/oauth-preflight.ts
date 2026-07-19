@@ -45,10 +45,10 @@ const PREFLIGHT_TIMEOUT_MS = 4000;
 const MODULE_NAME = "oauth-tls-preflight";
 
 /**
- * Returns `true` iff at least one agent's `provider` is recognised by pi-ai's
- * the provider OAuth catalog as an OAuth-using provider.
+ * Returns `true` iff at least one agent's `provider` is recognised by the
+ * provider OAuth catalog as an OAuth-using provider.
  *
- * Single-source-of-truth check — avoids drift with pi-ai's provider catalogue.
+ * Single-source-of-truth check — avoids drift with the provider catalogue.
  * When this returns `false`, the daemon skips the preflight entirely (zero
  * outbound probes during boot for OAuth-less deployments).
  */

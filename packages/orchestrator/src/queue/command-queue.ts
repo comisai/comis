@@ -143,8 +143,9 @@ export interface CommandQueue {
 /**
  * Create a lane-aware command queue with per-session serialization.
  *
- * Each session key gets an independent PQueue (concurrency=1) that
- * serializes execution. All lane queues route through a global gate
+ * Lanes are keyed per principal, but every lane sharing a `baseSessionKey`
+ * shares ONE PQueue (concurrency=1) — principal lanes of the same base
+ * session never execute concurrently. All lane queues route through a global gate
  * (PQueue with maxConcurrentSessions concurrency) that caps the total
  * number of parallel agent runs.
  *
