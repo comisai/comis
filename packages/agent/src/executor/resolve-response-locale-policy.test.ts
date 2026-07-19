@@ -165,6 +165,17 @@ describe("request-locale vs conversation-script precedence", () => {
     expect(policy.enforceLocale).toBe(true);
   });
 
+  it("does not treat a short Latin identifier as a conversation-language override", () => {
+    expect(resolveResponseLocalePolicy({
+      requestLocale: "he",
+      requestText: "npm test",
+    })).toEqual({
+      locale: "he",
+      source: "request",
+      enforceLocale: true,
+    });
+  });
+
   it("keeps the request locale when the message carries no script signal", () => {
     const policy = resolveResponseLocalePolicy({
       requestLocale: "he",

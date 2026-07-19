@@ -103,6 +103,7 @@ function contradictsRequestScript(locale: string, requestText: string | undefine
   if (requestText === undefined || scriptShares(requestText).size === 0) return false;
   const dominantClass = dominantScript(requestText);
   if (dominantClass === "other") return false;
+  if (dominantClass === "latin" && latinProseWordCount(requestText) < LATIN_PROSE_MIN_WORDS) return false;
   const maximized = tryCatch(() => new Intl.Locale(locale).maximize());
   if (!maximized.ok || maximized.value.script === undefined) return false;
   const localeClass = scriptClassForIsoScript(maximized.value.script);
@@ -156,6 +157,15 @@ function scriptUnits(text: string, scriptClass: ScriptClass): number {
   return units;
 }
 
+function latinProseWordCount(text: string): number {
+  const proseCandidate = text.replace(PROTECTED_RESPONSE_SPANS, " ");
+  const latinWords = proseCandidate.match(LATIN_WORD) ?? [];
+  return latinWords.filter((word) => {
+    if (word.length < 2) return false;
+    return word !== word.toUpperCase() || word.includes("'") || word.includes("’");
+  }).length;
+}
+
 /**
  * Find substantial wrong-script prose hidden behind a longer matching-script
  * tail. Protected code, links, URLs, acronyms, and short identifier clusters
@@ -181,18 +191,14 @@ function substantialForeignScript(
   if (expectedClass === "latin" || (shares.get("latin") ?? 0) < LATIN_PROSE_MIN_SHARE) {
     return undefined;
   }
-  const latinWords = proseCandidate.match(LATIN_WORD) ?? [];
-  const proseWordCount = latinWords.filter((word) => {
-    if (word.length < 2) return false;
-    return word !== word.toUpperCase() || word.includes("'") || word.includes("’");
-  }).length;
-  return proseWordCount >= LATIN_PROSE_MIN_WORDS ? "latin" : undefined;
+  return latinProseWordCount(response) >= LATIN_PROSE_MIN_WORDS ? "latin" : undefined;
 }
 
 function scriptLocaleFromRequest(text: string | undefined): string | undefined {
   if (text === undefined || scriptShares(text).size === 0) return undefined;
   const scriptClass = dominantScript(text);
-  if (scriptClass === "latin" || scriptClass === "other") return undefined;
+  if (scriptClass === "other") return undefined;
+  if (scriptClass === "latin" && latinProseWordCount(text) < LATIN_PROSE_MIN_WORDS) return undefined;
   return canonicalLocale(`und-${isoScriptByClass[scriptClass]}`);
 }
 
