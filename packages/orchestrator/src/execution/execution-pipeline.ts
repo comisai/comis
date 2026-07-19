@@ -325,35 +325,25 @@ export async function executeAndDeliver(
   }
   if (await stopForQueueAbort()) return;
 
-  let policy;
-  try {
-    policy = await runExecutionPolicy({
-      deps,
-      adapter,
-      effectiveMsg,
-      originalMsg,
-      executor,
-      sessionKey,
-      agentId,
-      sendOverrides,
-      ...(tools === undefined ? {} : { tools }),
-      ...(directives === undefined ? {} : { directives }),
-      inboundProvenancePlans,
-      onExecutionStart: () => { executionStartedAt = systemNowMs(); },
-      onExecutionComplete: () => { executionCompletedAt = systemNowMs(); },
-    });
-  } catch (error) {
-    emitDiagnostic(
-      0,
-      0,
-      "error",
-      { status: "error", failureStage: "execution", errorKind: "internal" },
-      { toolCalls: null, llmCalls: null },
-      executionCompletedAt,
-    );
-    // @allow-throw: inbound channel boundary converts executor rejection to its user-visible degraded response.
-    throw error;
-  }
+  // A rejection here propagates to the outer catch-all, which classifies the
+  // thrown error's own errorKind (classifyRejectionError) before emitting the
+  // once-guarded diagnostic — pre-classifying "internal" here would lock in
+  // the wrong kind for typed errors.
+  const policy = await runExecutionPolicy({
+    deps,
+    adapter,
+    effectiveMsg,
+    originalMsg,
+    executor,
+    sessionKey,
+    agentId,
+    sendOverrides,
+    ...(tools === undefined ? {} : { tools }),
+    ...(directives === undefined ? {} : { directives }),
+    inboundProvenancePlans,
+    onExecutionStart: () => { executionStartedAt = systemNowMs(); },
+    onExecutionComplete: () => { executionCompletedAt = systemNowMs(); },
+  });
   effectiveMsg = policy.effectiveMsg;
   const { replyTo, trustLevel } = policy;
   if (policy.kind === "denied") {
@@ -422,19 +412,10 @@ export async function executeAndDeliver(
         return completed;
       } catch (error) {
         executionCompletedAt = systemNowMs();
-        emitDiagnostic(
-          0,
-          0,
-          "error",
-          { status: "error", failureStage: "execution", errorKind: "internal" },
-          { toolCalls: null, llmCalls: null },
-          executionCompletedAt,
-        );
-        await finalizeCoordinator({
-          kind: "failure",
-          errorKind: "internal",
-          failedEvents: [],
-        });
+        // The once-guarded diagnostic + coordinator finalize happen in the
+        // outer catch-all, which classifies the thrown error's own errorKind —
+        // emitting a hardcoded "internal" here would permanently override
+        // the accurate classification.
         // @allow-throw: inbound channel boundary converts executor rejection to its user-visible degraded response.
         throw error;
       }
@@ -511,7 +492,13 @@ export async function executeAndDeliver(
       queueSignal,
     );
 
-    if (await stopForQueueAbort()) return;
+    // Truthfulness rule for the queue abort: a voice/media attachment that
+    // already reached the platform inside the filter stage must not be
+    // re-recorded as "aborted, nothing delivered" — the user has it.
+    const nonTextSendCompleted =
+      filterResult.reason === "voice_delivered" ||
+      (filterResult.mediaDelivery?.delivered ?? 0) > 0;
+    if (!nonTextSendCompleted && (await stopForQueueAbort())) return;
 
     if (!filterResult.deliver) {
       const executionLifecycle = readExecutionLifecycle();
@@ -599,7 +586,19 @@ export async function executeAndDeliver(
       deliverySignal, typingLifecycle,
     );
 
-    if (await stopForQueueAbort()) return;
+    // A queue abort that lands after the platform accepted chunks must not
+    // erase the delivered turn from the record — the user HAS the message, so
+    // message:sent and the success lifecycle below stay authoritative. Only a
+    // turn that delivered nothing (no text chunk, no voice/media) may still
+    // finalize as aborted.
+    const textChunksDelivered = deliveryReceipt.ok
+      ? deliveryReceipt.value.deliveredChunks
+      : 0;
+    if (
+      textChunksDelivered === 0 &&
+      !nonTextSendCompleted &&
+      (await stopForQueueAbort())
+    ) return;
 
     // Emit message:sent with the REAL last-chunk message id from the receipt
     // (replaces the prior synthetic placeholder id). On a delivery

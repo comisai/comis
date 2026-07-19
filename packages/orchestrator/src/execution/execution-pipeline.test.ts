@@ -2361,3 +2361,95 @@ describe("executeAndDeliver", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Queue-abort truthfulness + rejection errorKind classification
+// ---------------------------------------------------------------------------
+
+describe("queue abort and rejection classification truthfulness", () => {
+  it("preserves a typed errorKind from a rejected execution in the lifecycle diagnostic", async () => {
+    const eventBus = makeEventBus();
+    const deps = makeDeps({ eventBus });
+    const msg = makeMessage();
+    const primary = Object.assign(new Error("provider outage"), {
+      errorKind: "dependency",
+    });
+    const executor = makeExecutor({
+      execute: vi.fn(async () => {
+        throw primary;
+      }),
+    });
+
+    await expect(
+      executeAndDeliver(
+        deps, makeAdapter(), msg, msg, executor, makeSessionKey(),
+        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      ),
+    ).rejects.toBe(primary);
+
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "diagnostic:message_processed",
+      expect.objectContaining({
+        status: "error",
+        failureStage: "execution",
+        errorKind: "dependency",
+      }),
+    );
+  });
+
+  it("records message:sent when the queue abort lands after a completed delivery", async () => {
+    const eventBus = makeEventBus();
+    const deps = makeDeps({ eventBus });
+    const msg = makeMessage();
+    const queueAbort = new AbortController();
+    const adapter = makeAdapter({
+      sendMessage: vi.fn(async () => {
+        // A superseding inbound message aborts the lane while the platform
+        // send is in flight — by the time the receipt resolves, the signal
+        // is already aborted, but the user HAS the message.
+        queueAbort.abort();
+        return ok("msg-99");
+      }),
+    });
+
+    await executeAndDeliver(
+      deps, adapter, msg, msg, makeExecutor(), makeSessionKey(),
+      "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      undefined, undefined, undefined, undefined, queueAbort.signal,
+    );
+
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "message:sent",
+      expect.objectContaining({ messageId: "msg-99" }),
+    );
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "diagnostic:message_processed",
+      expect.objectContaining({ status: "success" }),
+    );
+  });
+
+  it("still records an aborted turn when the queue abort prevented any delivery", async () => {
+    const eventBus = makeEventBus();
+    const deps = makeDeps({ eventBus });
+    const msg = makeMessage();
+    const queueAbort = new AbortController();
+    queueAbort.abort();
+    const adapter = makeAdapter();
+
+    await executeAndDeliver(
+      deps, adapter, msg, msg, makeExecutor(), makeSessionKey(),
+      "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      undefined, undefined, undefined, undefined, queueAbort.signal,
+    );
+
+    expect(adapter.sendMessage).not.toHaveBeenCalled();
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "diagnostic:message_processed",
+      expect.objectContaining({ status: "aborted" }),
+    );
+    expect(eventBus.emit).not.toHaveBeenCalledWith(
+      "message:sent",
+      expect.anything(),
+    );
+  });
+});
