@@ -88,6 +88,21 @@ describe("silent-sentinel response is not stored in memory.db", () => {
     const agentResponse = "Here is the chart you requested. The Q1 numbers are…";
     expect(shouldStorePairedMemory(userText, agentResponse)).toBe(true);
   });
+
+  it("requires the request context to remain eligible before storing paired memory", () => {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("//"))
+      .join("\n");
+    const pairedMemoryBlock = stripped.slice(
+      stripped.indexOf("const operationType"),
+      stripped.indexOf("await storePairedConversationMemory"),
+    );
+
+    expect(pairedMemoryBlock).toMatch(/learningEligible\s*!==\s*false/);
+  });
 });
 
 // ---------------------------------------------------------------------------
