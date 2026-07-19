@@ -47,6 +47,7 @@
 import type { Message } from "@earendil-works/pi-ai";
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import { findPlainRoleContinuations } from "../response-filter/plain-role-continuation.js";
+import { getSessionFileEntries } from "./session-manager-internals.js";
 
 /**
  * Sentinels replacing the neutralized markers. They deliberately contain NONE
@@ -194,10 +195,9 @@ export interface ForgedMarkerScrubResult {
 export function scrubForgedContextMarkers(
   sessionManager: SessionManager,
 ): ForgedMarkerScrubResult {
-  /* eslint-disable @typescript-eslint/no-explicit-any -- SessionManager internals */
-  const sm = sessionManager as any;
-  const fileEntries = sm?.fileEntries;
-  if (!Array.isArray(fileEntries)) {
+  /* eslint-disable @typescript-eslint/no-explicit-any -- persisted-entry payloads are untyped JSONL shapes */
+  const fileEntries = getSessionFileEntries(sessionManager);
+  if (!fileEntries) {
     return { scrubbed: false, messagesRewritten: 0, markersStripped: 0 };
   }
 
@@ -205,7 +205,7 @@ export function scrubForgedContextMarkers(
   let markersStripped = 0;
   for (const entry of fileEntries) {
     if (!entry || entry.type !== "message") continue;
-    const msg = entry.message;
+    const msg = entry.message as any;
     if (!msg || msg.role !== "assistant") continue;
     const { message, strippedCount } = neutralizeForgedMarkersInMessage(msg as Message);
     if (strippedCount > 0) {
