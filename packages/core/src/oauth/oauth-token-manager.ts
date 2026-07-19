@@ -74,6 +74,11 @@ export interface OAuthError {
   hint?: string;
 }
 
+export interface ResolvedOAuthCredential {
+  apiKey: string;
+  credential: OAuthCredentials;
+}
+
 /** Dependencies injected into the OAuth token manager factory. */
 export interface OAuthTokenManagerDeps {
   /** SecretManager for env-var bootstrap and conflict detection. */
@@ -132,6 +137,11 @@ export interface OAuthTokenManager {
     providerId: string,
     agentContext?: { oauthProfiles?: Record<string, string> },
   ): Promise<Result<string, OAuthError>>;
+  /** Resolve both the provider request key and the canonical OAuth credential. */
+  getCredential(
+    providerId: string,
+    agentContext?: { oauthProfiles?: Record<string, string> },
+  ): Promise<Result<ResolvedOAuthCredential, OAuthError>>;
   /**
    * Synchronous best-effort check: the in-memory cache + env-var
    * (SecretManager) ONLY. Does NOT consult the async persisted credential

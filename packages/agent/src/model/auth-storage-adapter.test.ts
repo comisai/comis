@@ -443,6 +443,25 @@ describe("ComisCredentialStore — CredentialStore contract", () => {
     await expect(store.read("anthropic")).resolves.toBeUndefined();
   });
 
+  it("preserves an OAuth runtime credential for an OAuth-only SDK provider", async () => {
+    const store = new ComisCredentialStore();
+    store.setRuntimeOAuthCredential("openai-codex", {
+      access: "test-access-token",
+      refresh: "test-refresh-token",
+      expires: 4_000_000_000_000,
+    });
+
+    await expect(store.read("openai-codex")).resolves.toEqual({
+      type: "oauth",
+      access: "test-access-token",
+      refresh: "test-refresh-token",
+      expires: 4_000_000_000_000,
+    });
+    await expect(store.list()).resolves.toEqual([
+      { providerId: "openai-codex", type: "oauth" },
+    ]);
+  });
+
   it("list() unions stored credentials and runtime overrides without duplicates", async () => {
     const store = new ComisCredentialStore();
     store.set("anthropic", { type: "api_key", key: "sk-1" });

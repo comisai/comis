@@ -1644,6 +1644,26 @@ describe("OAuthTokenManager.getApiKey resolver chain", () => {
     expect(credentialStore.list).not.toHaveBeenCalled();
   });
 
+  it("returns the refreshed credential together with its provider request key", async () => {
+    const profile = buildProfile(CONFIGURED_PROFILE, "ACCESS_WORK");
+    vi.mocked(credentialStore.has).mockResolvedValue(_ok(true));
+    vi.mocked(credentialStore.get).mockResolvedValue(_ok(profile));
+
+    const manager = makeManager();
+    const result = await manager.getCredential(PROVIDER, {
+      oauthProfiles: { [PROVIDER]: CONFIGURED_PROFILE },
+    });
+
+    expect(result).toEqual(_ok({
+      apiKey: "ACCESS_WORK",
+      credential: {
+        access: "ACCESS_WORK",
+        refresh: `refresh-for-${CONFIGURED_PROFILE}`,
+        expires: profile.expires,
+      },
+    }));
+  });
+
   // The configured-profile-resolved INFO goes through withDedup, keyed on a
   // `dedupKey` field of "${providerId}::${configured}". It fires ONCE per
   // distinct key across repeated resolves, and the 3 behavior-gating Sets

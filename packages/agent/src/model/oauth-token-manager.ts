@@ -100,6 +100,11 @@ export interface OAuthError {
   hint?: string;
 }
 
+export interface ResolvedOAuthCredential {
+  apiKey: string;
+  credential: OAuthCredentials;
+}
+
 /** Dependencies injected into the OAuth token manager factory. */
 export interface OAuthTokenManagerDeps {
   /** SecretManager for env-var bootstrap and conflict detection. */
@@ -158,6 +163,11 @@ export interface OAuthTokenManager {
     providerId: string,
     agentContext?: { oauthProfiles?: Record<string, string> },
   ): Promise<Result<string, OAuthError>>;
+  /** Resolve both the provider request key and the canonical OAuth credential. */
+  getCredential(
+    providerId: string,
+    agentContext?: { oauthProfiles?: Record<string, string> },
+  ): Promise<Result<ResolvedOAuthCredential, OAuthError>>;
   /**
    * Synchronous best-effort check: the in-memory cache + env-var (SecretManager)
    * ONLY. Does NOT consult the async persisted credential store — so in
@@ -442,6 +452,21 @@ function mergeRefreshedCredentials(
     expires: refreshed.expires,
     accountId,
     version: SCHEMA_VERSION,
+  };
+}
+
+function resolvedCredential(
+  profile: OAuthProfile,
+  apiKey: string,
+): ResolvedOAuthCredential {
+  return {
+    apiKey,
+    credential: {
+      access: profile.access,
+      refresh: profile.refresh,
+      expires: profile.expires,
+      ...(profile.accountId === undefined ? {} : { accountId: profile.accountId }),
+    },
   };
 }
 
@@ -801,13 +826,13 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
   async function refreshUnderLock(
     providerId: string,
     initialProfile: OAuthProfile,
-  ): Promise<Result<string, OAuthError>> {
+  ): Promise<Result<ResolvedOAuthCredential, OAuthError>> {
     const lockPath = lockSentinelPath(dataDir, initialProfile.profileId);
     const lockStart = systemNowMs();
 
     const lockResult = await fileLock.withLock(
       lockPath,
-      async (): Promise<Result<string, OAuthError>> => {
+      async (): Promise<Result<ResolvedOAuthCredential, OAuthError>> => {
         const acquireMs = systemNowMs() - lockStart;
         logger.debug(
           {
@@ -879,7 +904,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
                 },
                 "OAuth token still valid — skipping refresh",
               );
-              return ok(profile.access);
+              return ok(resolvedCredential(profile, profile.access));
             }
 
             // Bypass never throws (it returns a tagged outcome on every path),
@@ -1079,6 +1104,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           // value, not the always-truthy newCredentials marker.
           const refreshed = oauthResult.newCredentials.refresh !== profile.refresh;
 
+          let effectiveProfile: OAuthProfile;
           if (refreshed) {
             const newProfile = mergeRefreshedCredentials(profile, oauthResult.newCredentials);
             const writeResult = await credentialStore.set(profile.profileId, newProfile);
@@ -1101,6 +1127,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
               });
             }
             cache.set(profile.profileId, newProfile);
+            effectiveProfile = newProfile;
             // pi-ai's OAuthCredentials.expires is already milliseconds since epoch
             // — use directly, do NOT multiply by 1000.
             eventBus.emit("auth:token_rotated", {
@@ -1112,6 +1139,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
           } else {
             // Cache the unrotated profile for the next read (no DB roundtrip needed).
             cache.set(profile.profileId, profile);
+            effectiveProfile = profile;
           }
 
           const completeStart = systemNowMs();
@@ -1144,7 +1172,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
             );
           }
 
-          return ok(oauthResult.apiKey);
+          return ok(resolvedCredential(effectiveProfile, oauthResult.apiKey));
         } finally {
           logger.debug(
             {
@@ -1193,11 +1221,10 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
     return lockResult.value;
   }
 
-  return {
-    async getApiKey(
-      providerId: string,
-      agentContext?: { oauthProfiles?: Record<string, string> },
-    ): Promise<Result<string, OAuthError>> {
+  async function resolveCredential(
+    providerId: string,
+    agentContext?: { oauthProfiles?: Record<string, string> },
+  ): Promise<Result<ResolvedOAuthCredential, OAuthError>> {
       // Provider validation first (cheap check; avoids store I/O on bad input).
       const provider = getProviderOAuth(providerId);
       if (!provider) {
@@ -1420,6 +1447,21 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
 
       // Acquire per-profile lock and run the refresh body.
       return refreshUnderLock(providerId, profile);
+  }
+
+  const manager: OAuthTokenManager = {
+    async getApiKey(
+      providerId: string,
+      agentContext?: { oauthProfiles?: Record<string, string> },
+    ): Promise<Result<string, OAuthError>> {
+      const result = await resolveCredential(providerId, agentContext);
+      return result.ok ? ok(result.value.apiKey) : result;
+    },
+    async getCredential(
+      providerId: string,
+      agentContext?: { oauthProfiles?: Record<string, string> },
+    ): Promise<Result<ResolvedOAuthCredential, OAuthError>> {
+      return resolveCredential(providerId, agentContext);
     },
 
     hasCredentials(providerId: string): boolean {
@@ -1479,4 +1521,5 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       cache.clear();
     },
   };
+  return manager;
 }

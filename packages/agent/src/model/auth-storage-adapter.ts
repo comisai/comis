@@ -18,6 +18,7 @@ import type {
   Credential,
   CredentialInfo,
   CredentialStore,
+  OAuthCredentials,
 } from "@earendil-works/pi-ai";
 import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL, type SecretManager } from "@comis/core";
@@ -46,7 +47,7 @@ export interface GetApiKeyOptions {
  */
 export class ComisCredentialStore implements CredentialStore {
   private readonly data = new Map<string, Credential>();
-  private readonly runtimeOverrides = new Map<string, string>();
+  private readonly runtimeOverrides = new Map<string, Credential>();
   private readonly writeQueues = new Map<string, Promise<unknown>>();
 
   // ---- Sync surface (Comis-internal writers) ----
@@ -73,7 +74,12 @@ export class ComisCredentialStore implements CredentialStore {
   }
 
   setRuntimeApiKey(provider: string, apiKey: string): void {
-    this.runtimeOverrides.set(provider, apiKey);
+    this.runtimeOverrides.set(provider, { type: "api_key", key: apiKey });
+  }
+
+  /** Preserve OAuth credential semantics for providers without API-key auth. */
+  setRuntimeOAuthCredential(provider: string, credential: OAuthCredentials): void {
+    this.runtimeOverrides.set(provider, { ...credential, type: "oauth" });
   }
 
   removeRuntimeApiKey(provider: string): void {
@@ -89,7 +95,7 @@ export class ComisCredentialStore implements CredentialStore {
   /** Override-first stored key. Never consults the ambient environment. */
   getStoredApiKey(provider: string): string | undefined {
     const override = this.runtimeOverrides.get(provider);
-    if (override) return override;
+    if (override?.type === "api_key") return override.key;
     const credential = this.data.get(provider);
     return credential?.type === "api_key" ? credential.key : undefined;
   }
@@ -112,8 +118,9 @@ export class ComisCredentialStore implements CredentialStore {
   async read(providerId: string): Promise<Credential | undefined> {
     const override = this.runtimeOverrides.get(providerId);
     if (override !== undefined) {
+      if (override.type === "oauth") return override;
       const env = this.getProviderEnv(providerId);
-      const credential: ApiKeyCredential = { type: "api_key", key: override };
+      const credential: ApiKeyCredential = override;
       return env ? { ...credential, env } : credential;
     }
     return this.data.get(providerId);
@@ -124,8 +131,8 @@ export class ComisCredentialStore implements CredentialStore {
     for (const [providerId, credential] of this.data) {
       infos.set(providerId, { providerId, type: credential.type });
     }
-    for (const providerId of this.runtimeOverrides.keys()) {
-      infos.set(providerId, { providerId, type: "api_key" });
+    for (const [providerId, credential] of this.runtimeOverrides) {
+      infos.set(providerId, { providerId, type: credential.type });
     }
     return [...infos.values()];
   }
