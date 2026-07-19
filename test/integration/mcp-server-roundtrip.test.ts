@@ -29,6 +29,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { createConversationRef, type ConversationScope } from "@comis/core";
 import {
   startTestDaemon,
   type TestDaemonHandle,
@@ -52,8 +53,33 @@ const CONFIG_PATH = resolve(
 
 const MCP_ROUNDTRIP_SECRET = "mcp-svr-roundtrip-client-tok-1-fix";
 
-// Session fixture used across resources/list + resources/read.
-const SESSION_KEY_RT = "test:roundtrip-user:chan-RT";
+// Session fixture used across resources/list + resources/read. Sessions are
+// addressed by explicit authority: a ConversationScope projecting to an opaque
+// conversation_ref, which the mcp-client sessionAllowlist holds (config). The
+// endpoint conversationId (chan-RT) doubles as the deliveryStatus-join
+// channelId, so the seeded delivery entry's channelId must equal it. REF_RT
+// MUST match createConversationRef(SCOPE_RT) in the config allowlist.
+const SCOPE_RT: ConversationScope = {
+  tenantId: "test",
+  // Must equal the daemon's routing.defaultAgentId (the identity the MCP
+  // resources path queries session.history under) — the schema default
+  // "default", since this config sets no routing block.
+  agentId: "default",
+  partition: {
+    kind: "endpoint-conversation",
+    endpoint: {
+      channelType: "test",
+      channelInstanceId: "roundtrip",
+      conversationId: "chan-RT",
+      conversationKind: "direct",
+    },
+  },
+};
+const REF_RT = (() => {
+  const r = createConversationRef(SCOPE_RT);
+  if (!r.ok) throw r.error;
+  return r.value;
+})();
 
 // Expected safe set (3 tools annotated mcpExportPolicy="safe").
 const EXPECTED_SAFE_TOOLS = ["browser", "web_fetch", "web_search"] as const;
@@ -112,8 +138,8 @@ describe("SDK Client end-to-end roundtrip against /mcp/v1", () => {
     // outbound-delivered (confirmed), outbound-in-flight (pending, excluded
     // from resources/read by the CONFIRMED-only filter).
     const bridge = handle.daemon.sessionStoreBridge!;
-    bridge.saveByFormattedKey(
-      SESSION_KEY_RT,
+    const saved = bridge.save(
+      SCOPE_RT,
       [
         { role: "user", content: "roundtrip-ping", timestamp: 1_700_001_000_000 },
         {
@@ -129,6 +155,7 @@ describe("SDK Client end-to-end roundtrip against /mcp/v1", () => {
       ],
       {},
     );
+    if (!saved.ok) throw saved.error;
 
     // Enqueue an IN-FLIGHT delivery-queue row for the "roundtrip-pending" text.
     // Using enqueueInFlight (status='in_flight') rather than enqueue (pending)
@@ -141,8 +168,18 @@ describe("SDK Client end-to-end roundtrip against /mcp/v1", () => {
     const r = await handle.daemon.deliveryQueue.enqueueInFlight({
       text: "roundtrip-pending",
       channelType: "test",
+      // channelId must equal the session's deliveryStatus-join channelId
+      // (endpoint conversationId chan-RT) so the CONFIRMED filter excludes it.
       channelId: "chan-RT",
       tenantId: "test",
+      agentId: "default",
+      conversationRef: REF_RT,
+      destinationEndpoint: {
+        channelType: "test",
+        channelInstanceId: "roundtrip",
+        conversationId: "chan-RT",
+        conversationKind: "direct",
+      },
       optionsJson: "{}",
       origin: "agent",
       maxAttempts: 3,
@@ -286,7 +323,7 @@ describe("SDK Client end-to-end roundtrip against /mcp/v1", () => {
         const resources = await client.listResources();
         expect(resources.resources.length).toBe(1);
         const seededResource = resources.resources[0]!;
-        expect(seededResource.uri).toBe(`comis://session/${SESSION_KEY_RT}`);
+        expect(seededResource.uri).toBe(`comis://session/${REF_RT}`);
         expect(seededResource.uri.startsWith("comis://session/")).toBe(true);
 
         // -------------------------------------------------------------------
@@ -294,7 +331,7 @@ describe("SDK Client end-to-end roundtrip against /mcp/v1", () => {
         // wrapExternalContent applied with source "MCP resource content".
         // -------------------------------------------------------------------
         const read = await client.readResource({
-          uri: `comis://session/${SESSION_KEY_RT}`,
+          uri: `comis://session/${REF_RT}`,
         });
         expect(read.contents.length).toBeGreaterThan(0);
         const readText = (read.contents[0] as { text?: string }).text ?? "";

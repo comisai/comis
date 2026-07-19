@@ -122,7 +122,7 @@ describe("registerMcpResourcesForClient", () => {
     try {
       registerMcpResourcesForClient(
         makeMcp(),
-        { logger: makeLogger(), daemonRpcForMcpClient: rpc, resourceReadLimit: 1000 },
+        { logger: makeLogger(), daemonRpcForMcpClient: rpc, resourceReadLimit: 1000, tenantId: "test", defaultAgentId: "test-agent" },
         client,
       );
       expect(captured.length).toBe(1);
@@ -145,7 +145,7 @@ describe("registerMcpResourcesForClient", () => {
     try {
       registerMcpResourcesForClient(
         makeMcp(),
-        { logger: makeLogger(), daemonRpcForMcpClient: rpc, resourceReadLimit: 1000 },
+        { logger: makeLogger(), daemonRpcForMcpClient: rpc, resourceReadLimit: 1000, tenantId: "test", defaultAgentId: "test-agent" },
         client,
       );
       const template = captured[0]!.template as unknown as { listCallback?: () => Promise<unknown> };
@@ -167,13 +167,13 @@ describe("registerMcpResourcesForClient", () => {
     try {
       registerMcpResourcesForClient(
         makeMcp(),
-        { logger: makeLogger(), daemonRpcForMcpClient: rpc, resourceReadLimit: 1000 },
+        { logger: makeLogger(), daemonRpcForMcpClient: rpc, resourceReadLimit: 1000, tenantId: "test", defaultAgentId: "test-agent" },
         client,
       );
       const cb = captured[0]!.readCallback;
       const uri = new URL("comis://session/sk-other");
       await expect(
-        cb(uri, { sessionKey: "sk-other" }),
+        cb(uri, { conversationRef: "sk-other" }),
       ).rejects.toThrow(/session_not_allowlisted/);
       // RPC was NEVER called -- the gate fires before dispatch.
       expect(rpc).not.toHaveBeenCalled();
@@ -196,12 +196,12 @@ describe("registerMcpResourcesForClient", () => {
     try {
       registerMcpResourcesForClient(
         makeMcp(),
-        { logger: makeLogger(), daemonRpcForMcpClient: rpc, resourceReadLimit: 1000 },
+        { logger: makeLogger(), daemonRpcForMcpClient: rpc, resourceReadLimit: 1000, tenantId: "test", defaultAgentId: "test-agent" },
         client,
       );
       const cb = captured[0]!.readCallback;
       const uri = new URL("comis://session/sk-allowed");
-      const result = await cb(uri, { sessionKey: "sk-allowed" });
+      const result = await cb(uri, { conversationRef: "sk-allowed" });
       const text = result.contents[0]!.text ?? "";
 
       // The two CONFIRMED messages must appear.
@@ -213,8 +213,16 @@ describe("registerMcpResourcesForClient", () => {
       // RPC dispatched with the expected method + params.
       expect(rpc).toHaveBeenCalledTimes(1);
       expect(rpc.mock.calls[0]![0]).toBe("session.history");
-      expect((rpc.mock.calls[0]![1] as Record<string, unknown>).session_key).toBe("sk-allowed");
-      expect((rpc.mock.calls[0]![1] as Record<string, unknown>).limit).toBe(1000);
+      // Session is addressed by explicit authority (tenant_id + agent_id +
+      // opaque conversation_ref) — the migrated session.history contract. The
+      // allowlist entry / URI variable IS the conversation_ref; tenant + agent
+      // come from the daemon identity threaded into the resources deps.
+      const params = rpc.mock.calls[0]![1] as Record<string, unknown>;
+      expect(params.tenant_id).toBe("test");
+      expect(params.agent_id).toBe("test-agent");
+      expect(params.conversation_ref).toBe("sk-allowed");
+      expect(params).not.toHaveProperty("session_key");
+      expect(params.limit).toBe(1000);
     } finally {
       restore();
     }
@@ -261,12 +269,14 @@ describe("registerMcpResourcesForClient", () => {
           logger: makeLogger(),
           daemonRpcForMcpClient: rpc,
           resourceReadLimit: 1000,
+          tenantId: "test",
+          defaultAgentId: "test-agent",
         },
         client,
       );
       const cb = captured[0]!.readCallback;
       const uri = new URL("comis://session/sk-allowed");
-      const result = await cb(uri, { sessionKey: "sk-allowed" });
+      const result = await cb(uri, { conversationRef: "sk-allowed" });
       const text = result.contents[0]!.text ?? "";
 
       // The strict-equality filter excludes both legacy entries.
@@ -290,12 +300,12 @@ describe("registerMcpResourcesForClient", () => {
     try {
       registerMcpResourcesForClient(
         makeMcp(),
-        { logger: makeLogger(), daemonRpcForMcpClient: rpc, resourceReadLimit: 1000 },
+        { logger: makeLogger(), daemonRpcForMcpClient: rpc, resourceReadLimit: 1000, tenantId: "test", defaultAgentId: "test-agent" },
         client,
       );
       const cb = captured[0]!.readCallback;
       const uri = new URL("comis://session/sk-allowed");
-      const result = await cb(uri, { sessionKey: "sk-allowed" });
+      const result = await cb(uri, { conversationRef: "sk-allowed" });
       const text = result.contents[0]!.text ?? "";
       expect(text).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
       expect(text).toMatch(/<<<END_UNTRUSTED_[a-f0-9]+>>>/);

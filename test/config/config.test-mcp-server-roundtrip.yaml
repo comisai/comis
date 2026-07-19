@@ -4,7 +4,7 @@
 #   - test-token (admin): the primary daemon token (rpc/ws/admin) used by the harness
 #     for the /health check.
 #   - mcp-roundtrip: scope ["mcp-client"], allowlist=["memory_search"],
-#                    sessionAllowlist=["test:roundtrip-user:chan-RT"].
+#                    sessionAllowlist=[<conversation_ref of chan-RT>].
 #                    Exercises the FULL surface in one session:
 #                      tools/list (safe + memory_search)
 #                      tools/call memory_search (happy path)
@@ -60,7 +60,10 @@ gateway:
       scopes: ["mcp-client"]
       mcpClient:
         allowlist: ["memory_search"]
-        sessionAllowlist: ["test:roundtrip-user:chan-RT"]
+        # Opaque conversation_ref for the seeded session (endpoint-conversation
+        # test/roundtrip/chan-RT, tenant test, agent default). Must match
+        # createConversationRef(SCOPE_RT) in mcp-server-roundtrip.test.ts.
+        sessionAllowlist: ["cv_i81tGadGWEp6MOm9VPlkaO0JuCbyPtrf76hiRLK_gk4"]
         toolRateLimit: {}
   rateLimit:
     windowMs: 60000

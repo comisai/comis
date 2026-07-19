@@ -55,6 +55,16 @@ export interface RegisterMcpResourcesDeps {
    *  need for cursor pagination at the MCP layer (the MCP spec supports
    *  resource cursors but we ship a single bounded view). */
   readonly resourceReadLimit: number;
+  /** The daemon's tenant. Sessions are addressed by explicit authority
+   *  (tenant_id + agent_id + opaque conversation_ref) on the migrated
+   *  session.history contract; the MCP client acts within THIS tenant, so the
+   *  tenant is supplied by the composition root, never by the caller. */
+  readonly tenantId: string;
+  /** The resolved default agent the MCP client acts as. Paired with `tenantId`
+   *  as the session-query authority passed to session.history. Must match the
+   *  agent the `daemonRpcForMcpClient` indirection binds the call to (so the
+   *  handler's `_agentId` cross-check passes). */
+  readonly defaultAgentId: string;
 }
 
 /**
@@ -78,7 +88,7 @@ interface SessionHistoryResponse {
  * per-session basis.
  *
  * Empty `sessionAllowlist` => `resources/list` returns `[]` (no resources).
- * Per-session gate: `resources/read` on a sessionKey NOT in the allowlist
+ * Per-session gate: `resources/read` on a conversation_ref NOT in the allowlist
  * rejects with `[session_not_allowlisted]` + structured `errorKind:"auth"`
  * log line.
  */
@@ -92,14 +102,14 @@ export function registerMcpResourcesForClient(
 
   mcp.registerResource(
     "session",
-    new ResourceTemplate("comis://session/{sessionKey}", {
+    new ResourceTemplate("comis://session/{conversationRef}", {
       list: async () => {
-        // Enumerate one resource per allowlisted session key. The set is
+        // Enumerate one resource per allowlisted conversation_ref. The set is
         // operator-curated via gateway.tokens[].mcpClient.sessionAllowlist;
         // an empty set = empty list (default-deny equivalent for sessions).
-        const resources = [...sessionAllowlist].map((sk) => ({
-          uri: `comis://session/${sk}`,
-          name: `Session ${sk}`,
+        const resources = [...sessionAllowlist].map((ref) => ({
+          uri: `comis://session/${ref}`,
+          name: `Session ${ref}`,
           mimeType: "text/plain",
           description:
             "Confirmed messages from this Comis session (CONFIRMED-only; pending outbound messages excluded)",
@@ -112,36 +122,46 @@ export function registerMcpResourcesForClient(
         "Comis session transcript (CONFIRMED-only). Outbound messages still pending or in-flight via the channel-adapter delivery queue are excluded.",
     },
     async (uri, variables) => {
-      const sessionKey = String(variables.sessionKey ?? "");
+      // The URI variable IS the opaque conversation_ref — the single session
+      // address on every migrated surface. Operators copy it from
+      // session.list / context.conversations output into the allowlist, the
+      // same ref session.reset_conversation / session.delete already take.
+      const conversationRef = String(variables.conversationRef ?? "");
 
       // -------- Allowlist gate (cross-conversation leak) -----------------
-      if (!sessionAllowlist.has(sessionKey)) {
+      if (!sessionAllowlist.has(conversationRef)) {
         logger.warn(
           {
             clientId: client.id,
-            sessionKey,
+            conversationRef,
             submodule: "resources-read",
             errorKind: "auth" as const,
             hint:
-              "Add sessionKey to gateway.tokens[].mcpClient.sessionAllowlist to expose this session",
+              "Add the conversation_ref to gateway.tokens[].mcpClient.sessionAllowlist to expose this session",
           },
           "MCP resources/read denied -- session not in per-client allowlist",
         );
         // The SDK turns thrown errors inside the callback into JSON-RPC
         // error responses on the wire (the Client side surfaces them as
         // McpError). The bracketed token is a machine-parsable code; the
-        // sessionKey suffix is included for operator debugging (the same
+        // conversationRef suffix is included for operator debugging (the same
         // suffix already appears in the URI the caller passed in -- this
         // adds no extra information disclosure beyond what the caller
         // sent).
-        throw new Error(`[session_not_allowlisted] sessionKey=${sessionKey}`);
+        throw new Error(`[session_not_allowlisted] conversationRef=${conversationRef}`);
       }
 
       // -------- Dispatch session.history through the trust-flag-isolated
       //          RPC indirection. The dispatcher does NOT inject
-      //          `_trustLevel:"admin"`; session.history is rpc-scope read.
+      //          `_trustLevel:"admin"`; session.history is rpc-scope read. The
+      //          session is addressed by explicit authority (tenant_id +
+      //          agent_id + conversation_ref); tenant + default-agent are the
+      //          daemon identity the same indirection binds the call to, so the
+      //          handler's `_tenantId`/`_agentId` cross-check passes.
       const history = (await deps.daemonRpcForMcpClient("session.history", {
-        session_key: sessionKey,
+        tenant_id: deps.tenantId,
+        agent_id: deps.defaultAgentId,
+        conversation_ref: conversationRef,
         limit: deps.resourceReadLimit,
       })) as SessionHistoryResponse;
 
@@ -173,13 +193,13 @@ export function registerMcpResourcesForClient(
       // to treat the content as data, not commands.
       const wrapped = wrapExternalContent(rendered, {
         source: "mcp_resource",
-        sender: `mcp-resource:session:${sessionKey}`,
+        sender: `mcp-resource:session:${conversationRef}`,
       });
 
       logger.info(
         {
           clientId: client.id,
-          sessionKey,
+          conversationRef,
           submodule: "resources-read",
           totalMessages: history.messages.length,
           confirmedMessages: confirmedOnly.length,

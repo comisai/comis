@@ -18,7 +18,14 @@
  */
 
 import type { AppContainer, AppConfig } from "@comis/core";
-import { systemDateFrom } from "@comis/core";
+import {
+  systemDateFrom,
+  createResolvedRequestContext,
+  runWithContext,
+  createDeliveryOrigin,
+  systemNowMs,
+} from "@comis/core";
+import { randomUUID } from "node:crypto";
 import type { ComisLogger } from "@comis/infra";
 import type {
   AgentExecutor,
@@ -40,9 +47,10 @@ import {
 } from "@comis/gateway";
 import type { SessionKey } from "@comis/core";
 import { mountGatewayRoutes } from "../setup-gateway-routes.js";
-import { buildGreetingGenerator } from "./setup-gateway-admin.js";
+import { buildGreetingGenerator, deriveTrustLevel } from "./setup-gateway-admin.js";
 import { buildRpcAdapterDeps, buildDynamicRouterAndRegister } from "./setup-gateway-rpc.js";
-import { buildMcpServerForClient } from "../../api/mcp-server-handlers.js";
+import { resolveGatewayTurnIdentity } from "./gateway-session-principal.js";
+import { buildMcpServerForClient, applyMcpClientIdentity } from "../../api/mcp-server-handlers.js";
 
 // ---------------------------------------------------------------------------
 // MCP server dispatch constants
@@ -362,10 +370,68 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
   // mcpExportPolicy classification of all admin tools as `never-export`
   // means admin RPC methods are never registered on the McpServer in the
   // first place, this indirection is the belt-and-suspenders enforcer.
+  // The MCP client is an authenticated principal with NO turn context, but
+  // tenant-scoped RPC methods (e.g. memory.search_files) now require BOTH the
+  // explicit `_tenantId`/`_agentId` authority params AND a resolved turn scope
+  // in AsyncLocalStorage that matches them. So each MCP RPC call is bound to
+  // THIS daemon's tenant + the resolved agent and run inside a resolved request
+  // context — the SAME pattern the gateway executeAgent path uses
+  // (resolveGatewayTurnIdentity → createResolvedRequestContext → runWithContext).
+  //
+  // SECURITY: this grants IDENTITY, never new TRUST. The context trust level is
+  // the non-admin tier an mcp-client token maps to (mcp-client tokens can never
+  // be admin — the endpoint's Gate 4 + GatewayTokenSchema disjointness reject
+  // admin/wildcard co-issuance); `_trustLevel:"admin"` is never injected. The
+  // agent is a FALLBACK — an explicitly-supplied `agentId` tool arg wins
+  // (per-agent routing); otherwise the default agent is bound. `applyMcpClientIdentity`
+  // strips any forged internal fields, and `_tenantId` stays authoritative so a
+  // client can never widen the tenant boundary.
+  const mcpTenantId = container.config.tenantId;
+  const mcpTrustLevel = deriveTrustLevel(["mcp-client"]);
   const daemonRpcForMcpClient = (
     method: string,
     params: Record<string, unknown>,
-  ): Promise<unknown> => rpcCall(method, params);
+  ): Promise<unknown> => {
+    const explicitAgentId =
+      typeof params.agentId === "string" && params.agentId.length > 0
+        ? params.agentId
+        : undefined;
+    const effectiveAgentId = explicitAgentId ?? defaultAgentId;
+
+    const identity = resolveGatewayTurnIdentity({
+      tenantId: mcpTenantId,
+      agentId: effectiveAgentId,
+    });
+    if (!identity.ok) return Promise.reject(identity.error);
+
+    const sk = identity.value.displaySessionKey;
+    const requestContext = createResolvedRequestContext({
+      traceId: randomUUID(),
+      tenantId: sk.tenantId,
+      userId: sk.userId,
+      agentId: effectiveAgentId,
+      sessionKey: sk,
+      startedAt: systemNowMs(),
+      trustLevel: mcpTrustLevel,
+      channelType: "gateway",
+      deliveryOrigin: createDeliveryOrigin({
+        channelType: "gateway",
+        channelId: sk.channelId,
+        userId: sk.userId,
+        tenantId: sk.tenantId,
+      }),
+      turnScope: identity.value.turnScope,
+    });
+    if (!requestContext.ok) return Promise.reject(requestContext.error);
+
+    const authorized = applyMcpClientIdentity(params, {
+      tenantId: mcpTenantId,
+      defaultAgentId,
+    });
+    return runWithContext(requestContext.value, () =>
+      rpcCall(method, authorized),
+    );
+  };
 
   const buildMcpServerForClientFactory = (client: TokenClient) =>
     buildMcpServerForClient(
@@ -376,6 +442,11 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
         defaultToolRateLimit: MCP_DEFAULT_TOOL_RATE_LIMIT,
         toolNameToRpcMethod: mcpToolNameToRpcMethod,
         resourceReadLimit: MCP_RESOURCE_READ_LIMIT,
+        // Session-query authority for the resources/read path: the daemon
+        // tenant + resolved default agent, matching what daemonRpcForMcpClient
+        // binds each call to.
+        tenantId: mcpTenantId,
+        defaultAgentId,
         // 154-03: obs_explain runs THIS directly under daemon authority — it is
         // NOT wired to mcpToolNameToRpcMethod / daemonRpcForMcpClient (it has its
         // own dispatch branch). The never-inject-admin indirection above is

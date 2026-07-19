@@ -3,7 +3,7 @@
 # Two mcp-client tokens:
 #   - mcp-resources-empty:  scope ["mcp-client"], sessionAllowlist=[]
 #                            => resources/list returns []
-#   - mcp-resources-s1:     scope ["mcp-client"], sessionAllowlist=[<SESSION_KEY_S1>]
+#   - mcp-resources-s1:     scope ["mcp-client"], sessionAllowlist=[<conversation_ref of S1>]
 #                            => resources/list returns one entry for S1
 #                            => resources/read on S1 succeeds (CONFIRMED-only filter)
 #                            => resources/read on S2 (not allowlisted) fails
@@ -65,7 +65,10 @@ gateway:
       scopes: ["mcp-client"]
       mcpClient:
         allowlist: []
-        sessionAllowlist: ["test:resources-user:chan-A"]
+        # Opaque conversation_ref for the seeded session (endpoint-conversation
+        # test/resources/chan-A, tenant test, agent default). Must match
+        # createConversationRef(SCOPE_S1) in mcp-server-resources.test.ts.
+        sessionAllowlist: ["cv_MsDcSBa9dmYP7ptzs_Xd7CMHOi6tliEQVzCbN1oOD4o"]
         toolRateLimit: {}
   rateLimit:
     windowMs: 60000

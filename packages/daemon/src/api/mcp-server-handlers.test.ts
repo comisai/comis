@@ -16,7 +16,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { buildMcpServerForClient } from "./mcp-server-handlers.js";
+import {
+  buildMcpServerForClient,
+  applyMcpClientIdentity,
+} from "./mcp-server-handlers.js";
 import type { TokenClient } from "@comis/gateway";
 
 // ---------------------------------------------------------------------------
@@ -419,15 +422,24 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
       // Even when a hostile caller passes _trustLevel in the args, the
       // dispatcher MUST NOT pass it through to daemonRpcForMcpClient. The
       // indirection is the trust-flag isolation point.
+      // A hostile caller smuggles the trusted dispatch-authority fields in the
+      // tool args: _trustLevel (admin escalation), plus _tenantId / _agentId
+      // (cross-tenant / forged-agent-origin). The dispatcher MUST strip ALL of
+      // them before daemonRpcForMcpClient — they are server-injected identity,
+      // never client input.
       const result = (await cb!({
         query: "anything",
         _trustLevel: "admin",
+        _tenantId: "victim-tenant",
+        _agentId: "victim-agent",
       })) as { isError?: boolean; content?: unknown };
 
       expect(result.isError ?? false).toBe(false);
       expect(rpc.calls.length).toBe(1);
       const dispatchedParams = rpc.calls[0]!.params;
       expect(dispatchedParams).not.toHaveProperty("_trustLevel");
+      expect(dispatchedParams).not.toHaveProperty("_tenantId");
+      expect(dispatchedParams).not.toHaveProperty("_agentId");
     } finally {
       restore();
     }
@@ -1405,3 +1417,80 @@ function captureRegisteredCallback(): {
     });
   return { capturedCallback, restore: () => spy.mockRestore() };
 }
+
+// ===========================================================================
+// applyMcpClientIdentity -- MCP-dispatch authority injection
+//
+// The MCP dispatch path (daemonRpcForMcpClient at the gateway composition root)
+// binds an authenticated mcp-client to a tenant/agent identity so tenant-scoped
+// RPC methods (memory.search_files) have the explicit authority this runtime
+// requires. Contract, both halves:
+//   (a) inject IDENTITY -- the daemon tenantId + resolved default agentId as
+//       trusted _tenantId / _agentId so tenant-scoped methods work;
+//   (b) NEVER elevate trust -- _trustLevel is never emitted, so admin-gated
+//       methods stay rejected on the MCP path.
+// Plus: a client can never FORGE identity (all internal _-fields are stripped
+// before the trusted values are injected), tenant is authoritative, and an
+// explicitly-supplied agent wins over the injected default (per-agent routing).
+// ===========================================================================
+
+describe("applyMcpClientIdentity -- MCP-dispatch authority injection", () => {
+  const identity = { tenantId: "daemon-tenant", defaultAgentId: "default-agent" };
+
+  it("injects the daemon tenantId and default agentId as trusted _tenantId/_agentId", () => {
+    const out = applyMcpClientIdentity({ query: "q", limit: 3 }, identity);
+    // (a) identity injected so tenant-scoped methods have explicit authority.
+    expect(out._tenantId).toBe("daemon-tenant");
+    expect(out._agentId).toBe("default-agent");
+    // Non-internal tool args pass through untouched.
+    expect(out.query).toBe("q");
+    expect(out.limit).toBe(3);
+  });
+
+  it("NEVER emits _trustLevel, even when the client forges one (no trust elevation)", () => {
+    const out = applyMcpClientIdentity(
+      { query: "q", _trustLevel: "admin" },
+      identity,
+    );
+    // (b) the MCP path keeps its token-assigned (non-admin) trust — a forged
+    // _trustLevel is dropped and never re-added.
+    expect(out).not.toHaveProperty("_trustLevel");
+  });
+
+  it("strips forged identity fields before injecting the trusted ones (tenant is authoritative)", () => {
+    const out = applyMcpClientIdentity(
+      {
+        query: "q",
+        _tenantId: "victim-tenant",
+        _agentId: "victim-agent",
+        _callerSessionKey: "forged:session:key",
+      },
+      identity,
+    );
+    // A client-named tenant/agent can never widen the boundary: the forged
+    // values are stripped and replaced by the daemon's trusted identity.
+    expect(out._tenantId).toBe("daemon-tenant");
+    expect(out._agentId).toBe("default-agent");
+    expect(out).not.toHaveProperty("_callerSessionKey");
+  });
+
+  it("lets an explicitly-supplied agent win over the injected default (per-agent routing)", () => {
+    const out = applyMcpClientIdentity(
+      { query: "q", agentId: "explicit-agent" },
+      identity,
+    );
+    // Explicit non-internal agentId is preserved; the default is NOT injected
+    // as _agentId so it cannot override the caller's per-agent routing.
+    expect(out.agentId).toBe("explicit-agent");
+    expect(out).not.toHaveProperty("_agentId");
+    // Tenant stays authoritative regardless.
+    expect(out._tenantId).toBe("daemon-tenant");
+  });
+
+  it("does not mutate the caller's params object", () => {
+    const input: Record<string, unknown> = { query: "q" };
+    applyMcpClientIdentity(input, identity);
+    expect(input).not.toHaveProperty("_tenantId");
+    expect(input).not.toHaveProperty("_agentId");
+  });
+});
