@@ -492,6 +492,25 @@ describe("createSqliteMentalModelStore", () => {
     }
   });
 
+  it("re-admitting an active skill cannot reset its state or accumulated proof", async () => {
+    const first = await store.admit(makeInput({ name: "durable-active", proofCount: 2 }), SCOPE_A);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    await store.promote(first.value.id, SCOPE_A, 3);
+
+    await store.admit(
+      makeInput({ name: "durable-active", body: "refreshed guidance", proofCount: 1 }),
+      SCOPE_A,
+    );
+
+    const current = await store.get("durable-active", SCOPE_A);
+    expect(current.ok).toBe(true);
+    if (!current.ok) return;
+    expect(current.value?.body).toBe("refreshed guidance");
+    expect(current.value?.state).toBe("active");
+    expect(current.value?.proofCount).toBe(3);
+  });
+
   it("the deterministic id survives row deletion (a replay re-creates the same id)", async () => {
     const first = await store.admit(makeInput({ name: "ghost" }), SCOPE_A);
     expect(first.ok).toBe(true);
