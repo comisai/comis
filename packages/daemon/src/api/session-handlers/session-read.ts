@@ -175,9 +175,13 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       }
 
       // Extract displayable messages and compute stats from raw message data.
-      // Token usage may live in the `usage` field on API response messages,
-      // or is estimated from content length (chars / 4) when not available.
-      // Tool calls appear as `tool_use` content blocks or as separate tool-role messages.
+      // Token usage may live in the `usage` field on API response messages
+      // (pi keys `input`/`output`; Anthropic wire keys `input_tokens`/
+      // `output_tokens`), or is estimated from content length (chars / 4)
+      // when not available. Tool invocations appear as `toolCall` (pi) /
+      // `tool_use` (Anthropic wire) content blocks in assistant messages;
+      // toolResult/tool-role messages answer the SAME invocation and must
+      // not double-count it.
       const messages: Array<{
         role: string;
         content: string;
@@ -196,15 +200,14 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
         const usage = m.usage as Record<string, number> | undefined;
         if (usage) {
           hasApiUsage = true;
-          inputTokens += usage.input_tokens ?? 0;
-          outputTokens += usage.output_tokens ?? 0;
+          inputTokens += usage.input ?? usage.input_tokens ?? 0;
+          outputTokens += usage.output ?? usage.output_tokens ?? 0;
         }
 
-        // Count tool_use blocks in content arrays and tool-role messages
-        if (role === "tool") { toolCalls++; }
+        // Count tool-invocation blocks in assistant content arrays
         if (Array.isArray(m.content)) {
           for (const block of m.content as Array<Record<string, unknown>>) {
-            if (block.type === "tool_use") toolCalls++;
+            if (block.type === "toolCall" || block.type === "tool_use") toolCalls++;
           }
         }
 
