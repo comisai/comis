@@ -20,6 +20,28 @@ export interface ScrubResult {
 // eslint-disable-next-line no-restricted-syntax -- egress scrubber sentinel (intra-core, not the Pino censor literal)
 const REDACTED = "[REDACTED]";
 
+const SECRET_FIELD_FRAGMENT =
+  "(?:password|passwd|pwd|secret|token|api[_-]?key|credential|private[_-]?key)";
+const SECRET_FIELD_HINTS = [
+  "password",
+  "passwd",
+  "pwd",
+  "secret",
+  "token",
+  "api_key",
+  "api-key",
+  "apikey",
+  "credential",
+  "private_key",
+  "private-key",
+] as const;
+
+const LABELED_SECRET_ASSIGNMENT_RE = new RegExp(
+  `((?:^|[\\s,{])["']?[A-Za-z0-9_.-]*${SECRET_FIELD_FRAGMENT}["']?\\s*[:=]\\s*)` +
+    `(?:"([^"\\r\\n]*)"|'([^'\\r\\n]*)'|(\\$\\{[^}\\r\\n]+\\}|\\[REDACTED\\]|[^\\s,;}\\r\\n]+))`,
+  "gim",
+);
+
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -33,7 +55,31 @@ export function mightContainSecret(text: string): boolean {
   for (const prefix of PLAINTEXT_SECRET_PREFIXES) {
     if (text.includes(prefix)) return true;
   }
-  return text.includes("Bearer ") || text.includes("Token ");
+  if (text.includes("Bearer ") || text.includes("Token ")) return true;
+  if (!text.includes(":") && !text.includes("=")) return false;
+  const lower = text.toLowerCase();
+  return SECRET_FIELD_HINTS.some((field) => lower.includes(field));
+}
+
+function isSafeSecretPlaceholder(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === REDACTED || (trimmed.startsWith("${") && trimmed.endsWith("}"));
+}
+
+function scrubLabeledAssignments(text: string): ScrubResult {
+  let redactions = 0;
+  const scrubbed = text.replace(
+    LABELED_SECRET_ASSIGNMENT_RE,
+    (_match, prefix: string, doubleQuoted: string | undefined, singleQuoted: string | undefined, bare: string | undefined) => {
+      const value = doubleQuoted ?? singleQuoted ?? bare ?? "";
+      if (value.length === 0 || isSafeSecretPlaceholder(value)) return _match;
+      redactions++;
+      if (doubleQuoted !== undefined) return `${prefix}"${REDACTED}"`;
+      if (singleQuoted !== undefined) return `${prefix}'${REDACTED}'`;
+      return `${prefix}${REDACTED}`;
+    },
+  );
+  return { text: scrubbed, redactions };
 }
 
 /**
@@ -46,8 +92,9 @@ export function mightContainSecret(text: string): boolean {
  */
 export function scrubSecretsFromText(text: string): ScrubResult {
   if (!mightContainSecret(text)) return { text, redactions: 0 };
-  let result = text;
-  let redactions = 0;
+  const labeled = scrubLabeledAssignments(text);
+  let result = labeled.text;
+  let redactions = labeled.redactions;
 
   for (const prefix of PLAINTEXT_SECRET_PREFIXES) {
     const minBody = PREFIX_MIN_BODY_LENGTHS.get(prefix) ?? 0;

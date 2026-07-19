@@ -29,7 +29,7 @@ function mockResult(
 }
 
 describe("hybrid-memory-injector", () => {
-  describe("createHybridMemoryInjector", () => {
+describe("createHybridMemoryInjector", () => {
     it("returns empty results for no memories", () => {
       const injector = createHybridMemoryInjector();
       const result = injector.split([], 5000);
@@ -199,5 +199,27 @@ describe("hybrid-memory-injector", () => {
       expect(result.systemPromptSections[0]).toContain("Memory A");
       expect(result.systemPromptSections[0]).toContain("Memory B");
     });
+  });
+
+  it("redacts a labelled password from high-salience inline recall", () => {
+    const injector = createHybridMemoryInjector({ inlineMinScore: 0.7 });
+    const secret = "ordinary-password-value";
+    const result = injector.split([
+      mockResult(`SERVICE_PASSWORD='${secret}'`, 0.95),
+    ], 4000);
+
+    expect(result.inlineMemory).toContain("[REDACTED]");
+    expect(result.inlineMemory).not.toContain(secret);
+  });
+
+  it("redacts a labelled password from system-section recall", () => {
+    const injector = createHybridMemoryInjector({ inlineMinScore: 0.99 });
+    const secret = "ordinary-password-value";
+    const result = injector.split([
+      mockResult(`password: ${secret}`, 0.5),
+    ], 4000);
+
+    expect(result.systemPromptSections.join("\n")).toContain("[REDACTED]");
+    expect(result.systemPromptSections.join("\n")).not.toContain(secret);
   });
 });

@@ -88,6 +88,12 @@ describe("validateMemoryWrite", () => {
       const result = validateMemoryWrite("Remember: the user's name is Alice");
       expect(result.severity).toBe("clean");
     });
+
+    it("validateMemoryWrite blocks a labelled password with no recognizable token prefix", () => {
+      const result = validateMemoryWrite("Install with SERVICE_PASSWORD='ordinary-password-value'");
+      expect(result.severity).toBe("critical");
+      expect(result.criticalPatterns).toContain("secret-egress-guard");
+    });
   });
 });
 

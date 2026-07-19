@@ -26,6 +26,7 @@ This file records user-visible changes to Comis. Detailed release history is ava
 ### Security
 
 - Installation guidance avoids executing remote scripts without an inspection and dry-run step.
+- Labelled password, token, secret, credential, and API-key assignments are blocked from learned memory and redacted again during recall, including ordinary credential values without a provider-specific token prefix.
 - Error responses and dashboard secret handling expose less sensitive operational detail.
 
 ### Operator action required

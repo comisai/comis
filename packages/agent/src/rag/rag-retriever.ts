@@ -8,7 +8,7 @@
  */
 
 import type { MemorySearchResult, WrapExternalContentOptions } from "@comis/core";
-import { systemDateFrom, wrapExternalContent } from "@comis/core";
+import { scrubSecretsFromText, systemDateFrom, wrapExternalContent } from "@comis/core";
 import { sanitizeToolOutput } from "../safety/tool-output-safety.js";
 
 /**
@@ -69,7 +69,7 @@ export function formatMemorySection(
     const source = entry.source.channel ? ` via ${entry.source.channel}` : "";
 
     // Sanitize content against prompt injection
-    let sanitizedContent = sanitizeToolOutput(entry.content);
+    let sanitizedContent = sanitizeToolOutput(scrubSecretsFromText(entry.content).text);
 
     // Wrap non-system content with security boundaries
     // Skip if already wrapped (taintLevel === "wrapped")

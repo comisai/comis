@@ -53,6 +53,33 @@ describe("scrubSecretsFromText", () => {
     expect(result.redactions).toBe(1);
     expect(result.text).not.toContain(token);
   });
+
+  it("scrubs a quoted password assigned to an environment-style field", () => {
+    const value = "ordinary-password-value";
+    const result = scrubSecretsFromText(`SERVICE_PASSWORD='${value}'`);
+    expect(result.redactions).toBe(1);
+    expect(result.text).not.toContain(value);
+    expect(result.text).toBe("SERVICE_PASSWORD='[REDACTED]'");
+  });
+
+  it("scrubs secret-bearing JSON and YAML fields without requiring token entropy", () => {
+    const jsonValue = "short-json-value";
+    const yamlValue = "short-yaml-value";
+    const result = scrubSecretsFromText(`{"api_key":"${jsonValue}"}\npassword: ${yamlValue}`);
+    expect(result.redactions).toBe(2);
+    expect(result.text).not.toContain(jsonValue);
+    expect(result.text).not.toContain(yamlValue);
+  });
+
+  it("preserves environment references and existing redaction sentinels", () => {
+    const input = "PASSWORD=${SERVICE_PASSWORD}\napi_key: [REDACTED]";
+    expect(scrubSecretsFromText(input)).toEqual({ text: input, redactions: 0 });
+  });
+
+  it("does not treat plural token-usage metrics as credential assignments", () => {
+    const input = "Runtime: 2.1s | Steps: 3 | Tokens: 200 | Cost: $0.0200";
+    expect(scrubSecretsFromText(input)).toEqual({ text: input, redactions: 0 });
+  });
 });
 
 describe("mightContainSecret", () => {
@@ -77,6 +104,10 @@ describe("mightContainSecret", () => {
     // intentionally conservative (fast) so this returns true (see scrubSecretsFromText
     // for fine-grained regex with minBody gate)
     expect(mightContainSecret("hf_model_config")).toBe(true);
+  });
+
+  it("returns true for an environment-style password assignment", () => {
+    expect(mightContainSecret("SERVICE_PASSWORD='ordinary-password-value'")).toBe(true);
   });
 });
 

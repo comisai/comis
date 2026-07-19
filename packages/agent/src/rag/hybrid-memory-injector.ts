@@ -11,7 +11,7 @@
  */
 
 import type { MemorySearchResult, WrapExternalContentOptions } from "@comis/core";
-import { systemDateFrom } from "@comis/core";
+import { scrubSecretsFromText, systemDateFrom } from "@comis/core";
 import { sanitizeToolOutput } from "../safety/tool-output-safety.js";
 import { formatMemorySection } from "./rag-retriever.js";
 
@@ -123,7 +123,7 @@ export function createHybridMemoryInjector(opts?: {
           typeof top.entry.occurredAt === "number"
             ? `, occurred ${systemDateFrom(top.entry.occurredAt).toISOString().split("T")[0]}`
             : "";
-        const sanitized = sanitizeToolOutput(top.entry.content);
+        const sanitized = sanitizeToolOutput(scrubSecretsFromText(top.entry.content).text);
         const inlineMemory = `\n[Relevant context from memory: ${sanitized} (recorded ${date}${occurred})]\n`;
 
         // If the top hit cannot fit as a complete inline envelope, keep the
