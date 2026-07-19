@@ -9,6 +9,9 @@ import { comisDist, requireCodeRoot, rig } from "./_rig.mjs";
 
 const STATE_PATH = "/root/generic-runtime-durable-state.json";
 const Database = requireCodeRoot("better-sqlite3");
+const { createConversationRef } = await import(
+  pathToFileURL(comisDist("core", "dist/index.js")).href
+);
 const { createSqliteDurableRunStore } = await import(
   pathToFileURL(comisDist("memory", "dist/index.js")).href
 );
@@ -26,16 +29,37 @@ if (command === "seed") {
   const checkpointId = `generic-runtime-restart-${id}`;
   const rootRunId = `generic-runtime-root-${id}`;
   const scriptRef = `generic-runtime-restart-${id}.js`;
+  const principalId = "generic-runtime-live-principal";
+  const conversationScope = {
+    tenantId: "default",
+    agentId: "default",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint: {
+        channelType: "durable-resume",
+        channelInstanceId: "generic-runtime-live",
+        conversationId: rootRunId,
+        conversationKind: "direct",
+      },
+      principalId,
+    },
+  };
+  const conversationReference = createConversationRef(conversationScope);
+  if (!conversationReference.ok) {
+    process.stderr.write(`durable conversation reference failed: ${conversationReference.error.message}\n`);
+    process.exit(1);
+  }
   const nowMs = Date.now();
   const db = new Database(`${rig.dataDir}/memory.db`);
   const store = createSqliteDurableRunStore(db, { nowMs: () => nowMs });
   const record = {
     checkpointId,
     rootRunId,
+    tenantId: "default",
     agentId: "default",
-    sessionKey: `default:${rig.chatId}:${rig.chatId}:peer:${rig.chatId}`,
-    ownerTenantId: "default",
-    ownerUserId: rig.chatId,
+    conversationRef: conversationReference.value,
+    conversationScope,
+    principalId,
     deliveryOrigin: null,
     spawnTree: [],
     caps: ["orch:read"],

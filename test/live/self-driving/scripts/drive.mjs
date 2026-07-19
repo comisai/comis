@@ -71,12 +71,20 @@ const isProgress = (t) =>
 // --- trajectory turn-end watch (authoritative completion signal) ---
 const resolveTraj = () => {
   try {
-    const dir = `${DATA}/workspace/sessions/default/${chatId}`;
-    const f = readdirSync(dir)
-      .filter((n) => n.endsWith('.jsonl.trajectory.jsonl'))
-      .map((n) => ({ n, m: statSync(`${dir}/${n}`).mtimeMs }))
+    const dir = `${DATA}/workspace/sessions`;
+    const files = [];
+    const visit = (current) => {
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        const path = `${current}/${entry.name}`;
+        if (entry.isDirectory()) visit(path);
+        else if (entry.name.endsWith('.jsonl.trajectory.jsonl')) files.push(path);
+      }
+    };
+    visit(dir);
+    const f = files
+      .map((path) => ({ path, m: statSync(path).mtimeMs }))
       .sort((a, b) => b.m - a.m)[0];
-    return f ? `${dir}/${f.n}` : null;
+    return f?.path ?? null;
   } catch { return null; }
 };
 const trajLineCount = (p) => { try { return readFileSync(p, 'utf8').split('\n').length; } catch { return 0; } };

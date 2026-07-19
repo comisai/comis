@@ -129,8 +129,8 @@ describe("memory_manage tool", () => {
       );
 
       expect(mockRpcCall).toHaveBeenCalledWith("memory.stats", {
-        tenant_id: undefined,
-        agent_id: undefined,
+        tenant_id: "default",
+        agent_id: "test-agent",
         _trustLevel: "admin",
       });
       expect(result.details).toEqual(
@@ -175,6 +175,39 @@ describe("memory_manage tool", () => {
   // -----------------------------------------------------------------------
 
   describe("delete action", () => {
+    it("resolves omitted tenant and agent scope before requesting memory deletion", async () => {
+      (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
+        approved: true,
+        approvedBy: "operator",
+      });
+      mockRpcCall.mockResolvedValue({ deleted: 1, failed: 0, total: 1 });
+
+      const tool = createMemoryManageTool(mockRpcCall, mockApprovalGate);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-del-scope", {
+          action: "delete",
+          ids: ["mem-1"],
+        } as never),
+      );
+
+      expect(mockApprovalGate.requestApproval).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fingerprintParams: {
+            ids: ["mem-1"],
+            tenant_id: "default",
+            agent_id: "test-agent",
+          },
+        }),
+      );
+      expect(mockRpcCall).toHaveBeenCalledWith("memory.delete", {
+        ids: ["mem-1"],
+        tenant_id: "default",
+        agent_id: "test-agent",
+        _trustLevel: "admin",
+      });
+    });
+
     it("calls rpcCall('memory.delete') after approval gate approves", async () => {
       (mockApprovalGate.requestApproval as ReturnType<typeof vi.fn>).mockResolvedValue({
         approved: true,
@@ -203,6 +236,7 @@ describe("memory_manage tool", () => {
           fingerprintParams: {
             ids: ["mem-1", "mem-2"],
             tenant_id: "tenant-a",
+            agent_id: "test-agent",
           },
         }),
       );

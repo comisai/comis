@@ -162,12 +162,19 @@ export function createMemoryManageTool(
 
         const p = params as unknown as Record<string, unknown>;
         const action = readEnumParam(p, "action", VALID_ACTIONS);
+        const tenantId = typeof p.tenant_id === "string" ? p.tenant_id : ctx?.tenantId;
+        const agentId = typeof p.agent_id === "string" ? p.agent_id : ctx?.agentId;
+        if (tenantId === undefined || agentId === undefined) {
+          throwToolError("permission_denied", "Memory authority scope is unavailable", {
+            hint: "Retry from a resolved agent request scope",
+          });
+        }
 
         switch (action) {
           case "stats": {
             const result = await rpcCall("memory.stats", {
-              tenant_id: p.tenant_id,
-              agent_id: p.agent_id,
+              tenant_id: tenantId,
+              agent_id: agentId,
               _trustLevel,
             });
             return jsonResult(result);
@@ -178,8 +185,8 @@ export function createMemoryManageTool(
               offset: p.offset,
               limit: p.limit,
               sort: p.sort,
-              tenant_id: p.tenant_id,
-              agent_id: p.agent_id,
+              tenant_id: tenantId,
+              agent_id: agentId,
               memory_type: p.memory_type,
               trust_level: p.trust_level,
               tags: p.tags,
@@ -190,7 +197,7 @@ export function createMemoryManageTool(
 
           case "delete": {
             const ids = p.ids;
-            const deleteParams = { ids, tenant_id: p.tenant_id };
+            const deleteParams = { ids, tenant_id: tenantId, agent_id: agentId };
             // Approval gate check for delete
             if (approvalGate) {
               const approvalContext = resolveApprovalRequestContext();
@@ -220,7 +227,7 @@ export function createMemoryManageTool(
           }
 
           case "flush": {
-            const flushParams = { tenant_id: p.tenant_id, agent_id: p.agent_id };
+            const flushParams = { tenant_id: tenantId, agent_id: agentId };
             // Approval gate check for flush
             if (approvalGate) {
               const approvalContext = resolveApprovalRequestContext();
@@ -253,8 +260,8 @@ export function createMemoryManageTool(
             const result = await rpcCall("memory.export", {
               offset: p.offset,
               limit: p.limit,
-              tenant_id: p.tenant_id,
-              agent_id: p.agent_id,
+              tenant_id: tenantId,
+              agent_id: agentId,
               _trustLevel,
             });
             return jsonResult(result);
@@ -266,8 +273,8 @@ export function createMemoryManageTool(
             }
             const result = await rpcCall("memory.pin", {
               id: p.id as string,
-              tenant_id: p.tenant_id,
-              agent_id: p.agent_id,
+              tenant_id: tenantId,
+              agent_id: agentId,
               _trustLevel,
             });
             return jsonResult(result);
@@ -279,8 +286,8 @@ export function createMemoryManageTool(
             }
             const result = await rpcCall("memory.unpin", {
               id: p.id as string,
-              tenant_id: p.tenant_id,
-              agent_id: p.agent_id,
+              tenant_id: tenantId,
+              agent_id: agentId,
               _trustLevel,
             });
             return jsonResult(result);
