@@ -351,6 +351,55 @@ describe("topicMatchScores", () => {
     expect(topicMatchedSkillNames(turn, surfaced)).toEqual(creditedNames);
   });
 
+  it("credits only the dominant learned topic when simulator request boilerplate overlaps every skill", () => {
+    const learned = [
+      {
+        name: "skill-package",
+        topicTokens: [
+          "accept", "as", "build", "correct", "deliver", "depot", "finish", "grad", "inspect",
+          "mcp", "need", "only", "package", "recipient", "result", "sim", "simulator", "tool", "use",
+        ],
+      },
+      {
+        name: "skill-threat",
+        topicTokens: [
+          "action", "alert", "baseline", "case", "close", "current", "distinguish", "false", "finish",
+          "from", "grad", "investigate", "justifi", "mcp", "only", "open", "positive", "result", "sim",
+          "simulator", "soc", "take", "telemetry", "th", "tool", "true", "use",
+        ],
+      },
+      {
+        name: "skill-wildfire",
+        topicTokens: [
+          "account", "as", "assign", "change", "choose", "containment", "declare", "evacuation", "finish",
+          "fire", "forecast", "fuel", "grad", "incident", "inspect", "mcp", "need", "only", "open", "plan",
+          "resource", "result", "safe", "sim", "simulator", "spread", "terrain", "tool", "use", "weather", "wildfire",
+        ],
+      },
+      {
+        name: "skill-relief",
+        topicTokens: [
+          "allocate", "assess", "confirm", "convoy", "current", "delivery", "dispatch", "field", "finish",
+          "grad", "humanitarian", "mcp", "need", "only", "open", "operation", "prioritize", "relief", "report",
+          "reroute", "result", "sim", "simulator", "source", "supply", "tool", "use", "verify",
+        ],
+      },
+    ];
+    const requests = [
+      ["skill-package", "Use only depot-sim tools to accept the new package, inspect the building as needed, deliver it to the correct recipient, and finish with the simulator graded result."],
+      ["skill-threat", "Use only th-sim tools to open and investigate the new SOC alert, distinguish true from false positive with telemetry and baselines, take only justified action, close the case, and finish with the simulator graded result."],
+      ["skill-wildfire", "Use only fire-sim tools to open the new wildfire incident, inspect weather, fuels, terrain, spread and resources, choose a safe plan accounting for forecast changes, assign resources and evacuation as needed, declare containment, and finish with the simulator graded result."],
+      ["skill-relief", "Use only relief-sim tools to open the new humanitarian operation, verify field-report sources, assess needs, prioritize, reroute and allocate supplies, dispatch the convoy, confirm delivery, and finish with the simulator graded result."],
+    ] as const;
+
+    for (const [expected, request] of requests) {
+      const credited = topicMatchScores(request, learned)
+        .filter((score) => score.credited)
+        .map((score) => score.name);
+      expect(credited).toEqual([expected]);
+    }
+  });
+
   it("credits nothing (but still scores every skill) for an empty/ungroupable turn", () => {
     const scores = topicMatchScores("please could you the a an", surfaced);
     expect(scores).toHaveLength(2);
