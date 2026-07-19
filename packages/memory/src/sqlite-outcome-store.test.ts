@@ -439,6 +439,20 @@ describe("createSqliteOutcomeStore", () => {
       expect(res.value.confidence).toBe(0.8);
     });
 
+    it("a lower-confidence terminal tool failure overrides an earlier successful step", async () => {
+      // Multi-step tools report successful intermediate operations at 0.9, while a
+      // terminal domain failure can carry 0.8. The terminal observation is the
+      // trajectory verdict; confidence must not let an earlier step mask it and
+      // falsely reinforce attributed memories or skills.
+      await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.9, observedAt: 1_000 }));
+      await store.observe(makeObs({ source: "tool", outcome: "failure", confidence: 0.8, observedAt: 2_000 }));
+      const res = await store.resolve(TRAJ, SCOPE_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.outcome).toBe("failure");
+      expect(res.value.confidence).toBe(0.8);
+    });
+
     it("a turn that ENDS in failure resolves to 'failure' (latest observation wins — recency tie-break)", async () => {
       // Same-tier (tool) equal-confidence (0.9) signals; the FAILURE is the LATEST
       // (terminal) observation → the turn ended failed → resolves `failure`.
