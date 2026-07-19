@@ -3951,7 +3951,10 @@ describe("parent prefix reuse", () => {
         ],
       },
       msg: makeMsg({
-        text: "Review the current system safety report.",
+        // Hebrew text so the he-IL request locale agrees with the message
+        // script (a contradicting transport locale now yields to the
+        // conversation and would resolve differently).
+        text: "סקור את דוח הבטיחות הנוכחי של המערכת.",
         metadata: { promptSkillContent: "Active skill content", locale: "he-IL" },
       }),
       resolvedModelId: "claude-3-opus",
@@ -4205,7 +4208,10 @@ describe("parent prefix reuse", () => {
         workspaceDir: "/workspace",
         spawnPacket: makeSpawnPacketWithCache(),
       },
-      msg: makeMsg({ metadata: { locale: "ar-EG" } }),
+      // Arabic text so the ar-EG request locale agrees with the message
+      // script (a contradicting transport locale now yields to the
+      // conversation instead of resolving).
+      msg: makeMsg({ text: "ما حالة النظام اليوم؟", metadata: { locale: "ar-EG" } }),
       resolvedModelId: "claude-3-opus",
       resolvedModelProvider: "anthropic",
     });

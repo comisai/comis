@@ -125,6 +125,7 @@ Execute an agent turn with the following request body.
 | `message` | `string` | Yes | The user message to process. |
 | `agentId` | `string` | No | Target agent ID. Uses default agent if omitted. |
 | `sessionKey` | `string` | No | Session key for conversation continuity. |
+| `locale` | `string` | No | Request-tier response locale as a **canonical BCP-47 tag** (`"he"`, `"pt-BR"`). A non-canonical or invalid tag is rejected with `400`. When the message text is written in a script that contradicts this locale, the conversation's script wins. |
 
 ## SSE Endpoints
 
@@ -189,9 +190,10 @@ Event types are organized by category:
 
 ### SSE Chat Streaming
 
-The `/api/chat/stream` endpoint accepts `{ "message": string, "agentId"?: string }` as its JSON
-request body. It sends incremental token deltas as `token` events, followed by a final `done`
-event with the complete response. The same configured HTTP body-size ceiling used by other chat
+The `/api/chat/stream` endpoint accepts `{ "message": string, "agentId"?: string, "locale"?: string }`
+as its JSON request body (`locale` is a canonical BCP-47 tag, rejected with `400` when invalid —
+same semantics as `POST /api/chat`). It sends incremental token deltas as `token` events, followed
+by a final `done` event with the complete response. The same configured HTTP body-size ceiling used by other chat
 POST endpoints is enforced before JSON parsing.
 
 ```

@@ -151,8 +151,14 @@ Two config keys carry the multilingual surface; both are documented in the
   rejects anything else. When omitted, Comis resolves the turn's locale from the
   channel-supplied request locale (e.g. the Telegram client's `language_code`, carried on the
   inbound message metadata), then from the dominant script of the current message (non-Latin
-  scripts only, as a script-only locale such as `und-Hebr`), and otherwise leaves it unset. It
-  does **not** affect the live agent reply, which always follows the user's language. See the
+  scripts only, as a script-only locale such as `und-Hebr`), and otherwise leaves it unset.
+  A channel-supplied locale is transport metadata, not conversation truth: when the current
+  message is written in a script that contradicts it, the conversation's script wins and the
+  transport locale is ignored for that turn. When a locale **is** resolved, it also governs the
+  live reply: a final response whose script contradicts the resolved locale triggers **at most
+  one** bounded, tools-disabled repair turn that rewrites the reply into the expected script
+  (facts, identifiers, code, and URLs preserved); streaming consumers receive only the finalized
+  response while enforcement is active. See the
   [`agents` reference](/reference/config-yaml#agents).
 - **`embedding.multilingual`** — an advisory boolean for the `comis system-health` model-health line
   (see [Embedding and reranker](#embedding-and-reranker)). It does not gate search. See the
