@@ -53,7 +53,7 @@ function priv(el: IcMemoryInspector) {
     _loading: boolean;
     _searched: boolean;
     _error: string;
-    _stats: { totalEntries: number; totalSessions: number; embeddedEntries: number; dbSizeBytes: number } | null;
+    _stats: { totalEntries: number; totalSessions: number; embeddedEntries: number; dbSizeBytes: number; byAgent?: Record<string, number>; oldestCreatedAt?: number | null } | null;
     _statsLoaded: boolean;
     _selectedEntry: MemoryEntry | null;
     _selectedIds: string[];
@@ -67,6 +67,17 @@ function priv(el: IcMemoryInspector) {
     _total: number;
     _agents: string[];
     _confirmOpen: boolean;
+    _createOpen: boolean;
+    _createContent: string;
+    _createTrustLevel: string;
+    _createVisibility: string;
+    _createAgentId: string;
+    _createMessageType: "success" | "error";
+    _tenantId: string;
+    _flushAgentId: string;
+    _loadTenant(): Promise<void>;
+    _submitCreate(): Promise<void>;
+    _confirmFlush(): Promise<void>;
     apiClient: ApiClient | null;
     rpcClient: RpcClient | null;
     _embeddingStats: EmbeddingCacheStats | null;
@@ -118,6 +129,10 @@ describe("IcMemoryInspector", () => {
     document.body.appendChild(el);
     await (el as any).updateComplete;
 
+    // Stats are per (tenant, agent): the view needs a resolved scope to read.
+    priv(el)._tenantId = "acme";
+    priv(el)._agents = ["default"];
+
     // Wait for async loadStats
     await priv(el)._loadStats();
     expect(mockClient.getMemoryStats).toHaveBeenCalled();
@@ -127,6 +142,8 @@ describe("IcMemoryInspector", () => {
   it("displays stat cards with stats values", async () => {
     const el = await createElement();
     el.apiClient = createMockApiClient();
+    priv(el)._tenantId = "acme";
+    priv(el)._agents = ["default"];
     await priv(el)._loadStats();
     await (el as any).updateComplete;
 
@@ -195,6 +212,9 @@ describe("IcMemoryInspector", () => {
     const el = await createElement();
     el.apiClient = createMockApiClient({ browseMemory } as Partial<ApiClient>);
     await (el as any).updateComplete;
+    // A resolved single-agent scope: browse is per (tenant, agent).
+    priv(el)._tenantId = "acme";
+    priv(el)._agents = ["default"];
 
     priv(el)._handleModeChange("browse");
     await (el as any).updateComplete;
@@ -233,6 +253,8 @@ describe("IcMemoryInspector", () => {
     const el = await createElement();
     el.apiClient = createMockApiClient({ browseMemory } as Partial<ApiClient>);
     await (el as any).updateComplete;
+    priv(el)._tenantId = "acme";
+    priv(el)._agents = ["default"];
 
     priv(el)._handleModeChange("browse");
     await (el as any).updateComplete;
@@ -427,6 +449,202 @@ describe("IcMemoryInspector", () => {
     // Has submit button
     const submitBtn = form?.querySelector(".create-submit");
     expect(submitBtn).toBeTruthy();
+  });
+
+  it("create-entry submits explicit tenant, agent, and visibility to memory.store", async () => {
+    // memory.store binds the operator write to an EXPLICIT tenant/agent + an
+    // explicit visibility under the daemon's control-plane authority model —
+    // the create form must supply all three, never a silent default.
+    const rpcCall = vi.fn().mockResolvedValue({ stored: true, id: "mem-1" });
+    const el = await createElement();
+    (el as any).rpcClient = { call: rpcCall };
+
+    const p = priv(el);
+    p._tenantId = "acme";
+    p._createAgentId = "aria";
+    p._createVisibility = "agent-shared";
+    p._createContent = "operator-authored note";
+
+    await p._submitCreate();
+
+    expect(rpcCall).toHaveBeenCalledWith(
+      "memory.store",
+      expect.objectContaining({
+        content: "operator-authored note",
+        visibility: "agent-shared",
+        tenantId: "acme",
+        agentId: "aria",
+      }),
+    );
+  });
+
+  it("create-entry refuses to submit memory.store when the tenant is unresolved (no silent default)", async () => {
+    const rpcCall = vi.fn().mockResolvedValue({ stored: true, id: "mem-1" });
+    const el = await createElement();
+    (el as any).rpcClient = { call: rpcCall };
+
+    const p = priv(el);
+    p._tenantId = ""; // never resolved
+    p._createAgentId = "aria";
+    p._createContent = "note";
+
+    await p._submitCreate();
+
+    // Lifecycle calls (config.read / embeddingCache) may run, but the guard must
+    // stop the store itself from ever reaching the daemon without a tenant.
+    expect(rpcCall).not.toHaveBeenCalledWith("memory.store", expect.anything());
+    expect(p._createMessageType).toBe("error");
+  });
+
+  it("_loadTenant resolves the deployment tenant from config.read", async () => {
+    const rpcCall = vi.fn(async (method: string) =>
+      method === "config.read"
+        ? { config: { tenantId: "acme" } }
+        : {},
+    );
+    const el = await createElement();
+    (el as any).rpcClient = { call: rpcCall };
+
+    await priv(el)._loadTenant();
+
+    expect(rpcCall).toHaveBeenCalledWith("config.read", expect.anything());
+    expect(priv(el)._tenantId).toBe("acme");
+  });
+
+  it("create form has visibility options in sync with the memory-visibility schema", async () => {
+    const el = await createElement();
+    (priv(el) as any)._createOpen = true;
+    await (el as any).updateComplete;
+
+    const form = el.shadowRoot?.querySelector(".create-form");
+    const visibilitySelect = form?.querySelector(".create-visibility-select");
+    expect(visibilitySelect).toBeTruthy();
+    const options = Array.from(
+      visibilitySelect!.querySelectorAll("option"),
+    ).map((o) => o.getAttribute("value"));
+    expect(options).toEqual(["agent-shared", "principal", "conversation"]);
+  });
+
+  // --- Scoped memory reads/deletes/flush (explicit authority) ---
+
+  it("_loadStats scopes getMemoryStats to the cached tenant and selected agent", async () => {
+    const getMemoryStats = vi.fn().mockResolvedValue({ stats: { totalEntries: 0 } });
+    const el = await createElement();
+    el.apiClient = createMockApiClient({ getMemoryStats });
+    const p = priv(el);
+    p._tenantId = "acme";
+    p._agentFilter = "aria";
+
+    await p._loadStats();
+
+    expect(getMemoryStats).toHaveBeenCalledWith({ tenantId: "acme", agentId: "aria" });
+  });
+
+  it("_search scopes searchMemory to the cached tenant and selected agent", async () => {
+    const searchMemory = vi.fn().mockResolvedValue([]);
+    const el = await createElement();
+    el.apiClient = createMockApiClient({ searchMemory });
+    const p = priv(el);
+    p._tenantId = "acme";
+    p._agentFilter = "aria";
+    p._query = "hello";
+
+    await p._search();
+
+    expect(searchMemory).toHaveBeenCalledWith("hello", { tenantId: "acme", agentId: "aria" }, 50);
+  });
+
+  it("_browse scopes browseMemory to the cached tenant and selected agent", async () => {
+    const browseMemory = vi.fn().mockResolvedValue({ entries: [], total: 0 });
+    const el = await createElement();
+    el.apiClient = createMockApiClient({ browseMemory });
+    const p = priv(el);
+    p._tenantId = "acme";
+    p._agentFilter = "aria";
+
+    await p._browse();
+
+    expect(browseMemory).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: "acme", agentId: "aria" }),
+    );
+  });
+
+  it("flush sends explicit tenant/agent for the selected agent", async () => {
+    const rpcCall = vi.fn().mockResolvedValue({ flushed: true, entriesRemoved: 0 });
+    const el = await createElement();
+    el.apiClient = createMockApiClient();
+    (el as any).rpcClient = { call: rpcCall };
+    const p = priv(el);
+    p._tenantId = "acme";
+    p._flushAgentId = "aria";
+
+    await p._confirmFlush();
+
+    expect(rpcCall).toHaveBeenCalledWith("memory.flush", { tenant_id: "acme", agent_id: "aria" });
+  });
+
+  it("_loadStats aggregates stats across every agent when the filter is 'All'", async () => {
+    const getMemoryStats = vi.fn(async ({ agentId }: { tenantId: string; agentId: string }) =>
+      agentId === "aria"
+        ? { stats: { totalEntries: 3, totalSessions: 1, embeddedEntries: 2, dbSizeBytes: 4096, byAgent: { aria: 3 }, byType: { episodic: 3 }, oldestCreatedAt: 100 } }
+        : { stats: { totalEntries: 5, totalSessions: 2, embeddedEntries: 1, dbSizeBytes: 4096, byAgent: { sol: 5 }, byType: { semantic: 5 }, oldestCreatedAt: 50 } },
+    );
+    const el = await createElement();
+    el.apiClient = createMockApiClient({ getMemoryStats } as Partial<ApiClient>);
+    const p = priv(el);
+    p._tenantId = "acme";
+    p._agents = ["aria", "sol"];
+    p._agentFilter = ""; // "All Agents"
+
+    await p._loadStats();
+
+    // One scoped call per configured agent (the lifecycle may re-run it, so
+    // assert the per-agent fan-out rather than an exact count).
+    expect(getMemoryStats).toHaveBeenCalledWith({ tenantId: "acme", agentId: "aria" });
+    expect(getMemoryStats).toHaveBeenCalledWith({ tenantId: "acme", agentId: "sol" });
+    expect(p._stats!.totalEntries).toBe(8); // 3 + 5 summed
+    expect(p._stats!.totalSessions).toBe(3); // 1 + 2 summed
+    expect(p._stats!.embeddedEntries).toBe(3); // 2 + 1 summed
+    expect(p._stats!.dbSizeBytes).toBe(4096); // whole-DB metric: max, NOT summed
+    expect(p._stats!.byAgent).toEqual({ aria: 3, sol: 5 });
+    expect(p._stats!.oldestCreatedAt).toBe(50); // earliest across agents
+  });
+
+  it("_browse fans out and merges entries newest-first across every agent when the filter is 'All'", async () => {
+    const browseMemory = vi.fn(async ({ agentId }: { agentId: string }) =>
+      agentId === "aria"
+        ? { entries: [{ id: "a1", content: "x", agentId: "aria", trustLevel: "learned", tags: [], createdAt: 200 }], total: 1 }
+        : { entries: [{ id: "s1", content: "y", agentId: "sol", trustLevel: "learned", tags: [], createdAt: 300 }], total: 3 },
+    );
+    const el = await createElement();
+    el.apiClient = createMockApiClient({ browseMemory } as Partial<ApiClient>);
+    const p = priv(el);
+    p._tenantId = "acme";
+    p._agents = ["aria", "sol"];
+    p._agentFilter = ""; // "All Agents"
+
+    await p._browse();
+
+    expect(browseMemory).toHaveBeenCalledTimes(2);
+    expect(p._total).toBe(4); // 1 + 3 summed
+    // merged newest-first: sol (createdAt 300) before aria (createdAt 200)
+    expect(p._results.map((e) => e.id)).toEqual(["s1", "a1"]);
+  });
+
+  it("flush with 'All Agents' flushes every configured agent under explicit authority", async () => {
+    const rpcCall = vi.fn().mockResolvedValue({ flushed: true, entriesRemoved: 0 });
+    const el = await createElement();
+    el.apiClient = createMockApiClient();
+    (el as any).rpcClient = { call: rpcCall };
+    const p = priv(el);
+    p._tenantId = "acme";
+    p._agents = ["aria", "sol"];
+    p._flushAgentId = ""; // "All Agents"
+
+    await p._confirmFlush();
+
+    expect(rpcCall).toHaveBeenCalledWith("memory.flush", { tenant_id: "acme", agent_id: "aria" });
+    expect(rpcCall).toHaveBeenCalledWith("memory.flush", { tenant_id: "acme", agent_id: "sol" });
   });
 
   // --- Flush ---

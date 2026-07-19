@@ -31,11 +31,13 @@ function makeRpc<T>(result: T): RpcCallFn {
 }
 
 describe("createApiClient — memory.browse via rpcCall path", () => {
-  it("delegates browseMemory to rpcCall with method memory.browse and the params object", async () => {
+  it("delegates browseMemory to rpcCall with method memory.browse and the explicit tenant/agent scope", async () => {
     const rpc = makeRpc({ entries: [], total: 0 });
     const client = createApiClient(BASE_URL, TOKEN, rpc);
-    await client.browseMemory({ limit: 10, offset: 5, type: "fact" });
+    await client.browseMemory({ tenantId: "acme", agentId: "aria", limit: 10, offset: 5, type: "fact" });
     expect(rpc).toHaveBeenCalledWith("memory.browse", {
+      tenant_id: "acme",
+      agent_id: "aria",
       limit: 10,
       offset: 5,
       memory_type: "fact",
@@ -48,23 +50,31 @@ describe("createApiClient — memory.browse via rpcCall path", () => {
     ];
     const rpc = makeRpc({ entries, total: 1 });
     const client = createApiClient(BASE_URL, TOKEN, rpc);
-    const result = await client.browseMemory({});
+    const result = await client.browseMemory({ tenantId: "acme", agentId: "aria" });
     expect(result.entries).toEqual(entries);
     expect(result.total).toBe(1);
   });
 });
 
 describe("createApiClient — memory.delete via rpcCall path", () => {
-  it("delegates single deleteMemory through the contract ids array", async () => {
+  it("delegates single deleteMemory through the contract ids array with explicit tenant/agent", async () => {
     const rpc = makeRpc(undefined);
-    await createApiClient(BASE_URL, TOKEN, rpc).deleteMemory("memory-id-7");
-    expect(rpc).toHaveBeenCalledWith("memory.delete", { ids: ["memory-id-7"] });
+    await createApiClient(BASE_URL, TOKEN, rpc).deleteMemory("memory-id-7", { tenantId: "acme", agentId: "aria" });
+    expect(rpc).toHaveBeenCalledWith("memory.delete", {
+      ids: ["memory-id-7"],
+      tenant_id: "acme",
+      agent_id: "aria",
+    });
   });
 
-  it("delegates deleteMemoryBulk to rpcCall memory.delete with ids array param", async () => {
+  it("delegates deleteMemoryBulk to rpcCall memory.delete with ids array + explicit tenant/agent", async () => {
     const rpc = makeRpc({ deleted: 3 });
-    const r = await createApiClient(BASE_URL, TOKEN, rpc).deleteMemoryBulk(["a", "b", "c"]);
-    expect(rpc).toHaveBeenCalledWith("memory.delete", { ids: ["a", "b", "c"] });
+    const r = await createApiClient(BASE_URL, TOKEN, rpc).deleteMemoryBulk(["a", "b", "c"], { tenantId: "acme", agentId: "aria" });
+    expect(rpc).toHaveBeenCalledWith("memory.delete", {
+      ids: ["a", "b", "c"],
+      tenant_id: "acme",
+      agent_id: "aria",
+    });
     expect(r.deleted).toBe(3);
   });
 });
@@ -219,9 +229,11 @@ describe("createApiClient — fetch fallback when rpcCall is not provided", () =
       status: 200,
       json: () => Promise.resolve({}),
     } as Response);
-    await createApiClient(BASE_URL, TOKEN).deleteMemory("memory-1");
+    await createApiClient(BASE_URL, TOKEN).deleteMemory("memory-1", { tenantId: "acme", agentId: "aria" });
     const call = mockFetch.mock.calls[0]!;
     expect(call[0]).toContain("/api/memory/memory-1");
+    expect(call[0]).toContain("tenant=acme");
+    expect(call[0]).toContain("agent=aria");
     expect((call[1] as RequestInit)?.method).toBe("DELETE");
   });
 
@@ -231,10 +243,12 @@ describe("createApiClient — fetch fallback when rpcCall is not provided", () =
       status: 200,
       json: () => Promise.resolve({ deleted: 2 }),
     } as Response);
-    await createApiClient(BASE_URL, TOKEN).deleteMemoryBulk(["id1", "id2"]);
+    await createApiClient(BASE_URL, TOKEN).deleteMemoryBulk(["id1", "id2"], { tenantId: "acme", agentId: "aria" });
     const call = mockFetch.mock.calls[0]!;
     expect(call[0]).toContain("/api/memory/bulk-delete");
     expect((call[1] as RequestInit)?.method).toBe("POST");
+    expect((call[1] as RequestInit)?.body).toContain("acme");
+    expect((call[1] as RequestInit)?.body).toContain("aria");
   });
 
   it("builds the browseMemory query string from every defined parameter on fetch fallback", async () => {
@@ -244,6 +258,7 @@ describe("createApiClient — fetch fallback when rpcCall is not provided", () =
       json: () => Promise.resolve({ entries: [], total: 0 }),
     } as Response);
     await createApiClient(BASE_URL, TOKEN).browseMemory({
+      tenantId: "acme",
       offset: 10,
       limit: 50,
       type: "fact",
@@ -253,11 +268,12 @@ describe("createApiClient — fetch fallback when rpcCall is not provided", () =
       to: 200,
     });
     const url = mockFetch.mock.calls[0]![0] as string;
+    expect(url).toContain("tenant=acme");
+    expect(url).toContain("agent=alpha");
     expect(url).toContain("offset=10");
     expect(url).toContain("limit=50");
     expect(url).toContain("type=fact");
     expect(url).toContain("trust=trusted");
-    expect(url).toContain("agentId=alpha");
     expect(url).toContain("from=100");
     expect(url).toContain("to=200");
   });

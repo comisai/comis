@@ -625,9 +625,16 @@ export class IcMemoryInspector extends LitElement {
   @state() private _createTags = "";
   @state() private _createTrustLevel = "learned";
   @state() private _createProvenance = "";
+  @state() private _createVisibility = "agent-shared";
+  @state() private _createAgentId = "";
   @state() private _createSubmitting = false;
   @state() private _createMessage = "";
   @state() private _createMessageType: "success" | "error" = "success";
+
+  // The deployment tenant the console operates on. memory.store binds an operator
+  // write to an EXPLICIT tenant/agent, so the create form must name the tenant —
+  // resolved once from config.read, never defaulted silently.
+  @state() private _tenantId = "";
 
   // Embedding infrastructure stats
   @state() private _embeddingStats: EmbeddingCacheStats | null = null;
@@ -652,6 +659,7 @@ export class IcMemoryInspector extends LitElement {
     }
     if (changed.has("rpcClient") && this.rpcClient) {
       this._loadEmbeddingStats();
+      this._loadTenant();
     }
   }
 
@@ -681,25 +689,66 @@ export class IcMemoryInspector extends LitElement {
 
   // --- Data loading ---
 
+  // The agents a scoped read/flush covers: the selected filter, else EVERY
+  // configured agent ("All Agents"). memory.stats/.browse are per (tenant,
+  // agent) with no aggregate surface, so the "All" view fans one call per agent
+  // and merges client-side.
+  private _scopedAgents(): string[] {
+    return this._agentFilter ? [this._agentFilter] : this._agents;
+  }
+
+  private _extractStatsObj(result: Record<string, unknown>): Record<string, unknown> {
+    const outer = result;
+    return typeof outer["stats"] === "object" && outer["stats"] !== null
+      ? (outer["stats"] as Record<string, unknown>)
+      : outer;
+  }
+
+  private _mergeStats(statsObjs: Record<string, unknown>[]): MemoryStats {
+    const byType: Record<string, number> = {};
+    const byTrustLevel: Record<string, number> = {};
+    const byAgent: Record<string, number> = {};
+    let totalEntries = 0;
+    let totalSessions = 0;
+    let embeddedEntries = 0;
+    let dbSizeBytes = 0;
+    let oldestCreatedAt: number | null = null;
+    const addMap = (target: Record<string, number>, src: unknown): void => {
+      if (typeof src !== "object" || src === null) return;
+      for (const [key, value] of Object.entries(src as Record<string, unknown>)) {
+        if (typeof value === "number") target[key] = (target[key] ?? 0) + value;
+      }
+    };
+    for (const o of statsObjs) {
+      totalEntries += (o["totalEntries"] as number) ?? 0;
+      totalSessions += (o["totalSessions"] as number) ?? 0;
+      embeddedEntries += (o["embeddedEntries"] as number) ?? 0;
+      // dbSizeBytes is a whole-database metric (identical across agents) — take the
+      // max, never sum, or an N-agent view would report N× the real file size.
+      dbSizeBytes = Math.max(dbSizeBytes, (o["dbSizeBytes"] as number) ?? 0);
+      addMap(byType, o["byType"]);
+      addMap(byTrustLevel, o["byTrustLevel"]);
+      addMap(byAgent, o["byAgent"]);
+      const oldest = o["oldestCreatedAt"];
+      if (typeof oldest === "number") {
+        oldestCreatedAt = oldestCreatedAt === null ? oldest : Math.min(oldestCreatedAt, oldest);
+      }
+    }
+    return { totalEntries, totalSessions, embeddedEntries, dbSizeBytes, byType, byTrustLevel, byAgent, oldestCreatedAt };
+  }
+
   private async _loadStats(): Promise<void> {
     if (!this.apiClient) return;
+    const agents = this._scopedAgents();
+    // Scope not resolved yet — _refreshScopedViews re-runs this once it is.
+    if (!this._tenantId || agents.length === 0) return;
     try {
-      const result = await this.apiClient.getMemoryStats();
-      const outer = result as Record<string, unknown>;
-      const statsObj =
-        typeof outer["stats"] === "object" && outer["stats"] !== null
-          ? (outer["stats"] as Record<string, unknown>)
-          : outer;
-      this._stats = {
-        totalEntries: (statsObj["totalEntries"] as number) ?? 0,
-        totalSessions: (statsObj["totalSessions"] as number) ?? 0,
-        embeddedEntries: (statsObj["embeddedEntries"] as number) ?? 0,
-        dbSizeBytes: (statsObj["dbSizeBytes"] as number) ?? 0,
-        byType: statsObj["byType"] as Record<string, number> | undefined,
-        byTrustLevel: statsObj["byTrustLevel"] as Record<string, number> | undefined,
-        byAgent: statsObj["byAgent"] as Record<string, number> | undefined,
-        oldestCreatedAt: statsObj["oldestCreatedAt"] as number | null | undefined,
-      };
+      const results = await Promise.all(
+        agents.map((agentId) =>
+          this.apiClient!.getMemoryStats({ tenantId: this._tenantId, agentId }),
+        ),
+      );
+      this._stats = this._mergeStats(results.map((r) => this._extractStatsObj(r)));
       this._statsLoaded = true;
     } catch {
       this._statsLoaded = true;
@@ -711,8 +760,31 @@ export class IcMemoryInspector extends LitElement {
     try {
       const agents = await this.apiClient.getAgents();
       this._agents = agents.map((a) => a.id);
+      // Default the create-entry agent to the first configured agent so the
+      // operator always names an explicit agent (never an empty scope).
+      if (!this._createAgentId && this._agents.length > 0) {
+        this._createAgentId = this._agents[0]!;
+      }
+      this._refreshScopedViews();
     } catch {
       // Non-critical
+    }
+  }
+
+  private async _loadTenant(): Promise<void> {
+    if (!this.rpcClient || this._tenantId) return;
+    try {
+      const result = (await this.rpcClient.call("config.read", {})) as {
+        config?: { tenantId?: unknown };
+      };
+      const tenantId = result?.config?.tenantId;
+      if (typeof tenantId === "string" && tenantId.length > 0) {
+        this._tenantId = tenantId;
+        this._refreshScopedViews();
+      }
+    } catch {
+      // Non-critical: create-entry surfaces a clear error if the tenant is
+      // unresolved rather than sending a store the daemon would reject.
     }
   }
 
@@ -729,6 +801,24 @@ export class IcMemoryInspector extends LitElement {
     }
   }
 
+  // The agent this memory view is scoped to: the selected filter, else the first
+  // configured agent. The daemon's memory RPCs are per (tenant, agent) — there is
+  // no tenant-wide read/flush surface, so a concrete agent is always named.
+  private _scopedAgentId(): string {
+    return this._agentFilter || this._agents[0] || "";
+  }
+
+  // Re-load the scoped views once BOTH the tenant and the agent list have
+  // resolved. The tenant (config.read) and agent list (getAgents) load
+  // asynchronously after the client properties are set, so the first-mount
+  // read can fire before either is known; this re-runs it once the scope is
+  // complete. No-op until both are present.
+  private _refreshScopedViews(): void {
+    if (!this.apiClient || !this._tenantId || !this._scopedAgentId()) return;
+    this._loadStats();
+    if (this._mode === "browse") this._browse();
+  }
+
   // --- Search ---
 
   private async _search(): Promise<void> {
@@ -740,7 +830,11 @@ export class IcMemoryInspector extends LitElement {
     this._selectedIds = [];
 
     try {
-      const results = await this.apiClient.searchMemory(query, 50);
+      const results = await this.apiClient.searchMemory(
+        query,
+        { tenantId: this._tenantId, agentId: this._scopedAgentId() },
+        50,
+      );
       // Normalize: results from searchMemory are MemorySearchResult, map to MemoryEntry
       this._results = results.map((r) => this._normalizeEntry(r as unknown as Record<string, unknown>));
       this._searched = true;
@@ -760,36 +854,67 @@ export class IcMemoryInspector extends LitElement {
   private async _browse(): Promise<void> {
     if (!this.apiClient || this._loading) return;
 
+    const agents = this._scopedAgents();
+    // Scope not resolved yet — _refreshScopedViews re-runs this once it is.
+    if (!this._tenantId || agents.length === 0) return;
+
     this._loading = true;
     this._error = "";
     this._selectedIds = [];
 
     try {
-      const params: Record<string, unknown> = {
-        offset: this._browseOffset,
-        limit: this._browseLimit,
-      };
-
-      // Pass server-side filters
+      // Server-side filters shared across every per-agent fetch.
+      const filters: Record<string, unknown> = {};
       if (this._typeFilter.size < MEMORY_TYPES.length) {
-        params.type = [...this._typeFilter].join(",");
+        filters.type = [...this._typeFilter].join(",");
       }
       if (this._trustFilter.size < TRUST_LEVELS.length) {
-        params.trust = [...this._trustFilter].join(",");
-      }
-      if (this._agentFilter) {
-        params.agentId = this._agentFilter;
+        filters.trust = [...this._trustFilter].join(",");
       }
       if (this._dateFrom) {
-        params.from = systemDateFrom(this._dateFrom).getTime();
+        filters.from = systemDateFrom(this._dateFrom).getTime();
       }
       if (this._dateTo) {
-        params.to = systemDateFrom(this._dateTo).getTime();
+        filters.to = systemDateFrom(this._dateTo).getTime();
       }
 
-      const result = await this.apiClient.browseMemory(params as unknown as BrowseMemoryParams);
-      this._results = result.entries.map((e) => this._normalizeEntry(e as unknown as Record<string, unknown>));
-      this._total = result.total;
+      if (agents.length === 1) {
+        const result = await this.apiClient.browseMemory({
+          tenantId: this._tenantId,
+          agentId: agents[0],
+          offset: this._browseOffset,
+          limit: this._browseLimit,
+          ...filters,
+        } as unknown as BrowseMemoryParams);
+        this._results = result.entries.map((e) => this._normalizeEntry(e as unknown as Record<string, unknown>));
+        this._total = result.total;
+      } else {
+        // "All Agents": memory.browse is per (tenant, agent), so fan one call per
+        // agent and merge. Each agent is fetched up to the current page window and
+        // the union is sorted newest-first before the window is applied. CAVEAT:
+        // one agent having more than (offset+limit) newer entries than another can
+        // shift entries on deep pages — acceptable at these page sizes; a true
+        // global cursor would need a server-side aggregate.
+        const windowSize = this._browseOffset + this._browseLimit;
+        const perAgent = await Promise.all(
+          agents.map((agentId) =>
+            this.apiClient!.browseMemory({
+              tenantId: this._tenantId,
+              agentId,
+              offset: 0,
+              limit: windowSize,
+              ...filters,
+            } as unknown as BrowseMemoryParams),
+          ),
+        );
+        const allEntries = perAgent
+          .flatMap((r) => r.entries)
+          .sort((a, b) => ((b as MemoryEntry).createdAt ?? 0) - ((a as MemoryEntry).createdAt ?? 0));
+        this._results = allEntries
+          .slice(this._browseOffset, this._browseOffset + this._browseLimit)
+          .map((e) => this._normalizeEntry(e as unknown as Record<string, unknown>));
+        this._total = perAgent.reduce((sum, r) => sum + r.total, 0);
+      }
       this._searched = true;
     } catch (err) {
       this._error =
@@ -926,6 +1051,16 @@ export class IcMemoryInspector extends LitElement {
     const content = this._createContent.trim();
     if (!content || !this.rpcClient || this._createSubmitting) return;
 
+    // memory.store binds the operator write to an EXPLICIT tenant/agent under the
+    // daemon's control-plane authority model. Refuse to submit without both —
+    // never fall back to a silent default the operator did not choose.
+    if (!this._tenantId || !this._createAgentId) {
+      this._createMessage =
+        "Cannot create entry: the deployment tenant or agent could not be resolved.";
+      this._createMessageType = "error";
+      return;
+    }
+
     this._createSubmitting = true;
     this._createMessage = "";
 
@@ -942,6 +1077,9 @@ export class IcMemoryInspector extends LitElement {
         content,
         tags: tags.length > 0 ? tags : undefined,
         trustLevel: this._createTrustLevel,
+        visibility: this._createVisibility,
+        tenantId: this._tenantId,
+        agentId: this._createAgentId,
       });
 
       this._createMessage = "Memory entry created successfully.";
@@ -975,12 +1113,28 @@ export class IcMemoryInspector extends LitElement {
     this._flushDialogOpen = false;
     if (!this.rpcClient || this._flushSubmitting) return;
 
+    if (!this._tenantId) {
+      this._error = "Cannot flush: the deployment tenant could not be resolved.";
+      return;
+    }
+    // The flush selector's "All Agents" (empty) maps to every configured agent:
+    // per-agent contracts have no tenant-wide flush, so each agent is flushed
+    // under its own explicit authority.
+    const agentsToFlush = this._flushAgentId ? [this._flushAgentId] : this._agents;
+    if (agentsToFlush.length === 0) {
+      this._error = "Cannot flush: no agent could be resolved.";
+      return;
+    }
+
     this._flushSubmitting = true;
 
     try {
-      await this.rpcClient.call("memory.flush", {
-        agent_id: this._flushAgentId || undefined,
-      });
+      for (const agentId of agentsToFlush) {
+        await this.rpcClient.call("memory.flush", {
+          tenant_id: this._tenantId,
+          agent_id: agentId,
+        });
+      }
 
       // Reload data
       this._loadStats();
@@ -1012,7 +1166,10 @@ export class IcMemoryInspector extends LitElement {
     if (!this.apiClient || this._selectedIds.length === 0) return;
 
     try {
-      await this.apiClient.deleteMemoryBulk(this._selectedIds);
+      await this.apiClient.deleteMemoryBulk(this._selectedIds, {
+        tenantId: this._tenantId,
+        agentId: this._scopedAgentId(),
+      });
       // Remove deleted entries from results
       const deletedSet = new Set(this._selectedIds);
       this._results = this._results.filter((e) => !deletedSet.has(e.id));
@@ -1059,7 +1216,13 @@ export class IcMemoryInspector extends LitElement {
     if (!this.apiClient) return;
     const entryId = e.detail;
     try {
-      await this.apiClient.deleteMemory(entryId);
+      // Delete under the entry's OWN agent authority when known, else the
+      // currently-scoped agent.
+      const entry = this._results.find((r) => r.id === entryId);
+      await this.apiClient.deleteMemory(entryId, {
+        tenantId: this._tenantId,
+        agentId: entry?.agentId || this._scopedAgentId(),
+      });
       this._results = this._results.filter((r) => r.id !== entryId);
       this._selectedEntry = null;
       this._loadStats();
@@ -1294,6 +1457,32 @@ export class IcMemoryInspector extends LitElement {
                   .value=${this._createTags}
                   @input=${(e: Event) => { this._createTags = (e.target as HTMLInputElement).value; }}
                 />
+              </div>
+
+              <div class="create-field">
+                <label class="create-label">Agent</label>
+                <select
+                  class="create-select create-agent-select"
+                  .value=${this._createAgentId}
+                  @change=${(e: Event) => { this._createAgentId = (e.target as HTMLSelectElement).value; }}
+                >
+                  ${this._agents.map(
+                    (agentId) => html`<option value=${agentId}>${agentId}</option>`,
+                  )}
+                </select>
+              </div>
+
+              <div class="create-field">
+                <label class="create-label">Visibility</label>
+                <select
+                  class="create-select create-visibility-select"
+                  .value=${this._createVisibility}
+                  @change=${(e: Event) => { this._createVisibility = (e.target as HTMLSelectElement).value; }}
+                >
+                  <option value="agent-shared">agent-shared</option>
+                  <option value="principal">principal</option>
+                  <option value="conversation">conversation</option>
+                </select>
               </div>
 
               <div class="create-field">

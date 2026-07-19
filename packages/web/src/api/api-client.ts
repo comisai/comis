@@ -51,8 +51,18 @@ export type SseEventHandler = (event: string, data: unknown) => void;
 /** RPC call function signature for JSON-RPC 2.0 method invocation */
 export type RpcCallFn = RpcClient["call"];
 
+/**
+ * The explicit tenant/agent a memory operation is scoped to. The daemon's
+ * memory RPCs and REST endpoints require both — there is no silent default.
+ */
+export interface MemoryAuthority {
+  readonly tenantId: string;
+  readonly agentId: string;
+}
+
 /** Parameters for browsing memory entries */
 export interface BrowseMemoryParams {
+  readonly tenantId?: string;
   readonly offset?: number;
   readonly limit?: number;
   readonly type?: string;
@@ -79,10 +89,10 @@ export interface ApiClient {
   getChannels(): Promise<ChannelInfo[]>;
   /** Fetch recent activity entries */
   getActivity(limit?: number): Promise<ActivityEntry[]>;
-  /** Search memory */
-  searchMemory(query: string, limit?: number): Promise<MemorySearchResult[]>;
-  /** Get memory statistics */
-  getMemoryStats(): Promise<Record<string, unknown>>;
+  /** Search memory within an explicit tenant/agent scope */
+  searchMemory(query: string, authority: MemoryAuthority, limit?: number): Promise<MemorySearchResult[]>;
+  /** Get memory statistics for an explicit tenant/agent scope */
+  getMemoryStats(authority: MemoryAuthority): Promise<Record<string, unknown>>;
   /** Send a chat message */
   chat(message: string, agentId?: string, sessionKey?: string): Promise<ChatResponse>;
   /** Load chat history */
@@ -92,12 +102,12 @@ export interface ApiClient {
 
   // --- Memory management methods ---
 
-  /** Browse memory entries (paginated, no query needed) */
+  /** Browse memory entries (paginated, no query needed) within an explicit tenant/agent scope */
   browseMemory(params: BrowseMemoryParams): Promise<{ entries: MemoryEntry[]; total: number }>;
-  /** Delete a memory entry by ID */
-  deleteMemory(id: string): Promise<void>;
-  /** Delete multiple memory entries */
-  deleteMemoryBulk(ids: string[]): Promise<{ deleted: number }>;
+  /** Delete a memory entry by ID within an explicit tenant/agent scope */
+  deleteMemory(id: string, authority: MemoryAuthority): Promise<void>;
+  /** Delete multiple memory entries within an explicit tenant/agent scope */
+  deleteMemoryBulk(ids: string[], authority: MemoryAuthority): Promise<{ deleted: number }>;
   /** Export memory entries as JSONL string */
   exportMemory(ids?: string[]): Promise<string>;
 
@@ -223,15 +233,24 @@ export function createApiClient(
       return result.entries ?? [];
     },
 
-    async searchMemory(query: string, limit = 10): Promise<MemorySearchResult[]> {
+    async searchMemory(
+      query: string,
+      authority: MemoryAuthority,
+      limit = 10,
+    ): Promise<MemorySearchResult[]> {
       const result = await fetchJson<{ results?: MemorySearchResult[] }>(
-        `/api/memory/search?q=${encodeURIComponent(query)}&limit=${limit}`,
+        `/api/memory/search?q=${encodeURIComponent(query)}&limit=${limit}`
+          + `&tenant=${encodeURIComponent(authority.tenantId)}`
+          + `&agent=${encodeURIComponent(authority.agentId)}`,
       );
       return result.results ?? [];
     },
 
-    async getMemoryStats(): Promise<Record<string, unknown>> {
-      return fetchJson<Record<string, unknown>>("/api/memory/stats");
+    async getMemoryStats(authority: MemoryAuthority): Promise<Record<string, unknown>> {
+      return fetchJson<Record<string, unknown>>(
+        `/api/memory/stats?tenant=${encodeURIComponent(authority.tenantId)}`
+          + `&agent=${encodeURIComponent(authority.agentId)}`,
+      );
     },
 
     async chat(message: string, agentId?: string, sessionKey?: string): Promise<ChatResponse> {
@@ -259,11 +278,12 @@ export function createApiClient(
     ): Promise<{ entries: MemoryEntry[]; total: number }> {
       if (rpcCall && params.from === undefined && params.to === undefined) {
         const result = await rpcCall("memory.browse", {
+          ...(params.tenantId !== undefined ? { tenant_id: params.tenantId } : {}),
+          ...(params.agentId !== undefined ? { agent_id: params.agentId } : {}),
           ...(params.offset !== undefined ? { offset: params.offset } : {}),
           ...(params.limit !== undefined ? { limit: params.limit } : {}),
           ...(params.type !== undefined ? { memory_type: params.type } : {}),
           ...(params.trust !== undefined ? { trust_level: params.trust } : {}),
-          ...(params.agentId !== undefined ? { agent_id: params.agentId } : {}),
         });
         return {
           entries: result.entries as unknown as MemoryEntry[],
@@ -271,11 +291,12 @@ export function createApiClient(
         };
       }
       const qs = new URLSearchParams();
+      if (params.tenantId) qs.set("tenant", params.tenantId);
+      if (params.agentId) qs.set("agent", params.agentId);
       if (params.offset !== undefined) qs.set("offset", String(params.offset));
       if (params.limit !== undefined) qs.set("limit", String(params.limit));
       if (params.type) qs.set("type", params.type);
       if (params.trust) qs.set("trust", params.trust);
-      if (params.agentId) qs.set("agentId", params.agentId);
       if (params.from !== undefined) qs.set("from", String(params.from));
       if (params.to !== undefined) qs.set("to", String(params.to));
       const query = qs.toString();
@@ -284,21 +305,30 @@ export function createApiClient(
       );
     },
 
-    async deleteMemory(id: string): Promise<void> {
+    async deleteMemory(id: string, authority: MemoryAuthority): Promise<void> {
       if (rpcCall) {
-        await rpcCall("memory.delete", { ids: [id] });
+        await rpcCall("memory.delete", {
+          ids: [id],
+          tenant_id: authority.tenantId,
+          agent_id: authority.agentId,
+        });
         return;
       }
-      await fetchJson(`/api/memory/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const qs = new URLSearchParams({ tenant: authority.tenantId, agent: authority.agentId });
+      await fetchJson(`/api/memory/${encodeURIComponent(id)}?${qs.toString()}`, { method: "DELETE" });
     },
 
-    async deleteMemoryBulk(ids: string[]): Promise<{ deleted: number }> {
+    async deleteMemoryBulk(ids: string[], authority: MemoryAuthority): Promise<{ deleted: number }> {
       if (rpcCall) {
-        return rpcCall("memory.delete", { ids });
+        return rpcCall("memory.delete", {
+          ids,
+          tenant_id: authority.tenantId,
+          agent_id: authority.agentId,
+        });
       }
       return fetchJson<{ deleted: number }>("/api/memory/bulk-delete", {
         method: "POST",
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ ids, tenant: authority.tenantId, agent: authority.agentId }),
       });
     },
 

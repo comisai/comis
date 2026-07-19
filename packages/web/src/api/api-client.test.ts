@@ -254,34 +254,36 @@ describe("createApiClient", () => {
   });
 
   describe("searchMemory()", () => {
+    const AUTH = { tenantId: "acme", agentId: "aria" };
+
     it("URL-encodes query parameter", async () => {
       mockFetch.mockReturnValueOnce(mockJsonResponse({ results: [] }));
-      await client.searchMemory("hello world & more");
+      await client.searchMemory("hello world & more", AUTH);
 
       const callUrl = mockFetch.mock.calls[0][0];
       expect(callUrl).toContain("q=hello%20world%20%26%20more");
     });
 
-    it("passes limit parameter", async () => {
+    it("passes limit and the explicit tenant/agent scope", async () => {
       mockFetch.mockReturnValueOnce(mockJsonResponse({ results: [] }));
-      await client.searchMemory("test", 5);
+      await client.searchMemory("test", AUTH, 5);
 
       const callUrl = mockFetch.mock.calls[0][0];
-      expect(callUrl).toBe(`${BASE_URL}/api/memory/search?q=test&limit=5`);
+      expect(callUrl).toBe(`${BASE_URL}/api/memory/search?q=test&limit=5&tenant=acme&agent=aria`);
     });
 
     it("returns results array from response", async () => {
       const results = [{ id: "m1", content: "test", memoryType: "fact", trustLevel: "high", score: 0.9, createdAt: 123 }];
       mockFetch.mockReturnValueOnce(mockJsonResponse({ results }));
 
-      const result = await client.searchMemory("test");
+      const result = await client.searchMemory("test", AUTH);
       expect(result).toEqual(results);
     });
 
     it("defaults to empty array when results missing", async () => {
       mockFetch.mockReturnValueOnce(mockJsonResponse({}));
 
-      const result = await client.searchMemory("test");
+      const result = await client.searchMemory("test", AUTH);
       expect(result).toEqual([]);
     });
   });
@@ -339,13 +341,13 @@ describe("createApiClient", () => {
   });
 
   describe("getMemoryStats()", () => {
-    it("fetches memory stats from /api/memory/stats", async () => {
+    it("fetches memory stats from /api/memory/stats with the explicit tenant/agent scope", async () => {
       const stats = { totalEntries: 100, byType: { fact: 50 } };
       mockFetch.mockReturnValueOnce(mockJsonResponse(stats));
 
-      const result = await client.getMemoryStats();
+      const result = await client.getMemoryStats({ tenantId: "acme", agentId: "aria" });
       expect(result).toEqual(stats);
-      expect(mockFetch.mock.calls[0][0]).toBe(`${BASE_URL}/api/memory/stats`);
+      expect(mockFetch.mock.calls[0][0]).toBe(`${BASE_URL}/api/memory/stats?tenant=acme&agent=aria`);
     });
   });
 
