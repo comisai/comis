@@ -747,3 +747,110 @@ describe("session-index session_ended emit", () => {
     expect(typeof payload.sessionId).toBe("string");
   });
 });
+
+// ---------------------------------------------------------------------------
+// getSessionStats
+// ---------------------------------------------------------------------------
+
+describe("getSessionStats", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs) {
+      try { rmSync(d, { recursive: true, force: true }); } catch { /* cleanup */ }
+    }
+    dirs.length = 0;
+  });
+
+  function makeManager() {
+    const baseDir = makeTmpDir();
+    const lockDir = makeTmpDir();
+    dirs.push(baseDir, lockDir);
+    return createComisSessionManager({ sessionBaseDir: baseDir, lockDir, cwd: baseDir, fileLock });
+  }
+
+  it("counts pi-native toolCall blocks and toolResult messages like the SDK's own session stats", async () => {
+    const mgr = makeManager();
+    const key = makeKey();
+
+    const outcome = await mgr.withSession(key, async (sm) => {
+      sm.appendMessage({ role: "user", content: "run the tool", timestamp: 1_700_000_000_000 } as any);
+      sm.appendMessage({
+        role: "assistant",
+        content: [
+          { type: "text", text: "running" },
+          { type: "toolCall", id: "call-1", name: "exec", arguments: { cmd: "ls" } },
+        ],
+        api: "messages", provider: "anthropic", model: "test-model",
+        usage: {
+          input: 100, output: 50, cacheRead: 10, cacheWrite: 5, totalTokens: 165,
+          cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 },
+        },
+        stopReason: "toolUse",
+        timestamp: 1_700_000_001_000,
+      } as any);
+      sm.appendMessage({
+        role: "toolResult", toolCallId: "call-1", toolName: "exec",
+        content: [{ type: "text", text: "ok" }], isError: false,
+        timestamp: 1_700_000_002_000,
+      } as any);
+      sm.appendMessage({
+        role: "assistant",
+        content: [{ type: "text", text: "done" }],
+        api: "messages", provider: "anthropic", model: "test-model",
+        usage: {
+          input: 200, output: 30, cacheRead: 0, cacheWrite: 0, totalTokens: 230,
+          cost: { input: 0.0005, output: 0.0005, cacheRead: 0, cacheWrite: 0, total: 0.001 },
+        },
+        stopReason: "stop",
+        timestamp: 1_700_000_003_000,
+      } as any);
+      return "seeded";
+    });
+    expect(outcome.ok).toBe(true);
+
+    const stats = mgr.getSessionStats(key);
+    expect(stats).toBeDefined();
+    // pi sessions carry role "toolResult" and content type "toolCall" — the
+    // Anthropic wire names ("tool", "tool_use") never appear in SDK-written
+    // JSONL, so counting only those names reports 0 forever.
+    expect(stats!.toolCalls).toBe(1);
+    expect(stats!.toolResults).toBe(1);
+    expect(stats!.userMessages).toBe(1);
+    expect(stats!.assistantMessages).toBe(2);
+    expect(stats!.messageCount).toBe(3);
+    expect(stats!.tokens).toEqual({ input: 300, output: 80, cacheRead: 10, cacheWrite: 5, total: 395 });
+    expect(stats!.cost).toBeCloseTo(0.004, 10);
+  });
+
+  it("still counts legacy Anthropic-named entries preserved in older session files", async () => {
+    const mgr = makeManager();
+    const key = makeKey();
+
+    const outcome = await mgr.withSession(key, async (sm) => {
+      sm.appendMessage({ role: "user", content: "legacy", timestamp: 1_700_000_000_000 } as any);
+      sm.appendMessage({
+        role: "assistant",
+        content: [{ type: "tool_use", id: "legacy-1", name: "exec", input: { cmd: "ls" } }],
+        api: "messages", provider: "anthropic", model: "test-model",
+        usage: {
+          input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1_700_000_001_000,
+      } as any);
+      sm.appendMessage({
+        role: "tool", toolCallId: "legacy-1",
+        content: [{ type: "text", text: "ok" }],
+        timestamp: 1_700_000_002_000,
+      } as any);
+      return "seeded";
+    });
+    expect(outcome.ok).toBe(true);
+
+    const stats = mgr.getSessionStats(key);
+    expect(stats).toBeDefined();
+    expect(stats!.toolCalls).toBe(1);
+    expect(stats!.toolResults).toBe(1);
+  });
+});
