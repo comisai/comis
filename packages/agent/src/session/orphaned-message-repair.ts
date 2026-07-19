@@ -37,6 +37,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { systemNowMs } from "@comis/core";
 import { CONTINUATION_USER_MESSAGE } from "./synthetic-user-messages.js";
+import { getSessionFileEntries, rewriteSessionFile } from "./session-manager-internals.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -431,15 +432,14 @@ export interface ScrubResult {
  * Best-effort: silently no-ops if the session manager shape is unexpected.
  */
 export function scrubPoisonedThinkingBlocks(sessionManager: SessionManager): ScrubResult {
-  /* eslint-disable @typescript-eslint/no-explicit-any -- SessionManager internals */
-  const sm = sessionManager as any;
-  const fileEntries = sm?.fileEntries;
-  if (!Array.isArray(fileEntries)) return { scrubbed: false, blocksRemoved: 0 };
+  /* eslint-disable @typescript-eslint/no-explicit-any -- persisted-entry payloads are untyped JSONL shapes */
+  const fileEntries = getSessionFileEntries(sessionManager);
+  if (!fileEntries) return { scrubbed: false, blocksRemoved: 0 };
 
   let blocksRemoved = 0;
   for (const entry of fileEntries) {
     if (!entry || entry.type !== "message") continue;
-    const msg = entry.message;
+    const msg = entry.message as any;
     if (!msg || msg.role !== "assistant") continue;
     const content = msg.content;
     if (!Array.isArray(content)) continue;
@@ -460,8 +460,8 @@ export function scrubPoisonedThinkingBlocks(sessionManager: SessionManager): Scr
     }
   }
 
-  if (blocksRemoved > 0 && typeof sm._rewriteFile === "function") {
-    sm._rewriteFile();
+  if (blocksRemoved > 0) {
+    rewriteSessionFile(sessionManager);
   }
   return { scrubbed: blocksRemoved > 0, blocksRemoved };
   /* eslint-enable @typescript-eslint/no-explicit-any */

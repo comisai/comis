@@ -14,6 +14,7 @@
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import type { BuiltinProvider } from "@earendil-works/pi-ai/compat";
+import { clampThinkingLevel } from "@earendil-works/pi-ai";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ComisCredentialStore } from "./auth-storage-adapter.js";
@@ -433,12 +434,17 @@ export function registerCustomProviders(
  * @param registry - ModelRegistry to search
  * @param config - Agent model configuration (provider + model ID)
  * @param allowlist - Optional model allowlist for enforcement
+ * @param providerAliases - Optional custom-provider alias map
+ * @param requestedThinkingLevel - Desired thinking level; clamped to the
+ *   resolved model's capability (defaults to "medium", which non-reasoning
+ *   models clamp to "off")
  */
 export async function resolveInitialModel(
   registry: ModelRegistry,
   config: { provider: string; model: string },
   allowlist?: ModelAllowlist,
   providerAliases?: Map<string, string>,
+  requestedThinkingLevel?: ThinkingLevel,
 ): Promise<InitialModelResult> {
   let model = registry.find(config.provider, config.model);
 
@@ -485,7 +491,10 @@ export async function resolveInitialModel(
 
   return {
     model,
-    thinkingLevel: model.reasoning ? "medium" : "off",
+    // SDK clamp: pass-through when the model supports the requested level,
+    // nearest supported tier otherwise (xhigh/max are per-model opt-ins),
+    // "off" on non-reasoning models. Default request stays "medium".
+    thinkingLevel: clampThinkingLevel(model, requestedThinkingLevel ?? "medium"),
     fallbackMessage: undefined,
   };
 }

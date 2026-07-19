@@ -729,27 +729,30 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
                   totalCost += cost.total ?? 0;
                 }
               }
-              // Count tool_use content blocks within assistant messages.
-              // The content array is typed `unknown`, so individual blocks
-              // can legitimately be null, undefined, or a primitive (string
-              // content blocks exist in some pi-coding-agent versions).
-              // Guard with object check before reading `.type` to prevent
-              // a TypeError that would be swallowed by the outer catch
-              // (turning a parse hiccup into a silent "no session" result).
+              // Count tool-invocation content blocks within assistant
+              // messages. pi-written sessions carry type "toolCall" (the
+              // SDK's own getSessionStats counts exactly this); "tool_use"
+              // is accepted for entries preserved from Anthropic-wire-format
+              // files. The content array is typed `unknown`, so individual
+              // blocks can legitimately be null, undefined, or a primitive
+              // (string content blocks exist in some pi-coding-agent
+              // versions). Guard with object check before reading `.type` to
+              // prevent a TypeError that would be swallowed by the outer
+              // catch (turning a parse hiccup into a silent "no session"
+              // result).
               if (Array.isArray(msg.message.content)) {
                 for (const block of msg.message.content) {
-                  if (
-                    block !== null &&
-                    typeof block === "object" &&
-                    (block as { type?: string }).type === "tool_use"
-                  ) {
+                  if (block === null || typeof block !== "object") continue;
+                  const blockType = (block as { type?: string }).type;
+                  if (blockType === "toolCall" || blockType === "tool_use") {
                     toolCalls++;
                   }
                 }
               }
             }
-            // Count tool result messages (role === "tool")
-            if (msg.message?.role === "tool") toolResults++;
+            // Count tool result messages: role "toolResult" in pi-written
+            // sessions, "tool" in preserved Anthropic-wire-format entries.
+            if (msg.message?.role === "toolResult" || msg.message?.role === "tool") toolResults++;
           }
         }
 

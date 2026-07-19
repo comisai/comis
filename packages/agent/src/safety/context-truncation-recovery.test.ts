@@ -27,8 +27,22 @@ describe("context-truncation-recovery", () => {
       expect(isContextOverflowError("too many tokens in request")).toBe(true);
     });
 
-    it("detects 'request too large' phrasing", () => {
-      expect(isContextOverflowError(new Error("request too large"))).toBe(true);
+    it("detects Anthropic's request_too_large wire type (HTTP 413 byte-size overflow)", () => {
+      expect(isContextOverflowError(new Error("413 request_too_large: Request exceeds the maximum size"))).toBe(true);
+    });
+
+    it("does NOT flag 'Request too large … tokens per min (TPM)' — OpenAI 429 throttling, not overflow", () => {
+      // OpenAI formats TPM rate-limit rejections as "Request too large for
+      // <model> … on tokens per min (TPM) …". Truncating the conversation on a
+      // transient throttle would silently destroy context; only the
+      // underscore wire type request_too_large is a real overflow signal.
+      expect(
+        isContextOverflowError(
+          new Error(
+            "Request too large for gpt-4o on tokens per min (TPM): Limit 30000, Requested 40000.",
+          ),
+        ),
+      ).toBe(false);
     });
 
     it("detects API error object shape", () => {
@@ -51,7 +65,7 @@ describe("context-truncation-recovery", () => {
 
     it("detects Error with cause", () => {
       const err = new Error("request failed");
-      (err as Error).cause = new Error("exceeds token limit");
+      (err as Error).cause = new Error("prompt is too long: 250000 tokens > 200000 maximum");
       expect(isContextOverflowError(err)).toBe(true);
     });
 
@@ -73,6 +87,66 @@ describe("context-truncation-recovery", () => {
     it("matches overflow patterns case-insensitively across upper-case error messages", () => {
       expect(isContextOverflowError("CONTEXT_LENGTH_EXCEEDED")).toBe(true);
       expect(isContextOverflowError(new Error("PROMPT IS TOO LONG"))).toBe(true);
+    });
+
+    // -------------------------------------------------------------------------
+    // SDK detector adoption: provider catalog + non-overflow exclusions.
+    // The detection axis rides the pi SDK's isContextOverflow (per-provider
+    // patterns plus throttling/rate-limit exclusions); only the error-shape
+    // candidate extraction stays Comis-owned.
+    // -------------------------------------------------------------------------
+
+    describe("SDK detector adoption", () => {
+      it("does NOT flag Bedrock throttling that mentions tokens", () => {
+        // Bedrock formats throttling as "Throttling error: Too many tokens,
+        // please wait before trying again." — matching it as overflow would
+        // truncate the conversation on a transient, retryable condition.
+        expect(
+          isContextOverflowError(
+            new Error("Throttling error: Too many tokens, please wait before trying again."),
+          ),
+        ).toBe(false);
+      });
+
+      it("does NOT flag rate-limit errors that mention tokens", () => {
+        expect(
+          isContextOverflowError("rate limit reached: too many tokens per minute for this org"),
+        ).toBe(false);
+      });
+
+      it("detects Together AI 'input … longer than the model's context length' phrasing", () => {
+        expect(
+          isContextOverflowError(
+            new Error(
+              "The input (265330 tokens) is longer than the model's context length (262144 tokens).",
+            ),
+          ),
+        ).toBe(true);
+      });
+
+      it("detects Groq 'reduce the length of the messages' phrasing", () => {
+        expect(
+          isContextOverflowError(new Error("Please reduce the length of the messages or completion.")),
+        ).toBe(true);
+      });
+
+      it("detects LM Studio 'greater than the context length' phrasing", () => {
+        expect(
+          isContextOverflowError(
+            "tokens to keep from the initial prompt is greater than the context length",
+          ),
+        ).toBe(true);
+      });
+
+      it("detects Google Gemini input-token-count phrasing", () => {
+        expect(
+          isContextOverflowError(
+            new Error(
+              "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)",
+            ),
+          ),
+        ).toBe(true);
+      });
     });
   });
 

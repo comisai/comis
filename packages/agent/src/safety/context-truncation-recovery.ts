@@ -10,6 +10,8 @@
  * @module
  */
 
+import { isContextOverflow } from "@earendil-works/pi-ai";
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -27,25 +29,46 @@ export interface ContextTruncationResult {
 // Error detection
 // ---------------------------------------------------------------------------
 
-/** Patterns that indicate a context-length overflow error. */
-const OVERFLOW_PATTERNS = [
-  /context.length.exceeded/i,
-  /prompt.is.too.long/i,
-  /maximum.context.length/i,
-  /token.limit/i,
-  /max.tokens/i,
-  /too.many.tokens/i,
-  /request.too.large/i,
-  /content.too.large/i,
-  /input.too.long/i,
-  /exceeds.*(?:token|context|length|limit)/i,
-];
+/**
+ * Zeroed usage block for the synthetic assistant-error message handed to the
+ * SDK detector. Without a contextWindow argument the detector never reads it;
+ * it exists only to satisfy the message shape.
+ */
+const ZERO_USAGE = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+/**
+ * Run one candidate error string through the SDK's overflow detector.
+ *
+ * The SDK detector operates on assistant messages, so the candidate is
+ * wrapped as a synthetic error-stop message. This inherits the SDK's full
+ * per-provider pattern catalog AND its non-overflow exclusions (throttling /
+ * rate-limit messages that mention tokens), which a local regex list would
+ * have to chase release-over-release.
+ */
+function sdkDetectsOverflow(text: string): boolean {
+  return isContextOverflow({
+    role: "assistant",
+    content: [],
+    stopReason: "error",
+    errorMessage: text,
+    usage: ZERO_USAGE,
+  } as unknown as Parameters<typeof isContextOverflow>[0]);
+}
 
 /**
  * Check whether an error represents a context-length overflow.
  *
  * Inspects error.message, String(error), and common API error shapes
  * (error.error?.type, error.status === 400 with overflow message).
+ * Candidate extraction is Comis-owned; the per-candidate detection axis is
+ * the SDK's `isContextOverflow` (patterns + non-overflow exclusions).
  *
  * @param error - The error to check (string, Error, or API error object)
  * @returns true if the error indicates context overflow
@@ -81,17 +104,22 @@ export function isContextOverflowError(error: unknown): boolean {
       if (typeof inner.message === "string") candidates.push(inner.message);
     }
 
-    // String(error) as fallback
-    try {
-      const str = String(error);
-      if (str !== "[object Object]") candidates.push(str);
-    } catch {
-      // ignore
+    // String(error) as fallback — ONLY when no message-derived candidate was
+    // found. For a normal Error it merely duplicates the message with an
+    // "Error: " prefix, and that prefix defeats the SDK's line-anchored
+    // non-overflow exclusions (e.g. Bedrock's "^Throttling error:").
+    if (candidates.length === 0) {
+      try {
+        const str = String(error);
+        if (str !== "[object Object]") candidates.push(str);
+      } catch {
+        // ignore
+      }
     }
   }
 
-  // Match any candidate against overflow patterns
-  return candidates.some((text) => OVERFLOW_PATTERNS.some((re) => re.test(text)));
+  // Match any candidate through the SDK detector
+  return candidates.some((text) => sdkDetectsOverflow(text));
 }
 
 // ---------------------------------------------------------------------------

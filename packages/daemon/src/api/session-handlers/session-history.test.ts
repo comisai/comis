@@ -355,3 +355,69 @@ describe("session.history agent-origin self-scoping", () => {
     expect(r.messages.length).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// session.history stats over pi-format sessions
+// ---------------------------------------------------------------------------
+
+describe("session.history stats over pi-format session files", () => {
+  function makePiSession(): SeededSession {
+    return {
+      messages: [
+        { role: "user", content: "run it", timestamp: 1_700_000_000_000 },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "running the tool" },
+            { type: "toolCall", id: "call-1", name: "exec", arguments: { cmd: "ls" } },
+          ],
+          usage: {
+            input: 100, output: 50, cacheRead: 0, cacheWrite: 0, totalTokens: 150,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          timestamp: 1_700_000_001_000,
+        },
+        {
+          role: "toolResult", toolCallId: "call-1",
+          content: [{ type: "text", text: "ok" }],
+          timestamp: 1_700_000_002_000,
+        },
+      ],
+      metadata: {},
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_002_000,
+    };
+  }
+
+  function makePiDeps(): SessionHandlerDeps {
+    const piSession = makePiSession();
+    return makeDeps({
+      sessionStore: {
+        listDetailed: () => [],
+        loadByFormattedKey: (key: string) => (key === SESSION_KEY ? piSession : undefined),
+        deleteByFormattedKey: () => false,
+        saveByFormattedKey: vi.fn(),
+      } as never,
+    });
+  }
+
+  it("counts pi-native toolCall blocks — sessions written by the SDK never carry tool_use", async () => {
+    const handlers = bindSessionReadHandlers(makePiDeps());
+    const r = (await handlers["session.history"]!({ session_key: SESSION_KEY })) as {
+      session: { toolCalls: number };
+    };
+    // One tool invocation: the toolCall block. The toolResult reply message
+    // is the result of the SAME invocation, not a second call.
+    expect(r.session.toolCalls).toBe(1);
+  });
+
+  it("reads pi usage keys (input/output) instead of estimating from content length", async () => {
+    const handlers = bindSessionReadHandlers(makePiDeps());
+    const r = (await handlers["session.history"]!({ session_key: SESSION_KEY })) as {
+      session: { inputTokens: number; outputTokens: number; totalTokens: number };
+    };
+    expect(r.session.inputTokens).toBe(100);
+    expect(r.session.outputTokens).toBe(50);
+    expect(r.session.totalTokens).toBe(150);
+  });
+});
