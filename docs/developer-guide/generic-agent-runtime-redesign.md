@@ -2,6 +2,8 @@
 
 Status: reviewed implementation specification. The identity/storage correctness work, canonical context and turn preparation, prompt compilation, locale resolution, and config tri-state/registration contracts are implemented. Contribution conversion, provider extraction, outcome evaluation, strategy extraction, and distribution work remain target-state requirements.
 
+The implemented slices passed the complete repository gate and a content-free production-host campaign covering canonical authority, scoped memory, locale, approval denial, durable restart, immutable configuration topology, delivery reconciliation, and clean-state restoration. The evidence is recorded in the [generic runtime staged campaign results](../../test/live/self-driving/runs/generic-runtime-staged-20260719/RESULTS-LOG.md).
+
 This document turns the [generic agent architecture](./generic-agent-architecture.md) into an executable redesign. The architecture guide remains the concise normative boundary that every production change must read. This specification defines the target contracts, package responsibilities, delivery order, tests, and removal criteria needed to make that boundary true in the runtime itself.
 
 Nothing described as proposed in this document exists merely because it is named here. Each contract must be introduced test-first, with a concrete caller, and must replace an existing responsibility rather than becoming a parallel abstraction.

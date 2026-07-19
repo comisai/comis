@@ -308,17 +308,30 @@ function durableProbe() {
   const db = new Database(`${rig.dataDir}/memory.db`, { readonly: true, fileMustExist: true });
   try {
     const rows = db.prepare(
-      "SELECT checkpoint_id, root_run_id, agent_id, status, spawn_tree, script_ref, updated_at_ms "
+      "SELECT checkpoint_id, root_run_id, tenant_id, agent_id, conversation_ref, canonical_scope, "
+      + "principal_id, status, spawn_tree, script_ref, updated_at_ms "
       + "FROM durable_run_checkpoints ORDER BY updated_at_ms DESC LIMIT 10",
     ).all();
     return {
       tableFound: true,
       checkpoints: rows.map((row) => {
         const payload = JSON.parse(row.spawn_tree);
+        const scope = JSON.parse(row.canonical_scope);
+        const endpoint = scope.partition?.endpoint;
         return {
           checkpointId: row.checkpoint_id,
           rootRunId: row.root_run_id,
+          tenantId: row.tenant_id,
           agentId: row.agent_id,
+          conversationRef: row.conversation_ref,
+          principalId: row.principal_id,
+          partitionKind: scope.partition?.kind,
+          endpoint: endpoint === undefined ? undefined : {
+            channelType: endpoint.channelType,
+            channelInstanceIdHash: sha256(endpoint.channelInstanceId),
+            conversationIdHash: sha256(endpoint.conversationId),
+            conversationKind: endpoint.conversationKind,
+          },
           status: row.status,
           workspacePolicyHash: payload.workspacePolicyHash,
           hasScriptRef: typeof row.script_ref === "string" && row.script_ref.length > 0,
@@ -350,6 +363,20 @@ function healthNamesProbe() {
   };
 }
 
+function configProbe() {
+  const modes = ["auto", "off", "on"];
+  const parsedModes = modes.map((mode) => {
+    const parsed = core.RagConfigSchema.safeParse({ rerank: { mode } });
+    return { mode, accepted: parsed.success, resolvedMode: parsed.success ? parsed.data.rerank.mode : undefined };
+  });
+  return {
+    parsedModes,
+    invalidModeRejected: !core.RagConfigSchema.safeParse({ rerank: { mode: "sometimes" } }).success,
+    removedBooleanRejected: !core.RagConfigSchema.safeParse({ rerank: { enabled: false } }).success,
+    contributionTopologyImmutable: core.isImmutableConfigPath("contributions", "instances.echo"),
+  };
+}
+
 const probes = {
   workspace: workspaceProbe,
   compiler: compilerProbe,
@@ -359,6 +386,7 @@ const probes = {
   approval: approvalProbe,
   receipts: receiptsProbe,
   durable: durableProbe,
+  config: configProbe,
   "health-names": healthNamesProbe,
 };
 

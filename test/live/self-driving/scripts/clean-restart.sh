@@ -60,6 +60,10 @@ sudo -u "$COMIS_USER" bash -c "
   # session + memory.db wipe above does NOT catch them. terminal-wake is the LOAD-BEARING one (the
   # re-fire trigger); clearing only terminal-drive leaves the wake-state to resurrect.
   rm -rf '$DATA'/terminal-drive/* '$DATA'/terminal-wake/*
+  # Graceful shutdown captures active channel lanes for replay on the next boot.
+  # A clean slate must remove that handoff after systemd has stopped the daemon,
+  # or the just-wiped session is reconstructed immediately on startup.
+  rm -f '$DATA'/restart-continuations.json
   # Optional (WIPE_CRONS=1): clear the persisted cron store so a from-scratch run inherits NO stale crons
   # from a prior (different-dist) daemon. The daemon re-registers its current cron set from config on boot.
   # ALSO wipe execution.jsonl -- the ExecutionTracker per-job run HISTORY persists there (NOT in memory.db),
