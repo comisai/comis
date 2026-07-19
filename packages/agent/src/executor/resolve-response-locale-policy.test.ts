@@ -99,4 +99,32 @@ describe("resolveResponseLocalePolicy", () => {
       "إجابة عن Docker 25 وURL",
     )).toBeUndefined();
   });
+
+  it("rejects a substantial Latin prose preamble hidden by a longer Arabic tail", () => {
+    const finding = evaluateResponseLocale(
+      { locale: "ar", source: "request", enforceLocale: true },
+      "I'm here for fleet management only, so I can't answer general questions like that — even in one sentence.\n\n"
+        + "بدلاً من ذلك يمكنني عرض مواقع المركبات أو التحقق من حالة التنبيهات النشطة.",
+    );
+
+    expect(finding).toEqual(expect.objectContaining({
+      kind: "locale_script_mismatch",
+      expectedScript: "Arab",
+      actualScript: "Latn",
+    }));
+  });
+
+  it("rejects a Hebrew prose preamble hidden by a longer Arabic tail", () => {
+    const finding = evaluateResponseLocale(
+      { locale: "ar", source: "request", enforceLocale: true },
+      "זהו סירוב שנכתב בעברית.\n\n"
+        + "بدلاً من ذلك يمكنني عرض مواقع المركبات أو التحقق من حالة التنبيهات النشطة في أسطولك.",
+    );
+
+    expect(finding).toEqual(expect.objectContaining({
+      kind: "locale_script_mismatch",
+      expectedScript: "Arab",
+      actualScript: "Hebr",
+    }));
+  });
 });

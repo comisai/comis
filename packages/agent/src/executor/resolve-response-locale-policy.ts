@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
+  classifyCodepoint,
   dominantScript,
   scriptShares,
   type ResponseLocalePolicy,
@@ -110,6 +111,56 @@ const isoScriptByClass: Readonly<Record<ScriptClass, string>> = {
   other: "Zyyy",
 };
 
+const FOREIGN_SCRIPT_MIN_SHARE = 0.15;
+const FOREIGN_SCRIPT_MIN_UNITS = 8;
+const LATIN_PROSE_MIN_SHARE = 0.2;
+const LATIN_PROSE_MIN_WORDS = 4;
+const PROTECTED_RESPONSE_SPANS = /```[\s\S]*?```|`[^`\n]+`|\[[^\]\n]*\]\([^)\n]+\)|https?:\/\/\S+|www\.\S+/giu;
+const LATIN_WORD = /\b[A-Za-z][A-Za-z'’]*\b/g;
+
+function scriptUnits(text: string, scriptClass: ScriptClass): number {
+  let units = 0;
+  for (const character of text) {
+    if (classifyCodepoint(character.codePointAt(0) ?? 0) === scriptClass) {
+      units += character.length;
+    }
+  }
+  return units;
+}
+
+/**
+ * Find substantial wrong-script prose hidden behind a longer matching-script
+ * tail. Protected code, links, URLs, acronyms, and short identifier clusters
+ * remain valid mixed-script content.
+ */
+function substantialForeignScript(
+  response: string,
+  expectedClass: ScriptClass,
+): ScriptClass | undefined {
+  const proseCandidate = response.replace(PROTECTED_RESPONSE_SPANS, " ");
+  const shares = scriptShares(proseCandidate);
+  for (const [scriptClass, share] of shares) {
+    if (
+      scriptClass !== expectedClass &&
+      scriptClass !== "latin" &&
+      scriptClass !== "other" &&
+      share >= FOREIGN_SCRIPT_MIN_SHARE &&
+      scriptUnits(proseCandidate, scriptClass) >= FOREIGN_SCRIPT_MIN_UNITS
+    ) {
+      return scriptClass;
+    }
+  }
+  if (expectedClass === "latin" || (shares.get("latin") ?? 0) < LATIN_PROSE_MIN_SHARE) {
+    return undefined;
+  }
+  const latinWords = proseCandidate.match(LATIN_WORD) ?? [];
+  const proseWordCount = latinWords.filter((word) => {
+    if (word.length < 2) return false;
+    return word !== word.toUpperCase() || word.includes("'") || word.includes("’");
+  }).length;
+  return proseWordCount >= LATIN_PROSE_MIN_WORDS ? "latin" : undefined;
+}
+
 function scriptLocaleFromRequest(text: string | undefined): string | undefined {
   if (text === undefined || scriptShares(text).size === 0) return undefined;
   const scriptClass = dominantScript(text);
@@ -129,14 +180,18 @@ export function evaluateResponseLocale(
   if (!localeResult.ok || localeResult.value.script === undefined) return undefined;
   const expectedClass = scriptClassForIsoScript(localeResult.value.script);
   const actualClass = dominantScript(response);
-  if (expectedClass === undefined || actualClass === "other" || expectedClass === actualClass) {
+  if (expectedClass === undefined || actualClass === "other") {
     return undefined;
   }
+  const mismatchedClass = expectedClass === actualClass
+    ? substantialForeignScript(response, expectedClass)
+    : actualClass;
+  if (mismatchedClass === undefined) return undefined;
   return {
     kind: "locale_script_mismatch",
     locale: policy.locale,
     expectedScript: localeResult.value.script,
-    actualScript: isoScriptByClass[actualClass],
+    actualScript: isoScriptByClass[mismatchedClass],
     responseChars: response.length,
   };
 }
