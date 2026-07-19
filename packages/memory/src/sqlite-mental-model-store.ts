@@ -267,12 +267,17 @@ export function createSqliteMentalModelStore(
       "ON CONFLICT(id) DO UPDATE SET " +
       "description = excluded.description, body = excluded.body, " +
       "structured_body = excluded.structured_body, required_tools = excluded.required_tools, " +
-      "params_schema = excluded.params_schema, proof_count = excluded.proof_count, " +
+      "params_schema = excluded.params_schema, " +
+      "proof_count = CASE WHEN mental_models.evicted_at IS NOT NULL " +
+      "THEN excluded.proof_count ELSE MAX(mental_models.proof_count, excluded.proof_count) END, " +
       "confidence = excluded.confidence, strength = excluded.strength, " +
       "source_traj_ids = excluded.source_traj_ids, mutating = excluded.mutating, " +
-      // A re-admit of a previously-evicted doc resurrects it (clears evicted_at,
-      // resets state to candidate) — the replay-stable path.
-      "state = 'candidate', evicted_at = NULL, updated_at = excluded.created_at",
+      // Preserve the monotonic lifecycle of a live doc: a later reflection may
+      // refresh its guidance but cannot erase accumulated proof or reset active/stale
+      // state. Only a previously-evicted doc is resurrected as a fresh candidate.
+      "state = CASE WHEN mental_models.evicted_at IS NOT NULL " +
+      "THEN 'candidate' ELSE mental_models.state END, " +
+      "evicted_at = NULL, updated_at = excluded.created_at",
   );
 
   // Scoped reads — the `tenant_id = ? AND agent_id = ?` filter is the

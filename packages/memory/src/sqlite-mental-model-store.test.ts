@@ -720,6 +720,24 @@ describe("createSqliteMentalModelStore — (tenant, agent) isolation + lifecycle
     const l = await store.list(SCOPE_A);
     if (l.ok) expect(l.value.find((s) => s.name === "evict-me")).toBeUndefined();
   });
+
+  it("re-admitting an evicted skill resurrects it as a fresh candidate", async () => {
+    const admitted = await store.admit(makeInput({ name: "resurrect-me", proofCount: 2 }), SCOPE_A);
+    if (!admitted.ok) return;
+    await store.evict(admitted.value.id, { ...SCOPE_A, now: 5_000 });
+
+    await store.admit(makeInput({ name: "resurrect-me", proofCount: 1 }), SCOPE_A);
+
+    const current = await store.get("resurrect-me", SCOPE_A);
+    expect(current.ok).toBe(true);
+    if (!current.ok) return;
+    expect(current.value?.state).toBe("candidate");
+    expect(current.value?.proofCount).toBe(1);
+    const raw = db
+      .prepare("SELECT evicted_at FROM mental_models WHERE tenant_id = ? AND agent_id = ? AND name = ?")
+      .get(TENANT_A, AGENT_A, "resurrect-me") as { evicted_at: number | null };
+    expect(raw.evicted_at).toBeNull();
+  });
 });
 
 // ===========================================================================
