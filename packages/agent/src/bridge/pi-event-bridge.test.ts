@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ok, err } from "@comis/shared";
-import { formatSessionKey, registerToolMetadata } from "@comis/core";
+import { formatSessionKey, registerToolMetadata, wrapExternalContent } from "@comis/core";
 import type { ModelOperationType, ErrorKind } from "@comis/core";
 import { BudgetError, checkSpendCeiling } from "../budget/budget-guard.js";
 import type { SpendGateOutcome } from "../budget/budget-guard.js";
@@ -793,6 +793,27 @@ describe("createPiEventBridge", () => {
       expect(endEmit).toBeDefined();
       expect(endEmit![1].success).toBe(false);
       expect(endEmit![1].errorKind).toBe("timeout");
+    });
+
+    it("MCP argument rejection is validation with a healthy transport", () => {
+      const { listener } = createPiEventBridge(deps);
+      const result = {
+        message: wrapExternalContent('MCP error -32602: Input validation error: "too_big"', {
+          source: "mcp_tool",
+        }),
+      };
+
+      listener(makeToolExecutionEndEvent("mcp__example--lookup", "tc-validation", true, result) as any);
+
+      const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+      const endEmit = calls.find(
+        (c) => c[0] === "tool:executed" && c[1].toolName === "mcp__example--lookup",
+      );
+      expect(endEmit).toBeDefined();
+      expect(endEmit![1].success).toBe(false);
+      expect(endEmit![1].errorKind).toBe("validation");
+      expect(endEmit![1].mcpErrorType).toBe("validation");
+      expect(endEmit![1].transportOk).toBe(true);
     });
 
     it("emits tool:executed with success=false + errorKind=internal for a generic non-zero exitCode (the command's OWN failure, not a dependency)", () => {

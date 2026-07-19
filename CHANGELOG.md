@@ -17,6 +17,7 @@ This file records user-visible changes to Comis. Detailed release history is ava
 
 ### Fixed
 
+- MCP schema and JSON-RPC invalid-parameter rejections are now reported as caller-correctable validation failures with a healthy transport, and their external-content envelope no longer causes the retry breaker to mark the server unavailable.
 - New and recreated workspaces now enter first-run onboarding, and the active bootstrap state reaches prompt assembly instead of being omitted as an unchanged operator placeholder.
 - Background tasks listed for an agent can now be retrieved and cancelled using their production authority shape; lookup and terminal task failures are reported as tool errors, and promoted calls explicitly require their result to be read before a dependent answer is finalized.
 - Provider status, CLI setup guidance, token-limit labels, and degraded-response instructions now reflect the runtime behavior.

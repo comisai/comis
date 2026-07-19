@@ -912,16 +912,17 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           let matchedRule: string | undefined;
           let matchedToken: string | undefined;
           let httpStatus: number | undefined;
-          // transportOk tracks the SDK/transport signal itself: false ONLY when
-          // the SDK reported isError (the call/transport failed). An exit-code,
-          // detector, or MCP-content failure means the call RETURNED and the
-          // content was a failure → transportOk stays true. This is the
+          // transportOk tracks whether the call reached the tool boundary. An
+          // exit-code, detector, MCP argument-validation, or MCP-content failure
+          // means the call RETURNED and the content was a failure, so transportOk
+          // is true. SDK isError starts pessimistically false; the MCP classifier
+          // corrects it to true for schema/argument rejections. This is the
           // self-evident-misclassification tell: a transportOk:true failure
           // with classifiedFailureBy:'failure_detector' means "we matched a
           // structured field, the transport was fine". (Derived from
           // the flip source, NOT the refined classifiedFailureBy label, so the
           // MCP-refinement of an SDK-isError failure stays transportOk:false.)
-          const transportOk = !endEvent.isError;
+          let transportOk = !endEvent.isError;
           // :591 — SDK isError flip (the transport/call itself errored).
           if (!toolSuccess) classifiedFailureBy = "sdk_iserror";
           // Tool metadata, read ONCE — gates the exit-code heuristic AND the failureDetector hook.
@@ -1086,9 +1087,14 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 const mcpKind = classifyMcpErrorType(errorText);
                 toolErrorKind = mcpKind === "timeout"
                   ? "timeout"
+                  : mcpKind === "validation"
+                    ? "validation"
                   : (mcpKind === "connection" || mcpKind === "transport")
                     ? "dependency"
                     : classifyToolError(endEvent.toolName, errorText);
+                if (mcpKind === "validation") {
+                  transportOk = true;
+                }
                 // Classifier precedence: the MCP classifier refines the sdk_iserror
                 // flip when this is an MCP-namespaced tool. The flip source
                 // is primary; the classifier that produced the errorKind wins
@@ -1161,16 +1167,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 // Failure-classification provenance — assigned at the mutation points above.
                 // matchedToken is untrusted tool output → sanitize+bound it
                 // exactly like errorText; the rest are enum-like/digest/number.
-                // transportOk = !endEvent.isError — it reflects whether the
-                // transport DELIVERED a response, not which classifier labeled
-                // the failure. It is false ONLY when the SDK reported a
-                // transport/spawn failure (endEvent.isError), and STAYS false
-                // even when the MCP classifier later refines that isError
-                // failure (relabeling classifiedFailureBy → "mcp_classifier").
-                // Do NOT rewrite as (classifiedFailureBy !== "sdk_iserror") —
-                // that flips the MCP-refined case to transportOk:true and reopens
-                // the MCP-transport-failure misclassification (see the
-                // const above).
+                // transportOk reflects whether the call reached the tool
+                // boundary. MCP schema/argument rejection is a returned
+                // tool-level response even when the SDK exposes it through
+                // isError; timeout/connection/transport failures remain false.
                 ...(classifiedFailureBy !== undefined && { classifiedFailureBy }),
                 transportOk,
                 ...(httpStatus !== undefined && { httpStatus }),

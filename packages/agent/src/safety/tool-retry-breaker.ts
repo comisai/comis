@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+import { unwrapExternalContent } from "@comis/core";
+import { isMcpValidationError } from "../bridge/bridge-event-handlers.js";
+
 /**
  * Tool retry circuit breaker: per-tool-signature consecutive failure tracking.
  *
@@ -138,8 +141,8 @@ export function extractErrorTag(errorText: string): string {
   const bracketMatch = /\[(\w+)\]/.exec(unwrapped);
   if (bracketMatch) return bracketMatch[1]!;
 
-  // 2. "Validation failed" prefix
-  if (/^validation failed/i.test(unwrapped)) return "validation_failed";
+  // 2. Caller-correctable schema/argument validation failures.
+  if (isMcpValidationError(unwrapped)) return "validation_failed";
 
   // 3. Fallback: normalize first 80 chars of the unwrapped text
   return unwrapped
@@ -156,6 +159,11 @@ export function extractErrorTag(errorText: string): string {
  * message (which starts with prose then embeds the next envelope in quotes).
  */
 function peelEnvelope(text: string): string {
+  const external = unwrapExternalContent(text);
+  if (external !== null) {
+    return external.content;
+  }
+
   // Shape A: raw JSON envelope — `{"content":[{"type":"text","text":"..."}], ...}`
   // Use prefix sniff to avoid JSON.parse cost on non-envelope errors.
   const trimmed = text.trimStart();

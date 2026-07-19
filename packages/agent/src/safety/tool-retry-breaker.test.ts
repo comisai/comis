@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
+import { wrapExternalContent } from "@comis/core";
 import { createToolRetryBreaker, extractErrorTag, buildBlockReason } from "./tool-retry-breaker.js";
 import type { ToolRetryBreaker } from "./tool-retry-breaker.js";
 
@@ -331,6 +332,17 @@ describe("tool retry breaker", () => {
 
     it("extracts Validation failed prefix", () => {
       expect(extractErrorTag("Validation failed: missing field")).toBe("validation_failed");
+    });
+
+    it("extracts validation from the real external-content envelope", () => {
+      const wrapped = wrapExternalContent('Validation failed for tool "lookup": missing required property', {
+        source: "mcp_tool",
+      });
+      expect(extractErrorTag(wrapped)).toBe("validation_failed");
+      const invalidParams = wrapExternalContent('MCP error -32602: Input validation error: "too_big"', {
+        source: "mcp_tool",
+      });
+      expect(extractErrorTag(invalidParams)).toBe("validation_failed");
     });
 
     it("fallback normalizes first 80 chars", () => {
@@ -674,6 +686,23 @@ describe("tool retry breaker", () => {
       }
 
       expect(breaker.getBlockedTools()).toEqual([]);
+    });
+
+    it("does not open for externally wrapped MCP validation failures", () => {
+      const breaker = createToolRetryBreaker(cfg);
+      const missing = wrapExternalContent('Validation failed for tool "lookup": missing required property', {
+        source: "mcp_tool",
+      });
+      const tooLarge = wrapExternalContent('MCP error -32602: Input validation error: "too_big"', {
+        source: "mcp_tool",
+      });
+
+      breaker.recordResult("mcp__example--lookup", { query: "first" }, false, missing);
+      const transition = breaker.recordResult("mcp__example--lookup", { query: "second" }, false, tooLarge);
+
+      expect(transition).toBeUndefined();
+      expect(breaker.getBlockedTools()).toEqual([]);
+      expect(breaker.beforeToolCall("mcp__example--lookup", { query: "third" }).block).toBe(false);
     });
 
     it("still counts genuine tool failures (permission_denied, not_found)", () => {
