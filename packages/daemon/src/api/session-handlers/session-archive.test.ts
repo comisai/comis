@@ -470,6 +470,62 @@ describe("session.reset_conversation handler", () => {
     expect(sessionStore.saveByFormattedKey).toHaveBeenCalledTimes(1);
   });
 
+  it("resets a live LCD conversation when the control-plane session store has no row", async () => {
+    const conversationScope: ConversationScope = {
+      tenantId: "tenant1",
+      agentId: "default",
+      partition: { kind: "principal", principalId: "user1" },
+    };
+    const conversationRefResult = createConversationRef(conversationScope);
+    if (!conversationRefResult.ok) throw conversationRefResult.error;
+    const conversationRef = conversationRefResult.value;
+    const lcdStore = makeLcdStore(2);
+    const sessionStore = {
+      ...makeSessionStore(),
+      loadByRef: vi.fn().mockReturnValue(ok(undefined)),
+      save: vi.fn(),
+    };
+    const destroyRuntimeSession = vi.fn().mockResolvedValue(true);
+    const contextBrowse = {
+      listConversations: vi.fn().mockReturnValue({
+        conversations: [{
+          conversationRef,
+          tenantId: "tenant1",
+          agentId: "default",
+          sessionKey: DISPLAY_SESSION_KEY,
+          title: null,
+          createdAt: 1000,
+          updatedAt: 2000,
+          messageCount: 2,
+        }],
+        total: 1,
+      }),
+    };
+    const deps = makeDeps({
+      lcdStore,
+      sessionStore,
+      contextBrowse,
+      destroyRuntimeSession,
+    } as unknown as Partial<SessionHandlerDeps>);
+    const handlers = bindSessionArchiveHandlersRaw(deps);
+
+    const result = (await handlers["session.reset_conversation"]!({
+      tenant_id: "tenant1",
+      agent_id: "default",
+      conversation_ref: conversationRef,
+      _trustLevel: "admin",
+    })) as { lcdRowsDeleted: number; sessionMessagesCleared: number; runtimeSessionDestroyed?: boolean };
+
+    expect(result.lcdRowsDeleted).toBe(2);
+    expect(result.sessionMessagesCleared).toBe(0);
+    expect(result.runtimeSessionDestroyed).toBe(true);
+    expect(sessionStore.save).not.toHaveBeenCalled();
+    expect(destroyRuntimeSession).toHaveBeenCalledWith(
+      { tenantId: "tenant1", agentId: "default" },
+      expect.objectContaining({ tenantId: "tenant1", agentId: "default" }),
+    );
+  });
+
   it("H7: --memory but memoryPort ABSENT → graceful-degrade WARN, memoriesDeleted OMITTED", async () => {
     // When memoryPort is NOT wired into deps (deployment doesn't support
     // it), --memory must NOT throw — it logs a precondition WARN and leaves

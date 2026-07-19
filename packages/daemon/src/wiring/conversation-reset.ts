@@ -34,7 +34,7 @@
  * @module
  */
 
-import type { ContextStorePort, ConversationScope, SessionKey, SessionStorePort } from "@comis/core";
+import type { ContextStorePort, ConversationScope, SessionKey, SessionQueryScope, SessionStorePort } from "@comis/core";
 import { createConversationRef, formatSessionKey } from "@comis/core";
 
 /** Minimal logger surface (info/warn/debug). */
@@ -75,7 +75,7 @@ export interface ConversationReset {
    * Used by `session.reset_conversation` (which performs L1+L2 itself and
    * reports per-layer counts).
    */
-  destroyRuntimeSession(scope: ConversationScope, key: SessionKey): Promise<boolean>;
+  destroyRuntimeSession(scope: SessionQueryScope, key: SessionKey): Promise<boolean>;
   /**
    * L1+L2+L3: the complete three-layer forget for slash `/new` + `/reset`.
    * Accepts the SessionKey object those call sites already hold.
@@ -123,7 +123,7 @@ export function createConversationReset(deps: ConversationResetDeps): Conversati
   }
 
   return {
-    async destroyRuntimeSession(scope: ConversationScope, key: SessionKey): Promise<boolean> {
+    async destroyRuntimeSession(scope: SessionQueryScope, key: SessionKey): Promise<boolean> {
       return destroyRuntime(scope.agentId, key, formatSessionKey(key));
     },
 

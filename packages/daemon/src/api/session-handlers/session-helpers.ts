@@ -3,8 +3,8 @@
  * Shared session-handler helpers.
  *
  * Explicit-authority session helpers shared across the session handler
- * bundles. Session discovery and reads use SessionStorePort only; filesystem
- * transcripts are runtime artifacts, not a parallel control-plane index.
+ * bundles. Runtime lifecycle handlers may also consult the authority-scoped LCD
+ * conversation index; filesystem transcripts are not a control-plane index.
  *
  * @module
  */
@@ -34,4 +34,26 @@ export function loadAuthorizedSession(
   const loaded = deps.sessionStore.loadByRef(scope, conversationRef);
   if (!loaded.ok) throw loaded.error;
   return loaded.value;
+}
+
+const LCD_CONVERSATION_PAGE_SIZE = 200;
+
+/** Find one LCD conversation without widening beyond the explicit tenant-agent scope. */
+export function findLcdConversation(
+  deps: SessionHandlerDeps,
+  scope: import("@comis/core").SessionQueryScope,
+  conversationRef: import("@comis/core").ConversationRef,
+) {
+  if (!deps.contextBrowse) return undefined;
+  let offset = 0;
+  while (true) {
+    const page = deps.contextBrowse.listConversations(scope, {
+      limit: LCD_CONVERSATION_PAGE_SIZE,
+      offset,
+    });
+    const match = page.conversations.find((entry) => entry.conversationRef === conversationRef);
+    if (match) return match;
+    offset += page.conversations.length;
+    if (page.conversations.length === 0 || offset >= page.total) return undefined;
+  }
 }

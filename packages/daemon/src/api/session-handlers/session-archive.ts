@@ -8,12 +8,13 @@ import {
   SessionExportContract,
   SessionResetConversationContract,
   conversationScopeToSessionKey,
+  parseFormattedSessionKey,
   stripInternalFields,
   systemNowMs,
 } from "@comis/core";
 import type { ContextStoreScope } from "@comis/core";
 import type { RpcHandler } from "../types.js";
-import { IS_DEV, loadAuthorizedSession, type SessionHandlerDeps } from "./session-helpers.js";
+import { findLcdConversation, IS_DEV, loadAuthorizedSession, type SessionHandlerDeps } from "./session-helpers.js";
 import { AuthorizationError } from "../errors.js";
 import { clearSessionDeliveryMirror } from "./session-delivery-mirror.js";
 import { displaySessionKey, parseSessionAuthority } from "./session-authority.js";
@@ -210,12 +211,16 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       const params = SessionResetConversationContract.request.parse(userParams);
       const authority = parseSessionAuthority({ tenant_id: params.tenant_id, agent_id: params.agent_id, conversation_ref: params.conversation_ref });
       const sessionData = loadAuthorizedSession(deps, authority.scope, authority.conversationRef);
-      if (!sessionData) throw new Error(`Conversation not found: ${params.conversation_ref}`);
-      const sessionKey = displaySessionKey(sessionData);
+      const lcdConversation = sessionData
+        ? undefined
+        : findLcdConversation(deps, authority.scope, authority.conversationRef);
+      if (!sessionData && !lcdConversation) throw new Error(`Conversation not found: ${params.conversation_ref}`);
+      const sessionKey = sessionData ? displaySessionKey(sessionData) : lcdConversation!.sessionKey;
+      const runtimeSessionKey = parseFormattedSessionKey(sessionKey);
+      if (!runtimeSessionKey) throw new Error("Stored conversation session key is invalid");
 
       const startMs = systemNowMs();
 
-      // Admin callers name the exact tenant, agent, and conversation to forget.
       const resolvedAgentId = authority.scope.agentId;
       const scope: ContextStoreScope = {
         conversationRef: authority.conversationRef,
@@ -234,7 +239,6 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
         "session.reset_conversation",
       );
 
-      // Layer 1: LCD store — serialized against concurrent live ingest.
       const lcdRowsDeleted = await deps.lcdStore.runOnConversation(
         scope.conversationRef,
         () => deps.lcdStore!.deleteConversationLcd(scope),
@@ -244,9 +248,11 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       // Best-effort: if no session entry exists (e.g., dag conversation with LCD rows
       // but no live session, or pipeline session whose JSONL was already deleted),
       // skip the save and report 0.
-      const sessionMessagesCleared = sessionData.messages.length;
-      const saved = deps.sessionStore.save(sessionData.conversationScope, [], sessionData.metadata);
-      if (!saved.ok) throw saved.error;
+      const sessionMessagesCleared = sessionData?.messages.length ?? 0;
+      if (sessionData) {
+        const saved = deps.sessionStore.save(sessionData.conversationScope, [], sessionData.metadata);
+        if (!saved.ok) throw saved.error;
+      }
 
       // Clear approval cache to prevent stale approvals from auto-approving in a
       // fresh context after the reset (same pattern as session.delete + session.reset).
@@ -264,8 +270,8 @@ export function bindSessionArchiveHandlers(deps: SessionHandlerDeps): Record<str
       let runtimeSessionDestroyed = false;
       if (deps.destroyRuntimeSession) {
         runtimeSessionDestroyed = await deps.destroyRuntimeSession(
-          sessionData.conversationScope,
-          runtimeDisplayKey(sessionData.conversationScope),
+          sessionData?.conversationScope ?? authority.scope,
+          runtimeSessionKey,
         );
       } else {
         deps.logger.warn(

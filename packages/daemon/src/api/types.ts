@@ -99,6 +99,13 @@ export interface SessionsApiDeps {
    *  absent, never a silent 0 count. Same instance as MemoryApiDeps; the copy here
    *  lets session-archive.ts access it without widening to the full MemoryApiDeps slice. */
   lcdStore?: import("@comis/core").ContextStorePort;
+  /** LCD conversation metadata index used by session.reset_conversation when a live
+   *  channel turn exists only in the LCD/pi runtime and has no SessionStorePort row.
+   *  The exact tenant-agent-conversation reference remains the authorization key;
+   *  this port supplies only the corresponding display session key needed to clear
+   *  the LCD and runtime layers. Production wires the same ContextBrowsePort used by
+   *  context.conversations. */
+  contextBrowse?: import("@comis/core").ContextBrowsePort;
   /** MemoryPort for session-archive --memory reset. The concrete
    *  adapter is SqliteMemoryAdapter (which implements MemoryPort) — it is the
    *  SAME object as MemoryApiDeps.memoryAdapter, threaded onto this slice at the
@@ -119,7 +126,7 @@ export interface SessionsApiDeps {
    *  with explicit conversation and display identities. Returns true when an adapter destroy ran.
    *  Optional: absent ⇒ the handler reports `runtimeSessionDestroyed: false`
    *  and WARNs with the resurrection consequence (honest degradation). */
-  destroyRuntimeSession?: (scope: ConversationScope, key: SessionKey) => Promise<boolean>;
+  destroyRuntimeSession?: (scope: import("@comis/core").SessionQueryScope, key: SessionKey) => Promise<boolean>;
   /** Executor session-scoped state cleanup: wired at the
    *  composition root (daemon.ts) to @comis/agent's clearSessionState — the
    *  single authoritative path that drops the per-key tool-schema snapshots,
