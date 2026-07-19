@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { TypedEventBus, EventMap } from "@comis/core";
+import { CanonicalLocaleSchema, type TypedEventBus, type EventMap } from "@comis/core";
 import type { Env } from "hono";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -287,6 +287,13 @@ export function createSseEndpoint(deps: SseEndpointDeps): Hono<SseEnv> {
       return c.json({ error: "Field agentId must be a string" }, 400);
     }
     const agentId = body.agentId as string | undefined;
+    const localeResult = body.locale === undefined
+      ? undefined
+      : CanonicalLocaleSchema.safeParse(body.locale);
+    if (localeResult !== undefined && !localeResult.success) {
+      return c.json({ error: "Field locale must be a canonical BCP-47 language tag" }, 400);
+    }
+    const locale = localeResult?.data;
 
     return streamSSE(c, async (stream) => {
       let eventId = 0;
@@ -309,6 +316,7 @@ export function createSseEndpoint(deps: SseEndpointDeps): Hono<SseEnv> {
         const clientId = c.get("clientId");
         const result = await rpcAdapterDeps.executeAgent({
           message,
+          ...(locale === undefined ? {} : { locale }),
           agentId,
           clientId,
           scopes,

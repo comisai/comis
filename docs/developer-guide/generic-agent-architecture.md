@@ -48,7 +48,7 @@ Execution state such as sender trust, locale policy, selected skills, and compac
 
 `ResponseLocalePolicy` is an open, strict domain type. Explicit locale tags are canonicalized with `Intl.getCanonicalLocales`; locale is not a closed language union. Unicode script analysis may support search, token estimation, bidirectional safety, and diagnostics, but it does not coerce response language.
 
-Translation target is separate from surrounding response locale. Post-generation script mismatch creates a content-free quality finding only when locale enforcement is enabled; it does not trigger a second model call or rewrite correct mixed-script content.
+Translation target is separate from surrounding response locale. A validated request or operator locale enables post-generation script enforcement. When no locale metadata exists, a non-Latin current request may produce an open `und-<Script>` BCP-47 expectation; this constrains writing-system fidelity without guessing a human language. A mismatch creates a content-free quality finding and starts at most one tools-disabled repair turn; the repaired output is checked again before delivery. Correct mixed-script content is not rewritten. Streaming consumers receive only the finalized response while enforcement is active, so an invalid draft cannot escape before validation.
 
 Deterministic platform replies use injectable locale packs and the deployment's configured fallback locale. Core does not choose a preferred human language.
 

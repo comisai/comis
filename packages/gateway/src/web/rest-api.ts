@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import { type TypedEventBus, type EventMap, systemNowMs, systemNowDate } from "@comis/core";
+import {
+  CanonicalLocaleSchema,
+  type TypedEventBus,
+  type EventMap,
+  systemNowMs,
+  systemNowDate,
+} from "@comis/core";
 import type { Env } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -364,6 +370,13 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
 
     const agentId = typeof body.agentId === "string" ? body.agentId : undefined;
     const rawSessionKey = typeof body.sessionKey === "string" ? body.sessionKey : undefined;
+    const localeResult = body.locale === undefined
+      ? undefined
+      : CanonicalLocaleSchema.safeParse(body.locale);
+    if (localeResult !== undefined && !localeResult.success) {
+      return c.json({ error: "Field locale must be a canonical BCP-47 language tag" }, 400);
+    }
+    const locale = localeResult?.data;
 
     const sessionKey = rawSessionKey
       ? {
@@ -392,7 +405,14 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
     }
 
     try {
-      const result = await rpcAdapterDeps.executeAgent({ message, agentId, sessionKey, clientId, scopes });
+      const result = await rpcAdapterDeps.executeAgent({
+        message,
+        ...(locale === undefined ? {} : { locale }),
+        agentId,
+        sessionKey,
+        clientId,
+        scopes,
+      });
       return c.json(result);
     } catch (err) {
       deps.logger?.error({ err, hint: "Check agent executor logs for details or verify LLM provider connectivity", errorKind: "internal" as const }, "POST /chat error");

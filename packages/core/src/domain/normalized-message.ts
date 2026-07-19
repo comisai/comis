@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ok, err, type Result } from "@comis/shared";
 import { z } from "zod";
+import { CanonicalLocaleSchema } from "./response-locale-policy.js";
 
 const MAX_DATE_EPOCH_MS = 8_640_000_000_000_000;
 
@@ -98,16 +99,21 @@ export const NormalizedMessageSchema = z.strictObject({
     /**
      * Channel-agnostic metadata bag. Admits arbitrary adapter-specific keys
      * (e.g. `isButtonCallback`, `callbackData`, `telegramThreadId`) via
-     * `z.looseObject` (zod v4 passthrough equivalent). The one concrete typed
-     * field is:
+     * `z.looseObject` (zod v4 passthrough equivalent). Typed fields are:
      *
      * - `traceId?: string` — Channel-ingress trace identifier.
      *   Auto-injected by channel adapters before the handler fanout; downstream
      *   orchestration verifies it against the inherited request scope and uses
      *   it when an unscoped custom adapter needs a fallback entry boundary.
      *   Must be a valid UUID when present (z.guid validation).
+     * - `locale?: string` — canonical BCP-47 response locale supplied by a
+     *   trusted ingress adapter for this turn.
      */
-    metadata: z.looseObject({ traceId: z.guid().optional() }).default({}),
+    metadata: z.looseObject({
+      traceId: z.guid().optional(),
+      /** Canonical BCP-47 response locale resolved at the trusted ingress boundary. */
+      locale: CanonicalLocaleSchema.optional(),
+    }).default({}),
     /** Exact physical messages represented by a synthetic coalesced turn. */
     originalMessages: z.array(OriginalInboundMessageSchema).min(1).max(10_000).optional(),
   });

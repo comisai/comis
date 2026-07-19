@@ -27,7 +27,7 @@ export interface ExecutionResult {
   sessionKey: SessionKey;
   /** Content-free hash of the immutable workspace policy used for this turn. */
   workspacePolicyHash?: string;
-  /** Content-free locale quality finding; never rewrites model output. */
+  /** Content-free finding recorded when the initial model output required locale repair. */
   localeQualityFinding?: ResponseLocaleQualityFinding;
   /** PER-EXECUTION token totals (the bridge's accumulation for THIS execute()
    *  call) — scope-consistent with `cost`. For the session-cumulative total

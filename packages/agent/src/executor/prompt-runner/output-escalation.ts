@@ -31,7 +31,7 @@ import type { TurnBudgetTracker } from "../../budget/turn-budget-tracker.js";
 import type { PromptRunResult, RunPromptParams } from "./prompt-runner-types.js";
 import { processFailurePath } from "./failure-path.js";
 import { applyInteractiveSilentRecovery } from "./interactive-silent-recovery.js";
-import { evaluateResponseLocale } from "../resolve-response-locale-policy.js";
+import { applyResponseLocaleEnforcement } from "./response-locale-enforcement.js";
 
 /**
  * Compute the final PromptRunResult by running output escalation, success-
@@ -320,22 +320,7 @@ async function processSuccessPath(
     deps.logger,
   );
 
-  if (params.responseLocalePolicy !== undefined) {
-    const finding = evaluateResponseLocale(params.responseLocalePolicy, result.response);
-    if (finding !== undefined) {
-      result.localeQualityFinding = finding;
-      deps.logger.debug(
-        {
-          step: "response-locale-quality",
-          locale: finding.locale,
-          expectedScript: finding.expectedScript,
-          actualScript: finding.actualScript,
-          responseChars: finding.responseChars,
-        },
-        "Response locale quality mismatch recorded",
-      );
-    }
-  }
+  await applyResponseLocaleEnforcement(params);
 
   // Redact LLM output -- log only character count.
   // OutputGuard scans the full response for secrets immediately after.

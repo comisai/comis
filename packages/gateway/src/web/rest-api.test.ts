@@ -433,6 +433,37 @@ describe("createRestApi", () => {
       });
     });
 
+    it("passes a canonical per-turn locale to agent execution", async () => {
+      const deps = createApiDeps();
+      const api = createRestApi(deps);
+
+      const res = await api.request("/chat", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "مرحبا", locale: "ar" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(deps.rpcAdapterDeps.executeAgent).toHaveBeenCalledWith(expect.objectContaining({
+        message: "مرحبا",
+        locale: "ar",
+      }));
+    });
+
+    it("rejects a non-canonical per-turn locale before agent execution", async () => {
+      const deps = createApiDeps();
+      const api = createRestApi(deps);
+
+      const res = await api.request("/chat", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "مرحبا", locale: "AR-eg" }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
+    });
+
     it("returns 400 for missing message", async () => {
       const api = createRestApi(createApiDeps());
 

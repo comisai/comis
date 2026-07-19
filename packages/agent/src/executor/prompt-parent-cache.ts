@@ -45,6 +45,7 @@ export async function assembleParentCachePrompt(
     const responseLocalePolicy = resolveResponseLocalePolicy({
       explicitLocale: config.language ?? deps.spawnPacket?.language,
       requestLocale: typeof msg.metadata?.locale === "string" ? msg.metadata.locale : undefined,
+      requestText: msg.originalMessages?.map(message => message.text).join("\n") ?? msg.text,
     });
 
     // Independently assemble dynamic preamble (same logic as the full path)

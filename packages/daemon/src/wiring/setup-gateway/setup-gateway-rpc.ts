@@ -233,7 +233,7 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
             text: params.message,
             timestamp: receivedAt,
             attachments: [],
-            metadata: {},
+            metadata: params.locale === undefined ? {} : { locale: params.locale },
           };
           const persisted = await persistGatewayInboundMessage({
             agentId: execAgentId,

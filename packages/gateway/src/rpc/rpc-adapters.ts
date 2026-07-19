@@ -24,6 +24,8 @@ export interface RpcAdapterDeps {
   /** Execute an agent turn. Returns the response text. */
   executeAgent: (params: {
     message: string;
+    /** Canonical BCP-47 response locale for this turn. */
+    locale?: string;
     agentId?: string;
     sessionKey?: { userId: string; channelId: string; peerId: string };
     clientId?: string;

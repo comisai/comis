@@ -383,6 +383,37 @@ describe("createSseEndpoint", () => {
       });
     });
 
+    it("passes a canonical per-turn locale to streaming agent execution", async () => {
+      const deps = createSseDeps();
+      const sse = createSseEndpoint(deps);
+
+      const res = await sse.request("/api/chat/stream", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "مرحبا", locale: "ar" }),
+      });
+
+      await res.text();
+      expect(deps.rpcAdapterDeps.executeAgent).toHaveBeenCalledWith(expect.objectContaining({
+        message: "مرحبا",
+        locale: "ar",
+      }));
+    });
+
+    it("rejects a non-canonical streaming locale before agent execution", async () => {
+      const deps = createSseDeps();
+      const sse = createSseEndpoint(deps);
+
+      const res = await sse.request("/api/chat/stream", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "مرحبا", locale: "AR-eg" }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(deps.rpcAdapterDeps.executeAgent).not.toHaveBeenCalled();
+    });
+
     it("sends generic error event when agent execution fails", async () => {
       const deps = createSseDeps({
         rpcAdapterDeps: createMockRpcDeps({

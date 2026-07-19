@@ -23,12 +23,24 @@ describe("resolveResponseLocalePolicy", () => {
       locale: "fr-CA",
       source: "request",
       translationTarget: "ja-JP",
-      enforceLocale: false,
+      enforceLocale: true,
     });
   });
 
   it("returns unset for invalid or absent request hints instead of coercing script to English", () => {
     expect(resolveResponseLocalePolicy({ requestLocale: "not a locale" })).toEqual({
+      source: "unset",
+      enforceLocale: false,
+    });
+  });
+
+  it("derives an open undetermined-language script tag from the current request text", () => {
+    expect(resolveResponseLocalePolicy({ requestText: "اكتب ملخصًا قصيرًا" })).toEqual({
+      locale: "und-Arab",
+      source: "request",
+      enforceLocale: true,
+    });
+    expect(resolveResponseLocalePolicy({ requestText: "10978704" })).toEqual({
       source: "unset",
       enforceLocale: false,
     });
@@ -40,7 +52,7 @@ describe("resolveResponseLocalePolicy", () => {
       confidence: "high",
     });
     expect(resolveLocale({ requestLocale: "fr-CA" })).toEqual({
-      policy: { locale: "fr-CA", source: "request", enforceLocale: false },
+      policy: { locale: "fr-CA", source: "request", enforceLocale: true },
       confidence: "medium",
     });
     expect(resolveLocale({})).toEqual({
@@ -73,10 +85,18 @@ describe("resolveResponseLocalePolicy", () => {
     expect(JSON.stringify(finding)).not.toContain("This response uses a different script.");
   });
 
-  it("does not flag mixed or unenforced responses", () => {
+  it("enforces a validated request locale while allowing matching mixed-script prose", () => {
     expect(evaluateResponseLocale(
-      { locale: "ar-EG", source: "request", enforceLocale: false },
-      "mixed text نص",
+      { locale: "ar-EG", source: "request", enforceLocale: true },
+      "This response uses a different script.",
+    )).toEqual(expect.objectContaining({
+      kind: "locale_script_mismatch",
+      expectedScript: "Arab",
+      actualScript: "Latn",
+    }));
+    expect(evaluateResponseLocale(
+      { locale: "ar-EG", source: "request", enforceLocale: true },
+      "إجابة عن Docker 25 وURL",
     )).toBeUndefined();
   });
 });

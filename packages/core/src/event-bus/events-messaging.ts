@@ -658,7 +658,8 @@ export interface MessagingEvents {
    *  `silent_retry` (strip empty turn + re-enter), `lkw_fallback` (retry on the last-known-working model
    *  after a silent auth failure), `continuation_nudge` (a single followUp on a
    *  thinking-only "stop" turn), `interactive_silent_sentinel` (an interactive
-   *  request returned a silent-control token without exact-route delivery).
+   *  request returned a silent-control token without exact-route delivery), or
+   *  `locale_fidelity` (one tools-disabled response-locale repair turn).
    *  Content-free: a closed reason + a boolean. */
   "execution:recovery_attempted": {
     agentId: string;
@@ -667,7 +668,8 @@ export interface MessagingEvents {
       | "silent_retry"
       | "lkw_fallback"
       | "continuation_nudge"
-      | "interactive_silent_sentinel";
+      | "interactive_silent_sentinel"
+      | "locale_fidelity";
     succeeded: boolean;
     timestamp: number;
   };

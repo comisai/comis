@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import {
   dominantScript,
+  scriptShares,
   type ResponseLocalePolicy,
   type ResponseLocaleSource,
   type ScriptClass,
@@ -10,6 +11,8 @@ import { tryCatch } from "@comis/shared";
 export interface ResolveResponseLocalePolicyInput {
   readonly explicitLocale?: string;
   readonly requestLocale?: string;
+  /** Exact current user-authored text used only for open script fallback. */
+  readonly requestText?: string;
   readonly translationTarget?: string;
 }
 
@@ -37,7 +40,7 @@ export function resolveResponseLocalePolicy(
 ): ResponseLocalePolicy {
   const candidates: ReadonlyArray<readonly [string | undefined, ResponseLocaleSource, boolean]> = [
     [input.explicitLocale, "explicit", true],
-    [input.requestLocale, "request", false],
+    [input.requestLocale, "request", true],
   ];
   const translationTarget = canonicalLocale(input.translationTarget);
   for (const [raw, source, enforceLocale] of candidates) {
@@ -50,6 +53,15 @@ export function resolveResponseLocalePolicy(
         enforceLocale,
       };
     }
+  }
+  const requestScriptLocale = scriptLocaleFromRequest(input.requestText);
+  if (requestScriptLocale !== undefined) {
+    return {
+      locale: requestScriptLocale,
+      source: "request",
+      ...(translationTarget === undefined ? {} : { translationTarget }),
+      enforceLocale: true,
+    };
   }
   return {
     source: "unset",
@@ -97,6 +109,13 @@ const isoScriptByClass: Readonly<Record<ScriptClass, string>> = {
   devanagari: "Deva",
   other: "Zyyy",
 };
+
+function scriptLocaleFromRequest(text: string | undefined): string | undefined {
+  if (text === undefined || scriptShares(text).size === 0) return undefined;
+  const scriptClass = dominantScript(text);
+  if (scriptClass === "latin" || scriptClass === "other") return undefined;
+  return canonicalLocale(`und-${isoScriptByClass[scriptClass]}`);
+}
 
 export function evaluateResponseLocale(
   policy: ResponseLocalePolicy,

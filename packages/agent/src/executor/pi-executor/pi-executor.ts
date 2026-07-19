@@ -94,7 +94,7 @@ import { setupContextEngine } from "../executor-context-engine-setup.js";
 import { runPrompt } from "../prompt-runner/index.js";
 import { wrapToolResultWithGuide } from "../jit-guide-injector.js";
 import { postExecution } from "../executor-post-execution.js";
-import { resolveLocale, resolveResponseLocalePolicy } from "../resolve-response-locale-policy.js";
+import { resolveLocale } from "../resolve-response-locale-policy.js";
 import { assembleTools } from "../executor-tool-assembly.js";
 import { assembleModelRequest, prepareTurn } from "../turn-preparation.js";
 import {
@@ -135,6 +135,7 @@ import { randomUUID } from "node:crypto";
 // Closure-extracted helpers (state-first)
 import { installCompactionTrigger } from "./compaction-trigger.js";
 import { createDeltaResetComposer } from "./delta-reset.js";
+import { createLocaleDeltaDelivery } from "./locale-delta-delivery.js";
 import { resolveTrajectoryConfinedBase } from "./trajectory-confinement.js";
 import { bootstrapSession, decodeExecutionOverrides, type MutableRef, type EffectiveTimeout } from "./session-bootstrap.js";
 import { runSafetyGates } from "./safety-gate.js";
@@ -422,15 +423,6 @@ export function createPiExecutor(
       if (alsCtx && resolvedModel) {
         (alsCtx as Record<string, unknown>).resolvedModel = `${resolvedModel.provider}:${resolvedModel.id}`;
       }
-      // Tag the resolved reply language on ALS for the sub-agent leg
-      // (config-then-inbound resolution order; set only when non-en so the en path is untouched).
-      if (alsCtx) {
-        const localePolicy = resolveResponseLocalePolicy({ explicitLocale: config.language });
-        if (localePolicy.locale !== undefined) {
-          (alsCtx as Record<string, unknown>).resolvedLanguage = localePolicy.locale;
-        }
-      }
-
       // Derive compat config via normalizeModelCompat (xAI + GBNF auto-detection;
       // providerType/comisCompat resolved per-execution because model overrides
       // can switch providers).
@@ -918,6 +910,12 @@ async function runSessionLocked(
     recalledMemories,
     responseLocalePolicy,
   } = promptResult;
+
+  // Publish the exact per-turn decision only after prompt preparation resolves
+  // both operator configuration and request metadata. Sub-agent and graph legs
+  // inherit this live context value instead of a config-only approximation.
+  const turnContext = tryGetContext();
+  if (turnContext) turnContext.resolvedLanguage = responseLocalePolicy.locale;
 
   const preparedTurnResult = await prepareTurn({
     scope: tryGetContext()?.turnScope,
@@ -1707,8 +1705,12 @@ async function runSessionLocked(
   // Deltas (text + thinking) reset the stall budget — ALWAYS-
   // defined (the bridge presence-gates on deps.onDelta), live-ref
   // (currentResetTimer is assigned later at onResetTimer), throttled ~1/s.
+  const localeDeltaDelivery = createLocaleDeltaDelivery({}, {
+    policy: responseLocalePolicy,
+    downstream: onDelta,
+  });
   const onDeltaWithStallReset = createDeltaResetComposer({}, {
-    channelOnDelta: onDelta,
+    channelOnDelta: localeDeltaDelivery.onDelta,
     getResetTimer: () => currentResetTimer,
     clock: deps.clock,
   });
@@ -2189,6 +2191,7 @@ async function runSessionLocked(
       adaptiveRetentionClear,
       executionMinTokensOverrideClear,
     });
+    localeDeltaDelivery.flush(result.response);
 
     // Tear down the trajectory recorder + bridge subscription as the very
     // last action of this execute() call. Both are best-effort — a

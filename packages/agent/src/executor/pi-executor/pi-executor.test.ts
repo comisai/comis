@@ -7533,6 +7533,22 @@ describe("composed onDelta wrapper at the bridge hand-off", () => {
   }, 15_000);
 });
 
+describe("per-turn locale inheritance wiring", () => {
+  it("publishes the resolved request locale to the live request context before sub-agent work", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(here, "pi-executor.ts"), "utf-8");
+    const policyIndex = src.indexOf("responseLocalePolicy,\n  } = promptResult");
+    const assignmentIndex = src.indexOf(
+      "turnContext.resolvedLanguage = responseLocalePolicy.locale",
+    );
+    const prepareIndex = src.indexOf("const preparedTurnResult = await prepareTurn", policyIndex);
+
+    expect(policyIndex).toBeGreaterThan(0);
+    expect(assignmentIndex).toBeGreaterThan(policyIndex);
+    expect(prepareIndex).toBeGreaterThan(assignmentIndex);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Source-text wiring guard: normalizeModelCompat call-site threading
 // ---------------------------------------------------------------------------

@@ -472,9 +472,10 @@ describe("buildRpcAdapterDeps executeAgent inbound provenance", () => {
 
     await deps.executeAgent({
       message: "User-authored gateway text",
+      locale: "ar",
       sessionKey: { userId: "user_a", channelId: "gateway-channel", peerId: "peer_a" },
       scopes: ["rpc"],
-    });
+    } as Parameters<typeof deps.executeAgent>[0] & { locale: string });
 
     expect(order).toEqual(["persist", "received", "preprocess", "tools", "execute"]);
     const [persistedSessionKey, persistedMessage] = persistInboundMessage.mock.calls[0]!;
@@ -489,9 +490,11 @@ describe("buildRpcAdapterDeps executeAgent inbound provenance", () => {
       channelId: persistedSessionKey.channelId,
       senderId: "peer_a",
       text: "User-authored gateway text",
+      metadata: { locale: "ar" },
     });
     expect(execute.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
       text: "enriched:User-authored gateway text",
+      metadata: { locale: "ar" },
       originalMessages: [expect.objectContaining({ text: "User-authored gateway text" })],
     }));
   });

@@ -111,6 +111,7 @@ export {
   createConversationRef,
   createConversationLocator,
   conversationScopeToSessionKey,
+  CanonicalLocaleSchema,
 } from "../domain/index.js";
 
 export { BackgroundTaskOriginSchema } from "../domain/background-task-origin.js";

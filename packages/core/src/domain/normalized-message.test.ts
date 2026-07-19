@@ -137,6 +137,19 @@ describe("NormalizedMessage", () => {
       }
     });
 
+    it("accepts a canonical per-turn response locale in message metadata", () => {
+      const result = parseMessage(validMessage({ metadata: { locale: "ar" } }));
+
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.metadata.locale).toBe("ar");
+    });
+
+    it("rejects a non-canonical per-turn response locale in message metadata", () => {
+      const result = parseMessage(validMessage({ metadata: { locale: "AR-eg" } }));
+
+      expect(result.ok).toBe(false);
+    });
+
     it("validates and preserves structured physical inbound provenance", () => {
       const originalMessages = [{
         id: VALID_UUID_2,

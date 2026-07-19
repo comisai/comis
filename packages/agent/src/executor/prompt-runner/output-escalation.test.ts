@@ -90,12 +90,11 @@ describe("output-escalation.ts — interactive silent-response boundary", () => 
 });
 
 describe("output-escalation.ts — response-language boundary", () => {
-  it("records locale quality without adding a response-rewrite model call", () => {
-    const qualityIndex = source.indexOf("evaluateResponseLocale(");
+  it("applies bounded locale enforcement before the output guard", () => {
+    const qualityIndex = source.indexOf("applyResponseLocaleEnforcement(");
     const guardIndex = source.indexOf("scanWithOutputGuard({", qualityIndex);
 
-    expect(source).toMatch(/from\s+"\.\.\/resolve-response-locale-policy\.js"/);
-    expect(source).not.toContain("repairResponseLanguageDrift");
+    expect(source).toMatch(/from\s+"\.\/response-locale-enforcement\.js"/);
     expect(qualityIndex).toBeGreaterThan(0);
     expect(guardIndex).toBeGreaterThan(qualityIndex);
   });

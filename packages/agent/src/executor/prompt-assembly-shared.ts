@@ -147,8 +147,11 @@ export function renderResponseLocalePolicy(policy: ResponseLocalePolicy): string
   const translation = policy.translationTarget === undefined
     ? ""
     : ` translation-target="${policy.translationTarget}"`;
+  const scriptGuidance = policy.locale.startsWith("und-")
+    ? " The tag identifies only the writing system; use the same human language as the current user request."
+    : "";
   return `<response-locale locale="${policy.locale}" source="${policy.source}" enforce="${policy.enforceLocale}"${translation}>\n`
-    + "Apply this response-locale decision to user-visible prose. Translation target is separate from response locale.\n"
+    + `Apply this response-locale decision to user-visible prose.${scriptGuidance} Translation target is separate from response locale.\n`
     + "</response-locale>";
 }
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Drive independent web-console conversations concurrently through the authenticated live gateway.
 // Input is a JSON array on stdin (or in a file argument):
-//   [{"name":"alpha","sessionKey":"parallel-alpha","message":"..."}]
+//   [{"name":"alpha","sessionKey":"parallel-alpha","message":"...","locale":"ar"}]
 // The result carries per-request timing and response metadata; trajectories remain the authoritative
 // proof that model/tool execution overlapped and stayed within the requested conversation.
 import { readFileSync } from 'node:fs';
@@ -24,8 +24,9 @@ try {
   process.exit(2);
 }
 if (!Array.isArray(specs) || specs.length < 2 || specs.some((spec) =>
-  !spec || typeof spec.name !== 'string' || typeof spec.sessionKey !== 'string' || typeof spec.message !== 'string')) {
-  console.error('parallel-chat.mjs: expected at least two {name,sessionKey,message} entries');
+  !spec || typeof spec.name !== 'string' || typeof spec.sessionKey !== 'string' || typeof spec.message !== 'string'
+  || (spec.locale !== undefined && typeof spec.locale !== 'string'))) {
+  console.error('parallel-chat.mjs: expected at least two {name,sessionKey,message,locale?} entries');
   process.exit(2);
 }
 
@@ -39,7 +40,12 @@ const records = await Promise.all(specs.map(async (spec) => {
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ message: spec.message, agentId: 'default', sessionKey: spec.sessionKey }),
+      body: JSON.stringify({
+        message: spec.message,
+        ...(spec.locale === undefined ? {} : { locale: spec.locale }),
+        agentId: 'default',
+        sessionKey: spec.sessionKey,
+      }),
     });
     const body = await response.json();
     return {
