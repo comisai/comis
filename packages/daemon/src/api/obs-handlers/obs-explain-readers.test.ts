@@ -503,6 +503,34 @@ describe("makeRealReader.readDiagnosticsRollup (session-scoped)", () => {
   });
 });
 
+describe("makeRealReader.readAuditEvents tenant scoping", () => {
+  it("scopes the bounded audit query to the session's tenant", async () => {
+    // On a multi-tenant daemon the audit? section must not read other
+    // tenants' rows — the store still narrows by traceId only AFTER this
+    // bounded read, so the tenant predicate is the isolation floor.
+    const queryAuditEvents = vi.fn(() => []);
+    const obsStore = { queryAuditEvents } as unknown as Parameters<typeof makeRealReader>[1];
+    const reader = makeRealReader(tmpDataDir(), obsStore);
+
+    await reader.readAuditEvents!(SESSION_KEY);
+
+    expect(queryAuditEvents).toHaveBeenCalledWith(
+      expect.objectContaining({ tenant: "default" }),
+    );
+  });
+
+  it("queries the bounded window unscoped when the key is unparseable", async () => {
+    const queryAuditEvents = vi.fn(() => []);
+    const obsStore = { queryAuditEvents } as unknown as Parameters<typeof makeRealReader>[1];
+    const reader = makeRealReader(tmpDataDir(), obsStore);
+
+    await reader.readAuditEvents!("not-a-formatted-key");
+
+    expect(queryAuditEvents).toHaveBeenCalledOnce();
+    expect(queryAuditEvents.mock.calls[0]![0]).not.toHaveProperty("tenant");
+  });
+});
+
 describe("makeRealReader default data dir", () => {
   it("falls back to ~/.comis when an empty dataDir is passed (soft-fail to [])", async () => {
     // Empty dataDir → defaultDataDir() (~/.comis); a synthetic key has no file

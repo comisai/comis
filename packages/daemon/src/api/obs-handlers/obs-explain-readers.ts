@@ -46,7 +46,7 @@
 
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { safePath } from "@comis/core";
+import { parseFormattedSessionKey, safePath } from "@comis/core";
 import { resolveTrajectoryPointerFilePath } from "@comis/observability";
 import type { ObservabilityStore } from "@comis/memory";
 
@@ -491,14 +491,18 @@ export function makeRealReader(
       return match === undefined ? null : (match as unknown as Record<string, unknown>);
     },
 
-    async readAuditEvents(_sessionKey: string): Promise<Array<Record<string, unknown>>> {
+    async readAuditEvents(sessionKey: string): Promise<Array<Record<string, unknown>>> {
       if (obsStore === undefined) return []; // No store — the audit? section is omitted.
       // AuditQueryParams has NO traceId predicate, so scope by the session's
-      // TENANT (the first sessionKey segment) + a bounded limit, and let the
-      // caller filter by the resolved traceId AFTER. An unparseable key yields no
-      // tenant scope — query the bounded window unfiltered (the caller's traceId
-      // filter still narrows it to this session).
+      // TENANT + a bounded limit, and let the caller filter by the resolved
+      // traceId AFTER. The display label is parsed here ONLY to NARROW this
+      // diagnostic read (multi-tenant isolation floor) — never to recover
+      // authority. An unparseable key yields no tenant scope — query the
+      // bounded window unfiltered (the caller's traceId filter still narrows
+      // it to this session).
+      const key = parseFormattedSessionKey(sessionKey);
       const rows = obsStore.queryAuditEvents({
+        ...(key === undefined ? {} : { tenant: key.tenantId }),
         limit: AUDIT_QUERY_LIMIT,
       });
       return rows as unknown as Array<Record<string, unknown>>;
