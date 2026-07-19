@@ -47,6 +47,17 @@ export function resolveResponseLocalePolicy(
   for (const [raw, source, enforceLocale] of candidates) {
     const locale = canonicalLocale(raw);
     if (locale !== undefined) {
+      // The request-tier locale is TRANSPORT metadata (a client UI
+      // language_code, a caller-supplied field) — a device setting, not the
+      // conversation's language. When the user's current message is written
+      // in a script that contradicts it, the conversation wins: skip the
+      // transport locale so the script fallback below (or unset) governs,
+      // and a correct same-script reply is never repaired toward the device
+      // language. The explicit operator locale is a deliberate pin and is
+      // never overridden.
+      if (source === "request" && contradictsRequestScript(locale, input.requestText)) {
+        continue;
+      }
       return {
         locale,
         source,
@@ -80,6 +91,23 @@ export function resolveLocale(input: ResolveResponseLocalePolicyInput): Resolved
       ? "medium" as const
       : "low" as const;
   return { policy, confidence };
+}
+
+/**
+ * True when the current request text carries a clear script signal that
+ * contradicts the candidate locale's script. No text, no classifiable
+ * shares, an "other" dominant class, or an unknown locale script all mean
+ * "cannot judge" — the locale is kept.
+ */
+function contradictsRequestScript(locale: string, requestText: string | undefined): boolean {
+  if (requestText === undefined || scriptShares(requestText).size === 0) return false;
+  const dominantClass = dominantScript(requestText);
+  if (dominantClass === "other") return false;
+  const maximized = tryCatch(() => new Intl.Locale(locale).maximize());
+  if (!maximized.ok || maximized.value.script === undefined) return false;
+  const localeClass = scriptClassForIsoScript(maximized.value.script);
+  if (localeClass === undefined) return false;
+  return localeClass !== dominantClass;
 }
 
 function scriptClassForIsoScript(script: string): ScriptClass | undefined {

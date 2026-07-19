@@ -128,3 +128,58 @@ describe("resolveResponseLocalePolicy", () => {
     }));
   });
 });
+
+describe("request-locale vs conversation-script precedence", () => {
+  // The transport/request locale (a Telegram client's UI language_code, a
+  // REST caller's locale field) is a DEVICE setting, not the conversation's
+  // language. When it contradicts the script the user is actually writing
+  // in, the conversation wins — a correct same-script reply must never be
+  // "repaired" toward the device UI language.
+  it("yields to the current message's script when the transport locale contradicts it", () => {
+    const policy = resolveResponseLocalePolicy({
+      requestLocale: "en",
+      requestText: "מה מזג האוויר מחר בתל אביב ואיך כדאי להתארגן ליום?",
+    });
+    expect(policy.locale).toBe("und-Hebr");
+    expect(policy.source).toBe("request");
+    expect(policy.enforceLocale).toBe(true);
+  });
+
+  it("keeps the request locale when it agrees with the message script", () => {
+    const policy = resolveResponseLocalePolicy({
+      requestLocale: "he",
+      requestText: "מה מזג האוויר מחר בתל אביב?",
+    });
+    expect(policy.locale).toBe("he");
+    expect(policy.source).toBe("request");
+    expect(policy.enforceLocale).toBe(true);
+  });
+
+  it("does not enforce a non-Latin transport locale over Latin-script conversation text", () => {
+    const policy = resolveResponseLocalePolicy({
+      requestLocale: "he",
+      requestText: "What is the weather tomorrow in Tel Aviv?",
+    });
+    expect(policy.source).toBe("unset");
+    expect(policy.enforceLocale).toBe(false);
+  });
+
+  it("keeps the request locale when the message carries no script signal", () => {
+    const policy = resolveResponseLocalePolicy({
+      requestLocale: "he",
+      requestText: "",
+    });
+    expect(policy.locale).toBe("he");
+    expect(policy.enforceLocale).toBe(true);
+  });
+
+  it("never overrides the explicit operator locale with the message script", () => {
+    const policy = resolveResponseLocalePolicy({
+      explicitLocale: "he",
+      requestText: "Plain English text in the current message.",
+    });
+    expect(policy.locale).toBe("he");
+    expect(policy.source).toBe("explicit");
+    expect(policy.enforceLocale).toBe(true);
+  });
+});
