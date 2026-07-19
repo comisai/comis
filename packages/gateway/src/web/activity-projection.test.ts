@@ -64,12 +64,20 @@ describe("activity event projection", () => {
     expect(JSON.stringify({ received, sent, streaming })).not.toContain(PRIVATE_TEXT);
   });
 
-  it("drops nested params, metadata, errors, and unknown free text from other events", () => {
+  it("keeps the approval capability verb + request identity but drops params, metadata, errors, and unknown free text", () => {
+    // `action` is the bounded capability verb the operator approval queue
+    // renders (e.g. "agents.suspend") — a controlled tool identifier, not
+    // caller-authored content, so it egresses like `toolName`. The nested
+    // `params` (which may carry secrets) and `metadata` stay stripped.
     const approval = projectActivityPayload("approval:requested", {
       requestId: "request-1",
+      shortId: "short-1",
       agentId: "agent-1",
+      tenantId: "tenant-1",
       toolName: "exec",
-      action: PRIVATE_TEXT,
+      action: "agents.suspend",
+      trustLevel: "admin",
+      createdAt: 1234,
       params: { command: PRIVATE_TEXT },
       metadata: { token: PRIVATE_TEXT },
       timestamp: 99,
@@ -85,13 +93,39 @@ describe("activity event projection", () => {
 
     expect(approval).toEqual({
       requestId: "request-1",
+      shortId: "short-1",
       agentId: "agent-1",
+      tenantId: "tenant-1",
       toolName: "exec",
+      action: "agents.suspend",
+      trustLevel: "admin",
+      createdAt: 1234,
       timestamp: 99,
     });
     expect(systemError).toEqual({ source: "gateway", errorName: "Error" });
     expect(unknown).toEqual({});
     expect(JSON.stringify({ approval, systemError, unknown })).not.toContain(PRIVATE_TEXT);
+  });
+
+  it("keeps the approval resolution outcome + resolver identity but drops the free-form reason", () => {
+    // The dashboard approval-history row needs the outcome (`approved`), the
+    // resolver (`approvedBy`), and `resolvedAt`. The operator-authored,
+    // free-form `reason` is content and stays stripped at the egress boundary.
+    const resolved = projectActivityPayload("approval:resolved", {
+      requestId: "request-1",
+      approved: true,
+      approvedBy: "operator",
+      reason: PRIVATE_TEXT,
+      resolvedAt: 4321,
+    });
+
+    expect(resolved).toEqual({
+      requestId: "request-1",
+      approved: true,
+      approvedBy: "operator",
+      resolvedAt: 4321,
+    });
+    expect(JSON.stringify(resolved)).not.toContain(PRIVATE_TEXT);
   });
 
   it("classifies an overwritten error name without exposing its text", () => {

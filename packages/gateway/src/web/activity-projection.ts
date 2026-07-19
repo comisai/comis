@@ -111,10 +111,21 @@ const SAFE_SCALAR_FIELDS = new Set([
   "provider",
   "model",
   "transport",
+  "action",
   "actionType",
   "kind",
   "classification",
   "outcome",
+  // Approval-gate resolution metadata — the operator approval queue + history
+  // render these. `action` above is the bounded capability verb; these are the
+  // outcome (boolean), the resolver identity, and the request/resolution
+  // timestamps. The free-form `reason` and the tool `params` are NOT listed and
+  // stay stripped at this content-free boundary.
+  "approved",
+  "approvedBy",
+  "trustLevel",
+  "createdAt",
+  "resolvedAt",
   "status",
   "errorKind",
   "stage",
