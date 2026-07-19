@@ -7,6 +7,7 @@ import {
   AGENT_STATE_FILES,
   DEFAULT_TEMPLATES,
   isUntouchedWorkspaceTemplate,
+  ONBOARDING_COMPLETE_TOOL_RESULT,
   OPERATOR_OWNED_FILES,
   TEMPLATE_MARKER,
   WORKSPACE_FILE_NAMES,
@@ -44,7 +45,16 @@ describe("default workspace template ownership", () => {
     expect(bootstrap).toMatch(/one.*file.*edit call/isu);
     expect(bootstrap).toMatch(/verify.*successful/isu);
     expect(bootstrap).toMatch(/clear BOOTSTRAP\.md/iu);
+    expect(bootstrap).toMatch(/write tool.*BOOTSTRAP\.md.*empty/isu);
+    expect(bootstrap).toMatch(/after.*clear.*do not ask.*setup question/isu);
     expect(bootstrap).not.toMatch(/personal assistant|industry|creature|vibe|emoji|English|Hebrew|Arabic|Russian/iu);
+  });
+
+  it("defines an unambiguous terminal signal for completed onboarding", () => {
+    expect(ONBOARDING_COMPLETE_TOOL_RESULT).toMatch(/onboarding_complete/iu);
+    expect(ONBOARDING_COMPLETE_TOOL_RESULT).toMatch(/do not call.*tool/iu);
+    expect(ONBOARDING_COMPLETE_TOOL_RESULT).toMatch(/do not ask.*setup question/iu);
+    expect(ONBOARDING_COMPLETE_TOOL_RESULT).toMatch(/summarize.*confirmed/iu);
   });
 
   it("classifies only operator placeholders as untouched", () => {

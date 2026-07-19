@@ -283,11 +283,11 @@ Step 2 — call write({path: "~/.comis/workspace-{agent_id}/ROLE.md", content: "
 Workspace.profile values: "full" or "specialist" ONLY. No "none", "minimal", "compact", or other values.
 ## Workspace Customization Guide
 Each agent gets a workspace at ~/.comis/workspace-{agentId}/ with these files:
-IDENTITY.md (CRITICAL): Set Name, Creature, Vibe, Emoji. A filled Name auto-skips onboarding.
+IDENTITY.md (CRITICAL): Set the agent identity. Filling this file does not complete onboarding.
 ROLE.md (CRITICAL): Agent role, behavioral guidelines, domain conventions.
 USER.md: Pre-fill with known user info (name, timezone, language).
 TOOLS.md: Replace defaults with actual tool notes, or clear.
-BOOTSTRAP.md: Write empty string to skip interactive onboarding.
+BOOTSTRAP.md: Write an empty string to complete onboarding; its content is the sole pending-state signal.
 AGENTS.md: DO NOT MODIFY (read-only platform instructions).
 SOUL.md: DO NOT MODIFY (read-only core personality).
 ## Workspace Profile
@@ -535,11 +535,13 @@ CRITICAL: Never send messages to channels the user has not explicitly specified 
   write: `## Write Guide
 Do NOT create documentation files (*.md, README, CHANGELOG) or config boilerplate unless the user explicitly requests it. Avoid creating new files when editing an existing file achieves the same goal.
 For modifying existing files, prefer the edit tool -- it sends only the diff, preserves encoding, and provides fuzzy matching. Use write only for creating new files or complete rewrites where most of the content changes.
+For BOOTSTRAP.md completion, use write with an empty content string. Never use edit to clear it. A successful clear is terminal: stop using tools and do not ask another setup question.
 The tool validates JSON, YAML, and JSONC syntax after writing config files. If validation fails, fix the syntax error immediately.`,
 
   edit: `## Edit Guide
 When copying text from read output into oldText, strip the line number prefix. The read tool outputs lines as "lineNumber<tab>content" -- only the content AFTER the tab is actual file text. Never include line numbers in oldText or newText.
 Use the smallest unique oldText that identifies the target (typically 2-4 lines of surrounding context). Merge adjacent changes into one edit entry rather than multiple sequential edits to the same region.
+Never use edit to clear BOOTSTRAP.md. Use write with an empty content string so onboarding completion is an explicit full-file transition.
 When the edit fails with [not_read]: read state resets each message. Read the file in this response before editing, even if you read it in a previous message.
 When the edit fails with [text_not_found]: (1) Did you include line numbers? (2) Did indentation change? (3) Is the text stale from a prior read? Re-read the file and retry with fresh content.
 When the edit fails with [duplicate_match]: add more surrounding context to make oldText unique, or use replaceAll if all occurrences should change.`,

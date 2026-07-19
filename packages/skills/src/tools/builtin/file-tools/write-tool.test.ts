@@ -365,6 +365,31 @@ describe("staleness detection", () => {
   });
 });
 
+describe("onboarding completion transition", () => {
+  it("returns a terminal no-repeat signal when BOOTSTRAP.md is cleared", async () => {
+    const bootstrapPath = await writeAndRead(
+      "BOOTSTRAP.md",
+      DEFAULT_TEMPLATES["BOOTSTRAP.md"],
+    );
+    const tool = createTool() as ReturnType<typeof createTool> & {
+      promptGuidelines?: string[];
+    };
+
+    const result = await tool.execute("id", {
+      path: "BOOTSTRAP.md",
+      content: "",
+    });
+
+    expect(await fs.readFile(bootstrapPath, "utf-8")).toBe("");
+    expect(result.content.map((block) => block.text).join("\n")).toMatch(
+      /onboarding_complete.*do not ask.*setup question/isu,
+    );
+    expect(tool.promptGuidelines?.join("\n")).toMatch(
+      /BOOTSTRAP\.md.*write.*empty.*never.*edit/isu,
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // New file creation tests
 // ---------------------------------------------------------------------------

@@ -33,6 +33,7 @@ export {
   OPERATOR_OWNED_FILES,
   AGENT_STATE_FILES,
   TEMPLATE_MARKER,
+  ONBOARDING_COMPLETE_TOOL_RESULT,
   isUntouchedWorkspaceTemplate,
 } from "./templates.js";
 export type { WorkspaceFileName } from "./templates.js";

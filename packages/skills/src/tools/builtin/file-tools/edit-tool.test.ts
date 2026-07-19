@@ -44,6 +44,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 // Import fs AFTER the mock is set up
 import * as fs from "node:fs/promises";
+import { DEFAULT_TEMPLATES } from "@comis/core";
 import { createComisEditTool } from "./edit-tool.js";
 
 // ---------------------------------------------------------------------------
@@ -140,6 +141,57 @@ describe("input validation", () => {
         edits: [{ oldText: "hello", newText: "hello" }],
       }),
     ).rejects.toThrow("[noop_edit]");
+  });
+});
+
+describe("onboarding completion transition", () => {
+  it("recovers a near-full BOOTSTRAP.md clear despite one-word copied-text drift", async () => {
+    const original = DEFAULT_TEMPLATES["BOOTSTRAP.md"];
+    const bootstrapPath = await writeAndRead("BOOTSTRAP.md", original);
+    const copiedWithLiveDrift = original.replace(
+      "only after the setup stages are answered",
+      "only after the setup stages were answered",
+    );
+    const tool = createTool();
+
+    const result = await tool.execute("id", {
+      path: "BOOTSTRAP.md",
+      edits: [{ oldText: copiedWithLiveDrift.trimEnd(), newText: "" }],
+    });
+
+    expect(await fs.readFile(bootstrapPath, "utf-8")).toBe("");
+    expect(result.content.map((block) => block.text).join("\n")).toMatch(
+      /onboarding_complete.*do not ask.*setup question/isu,
+    );
+  });
+
+  it("does not broaden near-full recovery to ordinary files", async () => {
+    const original = "# First-run setup\n\nordinary project documentation\n";
+    await writeAndRead("notes.md", original);
+    const tool = createTool();
+
+    await expect(tool.execute("id", {
+      path: "notes.md",
+      edits: [{
+        oldText: original.replace("documentation", "document"),
+        newText: "",
+      }],
+    })).rejects.toThrow("[text_not_found]");
+  });
+
+  it("does not broaden near-full recovery to a customized BOOTSTRAP.md", async () => {
+    const original = "# First-run setup\n\nCollect deployment-specific setup values carefully.\n";
+    const bootstrapPath = await writeAndRead("BOOTSTRAP.md", original);
+    const tool = createTool();
+
+    await expect(tool.execute("id", {
+      path: "BOOTSTRAP.md",
+      edits: [{
+        oldText: original.replace("carefully", "with care"),
+        newText: "",
+      }],
+    })).rejects.toThrow("[text_not_found]");
+    expect(await fs.readFile(bootstrapPath, "utf-8")).toBe(original);
   });
 });
 

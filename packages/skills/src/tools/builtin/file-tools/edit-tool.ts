@@ -16,7 +16,14 @@ import { Type } from "typebox";
 import * as fs from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { fromPromise } from "@comis/shared";
-import { safePath, PathTraversalError, scrubSecretsFromText, registerActivityLabelSpec } from "@comis/core";
+import {
+  DEFAULT_TEMPLATES,
+  ONBOARDING_COMPLETE_TOOL_RESULT,
+  safePath,
+  PathTraversalError,
+  scrubSecretsFromText,
+  registerActivityLabelSpec,
+} from "@comis/core";
 import type { FileStateTracker } from "../file/file-state-tracker.js";
 import { isDeviceFile } from "../file/file-state-tracker.js";
 import { suggestSimilarPaths } from "../file/path-suggest.js";
@@ -56,6 +63,35 @@ registerActivityLabelSpec("edit", {
 
 /** Maximum file size in bytes (1 GiB). Files above this are rejected. */
 const MAX_FILE_SIZE = 1024 * 1024 * 1024;
+
+/**
+ * Recognize a canonical near-full onboarding clear whose copied source drifted
+ * slightly from disk. This is deliberately limited to the root BOOTSTRAP.md,
+ * one deletion, the same first meaningful line, and a tightly bounded size.
+ */
+function isNearFullOnboardingClear(
+  workspacePath: string,
+  resolvedPath: string,
+  content: string,
+  edits: Array<{ oldText: string; newText: string }>,
+): boolean {
+  if (resolvedPath !== safePath(workspacePath, "BOOTSTRAP.md") || edits.length !== 1) {
+    return false;
+  }
+  if (content !== DEFAULT_TEMPLATES["BOOTSTRAP.md"]) return false;
+  const edit = edits[0]!;
+  if (edit.newText.trim().length !== 0) return false;
+
+  const actual = content.trim();
+  const copied = edit.oldText.trim();
+  if (actual.length === 0 || copied.length === 0) return false;
+  const actualFirstLine = actual.split(/\r?\n/u)[0]?.trim();
+  const copiedFirstLine = copied.split(/\r?\n/u)[0]?.trim();
+  if (actualFirstLine !== copiedFirstLine) return false;
+
+  return copied.length >= actual.length * 0.8
+    && copied.length <= actual.length * 1.2;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -199,6 +235,7 @@ export function createComisEditTool(
     "Use the smallest unique oldText (2-4 lines). Merge adjacent changes into one edit.",
     "Prefer one batch edit call with multiple edits[] over sequential calls to the same file.",
     "The single path applies to every edits[] entry. Never combine changes for different files; use a separate edit call for each file.",
+    "Never use edit to clear BOOTSTRAP.md. Complete onboarding with write({ path: \"BOOTSTRAP.md\", content: \"\" }).",
     "On [text_not_found]: re-read the file and retry with fresh content.",
   ] };
   return {
@@ -215,6 +252,7 @@ export function createComisEditTool(
       "line number prefix -- only copy the content after it. Use the smallest unique oldText " +
       "(2-4 lines). Merge adjacent changes into one edit. Prefer one batch edit call over " +
       "multiple sequential calls to the same file. " +
+      "Never clear BOOTSTRAP.md with edit; use write with empty content. " +
       "On [text_not_found]: re-read the file and retry with fresh content.",
     parameters: EditParams,
 
@@ -367,9 +405,21 @@ export function createComisEditTool(
         }));
 
         // --- V12-V14: Match + apply edits (applyEdits handles not-found, duplicate, overlap) ---
+        const recoveredOnboardingCompletion = isNearFullOnboardingClear(
+          workspacePath,
+          resolvedPath,
+          fileData.content,
+          processedEdits,
+        );
         let applyResult;
         try {
-          applyResult = applyEdits(fileData.content, processedEdits, filePath);
+          applyResult = recoveredOnboardingCompletion
+            ? {
+                baseContent: fileData.content,
+                newContent: "",
+                matchStrategy: "fuzzy" as const,
+              }
+            : applyEdits(fileData.content, processedEdits, filePath);
         } catch (error) {
           // Map applyEdits errors to our structured error code format
           const msg = error instanceof Error ? error.message : String(error);
@@ -440,6 +490,10 @@ export function createComisEditTool(
           configWarning,
           matchStrategy: applyResult.matchStrategy,
           editsApplied: processedEdits.length,
+          onboardingCompleted:
+            resolvedPath === safePath(workspacePath, "BOOTSTRAP.md")
+            && finalContent.trim().length === 0,
+          recoveredOnboardingCompletion,
         };
       });
 
@@ -451,10 +505,12 @@ export function createComisEditTool(
       if (editWarnRedactions > 0) {
         resultText += `\n\n[warn] ${editWarnRedactions} secret-shaped value(s) were redacted from the edit. Use the secure credential store for sensitive values.`;
       }
-
       const gitStat = await getGitDiffStat(resolvedPath, workspacePath);
       if (gitStat) {
         resultText += `\n\n${gitStat}`;
+      }
+      if (editResult.onboardingCompleted) {
+        resultText += `\n\n${ONBOARDING_COMPLETE_TOOL_RESULT}`;
       }
 
       logger?.debug(
@@ -463,6 +519,8 @@ export function createComisEditTool(
           editsApplied: editResult.editsApplied,
           matchStrategy: editResult.matchStrategy,
           firstChangedLine: editResult.firstChangedLine,
+          onboardingCompleted: editResult.onboardingCompleted,
+          recoveredOnboardingCompletion: editResult.recoveredOnboardingCompletion,
         },
         "Edit complete",
       );
@@ -474,6 +532,8 @@ export function createComisEditTool(
           firstChangedLine: editResult.firstChangedLine,
           matchStrategy: editResult.matchStrategy,
           editsApplied: editResult.editsApplied,
+          onboardingCompleted: editResult.onboardingCompleted,
+          recoveredOnboardingCompletion: editResult.recoveredOnboardingCompletion,
           gitDiff: gitStat ?? undefined,
         },
       };

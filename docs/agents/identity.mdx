@@ -226,8 +226,9 @@ monitor.
 A one-time setup conversation. A new or recreated workspace receives a neutral
 starter that offers to configure its role, scope, user context, and response
 preferences without assuming any of them. Once onboarding is complete, the
-agent clears this file. Normal restarts preserve the cleared file; deleting the
-workspace causes the starter to be created again.
+agent clears this file with a full empty write and stops asking setup questions.
+Normal restarts preserve the cleared file; deleting the workspace causes the
+starter to be created again.
 
 **What to put in it:** Conversation prompts for the agent's first session --
 questions to ask you, things to figure out together, and files to update

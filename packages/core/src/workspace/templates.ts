@@ -33,6 +33,12 @@ export const AGENT_STATE_FILES = ["BOOTSTRAP.md"] as const satisfies readonly Wo
 /** Exact marker shared by untouched operator starters. */
 export const TEMPLATE_MARKER = "<!-- COMIS-TEMPLATE -->";
 
+/** Model-visible terminal signal returned after the canonical onboarding state is cleared. */
+export const ONBOARDING_COMPLETE_TOOL_RESULT =
+  "[onboarding_complete] BOOTSTRAP.md is empty and onboarding is complete. "
+  + "Do not call more tools and do not ask any setup question. "
+  + "Respond now with a brief confirmation that summarizes the confirmed choices.";
+
 export const DEFAULT_TEMPLATES: Record<WorkspaceFileName, string> = {
   "SOUL.md": `${TEMPLATE_MARKER}
 # SOUL.md
@@ -91,7 +97,9 @@ Record only choices the user confirms. Put agent identity in IDENTITY.md, user c
 
 Do not persist anything on the first greeting. Once there is confirmed information to save, preserve all previously confirmed values. The edit tool has one path for the entire edits[] array: use one file per edit call and separate edit calls for different files. Never overwrite a successfully customized file with starter template content.
 
-After writing, read the changed files and verify that every confirmed value is present. If any tool call fails, correct it and verify again. Clear BOOTSTRAP.md last, only after the setup stages are answered or explicitly skipped and all required writes have been verified successful. Then briefly summarize what was saved and confirm that setup is complete.
+After writing, read the changed files and verify that every confirmed value is present. If any tool call fails, correct it and verify again. Clear BOOTSTRAP.md last, only after the setup stages are answered or explicitly skipped and all required writes have been verified successful. Use the write tool to replace BOOTSTRAP.md with the empty string; never use edit to clear it.
+
+After that clear succeeds, stop using tools and do not ask any setup question or repeat any choices. Briefly summarize what was saved and confirm that setup is complete.
 `,
   "BOOT.md": `${TEMPLATE_MARKER}
 # BOOT.md

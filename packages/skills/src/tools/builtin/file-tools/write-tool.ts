@@ -19,6 +19,7 @@ import { basename, dirname, extname } from "node:path";
 import { fromPromise } from "@comis/shared";
 import {
   DEFAULT_TEMPLATES,
+  ONBOARDING_COMPLETE_TOOL_RESULT,
   OPERATOR_OWNED_FILES,
   safePath,
   PathTraversalError,
@@ -202,6 +203,7 @@ export function createComisWriteTool(
   const ext = { promptGuidelines: [
     "For existing files, you MUST read before writing in each response (reads from prior messages do not carry over). Use the edit tool for targeted replacements instead of full rewrites.",
     "Prefer edit over write for modifying existing files — it only sends the diff.",
+    "For BOOTSTRAP.md completion, use write with an empty content string. Never use edit to clear it.",
   ] };
   return {
     ...ext,
@@ -212,7 +214,8 @@ export function createComisWriteTool(
       "are created automatically. For existing files, you must read the file first in the " +
       "current response (reads from previous messages do not carry over). " +
       "The file content is written exactly as provided. Use the edit tool for targeted text " +
-      "replacements instead of rewriting entire files.",
+      "replacements instead of rewriting entire files. Exception: complete onboarding by " +
+      "writing BOOTSTRAP.md with an empty content string; never edit it to empty.",
     parameters: WriteParams,
 
     async execute(
@@ -422,6 +425,9 @@ export function createComisWriteTool(
           sizeBytes: newStat.size,
           coldRead,
           auditNotice,
+          onboardingCompleted:
+            absolutePath === safePath(workspacePath, "BOOTSTRAP.md")
+            && content.trim().length === 0,
         };
       });
 
@@ -447,6 +453,12 @@ export function createComisWriteTool(
       if (resultData.auditNotice) {
         resultBlocks.push({ type: "text" as const, text: resultData.auditNotice });
       }
+      if (resultData.onboardingCompleted) {
+        resultBlocks.push({
+          type: "text" as const,
+          text: ONBOARDING_COMPLETE_TOOL_RESULT,
+        });
+      }
 
       return {
         content: resultBlocks,
@@ -455,6 +467,7 @@ export function createComisWriteTool(
           created: resultData.created,
           sizeBytes: resultData.sizeBytes,
           coldRead: resultData.coldRead,
+          onboardingCompleted: resultData.onboardingCompleted,
           gitDiff: gitStat ?? undefined,
         },
       };

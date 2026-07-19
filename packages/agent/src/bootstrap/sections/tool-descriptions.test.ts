@@ -70,6 +70,11 @@ describe("TOOL_GUIDES", () => {
     }
   });
 
+  it("routes BOOTSTRAP.md completion through a full empty write", () => {
+    expect(TOOL_GUIDES.write).toMatch(/BOOTSTRAP\.md.*write.*empty.*never.*edit/isu);
+    expect(TOOL_GUIDES.edit).toMatch(/never.*edit.*clear.*BOOTSTRAP\.md.*write/isu);
+  });
+
   // Credential Discovery rule — appended to the gateway guide so the LLM
   // probes env_list BEFORE asking the user for an API key / token / secret.
   // Closes the prompt-engineering half of a Telegram repro where the agent
@@ -233,6 +238,11 @@ describe("TOOL_GUIDES", () => {
       expect(singleCallIdx).toBeGreaterThan(-1);
       expect(fallbackIdx).toBeGreaterThan(-1);
       expect(singleCallIdx).toBeLessThan(fallbackIdx);
+    });
+
+    it("uses BOOTSTRAP.md content as the sole interactive-onboarding signal", () => {
+      expect(TOOL_GUIDES.agents_manage).not.toMatch(/identity.*auto-skips onboarding/iu);
+      expect(TOOL_GUIDES.agents_manage).toMatch(/BOOTSTRAP\.md.*empty.*complete onboarding/isu);
     });
   });
 

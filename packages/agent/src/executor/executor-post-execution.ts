@@ -1486,8 +1486,8 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
 
   // Check onboarding completion after execution
   // Fire-and-forget: triggers getWorkspaceStatus which records
-  // onboardingCompletedAt when IDENTITY.md Name is filled or
-  // BOOTSTRAP.md is deleted. Does not block response delivery.
+  // onboardingCompletedAt when BOOTSTRAP.md is empty or absent. Does not
+  // block response delivery.
   if (isOnboarding) {
     suppressError(getWorkspaceStatus(deps.workspaceDir), "onboarding status check");
   }
