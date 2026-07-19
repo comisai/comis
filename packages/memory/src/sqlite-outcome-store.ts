@@ -3,7 +3,8 @@
  * SqliteOutcomeStore: the SOLE adapter for the segregated `OutcomeSignalPort`
  * (@comis/core). It owns ALL the `outcome_events`
  * SQL — the idempotent `observe()` write (one raw observation per signal source),
- * the scoped `resolve()` read+fusion (precedence-first then confidence,
+ * the scoped `resolve()` read+fusion (precedence-first, then terminal recency,
+ * then confidence,
  * fail-closed `unknown`), and the age-based `prune()`.
  *
  * ## Idempotency
@@ -121,13 +122,13 @@ function tierRank(source: string): number {
 }
 
 /**
- * Outcome-severity ordering for the same-tier EQUAL-confidence tie-break:
+ * Outcome-severity ordering for the same-tier, same-time, EQUAL-confidence tie-break:
  * HIGHER value wins a tie. A `failure` (then a `corrected` soft-failure) beats a
  * `success`/`unknown` of equal confidence within the SAME tier — the conservative
  * verdict, so a real tool/node failure is NEVER silently masked by an
  * equal-confidence sibling success (the multi-tool / multi-node DAG case). This
- * ONLY breaks ties: precedence (tier) and then strict confidence still decide
- * first, so a higher-confidence success still wins over a lower-confidence failure.
+ * ONLY breaks exact recency-and-confidence ties: precedence (tier), terminal
+ * recency, and then strict confidence decide first.
  *
  * A `Map` (not a plain object) avoids the dynamic object-index lint while the key
  * is a DB-CHECK-constrained closed enum.
@@ -326,28 +327,27 @@ export function createSqliteOutcomeStore(deps: OutcomeStoreDeps): OutcomeSignalP
           return ok({ outcome: "unknown", confidence: 0, sources: [], recalledIds: [], usedSkillIds: [] });
         }
 
-        // Precedence-first, then confidence, then RECENCY: pick the highest-precedence
-        // tier present, then the MAX-confidence row WITHIN that tier, and on a same-tier
-        // EQUAL-confidence TIE prefer the MOST RECENT observation (the turn's TERMINAL
-        // state). So a transient tool failure the turn RECOVERED from (failure → later
-        // success) resolves to `success`, not `failure` — resolving a self-corrected turn
-        // to failure would wrongly exclude it from skill synthesis AND penalize the
-        // memories/skills that produced the correct answer (Comis's own tool-policy guards
-        // routinely manufacture transient failures). On an EXACT observed_at tie (genuinely
-        // simultaneous signals — e.g. concurrent DAG-node siblings) severity STILL wins, so
-        // a real concurrent failure is never masked. A high-confidence reaction still never
-        // overrides a deterministic tool result.
+        // Precedence-first, then RECENCY, then confidence: pick the highest-precedence
+        // tier present and the MOST RECENT observation within that tier (the turn's
+        // TERMINAL state). A transient tool failure the turn RECOVERED from (failure →
+        // later success) resolves to `success`; conversely, an earlier successful step
+        // cannot mask a lower-confidence terminal domain failure and falsely reinforce
+        // attributed memories or skills. On an EXACT observed_at tie (genuinely
+        // simultaneous signals — e.g. concurrent DAG-node siblings), confidence decides,
+        // then severity breaks an equal-confidence tie. A high-confidence reaction still
+        // never overrides a deterministic tool result.
         let winner = rows[0]!;
         for (const row of rows) {
           const rt = tierRank(row.source);
           const wt = tierRank(winner.source);
-          const sameTierConf = rt === wt && row.confidence === winner.confidence;
+          const sameTier = rt === wt;
+          const sameTierTime = sameTier && row.observed_at === winner.observed_at;
+          const sameTierTimeConf = sameTierTime && row.confidence === winner.confidence;
           const better =
             rt < wt ||
-            (rt === wt && row.confidence > winner.confidence) ||
-            (sameTierConf && row.observed_at > winner.observed_at) ||
-            (sameTierConf &&
-              row.observed_at === winner.observed_at &&
+            (sameTier && row.observed_at > winner.observed_at) ||
+            (sameTierTime && row.confidence > winner.confidence) ||
+            (sameTierTimeConf &&
               outcomeSeverity(row.outcome) > outcomeSeverity(winner.outcome));
           if (better) winner = row;
         }

@@ -5,7 +5,7 @@
  * `outcome_events` SQL: the idempotent `observe()`
  * upsert (deterministic-hash id + `ON CONFLICT … DO NOTHING` on the UNIQUE
  * `(tenant_id, agent_id, trajectory_id, source, observed_at)` tuple), the scoped
- * precedence-first-then-confidence `resolve()` fusion (fail-closed `unknown`),
+ * precedence-first-then-terminal-recency `resolve()` fusion (fail-closed `unknown`),
  * and the age-based `prune()`.
  *
  * `outcome_events` has NO foreign key (unlike `memory_usefulness → memories`), so
@@ -428,8 +428,8 @@ describe("createSqliteOutcomeStore", () => {
       expect(res.value.sources).toContain("correction");
     });
 
-    it("picks the max-confidence row within the winning tier", async () => {
-      // Two tool rows: success@0.7 and failure@0.8 → the max-confidence row wins.
+    it("returns the terminal row confidence within the winning tier", async () => {
+      // Two tool rows: the later failure is terminal and its confidence is returned.
       await store.observe(makeObs({ source: "tool", outcome: "success", confidence: 0.7, observedAt: 1_000 }));
       await store.observe(makeObs({ source: "tool", outcome: "failure", confidence: 0.8, observedAt: 2_000 }));
       const res = await store.resolve(TRAJ, SCOPE_A);
