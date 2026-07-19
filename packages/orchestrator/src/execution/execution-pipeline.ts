@@ -496,7 +496,7 @@ export async function executeAndDeliver(
     // already reached the platform inside the filter stage must not be
     // re-recorded as "aborted, nothing delivered" — the user has it.
     const nonTextSendCompleted =
-      filterResult.reason === "voice_delivered" ||
+      (!filterResult.deliver && filterResult.reason === "voice_delivered") ||
       (filterResult.mediaDelivery?.delivered ?? 0) > 0;
     if (!nonTextSendCompleted && (await stopForQueueAbort())) return;
 

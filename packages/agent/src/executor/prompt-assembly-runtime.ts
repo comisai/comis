@@ -747,7 +747,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       // context preflight then fails honestly instead of this WARN claiming
       // "the agent still runs" over an oversized prompt.
       let fallbackMode: PromptMode = "compact-secure";
-      let fallbackParams = { ...assemblerParams, promptMode: fallbackMode };
+      let fallbackParams: typeof assemblerParams = { ...assemblerParams, promptMode: fallbackMode };
       let fallbackPrompt = assembleRichSystemPrompt(fallbackParams);
       let fallbackTokens = promptTokensFor(fallbackPrompt);
       if (!fitsWindow(fallbackTokens)) {
