@@ -279,6 +279,7 @@ export function createSqliteDurableRunStore(
     for (const row of rows.value) {
       const existing = rowToRecord(row);
       if (!existing.ok) return err(existing.error);
+      if (existing.value.status !== "running") continue;
       const budget = existing.value.rootBudget;
       authority = authority === undefined
         ? budget

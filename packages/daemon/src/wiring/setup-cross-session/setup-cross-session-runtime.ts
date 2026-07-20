@@ -92,7 +92,7 @@ export interface CrossSessionResult {
   /** Receipt-aware retained-operation boundary for completion announcements. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
   /** Parent session announcement for graph results */
-  announceToParent: (callerAgentId: string, callerSessionKey: SessionKey, callerConversation: ConversationLocator, text: string, channelType: string, channelId: string, options?: { threadId?: string }) => Promise<string | undefined>;
+  announceToParent: (callerAgentId: string, callerSessionKey: SessionKey, callerConversation: ConversationLocator, text: string, channelType: string, channelId: string, options?: { threadId?: string; resolvedLanguage?: string }) => Promise<string | undefined>;
   /** Dead-letter queue for failed announcement persistence. */
   deadLetterQueue?: ReturnType<typeof createAnnouncementDeadLetterQueue>;
   /** Announcement batcher for coalescing concurrent graph/sub-agent completions. */
@@ -223,6 +223,7 @@ export function setupCrossSession(deps: {
     conversation: ConversationLocator,
     text: string,
     fixedTools?: Awaited<ReturnType<typeof assembleToolsForAgent>>,
+    resolvedLanguage?: string,
   ): Promise<{ response: string; tokensUsed: { total: number }; cost: { total: number } }> => {
     const targetSessionKey = { ...sessionKey, agentId };
     const formattedTargetSessionKey = formatSessionKey(targetSessionKey);
@@ -249,7 +250,7 @@ export function setupCrossSession(deps: {
       startedAt: deps.clock.now(),
       trustLevel: "guest",
       resolvedModel: undefined,
-      resolvedLanguage: undefined,
+      resolvedLanguage,
       turnScope: createInternalTurnScope(conversation.conversationScope),
       ...(targetOrigin !== undefined
         ? { channelType: targetOrigin.channelType, deliveryOrigin: targetOrigin }
@@ -257,7 +258,6 @@ export function setupCrossSession(deps: {
     });
     if (!targetContextResult.ok) return Promise.reject(targetContextResult.error);
     const targetContext = targetContextResult.value;
-
     return runWithContext(targetContext, async () => {
       const msg: NormalizedMessage = {
         id: randomUUID(),
@@ -334,7 +334,7 @@ export function setupCrossSession(deps: {
     text: string,
     channelType: string,
     channelId: string,
-    _options?: { threadId?: string },
+    options?: { threadId?: string; resolvedLanguage?: string },
   ): Promise<string | undefined> => {
     deps.logger?.debug({
       callerAgentId,
@@ -379,6 +379,7 @@ export function setupCrossSession(deps: {
         callerConversation,
         text,
         [],
+        options?.resolvedLanguage,
       );
       const trimmed = result.response.trim();
       const isNoReply = !trimmed || trimmed === "NO_REPLY" || trimmed.startsWith("NO_REPLY");

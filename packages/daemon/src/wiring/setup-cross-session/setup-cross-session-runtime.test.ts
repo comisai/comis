@@ -310,7 +310,7 @@ function getAnnounceToParent(runnerArgs: any) {
     text: string,
     channelType: string,
     channelId: string,
-    options?: { threadId?: string },
+    options?: { threadId?: string; resolvedLanguage?: string },
   ) => runWithConversationAuthority(agentId, sessionKey, (scopedSessionKey) => (
     announceToParent(
       agentId,
@@ -973,6 +973,30 @@ describe("setupCrossSession", () => {
       undefined,
       "agent-1",
     );
+  });
+
+  it("announceToParent restores the originating response locale in the target context", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const execute = vi.fn(async () => ({
+      response: getContext().resolvedLanguage ?? "missing",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop" as const,
+    }));
+    const deps = createMinimalDeps({ getExecutor: vi.fn(() => ({ execute })) });
+    setupCrossSession(deps);
+    const announceToParent = getAnnounceToParent(mockCreateSubAgentRunner.mock.calls[0][0]);
+
+    const candidate = await announceToParent(
+      "agent-1",
+      { channelId: "chan-1", userId: "user-1", tenantId: "t-1" },
+      "Rewrite this completion",
+      "telegram",
+      "chat-123",
+      { resolvedLanguage: "und-Hebr" },
+    );
+
+    expect(candidate).toBe("und-Hebr");
   });
 
   it("announceToParent lets workspace policy loading record its hash in the resolved context", async () => {

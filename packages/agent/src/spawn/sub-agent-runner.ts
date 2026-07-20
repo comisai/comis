@@ -290,7 +290,7 @@ export interface SubAgentRunnerDeps {
     text: string,
     channelType: string,
     channelId: string,
-    options?: { threadId?: string },
+    options?: { threadId?: string; resolvedLanguage?: string },
   ) => Promise<string | undefined>;
   eventBus: TypedEventBus;
   config: AgentToAgentConfig;
@@ -2447,6 +2447,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               callerAgentId: params.callerAgentId,
               callerSessionKey: params.callerSessionKey,
               callerConversation: params.callerConversation,
+              resolvedLanguage: params.resolvedLanguage,
               runId,
               ...(validationResults?.some((output) => output.exists)
                 ? {

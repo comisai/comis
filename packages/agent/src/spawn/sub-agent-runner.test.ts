@@ -1014,6 +1014,7 @@ describe("createSubAgentRunner", () => {
       callerConversation,
       announceChannelType: "discord",
       announceChannelId: "ch1",
+      resolvedLanguage: "und-Hebr",
     });
 
     await vi.advanceTimersByTimeAsync(0);
@@ -1027,6 +1028,7 @@ describe("createSubAgentRunner", () => {
     expect(text).toMatch(/^\[System Message\]/);
 
     expect(announceToParent.mock.calls[0]![2]).toEqual(callerConversation);
+    expect(announceToParent.mock.calls[0]![6]).toEqual({ resolvedLanguage: "und-Hebr" });
 
     // Session key was parsed correctly
     const callerSk = announceToParent.mock.calls[0]![1];

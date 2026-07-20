@@ -38,6 +38,8 @@ export interface QueuedAnnouncement {
   callerSessionKey: string;
   /** Canonical parent conversation authority captured at spawn time. */
   callerConversation: ConversationLocator;
+  /** Response locale resolved for the originating user turn. */
+  resolvedLanguage?: string;
   runId: string;
   /** Idempotency key `${callerSessionKey}::${runId}`. Built once at the delivery entry; opaque here. Undefined for a top-level spawn (no callerSessionKey). */
   idempotencyKey?: string;
@@ -52,7 +54,7 @@ export interface AnnouncementBatcherDeps {
     text: string,
     channelType: string,
     channelId: string,
-    options?: { threadId?: string },
+    options?: { threadId?: string; resolvedLanguage?: string },
   ) => Promise<string | undefined>;
   sendToChannel: (channelType: string, channelId: string, text: string, options?: { threadId?: string; extra?: Record<string, unknown> }) => Promise<boolean>;
   logger?: {
@@ -504,6 +506,12 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             }).join("\n\n");
             return `[System Message]\n${items.length} background tasks have completed.\n\n---\n\n${taskSections}\n\n---\n\nReview these completed tasks and summarize the results for the user in your own voice. If no user notification is needed, respond with NO_REPLY.`;
           })();
+      const parentOptions = first.announceThreadId || first.resolvedLanguage
+        ? {
+            ...(first.announceThreadId ? { threadId: first.announceThreadId } : {}),
+            ...(first.resolvedLanguage ? { resolvedLanguage: first.resolvedLanguage } : {}),
+          }
+        : undefined;
       try {
         const candidate = await withTimeout(
           deps.announceToParent(
@@ -513,7 +521,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
             parentInput,
             first.announceChannelType,
             first.announceChannelId,
-            first.announceThreadId ? { threadId: first.announceThreadId } : undefined,
+            parentOptions,
           ),
           ANNOUNCE_PARENT_TIMEOUT_MS,
           systemScheduleTimeout,
@@ -650,6 +658,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       params.announceChannelType,
       params.announceChannelId,
       params.announceThreadId ?? null,
+      params.resolvedLanguage ?? null,
     ]);
 
     let queue = queues.get(batchKey);

@@ -136,6 +136,27 @@ describe("AnnouncementBatcher", () => {
     );
   });
 
+  it("preserves the originating response locale across the debounce boundary", async () => {
+    const deps = makeDeps();
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({ resolvedLanguage: "und-Hebr" }));
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(deps.announceToParent.mock.calls[0]![6]).toEqual({ resolvedLanguage: "und-Hebr" });
+  });
+
+  it("does not combine announcements with different originating response locales", async () => {
+    const deps = makeDeps();
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({ runId: "run-he", resolvedLanguage: "und-Hebr" }));
+    await batcher.enqueue(makeAnnouncement({ runId: "run-en", resolvedLanguage: "en" }));
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(deps.announceToParent).toHaveBeenCalledTimes(2);
+  });
+
   it("does not batch announcements for different destination threads", async () => {
     const deps = makeDeps();
     const batcher = createAnnouncementBatcher(deps);

@@ -210,6 +210,42 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
         value: authoritative,
       });
     });
+
+    it("allows a fresh budget epoch after every checkpoint in the root is terminal", async () => {
+      const rootRunId = "stable-session-root";
+      const completed = makeRecord({
+        checkpointId: "completed-turn",
+        rootRunId,
+        status: "completed",
+        budgetConsumed: 3,
+        rootBudget: {
+          startedAtMs: 1_699_999_000_000,
+          tokensConsumed: 900,
+          usdConsumed: 3,
+        },
+      });
+      expect((await store.upsertCheckpoint(completed)).ok).toBe(true);
+
+      const nextTurn = makeRecord({
+        checkpointId: "next-turn",
+        rootRunId,
+        status: "running",
+        lastHeartbeatAt: 1_700_000_100_001,
+        budgetConsumed: 0.25,
+        rootBudget: {
+          startedAtMs: 1_700_000_100_000,
+          tokensConsumed: 20,
+          usdConsumed: 0.25,
+        },
+      });
+
+      const nextWrite = await store.upsertCheckpoint(nextTurn);
+      expect(nextWrite).toEqual({ ok: true, value: undefined });
+      expect(await store.getByCheckpoint(nextTurn.checkpointId)).toEqual({
+        ok: true,
+        value: nextTurn,
+      });
+    });
   });
 
   // -----------------------------------------------------------------------

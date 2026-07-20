@@ -78,6 +78,8 @@ export interface QueuedAnnouncementShape {
   callerAgentId: string;
   callerSessionKey: string;
   callerConversation: ConversationLocator;
+  /** Response locale resolved for the originating user turn. */
+  resolvedLanguage?: string;
   runId: string;
   /** Idempotency key `${callerSessionKey}::${runId}`. Mirrors QueuedAnnouncement.idempotencyKey — keep in lockstep. */
   idempotencyKey?: string;

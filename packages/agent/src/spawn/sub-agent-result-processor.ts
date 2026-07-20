@@ -430,6 +430,7 @@ export async function deliverAnnouncement(params: {
   callerAgentId?: string;
   callerSessionKey?: string;
   callerConversation?: ConversationLocator;
+  resolvedLanguage?: string;
   runId: string;
   attachments?: CompletionAttachmentShape[];
 }, deps: {
@@ -478,6 +479,7 @@ export async function deliverAnnouncement(params: {
       callerAgentId,
       callerSessionKey,
       callerConversation: params.callerConversation,
+      ...(params.resolvedLanguage ? { resolvedLanguage: params.resolvedLanguage } : {}),
       runId,
       idempotencyKey: announceKey,
       ...(params.attachments?.length ? { attachments: params.attachments } : {}),
@@ -557,6 +559,12 @@ export async function deliverAnnouncement(params: {
     try {
       const parentSk = conversationScopeToSessionKey(params.callerConversation.conversationScope);
       if (!parentSk.ok) throw parentSk.error;
+      const parentOptions = params.announceThreadId || params.resolvedLanguage
+        ? {
+            ...(params.announceThreadId ? { threadId: params.announceThreadId } : {}),
+            ...(params.resolvedLanguage ? { resolvedLanguage: params.resolvedLanguage } : {}),
+          }
+        : undefined;
       const candidate = await withTimeout(
         deps.announceToParent(
           callerAgentId,
@@ -565,7 +573,7 @@ export async function deliverAnnouncement(params: {
           announcementText,
           announceChannelType,
           announceChannelId,
-          params.announceThreadId ? { threadId: params.announceThreadId } : undefined,
+          parentOptions,
         ),
         ANNOUNCE_PARENT_TIMEOUT_MS,
         systemScheduleTimeout,
