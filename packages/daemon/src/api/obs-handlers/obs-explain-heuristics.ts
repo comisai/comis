@@ -24,27 +24,31 @@
  *      now blocks every new turn. So it sits ABOVE the breaker/degradation
  *      heuristics but BELOW #1 (the frozen misclassification). Keyed on
  *      endReason "spend_exceeded" (frozen fixtures carry it not).
- *   3. breaker_opened_repeated_failure — the 503 root cause: a real transport
+ *   3. execution_step_limit_reached — a local runtime guard exhausted the
+ *      configured call budget. It must out-rank repeated-failure inference
+ *      because each blocked call is recorded as a failure even though no
+ *      provider request was attempted.
+ *   4. breaker_opened_repeated_failure — the 503 root cause: a real transport
  *      failure (HTTP 503 → "overloaded") repeated until the per-tool breaker
  *      opened. The 503 has NO misclassification signal, so it falls through to
  *      here.
- *   3. tool_schema_unsupported — an acute, deterministic
+ *   5. tool_schema_unsupported — an acute, deterministic
  *      provider-schema rejection: upstream of any terminal state (out-ranks
  *      context_exhausted/output_starved) but downstream of the two established
  *      codes, whose fixtures carry no schema-rejection records (cannot
  *      regress them). Fires only when the one-shot strip-retry did NOT
  *      recover — a recovered repair is evidence, not a verdict.
- *   4. context_bloat / exec_dependency / provider_timeout — three low-risk
+ *   6. context_bloat / exec_dependency / provider_timeout — three low-risk
  *      "insurance" codes that broaden corpus coverage. They never fire on
  *      the two frozen fixtures (the two above match first), so they cannot
  *      regress them.
- *   5. context_exhausted / output_starved — the two NAMED terminal-state
+ *   7. context_exhausted / output_starved — the two NAMED terminal-state
  *      degradation causes. They key on the
  *      metadata-derived `endReason` (threaded onto the signals by the handler),
  *      NOT a tool failure, so they sit LAST: a tool-failure cause is upstream of
  *      the terminal state and out-ranks them. They fire only when the run's
  *      mapped endReason IS the cause, and never on a clean session.
- *   6. prompt_timeout / spend_exceeded —
+ *   8. prompt_timeout / spend_exceeded —
  *      the NAMED terminal latency + SPEND causes, keyed on endReason "timeout" /
  *      "spend_exceeded". Same terminal band as #5 (the endReason keys are mutually
  *      exclusive); every tool-failure cause out-ranks them. prompt_timeout is
@@ -142,7 +146,30 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     cannot regress them; deliberate parent/operator kills return null).
   subagentStuckKilledVerdict,
 
-  // 3) breaker_opened_repeated_failure (503 — real transport failure cascade).
+  // 3) execution_step_limit_reached. The executor records every blocked call
+  //    as a tool failure, so count-only breaker inference would otherwise
+  //    describe a local resource guard as an upstream outage.
+  (s) => {
+    const failure = s.failures.find(
+      (candidate) =>
+        candidate.classifiedFailureBy === "runtime_guard" && candidate.matchedRule === "step_limit",
+    );
+    if (failure === undefined) return null;
+    return {
+      code: "execution_step_limit_reached",
+      detail:
+        "the local execution step limit blocked additional tool calls (endReason=" +
+        (s.endReason ?? "max_steps") +
+        "); no provider request was attempted for the guarded calls",
+      suggestedNextSteps: [
+        "simplify the workflow or use a composite tool that performs the bounded operation in one call",
+        "increase max_steps only when the task legitimately requires more independent calls",
+        "obs.explain depth=full",
+      ],
+    };
+  },
+
+  // 4) breaker_opened_repeated_failure (503 — real transport failure cascade).
   (s) => {
     const trippedByEvent = s.breakerOpenedTool !== undefined || s.hasDoNotRetrySignal;
     const tool = breakerTool(s);
