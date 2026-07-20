@@ -1262,6 +1262,29 @@ describe("outward quota gate", () => {
     expect(isOrigin).toBe(true);
   });
 
+  it("denies an admin-origin attachment to a non-origin target without an outward grant", async () => {
+    const deps = createMockDeps(workspaceDir);
+    const tryOutward = vi.fn().mockReturnValue(err({ reason: "no_grant" }));
+    deps.boundedAutonomy = makeOutwardStub(tryOutward as never);
+    const handlers = createMessageHandlers(deps);
+    const adapter = deps.adaptersByType.get("telegram")!;
+
+    await expect(
+      handlers["message.attach"]({
+        channel_type: "telegram",
+        channel_id: "ch-B",
+        attachment_url: "https://example.com/report.csv",
+        attachment_type: "file",
+        _agentId: "agent-1",
+        _callerChannelId: "ch-A",
+        _trustLevel: "admin",
+      }),
+    ).rejects.toThrow();
+
+    expect(tryOutward).toHaveBeenCalledWith("agent-1", "ch-B", false, 1);
+    expect(adapter.sendAttachment).not.toHaveBeenCalled();
+  });
+
   it("derives the tryOutward volume from text.length and denies on a volume trip", async () => {
     const deps = createMockDeps(workspaceDir);
     const tryOutward = vi.fn().mockReturnValue(err({ reason: "volume" }));
