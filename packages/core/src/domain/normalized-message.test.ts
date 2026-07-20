@@ -181,6 +181,23 @@ describe("NormalizedMessage", () => {
       }]);
     });
 
+    it("projects a restart continuation as an internal provenance record", () => {
+      const result = parseMessage(validMessage({
+        metadata: { isRestartContinuation: true },
+      }));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      expect(getOriginalInboundMessages(result.value)).toEqual([{
+        id: VALID_UUID,
+        channelId: "general",
+        channelType: "telegram",
+        senderId: "system",
+        text: "Hello, world!",
+        timestamp: 1_700_000_000,
+      }]);
+    });
+
     it("parses the strict session provenance payload contract", () => {
       const result = parseInboundMessageProvenanceBatch({
         schemaVersion: 1,

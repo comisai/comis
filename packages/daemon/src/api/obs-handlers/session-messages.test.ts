@@ -30,6 +30,7 @@ import * as path from "node:path";
 import {
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
   formatSessionKey,
+  getOriginalInboundMessages,
   safePath,
   wrapExternalContent,
 } from "@comis/core";
@@ -1455,6 +1456,37 @@ describe("extractSessionMessages", () => {
       ["cross-session", "internal"],
       ["background_task", "internal"],
     ]);
+  });
+
+  it("excludes a restart continuation routed through a real user peer session", () => {
+    const dataDir = tmpDataDir();
+    const continuation = {
+      id: "11111111-1111-4111-8111-111111111111",
+      channelId: "555",
+      channelType: "telegram",
+      senderId: "555",
+      text: "[system: daemon restarted to apply a config change]",
+      timestamp: Date.parse("2026-07-20T23:21:10.818Z"),
+      attachments: [],
+      metadata: { isRestartContinuation: true },
+    } satisfies NormalizedMessage;
+    writeSessionFile(dataDir, PEER_SESSION_KEY, [provenanceRecord(
+      getOriginalInboundMessages(continuation),
+      { recordedAt: Date.parse("2026-07-20T23:21:10.822Z") },
+    )]);
+
+    const withoutInternal = extractSessionMessages(dataDir, {});
+    expect(withoutInternal.messages).toEqual([]);
+    expect(withoutInternal.coverage.internalExcluded).toBe(1);
+
+    const withInternal = extractSessionMessages(dataDir, { includeInternal: true });
+    expect(withInternal.messages).toHaveLength(1);
+    expect(withInternal.messages[0]).toMatchObject({
+      messageId: continuation.id,
+      senderId: "system",
+      origin: "internal",
+      text: continuation.text,
+    });
   });
 
   it("keeps the LATEST N messages and flags truncation when limit is exceeded", () => {
