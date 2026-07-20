@@ -105,6 +105,34 @@ describe("obs-explain-heuristics", () => {
     expect(r?.code).not.toBe("breaker_opened_repeated_failure");
   });
 
+  it("local step-limit guards outrank repeated-failure breaker inference", () => {
+    const r = rootCause(
+      makeSignals({
+        endReason: "max_steps",
+        repeatedFailureCount: { ituran_trips_search: 34 },
+        mostFailedTool: "ituran_trips_search",
+        failures: [
+          {
+            seq: 90,
+            toolName: "ituran_trips_search",
+            classifiedFailureBy: "runtime_guard",
+            transportOk: false,
+            errorKind: "resource",
+            resultDigest: "step-limit",
+            resultBytes: 0,
+            errorPreview: "Step limit reached -- blocking tool execution",
+            matchedRule: "step_limit",
+          },
+        ],
+      }),
+    );
+
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("execution_step_limit_reached");
+    expect(r!.detail).toMatch(/max_steps|step limit/i);
+    expect(r!.suggestedNextSteps.some((step) => /max_steps|simplify/i.test(step))).toBe(true);
+  });
+
   // ------------------------------------------------------------------------
   // Insurance codes (low-risk corpus coverage).
   // ------------------------------------------------------------------------
