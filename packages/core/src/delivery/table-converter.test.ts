@@ -73,6 +73,20 @@ describe("convertTable", () => {
       expect(col1Header.trim()).toBe("X");
       expect(col1Header.length).toBe(10);
     });
+
+    it("renders inline markdown as plain text inside the code block", () => {
+      const table = makeTable(
+        ["Month", "Score", "Status"],
+        [["July", "**55**", "**Partial:** `1–20 July`"]],
+      );
+
+      const result = convertTable(table, "code");
+
+      expect(result.raw).toContain("July   55");
+      expect(result.raw).toContain("Partial: 1–20 July");
+      expect(result.raw).not.toContain("**");
+      expect(result.raw).not.toContain("`");
+    });
   });
 
   // -------------------------------------------------------------------------
