@@ -59,12 +59,9 @@ export interface ToolDefinition {
  * `config.excludeTools` (structural exclusions, the `exec` class):
  *
  *   - `background_tasks` — the META tool that lists/reads/waits on background
- *     tasks. Its `read_output` on a pending task legitimately blocks, so it
- *     hits `autoBackgroundMs` and SELF-promotes — which fires a "Background
- *     task background_tasks completed" notification and a re-entry LLM turn
- *     that polls again: a self-amplifying loop that burned the per-execution
- *     token budget in a live incident (2026-07-08). Promoting the observer of
- *     background tasks into a background task is structurally self-referential.
+ *     tasks. Its `read_output` on a pending task deliberately waits for the
+ *     original promise, so promoting that observer would be structurally
+ *     self-referential.
  *   - `sleep` — the WAIT tool. The model sleeps to await a backgrounded result;
  *     the sleep itself hits `autoBackgroundMs`, promotes, and its raw
  *     'Background task "sleep" completed.' notice leaked to the user (live
@@ -193,9 +190,9 @@ export function wrapToolForAutoBackground(
       // cascade (see AGENTS.md / auto-background-middleware.test.ts invariant).
       const placeholderText =
         `Tool "${tool.name}" is taking longer than expected and has been moved to the background. ` +
-        `Task ID: ${taskId}. Automatic completion re-entry will resume this conversation with the result. ` +
-        `Do not call background_tasks or sleep to poll it; end this turn now without finalizing an answer or ` +
-        `substituting unrelated earlier data.`;
+        `Task ID: ${taskId}. Call background_tasks once with action "read_output" and taskId "${taskId}"; ` +
+        `that call waits for the result. Do not call "${tool.name}" again or sleep. Use only the returned task ` +
+        `output; do not finalize from or substitute unrelated earlier data.`;
       return {
         content: [{ type: "text" as const, text: placeholderText }],
         details: {

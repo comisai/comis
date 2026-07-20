@@ -191,8 +191,8 @@ describe("wrapToolForAutoBackground", () => {
     const firstBlock = result.content[0]!;
     expect(firstBlock.type).toBe("text");
     expect((firstBlock as { text: string }).text).toContain("moved to the background");
-    expect((firstBlock as { text: string }).text).toContain("Do not call background_tasks or sleep");
-    expect((firstBlock as { text: string }).text).toContain("end this turn now");
+    expect((firstBlock as { text: string }).text).toContain('Call background_tasks once with action "read_output"');
+    expect((firstBlock as { text: string }).text).toContain('Do not call "test_tool" again or sleep');
     expect((firstBlock as { text: string }).text).not.toContain("Use background_tasks");
 
     const details = result.details as {
@@ -374,18 +374,17 @@ describe("wrapToolForAutoBackground", () => {
       );
     });
 
-    it("placeholder defers result handling to automatic completion re-entry without polling", async () => {
+    it("placeholder directs one blocking result read instead of repeating the original tool", async () => {
       const tool = createMockTool({ resolveAfterMs: 200 });
       const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-7" }));
 
       const result = await wrapped.execute("call-1", {}, undefined, undefined, undefined);
 
       const text = (result.content[0] as { text: string }).text;
-      expect(text).toContain("background_tasks");
-      expect(text).toContain("Automatic completion re-entry");
-      expect(text).toContain("end this turn now");
+      expect(text).toContain('Call background_tasks once with action "read_output"');
+      expect(text).toContain('Do not call "test_tool" again or sleep');
       expect(text).toContain("unrelated earlier data");
-      expect(text).not.toContain("read_output");
+      expect(text).not.toContain("Automatic completion re-entry");
       expect(text).not.toContain("user will be notified");
     });
   });

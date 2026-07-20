@@ -13,6 +13,7 @@ function createMockManager(overrides: Partial<BackgroundTaskManagerLike> = {}): 
   return {
     cancel: vi.fn(() => ok(undefined)),
     getTask: vi.fn(() => undefined),
+    waitForTask: vi.fn(async () => err(new Error("no live task"))),
     getTasks: vi.fn(() => []),
     ...overrides,
   };
@@ -160,13 +161,44 @@ describe("background_tasks tool", () => {
         id: "t1", origin: origin(), toolName: "web_fetch",
         status: "running" as const, startedAt: 1000,
       };
-      manager = createMockManager({ getTask: vi.fn(() => task) });
+      manager = createMockManager({
+        getTask: vi.fn(() => task),
+        waitForTask: vi.fn(async () => ok(task)),
+      });
       const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
 
       const result = await tool.execute("call-1", { action: "read_output", taskId: "t1" });
       const text = (result as { content: Array<{ text: string }> }).content[0].text;
 
       expect(text).toContain("still running");
+    });
+
+    it("waits once for a live promoted task and returns its completed output", async () => {
+      const running = {
+        id: "t1", origin: origin(), toolName: "web_fetch",
+        status: "running" as const, startedAt: 1000,
+      };
+      const completed = {
+        ...running,
+        status: "completed" as const,
+        completedAt: 2000,
+        result: '{"data":"arrived"}',
+      };
+      const waitForTask = vi.fn().mockResolvedValue(ok(completed));
+      manager = {
+        cancel: vi.fn(() => ok(undefined)),
+        getTask: vi.fn(() => running),
+        getTasks: vi.fn(() => [running]),
+        waitForTask,
+      } as unknown as BackgroundTaskManagerLike;
+      const tool = createBackgroundTasksTool({ manager, agentId: AGENT_ID });
+
+      const result = await tool.execute("call-1", { action: "read_output", taskId: "t1" });
+      const text = (result as { content: Array<{ text: string }> }).content[0].text;
+
+      expect(waitForTask).toHaveBeenCalledWith("t1");
+      expect(text).toContain("arrived");
+      expect(text).not.toContain("still running");
     });
 
     it("returns failure message for failed task", async () => {

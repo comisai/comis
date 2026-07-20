@@ -8,7 +8,7 @@
  * @module
  */
 import { randomUUID } from "node:crypto";
-import { ok, err, type Result } from "@comis/shared";
+import { ok, err, fromPromise, type Result } from "@comis/shared";
 import { BackgroundTaskOriginSchema, emitObservationalEventSafely, type TypedEventBus, type ClockPort, type TimerPort } from "@comis/core";
 import { persistTaskSync, recoverTasks, removeTaskFile } from "./background-task-persistence.js";
 import type {
@@ -66,6 +66,8 @@ export interface BackgroundTaskManager {
   fail(taskId: string, error: unknown): void;
   cancel(taskId: string): Result<void, Error>;
   getTask(taskId: string): BackgroundTask | undefined;
+  /** Wait for a live promoted task and return its terminal state. */
+  waitForTask(taskId: string): Promise<Result<BackgroundTask, Error>>;
   getTasks(agentId: string): BackgroundTask[];
   getAllTasks(): BackgroundTask[];
   recoverOnStartup(): void;
@@ -254,6 +256,27 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
 
     getTask(taskId) {
       return tasks.get(taskId);
+    },
+
+    async waitForTask(taskId) {
+      const task = tasks.get(taskId);
+      if (!task) return err(new Error(`Background task not found: ${taskId}`));
+      if (task.status !== "running") return ok(task);
+      if (!task._promise) {
+        return err(new Error(`Background task ${taskId} has no live execution to await`));
+      }
+
+      const settled = await fromPromise(task._promise);
+      const current = tasks.get(taskId);
+      if (!current) return err(new Error(`Background task not found after waiting: ${taskId}`));
+      if (current.status !== "running") return ok(current);
+
+      if (settled.ok) manager.complete(taskId, settled.value);
+      else manager.fail(taskId, settled.error);
+      const terminal = tasks.get(taskId);
+      return terminal
+        ? ok(terminal)
+        : err(new Error(`Background task not found after completion: ${taskId}`));
     },
 
     getTasks(agentId) {

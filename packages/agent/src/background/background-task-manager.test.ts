@@ -193,6 +193,37 @@ describe("BackgroundTaskManager", () => {
     });
   });
 
+  describe("waitForTask", () => {
+    it("waits for the original promoted promise and returns its completed task", async () => {
+      let resolveTask: ((value: { data: string }) => void) | undefined;
+      const promise = new Promise<{ data: string }>((resolve) => {
+        resolveTask = resolve;
+      });
+      const promoted = manager.promote(
+        "tool",
+        promise,
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+      expect(promoted.ok).toBe(true);
+      if (!promoted.ok) return;
+
+      const waiting = manager.waitForTask(promoted.value);
+      resolveTask?.({ data: "arrived" });
+      const result = await waiting;
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.status).toBe("completed");
+      expect(result.value.result).toBe('{"data":"arrived"}');
+      expect(manager.getTask(promoted.value)?.status).toBe("completed");
+      expect((eventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+        "background_task:completed",
+        expect.objectContaining({ taskId: promoted.value, toolName: "tool" }),
+      );
+    });
+  });
+
   describe("fail", () => {
     it("sets status failed with error message and decrements counters", () => {
       const result = manager.promote("tool", new Promise(() => {}), new AbortController(), buildOrigin({ agentId: "agent-1" }));

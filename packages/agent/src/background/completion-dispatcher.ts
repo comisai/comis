@@ -137,15 +137,12 @@ export interface CompletionDispatcherDeps {
   sessionStore?: DispatcherSessionStore;
   /**
    * LIVE-TURN oracle: returns true while the given FORMATTED sessionKey has a
-   * turn currently executing. Load-bearing for the auto-background stub
-   * protocol: a task promoted mid-turn is consumed by ITS OWN still-running
-   * turn (which polls `background_tasks`), so a completion that lands while
-   * the origin turn is in flight must fire NO user-visible fallback — the
-   * live incident was a raw 'Background task "…" completed.' message landing
-   * mid-conversation because the `sessionStore` check below (the persistent
-   * store, near-EMPTY in DAG mode) mis-read a live conversation as "no active
-   * session". When absent, behavior is unchanged (the sessionStore check
-   * decides alone).
+   * turn currently executing. A task promoted mid-turn is consumed by its own
+   * still-running turn through one blocking `background_tasks read_output`
+   * call, so a completion that lands while the origin turn is in flight must
+   * fire no user-visible fallback. The persistent session store does not
+   * represent live execution for JSONL-backed conversations. When this oracle
+   * is absent, the session-store check decides alone.
    */
   isTurnInFlight?: (formattedSessionKey: string) => boolean;
   /** Recursion limit for background-task hop counting. When absent, the
@@ -277,10 +274,9 @@ export function createCompletionDispatcher(
     }
 
     // LIVE-TURN suppression (when wired): the origin turn is STILL EXECUTING —
-    // it promoted this task mid-turn and consumes the result itself via the
-    // background_tasks stub protocol. A user-visible fallback here is pure
-    // noise landing mid-conversation (the live incident: a raw
-    // 'Background task "…" completed.' followed by the turn's real answer).
+    // it promoted this task mid-turn and consumes the result itself through one
+    // blocking background_tasks read_output call. A user-visible fallback here
+    // would duplicate the live turn's eventual answer.
     // Transition to "dispatched" — no notice; the runner's own in-flight
     // check also skips re-entry (the live turn owns consumption; an
     // unconsumed result stays readable via `background_tasks`).

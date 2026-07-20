@@ -5,13 +5,11 @@
  *
  * Exists as the live-turn oracle for the background completion
  * dispatcher/runner (`isTurnInFlight`): a tool auto-backgrounded mid-turn is
- * consumed by its OWN still-running turn via the `background_tasks` stub
- * protocol, so its completion must fire no user-visible fallback and no
- * re-entry while that turn runs. The previous oracle — the persistent daemon
- * session store — is near-EMPTY in DAG mode (the default context engine), so
- * every mid-turn completion mis-read as "no active session" and leaked a raw
- * 'Background task "…" completed.' message to the user (live incident,
- * 2026-07-08).
+ * consumed by its own still-running turn through one blocking
+ * `background_tasks read_output` call, so its completion must fire no
+ * user-visible fallback and no re-entry while that turn runs. The persistent
+ * daemon session store is not an execution-flight oracle for JSONL-backed
+ * conversations, so this registry is authoritative for that decision.
  *
  * Lifecycle signals (all pre-existing bus events; no emitter changes):
  *   - `queue:dequeued`   → a channel turn started for `sessionKey` (SessionKey

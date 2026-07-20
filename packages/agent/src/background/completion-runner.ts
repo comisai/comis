@@ -89,9 +89,9 @@ export interface BackgroundCompletionRunnerDeps {
    * LIVE-TURN oracle (mirrors CompletionDispatcherDeps.isTurnInFlight): true
    * while the FORMATTED sessionKey has a turn currently executing. A task
    * promoted mid-turn is consumed by its own still-running turn via the
-   * background_tasks stub protocol — a re-entry turn now would serialize a
-   * redundant continuation behind the live turn. When absent, behavior is
-   * unchanged.
+   * single blocking `background_tasks read_output` protocol, so a re-entry
+   * turn would serialize a redundant continuation behind the live turn. When
+   * absent, behavior is unchanged.
    */
   isTurnInFlight?: (formattedSessionKey: string) => boolean;
   logger: ComisLogger;
@@ -232,10 +232,10 @@ export function createBackgroundCompletionRunner(
     }
 
     // LIVE-TURN skip (when wired): the origin turn is STILL EXECUTING and owns
-    // consumption via the background_tasks stub protocol — a re-entry turn now
-    // would only serialize a redundant continuation behind the live turn. The
-    // dispatcher's matching check already suppressed the fallback notice; the
-    // result stays readable via `background_tasks` if the live turn raced past it.
+    // consumption through one blocking background_tasks read_output call — a
+    // re-entry turn would only serialize a redundant continuation behind the
+    // live turn. The dispatcher's matching check already suppressed the
+    // fallback notice; the result stays readable if the live turn raced past it.
     if (deps.isTurnInFlight?.(formattedSessionKey) === true) {
       log.debug(
         {

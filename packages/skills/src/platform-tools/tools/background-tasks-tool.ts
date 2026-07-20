@@ -42,6 +42,7 @@ interface TaskInfo {
 /** Subset of BackgroundTaskManager consumed by this tool. */
 export interface BackgroundTaskManagerLike {
   getTask(taskId: string): TaskInfo | undefined;
+  waitForTask(taskId: string): Promise<Result<TaskInfo, Error>>;
   getTasks(agentId: string): TaskInfo[];
   cancel(taskId: string): Result<void, Error>;
 }
@@ -66,7 +67,7 @@ const BackgroundTasksToolParams = Type.Object({
       description:
         "Task management action. list: show all tasks for this agent. " +
         "get: get task details by ID. cancel: cancel a running task. " +
-        "read_output: read the output of a completed task.",
+        "read_output: wait for a running task and read its completed output.",
     },
   ),
   taskId: Type.Optional(
@@ -91,7 +92,7 @@ const VALID_ACTIONS = ["list", "get", "cancel", "read_output"] as const;
  * - **list** -- List all background tasks for the current agent
  * - **get** -- Get details of a specific task by ID
  * - **cancel** -- Cancel a running background task
- * - **read_output** -- Read the output of a completed background task
+ * - **read_output** -- Wait for a running task and read its completed output
  *
  * @param deps - Dependencies: BackgroundTaskManager and agentId
  * @returns AgentTool implementing the background tasks management interface
@@ -105,7 +106,7 @@ export function createBackgroundTasksTool(deps: {
     label: "Background Tasks",
     description:
       "Manage background tasks. Long-running tool executions are automatically promoted " +
-      "to background. Use this tool to check status, read output, or cancel tasks.",
+      "to background. Use read_output once to wait for and consume a promoted task result; use the other actions to check status or cancel tasks.",
     parameters: BackgroundTasksToolParams,
 
     async execute(
@@ -176,11 +177,20 @@ export function createBackgroundTasksTool(deps: {
 
         case "read_output": {
           const taskId = readStringParam(p, "taskId");
-          const task = deps.manager.getTask(taskId!);
+          let task = deps.manager.getTask(taskId!);
           if (!task || taskAgentId(task) !== deps.agentId) {
             throwToolError("not_found", `Background task not found: ${taskId}`, {
               hint: "Call background_tasks with action=list to obtain a task ID owned by this agent",
             });
+          }
+          if (task.status === "running") {
+            const waited = await deps.manager.waitForTask(taskId!);
+            if (!waited.ok) {
+              return throwToolError("conflict", waited.error.message, {
+                hint: "Inspect the task details before retrying the underlying operation",
+              });
+            }
+            task = waited.value;
           }
           switch (task.status) {
             case "running":
