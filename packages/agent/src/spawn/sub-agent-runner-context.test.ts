@@ -193,10 +193,13 @@ describe("sub-agent request context", () => {
 
   it("rejects an announcement route that differs from the authenticated requester", async () => {
     const captured: RequestContext[] = [];
-    const runner = createSubAgentRunner(createDeps(async () => {
+    const deps = createDeps(async () => {
       captured.push(getContext());
       return successResult();
-    }));
+    });
+    const warn = vi.fn();
+    deps.logger = { warn } as unknown as NonNullable<SubAgentRunnerDeps["logger"]>;
+    const runner = createSubAgentRunner(deps);
     const requesterOrigin = createDeliveryOrigin({
       channelType: "telegram",
       channelId: "chat_a",
@@ -220,6 +223,13 @@ describe("sub-agent request context", () => {
     await flushExecution();
 
     expect(captured).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "announcement_route_mismatch",
+        hint: expect.stringMatching(/omit.*announcement route/i),
+      }),
+      "Sub-agent spawn rejected: announcement route mismatch",
+    );
 
     await runner.shutdown();
   });
