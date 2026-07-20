@@ -383,6 +383,11 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
   const refreshSurface = deps.refreshLearnedSkillSurface;
   // Idempotency: the per-trajectory resolve-dedup set (see setup-learning-dedup.ts).
   const resolvedTrajectories = new Set<string>();
+  // Last opt-in tool self-grade per trajectory. Generic tool calls may follow the
+  // grader, so the completion seam persists this explicit terminal state after them.
+  const terminalToolGrades = new Map<string, "success" | "failure">();
+  const terminalGradeKey = (scope: OutcomeScope): string =>
+    `${scope.tenantId}\u0000${scope.agentId}\u0000${scope.trajectoryId}`;
 
   /**
    * The SHARED resolve→consume chain called by BOTH the `graph:completed` (DAG)
@@ -540,6 +545,10 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     const scope = resolveScope(p, deps.tenantId);
     if (scope === undefined) return;
 
+    if (p.selfGradedOutcome !== undefined) {
+      terminalToolGrades.set(terminalGradeKey(scope), p.selfGradedOutcome);
+    }
+
     // The failure signal is the real `success` boolean field. A transport-level
     // / sdk_iserror failure is the highest-confidence deterministic signal; a
     // content/detector/mcp-classified failure is still a failure at a slightly
@@ -641,8 +650,12 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     const scope = resolveScope({}, deps.tenantId);
     if (scope === undefined) return;
 
-    // Success ONLY on a CLEAN completion; failed/cancelled/running → failure.
-    const outcome: "success" | "failure" = p.status === "completed" ? "success" : "failure";
+    // The last explicit tool grade is the terminal task state even when generic
+    // cleanup/read calls followed it. A later explicit grade still recovers it.
+    const gradeKey = terminalGradeKey(scope);
+    const outcome: "success" | "failure" = terminalToolGrades.get(gradeKey) ??
+      (p.status === "completed" ? "success" : "failure");
+    terminalToolGrades.delete(gradeKey);
     const resolveStart = deps.clock.now();
     void observeNonFatal(deps, scope, outcome, "pipeline", DETERMINISTIC_CONFIDENCE).then(() =>
       resolveAndConsume(scope, resolveStart),
@@ -672,12 +685,15 @@ export function wireLearningOutcome(deps: LearningOutcomeWiringDeps): void {
     }, deps.tenantId);
     if (scope === undefined) return; // no trajectory identity (absent traceId) → skip
     const resolveStart = deps.clock.now();
+    const gradeKey = terminalGradeKey(scope);
+    const terminalGrade = terminalToolGrades.get(gradeKey);
+    terminalToolGrades.delete(gradeKey);
     void observeNonFatal(
       deps,
       scope,
-      "unknown",
-      "explicit",
-      ATTRIBUTION_CONFIDENCE,
+      terminalGrade ?? "unknown",
+      terminalGrade === undefined ? "explicit" : "pipeline",
+      terminalGrade === undefined ? ATTRIBUTION_CONFIDENCE : DETERMINISTIC_CONFIDENCE,
     ).then(() => resolveAndConsume(scope, resolveStart));
   });
 

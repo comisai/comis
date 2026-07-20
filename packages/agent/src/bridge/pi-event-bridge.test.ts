@@ -1031,6 +1031,7 @@ describe("createPiEventBridge", () => {
         expect(endEmit![1].classifiedFailureBy).toBe("failure_detector");
         expect(endEmit![1].transportOk).toBe(true); // the call returned; the CONTENT failed
         expect(endEmit![1].matchedRule).toBe("self_grade");
+        expect((endEmit![1] as Record<string, unknown>).selfGradedOutcome).toBe("failure");
         expect(warn).toBeDefined(); // a failure → a "Tool execution failed" WARN
       });
 
@@ -1043,6 +1044,7 @@ describe("createPiEventBridge", () => {
         expect(endEmit).toBeDefined();
         expect(endEmit![1].success).toBe(true);
         expect(endEmit![1].classifiedFailureBy).toBeUndefined();
+        expect((endEmit![1] as Record<string, unknown>).selfGradedOutcome).toBe("success");
       });
 
       it("a NON-graded result with an outcome:'failure' field but no graded:true marker → NOT flagged (opt-in marker required, no false-flag)", () => {

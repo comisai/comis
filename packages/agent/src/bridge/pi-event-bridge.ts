@@ -1036,7 +1036,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // call returned; the CONTENT failed — the failure_detector semantics). Opt-in
           // marker ⇒ never a false-flag. Runs only while
           // still success, so an SDK/exit-code/detector failure already classified wins.
-          if (toolSuccess && extractSelfGradedOutcome(endEvent.result) === "failure") {
+          const selfGradedOutcome = extractSelfGradedOutcome(endEvent.result);
+          if (toolSuccess && selfGradedOutcome === "failure") {
             toolSuccess = false;
             toolErrorKind = toolErrorKind ?? "validation";
             classifiedFailureBy = "failure_detector";
@@ -1353,6 +1354,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // closed-union → emitted as-is.
             ...(classifiedFailureBy !== undefined && { classifiedFailureBy }),
             ...(!toolSuccess && { transportOk }),
+            ...(selfGradedOutcome !== undefined && { selfGradedOutcome }),
             ...(httpStatus !== undefined && { httpStatus }),
             ...(matchedRule !== undefined && { matchedRule }),
             ...(matchedToken !== undefined && { matchedToken: sanitizeLogString(matchedToken).slice(0, 1500) }),

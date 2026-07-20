@@ -125,6 +125,9 @@ export interface AgentEvents {
     classifiedFailureBy?: "sdk_iserror" | "exit_code" | "failure_detector" | "mcp_classifier";
     /** False ONLY when the SDK/transport itself errored; true for content/exit/detector failures. */
     transportOk?: boolean;
+    /** Explicit terminal task grade reported by an opt-in `{ graded: true, outcome }`
+     * tool result. Content-free; later explicit grades replace earlier ones. */
+    selfGradedOutcome?: "success" | "failure";
     /** HTTP status for web tools (result.status). */
     httpStatus?: number;
     /** The detector rule that matched. */

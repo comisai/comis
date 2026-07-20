@@ -26,7 +26,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import type { OutcomeVerdict } from "@comis/agent";
 import { TypedEventBus, runWithContext } from "@comis/core";
-import { createSqliteMentalModelStore, initSchema } from "@comis/memory";
+import { createSqliteMentalModelStore, createSqliteOutcomeStore, initSchema } from "@comis/memory";
 import type { EventMap, OutcomeObservation, ResolvedOutcome, LearningScope } from "@comis/core";
 import type { UsefulnessScope, MemoryUsefulnessStore, UsefulnessSignal } from "@comis/core";
 import type { MentalModelStorePort } from "@comis/core";
@@ -1556,6 +1556,92 @@ describe("wireLearningOutcome — SINGLE-AGENT turn resolve via diagnostic:messa
       observedAt: NOW + 250,
     }));
     expect(observe.mock.invocationCallOrder[1]).toBeLessThan(resolve.mock.invocationCallOrder[0]!);
+  });
+
+  it("an explicit terminal tool failure outranks later generic tool success when the turn is resolved", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 384);
+    const bus = new TypedEventBus();
+    const clock = createFakeClock(NOW);
+    const ls = mockLearnedSkillStore();
+    const emitSpy = vi.spyOn(bus, "emit");
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: createSqliteOutcomeStore({ db }),
+      usefulnessStore: mockUsefulnessStore().store,
+      learnedSkillStore: ls.store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      learningSkillsEnabled: () => true,
+      learningSkillsPromoteAt: () => 3,
+      clock,
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("tool:executed", toolPayload({
+      success: false,
+      selfGradedOutcome: "failure",
+    } as Partial<EventMap["tool:executed"]>));
+    await flushMicrotasks();
+    clock.advance(1);
+    bus.emit("tool:executed", toolPayload({ toolName: "read", toolCallId: "call-2", success: true }));
+    bus.emit("memory:skill_used", skillUsedPayload({ usedSkillIds: ["s1"], usedCount: 1 }));
+    await flushMicrotasks();
+    clock.advance(1);
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    const emitted = emitSpy.mock.calls.find((c) => c[0] === "learning:outcome_observed");
+    expect((emitted?.[1] as EventMap["learning:outcome_observed"] | undefined)?.outcome).toBe("failure");
+    expect(ls.promoteByName).not.toHaveBeenCalled();
+    db.close();
+  });
+
+  it("a later explicit tool success recovers an earlier explicit failure at turn completion", async () => {
+    const db = new Database(":memory:");
+    initSchema(db, 384);
+    const bus = new TypedEventBus();
+    const clock = createFakeClock(NOW);
+    const ls = mockLearnedSkillStore();
+    const emitSpy = vi.spyOn(bus, "emit");
+    wireLearningOutcome({
+      tenantId: "tenant-x",
+      eventBus: bus,
+      outcomeStore: createSqliteOutcomeStore({ db }),
+      usefulnessStore: mockUsefulnessStore().store,
+      learnedSkillStore: ls.store,
+      learningTuningEnabled: () => false,
+      learningForgettingEnabled: () => false,
+      learningSkillsEnabled: () => true,
+      learningSkillsPromoteAt: () => 3,
+      clock,
+      logger: createMockLogger(),
+      learningOutcomeEnabled: () => true,
+    });
+
+    bus.emit("tool:executed", toolPayload({
+      success: false,
+      selfGradedOutcome: "failure",
+    } as Partial<EventMap["tool:executed"]>));
+    await flushMicrotasks();
+    clock.advance(1);
+    bus.emit("tool:executed", toolPayload({
+      toolCallId: "call-2",
+      success: true,
+      selfGradedOutcome: "success",
+    } as Partial<EventMap["tool:executed"]>));
+    bus.emit("memory:skill_used", skillUsedPayload({ usedSkillIds: ["s1"], usedCount: 1 }));
+    await flushMicrotasks();
+    clock.advance(1);
+    bus.emit("diagnostic:message_processed", diagnosticPayload());
+    await flushMicrotasks();
+
+    const emitted = emitSpy.mock.calls.find((c) => c[0] === "learning:outcome_observed");
+    expect((emitted?.[1] as EventMap["learning:outcome_observed"] | undefined)?.outcome).toBe("success");
+    expect(ls.promoteByName).toHaveBeenCalledTimes(1);
+    db.close();
   });
 
   it("byte-identity: learningOutcomeEnabled => false → diagnostic:message_processed resolves NOTHING", async () => {
