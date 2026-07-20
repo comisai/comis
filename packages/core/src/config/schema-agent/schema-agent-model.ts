@@ -196,6 +196,7 @@ export const OperationModelsSchema = z.strictObject({
   verification: OperationModelEntrySchema.optional(),  // pre-delivery critic
   planning: OperationModelEntrySchema.optional(),       // pre-execution planner
   outcomeJudge: OperationModelEntrySchema.optional(),   // post-execution outcome classifier
+  skillSynthesis: OperationModelEntrySchema.optional(), // reflected procedure synthesis
 }).default({});
 
 export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
