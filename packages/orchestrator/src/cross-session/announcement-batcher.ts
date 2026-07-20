@@ -686,7 +686,12 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     timers.set(batchKey, timer);
 
     deps.logger?.debug(
-      { batchKey, queueSize: queue.length, runId: params.runId },
+      {
+        batchKey,
+        queueSize: queue.length,
+        runId: params.runId,
+        resolvedLanguage: params.resolvedLanguage ?? "unset",
+      },
       "Announcement enqueued for batching",
     );
     return ok("queued");

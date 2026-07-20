@@ -997,6 +997,10 @@ describe("setupCrossSession", () => {
     );
 
     expect(candidate).toBe("und-Hebr");
+    expect(deps.logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ callerAgentId: "agent-1", resolvedLanguage: "und-Hebr" }),
+      "announceToParent invoked",
+    );
   });
 
   it("announceToParent lets workspace policy loading record its hash in the resolved context", async () => {

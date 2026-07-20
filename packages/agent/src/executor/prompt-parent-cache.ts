@@ -2,6 +2,7 @@
 import {
   formatSessionKey,
   generateCanaryToken,
+  tryGetContext,
   wrapExternalContent,
 } from "@comis/core";
 import type { InboundMetadata } from "../bootstrap/types.js";
@@ -43,7 +44,7 @@ export async function assembleParentCachePrompt(
     // No sessionToolNameSnapshots.set, no sessionBootstrapFileSnapshots.set for this session
 
     const responseLocalePolicy = resolveResponseLocalePolicy({
-      explicitLocale: config.language ?? deps.spawnPacket?.language,
+      explicitLocale: config.language ?? deps.spawnPacket?.language ?? tryGetContext()?.resolvedLanguage,
       requestLocale: typeof msg.metadata?.locale === "string" ? msg.metadata.locale : undefined,
       requestText: msg.originalMessages?.map(message => message.text).join("\n") ?? msg.text,
     });

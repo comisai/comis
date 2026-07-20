@@ -341,7 +341,7 @@ export function setupCrossSession(deps: {
       channelId: callerSessionKey.channelId,
       textLength: text.length,
       channelType,
-      targetChannelId: channelId,
+      targetChannelId: channelId, resolvedLanguage: options?.resolvedLanguage ?? "unset",
     }, "announceToParent invoked");
 
     // Emit proxy typing around announcement delivery (not spawn-time).

@@ -137,13 +137,18 @@ describe("AnnouncementBatcher", () => {
   });
 
   it("preserves the originating response locale across the debounce boundary", async () => {
-    const deps = makeDeps();
+    const logger = { debug: vi.fn(), warn: vi.fn() };
+    const deps = makeDeps({ logger });
     const batcher = createAnnouncementBatcher(deps);
 
     await batcher.enqueue(makeAnnouncement({ resolvedLanguage: "und-Hebr" }));
     await vi.advanceTimersByTimeAsync(2000);
 
     expect(deps.announceToParent.mock.calls[0]![6]).toEqual({ resolvedLanguage: "und-Hebr" });
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: "run-1", resolvedLanguage: "und-Hebr" }),
+      "Announcement enqueued for batching",
+    );
   });
 
   it("does not combine announcements with different originating response locales", async () => {

@@ -305,7 +305,10 @@ function makeParams(overrides?: Partial<PromptAssemblyParams>): PromptAssemblyPa
   return merged;
 }
 
-async function assembleExecutionPrompt(params: PromptAssemblyParams) {
+async function assembleExecutionPrompt(
+  params: PromptAssemblyParams,
+  contextOverrides: { resolvedLanguage?: string } = {},
+) {
   const sessionKey = params.sessionKey as SessionKey;
   const tenantId = sessionKey.tenantId ?? "tenant-1";
   const agentId = params.agentId;
@@ -337,6 +340,7 @@ async function assembleExecutionPrompt(params: PromptAssemblyParams) {
     agentId,
     startedAt: 0,
     trustLevel: "user",
+    ...contextOverrides,
     turnScope,
   }, () => assembleExecutionPromptRaw(params));
 }
@@ -3137,6 +3141,27 @@ describe("bootstrap file snapshotting", () => {
       expect(result.dynamicPreamble).toContain("same human language as the current user request");
     });
 
+    it("preserves the resolved parent locale for an internal completion rewrite", async () => {
+      const result = await assembleExecutionPrompt(
+        makeParams({
+          msg: makeMsg({
+            channelType: "cross-session",
+            senderId: "cross-session-relay",
+            text: "[Subagent Result: report generation]\nStatus: Completed\nInform the user about this completed background task.",
+            metadata: { crossSession: true },
+          }),
+        }),
+        { resolvedLanguage: "und-Hebr" },
+      );
+
+      expect(result.responseLocalePolicy).toEqual({
+        locale: "und-Hebr",
+        source: "explicit",
+        enforceLocale: true,
+      });
+      expect(result.dynamicPreamble).toContain('<response-locale locale="und-Hebr" source="explicit"');
+    });
+
     it("prependContext appears in dynamicPreamble, not systemPrompt", async () => {
       const hookRunner = {
         runBeforeAgentStart: vi.fn().mockResolvedValue({ prependContext: "Hook injected context" }),
@@ -4223,6 +4248,32 @@ describe("parent prefix reuse", () => {
     expect(result.responseLocalePolicy).toEqual({
       locale: "ar-EG",
       source: "request",
+      enforceLocale: true,
+    });
+  });
+
+  it("preserves the resolved parent locale on the parent-cache reuse path", async () => {
+    const params = makeParams({
+      config: makeConfig({ model: "claude-3-opus", provider: "anthropic" }),
+      deps: {
+        workspaceDir: "/workspace",
+        spawnPacket: makeSpawnPacketWithCache(),
+      },
+      msg: makeMsg({
+        channelType: "cross-session",
+        senderId: "cross-session-relay",
+        text: "[Subagent Result: report generation]\nStatus: Completed\nInform the user about this completed background task.",
+        metadata: { crossSession: true },
+      }),
+      resolvedModelId: "claude-3-opus",
+      resolvedModelProvider: "anthropic",
+    });
+    const result = await assembleExecutionPrompt(params, { resolvedLanguage: "und-Hebr" });
+
+    expect(result.systemPrompt).toBe("parent-frozen-prompt");
+    expect(result.responseLocalePolicy).toEqual({
+      locale: "und-Hebr",
+      source: "explicit",
       enforceLocale: true,
     });
   });
