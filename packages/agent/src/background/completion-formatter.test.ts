@@ -57,6 +57,13 @@ describe("formatCompletionAnnouncement", () => {
     expect(out.endsWith(TRAILING_INSTRUCTION)).toBe(true);
   });
 
+  it("requires completion turns to consume continuation metadata before summarizing", () => {
+    const task = buildTask({ status: "completed", result: '{"next_page_number":2}' });
+    const out = formatCompletionAnnouncement(task);
+    expect(out).toContain("retrieve every remaining result page");
+    expect(out).toContain("file tools before summarizing");
+  });
+
   it("size cap truncates body, preserves header + trailing", () => {
     // Body large enough to force total > 32768.
     const massiveResult = "X".repeat(40_000);

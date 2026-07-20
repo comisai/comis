@@ -14,7 +14,7 @@
  * @module
  */
 import { readFileSync, readdirSync, statSync, unlinkSync, existsSync } from "node:fs";
-import { safePath, systemNowMs } from "@comis/core";
+import { BackgroundTaskOriginSchema, safePath, systemNowMs } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import type { BackgroundTask, PersistedTaskState } from "./background-task-types.js";
 
@@ -130,7 +130,11 @@ export function recoverTasks(dataDir: string): PersistedTaskState[] {
         // all three unconditionally. A file failing this guard is either
         // truncated mid-write or a stale artifact operators should clean
         // up manually.
-        if (!parsed.id || !parsed.toolName || !parsed.origin) {
+        if (
+          !parsed.id
+          || !parsed.toolName
+          || !BackgroundTaskOriginSchema.safeParse(parsed.origin).success
+        ) {
           continue;
         }
         const task = parsed as PersistedTaskState;

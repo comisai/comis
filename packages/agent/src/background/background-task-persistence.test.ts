@@ -163,6 +163,29 @@ describe("background-task-persistence", () => {
       expect(recovered.find((t) => t.id === undefined)).toBeUndefined();
     });
 
+    it("skips persisted tasks whose origin lacks canonical turn authority", () => {
+      const agentDir = safePath(dataDir, "default");
+      mkdirSync(agentDir, { recursive: true });
+      const filePath = safePath(agentDir, "stale-origin.json");
+      writeFileSync(filePath, JSON.stringify({
+        id: "stale-origin",
+        toolName: "exec",
+        status: "completed",
+        startedAt: 1000,
+        completedAt: 2000,
+        origin: {
+          agentId: "default",
+          sessionKey: "default:echo:test:user1",
+          channelType: "echo",
+          channelId: "test",
+          traceId: null,
+          backgroundHopCount: 0,
+        },
+      }, null, 2), "utf-8");
+
+      expect(recoverTasks(dataDir)).toEqual([]);
+    });
+
     it("skips non-directory entries in dataDir without losing legitimate agent tasks", () => {
       // Create a legitimate agent directory with one task.
       const task: PersistedTaskState = {
