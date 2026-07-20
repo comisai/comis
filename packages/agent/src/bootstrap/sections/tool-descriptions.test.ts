@@ -4,6 +4,7 @@ import {
   LEAN_TOOL_DESCRIPTIONS,
   TOOL_SUMMARIES,
   TOOL_GUIDES,
+  SYSTEM_PROMPT_GUIDES,
   TOOL_ORDER,
   resolveDescription,
   getToolGuideWithSchema,
@@ -323,6 +324,14 @@ describe("TOOL_GUIDES", () => {
       // ambiguity.
       expect(TOOL_GUIDES.providers_manage).toContain("Credential Workflow Summary");
     });
+  });
+});
+
+describe("SYSTEM_PROMPT_GUIDES", () => {
+  it("binds sub-agent delivery without model-selected route identifiers", () => {
+    expect(SYSTEM_PROMPT_GUIDES.sessions_spawn).toContain("bound automatically");
+    expect(SYSTEM_PROMPT_GUIDES.sessions_spawn).not.toContain("announce_channel_type");
+    expect(SYSTEM_PROMPT_GUIDES.sessions_spawn).not.toContain("announce_channel_id");
   });
 });
 

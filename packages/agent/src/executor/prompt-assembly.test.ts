@@ -1834,14 +1834,15 @@ describe("assembleExecutionPrompt", () => {
     expect(call.channelContext).toBeUndefined();
   });
 
-  it("includes channel ID and announce hint in dynamic preamble", async () => {
+  it("includes channel identity without asking the model to route announcements", async () => {
     const params = makeParams({
       msg: makeMsg({ channelType: "slack", channelId: "C123" }),
     });
     const result = await assembleExecutionPrompt(params);
 
     expect(result.dynamicPreamble).toContain("Current channel: slack (ID: C123)");
-    expect(result.dynamicPreamble).toContain('announce_channel_type="slack"');
+    expect(result.dynamicPreamble).not.toContain("announce_channel_type");
+    expect(result.dynamicPreamble).not.toContain("announce_channel_id");
   });
 
   // -----------------------------------------------------------------
@@ -3900,6 +3901,24 @@ describe("parent prefix reuse", () => {
     expect(result.systemPrompt).toBe("parent-frozen-prompt");
     // Full assembly should NOT be called (early return)
     expect(mockAssembleRichSystemPrompt).not.toHaveBeenCalled();
+  });
+
+  it("keeps announcement routing out of the reused dynamic preamble", async () => {
+    const params = makeParams({
+      config: makeConfig({ model: "claude-3-opus", provider: "anthropic" }),
+      deps: {
+        workspaceDir: "/workspace",
+        spawnPacket: makeSpawnPacketWithCache(),
+      },
+      msg: makeMsg({ channelType: "telegram", channelId: "current_chat" }),
+      resolvedModelId: "claude-3-opus",
+      resolvedModelProvider: "anthropic",
+    });
+    const result = await assembleExecutionPrompt(params);
+
+    expect(result.dynamicPreamble).toContain("Current channel: telegram (ID: current_chat)");
+    expect(result.dynamicPreamble).not.toContain("announce_channel_type");
+    expect(result.dynamicPreamble).not.toContain("announce_channel_id");
   });
 
   it("falls through to full assembly when model mismatches", async () => {

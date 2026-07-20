@@ -291,6 +291,9 @@ describe("buildTaskDelegationSection", () => {
     const joined = result.join("\n");
     expect(joined).toContain("Do NOT Delegate");
     expect(joined).toContain("How to Delegate");
+    expect(joined).toContain("bound automatically");
+    expect(joined).not.toContain("announce_channel_type");
+    expect(joined).not.toContain("announce_channel_id");
   });
 
   it("includes parallel sub-agent guidance", () => {
