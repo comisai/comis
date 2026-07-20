@@ -14,7 +14,7 @@ fallback chains, and key rotation.
 
 Comis reads provider and model metadata from the [`@earendil-works/pi-ai`](https://www.npmjs.com/package/@earendil-works/pi-ai) catalog — currently 35 providers, including Anthropic, OpenAI, Google, Mistral, Groq, OpenRouter, DeepSeek, xAI, Cerebras, Amazon Bedrock, Azure OpenAI Responses, Vercel AI Gateway, Cloudflare AI Gateway / Workers AI, GitHub Copilot, Hugging Face, Fireworks, Together AI, Moonshot, Minimax, Z.ai, Kimi, OpenCode, and more. Every static-key scheme in the current catalog is bridged through Comis's Secret Manager; OAuth and ambient cloud credentials use their provider-specific paths.
 
-Catalog discovery and runtime authentication are separate. A provider added by a future pi-ai release appears automatically in model lists and pickers, but a new credential scheme may still require a Comis update before the provider can make requests. Amazon Bedrock uses the host AWS credential chain. For Google Vertex AI, use `GOOGLE_CLOUD_API_KEY` with `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`; ADC-only Vertex authentication is not currently bridged through the daemon's scrubbed environment.
+Catalog discovery and runtime authentication are separate. A provider added by a future pi-ai release appears automatically in model lists and pickers, but a new credential scheme may still require a Comis update before the provider can make requests. Amazon Bedrock supports a managed bearer, an AWS profile, or the host AWS credential chain. For Google Vertex AI, use `GOOGLE_CLOUD_API_KEY` with `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`; ADC-only Vertex authentication is not currently bridged through the daemon's scrubbed environment.
 
 Plus you can register custom OpenAI-compatible endpoints (any HTTP service that speaks the OpenAI chat-completions API) for proxies and self-hosted gateways.
 
@@ -46,6 +46,24 @@ In the web dashboard, the same catalog drives:
 - **Agents view › Edit agent** — provider and model dropdowns
 
 Provider and model discovery is not hardcoded in Comis source. The pi-ai catalog is the source of truth, accessed via `getProviders()` and `getModels(provider)`. Credential names are an explicit, tested mapping because Comis removes provider secrets from `process.env` after loading them.
+
+## Amazon Bedrock
+
+Set an agent's provider to `amazon-bedrock`, then choose one authentication mode:
+
+- **Managed Bedrock API key:** run `comis secrets set AWS_BEARER_TOKEN_BEDROCK`. The bearer is resolved from the Secret Manager before ambient AWS credentials and requires `bedrock:CallWithBearerToken`.
+- **AWS profile:** store the profile with `comis secrets set AWS_PROFILE`, or select it in the interactive wizard. The AWS SDK resolves that named profile normally.
+- **Ambient credential chain:** configure environment access keys, AWS SSO, web identity, IMDS, or ECS task-role credentials for the Comis process. Nothing needs to be copied into the Comis credential store.
+
+The interactive wizard asks for a region in every mode and stores it as `AWS_REGION`. Region resolution is: stored `AWS_REGION`, ambient `AWS_REGION`, ambient `AWS_DEFAULT_REGION`, the region in a model ARN, then `us-east-1`. Pinning the region avoids a misleading access error when the model is enabled somewhere other than the fallback region.
+
+Bedrock accepts several model-id forms:
+
+- Raw foundation-model ids, such as `anthropic.claude-*` or `amazon.nova-*`.
+- Cross-region inference-profile ids prefixed with `us.`, `eu.`, or `global.`.
+- Application inference-profile ARNs.
+
+The calling identity needs `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream`. Managed Bedrock API keys additionally need `bedrock:CallWithBearerToken`. Model availability and access are regional, so an `AccessDeniedException` or `ResourceNotFoundException` should be checked against both the resolved region and the configured model id.
 
 ## Custom providers (proxies and self-hosted)
 

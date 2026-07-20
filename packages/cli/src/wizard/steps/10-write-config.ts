@@ -311,6 +311,14 @@ function collectManagedSecrets(state: WizardState): Map<string, string> {
     if (envKey) managed.set(envKey, state.provider.apiKey);
   }
 
+  // Provider-scoped auxiliary values use the same persistence path as keys so
+  // pi receives them through credential.env after daemon bootstrap.
+  if (state.provider?.credentialValues) {
+    for (const [name, value] of Object.entries(state.provider.credentialValues)) {
+      if (value !== undefined && value !== "") managed.set(name, value);
+    }
+  }
+
   // Channel credentials
   if (state.channels) {
     for (const ch of state.channels) {

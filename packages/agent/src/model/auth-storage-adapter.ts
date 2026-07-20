@@ -174,6 +174,7 @@ export type AuthStorage = ComisCredentialStore;
  * GOOGLE_API_KEY before GEMINI_API_KEY).
  */
 export const PROVIDER_SECRET_KEYS: Readonly<Record<string, readonly string[]>> = {
+  "amazon-bedrock": ["AWS_BEARER_TOKEN_BEDROCK"],
   "github-copilot": ["COPILOT_GITHUB_TOKEN"],
   anthropic: ["ANTHROPIC_API_KEY", "ANTHROPIC_OAUTH_TOKEN"],
   "ant-ling": ["ANT_LING_API_KEY"],
@@ -224,6 +225,13 @@ const PROVIDER_CREDENTIAL_GROUPS: Readonly<
   ],
 };
 
+/** Optional provider-scoped values forwarded through pi's credential env. */
+const PROVIDER_OPTIONAL_CREDENTIAL_NAMES: Readonly<
+  Record<string, readonly string[]>
+> = {
+  "amazon-bedrock": ["AWS_REGION", "AWS_PROFILE"],
+};
+
 /** Return the ordered SecretManager names supported for a provider. */
 export function getProviderSecretNames(provider: string): readonly string[] {
   return PROVIDER_SECRET_KEYS[provider] ?? [];
@@ -241,7 +249,10 @@ export function getMissingProviderCredentialNames(
 }
 
 function getProviderCredentialNames(provider: string): string[] {
-  return (PROVIDER_CREDENTIAL_GROUPS[provider] ?? []).flatMap((group) => group);
+  return [
+    ...(PROVIDER_CREDENTIAL_GROUPS[provider] ?? []).flatMap((group) => group),
+    ...(PROVIDER_OPTIONAL_CREDENTIAL_NAMES[provider] ?? []),
+  ];
 }
 
 /** Return every provider affected when a credential or auxiliary value changes. */
@@ -296,11 +307,21 @@ function syncProviderCredentialForNames(
       provider,
       (name) => secretManager.has(name),
     );
-    if (apiKey === undefined || missing.length > 0) {
+    const hasRequiredCredentialGroups =
+      (PROVIDER_CREDENTIAL_GROUPS[provider]?.length ?? 0) > 0;
+    const env = providerCredentialEnv(secretManager, provider);
+    if (
+      missing.length > 0 ||
+      (hasRequiredCredentialGroups && apiKey === undefined) ||
+      (apiKey === undefined && env === undefined)
+    ) {
       return false;
     }
-    const env = providerCredentialEnv(secretManager, provider);
-    storage.set(provider, { type: "api_key", key: apiKey, ...(env ? { env } : {}) });
+    storage.set(provider, {
+      type: "api_key",
+      ...(apiKey !== undefined ? { key: apiKey } : {}),
+      ...(env ? { env } : {}),
+    });
     return true;
   }
 

@@ -53,6 +53,7 @@ interface ProviderUiHint {
  * pi-ai adds them in a future release.
  */
 const PROVIDER_UI_HINTS: Record<string, ProviderUiHint> = {
+  "amazon-bedrock": { label: "Amazon Bedrock (AWS)", hint: "Claude, Nova, Llama via AWS — API key or IAM", category: "other" },
   anthropic: { label: "Anthropic (Claude)", hint: "Recommended for agents", category: "recommended" },
   openai: { label: "OpenAI (GPT)", hint: "GPT-4o, o1, o3 — API key (pay per token)", category: "recommended" },
   "openai-codex": { label: "OpenAI Codex", hint: "ChatGPT/Codex subscription — OAuth login", category: "recommended" },

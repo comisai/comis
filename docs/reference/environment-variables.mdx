@@ -579,6 +579,7 @@ No provider key is universally required: an OAuth login or a local keyless provi
 | `ANTHROPIC_API_KEY` | Anthropic; preferred static name |
 | `ANTHROPIC_OAUTH_TOKEN` | Anthropic static token alias; interactive OAuth is also supported |
 | `ANT_LING_API_KEY` | Ant Ling |
+| `AWS_BEARER_TOKEN_BEDROCK` | Amazon Bedrock managed API key; preferred over the ambient AWS credential chain when set |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI Responses |
 | `CEREBRAS_API_KEY` | Cerebras |
 | `CLOUDFLARE_API_KEY` | Cloudflare Workers AI and AI Gateway |
@@ -608,9 +609,20 @@ No provider key is universally required: an OAuth login or a local keyless provi
 | `ZAI_API_KEY` | Z.ai |
 | `ZAI_CODING_CN_API_KEY` | Z.ai Coding China |
 
-Cloudflare also requires `CLOUDFLARE_ACCOUNT_ID`; Cloudflare AI Gateway additionally requires `CLOUDFLARE_GATEWAY_ID`. Google Vertex AI static-key authentication requires `GOOGLE_CLOUD_PROJECT` (or `GCLOUD_PROJECT`) and `GOOGLE_CLOUD_LOCATION` alongside `GOOGLE_CLOUD_API_KEY`.
+Cloudflare also requires `CLOUDFLARE_ACCOUNT_ID`; Cloudflare AI Gateway additionally requires `CLOUDFLARE_GATEWAY_ID`. Google Vertex AI static-key authentication requires `GOOGLE_CLOUD_PROJECT` (or `GCLOUD_PROJECT`) and `GOOGLE_CLOUD_LOCATION` alongside `GOOGLE_CLOUD_API_KEY`. Google Vertex ADC-only authentication is not currently bridged through the daemon's scrubbed environment; use the explicit Vertex key path above.
 
-Amazon Bedrock is the exception to the static-key table. It uses the host AWS credential chain (`AWS_PROFILE`, IAM access keys, a Bedrock bearer, ECS credentials, or web identity) and those values remain ambient for the AWS SDK. Google Vertex ADC-only authentication is not currently bridged through the daemon's scrubbed environment; use the explicit Vertex key path above.
+### Amazon Bedrock AWS variables
+
+| Variable | Purpose |
+|----------|---------|
+| `AWS_BEARER_TOKEN_BEDROCK` | Bedrock API key bearer. It can be stored with `comis secrets set AWS_BEARER_TOKEN_BEDROCK`; when present, it is used before the ambient credential chain. |
+| `AWS_REGION` | Preferred Bedrock region. The wizard stores this optional provider value so pi forwards it to the AWS SDK. |
+| `AWS_DEFAULT_REGION` | Ambient fallback when `AWS_REGION` is absent. It is not copied into the Comis credential store. |
+| `AWS_PROFILE` | Named AWS profile. It can be stored through the wizard or with `comis secrets set AWS_PROFILE`. |
+
+Bedrock can also use ambient `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, AWS SSO, web identity, IMDS, or ECS task-role credentials. The daemon intentionally does not scrub `AWS_*` variables from its own environment because the AWS SDK credential chain needs them. Treat all credential-bearing AWS variables as secrets and restrict the daemon environment accordingly.
+
+Region resolution is stored `AWS_REGION` → ambient `AWS_REGION` → `AWS_DEFAULT_REGION` → model-ARN region → `us-east-1`.
 
 ```bash
 # .env example: pick the providers you actually use

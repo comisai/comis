@@ -212,6 +212,8 @@ export type ProviderConfig = {
   /** Provider identifier (e.g. "anthropic", "openai"). */
   id: string;
   apiKey?: string;
+  /** Additional managed provider values persisted alongside the primary key. */
+  credentialValues?: Readonly<Partial<Record<"AWS_REGION" | "AWS_PROFILE", string>>>;
   /** Auth method when provider supports both API keys and OAuth tokens. */
   authMethod?: AuthMethod;
   customEndpoint?: string;
@@ -333,6 +335,7 @@ export const SUPPORTED_CHANNELS: readonly SupportedChannel[] = [
 
 /** Map provider identifier to the environment variable key for the API key. */
 export const PROVIDER_ENV_KEYS: Record<string, string> = {
+  "amazon-bedrock": "AWS_BEARER_TOKEN_BEDROCK",
   "github-copilot": "COPILOT_GITHUB_TOKEN",
   anthropic: "ANTHROPIC_API_KEY",
   "ant-ling": "ANT_LING_API_KEY",
