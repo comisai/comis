@@ -27,6 +27,22 @@ export interface GovernedAnnouncementRequest {
   channelId: string;
   text: string;
   options?: AnnouncementDeliveryOptions;
+  attachment?: GovernedAnnouncementAttachment;
+}
+
+/** Immutable prepared snapshot metadata bound into one outward operation. */
+export interface GovernedAnnouncementAttachment {
+  path: string;
+  fileName: string;
+  mimeType: string;
+  contentDigest: string;
+  sizeBytes: number;
+}
+
+/** Untrusted generated-file reference resolved by the daemon composition root. */
+export interface CompletionAttachmentRef {
+  sourceAgentId: string;
+  path: string;
 }
 
 export interface AnnouncementDeliveryOptions {
@@ -46,6 +62,7 @@ export interface AnnouncementPlatformSendOutcome {
 
 export type GovernedAnnouncementFailure =
   | "operation_validation_blocked"
+  | "attachment_preparation_blocked"
   | "allocation_blocked"
   | "lookup_blocked"
   | "operation_mismatch"
@@ -79,6 +96,9 @@ export interface CompletionAnnouncementSendRequest {
   channelId: string;
   text: string;
   options?: AnnouncementDeliveryOptions;
+  /** Distinguishes independently governed files emitted by the same run. */
+  partId?: string;
+  attachment?: CompletionAttachmentRef;
 }
 
 export type SendGovernedCompletionAnnouncement = (
@@ -92,6 +112,7 @@ interface GovernedAnnouncementSenderDeps {
     channelId: string,
     text: string,
     options?: AnnouncementDeliveryOptions,
+    attachment?: GovernedAnnouncementAttachment,
   ) => Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
   eventBus?: TypedEventBus;
   logger?: Pick<ComisLogger, "error" | "warn">;
@@ -102,9 +123,10 @@ export function createStableAnnouncementOperationId(
   agentId: string,
   callerSessionKey: string,
   runId: string,
+  partId?: string,
 ): string {
   const digest = createHash("sha256")
-    .update(JSON.stringify({ agentId, callerSessionKey, kind: "completion_announcement", runId }))
+    .update(JSON.stringify({ agentId, callerSessionKey, kind: "completion_announcement", partId: partId ?? null, runId }))
     .digest("hex");
   return `completion-announcement:${digest}`;
 }
@@ -224,12 +246,14 @@ export function createAnnouncementOperationDigests(params: {
   channelId: string;
   text: string;
   options?: AnnouncementDeliveryOptions;
+  attachment?: GovernedAnnouncementAttachment;
 }): Result<AnnouncementOperationDigests, Error> {
   const input = tryCatch(() => ({
     channelType: params.channelType,
     channelId: params.channelId,
     text: params.text,
     options: params.options,
+    attachment: params.attachment,
   }));
   if (!input.ok) return invalidJsonValue();
   if (
@@ -240,6 +264,14 @@ export function createAnnouncementOperationDigests(params: {
     return invalidJsonValue();
   }
   const canonical = canonicalJson({
+    ...(input.value.attachment === undefined
+      ? {}
+      : { attachment: {
+          contentDigest: input.value.attachment.contentDigest,
+          fileName: input.value.attachment.fileName,
+          mimeType: input.value.attachment.mimeType,
+          sizeBytes: input.value.attachment.sizeBytes,
+        } }),
     channelId: input.value.channelId,
     channelType: input.value.channelType,
     kind: "cross_session_announcement",
@@ -249,7 +281,9 @@ export function createAnnouncementOperationDigests(params: {
   });
   if (!canonical.ok) return canonical;
   return tryCatch(() => ({
-    contentDigest: createHash("sha256").update(input.value.text).digest("hex"),
+    contentDigest: createHash("sha256").update(
+      input.value.attachment === undefined ? input.value.text : canonical.value,
+    ).digest("hex"),
     operationFingerprint: createHash("sha256")
       .update(canonical.value)
       .digest("hex"),
@@ -447,6 +481,7 @@ export function createGovernedAnnouncementSender(deps: GovernedAnnouncementSende
         request.channelId,
         request.text,
         request.options,
+        request.attachment,
       ),
     );
     if (!boundary.ok || !boundary.value.ok) {

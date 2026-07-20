@@ -396,6 +396,43 @@ describe("AnnouncementBatcher", () => {
     );
   });
 
+  it("delivers a generated file even when the parent suppresses its caption", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: true,
+      identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 4 },
+    }));
+    const deps = makeDeps({
+      deadLetterQueue,
+      announceToParent: vi.fn().mockResolvedValue(undefined),
+      sendGovernedAnnouncement,
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({
+      idempotencyKey: "file-no-caption",
+      attachments: [{ sourceAgentId: "report-agent", path: "/workspace-report/reports/monthly.csv" }],
+    }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      text: "",
+      partId: "attachment:0",
+      attachment: {
+        sourceAgentId: "report-agent",
+        path: "/workspace-report/reports/monthly.csv",
+      },
+    }));
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
+      "file-no-caption",
+      "receipt_committed",
+    );
+    expect(deadLetterQueue.resolveDecision).not.toHaveBeenCalledWith(
+      "file-no-caption",
+      "no_reply",
+    );
+  });
+
   it("leaves the durable decision pending after parent timeout", async () => {
     const deadLetterQueue = makeDecisionQueue();
     const deps = makeDeps({

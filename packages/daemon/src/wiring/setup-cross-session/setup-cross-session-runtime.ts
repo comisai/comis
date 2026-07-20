@@ -16,13 +16,13 @@
 import type {
   AgentCapability, AgentConfig, AppContainer, ChannelPort, ClockPort,
   DeliveryOrigin, DeliveryService, DeliverToChannelOptions, DurableRunPort,
-  FileLockPort, NormalizedMessage, OutwardSendLedgerPort, RequestContext,
+  FileLockPort, NormalizedMessage, OutwardSendLedgerPort,
   SessionKey, TimerPort, SessionStorePort, ConversationLocator, ConversationRef, ConversationScope,
   ResolvedTurnScope,
   MemoryWriteEntry, MemoryWriteScope,
 } from "@comis/core";
 import {
-  createConversationRef, DeliveryOriginSchema, formatSessionKey,
+  createConversationRef, createResolvedRequestContext, DeliveryOriginSchema, formatSessionKey,
   resolveWorkspaceDir, runWithContext, safePath, systemNowMs, tryGetContext,
 } from "@comis/core";
 import { createResultRefStore } from "@comis/skills/tools";
@@ -39,6 +39,7 @@ import { randomUUID } from "node:crypto";
 import { buildExecuteSubAgent } from "./setup-cross-session-graph.js";
 import { registerProxyTypingListeners } from "./setup-cross-session-events.js";
 import { createAnnouncementDelivery } from "./governed-announcement-delivery.js";
+import { createCompletionAttachmentPreparer } from "./completion-attachment.js";
 
 /**
  * A silent {@link ComisLogger} used only when the optional `deps.logger` is
@@ -223,7 +224,8 @@ export function setupCrossSession(deps: {
     text: string,
     fixedTools?: Awaited<ReturnType<typeof assembleToolsForAgent>>,
   ): Promise<{ response: string; tokensUsed: { total: number }; cost: { total: number } }> => {
-    const formattedTargetSessionKey = formatSessionKey(sessionKey);
+    const targetSessionKey = { ...sessionKey, agentId };
+    const formattedTargetSessionKey = formatSessionKey(targetSessionKey);
     const ambientContext = tryGetContext();
     const parsedOrigin = DeliveryOriginSchema.safeParse(ambientContext?.deliveryOrigin);
     const candidateOrigin = parsedOrigin.success ? parsedOrigin.data : undefined;
@@ -238,10 +240,10 @@ export function setupCrossSession(deps: {
       && candidateOrigin.threadId === sessionKey.threadId
       ? Object.freeze(candidateOrigin)
       : undefined;
-    const targetContext: RequestContext = {
+    const targetContextResult = createResolvedRequestContext({
       tenantId: sessionKey.tenantId,
       userId: sessionKey.userId,
-      sessionKey: formattedTargetSessionKey,
+      sessionKey: targetSessionKey,
       agentId,
       traceId: randomUUID(),
       startedAt: deps.clock.now(),
@@ -252,13 +254,9 @@ export function setupCrossSession(deps: {
       ...(targetOrigin !== undefined
         ? { channelType: targetOrigin.channelType, deliveryOrigin: targetOrigin }
         : {}),
-    };
-    Object.defineProperties(targetContext, Object.fromEntries(
-      Object.keys(targetContext)
-        .filter((field) => field !== "resolvedModel" && field !== "resolvedLanguage")
-        .map((field) => [field, { writable: false, configurable: false }]),
-    ));
-    Object.preventExtensions(targetContext);
+    });
+    if (!targetContextResult.ok) return Promise.reject(targetContextResult.error);
+    const targetContext = targetContextResult.value;
 
     return runWithContext(targetContext, async () => {
       const msg: NormalizedMessage = {
@@ -272,7 +270,7 @@ export function setupCrossSession(deps: {
         metadata: { crossSession: true },
       };
       const tools = fixedTools ?? await assembleToolsForAgent(agentId);
-      const result = await getExecutor(agentId).execute(msg, sessionKey, tools, undefined, agentId);
+      const result = await getExecutor(agentId).execute(msg, targetSessionKey, tools, undefined, agentId);
       if (result.finishReason !== "stop") {
         // The sender already treats a rejected execute callback as a failed RPC
         // operation. Rejecting here preserves the executor's terminal outcome
@@ -284,7 +282,6 @@ export function setupCrossSession(deps: {
       return { response: result.response, tokensUsed: result.tokensUsed, cost: result.cost };
     });
   };
-
   const {
     sendToChannelWithReceipt,
     sendToChannel,
@@ -297,8 +294,11 @@ export function setupCrossSession(deps: {
     ...(deps.logger ? { logger: deps.logger } : {}),
     ...(deps.outwardLedger ? { outwardLedger: deps.outwardLedger } : {}),
     ...(deps.resolveRootRunId ? { resolveRootRunId: deps.resolveRootRunId } : {}),
+    prepareCompletionAttachment: createCompletionAttachmentPreparer({
+      dataDir: container.config.dataDir,
+      agents: container.config.agents,
+    }),
   });
-
   // executeSubAgent built via setup-cross-session-graph.ts.
   const executeSubAgent = buildExecuteSubAgent({
     container,

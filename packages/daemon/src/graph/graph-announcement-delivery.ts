@@ -111,6 +111,7 @@ function hasRetainedOperationEvidence(
     case "commit_blocked":
       return true;
     case "allocation_blocked":
+    case "attachment_preparation_blocked":
     case "operation_validation_blocked":
     case "lookup_blocked":
     case "operation_mismatch":

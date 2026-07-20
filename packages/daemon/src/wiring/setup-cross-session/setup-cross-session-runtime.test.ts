@@ -975,6 +975,36 @@ describe("setupCrossSession", () => {
     );
   });
 
+  it("announceToParent lets workspace policy loading record its hash in the resolved context", async () => {
+    const setupCrossSession = await getSetupCrossSession();
+    const execute = vi.fn(async () => {
+      const context = getContext();
+      context.workspacePolicyHash = "policy-hash";
+      return {
+        response: "Policy-aware candidate",
+        tokensUsed: { total: 10 },
+        cost: { total: 0.001 },
+        finishReason: "stop" as const,
+      };
+    });
+    const deps = createMinimalDeps({
+      getExecutor: vi.fn(() => ({ execute })),
+    });
+    setupCrossSession(deps);
+    const announceToParent = getAnnounceToParent(mockCreateSubAgentRunner.mock.calls[0][0]);
+
+    const candidate = await announceToParent(
+      "agent-1",
+      { channelId: "chan-1", userId: "user-1", tenantId: "t-1" },
+      "Rewrite this completion",
+      "telegram",
+      "chat-123",
+    );
+
+    expect(candidate).toBe("Policy-aware candidate");
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
   it("announceToParent does not send through an unrelated ambient route", async () => {
     const setupCrossSession = await getSetupCrossSession();
     const deps = createMinimalDeps();
@@ -3707,6 +3737,8 @@ describe("setupCrossSession durable-store injection", () => {
         }),
       })),
     });
+    deps.container.config.dataDir = `${os.tmpdir()}/comis-governed-commit-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    mkdirSync(deps.container.config.dataDir, { recursive: true });
     const result = setupCrossSession(deps);
 
     result.announcementBatcher.enqueue({

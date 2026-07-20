@@ -1237,6 +1237,36 @@ describe("announcement scrub", () => {
 // ---------------------------------------------------------------------------
 
 describe("deliverAnnouncement idempotency-key threading", () => {
+  it("threads generated output references onto the durable batcher entry", async () => {
+    const enqueue = vi.fn().mockResolvedValue(ok("admitted"));
+    const batcher = {
+      enqueue,
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      get pending() { return 0; },
+    };
+    const attachments = [{
+      sourceAgentId: "report-agent",
+      path: "/srv/comis/workspace/reports/monthly.csv",
+    }];
+
+    await deliverAnnouncement({
+      announcementText: "Report ready",
+      announceChannelType: "telegram",
+      announceChannelId: "chat-1",
+      callerAgentId: "agent-main",
+      callerSessionKey: "default:agent:agent-main:user1:telegram:peer:user1",
+      callerConversation: makeCallerConversation(),
+      runId: "run-report",
+      attachments,
+    }, {
+      sendToChannel: vi.fn().mockResolvedValue(true),
+      batcher,
+    });
+
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ attachments }));
+  });
+
   it("sets idempotencyKey = `${callerSessionKey}::${runId}` on the batcher enqueue", async () => {
     const { deliverAnnouncement } = await import("./sub-agent-result-processor.js");
     const enqueue = vi.fn();

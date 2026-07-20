@@ -2435,6 +2435,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               callerSessionKey: params.callerSessionKey,
               callerConversation: params.callerConversation,
               runId,
+              ...(validationResults?.some((output) => output.exists)
+                ? {
+                    attachments: validationResults
+                      .filter((output) => output.exists)
+                      .map((output) => ({ sourceAgentId: params.agentId, path: output.path })),
+                  }
+                : {}),
             }, deps);
           }
         } else {

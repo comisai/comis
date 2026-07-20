@@ -15,6 +15,7 @@ import { createDeliveryDedup, type DeliveryDedup } from "@comis/agent";
 import type { ChannelType } from "./announcement-dead-letter.js";
 import type {
   AnnouncementOperationIdentity,
+  CompletionAttachmentRef,
   SendGovernedCompletionAnnouncement,
 } from "./announcement-outward-operation.js";
 
@@ -40,6 +41,7 @@ export interface QueuedAnnouncement {
   runId: string;
   /** Idempotency key `${callerSessionKey}::${runId}`. Built once at the delivery entry; opaque here. Undefined for a top-level spawn (no callerSessionKey). */
   idempotencyKey?: string;
+  attachments?: CompletionAttachmentRef[];
 }
 
 export interface AnnouncementBatcherDeps {
@@ -248,7 +250,12 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
    * policy below this boundary; an opaque throw or false result is uncertain
    * and must not be repeated here.
    */
-  async function sendOnce(item: QueuedAnnouncement, text: string): Promise<{
+  async function sendOnce(
+    item: QueuedAnnouncement,
+    text: string,
+    attachment?: CompletionAttachmentRef,
+    partId?: string,
+  ): Promise<{
     delivered: boolean;
     lastError?: string;
     identity?: AnnouncementOperationIdentity;
@@ -262,6 +269,8 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         channelType: item.announceChannelType,
         channelId: item.announceChannelId,
         text,
+        ...(partId ? { partId } : {}),
+        ...(attachment ? { attachment } : {}),
         ...(item.announceThreadId ? { options: { threadId: item.announceThreadId } } : {}),
       }));
       if (!boundary.ok || !boundary.value.ok) {
@@ -357,8 +366,45 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     text: string,
   ): Promise<boolean> {
     const first = items[0]!;
-    const { delivered, lastError, identity } = await sendOnce(first, text);
-    if (delivered) {
+    const attachments = items.flatMap((item) =>
+      (item.attachments ?? []).map((attachment, index) => ({ item, attachment, index })),
+    );
+    const operations: Array<{
+      item: QueuedAnnouncement;
+      text: string;
+      attachment?: CompletionAttachmentRef;
+      partId?: string;
+    }> = attachments.length === 0
+      ? [{ item: first, text }]
+      : items.length === 1
+        ? attachments.map((entry, index) => ({
+            ...entry,
+            text: index === 0 ? text : "",
+            partId: `attachment:${entry.index}`,
+          }))
+        : [
+            { item: first, text, partId: "summary" },
+            ...attachments.map((entry) => ({
+              ...entry,
+              text: "",
+              partId: `attachment:${entry.index}`,
+            })),
+          ];
+
+    let failure: { lastError?: string; identity?: AnnouncementOperationIdentity } | undefined;
+    for (const operation of operations) {
+      const outcome = await sendOnce(
+        operation.item,
+        operation.text,
+        operation.attachment,
+        operation.partId,
+      );
+      if (!outcome.delivered) {
+        failure = outcome;
+        break;
+      }
+    }
+    if (failure === undefined) {
       await resolveDecisions(items, "receipt_committed");
       markItemsDelivered(items);
       return true;
@@ -375,6 +421,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       },
       "Announcement final delivery was not confirmed",
     );
+    if (attachments.length > 0) return false;
     if (!deps.deadLetterQueue) return false;
     const queued = await deps.deadLetterQueue.enqueue({
       announcementText: text,
@@ -384,12 +431,12 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
       runId: first.runId,
       failedAt: systemNowMs(),
       attemptCount: 0,
-      ...(lastError ? { lastError } : {}),
+      ...(failure.lastError ? { lastError: failure.lastError } : {}),
       ...(first.announceThreadId ? { threadId: first.announceThreadId } : {}),
       idempotencyKey: first.idempotencyKey,
-      ...(identity ? {
-        rootRunId: identity.rootRunId,
-        stepIndex: identity.stepIndex,
+      ...(failure.identity ? {
+        rootRunId: failure.identity.rootRunId,
+        stepIndex: failure.identity.stepIndex,
       } : {}),
     });
     if (!queued?.ok) {
@@ -473,6 +520,10 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
           "announceToParent",
         );
         if (candidate === undefined) {
+          if (items.some((item) => (item.attachments?.length ?? 0) > 0)) {
+            await sendFinal(key, items, "");
+            return;
+          }
           await resolveDecisions(items, "no_reply");
           markItemsDelivered(items);
           return;

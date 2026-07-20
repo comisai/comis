@@ -576,6 +576,42 @@ describe("createSubAgentRunner", () => {
     expect(lifecycle).toEqual(["enqueue", "batcher.shutdown"]);
   });
 
+  it("enqueues verified expected outputs as generated file references", async () => {
+    vi.useRealTimers();
+    const outputDir = await mkdtemp(join(tmpdir(), "completion-output-test-"));
+    const outputPath = join(outputDir, "monthly.csv");
+    await writeFile(outputPath, "vehicle_id,status\n1,active\n", "utf8");
+    const enqueue = vi.fn().mockResolvedValue(ok("queued"));
+    deps.batcher = {
+      enqueue,
+      flush: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      pending: 0,
+      hasDelivered: vi.fn().mockReturnValue(false),
+      markDelivered: vi.fn(),
+    };
+    const callerConversation = createTestConversation({ agentId: "parent-agent" });
+    const runner = createSubAgentRunner(deps);
+
+    runner.spawn({
+      task: "create the monthly report",
+      agentId: "report-agent",
+      expected_outputs: [outputPath],
+      callerAgentId: "parent-agent",
+      callerSessionKey: formattedConversation(callerConversation),
+      callerConversation,
+      announceChannelType: "telegram",
+      announceChannelId: "channel1",
+    });
+
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalledOnce());
+    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      attachments: [{ sourceAgentId: "report-agent", path: outputPath }],
+    }));
+    await runner.shutdown();
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  });
+
   it("shutdown closes spawn admission before waiting for active runs", async () => {
     const runner = createSubAgentRunner(deps);
 

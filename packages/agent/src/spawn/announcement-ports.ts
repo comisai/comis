@@ -39,6 +39,14 @@ export interface GovernedCompletionAnnouncementRequest {
   channelId: string;
   text: string;
   options?: { threadId?: string };
+  partId?: string;
+  attachment?: CompletionAttachmentShape;
+}
+
+/** Generated-file reference; daemon wiring validates and snapshots it before egress. */
+export interface CompletionAttachmentShape {
+  sourceAgentId: string;
+  path: string;
 }
 
 export type GovernedCompletionAnnouncementOutcome =
@@ -73,6 +81,7 @@ export interface QueuedAnnouncementShape {
   runId: string;
   /** Idempotency key `${callerSessionKey}::${runId}`. Mirrors QueuedAnnouncement.idempotencyKey — keep in lockstep. */
   idempotencyKey?: string;
+  attachments?: CompletionAttachmentShape[];
 }
 
 /**

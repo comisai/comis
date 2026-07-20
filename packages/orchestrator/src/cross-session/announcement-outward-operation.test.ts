@@ -121,6 +121,15 @@ describe("governed announcement sender", () => {
     expect(first.length).toBeLessThanOrEqual(256);
   });
 
+  it("allocates distinct stable operations for separate completion files", () => {
+    const first = createStableAnnouncementOperationId("agent-a", "session-a", "run-a", "attachment:0");
+    const repeated = createStableAnnouncementOperationId("agent-a", "session-a", "run-a", "attachment:0");
+    const second = createStableAnnouncementOperationId("agent-a", "session-a", "run-a", "attachment:1");
+
+    expect(first).toBe(repeated);
+    expect(first).not.toBe(second);
+  });
+
   it("rejects unsupported options before allocating an outward operation", async () => {
     const ledger = makeLedger();
     const sendToPlatform = vi.fn(async () => ok({
@@ -194,6 +203,38 @@ describe("governed announcement sender", () => {
 });
 
 describe("announcement operation fingerprinting", () => {
+  it("binds generated-file content but not the private snapshot path", () => {
+    const attachment = {
+      path: "/private/snapshot-one.csv",
+      fileName: "monthly.csv",
+      mimeType: "text/csv",
+      contentDigest: "a".repeat(64),
+      sizeBytes: 128,
+    };
+    const first = createAnnouncementOperationDigests({
+      channelType: "telegram",
+      channelId: "chat-1",
+      text: "report ready",
+      attachment,
+    });
+    const relocated = createAnnouncementOperationDigests({
+      channelType: "telegram",
+      channelId: "chat-1",
+      text: "report ready",
+      attachment: { ...attachment, path: "/private/snapshot-two.csv" },
+    });
+    const changed = createAnnouncementOperationDigests({
+      channelType: "telegram",
+      channelId: "chat-1",
+      text: "report ready",
+      attachment: { ...attachment, contentDigest: "b".repeat(64) },
+    });
+
+    expect(first.ok && relocated.ok && first.value).toEqual(relocated.ok && relocated.value);
+    expect(first.ok && changed.ok && first.value.operationFingerprint)
+      .not.toBe(changed.ok && changed.value.operationFingerprint);
+  });
+
   it("canonicalizes semantically equal nested option key orders", () => {
     const first = createAnnouncementOperationDigests({
       channelType: "telegram",
