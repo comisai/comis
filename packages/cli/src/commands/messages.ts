@@ -247,7 +247,7 @@ function renderCoverageNotes(result: SessionMessagesResult): void {
   }
   if (c.internalExcluded > 0) {
     info(
-      `${c.internalExcluded} internal dispatch message(s) (cron/sub-agent/heartbeat/cross-session/background/system) excluded — --include-internal to show them`,
+      `${c.internalExcluded} internal dispatch message(s) (cron/sub-agent/heartbeat/cross-session/background/system/restart-continuation) excluded — --include-internal to show them`,
     );
   }
   if (c.secretRedactions > 0) {
@@ -338,7 +338,7 @@ export function registerMessagesCommand(program: Command): void {
     .option("--limit <n>", "Max messages returned (the latest N are kept)", "500")
     .option(
       "--include-internal",
-      "Include cron/sub-agent/heartbeat/cross-session/background/system dispatch messages",
+      "Include cron/sub-agent/heartbeat/cross-session/background/system/restart-continuation dispatch messages",
     )
     .option(
       "--format <format>",

@@ -616,6 +616,7 @@ describe("comis messages", () => {
     const out = getSpyOutput(consoleSpy.log);
     expect(out).toContain("--limit");
     expect(out).toContain("--include-internal");
+    expect(out).toContain("restart-continuation");
     expect(out).toContain("1 user record(s) lacked enough authoritative provenance");
     expect(out).toContain("1 unstructured envelope record(s)");
   });

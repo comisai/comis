@@ -152,7 +152,11 @@ export function getOriginalInboundMessages(
     id: message.id,
     channelId: message.channelId,
     channelType: message.channelType,
-    senderId: message.senderId,
+    // Restart continuations retain the user's routing identity on the live
+    // message, but their durable authorship is Comis itself.
+    senderId: message.metadata?.isRestartContinuation === true
+      ? "system"
+      : message.senderId,
     text: message.text,
     timestamp: message.timestamp,
   }];
