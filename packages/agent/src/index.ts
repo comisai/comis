@@ -293,6 +293,10 @@ export { wrapInEnvelope, formatElapsed } from "./envelope/index.js";
 export { createPiExecutor } from "./executor/pi-executor/index.js";
 export type { PiExecutorDeps } from "./executor/pi-executor/index.js";
 
+// Canonical reply-locale resolution for composition-root boundaries that must
+// persist the current turn's language across process restarts.
+export { resolveResponseLocalePolicy } from "./executor/resolve-response-locale-policy.js";
+
 // ExecutionPlanPort holder — the composition root builds the holder,
 // threads it into bootstrapSession's ctx so SEP publishes the live per-turn
 // plan ref, and hands the SAME holder to the gateway as

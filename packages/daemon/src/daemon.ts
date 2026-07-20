@@ -29,6 +29,7 @@ import {
   writeMasterKeyIfAbsent,
   preReadStorageMode,
   systemNowMs,
+  tryGetContext,
   type ToolCapabilityPort,
   type PerAgentConfig,
   type WrapExternalContentOptions,
@@ -94,6 +95,7 @@ import {
   createGeminiCacheManager,
   createSessionTrackerRegistry,
   createFilesystemWorkspacePolicyAdapter,
+  resolveResponseLocalePolicy,
   evaluateViableFloorForAgent,
   probeAllOllamaProviders,
   seedDefaultDagTemplates,
@@ -287,7 +289,7 @@ function buildChannelManagerDeps(deps: {
 }): Parameters<typeof setupChannels>[0] {
   const { agents, assembleToolsForAgent, getInboundMessageIdResolver, getSessionTracker, msTeamsConversationStore } = deps;
   const {
-    container, executors, defaultAgentId, sessionManager, sessionStore,
+    container, executors, defaultAgentId, agentsConfig, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
     workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, memoryLifecycleStore, outcomeStore, learnedSkillStore, embeddingQueue,
@@ -392,9 +394,18 @@ function buildChannelManagerDeps(deps: {
       const chatType = typeof msg.metadata?.telegramChatType === "string"
         ? msg.metadata.telegramChatType
         : undefined;
+      const replayLanguage = msg.metadata?.isRestartContinuation === true
+        ? tryGetContext()?.resolvedLanguage
+        : undefined;
+      const resolvedLanguage = replayLanguage ?? resolveResponseLocalePolicy({
+        explicitLocale: agentsConfig[defaultAgentId]?.language,
+        requestLocale: typeof msg.metadata?.locale === "string" ? msg.metadata.locale : undefined,
+        requestText: msg.originalMessages?.map((message) => message.text).join("\n") ?? msg.text,
+      }).locale;
       continuationTracker.track({
         agentId: defaultAgentId, channelType, channelId: msg.channelId,
-        userId: msg.senderId, chatType, tenantId: container.config.tenantId, timestamp: Date.now(),
+        userId: msg.senderId, chatType, resolvedLanguage,
+        tenantId: container.config.tenantId, timestamp: Date.now(),
       });
       getInboundMessageIdResolver()?.record(msg, channelType);
     },
@@ -918,7 +929,9 @@ async function replayContinuationsIfAny(deps: {
       attachments: [] as never[],
       metadata,
     };
-    channelManager.injectMessage(record.channelType, syntheticMsg).catch((injectErr) => {
+    channelManager.injectMessage(record.channelType, syntheticMsg, {
+      resolvedLanguage: record.resolvedLanguage,
+    }).catch((injectErr) => {
       daemonLogger.warn(
         { err: injectErr, channelType: record.channelType, channelId: record.channelId, hint: "Continuation replay failed; user can re-send to resume", errorKind: "internal" as const },
         "Failed to replay continuation",

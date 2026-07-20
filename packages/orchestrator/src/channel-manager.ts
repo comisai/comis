@@ -321,7 +321,11 @@ export interface ChannelManager {
   /** Get running adapter count. */
   readonly activeCount: number;
   /** Inject a synthetic inbound message through the normal processing pipeline. Used for restart continuation replay. */
-  injectMessage(channelType: string, msg: NormalizedMessage): Promise<void>;
+  injectMessage(
+    channelType: string,
+    msg: NormalizedMessage,
+    context?: Pick<RequestContext, "resolvedLanguage">,
+  ): Promise<void>;
   /**
    * Raw onMessage-registration count per channelType, captured pre-dedup in startAll().
    * Used by the boot invariant collector to detect duplicate-adapter wiring.
@@ -736,7 +740,11 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       return activeChannelTypes.size;
     },
 
-    async injectMessage(channelType: string, msg: NormalizedMessage): Promise<void> {
+    async injectMessage(
+      channelType: string,
+      msg: NormalizedMessage,
+      context?: Pick<RequestContext, "resolvedLanguage">,
+    ): Promise<void> {
       // Prefer the startAll()-registered adapter; fall back to the daemon's live
       // boot registry for adapters added after boot (activation test).
       const adapter = adaptersByType.get(channelType) ?? deps.adapterRegistry?.get(channelType);
@@ -781,6 +789,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
           channelType: adapter.channelType,
           tenantId: deps.tenantId,
           trustLevel: "user",
+          resolvedLanguage: context?.resolvedLanguage,
         },
         async () => {
           deps.onMessageReceived?.(msg, channelType);

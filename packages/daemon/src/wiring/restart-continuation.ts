@@ -36,6 +36,8 @@ export interface ContinuationRecord {
    * inbound carries no chat-type metadata.
    */
   chatType?: string;
+  /** Resolved response locale carried into the synthetic replay context. */
+  resolvedLanguage?: string;
   tenantId: string;
   timestamp: number;
 }
