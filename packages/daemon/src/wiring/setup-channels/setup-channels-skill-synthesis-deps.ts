@@ -76,6 +76,25 @@ export interface ReflectionDepsInput {
 const UNTRUSTED_TRUST_TIER = "external";
 
 /**
+ * Recover the user-authored request from the executor's persisted model-facing
+ * envelope. LCD is lossless, so the stored user message includes dynamic system,
+ * workspace, channel, and integration context ahead of the actual request. That
+ * context is required for replay but is not trajectory evidence and must never be
+ * distilled into a learned document.
+ */
+function stripExecutorEnvelope(text: string): string {
+  const openMarker = "[System context]";
+  const closeMarker = "[End system context]";
+  const openIndex = text.indexOf(openMarker);
+  if (openIndex === -1) return text;
+  const closeIndex = text.indexOf(closeMarker, openIndex + openMarker.length);
+  if (closeIndex === -1) return text;
+  const afterContext = text.slice(closeIndex + closeMarker.length);
+  const channelHeader = afterContext.match(/^\s*\[[\w-]+\]\s+\S+\s+\([^)]*\):\s*/);
+  return (channelHeader ? afterContext.slice(channelHeader[0].length) : afterContext).trim();
+}
+
+/**
  * Derive the two origin-trust signals for a session-source sender. Prefer the
  * immutable, content-free ingress decision persisted on the trajectory. Synthetic
  * trajectories without that carrier fall back to `elevatedReply.senderTrustMap`
@@ -237,7 +256,11 @@ async function buildSkillSources(
         })
       : rows;
     if (turnRows.length === 0) return undefined;
-    const text = turnRows.map(contentOf).filter((t) => t.length > 0).join("\n");
+    const trajectoryContentOf = (message: unknown): string => {
+      const content = contentOf(message);
+      return roleOf(message) === "user" ? stripExecutorEnvelope(content) : content;
+    };
+    const text = turnRows.map(trajectoryContentOf).filter((t) => t.length > 0).join("\n");
     // The topicKey signature = the user-role messages (the task INTENT the user
     // controls), which is stable across the agent's response wording. The JOB
     // normalizes it via normalizeOpeningRequest (topic-key.ts) — which also
@@ -245,7 +268,7 @@ async function buildSkillSources(
     // so identical requests at different times collapse to the same topicKey.
     const userText = turnRows
       .filter((m) => roleOf(m) === "user")
-      .map((m) => contentOf(m))
+      .map(trajectoryContentOf)
       .filter((t) => t.length > 0)
       .join("\n");
     // A WINDOWED turn with no user text never seeds (a per-turn topic must be the

@@ -334,6 +334,8 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
           step: "reflect" as const,
           // Closed-union errorKind: a network-class transport fault on the LLM call.
           errorKind: "network" as const,
+          model: `${provider}/${modelId}`,
+          durationMs: clock.now() - callStartMs,
           hint: "reflection LLM call failed; the topic is skipped this run (the prior doc survives)",
         },
         "reflection LLM call failed",
@@ -391,6 +393,7 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
           step: "reflect" as const,
           errorKind: "dependency" as const,
           model: `${provider}/${modelId}`,
+          durationMs: clock.now() - callStartMs,
           hint: `reflection model returned an error/empty response (${resp.errorMessage ?? "no content"}) — topic skipped; verify the resolved cheap model id is valid for ${provider}`,
         },
         "reflection model returned error/empty response",
@@ -406,6 +409,8 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
       {
         submodule: "llm-reflection-adapter",
         step: "reflect" as const,
+        model: `${provider}/${modelId}`,
+        durationMs: clock.now() - callStartMs,
         opCount: result.ops?.length ?? 0,
         sectionCount: result.sections?.length ?? 0,
       },

@@ -266,6 +266,51 @@ describe("buildReflectionCronDeps", () => {
       expect(trajectories[0].signature).toBe("do X");
       expect(trajectories[0].text).toContain("did X");
     });
+
+    it("removes the executor system envelope from reflection text while preserving the user request and result", async () => {
+      const wrappedRequest = [
+        "[System context]",
+        "## Workspace onboarding",
+        "Ask the user for their name before doing any work.",
+        "[End system context]",
+        "",
+        "[telegram] user_a (10:15 AM):",
+        "Deliver the package to Priya's current office.",
+      ].join("\n");
+      const sessionStore = {
+        listDetailed: vi.fn(() => [{ sessionKey: "dm", userId: "u1", tenantId: "t", channelId: "telegram", metadata: null, createdAt: 1, updatedAt: 300, messageCount: 2 }]),
+        loadByFormattedKey: vi.fn(() => ({
+          messages: [
+            { role: "user", content: wrappedRequest, createdAt: 100 },
+            { role: "assistant", content: "Delivered successfully in four moves.", createdAt: 110 },
+          ],
+          metadata: {},
+          createdAt: 1,
+          updatedAt: 300,
+        })),
+      };
+      const outcomeStore = {
+        observe: vi.fn(), prune: vi.fn(), resolve: vi.fn(),
+        listTrajectoryIds: vi.fn(async () => ({
+          ok: true as const,
+          value: [{ trajectoryId: "turn-1", sessionId: "dm", observedAt: 120 }],
+        })),
+      };
+      const bundle = buildReflectionCronDeps(
+        makeInput({ sessionStore: sessionStore as any, outcomeStore: outcomeStore as any }),
+      )!;
+
+      const trajectories = await bundle.buildSourceTrajectories("skill", "agent-1", "t");
+
+      expect(trajectories).toHaveLength(1);
+      expect(trajectories[0].signature).toBe("Deliver the package to Priya's current office.");
+      expect(trajectories[0].text).toContain("Deliver the package to Priya's current office.");
+      expect(trajectories[0].text).toContain("Delivered successfully in four moves.");
+      expect(trajectories[0].text).not.toContain("Workspace onboarding");
+      expect(trajectories[0].text).not.toContain("Ask the user for their name");
+      expect(trajectories[0].text).not.toContain("[System context]");
+      expect(trajectories[0].text).not.toContain("[telegram] user_a");
+    });
   });
 
   // ── PROCEDURE DESCRIPTOR ATTACH (read-back → ReflectionSourceTrajectory) ──

@@ -102,6 +102,30 @@ describe("createLlmReflectionAdapter (untrusted-input boundary + honest error br
     expect(res.value.ops?.[0]?.op).toBe("replace");
   });
 
+  it("logs the resolved model and duration when a reflection call completes", async () => {
+    (completeSimple as Mock).mockResolvedValue(textResponse(JSON.stringify(FRESH_DOC)));
+    const logger = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const adapter = createLlmReflectionAdapter({
+      provider: "openai-codex",
+      modelId: "gpt-5.6-sol",
+      apiKey: "test-key",
+      clock: { now: () => SCOPE.now },
+      logger,
+    });
+
+    const res = await adapter.reflect({ trajectoryText: "x", currentSections: [] });
+
+    expect(res.ok).toBe(true);
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "reflect",
+        model: "openai-codex/gpt-5.6-sol",
+        durationMs: 0,
+      }),
+      "reflection call complete",
+    );
+  });
+
   it("wraps the UNTRUSTED trajectory with wrapExternalContent BEFORE the LLM (injection-defense keystone)", async () => {
     (completeSimple as Mock).mockResolvedValue(textResponse(JSON.stringify(FRESH_DOC)));
     const adapter = makeAdapter();
@@ -207,7 +231,12 @@ describe("createLlmReflectionAdapter (untrusted-input boundary + honest error br
 
     expect(res.ok).toBe(false);
     expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ errorKind: "network", step: "reflect" }),
+      expect.objectContaining({
+        errorKind: "network",
+        step: "reflect",
+        model: "anthropic/claude-x",
+        durationMs: 0,
+      }),
       expect.stringContaining("LLM call failed"),
     );
   });
