@@ -43,7 +43,7 @@ import {
 import { wireMemoryUsefulness } from "./setup-memory-usefulness-wiring.js";
 import { setupLearningOutcomeWiring } from "./setup-learning.js";
 import { buildReactionWiringDeps, wireLearningReactions, wireLearningCorrection } from "./setup-learning-reactions.js";
-import { buildOutcomeJudgeWiring } from "./setup-learning-judge.js";
+import { buildOutcomeJudgeWiring, createLateBoundLearningCredentialResolver, type LearningModelCredentialResolver } from "./setup-learning-judge.js";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -51,6 +51,8 @@ import { buildOutcomeJudgeWiring } from "./setup-learning-judge.js";
 
 /** All services produced by the memory/embedding setup phase. */
 export interface MemoryResult {
+  /** Binds the per-agent OAuth-aware credential resolver after agent setup. */
+  bindLearningCredentialResolver: (resolver: LearningModelCredentialResolver) => void;
   /** Dispose callback for embedding cache chain: L1 -> L2 -> provider. */
   disposeEmbedding?: () => Promise<void>;
   /** Cached embedding provider wrapper (optional). */
@@ -569,7 +571,8 @@ export async function setupMemory(deps: {
 
   // 6.5.2f'. Outcome subscriber + reward-at-resolve (reward/failure writes) + LLM-judge fallback (own leaf, byte-identity-gated); lcdStore created here for the judge transcript reader.
   const lcdStore = createLcdStore(db);
-  const judge = buildOutcomeJudgeWiring(container, clock, memoryLogger, lcdStore);
+  const learningCredential = createLateBoundLearningCredentialResolver();
+  const judge = buildOutcomeJudgeWiring(container, clock, memoryLogger, lcdStore, learningCredential.resolve);
   setupLearningOutcomeWiring({
     eventBus: container.eventBus, outcomeStore, learnedSkillStore,
     usefulnessStore, clock,
@@ -582,7 +585,7 @@ export async function setupMemory(deps: {
   // 6.5.2f''. Reaction + correction outcome wiring (the corroborating sources) behind the byte-identity gate; bulk lives in the co-located helper.
   const reactionWiring = buildReactionWiringDeps(
     { config: container.config, secretManager: container.secretManager, eventBus: container.eventBus, outcomeStore, logger: memoryLogger },
-    clock, timers);
+    clock, timers, learningCredential.resolve);
   wireLearningReactions(reactionWiring.deps);
   wireLearningCorrection(reactionWiring.deps);
   const { recordOutboundMessage, destroyReactionWiring } = reactionWiring; // destroy* tears down the reaction/session maps + rate-limiter timers at shutdown
@@ -705,6 +708,7 @@ export async function setupMemory(deps: {
   };
 
   return {
+    bindLearningCredentialResolver: learningCredential.bind,
     disposeEmbedding,
     cachedPort,
     memoryAdapter,

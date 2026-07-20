@@ -14,6 +14,7 @@ vi.mock("@comis/agent", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/agent")>();
   return {
     ...actual,
+    resolveProviderApiKey: vi.fn(async () => "oauth-access-token"),
     createOutcomeJudgeSeam: vi.fn(() =>
       vi.fn(async () => ({
         outcome: "unknown" as const,
@@ -25,12 +26,12 @@ vi.mock("@comis/agent", async (importOriginal) => {
   };
 });
 
-import { createOutcomeJudgeSeam } from "@comis/agent";
+import { createOutcomeJudgeSeam, resolveProviderApiKey } from "@comis/agent";
 import { createConversationLocator } from "@comis/core";
 import { ok } from "@comis/shared";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
-import { buildOutcomeJudgeWiring, maybeUpgradeWithJudge } from "./setup-learning-judge.js";
+import { bindLearningOAuthCredentialResolver, buildOutcomeJudgeWiring, createLateBoundLearningCredentialResolver, maybeUpgradeWithJudge } from "./setup-learning-judge.js";
 
 const NOW = 1_700_000_000_000;
 const TENANT = "tenant-x";
@@ -54,6 +55,41 @@ const judgeVerdict = (outcome: "success" | "failure" | "unknown", cappedConfiden
   judgeModel: "example/judge",
   rubricHash: "a".repeat(64),
   evidenceRefs: ["b".repeat(64)],
+});
+
+describe("late-bound learning credential resolution", () => {
+  it("delegates to the agent credential resolver after agent setup binds it", async () => {
+    const holder = createLateBoundLearningCredentialResolver();
+    expect(await holder.resolve("a1", "openai-codex")).toBeUndefined();
+
+    const resolver = vi.fn(async () => "oauth-access-token");
+    holder.bind(resolver);
+
+    expect(await holder.resolve("a1", "openai-codex")).toBe("oauth-access-token");
+    expect(resolver).toHaveBeenCalledWith("a1", "openai-codex");
+  });
+
+  it("binds OAuth resolution to the agent runtime credential storage", async () => {
+    const holder = createLateBoundLearningCredentialResolver();
+    const warn = vi.fn();
+    const oauthManager = { getApiKey: vi.fn() };
+    const authStorage = { getApiKey: vi.fn(), setRuntimeApiKey: vi.fn() };
+    bindLearningOAuthCredentialResolver({
+      bind: holder.bind,
+      oauthManagers: new Map([["a1", oauthManager as never]]),
+      authStorages: new Map([["a1", authStorage as never]]),
+      agents: { a1: { provider: "openai-codex", model: "gpt-5.6-sol" } as never },
+      providers: { entries: {} },
+      logger: { ...createMockLogger(), warn } as never,
+    });
+
+    expect(await holder.resolve("a1", "openai-codex")).toBe("oauth-access-token");
+    expect(resolveProviderApiKey).toHaveBeenCalledWith(
+      "openai-codex",
+      expect.objectContaining({ authStorage, oauthManager }),
+    );
+    expect(warn).not.toHaveBeenCalled();
+  });
 });
 
 describe("maybeUpgradeWithJudge — conversational-breadth fallback", () => {
@@ -303,6 +339,43 @@ describe("buildOutcomeJudgeWiring — daemon construction behind the byte-identi
     );
     expect(built.outcomeJudge).toBeUndefined();
     expect(built.learningOutcomeJudgeEnabled("a1")).toBe(true);
+  });
+
+  it("builds the outcome judge from a late-bound OAuth credential when no static API key exists", async () => {
+    const resolveCredential = vi.fn(async () => "oauth-access-token");
+    const seam = vi.fn(async () => judgeVerdict("success", 0.7));
+    vi.mocked(createOutcomeJudgeSeam).mockReturnValueOnce(seam as never);
+
+    const built = buildOutcomeJudgeWiring(
+      makeContainer({
+        agents: {
+          a1: {
+            provider: "openai-codex",
+            model: "gpt-5.6-sol",
+            oauthProfiles: { "openai-codex": "openai-codex:test@example.com" },
+            learningOutcome: { enabled: true, judge: { enabled: true } },
+          },
+        },
+        secrets: {},
+      }),
+      createFakeClock(NOW),
+      createMockLogger(),
+      makeLcdStore(),
+      resolveCredential,
+    );
+
+    expect(built.outcomeJudge).toBeDefined();
+    await built.outcomeJudge!({ agentId: "a1", trajectoryContent: "bounded transcript" });
+    expect(resolveCredential).toHaveBeenCalledWith("a1", "openai-codex");
+    expect(createOutcomeJudgeSeam).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "openai-codex",
+        modelId: "gpt-5.4-mini",
+        apiKey: "oauth-access-token",
+        agentId: "a1",
+      }),
+    );
+    expect(seam).toHaveBeenCalledTimes(1);
   });
 
   it("the judge seam is BUILT and readTurnTranscript reads the LCD transcript when judge.enabled AND a cheap-model key resolves", () => {

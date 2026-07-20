@@ -780,6 +780,29 @@ describe("buildReactionWiringDeps — daemon construction behind the byte-identi
     expect(built.deps.correctionDetector).toBeUndefined();
   });
 
+  it("builds the correction detector for an OAuth provider without a static API key", () => {
+    const resolveCredential = vi.fn(async () => "oauth-access-token");
+    const built = buildReactionWiringDeps(
+      makeContainer({
+        agents: {
+          a1: {
+            provider: "openai-codex",
+            model: "gpt-5.6-sol",
+            oauthProfiles: { "openai-codex": "openai-codex:test@example.com" },
+            learningOutcome: { enabled: true, correction: { enabled: true } },
+          },
+        },
+        secrets: {},
+      }),
+      createFakeClock(NOW),
+      createFakeTimers(NOW),
+      resolveCredential,
+    );
+
+    expect(built.deps.correctionDetector).toBeDefined();
+    expect(resolveCredential).not.toHaveBeenCalled();
+  });
+
   it("the correction detector is BUILT when correction.enabled AND a cheap-model API key resolves", () => {
     const built = buildReactionWiringDeps(
       makeContainer({

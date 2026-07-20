@@ -340,6 +340,7 @@ export interface BootContext {
   // Process (1 field)
   processMonitor: ReturnType<typeof setupHealth>["processMonitor"];
   // Memory + embedding (~14 fields)
+  bindLearningCredentialResolver: Awaited<ReturnType<typeof setupMemory>>["bindLearningCredentialResolver"];
   disposeEmbedding: Awaited<ReturnType<typeof setupMemory>>["disposeEmbedding"];
   cachedPort: Awaited<ReturnType<typeof setupMemory>>["cachedPort"];
   memoryAdapter: Awaited<ReturnType<typeof setupMemory>>["memoryAdapter"];

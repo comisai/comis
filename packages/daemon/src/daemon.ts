@@ -48,6 +48,7 @@ import {
   setupObservability, rehydrateSpendFromStore,
   setupHealth,
   setupMemory,
+  bindLearningOAuthCredentialResolver,
   setupAgents,
   setupSchedulers,
   setupChannels,
@@ -1378,7 +1379,7 @@ async function bootFoundation(
 
   // 6.5. Memory + embedding
   const {
-    disposeEmbedding, cachedPort, memoryAdapter, db,
+    bindLearningCredentialResolver, disposeEmbedding, cachedPort, memoryAdapter, db,
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
     summarizerSpendBreaker,
@@ -1547,7 +1548,7 @@ async function bootFoundation(
     activityStream, disposeActivityStream, spendAccumulator, otelHandle, // spendAccumulator: the spend kill-switch → bridge; otelHandle: the OTLP/Prometheus exporter → setupShutdown.
     contextPipelineCollector,
     processMonitor,
-    disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
+    bindLearningCredentialResolver, disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
     embeddingCircuitBreakerState, summarizerSpendBreaker, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, lcdStore, provenanceStore, contextBrowse, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, outcomeStore, learnedSkillStore, learnedSkillSurfaceRegistry, recordOutboundMessage, destroyReactionWiring, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence,
@@ -1603,7 +1604,7 @@ async function bootAgents(
     container, dataDir,
     clock, env, timers,
     daemonLogger, gatewayLogger, agentLogger, schedulerLogger, skillsLogger,
-    memoryAdapter, db, sessionStore, cachedPort, embeddingQueue,
+    bindLearningCredentialResolver, memoryAdapter, db, sessionStore, cachedPort, embeddingQueue,
     rerankerPort, // built in setup-memory; threaded into setupAgents -> createPiExecutor
     rerankerModelPresent, // model-present probe result; threaded into setupAgents -> per-agent effective rerank precedence (same value as the build gate)
     entityStore, // threaded into setupAgents -> createPiExecutor (recall read path) + the cron review (write path)
@@ -1799,6 +1800,8 @@ async function bootAgents(
     servedWindowByProvider,  // Ollama served context-window probe result
     servedWindowComparisons, agentBootWindowInfo,  // boot-honesty collectors
   });
+
+  bindLearningOAuthCredentialResolver({ bind: bindLearningCredentialResolver, oauthManagers, authStorages, agents: agentsConfig, providers: container.config.providers, logger: daemonLogger });
 
   // Log operation model resolutions at startup (dry-run validation)
   logOperationModelDryRun({
