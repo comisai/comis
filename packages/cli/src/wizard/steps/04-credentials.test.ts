@@ -24,7 +24,13 @@ vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@earendil-works/pi-ai/compat")>();
   return {
     ...actual,
-    getModels: vi.fn(() => [{ baseUrl: "https://api.anthropic.com" }]),
+    complete: vi.fn(async () => ({ stopReason: "stop", content: [] })),
+    getModels: vi.fn(() => [{
+      id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      provider: "amazon-bedrock",
+      api: "bedrock-converse-stream",
+      baseUrl: "https://api.anthropic.com",
+    }]),
   };
 });
 
@@ -40,6 +46,7 @@ vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => {
 // when undefined, it resolves "file". COMIS_CONFIG_PATHS / COMIS_DATA_DIR
 // always resolve undefined so the standard ~/.comis paths apply.
 let masterKeyState: string | undefined;
+let awsRegionState: string | undefined;
 
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@comis/core")>();
@@ -48,7 +55,11 @@ vi.mock("@comis/core", async (importOriginal) => {
     loginOpenAICodexOAuth: vi.fn(),
     isRemoteEnvironment: vi.fn().mockReturnValue(false),
     systemGetEnv: vi.fn((key: string) =>
-      key === "SECRETS_MASTER_KEY" ? masterKeyState : undefined,
+      key === "SECRETS_MASTER_KEY"
+        ? masterKeyState
+        : key === "AWS_REGION"
+          ? awsRegionState
+          : undefined,
     ),
     selectOAuthCredentialStore: vi.fn().mockImplementation(() => {
       const inMemory = new Map<string, unknown>();
@@ -107,7 +118,7 @@ vi.mock("../../util/offline-secrets-store.js", () => ({
 }));
 
 import { credentialsStep } from "./04-credentials.js";
-import { getModels } from "@earendil-works/pi-ai/compat";
+import { complete, getModels } from "@earendil-works/pi-ai/compat";
 import { loginOpenAICodexOAuth, isRemoteEnvironment, loadConfigFile, validateConfig, selectOAuthCredentialStore } from "@comis/core";
 import { callTyped, withClient } from "../../client/rpc-client.js";
 import { requireDaemonOrExit } from "../../util/daemon-required.js";
@@ -165,6 +176,7 @@ function createMockPrompter(
 describe("credentialsStep", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    awsRegionState = undefined;
     // Mock global.fetch for live validation
     vi.stubGlobal(
       "fetch",
@@ -195,8 +207,10 @@ describe("credentialsStep", () => {
     expect(prompter.log.info).toHaveBeenCalled();
   });
 
-  it("guides Amazon Bedrock users to the ambient AWS credential chain", async () => {
-    const prompter = createMockPrompter();
+  it("stores the Amazon Bedrock bearer token and selected region", async () => {
+    const prompter = createMockPrompter({ password: "test-bedrock-bearer", text: "il-central-1" });
+    vi.mocked(prompter.select).mockResolvedValueOnce("bearer");
+    vi.mocked(prompter.confirm).mockResolvedValueOnce(false);
     const state: WizardState = {
       ...INITIAL_STATE,
       provider: { id: "amazon-bedrock" } as ProviderConfig,
@@ -204,12 +218,127 @@ describe("credentialsStep", () => {
 
     const result = await credentialsStep.execute(state, prompter);
 
-    expect(result.provider).toEqual({ id: "amazon-bedrock", validated: false });
+    expect(result.provider).toMatchObject({
+      id: "amazon-bedrock",
+      apiKey: "test-bedrock-bearer",
+      credentialValues: { AWS_REGION: "il-central-1" },
+      validated: false,
+    });
+  });
+
+  it("stores the selected AWS profile and region without a bearer token", async () => {
+    const prompter = createMockPrompter({ text: "bedrock-test-profile" });
+    vi.mocked(prompter.select).mockResolvedValueOnce("profile");
+    vi.mocked(prompter.text)
+      .mockResolvedValueOnce("bedrock-test-profile")
+      .mockResolvedValueOnce("il-central-1");
+    vi.mocked(prompter.confirm).mockResolvedValueOnce(false);
+
+    const result = await credentialsStep.execute(
+      { ...INITIAL_STATE, provider: { id: "amazon-bedrock" } as ProviderConfig },
+      prompter,
+    );
+
+    expect(result.provider).toMatchObject({
+      id: "amazon-bedrock",
+      credentialValues: {
+        AWS_PROFILE: "bedrock-test-profile",
+        AWS_REGION: "il-central-1",
+      },
+      validated: false,
+    });
+    expect(result.provider?.apiKey).toBeUndefined();
+  });
+
+  it("preserves ambient AWS credential-chain mode while pinning the selected region", async () => {
+    const prompter = createMockPrompter({ text: "il-central-1" });
+    vi.mocked(prompter.select).mockResolvedValueOnce("chain");
+    vi.mocked(prompter.confirm).mockResolvedValueOnce(false);
+
+    const result = await credentialsStep.execute(
+      { ...INITIAL_STATE, provider: { id: "amazon-bedrock" } as ProviderConfig },
+      prompter,
+    );
+
+    expect(result.provider).toMatchObject({
+      id: "amazon-bedrock",
+      credentialValues: { AWS_REGION: "il-central-1" },
+      validated: false,
+    });
+    expect(result.provider?.apiKey).toBeUndefined();
     expect(prompter.password).not.toHaveBeenCalled();
     expect(prompter.note).toHaveBeenCalledWith(
       expect.stringContaining("AWS credential chain"),
       expect.stringContaining("Amazon Bedrock"),
     );
+  });
+
+  it("defaults the Bedrock region prompt from AWS_REGION", async () => {
+    awsRegionState = "il-central-1";
+    const prompter = createMockPrompter({ text: "il-central-1" });
+    vi.mocked(prompter.select).mockResolvedValueOnce("chain");
+    vi.mocked(prompter.confirm).mockResolvedValueOnce(false);
+
+    await credentialsStep.execute(
+      { ...INITIAL_STATE, provider: { id: "amazon-bedrock" } as ProviderConfig },
+      prompter,
+    );
+
+    expect(prompter.text).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultValue: "il-central-1" }),
+    );
+  });
+
+  it("marks Bedrock validated after the one-token pi probe succeeds", async () => {
+    const prompter = createMockPrompter({ password: "test-bedrock-bearer", text: "il-central-1" });
+    vi.mocked(prompter.select).mockResolvedValueOnce("bearer");
+    vi.mocked(prompter.confirm).mockResolvedValueOnce(true);
+
+    const result = await credentialsStep.execute(
+      {
+        ...INITIAL_STATE,
+        provider: { id: "amazon-bedrock" } as ProviderConfig,
+        model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      },
+      prompter,
+    );
+
+    expect(complete).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "amazon-bedrock" }),
+      expect.any(Object),
+      expect.objectContaining({
+        apiKey: "test-bedrock-bearer",
+        env: { AWS_REGION: "il-central-1" },
+        maxTokens: 1,
+      }),
+    );
+    expect(result.provider?.validated).toBe(true);
+  });
+
+  it("surfaces a Bedrock access hint and allows continuing unvalidated", async () => {
+    vi.mocked(complete).mockResolvedValueOnce({
+      stopReason: "error",
+      errorMessage: "AccessDeniedException",
+      content: [],
+    } as never);
+    const prompter = createMockPrompter({ password: "test-bedrock-bearer", text: "il-central-1" });
+    vi.mocked(prompter.select)
+      .mockResolvedValueOnce("bearer")
+      .mockResolvedValueOnce("continue");
+    vi.mocked(prompter.confirm).mockResolvedValueOnce(true);
+
+    const result = await credentialsStep.execute(
+      {
+        ...INITIAL_STATE,
+        provider: { id: "amazon-bedrock" } as ProviderConfig,
+        model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      },
+      prompter,
+    );
+
+    expect(result.provider?.validated).toBe(false);
+    expect(prompter.log.info).toHaveBeenCalledWith(expect.stringContaining("il-central-1"));
+    expect(prompter.log.info).toHaveBeenCalledWith(expect.stringContaining("model id"));
   });
 
   it.each([

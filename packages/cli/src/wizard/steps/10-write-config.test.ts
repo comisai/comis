@@ -68,7 +68,7 @@ vi.mock("../../util/offline-secrets-store.js", () => ({
 import { existsSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
 import { AppConfigSchema, loadEnvFile } from "@comis/core";
 import { offlineSecretSet } from "../../util/offline-secrets-store.js";
-import type { WizardPrompter, WizardState, Spinner } from "../index.js";
+import type { ProviderConfig, WizardPrompter, WizardState, Spinner } from "../index.js";
 import { writeConfigStep } from "./10-write-config.js";
 
 // ---------- Mock Prompter Helper ----------
@@ -193,6 +193,32 @@ describe("writeConfigStep", () => {
       ([path]) => typeof path === "string" && path.includes(".env"),
     );
     expect(envWriteCall?.[1]).toContain("NVIDIA_API_KEY=nvidia-test-key");
+  });
+
+  it("persists Bedrock bearer, region, and profile under their managed names", async () => {
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(
+      {
+        ...populatedState(),
+        provider: {
+          id: "amazon-bedrock",
+          apiKey: "test-bedrock-bearer",
+          credentialValues: {
+            AWS_REGION: "il-central-1",
+            AWS_PROFILE: "bedrock-test-profile",
+          },
+        } as unknown as ProviderConfig,
+      },
+      prompter,
+    );
+
+    const envWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    expect(envWriteCall?.[1]).toContain("AWS_BEARER_TOKEN_BEDROCK=test-bedrock-bearer");
+    expect(envWriteCall?.[1]).toContain("AWS_REGION=il-central-1");
+    expect(envWriteCall?.[1]).toContain("AWS_PROFILE=bedrock-test-profile");
   });
 
   it("persists an Anthropic OAuth token under its OAuth credential name", async () => {

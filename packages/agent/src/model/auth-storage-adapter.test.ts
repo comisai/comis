@@ -168,6 +168,45 @@ describe("createAuthStorageAdapter", () => {
       "cloudflare-workers-ai",
       "cloudflare-ai-gateway",
     ]);
+    expect(getProvidersForSecretName("AWS_REGION")).toContain("amazon-bedrock");
+  });
+
+  it("bridges a managed Bedrock bearer token into the pi credential key", async () => {
+    const storage = createAuthStorageAdapter({
+      secretManager: createSecretManager({
+        AWS_BEARER_TOKEN_BEDROCK: "test-bedrock-bearer",
+      }),
+    });
+
+    await expect(storage.read("amazon-bedrock")).resolves.toEqual({
+      type: "api_key",
+      key: "test-bedrock-bearer",
+    });
+  });
+
+  it("carries optional Bedrock region and profile values into credential env", async () => {
+    const storage = createAuthStorageAdapter({
+      secretManager: createSecretManager({
+        AWS_REGION: "il-central-1",
+        AWS_PROFILE: "bedrock-test-profile",
+      }),
+    });
+
+    await expect(storage.read("amazon-bedrock")).resolves.toEqual({
+      type: "api_key",
+      env: {
+        AWS_REGION: "il-central-1",
+        AWS_PROFILE: "bedrock-test-profile",
+      },
+    });
+  });
+
+  it("leaves Bedrock absent when no managed credential values are stored", async () => {
+    const storage = createAuthStorageAdapter({
+      secretManager: createSecretManager({}),
+    });
+
+    await expect(storage.read("amazon-bedrock")).resolves.toBeUndefined();
   });
 
   it("attaches Cloudflare routing identifiers to stored credentials", () => {

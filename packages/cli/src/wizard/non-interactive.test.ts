@@ -31,6 +31,7 @@ vi.mock("@comis/core", () => ({
     path: "/home/test/.comis/.env",
     keyHex: "f".repeat(64),
   })),
+  systemGetEnv: vi.fn(() => undefined),
   createModelCatalog: vi.fn(() => ({
     loadStatic: vi.fn(),
     getAll: vi.fn(() => [
@@ -50,7 +51,7 @@ vi.mock("node:crypto", () => ({
   randomBytes: vi.fn(() => ({ toString: () => "ab".repeat(24) })),
 }));
 
-import { writeMasterKeyIfAbsent } from "@comis/core";
+import { systemGetEnv, writeMasterKeyIfAbsent } from "@comis/core";
 import {
   validateNonInteractiveOptions,
   buildNonInteractiveState,
@@ -71,6 +72,10 @@ function validOpts(overrides?: Partial<NonInteractiveOptions>): NonInteractiveOp
     ...overrides,
   };
 }
+
+beforeEach(() => {
+  vi.mocked(systemGetEnv).mockReturnValue(undefined);
+});
 
 // ==========================================================================
 // validateNonInteractiveOptions
@@ -343,10 +348,10 @@ describe("validateNonInteractiveOptions", () => {
     expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
   });
 
-  it("rejects a static API key for Amazon Bedrock with AWS credential-chain guidance", () => {
+  it("accepts --api-key for Amazon Bedrock as its managed bearer token", () => {
     const opts = validOpts({ provider: "amazon-bedrock", apiKey: "test-key" });
 
-    expect(() => validateNonInteractiveOptions(opts)).toThrow(/AWS credential chain/);
+    expect(() => validateNonInteractiveOptions(opts)).not.toThrow();
   });
 
   it.each([
@@ -491,6 +496,33 @@ describe("buildNonInteractiveState", () => {
     expect(state.provider).toBeDefined();
     expect(state.provider!.id).toBe("openai");
     expect(state.provider!.apiKey).toBe("sk-test");
+  });
+
+  it("captures AWS_REGION for non-interactive Amazon Bedrock setup", () => {
+    vi.mocked(systemGetEnv).mockImplementation((name) =>
+      name === "AWS_REGION" ? "il-central-1" : undefined,
+    );
+
+    const state = buildNonInteractiveState(validOpts({
+      provider: "amazon-bedrock",
+      apiKey: "test-bedrock-bearer",
+    }));
+
+    expect(state.provider).toMatchObject({
+      id: "amazon-bedrock",
+      apiKey: "test-bedrock-bearer",
+      credentialValues: { AWS_REGION: "il-central-1" },
+      validated: false,
+    });
+  });
+
+  it("keeps non-interactive Amazon Bedrock on the ambient chain without --api-key", () => {
+    const state = buildNonInteractiveState(validOpts({
+      provider: "amazon-bedrock",
+      apiKey: undefined,
+    }));
+
+    expect(state.provider).toEqual({ id: "amazon-bedrock", validated: false });
   });
 
   it("no --embedding-multilingual → no recallProvider (keeps the daemon nomic default)", () => {

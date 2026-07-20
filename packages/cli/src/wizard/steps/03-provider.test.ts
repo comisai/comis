@@ -223,6 +223,21 @@ describe("providerStep", () => {
     expect(vercel!.hint).toBeUndefined();
   });
 
+  it("renders Amazon Bedrock with its AWS authentication guidance", async () => {
+    vi.mocked(loadProvidersWithFallback).mockResolvedValue(["amazon-bedrock"]);
+
+    const prompter = createMockPrompter({ select: "amazon-bedrock" });
+    await providerStep.execute({ ...INITIAL_STATE }, prompter);
+
+    const selectCall = (prompter.select as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as { options: Array<{ value: string; label?: string; hint?: string }> };
+    expect(selectCall.options.find((option) => option.value === "amazon-bedrock")).toEqual({
+      value: "amazon-bedrock",
+      label: "Amazon Bedrock (AWS)",
+      hint: "Claude, Nova, Llama via AWS — API key or IAM",
+    });
+  });
+
   it("SUPPORTED_PROVIDERS does not appear in any wizard source file", () => {
     // Source-grep regression pin: walk the wizard tree and assert none of
     // the .ts (non-test) files contains the forbidden constant (the provider
