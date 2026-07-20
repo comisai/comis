@@ -107,7 +107,7 @@ describe("sessions_spawn tool", () => {
     }));
   });
 
-  it("throws on RPC error", async () => {
+  it("throws when the RPC request fails", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => {
       throw new Error("spawn failed");
     });

@@ -624,7 +624,7 @@ You MUST delegate tasks to a sub-agent when the work matches ANY of these criter
 2. Describe WHAT to accomplish, not HOW -- the sub-agent has its own skills and will read SKILL.md itself
 3. Do NOT copy-paste skill instructions, shell commands, or step-by-step procedures into the task
 4. Include user context the sub-agent needs (e.g., desired style, dimensions, topic) but not tool instructions
-5. Set \`announce_channel_type\` and \`announce_channel_id\` for result delivery
+5. Result delivery is bound automatically to the authenticated request route; do not supply route identifiers
 6. Tell the user the task is delegated and give them the runId
 7. Continue the conversation -- the result will be announced automatically when done
 

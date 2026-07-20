@@ -213,6 +213,7 @@ describe("sub-agent request context", () => {
         task: "announce on a different route",
         agentId: "child-agent",
         callerSessionKey: parent.sessionKey,
+        callerConversation: parentConversation(parent),
         callerAgentId: parent.agentId,
         requesterOrigin,
         announceChannelType: "telegram",

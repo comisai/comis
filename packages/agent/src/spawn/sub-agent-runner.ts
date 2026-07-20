@@ -1292,6 +1292,16 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       // @allow-throw: spawn() is a daemon RPC boundary and rejects forged caller identity before creating a run or session.
       throw new Error("Spawn rejected: caller principal does not match the active request context");
     };
+    const rejectAnnouncementRoute = (): never => {
+      deps.logger?.warn({
+        agentId: params.agentId,
+        reason: "announcement_route_mismatch",
+        hint: "Reject the spawn; agent-origin delivery is bound to the authenticated request, so omit explicit announcement route fields",
+        errorKind: "auth" as const,
+      }, "Sub-agent spawn rejected: announcement route mismatch");
+      // @allow-throw: spawn() is a daemon RPC boundary and rejects forged delivery routing before creating a run or session.
+      throw new Error("Spawn rejected: announcement route does not match the authenticated requester");
+    };
 
     // GraphCoordinator snapshots and authorizes graph nodes independently, and
     // route-less daemon jobs may call the runner outside ALS. A direct spawn
@@ -1354,7 +1364,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           || params.announceChannelId !== requesterOrigin.channelId
         )
       ) {
-        rejectCallerPrincipal();
+        rejectAnnouncementRoute();
       }
     }
     const announcementRouteMismatch = requesterOrigin !== undefined

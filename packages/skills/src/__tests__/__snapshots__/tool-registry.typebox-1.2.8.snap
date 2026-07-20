@@ -3492,14 +3492,6 @@
           "description": "Target agent ID for cross-agent spawning",
           "type": "string"
         },
-        "announce_channel_id": {
-          "description": "Channel ID for result announcement",
-          "type": "string"
-        },
-        "announce_channel_type": {
-          "description": "Channel type for result announcement",
-          "type": "string"
-        },
         "artifact_refs": {
           "description": "File paths for the sub-agent to reference (not inline content)",
           "items": {

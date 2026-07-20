@@ -116,9 +116,6 @@ export async function buildDynamicPreamble(input: DynamicPreambleInput): Promise
   // channel relocated to dynamic preamble (changes on cross-session relay)
   if (msg.channelType) {
     const channelLines = [`## Channel`, `Current channel: ${msg.channelType} (ID: ${msg.channelId}).`];
-    if (msg.channelId) {
-      channelLines.push(`For background task routing: announce_channel_type="${msg.channelType}" announce_channel_id="${msg.channelId}".`);
-    }
     dynamicPreambleParts.push(channelLines.join("\n"));
   }
   // Verbosity hint (varies per channel type -- in dynamic preamble)
