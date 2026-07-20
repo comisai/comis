@@ -1007,6 +1007,42 @@ describe("createPiEventBridge", () => {
         expect(warn![0].classifiedFailureBy).toBe("mcp_classifier");
       });
 
+      it("classifies a runtime step-limit block as a resource guard without poisoning the tool breaker", () => {
+        const recordResult = vi.fn();
+        deps = createMockDeps({
+          toolRetryBreaker: {
+            beforeToolCall: vi.fn().mockReturnValue({ block: false }),
+            recordResult,
+            getBlockedTools: vi.fn().mockReturnValue([]),
+            reset: vi.fn(),
+          } as any,
+        });
+        const { listener } = createPiEventBridge(deps);
+        const result = {
+          content: [{ type: "text", text: "Step limit reached -- blocking tool execution" }],
+          details: {},
+        };
+
+        listener(makeToolExecutionEndEvent("mcp__example--search", "tc-step-limit", true, result) as any);
+
+        const { endEmit, warn } = findEmitAndWarn("mcp__example--search");
+        expect(endEmit).toBeDefined();
+        expect(endEmit![1]).toMatchObject({
+          success: false,
+          errorKind: "resource",
+          classifiedFailureBy: "runtime_guard",
+          matchedRule: "step_limit",
+          transportOk: false,
+        });
+        expect(warn![0]).toMatchObject({
+          errorKind: "resource",
+          classifiedFailureBy: "runtime_guard",
+          matchedRule: "step_limit",
+        });
+        expect(warn![0].hint).toMatch(/max_steps|simplify/i);
+        expect(recordResult).not.toHaveBeenCalled();
+      });
+
       // A tool can self-grade a logical
       // FAILURE via the explicit { graded:true, outcome:"failure" } envelope while returning
       // cleanly (no SDK isError) — e.g. an MCP delivery to a non-existent recipient. The
