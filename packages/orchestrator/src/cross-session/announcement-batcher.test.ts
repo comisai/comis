@@ -506,6 +506,41 @@ describe("AnnouncementBatcher", () => {
     expect(deps.sendToChannel).not.toHaveBeenCalled();
   });
 
+  it("delivers verified attachments when the parent rewrite fails before delivery", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: true,
+      identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 6 },
+    }));
+    const deps = makeDeps({
+      deadLetterQueue,
+      announceToParent: vi.fn().mockRejectedValue(
+        new TypeError("Cannot add property workspacePolicyHash, object is not extensible"),
+      ),
+      sendGovernedAnnouncement,
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({
+      idempotencyKey: "attachment-rewrite-failure",
+      attachments: [{ sourceAgentId: "report-agent", path: "/workspace-report/reports/monthly.csv" }],
+    }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      text: "",
+      partId: "attachment:0",
+      attachment: {
+        sourceAgentId: "report-agent",
+        path: "/workspace-report/reports/monthly.csv",
+      },
+    }));
+    expect(deadLetterQueue.resolveDecision).toHaveBeenCalledWith(
+      "attachment-rewrite-failure",
+      "receipt_committed",
+    );
+  });
+
   it("shutdown closes admission and waits for an in-flight reservation before flushing", async () => {
     let finishReservation!: (value: ReturnType<typeof ok>) => void;
     const deadLetterQueue = makeDecisionQueue();

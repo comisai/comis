@@ -20,7 +20,8 @@ import type {
 } from "./announcement-outward-operation.js";
 
 /** Hard timeout for the text-only parent candidate execution. A timeout leaves
- *  the durable decision reservation quarantined and never starts another path.
+ *  text-only results quarantined; verified attachments continue without a
+ *  generated caption because no outward delivery has started at this stage.
  *  Defined locally to avoid an orchestrator-to-agent dependency cycle and kept
  *  aligned with the public agent timeout. */
 const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
@@ -584,6 +585,20 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         }
         await sendFinal(key, items, scrubbedCandidate.text);
       } catch (err) {
+        if (items.some((item) => (item.attachments?.length ?? 0) > 0)) {
+          deps.logger?.warn(
+            {
+              batchKey: key,
+              batchSize: items.length,
+              err: toSafeErrorLogString(err),
+              errorKind: err instanceof TimeoutError ? "timeout" as const : "internal" as const,
+              hint: "Inspect the parent rewrite failure; verified attachments continue without a generated caption",
+            },
+            "Announcement parent execution failed before attachment delivery",
+          );
+          await sendFinal(key, items, "");
+          return;
+        }
         retainItems(items);
         deps.logger?.warn(
           {
