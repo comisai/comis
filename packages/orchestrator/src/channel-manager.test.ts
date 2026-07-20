@@ -4,7 +4,7 @@ import type { AgentExecutor, SessionLifecycle } from "@comis/agent";
 // because orchestrator cannot import its own published name.
 import type { MessageRouter } from "./routing/message-router.js";
 import type { CommandQueue } from "./queue/command-queue.js";
-import { type ChannelPort, type NormalizedMessage, type MessageHandler, type DeliveryService } from "@comis/core";
+import { type ChannelPort, type NormalizedMessage, type MessageHandler, type DeliveryService, tryGetContext } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockLogger } from "../../../test/support/mock-logger.js";
@@ -971,6 +971,29 @@ describe("createChannelManager", () => {
   });
 
   describe("injectMessage()", () => {
+    it("seeds a trusted response language for a synthetic injected turn", async () => {
+      const adapter = makeAdapter();
+      let observedLanguage: string | undefined;
+      const processInboundMessage = vi.fn(async () => {
+        observedLanguage = tryGetContext()?.resolvedLanguage;
+      });
+      const deps = makeDeps({
+        adapters: [adapter],
+        processInboundMessage: processInboundMessage as unknown as ChannelManagerDeps["processInboundMessage"],
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      const injectWithContext = manager.injectMessage as unknown as (
+        channelType: string,
+        msg: NormalizedMessage,
+        context: { resolvedLanguage?: string },
+      ) => Promise<void>;
+      await injectWithContext("telegram", makeMessage(), { resolvedLanguage: "und-Hebr" });
+
+      expect(observedLanguage).toBe("und-Hebr");
+    });
+
     it("invokes onMessageProcessed after successful injection", async () => {
       const onMessageProcessed = vi.fn();
       const adapter = makeAdapter();

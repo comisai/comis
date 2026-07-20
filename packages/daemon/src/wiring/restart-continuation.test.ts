@@ -146,6 +146,18 @@ describe("createRestartContinuationTracker", () => {
     expect(byChannel.get("dm-chat")?.chatType).toBe("private");
     expect(byChannel.get("no-meta")?.chatType).toBeUndefined();
   });
+
+  it("preserves the resolved response language across a restart round trip", () => {
+    const tracker = createRestartContinuationTracker();
+    tracker.track(makeRecord({ resolvedLanguage: "und-Hebr" }));
+
+    const filePath = join(tmpDir, "language-round-trip.json");
+    expect(tracker.capture(filePath, 60_000, tmpDir)).toBe(1);
+
+    const loaded = loadContinuations(filePath, 300_000, makeMockLogger());
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]?.resolvedLanguage).toBe("und-Hebr");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -361,4 +373,3 @@ describe("restart-continuation honors §1.4 mode invariants", () => {
     expect(statSync(filePath).mode & 0o777).toBe(0o600);
   });
 });
-
