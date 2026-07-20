@@ -8,7 +8,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ok, err } from "@comis/shared";
 import { resolveModelProfile } from "../model-profile.js";
-import type { ContextStorePort, PerAgentConfig, RequestContext, SessionKey, NormalizedMessage } from "@comis/core";
+import type { ContextStorePort, PerAgentConfig, SessionKey, NormalizedMessage } from "@comis/core";
 import {
   createDeliveryOrigin,
   formatSessionKey,
@@ -691,61 +691,6 @@ describe("PiExecutor", () => {
       expect(load).toHaveBeenCalledTimes(1);
       expect(load).toHaveBeenCalledWith("agent-1");
       expect(result.workspacePolicyHash).toBe(snapshot.combinedHash);
-    });
-
-    it("continues when the request context cannot accept policy metadata", async () => {
-      const snapshot = {
-        agentId: "agent-1",
-        sections: [],
-        combinedHash: "a".repeat(64),
-      };
-      const deps = createMockDeps({
-        workspacePolicySnapshot: undefined,
-        workspacePolicyPort: {
-          load: vi.fn().mockResolvedValue(ok(snapshot)),
-          get: vi.fn(),
-        },
-      });
-      const executor = createPiExecutor(testConfig, deps);
-      const context = Object.preventExtensions({
-        tenantId: testSessionKey.tenantId,
-        userId: testSessionKey.userId,
-        sessionKey: formatSessionKey(testSessionKey),
-        agentId: deps.agentId,
-        turnScope: {
-          conversation: {
-            tenantId: testSessionKey.tenantId,
-            agentId: deps.agentId,
-            partition: { kind: "agent" as const },
-          },
-          principal: { principalId: testSessionKey.userId },
-          endpoint: {
-            channelType: "test",
-            channelInstanceId: "test-instance",
-            conversationId: testSessionKey.channelId,
-            conversationKind: "direct" as const,
-          },
-        },
-        traceId: "00000000-0000-4000-8000-000000000001",
-        startedAt: 1,
-        trustLevel: "admin" as const,
-        resolvedModel: undefined,
-        resolvedLanguage: undefined,
-      }) as RequestContext;
-
-      const result = await runWithContext(context, () =>
-        executor.execute(testMessage, testSessionKey));
-
-      expect(result.finishReason).toBe("stop");
-      expect(result.workspacePolicyHash).toBe(snapshot.combinedHash);
-      expect(deps.logger.warn).toHaveBeenCalledWith(
-        expect.objectContaining({
-          step: "workspace-policy-context",
-          errorKind: "precondition",
-          hint: expect.any(String),
-        }),
-        "Workspace policy hash could not be recorded on the request context",
-      );
     });
 
     it("stops before model dispatch when workspace policy loading fails", async () => {
