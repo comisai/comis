@@ -17,7 +17,7 @@
  * @module
  */
 
-import { isMcpValidationError } from "./bridge-event-handlers.js";
+import { classifyRuntimeToolGuard, isMcpValidationError } from "./bridge-event-handlers.js";
 
 /** First bracketed snake_case code (≥ one underscore → avoids matching `[i]`/`[abc]`/array indices). */
 const BRACKETED_ERROR_CODE = /\[([a-z]+(?:_[a-z]+)+)\]/;
@@ -41,6 +41,9 @@ export const GENERIC_TOOL_FAILURE_HINT =
  */
 export function toolFailureHint(errorText?: string): string {
   if (errorText) {
+    if (classifyRuntimeToolGuard(errorText) === "step_limit") {
+      return "Execution step budget was exhausted; increase max_steps for the run or simplify the task before retrying";
+    }
     const m = BRACKETED_ERROR_CODE.exec(errorText);
     if (m) {
       const code = m[1];

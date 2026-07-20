@@ -39,6 +39,15 @@ const MAX_ERROR_TEXT_CHARS = 2000;
  */
 export type McpErrorType = "timeout" | "connection" | "transport" | "validation" | "tool_error" | "unknown";
 
+export type RuntimeToolGuard = "step_limit";
+
+const STEP_LIMIT_TOOL_GUARD = /\bstep limit reached\b.*\bblocking tool execution\b/i;
+
+/** Identify failures produced by the local execution guard before the tool boundary. */
+export function classifyRuntimeToolGuard(errorText: string | undefined): RuntimeToolGuard | undefined {
+  return errorText !== undefined && STEP_LIMIT_TOOL_GUARD.test(errorText) ? "step_limit" : undefined;
+}
+
 const MCP_VALIDATION_ERROR =
   /\bvalidation failed\b|\binput validation error\b|\bmcp error\s*-32602\b|\binvalid params?\b|\bmust have required propert(?:y|ies)\b|(?:^|[\s"'=:])too_big(?:$|[\s"',}:])/i;
 

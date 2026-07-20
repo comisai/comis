@@ -122,7 +122,7 @@ export interface AgentEvents {
     /** Character count after truncation. Only present when truncated=true. */
     returnedChars?: number;
     /** Which of the 4 sources classified this failure. */
-    classifiedFailureBy?: "sdk_iserror" | "exit_code" | "failure_detector" | "mcp_classifier";
+    classifiedFailureBy?: "sdk_iserror" | "exit_code" | "failure_detector" | "mcp_classifier" | "runtime_guard";
     /** False ONLY when the SDK/transport itself errored; true for content/exit/detector failures. */
     transportOk?: boolean;
     /** Explicit terminal task grade reported by an opt-in `{ graded: true, outcome }`

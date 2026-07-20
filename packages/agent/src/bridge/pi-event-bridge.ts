@@ -59,7 +59,12 @@ import type { ExecutionResult } from "../executor/types.js";
 import type { ExecutionPlan } from "../planner/types.js";
 import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { extractMcpServerName } from "@comis/shared";
-import { classifyMcpErrorType, sanitizeToolArgs, extractErrorText } from "./bridge-event-handlers.js";
+import {
+  classifyMcpErrorType,
+  classifyRuntimeToolGuard,
+  sanitizeToolArgs,
+  extractErrorText,
+} from "./bridge-event-handlers.js";
 
 /**
  * Bracketed `[error_code]` prefixes that mean the tool's OWN IO failed (disk,
@@ -908,6 +913,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             | "exit_code"
             | "failure_detector"
             | "mcp_classifier"
+            | "runtime_guard"
             | undefined;
           let matchedRule: string | undefined;
           let matchedToken: string | undefined;
@@ -1059,10 +1065,12 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // body itself never crosses into the event/log.
           let resultBytes: number | undefined;
           let resultDigest: string | undefined;
+          let runtimeToolGuard: ReturnType<typeof classifyRuntimeToolGuard> = undefined;
           // Extract MCP server name for attribution
           const mcpServer = extractMcpServerName(endEvent.toolName);
           if (!toolSuccess) {
             errorText = extractErrorText(endEvent.result);
+            runtimeToolGuard = classifyRuntimeToolGuard(errorText);
             const serialized =
               typeof endEvent.result === "string"
                 ? endEvent.result
@@ -1084,7 +1092,14 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // (timeout → timeout, connection/transport → dependency,
             // everything else → classifyToolError fallback).
             if (toolErrorKind === undefined) {
-              if (mcpServer !== undefined) {
+              if (runtimeToolGuard !== undefined) {
+                toolErrorKind = "resource";
+                classifiedFailureBy = "runtime_guard";
+                matchedRule = runtimeToolGuard;
+                // The runtime blocked the call before the tool or MCP transport
+                // boundary, so no external dependency was contacted.
+                transportOk = false;
+              } else if (mcpServer !== undefined) {
                 const mcpKind = classifyMcpErrorType(errorText);
                 toolErrorKind = mcpKind === "timeout"
                   ? "timeout"
@@ -1159,7 +1174,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 durationMs,
                 ...(errorText && { errorText: sanitizeLogString(errorText).slice(0, 1500) }),
                 argumentCount: sanitizedArgs === undefined ? 0 : Object.keys(sanitizedArgs).length,
-                ...(mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
+                ...(mcpServer !== undefined && runtimeToolGuard === undefined && {
+                  mcpServer,
+                  mcpErrorType: classifyMcpErrorType(errorText),
+                }),
                 errorKind: toolErrorKind ?? ("dependency" as const),
                 // Name the bracketed `[error_code]` the errorText carries
                 // (permission_denied / invalid_value / …) instead of a generic
@@ -1192,7 +1210,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // as SEPARATE string-literal calls in an if/else (NOT a ternary) so
           // the trajectory-event-types-known arch gate's EMIT_REGEX sees both
           // names and verifies their mappings.
-          if (deps.toolRetryBreaker) {
+          // Runtime guards do not describe tool health. Feeding them into the
+          // per-tool retry breaker would blame a healthy tool for a local
+          // execution budget and manufacture a provider-outage diagnosis.
+          if (deps.toolRetryBreaker && classifiedFailureBy !== "runtime_guard") {
             const transition = deps.toolRetryBreaker.recordResult(
               endEvent.toolName,
               (sanitizedArgs ?? {}) as Record<string, unknown>,
@@ -1343,7 +1364,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }),
             ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
             ...(errorText && { errorMessage: sanitizeLogString(errorText).slice(0, 1500) }),
-            ...(!toolSuccess && mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
+            ...(!toolSuccess && mcpServer !== undefined && runtimeToolGuard === undefined && {
+              mcpServer,
+              mcpErrorType: classifyMcpErrorType(errorText),
+            }),
             ...(truncMeta && { truncated: truncMeta.truncated, fullChars: truncMeta.fullChars, returnedChars: truncMeta.returnedChars }),
             // Failure-classification provenance — assigned at the mutation points above.
             // matchedToken is untrusted tool output and the payload feeds the
