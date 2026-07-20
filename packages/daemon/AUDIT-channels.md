@@ -28,7 +28,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | workspaceDirs | required | — | packages/daemon/src/api/types.ts:172 |
 | logger | required | — | packages/daemon/src/api/types.ts:173 |
 | persistDeps | optional | channel.start / channel.stop runtime state changes are NOT persisted to config.yaml; reverts on next daemon restart (in-memory only) | packages/daemon/src/api/types.ts:174 |
-| boundedAutonomy | optional | the bounded-autonomy outward quota is inert — message.send/reply/react are NOT gated on origin/grant/per-hour/volume (the cap gate + authorizeChannelAccess still apply); wired only when an autonomy-bearing agent is configured | packages/daemon/src/api/types.ts:287 |
+| boundedAutonomy | optional | the bounded-autonomy outward quota is inert — message.send/reply/react/attach are NOT gated on origin/grant/per-hour/volume (the cap gate + authorizeChannelAccess still apply); wired only when an autonomy-bearing agent is configured | packages/daemon/src/api/types.ts:287 |
 | resolveRootRunId | optional | message.send/reply/react cannot derive the outward-ledger root identity from the caller session, so retained-operation duplicate suppression is a pass-through (same resolver as SessionsApiDeps.resolveRootRunId; already spread into the flat dispatch deps) | packages/daemon/src/api/types.ts:288 |
 | outwardLedger | optional | the closed five-state outward uncertainty ledger is absent, so message.send/reply/react run without retained-operation protection — deliverToChannel remains a pass-through (a non-autonomy daemon); the quota gate is unaffected | packages/daemon/src/api/types.ts:290 |
 

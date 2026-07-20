@@ -159,7 +159,7 @@ function requireMethod<TMethod extends (...args: never[]) => unknown>(
 /**
  * The outward irreversible-action gate for an agent-
  * initiated orch:message send. Called AFTER authorizeChannelAccess, BEFORE
- * deliver, for message.send/reply/react. Consults `boundedAutonomy.tryOutward`
+ * deliver, for message.send/reply/react/attach. Consults `boundedAutonomy.tryOutward`
  * (origin-only + per-target grant + per-hour + volume); on a deny it throws a
  * `CapabilityDeniedError` whose §2.7 WARN names the reason.
  *
@@ -466,6 +466,10 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
       assertCapability("message.attach", channelType, deps.channelPlugins);
       const channelId = rawParams.channel_id as string;
       authorizeChannelAccess(rawParams._callerChannelId as string | undefined, channelId, rawParams._trustLevel as string | undefined);
+      // An attachment is an outward delivery just like a text send. Keep an
+      // admin-trust agent on the active origin unless the target has the
+      // explicit autonomy grant; one attachment consumes one volume unit.
+      enforceOutwardQuota(deps, rawParams, channelId, 1);
 
       const userParams = stripInternalFields(rawParams);
       MessageAttachContract.request.parse(userParams);
