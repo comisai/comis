@@ -29,7 +29,6 @@ import {
   writeMasterKeyIfAbsent,
   preReadStorageMode,
   systemNowMs,
-  tryGetContext,
   type ToolCapabilityPort,
   type PerAgentConfig,
   type WrapExternalContentOptions,
@@ -95,7 +94,6 @@ import {
   createGeminiCacheManager,
   createSessionTrackerRegistry,
   createFilesystemWorkspacePolicyAdapter,
-  resolveResponseLocalePolicy,
   evaluateViableFloorForAgent,
   probeAllOllamaProviders,
   seedDefaultDagTemplates,
@@ -156,6 +154,7 @@ import {
   createRestartContinuationTracker,
   loadContinuations,
   buildMcpStatusLine,
+  resolveContinuationLanguage,
 } from "./wiring/restart-continuation.js";
 import { setupSingleAgent, createLearnedSkillSurfaceRegistry } from "./wiring/setup-agents/index.js";
 import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
@@ -394,17 +393,10 @@ function buildChannelManagerDeps(deps: {
       const chatType = typeof msg.metadata?.telegramChatType === "string"
         ? msg.metadata.telegramChatType
         : undefined;
-      const replayLanguage = msg.metadata?.isRestartContinuation === true
-        ? tryGetContext()?.resolvedLanguage
-        : undefined;
-      const resolvedLanguage = replayLanguage ?? resolveResponseLocalePolicy({
-        explicitLocale: agentsConfig[defaultAgentId]?.language,
-        requestLocale: typeof msg.metadata?.locale === "string" ? msg.metadata.locale : undefined,
-        requestText: msg.originalMessages?.map((message) => message.text).join("\n") ?? msg.text,
-      }).locale;
       continuationTracker.track({
         agentId: defaultAgentId, channelType, channelId: msg.channelId,
-        userId: msg.senderId, chatType, resolvedLanguage,
+        userId: msg.senderId, chatType,
+        resolvedLanguage: resolveContinuationLanguage(msg, agentsConfig[defaultAgentId]?.language),
         tenantId: container.config.tenantId, timestamp: Date.now(),
       });
       getInboundMessageIdResolver()?.record(msg, channelType);

@@ -8,7 +8,8 @@
  */
 
 import { readFileSync, unlinkSync, existsSync } from "node:fs";
-import { systemNowMs } from "@comis/core";
+import { systemNowMs, tryGetContext, type NormalizedMessage } from "@comis/core";
+import { resolveResponseLocalePolicy } from "@comis/agent";
 import { writeRegularFile } from "@comis/observability";
 import type { ComisLogger } from "@comis/infra";
 import type { McpConnection } from "@comis/skills";
@@ -69,6 +70,24 @@ export interface RestartContinuationTracker {
     confinedBaseDir: string,
     logger?: ComisLogger,
   ): number;
+}
+
+/** Resolve the language that a future synthetic restart turn must retain. */
+export function resolveContinuationLanguage(
+  message: Pick<NormalizedMessage, "metadata" | "originalMessages" | "text">,
+  explicitLocale?: string,
+): string | undefined {
+  if (message.metadata.isRestartContinuation === true) {
+    return tryGetContext()?.resolvedLanguage;
+  }
+  return resolveResponseLocalePolicy({
+    explicitLocale,
+    requestLocale: typeof message.metadata.locale === "string"
+      ? message.metadata.locale
+      : undefined,
+    requestText: message.originalMessages?.map((original) => original.text).join("\n")
+      ?? message.text,
+  }).locale;
 }
 
 // ---------------------------------------------------------------------------
