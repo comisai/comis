@@ -152,6 +152,18 @@ function displayKeyForConversation(locator: ConversationLocator): { key: Session
   return { key: projected.value, formatted: formatSessionKey(projected.value) };
 }
 
+function appendExpectedOutputContract(task: string, expectedOutputs: string[] | undefined): string {
+  if (!expectedOutputs || expectedOutputs.length === 0) return task;
+  const paths = expectedOutputs.map((filePath) => `- ${JSON.stringify(filePath)}`).join("\n");
+  return (
+    `${task}\n\n` +
+    `Expected output contract:\n` +
+    `${paths}\n` +
+    `Create every file at its exact path. The completion runner validates these exact paths; ` +
+    `an alternate filename or directory is treated as missing. Before your final response, verify every listed file exists.`
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Public interfaces
 // ---------------------------------------------------------------------------
@@ -2055,13 +2067,14 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           throw childContext.error;
         }
 
+        const childTask = appendExpectedOutputContract(params.task, params.expected_outputs);
         const result = await runWithContext(
           childContext.value,
           () => deps.executeAgent(
             params.agentId,
             subSessionKey,
             { conversationScope: run.conversationScope, conversationRef: run.conversationRef },
-            params.task,
+            childTask,
             params.max_steps,
             params.callerAgentId,
             params.graphId && params.nodeId

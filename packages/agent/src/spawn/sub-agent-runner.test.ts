@@ -1573,6 +1573,23 @@ describe("createSubAgentRunner", () => {
     );
   });
 
+  it("expected output paths are included in the child execution contract", async () => {
+    const runner = createSubAgentRunner(deps);
+    runner.spawn({
+      task: "create the monthly report",
+      agentId: "default",
+      expected_outputs: ["/workspace/reports/monthly.csv"],
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const childTask = vi.mocked(deps.executeAgent).mock.calls[0]?.[3];
+    expect(childTask).toContain("create the monthly report");
+    expect(childTask).toContain("Expected output contract");
+    expect(childTask).toContain("/workspace/reports/monthly.csv");
+    expect(childTask).toContain("exact path");
+  });
+
   // A per-spawn tokenBudget is threaded to executeAgent, where the daemon wiring
   // lands it on executionOverrides → the child's BudgetGuard per-execution cap.
   it("tokenBudget and spawn authority are passed to executeAgent", async () => {
