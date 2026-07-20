@@ -109,12 +109,12 @@ describe("obs-explain-heuristics", () => {
     const r = rootCause(
       makeSignals({
         endReason: "max_steps",
-        repeatedFailureCount: { ituran_trips_search: 34 },
-        mostFailedTool: "ituran_trips_search",
+        repeatedFailureCount: { records_search: 34 },
+        mostFailedTool: "records_search",
         failures: [
           {
             seq: 90,
-            toolName: "ituran_trips_search",
+            toolName: "records_search",
             classifiedFailureBy: "runtime_guard",
             transportOk: false,
             errorKind: "resource",
