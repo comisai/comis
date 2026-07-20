@@ -7,9 +7,11 @@ import {
   createRestartContinuationTracker,
   loadContinuations,
   buildMcpStatusLine,
+  resolveContinuationLanguage,
   type ContinuationRecord,
 } from "./restart-continuation.js";
 import type { McpConnection } from "@comis/skills";
+import { runWithContext } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -157,6 +159,28 @@ describe("createRestartContinuationTracker", () => {
     const loaded = loadContinuations(filePath, 300_000, makeMockLogger());
     expect(loaded).toHaveLength(1);
     expect(loaded[0]?.resolvedLanguage).toBe("und-Hebr");
+  });
+});
+
+describe("resolveContinuationLanguage", () => {
+  it("derives the response script from the original inbound text", () => {
+    expect(resolveContinuationLanguage({
+      text: "סכם את ציוני הבטיחות לפי קבוצות הרכב",
+      metadata: {},
+    })).toBe("und-Hebr");
+  });
+
+  it("retains the trusted locale for an English synthetic restart message", () => {
+    const resolved = runWithContext({
+      traceId: "trace-restart-language",
+      startedAt: Date.now(),
+      resolvedLanguage: "und-Hebr",
+    }, () => resolveContinuationLanguage({
+      text: "[system: daemon restarted]",
+      metadata: { isRestartContinuation: true },
+    }));
+
+    expect(resolved).toBe("und-Hebr");
   });
 });
 
