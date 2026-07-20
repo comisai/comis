@@ -211,6 +211,24 @@ export function sanitizeForUser(text: string): string {
   return sanitized || GENERIC_FALLBACK;
 }
 
+function replaceAttachedFilePaths(
+  text: string,
+  attachments: readonly CompletionAttachmentRef[],
+): { text: string; replacements: number } {
+  let sanitized = text;
+  let replacements = 0;
+
+  for (const attachment of attachments) {
+    const fileName = attachment.path.split(/[\\/]/).filter(Boolean).at(-1);
+    if (!fileName || !sanitized.includes(attachment.path)) continue;
+    const parts = sanitized.split(attachment.path);
+    replacements += parts.length - 1;
+    sanitized = parts.join(fileName);
+  }
+
+  return { text: sanitized, replacements };
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -371,21 +389,36 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     const attachments = items.flatMap((item) =>
       (item.attachments ?? []).map((attachment, index) => ({ item, attachment, index })),
     );
+    const sanitizedCaption = replaceAttachedFilePaths(
+      text,
+      attachments.map((entry) => entry.attachment),
+    );
+    if (sanitizedCaption.replacements > 0) {
+      deps.logger?.debug(
+        {
+          batchKey: key,
+          runId: first.runId,
+          replacements: sanitizedCaption.replacements,
+          step: "completion-caption-egress",
+        },
+        "Attached file paths replaced before completion delivery",
+      );
+    }
     const operations: Array<{
       item: QueuedAnnouncement;
       text: string;
       attachment?: CompletionAttachmentRef;
       partId?: string;
     }> = attachments.length === 0
-      ? [{ item: first, text }]
+      ? [{ item: first, text: sanitizedCaption.text }]
       : items.length === 1
         ? attachments.map((entry, index) => ({
             ...entry,
-            text: index === 0 ? text : "",
+            text: index === 0 ? sanitizedCaption.text : "",
             partId: `attachment:${entry.index}`,
           }))
         : [
-            { item: first, text, partId: "summary" },
+            { item: first, text: sanitizedCaption.text, partId: "summary" },
             ...attachments.map((entry) => ({
               ...entry,
               text: "",
@@ -426,7 +459,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
     if (attachments.length > 0) return false;
     if (!deps.deadLetterQueue) return false;
     const queued = await deps.deadLetterQueue.enqueue({
-      announcementText: text,
+      announcementText: sanitizedCaption.text,
       channelType: first.announceChannelType,
       channelId: first.announceChannelId,
       agentId: first.callerAgentId,

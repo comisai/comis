@@ -459,6 +459,36 @@ describe("AnnouncementBatcher", () => {
     );
   });
 
+  it("replaces an attached file absolute path with its filename before delivery", async () => {
+    const deadLetterQueue = makeDecisionQueue();
+    const sendGovernedAnnouncement = vi.fn().mockResolvedValue(ok({
+      delivered: true,
+      identity: { agentId: "agent-main", rootRunId: "root-1", stepIndex: 5 },
+    }));
+    const deps = makeDeps({
+      deadLetterQueue,
+      announceToParent: vi.fn().mockResolvedValue(
+        "The report is ready at `/workspace-report/reports/monthly.csv`.",
+      ),
+      sendGovernedAnnouncement,
+    });
+    const batcher = createAnnouncementBatcher(deps);
+
+    await batcher.enqueue(makeAnnouncement({
+      idempotencyKey: "file-path-caption",
+      attachments: [{ sourceAgentId: "report-agent", path: "/workspace-report/reports/monthly.csv" }],
+    }));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
+      text: "The report is ready at `monthly.csv`.",
+      attachment: {
+        sourceAgentId: "report-agent",
+        path: "/workspace-report/reports/monthly.csv",
+      },
+    }));
+  });
+
   it("leaves the durable decision pending after parent timeout", async () => {
     const deadLetterQueue = makeDecisionQueue();
     const deps = makeDeps({
