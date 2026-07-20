@@ -84,6 +84,13 @@ A from-scratch memory/learning drive restarts anyway (next section), so the skil
 > right one per task; `drive-sim-workload.sh` then only swaps the MCP *server* (live, no restart) per
 > workload. Patch all 14: `{"agents":{"default":{"skills":{"discoveryPaths":["/home/comis/sim/package-delivery","/home/comis/sim/threat-hunting", … all 14 … ]}}}}`.
 
+> **Size the learned-procedure surface for the accumulating campaign.** The runtime selects the
+> highest-corroboration procedures first, so a campaign that keeps all 14 workload skills in one store must
+> set `agents.default.learning.reflect.maxProcedureDocsSurfaced` to at least 14 (20 leaves diagnostic
+> headroom). A smaller cap is valid for production, but it deterministically hides lower-proof candidates
+> once enough earlier skills become active; hidden candidates cannot earn reuse credit. The campaign
+> preflight therefore uses `20` and verifies the startup config before driving transfer variants.
+
 > **Not wiping `memory.db` between workloads (accumulating tools in ONE session) is a useful STRESS** — it
 > surfaced a toolStats-sentinel bug (a >64-distinct-tool `toolStats` tripped the bounding backstop's
 > object-key cap → schema-invalid `explain`; since FIXED by the toolStats count-cap). But it makes per-session
