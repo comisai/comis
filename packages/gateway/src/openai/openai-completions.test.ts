@@ -129,6 +129,7 @@ describe("createOpenaiCompletionsRoute", () => {
       expect(call.message).toContain("Subject: Conversation turn 3; role=assistant");
       expect(call.message).toContain("Subject: Conversation turn 4; role=system");
       expect(call.message).toContain("Subject: Conversation turn 5; role=user");
+      expect(call.currentUserText).toBe("PRIVATE_CURRENT_QUESTION");
       const completeConversation = `${call.systemPrompt}\n\n${call.message}`;
       expect(completeConversation.indexOf("First system instruction")).toBeLessThan(
         completeConversation.indexOf("PRIVATE_HISTORY_QUESTION"),

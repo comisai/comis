@@ -866,6 +866,71 @@ describe("OpenAI-compatible request context boundaries", () => {
     expect(seenTraceIds[0]).toBeDefined();
   });
 
+  it.each([
+    {
+      surface: "chat-completions",
+      captureExecuteAgent: () => (
+        vi.mocked(createOpenaiCompletionsRoute).mock.calls[0]![0] as {
+          executeAgent(params: {
+            message: string;
+            currentUserText: string;
+            signal: AbortSignal;
+          }): Promise<unknown>;
+        }
+      ).executeAgent,
+      sessionKey: undefined,
+    },
+    {
+      surface: "responses",
+      captureExecuteAgent: () => (
+        vi.mocked(createResponsesRoute).mock.calls[0]![0] as {
+          executeAgent(params: {
+            message: string;
+            currentUserText: string;
+            signal: AbortSignal;
+            sessionKey: { userId: string; channelId: string; peerId: string };
+          }): Promise<unknown>;
+        }
+      ).executeAgent,
+      sessionKey: { userId: "user_a", channelId: "responses", peerId: "peer_a" },
+    },
+  ])("$surface preserves the raw current user turn as inbound provenance", async ({
+    captureExecuteAgent,
+    sessionKey,
+  }) => {
+    const execute = vi.fn(async () => ({
+      response: "ok",
+      tokensUsed: { input: 0, output: 0, total: 0 },
+      finishReason: "stop" as const,
+      stepsExecuted: 0,
+      llmCalls: 1,
+    }));
+    const deps = createMockDeps({
+      getExecutor: vi.fn(() => ({ execute })) as GatewayRouteDeps["getExecutor"],
+    });
+    mountGatewayRoutes(deps);
+
+    await captureExecuteAgent()({
+      message: "English security envelope around the request",
+      currentUserText: "אילו כלי רכב נמצאים כרגע במצב סרק פתוח?",
+      signal: new AbortController().signal,
+      ...(sessionKey !== undefined ? { sessionKey } : {}),
+    } as never);
+
+    const normalizedMessage = execute.mock.calls[0]![0] as NormalizedMessage;
+    expect(normalizedMessage.text).toBe("English security envelope around the request");
+    expect(normalizedMessage.originalMessages).toEqual([
+      expect.objectContaining({
+        id: normalizedMessage.id,
+        channelId: normalizedMessage.channelId,
+        channelType: normalizedMessage.channelType,
+        senderId: normalizedMessage.senderId,
+        text: "אילו כלי רכב נמצאים כרגע במצב סרק פתוח?",
+        timestamp: normalizedMessage.timestamp,
+      }),
+    ]);
+  });
+
   it("chat-completions keeps preprocessing and tool assembly in the requested trace context", async () => {
     const requestedTraceId = "550e8400-e29b-41d4-a716-446655440001";
     const observed: Array<string | undefined> = [];
