@@ -12,25 +12,29 @@ function parseResult(result: { content: Array<{ type: string; text?: string }> }
 }
 
 describe("sessions_history tool", () => {
-  it("delegates with session_key, offset, limit", async () => {
+  it("delegates the durable conversation identity with pagination", async () => {
     const mockRpcCall: RpcCall = vi.fn(async (method, params) => {
       if (method === "session.history") {
-        return { messages: [], session_key: params.session_key };
+        return { messages: [], conversation_ref: params.conversation_ref };
       }
       throw new Error(`Unexpected method: ${method}`);
     });
 
     const tool = createSessionsHistoryTool(mockRpcCall);
     const result = await tool.execute("call-1", {
-      session_key: "t:u:c",
+      tenant_id: "default",
+      agent_id: "default",
+      conversation_ref: "cv_child",
       offset: 10,
       limit: 5,
     } as never);
 
-    const parsed = parseResult(result) as { messages: unknown[]; session_key: string };
-    expect(parsed.session_key).toBe("t:u:c");
+    const parsed = parseResult(result) as { messages: unknown[]; conversation_ref: string };
+    expect(parsed.conversation_ref).toBe("cv_child");
     expect(mockRpcCall).toHaveBeenCalledWith("session.history", {
-      session_key: "t:u:c",
+      tenant_id: "default",
+      agent_id: "default",
+      conversation_ref: "cv_child",
       offset: 10,
       limit: 5,
     });
@@ -41,23 +45,27 @@ describe("sessions_history tool", () => {
 
     const tool = createSessionsHistoryTool(mockRpcCall);
     await tool.execute("call-2", {
-      session_key: "t:u:c",
+      tenant_id: "default",
+      agent_id: "default",
+      conversation_ref: "cv_child",
     } as never);
 
     expect(mockRpcCall).toHaveBeenCalledWith("session.history", {
-      session_key: "t:u:c",
+      tenant_id: "default",
+      agent_id: "default",
+      conversation_ref: "cv_child",
       offset: 0,
       limit: 20,
     });
   });
 
-  it("throws when session_key is missing", async () => {
+  it("throws when the durable conversation identity is missing", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => ({}));
 
     const tool = createSessionsHistoryTool(mockRpcCall);
 
     await expect(tool.execute("call-3", {} as never)).rejects.toThrow(
-      "Missing required parameter: session_key",
+      "Missing required parameter: tenant_id",
     );
     expect(mockRpcCall).not.toHaveBeenCalled();
   });
@@ -70,7 +78,11 @@ describe("sessions_history tool", () => {
     const tool = createSessionsHistoryTool(mockRpcCall);
 
     await expect(
-      tool.execute("call-4", { session_key: "t:u:c" } as never),
+      tool.execute("call-4", {
+        tenant_id: "default",
+        agent_id: "default",
+        conversation_ref: "cv_child",
+      } as never),
     ).rejects.toThrow("timeout");
   });
 });
