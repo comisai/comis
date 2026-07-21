@@ -57,6 +57,8 @@ export interface OpenaiCompletionsDeps {
   /** Execute an agent turn with optional streaming callback. */
   executeAgent: (params: {
     message: string;
+    /** Latest user-authored turn before the conversation is security-wrapped. */
+    currentUserText: string;
     systemPrompt?: string;
     sessionKey?: { userId: string; channelId: string; peerId: string };
     /** Scopes from the bearer token already verified by the parent route. */
@@ -223,6 +225,7 @@ async function handleStreamingCompletion(params: {
   deps: OpenaiCompletionsDeps;
   body: { model: string };
   userMessage: string;
+  currentUserText: string;
   systemPrompt: string | undefined;
   completionId: string;
   created: number;
@@ -238,6 +241,7 @@ async function handleStreamingCompletion(params: {
     deps,
     body,
     userMessage,
+    currentUserText,
     systemPrompt,
     completionId,
     created,
@@ -316,6 +320,7 @@ async function handleStreamingCompletion(params: {
   try {
     result = await deps.executeAgent({
       message: userMessage,
+      currentUserText,
       systemPrompt,
       sessionKey,
       onDelta,
@@ -553,6 +558,7 @@ export function createOpenaiCompletionsRoute(
         );
       }
       const userMessage = conversation.message;
+      const currentUserText = conversation.currentUserText;
       const systemPrompt = conversation.systemPrompt;
 
       // Optional model alias resolution
@@ -590,6 +596,7 @@ export function createOpenaiCompletionsRoute(
             deps,
             body,
             userMessage,
+            currentUserText,
             systemPrompt,
             completionId,
             created,
@@ -610,6 +617,7 @@ export function createOpenaiCompletionsRoute(
       try {
         result = await deps.executeAgent({
           message: userMessage,
+          currentUserText,
           systemPrompt,
           sessionKey,
           traceId,

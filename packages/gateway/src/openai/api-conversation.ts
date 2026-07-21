@@ -10,6 +10,7 @@ export interface ApiConversationMessage {
 /** Executor inputs derived from one caller-supplied conversation. */
 export interface PreparedApiConversation {
   message: string;
+  currentUserText: string;
   systemPrompt?: string;
 }
 
@@ -20,11 +21,10 @@ export interface PreparedApiConversation {
 export function prepareApiConversation(
   messages: readonly ApiConversationMessage[],
 ): PreparedApiConversation | undefined {
-  if (!messages.some(
+  const currentUserTurn = messages.findLast(
     (message) => message.role === "user" && message.content.length > 0,
-  )) {
-    return undefined;
-  }
+  );
+  if (currentUserTurn === undefined) return undefined;
 
   let leadingSystemCount = 0;
   for (const message of messages) {
@@ -51,9 +51,9 @@ export function prepareApiConversation(
   const systemPrompt = leadingSystemMessages.length === 0
     ? undefined
     : leadingSystemMessages.map(wrapTurn).join("\n\n");
-
   return {
     message,
+    currentUserText: currentUserTurn.content,
     ...(systemPrompt !== undefined ? { systemPrompt } : {}),
   };
 }

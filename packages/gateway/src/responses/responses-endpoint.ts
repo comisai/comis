@@ -56,6 +56,8 @@ export interface ResponsesEndpointDeps {
   /** Execute an agent turn with optional streaming callback. */
   executeAgent: (params: {
     message: string;
+    /** Latest user-authored turn before the conversation is security-wrapped. */
+    currentUserText: string;
     systemPrompt?: string;
     sessionKey: { userId: string; channelId: string; peerId: string };
     /** Scopes from the bearer token already verified by the parent route. */
@@ -178,6 +180,7 @@ async function handleStreamingResponse(params: {
   deps: ResponsesEndpointDeps;
   body: { model: string };
   userMessage: string;
+  currentUserText: string;
   systemPrompt: string | undefined;
   responseId: string;
   messageId: string;
@@ -193,6 +196,7 @@ async function handleStreamingResponse(params: {
     deps,
     body,
     userMessage,
+    currentUserText,
     systemPrompt,
     responseId,
     messageId,
@@ -330,6 +334,7 @@ async function handleStreamingResponse(params: {
   try {
     result = await deps.executeAgent({
       message: userMessage,
+      currentUserText,
       systemPrompt,
       sessionKey,
       onDelta: (delta: string, kind?: "text" | "thinking") => {
@@ -588,6 +593,7 @@ export function createResponsesRoute(
         );
       }
       const userMessage = conversation.message;
+      const currentUserText = conversation.currentUserText;
       const systemPrompt = conversation.systemPrompt;
 
       let resolvedModel: ReturnType<NonNullable<ResponsesEndpointDeps["resolveModel"]>> = undefined;
@@ -624,6 +630,7 @@ export function createResponsesRoute(
             deps,
             body,
             userMessage,
+            currentUserText,
             systemPrompt,
             responseId,
             messageId,
@@ -644,6 +651,7 @@ export function createResponsesRoute(
       try {
         result = await deps.executeAgent({
           message: userMessage,
+          currentUserText,
           systemPrompt,
           sessionKey,
           traceId,

@@ -507,6 +507,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
     resolveModel,
     executeAgent: async ({
       message,
+      currentUserText,
       systemPrompt,
       sessionKey,
       onDelta,
@@ -595,14 +596,24 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
               return { enrichedText, tools };
             })());
             cancellation.throwIfAborted();
+            const messageId = randomUUID();
+            const timestamp = systemNowMs();
             const msg: NormalizedMessage = {
-              id: randomUUID(),
+              id: messageId,
               channelId: requestChannelId,
               channelType: "openai",
               senderId,
               text: preparation.enrichedText,
-              timestamp: systemNowMs(),
+              timestamp,
               attachments: [],
+              originalMessages: [{
+                id: messageId,
+                channelId: requestChannelId,
+                channelType: "openai",
+                senderId,
+                text: currentUserText,
+                timestamp,
+              }],
               metadata: {
                 ...(systemPrompt && { openaiSystemPrompt: systemPrompt }),
               },
@@ -680,6 +691,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
     agentId: defaultAgentId,
     executeAgent: async ({
       message,
+      currentUserText,
       systemPrompt,
       sessionKey,
       onDelta,
@@ -768,14 +780,24 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
               return { enrichedText, tools };
             })());
             cancellation.throwIfAborted();
+            const messageId = randomUUID();
+            const timestamp = systemNowMs();
             const msg: NormalizedMessage = {
-              id: randomUUID(),
+              id: messageId,
               channelId: requestChannelId,
               channelType: "responses",
               senderId,
               text: preparation.enrichedText,
-              timestamp: systemNowMs(),
+              timestamp,
               attachments: [],
+              originalMessages: [{
+                id: messageId,
+                channelId: requestChannelId,
+                channelType: "responses",
+                senderId,
+                text: currentUserText,
+                timestamp,
+              }],
               metadata: {
                 ...(systemPrompt && { openaiSystemPrompt: systemPrompt }),
               },
