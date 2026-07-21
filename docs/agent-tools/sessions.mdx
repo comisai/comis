@@ -62,13 +62,15 @@ The four session tools (`session_search`, `session_status`, `sessions_history`, 
   </Accordion>
 
   <Accordion title="sessions_history -- Browse conversation history">
-    Retrieves the conversation history for a specific session by session key.
+    Retrieves the conversation history for a durable conversation identity. Sub-agent listings expose the required agent, conversation reference, and conversation scope.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `session_key` | string | Yes | Session key in `tenantId:filename` form. Use `sessions_list` first to discover available keys. |
+    | `tenant_id` | string | Yes | Tenant from `conversationScope.tenantId`. |
+    | `agent_id` | string | Yes | Agent that owns the conversation. |
+    | `conversation_ref` | string | Yes | Opaque durable conversation reference. |
     | `limit` | integer | No | Maximum messages to return (default: 20) |
     | `offset` | integer | No | Skip this many messages (default: 0) |
   </Accordion>

@@ -70,7 +70,7 @@ describe("sessions_history tool", () => {
     expect(mockRpcCall).not.toHaveBeenCalled();
   });
 
-  it("throws on RPC error", async () => {
+  it("propagates an RPC history error", async () => {
     const mockRpcCall: RpcCall = vi.fn(async () => {
       throw new Error("timeout");
     });

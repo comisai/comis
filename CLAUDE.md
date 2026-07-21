@@ -155,6 +155,8 @@ Pino auto-redacts credentials (`apiKey`, `token`, `password`, `secret`, `authori
 
 **Multi-agent targeting.** `cron.run` / `cron.list` / `cron.runs` / `cron.status` / `session.reset_conversation` take an optional `agentId` — pass it to act on a NON-default agent (the default agent is otherwise resolved from the connection, silently). `cron.list` with `agentId: "*"` returns EVERY agent's jobs. Every response states the `resolvedAgentId` it acted on; a 0-row reset reports the scope rather than failing silently. (Without this, a cron triggered for `mldag` ran on `default`, and a reset returned `lcdRowsDeleted:0` — both diagnosed the hard way.)
 
+**Sub-agent history uses durable identity, not display session keys.** `sessions_history` takes `tenant_id`, `agent_id`, and the opaque `conversation_ref` exposed by `subagents`/session listings. The formatted `sessionKey` is a human-readable projection and cannot recover the authoritative conversation reference. Keep the platform-tool schema synchronized with the `session.history` RPC contract; otherwise TypeBox strips the durable fields and every child-result read fails before the handler.
+
 **Start with `obs.explain` — do NOT hand-join the logs.** It exists so an agent (or you) root-causes a bad session in one call instead of grepping four files. The CLI is not on PATH:
 
 ```bash

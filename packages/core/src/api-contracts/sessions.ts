@@ -254,8 +254,8 @@ export const SessionSearchContract = defineContract({
  *   - Missing session in SQLite + workspace JSONL fallback miss →
  *     `"Session not found: <key>. Available session keys: ..."`.
  *
- * Request: `{ session_key, offset?, limit? }`. Handler defaults offset=0,
- * limit=20.
+ * Request: `{ tenant_id, agent_id, conversation_ref, offset?, limit? }`.
+ * Handler defaults offset=0, limit=20.
  *
  * Response: `{ session: SessionMeta, messages: Message[], total, offset,
  * limit, hasMore }`. `session` is tight-modeled per the handler's

@@ -1116,7 +1116,7 @@ Retrieve the conversation history for a session. Returns the raw message array s
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ channelId?: string }` |
+| **Parameters** | `{ tenant_id: string, agent_id: string, conversation_ref: string, offset?: number, limit?: number }` |
 | **Returns** | `{ messages: Array<{ role: string, content: string, timestamp?: number }> }` |
 
 ### `session.list`

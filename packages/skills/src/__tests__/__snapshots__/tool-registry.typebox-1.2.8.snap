@@ -3339,6 +3339,14 @@
     "category": "session",
     "schema": {
       "properties": {
+        "agent_id": {
+          "description": "Agent that owns the target conversation",
+          "type": "string"
+        },
+        "conversation_ref": {
+          "description": "Opaque durable reference of the target conversation",
+          "type": "string"
+        },
         "limit": {
           "description": "Max messages to return (default: 20)",
           "type": "integer"
@@ -3347,13 +3355,15 @@
           "description": "Pagination offset (default: 0)",
           "type": "integer"
         },
-        "session_key": {
-          "description": "Target session key to retrieve history for",
+        "tenant_id": {
+          "description": "Tenant that owns the target conversation",
           "type": "string"
         }
       },
       "required": [
-        "session_key"
+        "tenant_id",
+        "agent_id",
+        "conversation_ref"
       ],
       "type": "object"
     },
