@@ -17,8 +17,8 @@
  *     those is caught and mapped to `{ wake: true }`. This runner NEVER throws to
  *     the scheduler — a broken gate can never silently drop a monitored job
  *     (which would fail CLOSED: status:error → backoff → auto-suspend).
- *   - LEAST-PRIVILEGE, per fire. Each fire mints a FRESH attenuated lease under a
- *     distinct `root-wakegate-<jobId>-<ts>-<nonce>` root, registers the bearer with the
+ *   - LEAST-PRIVILEGE, per fire. Each fire mints a fresh attenuated lease under the
+ *     scheduler occurrence's registered `root-cron-*` root, registers the bearer with the
  *     OutputGuard so it is never logged, and threads it into the jail env as
  *     `COMIS_CAP_LEASE` (+ `COMIS_ORCH_SOCKET`). The gate's tool reach is bounded
  *     by the agent's RESOLVED autonomy capabilities enforced at the cap socket —
@@ -59,6 +59,8 @@ export interface WakeGateRunContext {
   readonly jobId: string;
   /** The formatted main-session key for the job's agent (the lease's session). */
   readonly sessionKey: string;
+  /** Registered scheduler execution root shared by gate and payload work. */
+  readonly rootRunId: string;
 }
 
 /**
@@ -83,11 +85,19 @@ export type WakeGateOutcome =
       verdict: WakeGateVerdict;
       durationMs: number;
       toolCalls: number;
-      failedOpen: boolean;
-      /** The per-fire `root-wakegate-<jobId>-<ts>-<nonce>` the gate's cap-calls are
+      failedOpen: false;
+      /** The scheduler-provided `root-cron-*` identity the gate's cap-calls are
        *  audited under. Surfaced so an operator can reconstruct a fire's tool.invoke
        *  sequence with `comis explain <rootRunId>` (the cap-audit stream keys on it).
        *  Absent only on the rare pre-mint throw (nothing was audited to explain). */
+      rootRunId?: string;
+    }
+  | {
+      verdict: WakeGateVerdict;
+      durationMs: number;
+      toolCalls: number;
+      failedOpen: true;
+      errorKind: ErrorKind;
       rootRunId?: string;
     }
   | { runAsToday: true };
@@ -102,6 +112,7 @@ export interface WakeGateRunner {
   runWakeGate(
     gate: { script: string; language: "js" | "ts"; timeoutSeconds: number },
     ctx: WakeGateRunContext,
+    signal: AbortSignal,
   ): Promise<WakeGateOutcome>;
 }
 
@@ -143,7 +154,12 @@ export interface WakeGateRunnerDeps {
    */
   readonly runJailedScriptFn?: (
     deps: JailedScriptRunnerDeps,
-    params: { script: string; language: "js" | "ts"; timeoutMs?: number },
+    params: {
+      script: string;
+      language: "js" | "ts";
+      timeoutMs?: number;
+      signal?: AbortSignal;
+    },
   ) => Promise<string>;
   /** The ResultRef store (default `createResultRefStore({ logger })`). */
   readonly store?: JailedScriptResultStore;
@@ -160,6 +176,9 @@ export interface WakeGateRunnerDeps {
  * the WARN payload, so the exact cause stays visible.
  */
 function classifyWakeGateFailure(err: unknown): ErrorKind {
+  if (typeof err === "object" && err !== null && "name" in err && err.name === "AbortError") {
+    return "precondition";
+  }
   const message = err instanceof Error ? err.message : String(err);
   if (/timeout/i.test(message)) return "timeout";
   if (/hard cap/i.test(message)) return "resource";
@@ -174,14 +193,8 @@ function classifyWakeGateFailure(err: unknown): ErrorKind {
  */
 export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
   const log = deps.logger.child({ submodule: "wake-gate-runner" });
-  // A per-runner monotonic nonce disambiguates two fires of the SAME job that
-  // start within one millisecond: `now()` has millisecond resolution, so the
-  // `-<ts>` root suffix alone can repeat. Captured in this closure, the counter
-  // is deterministic and collision-free within a process (no entropy source).
-  let fireSeq = 0;
-
   return {
-    async runWakeGate(gate, ctx) {
+    async runWakeGate(gate, ctx, signal) {
       // The WHOLE body is fail-open: the degrade, the per-fire lease mint, the
       // deps assembly, and the jailed run all sit inside ONE try. Any throw —
       // including a mintLease / registerSecret / registerRoot fault — maps to a
@@ -221,12 +234,10 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
         //    COMIS_CAP_LEASE/COMIS_ORCH_SOCKET). Caps are the agent's RESOLVED
         //    autonomy caps enforced at the cap socket — never a job tool policy.
         //    A fault here is caught below and fails OPEN (waking), never closed.
-        //    The `-<nonce>` suffix keeps the root unique even for two same-job
-        //    fires that start in the same millisecond, so the scoped toolCalls
-        //    counter (which filters by THIS root) can never cross-count a
-        //    concurrent fire and the per-fire lease/root index never collides.
+        //    The scheduler already minted the occurrence root before this call;
+        //    the gate lease joins that same governed tree.
         const ts = now().toString(36);
-        rootRunId = `root-wakegate-${ctx.jobId}-${ts}-${(fireSeq++).toString(36)}`;
+        rootRunId = ctx.rootRunId;
         const capMint: CapabilityMintDeps = {
           leaseManager: deps.leaseManager,
           outputGuard: deps.outputGuard,
@@ -277,6 +288,7 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
             script: gate.script,
             language: gate.language,
             timeoutMs: gate.timeoutSeconds * 1000,
+            signal,
           });
           // A clean resolve means the child exited 0 without timing out/overflowing
           // (those paths REJECT). The parser fails open on empty/unparseable stdout.
@@ -328,17 +340,25 @@ export function createWakeGateRunner(deps: WakeGateRunnerDeps): WakeGateRunner {
           deps.eventBus?.off("capability:audited", onAudited);
         }
       } catch (err) {
+        const errorKind = classifyWakeGateFailure(err);
         log.warn(
           {
             err,
             agentId: ctx.agentId,
             jobId: ctx.jobId,
-            errorKind: classifyWakeGateFailure(err),
+            errorKind,
             hint: "wake-gate failed — waking the model (fail-open)",
           },
           "Wake-gate failed — waking (fail-open)",
         );
-        return { verdict: { wake: true }, durationMs: now() - startedAt, toolCalls, failedOpen: true, rootRunId };
+        return {
+          verdict: { wake: true },
+          durationMs: now() - startedAt,
+          toolCalls,
+          failedOpen: true,
+          errorKind,
+          rootRunId,
+        };
       }
     },
   };

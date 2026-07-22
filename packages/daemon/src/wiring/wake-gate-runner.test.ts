@@ -8,7 +8,7 @@
  *     and NEVER throws to the scheduler; a clean run resolves via the pure parser.
  *   - BEARER-THREADING: a fire mints a fresh per-fire lease, registers the bearer
  *     with OutputGuard, and threads `COMIS_CAP_LEASE` + `COMIS_ORCH_SOCKET` into
- *     the jail env under a fresh `root-wakegate-<jobId>-<ts>` root.
+ *     the jail env under the scheduler occurrence's `root-cron-*` root.
  *   - LEASE CAPS = the agent's resolved autonomy caps (never a job tool policy).
  *   - HONEST DEGRADE: no sandbox (preflight failed) or autonomy disabled yields a
  *     run-as-today signal — no lease minted, no jailed run.
@@ -56,7 +56,12 @@ function makeCapturingLogger(): { logger: WakeGateRunnerDeps["logger"]; warn: Re
 }
 
 const GATE = { script: "noop", language: "js" as const, timeoutSeconds: 30 };
-const CTX: WakeGateRunContext = { agentId: "agent-1", jobId: "job-1", sessionKey: "main:agent-1" };
+const CTX: WakeGateRunContext = {
+  agentId: "agent-1",
+  jobId: "job-1",
+  sessionKey: "main:agent-1",
+  rootRunId: "root-cron-job-1-execution-1",
+};
 
 /**
  * The richer runWakeGate outcome wrapped around a bare verdict. Under the default
@@ -64,18 +69,24 @@ const CTX: WakeGateRunContext = { agentId: "agent-1", jobId: "job-1", sessionKey
  */
 function outcome(
   verdict: unknown,
-  over: { durationMs?: number; toolCalls?: number; failedOpen?: boolean; rootRunId?: unknown } = {},
+  over: {
+    durationMs?: number;
+    toolCalls?: number;
+    failedOpen?: boolean;
+    errorKind?: string;
+    rootRunId?: unknown;
+  } = {},
 ) {
+  const failedOpen = over.failedOpen ?? false;
   return {
     verdict,
     durationMs: over.durationMs ?? 0,
     toolCalls: over.toolCalls ?? 0,
     // Default false — a clean run; the fail-open (catch) cases pass true.
-    failedOpen: over.failedOpen ?? false,
-    // The runner mints a per-fire root-wakegate-<jobId>-<ts>-<nonce>; the ts/nonce
-    // vary, so match the shape (present on every verdict outcome; the mint runs
-    // before the run/catch). Override for an exact assertion.
-    rootRunId: over.rootRunId ?? expect.stringMatching(/^root-wakegate-/),
+    failedOpen,
+    ...(failedOpen ? { errorKind: over.errorKind ?? "dependency" } : {}),
+    // The runner preserves the scheduler occurrence root on every verdict.
+    rootRunId: over.rootRunId ?? CTX.rootRunId,
   };
 }
 
@@ -134,14 +145,14 @@ function makeDeps(over: Partial<WakeGateRunnerDeps> = {}) {
 }
 
 describe("createWakeGateRunner — exception-safety (fail-open, never throws)", () => {
-  const rejections: ReadonlyArray<readonly [string, Error]> = [
-    ["a SIGKILL timeout", new Error("run exceeded its 30000ms timeout")],
-    ["a stdout overflow", new Error("stdout exceeded the 4194304B hard cap")],
-    ["a non-zero exit", new Error("jailed child exited with code 1")],
-    ["a spawn error", new Error("spawn bwrap ENOENT")],
+  const rejections: ReadonlyArray<readonly [string, Error, string]> = [
+    ["a SIGKILL timeout", new Error("run exceeded its 30000ms timeout"), "timeout"],
+    ["a stdout overflow", new Error("stdout exceeded the 4194304B hard cap"), "resource"],
+    ["a non-zero exit", new Error("jailed child exited with code 1"), "dependency"],
+    ["a spawn error", new Error("spawn bwrap ENOENT"), "dependency"],
   ];
 
-  for (const [label, err] of rejections) {
+  for (const [label, err, errorKind] of rejections) {
     it(`resolves to wake (fail-open) and NEVER throws when the jailed run rejects with ${label}`, async () => {
       const { deps, runJailedScriptFn } = makeDeps();
       runJailedScriptFn.mockRejectedValue(err);
@@ -149,7 +160,9 @@ describe("createWakeGateRunner — exception-safety (fail-open, never throws)", 
       // `.resolves` proves the promise did not reject — the never-throw invariant;
       // `failedOpen:true` marks it as a caught run failure (the broken-gate signal),
       // not a clean wake decision.
-      await expect(runner.runWakeGate(GATE, CTX)).resolves.toEqual(outcome({ wake: true }, { failedOpen: true }));
+      await expect(runner.runWakeGate(GATE, CTX, new AbortController().signal)).resolves.toEqual(
+        outcome({ wake: true }, { failedOpen: true, errorKind }),
+      );
     });
   }
 
@@ -172,6 +185,46 @@ describe("createWakeGateRunner — exception-safety (fail-open, never throws)", 
     });
     const runner = createWakeGateRunner(deps);
     await expect(runner.runWakeGate(GATE, CTX)).resolves.toEqual(outcome({ wake: true }, { failedOpen: true }));
+  });
+});
+
+describe("createWakeGateRunner — scheduler cancellation", () => {
+  it("passes the scheduler abort signal into the jailed run and reports cancellation distinctly", async () => {
+    const controller = new AbortController();
+    const { deps, runJailedScriptFn } = makeDeps();
+    runJailedScriptFn.mockImplementation(async (_runnerDeps, params) => {
+      expect(params.signal).toBe(controller.signal);
+      return await new Promise<string>((_resolve, reject) => {
+        params.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), {
+          once: true,
+        });
+      });
+    });
+    const pending = createWakeGateRunner(deps).runWakeGate(GATE, CTX, controller.signal);
+
+    controller.abort();
+
+    await expect(pending).resolves.toEqual(outcome(
+      { wake: true },
+      { failedOpen: true, errorKind: "precondition" },
+    ));
+  });
+});
+
+describe("createWakeGateRunner — cron root inheritance", () => {
+  it("mints the gate lease under the scheduler-provided cron root", async () => {
+    const { deps, mintLease, registerRoot } = makeDeps();
+
+    const result = await createWakeGateRunner(deps).runWakeGate(GATE, {
+      ...CTX,
+      rootRunId: "root-cron-job-1-execution-1",
+    });
+
+    expect(mintLease).toHaveBeenCalledWith(expect.objectContaining({
+      rootRunId: "root-cron-job-1-execution-1",
+    }));
+    expect(registerRoot).toHaveBeenCalledWith("root-cron-job-1-execution-1", "lease-x", undefined);
+    expect(result).toMatchObject({ rootRunId: "root-cron-job-1-execution-1" });
   });
 });
 
@@ -254,18 +307,18 @@ describe("createWakeGateRunner — bearer-threading (full mint treatment)", () =
     expect(runnerDeps.brokerSpawnEnv?.placeholders?.COMIS_ORCH_SOCKET).toBe("/data/cap.sock");
   });
 
-  it("anchors a fresh root-wakegate-<jobId>-<ts> root with the minted leaseId", async () => {
+  it("anchors the scheduler-provided cron root with the minted gate lease", async () => {
     const { deps, mintLease, registerRoot } = makeDeps();
     await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
 
     expect(registerRoot).toHaveBeenCalledTimes(1);
     const [rootRunId, leaseId] = registerRoot.mock.calls[0]!;
-    expect(rootRunId).toMatch(/^root-wakegate-job-1-/);
+    expect(rootRunId).toBe(CTX.rootRunId);
     expect(leaseId).toBe("lease-x");
 
     // The lease is minted under the SAME per-fire root + the job's session key.
     const mintInput = mintLease.mock.calls[0]![0] as { rootRunId: string; sessionKey: string };
-    expect(mintInput.rootRunId).toMatch(/^root-wakegate-job-1-/);
+    expect(mintInput.rootRunId).toBe(CTX.rootRunId);
     expect(mintInput.sessionKey).toBe("main:agent-1");
   });
 
@@ -430,7 +483,11 @@ describe("createWakeGateRunner — richer outcome (durationMs on the clean AND f
 
     const result = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
 
-    expect(result).toEqual(outcome({ wake: true }, { durationMs: 42, failedOpen: true }));
+    expect(result).toEqual(outcome({ wake: true }, {
+      durationMs: 42,
+      failedOpen: true,
+      errorKind: "timeout",
+    }));
   });
 });
 
@@ -459,7 +516,7 @@ describe("createWakeGateRunner — scoped, leak-safe capability:audited toolCall
       const rootRunId = registerRoot.mock.calls[0]![0] as string;
       bus.emit("capability:audited", makeAudit(rootRunId, "allow")); // counted
       bus.emit("capability:audited", makeAudit(rootRunId, "deny")); // NOT — a blocked call is no cost incurred
-      bus.emit("capability:audited", makeAudit("root-wakegate-other-9z", "allow")); // NOT — another fire's root
+      bus.emit("capability:audited", makeAudit("root-cron-other-9z", "allow")); // another fire's root
       bus.emit("capability:audited", makeAudit(rootRunId, "allow")); // counted
       return '{"wake":false}';
     });
@@ -498,7 +555,11 @@ describe("createWakeGateRunner — scoped, leak-safe capability:audited toolCall
     const result = await createWakeGateRunner(deps).runWakeGate(GATE, CTX);
 
     // Fail-open wake; the count survives to the fail-open return AND the listener is gone.
-    expect(result).toEqual(outcome({ wake: true }, { toolCalls: 2, failedOpen: true }));
+    expect(result).toEqual(outcome({ wake: true }, {
+      toolCalls: 2,
+      failedOpen: true,
+      errorKind: "timeout",
+    }));
     expect(bus.listenerCount("capability:audited")).toBe(0);
   });
 
@@ -512,12 +573,7 @@ describe("createWakeGateRunner — scoped, leak-safe capability:audited toolCall
     expect(result).toEqual(outcome({ wake: false }, { toolCalls: 0 }));
   });
 
-  it("two CONCURRENT fires of the SAME job in the same millisecond derive DISTINCT roots and do NOT cross-count toolCalls", async () => {
-    // `now()` has millisecond resolution, so two same-job fires that start in the
-    // same millisecond would derive an identical `-<ts>` suffix. With only the ts
-    // both roots collide, so EACH fire's scoped counter matches BOTH fires'
-    // allow-events and cross-counts the other's cap-calls. A per-fire nonce must
-    // make each root unique regardless of clock resolution.
+  it("two concurrent scheduler occurrences retain distinct roots and do not cross-count tool calls", async () => {
     const bus = new TypedEventBus();
     // Each fire's own root is captured in fire order as it is anchored at mint.
     const roots: string[] = [];
@@ -533,8 +589,10 @@ describe("createWakeGateRunner — scoped, leak-safe capability:audited toolCall
     const barrier = new Promise<void>((resolve) => {
       release = resolve;
     });
+    const occurrenceRoots = ["root-cron-occurrence-a", "root-cron-occurrence-b"] as const;
+    let runIndex = 0;
     const runJailedScriptFn = vi.fn(async () => {
-      const myRoot = roots[roots.length - 1]!; // this fire's just-anchored root
+      const myRoot = occurrenceRoots[runIndex++];
       entered += 1;
       if (entered === 2) release();
       await barrier;
@@ -546,17 +604,18 @@ describe("createWakeGateRunner — scoped, leak-safe capability:audited toolCall
       eventBus: bus,
       registerRoot,
       runJailedScriptFn,
-      now: () => 1_700_000_000_000, // a FIXED clock ⇒ both fires compute the same `-<ts>`
+      now: () => 1_700_000_000_000,
     });
     const runner = createWakeGateRunner(deps);
 
-    const [a, b] = await Promise.all([runner.runWakeGate(GATE, CTX), runner.runWakeGate(GATE, CTX)]);
+    const [a, b] = await Promise.all([
+      runner.runWakeGate(GATE, { ...CTX, rootRunId: occurrenceRoots[0] }),
+      runner.runWakeGate(GATE, { ...CTX, rootRunId: occurrenceRoots[1] }),
+    ]);
 
-    // Distinct per-fire roots even under the identical clock (pre-fix: identical).
     expect(roots).toHaveLength(2);
     expect(roots[0]).not.toBe(roots[1]);
-    // Each fire counts ONLY its own allow — no cross-count (pre-fix: both see 2).
-    expect(a).toEqual(outcome({ wake: false }, { toolCalls: 1 }));
-    expect(b).toEqual(outcome({ wake: false }, { toolCalls: 1 }));
+    expect(a).toEqual(outcome({ wake: false }, { toolCalls: 1, rootRunId: occurrenceRoots[0] }));
+    expect(b).toEqual(outcome({ wake: false }, { toolCalls: 1, rootRunId: occurrenceRoots[1] }));
   });
 });
