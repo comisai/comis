@@ -60,7 +60,7 @@ describe("credential-validator", () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.error.message).toContain("Invalid Telegram bot token");
+        expect(result.error.message).toContain("Telegram bot validation failed");
         expect(result.error.message).toContain("Not Found: bot token is invalid");
       }
     });
@@ -109,7 +109,7 @@ describe("credential-validator", () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.error.message).toContain("Invalid Telegram bot token");
+        expect(result.error.message).toContain("Telegram bot validation failed");
         expect(result.error.message).not.toContain(credential);
       }
     });
@@ -142,7 +142,7 @@ describe("credential-validator", () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.error.message).toContain("Invalid Telegram bot token");
+        expect(result.error.message).toContain("Telegram bot validation failed");
         expect(result.error.message).toContain("string error");
       }
     });

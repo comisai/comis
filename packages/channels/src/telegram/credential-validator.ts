@@ -15,6 +15,44 @@ export interface BotInfo {
   isBot: boolean;
 }
 
+export type TelegramCredentialValidationFailureKind =
+  | "auth"
+  | "network"
+  | "dependency"
+  | "validation";
+
+export interface TelegramCredentialValidationError extends Error {
+  readonly failureKind: TelegramCredentialValidationFailureKind;
+}
+
+function validationError(
+  failureKind: TelegramCredentialValidationFailureKind,
+  message: string,
+): TelegramCredentialValidationError {
+  return Object.assign(new Error(message), {
+    name: "TelegramCredentialValidationError",
+    failureKind,
+  });
+}
+
+function classifyValidationFailure(error: unknown): TelegramCredentialValidationFailureKind {
+  if (typeof error === "object" && error !== null) {
+    const candidate = error as { readonly name?: unknown; readonly error_code?: unknown };
+    if (candidate.name === "HttpError") return "network";
+    if (candidate.name === "GrammyError") {
+      return candidate.error_code === 401 || candidate.error_code === 404
+        ? "auth"
+        : "dependency";
+    }
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  if (/\b(?:ECONNREFUSED|ECONNRESET|ENETUNREACH|ENOTFOUND|ETIMEDOUT)\b|fetch failed|network request/i.test(message)) {
+    return "network";
+  }
+  return "dependency";
+}
+
 /**
  * Validate a Telegram bot token by calling the getMe() API.
  *
@@ -32,9 +70,9 @@ export interface BotInfo {
 export async function validateBotToken(
   token: string,
   apiRoot?: string,
-): Promise<Result<BotInfo, Error>> {
+): Promise<Result<BotInfo, TelegramCredentialValidationError>> {
   if (token.trim() === "") {
-    return err(new Error("Invalid Telegram credentials: token must not be empty"));
+    return err(validationError("validation", "Invalid Telegram credentials: token must not be empty"));
   }
   try {
     // E2E seam: passing the grammy `client.apiRoot` option only when the
@@ -49,7 +87,10 @@ export async function validateBotToken(
     });
   } catch (error: unknown) {
     const message = toSafeErrorLogString(error);
-    return err(new Error(`Invalid Telegram bot token: ${message}`));
+    return err(validationError(
+      classifyValidationFailure(error),
+      `Telegram bot validation failed: ${message}`,
+    ));
   }
 }
 

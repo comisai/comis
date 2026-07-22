@@ -9,7 +9,11 @@ export type { TelegramAdapterDeps, TelegramAdapterHandle } from "./telegram/tele
 export { mapGrammyToNormalized } from "./telegram/message-mapper.js";
 export { buildAttachments } from "./telegram/media-handler.js";
 export { validateBotToken, validateWebhookSecret } from "./telegram/credential-validator.js";
-export type { BotInfo } from "./telegram/credential-validator.js";
+export type {
+  BotInfo,
+  TelegramCredentialValidationError,
+  TelegramCredentialValidationFailureKind,
+} from "./telegram/credential-validator.js";
 export { createTelegramResolver } from "./telegram/telegram-resolver.js";
 export type { TelegramResolverDeps } from "./telegram/telegram-resolver.js";
 
