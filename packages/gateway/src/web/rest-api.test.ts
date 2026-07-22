@@ -574,13 +574,13 @@ describe("createRestApi", () => {
 describe("ActivityRingBuffer", () => {
   it("stores and retrieves content-free entries", () => {
     const buffer = new ActivityRingBuffer(10);
-    buffer.push("scheduler:job_started", { jobId: "job-1", status: "running" });
-    buffer.push("scheduler:job_started", { jobId: "job-2", status: "running" });
+    buffer.push("scheduler:cron_execution_started", { executionId: "execution-1", jobId: "job-1", startedAtMs: 1 });
+    buffer.push("scheduler:cron_execution_started", { executionId: "execution-2", jobId: "job-2", startedAtMs: 2 });
 
     const entries = buffer.getRecent(10);
     expect(entries).toHaveLength(2);
-    expect(entries[0].payload).toEqual({ jobId: "job-1", status: "running" });
-    expect(entries[1].payload).toEqual({ jobId: "job-2", status: "running" });
+    expect(entries[0].payload).toEqual({ executionId: "execution-1", jobId: "job-1", startedAtMs: 1 });
+    expect(entries[1].payload).toEqual({ executionId: "execution-2", jobId: "job-2", startedAtMs: 2 });
   });
 
   it("assigns incrementing IDs", () => {
@@ -609,7 +609,7 @@ describe("ActivityRingBuffer", () => {
   it("respects limit in getRecent", () => {
     const buffer = new ActivityRingBuffer(10);
     for (let i = 0; i < 5; i++) {
-      buffer.push("scheduler:job_started", { attempt: i });
+      buffer.push("scheduler:cron_execution_started", { attempt: i });
     }
 
     const entries = buffer.getRecent(2);
