@@ -427,6 +427,9 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     ...createModelHandlers({
       ...deps,
       providerEntries: deps.container.config.providers.entries,
+      secretManager: deps.container.secretManager,
+      modelsConfig: deps.container.config.models,
+      oauthCredentialStore: deps.oauthCredentialStore,
     }),
     ...createChannelHandlers({
       ...deps,
