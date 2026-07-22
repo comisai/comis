@@ -34,7 +34,6 @@ agents:
     scheduler:
       cron:
         enabled: true
-        maxConcurrentRuns: 5
         defaultTimezone: "UTC"
   secondary:
     name: "SecondaryIdentityAgent"
@@ -60,7 +59,6 @@ agents:
     scheduler:
       cron:
         enabled: true
-        maxConcurrentRuns: 5
         defaultTimezone: "UTC"
 
 routing:
@@ -84,7 +82,6 @@ gateway:
 scheduler:
   cron:
     enabled: true
-    maxConcurrentRuns: 5
     defaultTimezone: "UTC"
   heartbeat:
     intervalMs: 300000

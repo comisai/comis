@@ -40,7 +40,6 @@ agents:
     scheduler:
       cron:
         enabled: true
-        maxConcurrentRuns: 5
         defaultTimezone: "UTC"
     # Enable background tasks so setupBackgroundCompletionRunner instantiates
     # and so shutdownBackgroundProcesses has the background-process registry
@@ -71,7 +70,6 @@ gateway:
 scheduler:
   cron:
     enabled: true
-    maxConcurrentRuns: 5
     defaultTimezone: "UTC"
   heartbeat:
     intervalMs: 300000

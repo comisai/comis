@@ -139,7 +139,7 @@ describe("Config Schema Validation", () => {
 
     it("valid scheduler section passes validation", () => {
       const result = validateConfig({
-        scheduler: { cron: { enabled: true, maxConcurrentRuns: 3 } },
+        scheduler: { cron: { enabled: true } },
       });
       expect(result.ok).toBe(true);
     });

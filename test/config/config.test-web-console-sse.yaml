@@ -21,7 +21,6 @@ agents:
     scheduler:
       cron:
         enabled: true
-        maxConcurrentRuns: 5
         defaultTimezone: UTC
   sse-multi-agent:
     name: SSE Multi Agent
@@ -57,7 +56,6 @@ gateway:
 scheduler:
   cron:
     enabled: true
-    maxConcurrentRuns: 5
     defaultTimezone: UTC
   heartbeat:
     intervalMs: 300000
