@@ -360,6 +360,21 @@ describe("parseMarkdownToIR", () => {
       expect(spans[1]).toMatchObject({ type: "italic", text: "world" });
     });
 
+    it.each(["LIVE_BASELINE_0722", "LIVE__BASELINE__0722"])(
+      "preserves underscores inside the alphanumeric identifier %s",
+      (identifier) => {
+        const spans = firstBlockSpans(identifier);
+        expect(spans).toEqual([
+          {
+            type: "text",
+            text: identifier,
+            offset: 0,
+            length: identifier.length,
+          },
+        ]);
+      },
+    );
+
     it("parses inline code", () => {
       const spans = firstBlockSpans("Use `console.log`");
       expect(spans).toHaveLength(2);

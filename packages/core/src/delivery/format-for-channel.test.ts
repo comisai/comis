@@ -81,6 +81,12 @@ describe("formatForChannel", () => {
     expect(result).toContain("Runtime: 5.2s");
   });
 
+  it("preserves an underscored identifier exactly for telegram", () => {
+    expect(formatForChannel("LIVE_BASELINE_0722", "telegram")).toBe(
+      "LIVE_BASELINE_0722",
+    );
+  });
+
   it("handles empty string", () => {
     expect(formatForChannel("", "telegram")).toBe("");
   });
