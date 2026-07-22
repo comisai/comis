@@ -1,414 +1,110 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
+import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
-// ---------------------------------------------------------------------------
-// Hoisted mocks (Monitoring)
-// ---------------------------------------------------------------------------
-
-const mockCreateDiskSpaceSource = vi.hoisted(() => vi.fn(() => ({ id: "disk" })));
-const mockCreateSystemResourcesSource = vi.hoisted(() => vi.fn(() => ({ id: "resources" })));
-const mockCreateSystemdServiceSource = vi.hoisted(() => vi.fn(() => ({ id: "systemd" })));
-const mockCreateSecurityUpdateSource = vi.hoisted(() => vi.fn(() => ({ id: "security" })));
-const mockCreateGitWatcherSource = vi.hoisted(() => vi.fn(() => ({ id: "git" })));
-
-const mockCreateHeartbeatRunner = vi.hoisted(() => vi.fn(() => ({
-  start: vi.fn(),
-  stop: vi.fn(),
+const sourceFactories = vi.hoisted(() => ({
+  disk: vi.fn(() => ({ id: "monitor_disk_space" })),
+  resources: vi.fn(() => ({ id: "monitor_system_resources" })),
+  systemd: vi.fn(() => ({ id: "monitor_systemd_services" })),
+  security: vi.fn(() => ({ id: "monitor_security_updates" })),
+  git: vi.fn(() => ({ id: "monitor_git_repositories" })),
+}));
+const heartbeatRunner = vi.hoisted(() => ({
+  runOnce: vi.fn(), registerSource: vi.fn(), unregisterSource: vi.fn(), isBusy: vi.fn(), shutdown: vi.fn(),
+}));
+const createHeartbeatRunner = vi.hoisted(() => vi.fn(() => heartbeatRunner));
+const createDuplicateDetector = vi.hoisted(() => vi.fn(() => ({
+  check: vi.fn(() => false), recordPossiblyVisible: vi.fn(), clear: vi.fn(),
 })));
-
-const mockCreateDuplicateDetector = vi.hoisted(() => vi.fn(() => ({
-  isDuplicate: vi.fn(() => false),
-  clear: vi.fn(),
-})));
-
-const mockDeliverHeartbeatNotification = vi.hoisted(() => vi.fn(() => Promise.resolve({ status: "delivered", messageId: "test-msg-1" })));
 
 vi.mock("../monitoring/index.js", () => ({
-  createDiskSpaceSource: mockCreateDiskSpaceSource,
-  createSystemResourcesSource: mockCreateSystemResourcesSource,
-  createSystemdServiceSource: mockCreateSystemdServiceSource,
-  createSecurityUpdateSource: mockCreateSecurityUpdateSource,
-  createGitWatcherSource: mockCreateGitWatcherSource,
+  createDiskSpaceSource: sourceFactories.disk,
+  createSystemResourcesSource: sourceFactories.resources,
+  createSystemdServiceSource: sourceFactories.systemd,
+  createSecurityUpdateSource: sourceFactories.security,
+  createGitWatcherSource: sourceFactories.git,
 }));
+vi.mock("@comis/scheduler", () => ({ createHeartbeatRunner, createDuplicateDetector }));
 
-vi.mock("@comis/scheduler", () => ({
-  createHeartbeatRunner: mockCreateHeartbeatRunner,
-  createDuplicateDetector: mockCreateDuplicateDetector,
-  deliverHeartbeatNotification: mockDeliverHeartbeatNotification,
-}));
-
-// ---------------------------------------------------------------------------
-// Helpers
-function createMinimalContainer(overrides: Record<string, any> = {}) {
+function container(enabled = false) {
   return {
     config: {
-      dataDir: "/test/data",
-      ...overrides,
+      monitoring: {
+        disk: { enabled, paths: ["/"], thresholdPercent: 90 },
+        resources: { enabled, cpuThresholdPercent: 90, memoryThresholdPercent: 90 },
+        systemd: { enabled, services: [] },
+        securityUpdates: { enabled, securityOnly: true },
+        git: { enabled, repositories: [], checkRemote: false },
+      },
+      scheduler: {
+        heartbeat: { staleMs: 120_000 },
+      },
     },
-    eventBus: { on: vi.fn(), emit: vi.fn() },
-  } as any;
+    eventBus: { emit: vi.fn() },
+  } as never;
 }
 
-function createMonitoringConfig(overrides: Record<string, any> = {}) {
-  return {
-    disk: { enabled: false, ...overrides.disk },
-    resources: { enabled: false, ...overrides.resources },
-    systemd: { enabled: false, ...overrides.systemd },
-    securityUpdates: { enabled: false, ...overrides.securityUpdates },
-    git: { enabled: false, ...overrides.git },
-  };
-}
+describe("health and monitoring setup", () => {
+  beforeEach(() => vi.clearAllMocks());
 
-function createSchedulerConfig(overrides: Record<string, any> = {}) {
-  return {
-    heartbeat: {
-      intervalMs: 60_000,
-      showOk: false,
-      showAlerts: true,
-      ...overrides.heartbeat,
-    },
-    quietHours: {
-      enabled: false,
-      criticalBypass: true,
-      ...overrides.quietHours,
-    },
-  };
-}
+  it("starts and returns the process health monitor", async () => {
+    const processMonitor = { start: vi.fn(), stop: vi.fn() };
+    const createProcessMonitor = vi.fn(() => processMonitor);
+    const { setupHealth } = await import("./setup-health.js");
 
-function createMonitoringContainer(opts: { monitoring?: Record<string, any>; scheduler?: Record<string, any> } = {}) {
-  return {
-    config: {
-      monitoring: createMonitoringConfig(opts.monitoring),
-      scheduler: createSchedulerConfig(opts.scheduler),
-    },
-    eventBus: { on: vi.fn(), emit: vi.fn() },
-  } as any;
-}
-
-// ===========================================================================
-// Health tests
-// ===========================================================================
-
-describe("setupHealth", () => {
-  let mockCreateProcessMonitor: ReturnType<typeof vi.fn>;
-  let mockProcessMonitor: { start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> };
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-
-    mockProcessMonitor = { start: vi.fn(), stop: vi.fn() };
-    mockCreateProcessMonitor = vi.fn(() => mockProcessMonitor);
+    expect(setupHealth({
+      container: container(),
+      logger: createMockLogger() as never,
+      daemonLogger: createMockLogger() as never,
+      _createProcessMonitor: createProcessMonitor as never,
+    })).toEqual({ processMonitor });
+    expect(processMonitor.start).toHaveBeenCalledOnce();
   });
 
-  async function getSetupHealth() {
-    const mod = await import("./setup-health.js");
-    return mod.setupHealth;
-  }
-
-  // -------------------------------------------------------------------------
-  // 1. Creates and starts process monitor
-  // -------------------------------------------------------------------------
-
-  it("calls _createProcessMonitor with eventBus and calls .start()", async () => {
-    const container = createMinimalContainer();
-    const setupHealth = await getSetupHealth();
-
-    setupHealth({
-      container,
-      logger: createMockLogger() as any,
-      daemonLogger: createMockLogger() as any,
-      _createProcessMonitor: mockCreateProcessMonitor,
-    });
-
-    expect(mockCreateProcessMonitor).toHaveBeenCalledWith({ eventBus: container.eventBus });
-    expect(mockProcessMonitor.start).toHaveBeenCalled();
-  });
-
-  // -------------------------------------------------------------------------
-  // 2. Returns processMonitor as the sole field
-  // -------------------------------------------------------------------------
-
-  it("returns processMonitor as the sole result field", async () => {
-    const setupHealth = await getSetupHealth();
-
-    const result = setupHealth({
-      container: createMinimalContainer(),
-      logger: createMockLogger() as any,
-      daemonLogger: createMockLogger() as any,
-      _createProcessMonitor: mockCreateProcessMonitor,
-    });
-
-    expect(result.processMonitor).toBe(mockProcessMonitor);
-    expect(Object.keys(result)).toEqual(["processMonitor"]);
-  });
-});
-
-// ===========================================================================
-// Monitoring tests
-// ===========================================================================
-
-describe("setupMonitoring", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  async function getSetupMonitoring() {
-    const mod = await import("./setup-health.js");
-    return mod.setupMonitoring;
-  }
-
-  // -------------------------------------------------------------------------
-  // 1. No heartbeat when all sources disabled
-  // -------------------------------------------------------------------------
-
-  it("returns undefined heartbeatRunner when all sources disabled", async () => {
-    const setupMonitoring = await getSetupMonitoring();
-
+  it("keeps monitoring absent and timer-free when every source is disabled", async () => {
+    const { setupMonitoring } = await import("./setup-health.js");
     const result = setupMonitoring({
-      container: createMonitoringContainer(),
-      schedulerLogger: createMockLogger() as any,
-      logger: createMockLogger() as any,
+      container: container(false),
+      schedulerLogger: createMockLogger() as never,
+      clock: createFakeClock(1_000),
+      timers: createFakeTimers(1_000),
     });
 
     expect(result.heartbeatRunner).toBeUndefined();
-    expect(mockCreateHeartbeatRunner).not.toHaveBeenCalled();
+    expect(createHeartbeatRunner).not.toHaveBeenCalled();
+    expect(result.duplicateDetector).toBeDefined();
   });
 
-  // -------------------------------------------------------------------------
-  // 2. Creates heartbeat runner when disk monitoring enabled
-  // -------------------------------------------------------------------------
-
-  it("creates heartbeat runner when disk monitoring enabled and calls .start()", async () => {
-    const container = createMonitoringContainer({
-      monitoring: { disk: { enabled: true, thresholdPct: 90 } },
-    });
-    const setupMonitoring = await getSetupMonitoring();
+  it("constructs closed monitoring sources without starting a timer", async () => {
+    const { setupMonitoring } = await import("./setup-health.js");
+    const clock = createFakeClock(1_000);
+    const timers = createFakeTimers(1_000);
+    const schedulerLogger = createMockLogger();
+    const configured = container(true);
 
     const result = setupMonitoring({
-      container,
-      schedulerLogger: createMockLogger() as any,
-      logger: createMockLogger() as any,
+      container: configured,
+      schedulerLogger: schedulerLogger as never,
+      clock,
+      timers,
     });
 
-    expect(result.heartbeatRunner).toBeDefined();
-    expect(mockCreateHeartbeatRunner).toHaveBeenCalledOnce();
-    expect(result.heartbeatRunner!.start).toHaveBeenCalled();
-  });
-
-  // -------------------------------------------------------------------------
-  // 3. Adds multiple sources when multiple configs enabled
-  // -------------------------------------------------------------------------
-
-  it("adds multiple sources when multiple monitoring configs enabled", async () => {
-    const container = createMonitoringContainer({
-      monitoring: {
-        disk: { enabled: true },
-        resources: { enabled: true },
-        git: { enabled: true },
-      },
+    expect(result.heartbeatRunner).toBe(heartbeatRunner);
+    expect(sourceFactories.disk).toHaveBeenCalledWith(configured.config.monitoring.disk, clock);
+    expect(sourceFactories.resources).toHaveBeenCalledWith(configured.config.monitoring.resources, clock);
+    expect(sourceFactories.systemd).toHaveBeenCalledWith(configured.config.monitoring.systemd, clock);
+    expect(sourceFactories.security).toHaveBeenCalledWith(configured.config.monitoring.securityUpdates, clock);
+    expect(sourceFactories.git).toHaveBeenCalledWith(configured.config.monitoring.git, clock);
+    expect(createHeartbeatRunner).toHaveBeenCalledWith({
+      sources: expect.any(Array),
+      clock,
+      timers,
+      eventBus: configured.eventBus,
+      logger: schedulerLogger,
+      staleMs: 120_000,
     });
-    const setupMonitoring = await getSetupMonitoring();
-
-    setupMonitoring({
-      container,
-      schedulerLogger: createMockLogger() as any,
-      logger: createMockLogger() as any,
-    });
-
-    expect(mockCreateDiskSpaceSource).toHaveBeenCalled();
-    expect(mockCreateSystemResourcesSource).toHaveBeenCalled();
-    expect(mockCreateGitWatcherSource).toHaveBeenCalled();
-    expect(mockCreateSystemdServiceSource).not.toHaveBeenCalled();
-    expect(mockCreateSecurityUpdateSource).not.toHaveBeenCalled();
-
-    // Verify 3 sources passed to heartbeat runner
-    const sources = mockCreateHeartbeatRunner.mock.calls[0][0].sources;
-    expect(sources).toHaveLength(3);
-  });
-
-  // -------------------------------------------------------------------------
-  // 4. All 5 source types can be enabled
-  // -------------------------------------------------------------------------
-
-  it("creates all 5 source types when all enabled", async () => {
-    const container = createMonitoringContainer({
-      monitoring: {
-        disk: { enabled: true },
-        resources: { enabled: true },
-        systemd: { enabled: true },
-        securityUpdates: { enabled: true },
-        git: { enabled: true },
-      },
-    });
-    const setupMonitoring = await getSetupMonitoring();
-
-    setupMonitoring({
-      container,
-      schedulerLogger: createMockLogger() as any,
-      logger: createMockLogger() as any,
-    });
-
-    const sources = mockCreateHeartbeatRunner.mock.calls[0][0].sources;
-    expect(sources).toHaveLength(5);
-  });
-
-  // -------------------------------------------------------------------------
-  // 5. Notification callback logs critical/alert/info correctly
-  // -------------------------------------------------------------------------
-
-  it("onNotification logs critical as error", async () => {
-    const container = createMonitoringContainer({
-      monitoring: { disk: { enabled: true } },
-    });
-    const logger = createMockLogger();
-    const setupMonitoring = await getSetupMonitoring();
-
-    setupMonitoring({
-      container,
-      schedulerLogger: createMockLogger() as any,
-      logger: logger as any,
-    });
-
-    const onNotification = mockCreateHeartbeatRunner.mock.calls[0][0].onNotification;
-
-    onNotification({ sourceId: "disk", level: "critical", text: "Disk full" });
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sourceId: "disk",
-        level: "critical",
-        hint: "Investigate the monitoring source for critical conditions",
-        errorKind: "resource",
-      }),
-      "Monitoring: Disk full",
-    );
-  });
-
-  it("onNotification logs alert as warn", async () => {
-    const container = createMonitoringContainer({
-      monitoring: { disk: { enabled: true } },
-    });
-    const logger = createMockLogger();
-    const setupMonitoring = await getSetupMonitoring();
-
-    setupMonitoring({
-      container,
-      schedulerLogger: createMockLogger() as any,
-      logger: logger as any,
-    });
-
-    const onNotification = mockCreateHeartbeatRunner.mock.calls[0][0].onNotification;
-
-    onNotification({ sourceId: "resources", level: "alert", text: "High CPU" });
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sourceId: "resources",
-        level: "alert",
-        hint: "Review the monitoring source alert details",
-        errorKind: "resource",
-      }),
-      "Monitoring: High CPU",
-    );
-  });
-
-  it("onNotification logs info level notifications as info", async () => {
-    const container = createMonitoringContainer({
-      monitoring: { disk: { enabled: true } },
-    });
-    const logger = createMockLogger();
-    const setupMonitoring = await getSetupMonitoring();
-
-    setupMonitoring({
-      container,
-      schedulerLogger: createMockLogger() as any,
-      logger: logger as any,
-    });
-
-    const onNotification = mockCreateHeartbeatRunner.mock.calls[0][0].onNotification;
-
-    onNotification({ sourceId: "git", level: "info", text: "Repo clean" });
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ sourceId: "git", level: "info" }),
-      "Monitoring: Repo clean",
-    );
-  });
-
-  // -------------------------------------------------------------------------
-  // 6. Passes quietHoursConfig and criticalBypass
-  // -------------------------------------------------------------------------
-
-  it("passes quietHoursConfig and criticalBypass from scheduler config", async () => {
-    const container = createMonitoringContainer({
-      monitoring: { disk: { enabled: true } },
-      scheduler: {
-        quietHours: { enabled: true, criticalBypass: false, start: "22:00", end: "08:00" },
-      },
-    });
-    const setupMonitoring = await getSetupMonitoring();
-
-    setupMonitoring({
-      container,
-      schedulerLogger: createMockLogger() as any,
-      logger: createMockLogger() as any,
-    });
-
-    const runnerArgs = mockCreateHeartbeatRunner.mock.calls[0][0];
-    expect(runnerArgs.quietHoursConfig).toEqual(
-      expect.objectContaining({ enabled: true, start: "22:00", end: "08:00" }),
-    );
-    expect(runnerArgs.criticalBypass).toBe(false);
-  });
-
-  // -------------------------------------------------------------------------
-  // 7. Passes heartbeat config
-  // -------------------------------------------------------------------------
-
-  it("passes heartbeat config (intervalMs, showOk, showAlerts)", async () => {
-    const container = createMonitoringContainer({
-      monitoring: { disk: { enabled: true } },
-      scheduler: {
-        heartbeat: { intervalMs: 30_000, showOk: true, showAlerts: false },
-      },
-    });
-    const setupMonitoring = await getSetupMonitoring();
-
-    setupMonitoring({
-      container,
-      schedulerLogger: createMockLogger() as any,
-      logger: createMockLogger() as any,
-    });
-
-    const runnerArgs = mockCreateHeartbeatRunner.mock.calls[0][0];
-    expect(runnerArgs.config).toEqual({
-      intervalMs: 30_000,
-      showOk: true,
-      showAlerts: false,
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // 8. Logs source count on start
-  // -------------------------------------------------------------------------
-
-  it("logs source count when heartbeat runner started", async () => {
-    const container = createMonitoringContainer({
-      monitoring: {
-        disk: { enabled: true },
-        resources: { enabled: true },
-      },
-    });
-    const schedulerLogger = createMockLogger();
-    const setupMonitoring = await getSetupMonitoring();
-
-    setupMonitoring({
-      container,
-      schedulerLogger: schedulerLogger as any,
-      logger: createMockLogger() as any,
-    });
-
-    expect(schedulerLogger.info).toHaveBeenCalledWith(
-      { sourceCount: 2 },
-      "Monitoring heartbeat runner started",
-    );
+    expect(timers.unrefRecord()).toEqual([]);
   });
 });
