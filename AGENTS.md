@@ -168,7 +168,7 @@ Not supported. Per the project's no-BC policy, never add migration code, default
 Every behavior change in production source (`packages/*/src/**`) starts with a failing test. Bug fixes get a regression test that fails on the current codebase; new features get a contract test that pins the new behavior. The test is written, runs RED, and then the production patch flips it to GREEN — in that order, never the reverse.
 
 - **Scope.** Applies to fixes and feature work. Pure docs, comments, formatting, and build-tooling-only changes (CI YAML, tsconfig, `.vscode`) are exempt because they have nothing to assert against. When in doubt, the change needs a test.
-- **Commit ordering.** Prefer landing the RED commit first (test-only, failing on current `main`) and the GREEN commit second (the production patch). Combining RED + GREEN into one commit is acceptable when the test would not compile against the pre-patch code, when the bug is too narrow to surface from a separate commit, or when shipping a security patch — the rationale belongs in the commit message either way.
+- **Commit ordering.** Land the RED commit first (test-only, failing on current `main`) and the GREEN commit second (the production patch). Combining RED + GREEN into one commit is acceptable when the test would not compile against the pre-patch code, when the bug is too narrow to surface from a separate commit, or when shipping a security patch — the rationale belongs in the commit message either way. This ordering is only observable if the work is actually committed as it is produced; see §2.13.
 - **What the test must prove.** A test that passes both before and after the patch proves nothing — it must demonstrably FAIL on the pre-patch code. If a reviewer cannot reproduce the RED state by checking out the test commit alone, the test does not satisfy this rule.
 - **Refactor (optional third step).** After GREEN, simplify if the patch leaves duplication or awkward seams. Refactor commits keep all tests green; if behavior shifts, that is a new fix or feature and the cycle restarts.
 - **Pure refactor PRs.** A refactor that does not change behavior preserves the existing tests as the green signal. New tests are not required, but no existing test may be deleted or weakened to make a refactor pass.
@@ -190,6 +190,18 @@ Comments, docs, test titles, and runtime strings (log messages, `hint`s, tool/CL
 - **Reference-project names** — Hermes, OpenClaw / clawdbot, Deer-Flow. Keep any license-required attribution in `NOTICE`, not in a source comment.
 
 **Runtime strings carry ZERO of the above** — a residue-carrying string is a behavior change: clean it and its asserting test in the same commit. **Keep-list** (these are API/contracts, not prose): third-party/dependency/model versions, standards tokens (SHA-256, TLS-1.3, ES2023, BCP-47), GitHub `#refs`, and real code identifiers such as the `SEC-GW-003` security-check codes, live-test scenario IDs, and the `architecture-allowlist` `phase-X` template types.
+
+### 2.13 Commit discipline (the working tree is not a deliverable)
+
+Uncommitted work does not exist. A session ends with `git status --short` empty — every change either committed on a working branch or explicitly reported as abandoned. Leaving finished work as a dirty working tree is a protocol violation independent of code quality: it erases the RED → GREEN evidence §2.10 requires, cannot be read as a diff by a reviewer, and is destroyed by a single `git checkout` / `git stash` / branch switch. "The code is good and it builds" does not satisfy this rule.
+
+- **Commit locally as you go; push only when asked.** Committing to a working branch is local, reversible, and required. Pushing, opening a PR, or merging is outward-facing and needs explicit approval (§9). Do not conflate the two — waiting for permission to *push* is never a reason to leave work *uncommitted*.
+- **One commit per RED → GREEN pair.** Commit each pair before starting the next concern. If `git status` shows changes spanning more than one concern, the commit is already overdue. A multi-part change lands as an ordered sequence of small commits a reviewer can read in order — never one undifferentiated tree.
+- **Deletions and replacements need a commit trail.** Removing or replacing an existing test or module is a reviewable event: commit it with the rationale in the message (module replaced by `<file>`, coverage moved to `<file>`). A test deleted inside a large uncommitted tree is indistinguishable from silent coverage loss.
+- **Never destroy uncommitted work.** Do not run `git checkout -- .`, `git stash`, `git reset --hard`, or switch branches over a dirty tree — yours or pre-existing. Commit first, then move.
+- **Report tree state when the task ends.** State the branch, the commit sequence (`git log --oneline <base>..HEAD`), and that the tree is clean. If anything is intentionally left uncommitted, say so and why — silence is not acceptable.
+
+An agent that produces a large, correct, fully-passing change set and leaves it uncommitted has not completed the task.
 
 ## 3) Naming Contract
 
@@ -221,6 +233,7 @@ When uncertain, classify higher.
 5. **Implement minimal patch** — make the test pass. Apply KISS/YAGNI/rule-of-three explicitly.
 6. **Validate** — `pnpm validate` (= `pnpm build && pnpm test && pnpm lint:security && pnpm cycles`) must all pass.
 7. **Document impact** — update comments/docs for behavior changes, risk, side effects.
+8. **Commit the slice** — commit this RED → GREEN pair on the working branch before starting the next concern (§2.13). Steps 4–8 repeat per concern; the task is not done until `git status --short` is empty.
 
 ## 6) Change Playbooks
 
@@ -314,11 +327,16 @@ If full validation is impractical, document what was run and what was skipped.
 - Add entries to architecture allowlists (`test/support/architecture-allowlist.ts`) — they are shrink-only. Closing a violation requires deleting the entry, not adding a new one.
 - Patch a symptom at a convenient layer (a parallel guard/allowlist/special-case) instead of root-causing across layers and fixing the authoritative one (§2.11) — a fix that leaves two layers disagreeing is not a fix.
 - Land a fix or feature commit without a test that demonstrably failed on the pre-patch code. "I tested it locally" is not a substitute for an automated RED → GREEN cycle.
+- End a task with uncommitted changes in the working tree (§2.13). A passing build is not a substitute for a commit; work that only exists as a dirty tree is unreviewable and one command away from being lost.
+- Accumulate an entire multi-concern change as a single uncommitted tree, or as one giant commit. Commit each RED → GREEN pair as it completes.
+- Delete or replace an existing test file without a dedicated commit stating why — an unexplained deletion reads as coverage loss.
+- Treat "commit only when asked" as license to skip committing — that gate applies to **pushing**, not to local commits (§9).
 
 ## 9) Conventions
 
 - **Commits**: Conventional Commits — `feat(agent): description`, `fix(channels): description`.
-- **Branches (branch-first)**: never commit directly to the default branch (`main`). Cut a working branch off `main` before the first change — `feature/<desc>`, `fix/<desc>`, `docs/<desc>` — and land the work via PR. Commit or push only when the user asks; approval to make a change is not approval to push it. If you find yourself on `main` with uncommitted work, branch before committing.
+- **Branches (branch-first)**: never commit directly to the default branch (`main`). Cut a working branch off `main` before the first change — `feature/<desc>`, `fix/<desc>`, `docs/<desc>` — and land the work via PR. If you find yourself on `main` with uncommitted work, branch before committing.
+- **Commit vs. push**: commit to the working branch continuously as work is produced (§2.13) — this is local, reversible, and required, not something to wait for permission on. **Pushing**, opening a PR, or merging is outward-facing and happens **only when the user asks**; approval to make a change is never approval to push it, and approval in one turn does not carry to the next.
 - **Modules**: ES modules only (`"type": "module"`).
 - **TypeScript**: Strict mode, ES2023 target, NodeNext resolution, `composite: true` with project references, `isolatedModules: true`.
 - **Project references**: list every cross-package import in the importing package's `tsconfig.json` `references` array — missing entries break `tsc --build` ordering silently.
