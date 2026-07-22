@@ -34,6 +34,8 @@ import {
   type AgentCapability,
   type ResultRef,
   type ErrorKind,
+  AgentExecutionFinishReasonSchema,
+  classifyAgentFinishErrorKind,
   SUB_AGENT_TOOL_DENYLIST,
   toolReachableGroups,
   RequiredToolsUnreachableError,
@@ -346,6 +348,8 @@ export interface SubAgentRunnerDeps {
     finishReason: string;
     stepsExecuted: number;
     toolCallHistory?: string[];
+    /** Boundary-classified kind for settled failures whose finish reason does not fix one. */
+    terminalErrorKind?: ErrorKind;
     errorContext?: {
       errorType: string;
       retryable: boolean;
@@ -805,14 +809,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
   function classifyCompletionErrorKind(
     finishReason: string,
-    errorType: string | undefined,
+    terminalErrorKind: ErrorKind | undefined,
   ): ErrorKind {
-    const normalized = `${finishReason} ${errorType ?? ""}`.toLowerCase();
-    if (normalized.includes("timeout") || normalized.includes("timed_out")) return "timeout";
-    if (finishReason === "provider_degraded") return "dependency";
-    if (normalized.includes("budget") || normalized.includes("limit")) return "resource";
-    if (normalized.includes("validation") || normalized.includes("invalid")) return "validation";
-    return "internal";
+    if (finishReason === "error" || finishReason === "completed_with_tool_errors") {
+      return terminalErrorKind ?? "internal";
+    }
+    const parsed = AgentExecutionFinishReasonSchema.safeParse(finishReason);
+    return parsed.success
+      ? classifyAgentFinishErrorKind(parsed.data) ?? "internal"
+      : "internal";
   }
 
   function freezeResultRef(resultRef: ResultRef | undefined): ResultRef | undefined {
@@ -2592,7 +2597,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             completedAtMs: completedAt,
             errorKind: classifyCompletionErrorKind(
               result.finishReason,
-              result.errorContext?.errorType,
+              result.terminalErrorKind,
             ),
             summary: completionSummary || result.errorContext?.originalError,
             ...(materializedRef ? { resultRef: materializedRef } : {}),
@@ -2866,10 +2871,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         terminalizeRun(runId, {
           endReason: "failed",
           completedAtMs: completedAt,
-          errorKind: classifyCompletionErrorKind(
-            "error",
-            error instanceof Error ? error.constructor.name : undefined,
-          ),
+          errorKind: "internal",
           summary: errorMessage,
         });
 

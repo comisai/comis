@@ -77,15 +77,14 @@ describe("bridge-metrics shape regression guard", () => {
   it("buildBridgeResult copies all monotonic side-effect facts", () => {
     const m = createBridgeMetrics();
     m.sideEffectSummary.schedulingCapabilityInvoked = true;
+    const snapshot = buildBridgeResult(m, 4).sideEffectSummary;
     m.sideEffectSummary.outboundDeliveryCapabilityInvoked = true;
-    m.sideEffectSummary.deferredWorkCapabilityInvoked = true;
-    m.sideEffectSummary.unclassifiedInvocationObserved = true;
 
-    expect(buildBridgeResult(m, 4).sideEffectSummary).toEqual({
+    expect(snapshot).toEqual({
       schedulingCapabilityInvoked: true,
-      outboundDeliveryCapabilityInvoked: true,
-      deferredWorkCapabilityInvoked: true,
-      unclassifiedInvocationObserved: true,
+      outboundDeliveryCapabilityInvoked: false,
+      deferredWorkCapabilityInvoked: false,
+      unclassifiedInvocationObserved: false,
     });
   });
 

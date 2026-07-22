@@ -30,7 +30,7 @@ import { AuthorizationError, PreconditionError } from "../errors.js";
 import {
   resolveSubagentController,
   subagentControllerOwnsRun,
-} from "../subagent-handlers.js";
+} from "../subagent-controller.js";
 
 /**
  * Bind the session read handlers. Object-spread compatible with

@@ -221,7 +221,7 @@ export function createCronAgentTurnExecutor(deps: CronAgentTurnExecutorDeps) {
         agentConfig.cacheRetention,
         input.job.cacheRetention,
       );
-      const agentExecutionId = deps.idFactory();
+      const messageId = deps.idFactory();
       const startedAt = deps.clock.now();
       const beforeMetrics = deps.readMetrics(input.job.agentId, sessionKey);
       let abortReason: AgentExecutionAbortReason | undefined;
@@ -236,7 +236,7 @@ export function createCronAgentTurnExecutor(deps: CronAgentTurnExecutorDeps) {
 
       const framedMessage = wrapExternalContent(input.job.payload.message, { source: "api" });
       const message = {
-        id: agentExecutionId,
+        id: messageId,
         text: gate.value.context === undefined
           ? framedMessage
           : `${framedMessage}\n\nWake-gate context:\n${wrapExternalContent(gate.value.context, { source: "api" })}`,
@@ -270,6 +270,7 @@ export function createCronAgentTurnExecutor(deps: CronAgentTurnExecutorDeps) {
           },
         },
       ));
+      const agentExecutionId = executed.ok ? executed.value.executionId : messageId;
       deps.eventBus.off("execution:aborted", onAborted as never);
 
       const persisted = await deps.sessionPolicy.after(policyRequest);
@@ -303,6 +304,7 @@ export function createCronAgentTurnExecutor(deps: CronAgentTurnExecutorDeps) {
       const execution = classifyAgentTurnExecutionOutcome({
         finishReason: executed.value.finishReason,
         abortReason: abortReason ?? (signal.aborted ? "pipeline_timeout" : undefined),
+        errorKind: executed.value.terminalErrorKind,
       });
       const metrics = {
         durationMs,

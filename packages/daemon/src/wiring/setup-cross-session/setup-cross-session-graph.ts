@@ -2,8 +2,7 @@
 /**
  * Graph-execution wiring for cross-session sub-agent spawns.
  *
- * Hosts the `executeSubAgent` closure builder, depth-aware cache retention,
- * and the step-budget floor used by the sub-agent runner.
+ * Builds sub-agent execution with depth-aware cache retention and step-budget floors.
  *
  * @module
  */
@@ -19,6 +18,7 @@ import {
   getCacheSafeParams,
   resolveOperationModel,
   resolveProviderFamily,
+  type ExecutionResult,
 } from "@comis/agent";
 import { randomUUID } from "node:crypto";
 import type { GitExec } from "@comis/skills/tools";
@@ -82,8 +82,7 @@ export type ExecuteSubAgentFn = (
       caps: readonly AgentCapability[];
     }): void;
   },
-) => Promise<{ response: string; tokensUsed: { total: number; cacheRead?: number; cacheWrite?: number }; cost: { total: number; cacheSaved?: number }; finishReason: string; stepsExecuted: number; toolCallHistory?: string[] }>;
-
+) => Promise<Pick<ExecutionResult, "response" | "tokensUsed" | "cost" | "finishReason" | "stepsExecuted" | "toolCallHistory" | "terminalErrorKind">>;
 /**
  * Build the executeSubAgent callback wired into createSubAgentRunner. The
  * closure captures the daemon container + session store + tool assembler +
@@ -592,6 +591,9 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       finishReason: result.finishReason,
       stepsExecuted: result.stepsExecuted,
       toolCallHistory: result.toolCallHistory,
+      ...(result.terminalErrorKind === undefined
+        ? {}
+        : { terminalErrorKind: result.terminalErrorKind }),
     };
   };
 }
