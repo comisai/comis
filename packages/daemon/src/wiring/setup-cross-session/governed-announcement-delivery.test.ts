@@ -44,6 +44,27 @@ function makeConversation() {
   return locator.value;
 }
 
+function makeEndpointConversation() {
+  const endpoint = {
+    channelType: "telegram",
+    channelInstanceId: "telegram-primary",
+    conversationId: "chat-1",
+    threadId: "topic-7",
+    conversationKind: "shared" as const,
+  };
+  const locator = createConversationLocator({
+    tenantId: "tenant-a",
+    agentId: "agent-1",
+    partition: {
+      kind: "endpoint-conversation-principal",
+      endpoint,
+      principalId: "principal-a",
+    },
+  });
+  if (!locator.ok) throw locator.error;
+  return { endpoint, locator: locator.value };
+}
+
 describe("completion announcement delivery wiring", () => {
   it("returns false without calling the delivery service when no adapter exists", async () => {
     const deliveryService = makeDeliveryService();
@@ -81,6 +102,67 @@ describe("completion announcement delivery wiring", () => {
     expect(result).toEqual(ok({ delivered: false, failure: "allocation_blocked" }));
     expect(ledger.allocateStep).not.toHaveBeenCalled();
     expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
+  });
+
+  it("passes authenticated caller authority to delivery persistence without ambient context", async () => {
+    const ledger = makeLedger();
+    const deliveryService = makeDeliveryService();
+    vi.mocked(deliveryService.deliverToChannel).mockResolvedValue(ok({
+      chunks: [{
+        status: "accepted" as const,
+        messageId: "telegram-message-1",
+        charCount: 10,
+        retried: false,
+      }],
+      totalChars: 10,
+      platform: {
+        status: "accepted" as const,
+        deliveredChunks: 1,
+        settledAtMs: 1,
+        lastMessageId: "telegram-message-1",
+      },
+      queueDisposition: "settled" as const,
+    }));
+    const adapter = {
+      channelType: "telegram",
+      sendMessage: vi.fn(async () => ok("telegram-message-1")),
+    };
+    const caller = makeEndpointConversation();
+    const delivery = createAnnouncementDelivery({
+      adaptersByType: new Map([["telegram", adapter]]),
+      deliveryService,
+      eventBus,
+      outwardLedger: ledger,
+      resolveRootRunId: () => ({ ok: true, value: "root-1" }),
+    });
+
+    const result = await delivery.sendGovernedAnnouncement?.({
+      agentId: "agent-1",
+      callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
+      callerConversation: caller.locator,
+      runId: "run-1",
+      channelType: "telegram",
+      channelId: "chat-1",
+      text: "completion",
+      options: { threadId: "topic-7" },
+    });
+
+    expect(result?.ok && result.value.delivered).toBe(true);
+    expect(deliveryService.deliverToChannel).toHaveBeenCalledWith(
+      adapter,
+      "chat-1",
+      "completion",
+      {
+        completionMode: "settled",
+        threadId: "topic-7",
+        authority: {
+          tenantId: "tenant-a",
+          agentId: "agent-1",
+          conversationRef: caller.locator.conversationRef,
+        },
+        destinationEndpoint: caller.endpoint,
+      },
+    );
   });
 
   it("delivers a validated generated file as the governed channel operation", async () => {
