@@ -619,6 +619,10 @@
               "type": "string"
             },
             {
+              "const": "wait",
+              "type": "string"
+            },
+            {
               "const": "kill",
               "type": "string"
             },
@@ -627,7 +631,7 @@
               "type": "string"
             }
           ],
-          "description": "Subagent action (default: list). Valid values: list (show active runs), kill (terminate sub-agent), steer (redirect task with new message)"
+          "description": "Subagent action (default: list). Valid values: list (show runs), wait (await owned children without polling), kill (terminate sub-agent), steer (redirect task with new message)"
         },
         "message": {
           "description": "New task description for the subagent (for steer)",
@@ -637,9 +641,26 @@
           "description": "Include runs from last N minutes (default: 30, for list)",
           "type": "integer"
         },
+        "run_ids": {
+          "description": "Exact run IDs to wait for; omit to wait for active direct children",
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "type": "array"
+        },
         "target": {
           "description": "Run ID of the target subagent (for kill/steer)",
           "type": "string"
+        },
+        "timeout_ms": {
+          "description": "Wait deadline in milliseconds",
+          "maximum": 300000,
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -1276,20 +1297,12 @@
           "description": "Use lightweight bootstrap context (HEARTBEAT.md only)",
           "type": "boolean"
         },
-        "model": {
-          "description": "Model override for heartbeat LLM calls",
-          "type": "string"
-        },
         "prompt": {
           "description": "Custom heartbeat prompt text",
           "type": "string"
         },
         "response_prefix": {
           "description": "Prefix to strip from LLM responses before delivery",
-          "type": "string"
-        },
-        "session": {
-          "description": "Session key for heartbeat conversation isolation",
           "type": "string"
         },
         "show_alerts": {
@@ -1300,29 +1313,50 @@
           "description": "Show OK status notifications",
           "type": "boolean"
         },
-        "skip_heartbeat_only_delivery": {
-          "description": "Suppress HEARTBEAT_OK-only delivery from cron triggers",
-          "type": "boolean"
-        },
         "stale_ms": {
           "description": "Max ms before stuck detection triggers",
           "type": "integer"
         },
-        "target_channel_id": {
-          "description": "Delivery target channel identifier",
-          "type": "string"
-        },
-        "target_channel_type": {
-          "description": "Delivery target channel type (e.g. telegram, discord)",
-          "type": "string"
-        },
-        "target_chat_id": {
-          "description": "Delivery target chat/conversation ID",
-          "type": "string"
-        },
-        "target_is_dm": {
-          "description": "Whether delivery target is a DM conversation",
-          "type": "boolean"
+        "target": {
+          "additionalProperties": false,
+          "description": "Complete exact heartbeat delivery endpoint",
+          "properties": {
+            "channel_instance_id": {
+              "description": "Registered channel adapter instance ID",
+              "type": "string"
+            },
+            "channel_type": {
+              "description": "Channel type (e.g. telegram, discord)",
+              "type": "string"
+            },
+            "conversation_id": {
+              "description": "Platform conversation ID",
+              "type": "string"
+            },
+            "conversation_kind": {
+              "anyOf": [
+                {
+                  "const": "direct",
+                  "type": "string"
+                },
+                {
+                  "const": "shared",
+                  "type": "string"
+                }
+              ]
+            },
+            "thread_id": {
+              "description": "Platform thread or topic ID",
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel_type",
+            "channel_instance_id",
+            "conversation_id",
+            "conversation_kind"
+          ],
+          "type": "object"
         }
       },
       "required": [
@@ -3151,9 +3185,22 @@
           ],
           "description": "Cron scheduling action. Valid values: add (create new job), list (show all jobs), update (modify job config), remove (delete a job), status (scheduler health), runs (job execution history), run (trigger job now), wake (wake scheduler loop)"
         },
-        "enabled": {
-          "description": "Enable or disable a job (for update)",
-          "type": "boolean"
+        "continuation_mode": {
+          "anyOf": [
+            {
+              "const": "none",
+              "type": "string"
+            },
+            {
+              "const": "heartbeat_excerpt",
+              "type": "string"
+            },
+            {
+              "const": "origin_history",
+              "type": "string"
+            }
+          ],
+          "description": "Post-run continuation mode for agent-turn jobs. Default: none."
         },
         "job_name": {
           "description": "Job name (required for update, remove, runs, run)",
@@ -3188,10 +3235,18 @@
           "description": "Human-readable job name (for add/update)",
           "type": "string"
         },
+        "paused": {
+          "description": "Pause or resume future occurrences (for update)",
+          "type": "boolean"
+        },
         "payload_kind": {
           "anyOf": [
             {
-              "const": "system_event",
+              "const": "heartbeat_event",
+              "type": "string"
+            },
+            {
+              "const": "delivery",
               "type": "string"
             },
             {
@@ -3199,7 +3254,7 @@
               "type": "string"
             }
           ],
-          "description": "Payload type. Valid values: system_event (cron/system triggers), agent_turn (agent-initiated runs)"
+          "description": "Payload type. Valid values: heartbeat_event (enqueue an agent heartbeat event), delivery (deliver exact text), agent_turn (run the agent)"
         },
         "payload_text": {
           "description": "Payload text or message content",
@@ -3251,17 +3306,9 @@
             {
               "const": "rolling",
               "type": "string"
-            },
-            {
-              "const": "accumulate",
-              "type": "string"
             }
           ],
-          "description": "Session history strategy for recurring jobs. Valid values: fresh (new session each run; default and STRONGLY PREFERRED for cadences ≥ 10 minutes), rolling (keep last N turns; ONLY use when cadence < 5 minutes), accumulate (keep all history; rarely correct, leaks across runs). Rationale: cron uses a 5-minute prompt cache TTL, so any cadence longer than that wastes cache-write spend on rolling/accumulate — the cache is always cold by the next tick. Pick fresh unless cross-tick session memory is essential and cadence is < 5 minutes. Default: fresh"
-        },
-        "source": {
-          "description": "Audit trail source identifier for wake action (default: agent)",
-          "type": "string"
+          "description": "Bounded session history strategy for agent-turn jobs. Valid values: fresh (new session each run; default) or rolling (keep up to max_history_turns)."
         },
         "timezone": {
           "description": "IANA timezone (e.g. America/Los_Angeles). REQUIRED for any time-of-day schedule (schedule_kind=cron or at) so it fires at the USER'S local wall-clock time, not the server's. Set it to the user's known timezone (from memory/USER.md); without it a naive time like 09:00 is interpreted in the server timezone (UTC). E.g. a Pacific user's 'remind me at 9am' must pass timezone=America/Los_Angeles.",
@@ -3283,6 +3330,36 @@
         "wake_gate_script": {
           "description": "Optional pre-run gate script for a monitoring job (add/update). When set, the scheduler runs it before each fire and wakes the model ONLY if the script signals a change; otherwise the fire is skipped cheaply. The script prints its verdict on stdout — see this tool's description for the protocol and a worked example.",
           "type": "string"
+        },
+        "wake_gate_timeout_seconds": {
+          "description": "Wake-gate timeout in seconds. Default: 30.",
+          "type": "integer"
+        },
+        "wake_mode": {
+          "anyOf": [
+            {
+              "const": "now",
+              "type": "string"
+            },
+            {
+              "const": "next-heartbeat",
+              "type": "string"
+            }
+          ],
+          "description": "Heartbeat-event timing. Valid values: now or next-heartbeat. Default: now."
+        },
+        "wake_target": {
+          "anyOf": [
+            {
+              "const": "agent",
+              "type": "string"
+            },
+            {
+              "const": "monitoring",
+              "type": "string"
+            }
+          ],
+          "description": "Typed scheduler wake target. Default: agent."
         }
       },
       "required": [

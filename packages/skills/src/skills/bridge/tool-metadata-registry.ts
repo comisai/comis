@@ -22,6 +22,7 @@ import {
 import { validateExecCommand } from "../../tools/builtin/exec-security/index.js";
 import { GATEWAY_ACTIONS } from "../../platform-tools/tools/gateway-tool.js";
 import { registerFailureDetectorMetadata } from "./register-failure-detector-metadata.js";
+import { registerInvocationSideEffectMetadata } from "./register-invocation-side-effect-metadata.js";
 
 export function registerAllToolMetadata(): void {
   // =========================================================================
@@ -389,10 +390,9 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("heartbeat_manage", {
     validActions: ["get", "update", "status", "trigger"],
     validKeys: [
-      "action", "agent_id", "enabled", "interval_ms", "prompt", "model",
-      "target_channel_type", "target_channel_id", "target_chat_id", "target_is_dm",
+      "action", "agent_id", "enabled", "interval_ms", "prompt", "target",
       "light_context", "show_ok", "show_alerts", "allow_dm",
-      "skip_heartbeat_only_delivery", "ack_max_chars", "response_prefix", "session",
+      "ack_max_chars", "response_prefix",
       "alert_threshold", "alert_cooldown_ms", "stale_ms",
     ],
     // Every action's params beyond `action` are Type.Optional. Empty
@@ -725,6 +725,22 @@ export function registerAllToolMetadata(): void {
   // Sleep — never-export; an internal between-turns pacing primitive
   // inside Comis's trust boundary, not a capability an external MCP client needs.
   registerToolMetadata("sleep", { mcpExportPolicy: "never-export" });
+
+  // Exact emitted names that previously relied on default-deny or activity-only
+  // registration. They are first-class metadata entries so execution-side
+  // effect coverage and MCP export policy cannot drift independently.
+  registerToolMetadata("background_tasks", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("get_prompt", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("list_prompts", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("list_resources", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("read_resource", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("mcp_login", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("memory_ask", { mcpExportPolicy: "never-export", isReadOnly: true });
+  registerToolMetadata("image_generate", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("notify_user", { mcpExportPolicy: "never-export" });
+  registerToolMetadata("notebook_edit", { mcpExportPolicy: "never-export" });
+
+  registerInvocationSideEffectMetadata();
 
   // Failure Detectors — web_search / web_fetch structured-field failure
   // classification. Extracted to keep this file ≤800 lines; a behavior-neutral

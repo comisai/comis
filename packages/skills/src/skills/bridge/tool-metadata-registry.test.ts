@@ -9,6 +9,7 @@ import { wrapWithAudit } from "./tool-audit.js";
 import { validateToolEntry } from "./schema-validator.js";
 import { GATEWAY_ACTIONS } from "../../platform-tools/tools/gateway-tool.js";
 import { createMemoryManageTool } from "../../platform-tools/tools/memory-manage-tool.js";
+import { createPlatformToolRegistry } from "../../platform-tools/registry.js";
 
 // ---------------------------------------------------------------------------
 // Ensure metadata is registered before all tests
@@ -41,7 +42,7 @@ function createMockTool(name: string, executeFn?: (...args: any[]) => Promise<an
 // ===========================================================================
 
 describe("tool-metadata-registry -- registry count", () => {
-  it("registers exactly 63 unique tools (registry count assertion)", () => {
+  it("registers exactly 74 unique emitted tool names", () => {
     // The registry pins an exact tool count so an accidental add or removal is
     // caught. Notable entries: video_generate and video_status are EXPLICITLY
     // registered never-export (cost-bearing + outbound delivery); video_status
@@ -53,7 +54,128 @@ describe("tool-metadata-registry -- registry count", () => {
     // (ctx_search / ctx_inspect / ctx_expand) are the governed TOOL surface over
     // the LCD store.
     const all = getAllToolMetadata();
-    expect(all.size).toBe(64);
+    expect(all.size).toBe(74);
+  });
+});
+
+describe("tool-metadata-registry -- invocation side-effect coverage", () => {
+  const BUILTIN_EMITTED_NAMES = [
+    "read",
+    "write",
+    "edit",
+    "ls",
+    "grep",
+    "find",
+    "notebook_edit",
+    "apply_patch",
+    "exec",
+    "process",
+    "web_fetch",
+    "web_search",
+  ] as const;
+
+  it("classifies every registered and emitted built-in tool by its exact runtime name", () => {
+    const buildContext = {
+      agentId: "test-agent",
+      rpcCall: async () => ({}),
+    } as never;
+    const platformEmittedNames = createPlatformToolRegistry()
+      .map((descriptor) => descriptor.build(buildContext)?.name)
+      .filter((name): name is string => typeof name === "string");
+    const emittedNames = new Set([...BUILTIN_EMITTED_NAMES, ...platformEmittedNames]);
+    const missingEmitted = [...emittedNames].filter(
+      (name) => getToolMetadata(name)?.invocationSideEffects === undefined,
+    );
+    const missingRegistered = [...getAllToolMetadata()].flatMap(([name, metadata]) =>
+      metadata.invocationSideEffects === undefined ? [name] : [],
+    );
+
+    expect(missingEmitted).toEqual([]);
+    expect(missingRegistered).toEqual([]);
+  });
+
+  it("pins the initial nonempty invocation classifications", () => {
+    expect(getToolMetadata("exec")?.invocationSideEffects).toEqual({
+      kind: "always",
+      capabilities: ["deferred_work"],
+    });
+    expect(getToolMetadata("sessions_send")?.invocationSideEffects).toEqual({
+      kind: "always",
+      capabilities: ["outbound_delivery"],
+    });
+    expect(getToolMetadata("video_generate")?.invocationSideEffects).toEqual({
+      kind: "always",
+      capabilities: ["outbound_delivery", "deferred_work"],
+    });
+    expect(getToolMetadata("video_status")?.invocationSideEffects).toEqual({
+      kind: "always",
+      capabilities: ["deferred_work"],
+    });
+    expect(getToolMetadata("background_tasks")?.invocationSideEffects).toEqual({
+      kind: "always",
+      capabilities: ["deferred_work"],
+    });
+  });
+
+  it("keeps action-classification maps in exact lockstep with reviewed action tuples", () => {
+    for (const name of [
+      "cron",
+      "message",
+      "discord_action",
+      "telegram_action",
+      "pipeline",
+      "heartbeat_manage",
+    ] as const) {
+      const metadata = getToolMetadata(name);
+      const declaration = metadata?.invocationSideEffects;
+      expect(declaration?.kind, `${name} must use by_action classification`).toBe("by_action");
+      if (declaration?.kind !== "by_action") continue;
+      expect(Object.keys(declaration.actions).sort()).toEqual(
+        [...(metadata?.validActions ?? [])].sort(),
+      );
+    }
+  });
+
+  it("classifies only the reviewed publishing and scheduling actions as nonempty", () => {
+    const cron = getToolMetadata("cron")?.invocationSideEffects;
+    const message = getToolMetadata("message")?.invocationSideEffects;
+    const discord = getToolMetadata("discord_action")?.invocationSideEffects;
+    const telegram = getToolMetadata("telegram_action")?.invocationSideEffects;
+    const heartbeat = getToolMetadata("heartbeat_manage")?.invocationSideEffects;
+    expect(cron?.kind === "by_action" ? cron.actions : undefined).toMatchObject({
+      add: ["scheduling"],
+      update: ["scheduling"],
+      remove: ["scheduling"],
+      run: ["scheduling"],
+      wake: ["scheduling"],
+      list: [],
+      status: [],
+      runs: [],
+    });
+    expect(message?.kind === "by_action" ? message.actions : undefined).toMatchObject({
+      send: ["outbound_delivery"],
+      reply: ["outbound_delivery"],
+      attach: ["outbound_delivery"],
+      edit: ["outbound_delivery"],
+      delete: ["outbound_delivery"],
+      react: ["outbound_delivery"],
+      fetch: [],
+    });
+    expect(discord?.kind === "by_action" ? discord.actions.threadReply : undefined).toEqual([
+      "outbound_delivery",
+    ]);
+    expect(telegram?.kind === "by_action" ? telegram.actions.poll : undefined).toEqual([
+      "outbound_delivery",
+    ]);
+    expect(telegram?.kind === "by_action" ? telegram.actions.sticker : undefined).toEqual([
+      "outbound_delivery",
+    ]);
+    expect(heartbeat?.kind === "by_action" ? heartbeat.actions : undefined).toEqual({
+      get: [],
+      update: ["scheduling"],
+      status: [],
+      trigger: ["deferred_work"],
+    });
   });
 });
 
@@ -927,7 +1049,7 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
     ["skills_manage",    ["list", "import", "delete", "create", "update"], 6],
     ["memory_manage",    ["stats", "browse", "delete", "flush", "export", "pin", "unpin"], 11],
     ["models_manage",    ["list", "test", "list_providers"], 3],
-    ["heartbeat_manage", ["get", "update", "status", "trigger"], 21],
+    ["heartbeat_manage", ["get", "update", "status", "trigger"], 15],
   ] as const)(
     "registers entry-shape metadata for %s",
     (name, validActions, validKeysCount) => {
