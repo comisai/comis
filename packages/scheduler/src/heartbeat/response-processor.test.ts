@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
+import { HEARTBEAT_OK_TOKEN, NO_REPLY_TOKEN, SILENT_PREFIX } from "@comis/shared";
 import { describe, expect, it } from "vitest";
 import {
   classifyHeartbeatResponse,
@@ -41,6 +41,19 @@ describe("heartbeat response normalization", () => {
 describe("closed heartbeat response classification", () => {
   it("classifies empty output without manufacturing a visible acknowledgement", () => {
     for (const text of [null, undefined, "   \n  "]) {
+      expect(classifyHeartbeatResponse({ text, hasMedia: false, ackMaxChars: 300 })).toEqual({
+        kind: "empty",
+      });
+    }
+  });
+
+  it("suppresses shared non-heartbeat silent markers after reply-tag normalization", () => {
+    for (const text of [
+      NO_REPLY_TOKEN,
+      `  <reply>  ${NO_REPLY_TOKEN}  </reply>  `,
+      `${SILENT_PREFIX} no user notification needed`,
+      `<reply>${SILENT_PREFIX} no user notification needed</reply>`,
+    ]) {
       expect(classifyHeartbeatResponse({ text, hasMedia: false, ackMaxChars: 300 })).toEqual({
         kind: "empty",
       });
@@ -103,6 +116,14 @@ describe("closed heartbeat response classification", () => {
       kind: "alert",
       level: "alert",
       text: "HEARTBEAT_OK",
+      hasMedia: true,
+    });
+    expect(classifyHeartbeatResponse({
+      text: NO_REPLY_TOKEN, hasMedia: true, ackMaxChars: 300,
+    })).toEqual({
+      kind: "alert",
+      level: "alert",
+      text: NO_REPLY_TOKEN,
       hasMedia: true,
     });
   });

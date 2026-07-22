@@ -155,6 +155,27 @@ describe("heartbeat agent turn executor", () => {
     expect(deliver).not.toHaveBeenCalled();
   });
 
+  it("suppresses NO_REPLY with a visible-ok target instead of delivering the sentinel", async () => {
+    const { deps, execute, deliver, pruneAcknowledgedTurn } = makeDeps({
+      agents: {
+        "agent-a": agentConfig({ target: endpoint, showOk: true, showAlerts: true }),
+      },
+    });
+    execute.mockResolvedValueOnce(executionResult("NO_REPLY"));
+
+    const result = await createHeartbeatAgentTurnExecutor(deps)(runInput({ eventBatch: [] }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        delivery: { status: "suppressed", reason: "empty_reply" },
+        sessionMaintenance: { status: "not_required" },
+      },
+    });
+    expect(pruneAcknowledgedTurn).not.toHaveBeenCalled();
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
   it("keeps critical output visible when ordinary alerts are hidden", async () => {
     const { deps, execute, deliver } = makeDeps({
       agents: { "agent-a": agentConfig({ target: endpoint, showOk: false, showAlerts: false }) },
