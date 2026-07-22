@@ -7,16 +7,17 @@ import type {
   TimerHandle,
   TimerPort,
 } from "@comis/core";
-import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
+import { err, fromPromise, ok, suppressError, tryCatch, type Result } from "@comis/shared";
 import type {
   HeartbeatWakeAdmissionError,
   HeartbeatWakeAdmissionOutcome,
   HeartbeatWakeRequest,
 } from "../heartbeat/wake-coordinator.js";
-import type { FollowupTaskStore } from "./task-store.js";
+import { FOLLOWUP_TASK_RETENTION_MS, type FollowupTaskStore } from "./task-store.js";
 import type { FollowupTaskRecord } from "./task-types.js";
 
 const TASK_WAKE_RETRY_MS = 30_000;
+type TaskScheduleBoundaryKind = "task_due" | "retention";
 
 export type TaskDueScheduleError =
   | { readonly code: "not_accepting"; readonly errorKind: "precondition" }
@@ -78,33 +79,64 @@ export function createTaskDueSchedule(deps: TaskDueScheduleDeps): TaskDueSchedul
     const pending = boundary.value.value.tasks.filter((task): task is Extract<FollowupTaskRecord, { status: "pending" }> => (
       task.agentId === deps.agentId && task.status === "pending"
     ));
-    const next = pending.reduce<number | null>((earliest, task) => (
+    const nextTaskDueAtMs = pending.reduce<number | null>((earliest, task) => (
       earliest === null ? task.nextAttemptAtMs : Math.min(earliest, task.nextAttemptAtMs)
     ), null);
-    if (next !== null && (!Number.isSafeInteger(next) || next < 0)) {
+    const terminalTimes = boundary.value.value.tasks.flatMap((task) => (
+      "terminalAtMs" in task ? [task.terminalAtMs] : []
+    ));
+    const nextRetentionAtMs = terminalTimes.reduce<number | null>((earliest, terminalAtMs) => {
+      const retentionAtMs = terminalAtMs + FOLLOWUP_TASK_RETENTION_MS;
+      if (!Number.isSafeInteger(retentionAtMs)) return Number.NaN;
+      return earliest === null ? retentionAtMs : Math.min(earliest, retentionAtMs);
+    }, null);
+    if (
+      nextTaskDueAtMs !== null && (!Number.isSafeInteger(nextTaskDueAtMs) || nextTaskDueAtMs < 0)
+      || nextRetentionAtMs !== null && (!Number.isSafeInteger(nextRetentionAtMs) || nextRetentionAtMs < 0)
+    ) {
       return err({ code: "invalid_state", errorKind: "validation" });
     }
-    armAt(next);
+    const boundaryPlan = nextTaskDueAtMs !== null && (
+      nextRetentionAtMs === null || nextTaskDueAtMs <= nextRetentionAtMs
+    )
+      ? { atMs: nextTaskDueAtMs, kind: "task_due" as const }
+      : nextRetentionAtMs === null
+        ? null
+        : { atMs: nextRetentionAtMs, kind: "retention" as const };
+    armAt(boundaryPlan);
     deps.logger.debug({
       agentId: deps.agentId,
       step: "task_due_rescan",
       pendingCount: pending.length,
-      nextDueAtMs: next,
+      terminalCount: terminalTimes.length,
+      nextDueAtMs: boundaryPlan?.atMs ?? null,
+      boundaryKind: boundaryPlan?.kind ?? "none",
       durationMs: Math.max(0, deps.clock.now() - startedAtMs),
     }, "Task due schedule rescanned");
-    return ok({ nextDueAtMs: next });
+    return ok({ nextDueAtMs: boundaryPlan?.atMs ?? null });
   }
 
-  function armAt(next: number | null): void {
+  function armAt(boundary: { readonly atMs: number; readonly kind: TaskScheduleBoundaryKind } | null): void {
     timer?.cancel();
     timer = undefined;
-    nextDueAtMs = next;
-    if (!active || closed || next === null) return;
+    nextDueAtMs = boundary?.atMs ?? null;
+    if (!active || closed || boundary === null) return;
     const handle = deps.timers.setTimeout(() => {
       if (timer === handle) timer = undefined;
       nextDueAtMs = null;
-      submitDueWake(next);
-    }, Math.max(0, next - deps.clock.now()));
+      if (boundary.kind === "task_due") {
+        submitDueWake(boundary.atMs);
+        return;
+      }
+      suppressError(
+        requestRescan(),
+        "task retention schedule rescan",
+        (message) => deps.logger.debug({
+          agentId: deps.agentId,
+          step: "task_retention_rescan",
+        }, message),
+      );
+    }, Math.max(0, boundary.atMs - deps.clock.now()));
     handle.unref();
     timer = handle;
   }
@@ -139,7 +171,7 @@ export function createTaskDueSchedule(deps: TaskDueScheduleDeps): TaskDueSchedul
       hint: "Restore coordinator admission; one bounded task-wake retry remains armed",
     }, "Task due wake admission failed");
     const retryAtMs = deps.clock.now() + TASK_WAKE_RETRY_MS;
-    if (Number.isSafeInteger(retryAtMs)) armAt(retryAtMs);
+    if (Number.isSafeInteger(retryAtMs)) armAt({ atMs: retryAtMs, kind: "task_due" });
     else {
       deps.logger.error({
         agentId: deps.agentId,
