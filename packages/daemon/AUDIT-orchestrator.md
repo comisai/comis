@@ -4,7 +4,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:331–381`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 22 (10 required + 12 optional + 0 stale-fallback)
+**Field count:** 31 (15 required + 16 optional + 0 stale-fallback)
 **Location rationale:** Co-located with @comis/daemon package. `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from npm tarball.
 
 ## Field Classification
@@ -14,13 +14,19 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | **Field** | **Classification** | **When-absent** | **Evidence-link** |
 |-----------|--------------------|-----------------|-------------------|
 | getAgentCronScheduler | required | — | packages/daemon/src/api/types.ts:217 |
+| getAgentCronAuthoringConfig | required | — | packages/daemon/src/api/types.ts:327 |
 | cronSchedulers | required | — | packages/daemon/src/api/types.ts:218 |
 | executionTrackers | required | — | packages/daemon/src/api/types.ts:219 |
-| wakeCoalescer | required | — | packages/daemon/src/api/types.ts:220 |
+| cronMaintenanceControllers | required | — | packages/daemon/src/api/types.ts:333 |
+| taskMaintenanceControllers | required | — | packages/daemon/src/api/types.ts:334 |
+| followupTaskStores | required | — | packages/daemon/src/api/types.ts:335 |
+| requestTaskRescan | required | — | packages/daemon/src/api/types.ts:336 |
 | graphCoordinator | optional | graph.run RPC fails with "graph coordinator unavailable"; named graph execution is disabled (read-only catalog still works via namedGraphStore) | packages/daemon/src/api/types.ts:222 |
 | namedGraphStore | optional | graph.list returns an empty array; graph.run with a stored-graph reference returns "named graph not found" | packages/daemon/src/api/types.ts:224 |
 | nodeTypeRegistry | optional | graph.run skips driver-config validation; bad node configs surface later at node-execution time instead of being rejected up front | packages/daemon/src/api/types.ts:228 |
-| perAgentRunner | optional | heartbeat.run / heartbeat.list cannot trigger or report per-agent heartbeats; global heartbeats (if any) remain available | packages/daemon/src/api/types.ts:230 |
+| heartbeatCoordinator | optional | heartbeat.trigger, scheduler.wake, and periodic reconfiguration reject with a closed precondition; state reads still expose configured agents | packages/daemon/src/api/types.ts:339 |
+| getAgentSchedulerSeed | optional | heartbeat.update cannot deterministically re-arm the agent phase and rejects before mutating configuration | packages/daemon/src/api/types.ts:340 |
+| schedulerNowMs | required | — | packages/daemon/src/api/types.ts:344 |
 | globalHeartbeatConfig | optional | heartbeat.list omits the global-heartbeat config field; UI shows "not configured" | packages/daemon/src/api/types.ts:231 |
 | defaultAgentId | required | — | packages/daemon/src/api/types.ts:233 |
 | tenantId | required | — | packages/daemon/src/api/types.ts:235 |
@@ -41,12 +47,12 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Removed Fields (stale-fallback — deleted)
 
-**None.** Every optional field corresponds to a feature-gate documented above. The graph-handler quartet (`graphCoordinator` / `namedGraphStore` / `nodeTypeRegistry` / `dataDir`) is gated together at dispatcher wiring time; tests omit each independently to exercise the degraded paths. `perAgentRunner` / `globalHeartbeatConfig` reflect optional heartbeat subsystems.
+**None.** Every optional field corresponds to a feature-gate documented above. The graph-handler quartet (`graphCoordinator` / `namedGraphStore` / `nodeTypeRegistry` / `dataDir`) is gated together at dispatcher wiring time; tests omit each independently to exercise the degraded paths. `heartbeatCoordinator` / `getAgentSchedulerSeed` / `globalHeartbeatConfig` reflect optional heartbeat subsystems.
 
 ## Summary
 
 - **Pre-audit count:** 17
-- **Final count:** 22 (10 required + 12 optional)
+- **Final count:** 31 (15 required + 16 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

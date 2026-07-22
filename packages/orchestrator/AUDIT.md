@@ -1,9 +1,9 @@
 # ChannelManagerDeps Audit
 
 **Generated:** 2026-05-11
-**Interface source:** `packages/orchestrator/src/channel-manager.ts` (48-field interface)
+**Interface source:** `packages/orchestrator/src/channel-manager.ts` (50-field interface)
 **Construction site:** `packages/daemon/src/wiring/setup-channels/setup-channels-runtime.ts` (single site — `createChannelManager({`)
-**Field count:** 48 (12 required + 36 optional + 0 stale-fallback)
+**Field count:** 50 (13 required + 37 optional + 0 stale-fallback)
 
 This file is co-located with the orchestrator package. `files: ["dist"]` in `packages/orchestrator/package.json` excludes it from the npm tarball.
 
@@ -21,6 +21,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 |-----------|--------------------|-----------------|-------------------|
 | tenantId | required | — | packages/orchestrator/src/channel-manager.ts:154 |
 | eventBus | required | — | packages/orchestrator/src/channel-manager.ts:79 |
+| clock | required | — | packages/orchestrator/src/channel-manager.ts:159 |
 | messageRouter | required | — | packages/orchestrator/src/channel-manager.ts:80 |
 | sessionManager | required | — | packages/orchestrator/src/channel-manager.ts:81 |
 | principalResolver | required | — | packages/orchestrator/src/channel-manager.ts:159 |
@@ -65,6 +66,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | exportSessionBundle | optional | /export-trajectory falls through to generic handleSlashCommand (no-op — export-trajectory has no case in command-handler.ts switch, returns handled:false, message with empty text reaches executor) | packages/orchestrator/src/channel-manager.ts:189 |
 | activityStreamPort | optional | absent → the inbound pipeline activity gate (execution-pipeline.ts:395) is false; no per-turn coordinator is built and renderer.apply never fires (fail-closed: no activity stream means no per-turn rendering, never a partial one) | packages/orchestrator/src/channel-manager.ts:192 |
 | coordinatorFactory | optional | absent → the activity gate stays false (the daemon supplies it only alongside activityStreamPort); the turn runs exactly as before with no activity rendering | packages/orchestrator/src/channel-manager.ts:196 |
+| taskCapture | optional | inferred follow-up capture is disabled; settled interactive turns are delivered without entering the scheduler extraction queue | packages/orchestrator/src/channel-manager.ts:280 |
 | adapterRegistry | optional | injectMessage falls back to the daemon's live boot adapter map for adapters registered after startAll(); absent → only startAll()-registered adapters drive injectMessage (production registers every real adapter at boot) | packages/orchestrator/src/channel-manager.ts:224 |
 | channelCredentialMap | optional | absent → no channel reconnect hook on credential rotation (secret:changed events are ignored for adapter restart; production wires from setup-channels with the per-channel credential name map) | packages/orchestrator/src/channel-manager.ts:236 |
 
@@ -74,7 +76,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Summary
 
-- **Total fields:** 48 (12 required + 36 optional)
+- **Total fields:** 50 (13 required + 37 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value)
 
