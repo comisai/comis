@@ -37,6 +37,16 @@ describe("classifyTypedRpcError", () => {
     expect(classifyTypedRpcError(named("ValidationError"))!.level).toBe("warn");
   });
 
+  it("classifies schema parse errors as validation warnings at both RPC log boundaries", () => {
+    const classification = classifyTypedRpcError(named("ZodError"));
+
+    expect(classification).toEqual({
+      errorKind: "validation",
+      hint: "Check parameter types and values against the schema",
+      level: "warn",
+    });
+  });
+
   it("classifies AuthorizationError as auth/warn", () => {
     const c = classifyTypedRpcError(named("AuthorizationError"));
     expect(c!.errorKind).toBe("auth");
