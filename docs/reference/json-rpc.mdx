@@ -1351,27 +1351,34 @@ After a reset, the next conversation turn starts with a complete clean slate in 
 
 </Accordion>
 
-<Accordion title="cron (7 methods)">
+<Accordion title="cron (8 methods)">
 
-Scheduled job management for cron expressions, intervals, and one-time tasks.
+Strict scheduled-job authoring, authority inspection, immutable execution history, manual submission, and guarded authority reset. Unknown request and response fields are rejected.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
-| `cron.list` | `rpc` | List all cron jobs |
-| `cron.add` | `rpc` | Add a new cron job |
-| `cron.update` | `rpc` | Update an existing cron job |
-| `cron.remove` | `rpc` | Remove a cron job |
-| `cron.status` | `rpc` | Get cron job status |
-| `cron.runs` | `rpc` | Get cron job run history |
-| `cron.run` | `rpc` | Trigger a manual cron run |
+| `cron.add` | `rpc` | Add an authored job |
+| `cron.list` | `rpc` | List authored and built-in jobs |
+| `cron.update` | `rpc` | Update an authored job |
+| `cron.status` | `rpc` | Inspect scheduler and authority state |
+| `cron.runs` | `rpc` | Read immutable execution groups |
+| `cron.remove` | `rpc` | Remove an authored job |
+| `cron.run` | `rpc` | Submit manual or overdue execution |
+| `cron.reset` | `admin` | Compare-and-set reset of scheduler authorities |
 
 ### `cron.add`
 
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ name: string, message: string, agentId?: string, schedule: { kind: "cron" \| "interval" \| "once", expr?: string, tz?: string, everyMs?: number, at?: string } }` |
-| **Returns** | Created job info |
+Creates one authored job. The request is `{ name, agentId?, schedule, payload, sessionPolicy?, continuationMode?, deliveryTarget?, wakeGate?, cacheRetention?, toolPolicy?, maxConsecutiveDependencyErrors? }`.
+
+Request fields are `name`, `agentId`, `schedule`, `payload`, `sessionPolicy`, `continuationMode`, `deliveryTarget`, `wakeGate`, `cacheRetention`, `toolPolicy`, and `maxConsecutiveDependencyErrors`. Schedule kinds are `cron`, `every`, `at`, and `in`; authorable payload kinds are `heartbeat_event`, `delivery`, and `agent_turn`.
+
+- `schedule` is exactly one of `{ kind: "cron", expr, tz? }`, `{ kind: "every", everyMs, anchorMs? }`, `{ kind: "at", at, tz?, fold?: "earlier" | "later" }`, or `{ kind: "in", seconds }`. `everyMs` and `seconds` are positive safe integers. The persisted response projects an `in` or `at` request as `{ kind: "at", atMs }`.
+- `payload` is exactly one of `{ kind: "heartbeat_event", text, wakeMode: "now" | "next-heartbeat" }`, `{ kind: "delivery", text }`, or `{ kind: "agent_turn", message, model?, timeoutSeconds? }`.
+- `sessionPolicy` is `{ strategy: "fresh" }` or `{ strategy: "rolling", maxHistoryTurns }`; `continuationMode` is `none`, `heartbeat_excerpt`, or `origin_history`.
+- `deliveryTarget` is `{ conversation, destinationEndpoint }`. `conversation` carries a canonical `conversationScope` and matching `conversationRef`; `destinationEndpoint` carries `channelType`, `channelInstanceId`, `conversationId`, optional `threadId`, and `conversationKind: "direct" | "shared"`.
+- `wakeGate` is `{ script, language: "js" | "ts", timeoutSeconds }`; `cacheRetention` is `none`, `short`, or `long`; `toolPolicy` is `{ profile, allow, deny }`, where `profile` is `minimal`, `coding`, `messaging`, `supervisor`, or `full`.
+
+The response fields are `jobId`, `name`, and `schedule`, with the schedule in persisted `cron`, `every`, or `at` form.
 
 <CodeGroup>
 ```json Request
@@ -1379,13 +1386,18 @@ Scheduled job management for cron expressions, intervals, and one-time tasks.
   "jsonrpc": "2.0",
   "method": "cron.add",
   "params": {
-    "name": "daily-summary",
-    "message": "Summarize today's activity",
-    "schedule": {
-      "kind": "cron",
-      "expr": "0 18 * * *",
-      "tz": "America/New_York"
-    }
+    "name": "weekday-briefing",
+    "agentId": "default",
+    "schedule": { "kind": "cron", "expr": "0 9 * * 1-5", "tz": "America/New_York" },
+    "payload": {
+      "kind": "agent_turn",
+      "message": "Prepare the weekday briefing.",
+      "timeoutSeconds": 300
+    },
+    "sessionPolicy": { "strategy": "fresh" },
+    "continuationMode": "none",
+    "cacheRetention": "short",
+    "maxConsecutiveDependencyErrors": 3
   },
   "id": 1
 }
@@ -1394,8 +1406,9 @@ Scheduled job management for cron expressions, intervals, and one-time tasks.
 {
   "jsonrpc": "2.0",
   "result": {
-    "id": "daily-summary",
-    "created": true
+    "jobId": "job_a1b2c3",
+    "name": "weekday-briefing",
+    "schedule": { "kind": "cron", "expr": "0 9 * * 1-5", "tz": "America/New_York" }
   },
   "id": 1
 }
@@ -1404,92 +1417,80 @@ Scheduled job management for cron expressions, intervals, and one-time tasks.
 
 ### `cron.list`
 
-List all scheduled jobs. Returns each job's name, schedule expression, next run time, and whether it is currently enabled.
+The request is `{ agentId? }`. The response is `{ jobs }`; every job contains `id`, `name`, `agentId`, `source`, `schedule`, `lifecycle`, and `payload`, plus only the optional policy fields that apply: `maxConsecutiveDependencyErrors`, `sessionPolicy`, `continuationMode`, `deliveryTarget`, `wakeGate`, `cacheRetention`, and `toolPolicy`.
 
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | None |
-| **Returns** | `{ jobs: Array<{ id, name, scheduleKind, expr?, tz?, everyMs?, nextRunAtMs, enabled, lastRunAtMs?, lastError?, wakeGate? }> }` (a gated job carries its `wakeGate` so the web scheduler editor can display and edit the existing gate) |
+`source` is `authored` or `built_in`. Persisted `schedule` is `cron`, `every`, or `at`. `lifecycle` is one of:
 
-<CodeGroup>
+- `{ status: "scheduled", nextRunAtMs, consecutiveDependencyErrors }`
+- `{ status: "paused", nextRunAtMs, consecutiveDependencyErrors, reason: "operator" | "dependency_errors" }`
+- `{ status: "one_shot_claimed", executionId, scheduledForMs, claimedAtMs }`
+- `{ status: "one_shot_terminal", terminalExecutionId, terminalAtMs }`
+
+Projected `payload.kind` is `heartbeat_event`, `delivery`, `agent_turn`, or `internal_action`; built-in internal actions expose `action: "memory_review" | "memory_lifecycle" | "reflection"`.
+
 ```json Request
-{
-  "jsonrpc": "2.0",
-  "method": "cron.list",
-  "id": 1
-}
+{"jsonrpc":"2.0","method":"cron.list","params":{"agentId":"default"},"id":1}
 ```
-```json Response
-{
-  "jsonrpc": "2.0",
-  "result": {
-    "jobs": [
-      {
-        "id": "daily-summary",
-        "name": "daily-summary",
-        "scheduleKind": "cron",
-        "expr": "0 18 * * *",
-        "tz": "America/New_York",
-        "nextRunAtMs": 1773334800000,
-        "enabled": true
-      }
-    ]
-  },
-  "id": 1
-}
-```
-</CodeGroup>
 
 ### `cron.update`
 
-Update an existing cron job's schedule or message. Only the fields you provide are changed.
+Updates an authored job selected by `jobId` or `jobName`; at least one selector is required. The strict request is `{ jobId?, jobName?, name?, schedule?, payload?, sessionPolicy?, continuationMode?, deliveryTarget?, wakeGate?, cacheRetention?, toolPolicy?, maxConsecutiveDependencyErrors?, paused? }`. `schedule` and `payload` use the same closed unions as `cron.add`. Nullable `deliveryTarget`, `wakeGate`, `cacheRetention`, `toolPolicy`, and `maxConsecutiveDependencyErrors` clear those settings. The response is `{ jobName, updated }`.
 
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ name: string, message?: string, agentId?: string, schedule?: { kind: "cron" \| "interval" \| "once", expr?: string, tz?: string, everyMs?: number, at?: string } }` |
-| **Returns** | Updated job info |
+Mutation vocabulary is `jobId`, `jobName`, `name`, `schedule`, `payload`, and `paused`; this response reports `updated`, while `cron.remove` reports the separate `removed` flag.
+
+```json Request
+{"jsonrpc":"2.0","method":"cron.update","params":{"jobName":"weekday-briefing","paused":true},"id":1}
+```
 
 ### `cron.status`
 
-Get the current status of a single cron job by name.
+Returns scheduler-wide authority state for the resolved agent, not one job. The request is `{ agentId? }`. The response is `{ state, configuredEnabled, running, strictAuthoritiesValid, ownershipReconciled, jobCount, activeClaimCount, resolvedAgentId, store, ledger, intent, lastError? }`.
 
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ name: string }` |
-| **Returns** | `{ id, name, scheduleKind, nextRunAtMs, enabled, lastRunAtMs?, lastError? }` |
+Response fields are `state`, `configuredEnabled`, `running`, `strictAuthoritiesValid`, `ownershipReconciled`, `jobCount`, `activeClaimCount`, `resolvedAgentId`, `store`, `ledger`, `intent`, and optional `lastError`; the request optionally selects `agentId`.
+
+- `state` is `initializing`, `disabled`, `ready`, `active`, `maintenance`, or `failed`.
+- `store` and `ledger` are `{ exists, bytes, digest }`; `digest` is a lowercase SHA-256 value or `null`, and the three fields must agree about whether the authority exists.
+- `intent` is `{ status: "none" }`, `{ status: "pending", operationId, target, phase, digest }`, or `{ status: "invalid", digest }`. Pending `target` is `store`, `ledger`, or `all`; `phase` is `prepared`, `archives_recorded`, `replacements_recorded`, or `completion_recorded`.
+- `lastError`, when present, is `{ code, errorKind }`, using the closed maintenance error and platform error-kind vocabularies.
 
 ### `cron.runs`
 
-Get the run history for a cron job — the timestamp, duration, and outcome of each fire. This is the per-fire lens for a [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters): a fire the gate **skipped** is recorded here as a `skipped` outcome (no model turn ran), so a gated job's skips are visible without a session to `obs.explain`.
+Reads immutable start/terminal groups for one job. The request is `{ jobName, limit?, agentId? }`; `limit` is a positive safe integer capped at 10,000. The response is `{ runs }`. Each run contains `executionId`, `jobId`, `agentId`, `scheduledForMs`, `trigger`, `workKind`, `rootRunId`, `startedAtMs`, optional `terminalAtMs` and `durationMs`, `status`, `deliveryStatus`, optional `errorKind`, and optional `counters`.
 
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ jobName: string, limit?: number, agentId?: string }` |
-| **Returns** | `{ runs: Array<{ ts: number, jobId: string, status: "ok" \| "error" \| "skipped", durationMs: number, summary?: string, error?: string, toolCalls?: number, estTurnsSaved?: number, rootRunId?: string }> }` |
+Request fields are `jobName`, `limit`, and optional `agentId`.
 
-Each entry's `status` is `ok` (the payload ran), `error` (it failed — `error` carries the message), or `skipped` (a wake-gate decided not to invoke the model — `summary` reads `wake-gate: skipped`). On a skip, `toolCalls` is the gate's own cap-call count, `estTurnsSaved` is the model turn it avoided (`1` per skip), and `rootRunId` is the gate fire's `root-wakegate-…` root: when the gate made cap-calls before skipping (a skip-after-fetch, `toolCalls > 0`), reconstruct them from the durable audit trail with [`security audit-log`](/reference/cli#security-audit-log) filtered on that root. The cross-job skip-rate rollup is on [`obs.system.health`](#obs-system-health)'s `cronWakeGate` block.
+- `trigger` is `scheduled`, `catchup`, or `manual`; `workKind` is `agent_turn`, `heartbeat_event`, `internal_action`, or `delivery_only`.
+- `status` is `started`, `dispatched`, `completed`, `failed`, `aborted`, `skipped`, or `unknown`.
+- `deliveryStatus` is `not_requested`, `suppressed`, `pre_send_failed`, `accepted`, `partial`, `rejected`, or `unknown`.
+- `counters` appears only on terminal `internal_action` outcomes. It contains at most 32 content-free `{ name, value }` records. A name matches `^[a-z][a-z0-9_]*$`, is at most 64 characters, and each value is a nonnegative safe integer.
 
 <CodeGroup>
 ```json Request
-{
-  "jsonrpc": "2.0",
-  "method": "cron.runs",
-  "params": { "jobName": "daily-summary", "limit": 5 },
-  "id": 1
-}
+{"jsonrpc":"2.0","method":"cron.runs","params":{"jobName":"Reflection","limit":5,"agentId":"default"},"id":1}
 ```
 ```json Response
 {
   "jsonrpc": "2.0",
   "result": {
-    "runs": [
-      { "ts": 1773248400000, "jobId": "job_a1b2c3", "status": "ok", "durationMs": 3200 },
-      { "ts": 1773162000000, "jobId": "job_a1b2c3", "status": "skipped", "durationMs": 210, "summary": "wake-gate: skipped", "toolCalls": 1, "estTurnsSaved": 1 }
-    ]
+    "runs": [{
+      "executionId": "execution-reflection-a",
+      "jobId": "reflection-default",
+      "agentId": "default",
+      "scheduledForMs": 1800000000000,
+      "trigger": "scheduled",
+      "workKind": "internal_action",
+      "rootRunId": "root-cron-execution-reflection-a",
+      "startedAtMs": 1800000000000,
+      "terminalAtMs": 1800000000050,
+      "durationMs": 50,
+      "status": "failed",
+      "deliveryStatus": "not_requested",
+      "errorKind": "dependency",
+      "counters": [
+        { "name": "selected", "value": 8 },
+        { "name": "dependency_failures", "value": 1 }
+      ]
+    }]
   },
   "id": 1
 }
@@ -1498,21 +1499,23 @@ Each entry's `status` is `ok` (the payload ran), `error` (it failed — `error` 
 
 ### `cron.remove`
 
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ name: string }` |
-| **Returns** | Removal confirmation |
+Removes an authored job selected by `jobId` or `jobName`; at least one selector is required. The request is `{ jobId?, jobName? }`. The response is `{ jobName, removed }`.
 
 ### `cron.run`
 
-Trigger an immediate manual run of a scheduled job. By default this forces the job to execute regardless of its next scheduled time (`mode: "force"`). Pass `mode: "due"` to run all currently overdue jobs instead.
+Submits work through the normal scheduler execution path. The request is `{ jobName?, mode?: "force" | "due", agentId? }`; omitted `mode` means `force`. `force` requires a resolvable `jobName` and returns `{ triggered, mode: "force", jobName, resolvedAgentId, executionId }`. `due` evaluates all overdue occurrences for the resolved agent and returns `{ triggered, mode: "due", resolvedAgentId, executionIds }`.
 
-| Property | Value |
-|----------|-------|
-| **Scope** | `rpc` |
-| **Parameters** | `{ name?: string, mode?: "force" \| "due" }` (`name` required when `mode` is `"force"`) |
-| **Returns** | `{ triggered: true, mode: string, jobName?: string }` |
+The closed request/response vocabulary is `jobName`, `mode`, `force`, `due`, `agentId`, `triggered`, `resolvedAgentId`, `executionId`, and `executionIds`.
+
+A manual `force` submission does not change the job's scheduled lifecycle or dependency-breaker state. It creates a new manual occurrence; it does not replay or reinterpret an earlier uncertain occurrence.
+
+### `cron.reset`
+
+`admin`-only compare-and-set maintenance for raw scheduler authorities. The request is one of `{ target: "store", expectedDigests: { store }, confirmed: true, agentId? }`, `{ target: "ledger", expectedDigests: { ledger }, confirmed: true, agentId? }`, or `{ target: "all", expectedDigests: { store, ledger }, confirmed: true, agentId? }`. Each expected digest is a lowercase SHA-256 value or `null` when that authority is absent. The exact digest prevents resetting state that changed after inspection.
+
+The response is `{ operationId, target, resolvedAgentId, beforeDigests, afterDigests, state, reactivated }`. `beforeDigests` and `afterDigests` each contain nullable `store` and `ledger` digests; `state` is `disabled`, `ready`, or `active`.
+
+Reset fields are `target`, `expectedDigests`, `confirmed`, optional `agentId`, `operationId`, `beforeDigests`, `afterDigests`, `state`, and `reactivated`.
 
 </Accordion>
 
@@ -4649,15 +4652,17 @@ Extract the text content from a document attachment (PDF, DOCX, etc.) using the 
 
 <Accordion title="scheduler (1 method)">
 
-Internal scheduler wake signal. Used by webhooks and other triggers to nudge the heartbeat coalescer into running immediately.
+Typed admission into the heartbeat coordinator.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
-| `scheduler.wake` | `rpc` | Request an immediate heartbeat coalescer run |
+| `scheduler.wake` | `rpc` | Submit an agent or monitoring wake |
 
 ### `scheduler.wake`
 
-Signal the wake coalescer to fire immediately rather than waiting for the next scheduled interval. The coalescer debounces rapid wake calls, so multiple calls within a short window are collapsed into a single run. Returns immediately — the actual heartbeat execution is fire-and-forget.
+Submits a routine wake to one closed target. `agent` targets the calling agent's lane; `monitoring` targets the monitoring lane. This method admits or coalesces a heartbeat occurrence and does not inspect or run cron jobs.
+
+The closed vocabulary is `target`, `agent`, `monitoring`, `accepted`, `coalesced`, `disposition`, `new_occurrence`, `occurrence_upgraded`, `correlationId`, `lane`, and `retainedReason`.
 
 <Note>
 **Not the per-job wake-gate.** `scheduler.wake` nudges the whole heartbeat coalescer to run now — it is a scheduler-wide trigger. A [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) is the opposite: a per-job pre-run script that decides whether a *single* cron fire invokes the model. They share the word "wake" and nothing else.
@@ -4666,17 +4671,17 @@ Signal the wake coalescer to fire immediately rather than waiting for the next s
 | Property | Value |
 |----------|-------|
 | **Scope** | `rpc` |
-| **Parameters** | `{ source?: string }` |
-| **Returns** | `{ woke: true, source: string }` |
+| **Parameters** | `{ target: "agent" \| "monitoring" }` |
+| **Returns** | `{ status: "accepted", disposition: "new_occurrence" \| "occurrence_upgraded", correlationId, lane: "normal" \| "task", retainedReason }` or `{ status: "coalesced", correlationId, lane: "normal" \| "task", retainedReason }` |
 
-`source` is a free-form label for tracing (e.g. `"webhook"`, `"agent"`). Defaults to `"agent"` when omitted.
+`retainedReason` is `interval`, `manual`, `hook`, `wake`, `exec-event`, `cron`, or `task`. `accepted` distinguishes a newly admitted occurrence from an upgrade of one already admitted; `coalesced` reports the retained occurrence without creating another.
 
 <CodeGroup>
 ```json Request
 {
   "jsonrpc": "2.0",
   "method": "scheduler.wake",
-  "params": { "source": "webhook" },
+  "params": { "target": "monitoring" },
   "id": 1
 }
 ```
@@ -4684,8 +4689,11 @@ Signal the wake coalescer to fire immediately rather than waiting for the next s
 {
   "jsonrpc": "2.0",
   "result": {
-    "woke": true,
-    "source": "webhook"
+    "status": "accepted",
+    "disposition": "new_occurrence",
+    "correlationId": "wake-monitoring-a",
+    "lane": "normal",
+    "retainedReason": "wake"
   },
   "id": 1
 }

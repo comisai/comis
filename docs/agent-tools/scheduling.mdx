@@ -186,7 +186,7 @@ Only `agent_turn` jobs have a session strategy or continuation mode:
   </Accordion>
 
   <Accordion title="runs -- View immutable run history">
-    Reads immutable start/terminal groups for one job from the execution ledger. Each run projects `executionId`, `jobId`, `agentId`, `scheduledForMs`, `trigger`, `workKind`, `rootRunId`, `startedAtMs`, optional `terminalAtMs` and `durationMs`, `status`, `deliveryStatus`, and optional `errorKind`.
+    Reads immutable start/terminal groups for one job from the execution ledger. Each run projects `executionId`, `jobId`, `agentId`, `scheduledForMs`, `trigger`, `workKind`, `rootRunId`, `startedAtMs`, optional `terminalAtMs` and `durationMs`, `status`, `deliveryStatus`, optional `errorKind`, and optional bounded content-free `counters` for terminal internal actions.
 
     Run `status` is `started`, `dispatched`, `completed`, `failed`, `aborted`, `skipped`, or `unknown`. Delivery `deliveryStatus` is `not_requested`, `suppressed`, `pre_send_failed`, `accepted`, `partial`, `rejected`, or `unknown`. These are separate: a completed model turn does not imply that platform delivery was accepted.
 
