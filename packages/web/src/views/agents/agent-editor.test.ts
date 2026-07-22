@@ -458,12 +458,13 @@ describe("IcAgentEditor", () => {
                   heartbeat: {
                     enabled: true,
                     intervalMs: 900000,
-                    model: "gpt-4o",
                     prompt: "Check system health",
                     target: {
                       channelType: "telegram",
-                      channelId: "chan-123",
-                      chatId: "chat-456",
+                      channelInstanceId: "bot-main",
+                      conversationId: "chat-456",
+                      threadId: "topic-3",
+                      conversationKind: "shared",
                     },
                   },
                 },
@@ -483,11 +484,12 @@ describe("IcAgentEditor", () => {
 
       expect(priv(el)._form["heartbeat.enabled"]).toBe(true);
       expect(priv(el)._form["heartbeat.intervalMs"]).toBe(900000);
-      expect(priv(el)._form["heartbeat.model"]).toBe("gpt-4o");
       expect(priv(el)._form["heartbeat.prompt"]).toBe("Check system health");
       expect(priv(el)._form["heartbeat.target.channelType"]).toBe("telegram");
-      expect(priv(el)._form["heartbeat.target.channelId"]).toBe("chan-123");
-      expect(priv(el)._form["heartbeat.target.chatId"]).toBe("chat-456");
+      expect(priv(el)._form["heartbeat.target.channelInstanceId"]).toBe("bot-main");
+      expect(priv(el)._form["heartbeat.target.conversationId"]).toBe("chat-456");
+      expect(priv(el)._form["heartbeat.target.threadId"]).toBe("topic-3");
+      expect(priv(el)._form["heartbeat.target.conversationKind"]).toBe("shared");
     });
 
     it("builds correct scheduler.heartbeat payload from form", async () => {
@@ -497,10 +499,11 @@ describe("IcAgentEditor", () => {
 
       priv(el)._updateField("heartbeat.enabled", true);
       priv(el)._updateField("heartbeat.intervalMs", 600000);
-      priv(el)._updateField("heartbeat.model", "gpt-4o");
       priv(el)._updateField("heartbeat.target.channelType", "discord");
-      priv(el)._updateField("heartbeat.target.channelId", "ch-1");
-      priv(el)._updateField("heartbeat.target.chatId", "chat-1");
+      priv(el)._updateField("heartbeat.target.channelInstanceId", "discord-main");
+      priv(el)._updateField("heartbeat.target.conversationId", "chat-1");
+      priv(el)._updateField("heartbeat.target.threadId", "thread-1");
+      priv(el)._updateField("heartbeat.target.conversationKind", "shared");
 
       const payload = priv(el)._buildPayload();
       const sched = payload.scheduler as Record<string, unknown>;
@@ -508,11 +511,12 @@ describe("IcAgentEditor", () => {
       const hb = sched.heartbeat as Record<string, unknown>;
       expect(hb.enabled).toBe(true);
       expect(hb.intervalMs).toBe(600000);
-      expect(hb.model).toBe("gpt-4o");
       const target = hb.target as Record<string, unknown>;
       expect(target.channelType).toBe("discord");
-      expect(target.channelId).toBe("ch-1");
-      expect(target.chatId).toBe("chat-1");
+      expect(target.channelInstanceId).toBe("discord-main");
+      expect(target.conversationId).toBe("chat-1");
+      expect(target.threadId).toBe("thread-1");
+      expect(target.conversationKind).toBe("shared");
     });
 
     it("omits scheduler.heartbeat from payload when all fields empty", async () => {

@@ -59,13 +59,15 @@ interface SchedulerCronJob {
 }
 
 interface ExecutionRecord {
+  executionId: string;
   jobId: string;
   jobName: string;
   agentId: string;
   timestamp: number;
-  success: boolean | "pending";
+  status: "started" | "dispatched" | "completed" | "failed" | "aborted" | "skipped" | "unknown";
+  deliveryStatus?: "not_requested" | "suppressed" | "pre_send_failed" | "accepted" | "partial" | "rejected" | "unknown";
   durationMs?: number;
-  error?: string;
+  errorKind?: string;
 }
 
 interface HeartbeatRecord {
@@ -750,41 +752,56 @@ export class IcSchedulerView extends LitElement {
   private _initSse(): void {
     if (!this.eventDispatcher || this._sse) return;
     this._sse = new SseController(this, this.eventDispatcher, {
-      "scheduler:job_started": (data) => {
-        const d = data as { jobId: string; jobName?: string; agentId?: string; timestamp?: number };
+      "scheduler:cron_execution_started": (data) => {
+        const d = data as { executionId: string; jobId: string; agentId: string; startedAtMs: number };
+        const jobName = this._jobs.find((job) => job.id === d.jobId)?.name ?? d.jobId;
         const record: ExecutionRecord = {
+          executionId: d.executionId,
           jobId: d.jobId,
-          jobName: d.jobName ?? d.jobId,
-          agentId: d.agentId ?? "",
-          timestamp: d.timestamp ?? systemNowMs(),
-          success: "pending",
+          jobName,
+          agentId: d.agentId,
+          timestamp: d.startedAtMs,
+          status: "started",
         };
         this._executions = [record, ...this._executions].slice(0, 50);
       },
-      "scheduler:job_completed": (data) => {
-        const d = data as { jobId: string; jobName?: string; agentId?: string; timestamp?: number; success?: boolean; durationMs?: number; error?: string };
+      "scheduler:cron_execution_terminal": (data) => {
+        const d = data as {
+          executionId: string;
+          jobId: string;
+          agentId: string;
+          terminalAtMs: number;
+          executionStatus: Exclude<ExecutionRecord["status"], "started">;
+          deliveryStatus: NonNullable<ExecutionRecord["deliveryStatus"]>;
+          durationMs: number;
+          errorKind?: string;
+        };
         const pendingIdx = this._executions.findIndex(
-          (r) => r.jobId === d.jobId && r.success === "pending",
+          (record) => record.executionId === d.executionId && record.status === "started",
         );
         if (pendingIdx >= 0) {
           const updated = [...this._executions];
           updated[pendingIdx] = {
             ...updated[pendingIdx],
-            success: d.success ?? true,
+            status: d.executionStatus,
+            deliveryStatus: d.deliveryStatus,
             durationMs: d.durationMs,
-            error: d.error,
-            timestamp: d.timestamp ?? updated[pendingIdx].timestamp,
+            errorKind: d.errorKind,
+            timestamp: d.terminalAtMs,
           };
           this._executions = updated;
         } else {
+          const jobName = this._jobs.find((job) => job.id === d.jobId)?.name ?? d.jobId;
           const record: ExecutionRecord = {
+            executionId: d.executionId,
             jobId: d.jobId,
-            jobName: d.jobName ?? d.jobId,
-            agentId: d.agentId ?? "",
-            timestamp: d.timestamp ?? systemNowMs(),
-            success: d.success ?? true,
+            jobName,
+            agentId: d.agentId,
+            timestamp: d.terminalAtMs,
+            status: d.executionStatus,
+            deliveryStatus: d.deliveryStatus,
             durationMs: d.durationMs,
-            error: d.error,
+            errorKind: d.errorKind,
           };
           this._executions = [record, ...this._executions].slice(0, 50);
         }
@@ -1290,17 +1307,17 @@ export class IcSchedulerView extends LitElement {
                     <div class="execution-entry">
                       <span class="exec-timestamp">${formatTimestamp(exec.timestamp)}</span>
                       <span class="exec-job">${exec.jobName || exec.jobId}</span>
-                      <span class=${exec.success === "pending"
-                        ? "exec-result--pending"
-                        : exec.success
-                          ? "exec-result--success"
-                          : "exec-result--fail"}>${exec.success === "pending" ? "..." : exec.success ? "OK" : "FAIL"}</span>
+                       <span class=${exec.status === "started"
+                         ? "exec-result--pending"
+                         : exec.status === "completed" || exec.status === "dispatched"
+                           ? "exec-result--success"
+                           : "exec-result--fail"}>${exec.status}${exec.deliveryStatus && exec.deliveryStatus !== "not_requested" ? ` / ${exec.deliveryStatus}` : ""}</span>
                       ${exec.durationMs != null
                         ? html`<span class="exec-duration">(${formatMs(exec.durationMs)})</span>`
                         : nothing}
-                      ${exec.error
-                        ? html`<span class="exec-error">${exec.error}</span>`
-                        : nothing}
+                       ${exec.errorKind
+                         ? html`<span class="exec-error">${exec.errorKind}</span>`
+                         : nothing}
                     </div>
                   `,
                 )}

@@ -274,7 +274,7 @@ describe("IcActivityFeed", () => {
       const values = chips.options.map((o: { value: string }) => o.value);
       expect(values).toContain("message:received");
       expect(values).toContain("system:error");
-      expect(values).toContain("scheduler:job_completed");
+      expect(values).toContain("scheduler:cron_execution_terminal");
     });
 
     it("setting active filters hides non-matching entries", async () => {

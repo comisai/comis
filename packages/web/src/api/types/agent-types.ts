@@ -73,19 +73,17 @@ export interface AgentDetail extends AgentInfo {
     readonly showOk?: boolean;
     readonly showAlerts?: boolean;
     readonly target?: {
-      readonly channelType?: string;
-      readonly channelId?: string;
-      readonly chatId?: string;
-      readonly isDm?: boolean;
+      readonly channelType: string;
+      readonly channelInstanceId: string;
+      readonly conversationId: string;
+      readonly threadId?: string;
+      readonly conversationKind: "direct" | "shared";
     };
     readonly prompt?: string;
-    readonly model?: string;
-    readonly session?: string;
     readonly allowDm?: boolean;
     readonly lightContext?: boolean;
     readonly ackMaxChars?: number;
     readonly responsePrefix?: string;
-    readonly skipHeartbeatOnlyDelivery?: boolean;
     readonly alertThreshold?: number;
     readonly alertCooldownMs?: number;
     readonly staleMs?: number;

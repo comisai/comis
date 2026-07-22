@@ -111,7 +111,7 @@ function priv(el: IcSchedulerView) {
     _loading: boolean;
     _error: string;
     _activeTab: string;
-    _executions: Array<{ jobId: string; success: boolean | "pending"; durationMs?: number }>;
+    _executions: Array<{ executionId: string; jobId: string; status: string; deliveryStatus?: string; durationMs?: number }>;
     _heartbeats: Array<{ checksRun: number; alertsRaised: number; timestamp: number }>;
     _heartbeatAlerts: Array<{ agentId: string; classification: string; reason: string; consecutiveErrors: number; backoffMs: number; timestamp: number }>;
     _heartbeatDeliveries: Array<{ agentId: string; channelType: string; outcome: string; level: string; durationMs: number; timestamp: number }>;
@@ -299,58 +299,60 @@ describe("IcSchedulerView", () => {
     expect(emptyState).toBeTruthy();
   });
 
-  it("14 - SSE job_completed event adds execution record", async () => {
+  it("14 - SSE cron terminal event adds an execution record", async () => {
     const rpc = createSchedulerMockRpcClient();
     const mockDispatcher = createMockEventDispatcher();
     const el = await createElement({ rpcClient: rpc, eventDispatcher: mockDispatcher });
     await flush(el);
 
-    mockDispatcher._fire("scheduler:job_completed", {
+    mockDispatcher._fire("scheduler:cron_execution_terminal", {
+      executionId: "execution-daily-report",
       jobId: "daily-report",
-      jobName: "Daily Report",
       agentId: "default",
+      terminalAtMs: Date.now(),
+      executionStatus: "completed",
+      deliveryStatus: "accepted",
       durationMs: 1200,
-      success: true,
-      timestamp: Date.now(),
     });
     await (el as any).updateComplete;
 
     expect(priv(el)._executions).toHaveLength(1);
     expect(priv(el)._executions[0].jobId).toBe("daily-report");
-    expect(priv(el)._executions[0].success).toBe(true);
+    expect(priv(el)._executions[0].status).toBe("completed");
+    expect(priv(el)._executions[0].deliveryStatus).toBe("accepted");
     expect(priv(el)._executions[0].durationMs).toBe(1200);
   });
 
-  it("15 - SSE job_started then job_completed updates pending record", async () => {
+  it("15 - SSE cron start then terminal updates the same execution", async () => {
     const rpc = createSchedulerMockRpcClient();
     const mockDispatcher = createMockEventDispatcher();
     const el = await createElement({ rpcClient: rpc, eventDispatcher: mockDispatcher });
     await flush(el);
 
-    // Dispatch job_started
-    mockDispatcher._fire("scheduler:job_started", {
+    mockDispatcher._fire("scheduler:cron_execution_started", {
+      executionId: "execution-health-check",
       jobId: "health-check",
-      jobName: "Health Check",
       agentId: "default",
-      timestamp: Date.now(),
+      startedAtMs: Date.now(),
     });
     await (el as any).updateComplete;
 
     expect(priv(el)._executions).toHaveLength(1);
-    expect(priv(el)._executions[0].success).toBe("pending");
+    expect(priv(el)._executions[0].status).toBe("started");
 
-    // Dispatch job_completed for same job
-    mockDispatcher._fire("scheduler:job_completed", {
+    mockDispatcher._fire("scheduler:cron_execution_terminal", {
+      executionId: "execution-health-check",
       jobId: "health-check",
-      jobName: "Health Check",
-      success: true,
+      agentId: "default",
+      terminalAtMs: Date.now(),
+      executionStatus: "completed",
+      deliveryStatus: "not_requested",
       durationMs: 500,
-      timestamp: Date.now(),
     });
     await (el as any).updateComplete;
 
     expect(priv(el)._executions).toHaveLength(1);
-    expect(priv(el)._executions[0].success).toBe(true);
+    expect(priv(el)._executions[0].status).toBe("completed");
     expect(priv(el)._executions[0].durationMs).toBe(500);
   });
 
@@ -583,6 +585,103 @@ describe("IcSchedulerView", () => {
     expect(addCall![1]).not.toHaveProperty("wakeGate");
   });
 
+  it("projects create-editor data into the strict nested cron add contract", async () => {
+    const rpc = createSchedulerMockRpcClient();
+    const el = await createElement({ rpcClient: rpc });
+    await flush(el);
+    (el.shadowRoot?.querySelector(".btn-primary") as HTMLElement).click();
+    await (el as any).updateComplete;
+
+    (el.shadowRoot?.querySelector("ic-cron-editor") as HTMLElement).dispatchEvent(
+      new CustomEvent("save", {
+        detail: {
+          id: "new-job",
+          name: "New Job",
+          agentId: "default",
+          schedule: { kind: "cron", expr: "0 12 * * *", tz: "UTC" },
+          payload: { kind: "agent_turn", message: "Do something", model: "provider:model-a" },
+          paused: false,
+          sessionPolicy: { strategy: "fresh" },
+          continuationMode: "none",
+        },
+      }),
+    );
+    await flush(el);
+
+    const addCall = (rpc.call as ReturnType<typeof vi.fn>).mock.calls.find(
+      (call: unknown[]) => call[0] === "cron.add",
+    );
+    expect(addCall?.[1]).toEqual({
+      name: "New Job",
+      agentId: "default",
+      schedule: { kind: "cron", expr: "0 12 * * *", tz: "UTC" },
+      payload: { kind: "agent_turn", message: "Do something", model: "provider:model-a" },
+      sessionPolicy: { strategy: "fresh" },
+      continuationMode: "none",
+    });
+  });
+
+  it("projects edit-editor data into strict pause and nullable wake-gate fields", async () => {
+    const rpc = createSchedulerMockRpcClient();
+    const el = await createElement({ rpcClient: rpc });
+    await flush(el);
+    (el.shadowRoot?.querySelector(".grid-row") as HTMLElement).click();
+    await (el as any).updateComplete;
+
+    (el.shadowRoot?.querySelector("ic-cron-editor") as HTMLElement).dispatchEvent(
+      new CustomEvent("save", {
+        detail: {
+          id: "daily-report",
+          name: "Daily Report",
+          agentId: "default",
+          schedule: { kind: "cron", expr: "0 9 * * *", tz: "America/New_York" },
+          payload: { kind: "agent_turn", message: "Generate daily report" },
+          paused: true,
+          sessionPolicy: { strategy: "rolling", maxHistoryTurns: 3 },
+          continuationMode: "none",
+          wakeGate: null,
+        },
+      }),
+    );
+    await flush(el);
+
+    const updateCall = (rpc.call as ReturnType<typeof vi.fn>).mock.calls.find(
+      (call: unknown[]) => call[0] === "cron.update",
+    );
+    expect(updateCall?.[1]).toEqual({
+      jobId: "daily-report",
+      name: "Daily Report",
+      schedule: { kind: "cron", expr: "0 9 * * *", tz: "America/New_York" },
+      payload: { kind: "agent_turn", message: "Generate daily report" },
+      sessionPolicy: { strategy: "rolling", maxHistoryTurns: 3 },
+      continuationMode: "none",
+      wakeGate: null,
+      paused: true,
+    });
+  });
+
+  it("renders config-owned internal actions without edit or delete controls", async () => {
+    const rpc = createSchedulerMockRpcClient([{
+      id: "reflect-default",
+      name: "Reflection",
+      agentId: "default",
+      source: "built_in",
+      schedule: { kind: "cron", expr: "0 */3 * * *", tz: "UTC" },
+      lifecycle: { status: "scheduled", nextRunAtMs: Date.now() + 60_000, consecutiveDependencyErrors: 0 },
+      payload: { kind: "internal_action", action: "reflection" },
+    }]);
+    const el = await createElement({ rpcClient: rpc });
+    await flush(el);
+
+    const row = el.shadowRoot?.querySelector(".grid-row") as HTMLElement;
+    expect(row.querySelector(".btn-run")).toBeTruthy();
+    expect(row.querySelector(".btn-edit")).toBeFalsy();
+    expect(row.querySelector(".btn-delete")).toBeFalsy();
+    row.click();
+    await (el as any).updateComplete;
+    expect(priv(el)._editorOpen).toBe(false);
+  });
+
   it("21 - heartbeat tab shows global status when enabled", async () => {
     const rpc = createSchedulerMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
@@ -613,10 +712,14 @@ describe("IcSchedulerView", () => {
 
     // After removal, dispatching events through the mock dispatcher should not affect state
     const execBefore = priv(el)._executions.length;
-    mockDispatcher._fire("scheduler:job_completed", {
+    mockDispatcher._fire("scheduler:cron_execution_terminal", {
+      executionId: "execution-test",
       jobId: "test",
-      success: true,
-      timestamp: Date.now(),
+      agentId: "default",
+      terminalAtMs: Date.now(),
+      executionStatus: "completed",
+      deliveryStatus: "not_requested",
+      durationMs: 1,
     });
     expect(priv(el)._executions.length).toBe(execBefore);
   });

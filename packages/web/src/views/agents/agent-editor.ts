@@ -63,7 +63,10 @@ function createDefaultForm(): Record<string, unknown> {
     "heartbeat.enabled": undefined,
     "heartbeat.intervalMs": undefined,
     "heartbeat.target.channelType": "",
-    "heartbeat.target.channelId": "",
+    "heartbeat.target.channelInstanceId": "",
+    "heartbeat.target.conversationId": "",
+    "heartbeat.target.threadId": "",
+    "heartbeat.target.conversationKind": "",
     "heartbeat.prompt": "",
     "heartbeat.showOk": undefined,
     "heartbeat.showAlerts": undefined,
@@ -99,15 +102,10 @@ function createDefaultForm(): Record<string, unknown> {
     // Broadcast
     "broadcast.groups": "[]",
     // Additional heartbeat fields
-    "heartbeat.target.chatId": "",
-    "heartbeat.target.isDm": undefined,
-    "heartbeat.model": "",
-    "heartbeat.session": "",
     "heartbeat.allowDm": undefined,
     "heartbeat.lightContext": undefined,
     "heartbeat.ackMaxChars": undefined,
     "heartbeat.responsePrefix": "",
-    "heartbeat.skipHeartbeatOnlyDelivery": undefined,
     "heartbeat.alertThreshold": undefined,
     "heartbeat.alertCooldownMs": undefined,
     "heartbeat.staleMs": undefined,
@@ -705,19 +703,17 @@ export class IcAgentEditor extends LitElement {
           showOk: hb.showOk as boolean | undefined,
           showAlerts: hb.showAlerts as boolean | undefined,
           target: hbTarget ? {
-            channelType: hbTarget.channelType as string | undefined,
-            channelId: hbTarget.channelId as string | undefined,
-            chatId: hbTarget.chatId as string | undefined,
-            isDm: hbTarget.isDm as boolean | undefined,
+            channelType: hbTarget.channelType as string,
+            channelInstanceId: hbTarget.channelInstanceId as string,
+            conversationId: hbTarget.conversationId as string,
+            threadId: hbTarget.threadId as string | undefined,
+            conversationKind: hbTarget.conversationKind as "direct" | "shared",
           } : undefined,
           prompt: hb.prompt as string | undefined,
-          model: hb.model as string | undefined,
-          session: hb.session as string | undefined,
           allowDm: hb.allowDm as boolean | undefined,
           lightContext: hb.lightContext as boolean | undefined,
           ackMaxChars: hb.ackMaxChars as number | undefined,
           responsePrefix: hb.responsePrefix as string | undefined,
-          skipHeartbeatOnlyDelivery: hb.skipHeartbeatOnlyDelivery as boolean | undefined,
           alertThreshold: hb.alertThreshold as number | undefined,
           alertCooldownMs: hb.alertCooldownMs as number | undefined,
           staleMs: hb.staleMs as number | undefined,
@@ -858,18 +854,16 @@ export class IcAgentEditor extends LitElement {
     form["heartbeat.showAlerts"] = hb?.showAlerts;
     if (hb?.target) {
       form["heartbeat.target.channelType"] = hb.target.channelType ?? "";
-      form["heartbeat.target.channelId"] = hb.target.channelId ?? "";
-      form["heartbeat.target.chatId"] = hb.target.chatId ?? "";
-      form["heartbeat.target.isDm"] = hb.target.isDm;
+      form["heartbeat.target.channelInstanceId"] = hb.target.channelInstanceId ?? "";
+      form["heartbeat.target.conversationId"] = hb.target.conversationId ?? "";
+      form["heartbeat.target.threadId"] = hb.target.threadId ?? "";
+      form["heartbeat.target.conversationKind"] = hb.target.conversationKind;
     }
     form["heartbeat.prompt"] = hb?.prompt ?? "";
-    form["heartbeat.model"] = hb?.model ?? "";
-    form["heartbeat.session"] = hb?.session ?? "";
     form["heartbeat.allowDm"] = hb?.allowDm;
     form["heartbeat.lightContext"] = hb?.lightContext;
     form["heartbeat.ackMaxChars"] = hb?.ackMaxChars;
     form["heartbeat.responsePrefix"] = hb?.responsePrefix ?? "";
-    form["heartbeat.skipHeartbeatOnlyDelivery"] = hb?.skipHeartbeatOnlyDelivery;
     form["heartbeat.alertThreshold"] = hb?.alertThreshold;
     form["heartbeat.alertCooldownMs"] = hb?.alertCooldownMs;
     form["heartbeat.staleMs"] = hb?.staleMs;
@@ -1079,19 +1073,17 @@ export class IcAgentEditor extends LitElement {
 
     const hbTarget: Record<string, unknown> = {};
     if (f["heartbeat.target.channelType"]) hbTarget.channelType = f["heartbeat.target.channelType"];
-    if (f["heartbeat.target.channelId"]) hbTarget.channelId = f["heartbeat.target.channelId"];
-    if (f["heartbeat.target.chatId"]) hbTarget.chatId = f["heartbeat.target.chatId"];
-    if (f["heartbeat.target.isDm"] !== undefined && f["heartbeat.target.isDm"] !== "") hbTarget.isDm = Boolean(f["heartbeat.target.isDm"]);
+    if (f["heartbeat.target.channelInstanceId"]) hbTarget.channelInstanceId = f["heartbeat.target.channelInstanceId"];
+    if (f["heartbeat.target.conversationId"]) hbTarget.conversationId = f["heartbeat.target.conversationId"];
+    if (f["heartbeat.target.threadId"]) hbTarget.threadId = f["heartbeat.target.threadId"];
+    if (f["heartbeat.target.conversationKind"]) hbTarget.conversationKind = f["heartbeat.target.conversationKind"];
     if (Object.keys(hbTarget).length > 0) heartbeat.target = hbTarget;
 
     if (f["heartbeat.prompt"]) heartbeat.prompt = f["heartbeat.prompt"];
-    if (f["heartbeat.model"]) heartbeat.model = f["heartbeat.model"];
-    if (f["heartbeat.session"]) heartbeat.session = f["heartbeat.session"];
     if (f["heartbeat.allowDm"] !== undefined && f["heartbeat.allowDm"] !== "") heartbeat.allowDm = Boolean(f["heartbeat.allowDm"]);
     if (f["heartbeat.lightContext"] !== undefined && f["heartbeat.lightContext"] !== "") heartbeat.lightContext = Boolean(f["heartbeat.lightContext"]);
     if (f["heartbeat.ackMaxChars"] !== undefined && f["heartbeat.ackMaxChars"] !== "") heartbeat.ackMaxChars = Number(f["heartbeat.ackMaxChars"]);
     if (f["heartbeat.responsePrefix"]) heartbeat.responsePrefix = f["heartbeat.responsePrefix"];
-    if (f["heartbeat.skipHeartbeatOnlyDelivery"] !== undefined && f["heartbeat.skipHeartbeatOnlyDelivery"] !== "") heartbeat.skipHeartbeatOnlyDelivery = Boolean(f["heartbeat.skipHeartbeatOnlyDelivery"]);
     if (f["heartbeat.alertThreshold"] !== undefined && f["heartbeat.alertThreshold"] !== "") heartbeat.alertThreshold = Number(f["heartbeat.alertThreshold"]);
     if (f["heartbeat.alertCooldownMs"] !== undefined && f["heartbeat.alertCooldownMs"] !== "") heartbeat.alertCooldownMs = Number(f["heartbeat.alertCooldownMs"]);
     if (f["heartbeat.staleMs"] !== undefined && f["heartbeat.staleMs"] !== "") heartbeat.staleMs = Number(f["heartbeat.staleMs"]);

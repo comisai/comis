@@ -18,8 +18,8 @@ const EVENT_CONFIG: Record<string, { label: string; color: string }> = {
   "skill:loaded": { label: "SKILL", color: "#10b981" },
   "skill:executed": { label: "SKILL RUN", color: "#10b981" },
   "skill:rejected": { label: "REJECTED", color: "#ef4444" },
-  "scheduler:job_started": { label: "JOB START", color: "#8b5cf6" },
-  "scheduler:job_completed": { label: "JOB DONE", color: "#22c55e" },
+  "scheduler:cron_execution_started": { label: "CRON START", color: "#8b5cf6" },
+  "scheduler:cron_execution_terminal": { label: "CRON DONE", color: "#22c55e" },
   "scheduler:heartbeat_check": { label: "HEARTBEAT", color: "#06b6d4" },
   "system:error": { label: "ERROR", color: "#ef4444" },
 };
@@ -61,8 +61,8 @@ export function summarizePayload(event: string, payload: Record<string, unknown>
     return (payload["skillName"] ?? payload["name"] ?? "unknown skill") as string;
   }
 
-  if (event === "scheduler:job_completed" || event === "scheduler:job_started") {
-    return (payload["taskId"] ?? payload["jobId"] ?? "") as string;
+  if (event === "scheduler:cron_execution_terminal" || event === "scheduler:cron_execution_started") {
+    return (payload["executionId"] ?? payload["jobId"] ?? "") as string;
   }
 
   if (event === "audit:event") {
