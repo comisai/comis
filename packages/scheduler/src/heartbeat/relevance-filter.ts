@@ -72,8 +72,8 @@ export function shouldNotify(opts: ShouldNotifyOptions): boolean {
  * - Everything else -> "alert"
  */
 export function classifyHeartbeatResult(text: string): NotificationLevel {
-  if (text.includes(HEARTBEAT_OK_TOKEN)) return "ok";
   const upper = text.toUpperCase();
   if (upper.includes("CRITICAL") || upper.includes("EMERGENCY")) return "critical";
+  if (text.includes(HEARTBEAT_OK_TOKEN)) return "ok";
   return "alert";
 }

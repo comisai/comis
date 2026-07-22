@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import type { QuietHoursConfig } from "./quiet-hours.js";
-import { parseTimeToMinutes, getCurrentMinutesInTimezone, isInQuietHours } from "./quiet-hours.js";
+import {
+  parseTimeToMinutes,
+  getCurrentMinutesInTimezone,
+  isInQuietHours,
+  resolveQuietHoursEndMs,
+} from "./quiet-hours.js";
 
 describe("parseTimeToMinutes", () => {
   it("parses 22:00 -> 1320", () => {
@@ -142,5 +147,46 @@ describe("isInQuietHours", () => {
 
   it("same-day: end time (17:00) is exclusive", () => {
     expect(isInQuietHours(sameDayConfig, utcTimestamp(17, 0))).toBe(false);
+  });
+});
+
+describe("resolveQuietHoursEndMs", () => {
+  it("returns null outside quiet hours and the exact UTC end while active", () => {
+    const config: QuietHoursConfig = {
+      enabled: true,
+      start: "22:00",
+      end: "07:00",
+      timezone: "UTC",
+    };
+    expect(resolveQuietHoursEndMs(config, Date.UTC(2024, 0, 15, 12, 0))).toEqual({ ok: true, value: null });
+    expect(resolveQuietHoursEndMs(config, Date.UTC(2024, 0, 15, 23, 15, 30))).toEqual({
+      ok: true,
+      value: Date.UTC(2024, 0, 16, 7, 0),
+    });
+  });
+
+  it("finds the exact end across a daylight-saving clock change", () => {
+    const config: QuietHoursConfig = {
+      enabled: true,
+      start: "00:00",
+      end: "04:00",
+      timezone: "America/New_York",
+    };
+    expect(resolveQuietHoursEndMs(config, Date.UTC(2024, 2, 10, 6, 30))).toEqual({
+      ok: true,
+      value: Date.UTC(2024, 2, 10, 8, 0),
+    });
+  });
+
+  it("returns a typed configuration error for an invalid timezone", () => {
+    expect(resolveQuietHoursEndMs({
+      enabled: true,
+      start: "22:00",
+      end: "07:00",
+      timezone: "Invalid/Zone",
+    }, Date.UTC(2024, 0, 15, 23, 0))).toEqual({
+      ok: false,
+      error: { code: "invalid_config", errorKind: "config" },
+    });
   });
 });

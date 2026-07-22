@@ -20,10 +20,11 @@ import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
 // Public types
 // ---------------------------------------------------------------------------
 
-/** Discriminated union result of heartbeat response classification. */
+/** Closed visibility classification after response-prefix and markup normalization. */
 export type HeartbeatResponseOutcome =
-  | { kind: "heartbeat_ok"; reason: "token" | "ack_under_threshold" | "empty_reply"; cleanedText: string }
-  | { kind: "deliver"; text: string; hasMedia: boolean };
+  | { kind: "empty" }
+  | { kind: "acknowledged_ok"; reason: "heartbeat_token" | "ack_under_threshold"; text: string }
+  | { kind: "alert"; level: "alert" | "critical"; text: string; hasMedia: boolean };
 
 /** Input to classifyHeartbeatResponse. */
 export interface ClassifyHeartbeatInput {
@@ -122,29 +123,44 @@ export function stripResponsePrefix(text: string, prefix: string | undefined): s
 export function classifyHeartbeatResponse(input: ClassifyHeartbeatInput): HeartbeatResponseOutcome {
   const { text, hasMedia, ackMaxChars } = input;
 
-  // Media bypass -- always deliver
-  if (hasMedia) {
-    return { kind: "deliver", text: text?.trim() ?? "", hasMedia: true };
-  }
-
-  // Empty/null reply treated as HEARTBEAT_OK
+  // Empty model text never manufactures a user-visible acknowledgement.
   if (!text || !text.trim()) {
-    return { kind: "heartbeat_ok", reason: "empty_reply", cleanedText: "" };
+    return hasMedia
+      ? { kind: "alert", level: "alert", text: "", hasMedia: true }
+      : { kind: "empty" };
   }
 
-  const { stripped, hadToken } = stripHeartbeatToken(text);
+  const normalized = stripMarkup(text);
+  if (hasMedia) {
+    return {
+      kind: "alert",
+      level: isCritical(normalized) ? "critical" : "alert",
+      text: normalized,
+      hasMedia: true,
+    };
+  }
+
+  const { stripped, hadToken } = stripHeartbeatToken(normalized);
+  if (isCritical(stripped)) {
+    return { kind: "alert", level: "critical", text: stripped, hasMedia: false };
+  }
 
   if (hadToken) {
-    // Token found -- check if remaining text is under threshold
-    if (stripped.length <= ackMaxChars) {
-      return { kind: "heartbeat_ok", reason: "token", cleanedText: stripped };
+    if (stripped.length === 0) {
+      return { kind: "acknowledged_ok", reason: "heartbeat_token", text: HEARTBEAT_OK_TOKEN };
     }
-    // Token found but substantial remaining text -- deliver the stripped text
-    return { kind: "deliver", text: stripped, hasMedia: false };
+    if (stripped.length <= ackMaxChars) {
+      return { kind: "acknowledged_ok", reason: "ack_under_threshold", text: stripped };
+    }
+    return { kind: "alert", level: "alert", text: stripped, hasMedia: false };
   }
 
-  // No token, no media, non-empty -- deliver as-is
-  return { kind: "deliver", text: text.trim(), hasMedia: false };
+  return {
+    kind: "alert",
+    level: isCritical(normalized) ? "critical" : "alert",
+    text: normalized,
+    hasMedia: false,
+  };
 }
 
 /**
@@ -165,4 +181,9 @@ export function processHeartbeatResponse(input: ProcessHeartbeatInput): Heartbea
   const prefixStripped = stripResponsePrefix(responseText, responsePrefix);
 
   return classifyHeartbeatResponse({ text: prefixStripped, hasMedia, ackMaxChars });
+}
+
+function isCritical(text: string): boolean {
+  const upper = text.toUpperCase();
+  return upper.includes("CRITICAL") || upper.includes("EMERGENCY");
 }

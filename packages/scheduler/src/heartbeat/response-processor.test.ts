@@ -1,314 +1,122 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect } from "vitest";
+import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
+import { describe, expect, it } from "vitest";
 import {
-  stripMarkup,
-  stripHeartbeatToken,
-  stripResponsePrefix,
   classifyHeartbeatResponse,
   processHeartbeatResponse,
+  stripHeartbeatToken,
+  stripMarkup,
+  stripResponsePrefix,
 } from "./response-processor.js";
-import type { HeartbeatResponseOutcome } from "./response-processor.js";
 
-// ---------------------------------------------------------------------------
-// stripMarkup
-// ---------------------------------------------------------------------------
-
-describe("stripMarkup", () => {
-  it("strips HTML tags from response text before token detection", () => {
-    expect(stripMarkup("<p>HEARTBEAT_OK</p>")).toBe("HEARTBEAT_OK");
+describe("heartbeat response normalization", () => {
+  it("exposes a wrapped heartbeat token through bounded markup removal", () => {
+    expect(stripMarkup("<p>**HEARTBEAT_OK**</p>")).toBe("HEARTBEAT_OK");
+    expect(stripMarkup("  plain text  ")).toBe("plain text");
   });
 
-  it("strips nested HTML tags", () => {
-    expect(stripMarkup("<div><span>hello</span></div>")).toBe("hello");
-  });
-
-  it("strips bold markdown wrappers", () => {
-    expect(stripMarkup("**HEARTBEAT_OK**")).toBe("HEARTBEAT_OK");
-  });
-
-  it("strips italic markdown wrappers", () => {
-    expect(stripMarkup("*HEARTBEAT_OK*")).toBe("HEARTBEAT_OK");
-  });
-
-  it("strips backtick markdown wrappers", () => {
-    expect(stripMarkup("`HEARTBEAT_OK`")).toBe("HEARTBEAT_OK");
-  });
-
-  it("strips strikethrough markdown wrappers", () => {
-    expect(stripMarkup("~~HEARTBEAT_OK~~")).toBe("HEARTBEAT_OK");
-  });
-
-  it("strips underscore italic wrappers", () => {
-    expect(stripMarkup("_HEARTBEAT_OK_")).toBe("HEARTBEAT_OK");
-  });
-
-  it("leaves plain text unchanged", () => {
-    expect(stripMarkup("plain text")).toBe("plain text");
-  });
-
-  it("trims leading and trailing whitespace from stripped response text", () => {
-    expect(stripMarkup("  HEARTBEAT_OK  ")).toBe("HEARTBEAT_OK");
-  });
-
-  it("handles combined HTML and markdown", () => {
-    expect(stripMarkup("<b>**HEARTBEAT_OK**</b>")).toBe("HEARTBEAT_OK");
-  });
-
-  it("handles empty string", () => {
-    expect(stripMarkup("")).toBe("");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// stripHeartbeatToken
-// ---------------------------------------------------------------------------
-
-describe("stripHeartbeatToken", () => {
-  it("detects exact HEARTBEAT_OK token at start of input and strips it", () => {
-    const result = stripHeartbeatToken("HEARTBEAT_OK");
-    expect(result).toEqual({ stripped: "", hadToken: true });
-  });
-
-  it("detects token with trailing punctuation (up to 4 non-word chars)", () => {
+  it("recognizes only leading trailing or exact heartbeat tokens", () => {
     expect(stripHeartbeatToken("HEARTBEAT_OK!!!")).toEqual({ stripped: "", hadToken: true });
-    expect(stripHeartbeatToken("HEARTBEAT_OK.")).toEqual({ stripped: "", hadToken: true });
-    expect(stripHeartbeatToken("HEARTBEAT_OK..")).toEqual({ stripped: "", hadToken: true });
-    expect(stripHeartbeatToken("HEARTBEAT_OK!!!!")).toEqual({ stripped: "", hadToken: true });
-  });
-
-  it("detects token with more than 4 trailing non-word chars as no-token", () => {
-    // 5 trailing non-word chars -- exceeds allowance
+    expect(stripHeartbeatToken("HEARTBEAT_OK. All clear.")).toEqual({
+      stripped: "All clear.", hadToken: true,
+    });
+    expect(stripHeartbeatToken("All clear. HEARTBEAT_OK")).toEqual({
+      stripped: "All clear.", hadToken: true,
+    });
+    expect(stripHeartbeatToken("The status is HEARTBEAT_OK for now")).toEqual({
+      stripped: "The status is HEARTBEAT_OK for now", hadToken: false,
+    });
     expect(stripHeartbeatToken("HEARTBEAT_OK!!!!!")).toEqual({
-      stripped: "HEARTBEAT_OK!!!!!",
-      hadToken: false,
+      stripped: "HEARTBEAT_OK!!!!!", hadToken: false,
     });
   });
 
-  it("detects leading token with trailing text", () => {
-    const result = stripHeartbeatToken("HEARTBEAT_OK. All clear.");
-    expect(result).toEqual({ stripped: "All clear.", hadToken: true });
-  });
-
-  it("detects trailing token", () => {
-    const result = stripHeartbeatToken("All clear. HEARTBEAT_OK");
-    expect(result).toEqual({ stripped: "All clear.", hadToken: true });
-  });
-
-  it("does NOT detect token embedded mid-sentence", () => {
-    const result = stripHeartbeatToken("The status is HEARTBEAT_OK for now");
-    expect(result).toEqual({ stripped: "The status is HEARTBEAT_OK for now", hadToken: false });
-  });
-
-  it("returns no-token for text without token", () => {
-    const result = stripHeartbeatToken("no token here");
-    expect(result).toEqual({ stripped: "no token here", hadToken: false });
-  });
-
-  it("strips HTML before detecting token", () => {
-    const result = stripHeartbeatToken("<p>HEARTBEAT_OK</p>");
-    expect(result).toEqual({ stripped: "", hadToken: true });
-  });
-
-  it("strips markdown before detecting token", () => {
-    const result = stripHeartbeatToken("**HEARTBEAT_OK**");
-    expect(result).toEqual({ stripped: "", hadToken: true });
-  });
-
-  it("handles token with newline-separated trailing text", () => {
-    const result = stripHeartbeatToken("HEARTBEAT_OK\n\nAll systems normal.");
-    expect(result).toEqual({ stripped: "All systems normal.", hadToken: true });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// stripResponsePrefix
-// ---------------------------------------------------------------------------
-
-describe("stripResponsePrefix", () => {
-  it("strips matching prefix", () => {
-    expect(stripResponsePrefix("Agent: hello world", "Agent: ")).toBe("hello world");
-  });
-
-  it("returns unchanged when prefix does not match", () => {
-    expect(stripResponsePrefix("hello world", "Agent: ")).toBe("hello world");
-  });
-
-  it("returns unchanged when prefix is undefined", () => {
+  it("strips a configured response prefix case-sensitively", () => {
+    expect(stripResponsePrefix("Agent: hello", "Agent: ")).toBe("hello");
+    expect(stripResponsePrefix("agent: hello", "Agent: ")).toBe("agent: hello");
     expect(stripResponsePrefix("hello", undefined)).toBe("hello");
   });
-
-  it("returns unchanged when prefix is empty", () => {
-    expect(stripResponsePrefix("hello", "")).toBe("hello");
-  });
-
-  it("matches prefix case-sensitively when stripping response prefix from agent text", () => {
-    expect(stripResponsePrefix("agent: hello", "Agent: ")).toBe("agent: hello");
-  });
 });
 
-// ---------------------------------------------------------------------------
-// classifyHeartbeatResponse
-// ---------------------------------------------------------------------------
-
-describe("classifyHeartbeatResponse", () => {
-  it("returns empty_reply for null text", () => {
-    const result = classifyHeartbeatResponse({ text: null, hasMedia: false, ackMaxChars: 300 });
-    expect(result).toEqual({ kind: "heartbeat_ok", reason: "empty_reply", cleanedText: "" });
-  });
-
-  it("returns empty_reply for undefined text", () => {
-    const result = classifyHeartbeatResponse({ text: undefined, hasMedia: false, ackMaxChars: 300 });
-    expect(result).toEqual({ kind: "heartbeat_ok", reason: "empty_reply", cleanedText: "" });
-  });
-
-  it("returns empty_reply for whitespace-only text", () => {
-    const result = classifyHeartbeatResponse({ text: "   \n  ", hasMedia: false, ackMaxChars: 300 });
-    expect(result).toEqual({ kind: "heartbeat_ok", reason: "empty_reply", cleanedText: "" });
-  });
-
-  it("returns heartbeat_ok with reason token for exact HEARTBEAT_OK", () => {
-    const result = classifyHeartbeatResponse({ text: "HEARTBEAT_OK", hasMedia: false, ackMaxChars: 300 });
-    expect(result).toEqual({ kind: "heartbeat_ok", reason: "token", cleanedText: "" });
-  });
-
-  it("returns heartbeat_ok with token reason and cleaned text for short ack", () => {
-    const result = classifyHeartbeatResponse({
-      text: "HEARTBEAT_OK. All clear.",
-      hasMedia: false,
-      ackMaxChars: 300,
-    });
-    expect(result).toEqual({ kind: "heartbeat_ok", reason: "token", cleanedText: "All clear." });
-  });
-
-  it("returns deliver when token present but remaining text exceeds ackMaxChars", () => {
-    const longText = "A".repeat(301);
-    const result = classifyHeartbeatResponse({
-      text: `HEARTBEAT_OK\n\n${longText}`,
-      hasMedia: false,
-      ackMaxChars: 300,
-    });
-    expect(result.kind).toBe("deliver");
-    if (result.kind === "deliver") {
-      expect(result.text).toBe(longText);
-      expect(result.hasMedia).toBe(false);
+describe("closed heartbeat response classification", () => {
+  it("classifies empty output without manufacturing a visible acknowledgement", () => {
+    for (const text of [null, undefined, "   \n  "]) {
+      expect(classifyHeartbeatResponse({ text, hasMedia: false, ackMaxChars: 300 })).toEqual({
+        kind: "empty",
+      });
     }
   });
 
-  it("returns deliver for media attachments regardless of text", () => {
-    const result = classifyHeartbeatResponse({ text: "some image", hasMedia: true, ackMaxChars: 300 });
-    expect(result).toEqual({ kind: "deliver", text: "some image", hasMedia: true });
-  });
-
-  it("returns deliver for media even with HEARTBEAT_OK text", () => {
-    const result = classifyHeartbeatResponse({ text: "HEARTBEAT_OK", hasMedia: true, ackMaxChars: 300 });
-    expect(result).toEqual({ kind: "deliver", text: "HEARTBEAT_OK", hasMedia: true });
-  });
-
-  it("returns deliver for normal alert text", () => {
-    const result = classifyHeartbeatResponse({
-      text: "Alert: DB connection pool at 95%",
-      hasMedia: false,
-      ackMaxChars: 300,
+  it("maps a token-only response to the canonical visible token", () => {
+    expect(classifyHeartbeatResponse({
+      text: "<p>HEARTBEAT_OK</p>", hasMedia: false, ackMaxChars: 300,
+    })).toEqual({
+      kind: "acknowledged_ok",
+      reason: "heartbeat_token",
+      text: HEARTBEAT_OK_TOKEN,
     });
-    expect(result.kind).toBe("deliver");
-    if (result.kind === "deliver") {
-      expect(result.text).toBe("Alert: DB connection pool at 95%");
-      expect(result.hasMedia).toBe(false);
-    }
   });
 
-  it("returns heartbeat_ok for HTML-wrapped token", () => {
-    const result = classifyHeartbeatResponse({
-      text: "<p>HEARTBEAT_OK</p>",
-      hasMedia: false,
-      ackMaxChars: 300,
+  it("keeps the exact stripped residual only when a token bounds a short acknowledgement", () => {
+    expect(classifyHeartbeatResponse({
+      text: "HEARTBEAT_OK. All clear.", hasMedia: false, ackMaxChars: 10,
+    })).toEqual({
+      kind: "acknowledged_ok",
+      reason: "ack_under_threshold",
+      text: "All clear.",
     });
-    expect(result).toEqual({ kind: "heartbeat_ok", reason: "token", cleanedText: "" });
   });
 
-  it("returns heartbeat_ok for markdown-wrapped token", () => {
-    const result = classifyHeartbeatResponse({
-      text: "**HEARTBEAT_OK**",
-      hasMedia: false,
-      ackMaxChars: 300,
-    });
-    expect(result).toEqual({ kind: "heartbeat_ok", reason: "token", cleanedText: "" });
-  });
-
-  it("respects custom ackMaxChars threshold", () => {
-    // With ackMaxChars=5, "All clear." (10 chars) exceeds threshold -> deliver
-    const result = classifyHeartbeatResponse({
-      text: "HEARTBEAT_OK. All clear.",
-      hasMedia: false,
-      ackMaxChars: 5,
-    });
-    expect(result.kind).toBe("deliver");
-    if (result.kind === "deliver") {
-      expect(result.text).toBe("All clear.");
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// processHeartbeatResponse
-// ---------------------------------------------------------------------------
-
-describe("processHeartbeatResponse", () => {
-  it("applies prefix stripping before classification", () => {
-    const result = processHeartbeatResponse({
-      responseText: "Agent: HEARTBEAT_OK",
-      responsePrefix: "Agent: ",
-      ackMaxChars: 300,
+  it("does not suppress arbitrary short text without the heartbeat token", () => {
+    expect(classifyHeartbeatResponse({
+      text: "All clear.", hasMedia: false, ackMaxChars: 300,
+    })).toEqual({
+      kind: "alert",
+      level: "alert",
+      text: "All clear.",
       hasMedia: false,
     });
-    expect(result).toEqual({ kind: "heartbeat_ok", reason: "token", cleanedText: "" });
   });
 
-  it("classifies without prefix when none configured", () => {
-    const result = processHeartbeatResponse({
-      responseText: "HEARTBEAT_OK",
-      responsePrefix: undefined,
-      ackMaxChars: 300,
+  it("delivers a token residual that exceeds the acknowledgement threshold", () => {
+    const text = "A".repeat(11);
+    expect(classifyHeartbeatResponse({
+      text: `HEARTBEAT_OK\n\n${text}`, hasMedia: false, ackMaxChars: 10,
+    })).toEqual({ kind: "alert", level: "alert", text, hasMedia: false });
+  });
+
+  it("gives critical content precedence over an embedded heartbeat token", () => {
+    expect(classifyHeartbeatResponse({
+      text: "HEARTBEAT_OK. CRITICAL: disk full", hasMedia: false, ackMaxChars: 300,
+    })).toEqual({
+      kind: "alert",
+      level: "critical",
+      text: "CRITICAL: disk full",
       hasMedia: false,
     });
-    expect(result).toEqual({ kind: "heartbeat_ok", reason: "token", cleanedText: "" });
   });
 
-  it("returns deliver for non-heartbeat text with prefix", () => {
-    const result = processHeartbeatResponse({
-      responseText: "Agent: Alert! Server down",
-      responsePrefix: "Agent: ",
-      ackMaxChars: 300,
-      hasMedia: false,
-    });
-    expect(result.kind).toBe("deliver");
-    if (result.kind === "deliver") {
-      expect(result.text).toBe("Alert! Server down");
-    }
-  });
-
-  it("handles null responseText", () => {
-    const result = processHeartbeatResponse({
-      responseText: null,
-      responsePrefix: "Agent: ",
-      ackMaxChars: 300,
-      hasMedia: false,
-    });
-    expect(result).toEqual({ kind: "heartbeat_ok", reason: "empty_reply", cleanedText: "" });
-  });
-
-  it("media bypass takes precedence over prefix stripping", () => {
-    const result = processHeartbeatResponse({
-      responseText: "Agent: some image",
-      responsePrefix: "Agent: ",
-      ackMaxChars: 300,
+  it("keeps media visible even when its text is an acknowledgement token", () => {
+    expect(classifyHeartbeatResponse({
+      text: "HEARTBEAT_OK", hasMedia: true, ackMaxChars: 300,
+    })).toEqual({
+      kind: "alert",
+      level: "alert",
+      text: "HEARTBEAT_OK",
       hasMedia: true,
     });
-    expect(result.kind).toBe("deliver");
-    if (result.kind === "deliver") {
-      expect(result.hasMedia).toBe(true);
-      // Prefix still stripped for delivery text
-      expect(result.text).toBe("some image");
-    }
+  });
+
+  it("applies response prefix removal before all closed classification", () => {
+    expect(processHeartbeatResponse({
+      responseText: "Agent: HEARTBEAT_OK. Routine",
+      responsePrefix: "Agent: ",
+      ackMaxChars: 20,
+      hasMedia: false,
+    })).toEqual({
+      kind: "acknowledged_ok",
+      reason: "ack_under_threshold",
+      text: "Routine",
+    });
   });
 });

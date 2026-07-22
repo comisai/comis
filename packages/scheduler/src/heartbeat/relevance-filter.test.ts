@@ -33,9 +33,8 @@ describe("classifyHeartbeatResult", () => {
     expect(classifyHeartbeatResult("")).toBe("alert");
   });
 
-  it("prefers 'ok' when both OK token and CRITICAL are present", () => {
-    // OK token check comes first
-    expect(classifyHeartbeatResult(`${HEARTBEAT_OK_TOKEN} CRITICAL`)).toBe("ok");
+  it("prefers critical when both the OK token and CRITICAL are present", () => {
+    expect(classifyHeartbeatResult(`${HEARTBEAT_OK_TOKEN} CRITICAL`)).toBe("critical");
   });
 });
 

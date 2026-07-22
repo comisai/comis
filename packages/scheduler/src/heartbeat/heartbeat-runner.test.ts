@@ -1,401 +1,177 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { Result } from "@comis/shared";
 import { TypedEventBus } from "@comis/core";
-import { ok, HEARTBEAT_OK_TOKEN } from "@comis/shared";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { HeartbeatRunnerDeps, HeartbeatNotification } from "./heartbeat-runner.js";
-import type { HeartbeatSourcePort, HeartbeatCheckResult } from "./heartbeat-source.js";
-import type { QuietHoursConfig } from "./quiet-hours.js";
+import { err, ok } from "@comis/shared";
+import { describe, expect, it, vi } from "vitest";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
+import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import { createHeartbeatRunner } from "./heartbeat-runner.js";
+import type { HeartbeatSourcePort } from "./heartbeat-source.js";
 
-function makeSource(
+const NOW_MS = 1_800_000_000_000;
+
+function source(
   id: string,
-  text: string,
-  overrides?: Partial<HeartbeatCheckResult>,
+  result = ok({
+    level: "ok" as const,
+    observedAtMs: NOW_MS,
+    code: "healthy",
+    counters: [],
+  }),
 ): HeartbeatSourcePort {
-  return {
-    id,
-    name: `Source ${id}`,
-    check: vi.fn(async () => ({
-      sourceId: id,
-      text,
-      timestamp: Date.now(),
-      ...overrides,
-    })),
-  };
+  return { id, check: vi.fn(async () => result) };
 }
 
-function makeLogger() {
+function fixture(overrides: Record<string, unknown> = {}) {
+  const clock = createFakeClock(NOW_MS);
+  const timers = createFakeTimers(NOW_MS);
+  const eventBus = new TypedEventBus();
   const logger = {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-    child: vi.fn(),
+    debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
   };
-  logger.child.mockReturnValue(logger);
-  return logger;
-}
-
-function makeDeps(overrides?: Partial<HeartbeatRunnerDeps>): HeartbeatRunnerDeps {
-  return {
+  const runner = createHeartbeatRunner({
     sources: [],
-    eventBus: new TypedEventBus(),
-    logger: makeLogger(),
-    config: { intervalMs: 1000, showOk: false, showAlerts: true },
-    quietHoursConfig: { enabled: false, start: "22:00", end: "07:00", timezone: "UTC" },
-    criticalBypass: true,
-    onNotification: vi.fn(),
-    nowMs: () => Date.UTC(2024, 0, 15, 12, 0, 0),
+    clock,
+    timers,
+    eventBus,
+    logger,
+    staleMs: 120_000,
     ...overrides,
-  };
+  } as never);
+  return { clock, timers, eventBus, logger, runner };
 }
 
-describe("HeartbeatRunner", () => {
-  afterEach(() => {
-    vi.useRealTimers();
+describe("monitoring heartbeat runner", () => {
+  it("returns exact settled counters from closed source diagnostics", async () => {
+    const healthy = source("monitor_disk");
+    const critical = source("monitor_cpu", ok({
+      level: "critical",
+      observedAtMs: NOW_MS,
+      code: "threshold_exceeded",
+      counters: [{ name: "used_percent", value: 95 }],
+    }));
+    const built = fixture({ sources: [healthy, critical] });
+
+    await expect(built.runner.runOnce("interval", new AbortController().signal)).resolves.toEqual(ok({
+      status: "settled",
+      trigger: "interval",
+      checksRun: 2,
+      checksFailed: 0,
+      alertsRaised: 1,
+      durationMs: 0,
+    }));
+    expect(healthy.check).toHaveBeenCalledWith(expect.any(AbortSignal));
+    expect(critical.check).toHaveBeenCalledWith(expect.any(AbortSignal));
   });
 
-  it("runOnce calls check() on all sources", async () => {
-    const s1 = makeSource("s1", `${HEARTBEAT_OK_TOKEN}`);
-    const s2 = makeSource("s2", `${HEARTBEAT_OK_TOKEN}`);
-    const deps = makeDeps({ sources: [s1, s2] });
-    const runner = createHeartbeatRunner(deps);
-
-    await runner.runOnce();
-
-    expect(s1.check).toHaveBeenCalledOnce();
-    expect(s2.check).toHaveBeenCalledOnce();
-  });
-
-  it("alert triggers onNotification", async () => {
-    const source = makeSource("disk", "Warning: disk usage 95%");
-    const deps = makeDeps({
-      sources: [source],
-      config: { intervalMs: 1000, showOk: false, showAlerts: true },
-    });
-    const runner = createHeartbeatRunner(deps);
-
-    await runner.runOnce();
-
-    expect(deps.onNotification).toHaveBeenCalledOnce();
-    const notification = (deps.onNotification as ReturnType<typeof vi.fn>).mock
-      .calls[0][0] as HeartbeatNotification;
-    expect(notification.level).toBe("alert");
-    expect(notification.sourceId).toBe("disk");
-  });
-
-  it("OK with showOk=false does NOT trigger notification", async () => {
-    const source = makeSource("ping", `All clear ${HEARTBEAT_OK_TOKEN}`);
-    const deps = makeDeps({
-      sources: [source],
-      config: { intervalMs: 1000, showOk: false, showAlerts: true },
-    });
-    const runner = createHeartbeatRunner(deps);
-
-    await runner.runOnce();
-
-    expect(deps.onNotification).not.toHaveBeenCalled();
-  });
-
-  it("OK with showOk=true triggers notification", async () => {
-    const source = makeSource("ping", `All clear ${HEARTBEAT_OK_TOKEN}`);
-    const deps = makeDeps({
-      sources: [source],
-      config: { intervalMs: 1000, showOk: true, showAlerts: true },
-    });
-    const runner = createHeartbeatRunner(deps);
-
-    await runner.runOnce();
-
-    expect(deps.onNotification).toHaveBeenCalledOnce();
-    const notification = (deps.onNotification as ReturnType<typeof vi.fn>).mock
-      .calls[0][0] as HeartbeatNotification;
-    expect(notification.level).toBe("ok");
-  });
-
-  it("quiet hours suppress non-critical", async () => {
-    const source = makeSource("cpu", "Warning: high CPU");
-    // nowMs at 23:00 UTC, quiet hours 22:00-07:00
-    const deps = makeDeps({
-      sources: [source],
-      config: { intervalMs: 1000, showOk: true, showAlerts: true },
-      quietHoursConfig: { enabled: true, start: "22:00", end: "07:00", timezone: "UTC" },
-      nowMs: () => Date.UTC(2024, 0, 15, 23, 0, 0),
-    });
-    const runner = createHeartbeatRunner(deps);
-
-    await runner.runOnce();
-
-    expect(deps.onNotification).not.toHaveBeenCalled();
-  });
-
-  it("critical bypasses quiet hours when criticalBypass=true", async () => {
-    const source = makeSource("disk", "CRITICAL: disk full");
-    // nowMs at 23:00 UTC, quiet hours 22:00-07:00
-    const deps = makeDeps({
-      sources: [source],
-      config: { intervalMs: 1000, showOk: false, showAlerts: true },
-      quietHoursConfig: { enabled: true, start: "22:00", end: "07:00", timezone: "UTC" },
-      criticalBypass: true,
-      nowMs: () => Date.UTC(2024, 0, 15, 23, 0, 0),
-    });
-    const runner = createHeartbeatRunner(deps);
-
-    await runner.runOnce();
-
-    expect(deps.onNotification).toHaveBeenCalledOnce();
-    const notification = (deps.onNotification as ReturnType<typeof vi.fn>).mock
-      .calls[0][0] as HeartbeatNotification;
-    expect(notification.level).toBe("critical");
-  });
-
-  it("emits scheduler:heartbeat_check event with correct counts", async () => {
-    const okSource = makeSource("ping", `${HEARTBEAT_OK_TOKEN}`);
-    const alertSource = makeSource("cpu", "Warning: high CPU");
-    const criticalSource = makeSource("disk", "CRITICAL: disk full");
-
-    const eventBus = new TypedEventBus();
-    const events: Array<{ checksRun: number; alertsRaised: number }> = [];
-    eventBus.on("scheduler:heartbeat_check", (payload) => {
-      events.push(payload);
-    });
-
-    const deps = makeDeps({
-      sources: [okSource, alertSource, criticalSource],
-      eventBus,
-      config: { intervalMs: 1000, showOk: true, showAlerts: true },
-    });
-    const runner = createHeartbeatRunner(deps);
-
-    await runner.runOnce();
-
-    expect(events).toHaveLength(1);
-    expect(events[0].checksRun).toBe(3);
-    expect(events[0].alertsRaised).toBe(2); // alert + critical
-  });
-
-  it("catches and logs source check errors", async () => {
-    const errorSource: HeartbeatSourcePort = {
-      id: "bad",
-      name: "Bad Source",
-      check: vi.fn(async () => {
-        throw new Error("connection refused");
-      }),
+  it("classifies returned and thrown source failures without exposing prose", async () => {
+    const returned = source("monitor_disk", err({ code: "stat_failed", errorKind: "resource" }));
+    const thrown: HeartbeatSourcePort = {
+      id: "monitor_service",
+      check: vi.fn(async () => { throw new Error("secret-bearing adapter prose"); }),
     };
-    const logger = makeLogger();
-    const deps = makeDeps({
-      sources: [errorSource],
-      logger,
-      config: { intervalMs: 1000, showOk: false, showAlerts: true },
+    const built = fixture({ sources: [returned, thrown] });
+
+    await expect(built.runner.runOnce("manual", new AbortController().signal)).resolves.toMatchObject({
+      ok: true,
+      value: { status: "settled", checksRun: 2, checksFailed: 2, alertsRaised: 2 },
     });
-    const runner = createHeartbeatRunner(deps);
-
-    await runner.runOnce();
-
-    expect(logger.error).toHaveBeenCalled();
-    // Error produces an alert-level notification
-    expect(deps.onNotification).toHaveBeenCalledOnce();
+    expect(built.logger.error).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(built.logger.error.mock.calls)).not.toContain("secret-bearing adapter prose");
   });
 
-  it("sanitizes credentials in notification text via sanitizeLogString", async () => {
-    const errorSource: HeartbeatSourcePort = {
-      id: "leaky",
-      name: "Leaky Source",
-      check: vi.fn(async () => {
-        throw new Error("Connection failed with token sk-abc123def456ghi789jkl012mno345pqr678");
-      }),
+  it("fails before a source starts when the requested trigger is invalid or already aborted", async () => {
+    const checked = source("monitor_disk");
+    const built = fixture({ sources: [checked] });
+    const controller = new AbortController();
+    controller.abort("shutdown");
+
+    await expect(built.runner.runOnce("task" as never, new AbortController().signal)).resolves.toEqual(err({
+      code: "invalid_input",
+      errorKind: "validation",
+    }));
+    await expect(built.runner.runOnce("manual", controller.signal)).resolves.toEqual(err({
+      code: "precondition_failed",
+      errorKind: "precondition",
+    }));
+    expect(checked.check).not.toHaveBeenCalled();
+  });
+
+  it("returns a cooperative deadline abort after cancelling the active source", async () => {
+    const checked: HeartbeatSourcePort = {
+      id: "monitor_disk",
+      check: vi.fn((signal) => new Promise((resolve) => {
+        signal.addEventListener("abort", () => resolve(err({
+          code: "cancelled",
+          errorKind: "timeout",
+        })), { once: true });
+      })),
     };
-    const deps = makeDeps({
-      sources: [errorSource],
-      config: { intervalMs: 1000, showOk: false, showAlerts: true },
-    });
-    const runner = createHeartbeatRunner(deps);
+    const built = fixture({ sources: [checked], staleMs: 1_000 });
+    const running = built.runner.runOnce("interval", new AbortController().signal);
 
-    await runner.runOnce();
-
-    expect(deps.onNotification).toHaveBeenCalledOnce();
-    const notification = (deps.onNotification as ReturnType<typeof vi.fn>).mock
-      .calls[0][0] as HeartbeatNotification;
-    // Credentials must be redacted by sanitizeLogString
-    expect(notification.text).not.toContain("sk-abc123def456ghi789jkl012mno345pqr678");
-    expect(notification.text).toContain("sk-[REDACTED]");
-    expect(notification.text).toContain("Error checking source:");
+    built.clock.advance(1_000);
+    built.timers.advance(1_000);
+    await expect(running).resolves.toEqual(ok({
+      status: "aborted",
+      trigger: "interval",
+      reason: "deadline",
+      errorKind: "timeout",
+      checksRun: 1,
+      checksFailed: 1,
+      alertsRaised: 1,
+      durationMs: 1_000,
+    }));
   });
 
-  it("registerSource adds a new source", async () => {
-    const deps = makeDeps({ sources: [] });
-    const runner = createHeartbeatRunner(deps);
+  it("returns unsettled after grace while retaining the busy guard until late settlement", async () => {
+    let settle!: () => void;
+    const checked: HeartbeatSourcePort = {
+      id: "monitor_disk",
+      check: vi.fn(() => new Promise((resolve) => {
+        settle = () => resolve(ok({
+          level: "ok", observedAtMs: NOW_MS, code: "late_ok", counters: [],
+        }));
+      })),
+    };
+    const built = fixture({ sources: [checked], staleMs: 1_000 });
+    const running = built.runner.runOnce("interval", new AbortController().signal);
 
-    const newSource = makeSource("new", "Warning: something");
-    runner.registerSource(newSource);
-    await runner.runOnce();
-
-    expect(newSource.check).toHaveBeenCalledOnce();
+    built.clock.advance(1_000);
+    built.timers.advance(1_000);
+    await Promise.resolve();
+    await Promise.resolve();
+    built.clock.advance(5_000);
+    built.timers.advance(5_000);
+    await expect(running).resolves.toEqual(ok({
+      status: "unsettled",
+      trigger: "interval",
+      reason: "deadline_termination_unestablished",
+      errorKind: "timeout",
+      checksRun: 1,
+      checksCompleted: 0,
+      checksFailed: 0,
+      alertsRaised: 0,
+      durationMs: 6_000,
+    }));
+    expect(built.runner.isBusy()).toBe(true);
+    settle();
+    await vi.waitFor(() => expect(built.runner.isBusy()).toBe(false));
   });
 
-  it("unregisterSource removes a source and returns true", async () => {
-    const source = makeSource("s1", `${HEARTBEAT_OK_TOKEN}`);
-    const deps = makeDeps({ sources: [source] });
-    const runner = createHeartbeatRunner(deps);
+  it("registers unique source identities and closes admission on shutdown", async () => {
+    const checked = source("monitor_disk");
+    const built = fixture();
 
-    const removed = runner.unregisterSource("s1");
-    expect(removed).toBe(true);
-
-    await runner.runOnce();
-    expect(source.check).not.toHaveBeenCalled();
-  });
-
-  it("unregisterSource returns false for unknown source", () => {
-    const deps = makeDeps({ sources: [] });
-    const runner = createHeartbeatRunner(deps);
-
-    expect(runner.unregisterSource("nonexistent")).toBe(false);
-  });
-
-  it("start/stop controls the interval timer", async () => {
-    vi.useFakeTimers();
-    const source = makeSource("s1", `${HEARTBEAT_OK_TOKEN}`);
-    const deps = makeDeps({
-      sources: [source],
-      config: { intervalMs: 500, showOk: true, showAlerts: true },
-    });
-    const runner = createHeartbeatRunner(deps);
-
-    runner.start();
-
-    // Advance timer past one interval
-    await vi.advanceTimersByTimeAsync(600);
-    expect(source.check).toHaveBeenCalled();
-
-    const callCountAfterStart = (source.check as ReturnType<typeof vi.fn>).mock.calls.length;
-
-    runner.stop();
-
-    // Advance further -- no more calls
-    (source.check as ReturnType<typeof vi.fn>).mockClear();
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(source.check).not.toHaveBeenCalled();
-  });
-
-  it("start is idempotent (calling twice does not create two timers)", () => {
-    const logger = makeLogger();
-    const deps = makeDeps({ logger });
-    const runner = createHeartbeatRunner(deps);
-
-    runner.start();
-    runner.start(); // should not log a second "started" message
-
-    // Only one start message (object-first: logger.info({ ... }, "HeartbeatRunner started"))
-    const startCalls = (logger.info as ReturnType<typeof vi.fn>).mock.calls.filter(
-      (call: unknown[]) =>
-        (typeof call[0] === "string" && (call[0] as string).includes("started")) ||
-        (typeof call[1] === "string" && (call[1] as string).includes("started")),
-    );
-    expect(startCalls).toHaveLength(1);
-
-    runner.stop();
-  });
-
-  it("lock prevents concurrent checks", async () => {
-    const source = makeSource("s1", "Warning: alert");
-    const lockFn = vi.fn(
-      async <T>(lockPath: string, fn: () => Promise<T>): Promise<Result<T, "locked" | "error">> => {
-        const result = await fn();
-        return ok(result);
-      },
-    );
-    const deps = makeDeps({
-      sources: [source],
-      lockFn,
-      lockDir: "/tmp/test-locks",
-    });
-    const runner = createHeartbeatRunner(deps);
-
-    await runner.runOnce();
-
-    expect(lockFn).toHaveBeenCalledOnce();
-    expect(lockFn).toHaveBeenCalledWith("/tmp/test-locks/heartbeat.lock", expect.any(Function));
-    expect(source.check).toHaveBeenCalledOnce();
-  });
-
-  it("lock held -> skips checks and logs warning", async () => {
-    const source = makeSource("s1", "Warning: alert");
-    const lockFn = vi.fn(
-      async <T>(
-        _lockPath: string,
-        _fn: () => Promise<T>,
-      ): Promise<Result<T, "locked" | "error">> => {
-        return { ok: false, error: "locked" as const };
-      },
-    );
-    const logger = makeLogger();
-    const deps = makeDeps({
-      sources: [source],
-      lockFn,
-      lockDir: "/tmp/test-locks",
-      logger,
-    });
-    const runner = createHeartbeatRunner(deps);
-
-    await runner.runOnce();
-
-    expect(source.check).not.toHaveBeenCalled();
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ hint: expect.stringContaining("Previous heartbeat check"), errorKind: "resource" }),
-      "Heartbeat check skipped",
-    );
-  });
-
-  it("logs heartbeat tick at DEBUG with checksRun and alertsRaised", async () => {
-    const okSource = makeSource("ping", "HEARTBEAT_OK");
-    const alertSource = makeSource("cpu", "Warning: high CPU");
-    const logger = makeLogger();
-    const deps = makeDeps({
-      sources: [okSource, alertSource],
-      logger,
-      config: { intervalMs: 1000, showOk: true, showAlerts: true },
-    });
-    const runner = createHeartbeatRunner(deps);
-
-    await runner.runOnce();
-
-    expect(logger.debug).toHaveBeenCalledWith(
-      expect.objectContaining({ checksRun: 2, alertsRaised: 1 }),
-      "Heartbeat tick complete",
-    );
-  });
-
-  it("handles lock error (non-locked failure) and logs error", async () => {
-    const source = makeSource("s1", "Warning: alert");
-    const lockFn = vi.fn(
-      async <T>(
-        _lockPath: string,
-        _fn: () => Promise<T>,
-      ): Promise<Result<T, "locked" | "error">> => {
-        return { ok: false, error: "error" as const };
-      },
-    );
-    const logger = makeLogger();
-    const deps = makeDeps({
-      sources: [source],
-      lockFn,
-      lockDir: "/tmp/test-locks",
-      logger,
-    });
-    const runner = createHeartbeatRunner(deps);
-
-    await runner.runOnce();
-
-    // Checks should NOT have been called (lock failed)
-    expect(source.check).not.toHaveBeenCalled();
-    // Error logged (not warn -- "error" is different from "locked")
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.objectContaining({
-        hint: expect.stringContaining("Lock acquisition failed"),
-        errorKind: "internal",
-      }),
-      "Heartbeat check lock error",
-    );
+    expect(built.runner.registerSource(checked)).toEqual(ok(undefined));
+    expect(built.runner.registerSource(checked)).toEqual(err({
+      code: "invalid_input",
+      errorKind: "validation",
+    }));
+    expect(built.runner.unregisterSource("monitor_disk")).toBe(true);
+    built.runner.shutdown();
+    expect(built.runner.registerSource(checked)).toEqual(err({
+      code: "not_bound",
+      errorKind: "precondition",
+    }));
   });
 });

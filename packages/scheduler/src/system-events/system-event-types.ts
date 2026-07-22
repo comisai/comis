@@ -10,8 +10,10 @@ export const SystemEventEntrySchema = z.strictObject({
   text: z.string().min(1),
   /** Classification key for filtering (e.g., "cron:job-abc", "exec:cmd-123") */
   contextKey: z.string().min(1),
+  /** Explicit producer classification; prompt behavior never infers it from contextKey. */
+  trigger: z.enum(["hook", "wake", "exec-event", "cron"]),
   /** Timestamp when the event was enqueued (ms since epoch) */
-  enqueuedAt: z.number().int().positive(),
+  enqueuedAt: z.number().int().nonnegative().safe(),
 });
 
 export type SystemEventEntry = z.infer<typeof SystemEventEntrySchema>;
