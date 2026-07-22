@@ -650,6 +650,7 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           ...existing,
           ...(metadata.traceId && { traceId: metadata.traceId }),
           ...(metadata.runId && { runId: metadata.runId }),
+          ...(metadata.sessionKey && { sessionKey: metadata.sessionKey }),
           ...(metadata.sessionEnd && { sessionEnd: metadata.sessionEnd }),
           lastUpdated: systemNowDate().toISOString(),
         };
