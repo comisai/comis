@@ -4,7 +4,8 @@
  *
  * Pure functions that classify LLM heartbeat responses into a discriminated
  * union outcome (heartbeat_ok vs deliver). Handles:
- * - HEARTBEAT_OK token detection with HTML/Markdown stripping
+ * - Shared silent-response suppression with HTML/Markdown stripping
+ * - HEARTBEAT_OK acknowledgement detection
  * - ackMaxChars threshold for soft acknowledgments
  * - Response prefix removal
  * - Media bypass
@@ -14,7 +15,7 @@
  * are handled by the caller based on the returned outcome.
  */
 
-import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
+import { HEARTBEAT_OK_TOKEN, isSilentResponse } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -116,9 +117,10 @@ export function stripResponsePrefix(text: string, prefix: string | undefined): s
  * Classify a heartbeat LLM response into an outcome.
  *
  * Check order:
- * 1. Media bypass -- always deliver
- * 2. Empty/null reply -- treated as HEARTBEAT_OK
- * 3. Token detection + ackMaxChars threshold
+ * 1. Empty/null reply -- suppress when text-only, preserve media
+ * 2. Media bypass -- always deliver
+ * 3. Shared non-heartbeat silent marker -- suppress
+ * 4. HEARTBEAT_OK detection + ackMaxChars threshold
  */
 export function classifyHeartbeatResponse(input: ClassifyHeartbeatInput): HeartbeatResponseOutcome {
   const { text, hasMedia, ackMaxChars } = input;
@@ -138,6 +140,14 @@ export function classifyHeartbeatResponse(input: ClassifyHeartbeatInput): Heartb
       text: normalized,
       hasMedia: true,
     };
+  }
+
+  // The shared helper is the runtime-wide source of truth for NO_REPLY and
+  // [SILENT] wrappers. HEARTBEAT_OK deliberately continues through the
+  // acknowledgement path below so showOk and transcript pruning retain their
+  // existing semantics.
+  if (normalized !== HEARTBEAT_OK_TOKEN && isSilentResponse(normalized)) {
+    return { kind: "empty" };
   }
 
   const { stripped, hadToken } = stripHeartbeatToken(normalized);
