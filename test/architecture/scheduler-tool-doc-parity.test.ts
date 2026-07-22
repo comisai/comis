@@ -181,6 +181,7 @@ describe("scheduler tool documentation parity", () => {
       "status",
       "deliveryStatus",
       "errorKind",
+      "counters",
     ]);
     expectTokens(runs, ["started", "dispatched", "completed", "failed", "aborted", "skipped", "unknown"]);
     expectTokens(runs, ["not_requested", "suppressed", "pre_send_failed", "accepted", "partial", "rejected"]);
