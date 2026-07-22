@@ -164,6 +164,25 @@ describe("createExecTool", () => {
       expect(typeof details.pid).toBe("number");
     });
 
+    it("does not expose a host pid for a sandboxed background session", async () => {
+      registry = createProcessRegistry();
+      const tool = createExecTool({
+        workspacePath: tmpdir(),
+        registry,
+        secretManager: STUB_SM,
+        platformSecretNames: STUB_PLATFORM_NAMES,
+        sandboxConfig: createPidIsolatingTestSandbox(),
+        toolCapabilityPort: createCapabilityPortStub(),
+      });
+      const result = await tool.execute("tc-sandbox-background", {
+        command: "sleep 5",
+        background: true,
+      });
+
+      expect(result.details).toMatchObject({ status: "started", sessionId: expect.any(String) });
+      expect(result.details).not.toHaveProperty("pid");
+    });
+
     it("process is registered in the ProcessRegistry", async () => {
       const tool = setup();
       const result = await tool.execute("tc1", {
@@ -617,6 +636,25 @@ describe("createExecTool", () => {
       expect(registry.size()).toBe(1);
     });
 
+    it("does not expose a host pid after sandboxed auto-background escalation", { timeout: 15_000 }, async () => {
+      registry = createProcessRegistry();
+      const tool = createExecTool({
+        workspacePath: tmpdir(),
+        registry,
+        secretManager: STUB_SM,
+        platformSecretNames: STUB_PLATFORM_NAMES,
+        sandboxConfig: createPidIsolatingTestSandbox(),
+        toolCapabilityPort: createCapabilityPortStub(),
+      });
+      const result = await tool.execute("tc-sandbox-auto-background", {
+        command: "sleep 5",
+        autoBackgroundMs: 20,
+      });
+
+      expect(result.details).toMatchObject({ status: "backgrounded", sessionId: expect.any(String) });
+      expect(result.details).not.toHaveProperty("pid");
+    });
+
     it("auto-backgrounded startedAt is wall-clock so runtimeMs reports elapsed time", { timeout: 15_000 }, async () => {
       // Regression: escalateToBackground previously stored performance.now()
       // (monotonic clock relative to process start, ~10^5 ms) into
@@ -935,6 +973,19 @@ function createMockSandboxConfig(overrides?: Partial<ExecSandboxConfig>): ExecSa
     readOnlyPaths: [],
     configReadOnlyPaths: [],
     ...overrides,
+  };
+}
+
+function createPidIsolatingTestSandbox(): ExecSandboxConfig {
+  return {
+    sandbox: createMockSandboxProvider({
+      name: "pid-isolating-test-sandbox",
+      buildArgs: () => ["/usr/bin/env"],
+      wrapEnv: (env) => env,
+    }),
+    sharedPaths: [],
+    readOnlyPaths: [],
+    configReadOnlyPaths: [],
   };
 }
 

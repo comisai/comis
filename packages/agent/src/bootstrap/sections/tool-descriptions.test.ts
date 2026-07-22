@@ -172,6 +172,11 @@ describe("TOOL_GUIDES", () => {
     expect(TOOL_GUIDES.exec).toMatch(/## Sandbox-Forbidden Paths/);
   });
 
+  it("exec guide forbids cross-sandbox process-id polling", () => {
+    expect(TOOL_GUIDES.exec).toMatch(/process status.*only authoritative completion signal/i);
+    expect(TOOL_GUIDES.exec).toMatch(/process IDs are isolated/i);
+  });
+
   // -------------------------------------------------------------------------
   // Prescriptive 2-step creation flow + workspace.profile enum guardrail.
   // Production trace showed 18 system-creation failures across 9 agents because

@@ -80,6 +80,13 @@ describe("createProcessRegistry", () => {
     expect(typeof result[0].tail).toBe("string");
   });
 
+  it("list withholds host pids for sandboxed process sessions", () => {
+    const registry = createProcessRegistry();
+    registry.add(makeSession({ id: "sandboxed", sandboxed: true, pid: 54321 }));
+
+    expect(registry.list()[0]).not.toHaveProperty("pid");
+  });
+
   it("list calculates runtimeMs correctly", () => {
     const registry = createProcessRegistry();
     const startedAt = Date.now() - 5000; // 5 seconds ago
