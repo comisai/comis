@@ -257,6 +257,20 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
   "background_task:completed": "background_task.completed",
   "background_task:failed": "background_task.failed",
 
+  // ---- Inferred follow-up task lifecycle ----
+  // These scheduler events carry ids, closed labels, counts, and durations
+  // only. A payload sessionKey, when present, routes the record to its owning
+  // conversation and is stripped by the translator.
+  "scheduler:task_extraction_completed": "scheduler.task_extraction_completed",
+  "scheduler:task_extraction_failed": "scheduler.task_extraction_failed",
+  "scheduler:task_check_started": "scheduler.task_check_started",
+  "scheduler:task_check_terminal": "scheduler.task_check_terminal",
+  "scheduler:task_delivery_history_failed": "scheduler.task_delivery_history_failed",
+  "scheduler:task_cap_deferred": "scheduler.task_cap_deferred",
+  "scheduler:task_store_degraded": "scheduler.task_store_degraded",
+  "scheduler:task_cancelled": "scheduler.task_cancelled",
+  "scheduler:task_store_reset": "scheduler.task_store_reset",
+
   // ---- Terminal drive lifecycle ----
   // A long coding-CLI drive backgrounded at the inline→detached boundary.
   // Content-free (the reason enum only — see translate-payload). Emitted from packages/skills,

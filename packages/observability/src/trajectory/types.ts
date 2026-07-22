@@ -395,6 +395,18 @@ export const TRAJECTORY_EVENT_TYPES = [
   // counts/enums/ids ONLY, never the gathered payload, the script source, a
   // prompt, or a secret. No bridge mapping: daemon direct-emit, unscanned.
   "scheduler.wake_gate",
+
+  // Inferred follow-up task lifecycle. Content-free ids, closed labels,
+  // counts, and durations only.
+  "scheduler.task_extraction_completed",
+  "scheduler.task_extraction_failed",
+  "scheduler.task_check_started",
+  "scheduler.task_check_terminal",
+  "scheduler.task_delivery_history_failed",
+  "scheduler.task_cap_deferred",
+  "scheduler.task_store_degraded",
+  "scheduler.task_cancelled",
+  "scheduler.task_store_reset",
 ] as const;
 
 /** Closed union of trajectory event type strings. */
