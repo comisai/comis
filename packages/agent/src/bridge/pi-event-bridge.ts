@@ -137,8 +137,8 @@ import { appendSessionIndexEntry } from "@comis/observability";
 import {
   createBridgeMetrics,
   buildBridgeResult,
-  recordToolInvocationSideEffects,
 } from "./bridge-metrics.js";
+import { recordToolInvocationSideEffects } from "./bridge-side-effect-accumulator.js";
 import { drainAt, type DrainInflightState } from "../executor/drain-helper.js";
 import { checkStepLimit, emitStepLimitAbort, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
 import type { LoopStateReporter, SpendEmitHooks } from "./bridge-safety-controls.js";
@@ -829,7 +829,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           const toolEvent = event as { toolName: string; toolCallId: string; args?: unknown };
           recordToolInvocationSideEffects(
             m.sideEffectSummary,
-            getToolMetadata(toolEvent.toolName),
+            toolEvent.toolName,
             toolEvent.args,
           );
           m.toolStartTimes.set(toolEvent.toolCallId, systemNowMs());
