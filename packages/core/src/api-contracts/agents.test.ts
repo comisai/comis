@@ -269,6 +269,42 @@ describe("AgentGetOperationModelsContract", () => {
     })).toBeDefined();
   });
 
+  it("accepts operation cache retention policy values emitted by the resolver", () => {
+    expect(AgentGetOperationModelsContract.response.parse({
+      agentId: "alpha",
+      primaryModel: "anthropic:claude-sonnet-4-5",
+      primaryProvider: "anthropic",
+      providerFamily: "anthropic",
+      tieringActive: true,
+      operations: [
+        {
+          operationType: "heartbeat",
+          model: "anthropic:claude-sonnet-4-5",
+          provider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+          source: "agent_primary",
+          timeoutMs: 180000,
+          cacheRetention: "none",
+          tieringActive: false,
+          crossProvider: false,
+          apiKeyConfigured: true,
+        },
+        {
+          operationType: "cron",
+          model: "anthropic:claude-sonnet-4-5",
+          provider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+          source: "agent_primary",
+          timeoutMs: 180000,
+          cacheRetention: "short",
+          tieringActive: false,
+          crossProvider: false,
+          apiKeyConfigured: true,
+        },
+      ],
+    })).toBeDefined();
+  });
+
   it("response.operations.apiKeyConfigured must be boolean", () => {
     expect(() => AgentGetOperationModelsContract.response.parse({
       agentId: "alpha",
