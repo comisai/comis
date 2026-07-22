@@ -100,6 +100,39 @@ describe("IncidentReportSchema audit? + cacheBreaks? sections", () => {
   });
 });
 
+describe("IncidentReportSchema task-check lifecycle section", () => {
+  it("preserves bounded lifecycle evidence while stripping task content", () => {
+    const parsed = IncidentReportSchema.parse({
+      ...baseReport(),
+      taskCheck: {
+        rootRunId: "root-task-check-a",
+        attemptId: "attempt-a",
+        correlationId: "correlation-a",
+        lifecycle: "terminal",
+        outcome: "delivered",
+        recovery: "live",
+        deliveredChunks: 1,
+        failedChunks: 0,
+        ambiguousChunks: 0,
+        taskText: "PRIVATE TASK BODY MUST BE STRIPPED",
+      },
+    }) as unknown as Record<string, unknown>;
+
+    expect(parsed.taskCheck).toEqual({
+      rootRunId: "root-task-check-a",
+      attemptId: "attempt-a",
+      correlationId: "correlation-a",
+      lifecycle: "terminal",
+      outcome: "delivered",
+      recovery: "live",
+      deliveredChunks: 1,
+      failedChunks: 0,
+      ambiguousChunks: 0,
+    });
+    expect(JSON.stringify(parsed)).not.toContain("PRIVATE TASK BODY MUST BE STRIPPED");
+  });
+});
+
 describe("IncidentReportSchema spend? section", () => {
   it("parses a report WITHOUT spend (additive — present only on a spend-killed session)", () => {
     const parsed = IncidentReportSchema.parse(baseReport());

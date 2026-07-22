@@ -36,18 +36,26 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import Database from "better-sqlite3";
 import { sessionKeyToPath } from "@comis/agent";
+import { systemDateFrom, systemNowMs } from "@comis/core";
+import { createObservabilityStore, initSchema } from "@comis/memory";
 import {
+  resolveTrajectoryFilePath,
   resolveTrajectoryPointerFilePath,
   writeTrajectoryPointerFileBestEffort,
 } from "@comis/observability";
 import { makeRealReader } from "./obs-explain-readers.js";
 import { assembleIncidentReportFromSources } from "./obs-explain.js";
+import { taskEventToRow } from "../../observability/obs-scheduler-rows.js";
 
 // The canonical formatted session key (the same one obs-explain-readers.test.ts
 // pins). sessionKeyToPath maps it to tenant="default", channel="678314278",
 // file="678314278~peer~678314278.jsonl".
 const SESSION_KEY = "default:agent:default:678314278:678314278:peer:678314278";
+const TASK_ROOT_RUN_ID = "root-task-check-244cd6a3-0a81-48b1-a4f1-2e24375a6b35";
+const TASK_CORRELATION_ID = "256bb57a-b6c3-46ba-88d3-459c7be29dfe";
+const TASK_SESSION_KEY = "default:agent:default:scheduler-task-check-default:scheduler:task-check:attempt-task-a:peer:scheduler-task-check-default";
 
 // Every temp dir created — torn down in afterEach so no temp tree leaks.
 const tmpDirs: string[] = [];
@@ -110,6 +118,62 @@ function trajectoryLines(): string {
     },
   });
   return [failure, offload].join("\n") + "\n";
+}
+
+function taskTrajectoryLines(): string {
+  return [
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "context.budget",
+      seq: 1,
+      traceId: TASK_CORRELATION_ID,
+      data: {
+        windowTokens: 32_000,
+        rawContextWindowTokens: 32_000,
+        windowCapSource: "none",
+        systemTokens: 1_000,
+        freshTailTokens: 200,
+        budgetedHistoryTokens: 0,
+        keptCount: 0,
+        assembledInputTokens: 1_200,
+        outputHeadroom: 768,
+        verdict: "fits",
+      },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "capability.audited",
+      seq: 2,
+      traceId: TASK_CORRELATION_ID,
+      agentId: "default",
+      data: {
+        leaseId: "lease-task-a",
+        rootRunId: TASK_ROOT_RUN_ID,
+        capability: "orch:read",
+        tool: "task_check",
+        decision: "allow",
+      },
+    },
+  ].map((line) => JSON.stringify(line)).join("\n") + "\n";
+}
+
+function writeTaskSessionIndex(dataDir: string): void {
+  const logsDir = path.join(dataDir, "logs");
+  fs.mkdirSync(logsDir, { recursive: true });
+  const dayKey = systemDateFrom(systemNowMs()).toISOString().slice(0, 10);
+  fs.writeFileSync(
+    path.join(logsDir, `session-index.${dayKey}.jsonl`),
+    JSON.stringify({
+      traceSchema: "comis-session-index",
+      schemaVersion: 1,
+      event: "turn_completed",
+      traceId: TASK_CORRELATION_ID,
+      sessionKey: TASK_SESSION_KEY,
+    }) + "\n",
+    "utf-8",
+  );
 }
 
 /**
@@ -184,6 +248,95 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     // EXACT field-name regression this assertion forbids.
     expect(report.offloads[0]!.pointer).toBe("tool-results/call_abc.json");
     expect(report.offloads[0]!.pointer).not.toBe("<offloaded>");
+  });
+
+  it("resolves a task-check root to its real origin session and folds durable delivery evidence", async () => {
+    const dataDir = tmpDataDir();
+    const sessionFile = buildRealSessionFile(dataDir);
+    const runtimeFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(runtimeFile, trajectoryLines(), "utf-8");
+    writeTrajectoryPointerFileBestEffort({ sessionFile, sessionId: SESSION_KEY, runtimeFile });
+    writeRealMetadata(sessionFile);
+    writeTaskSessionIndex(dataDir);
+
+    // Ephemeral task-check sessions intentionally have no transcript/pointer.
+    // Their trajectory writer therefore uses the sanctioned workspace-dir
+    // fallback: <dataDir>/workspace/<safe-session-id>.trajectory.jsonl.
+    const taskTrajectoryFile = resolveTrajectoryFilePath({
+      sessionId: TASK_SESSION_KEY,
+      workspaceDir: path.join(dataDir, "workspace"),
+    });
+    fs.writeFileSync(taskTrajectoryFile, taskTrajectoryLines(), "utf-8");
+    expect(taskTrajectoryFile.startsWith(path.join(dataDir, "workspace"))).toBe(true);
+    expect(taskTrajectoryFile.includes(`${path.sep}sessions${path.sep}`)).toBe(false);
+
+    const db = new Database(":memory:");
+    initSchema(db, 1_536);
+    const store = createObservabilityStore(db);
+    store.insertDiagnostic(taskEventToRow("scheduler:task_check_started", {
+      agentId: "default",
+      sessionKey: SESSION_KEY,
+      attemptId: "attempt-task-a",
+      rootRunId: TASK_ROOT_RUN_ID,
+      correlationId: TASK_CORRELATION_ID,
+      taskIds: ["task-a"],
+      sourceExecutionIds: ["execution-a"],
+      originTraceIds: ["trace-1"],
+      durationMs: 3,
+      timestamp: 3_000,
+    }));
+    const terminalRow = taskEventToRow("scheduler:task_check_terminal", {
+      agentId: "default",
+      sessionKey: SESSION_KEY,
+      attemptId: "attempt-task-a",
+      rootRunId: TASK_ROOT_RUN_ID,
+      correlationId: TASK_CORRELATION_ID,
+      taskIds: ["task-a"],
+      sourceExecutionIds: ["execution-a"],
+      originTraceIds: ["trace-1"],
+      outcome: "delivered",
+      recovery: "live",
+      deliveredChunks: 1,
+      failedChunks: 0,
+      ambiguousChunks: 0,
+      durationMs: 21,
+      timestamp: 3_021,
+    });
+    terminalRow.details = JSON.stringify({
+      ...JSON.parse(terminalRow.details ?? "{}") as Record<string, unknown>,
+      taskText: "PRIVATE TASK BODY MUST NOT SURFACE",
+    });
+    store.insertDiagnostic(terminalRow);
+
+    const report = await assembleIncidentReportFromSources(
+      makeRealReader(dataDir, store),
+      dataDir,
+      { rootRunId: TASK_ROOT_RUN_ID, depth: "summary" },
+    );
+
+    expect(report.sessionKey).toBe(SESSION_KEY);
+    expect(report.likelyRootCause?.code).not.toBe("session_not_found");
+    expect((report as unknown as Record<string, unknown>).taskCheck).toEqual({
+      rootRunId: TASK_ROOT_RUN_ID,
+      attemptId: "attempt-task-a",
+      correlationId: TASK_CORRELATION_ID,
+      lifecycle: "terminal",
+      outcome: "delivered",
+      recovery: "live",
+      deliveredChunks: 1,
+      failedChunks: 0,
+      ambiguousChunks: 0,
+    });
+    expect(report.contextBudget).toMatchObject({ verdict: "fits", assembledInputTokens: 1_200 });
+    expect(report.spawnTree).toEqual([
+      expect.objectContaining({
+        leaseId: "lease-task-a",
+        rootRunId: TASK_ROOT_RUN_ID,
+        toolsInvoked: ["task_check"],
+      }),
+    ]);
+    expect(JSON.stringify(report)).not.toContain("PRIVATE TASK BODY MUST NOT SURFACE");
+    db.close();
   });
 
 });

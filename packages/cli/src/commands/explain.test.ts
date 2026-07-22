@@ -297,6 +297,56 @@ describe("comis explain default (table) renders key report fields", () => {
   });
 });
 
+describe("comis explain renders durable task-check lifecycle evidence", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("prints delivered attempt, correlation, and root identifiers for a task-check root", async () => {
+    const taskReport = {
+      ...FAKE_REPORT,
+      taskCheck: {
+        rootRunId: "root-task-check-a",
+        attemptId: "attempt-a",
+        correlationId: "correlation-a",
+        lifecycle: "terminal",
+        outcome: "delivered",
+        recovery: "live",
+        deliveredChunks: 1,
+        failedChunks: 0,
+        ambiguousChunks: 0,
+      },
+    };
+    const client: RpcClient = {
+      call: () => Promise.resolve(taskReport),
+      close: () => {},
+      onNotification: () => {},
+    };
+    vi.mocked(withClient).mockImplementation(async (fn) => fn(client));
+
+    const program = createTestProgram();
+    registerExplainCommand(program);
+    await program.parseAsync(["node", "test", "explain", "root-task-check-a"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Task check: delivered");
+    expect(output).toContain("attempt=attempt-a");
+    expect(output).toContain("correlation=correlation-a");
+    expect(output).toContain("root=root-task-check-a");
+    expect(output).toContain("delivered=1 failed=0 ambiguous=0");
+  });
+});
+
 describe("comis explain table view tolerates a null likelyRootCause and empty next-steps", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;
   let exitSpy: ReturnType<typeof createProcessExitSpy>;
