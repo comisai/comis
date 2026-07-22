@@ -31,6 +31,16 @@ describe("classifyTypedRpcError", () => {
     expect(c!.hint).toMatch(/sandboxNoDowngrade/);
   });
 
+  it("classifies a paused sub-agent spawn as an expected precondition refusal", () => {
+    const classification = classifyTypedRpcError(named("SubAgentSpawnPausedError"));
+
+    expect(classification).toEqual({
+      errorKind: "precondition",
+      hint: "Resume sub-agent admission with the admin subagent.resume operation when new background work is allowed",
+      level: "warn",
+    });
+  });
+
   it("classifies ValidationError and RequiredToolsUnreachableError as validation/warn", () => {
     expect(classifyTypedRpcError(named("ValidationError"))!.errorKind).toBe("validation");
     expect(classifyTypedRpcError(named("RequiredToolsUnreachableError"))!.errorKind).toBe("validation");

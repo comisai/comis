@@ -301,6 +301,17 @@ describe("classifyRpcError", () => {
     expect(result.hint).toBeTruthy();
   });
 
+  it("classifies a paused sub-agent spawn as a precondition warning", () => {
+    const error = new Error("Sub-agent spawning is paused by operator");
+    error.name = "SubAgentSpawnPausedError";
+
+    const result = classifyRpcError(error);
+
+    expect(result.errorKind).toBe("precondition");
+    expect(result.level).toBe("warn");
+    expect(result.hint).toContain("subagent.resume");
+  });
+
   it("classifies ValidationError as validation error (warn level)", () => {
     const result = classifyRpcError(new ValidationError("Unknown ID prefix. Expected 'sum_' or 'file_', got: abc-123"));
     expect(result.errorKind).toBe("validation");
