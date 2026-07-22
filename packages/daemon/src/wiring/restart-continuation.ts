@@ -43,11 +43,13 @@ export interface ContinuationRecord {
   timestamp: number;
 }
 
-/** In-memory tracker for recently-active sessions. */
+/** In-memory tracker for sessions with channel turns still in flight. */
 export interface RestartContinuationTracker {
-  /** Upsert a session record (called after each successful inbound message). */
+  /** Mark a channel turn active before inbound processing starts. */
   track(record: ContinuationRecord): void;
-  /** Check if a session has been active since the tracker was created. */
+  /** Mark one active turn complete after inbound processing settles successfully. */
+  complete(record: Pick<ContinuationRecord, "channelType" | "channelId" | "userId" | "peerId">): void;
+  /** Check if a session still has at least one channel turn in flight. */
   isTracked(record: Pick<ContinuationRecord, "channelType" | "channelId" | "userId" | "peerId">): boolean;
   /**
    * Write recent records to disk. Returns the count written.
@@ -95,28 +97,44 @@ export function resolveContinuationLanguage(
 // ---------------------------------------------------------------------------
 
 /**
- * Create an in-memory tracker that stores the most recent activity per session.
- * On shutdown, `capture()` writes records within the recent window to a JSON file.
+ * Create an in-memory tracker that stores the newest in-flight turn per session.
+ * On shutdown, `capture()` writes active records within the recent window to a JSON file.
  */
 export function createRestartContinuationTracker(): RestartContinuationTracker {
-  const records = new Map<string, ContinuationRecord>();
+  const records = new Map<string, { record: ContinuationRecord; activeCount: number }>();
 
-  function makeKey(r: ContinuationRecord): string {
+  function makeKey(r: Pick<ContinuationRecord, "channelType" | "channelId" | "userId" | "peerId">): string {
     return `${r.channelType}:${r.channelId}:${r.userId}:${r.peerId ?? ""}`;
   }
 
   return {
     track(record) {
-      records.set(makeKey(record), { ...record, timestamp: systemNowMs() });
+      const key = makeKey(record);
+      const activeCount = (records.get(key)?.activeCount ?? 0) + 1;
+      records.set(key, {
+        record: { ...record, timestamp: systemNowMs() },
+        activeCount,
+      });
+    },
+
+    complete(record) {
+      const key = makeKey(record);
+      const active = records.get(key);
+      if (!active) return;
+      if (active.activeCount > 1) {
+        records.set(key, { ...active, activeCount: active.activeCount - 1 });
+        return;
+      }
+      records.delete(key);
     },
 
     isTracked(record) {
-      return records.has(makeKey(record as ContinuationRecord));
+      return records.has(makeKey(record));
     },
 
     capture(filePath, recentWindowMs, confinedBaseDir, logger) {
       const now = systemNowMs();
-      const recent = Array.from(records.values()).filter(
+      const recent = Array.from(records.values(), ({ record }) => record).filter(
         (r) => now - r.timestamp < recentWindowMs,
       );
       if (recent.length === 0) return 0;

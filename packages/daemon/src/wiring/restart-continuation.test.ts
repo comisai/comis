@@ -9,7 +9,6 @@ import {
   buildMcpStatusLine,
   resolveContinuationLanguage,
   type ContinuationRecord,
-  type RestartContinuationTracker,
 } from "./restart-continuation.js";
 import type { McpConnection } from "@comis/skills";
 import { runWithContext } from "@comis/core";
@@ -43,10 +42,6 @@ function makeMockLogger() {
     level: "debug",
   } as any;
 }
-
-type CompletionCapableTracker = RestartContinuationTracker & {
-  complete(record: Pick<ContinuationRecord, "channelType" | "channelId" | "userId" | "peerId">): void;
-};
 
 // ---------------------------------------------------------------------------
 // createRestartContinuationTracker
@@ -131,7 +126,7 @@ describe("createRestartContinuationTracker", () => {
   });
 
   it("completed turns are excluded from restart capture", () => {
-    const tracker = createRestartContinuationTracker() as CompletionCapableTracker;
+    const tracker = createRestartContinuationTracker();
     const record = makeRecord({ channelId: "settled-chat" });
 
     tracker.track(record);
@@ -144,7 +139,7 @@ describe("createRestartContinuationTracker", () => {
   });
 
   it("earlier completion keeps an overlapping turn active", () => {
-    const tracker = createRestartContinuationTracker() as CompletionCapableTracker;
+    const tracker = createRestartContinuationTracker();
     const first = makeRecord({ channelId: "overlap-chat", resolvedLanguage: "en" });
     const second = makeRecord({ channelId: "overlap-chat", resolvedLanguage: "fr" });
 
