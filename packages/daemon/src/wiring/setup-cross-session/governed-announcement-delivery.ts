@@ -12,7 +12,6 @@ import {
   type DeliveryService,
   type OutwardSendLedgerPort,
   type SendMessageOptions,
-  type SessionKey,
   type TypedEventBus,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
@@ -47,24 +46,26 @@ interface AnnouncementDeliveryDeps {
   gatewaySend?: { ref?: (channelId: string, text: string) => boolean };
   logger?: ComisLogger;
   outwardLedger?: OutwardSendLedgerPort;
-  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
+  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
   prepareCompletionAttachment?: (
     attachment: CompletionAttachmentRef,
   ) => Promise<Result<PreparedCompletionAttachment, Error>>;
 }
+
+type AnnouncementDeliveryOptions = Omit<DeliverToChannelOptions, "completionMode">;
 
 export interface AnnouncementDelivery {
   sendToChannelWithReceipt(
     channelType: string,
     channelId: string,
     text: string,
-    options?: DeliverToChannelOptions,
+    options?: AnnouncementDeliveryOptions,
   ): Promise<Result<AnnouncementPlatformSendOutcome, Error>>;
   sendToChannel(
     channelType: string,
     channelId: string,
     text: string,
-    options?: DeliverToChannelOptions,
+    options?: AnnouncementDeliveryOptions,
   ): Promise<boolean>;
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
 }
@@ -76,7 +77,7 @@ export function createAnnouncementDelivery(
     channelType: string,
     channelId: string,
     text: string,
-    options?: DeliverToChannelOptions,
+    options?: AnnouncementDeliveryOptions,
   ): Promise<Result<AnnouncementPlatformSendOutcome, Error>> => {
     deps.logger?.debug({
       channelType,
@@ -110,19 +111,22 @@ export function createAnnouncementDelivery(
       );
       return ok({ delivered: false });
     }
-    const result = await deps.deliveryService.deliverToChannel(adapter, channelId, text, options);
+    const result = await deps.deliveryService.deliverToChannel(adapter, channelId, text, {
+      completionMode: "settled",
+      ...options,
+    });
     const platformDelivery = resolvePlatformDeliveryResult(result);
-    const success = platformDelivery.ok && platformDelivery.value.ok;
+    const success = platformDelivery.ok && platformDelivery.value.platform.status === "accepted";
     deps.logger?.debug(
       { channelType, channelId, success, gateway: false },
       "sendToChannel delivery outcome",
     );
     if (!platformDelivery.ok) return err(platformDelivery.error);
     const platformMessageId = platformDelivery.value.chunks.find(
-      (chunk) => chunk.ok && typeof chunk.messageId === "string" && chunk.messageId.length > 0,
+      (chunk) => chunk.status === "accepted" && typeof chunk.messageId === "string" && chunk.messageId.length > 0,
     )?.messageId;
     return ok({
-      delivered: platformDelivery.value.ok,
+      delivered: platformDelivery.value.platform.status === "accepted",
       ...(platformMessageId ? { platformMessageId } : {}),
     });
   };
@@ -131,7 +135,7 @@ export function createAnnouncementDelivery(
     channelType: string,
     channelId: string,
     text: string,
-    options?: DeliverToChannelOptions,
+    options?: AnnouncementDeliveryOptions,
   ): Promise<boolean> => {
     const result = await sendToChannelWithReceipt(channelType, channelId, text, options);
     return result.ok && result.value.delivered;
@@ -142,7 +146,7 @@ export function createAnnouncementDelivery(
     channelId: string,
     text: string,
     attachment: GovernedAnnouncementAttachment,
-    options?: DeliverToChannelOptions,
+    options?: AnnouncementDeliveryOptions,
   ): Promise<Result<AnnouncementPlatformSendOutcome, Error>> => {
     const startedAt = systemNowMs();
     const adapter = deps.adaptersByType.get(channelType);
@@ -250,7 +254,7 @@ export function createAnnouncementDelivery(
       );
       return ok({ delivered: false, failure: "allocation_blocked" });
     }
-    const resolvedRoot = tryCatch(() => resolveRootRunId(request.agentId, projectedSession.value));
+    const resolvedRoot = resolveRootRunId(request.agentId, projectedSession.value);
     if (!resolvedRoot.ok || resolvedRoot.value.length === 0) {
       deps.logger?.error(
         {

@@ -88,7 +88,7 @@ export interface CrossSessionResult {
   /** Sub-agent task runner for delegated execution. */
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
   /** Channel message sender for graph completion announcements */
-  sendToChannel: (channelType: string, channelId: string, text: string, options?: DeliverToChannelOptions) => Promise<boolean>;
+  sendToChannel: (channelType: string, channelId: string, text: string, options?: Omit<DeliverToChannelOptions, "completionMode">) => Promise<boolean>;
   /** Receipt-aware retained-operation boundary for completion announcements. */
   sendGovernedAnnouncement?: SendGovernedCompletionAnnouncement;
   /** Parent session announcement for graph results */
@@ -204,7 +204,7 @@ export function setupCrossSession(deps: {
    * instances built at composition (one ledger, one durable store).
    */
   outwardLedger?: OutwardSendLedgerPort;
-  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
+  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
   /**
    * Release a child session's trajectory recorder when its run settles
    * (bound to `SessionTrajectoryHandleRegistry.close` by the daemon).

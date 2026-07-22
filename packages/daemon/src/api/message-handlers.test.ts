@@ -50,18 +50,26 @@ function makeFakeDeliveryService(): DeliveryService {
       if (options?.extra) sendOpts.extra = options.extra;
       const result = await adapter.sendMessage(channelId, text, Object.keys(sendOpts).length > 0 ? sendOpts : undefined);
       return ok({
-        ok: result.ok,
-        totalChunks: 1,
-        deliveredChunks: result.ok ? 1 : 0,
-        failedChunks: result.ok ? 0 : 1,
-        chunks: [{
-          ok: result.ok,
-          messageId: result.ok ? result.value : undefined,
-          error: result.ok ? undefined : result.error,
-          charCount: text.length,
-          retried: false,
-        }],
+        chunks: result.ok
+          ? [{ status: "accepted" as const, messageId: result.value, charCount: text.length, retried: false }]
+          : [{
+              status: "rejected" as const,
+              error: result.error,
+              errorKind: "platform" as const,
+              charCount: text.length,
+              retried: false,
+            }],
         totalChars: text.length,
+        platform: result.ok
+          ? { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 1, lastMessageId: result.value }
+          : {
+              status: "rejected" as const,
+              errorKind: "platform" as const,
+              deliveredChunks: 0,
+              failedChunks: 1,
+              settledAtMs: 1,
+            },
+        queueDisposition: "settled" as const,
       });
     }),
     // DeliveryService gained drainInFlight().
@@ -73,12 +81,10 @@ function makeFakeDeliveryService(): DeliveryService {
 
 function makeQueueTransitionError(messageId = "platform-msg-1"): DeliveryQueueTransitionError {
   const platformResult: DeliveryResult = {
-    ok: true,
-    totalChunks: 1,
-    deliveredChunks: 1,
-    failedChunks: 0,
-    chunks: [{ ok: true, messageId, charCount: 5, retried: false }],
+    chunks: [{ status: "accepted", messageId, charCount: 5, retried: false }],
     totalChars: 5,
+    platform: { status: "accepted", deliveredChunks: 1, settledAtMs: 1, lastMessageId: messageId },
+    queueDisposition: "transition_failed",
   };
   return new DeliveryQueueTransitionError([{
     transition: "ack",
@@ -1129,7 +1135,7 @@ describe("outward quota gate", () => {
       listUnreconciled: vi.fn(async () => ok([])),
     };
     deps.outwardLedger = ledger;
-    deps.resolveRootRunId = vi.fn(() => "root-1");
+    deps.resolveRootRunId = vi.fn(() => ({ ok: true, value: "root-1" }));
     const handlers = createMessageHandlers(deps);
 
     const result = await handlers["message.send"]({
@@ -1180,6 +1186,7 @@ describe("outward quota gate", () => {
         hookRunner,
         deliveryQueue: createNoOpDeliveryQueue(),
         logger: deps.logger,
+        clock: { now: () => 1 },
         eventBus,
         retryEngine,
       });
@@ -1195,7 +1202,7 @@ describe("outward quota gate", () => {
         listUnreconciled: vi.fn(async () => ok([])),
       };
       deps.outwardLedger = ledger;
-      deps.resolveRootRunId = vi.fn(() => "root-ambiguous");
+      deps.resolveRootRunId = vi.fn(() => ({ ok: true, value: "root-ambiguous" }));
       const handlers = createMessageHandlers(deps);
 
       await expect(handlers["message.send"]({

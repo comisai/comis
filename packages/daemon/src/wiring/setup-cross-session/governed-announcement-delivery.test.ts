@@ -113,7 +113,7 @@ describe("completion announcement delivery wiring", () => {
       deliveryService,
       eventBus,
       outwardLedger: ledger,
-      resolveRootRunId: () => "root-1",
+      resolveRootRunId: () => ({ ok: true, value: "root-1" }),
       prepareCompletionAttachment: vi.fn(async () => ok({
         path: "/tmp/completion-report.csv",
         fileName: "completion-report.csv",

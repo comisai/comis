@@ -31,12 +31,15 @@ const mockRandomUUID = vi.hoisted(() => vi.fn(() => "30000000-0000-4000-8000-000
 const mockDeliverToChannel = vi.hoisted(() => vi.fn(async () => ({
   ok: true as const,
   value: {
-    ok: true,
-    totalChunks: 1,
-    deliveredChunks: 1,
-    failedChunks: 0,
-    chunks: [{ ok: true, messageId: "mock-msg-id", charCount: 10, retried: false }],
+    chunks: [{ status: "accepted" as const, messageId: "mock-msg-id", charCount: 10, retried: false }],
     totalChars: 10,
+    platform: {
+      status: "accepted" as const,
+      deliveredChunks: 1,
+      settledAtMs: 1,
+      lastMessageId: "mock-msg-id",
+    },
+    queueDisposition: "settled" as const,
   },
 })));
 const mockTypingControllerInstance = vi.hoisted(() => ({
@@ -670,10 +673,9 @@ describe("setupCrossSession", () => {
     const result = await sendToChannel("telegram", "chat-123", "Hello channel");
 
     const adapter = deps.adaptersByType.get("telegram");
-    // No optional 5th-arg deps record — DeliveryService captured
-    // deliveryQueue + eventBus + hookRunner in closure at composition.
+    // Direct announcement delivery requires settled platform truth.
     expect(mockDeliverToChannel).toHaveBeenCalledWith(
-      adapter, "chat-123", "Hello channel", undefined,
+      adapter, "chat-123", "Hello channel", { completionMode: "settled" },
     );
     expect(result).toBe(true);
   });
@@ -701,9 +703,9 @@ describe("setupCrossSession", () => {
     const result = await sendToChannel("telegram", "chat-123", "# Hello", { threadId: "thread-42" });
 
     const adapter = deps.adaptersByType.get("telegram");
-    // Per-call options still ride; no 5th-arg deps record.
+    // Per-call options ride alongside the settled-completion contract.
     expect(mockDeliverToChannel).toHaveBeenCalledWith(
-      adapter, "chat-123", "# Hello", { threadId: "thread-42" },
+      adapter, "chat-123", "# Hello", { threadId: "thread-42", completionMode: "settled" },
     );
     expect(result).toBe(true);
   });
@@ -746,12 +748,15 @@ describe("setupCrossSession", () => {
     setupCrossSession(deps);
     const sendToChannel = mockCreateCrossSessionSender.mock.calls[0][0].sendToChannel;
     const platformResult = {
-      ok: true,
-      totalChunks: 1,
-      deliveredChunks: 1,
-      failedChunks: 0,
-      chunks: [{ ok: true, messageId: "platform-msg-1", charCount: 5, retried: false }],
+      chunks: [{ status: "accepted" as const, messageId: "platform-msg-1", charCount: 5, retried: false }],
       totalChars: 5,
+      platform: {
+        status: "accepted" as const,
+        deliveredChunks: 1,
+        settledAtMs: 1,
+        lastMessageId: "platform-msg-1",
+      },
+      queueDisposition: "transition_failed" as const,
     };
     mockDeliverToChannel.mockResolvedValueOnce({
       ok: false,
@@ -778,7 +783,24 @@ describe("setupCrossSession", () => {
 
     mockDeliverToChannel.mockResolvedValueOnce({
       ok: true,
-      value: { ok: false, totalChunks: 1, deliveredChunks: 0, failedChunks: 1, chunks: [], totalChars: 10 },
+      value: {
+        chunks: [{
+          status: "rejected",
+          error: new Error("transport rejected"),
+          errorKind: "platform",
+          charCount: 10,
+          retried: false,
+        }],
+        totalChars: 10,
+        platform: {
+          status: "rejected",
+          errorKind: "platform",
+          deliveredChunks: 0,
+          failedChunks: 1,
+          settledAtMs: 1,
+        },
+        queueDisposition: "settled",
+      },
     });
     const result = await sendToChannel("telegram", "chat-123", "Hello");
     expect(result).toBe(false);
@@ -3697,7 +3719,7 @@ describe("setupCrossSession durable-store injection", () => {
       markFailed: vi.fn(async () => {}),
       listUnreconciled: vi.fn(async () => []),
     };
-    const resolveRootRunId = vi.fn(() => "root-xyz");
+    const resolveRootRunId = vi.fn(() => ({ ok: true as const, value: "root-xyz" }));
 
     setupCrossSession(createMinimalDeps({ outwardLedger, resolveRootRunId }));
 
@@ -3738,23 +3760,26 @@ describe("setupCrossSession durable-store injection", () => {
       return {
         ok: true as const,
         value: {
-          ok: true,
-          totalChunks: 1,
-          deliveredChunks: 1,
-          failedChunks: 0,
           chunks: [{
-            ok: true,
+            status: "accepted" as const,
             messageId: "telegram-receipt-4",
             charCount: 20,
             retried: false,
           }],
           totalChars: 20,
+          platform: {
+            status: "accepted" as const,
+            deliveredChunks: 1,
+            settledAtMs: 1,
+            lastMessageId: "telegram-receipt-4",
+          },
+          queueDisposition: "settled" as const,
         },
       };
     });
     const deps = createMinimalDeps({
       outwardLedger,
-      resolveRootRunId: vi.fn(() => "root-completion"),
+      resolveRootRunId: vi.fn(() => ({ ok: true as const, value: "root-completion" })),
       deliveryService: { deliverToChannel },
       getExecutor: vi.fn(() => ({
         execute: vi.fn().mockResolvedValue({
@@ -3827,22 +3852,27 @@ describe("setupCrossSession durable-store injection", () => {
       : vi.fn(async () => ({
           ok: true as const,
           value: {
-            ok: false,
-            totalChunks: 1,
-            deliveredChunks: 0,
-            failedChunks: 1,
             chunks: [{
-              ok: false,
+              status: "rejected" as const,
               error: new Error("transport rejected"),
+              errorKind: "platform" as const,
               charCount: 20,
               retried: false,
             }],
             totalChars: 20,
+            platform: {
+              status: "rejected" as const,
+              errorKind: "platform" as const,
+              deliveredChunks: 0,
+              failedChunks: 1,
+              settledAtMs: 1,
+            },
+            queueDisposition: "settled" as const,
           },
         }));
     const deps = createMinimalDeps({
       outwardLedger,
-      resolveRootRunId: vi.fn(() => "root-retained"),
+      resolveRootRunId: vi.fn(() => ({ ok: true as const, value: "root-retained" })),
       deliveryService: { deliverToChannel },
       getExecutor: vi.fn(() => ({
         execute: vi.fn().mockResolvedValue({

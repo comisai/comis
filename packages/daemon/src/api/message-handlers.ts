@@ -266,12 +266,15 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         text: typeof text === "string" ? text : String(text),
         doSend: async () => {
           const dr = await deps.deliveryService.deliverToChannel(adapter, channelId, text, {
+            completionMode: "settled",
             extra: Object.keys(extra).length > 0 ? extra : undefined,
             origin: "rpc:message.send",
           });
           const platformDelivery = resolvePlatformDeliveryResult(dr);
           if (!platformDelivery.ok) return platformDelivery;
-          if (platformDelivery.value.failedChunks > 0) return { ok: false as const, error: new Error("Message delivery failed") };
+          if (platformDelivery.value.platform.status !== "accepted") {
+            return err(new Error("Message delivery was not fully accepted by the platform"));
+          }
           const platformMessageId = platformDelivery.value.chunks[0]?.messageId;
           return platformMessageId === undefined || platformMessageId.length === 0
             ? err(new Error("Message delivery returned no platform receipt"))
@@ -322,13 +325,16 @@ export function createMessageHandlers(deps: MessageHandlerDeps): Record<string, 
         text: typeof text === "string" ? text : String(text),
         doSend: async () => {
           const dr = await deps.deliveryService.deliverToChannel(adapter, channelId, text, {
+            completionMode: "settled",
             replyTo: messageId,
             extra: Object.keys(extra).length > 0 ? extra : undefined,
             origin: "rpc:message.reply",
           });
           const platformDelivery = resolvePlatformDeliveryResult(dr);
           if (!platformDelivery.ok) return platformDelivery;
-          if (platformDelivery.value.failedChunks > 0) return { ok: false as const, error: new Error("Message delivery failed") };
+          if (platformDelivery.value.platform.status !== "accepted") {
+            return err(new Error("Message delivery was not fully accepted by the platform"));
+          }
           const platformMessageId = platformDelivery.value.chunks[0]?.messageId;
           return platformMessageId === undefined || platformMessageId.length === 0
             ? err(new Error("Message delivery returned no platform receipt"))
