@@ -32,7 +32,11 @@ import * as os from "node:os";
 import { ObsExplainContract, stripInternalFields, safePath, type IncidentReport } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type ObsHandlerDeps } from "./obs-helpers.js";
-import { resolveTraceToSession, resolveRootRunToSession } from "./obs-explain-resolve.js";
+import {
+  resolveTraceToSession,
+  resolveRootRunToSession,
+  traceIdFromCronRootRun,
+} from "./obs-explain-resolve.js";
 import { makeRealReader, resolveSessionFilePath, type IncidentSourceReader } from "./obs-explain-readers.js";
 import { toIncidentSignals } from "./obs-explain-signals.js";
 import { assembleIncidentReport } from "./obs-explain-assemble.js";
@@ -71,6 +75,74 @@ export interface AssembleIncidentReportParams {
    * (absent/`false`) excludes synthetic rows from the by-traceId resolution.
    */
   readonly includeSynthetic?: boolean;
+}
+
+function recordHasTraceId(record: Record<string, unknown>, traceId: string): boolean {
+  return record.traceId === traceId;
+}
+
+function recordData(record: Record<string, unknown> | undefined): Record<string, unknown> {
+  return typeof record?.data === "object" && record.data !== null
+    ? record.data as Record<string, unknown>
+    : {};
+}
+
+function lastRecordOfType(
+  records: ReadonlyArray<Record<string, unknown>>,
+  type: string,
+): Record<string, unknown> | undefined {
+  return [...records].reverse().find((record) => record.type === type);
+}
+
+function executionDurationMs(records: ReadonlyArray<Record<string, unknown>>): number | undefined {
+  const timestamps = records
+    .map((record) => typeof record.ts === "string" ? Date.parse(record.ts) : undefined)
+    .filter((timestamp): timestamp is number => timestamp !== undefined && Number.isFinite(timestamp));
+  if (timestamps.length > 1) {
+    const first = Math.min(...timestamps);
+    const last = Math.max(...timestamps);
+    if (last > first) return last - first;
+  }
+
+  let modelDurationMs = 0;
+  let modelCompletions = 0;
+  for (const record of records) {
+    if (record.type !== "model.completed") continue;
+    const durationMs = recordData(record).durationMs;
+    if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs < 0) continue;
+    modelDurationMs += durationMs;
+    modelCompletions += 1;
+  }
+  return modelCompletions > 0 ? modelDurationMs : undefined;
+}
+
+/**
+ * Build the last-write rollup for one scheduler execution from that execution's
+ * trajectory. Durable scheduler sessions reuse one metadata file, so metadata
+ * for an earlier trace is no longer authoritative after the next cron turn.
+ */
+function metadataForCronExecution(
+  metadata: Record<string, unknown> | null,
+  records: ReadonlyArray<Record<string, unknown>>,
+  traceId: string,
+): Record<string, unknown> {
+  const matchingMetadata = metadata?.traceId === traceId ? metadata : undefined;
+  const matchingSessionEnd =
+    typeof matchingMetadata?.sessionEnd === "object" && matchingMetadata.sessionEnd !== null
+      ? matchingMetadata.sessionEnd as Record<string, unknown>
+      : {};
+  const summary = recordData(lastRecordOfType(records, "session.summary"));
+  const durationMs = matchingMetadata === undefined ? executionDurationMs(records) : undefined;
+
+  return {
+    ...(matchingMetadata ?? {}),
+    traceId,
+    sessionEnd: {
+      ...matchingSessionEnd,
+      ...summary,
+      ...(durationMs !== undefined ? { durationMs } : {}),
+    },
+  };
 }
 
 /**
@@ -116,6 +188,9 @@ export async function assembleIncidentReportFromSources(
     : params.traceId
       ? await resolveTraceToSession(dataDir, params.traceId, params.includeSynthetic)
       : params.sessionKey!;
+  const cronExecutionTraceId = params.rootRunId !== undefined
+    ? traceIdFromCronRootRun(params.rootRunId)
+    : undefined;
 
   // A traceId OR a rootRunId that resolves to "" (no row in
   // today/yesterday's session index, and not a synthetic root) is UNRESOLVABLE —
@@ -135,10 +210,22 @@ export async function assembleIncidentReportFromSources(
 
   // Step 4: read the four bounded sources (production reads files; tests
   // inject the fixture reader).
-  const records = await reader.readSessionRecords(sessionKey);
-  const cache = await reader.readCacheTraceRecords(sessionKey);
-  const metadata = await reader.readSessionMetadata(sessionKey);
-  const rollup = await reader.readDiagnosticsRollup(sessionKey);
+  const sessionRecords = await reader.readSessionRecords(sessionKey);
+  const sessionCache = await reader.readCacheTraceRecords(sessionKey);
+  const sessionMetadata = await reader.readSessionMetadata(sessionKey);
+  const sessionRollup = await reader.readDiagnosticsRollup(sessionKey);
+  const records = cronExecutionTraceId === undefined
+    ? sessionRecords
+    : sessionRecords.filter((record) => recordHasTraceId(record, cronExecutionTraceId));
+  const cache = cronExecutionTraceId === undefined
+    ? sessionCache
+    : sessionCache.filter((record) => recordHasTraceId(record, cronExecutionTraceId));
+  const metadata = cronExecutionTraceId === undefined
+    ? sessionMetadata
+    : metadataForCronExecution(sessionMetadata, records, cronExecutionTraceId);
+  // Diagnostics rows are session-scoped and last-write-wins. They cannot
+  // safely contribute to a historical cron execution report.
+  const rollup = cronExecutionTraceId === undefined ? sessionRollup : null;
   // The 5th source — the session's audit events (persisted
   // via SQLite, NOT a trajectory record, so they are read HERE,
   // not folded from the record stream). Tenant-scoped + bounded by the reader;

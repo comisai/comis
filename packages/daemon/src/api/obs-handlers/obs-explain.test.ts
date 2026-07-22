@@ -380,13 +380,21 @@ describe("bindObsExplainHandlers", () => {
     fs.mkdirSync(logsDir, { recursive: true });
     fs.writeFileSync(
       path.join(logsDir, `session-index.${todayKey()}.jsonl`),
-      [firstExecutionId, secondExecutionId]
-        .map((traceId) => JSON.stringify({
+      [
+        { traceId: firstExecutionId, durationMs: 90, inputTokens: 10, outputTokens: 5 },
+        { traceId: secondExecutionId, durationMs: 180, inputTokens: 20, outputTokens: 10 },
+      ]
+        .map((turn) => JSON.stringify({
           traceSchema: "comis-session-index",
           schemaVersion: 1,
           event: "turn_completed",
-          traceId,
+          ts: "2026-07-22T10:00:00.000Z",
+          traceId: turn.traceId,
           sessionId: sessionKey,
+          durationMs: turn.durationMs,
+          inputTokens: turn.inputTokens,
+          outputTokens: turn.outputTokens,
+          lastError: null,
         }))
         .join("\n") + "\n",
       "utf-8",
@@ -400,30 +408,30 @@ describe("bindObsExplainHandlers", () => {
     const trajectoryRecords = [
       {
         traceSchema: "comis-trajectory", schemaVersion: 1, type: "prompt.submitted",
-        sessionId: sessionKey, traceId: firstExecutionId, timestamp: 1_000, data: {},
+        sessionId: sessionKey, traceId: firstExecutionId, ts: "2026-07-22T10:00:00.000Z", data: {},
       },
       {
-        traceSchema: "comis-trajectory", schemaVersion: 1, type: "execution.completed",
-        sessionId: sessionKey, traceId: firstExecutionId, timestamp: 1_111,
-        data: { outcome: "success", durationMs: 111 },
+        traceSchema: "comis-trajectory", schemaVersion: 1, type: "model.completed",
+        sessionId: sessionKey, traceId: firstExecutionId, ts: "2026-07-22T10:00:00.090Z",
+        data: { durationMs: 90, inputTokens: 10, outputTokens: 5 },
       },
       {
         traceSchema: "comis-trajectory", schemaVersion: 1, type: "session.summary",
-        sessionId: sessionKey, traceId: firstExecutionId, timestamp: 1_112,
+        sessionId: sessionKey, traceId: firstExecutionId, ts: "2026-07-22T10:00:00.111Z",
         data: { degraded: false, turnCount: 1, costUsd: 0.01, toolStats: {}, breakerTripCount: 0 },
       },
       {
         traceSchema: "comis-trajectory", schemaVersion: 1, type: "prompt.submitted",
-        sessionId: sessionKey, traceId: secondExecutionId, timestamp: 2_000, data: {},
+        sessionId: sessionKey, traceId: secondExecutionId, ts: "2026-07-22T11:00:00.000Z", data: {},
       },
       {
-        traceSchema: "comis-trajectory", schemaVersion: 1, type: "execution.completed",
-        sessionId: sessionKey, traceId: secondExecutionId, timestamp: 2_222,
-        data: { outcome: "success", durationMs: 222 },
+        traceSchema: "comis-trajectory", schemaVersion: 1, type: "model.completed",
+        sessionId: sessionKey, traceId: secondExecutionId, ts: "2026-07-22T11:00:00.180Z",
+        data: { durationMs: 180, inputTokens: 20, outputTokens: 10 },
       },
       {
         traceSchema: "comis-trajectory", schemaVersion: 1, type: "session.summary",
-        sessionId: sessionKey, traceId: secondExecutionId, timestamp: 2_223,
+        sessionId: sessionKey, traceId: secondExecutionId, ts: "2026-07-22T11:00:00.222Z",
         data: { degraded: false, turnCount: 2, costUsd: 0.02, toolStats: {}, breakerTripCount: 0 },
       },
     ];

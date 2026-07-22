@@ -41,6 +41,15 @@ function yesterdayKey(): string {
   return systemDateFrom(systemNowMs() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+const CRON_ROOT_PREFIX = "root-cron-";
+
+/** Return the scheduler execution trace embedded in a cron root identifier. */
+export function traceIdFromCronRootRun(rootRunId: string): string | undefined {
+  if (!rootRunId.startsWith(CRON_ROOT_PREFIX)) return undefined;
+  const traceId = rootRunId.slice(CRON_ROOT_PREFIX.length);
+  return traceId.length > 0 ? traceId : undefined;
+}
+
 /**
  * Resolve a `traceId` to its canonical `sessionKey` by scanning the last two
  * days of session-index JSONL files. Returns the FIRST matching row's
@@ -142,13 +151,10 @@ export async function resolveRootRunToSession(
 
   // Source 2 (cron root): the execution id is the indexed model trace id. Reuse
   // the canonical trace resolver so parsing, bounds, and soft-failure stay shared.
-  const CRON_ROOT_PREFIX = "root-cron-";
-  if (rootRunId.startsWith(CRON_ROOT_PREFIX)) {
-    const executionId = rootRunId.slice(CRON_ROOT_PREFIX.length);
-    if (executionId.length > 0) {
-      const sessionKey = await resolveTraceToSession(dataDir, executionId);
-      if (sessionKey.length > 0) return sessionKey;
-    }
+  const executionTraceId = traceIdFromCronRootRun(rootRunId);
+  if (executionTraceId !== undefined) {
+    const sessionKey = await resolveTraceToSession(dataDir, executionTraceId);
+    if (sessionKey.length > 0) return sessionKey;
   }
 
   // Source 3 (capability-audited root): scan the day-keyed session index for a
