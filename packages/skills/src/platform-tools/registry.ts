@@ -107,7 +107,7 @@ import {
 export type RpcCall = (
   method: string,
   params: Record<string, unknown>,
-  metadata?: { outwardOperationId?: string },
+  metadata?: { outwardOperationId?: string; signal?: AbortSignal },
 ) => Promise<unknown>;
 
 /**

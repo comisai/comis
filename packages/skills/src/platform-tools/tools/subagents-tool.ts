@@ -4,7 +4,7 @@
  * Subagents lifecycle management tool: multi-action tool for listing,
  * killing, and steering running sub-agents.
  *
- * Supports 3 actions: list (default), kill, steer.
+ * Supports 4 actions: list (default), wait, kill, steer.
  * Kill action is gated via action classifier.
  * All actions delegate to the subagent backend via rpcCall indirection.
  *
@@ -12,6 +12,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import { wrapExternalContent } from "@comis/core";
 import { Type, type Static } from "typebox";
 import {
   jsonResult,
@@ -29,8 +30,8 @@ import type { RpcCall } from "./cron-tool.js";
 const SubagentsParams = Type.Object({
   action: Type.Optional(
     Type.Union(
-      [Type.Literal("list"), Type.Literal("kill"), Type.Literal("steer")],
-      { description: "Subagent action (default: list). Valid values: list (show active runs), kill (terminate sub-agent), steer (redirect task with new message)" },
+      [Type.Literal("list"), Type.Literal("wait"), Type.Literal("kill"), Type.Literal("steer")],
+      { description: "Subagent action (default: list). Valid values: list (show runs), wait (await owned children without polling), kill (terminate sub-agent), steer (redirect task with new message)" },
     ),
   ),
   target: Type.Optional(
@@ -41,6 +42,16 @@ const SubagentsParams = Type.Object({
   ),
   recent_minutes: Type.Optional(
     Type.Integer({ description: "Include runs from last N minutes (default: 30, for list)" }),
+  ),
+  run_ids: Type.Optional(
+    Type.Array(Type.String({ minLength: 1, maxLength: 256 }), {
+      minItems: 1,
+      maxItems: 32,
+      description: "Exact run IDs to wait for; omit to wait for active direct children",
+    }),
+  ),
+  timeout_ms: Type.Optional(
+    Type.Integer({ minimum: 0, maximum: 300_000, description: "Wait deadline in milliseconds" }),
   ),
   _confirmed: Type.Optional(
     Type.Boolean({
@@ -69,7 +80,7 @@ interface ToolLogger {
 // ---------------------------------------------------------------------------
 
 /**
- * Create a subagents lifecycle management tool with 3 actions.
+ * Create a subagents lifecycle management tool with 4 actions.
  *
  * The kill action is gated via createActionGate. List is the default
  * action when no action is specified. Steer kills a running sub-agent
@@ -79,7 +90,30 @@ interface ToolLogger {
  * @param logger - Optional structured logger for DEBUG-level operation logging
  * @returns AgentTool implementing the subagents management interface
  */
-const VALID_ACTIONS = ["list", "kill", "steer"] as const;
+const VALID_ACTIONS = ["list", "wait", "kill", "steer"] as const;
+
+function frameWaitCompletionSummaries(value: unknown): unknown {
+  if (!value || typeof value !== "object" || !("results" in value)) return value;
+  const results = (value as { results?: unknown }).results;
+  if (!Array.isArray(results)) return value;
+  return {
+    ...(value as Record<string, unknown>),
+    results: results.map((entry) => {
+      if (!entry || typeof entry !== "object" || !("completion" in entry)) return entry;
+      const completion = (entry as { completion?: unknown }).completion;
+      if (!completion || typeof completion !== "object") return entry;
+      const summary = (completion as { summary?: unknown }).summary;
+      if (typeof summary !== "string") return entry;
+      return {
+        ...(entry as Record<string, unknown>),
+        completion: {
+          ...(completion as Record<string, unknown>),
+          summary: wrapExternalContent(summary, { source: "unknown" }),
+        },
+      };
+    }),
+  };
+}
 
 export function createSubagentsTool(rpcCall: RpcCall, logger?: ToolLogger): AgentTool<typeof SubagentsParams> {
   const killGate = createActionGate("subagent.kill");
@@ -88,12 +122,13 @@ export function createSubagentsTool(rpcCall: RpcCall, logger?: ToolLogger): Agen
     name: "subagents",
     label: "Subagents",
     description:
-      "List, kill, or steer running sub-agents. Use list to see active runs, kill to terminate one, steer to redirect a running sub-agent's task.",
+      "List, wait for, kill, or steer sub-agents. Wait is event-driven and defaults to this caller's active direct children.",
     parameters: SubagentsParams,
 
     async execute(
       _toolCallId: string,
       params: SubagentsParamsType,
+      signal?: AbortSignal,
     ): Promise<AgentToolResult<unknown>> {
       try {
         const p = params as unknown as Record<string, unknown>;
@@ -115,6 +150,25 @@ export function createSubagentsTool(rpcCall: RpcCall, logger?: ToolLogger): Agen
             recentMinutes,
           });
           return jsonResult(result);
+        }
+
+        if (action === "wait") {
+          const runIds = Array.isArray(p.run_ids)
+            ? p.run_ids.filter((runId): runId is string => typeof runId === "string")
+            : undefined;
+          const timeoutMs = readNumberParam(p, "timeout_ms", false);
+          const waitParams = {
+            ...(runIds ? { runIds: [...new Set(runIds)] } : {}),
+            ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+          };
+          logger?.debug({
+            toolName: "subagents",
+            action: "wait",
+            requestedCount: runIds?.length ?? 0,
+            timeoutMs,
+          }, "Subagent completion wait started");
+          const result = await rpcCall("subagent.wait", waitParams, { signal });
+          return jsonResult(frameWaitCompletionSummaries(result));
         }
 
         if (action === "kill") {

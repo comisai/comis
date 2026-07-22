@@ -280,7 +280,13 @@ export function clampTimeoutMs(requested: number | undefined): number {
  */
 export async function runJailedScript(
   deps: JailedScriptRunnerDeps,
-  params: { script: string; language: "ts" | "js"; timeoutMs?: number; runId?: string },
+  params: {
+    script: string;
+    language: "ts" | "js";
+    timeoutMs?: number;
+    runId?: string;
+    signal?: AbortSignal;
+  },
 ): Promise<string> {
   const log = deps.logger.child({ submodule: "orchestrate-tool" });
   const spawnFn = deps.spawnFn ?? defaultSpawn;
@@ -301,6 +307,10 @@ export async function runJailedScript(
   // internal logs.
   const runId =
     params.runId ?? `orch-${now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+  if (params.signal?.aborted) {
+    throw createJailedRunAbortError();
+  }
 
   log.debug({ runId, step: "start", language: params.language }, "orchestrate run starting");
 
@@ -422,6 +432,7 @@ export async function runJailedScript(
       { env: childEnv, cwd: undefined },
       timeoutMs,
       { runId, log },
+      params.signal,
     );
 
     return stdout;
@@ -468,8 +479,13 @@ function runJailedChild(
   opts: { env: Record<string, string | undefined>; cwd?: string },
   timeoutMs: number,
   ctx: { runId: string; log: ComisLogger },
+  signal?: AbortSignal,
 ): Promise<string> {
   return new Promise<string>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createJailedRunAbortError());
+      return;
+    }
     let child: JailedScriptSpawnedChild;
     try {
       child = spawnFn(bin, args, opts);
@@ -482,9 +498,25 @@ function runJailedChild(
     let stdoutBytes = 0;
     let stderrTail = "";
     let settled = false;
+    const removeAbortListener = (): void => {
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = (): void => {
+      if (settled) return;
+      settled = true;
+      systemClearTimeout(timer);
+      removeAbortListener();
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
+      reject(createJailedRunAbortError());
+    };
     const timer: SystemTimeoutHandle = systemSetTimeout(() => {
       if (settled) return;
       settled = true;
+      removeAbortListener();
       try {
         child.kill("SIGKILL");
       } catch {
@@ -493,6 +525,7 @@ function runJailedChild(
       reject(new Error(`orchestrate run exceeded its ${timeoutMs}ms timeout`));
     }, timeoutMs);
     timer.unref?.();
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     child.stdout?.on("data", (chunk: Buffer) => {
       if (settled) return;
@@ -504,6 +537,7 @@ function runJailedChild(
       if (stdoutBytes > STDOUT_HARD_CAP_BYTES) {
         settled = true;
         systemClearTimeout(timer);
+        removeAbortListener();
         try {
           child.kill("SIGKILL");
         } catch {
@@ -531,12 +565,14 @@ function runJailedChild(
       if (settled) return;
       settled = true;
       systemClearTimeout(timer);
+      removeAbortListener();
       reject(err);
     });
     child.on("close", (code: number | null) => {
       if (settled) return;
       settled = true;
       systemClearTimeout(timer);
+      removeAbortListener();
       if (code !== 0 && code !== null) {
         const tail = stderrTail.trim();
         ctx.log.warn(
@@ -558,6 +594,12 @@ function runJailedChild(
       resolve(stdout);
     });
   });
+}
+
+function createJailedRunAbortError(): Error {
+  const error = new Error("orchestrate jailed run aborted by caller");
+  error.name = "AbortError";
+  return error;
 }
 
 /** The default real spawn (the unit suite injects `spawnFn`; this is production). */
