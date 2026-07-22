@@ -30,7 +30,15 @@ import { describe, it, expect, vi } from "vitest";
 import { bindSessionReadHandlers as bindSessionReadHandlersRaw } from "./session-read.js";
 import type { SessionHandlerDeps } from "./session-helpers.js";
 import { ok } from "@comis/shared";
-import { createConversationRef, type ConversationScope, type DeliveryQueueEntry, type DeliveryQueuePort } from "@comis/core";
+import {
+  createConversationRef,
+  messageToParts,
+  type ContextStoreScope,
+  type ConversationScope,
+  type DeliveryQueueEntry,
+  type DeliveryQueuePort,
+  type LcdMessage,
+} from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -419,5 +427,138 @@ describe("session.history stats over pi-format session files", () => {
     expect(r.session.inputTokens).toBe(100);
     expect(r.session.outputTokens).toBe(50);
     expect(r.session.totalTokens).toBe(150);
+  });
+});
+
+describe("session.history LCD transcript recovery", () => {
+  it("returns scoped LCD messages with normal projections when session metadata has no transcript", async () => {
+    const conversationRef = referenceFor("default");
+    const createdAt = 1_700_000_100_000;
+    const assistantAt = 1_700_000_102_000;
+    const updatedAt = 1_700_000_104_000;
+    const lcdRows: LcdMessage[] = [
+      {
+        id: "lcd-user",
+        conversationRef,
+        seq: 1,
+        role: "user",
+        tokenCount: 5,
+        createdAt,
+        parts: messageToParts({
+          role: "user",
+          content: "scoped request",
+          timestamp: createdAt,
+        }),
+      },
+      {
+        id: "lcd-assistant",
+        conversationRef,
+        seq: 2,
+        role: "assistant",
+        tokenCount: 150,
+        createdAt: assistantAt,
+        parts: messageToParts({
+          role: "assistant",
+          content: [
+            { type: "text", text: "scoped response" },
+            { type: "toolCall", id: "call-lcd", name: "exec", arguments: { cmd: "pwd" } },
+          ],
+          api: "openai-responses",
+          provider: "openai",
+          model: "test-model",
+          usage: {
+            input: 100,
+            output: 50,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 150,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "toolUse",
+          timestamp: assistantAt,
+        }),
+      },
+    ];
+    const getMessages = vi.fn((_scope: ContextStoreScope) => lcdRows);
+    const queue = makeQueuePort([
+      makeQueueEntry("scoped response", "chan-A", "pending"),
+    ]);
+    const deps = makeDeps({
+      deliveryQueue: queue,
+      lcdStore: { getMessages } as unknown as SessionHandlerDeps["lcdStore"],
+      sessionStore: {
+        listDetailed: () => [],
+        loadByFormattedKey: (key: string) => key === SESSION_KEY
+          ? { messages: [], metadata: {}, createdAt, updatedAt }
+          : undefined,
+        deleteByFormattedKey: () => false,
+        saveByFormattedKey: vi.fn(),
+      } as never,
+    });
+
+    const handlers = bindSessionReadHandlers(deps);
+    const result = (await handlers["session.history"]!({
+      session_key: SESSION_KEY,
+      limit: 100,
+    })) as {
+      session: {
+        messageCount: number;
+        inputTokens: number;
+        outputTokens: number;
+        totalTokens: number;
+        toolCalls: number;
+        createdAt: number;
+        lastActiveAt: number;
+      };
+      messages: Array<{
+        role: string;
+        content: string;
+        timestamp: number;
+        deliveryStatus: "confirmed" | "pending";
+      }>;
+      total: number;
+    };
+
+    expect(getMessages).toHaveBeenCalledWith({
+      tenantId: "test",
+      agentId: "default",
+      conversationRef,
+      sessionKey: SESSION_KEY,
+    });
+    expect(result.messages).toEqual([
+      {
+        role: "user",
+        content: "scoped request",
+        timestamp: createdAt,
+        deliveryStatus: "confirmed",
+      },
+      {
+        role: "assistant",
+        content: "scoped response",
+        timestamp: assistantAt,
+        deliveryStatus: "pending",
+      },
+    ]);
+    expect(result.total).toBe(2);
+    expect(result.session).toMatchObject({
+      messageCount: 2,
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      toolCalls: 1,
+      createdAt,
+      lastActiveAt: updatedAt,
+    });
+    expect(deps.logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageSource: "lcd",
+        sourceMessageCount: 2,
+        visibleMessageCount: 2,
+        durationMs: expect.any(Number),
+      }),
+      "Session history read complete",
+    );
+    expect(JSON.stringify((deps.logger.info as ReturnType<typeof vi.fn>).mock.calls)).not.toContain("scoped request");
+    expect(JSON.stringify((deps.logger.info as ReturnType<typeof vi.fn>).mock.calls)).not.toContain("scoped response");
   });
 });
