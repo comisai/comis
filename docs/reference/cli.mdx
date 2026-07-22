@@ -6,7 +6,7 @@ icon: "terminal"
 
 **What this is for:** the `comis` command is how you set up your daemon, manage agents and channels, browse memory, audit security, and operate the running system from the terminal. **Who it's for:** operators and developers running Comis on their own machine or a server.
 
-Comis currently ships **31 top-level command groups**. Some commands call the
+Comis currently ships **32 top-level command groups**. Some commands call the
 running daemon over JSON-RPC; others inspect or update local state. The built-in
 `--help` output is authoritative for the installed version.
 
@@ -311,6 +311,45 @@ comis cron status --agent default
 ```
 
 Cross-agent selection is authorized by the daemon, not trusted from CLI arguments. Agent-origin RPC calls remain self-scoped. Table inventory deliberately omits payload bodies; JSON is the complete typed operator projection.
+
+---
+
+### `comis tasks`
+
+Inspect, cancel, and recover inferred follow-up tasks through the running daemon's strict admin JSON-RPC contracts. Like `comis cron`, the CLI never parses scheduler files and has no offline mode; an unreachable daemon is an error. Records are content-free: identifiers, states, and timestamps only, never the task text.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `tasks status` | Show content-free task authority status, digest, quarantine, and counts |
+| `tasks list` | List content-free task records |
+| `tasks cancel [taskId]` | Cancel one pending task, or every pending task for the selected agent |
+| `tasks reset` | Archive and replace a disabled task authority after digest review |
+
+All subcommands accept `--agent <id>` and `--format table|json`. `tasks list` additionally accepts `--status <state>` (an exact task state: `pending`, `checking`, `delivering`, `delivered`, `delivery_partial`, `dismissed`, `delivery_unknown`, `expired`, `cancelled`) and `--limit <n>` from 1 through 256. `tasks cancel` takes either a `taskId` or `--all-pending`, never both; the bulk form also requires `--confirm`. `tasks reset` requires `--expected-digest <sha256>` (a lowercase SHA-256 of the current raw authority, as reported by `tasks status`) plus `--confirm`, and replaces the authority irreversibly after archiving it.
+
+```bash
+# Authority state, file digest, quarantine, and pending/active/terminal counts
+comis tasks status --agent default
+
+# Content-free inventory, newest-bounded
+comis tasks list --agent default --limit 50
+
+# Only the records still awaiting a due check
+comis tasks list --status pending --format json
+
+# Cancel one task by id
+comis tasks cancel task_01hx8n4k --agent default
+
+# Cancel every pending task for one agent
+comis tasks cancel --all-pending --agent default --confirm
+
+# Recover a quarantined authority after reviewing the digest from `tasks status`
+comis tasks reset --agent default --expected-digest <sha256> --confirm
+```
+
+Cancellation reports whether the scheduler must rescan, so a terminal state is never inferred from CLI output alone. A reset that does not match `--expected-digest` fails instead of overwriting an authority you have not reviewed.
 
 ---
 
