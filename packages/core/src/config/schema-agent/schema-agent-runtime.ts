@@ -15,6 +15,7 @@
  * @module
  */
 import { z } from "zod";
+import { tryCatch } from "@comis/shared";
 import { SkillsConfigSchema } from "../schema-skills.js";
 import { AgentSecretsConfigSchema } from "../schema-secrets.js";
 import { GeminiCacheConfigSchema } from "../schema-gemini-cache.js";
@@ -28,6 +29,7 @@ import { LearningConfigSchema } from "../schema-learning.js";
 import { MemoryLifecycleConfigSchema } from "../schema-memory-lifecycle.js";
 import { validateProfileId } from "../../security/profile-id.js";
 import { CanonicalLocaleSchema } from "../../domain/response-locale-policy.js";
+import { ChannelEndpointSchema } from "../../domain/conversation-scope.js";
 
 // Sibling-leaf imports (one-directional dependency graph).
 import {
@@ -265,14 +267,19 @@ export type DeliveryConfig = z.infer<typeof DeliveryConfigSchema>;
 export const PerAgentCronConfigSchema = z.strictObject({
     /** Enable cron job scheduling for this agent */
     enabled: z.boolean().default(true),
-    /** Maximum concurrent cron job runs for this agent */
-    maxConcurrentRuns: z.number().int().positive().default(3),
-    /** Default timezone for cron expressions (empty = UTC) */
-    defaultTimezone: z.string().default(""),
-    /** Maximum number of cron jobs allowed for this agent (0 = unlimited) */
-    maxJobs: z.number().int().nonnegative().default(100),
-    /** Maximum consecutive errors before auto-suspending a cron job (0 = never suspend). Per-agent override. */
-    maxConsecutiveErrors: z.number().int().nonnegative().default(5),
+    /** Maximum due cron occurrences admitted by one scheduler tick */
+    maxRunsPerTick: z.number().int().positive().safe().default(3),
+    /** Default explicit authoring timezone */
+    defaultTimezone: z.string().transform((value) => value === "" ? "UTC" : value).refine(
+      (value) => tryCatch(() => new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0)).ok,
+      { message: "Expected a valid IANA timezone" },
+    ).default("UTC"),
+    /** Positive authored-job cap for this agent */
+    maxJobs: z.number().int().positive().safe().max(10_000).default(100),
+    /** Provider/dependency failures before suspension (zero disables suspension) */
+    maxConsecutiveDependencyErrors: z.number().int().nonnegative().safe().default(5),
+    /** Stable per-job eligibility spread applied only to recurring scheduled fires */
+    staggerWindowMs: z.number().int().nonnegative().safe().default(0),
     /**
      * Per-agent override for the scheduler-initiated wake-gate toggle. Tri-state
      * via `.optional()` (mirrors the global `scheduler.cron.wakeGate`): `true` →
@@ -285,16 +292,7 @@ export const PerAgentCronConfigSchema = z.strictObject({
   });
 
 /** Per-agent heartbeat delivery target (which channel to send heartbeat notifications to). */
-export const HeartbeatTargetSchema = z.strictObject({
-    /** Channel type (e.g., "telegram", "discord") */
-    channelType: z.string().min(1),
-    /** Channel identifier within the platform */
-    channelId: z.string().min(1),
-    /** Chat/conversation identifier */
-    chatId: z.string().min(1),
-    /** Whether this target is a DM conversation (for DM delivery policy) */
-    isDm: z.boolean().optional(),
-  });
+export const HeartbeatTargetSchema = ChannelEndpointSchema;
 
 /** Per-agent heartbeat config: all fields optional (inherit from global scheduler.heartbeat). */
 export const PerAgentHeartbeatConfigSchema = z.strictObject({
@@ -310,8 +308,6 @@ export const PerAgentHeartbeatConfigSchema = z.strictObject({
     target: HeartbeatTargetSchema.optional(),
     /** Custom heartbeat prompt for this agent */
     prompt: z.string().optional(),
-    /** Session key for heartbeat conversation isolation */
-    session: z.string().min(1).optional(),
     /** Whether heartbeat alerts can be delivered to DM conversations (default: true) */
     allowDm: z.boolean().optional(),
     /** When true, heartbeat bootstrap context includes ONLY HEARTBEAT.md (cost optimization) */
@@ -320,8 +316,6 @@ export const PerAgentHeartbeatConfigSchema = z.strictObject({
     ackMaxChars: z.number().int().positive().optional(),
     /** Prefix to strip from LLM responses before delivery */
     responsePrefix: z.string().optional(),
-    /** Whether to suppress delivery of HEARTBEAT_OK-only responses from cron triggers (default applied in scheduler) */
-    skipHeartbeatOnlyDelivery: z.boolean().optional(),
     /** Override consecutive failure threshold for alerting (per-agent) */
     alertThreshold: z.number().int().positive().optional(),
     /** Override alert cooldown period in ms (per-agent) */

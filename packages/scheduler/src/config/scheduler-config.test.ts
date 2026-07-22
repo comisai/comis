@@ -12,9 +12,9 @@ describe("SchedulerConfigSchema", () => {
 
     // Cron defaults
     expect(cfg.cron.enabled).toBe(true);
-    expect(cfg.cron.storeDir).toBe("./data/scheduler");
-    expect(cfg.cron.maxConcurrentRuns).toBe(3);
-    expect(cfg.cron.defaultTimezone).toBe("");
+    expect(cfg.cron.maxRunsPerTick).toBe(3);
+    expect(cfg.cron.defaultTimezone).toBe("UTC");
+    expect(cfg.cron.staggerWindowMs).toBe(0);
 
     // Heartbeat defaults
     expect(cfg.heartbeat.enabled).toBe(true);
@@ -26,40 +26,37 @@ describe("SchedulerConfigSchema", () => {
     expect(cfg.quietHours.enabled).toBe(false);
     expect(cfg.quietHours.start).toBe("22:00");
     expect(cfg.quietHours.end).toBe("07:00");
-    expect(cfg.quietHours.timezone).toBe("");
+    expect(cfg.quietHours.timezone).toBe("UTC");
     expect(cfg.quietHours.criticalBypass).toBe(true);
 
     // Execution defaults
-    expect(cfg.execution.lockDir).toBe("./data/scheduler/locks");
-    expect(cfg.execution.staleMs).toBe(600_000);
-    expect(cfg.execution.updateMs).toBe(30_000);
-    expect(cfg.execution.logDir).toBe("./data/scheduler/logs");
     expect(cfg.execution.maxLogBytes).toBe(2_000_000);
-    expect(cfg.execution.keepLines).toBe(2_000);
+    expect(cfg.execution.retainedExecutions).toBe(1_000);
 
-    // Tasks defaults — task extraction is ON by default (agent fully capable out of the box)
-    expect(cfg.tasks.enabled).toBe(true);
+    // Task extraction stays opt-in until the task runtime is configured end to end.
+    expect(cfg.tasks.enabled).toBe(false);
     expect(cfg.tasks.confidenceThreshold).toBe(0.8);
-    expect(cfg.tasks.storeDir).toBe("./data/scheduler/tasks");
+    expect(cfg.tasks.debounceMs).toBe(15_000);
+    expect(cfg.tasks.batchMax).toBe(8);
 
   });
 
   it("validates each section independently", () => {
     const result = SchedulerConfigSchema.safeParse({
-      cron: { enabled: true, maxConcurrentRuns: 5 },
+      cron: { enabled: true, maxRunsPerTick: 5 },
       heartbeat: { enabled: true, intervalMs: 60_000 },
       quietHours: { start: "23:00", end: "06:00" },
-      execution: { staleMs: 300_000 },
+      execution: { retainedExecutions: 300 },
     });
     expect(result.success).toBe(true);
     if (!result.success) return;
 
     expect(result.data.cron.enabled).toBe(true);
-    expect(result.data.cron.maxConcurrentRuns).toBe(5);
+    expect(result.data.cron.maxRunsPerTick).toBe(5);
     expect(result.data.heartbeat.enabled).toBe(true);
     expect(result.data.heartbeat.intervalMs).toBe(60_000);
     expect(result.data.quietHours.start).toBe("23:00");
-    expect(result.data.execution.staleMs).toBe(300_000);
+    expect(result.data.execution.retainedExecutions).toBe(300);
   });
 
   it("rejects unknown fields via .strict()", () => {
@@ -76,11 +73,17 @@ describe("SchedulerConfigSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects invalid cron maxConcurrentRuns (non-positive)", () => {
+  it("rejects invalid cron maxRunsPerTick (non-positive)", () => {
     const result = SchedulerConfigSchema.safeParse({
-      cron: { maxConcurrentRuns: 0 },
+      cron: { maxRunsPerTick: 0 },
     });
     expect(result.success).toBe(false);
+  });
+
+  it("rejects cron stagger windows outside the safe nonnegative integer range", () => {
+    for (const staggerWindowMs of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(SchedulerConfigSchema.safeParse({ cron: { staggerWindowMs } }).success).toBe(false);
+    }
   });
 
   it("rejects invalid heartbeat intervalMs (non-positive)", () => {
@@ -90,9 +93,9 @@ describe("SchedulerConfigSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects non-integer staleMs", () => {
+  it("rejects non-integer retainedExecutions", () => {
     const result = SchedulerConfigSchema.safeParse({
-      execution: { staleMs: 100.5 },
+      execution: { retainedExecutions: 100.5 },
     });
     expect(result.success).toBe(false);
   });
