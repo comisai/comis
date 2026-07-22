@@ -87,6 +87,32 @@ describe("createLlmReflectionAdapter (untrusted-input boundary + honest error br
     expect(res.value.ops).toBeUndefined();
   });
 
+  it("forwards provider configuration for native auth without fabricating an API key", async () => {
+    (completeSimple as Mock).mockResolvedValue(textResponse(JSON.stringify(FRESH_DOC)));
+    const adapter = createLlmReflectionAdapter({
+      provider: "amazon-bedrock",
+      modelId: "anthropic.claude-sonnet",
+      providerEnv: {
+        AWS_REGION: "il-central-1",
+        AWS_PROFILE: "test-profile",
+      },
+      clock: { now: () => SCOPE.now },
+      logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    const result = await adapter.reflect({ trajectoryText: "successful outcome", currentSections: [] });
+
+    expect(result.ok).toBe(true);
+    const options = (completeSimple as Mock).mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(options).toMatchObject({
+      env: {
+        AWS_REGION: "il-central-1",
+        AWS_PROFILE: "test-profile",
+      },
+    });
+    expect(options).not.toHaveProperty("apiKey");
+  });
+
   it("returns ok({ ops }) for a well-formed delta-op response (existing doc)", async () => {
     (completeSimple as Mock).mockResolvedValue(textResponse(JSON.stringify(DELTA_REFRESH)));
     const adapter = makeAdapter();

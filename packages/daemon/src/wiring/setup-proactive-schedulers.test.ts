@@ -101,4 +101,13 @@ describe("proactive scheduler composition", () => {
     expect(source).toContain('coordinator.closeTaskLane(agentId, "feature_disabled")');
     expect(source).toContain("taskRuntime?.disable()");
   });
+
+  it("provides per-agent auth storage to cron memory action runners", () => {
+    const source = readFileSync(new URL("./setup-proactive-schedulers.ts", import.meta.url), "utf8");
+
+    expect(source).toContain('| "authStorages"');
+    expect(source).toMatch(
+      /createCronMemoryActionRunners\(\{[\s\S]*?authStorages:\s*runtime\.authStorages[\s\S]*?\}\);/u,
+    );
+  });
 });

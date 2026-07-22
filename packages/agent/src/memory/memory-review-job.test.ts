@@ -268,6 +268,31 @@ describe("runMemoryReview", () => {
     expect(batchText).not.toMatch(/\[user\]:\s*\n/);
   });
 
+  it("forwards provider configuration for native auth without fabricating an API key", async () => {
+    const deps = makeDeps({
+      provider: "amazon-bedrock",
+      apiKey: undefined,
+      providerEnv: {
+        AWS_REGION: "il-central-1",
+        AWS_PROFILE: "test-profile",
+      },
+    });
+    arrangeOneSession(deps);
+    (completeSimple as Mock).mockResolvedValue(structuredResponse({ memories: [] }));
+
+    const result = await runMemoryReview(deps);
+
+    expect(result.ok).toBe(true);
+    const options = (completeSimple as Mock).mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(options).toMatchObject({
+      env: {
+        AWS_REGION: "il-central-1",
+        AWS_PROFILE: "test-profile",
+      },
+    });
+    expect(options).not.toHaveProperty("apiKey");
+  });
+
   it("calls completeSimple exactly once with all qualifying sessions batched", async () => {
     const deps = makeDeps();
     (deps.sessionStore.listDetailed as Mock).mockReturnValue(ok([

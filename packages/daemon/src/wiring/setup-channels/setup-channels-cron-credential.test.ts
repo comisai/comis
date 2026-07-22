@@ -35,6 +35,17 @@ function makeContainer(opts: {
   } as unknown as AppContainer;
 }
 
+function makeAuthStorage(
+  credential: {
+    type: "api_key";
+    key?: string;
+    env?: Record<string, string>;
+  } | undefined,
+) {
+  const read = vi.fn(async (_provider: string) => credential);
+  return { storage: { read } as never, read };
+}
+
 describe("resolveCronJobCredential", () => {
   it("resolves the OAuth access token for an openai-codex agent (was skipped)", async () => {
     const container = makeContainer({
@@ -43,7 +54,7 @@ describe("resolveCronJobCredential", () => {
     });
     const resolver = vi.fn(async () => "oauth-access-token-xyz");
 
-    const cred = await resolveCronJobCredential(container, "default", "openai-codex", resolver);
+    const cred = await resolveCronJobCredential(container, "default", "openai-codex", undefined, resolver);
 
     expect(cred.source).toBe("oauth");
     expect(cred.apiKey).toBe("oauth-access-token-xyz"); // pi-ai uses this as the bearer
@@ -69,6 +80,103 @@ describe("resolveCronJobCredential", () => {
     const cred = await resolveCronJobCredential(container, "default", "anthropic");
     expect(cred.source).toBe("secret");
     expect(cred.apiKey).toBe("sk-ant-123");
+  });
+
+  it("resolves the built-in Bedrock bearer name instead of deriving a provider key name", async () => {
+    const container = makeContainer({ secrets: {} });
+    const authStorage = makeAuthStorage({ type: "api_key", key: "test-key" });
+
+    const cred = await resolveCronJobCredential(
+      container,
+      "default",
+      "amazon-bedrock",
+      authStorage.storage,
+    );
+
+    expect(cred).toMatchObject({
+      source: "secret",
+      apiKeyName: "AWS_BEARER_TOKEN_BEDROCK",
+    });
+    expect(cred.apiKey).toBeDefined();
+    expect(authStorage.read).toHaveBeenCalledWith("amazon-bedrock");
+  });
+
+  it("prefers an explicit custom key name over the built-in provider secret names", async () => {
+    const container = makeContainer({
+      secrets: {},
+      entries: {
+        "custom-bedrock": {
+          type: "amazon-bedrock",
+          apiKeyName: "CUSTOM_PROVIDER_KEY",
+        },
+      },
+    });
+    const authStorage = makeAuthStorage({ type: "api_key", key: "test-key" });
+
+    const cred = await resolveCronJobCredential(
+      container,
+      "default",
+      "custom-bedrock",
+      authStorage.storage,
+    );
+
+    expect(cred).toMatchObject({
+      source: "secret",
+      apiKeyName: "CUSTOM_PROVIDER_KEY",
+    });
+    expect(cred.apiKey).toBeDefined();
+    expect(authStorage.read).toHaveBeenCalledWith("custom-bedrock");
+  });
+
+  it("admits Bedrock native auth and carries stored provider configuration without a bearer", async () => {
+    const container = makeContainer({ secrets: {} });
+    const authStorage = makeAuthStorage({
+      type: "api_key",
+      env: {
+        AWS_REGION: "il-central-1",
+        AWS_PROFILE: "test-profile",
+      },
+    });
+
+    const cred = await resolveCronJobCredential(
+      container,
+      "default",
+      "amazon-bedrock",
+      authStorage.storage,
+    );
+
+    expect(cred).toEqual({
+      apiKey: undefined,
+      apiKeyName: "AWS_BEARER_TOKEN_BEDROCK",
+      source: "native",
+      hasOAuthProfile: false,
+      providerEnv: {
+        AWS_REGION: "il-central-1",
+        AWS_PROFILE: "test-profile",
+      },
+    });
+    expect(authStorage.read).toHaveBeenCalledWith("amazon-bedrock");
+  });
+
+  it("admits the ambient Bedrock credential chain without fabricating a bearer", async () => {
+    const container = makeContainer({ secrets: {} });
+    const authStorage = makeAuthStorage(undefined);
+
+    const cred = await resolveCronJobCredential(
+      container,
+      "default",
+      "amazon-bedrock",
+      authStorage.storage,
+    );
+
+    expect(cred).toMatchObject({
+      apiKey: undefined,
+      apiKeyName: "AWS_BEARER_TOKEN_BEDROCK",
+      source: "native",
+      hasOAuthProfile: false,
+    });
+    expect(cred.providerEnv).toBeUndefined();
+    expect(authStorage.read).toHaveBeenCalledWith("amazon-bedrock");
   });
 
   it("keyless providers still get the sentinel (no OAuth needed)", async () => {
@@ -108,7 +216,13 @@ describe("resolveCronJobCredential", () => {
       secrets: {},
       oauthProfiles: { "openai-codex": "openai-codex:user@example.com" },
     });
-    const cred = await resolveCronJobCredential(container, "default", "openai-codex", async () => undefined);
+    const cred = await resolveCronJobCredential(
+      container,
+      "default",
+      "openai-codex",
+      undefined,
+      async () => undefined,
+    );
     expect(cred.apiKey).toBe("");
     expect(cred.source).toBe("none");
     expect(cred.hasOAuthProfile).toBe(true);
