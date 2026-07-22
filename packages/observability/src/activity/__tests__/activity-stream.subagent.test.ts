@@ -70,7 +70,6 @@ describe("createActivityStream — subagent mapping", () => {
       runId: "run-1",
       parentSessionKey: SESSION,
       agentId: AGENT,
-      task: "summarize the thread",
       timestamp: 1000,
     });
 
@@ -88,18 +87,16 @@ describe("createActivityStream — subagent mapping", () => {
     sub.unsubscribe();
   });
 
-  it("renders the label from agentId + the 🤖 marker and NEVER reflects the free-text task", () => {
+  it("renders the label from agentId and the configured subagent marker", () => {
     const bus = new TypedEventBus();
     const stream = createActivityStream({ eventBus: bus, logger: makeLogger() });
     const received: ActivityEvent[] = [];
     const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
 
-    const SECRET_TASK = "leak-this-user-content-into-the-label";
     bus.emit("session:sub_agent_spawned", {
       runId: "run-marker",
       parentSessionKey: SESSION,
       agentId: AGENT,
-      task: SECRET_TASK,
       timestamp: 1000,
     });
 
@@ -107,8 +104,6 @@ describe("createActivityStream — subagent mapping", () => {
     const label = received[0].defaultLabel ?? "";
     expect(label).toContain("🤖");
     expect(label).toContain(AGENT);
-    // The free-text task must NOT appear in the rendered label (information disclosure).
-    expect(label).not.toContain(SECRET_TASK);
     sub.unsubscribe();
   });
 
@@ -122,7 +117,6 @@ describe("createActivityStream — subagent mapping", () => {
       runId: "run-2",
       parentSessionKey: SESSION,
       agentId: AGENT,
-      task: "do work",
       timestamp: 1000,
     });
     bus.emit("session:sub_agent_completed", {
@@ -155,7 +149,6 @@ describe("createActivityStream — subagent mapping", () => {
       runId: "run-fail",
       parentSessionKey: SESSION,
       agentId: AGENT,
-      task: "do work",
       timestamp: 1000,
     });
     bus.emit("session:sub_agent_completed", {
@@ -188,7 +181,6 @@ describe("createActivityStream — subagent mapping", () => {
       runId: "run-3",
       parentSessionKey: SESSION,
       agentId: AGENT,
-      task: "do work",
       timestamp: 1000,
     });
 
