@@ -3801,6 +3801,12 @@ describe("setupCrossSession durable-store injection", () => {
       callerAgentId: "agent-1",
       callerSessionKey: "default:agent:agent-1:user1:chan1",
       callerConversation: makeConversation("default", "agent-1"),
+      destinationEndpoint: {
+        channelType: "telegram",
+        channelInstanceId: "test-instance",
+        conversationId: "chat-1",
+        conversationKind: "direct",
+      },
       runId: "completion-run-1",
       idempotencyKey: "default:agent:agent-1:user1:chan1::completion-run-1",
     });
@@ -3894,6 +3900,12 @@ describe("setupCrossSession durable-store injection", () => {
       callerAgentId: "agent-1",
       callerSessionKey: "default:agent:agent-1:user1:chan1",
       callerConversation: makeConversation("default", "agent-1"),
+      destinationEndpoint: {
+        channelType: "telegram",
+        channelInstanceId: "test-instance",
+        conversationId: "chat-retained",
+        conversationKind: "direct",
+      },
       runId: `completion-${mode}`,
       idempotencyKey: `default:agent:agent-1:user1:chan1::completion-${mode}`,
     });

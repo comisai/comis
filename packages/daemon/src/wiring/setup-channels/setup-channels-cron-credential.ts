@@ -118,7 +118,7 @@ export async function resolveCronJobCredential(
   // keyless — else the reflection/memory-review crons skip ("no API key") on a local keyless daemon,
   // silently disabling the learning loop. Mirrors the agent completion
   // path + setup-dialectic, which key off entry.type. Guarded by test/architecture/keyless-provider-by-type.
-  if (KEYLESS_PROVIDER_TYPES.has(providerType)) {
+  if (KEYLESS_PROVIDER_TYPES.has(providerEntry?.type ?? provider)) {
     return { apiKey: KEYLESS_API_KEY_SENTINEL, apiKeyName, source: "keyless", hasOAuthProfile };
   }
 

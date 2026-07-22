@@ -172,7 +172,7 @@ describe("TOOL_GUIDES", () => {
     expect(TOOL_GUIDES.exec).toMatch(/## Sandbox-Forbidden Paths/);
   });
 
-  it("exec guide forbids cross-sandbox process-id polling", () => {
+  it("rejects cross-sandbox process-id polling in the exec guide", () => {
     expect(TOOL_GUIDES.exec).toMatch(/process status.*only authoritative completion signal/i);
     expect(TOOL_GUIDES.exec).toMatch(/process IDs are isolated/i);
   });

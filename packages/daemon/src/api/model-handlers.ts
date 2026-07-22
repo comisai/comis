@@ -136,7 +136,8 @@ export function createModelHandlers(deps: ModelHandlerDeps): Record<string, RpcH
       const providerIds = [...new Set<string>(getProviders())].sort();
       const providers = [];
       for (const provider of providerIds) {
-        if (KEYLESS_PROVIDER_TYPES.has(provider)) {
+        const providerEntry = deps.providerEntries?.[provider];
+        if (KEYLESS_PROVIDER_TYPES.has(providerEntry?.type ?? provider)) {
           providers.push({
             provider,
             modelCount: deps.modelCatalog.getByProvider(provider).length,

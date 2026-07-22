@@ -247,7 +247,7 @@ describe("createExecTool", () => {
       await expect(tool.execute("tc1", { command: "rm -rf ~" })).rejects.toThrow(/blocked/);
     });
 
-    it("mkfs is rejected", async () => {
+    it("rejects filesystem formatting commands", async () => {
       const tool = setup();
       await expect(tool.execute("tc1", { command: "mkfs /dev/sda1" })).rejects.toThrow(/blocked.*Filesystem format/);
     });

@@ -1,6 +1,6 @@
 {
-  "totalMinified": 181904,
-  "totalGzipped": 18357,
+  "totalMinified": 182438,
+  "totalGzipped": 18466,
   "budget": {
     "minified": 183000,
     "gzipped": 38912
@@ -12,7 +12,7 @@
     "admin.approval.resolve": 746,
     "admin.approval.resolveAll": 608,
     "agent.cacheStats": 458,
-    "agent.getOperationModels": 1103,
+    "agent.getOperationModels": 1127,
     "agents.create": 852,
     "agents.delete": 390,
     "agents.get": 568,
@@ -138,7 +138,7 @@
     "message.reply": 910,
     "message.send": 866,
     "models.list": 281,
-    "models.list_providers": 351,
+    "models.list_providers": 910,
     "models.test": 305,
     "notification.send": 532,
     "obs.audit.query": 664,

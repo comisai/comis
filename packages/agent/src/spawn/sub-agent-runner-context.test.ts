@@ -89,11 +89,13 @@ function parentContext(
   trustLevel: RequestContext["trustLevel"],
   overrides: Partial<RequestContext> = {},
 ): RequestContext {
+  const origin = overrides.deliveryOrigin;
   const endpoint = {
-    channelType: "telegram",
+    channelType: origin?.channelType ?? "telegram",
     channelInstanceId: "test-instance",
-    conversationId: "chat_a",
+    conversationId: origin?.channelId ?? "chat_a",
     conversationKind: "direct" as const,
+    ...(origin?.threadId ? { threadId: origin.threadId } : {}),
   };
   return {
     traceId: "10000000-0000-4000-8000-000000000001",

@@ -3183,7 +3183,7 @@
               "type": "string"
             }
           ],
-          "description": "Cron scheduling action. Valid values: add (create new job), list (show all jobs), update (modify job config), remove (delete a job), status (scheduler health), runs (job execution history), run (trigger job now), wake (wake scheduler loop)"
+          "description": "Cron scheduling action. Valid values: add (create new job), list (show all jobs), update (modify job config), remove (delete a job), status (scheduler health), runs (job execution history), run (trigger job now), wake (request typed heartbeat coordinator admission)"
         },
         "continuation_mode": {
           "anyOf": [

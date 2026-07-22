@@ -314,7 +314,11 @@
                 "type": "number"
               },
               "cacheRetention": {
-                "type": "number"
+                "type": "string",
+                "enum": [
+                  "none",
+                  "short"
+                ]
               },
               "tieringActive": {
                 "type": "boolean"
@@ -9554,24 +9558,72 @@
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
-      "properties": {},
+      "properties": {
+        "agentId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
       "additionalProperties": false
     },
     "response": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
+        "agentId": {
+          "type": "string"
+        },
         "providers": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "modelCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "configured",
+                  "keyless",
+                  "not_configured"
+                ]
+              },
+              "credentialSource": {
+                "type": "string",
+                "enum": [
+                  "keyless",
+                  "providers_entry",
+                  "env_canonical",
+                  "oauth_profile",
+                  "oauth_env_seed",
+                  "secret_store_canonical",
+                  "none"
+                ]
+              }
+            },
+            "required": [
+              "provider",
+              "modelCount",
+              "status",
+              "credentialSource"
+            ],
+            "additionalProperties": false
           }
         },
         "count": {
-          "type": "number"
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
+        "agentId",
         "providers",
         "count"
       ],
