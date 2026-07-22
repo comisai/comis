@@ -472,10 +472,17 @@ describe("cron tool", () => {
       expect(skipVerdicts).toBeGreaterThanOrEqual(2);
     });
 
-    it("disambiguates the wake-gate from the `wake` action (a scheduler-loop restart-replay)", () => {
-      const desc = getToolDescription();
-      expect(desc).toContain("`wake` action");
-      expect(desc.toLowerCase()).toContain("not the");
+    it("describes wake as typed heartbeat coordinator admission without replay semantics", () => {
+      const tool = createCronTool(vi.fn(async () => ({})));
+      const parameters = tool.parameters as unknown as {
+        properties: { action?: { description?: string } };
+      };
+      const description = tool.description;
+      const actionDescription = parameters.properties.action?.description ?? "";
+
+      expect(description).toContain("typed heartbeat coordinator admission");
+      expect(actionDescription).toContain("typed heartbeat coordinator admission");
+      expect(`${description} ${actionDescription}`).not.toMatch(/\b(?:replay|restart|scheduler loop)\b/iu);
     });
   });
 
