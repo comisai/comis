@@ -7,17 +7,15 @@
  * @module
  */
 
-import type { AppContainer, ChannelPort } from "@comis/core";
+import type { AppContainer, ClockPort, TimerPort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { createProcessMonitor, ProcessMonitor } from "../process/process-monitor.js";
 import {
   createHeartbeatRunner,
   createDuplicateDetector,
-  deliverHeartbeatNotification,
   type HeartbeatRunner,
   type HeartbeatSourcePort,
   type DuplicateDetector,
-  type DeliveryTarget,
 } from "@comis/scheduler";
 import {
   createDiskSpaceSource,
@@ -80,10 +78,10 @@ export interface MonitoringDeps {
   container: AppContainer;
   /** Module-bound logger for scheduler subsystem. */
   schedulerLogger: ComisLogger;
-  /** Root logger for notification callbacks. */
-  logger: ComisLogger;
-  /** Channel adapters for heartbeat delivery (optional -- delivery skipped if not provided). */
-  adaptersByType?: ReadonlyMap<string, ChannelPort>;
+  /** Injected scheduler clock for diagnostics and duplicate visibility evidence. */
+  clock: ClockPort;
+  /** Injected scheduler timers for stale-check cancellation and grace. */
+  timers: TimerPort;
 }
 
 /** All services produced by the monitoring setup phase. */
@@ -105,7 +103,7 @@ export interface MonitoringResult {
  * @param deps - Monitoring dependencies
  */
 export function setupMonitoring(deps: MonitoringDeps): MonitoringResult {
-  const { container, schedulerLogger, logger, adaptersByType } = deps;
+  const { container, schedulerLogger } = deps;
 
   let heartbeatRunner: HeartbeatRunner | undefined;
   const monitoringConfig = container.config.monitoring;
@@ -113,86 +111,38 @@ export function setupMonitoring(deps: MonitoringDeps): MonitoringResult {
   const monitoringSources: HeartbeatSourcePort[] = [];
 
   // Create shared duplicate detector for 24h dedup
-  const duplicateDetector = createDuplicateDetector();
+  const duplicateDetector = createDuplicateDetector({ clock: deps.clock });
 
   if (monitoringConfig.disk.enabled) {
-    monitoringSources.push(createDiskSpaceSource(monitoringConfig.disk));
+    monitoringSources.push(createDiskSpaceSource(monitoringConfig.disk, deps.clock));
   }
   if (monitoringConfig.resources.enabled) {
-    monitoringSources.push(createSystemResourcesSource(monitoringConfig.resources));
+    monitoringSources.push(createSystemResourcesSource(monitoringConfig.resources, deps.clock));
   }
   if (monitoringConfig.systemd.enabled) {
-    monitoringSources.push(createSystemdServiceSource(monitoringConfig.systemd));
+    monitoringSources.push(createSystemdServiceSource(monitoringConfig.systemd, deps.clock));
   }
   if (monitoringConfig.securityUpdates.enabled) {
-    monitoringSources.push(createSecurityUpdateSource(monitoringConfig.securityUpdates));
+    monitoringSources.push(createSecurityUpdateSource(monitoringConfig.securityUpdates, deps.clock));
   }
   if (monitoringConfig.git.enabled) {
-    monitoringSources.push(createGitWatcherSource(monitoringConfig.git));
+    monitoringSources.push(createGitWatcherSource(monitoringConfig.git, deps.clock));
   }
 
   if (monitoringSources.length > 0) {
     heartbeatRunner = createHeartbeatRunner({
       sources: monitoringSources,
+      clock: deps.clock,
+      timers: deps.timers,
       eventBus: container.eventBus,
       logger: schedulerLogger,
-      config: {
-        intervalMs: schedulerConfig.heartbeat.intervalMs,
-        showOk: schedulerConfig.heartbeat.showOk,
-        showAlerts: schedulerConfig.heartbeat.showAlerts,
-      },
-      quietHoursConfig: schedulerConfig.quietHours,
-      criticalBypass: schedulerConfig.quietHours.criticalBypass,
-      onNotification: (notification) => {
-        const msg = `Monitoring: ${notification.text}`;
-        if (notification.level === "critical") {
-          logger.error({ sourceId: notification.sourceId, level: notification.level, hint: "Investigate the monitoring source for critical conditions", errorKind: "resource" as const }, msg);
-        } else if (notification.level === "alert") {
-          logger.warn({ sourceId: notification.sourceId, level: notification.level, hint: "Review the monitoring source alert details", errorKind: "resource" as const }, msg);
-        } else {
-          logger.info({ sourceId: notification.sourceId, level: notification.level }, msg);
-        }
-
-        // Deliver to configured target channel (fire-and-forget)
-        // Global heartbeat uses scheduler.heartbeat config -- per-agent delivery targets are wired in
-        if (adaptersByType && adaptersByType.size > 0) {
-          const globalTarget = resolveGlobalDeliveryTarget(container.config);
-          if (globalTarget) {
-            void deliverHeartbeatNotification(
-              { adaptersByType, duplicateDetector, eventBus: container.eventBus, logger: schedulerLogger },
-              globalTarget,
-              notification,
-              { agentId: "system" },
-            ).catch((err: unknown) => {
-              const errMsg = err instanceof Error ? err.message : String(err);
-              schedulerLogger.warn(
-                { err: errMsg, hint: "Heartbeat delivery failed unexpectedly", errorKind: "internal" as const },
-                "Heartbeat delivery error",
-              );
-            });
-          }
-        }
-      },
+      staleMs: schedulerConfig.heartbeat.staleMs,
     });
-    heartbeatRunner.start();
-    schedulerLogger.info({ sourceCount: monitoringSources.length }, "Monitoring heartbeat runner started");
+    schedulerLogger.debug(
+      { sourceCount: monitoringSources.length, step: "monitoring_construction" },
+      "Monitoring heartbeat runner constructed",
+    );
   }
 
   return { heartbeatRunner, duplicateDetector };
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve global heartbeat delivery target from config.
- * Currently returns undefined -- global system monitoring does not have a
- * delivery target. Per-agent delivery is handled by PerAgentHeartbeatRunner
- * This function exists so that adding a global delivery target
- * in a future phase is a one-line change.
- */
-
-function resolveGlobalDeliveryTarget(_config: AppContainer["config"]): DeliveryTarget | undefined {
-  return undefined;
 }

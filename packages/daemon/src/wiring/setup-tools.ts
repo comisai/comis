@@ -114,7 +114,7 @@ export interface ToolsDeps {
    *  rpcCall factory so an in-process OUTWARD send gets a monotonic `_outwardStepIndex`.
    *  Both optional; absent ⇒ no index → the outward-send wrap is a pass-through. */
   outwardLedger?: OutwardSendLedgerPort;
-  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
+  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
   /** Durable checkpoint store used by orchestrate resume. */
   durableRuns?: DurableRunPort;
   /** Per-agent config map (container.config.agents). */

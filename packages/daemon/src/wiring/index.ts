@@ -19,6 +19,23 @@ export { createImageProviderSelector, makeUnavailableImagePort } from "./setup-i
 export { setupCrossSession, type CrossSessionResult } from "./setup-cross-session/index.js";
 export { setupAgents, type AgentsResult } from "./setup-agents/index.js";
 export { setupSchedulers, type SchedulersResult } from "./setup-schedulers.js";
+export {
+  createTaskSettledDelivery,
+  type TaskSettledDelivery,
+  type TaskSettledDeliveryDeps,
+  type TaskSettledDeliveryOutcome,
+} from "./task-settled-delivery.js";
+export {
+  createTaskHeartbeatAgentTurnExecutor,
+  TASK_MODEL_TIMEOUT_MS,
+  type TaskHeartbeatAgentTurnExecutorDeps,
+} from "./task-heartbeat-agent-turn-executor.js";
+export {
+  createFollowupTaskRuntime,
+  type FollowupTaskRuntime,
+  type FollowupTaskRuntimeDeps,
+  type FollowupTaskRuntimeError,
+} from "./setup-followup-task-runtime.js";
 export { emitMemoryCostFeatureNotice, type MemoryCostFeatureNoticeDeps } from "./setup-memory-cost-notice.js";
 export { setupChannels, type ChannelsResult } from "./setup-channels/index.js";
 export {
@@ -39,7 +56,6 @@ export {
   type SetupSkillBundlesDeps,
 } from "./setup-skill-bundles.js";
 export { setupTools, type ToolsResult } from "./setup-tools.js";
-export { setupHeartbeat, type HeartbeatSetupDeps, type HeartbeatSetupResult } from "./setup-heartbeat.js";
 export { setupShutdown, type ShutdownResult } from "./setup-shutdown.js";
 export { setupGateway, type GatewayDeps, type GatewayResult, setupRpcBridge, type RpcBridgeResult } from "./setup-gateway/index.js";
 export {

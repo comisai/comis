@@ -182,7 +182,7 @@ export async function setupAgents(deps: {
    *  resolver, forwarded into each SingleAgentDeps (every bridge holds the SAME
    *  holder, populated by the cap layer); absent ⇒ the per-root reserve is a no-op. */
   boundedAutonomyBudget?: import("@comis/agent").BoundedAutonomyBudgetHolder;
-  resolveRootRunId?: (agentId: string, sessionKey: import("@comis/core").SessionKey) => string;
+  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
   /** Temporal-spread store. Threaded into each per-agent createPiExecutor like entityStore (the recall temporal-spread read path). Built in setup-memory on the shared db. */
   temporalStore?: import("@comis/core").MemoryTemporalStore;
   /** Causal store. Threaded into each per-agent createPiExecutor like entityStore (the recall 5th causal lane read path). Built in setup-memory on the shared db. */

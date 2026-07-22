@@ -46,7 +46,17 @@ import {
 import type { ReflectionSourceTrajectory } from "@comis/agent";
 import type { MemoryApi } from "@comis/memory";
 import { buildReviewSessionSource } from "./review-session-source.js";
-import type { ReflectionCronDeps } from "./setup-channels-memory-crons-types.js";
+
+/** Dependencies required to build exact, trust-filtered reflection sources. */
+export interface ReflectionCronDeps {
+  learnedSkillStore: Pick<MentalModelStorePort, "get" | "admit" | "supersede">;
+  outcomeSignal: Pick<OutcomeSignalPort, "resolve">;
+  buildSourceTrajectories: (
+    kind: "skill" | "profile" | "topic",
+    agentId: string,
+    tenantId: string,
+  ) => Promise<ReflectionSourceTrajectory[]>;
+}
 
 /** The structural deps subset this helper reads (a slice of CronEventListenerDeps — avoids a cycle). */
 export interface ReflectionDepsInput {

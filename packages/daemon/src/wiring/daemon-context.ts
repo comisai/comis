@@ -16,7 +16,7 @@ import type { AppContainer, ChannelPort, EmbeddingPort, TTSPort, VisionProvider 
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createCostTracker, createBudgetGuard, createStepCounter, createSessionLifecycle, SessionResetScheduler } from "@comis/agent";
 import type { SqliteMemoryAdapter, createSessionStore, createEmbeddingQueue, MemoryApi } from "@comis/memory";
-import type { HeartbeatRunner, CronScheduler, createExecutionTracker } from "@comis/scheduler";
+import type { HeartbeatRunner, CronScheduler, FollowupTaskStore, createExecutionTracker } from "@comis/scheduler";
 import type { GatewayServerHandle } from "@comis/gateway";
 import type { BrowserService, LinkRunner } from "@comis/skills";
 import type { RpcCall } from "@comis/skills/platform-tools";
@@ -128,8 +128,16 @@ export interface DaemonContext {
 
   /** Per-agent cron schedulers. */
   cronSchedulers: Map<string, CronScheduler>;
+  /** Every cron scheduler retained for daemon shutdown, regardless of readiness. */
+  ownedCronSchedulers: Map<string, CronScheduler>;
   /** Per-agent execution history trackers. */
   executionTrackers: Map<string, ReturnType<typeof createExecutionTracker>>;
+  /** Per-agent durable follow-up task stores owned by this daemon boot. */
+  followupTaskStores: Map<string, FollowupTaskStore>;
+  /** Boot ownership identifier used for task attempt reconciliation. */
+  taskBootId: string;
+  /** Live task feature gate shared by store claims and daemon lifecycle control. */
+  taskRuntimeGate: Awaited<ReturnType<typeof import("./setup-schedulers.js").setupSchedulers>>["taskRuntimeGate"];
   /** Per-agent session reset schedulers. */
   resetSchedulers: Map<string, SessionResetScheduler>;
 

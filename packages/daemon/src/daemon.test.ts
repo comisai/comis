@@ -93,7 +93,7 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
         git: { enabled: false, repositories: [], checkRemote: true },
       },
       scheduler: {
-        cron: { enabled: false, storeDir: "", maxConcurrentRuns: 3, defaultTimezone: "", maxJobs: 100 },
+        cron: { enabled: false, maxRunsPerTick: 3, defaultTimezone: "UTC", maxJobs: 100, maxConsecutiveDependencyErrors: 5, staggerWindowMs: 0 },
         heartbeat: { enabled: false, intervalMs: 300_000, showOk: false, showAlerts: true },
         quietHours: {
           enabled: false,
@@ -102,19 +102,8 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
           timezone: "",
           criticalBypass: true,
         },
-        execution: {
-          lockDir: "./data/scheduler/locks",
-          staleMs: 600_000,
-          updateMs: 30_000,
-          logDir: "./data/scheduler/logs",
-          maxLogBytes: 2_000_000,
-          keepLines: 2_000,
-        },
-        tasks: {
-          enabled: false,
-          confidenceThreshold: 0.8,
-          storeDir: "./data/scheduler/tasks",
-        },
+        execution: { maxLogBytes: 2_000_000, retainedExecutions: 1_000 },
+        tasks: { enabled: false, confidenceThreshold: 0.8, debounceMs: 15_000, batchMax: 8, maxPerCheck: 3, maxPerDayPerConversation: 3, defaultWindowMs: 43_200_000, preAcceptanceRetryLimit: 3 },
       },
       integrations: {
         mcp: { servers: [] },

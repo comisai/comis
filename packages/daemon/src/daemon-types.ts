@@ -19,7 +19,7 @@
  * @module
  */
 
-import type { TimerPort, SessionKey } from "@comis/core";
+import type { ErrorKind, TimerPort } from "@comis/core";
 import type { AppContainer, ChannelPort, DeliveryQueuePort, DeliveryAdapter } from "@comis/core";
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import type { ChannelActivityRenderer } from "@comis/core";
@@ -32,7 +32,10 @@ import type { GatewayServerHandle, WsConnectionManager } from "@comis/gateway";
 import type {
   HeartbeatRunner,
   CronScheduler,
+  DuplicateDetector,
+  createHeartbeatWakeCoordinator,
 } from "@comis/scheduler";
+import type { Result } from "@comis/shared";
 import type { BrowserService, SandboxProvider, ImageGenRateLimiter, VideoGenRateLimiter } from "@comis/skills";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import type { LogLevelManager } from "./observability/log-infra.js";
@@ -67,7 +70,6 @@ import type {
   SessionTrackerRegistry,
 } from "@comis/agent";
 import type { createRestartContinuationTracker } from "./wiring/restart-continuation.js";
-import type { createSystemEventQueue, createWakeCoalescer } from "@comis/scheduler";
 import type { createFileStateTracker, createImageGenProvider, createVideoGenProvider } from "@comis/skills";
 import type { createTracingLogger } from "./observability/trace-logger.js";
 import type { createLogLevelManager } from "./observability/log-infra.js";
@@ -87,7 +89,6 @@ import type {
   selectMcpTokenStore,
   setupTools,
   setupMonitoring,
-  setupHeartbeat,
   setupRpcBridge,
   setupDeliveryQueue,
   setupDeliveryMirror,
@@ -124,6 +125,29 @@ export interface PermissionCorrection {
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
+
+export interface ProactiveSchedulersHandle {
+  readonly coordinator: ReturnType<typeof createHeartbeatWakeCoordinator>;
+  readonly heartbeatRunner: HeartbeatRunner | undefined;
+  readonly duplicateDetector: DuplicateDetector;
+  requestTaskRescan(agentId: string): Promise<Result<void, { readonly errorKind: ErrorKind }>>;
+  enterTaskMaintenance(agentId: string): Promise<Result<{
+    readonly taskCheckActiveCount: number;
+    readonly extractionActiveCount: number;
+  }, { readonly errorKind: ErrorKind; readonly message: string }>>;
+  disableTasks(): {
+    readonly changed: boolean;
+    readonly cancelledBeforeStartCount: number;
+    readonly activeTaskCheckCount: number;
+    readonly activeExtractionCount: number;
+    readonly droppedExtractionCount: number;
+  };
+  closeAdmission(): { readonly activeCount: number; readonly cancelledCount: number };
+  waitForIdle(): Promise<void>;
+  abortActive(): { readonly activeCount: number };
+  finalizeShutdown(): void;
+  shutdown(): void;
+}
 
 /**
  * The running daemon instance with all wired services.
@@ -260,8 +284,8 @@ export type SessionStoreBridge = import("@comis/core").SessionStorePort;
  * Replaces the prior 4-handle chain (foundation → agents → channels →
  * gateway handles, composed via `extends`).
  *
- * The 6 true forward-ref slots (`channelPluginsRef`, `bgNotifyRef`,
- * `cronWakeCallbackRef`, `gatewaySendRef`, `shutdownRef`,
+ * The 5 true forward-ref slots (`channelPluginsRef`, `bgNotifyRef`,
+ * `gatewaySendRef`, `shutdownRef`,
  * `channelAdaptersRef`) are preserved as documented BootContext fields —
  * they are cross-stage forward refs that cannot be eliminated by reordering
  * construction.
@@ -496,15 +520,26 @@ export interface BootContext {
   execToolEnv?: Record<string, string>;
   // The LATE-BOUND bounded-autonomy seam (bootAgents → boot → cap layer populates/shares it).
   boundedAutonomyBudgetHolder?: BoundedAutonomyBudgetHolder;
-  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
+  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
   sharedLeaseManager?: LeaseManager;
   // Schedulers
-  systemEventQueue?: ReturnType<typeof createSystemEventQueue>;
   cronSchedulers?: Awaited<ReturnType<typeof setupSchedulers>>["cronSchedulers"];
+  ownedCronSchedulers?: Awaited<ReturnType<typeof setupSchedulers>>["ownedCronSchedulers"];
   executionTrackers?: Awaited<ReturnType<typeof setupSchedulers>>["executionTrackers"];
+  followupTaskStores?: Awaited<ReturnType<typeof setupSchedulers>>["followupTaskStores"];
+  taskBootId?: Awaited<ReturnType<typeof setupSchedulers>>["taskBootId"];
+  taskRuntimeGate?: Awaited<ReturnType<typeof setupSchedulers>>["taskRuntimeGate"];
+  taskMaintenanceControllers?: Awaited<ReturnType<typeof setupSchedulers>>["taskMaintenanceControllers"];
+  bindTaskMaintenanceRuntime?: Awaited<ReturnType<typeof setupSchedulers>>["bindTaskMaintenanceRuntime"];
+  cronMaintenanceControllers?: Awaited<ReturnType<typeof setupSchedulers>>["cronMaintenanceControllers"];
   browserServices?: Awaited<ReturnType<typeof setupSchedulers>>["browserServices"];
   resetSchedulers?: Awaited<ReturnType<typeof setupSchedulers>>["resetSchedulers"];
   getAgentCronScheduler?: Awaited<ReturnType<typeof setupSchedulers>>["getAgentCronScheduler"];
+  getAgentCronAuthoringConfig?: Awaited<ReturnType<typeof setupSchedulers>>["getAgentCronAuthoringConfig"];
+  getAgentSchedulerSeed?: Awaited<ReturnType<typeof setupSchedulers>>["getAgentSchedulerSeed"];
+  cronRuntimeBinding?: Awaited<ReturnType<typeof setupSchedulers>>["cronRuntimeBinding"];
+  activateCronSchedulers?: Awaited<ReturnType<typeof setupSchedulers>>["activateCronSchedulers"];
+  schedulerCorePortBindings?: import("./wiring/scheduler-core-port-bindings.js").SchedulerCorePortBindings;
   getAgentBrowserService?: Awaited<ReturnType<typeof setupSchedulers>>["getAgentBrowserService"];
   sessionTrackerRegistry?: SessionTrackerRegistry<ReturnType<typeof createFileStateTracker>>;
   auditAggregator?: ReturnType<typeof createAuditAggregator>;
@@ -643,8 +678,10 @@ export interface BootContext {
   // Monitoring + heartbeat
   heartbeatRunner?: ReturnType<typeof setupMonitoring>["heartbeatRunner"];
   duplicateDetector?: ReturnType<typeof setupMonitoring>["duplicateDetector"];
-  perAgentRunner?: ReturnType<typeof setupHeartbeat>["perAgentRunner"];
-  wakeCoalescer?: ReturnType<typeof createWakeCoalescer>;
+  heartbeatCoordinator?: ReturnType<
+    typeof import("@comis/scheduler").createHeartbeatWakeCoordinator
+  >;
+  proactiveSchedulers?: ProactiveSchedulersHandle;
   // Graph
   nodeTypeRegistry?: ReturnType<typeof createNodeTypeRegistry>;
   graphCoordinator?: ReturnType<typeof createGraphCoordinator>;
@@ -694,8 +731,6 @@ export interface BootContext {
   bgNotifyRef: { ref?: import("./notification/notification-service.js").NotificationService };
   /** Closure constructed in bootFoundation; reads bgNotifyRef.ref at call time. */
   bgNotifyFn: (opts: { agentId: string; message: string; priority: "normal"; origin: "background_task" }) => Promise<void>;
-  /** Populated by bootChannels post-wakeCoalescer; read by setupSchedulers onCronWake (bootAgents). */
-  cronWakeCallbackRef?: { ref?: (reason: string) => void };
   /** Populated by bootChannels post-cap-layer; read by setupSchedulers executeJob (bootAgents) at fire time. */
   wakeGateRunnerRef?: { ref?: import("./wiring/wake-gate-runner.js").WakeGateRunner };
   /** Populated by bootGateway post-setupGateway; read by setupCrossSession's gatewaySend (bootChannels). */

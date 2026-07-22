@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ShutdownDeps } from "./setup-shutdown.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
+import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -27,7 +29,9 @@ function createMinimalDeps(overrides: Partial<ShutdownDeps> = {}): ShutdownDeps 
     exitFn: vi.fn(),
     activeExecutions: undefined,
     subAgentRunner: { shutdown: vi.fn(async () => {}) },
-    cronSchedulers: new Map(),
+    ownedCronSchedulers: new Map(),
+    clock: createFakeClock(1_800_000_000_000),
+    timers: createFakeTimers(1_800_000_000_000),
     resetSchedulers: new Map(),
     browserServices: new Map(),
     tokenTracker: {
@@ -76,20 +80,30 @@ describe("setupShutdown", () => {
   // -------------------------------------------------------------------------
 
   it("executes ordered teardown in correct sequence", async () => {
-    const cronScheduler = { stop: vi.fn() };
+    const cronScheduler = {
+      closeAdmission: vi.fn(() => ({ activeExecutions: 0 })),
+      waitForIdle: vi.fn(async () => undefined),
+      abortActive: vi.fn(() => ({ activeExecutions: 0 })),
+    };
     const resetScheduler = { stop: vi.fn() };
     const browserService = { stop: vi.fn(async () => {}) };
     const channelManager = { stopAll: vi.fn(async () => {}) };
-    const heartbeatRunner = { stop: vi.fn() } as any;
+    const proactiveSchedulers = {
+      closeAdmission: vi.fn(() => ({ activeCount: 0, cancelledCount: 0 })),
+      waitForIdle: vi.fn(async () => undefined),
+      abortActive: vi.fn(() => ({ activeCount: 0 })),
+      finalizeShutdown: vi.fn(),
+      shutdown: vi.fn(),
+    } as any;
     const mediaTempManager = { stopCleanupInterval: vi.fn() } as any;
     const gatewayHandle = { stop: vi.fn(async () => {}) } as any;
 
     const deps = createMinimalDeps({
-      cronSchedulers: new Map([["agent-1", cronScheduler as any]]),
+      ownedCronSchedulers: new Map([["agent-1", cronScheduler as any]]),
       resetSchedulers: new Map([["agent-1", resetScheduler as any]]),
       browserServices: new Map([["agent-1", browserService as any]]),
       channelManager,
-      heartbeatRunner,
+      proactiveSchedulers,
       mediaTempManager,
       gatewayHandle,
       tokenTracker: {
@@ -134,11 +148,11 @@ describe("setupShutdown", () => {
 
     // Verify key components were stopped
     expect(deps.subAgentRunner.shutdown).toHaveBeenCalled();
-    expect(cronScheduler.stop).toHaveBeenCalled();
+    expect(cronScheduler.closeAdmission).toHaveBeenCalled();
     expect(resetScheduler.stop).toHaveBeenCalled();
     expect(browserService.stop).toHaveBeenCalled();
     expect(channelManager.stopAll).toHaveBeenCalled();
-    expect(heartbeatRunner.stop).toHaveBeenCalled();
+    expect(proactiveSchedulers.finalizeShutdown).toHaveBeenCalled();
     expect(mediaTempManager.stopCleanupInterval).toHaveBeenCalled();
     expect(gatewayHandle.stop).toHaveBeenCalled();
     expect(deps.diagnosticCollector.dispose).toHaveBeenCalled();
@@ -152,6 +166,51 @@ describe("setupShutdown", () => {
     // actually hangs.
   }, 15_000);
 
+  it("drains scheduled work before closing delivery dependencies", async () => {
+    const clock = createFakeClock(1_800_000_000_000);
+    const timers = createFakeTimers(1_800_000_000_000);
+    let settleCron!: () => void;
+    const cronIdle = new Promise<void>((resolve) => { settleCron = resolve; });
+    const calls: string[] = [];
+    const cronScheduler = {
+      closeAdmission: vi.fn(() => { calls.push("cron-close"); return { activeExecutions: 1 }; }),
+      waitForIdle: vi.fn(() => cronIdle),
+      abortActive: vi.fn(() => ({ activeExecutions: 1 })),
+      stop: vi.fn(async () => ({ ok: true, value: undefined })),
+    };
+    const proactiveSchedulers = {
+      closeAdmission: vi.fn(() => { calls.push("proactive-close"); return { activeCount: 0, cancelledCount: 0 }; }),
+      waitForIdle: vi.fn(async () => undefined),
+      abortActive: vi.fn(() => ({ activeCount: 0 })),
+      finalizeShutdown: vi.fn(() => { calls.push("proactive-finalize"); }),
+      shutdown: vi.fn(),
+    };
+    const channelManager = {
+      stopAll: vi.fn(async () => { calls.push("channel-stop"); }),
+    };
+    const deps = createMinimalDeps({
+      ownedCronSchedulers: new Map([["agent-a", cronScheduler as any]]),
+      proactiveSchedulers: proactiveSchedulers as any,
+      channelManager,
+      gatewayHandle: { stop: vi.fn(async () => { calls.push("gateway-stop"); }) } as any,
+      clock,
+      timers,
+      timeoutMs: 60_000,
+    } as any);
+    const setupShutdown = await getSetupShutdown();
+
+    const shuttingDown = setupShutdown(deps).shutdownHandle.trigger("SIGTERM");
+    await vi.waitFor(() => expect(cronScheduler.closeAdmission).toHaveBeenCalledOnce());
+    expect(calls.slice(0, 3)).toEqual(["gateway-stop", "cron-close", "proactive-close"]);
+    expect(channelManager.stopAll).not.toHaveBeenCalled();
+    expect(proactiveSchedulers.finalizeShutdown).not.toHaveBeenCalled();
+
+    settleCron();
+    await shuttingDown;
+    expect(proactiveSchedulers.abortActive).not.toHaveBeenCalled();
+    expect(calls.indexOf("proactive-finalize")).toBeLessThan(calls.indexOf("channel-stop"));
+  });
+
   // -------------------------------------------------------------------------
   // 2. Optional component handling
   // -------------------------------------------------------------------------
@@ -159,7 +218,7 @@ describe("setupShutdown", () => {
   it("handles missing optional deps without errors", async () => {
     const deps = createMinimalDeps({
       channelManager: undefined,
-      heartbeatRunner: undefined,
+      proactiveSchedulers: undefined,
       gatewayHandle: undefined,
       mediaTempManager: undefined,
       secretStore: undefined,
@@ -616,13 +675,19 @@ describe("setupShutdown", () => {
     const gatewayHandle = { stop: vi.fn(async () => { callOrder.push("gateway"); }) } as any;
     const channelManager = { stopAll: vi.fn(async () => { callOrder.push("channel-manager"); }) };
     const subAgentRunner = { shutdown: vi.fn(async () => { callOrder.push("sub-agent-runner"); }) };
-    const heartbeatRunner = { stop: vi.fn(() => { callOrder.push("heartbeat-runner"); }) } as any;
+    const proactiveSchedulers = {
+      closeAdmission: vi.fn(() => ({ activeCount: 0, cancelledCount: 0 })),
+      waitForIdle: vi.fn(async () => undefined),
+      abortActive: vi.fn(() => ({ activeCount: 0 })),
+      finalizeShutdown: vi.fn(() => { callOrder.push("proactive-schedulers"); }),
+      shutdown: vi.fn(),
+    } as any;
 
     const deps = createMinimalDeps({
       gatewayHandle,
       channelManager,
       subAgentRunner,
-      heartbeatRunner,
+      proactiveSchedulers,
     });
 
     const setupShutdown = await getSetupShutdown();
@@ -634,7 +699,7 @@ describe("setupShutdown", () => {
     // Other components come after
     expect(callOrder).toContain("sub-agent-runner");
     expect(callOrder).toContain("channel-manager");
-    expect(callOrder).toContain("heartbeat-runner");
+    expect(callOrder).toContain("proactive-schedulers");
   });
 
   // -------------------------------------------------------------------------
@@ -716,8 +781,18 @@ describe("setupShutdown", () => {
       const deps = createMinimalDeps({
         gatewayHandle: { stop: vi.fn(async () => {}) } as any,
         channelManager: { stopAll: vi.fn(async () => {}) },
-        heartbeatRunner: { stop: vi.fn() } as any,
-        cronSchedulers: new Map([["agent-1", { stop: vi.fn() } as any]]),
+        proactiveSchedulers: {
+          closeAdmission: vi.fn(() => ({ activeCount: 0, cancelledCount: 0 })),
+          waitForIdle: vi.fn(async () => undefined),
+          abortActive: vi.fn(() => ({ activeCount: 0 })),
+          finalizeShutdown: vi.fn(),
+          shutdown: vi.fn(),
+        } as any,
+        ownedCronSchedulers: new Map([["agent-1", {
+          closeAdmission: vi.fn(() => ({ activeExecutions: 0 })),
+          waitForIdle: vi.fn(async () => undefined),
+          abortActive: vi.fn(() => ({ activeExecutions: 0 })),
+        } as any]]),
         browserServices: new Map([["agent-1", { stop: vi.fn(async () => {}) } as any]]),
       });
 
@@ -775,7 +850,7 @@ describe("setup-shutdown honors §1.4 mode invariants", () => {
       container: { shutdown: vi.fn(async () => {}) } as any,
       exitFn: vi.fn(),
       subAgentRunner: { shutdown: vi.fn(async () => {}) },
-      cronSchedulers: new Map(),
+      ownedCronSchedulers: new Map(),
       resetSchedulers: new Map(),
       browserServices: new Map(),
       tokenTracker: {
@@ -845,7 +920,7 @@ describe("brokerStop runs after shutdownBackgroundProcesses (shutdown ordering)"
       container: { shutdown: vi.fn(async () => {}) } as any,
       exitFn: vi.fn(),
       subAgentRunner: { shutdown: vi.fn(async () => {}) },
-      cronSchedulers: new Map(),
+      ownedCronSchedulers: new Map(),
       resetSchedulers: new Map(),
       browserServices: new Map(),
       tokenTracker: { getAll: vi.fn(() => []) } as any,

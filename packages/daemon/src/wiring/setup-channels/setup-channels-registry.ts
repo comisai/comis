@@ -25,10 +25,8 @@ import { initTelegramFileGuardConfig } from "@comis/core";
 import type { MediaResolverPort } from "@comis/core";
 import type { SsrfGuardedFetcher, LinkRunner, AudioConverter, MediaTempManager, MediaSemaphore } from "@comis/skills";
 import type { RpcCall } from "@comis/skills/platform-tools";
-import type { ExecutionLogEntry } from "@comis/scheduler";
 import { bootstrapAdapters } from "../setup-channels-adapters.js";
 import { buildMediaPipeline } from "../setup-channels-media.js";
-import { registerCronEventListeners } from "./setup-channels-credentials.js";
 import { buildAndStartChannelManager } from "./setup-channels-runtime.js";
 
 // Re-export the unused VoiceResponsePipelineDeps + LifecycleReactor types to
@@ -310,8 +308,6 @@ export interface ChannelsDeps {
     getByProvider(): Array<{ provider: string; model: string; totalTokens: number; totalCost: number; callCount: number }>;
     getBySession(key: string): { totalTokens: number; totalCost: number };
   }>;
-  /** Per-agent cron execution trackers for enriched JSONL entries. */
-  cronExecutionTrackers?: Map<string, { record(entry: ExecutionLogEntry): Promise<void> }>;
   /**
    * DI seam for /export-trajectory slash command.
    * Threaded into buildAndStartChannelManager → createChannelManager →
@@ -338,7 +334,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     executors,
     defaultAgentId,
     sessionManager,
-    logger,
     channelsLogger,
     linkRunner,
     ssrfFetcher,
@@ -364,6 +359,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     hookRunner: container.hookRunner,
     deliveryQueue: deps.deliveryQueue ?? createNoOpDeliveryQueue(),
     logger: channelsLogger,
+    clock: deps.clock,
     eventBus: container.eventBus,
     // Bind the minted reply id → trajectory on the direct platform-send
     // path too (the primary inbound-reply path sends here, not via the drain).
@@ -414,40 +410,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     onSuspiciousContent: deps.onSuspiciousContent,
   });
 
-  // Register cron-delivery event listeners (scheduler:job_result + scheduler:job_suspended).
-  registerCronEventListeners({
-    container,
-    executors,
-    defaultAgentId,
-    sessionManager,
-    sessionStore: deps.sessionStore,
-    logger,
-    clock: deps.clock,
-    resolveAccessToken: deps.resolveAccessToken, // OAuth-provider background jobs
-    adaptersByType,
-    deliveryService,
-    assembleToolsForAgent: deps.assembleToolsForAgent,
-    transcriber,
-    workspaceDirs: deps.workspaceDirs,
-    memoryAdapter: deps.memoryAdapter,
-    lcdStore: deps.lcdStore,
-    contextBrowse: deps.contextBrowse,
-    entityStore: deps.entityStore,
-    causalStore: deps.causalStore,
-    consolidationStore: deps.consolidationStore,
-    memoryLifecycleStore: deps.memoryLifecycleStore,
-    // Reflection: the outcome gate + mental-model store ride the SAME cron-deps chain →
-    // the __REFLECT__ sentinel assembles the closed-graph reflection bundle (no embedder — the
-    // reflection job groups by topicKey, not clustering embeddings).
-    outcomeStore: deps.outcomeStore,
-    learnedSkillStore: deps.learnedSkillStore,
-    memoryApi: deps.memoryApi,
-    tenantId: deps.tenantId,
-    piSessionAdapters: deps.piSessionAdapters,
-    cronExecutionTrackers: deps.cronExecutionTrackers,
-    activeRunRegistry: deps.activeRunRegistry,
-  });
-
   // Build the ChannelManager (voice pipeline + command queue + slash handlers +
   // lifecycle reactors).
   const { channelManager, lifecycleReactors, commandQueue } =
@@ -490,7 +452,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       piSessionAdapters: deps.piSessionAdapters,
       destroyConversation: deps.destroyConversation,
       costTrackers: deps.costTrackers,
-      cronExecutionTrackers: deps.cronExecutionTrackers,
       exportSessionBundle: deps.exportSessionBundle,
     });
 

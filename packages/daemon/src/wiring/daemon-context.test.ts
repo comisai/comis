@@ -70,6 +70,8 @@ describe("DaemonContext", () => {
       // Schedulers
       "cronSchedulers",
       "executionTrackers",
+      "followupTaskStores",
+      "taskBootId",
       "resetSchedulers",
       // Browser
       "browserServices",

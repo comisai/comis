@@ -98,7 +98,7 @@ export interface SingleAgentDeps {
    *  so every bridge sees the SAME holder. Absent ⇒ the bridge's per-root reserve
    *  is a no-op (byte-identical). */
   boundedAutonomyBudget?: import("@comis/agent").BoundedAutonomyBudgetHolder;
-  resolveRootRunId?: (agentId: string, sessionKey: import("@comis/core").SessionKey) => string;
+  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
   /** Temporal-spread store. Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the shared
    *  db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator enables

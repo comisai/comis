@@ -36,6 +36,7 @@ import {
   safePath,
   createOutputGuard,
   formatSessionKey,
+  resolveContextRootRunId,
   type PerAgentConfig,
   type ClockPort,
   type TimerPort,
@@ -43,9 +44,12 @@ import {
   type OutputGuardPort,
   type ComisLogger,
   type SessionKey,
+  type RootRunIdResolver,
+  type RootRunContextError,
   type DurableRunPort,
   type OutwardSendLedgerPort,
 } from "@comis/core";
+import { ok } from "@comis/shared";
 import type { BoundedAutonomyBudgetHolder } from "@comis/agent";
 import { createLeaseManager, type LeaseManager, type LeaseManagerDeps } from "@comis/infra";
 import { createBoundedAutonomy, type BoundedAutonomy } from "../autonomy/bounded-autonomy.js";
@@ -100,12 +104,20 @@ export interface CapabilityWebSearchKeys {
 export function createRootRunIdResolver(deps: {
   holder: BoundedAutonomyBudgetHolder;
   index: Map<string, string>;
-}): (agentId: string, sessionKey: SessionKey) => string {
-  return (agentId: string, sessionKey: SessionKey): string => {
+  onContextMismatch?: (error: RootRunContextError, agentId: string) => void;
+}): RootRunIdResolver {
+  return (agentId: string, sessionKey: SessionKey) => {
+    const contextRoot = resolveContextRootRunId(agentId, sessionKey);
+    if (!contextRoot.ok) {
+      deps.onContextMismatch?.(contextRoot.error, agentId);
+      return contextRoot;
+    }
+    if (contextRoot.value !== undefined) return ok(contextRoot.value);
+
     const formatted = formatSessionKey(sessionKey);
     const principalKey = `${agentId}:${formatted}`;
     const existing = deps.index.get(principalKey);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) return ok(existing);
     const synthetic = `root-session-${agentId}-${formatted}`;
     deps.index.set(principalKey, synthetic);
     // Anchor the synthetic root in the budget meter on first use (wall-clock
@@ -113,7 +125,7 @@ export function createRootRunIdResolver(deps: {
     // run → a synthetic leaseId; absent holder ⇒ skip (the resolver still returns
     // a stable id so the bridge can call reserveBudget once `current` is populated).
     deps.holder.current?.registerRoot(synthetic, `lease-${synthetic}`);
-    return synthetic;
+    return ok(synthetic);
   };
 }
 
@@ -284,7 +296,7 @@ export interface CapabilityLayerResult {
    * call — this returned one is the canonical resolver for any later consumer + the
    * boot-test seam.
    */
-  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
+  resolveRootRunId?: RootRunIdResolver;
 }
 
 /** The shipped web-search provider keys, read from the secret store (or none). */
@@ -550,7 +562,22 @@ export async function constructCapabilityLayer(
   // is a stable closure that reads `holder.current` at call time.
   const rootRunIdIndex = deps.rootRunIdIndex ?? new Map<string, string>();
   const resolveRootRunId = deps.boundedAutonomyHolder
-    ? createRootRunIdResolver({ holder: deps.boundedAutonomyHolder, index: rootRunIdIndex })
+    ? createRootRunIdResolver({
+        holder: deps.boundedAutonomyHolder,
+        index: rootRunIdIndex,
+        onContextMismatch: (error, agentId) => {
+          daemonLogger.audit(
+            { agentId, outcome: "denied", reason: error.code },
+            "Trusted root context identity rejected",
+          );
+          void deps.container?.eventBus.emitSafely("security:warn", {
+            category: "root_context_mismatch",
+            agentId,
+            message: "Trusted root context identity rejected",
+            timestamp: clock.now(),
+          });
+        },
+      })
     : undefined;
 
   // The first autonomy-bearing agent's resolved posture is the daemon-wide

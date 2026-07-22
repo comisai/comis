@@ -15,7 +15,7 @@ import {
   EMBED_MULTILINGUAL,
   RERANK_MULTILINGUAL,
 } from "@comis/core";
-import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort, SessionKey } from "@comis/core";
+import type { ImageGenerationPort, OAuthTokenManager, ClockPort, VideoGenerationPort, RootRunIdResolver, ComisLogger, TypedEventBus } from "@comis/core";
 import { createChannelHealthMonitor } from "@comis/channels";
 import { createImageGenRateLimiter } from "@comis/skills";
 import { createLeaseManager, type LeaseManager } from "@comis/infra";
@@ -67,15 +67,34 @@ import { restartChannelAdapter } from "./channel-adapter-restart.js";
 export interface BoundedAutonomyWiring {
   boundedAutonomyBudgetHolder: BoundedAutonomyBudgetHolder;
   rootRunIdIndex: Map<string, string>;
-  resolveRootRunId: (agentId: string, sessionKey: SessionKey) => string;
+  resolveRootRunId: RootRunIdResolver;
   sharedLeaseManager: LeaseManager;
 }
 
 /** Build the {@link BoundedAutonomyWiring} late-bind seam (see the interface doc). */
-export function createBoundedAutonomyWiring(deps: { clock: ClockPort }): BoundedAutonomyWiring {
+export function createBoundedAutonomyWiring(deps: {
+  clock: ClockPort;
+  logger: ComisLogger;
+  eventBus: TypedEventBus;
+}): BoundedAutonomyWiring {
   const boundedAutonomyBudgetHolder: BoundedAutonomyBudgetHolder = {};
   const rootRunIdIndex = new Map<string, string>();
-  const resolveRootRunId = createRootRunIdResolver({ holder: boundedAutonomyBudgetHolder, index: rootRunIdIndex });
+  const resolveRootRunId = createRootRunIdResolver({
+    holder: boundedAutonomyBudgetHolder,
+    index: rootRunIdIndex,
+    onContextMismatch: (error, agentId) => {
+      deps.logger.audit(
+        { agentId, outcome: "denied", reason: error.code },
+        "Trusted root context identity rejected",
+      );
+      deps.eventBus.emit("security:warn", {
+        category: "root_context_mismatch",
+        agentId,
+        message: "Trusted root context identity rejected",
+        timestamp: deps.clock.now(),
+      });
+    },
+  });
   const sharedLeaseManager = createLeaseManager({ clock: deps.clock });
   return { boundedAutonomyBudgetHolder, rootRunIdIndex, resolveRootRunId, sharedLeaseManager };
 }

@@ -57,8 +57,6 @@ import {
   setupMedia,
   setupCrossSession,
   setupTools,
-  setupMonitoring,
-  setupHeartbeat,
   setupShutdown,
   setupGateway,
   setupRpcBridge,
@@ -111,6 +109,8 @@ import { seedBundledSkills, defaultSeedBundledSkillsDeps } from "./wiring/seed-b
 // createModelCatalog + resolveWorkspaceDir live in @comis/core.
 import { createModelCatalog, resolveWorkspaceDir, type AppConfig } from "@comis/core";
 import { createWorkspacePolicyResolveDir } from "./wiring/workspace-policy-resolve-dir.js";
+import { createSchedulerCorePortBindings } from "./wiring/scheduler-core-port-bindings.js";
+import { setupProactiveSchedulers } from "./wiring/setup-proactive-schedulers.js";
 import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
 import { reapNeverTaskedDrives as reapNeverTaskedDrivesInRegistry, createOrchestrateReplayRespawn } from "@comis/skills/tools";
 import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // the sandbox/capability endpoint layer
@@ -123,7 +123,6 @@ import { createWakeGateRunner, buildWakeGateRunnerDeps, type WakeGateRunner } fr
 import { createActivityCircuitBreaker } from "@comis/orchestrator";
 import { createGraphCoordinator, createNodeTypeRegistry } from "./graph/index.js";
 import { resolveGraphConcurrencyDefaults } from "./graph/graph-capability-defaults.js";
-import { createWakeCoalescer, createSystemEventQueue, type WakeReasonKind } from "@comis/scheduler";
 import { createTokenRegistry } from "./api/token-handlers.js";
 import { buildObsMcpClientClosures } from "./wiring/obs-mcp-closures.js";
 import type { DaemonInstance, DaemonOverrides, BootContext, SessionStoreBridge } from "./daemon-types.js";
@@ -294,7 +293,7 @@ function buildChannelManagerDeps(deps: {
     workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, memoryLifecycleStore, outcomeStore, learnedSkillStore, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
-    piSessionAdapters, costTrackers, deliveryQueue, recordOutboundMessage, executionTrackers,
+    piSessionAdapters, costTrackers, deliveryQueue, recordOutboundMessage,
     onSuspiciousContent, dataDir, clock, timers, env, activityBreaker, activityStream, activityRendererFactoryOverride,
     executionPlanPorts, oauthManagers,
   } = agents;
@@ -412,7 +411,6 @@ function buildChannelManagerDeps(deps: {
     recordOutboundMessage,
     destroyConversation: channelConversationReset.destroyConversationCompletely,
     lcdStore: agents.lcdStore, contextBrowse: agents.contextBrowse, // review session source (DAG transcripts)
-    cronExecutionTrackers: executionTrackers,
     exportSessionBundle,
   };
 }
@@ -598,8 +596,8 @@ type PostChannelsBootContext = BootContext & Required<Pick<BootContext,
   | "graphCoordinator" | "namedGraphStore" | "nodeTypeRegistry"
   | "channelHealthMonitor" | "notificationContext"
   | "modelCatalog" | "channelConfig" | "suspendedAgents"
-  | "approvalGate" | "wakeCoalescer"
-  | "cronSchedulers" | "executionTrackers" | "getAgentCronScheduler" | "getAgentBrowserService"
+  | "approvalGate" | "heartbeatCoordinator" | "proactiveSchedulers"
+  | "cronSchedulers" | "ownedCronSchedulers" | "executionTrackers" | "cronMaintenanceControllers" | "followupTaskStores" | "taskRuntimeGate" | "taskMaintenanceControllers" | "getAgentCronScheduler" | "getAgentCronAuthoringConfig" | "getAgentSchedulerSeed" | "getAgentBrowserService"
   | "memoryApi" | "memoryAdapter" | "embeddingQueue" | "continuationTracker"
   | "ttsAdapter" | "visionRegistry" | "linkRunner" | "transcriber" | "fileExtractor"
   | "resolveAttachment" | "deliveryQueue"
@@ -737,12 +735,15 @@ function buildRpcDispatchDeps(deps: {
   const conversationReset = createConversationReset({ lcdStore: c.lcdStore, sessionStore: g.sessionStoreBridge, piSessionAdapters: c.piSessionAdapters, logger: c.logger });
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
-    cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
-    // perAgentRunner MUST be threaded here alongside wakeCoalescer (both live on
-    // the boot context `c`): the heartbeat.trigger/states handlers gate on
-    // deps.perAgentRunner, so omitting it leaves the heartbeat_manage round-trip
-    // dead even while the runner ticks. See heartbeat-runner-wiring-guard.test.ts.
-    perAgentRunner: c.perAgentRunner,
+    getAgentCronAuthoringConfig: c.getAgentCronAuthoringConfig,
+    cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers,
+    cronMaintenanceControllers: c.cronMaintenanceControllers,
+    followupTaskStores: c.followupTaskStores,
+    taskMaintenanceControllers: c.taskMaintenanceControllers,
+    requestTaskRescan: (agentId: string) => c.proactiveSchedulers.requestTaskRescan(agentId),
+    heartbeatCoordinator: c.heartbeatCoordinator,
+    getAgentSchedulerSeed: c.getAgentSchedulerSeed,
+    schedulerNowMs: () => c.clock.now(),
     defaultWorkspaceDir: c.defaultWorkspaceDir, workspaceDirs: c.workspaceDirs,
     memoryApi: c.memoryApi, memoryAdapter: c.memoryAdapter, embeddingQueue: c.embeddingQueue,
     // Thread the memory adapter as the MemoryPort for the
@@ -809,6 +810,9 @@ function buildRpcDispatchDeps(deps: {
     daemonVersion: c.daemonVersion,
     configGitManager: c.configGitManager,
     configWebhook: c.container.config.daemon.configWebhook as { url?: string; timeoutMs?: number; secret?: string },
+    onConfigPersisted: (nextConfig) => {
+      if (!nextConfig.scheduler.tasks.enabled) c.proactiveSchedulers.disableTasks();
+    },
     secretStore: c.secretStore, mutableSecretManager: c.mutableHandle, envFilePath: c.envPath, logLevelManager: c.logLevelManager,
     getAgentBrowserService: c.getAgentBrowserService,
     resolveAttachment: c.resolveAttachment, transcriber: c.transcriber, fileExtractor: c.fileExtractor, voiceSelection: c.voiceSelection,
@@ -1008,12 +1012,13 @@ function wireHealthLogging(deps: {
     const stuckKillThresholdMs = container.config.security.agentToAgent.subagentContext?.stuckKillThresholdMs ?? 180_000;
     const graphStuckKillThresholdMs = container.config.security.agentToAgent.subagentContext?.graphStuckKillThresholdMs ?? 600_000;
     const allRuns = subAgentRunner.listRuns();
+    const runningRuns = allRuns.filter((run) => run.status === "running");
     const now = Date.now();
     subagentActivity.prune(
-      new Set(allRuns.filter((r) => r.status === "running").map((r) => r.sessionKey)),
+      new Set(runningRuns.map((run) => run.sessionKey)),
     );
     const sweep = sweepStuckSubAgentRuns({
-      runs: allRuns,
+      runs: runningRuns,
       now,
       stuckKillThresholdMs,
       graphStuckKillThresholdMs,
@@ -1199,9 +1204,15 @@ async function bootFoundation(
   // right after the container is finalized; the bootstrap config is the fallback
   // for the boot window before any turn runs.
   const workspacePolicyLiveConfig: { current: AppConfig | undefined } = { current: undefined };
-  const wrappedBootstrap = (opts: Parameters<typeof _bootstrap>[0]) => _bootstrap({
+  const schedulerCorePortBindings = createSchedulerCorePortBindings();
+  const wrappedBootstrap = (opts: {
+    configPaths: string[];
+    env: Record<string, string | undefined>;
+  }) => _bootstrap({
     ...opts,
     secretManager: sharedSecretManager,
+    taskExtractionPort: schedulerCorePortBindings.taskExtractionPort,
+    deliveredAssistantHistoryPort: schedulerCorePortBindings.deliveredAssistantHistoryPort,
     workspacePolicyPortFactory: (config) => createFilesystemWorkspacePolicyAdapter({
       resolveWorkspaceDir: createWorkspacePolicyResolveDir(
         () => workspacePolicyLiveConfig.current ?? config,
@@ -1562,6 +1573,7 @@ async function bootFoundation(
     geminiCacheManager,
     backgroundTaskManager, bgNotifyFn,
     brokerHandle,
+    schedulerCorePortBindings,
   });
   } catch (e: unknown) {
     // Boot failed — release the lock. Under normal boot, setupShutdown.onShutdown
@@ -1581,7 +1593,7 @@ async function bootFoundation(
  *   - mcpClientManager (constructed BEFORE setupAgents per ordering constraint)
  *   - setupAgents (executors, costTrackers, skillRegistries, OAuth store, etc.)
  *   - subprocessEnv + execToolEnv (filtered envs for trusted/untrusted children)
- *   - systemEventQueue (cron-heartbeat routing) + setupSchedulers
+ *   - timer-free scheduler initialization and runtime binding handles
  *   - sessionTrackerRegistry + Gemini-cache cleanup + MCP disconnect cleanup
  *   - auditAggregator + onSuspiciousContent
  *   - setupMedia + setupRpcBridge
@@ -1748,7 +1760,7 @@ async function bootAgents(
   const agentBootWindowInfo = new Map<string, AgentBootWindowInfo>();
 
   // The LATE-BOUND bounded-autonomy seam (built before the cap layer; see helper JSDoc).
-  const { boundedAutonomyBudgetHolder, resolveRootRunId, sharedLeaseManager } = createBoundedAutonomyWiring({ clock });
+  const { boundedAutonomyBudgetHolder, resolveRootRunId, sharedLeaseManager } = createBoundedAutonomyWiring({ clock, logger: daemonLogger, eventBus: container.eventBus });
 
   const {
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
@@ -1825,40 +1837,21 @@ async function bootAgents(
   // Credential-free env for the exec tool (agent-issued shell commands).
   const execToolEnv = envSubset(container.secretManager, [...SUBPROCESS_SYSTEM]);
 
-  // Deferred wake callback ref -- populated by bootChannels once wakeCoalescer is
-  // constructed (the channelPluginsRef / bgNotifyRef cross-stage deferred-ref pattern).
-  const cronWakeCallbackRef: { ref?: (reason: string) => void } = {};
   const wakeGateRunnerRef: { ref?: WakeGateRunner } = {}; // populated post-cap-layer (bootChannels); read at FIRE time (absent ⇒ cron runs as today)
 
-  // 6.6.4.9. System event queue (created early for cron-heartbeat routing)
-  const systemEventQueue = createSystemEventQueue({ logger: schedulerLogger });
-
-  // 6.6.5. Schedulers — the onCronWake handler reads `cronWakeCallbackRef.ref` at
-  // INVOCATION time (deferred), so the live wakeCoalescer wired in bootChannels
-  // receives the wake; a cron firing in the handoff gap is DEBUG-logged (the silent
-  // miss is visible). Observability-only: NO buffer-then-drain (channelPluginsRef/
-  // bgNotifyRef precedent) — replaying timer-driven wakes could cause a wake storm.
+  // 6.6.5. Schedulers initialize persisted state without arming timers. The
+  // proactive composition stage binds runtime dependencies and activates once
+  // channels and durable delivery are ready.
   const {
-    cronSchedulers, executionTrackers, browserServices, resetSchedulers,
-    getAgentCronScheduler, getAgentBrowserService,
+    cronSchedulers, ownedCronSchedulers, executionTrackers, cronMaintenanceControllers, browserServices, resetSchedulers,
+    followupTaskStores, taskBootId, taskRuntimeGate, taskMaintenanceControllers, bindTaskMaintenanceRuntime,
+    getAgentCronScheduler, getAgentCronAuthoringConfig, getAgentBrowserService,
+    getAgentSchedulerSeed, cronRuntimeBinding, activateCronSchedulers,
   } = await setupSchedulers({
     container, workspaceDirs, sessionStore, sessionManager,
     schedulerLogger, agentLogger, skillsLogger,
     subprocessEnv,
-    systemEventQueue,  // cron-heartbeat routing
-    onCronWake: (reason: string) => {
-      const callback = cronWakeCallbackRef.ref;
-      if (callback) {
-        callback(reason);
-      } else {
-        daemonLogger.debug(
-          { reason, hint: "wakeCoalescer not yet constructed; cron wake dropped" },
-          "Cron wake dropped during stage handoff",
-        );
-      }
-    },
-    clock, timers, wakeGateRunnerRef, trajectoryRegistry, // wakeGateRunnerRef: late-bound pre-payload wake-gate runner (executeJob reads .ref at fire time); trajectoryRegistry: a woke fire's direct per-session wake-gate trajectory record
-    leaseManager: sharedLeaseManager, boundedAutonomyHolder: boundedAutonomyBudgetHolder, // the cron-fire fresh-lease mint (shared LeaseManager + late-bound holder)
+    clock, timers,
   });
 
   // Post-setupAgents cleanup wiring: session expiry, Gemini cache disposal,
@@ -1956,14 +1949,17 @@ async function bootAgents(
     singleAgentDeps, providerHealth, oauthCredentialStore, toolCapabilityPorts, mcpClientManager,
     mcpTokenStore,
     continuationTracker, subprocessEnv, execToolEnv,
-    systemEventQueue, cronSchedulers, executionTrackers, browserServices, resetSchedulers,
-    getAgentCronScheduler, getAgentBrowserService,
+    cronSchedulers, ownedCronSchedulers, executionTrackers, cronMaintenanceControllers, browserServices, resetSchedulers,
+    followupTaskStores, taskBootId, taskRuntimeGate, taskMaintenanceControllers, bindTaskMaintenanceRuntime,
+    getAgentCronScheduler, getAgentCronAuthoringConfig, getAgentBrowserService,
+    getAgentSchedulerSeed, cronRuntimeBinding,
+    activateCronSchedulers,
     sessionTrackerRegistry, auditAggregator, onSuspiciousContent,
     ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner, mediaTempManager, mediaSemaphore, audioConverter,
     transcriber, ssrfFetcher, fileExtractor, voiceSelection,
     rpcCall, wireDispatch, approvalGate, interactiveCallbackWiring,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
-    cronWakeCallbackRef, wakeGateRunnerRef, trajectoryRegistry, executionPlanPorts, oauthManagers, authStorages, servedWindowComparisons, agentBootWindowInfo,
+    wakeGateRunnerRef, trajectoryRegistry, executionPlanPorts, oauthManagers, authStorages, servedWindowComparisons, agentBootWindowInfo,
   });
 }
 
@@ -1985,7 +1981,7 @@ async function bootAgents(
  *   - cross-session sender + sub-agent runner
  *   - node type registry + graph coordinator + named graph store
  *   - monitoring (heartbeat runner) + per-agent heartbeat + wake coalescer
- *   - cronWakeCallbackRef populated (cross-stage handoff)
+ *   - proactive scheduler dependencies bound before activation
  *   - agent management runtime state (suspended set, model catalog, channel cfg)
  *
  * setupTools is constructed BEFORE setupChannels (every setupTools input
@@ -2014,24 +2010,24 @@ async function bootChannels(boot: BootContext): Promise<void> {
     | "linkRunner" | "ssrfFetcher" | "transcriber" | "ttsAdapter"
     | "audioConverter" | "mediaTempManager" | "mediaSemaphore" | "fileExtractor"
     | "rpcCall" | "wireDispatch" | "continuationTracker" | "subprocessEnv" | "execToolEnv"
-    | "systemEventQueue" | "cronSchedulers" | "executionTrackers" | "browserServices" | "getAgentCronScheduler"
+    | "cronSchedulers" | "executionTrackers" | "followupTaskStores" | "taskBootId" | "taskRuntimeGate" | "taskMaintenanceControllers" | "bindTaskMaintenanceRuntime" | "browserServices" | "getAgentCronScheduler" | "getAgentCronAuthoringConfig" | "getAgentSchedulerSeed" | "cronRuntimeBinding" | "activateCronSchedulers"
     | "sessionTrackerRegistry" | "auditAggregator" | "onSuspiciousContent"
     | "mcpClientManager" | "singleAgentDeps" | "providerHealth"
     | "channelAdaptersRef" | "deliveryQueue" | "drainAndStartDeliveryPrune"
-    | "shutdownDeliveryQueue" | "cronWakeCallbackRef" | "wakeGateRunnerRef" | "trajectoryRegistry"
-    | "executionPlanPorts" | "oauthManagers"
+    | "shutdownDeliveryQueue" | "wakeGateRunnerRef" | "trajectoryRegistry"
+    | "executionPlanPorts" | "oauthManagers" | "schedulerCorePortBindings"
   >>;
   // Names consumed by bootChannels body itself; helper functions
   // re-destructure from `handle` directly so closure deps are explicit.
   const {
-    container, sessionStore, db, daemonLogger, agentLogger, schedulerLogger,
-    skillsLogger, logger, memoryAdapter, memoryApi,
+    container, sessionStore, db, daemonLogger, agentLogger,
+    skillsLogger, memoryAdapter,
     sessionResolver, channelPluginsRef, backgroundTaskManager,
     bgNotifyRef, bgNotifyFn,
-    defaultAgentId, defaultWorkspaceDir, executors, workspaceDirs,
+    defaultAgentId, defaultWorkspaceDir, workspaceDirs,
     agentsConfig: agents, toolCapabilityPorts, mcpClientManager,
-    linkRunner, systemEventQueue, rpcCall, approvalGate,
-    deliveryQueue, cronWakeCallbackRef, wakeGateRunnerRef, singleAgentDeps,
+    linkRunner, rpcCall, approvalGate,
+    deliveryQueue, wakeGateRunnerRef, singleAgentDeps,
     // The concrete LCD ContextStorePort (createLcdStore),
     // populated on the BootContext by bootFoundation's setupMemory Object.assign.
     // Threaded into setupTools so assembleToolsForAgent wires the dag-mode ctx_*
@@ -2082,7 +2078,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const msTeamsConversationStore = createSqliteMsTeamsConversationStore(db); // shared memory.db → createMsTeamsPlugin (capture + proactive recovery)
 
   // 7.9. Capability-lease layer + ACTIVATION — constructed BEFORE setupTools so the KEPT handle threads capMint + the orchestrate capSocketPath into tool assembly; on `boot` for bootShutdown. cronJobCount binds the bounded-autonomy rate count to the per-agent CronScheduler. durableRuns threads into the jail-leg chokepoint for the _outwardStepIndex allocation.
-  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { return handle.getAgentCronScheduler(agentId).getJobs().length; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container, mcpClientManager, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}), ...(outwardLedgerEarly ? { outwardLedger: outwardLedgerEarly } : {}) }); // POPULATES the late-bound budget holder (read by the bridge at turn time) + shares the SAME LeaseManager as the cron-fire mint; the container is passed so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
+  const { capEndpointHandle, namespacePreflightOk } = await constructCapabilityLayer({ agents, rpcCall, clock: boot.clock, timers: handle.timers, cronJobCount: (agentId) => { try { const jobs = handle.getAgentCronScheduler(agentId).getJobs(); return jobs.ok ? jobs.value.length : 0; } catch { return 0; } }, dataDir: container.config.dataDir || ".", daemonLogger, skillsLogger, workspaceDirs, defaultWorkspaceDir, webSearchKeys: container.secretManager, boundedAutonomyHolder: handle.boundedAutonomyBudgetHolder, leaseManager: handle.sharedLeaseManager, container, mcpClientManager, ...(durableRunStoreEarly ? { durableRuns: durableRunStoreEarly } : {}), ...(outwardLedgerEarly ? { outwardLedger: outwardLedgerEarly } : {}) }); // POPULATES the late-bound budget holder (read by the bridge at turn time) + shares the SAME LeaseManager as the cron-fire mint; the container is passed so the SOCKET chokepoint emits the per-cap audit (audit:event + capability:audited) for jailed tool.invoke calls
   Object.assign(boot, { capEndpointHandle, namespacePreflightOk });
 
   if (capEndpointHandle && sandboxProvider) { // pre-payload wake-gate runner: built after the cap layer (deps from capEndpointHandle), read at fire time
@@ -2157,6 +2153,9 @@ async function bootChannels(boot: BootContext): Promise<void> {
         }
       : undefined,
   });
+  // Proactive scheduler construction consumes the assembler through the shared
+  // boot context later in this stage, so publish it as soon as it is available.
+  Object.assign(boot, { assembleToolsForAgent });
 
   // Boot-time viable-floor WARN per agent — WARN-only,
   // awaited for determinism, fail-open per agent (a throw never aborts boot).
@@ -2388,19 +2387,18 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // Seed the four canonical small-model DAG templates into the named-graph store. Idempotent (INSERT-OR-IGNORE in the seeder), so operator-customized templates survive restarts and re-running on every boot is safe.
   seedDefaultDagTemplates(namedGraphStore);
 
-  // 6.7. Monitoring + per-agent heartbeat + wake coalescer
-  const { heartbeatRunner, duplicateDetector } = setupMonitoring({ container, schedulerLogger, logger, adaptersByType });
-  const { perAgentRunner } = setupHeartbeat({
-    container, executors, assembleToolsForAgent, workspaceDirs,
-    sessionResolver, duplicateDetector, adaptersByType, systemEventQueue, memoryApi, schedulerLogger,
+  // 6.7. Bind every proactive dependency, then arm heartbeat and cron together.
+  const proactive = await setupProactiveSchedulers({
+    runtime: handle,
+    adaptersByType,
+    deliveryService,
+    schedulerCorePortBindings: handle.schedulerCorePortBindings,
   });
-  const wakeCoalescer = createWakeCoalescer({
-    runOnce: () => (heartbeatRunner ? heartbeatRunner.runOnce() : Promise.resolve()),
-    logger: schedulerLogger,
-  });
-  // Cross-stage: populate cronWakeCallbackRef now that wakeCoalescer exists. The setupSchedulers `onCronWake` lambda (wired in bootAgents) reads `.ref` at call time.
-  cronWakeCallbackRef.ref = (reason) => wakeCoalescer.requestHeartbeatNow(reason as WakeReasonKind);
-
+  if (!proactive.ok) {
+    throw new Error(`Proactive scheduler activation failed: ${proactive.error.message}`);
+  }
+  handle.bindTaskMaintenanceRuntime(proactive.value);
+  const { heartbeatRunner, duplicateDetector, coordinator: heartbeatCoordinator } = proactive.value;
   // 6.7.0.2. Agent management runtime state
   const suspendedAgents = new Set<string>();
   const modelCatalog = createModelCatalog();
@@ -2421,8 +2419,9 @@ async function bootChannels(boot: BootContext): Promise<void> {
     deadLetterQueue, announcementBatcher, gatewaySendRef,
     sandboxProvider, imageGenProvider, imageGenRateLimiter, imageGenConfig, persistImage, imageGenCostLimiter, mediaVisionBundle,
     videoGenProvider, videoGenRateLimiter, videoGenConfig, persistVideo, videoGenCostLimiter, videoJobStore, videoPoller,
-    assembleToolsForAgent, preprocessMessageText, getCapabilityPortForAgent,
-    heartbeatRunner, duplicateDetector, perAgentRunner, wakeCoalescer,
+    preprocessMessageText, getCapabilityPortForAgent,
+    heartbeatRunner, duplicateDetector, heartbeatCoordinator,
+    proactiveSchedulers: proactive.value,
     nodeTypeRegistry, graphCoordinator, namedGraphStore,
     suspendedAgents, modelCatalog, channelConfig, promptTimeoutTimestamps,
     // Teardown handles surfaced for ShutdownDeps wiring.
@@ -2640,8 +2639,8 @@ async function bootShutdown(
     | "graphCoordinator" | "namedGraphStore" | "nodeTypeRegistry"
     | "channelHealthMonitor" | "notificationContext"
     | "modelCatalog" | "channelConfig" | "suspendedAgents"
-    | "approvalGate" | "wakeCoalescer"
-    | "cronSchedulers" | "resetSchedulers" | "executionTrackers" | "browserServices"
+    | "approvalGate" | "proactiveSchedulers"
+    | "cronSchedulers" | "ownedCronSchedulers" | "resetSchedulers" | "executionTrackers" | "browserServices"
     | "getAgentCronScheduler" | "getAgentBrowserService"
     | "memoryApi" | "memoryAdapter" | "embeddingQueue" | "continuationTracker"
     | "ttsAdapter" | "visionRegistry" | "linkRunner" | "transcriber" | "fileExtractor"
@@ -2650,18 +2649,18 @@ async function bootShutdown(
     | "videoGenProvider" | "videoGenRateLimiter" | "videoGenConfig" | "persistVideo" | "videoGenCostLimiter"
     | "getExecutor" | "rpcCall" | "wireDispatch"
     | "assembleToolsForAgent" | "preprocessMessageText"
-    | "gatewaySendRef" | "channelAdaptersRef" | "cronWakeCallbackRef"
+    | "gatewaySendRef" | "channelAdaptersRef"
     | "drainAndStartDeliveryPrune" | "shutdownDeliveryQueue"
     | "tokenRegistry" | "runtimeTokens" | "removedTokenIds" | "resolvedGatewayTokens"
     | "sessionStoreBridge" | "shutdownRef" | "hotAdd" | "hotRemove" | "rpcDispatchDeps"
     | "activeExecutions" | "getActiveConnectionCount" | "wsConnections"
-    | "heartbeatRunner" | "duplicateDetector" | "perAgentRunner"
+    | "heartbeatRunner" | "duplicateDetector" | "heartbeatCoordinator"
     | "stopChannelHealthMonitor" | "stopChannelLivenessMonitor" | "shutdownBackgroundProcesses" | "proxyTypingCleanup"
     | "outputRetentionHandle"
     | "bgCompletionRunnerContext" | "trajectoryRegistry"
     | "auditAggregator" | "onSuspiciousContent"
     | "sessionManager"
-    | "subprocessEnv" | "execToolEnv" | "systemEventQueue"
+    | "subprocessEnv" | "execToolEnv"
     | "sessionTrackerRegistry" | "promptTimeoutTimestamps"
     | "lifecycleReactors" | "commandQueue"
     | "sandboxProvider" | "getCapabilityPortForAgent"
@@ -2678,15 +2677,15 @@ async function bootShutdown(
     disposeActivityStream, otelHandle,
     injectionRateLimiter, destroyReactionWiring, geminiCacheManager, backgroundTaskManager,
     secretStore,
-    executors: _execs, cronSchedulers, resetSchedulers, browserServices,
+    executors: _execs, cronSchedulers, ownedCronSchedulers, resetSchedulers, browserServices,
     skillWatcherHandles, lockCleanupTimer, continuationTracker,
     mediaTempManager, ttsAdapter, visionRegistry,
     rpcCall, approvalGate, auditAggregator,
     agentsConfig: agents, providerHealth, subAgentRunner,
     channelManager, channelAdaptersRef, deliveryQueue,
     adaptersByType, lifecycleReactors,
-    channelHealthMonitor, deadLetterQueue, heartbeatRunner, perAgentRunner,
-    wakeCoalescer, graphCoordinator, suspendedAgents: _suspended,
+    channelHealthMonitor, deadLetterQueue, heartbeatRunner, proactiveSchedulers,
+    graphCoordinator, suspendedAgents: _suspended,
     promptTimeoutTimestamps,
     sessionStoreBridge, shutdownRef, gatewayHandle,
     activeExecutions, getActiveConnectionCount,
@@ -2711,9 +2710,9 @@ async function bootShutdown(
   // 8. Graceful shutdown: signal-handler registration + teardown ordering (setupShutdown).
   const { shutdownHandle } = setupShutdown({
     logger, daemonLogger, processMonitor, container, exitFn,
-    tokenTracker, startupTimestamp: startupStartMs,
-    activeExecutions, graphCoordinator, subAgentRunner, cronSchedulers, resetSchedulers,
-    browserServices, channelManager, heartbeatRunner, perAgentRunner, wakeCoalescer, gatewayHandle,
+    tokenTracker, startupTimestamp: startupStartMs, clock: boot.clock, timers: boot.timers,
+    activeExecutions, graphCoordinator, subAgentRunner, ownedCronSchedulers, resetSchedulers,
+    browserServices, channelManager, proactiveSchedulers, gatewayHandle,
     mediaTempManager, skillWatcherHandles,
     diagnosticCollector, channelActivityTracker, deliveryTracer, contextPipelineCollector,
     backgroundIndexingPromise, db,
@@ -2757,6 +2756,7 @@ async function bootShutdown(
     // Credential broker teardown (no-op when executor.broker is absent)
     brokerStop: boot.brokerHandle ? () => boot.brokerHandle!.stop() : undefined,
     capEndpointStop: capEndpointHandle ? () => capEndpointHandle.endpoint.stopSocket() : undefined, // stops+unlinks cap.sock
+    timeoutMs: container.config.daemon.shutdownTimeoutMs,
   });
 
   // Wire shutdown ref for hot-add guard. Cross-stage deferred-ref populate:

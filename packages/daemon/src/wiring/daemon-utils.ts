@@ -6,7 +6,7 @@
  */
 
 import type { ChannelPort } from "@comis/core";
-import type { CronSchedule } from "@comis/scheduler";
+import type { CronAuthoringSchedule } from "@comis/scheduler";
 
 /** Resolve a channel adapter by type, throwing if not found. */
 export function resolveAdapter(channelType: string, registry: Map<string, ChannelPort>): ChannelPort {
@@ -52,21 +52,29 @@ export function authorizeChannelAccess(
  * rpc-dispatch.ts wrapper (lines 306-321) converts thrown errors into
  * JSON-RPC error responses.
  */
-export function buildCronSchedule(kind: CronSchedule["kind"], params: Record<string, unknown>): CronSchedule {
+export function buildCronSchedule(
+  kind: CronAuthoringSchedule["kind"],
+  params: Record<string, unknown>,
+): CronAuthoringSchedule {
   switch (kind) {
     case "cron":
       return {
         kind: "cron" as const,
         expr: params.schedule_expr as string,
-        tz: params.timezone as string | undefined,
+        ...(typeof params.timezone === "string" ? { tz: params.timezone } : {}),
       };
     case "every":
-      return { kind: "every" as const, everyMs: params.schedule_every_ms as number };
+      return {
+        kind: "every" as const,
+        everyMs: params.schedule_every_ms as number,
+        ...(typeof params.schedule_anchor_ms === "number" ? { anchorMs: params.schedule_anchor_ms } : {}),
+      };
     case "at":
       return {
         kind: "at" as const,
         at: params.schedule_at as string,
-        tz: params.timezone as string | undefined,
+        ...(typeof params.timezone === "string" ? { tz: params.timezone } : {}),
+        ...(params.fold === "earlier" || params.fold === "later" ? { fold: params.fold } : {}),
       };
     case "in":
       // Relative one-shot — seconds from now, timezone-free.

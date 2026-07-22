@@ -33,7 +33,6 @@ import {
 } from "@comis/skills";
 import type { RpcCall } from "@comis/skills/platform-tools";
 import type { TTSPort, QueueConfig } from "@comis/core";
-import type { ExecutionLogEntry } from "@comis/scheduler";
 import { err, fromPromise, tryCatch } from "@comis/shared";
 
 /** Closure-captured deps for building and starting the ChannelManager. */
@@ -105,7 +104,6 @@ export interface ChannelManagerBuildDeps {
     getByProvider(): Array<{ provider: string; model: string; totalTokens: number; totalCost: number; callCount: number }>;
     getBySession(key: string): { totalTokens: number; totalCost: number };
   }>;
-  cronExecutionTrackers?: Map<string, { record(entry: ExecutionLogEntry): Promise<void> }>;
   /** DI seam for /export-trajectory. Absent → command falls through to generic slash handling. */
   exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
   /** Override for the credential→channelType map. Absent → auto-built from config. */
@@ -255,6 +253,7 @@ export async function buildAndStartChannelManager(
     channelManager = createChannelManager({
       tenantId: container.config.tenantId,
       eventBus: container.eventBus,
+      clock: deps.clock,
       messageRouter,
       commandQueue,
       sessionManager,
@@ -312,6 +311,14 @@ export async function buildAndStartChannelManager(
       // The redacted stream port + per-turn coordinatorFactory (gate at :395).
       activityStreamPort: deps.activityStream,
       coordinatorFactory,
+      ...(container.workspacePolicyPort === undefined
+        ? {}
+        : {
+            taskCapture: {
+              taskExtractionPort: container.taskExtractionPort,
+              workspacePolicyPort: container.workspacePolicyPort,
+            },
+          }),
       // Live boot adapter registry — injectMessage falls back to it for post-startAll adapters.
       adapterRegistry: adaptersByType,
       getAllowFrom: (channelType: string) => {

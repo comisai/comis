@@ -13,11 +13,20 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PerAgentConfig, ClockPort, TimerPort, TimerHandle, ComisLogger } from "@comis/core";
+import { randomUUID } from "node:crypto";
+import {
+  createResolvedRequestContext,
+  runWithContext,
+  type PerAgentConfig,
+  type ClockPort,
+  type TimerPort,
+  type TimerHandle,
+  type ComisLogger,
+} from "@comis/core";
 import type { McpClientManager } from "@comis/skills";
 import { safeResultRunId } from "@comis/skills/tools";
 import { createLeaseManager } from "@comis/infra";
-import { constructCapabilityLayer } from "./setup-capability-endpoint-boot.js";
+import { createRootRunIdResolver, constructCapabilityLayer } from "./setup-capability-endpoint-boot.js";
 
 /** Track temp data dirs + stop thunks so each socket-binding test tears down. */
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -199,8 +208,75 @@ describe("constructCapabilityLayer autonomy gate + boot preflight", () => {
     const sk = { tenantId: "t1", channelId: "c1", userId: "u1" };
     const id1 = resolveRootRunId!("a1", sk);
     const id2 = resolveRootRunId!("a1", sk);
-    expect(id1).toContain("root-session-");
-    expect(id2).toBe(id1); // stable across calls
+    expect(id1.ok).toBe(true);
+    expect(id2).toEqual(id1); // stable across calls
+    if (id1.ok) expect(id1.value).toContain("root-session-");
+  });
+
+  it("resolveRootRunId prefers an exact trusted context root without minting a session root", async () => {
+    const dataDir = tempDataDir();
+    const registerRoot = vi.fn();
+    const holder = { current: { reserveBudget: vi.fn(), registerRoot } };
+    const deps = {
+      ...createDeps({ a1: { autonomy: { profile: "standard" } } as unknown as PerAgentConfig }, { dataDir }),
+      boundedAutonomyHolder: holder,
+    };
+    const result = await constructCapabilityLayer(deps as Parameters<typeof constructCapabilityLayer>[0]);
+    cleanups.push(() => result.capEndpointStop?.());
+    const context = createResolvedRequestContext({
+      tenantId: "t1",
+      userId: "u1",
+      sessionKey: { tenantId: "t1", agentId: "a1", channelId: "c1", userId: "u1" },
+      agentId: "a1",
+      rootRunId: "root-cron-execution-1",
+      traceId: randomUUID(),
+      startedAt: 1_700_000_000_000,
+      trustLevel: "user",
+    });
+    expect(context.ok).toBe(true);
+    if (!context.ok || result.resolveRootRunId === undefined) return;
+
+    const resolved = runWithContext(context.value, () => result.resolveRootRunId!(
+      "a1",
+      { tenantId: "t1", agentId: "a1", channelId: "c1", userId: "u1" },
+    ));
+
+    expect(resolved).toEqual({ ok: true, value: "root-cron-execution-1" });
+    expect(registerRoot).not.toHaveBeenCalled();
+  });
+
+  it("resolveRootRunId reports a trusted context identity mismatch without minting a fallback", () => {
+    const registerRoot = vi.fn();
+    const onContextMismatch = vi.fn();
+    const resolver = createRootRunIdResolver({
+      holder: { current: { reserveBudget: vi.fn(), registerRoot } },
+      index: new Map(),
+      onContextMismatch,
+    });
+    const context = createResolvedRequestContext({
+      tenantId: "t1",
+      userId: "u1",
+      sessionKey: { tenantId: "t1", agentId: "a1", channelId: "c1", userId: "u1" },
+      agentId: "a1",
+      rootRunId: "root-cron-execution-1",
+      traceId: randomUUID(),
+      startedAt: 1_700_000_000_000,
+      trustLevel: "user",
+    });
+    expect(context.ok).toBe(true);
+    if (!context.ok) return;
+
+    const resolved = runWithContext(context.value, () => resolver(
+      "a2",
+      { tenantId: "t1", agentId: "a2", channelId: "c1", userId: "u1" },
+    ));
+
+    expect(resolved).toMatchObject({ ok: false, error: { code: "context_identity_mismatch" } });
+    expect(onContextMismatch).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "context_identity_mismatch" }),
+      "a2",
+    );
+    expect(registerRoot).not.toHaveBeenCalled();
   });
 
   // The cap socket path lives under the supplied data dir.

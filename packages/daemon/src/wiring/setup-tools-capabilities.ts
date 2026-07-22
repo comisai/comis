@@ -9,10 +9,18 @@
  * @module
  */
 
-import type { AgentCapability, PerAgentConfig, OutwardSendLedgerPort, SessionKey, ComisLogger } from "@comis/core";
+import type {
+  AgentCapability,
+  ChannelEndpoint,
+  ComisLogger,
+  ConversationLocator,
+  OutwardSendLedgerPort,
+  PerAgentConfig,
+} from "@comis/core";
 import {
   attenuateCaps,
   conversationScopeToSessionKey,
+  createConversationRef,
   resolveAutonomy,
   stripInternalFields,
   toSafeErrorLogString,
@@ -59,7 +67,7 @@ export interface AgentRpcCallFactoryDeps {
    * Optional; absent ⇒ no index allocated (pass-through). Paired with
    * {@link AgentRpcCallFactoryDeps.durableRuns}.
    */
-  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
+  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
   /** Logger for fail-closed durable-counter failures on outward calls. */
   logger?: Pick<ComisLogger, "error">;
 }
@@ -115,22 +123,51 @@ export function makeCreateAgentRpcCall(
       // authorization and routing metadata. Missing or cross-agent context is
       // deliberately treated as untrusted and therefore injects none of it.
       const trustedContext = ctx?.agentId === agentId ? ctx : undefined;
-      // Build delivery target from context for cron job routing
-      let deliveryTarget: { channelId: string; userId: string; tenantId: string; channelType?: string } | undefined;
+      let deliveryTarget: {
+        conversation: ConversationLocator;
+        destinationEndpoint: ChannelEndpoint;
+      } | undefined;
       const origin = trustedContext?.deliveryOrigin;
       const projectedSession = trustedContext?.turnScope
         ? conversationScopeToSessionKey(trustedContext.turnScope.conversation)
         : undefined;
       const callerSession = projectedSession?.ok ? projectedSession.value : undefined;
-      const rootRunId = resolveRootRunId && callerSession && trustedContext
+      const rootResolution = resolveRootRunId && callerSession && trustedContext
         ? resolveRootRunId(agentId, callerSession)
         : undefined;
+      if (rootResolution !== undefined && !rootResolution.ok) {
+        logger?.error(
+          {
+            method,
+            agentId,
+            errorKind: rootResolution.error.errorKind,
+            hint: "Preserve the trusted request agent, session, and root identity before retrying the agent RPC call",
+          },
+          "Agent RPC root identity mismatch",
+        );
+        return Promise.reject(new Error(rootResolution.error.message));
+      }
+      const rootRunId = rootResolution?.ok === true ? rootResolution.value : undefined;
       if (callerSession && trustedContext?.turnScope) {
+        const conversationRef = createConversationRef(trustedContext.turnScope.conversation);
+        if (!conversationRef.ok) {
+          logger?.error(
+            {
+              method,
+              agentId,
+              errorKind: "validation" as const,
+              hint: "Preserve the validated conversation scope before retrying the agent RPC call",
+            },
+            "Agent RPC delivery authority could not be derived",
+          );
+          return Promise.reject(conversationRef.error);
+        }
         deliveryTarget = {
-          channelId: origin?.channelId ?? callerSession.channelId,
-          userId: trustedContext.turnScope.principal.principalId,
-          tenantId: callerSession.tenantId,
-          channelType: trustedContext?.channelType,
+          conversation: {
+            conversationScope: trustedContext.turnScope.conversation,
+            conversationRef: conversationRef.value,
+          },
+          destinationEndpoint: trustedContext.turnScope.endpoint,
         };
       }
       // An in-process agent-loop OUTWARD send reaches
@@ -179,6 +216,7 @@ export function makeCreateAgentRpcCall(
       // Extract caller channel metadata from DeliveryOrigin
       return rpcCall(method, {
         ...stripInternalFields(params),
+        ...(metadata?.signal ? { _abortSignal: metadata.signal } : {}),
         _agentId: agentId,
         ...(trustedContext?.turnScope !== undefined && {
           _tenantId: trustedContext.turnScope.conversation.tenantId,

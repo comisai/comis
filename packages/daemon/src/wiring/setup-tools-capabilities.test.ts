@@ -16,6 +16,7 @@ import { describe, it, expect, vi } from "vitest";
 let currentCtx: Record<string, unknown> | undefined;
 
 const internalFieldNames = new Set([
+  "_abortSignal",
   "_agentId",
   "_autonomyMode",
   "_callerChannelId",
@@ -81,6 +82,7 @@ vi.mock("@comis/core", () => ({
   }),
   attenuateCaps: (parent: string[], requested: string[]) =>
     requested.filter((cap) => parent.includes(cap)),
+  createConversationRef: () => ({ ok: true, value: `cv_${"a".repeat(43)}` }),
   // buildAutonomyToolWiring (loaded via the setup-tools chain)
   // degrades the resolved posture via degradeAutonomy before gating orchestrate.
   // This seam never passes namespacePreflightOk (→ defaults true → no-op), so a
@@ -115,6 +117,25 @@ function inProcessContext(trustLevel = "user"): Record<string, unknown> {
 }
 
 describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injection builder", () => {
+  it("propagates only the trusted metadata cancellation signal", async () => {
+    currentCtx = undefined;
+    const rpcCall = vi.fn(async () => "ok");
+    const agentRpc = makeCreateAgentRpcCall({
+      rpcCall,
+      agents: { "agent-1": {} as never },
+      defaultAgentId: "agent-1",
+    })("agent-1");
+    const controller = new AbortController();
+
+    await agentRpc(
+      "subagent.wait",
+      { _abortSignal: { forged: true }, runIds: ["run-1"] },
+      { signal: controller.signal },
+    );
+
+    const forwarded = rpcCall.mock.calls[0]![1] as Record<string, unknown>;
+    expect(forwarded._abortSignal).toBe(controller.signal);
+  });
   it("injects _agentId and the resolved _capabilities into every forwarded rpcCall", async () => {
     currentCtx = undefined;
     const rpcCall = vi.fn(async () => "ok");
@@ -330,10 +351,11 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
     expect(forwarded._callerSessionKey).toBe("tenant-x:agent:agent-1:user-z:telegram:peer:user-z");
     expect(forwarded._callerConversationScope).toEqual(currentCtx.turnScope?.conversation);
     expect(forwarded._deliveryTarget).toEqual({
-      channelId: "chan-y",
-      userId: "user-z",
-      tenantId: "tenant-x",
-      channelType: "telegram",
+      conversation: {
+        conversationScope: TURN_SCOPE.conversation,
+        conversationRef: `cv_${"a".repeat(43)}`,
+      },
+      destinationEndpoint: TURN_SCOPE.endpoint,
     });
     expect(forwarded._callerChannelType).toBe("telegram");
     expect(forwarded._callerChannelId).toBe("chan-y");
@@ -396,7 +418,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
       agents: { "agent-1": {} as never },
       defaultAgentId: "agent-1",
       outwardLedger,
-      resolveRootRunId: () => "root-IP",
+      resolveRootRunId: () => ({ ok: true, value: "root-IP" }),
     });
 
     await create("agent-1")(
@@ -419,7 +441,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
       agents: { "agent-1": {} as never },
       defaultAgentId: "agent-1",
       outwardLedger,
-      resolveRootRunId: () => "root-SAME",
+      resolveRootRunId: () => ({ ok: true, value: "root-SAME" }),
     })("agent-1");
 
     await agentRpc("message.send", { channelId: "chan-y", text: "one" }, { outwardOperationId: "tool-call-one" });
@@ -442,7 +464,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
       agents: { "agent-1": {} as never },
       defaultAgentId: "agent-1",
       outwardLedger,
-      resolveRootRunId: () => "root-RETRY",
+      resolveRootRunId: () => ({ ok: true, value: "root-RETRY" }),
     })("agent-1");
 
     const identity = { outwardOperationId: "stable-tool-call" };
@@ -464,7 +486,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
       agents: { "agent-1": {} as never },
       defaultAgentId: "agent-1",
       outwardLedger,
-      resolveRootRunId: () => "root-NO-ID",
+      resolveRootRunId: () => ({ ok: true, value: "root-NO-ID" }),
     })("agent-1");
 
     await expect(agentRpc("message.send", { channelId: "chan-y", text: "blocked" }))
@@ -481,7 +503,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
       agents: { "agent-1": {} as never },
       defaultAgentId: "agent-1",
       outwardLedger,
-      resolveRootRunId: () => "root-X",
+      resolveRootRunId: () => ({ ok: true, value: "root-X" }),
     })("agent-1")("session.spawn", { task: "t" });
 
     const forwarded = rpcCall.mock.calls[0][1] as Record<string, unknown>;
@@ -498,7 +520,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
       agents: { "agent-1": {} as never },
       defaultAgentId: "agent-1",
       outwardLedger,
-      resolveRootRunId: () => "root-X",
+      resolveRootRunId: () => ({ ok: true, value: "root-X" }),
     })("agent-1");
 
     await agentRpc(
@@ -540,7 +562,7 @@ describe("makeCreateAgentRpcCall — the agent-scoped rpcCall capability-injecti
       agents: { "agent-1": {} as never },
       defaultAgentId: "agent-1",
       outwardLedger,
-      resolveRootRunId: () => "root-IP",
+      resolveRootRunId: () => ({ ok: true, value: "root-IP" }),
     })("agent-1");
 
     await expect(agentRpc("message.send", { channelId: "chan-y", text: "blocked" }, { outwardOperationId: "allocation-failure-id" }))
