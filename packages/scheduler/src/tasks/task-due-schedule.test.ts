@@ -124,7 +124,7 @@ describe("follow-up task due schedule", () => {
     expect(data.submitTaskWake).toHaveBeenCalledWith({
       target: { kind: "agent", agentId: "agent-a" },
       reason: "task",
-      timing: { kind: "routine", notBeforeMs: NOW_MS + 60_000 },
+      timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS + 60_000 },
     });
     expect(data.timers.unrefRecord()).toHaveLength(1);
   });

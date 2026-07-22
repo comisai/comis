@@ -18,6 +18,24 @@ import type { FollowupTaskRecord } from "./task-types.js";
 
 const TASK_WAKE_RETRY_MS = 30_000;
 type TaskScheduleBoundaryKind = "task_due" | "retention";
+type TaskWakeAdmissionFailureCode = HeartbeatWakeAdmissionError["code"] | "submission_failed";
+
+function taskWakeAdmissionHint(errorCode: TaskWakeAdmissionFailureCode): string {
+  switch (errorCode) {
+    case "invalid_request":
+      return "Verify the trusted due-task producer uses task reason with spacing_bypass timing before retrying";
+    case "invalid_target":
+      return "Restore the configured agent target before the bounded due-task retry";
+    case "not_accepting":
+      return "Activate heartbeat coordinator admission before the bounded due-task retry";
+    case "submission_failed":
+      return "Inspect the heartbeat coordinator submission boundary before the bounded due-task retry";
+    default: {
+      const _exhaustive: never = errorCode;
+      return _exhaustive;
+    }
+  }
+}
 
 export type TaskDueScheduleError =
   | { readonly code: "not_accepting"; readonly errorKind: "precondition" }
@@ -147,7 +165,7 @@ export function createTaskDueSchedule(deps: TaskDueScheduleDeps): TaskDueSchedul
     const submitted = tryCatch(() => deps.submitTaskWake({
       target: { kind: "agent", agentId: deps.agentId },
       reason: "task",
-      timing: { kind: "routine", notBeforeMs: nominalDueAtMs },
+      timing: { kind: "spacing_bypass", notBeforeMs: nominalDueAtMs },
     }));
     if (submitted.ok && submitted.value.ok) {
       deps.logger.info({
@@ -159,16 +177,21 @@ export function createTaskDueSchedule(deps: TaskDueScheduleDeps): TaskDueSchedul
       return;
     }
     let errorKind: ErrorKind = "internal";
+    let errorCode: TaskWakeAdmissionFailureCode = "submission_failed";
     if (submitted.ok) {
       const admission = submitted.value;
-      if (!admission.ok) errorKind = admission.error.errorKind;
+      if (!admission.ok) {
+        errorCode = admission.error.code;
+        errorKind = admission.error.errorKind;
+      }
     }
     deps.logger.warn({
       agentId: deps.agentId,
       step: "task_due_wake_admission",
       durationMs: Math.max(0, deps.clock.now() - startedAtMs),
+      errorCode,
       errorKind,
-      hint: "Restore coordinator admission; one bounded task-wake retry remains armed",
+      hint: taskWakeAdmissionHint(errorCode),
     }, "Task due wake admission failed");
     const retryAtMs = deps.clock.now() + TASK_WAKE_RETRY_MS;
     if (Number.isSafeInteger(retryAtMs)) armAt({ atMs: retryAtMs, kind: "task_due" });
