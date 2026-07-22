@@ -62,12 +62,13 @@ export interface MarkdownIR {
  *    in their path (rare; Wikipedia is the canonical example) will be
  *    truncated at the first `)`.
  * 3. Links [text](url)
- * 4. Bold **text** or __text__
+ * 4. Bold **text** or __text__. Underscore delimiters cannot occur inside
+ *    alphanumeric words, matching Markdown delimiter-run rules.
  * 5. Strikethrough ~~text~~
- * 6. Italic *text* or _text_
+ * 6. Italic *text* or _text_, with the same intraword restriction for `_`.
  */
 const INLINE_RE =
-  /`([^`]+)`|(https?:\/\/[^\s<>"'`)]+)|\[([^\]]+)\]\(([^)]+)\)|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|\*(.+?)\*|_(.+?)_/g;
+  /`([^`]+)`|(https?:\/\/[^\s<>"'`)]+)|\[([^\]]+)\]\(([^)]+)\)|\*\*(.+?)\*\*|(?<![\p{L}\p{N}\p{M}])__(.+?)__(?![\p{L}\p{N}\p{M}])|~~(.+?)~~|\*(.+?)\*|(?<![\p{L}\p{N}\p{M}_])_(.+?)_(?![\p{L}\p{N}\p{M}_])/gu;
 
 /**
  * Parse inline Markdown formatting into typed spans with UTF-16 offsets.
