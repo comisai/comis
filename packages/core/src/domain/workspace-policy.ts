@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from "node:crypto";
 import { err, ok, type Result } from "@comis/shared";
 import { z } from "zod";
 
@@ -56,6 +57,44 @@ export type InstructionTrust = z.infer<typeof InstructionTrustSchema>;
 export type InstructionStability = z.infer<typeof InstructionStabilitySchema>;
 export type InstructionSection = z.infer<typeof InstructionSectionSchema>;
 export type WorkspacePolicySnapshot = z.infer<typeof WorkspacePolicySnapshotSchema>;
+
+export type WorkspacePolicyVerificationError =
+  | { readonly code: "duplicate_section"; readonly errorKind: "validation"; readonly sectionId: string }
+  | { readonly code: "content_hash_mismatch"; readonly errorKind: "validation"; readonly sectionId: string }
+  | { readonly code: "combined_hash_mismatch"; readonly errorKind: "validation" };
+
+/** Canonical SHA-256 used by both workspace loaders and durable snapshot consumers. */
+export function hashWorkspacePolicyContent(content: string): string {
+  return createHash("sha256").update(content, "utf-8").digest("hex");
+}
+
+/** Preserve section order while hashing only stable section identity and content hashes. */
+export function computeWorkspacePolicyCombinedHash(
+  sections: readonly Pick<InstructionSection, "id" | "contentHash">[],
+): string {
+  return hashWorkspacePolicyContent(JSON.stringify(
+    sections.map(({ id, contentHash }) => ({ id, contentHash })),
+  ));
+}
+
+/** Recompute every hash before a persisted snapshot is trusted. */
+export function verifyWorkspacePolicySnapshot(
+  snapshot: WorkspacePolicySnapshot,
+): Result<void, WorkspacePolicyVerificationError> {
+  const sectionIds = new Set<string>();
+  for (const section of snapshot.sections) {
+    if (sectionIds.has(section.id)) {
+      return err({ code: "duplicate_section", errorKind: "validation", sectionId: section.id });
+    }
+    sectionIds.add(section.id);
+    if (hashWorkspacePolicyContent(section.content) !== section.contentHash) {
+      return err({ code: "content_hash_mismatch", errorKind: "validation", sectionId: section.id });
+    }
+  }
+  return computeWorkspacePolicyCombinedHash(snapshot.sections) === snapshot.combinedHash
+    ? ok(undefined)
+    : err({ code: "combined_hash_mismatch", errorKind: "validation" });
+}
 
 export function parseWorkspacePolicySnapshot(
   raw: unknown,

@@ -58,7 +58,12 @@ export {
   isSecretRef,
   SecretRefOrStringSchema,
   isMcpInstructionTextSafe,
+  WorkspacePolicySnapshotSchema,
+  computeWorkspacePolicyCombinedHash,
+  hashWorkspacePolicyContent,
   parseWorkspacePolicySnapshot,
+  verifyWorkspacePolicySnapshot,
+  ResponseLocalePolicySchema,
   // DeliveryOrigin
   DeliveryOriginSchema,
   createDeliveryOrigin,

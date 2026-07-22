@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import {
   AGENT_STATE_FILES,
   OPERATOR_OWNED_FILES,
   WORKSPACE_FILE_NAMES,
   isUntouchedWorkspaceTemplate,
+  computeWorkspacePolicyCombinedHash,
+  hashWorkspacePolicyContent,
   parseWorkspacePolicySnapshot,
   safePath,
   type InstructionSection,
@@ -22,10 +23,6 @@ const agentState = new Set<WorkspaceFileName>(AGENT_STATE_FILES);
 
 export interface FilesystemWorkspacePolicyAdapterDeps {
   resolveWorkspaceDir(agentId: string): string | undefined;
-}
-
-function sha256Hex(value: string): string {
-  return createHash("sha256").update(value, "utf-8").digest("hex");
 }
 
 function sectionId(fileName: WorkspaceFileName): string {
@@ -58,7 +55,7 @@ function toSection(
       trust: "trusted",
       stability: "stable",
       content,
-      contentHash: sha256Hex(content),
+      contentHash: hashWorkspacePolicyContent(content),
       maxChars: MAX_WORKSPACE_SECTION_CHARS,
     });
   }
@@ -70,7 +67,7 @@ function toSection(
       trust: "untrusted",
       stability: "turn",
       content,
-      contentHash: sha256Hex(content),
+      contentHash: hashWorkspacePolicyContent(content),
       maxChars: MAX_WORKSPACE_SECTION_CHARS,
     });
   }
@@ -112,9 +109,7 @@ async function loadSnapshot(
     sections.push(sectionResult.value);
   }
 
-  const combinedHash = sha256Hex(JSON.stringify(
-    sections.map(({ id, contentHash }) => ({ id, contentHash })),
-  ));
+  const combinedHash = computeWorkspacePolicyCombinedHash(sections);
   const parsed = parseWorkspacePolicySnapshot({ agentId, sections, combinedHash });
   if (!parsed.ok) {
     return err({ kind: "invalid_section", agentId, fileName: "<snapshot>" });

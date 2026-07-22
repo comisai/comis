@@ -116,7 +116,10 @@ export {
   InstructionStabilitySchema,
   InstructionSectionSchema,
   WorkspacePolicySnapshotSchema,
+  computeWorkspacePolicyCombinedHash,
+  hashWorkspacePolicyContent,
   parseWorkspacePolicySnapshot,
+  verifyWorkspacePolicySnapshot,
 } from "./workspace-policy.js";
 
 export {
@@ -135,6 +138,7 @@ export type {
   InstructionStability,
   InstructionSection,
   WorkspacePolicySnapshot,
+  WorkspacePolicyVerificationError,
 } from "./workspace-policy.js";
 
 export {
