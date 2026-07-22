@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Observability persistence wiring: event-to-row mappers and dual-write
- * persistence factory.
+ * Observability persistence wiring and dual-write persistence factory.
  * Subscribes NEW event bus listeners alongside existing in-memory collectors
  * to push observability data into SQLite via write buffers. Does NOT modify
  * existing collectors -- purely additive "write" side.
@@ -38,6 +37,7 @@ import {
   autonomyDenialBreakerEventToRow,
 } from "./obs-autonomy-rows.js";
 import type { ChannelActivityTracker } from "./channel-activity-tracker.js";
+import { wireSchedulerDiagnostics } from "./obs-scheduler-rows.js";
 
 // The event→row mapper functions live in a sibling module (file-size cap);
 // imported here for the subscriber registrations in setupObsPersistence and
@@ -514,6 +514,7 @@ export function setupObsPersistence(deps: ObsPersistenceDeps): ObsPersistenceRes
   eventBus.on("health:budget_exceeded", (payload) => {
     diagnosticBuffer.push(healthBudgetExceededEventToRow(payload));
   });
+  wireSchedulerDiagnostics({ eventBus, diagnosticBuffer });
   // A degraded/failed recall lane → a health_signal row (system finding
   // `health_signal:recall_degraded`) — dead recall must be a system finding,
   // not a daemon.log-grep discovery.

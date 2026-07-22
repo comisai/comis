@@ -388,7 +388,6 @@ describe("setupObservability", () => {
       runId: "run-wiring",
       parentSessionKey: "session-1",
       agentId: "agent-1",
-      task: "do work",
       timestamp: 1,
     });
     sub.unsubscribe();

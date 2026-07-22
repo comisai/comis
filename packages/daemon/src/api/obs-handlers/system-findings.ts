@@ -21,6 +21,7 @@ import type { DiagnosticRow } from "@comis/memory";
 import type { PipelineAuthoringAggregate } from "@comis/observability";
 import {
   chimericModelFromRow,
+  cronOwnershipFailureFromRow,
   unresolvedModelFromRow,
   DEDICATED_SCRIPT_SIGNALS,
   deliveryDeadletteredFromRow,
@@ -183,6 +184,27 @@ export function buildFindings(
       detail: `${count} ${label} health signal(s) in the window${breakdown ? ` (${breakdown})` : ""}`,
       count,
       hint: "run `comis explain` on an affected session; inspect the recurring health WARNs",
+    });
+  }
+
+  let cronOwnershipFailureCount = 0;
+  const cronOwnershipErrors = new Map<string, number>();
+  for (const row of healthSignals) {
+    const parsed = cronOwnershipFailureFromRow(row);
+    if (parsed === null) continue;
+    cronOwnershipFailureCount += 1;
+    cronOwnershipErrors.set(parsed.errorCode, (cronOwnershipErrors.get(parsed.errorCode) ?? 0) + 1);
+  }
+  if (cronOwnershipFailureCount > 0) {
+    const breakdown = [...cronOwnershipErrors.entries()]
+      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .map(([code, count]) => `${code}=${count}`)
+      .join(", ");
+    findings.push({
+      code: "cron_ownership_reconciliation_failed",
+      detail: `${cronOwnershipFailureCount} cron ownership reconciliation failure(s) (${breakdown})`,
+      count: cronOwnershipFailureCount,
+      hint: "run `comis cron status --agent <agentId>`; preserve both authority files before repair or a guarded whole-authority reset",
     });
   }
 
@@ -628,7 +650,7 @@ export function buildFindings(
       code: "learning_health",
       detail: `${learningHealth.length} reflection run(s) in the window; latest outcome=${latestOutcome}, admitted=${admittedSum}, untrustedDrops=${untrustedSum}`,
       count: learningHealth.length,
-      hint: 'admitted=0 with untrustedDrops/uncorroborated is the anti-poison gates WORKING (not a fault); admitted=0 DESPITE genuine corroboration ⇒ a topicKey under-merge. The per-run funnel is the `cron.runs` tool (agent/gateway RPC — there is no `comis cron` CLI); these summed counts are the operator surface.',
+      hint: 'admitted=0 with untrustedDrops/uncorroborated is the anti-poison gates WORKING (not a fault); admitted=0 DESPITE genuine corroboration ⇒ a topicKey under-merge. Use `comis cron runs "Memory review" --agent <agentId>` for the per-run funnel; these summed counts are the deployment-wide surface.',
     });
   }
 
@@ -648,7 +670,7 @@ export function buildFindings(
       code: "memory_lifecycle",
       detail: `${memoryLifecycle.length} forget sweep(s) in the window; evicted=${evictedSum}, demoted=${demotedSum}`,
       count: memoryLifecycle.length,
-      hint: 'evicted=0 is usually healthy (no corroborated-wrong / dormant candidates) — NOT a fault. Eviction is gated by learning.forget + the anti-induced-eviction exemptions (pinned/high-proof/system survive). Per-sweep counts are the `cron.runs` tool (agent/gateway RPC — there is no `comis cron` CLI); these summed counts are the operator surface.',
+      hint: 'evicted=0 is usually healthy (no corroborated-wrong / dormant candidates) — NOT a fault. Eviction is gated by learning.forget + the anti-induced-eviction exemptions (pinned/high-proof/system survive). Use `comis cron runs "Memory lifecycle" --agent <agentId>` for per-sweep counts; these summed counts are the deployment-wide surface.',
     });
   }
 
@@ -684,7 +706,7 @@ export function buildFindings(
       code: "cron_wake_gate_efficiency",
       detail: `${cronWakeGate.length} gated cron fire(s) in the window; skipped=${skippedSum}, failedOpen=${failedOpenSum}, turnsSaved=${turnsSavedSum}, toolCalls=${toolCallsSum}`,
       count: cronWakeGate.length,
-      hint: `a high skip-rate is the gate WORKING (savings), not a fault; a 100% skip-rate on a monitor you expect to fire, a high failedOpen count, or toolCalls exceeding turnsSaved, is the signal to inspect. Per-fire gate decisions are the \`cron.runs\` tool (agent/gateway RPC — there is no \`comis cron\` CLI); these summed counts are the operator surface.${failOpenNote}`,
+      hint: `a high skip-rate is the gate WORKING (savings), not a fault; a 100% skip-rate on a monitor you expect to fire, a high failedOpen count, or toolCalls exceeding turnsSaved, is the signal to inspect. Use \`comis cron runs <jobName> --agent <agentId>\` for per-fire gate decisions; these summed counts are the deployment-wide surface.${failOpenNote}`,
     });
   }
 

@@ -1181,6 +1181,14 @@ describe("buildFindings — learning_health (reflection funnel rollup)", () => {
     expect(lh[0]!.detail).toContain("latest outcome=unknown"); // off-vocabulary → unknown, never echoed
   });
 
+  it("points operators to the cron CLI for per-run reflection evidence", () => {
+    const findings = buildFindings([], [], [], [
+      learningHealthRow(1_000, { admissionOutcome: "admitted", admitted: 1 }),
+    ]);
+    expect(findings.find((finding) => finding.code === "learning_health")?.hint)
+      .toContain("comis cron runs");
+  });
+
   it("no learning_health finding when there are no reflection rows (callers omitting the argument are unchanged)", () => {
     expect(buildFindings([], [], []).some((f) => f.code === "learning_health")).toBe(false);
   });
@@ -1221,6 +1229,12 @@ describe("buildFindings — memory_lifecycle (forget sweep rollup)", () => {
     expect(ml[0]!.count).toBe(2); // 2 sweeps in the window
     expect(ml[0]!.detail).toContain("evicted=3"); // 1 + 2
     expect(ml[0]!.detail).toContain("demoted=1");
+  });
+
+  it("points operators to the cron CLI for per-sweep lifecycle evidence", () => {
+    const findings = buildFindings([], [], [], [], [lifecycleRow(1_000, { evicted: 1 })]);
+    expect(findings.find((finding) => finding.code === "memory_lifecycle")?.hint)
+      .toContain("comis cron runs");
   });
 
   it("no memory_lifecycle finding when there are no sweep rows (callers omitting the argument are unchanged)", () => {
@@ -1529,13 +1543,13 @@ describe("buildFindings — cron_wake_gate_efficiency (wake-gate rollup)", () =>
     expect(f[0]!.detail).toContain("toolCalls=2");
   });
 
-  it("carries a BENIGN hint (a high skip-rate is the gate WORKING, not a fault) pointing at cron.runs", () => {
+  it("carries a benign hint pointing at the cron CLI and explaining that skips are savings", () => {
     const findings = buildFindings([], [], [], [], [], [gateRow({ agentId: "a", wake: false })]);
     const f = findings.find((x) => x.code === "cron_wake_gate_efficiency");
     expect(f).toBeDefined();
     // The hint names cron.runs for the per-fire decisions + says a skip is savings,
     // and calls out the two signals to inspect (100% skip / toolCalls > turnsSaved).
-    expect(f!.hint).toContain("cron.runs");
+    expect(f!.hint).toContain("comis cron runs");
     expect(f!.hint.toLowerCase()).toMatch(/working|savings/);
   });
 
@@ -1625,5 +1639,44 @@ describe("buildFindings — config_posture:media_credential_gap", () => {
   it("does NOT emit when the media gap count is zero", () => {
     const findings = buildFindings([], [], [postureRow(0)], [], []);
     expect(findings.some((x) => x.code === "config_posture:media_credential_gap")).toBe(false);
+  });
+});
+
+describe("buildFindings — cron ownership reconciliation failure", () => {
+  function row(timestamp: number, errorCode: string): DiagnosticRow {
+    return {
+      timestamp,
+      category: "health_signal",
+      severity: "warning",
+      agentId: "agent-a",
+      message: "scheduler:cron_ownership_reconciliation",
+      details: JSON.stringify({
+        signal: "cron_ownership_reconciliation",
+        status: "failed",
+        errorCode,
+        errorKind: "validation",
+        durationMs: 4,
+      }),
+    };
+  }
+
+  it("reports failed boot ownership with closed error counts and a repair-oriented hint", () => {
+    const findings = buildFindings([
+      row(1_000, "identity_mismatch"),
+      row(2_000, "orphan_start"),
+    ], [], []);
+    const finding = findings.find((candidate) => candidate.code === "cron_ownership_reconciliation_failed");
+
+    expect(finding).toMatchObject({ count: 2 });
+    expect(finding?.detail).toContain("identity_mismatch=1");
+    expect(finding?.detail).toContain("orphan_start=1");
+    expect(finding?.hint).toContain("comis cron status");
+    expect(finding?.hint).toContain("both authority files");
+  });
+
+  it("does not double-report ownership failures through the generic health rollup", () => {
+    const findings = buildFindings([row(1_000, "identity_mismatch")], [], []);
+
+    expect(findings.some((candidate) => candidate.code === "health_signal:cron_ownership_reconciliation")).toBe(false);
   });
 });

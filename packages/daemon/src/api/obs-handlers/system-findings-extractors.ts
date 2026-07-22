@@ -241,6 +241,7 @@ export const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   // stuck-kill is not ALSO counted as a generic `health_signal:subagent_killed`
   // finding — finding + entry MOVE TOGETHER.
   "subagent_killed",
+  "cron_ownership_reconciliation",
   // The four persisted autonomy/durable-run signals
   // are EXCLUDED from the generic `health_signal:<label>` rollup.
   // durable_orphaned / autonomy_revoked / autonomy_killed each get a dedicated
@@ -261,6 +262,35 @@ export const DEDICATED_SCRIPT_SIGNALS: ReadonlySet<string> = new Set([
   // entry MOVE TOGETHER; listing it here without the dedicated branch silently drops it).
   "autonomy_denial_breaker",
 ]);
+
+const CRON_OWNERSHIP_ERROR_CODES: ReadonlySet<string> = new Set([
+  "invalid_input",
+  "store_read",
+  "ledger_read",
+  "identity_mismatch",
+  "orphan_start",
+  "ledger_write",
+  "store_write",
+]);
+
+export function cronOwnershipFailureFromRow(row: DiagnosticRow): { errorCode: string } | null {
+  if (row.severity === "info" || row.details === undefined) return null;
+  try {
+    const parsed = JSON.parse(row.details) as {
+      signal?: unknown;
+      status?: unknown;
+      errorCode?: unknown;
+    };
+    return parsed.signal === "cron_ownership_reconciliation"
+      && parsed.status === "failed"
+      && typeof parsed.errorCode === "string"
+      && CRON_OWNERSHIP_ERROR_CODES.has(parsed.errorCode)
+      ? { errorCode: parsed.errorCode }
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The closed domain `errorKind` (an `SttErrorKind`) carried
  *  on a `voice_degraded` health_signal row's details JSON, parsed defensively
