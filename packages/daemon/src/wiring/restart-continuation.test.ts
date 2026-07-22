@@ -9,6 +9,7 @@ import {
   buildMcpStatusLine,
   resolveContinuationLanguage,
   type ContinuationRecord,
+  type RestartContinuationTracker,
 } from "./restart-continuation.js";
 import type { McpConnection } from "@comis/skills";
 import { runWithContext } from "@comis/core";
@@ -42,6 +43,10 @@ function makeMockLogger() {
     level: "debug",
   } as any;
 }
+
+type CompletionCapableTracker = RestartContinuationTracker & {
+  complete(record: Pick<ContinuationRecord, "channelType" | "channelId" | "userId" | "peerId">): void;
+};
 
 // ---------------------------------------------------------------------------
 // createRestartContinuationTracker
@@ -123,6 +128,38 @@ describe("createRestartContinuationTracker", () => {
     const count = tracker.capture(filePath, 60_000, tmpDir);
 
     expect(count).toBe(2);
+  });
+
+  it("completed turns are excluded from restart capture", () => {
+    const tracker = createRestartContinuationTracker() as CompletionCapableTracker;
+    const record = makeRecord({ channelId: "settled-chat" });
+
+    tracker.track(record);
+    tracker.complete(record);
+
+    const filePath = join(tmpDir, "settled.json");
+    expect(tracker.isTracked(record)).toBe(false);
+    expect(tracker.capture(filePath, 60_000, tmpDir)).toBe(0);
+    expect(existsSync(filePath)).toBe(false);
+  });
+
+  it("earlier completion keeps an overlapping turn active", () => {
+    const tracker = createRestartContinuationTracker() as CompletionCapableTracker;
+    const first = makeRecord({ channelId: "overlap-chat", resolvedLanguage: "en" });
+    const second = makeRecord({ channelId: "overlap-chat", resolvedLanguage: "fr" });
+
+    tracker.track(first);
+    tracker.track(second);
+    tracker.complete(first);
+
+    const filePath = join(tmpDir, "overlap.json");
+    expect(tracker.isTracked(second)).toBe(true);
+    expect(tracker.capture(filePath, 60_000, tmpDir)).toBe(1);
+    const written: ContinuationRecord[] = JSON.parse(readFileSync(filePath, "utf-8"));
+    expect(written[0]?.resolvedLanguage).toBe("fr");
+
+    tracker.complete(second);
+    expect(tracker.isTracked(second)).toBe(false);
   });
 
   it("preserves chatType across track -> capture -> loadContinuations round trip", () => {
