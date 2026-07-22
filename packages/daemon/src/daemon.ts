@@ -744,6 +744,7 @@ function buildRpcDispatchDeps(deps: {
     heartbeatCoordinator: c.heartbeatCoordinator,
     getAgentSchedulerSeed: c.getAgentSchedulerSeed,
     schedulerNowMs: () => c.clock.now(),
+    globalHeartbeatConfig: c.container.config.scheduler.heartbeat,
     defaultWorkspaceDir: c.defaultWorkspaceDir, workspaceDirs: c.workspaceDirs,
     memoryApi: c.memoryApi, memoryAdapter: c.memoryAdapter, embeddingQueue: c.embeddingQueue,
     // Thread the memory adapter as the MemoryPort for the
