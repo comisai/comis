@@ -6,6 +6,7 @@ import type { RpcClient } from "../api/rpc-client.js";
 import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
+import type { WebRpcMethodMap } from "../api/contracts.generated.js";
 
 // Side-effect imports (register custom elements)
 import "../components/nav/ic-tabs.js";
@@ -22,41 +23,50 @@ import type { TabDef } from "../components/nav/ic-tabs.js";
 import { systemDateFrom, systemNowMs } from "@comis/core";
 
 /* ------------------------------------------------------------------ */
-/*  Local types -- DO NOT import from @comis/scheduler              */
+/*  Generated RPC projections keep web independent of scheduler code. */
 /* ------------------------------------------------------------------ */
+type WebCronJob = WebRpcMethodMap["cron.list"]["result"]["jobs"][number];
+type SchedulerCronSchedule = SchedulerCronJob["schedule"];
+type CronAddParams = WebRpcMethodMap["cron.add"]["params"];
+type CronUpdateParams = WebRpcMethodMap["cron.update"]["params"];
 
-/**
- * Local mirror of the scheduler's CronSchedule + CronPayload discriminator
- * literals. Web cannot import from @comis/scheduler (boundary policy — see
- * "DO NOT import" comment above), so the closed unions are reproduced
- * inline. If the scheduler adds a new kind, web TypeScript will silently
- * accept the wire payload as "unknown discriminator" until this local
- * mirror is updated; that drift is intentional per the bounded-context
- * rule.
- */
-interface SchedulerCronJob {
-  id: string;
-  name: string;
-  agentId: string;
-  schedule: { kind: "cron" | "every" | "at"; expr?: string; tz?: string; everyMs?: number; at?: string };
-  payload: { kind: "system_event" | "agent_turn"; message?: string; text?: string };
-  sessionTarget: string;
-  enabled: boolean;
-  nextRunAtMs?: number;
-  lastRunAtMs?: number;
-  consecutiveErrors: number;
-  createdAtMs: number;
-  deliveryTarget?: {
-    channelId: string;
-    userId: string;
-    tenantId: string;
-    channelType?: string;
-  };
-  wakeGate?: {
-    script: string;
-    language?: "js" | "ts";
-  };
+interface SchedulerCronJobBase {
+  id: WebCronJob["id"];
+  name: WebCronJob["name"];
+  agentId: WebCronJob["agentId"];
+  schedule: WebCronJob["schedule"];
+  lifecycle: WebCronJob["lifecycle"];
+  maxConsecutiveDependencyErrors?: WebCronJob["maxConsecutiveDependencyErrors"];
 }
+
+type SchedulerCronJob = SchedulerCronJobBase & (
+  | {
+      source: "authored";
+      payload: Extract<CronAddParams["payload"], { kind: "heartbeat_event" }>;
+    }
+  | {
+      source: "authored";
+      payload: Extract<CronAddParams["payload"], { kind: "delivery" }>;
+      deliveryTarget: NonNullable<CronAddParams["deliveryTarget"]>;
+    }
+  | {
+      source: "authored";
+      payload: Extract<CronAddParams["payload"], { kind: "agent_turn" }>;
+      sessionPolicy: NonNullable<CronAddParams["sessionPolicy"]>;
+      continuationMode: NonNullable<CronAddParams["continuationMode"]>;
+      deliveryTarget?: CronAddParams["deliveryTarget"];
+      wakeGate?: CronUpdateParams["wakeGate"];
+      cacheRetention?: CronAddParams["cacheRetention"];
+      toolPolicy?: CronAddParams["toolPolicy"];
+    }
+  | {
+      source: "built_in";
+      payload: {
+        kind: "internal_action";
+        action: "memory_review" | "memory_lifecycle" | "reflection";
+      };
+    }
+);
 
 interface ExecutionRecord {
   executionId: string;
@@ -121,7 +131,7 @@ const TAB_DEFS: TabDef[] = [
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function formatSchedule(schedule: SchedulerCronJob["schedule"]): string {
+function formatSchedule(schedule: SchedulerCronSchedule): string {
   switch (schedule.kind) {
     case "cron":
       return schedule.expr ?? "cron";
@@ -132,9 +142,7 @@ function formatSchedule(schedule: SchedulerCronJob["schedule"]): string {
       return `Every ${Math.round(ms / 1000)}s`;
     }
     case "at":
-      return schedule.at ? systemDateFrom(schedule.at).toLocaleString() : "one-shot";
-    default:
-      return schedule.kind;
+      return systemDateFrom(schedule.atMs).toLocaleString();
   }
 }
 
@@ -158,25 +166,96 @@ function formatIntervalMs(ms: number): string {
 /**
  * Convert a SchedulerCronJob to CronJobInput for the ic-cron-editor.
  */
-function jobToCronInput(job: SchedulerCronJob): CronJobInput {
-  return {
+function jobToCronInput(job: Exclude<SchedulerCronJob, { source: "built_in" }>): CronJobInput {
+  const schedule: CronJobInput["schedule"] = job.schedule.kind === "cron"
+    ? { kind: "cron", expr: job.schedule.expr, tz: job.schedule.tz }
+    : job.schedule.kind === "every"
+      ? { kind: "every", everyMs: job.schedule.everyMs, anchorMs: job.schedule.anchorMs }
+      : { kind: "at", at: systemDateFrom(job.schedule.atMs).toISOString() };
+  const common = {
     id: job.id,
     name: job.name,
     agentId: job.agentId,
-    schedule: {
-      kind: job.schedule.kind as "cron" | "every" | "at",
-      expr: job.schedule.expr,
-      tz: job.schedule.tz,
-      everyMs: job.schedule.everyMs,
-      at: job.schedule.at,
-    },
-    message: job.payload?.message ?? job.payload?.text ?? "",
-    enabled: job.enabled,
-    maxConcurrent: 1,
-    sessionTarget: (job.sessionTarget ?? "main") as "main" | "isolated",
-    deliveryTarget: job.deliveryTarget,
-    wakeGate: job.wakeGate,
+    schedule,
+    paused: job.lifecycle.status === "paused",
   };
+  if (job.payload.kind === "heartbeat_event") {
+    return { ...common, payload: job.payload };
+  }
+  if (job.payload.kind === "delivery") {
+    return { ...common, payload: job.payload, deliveryTarget: job.deliveryTarget };
+  }
+  return {
+    ...common,
+    payload: job.payload,
+    sessionPolicy: job.sessionPolicy,
+    continuationMode: job.continuationMode,
+    ...(job.deliveryTarget === undefined ? {} : { deliveryTarget: job.deliveryTarget }),
+    ...(job.wakeGate === undefined ? {} : { wakeGate: job.wakeGate }),
+  };
+}
+
+function decodeSchedulerCronJob(job: WebCronJob): SchedulerCronJob | null {
+  const common: SchedulerCronJobBase = {
+    id: job.id,
+    name: job.name,
+    agentId: job.agentId,
+    schedule: job.schedule,
+    lifecycle: job.lifecycle,
+    ...(job.maxConsecutiveDependencyErrors === undefined
+      ? {}
+      : { maxConsecutiveDependencyErrors: job.maxConsecutiveDependencyErrors }),
+  };
+  const payload = job.payload;
+  if (job.source === "authored" && payload.kind === "heartbeat_event"
+    && typeof payload.text === "string"
+    && (payload.wakeMode === "now" || payload.wakeMode === "next-heartbeat")) {
+    return {
+      ...common,
+      source: "authored",
+      payload: { kind: "heartbeat_event", text: payload.text, wakeMode: payload.wakeMode },
+    };
+  }
+  if (job.source === "authored" && payload.kind === "delivery"
+    && typeof payload.text === "string" && job.deliveryTarget !== undefined) {
+    return {
+      ...common,
+      source: "authored",
+      payload: { kind: "delivery", text: payload.text },
+      deliveryTarget: job.deliveryTarget,
+    };
+  }
+  if (job.source === "authored" && payload.kind === "agent_turn"
+    && typeof payload.message === "string"
+    && job.sessionPolicy !== undefined && job.continuationMode !== undefined) {
+    return {
+      ...common,
+      source: "authored",
+      payload: {
+        kind: "agent_turn",
+        message: payload.message,
+        ...(payload.model === undefined ? {} : { model: payload.model }),
+        ...(payload.timeoutSeconds === undefined ? {} : { timeoutSeconds: payload.timeoutSeconds }),
+      },
+      sessionPolicy: job.sessionPolicy,
+      continuationMode: job.continuationMode,
+      ...(job.deliveryTarget === undefined ? {} : { deliveryTarget: job.deliveryTarget }),
+      ...(job.wakeGate === undefined ? {} : { wakeGate: job.wakeGate }),
+      ...(job.cacheRetention === undefined ? {} : { cacheRetention: job.cacheRetention }),
+      ...(job.toolPolicy === undefined ? {} : { toolPolicy: job.toolPolicy }),
+    };
+  }
+  if (job.source === "built_in" && payload.kind === "internal_action"
+    && (payload.action === "memory_review"
+      || payload.action === "memory_lifecycle"
+      || payload.action === "reflection")) {
+    return {
+      ...common,
+      source: "built_in",
+      payload: { kind: "internal_action", action: payload.action },
+    };
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -736,7 +815,7 @@ export class IcSchedulerView extends LitElement {
       this._jobsLoaded
     ) {
       const job = this._jobs.find((j) => j.id === this.routeParams.jobId);
-      if (job && !this._editorOpen) {
+      if (job?.source === "authored" && !this._editorOpen) {
         this._editingJob = job;
         this._editorOpen = true;
         this._editorError = "";
@@ -863,7 +942,12 @@ export class IcSchedulerView extends LitElement {
         "cron.list",
         { agentId: this._selectedAgentId || undefined },
       ));
-      this._jobs = Array.isArray(result) ? result : (result.jobs ?? []);
+      const jobs = result.jobs.map(decodeSchedulerCronJob);
+      if (jobs.some((job) => job === null)) {
+        this._error = "Cron inventory returned an invalid job";
+        return;
+      }
+      this._jobs = jobs.filter((job): job is SchedulerCronJob => job !== null);
       this._jobsLoaded = true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to load jobs";
@@ -964,86 +1048,60 @@ export class IcSchedulerView extends LitElement {
     this._editorError = "";
 
     if (this._editingJob) {
-      // Edit mode -- optimistic update
-      const originalJobs = [...this._jobs];
-      const idx = this._jobs.findIndex((j) => j.id === this._editingJob!.id);
-      if (idx >= 0) {
-        const updatedJob: SchedulerCronJob = {
-          ...this._jobs[idx],
-          name: jobData.name,
-          agentId: jobData.agentId,
-          schedule: jobData.schedule,
-          payload: { kind: "agent_turn", message: jobData.message },
-          sessionTarget: jobData.sessionTarget,
-          enabled: jobData.enabled,
-          deliveryTarget: jobData.deliveryTarget,
-          wakeGate: jobData.wakeGate,
-        };
-        const updated = [...this._jobs];
-        updated[idx] = updatedJob;
-        this._jobs = updated;
-      }
       try {
+        const variantFields = jobData.payload.kind === "agent_turn"
+          ? {
+              sessionPolicy: jobData.sessionPolicy,
+              continuationMode: jobData.continuationMode,
+              ...(jobData.deliveryTarget === undefined
+                ? {}
+                : { deliveryTarget: jobData.deliveryTarget }),
+              ...(jobData.wakeGate === undefined ? {} : { wakeGate: jobData.wakeGate }),
+            }
+          : jobData.payload.kind === "delivery"
+            ? { deliveryTarget: jobData.deliveryTarget }
+            : {};
         await this.rpcClient.call("cron.update", {
           jobId: this._editingJob.id,
           name: jobData.name,
-          enabled: jobData.enabled,
-          sessionTarget: jobData.sessionTarget,
           schedule: jobData.schedule,
-          message: jobData.message,
-          ...(jobData.deliveryTarget !== undefined
-            ? { deliveryTarget: jobData.deliveryTarget }
-            : {}),
-          ...(jobData.wakeGate !== undefined ? { wakeGate: jobData.wakeGate } : {}),
+          payload: jobData.payload,
+          paused: jobData.paused,
+          ...variantFields,
         });
+        await this._loadJobs();
         this._editorOpen = false;
         this._editingJob = null;
       } catch (err) {
-        this._jobs = originalJobs;
         this._editorError = err instanceof Error ? err.message : "Failed to update job";
       }
     } else {
-      // Create mode -- optimistic update
-      const tempJob: SchedulerCronJob = {
-        id: jobData.id,
-        name: jobData.name,
-        agentId: jobData.agentId,
-        schedule: jobData.schedule,
-        payload: { kind: "agent_turn", message: jobData.message },
-        sessionTarget: jobData.sessionTarget,
-        enabled: jobData.enabled,
-        consecutiveErrors: 0,
-        createdAtMs: systemNowMs(),
-        deliveryTarget: jobData.deliveryTarget,
-        wakeGate: jobData.wakeGate,
-      };
-      this._jobs = [...this._jobs, tempJob];
       try {
-        const result = await this.rpcClient.call("cron.add", {
+        const variantFields = jobData.payload.kind === "agent_turn"
+          ? {
+              sessionPolicy: jobData.sessionPolicy,
+              continuationMode: jobData.continuationMode,
+              ...(jobData.deliveryTarget === undefined || jobData.deliveryTarget === null
+                ? {}
+                : { deliveryTarget: jobData.deliveryTarget }),
+              ...(jobData.wakeGate === undefined || jobData.wakeGate === null
+                ? {}
+                : { wakeGate: jobData.wakeGate }),
+            }
+          : jobData.payload.kind === "delivery"
+            ? { deliveryTarget: jobData.deliveryTarget }
+            : {};
+        await this.rpcClient.call("cron.add", {
           name: jobData.name,
           agentId: jobData.agentId || this._selectedAgentId || undefined,
           schedule: jobData.schedule,
-          message: jobData.message,
-          sessionTarget: jobData.sessionTarget,
-          enabled: jobData.enabled,
-          ...(jobData.deliveryTarget !== undefined
-            ? { deliveryTarget: jobData.deliveryTarget }
-            : {}),
-          ...(jobData.wakeGate !== undefined ? { wakeGate: jobData.wakeGate } : {}),
+          payload: jobData.payload,
+          ...variantFields,
         });
-        // Update the temp job with the server-returned ID if different
-        if (result?.jobId && result.jobId !== tempJob.id) {
-          const idx = this._jobs.findIndex((j) => j.id === tempJob.id);
-          if (idx >= 0) {
-            const updated = [...this._jobs];
-            updated[idx] = { ...updated[idx], id: result.jobId };
-            this._jobs = updated;
-          }
-        }
+        await this._loadJobs();
         this._editorOpen = false;
         this._editingJob = null;
       } catch (err) {
-        this._jobs = this._jobs.filter((j) => j.id !== tempJob.id);
         this._editorError = err instanceof Error ? err.message : "Failed to create job";
       }
     }
@@ -1060,7 +1118,7 @@ export class IcSchedulerView extends LitElement {
 
     try {
       await this.rpcClient.call("cron.remove", {
-        jobName: job.name,
+        jobId: job.id,
       });
     } catch (err) {
       this._jobs = originalJobs;
@@ -1116,6 +1174,7 @@ export class IcSchedulerView extends LitElement {
   }
 
   private _openEditEditor(job: SchedulerCronJob): void {
+    if (job.source === "built_in") return;
     this._editingJob = job;
     this._editorOpen = true;
     this._editorError = "";
@@ -1140,7 +1199,7 @@ export class IcSchedulerView extends LitElement {
   /* ---- Computed getters ---- */
 
   private get _editingJobInput(): CronJobInput | null {
-    if (!this._editingJob) return null;
+    if (!this._editingJob || this._editingJob.source === "built_in") return null;
     return jobToCronInput(this._editingJob);
   }
 
@@ -1197,62 +1256,82 @@ export class IcSchedulerView extends LitElement {
   }
 
   private _renderJobRow(job: SchedulerCronJob) {
-    const dotClass = job.enabled
-      ? job.consecutiveErrors > 0 ? "status-dot status-dot--error" : "status-dot status-dot--active"
-      : "status-dot status-dot--inactive";
+    const isPaused = job.lifecycle.status === "paused";
+    const isTerminal = job.lifecycle.status === "one_shot_terminal";
+    const consecutiveDependencyErrors = job.lifecycle.status === "scheduled"
+      || job.lifecycle.status === "paused"
+      ? job.lifecycle.consecutiveDependencyErrors
+      : 0;
+    const nextRunAtMs = job.lifecycle.status === "scheduled" || job.lifecycle.status === "paused"
+      ? job.lifecycle.nextRunAtMs
+      : null;
+    const latestExecution = this._executions.find((execution) => execution.jobId === job.id);
+    const deliveryTarget = "deliveryTarget" in job ? job.deliveryTarget : undefined;
+    const dotClass = consecutiveDependencyErrors > 0
+      ? "status-dot status-dot--error"
+      : isPaused || isTerminal
+        ? "status-dot status-dot--inactive"
+        : "status-dot status-dot--active";
     return html`
-      <div class="grid-row" role="row" @click=${() => this._openEditEditor(job)}>
+      <div
+        class="grid-row"
+        role="row"
+        @click=${() => this._openEditEditor(job)}
+      >
         <div class="cell" role="cell">${job.name || job.id}</div>
         <div class="cell" role="cell">${formatSchedule(job.schedule)}</div>
         <div class="cell" role="cell">
-          ${job.lastRunAtMs && job.lastRunAtMs > 0
-            ? html`<ic-relative-time .timestamp=${job.lastRunAtMs}></ic-relative-time>`
+          ${latestExecution
+            ? html`<ic-relative-time .timestamp=${latestExecution.timestamp}></ic-relative-time>`
             : "Never"}
         </div>
         <div class="cell" role="cell">
-          ${job.enabled && job.nextRunAtMs && job.nextRunAtMs > 0
-            ? html`<ic-relative-time .timestamp=${job.nextRunAtMs}></ic-relative-time>`
-            : "(off)"}
+          ${nextRunAtMs === null
+            ? isTerminal ? "Complete" : "Claimed"
+            : isPaused
+              ? "Paused"
+              : html`<ic-relative-time .timestamp=${nextRunAtMs}></ic-relative-time>`}
         </div>
         <div class="cell" role="cell">
           <span class="status-info">
             <span class=${dotClass}></span>
-            ${job.consecutiveErrors > 0
-              ? html`<span class="error-count">${job.consecutiveErrors} errors</span>`
+            ${consecutiveDependencyErrors > 0
+              ? html`<span class="error-count">${consecutiveDependencyErrors} dependency errors</span>`
               : nothing}
           </span>
         </div>
         <div class="cell" role="cell">
-          ${job.deliveryTarget
-            ? html`<ic-tag variant="info">${job.deliveryTarget.channelType ?? "channel"}</ic-tag>`
+          ${deliveryTarget
+            ? html`<ic-tag variant="info">${deliveryTarget.destinationEndpoint.channelType}</ic-tag>`
             : html`<span style="color:var(--ic-text-dim)">local</span>`}
         </div>
         <div class="cell" role="cell">
           <div class="action-group">
             <button
               class="btn-run"
-              ?disabled=${!job.enabled}
-              title=${job.enabled ? "Execute this job now" : "Enable job to run"}
+              title="Execute this job now"
               @click=${(e: Event) => {
                 e.stopPropagation();
                 this._handleRunJob(job.name || job.id);
               }}
             >Run</button>
-            <button
-              class="btn-edit"
-              title="Edit this job"
-              @click=${(e: Event) => {
-                e.stopPropagation();
-                this._openEditEditor(job);
-              }}
-            >Edit</button>
-            <button
-              class="btn-delete"
-              @click=${(e: Event) => {
-                e.stopPropagation();
-                this._handleDeleteJob(job.id);
-              }}
-            >Delete</button>
+            ${job.source === "authored" ? html`
+              <button
+                class="btn-edit"
+                title="Edit this job"
+                @click=${(e: Event) => {
+                  e.stopPropagation();
+                  this._openEditEditor(job);
+                }}
+              >Edit</button>
+              <button
+                class="btn-delete"
+                @click=${(e: Event) => {
+                  e.stopPropagation();
+                  this._handleDeleteJob(job.id);
+                }}
+              >Delete</button>
+            ` : nothing}
           </div>
         </div>
       </div>

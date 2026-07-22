@@ -3570,10 +3570,53 @@ export const CONTRACTS = {
               },
               "payload": {
                 "type": "object",
-                "propertyNames": {
-                  "type": "string"
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "heartbeat_event",
+                      "delivery",
+                      "agent_turn",
+                      "internal_action"
+                    ]
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "wakeMode": {
+                    "type": "string",
+                    "enum": [
+                      "now",
+                      "next-heartbeat"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "timeoutSeconds": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 86400
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "memory_review",
+                      "memory_lifecycle",
+                      "reflection"
+                    ]
+                  }
                 },
-                "additionalProperties": {}
+                "required": [
+                  "kind"
+                ],
+                "additionalProperties": false
               },
               "maxConsecutiveDependencyErrors": {
                 "type": "integer",

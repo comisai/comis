@@ -43,10 +43,10 @@ describe("IcCronEditor", () => {
     expect(root.querySelector("#cron-name")).toBeTruthy();
     expect(root.querySelector('input[name="schedule-kind"]')).toBeTruthy();
     expect(root.querySelector("#cron-tz")).toBeTruthy();
-    expect(root.querySelector("#cron-enabled")).toBeTruthy();
+    expect(root.querySelector("#cron-paused")).toBeFalsy();
     expect(root.querySelector("#cron-agent")).toBeTruthy();
+    expect(root.querySelector("#cron-payload-kind")).toBeTruthy();
     expect(root.querySelector("#cron-message")).toBeTruthy();
-    expect(root.querySelector("#cron-max")).toBeTruthy();
     expect(root.querySelector("#cron-session")).toBeTruthy();
   });
 
@@ -86,10 +86,10 @@ describe("IcCronEditor", () => {
         name: "Daily Report",
         agentId: "assistant",
         schedule: { kind: "cron", expr: "0 9 * * *", tz: "America/New_York" },
-        message: "Generate the report",
-        enabled: true,
-        maxConcurrent: 2,
-        sessionTarget: "isolated",
+        payload: { kind: "agent_turn", message: "Generate the report" },
+        paused: true,
+        sessionPolicy: { strategy: "rolling", maxHistoryTurns: 2 },
+        continuationMode: "heartbeat_excerpt",
       },
     });
 
@@ -98,10 +98,11 @@ describe("IcCronEditor", () => {
     expect((el as any)._agentId).toBe("assistant");
     expect((el as any)._cronExpr).toBe("0 9 * * *");
     expect((el as any)._timezone).toBe("America/New_York");
-    expect((el as any)._message).toBe("Generate the report");
-    expect((el as any)._enabled).toBe(true);
-    expect((el as any)._maxConcurrent).toBe(2);
-    expect((el as any)._sessionTarget).toBe("isolated");
+    expect((el as any)._payloadText).toBe("Generate the report");
+    expect((el as any)._paused).toBe(true);
+    expect((el as any)._sessionStrategy).toBe("rolling");
+    expect((el as any)._maxHistoryTurns).toBe(2);
+    expect((el as any)._continuationMode).toBe("heartbeat_excerpt");
   });
 
   it("schedule kind selector switches visible fields", async () => {
@@ -185,10 +186,10 @@ describe("IcCronEditor", () => {
     (el as any)._cronExpr = "0 9 * * *";
     (el as any)._timezone = "UTC";
     (el as any)._agentId = "default";
-    (el as any)._message = "Hello";
-    (el as any)._enabled = true;
-    (el as any)._maxConcurrent = 1;
-    (el as any)._sessionTarget = "main";
+    (el as any)._payloadKind = "agent_turn";
+    (el as any)._payloadText = "Hello";
+    (el as any)._sessionStrategy = "fresh";
+    (el as any)._continuationMode = "none";
     await el.updateComplete;
 
     const handler = vi.fn();
@@ -205,10 +206,10 @@ describe("IcCronEditor", () => {
     expect(detail.schedule.expr).toBe("0 9 * * *");
     expect(detail.schedule.tz).toBe("UTC");
     expect(detail.agentId).toBe("default");
-    expect(detail.message).toBe("Hello");
-    expect(detail.enabled).toBe(true);
-    expect(detail.maxConcurrent).toBe(1);
-    expect(detail.sessionTarget).toBe("main");
+    expect(detail.payload).toEqual({ kind: "agent_turn", message: "Hello" });
+    expect(detail.paused).toBe(false);
+    expect(detail.sessionPolicy).toEqual({ strategy: "fresh" });
+    expect(detail.continuationMode).toBe("none");
   });
 
   it("surfaces a wake-gate script field in the editor form", async () => {
@@ -244,6 +245,7 @@ describe("IcCronEditor", () => {
     expect(detail.wakeGate).toEqual({
       script: 'print(JSON.stringify({ wake: false }))',
       language: "js",
+      timeoutSeconds: 30,
     });
   });
 
@@ -277,11 +279,11 @@ describe("IcCronEditor", () => {
         name: "Monitor",
         agentId: "default",
         schedule: { kind: "cron", expr: "*/10 * * * *", tz: "UTC" },
-        message: "Check the feed",
-        enabled: true,
-        maxConcurrent: 1,
-        sessionTarget: "main",
-        wakeGate: { script: "check()", language: "ts" },
+        payload: { kind: "agent_turn", message: "Check the feed" },
+        paused: false,
+        sessionPolicy: { strategy: "fresh" },
+        continuationMode: "none",
+        wakeGate: { script: "check()", language: "ts", timeoutSeconds: 12 },
       },
     });
 
@@ -293,10 +295,10 @@ describe("IcCronEditor", () => {
     (el.shadowRoot!.querySelector(".btn-save") as HTMLButtonElement).click();
 
     const detail = (handler.mock.calls[0][0] as CustomEvent).detail;
-    expect(detail.wakeGate).toEqual({ script: "check()", language: "ts" });
+    expect(detail.wakeGate).toEqual({ script: "check()", language: "ts", timeoutSeconds: 12 });
   });
 
-  it("clearing the script on a gated job sends an empty wakeGate so the handler removes the gate", async () => {
+  it("clearing the script on a gated job sends null so the handler removes the gate", async () => {
     const el = await createElement<IcCronEditor>("ic-cron-editor", {
       agents: ["default"],
       job: {
@@ -304,11 +306,11 @@ describe("IcCronEditor", () => {
         name: "Monitor",
         agentId: "default",
         schedule: { kind: "cron", expr: "*/10 * * * *", tz: "UTC" },
-        message: "Check the feed",
-        enabled: true,
-        maxConcurrent: 1,
-        sessionTarget: "main",
-        wakeGate: { script: "check()", language: "ts" },
+        payload: { kind: "agent_turn", message: "Check the feed" },
+        paused: false,
+        sessionPolicy: { strategy: "fresh" },
+        continuationMode: "none",
+        wakeGate: { script: "check()", language: "ts", timeoutSeconds: 12 },
       },
     });
     // The user clears the script textarea to remove the gate.
@@ -320,9 +322,7 @@ describe("IcCronEditor", () => {
     (el.shadowRoot!.querySelector(".btn-save") as HTMLButtonElement).click();
 
     const detail = (handler.mock.calls[0][0] as CustomEvent).detail;
-    // An explicit empty script tells the handler to CLEAR the gate; an omitted
-    // field would leave the old gate in place (the reappears-on-reload bug).
-    expect(detail.wakeGate).toEqual({ script: "" });
+    expect(detail.wakeGate).toBeNull();
   });
 
   it("cancel button fires cancel event", async () => {

@@ -181,6 +181,16 @@ const CronLifecycleProjectionSchema = z.discriminatedUnion("status", [
   }),
 ]);
 
+const CronProjectedPayloadSchema = z.strictObject({
+  kind: z.enum(["heartbeat_event", "delivery", "agent_turn", "internal_action"]),
+  text: z.string().min(1).optional(),
+  wakeMode: z.enum(["now", "next-heartbeat"]).optional(),
+  message: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  timeoutSeconds: PositiveSafeIntegerSchema.max(86_400).optional(),
+  action: z.enum(["memory_review", "memory_lifecycle", "reflection"]).optional(),
+});
+
 const CronJobProjectionSchema = z.strictObject({
   id: IdentifierSchema,
   name: z.string().min(1),
@@ -188,7 +198,7 @@ const CronJobProjectionSchema = z.strictObject({
   source: z.enum(["authored", "built_in"]),
   schedule: CronPersistedScheduleProjectionSchema,
   lifecycle: CronLifecycleProjectionSchema,
-  payload: z.record(z.string(), z.unknown()),
+  payload: CronProjectedPayloadSchema,
   maxConsecutiveDependencyErrors: NonnegativeSafeIntegerSchema.optional(),
   sessionPolicy: CronSessionPolicySchema.optional(),
   continuationMode: z.enum(["none", "heartbeat_excerpt", "origin_history"]).optional(),

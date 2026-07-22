@@ -17,39 +17,45 @@ const MOCK_JOBS = [
     id: "daily-report",
     name: "Daily Report",
     agentId: "default",
+    source: "authored",
     schedule: { kind: "cron", expr: "0 9 * * *", tz: "America/New_York" },
     payload: { kind: "agent_turn", message: "Generate daily report" },
-    sessionTarget: "isolated",
-    enabled: true,
-    nextRunAtMs: Date.now() + 86400000,
-    lastRunAtMs: Date.now() - 3600000,
-    consecutiveErrors: 0,
-    createdAtMs: Date.now() - 86400000 * 30,
+    sessionPolicy: { strategy: "fresh" },
+    continuationMode: "none",
+    lifecycle: {
+      status: "scheduled",
+      nextRunAtMs: Date.now() + 86400000,
+      consecutiveDependencyErrors: 0,
+    },
   },
   {
     id: "health-check",
     name: "Health Check",
     agentId: "default",
-    schedule: { kind: "every", everyMs: 300000 },
-    payload: { kind: "system_event", text: "health ping" },
-    sessionTarget: "main",
-    enabled: true,
-    nextRunAtMs: Date.now() + 300000,
-    lastRunAtMs: Date.now() - 60000,
-    consecutiveErrors: 0,
-    createdAtMs: Date.now() - 86400000 * 7,
+    source: "authored",
+    schedule: { kind: "every", everyMs: 300000, anchorMs: Date.now() },
+    payload: { kind: "heartbeat_event", text: "health ping", wakeMode: "now" },
+    lifecycle: {
+      status: "scheduled",
+      nextRunAtMs: Date.now() + 300000,
+      consecutiveDependencyErrors: 0,
+    },
   },
   {
     id: "old-backup",
     name: "Old Backup",
     agentId: "backup-agent",
-    schedule: { kind: "cron", expr: "0 3 * * *" },
+    source: "authored",
+    schedule: { kind: "cron", expr: "0 3 * * *", tz: "UTC" },
     payload: { kind: "agent_turn", message: "Run backup" },
-    sessionTarget: "isolated",
-    enabled: false,
-    lastRunAtMs: 0,
-    consecutiveErrors: 0,
-    createdAtMs: Date.now() - 86400000 * 60,
+    sessionPolicy: { strategy: "fresh" },
+    continuationMode: "none",
+    lifecycle: {
+      status: "paused",
+      nextRunAtMs: Date.now() + 86400000,
+      consecutiveDependencyErrors: 0,
+      reason: "operator",
+    },
   },
 ];
 
@@ -59,10 +65,14 @@ const MOCK_JOBS = [
 
 function createSchedulerMockRpcClient(jobs: unknown[] = MOCK_JOBS): RpcClient {
   return createMockRpcClient((method: string) => {
-    if (method === "cron.list") return Promise.resolve(jobs);
-    if (method === "cron.add") return Promise.resolve({ jobId: "new-job-1" });
-    if (method === "cron.update") return Promise.resolve({ updated: true });
-    if (method === "cron.remove") return Promise.resolve({ removed: true });
+    if (method === "cron.list") return Promise.resolve({ jobs });
+    if (method === "cron.add") return Promise.resolve({
+      jobId: "new-job-1",
+      name: "New Job",
+      schedule: { kind: "cron", expr: "0 12 * * *", tz: "UTC" },
+    });
+    if (method === "cron.update") return Promise.resolve({ jobName: "Daily Report", updated: true });
+    if (method === "cron.remove") return Promise.resolve({ jobName: "Daily Report", removed: true });
     if (method === "config.read")
       return Promise.resolve({ heartbeat: { enabled: false, intervalMs: 300000 } });
     if (method === "config.set") return Promise.resolve({ updated: true });
@@ -187,13 +197,13 @@ describe("IcSchedulerView", () => {
     expect(firstRowText).toContain("0 9 * * *");
   });
 
-  it("6 - job table shows relative time for last run", async () => {
+  it("6 - job table reports no last run before an execution event", async () => {
     const rpc = createSchedulerMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
 
-    const relTimes = el.shadowRoot?.querySelectorAll("ic-relative-time");
-    expect(relTimes?.length).toBeGreaterThanOrEqual(1);
+    const firstRowText = el.shadowRoot?.querySelector(".grid-row")?.textContent ?? "";
+    expect(firstRowText).toContain("Never");
   });
 
   it("7 - job table shows status indicators", async () => {
@@ -203,13 +213,13 @@ describe("IcSchedulerView", () => {
 
     const activeDots = el.shadowRoot?.querySelectorAll(".status-dot--active");
     const inactiveDots = el.shadowRoot?.querySelectorAll(".status-dot--inactive");
-    // 2 enabled jobs (daily-report, health-check), 1 disabled (old-backup)
+    // Two scheduled jobs and one operator-paused job.
     expect(activeDots?.length).toBe(2);
     expect(inactiveDots?.length).toBe(1);
   });
 
   it("8 - shows empty state when no jobs", async () => {
-    const rpc = createMockRpcClient([]);
+    const rpc = createSchedulerMockRpcClient([]);
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
 
@@ -370,7 +380,7 @@ describe("IcSchedulerView", () => {
     deleteBtn.click();
     await flush(el);
 
-    expect(rpc.call).toHaveBeenCalledWith("cron.remove", { jobName: "Daily Report" });
+    expect(rpc.call).toHaveBeenCalledWith("cron.remove", { jobId: "daily-report" });
     // Job should be removed from list (optimistic)
     expect(priv(el)._jobs).toHaveLength(2);
 
@@ -395,11 +405,11 @@ describe("IcSchedulerView", () => {
           id: "new-job",
           name: "New Job",
           agentId: "default",
-          schedule: { kind: "cron", expr: "0 12 * * *" },
-          message: "Do something",
-          enabled: true,
-          maxConcurrent: 1,
-          sessionTarget: "main",
+          schedule: { kind: "cron", expr: "0 12 * * *", tz: "UTC" },
+          payload: { kind: "agent_turn", message: "Do something" },
+          paused: false,
+          sessionPolicy: { strategy: "fresh" },
+          continuationMode: "none",
         },
       }),
     );
@@ -409,8 +419,7 @@ describe("IcSchedulerView", () => {
       "cron.add",
       expect.objectContaining({ name: "New Job", agentId: "default" }),
     );
-    // New job should be in list
-    expect(priv(el)._jobs).toHaveLength(4);
+    expect(priv(el)._jobs).toHaveLength(3);
     expect(priv(el)._editorOpen).toBe(false);
   });
 
@@ -432,11 +441,11 @@ describe("IcSchedulerView", () => {
           id: "daily-report",
           name: "Daily Report Updated",
           agentId: "default",
-          schedule: { kind: "cron", expr: "0 10 * * *" },
-          message: "Generate updated report",
-          enabled: true,
-          maxConcurrent: 1,
-          sessionTarget: "isolated",
+          schedule: { kind: "cron", expr: "0 10 * * *", tz: "UTC" },
+          payload: { kind: "agent_turn", message: "Generate updated report" },
+          paused: false,
+          sessionPolicy: { strategy: "fresh" },
+          continuationMode: "none",
         },
       }),
     );
@@ -449,7 +458,7 @@ describe("IcSchedulerView", () => {
     expect(priv(el)._editorOpen).toBe(false);
   });
 
-  it("25 - save in create mode threads the nested wakeGate onto cron.add and the optimistic job", async () => {
+  it("25 - save in create mode threads the nested wakeGate onto cron.add", async () => {
     const rpc = createSchedulerMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
@@ -465,12 +474,12 @@ describe("IcSchedulerView", () => {
           id: "gated-monitor",
           name: "Gated Monitor",
           agentId: "default",
-          schedule: { kind: "cron", expr: "*/5 * * * *" },
-          message: "watch the feed",
-          enabled: true,
-          maxConcurrent: 1,
-          sessionTarget: "main",
-          wakeGate: { script: "check()", language: "js" },
+          schedule: { kind: "cron", expr: "*/5 * * * *", tz: "UTC" },
+          payload: { kind: "agent_turn", message: "watch the feed" },
+          paused: false,
+          sessionPolicy: { strategy: "fresh" },
+          continuationMode: "none",
+          wakeGate: { script: "check()", language: "js", timeoutSeconds: 10 },
         },
       }),
     );
@@ -478,15 +487,11 @@ describe("IcSchedulerView", () => {
 
     expect(rpc.call).toHaveBeenCalledWith(
       "cron.add",
-      expect.objectContaining({ wakeGate: { script: "check()", language: "js" } }),
+      expect.objectContaining({ wakeGate: { script: "check()", language: "js", timeoutSeconds: 10 } }),
     );
-    const created = priv(el)._jobs.find((j) => (j as { wakeGate?: unknown }).wakeGate) as
-      | { wakeGate?: unknown }
-      | undefined;
-    expect(created?.wakeGate).toEqual({ script: "check()", language: "js" });
   });
 
-  it("26 - save in edit mode threads the nested wakeGate onto cron.update and the optimistic job", async () => {
+  it("26 - save in edit mode threads the nested wakeGate onto cron.update", async () => {
     const rpc = createSchedulerMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
@@ -502,12 +507,12 @@ describe("IcSchedulerView", () => {
           id: "daily-report",
           name: "Daily Report",
           agentId: "default",
-          schedule: { kind: "cron", expr: "0 9 * * *" },
-          message: "Generate daily report",
-          enabled: true,
-          maxConcurrent: 1,
-          sessionTarget: "isolated",
-          wakeGate: { script: "poll()", language: "js" },
+          schedule: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
+          payload: { kind: "agent_turn", message: "Generate daily report" },
+          paused: false,
+          sessionPolicy: { strategy: "fresh" },
+          continuationMode: "none",
+          wakeGate: { script: "poll()", language: "js", timeoutSeconds: 10 },
         },
       }),
     );
@@ -515,12 +520,8 @@ describe("IcSchedulerView", () => {
 
     expect(rpc.call).toHaveBeenCalledWith(
       "cron.update",
-      expect.objectContaining({ wakeGate: { script: "poll()", language: "js" } }),
+      expect.objectContaining({ wakeGate: { script: "poll()", language: "js", timeoutSeconds: 10 } }),
     );
-    const updated = priv(el)._jobs.find(
-      (j) => (j as { id: string }).id === "daily-report",
-    ) as { wakeGate?: unknown } | undefined;
-    expect(updated?.wakeGate).toEqual({ script: "poll()", language: "js" });
   });
 
   it("27 - maps a loaded job's wakeGate into the editor input on edit-open", async () => {
@@ -529,13 +530,13 @@ describe("IcSchedulerView", () => {
         id: "monitor",
         name: "Monitor",
         agentId: "default",
-        schedule: { kind: "cron", expr: "*/10 * * * *" },
+        source: "authored",
+        schedule: { kind: "cron", expr: "*/10 * * * *", tz: "UTC" },
+        lifecycle: { status: "scheduled", nextRunAtMs: Date.now() + 60_000, consecutiveDependencyErrors: 0 },
         payload: { kind: "agent_turn", message: "check the feed" },
-        sessionTarget: "main",
-        enabled: true,
-        consecutiveErrors: 0,
-        createdAtMs: Date.now(),
-        wakeGate: { script: "check()", language: "ts" },
+        sessionPolicy: { strategy: "fresh" },
+        continuationMode: "none",
+        wakeGate: { script: "check()", language: "ts", timeoutSeconds: 12 },
       },
     ]);
     const el = await createElement({ rpcClient: rpc });
@@ -549,6 +550,7 @@ describe("IcSchedulerView", () => {
     expect((editor as unknown as { job?: { wakeGate?: unknown } })?.job?.wakeGate).toEqual({
       script: "check()",
       language: "ts",
+      timeoutSeconds: 12,
     });
   });
 
@@ -568,11 +570,11 @@ describe("IcSchedulerView", () => {
           id: "plain-job",
           name: "Plain Job",
           agentId: "default",
-          schedule: { kind: "cron", expr: "0 9 * * *" },
-          message: "just run",
-          enabled: true,
-          maxConcurrent: 1,
-          sessionTarget: "main",
+          schedule: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
+          payload: { kind: "agent_turn", message: "just run" },
+          paused: false,
+          sessionPolicy: { strategy: "fresh" },
+          continuationMode: "none",
         },
       }),
     );

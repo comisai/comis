@@ -3,44 +3,45 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
 import { systemDateFrom, systemNowDate } from "@comis/core";
+import type { WebRpcMethodMap } from "../../api/contracts.generated.js";
 import {
   createIcCronEditorController,
   type IcCronEditorController,
 } from "./ic-cron-editor-controller.js";
 
 /* ------------------------------------------------------------------ */
-/*  Local types - DO NOT import from @comis/scheduler              */
+/*  Generated RPC projections keep web independent of scheduler code. */
 /* ------------------------------------------------------------------ */
 
-export interface CronScheduleInput {
-  kind: "cron" | "every" | "at";
-  expr?: string;
-  tz?: string;
-  everyMs?: number;
-  at?: string;
-}
+type CronAddParams = WebRpcMethodMap["cron.add"]["params"];
+type CronUpdateParams = WebRpcMethodMap["cron.update"]["params"];
 
-export interface CronJobInput {
+export type CronScheduleInput = Exclude<CronAddParams["schedule"], { kind: "in" }>;
+
+interface CronJobInputBase {
   id: string;
   name: string;
   agentId: string;
   schedule: CronScheduleInput;
-  message: string;
-  enabled: boolean;
-  maxConcurrent: number;
-  sessionTarget: "main" | "isolated";
-  deliveryTarget?: {
-    channelId: string;
-    userId: string;
-    tenantId: string;
-    channelType?: string;
-  };
-  /** Optional pre-run wake-gate: a jailed script that decides whether to invoke the model. */
-  wakeGate?: {
-    script: string;
-    language?: "js" | "ts";
-  };
+  paused: boolean;
 }
+
+export type CronJobInput = CronJobInputBase & (
+  | {
+      payload: Extract<CronAddParams["payload"], { kind: "agent_turn" }>;
+      sessionPolicy: NonNullable<CronAddParams["sessionPolicy"]>;
+      continuationMode: NonNullable<CronAddParams["continuationMode"]>;
+      deliveryTarget?: CronUpdateParams["deliveryTarget"];
+      wakeGate?: CronUpdateParams["wakeGate"];
+    }
+  | {
+      payload: Extract<CronAddParams["payload"], { kind: "heartbeat_event" }>;
+    }
+  | {
+      payload: Extract<CronAddParams["payload"], { kind: "delivery" }>;
+      deliveryTarget: NonNullable<CronAddParams["deliveryTarget"]>;
+    }
+);
 
 /* ------------------------------------------------------------------ */
 /*  Next-runs calculators (exported for testing)                      */
@@ -158,7 +159,7 @@ export function computeNextCronRuns(
   const DOW_MAP: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
   // Start one minute past `from`
-  const cursor = systemDateFrom(from);
+  const cursor = systemDateFrom(from.getTime());
   cursor.setSeconds(0, 0);
   cursor.setTime(cursor.getTime() + 60_000);
 
@@ -181,7 +182,7 @@ export function computeNextCronRuns(
     }
 
     if (minuteSet.has(m) && hourSet.has(h) && domSet.has(dom) && monthSet.has(mon) && dowSet.has(dow)) {
-      results.push(systemDateFrom(cursor));
+      results.push(systemDateFrom(cursor.getTime()));
     }
 
     cursor.setTime(cursor.getTime() + 60_000);
@@ -484,18 +485,22 @@ export class IcCronEditor extends LitElement {
   @state() private _timezone = "UTC";
   @state() private _everyMs = 60_000;
   @state() private _atDateTime = "";
-  @state() private _enabled = true;
+  @state() private _paused = false;
   @state() private _agentId = "";
-  @state() private _message = "";
-  @state() private _maxConcurrent = 1;
-  @state() private _sessionTarget: "main" | "isolated" = "main";
-  @state() private _deliveryMode: "none" | "origin" | "custom" = "none";
-  @state() private _deliveryChannelType = "";
-  @state() private _deliveryChannelId = "";
+  @state() private _payloadKind: "agent_turn" | "heartbeat_event" | "delivery" = "agent_turn";
+  @state() private _payloadText = "";
+  @state() private _agentModel = "";
+  @state() private _agentTimeoutSeconds: number | null = null;
+  @state() private _heartbeatWakeMode: "now" | "next-heartbeat" = "now";
+  @state() private _sessionStrategy: "fresh" | "rolling" = "fresh";
+  @state() private _maxHistoryTurns = 3;
+  @state() private _continuationMode: "none" | "heartbeat_excerpt" | "origin_history" = "none";
+  @state() private _deliveryMode: "none" | "existing" = "none";
   @state() private _wakeGateScript = "";
   @state() private _wakeGateLanguage: "js" | "ts" = "js";
-  /** True when the edited job arrived WITH a gate — so clearing the script field
-   *  sends an explicit empty script (removes the gate) rather than omitting it. */
+  @state() private _wakeGateTimeoutSeconds = 30;
+  /** True when the edited job arrived with a gate, so clearing the script sends
+   *  an explicit null removal rather than leaving the persisted gate unchanged. */
   @state() private _hadWakeGate = false;
   @state() private _nextRuns: string[] = [];
 
@@ -554,27 +559,37 @@ export class IcCronEditor extends LitElement {
     this._id = job.id;
     this._name = job.name;
     this._agentId = job.agentId;
-    this._message = job.message;
-    this._enabled = job.enabled;
-    this._maxConcurrent = job.maxConcurrent;
-    this._sessionTarget = job.sessionTarget;
+    this._paused = job.paused;
+    this._payloadKind = job.payload.kind;
+    this._payloadText = job.payload.kind === "agent_turn" ? job.payload.message : job.payload.text;
+    this._agentModel = job.payload.kind === "agent_turn" ? job.payload.model ?? "" : "";
+    this._agentTimeoutSeconds = job.payload.kind === "agent_turn"
+      ? job.payload.timeoutSeconds ?? null
+      : null;
+    this._heartbeatWakeMode = job.payload.kind === "heartbeat_event" ? job.payload.wakeMode : "now";
+    this._sessionStrategy = job.payload.kind === "agent_turn"
+      ? job.sessionPolicy.strategy
+      : "fresh";
+    this._maxHistoryTurns = job.payload.kind === "agent_turn"
+      && job.sessionPolicy.strategy === "rolling"
+      ? job.sessionPolicy.maxHistoryTurns
+      : 3;
+    this._continuationMode = job.payload.kind === "agent_turn" ? job.continuationMode : "none";
     this._scheduleKind = job.schedule.kind;
-    this._cronExpr = job.schedule.expr ?? "";
-    this._timezone = job.schedule.tz ?? "UTC";
-    this._everyMs = job.schedule.everyMs ?? 60_000;
-    this._atDateTime = job.schedule.at ?? "";
-    if (job.deliveryTarget) {
-      this._deliveryMode = "origin";
-      this._deliveryChannelType = job.deliveryTarget.channelType ?? "";
-      this._deliveryChannelId = job.deliveryTarget.channelId ?? "";
+    this._cronExpr = job.schedule.kind === "cron" ? job.schedule.expr : "";
+    this._timezone = "tz" in job.schedule ? job.schedule.tz ?? "UTC" : "UTC";
+    this._everyMs = job.schedule.kind === "every" ? job.schedule.everyMs : 60_000;
+    this._atDateTime = job.schedule.kind === "at" ? job.schedule.at : "";
+    if ("deliveryTarget" in job && job.deliveryTarget) {
+      this._deliveryMode = "existing";
     } else {
       this._deliveryMode = "none";
-      this._deliveryChannelType = "";
-      this._deliveryChannelId = "";
     }
-    this._wakeGateScript = job.wakeGate?.script ?? "";
-    this._wakeGateLanguage = job.wakeGate?.language ?? "js";
-    this._hadWakeGate = job.wakeGate != null;
+    const wakeGate = job.payload.kind === "agent_turn" ? job.wakeGate : undefined;
+    this._wakeGateScript = wakeGate?.script ?? "";
+    this._wakeGateLanguage = wakeGate?.language ?? "js";
+    this._wakeGateTimeoutSeconds = wakeGate?.timeoutSeconds ?? 30;
+    this._hadWakeGate = wakeGate != null;
   }
 
   /* ---- Preview ---- */
@@ -600,51 +615,76 @@ export class IcCronEditor extends LitElement {
 
   /* ---- Assemble output ---- */
 
-  private _assembleJob(): CronJobInput {
-    const schedule: CronScheduleInput = { kind: this._scheduleKind };
+  private _assembleJob(): CronJobInput | null {
+    let schedule: CronScheduleInput;
     switch (this._scheduleKind) {
       case "cron":
-        schedule.expr = this._cronExpr;
-        schedule.tz = this._timezone;
+        schedule = { kind: "cron", expr: this._cronExpr, tz: this._timezone };
         break;
       case "every":
-        schedule.everyMs = this._everyMs;
+        schedule = { kind: "every", everyMs: this._everyMs };
         break;
       case "at":
-        schedule.at = this._atDateTime;
+        schedule = /(?:Z|[+-]\d{2}:\d{2})$/u.test(this._atDateTime)
+          ? { kind: "at", at: this._atDateTime }
+          : { kind: "at", at: this._atDateTime, tz: this._timezone };
         break;
     }
 
-    let deliveryTarget: CronJobInput["deliveryTarget"];
-    if (this._deliveryMode === "origin" && this.job?.deliveryTarget) {
-      deliveryTarget = this.job.deliveryTarget;
-    } else if (this._deliveryMode === "custom") {
-      deliveryTarget = {
-        channelId: this._deliveryChannelId,
-        channelType: this._deliveryChannelType,
-        userId: "system",
-        tenantId: "default",
-      };
-    }
-
-    return {
+    const common = {
       id: this._id,
       name: this._name,
       agentId: this._agentId,
       schedule,
-      message: this._message,
-      enabled: this._enabled,
-      maxConcurrent: this._maxConcurrent,
-      sessionTarget: this._sessionTarget,
-      deliveryTarget,
-      // A non-empty script sets/replaces the gate. An empty field on a job that
-      // HAD a gate sends an explicit empty script so the handler removes it
-      // (an omitted field would leave the existing gate untouched). A never-gated
-      // job omits the field entirely, so its output stays byte-identical.
+      paused: this._paused,
+    };
+    if (this._payloadKind === "heartbeat_event") {
+      return {
+        ...common,
+        payload: { kind: "heartbeat_event", text: this._payloadText, wakeMode: this._heartbeatWakeMode },
+      };
+    }
+    if (this._payloadKind === "delivery") {
+      if (!this.job || !("deliveryTarget" in this.job) || !this.job.deliveryTarget) {
+        return null;
+      }
+      return {
+        ...common,
+        payload: { kind: "delivery", text: this._payloadText },
+        deliveryTarget: this.job.deliveryTarget,
+      };
+    }
+    const sessionPolicy: NonNullable<CronAddParams["sessionPolicy"]> = this._sessionStrategy === "rolling"
+      ? { strategy: "rolling", maxHistoryTurns: this._maxHistoryTurns }
+      : { strategy: "fresh" };
+    return {
+      ...common,
+      payload: {
+        kind: "agent_turn",
+        message: this._payloadText,
+        ...(this._agentModel.trim() ? { model: this._agentModel.trim() } : {}),
+        ...(this._agentTimeoutSeconds === null
+          ? {}
+          : { timeoutSeconds: this._agentTimeoutSeconds }),
+      },
+      sessionPolicy,
+      continuationMode: this._continuationMode,
+      ...(this._deliveryMode === "existing" && this.job
+          && "deliveryTarget" in this.job && this.job.deliveryTarget
+        ? { deliveryTarget: this.job.deliveryTarget }
+        : this.job && "deliveryTarget" in this.job && this.job.deliveryTarget
+          ? { deliveryTarget: null }
+          : {}),
       ...(this._wakeGateScript.trim()
-        ? { wakeGate: { script: this._wakeGateScript, language: this._wakeGateLanguage } }
+        ? {
+            wakeGate: {
+              script: this._wakeGateScript,
+              language: this._wakeGateLanguage,
+              timeoutSeconds: this._wakeGateTimeoutSeconds,
+            },
+          }
         : this._hadWakeGate
-          ? { wakeGate: { script: "" } }
+          ? { wakeGate: null }
           : {}),
     };
   }
@@ -652,8 +692,10 @@ export class IcCronEditor extends LitElement {
   /* ---- Event handlers ---- */
 
   private _onSave(): void {
+    const job = this._assembleJob();
+    if (!job) return;
     this.dispatchEvent(
-      new CustomEvent("save", { detail: this._assembleJob() }),
+      new CustomEvent("save", { detail: job }),
     );
   }
 
@@ -665,6 +707,9 @@ export class IcCronEditor extends LitElement {
 
   override render() {
     const title = this.mode === "edit" ? "Edit Cron Job" : "New Cron Job";
+    const deliveryTarget = this.job && "deliveryTarget" in this.job
+      ? this.job.deliveryTarget
+      : undefined;
 
     return html`
       <div class="editor-card">
@@ -789,16 +834,17 @@ export class IcCronEditor extends LitElement {
             </div>
           ` : nothing}
 
-          <!-- Enabled -->
-          <div class="field checkbox-field">
-            <input
-              id="cron-enabled"
-              type="checkbox"
-              .checked=${this._enabled}
-              @change=${(e: Event) => { this._enabled = (e.target as HTMLInputElement).checked; }}
-            />
-            <label for="cron-enabled">Enabled</label>
-          </div>
+          ${this.mode === "edit" ? html`
+            <div class="field checkbox-field">
+              <input
+                id="cron-paused"
+                type="checkbox"
+                .checked=${this._paused}
+                @change=${(e: Event) => { this._paused = (e.target as HTMLInputElement).checked; }}
+              />
+              <label for="cron-paused">Paused</label>
+            </div>
+          ` : nothing}
 
           <!-- Agent -->
           <div class="field">
@@ -816,30 +862,119 @@ export class IcCronEditor extends LitElement {
             </select>
           </div>
 
-          <!-- Message -->
+          <div class="field">
+            <label for="cron-payload-kind">Action</label>
+            <select
+              id="cron-payload-kind"
+              .value=${this._payloadKind}
+              @change=${(e: Event) => {
+                this._payloadKind = (e.target as HTMLSelectElement).value as typeof this._payloadKind;
+              }}
+            >
+              <option value="agent_turn">Agent turn</option>
+              <option value="heartbeat_event">Heartbeat event</option>
+              ${this.job?.payload.kind === "delivery" && "deliveryTarget" in this.job
+                ? html`<option value="delivery">Direct delivery</option>`
+                : nothing}
+            </select>
+          </div>
+
           <div class="field">
             <label for="cron-message">Message</label>
             <textarea
               id="cron-message"
               rows="3"
-              .value=${this._message}
-              placeholder="Message to send to the agent..."
-              @input=${(e: InputEvent) => { this._message = (e.target as HTMLTextAreaElement).value; }}
+              .value=${this._payloadText}
+              placeholder="Scheduled text..."
+              @input=${(e: InputEvent) => { this._payloadText = (e.target as HTMLTextAreaElement).value; }}
             ></textarea>
           </div>
 
-          <!-- Session Target -->
-          <div class="field">
-            <label for="cron-session">Session Target</label>
-            <select
-              id="cron-session"
-              .value=${this._sessionTarget}
-              @change=${(e: Event) => { this._sessionTarget = (e.target as HTMLSelectElement).value as "main" | "isolated"; }}
-            >
-              <option value="main" ?selected=${this._sessionTarget === "main"}>Main</option>
-              <option value="isolated" ?selected=${this._sessionTarget === "isolated"}>Isolated</option>
-            </select>
-          </div>
+          ${this._payloadKind === "agent_turn" ? html`
+            <div class="field">
+              <label for="cron-session">Session policy</label>
+              <select
+                id="cron-session"
+                .value=${this._sessionStrategy}
+                @change=${(e: Event) => {
+                  this._sessionStrategy = (e.target as HTMLSelectElement).value as typeof this._sessionStrategy;
+                }}
+              >
+                <option value="fresh">Fresh</option>
+                <option value="rolling">Rolling</option>
+              </select>
+            </div>
+            ${this._sessionStrategy === "rolling" ? html`
+              <div class="field">
+                <label for="cron-history-turns">History turns</label>
+                <input
+                  id="cron-history-turns"
+                  type="number"
+                  min="1"
+                  max="20"
+                  .value=${String(this._maxHistoryTurns)}
+                  @input=${(e: InputEvent) => {
+                    const value = Number.parseInt((e.target as HTMLInputElement).value, 10);
+                    if (Number.isSafeInteger(value) && value >= 1 && value <= 20) this._maxHistoryTurns = value;
+                  }}
+                />
+              </div>
+            ` : nothing}
+            <div class="field">
+              <label for="cron-continuation">Continuation</label>
+              <select
+                id="cron-continuation"
+                .value=${this._continuationMode}
+                @change=${(e: Event) => {
+                  this._continuationMode = (e.target as HTMLSelectElement).value as typeof this._continuationMode;
+                }}
+              >
+                <option value="none">None</option>
+                <option value="heartbeat_excerpt">Heartbeat excerpt</option>
+                <option value="origin_history">Origin history</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="cron-model">Model override (optional)</label>
+              <input
+                id="cron-model"
+                type="text"
+                .value=${this._agentModel}
+                @input=${(e: InputEvent) => { this._agentModel = (e.target as HTMLInputElement).value; }}
+              />
+            </div>
+            <div class="field">
+              <label for="cron-timeout">Timeout seconds (optional)</label>
+              <input
+                id="cron-timeout"
+                type="number"
+                min="1"
+                max="86400"
+                .value=${this._agentTimeoutSeconds === null ? "" : String(this._agentTimeoutSeconds)}
+                @input=${(e: InputEvent) => {
+                  const raw = (e.target as HTMLInputElement).value;
+                  const value = Number.parseInt(raw, 10);
+                  this._agentTimeoutSeconds = raw === "" || !Number.isSafeInteger(value) ? null : value;
+                }}
+              />
+            </div>
+          ` : nothing}
+
+          ${this._payloadKind === "heartbeat_event" ? html`
+            <div class="field">
+              <label for="cron-wake-mode">Wake mode</label>
+              <select
+                id="cron-wake-mode"
+                .value=${this._heartbeatWakeMode}
+                @change=${(e: Event) => {
+                  this._heartbeatWakeMode = (e.target as HTMLSelectElement).value as typeof this._heartbeatWakeMode;
+                }}
+              >
+                <option value="now">Now</option>
+                <option value="next-heartbeat">Next heartbeat</option>
+              </select>
+            </div>
+          ` : nothing}
 
           <!-- Delivery Target -->
           <div class="field">
@@ -847,59 +982,25 @@ export class IcCronEditor extends LitElement {
             <select
               id="cron-delivery"
               .value=${this._deliveryMode}
-              @change=${(e: Event) => { this._deliveryMode = (e.target as HTMLSelectElement).value as "none" | "origin" | "custom"; }}
+              @change=${(e: Event) => { this._deliveryMode = (e.target as HTMLSelectElement).value as typeof this._deliveryMode; }}
             >
-              <option value="none" ?selected=${this._deliveryMode === "none"}>None (local only)</option>
-              <option value="origin" ?selected=${this._deliveryMode === "origin"}>Origin (captured channel)</option>
-              <option value="custom" ?selected=${this._deliveryMode === "custom"}>Custom channel</option>
+              ${this._payloadKind === "delivery"
+                ? nothing
+                : html`<option value="none" ?selected=${this._deliveryMode === "none"}>None (local only)</option>`}
+              ${deliveryTarget
+                ? html`<option value="existing" ?selected=${this._deliveryMode === "existing"}>Keep exact target</option>`
+                : nothing}
             </select>
           </div>
-          ${this._deliveryMode === "origin" && this.job?.deliveryTarget ? html`
+          ${this._deliveryMode === "existing" && deliveryTarget ? html`
             <div class="field">
               <label>Current target</label>
-              <span style="font-size:var(--ic-text-sm);color:var(--ic-text-dim)">${this.job.deliveryTarget.channelType ?? "unknown"}:${this.job.deliveryTarget.channelId}</span>
+              <span style="font-size:var(--ic-text-sm);color:var(--ic-text-dim)">${deliveryTarget.destinationEndpoint.channelType}:${deliveryTarget.destinationEndpoint.conversationId}</span>
             </div>
           ` : nothing}
-          ${this._deliveryMode === "custom" ? html`
-            <div class="field">
-              <label for="cron-delivery-type">Channel Type</label>
-              <input
-                id="cron-delivery-type"
-                type="text"
-                .value=${this._deliveryChannelType}
-                placeholder="telegram"
-                @input=${(e: InputEvent) => { this._deliveryChannelType = (e.target as HTMLInputElement).value; }}
-              />
-            </div>
-            <div class="field">
-              <label for="cron-delivery-id">Channel ID</label>
-              <input
-                id="cron-delivery-id"
-                type="text"
-                .value=${this._deliveryChannelId}
-                placeholder="-100372..."
-                @input=${(e: InputEvent) => { this._deliveryChannelId = (e.target as HTMLInputElement).value; }}
-              />
-            </div>
-          ` : nothing}
-
-          <!-- Max Concurrent -->
-          <div class="field">
-            <label for="cron-max">Max Concurrent</label>
-            <input
-              id="cron-max"
-              type="number"
-              min="1"
-              .value=${String(this._maxConcurrent)}
-              @input=${(e: InputEvent) => {
-                const v = parseInt((e.target as HTMLInputElement).value, 10);
-                if (!isNaN(v) && v >= 1) this._maxConcurrent = v;
-              }}
-            />
-          </div>
 
           <!-- Wake-gate (optional) -->
-          <div class="field">
+          ${this._payloadKind === "agent_turn" ? html`<div class="field">
             <label for="cron-wake-gate">Wake-gate script (optional)</label>
             <textarea
               id="cron-wake-gate"
@@ -908,8 +1009,8 @@ export class IcCronEditor extends LitElement {
               placeholder=${'Runs before the model; print {"wake":false} to skip the turn, or {"wake":true,"context":"…"} with what it found.'}
               @input=${(e: InputEvent) => { this._wakeGateScript = (e.target as HTMLTextAreaElement).value; }}
             ></textarea>
-          </div>
-          ${this._wakeGateScript.trim() ? html`
+          </div>` : nothing}
+          ${this._payloadKind === "agent_turn" && this._wakeGateScript.trim() ? html`
             <div class="field">
               <label for="cron-wake-gate-lang">Wake-gate language</label>
               <select
@@ -920,6 +1021,22 @@ export class IcCronEditor extends LitElement {
                 <option value="js" ?selected=${this._wakeGateLanguage === "js"}>JavaScript</option>
                 <option value="ts" ?selected=${this._wakeGateLanguage === "ts"}>TypeScript</option>
               </select>
+            </div>
+            <div class="field">
+              <label for="cron-wake-gate-timeout">Wake-gate timeout seconds</label>
+              <input
+                id="cron-wake-gate-timeout"
+                type="number"
+                min="1"
+                max="300"
+                .value=${String(this._wakeGateTimeoutSeconds)}
+                @input=${(e: InputEvent) => {
+                  const value = Number.parseInt((e.target as HTMLInputElement).value, 10);
+                  if (Number.isSafeInteger(value) && value >= 1 && value <= 300) {
+                    this._wakeGateTimeoutSeconds = value;
+                  }
+                }}
+              />
             </div>
           ` : nothing}
 
