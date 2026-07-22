@@ -1025,9 +1025,11 @@ Setting **any** field here replaces the global `scheduler.cron` block **wholesal
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `true` | Enable cron job scheduling |
-| `maxConcurrentRuns` | `number` | `3` | Maximum concurrent cron job runs |
-| `defaultTimezone` | `string` | `""` | Default timezone (empty = UTC) |
-| `maxJobs` | `number` | `100` | Maximum cron jobs (0 = unlimited) |
+| `maxRunsPerTick` | `number` | `3` | Maximum due cron occurrences admitted by one scheduler tick |
+| `defaultTimezone` | `string` | `"UTC"` | IANA authoring timezone used when a cron expression omits an explicit zone |
+| `maxJobs` | `number` | `100` | Positive authored-job cap; config-owned jobs and retained terminal records are separate |
+| `maxConsecutiveDependencyErrors` | `number` | `5` | Consecutive scheduled dependency failures before suspension; `0` disables suspension |
+| `staggerWindowMs` | `number` | `0` | Stable eligibility spread applied only to recurring scheduled fires |
 | `wakeGate` | `boolean` | _(unset)_ | Per-agent [wake-gate](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters) toggle (same semantics as the global `scheduler.cron.wakeGate`). Because the block is whole-replace, this is **not** inherited from the global toggle -- set it here explicitly. |
 
 **Heartbeat (agents.*.scheduler.heartbeat)**
@@ -1736,10 +1738,11 @@ Proactive automation configuration for cron scheduling, heartbeat monitoring, qu
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `true` | Enable cron job scheduling |
-| `storeDir` | `string` | `"./data/scheduler"` | Directory for cron job state persistence |
-| `maxConcurrentRuns` | `number` | `3` | Max concurrent cron job runs |
-| `defaultTimezone` | `string` | `""` | Default timezone (empty = UTC) |
-| `maxJobs` | `number` | `100` | Max cron jobs (0 = unlimited) |
+| `maxRunsPerTick` | `number` | `3` | Maximum due cron occurrences admitted by one scheduler tick |
+| `defaultTimezone` | `string` | `"UTC"` | IANA authoring timezone used when a cron expression omits an explicit zone |
+| `maxJobs` | `number` | `100` | Positive authored-job cap; config-owned jobs and retained terminal records are separate |
+| `maxConsecutiveDependencyErrors` | `number` | `5` | Consecutive scheduled dependency failures before suspension; `0` disables suspension |
+| `staggerWindowMs` | `number` | `0` | Stable eligibility spread applied only to recurring scheduled fires |
 | `wakeGate` | `boolean` | _(unset)_ | Enable scheduler-initiated [wake-gates](/agent-tools/scheduling#wake-gate-run-the-model-only-when-it-matters). `true` forces on, `false` forces off (an explicit `false` wins even if the agent's `autonomy.script` surface is on); when unset, a gate runs only if that script surface is explicitly on. A gate still executes under the agent's own resolved caps -- the toggle grants no new capability. |
 
 **Heartbeat (scheduler.heartbeat)**
@@ -1761,27 +1764,28 @@ Proactive automation configuration for cron scheduling, heartbeat monitoring, qu
 | `enabled` | `boolean` | `false` | Enable quiet hours |
 | `start` | `string` | `"22:00"` | Start time (HH:MM format) |
 | `end` | `string` | `"07:00"` | End time (HH:MM format) |
-| `timezone` | `string` | `""` | Timezone (empty = system local) |
+| `timezone` | `string` | `"UTC"` | Explicit IANA timezone for deterministic quiet-hour evaluation |
 | `criticalBypass` | `boolean` | `true` | Allow critical items to bypass quiet hours |
 
 **Execution (scheduler.execution)**
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `lockDir` | `string` | `"./data/scheduler/locks"` | Directory for execution lock files |
-| `staleMs` | `number` | `600000` | Lock stale timeout in ms (10 min) |
-| `updateMs` | `number` | `30000` | Lock update interval in ms |
-| `logDir` | `string` | `"./data/scheduler/logs"` | Directory for execution log files |
-| `maxLogBytes` | `number` | `2000000` | Max log file size in bytes |
-| `keepLines` | `number` | `2000` | Max lines in ring-buffer log |
+| `maxLogBytes` | `number` | `2000000` | Maximum execution ledger size in bytes; must reserve capacity for the configured per-tick admissions |
+| `retainedExecutions` | `number` | `1000` | Complete start/terminal execution groups retained when capacity permits |
 
 **Tasks (scheduler.tasks)**
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | `boolean` | `true` | Enable task extraction from conversations (on by default — the agent proactively follows up) |
-| `confidenceThreshold` | `number` | `0.8` | Minimum confidence threshold (0-1) |
-| `storeDir` | `string` | `"./data/scheduler/tasks"` | Directory for task state persistence |
+| `enabled` | `boolean` | `false` | Explicit opt-in for model-inferred follow-up tasks from delivered conversations |
+| `confidenceThreshold` | `number` | `0.8` | Minimum extraction confidence from `0` to `1` |
+| `debounceMs` | `number` | `15000` | Per-agent delay used to form a bounded extraction batch |
+| `batchMax` | `number` | `8` | Maximum delivered turns in one extraction batch |
+| `maxPerCheck` | `number` | `3` | Maximum exact-origin tasks considered in one proactive check |
+| `maxPerDayPerConversation` | `number` | `3` | Rolling visible-send cap for one conversation |
+| `defaultWindowMs` | `number` | `43200000` | Default slack after the minimum due instant (12 hours) |
+| `preAcceptanceRetryLimit` | `number` | `3` | Additional pre-acceptance attempts allowed after the initial attempt |
 
 <Info>See [Scheduler](/operations/scheduler) for scheduling configuration and [Monitoring](/operations/monitoring) for heartbeat setup.</Info>
 

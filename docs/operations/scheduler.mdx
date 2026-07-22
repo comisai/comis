@@ -19,19 +19,25 @@ Cron jobs are recurring tasks that run on a schedule, like "check email every mo
 scheduler:
   cron:
     enabled: true
-    maxConcurrentRuns: 3    # Maximum jobs running at the same time
-    defaultTimezone: ""     # Empty = UTC
-    maxJobs: 100            # Maximum number of scheduled jobs
+    maxRunsPerTick: 3                     # Maximum due occurrences admitted by one tick
+    defaultTimezone: "UTC"                # Authoring timezone when no zone is supplied
+    maxJobs: 100                           # Positive cap on agent-authored jobs
+    maxConsecutiveDependencyErrors: 5     # Suspend after repeated dependency failures
+    staggerWindowMs: 0                    # Stable spread for recurring scheduled fires
+    # wakeGate: true                       # Optional scheduler-initiated gate override
 ```
 
 | Setting | Default | What It Does |
 |---------|---------|--------------|
 | `enabled` | `true` | Whether cron scheduling is active |
-| `maxConcurrentRuns` | 3 | How many cron jobs can run simultaneously |
-| `defaultTimezone` | `""` (UTC) | Default timezone for cron expressions |
-| `maxJobs` | 100 | Maximum number of cron jobs allowed (0 = unlimited) |
+| `maxRunsPerTick` | `3` | Maximum due cron occurrences admitted by one scheduler tick |
+| `defaultTimezone` | `"UTC"` | IANA authoring timezone used when a cron expression does not specify one |
+| `maxJobs` | `100` | Positive authored-job cap; config-owned jobs and retained terminal records are separate |
+| `maxConsecutiveDependencyErrors` | `5` | Consecutive scheduled dependency failures before a recurring job is suspended; `0` disables suspension |
+| `staggerWindowMs` | `0` | Stable eligibility spread, in milliseconds, applied only to recurring scheduled fires |
+| `wakeGate` | _(unset)_ | Optional scheduler-initiated gate override: `true` enables it, `false` disables it, and unset follows the agent's `autonomy.script` surface |
 
-<Tip>Agents can create their own cron jobs using the scheduling tools. You set the limits (how many jobs, how many run at once); they decide what to schedule and when.</Tip>
+<Tip>Agents can create their own cron jobs using the scheduling tools. You set the authored-job cap and the number of due occurrences admitted per tick; they decide what to schedule and when.</Tip>
 
 ### Heartbeat Monitoring
 
@@ -69,15 +75,32 @@ During a conversation, your agent might notice follow-up work — "I should chec
 # config.yaml
 scheduler:
   tasks:
-    enabled: true               # On by default — the agent proactively follows up
-    confidenceThreshold: 0.8    # Minimum confidence (0-1) to schedule a task
+    enabled: false                      # Explicit opt-in for model-inferred follow-ups
+    confidenceThreshold: 0.8            # Minimum extraction confidence (0-1)
+    debounceMs: 15000                   # Per-agent batching delay
+    batchMax: 8                         # Maximum delivered turns per batch
+    maxPerCheck: 3                      # Maximum exact-origin tasks checked at once
+    maxPerDayPerConversation: 3         # Rolling visible-send cap per conversation
+    defaultWindowMs: 43200000           # Default due-time slack (12 hours)
+    preAcceptanceRetryLimit: 3          # Retries after the initial pre-acceptance attempt
 ```
 
-<Info>Task extraction is **on by default** — the agent is fully capable out of the box and proactively schedules follow-ups it notices in conversation (only above `confidenceThreshold`). Set `enabled: false` to opt out if you prefer the agent never self-schedules.</Info>
+| Setting | Default | What It Does |
+|---------|---------|--------------|
+| `enabled` | `false` | Explicit opt-in for model-inferred follow-up tasks from delivered conversations |
+| `confidenceThreshold` | `0.8` | Minimum extraction confidence from `0` to `1` |
+| `debounceMs` | `15000` | Per-agent delay used to form a bounded extraction batch |
+| `batchMax` | `8` | Maximum delivered turns in one extraction batch |
+| `maxPerCheck` | `3` | Maximum exact-origin tasks considered in one proactive check |
+| `maxPerDayPerConversation` | `3` | Rolling visible-send cap for one conversation |
+| `defaultWindowMs` | `43200000` | Default slack after the minimum due instant (12 hours) |
+| `preAcceptanceRetryLimit` | `3` | Additional pre-acceptance attempts allowed after the initial attempt |
+
+<Info>Task extraction requires explicit opt-in with `scheduler.tasks.enabled: true`. Extracted work remains subject to the confidence, batch, retry, and per-conversation delivery limits above.</Info>
 
 ## Quiet Hours
 
-Quiet hours prevent non-critical scheduled tasks from running during specified times — for example, overnight when you do not want notifications.
+Quiet hours control scheduled delivery and task-lane admission during specified times — for example, overnight when you do not want notifications. They do not stop the cron engine or agent heartbeat execution.
 
 ```yaml
 # config.yaml
@@ -86,13 +109,21 @@ scheduler:
     enabled: false
     start: "22:00"
     end: "07:00"
-    timezone: ""           # Empty = system local timezone
-    criticalBypass: true   # Critical tasks ignore quiet hours
+    timezone: "UTC"        # Explicit IANA timezone
+    criticalBypass: true   # Critical heartbeat delivery may bypass quiet hours
 ```
 
-When quiet hours are active, cron jobs and heartbeat alerts are suppressed. They resume when the quiet window ends.
+| Setting | Default | What It Does |
+|---------|---------|--------------|
+| `enabled` | `false` | Whether quiet hours are active |
+| `start` | `"22:00"` | Quiet window start in `HH:MM` format |
+| `end` | `"07:00"` | Quiet window end in `HH:MM` format |
+| `timezone` | `"UTC"` | Explicit IANA timezone used to evaluate the window |
+| `criticalBypass` | `true` | Whether critical heartbeat output can bypass quiet-hour delivery suppression |
 
-<Tip>Critical tasks (like security alerts) bypass quiet hours by default. Set `criticalBypass: false` only if you want complete silence during quiet hours.</Tip>
+When quiet hours are active, cron and agent-heartbeat runs still execute. At the closed delivery boundary, routine and non-critical delivery is suppressed; critical heartbeat output may bypass that boundary when `criticalBypass` is `true`. Task-lane checks defer before the model runs until the configured quiet window ends, avoiding an unnecessary model call during the window.
+
+<Tip>`criticalBypass` applies to qualifying critical heartbeat delivery. It does not disable the quiet window or make task-lane checks run early.</Tip>
 
 ## Wake-Gate Efficiency
 
@@ -110,14 +141,24 @@ Scheduler-initiated gates are governed deployment-wide by the **`scheduler.cron.
 
 ## Safety
 
-The scheduler includes several safety mechanisms to prevent runaway tasks:
+Each scheduled occurrence crosses durable safety boundaries before and after runtime execution:
 
-- **Lock files** prevent the same cron job from running twice simultaneously
-- **`maxConcurrentRuns`** limits how many jobs can execute at the same time (default: 3)
-- **`staleMs`** detects stuck tasks that have been running too long (default: 2 minutes)
-- **`maxJobs`** caps the total number of scheduled jobs (default: 100)
+- A **durable claim** prevents a second owner from dispatching the same occurrence and gives startup reconciliation an authoritative recovery record.
+- A **start/terminal execution ledger** records the start before runtime dispatch and appends exactly one terminal outcome afterward.
+- **`maxRunsPerTick`** limits, per scheduler tick, how many due occurrences are admitted (default: `3`); admitted occurrences execute sequentially.
+- **`maxConsecutiveDependencyErrors`** counts only dependency-classified failures from recurring scheduled fires and suspends the job at the configured threshold. Internal failures and manual runs do not advance this breaker.
+- **`maxJobs`** is a positive cap on agent-authored jobs (default: `100`).
 
-If a task exceeds the stale timeout, the scheduler marks it as stuck and releases the lock so it can run again on the next cycle.
+The claim and immutable ledger are reconciled on startup. A started occurrence without terminal evidence is preserved conservatively rather than reported as successful or dispatched again blindly.
+
+## Execution Ledger
+
+The execution ledger stores complete start/terminal groups. Capacity is bounded by bytes and by the number of complete groups retained; the configured byte limit must also reserve enough room for the per-tick admission limit.
+
+| Setting | Default | What It Does |
+|---------|---------|--------------|
+| `maxLogBytes` | `2000000` | Maximum execution ledger size in bytes |
+| `retainedExecutions` | `1000` | Complete start/terminal execution groups retained when capacity permits |
 
 ## Full Configuration Reference
 
@@ -126,10 +167,12 @@ If a task exceeds the stale timeout, the scheduler marks it as stuck and release
 scheduler:
   cron:
     enabled: true
-    storeDir: "./data/scheduler"
-    maxConcurrentRuns: 3
-    defaultTimezone: ""
+    maxRunsPerTick: 3
+    defaultTimezone: "UTC"
     maxJobs: 100
+    maxConsecutiveDependencyErrors: 5
+    staggerWindowMs: 0
+    # wakeGate: true  # Optional; unset follows the agent's autonomy.script surface
 
   heartbeat:
     enabled: true
@@ -144,13 +187,22 @@ scheduler:
     enabled: false
     start: "22:00"
     end: "07:00"
-    timezone: ""
+    timezone: "UTC"
     criticalBypass: true
+
+  execution:
+    maxLogBytes: 2000000
+    retainedExecutions: 1000
 
   tasks:
     enabled: false
     confidenceThreshold: 0.8
-    storeDir: "./data/scheduler/tasks"
+    debounceMs: 15000
+    batchMax: 8
+    maxPerCheck: 3
+    maxPerDayPerConversation: 3
+    defaultWindowMs: 43200000
+    preAcceptanceRetryLimit: 3
 ```
 
 ## Related Pages
