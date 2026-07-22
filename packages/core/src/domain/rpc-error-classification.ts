@@ -56,6 +56,7 @@ const TYPED_RPC_ERROR_BY_NAME: ReadonlyMap<string, TypedRpcErrorClassification> 
   ["SandboxDowngradeError", { errorKind: "precondition", hint: "Child sandbox posture is less confined than its spawner; align the child's skills sandbox config or set security.agentToAgent.sandboxNoDowngrade:false to allow", level: "warn" } as const],
   // Caller-side validation failures.
   ["ValidationError", { errorKind: "validation", hint: "Check parameter types and values against the schema", level: "warn" } as const],
+  ["ZodError", { errorKind: "validation", hint: "Check parameter types and values against the schema", level: "warn" } as const],
   ["RequiredToolsUnreachableError", { errorKind: "validation", hint: "Adjust required_tools and/or tool_groups per the per-tool hints in the error message", level: "warn" } as const],
   // Expected authorization refusal (wrong-trust control-plane call).
   ["AuthorizationError", { errorKind: "auth", hint: "Caller lacks admin trust for this control-plane method; use an admin-scoped token or the documented operator route (e.g. `comis explain` assembles obs reports offline)", level: "warn" } as const],
