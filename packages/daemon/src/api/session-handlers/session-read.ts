@@ -20,6 +20,7 @@ import {
   SessionStatusContract,
   SessionHistoryContract,
   SessionRunStatusContract,
+  partsToMessage,
   stripInternalFields,
   systemNowMs,
 } from "@comis/core";
@@ -72,6 +73,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
     },
 
     [SessionHistoryContract.method]: async (rawParams) => {
+      const startedAt = systemNowMs();
       // Bespoke pre-Zod: missing session_key triggers the standard Zod error.
       // The session-not-found error message preserves the user-friendly hint
       // including the list of available keys — that path runs AFTER the
@@ -115,6 +117,20 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       const projected = conversationScopeToSessionKey(data.conversationScope);
       if (!projected.ok) throw projected.error;
       const sessionKey = formatSessionKey(projected.value);
+      let sourceMessages = data.messages;
+      let messageSource: "session-store" | "lcd" = "session-store";
+      if (sourceMessages.length === 0 && deps.lcdStore) {
+        const lcdRows = deps.lcdStore.getMessages({
+          tenantId: authority.tenantId,
+          agentId: authority.agentId,
+          conversationRef: parsedRef.data,
+          sessionKey,
+        });
+        if (lcdRows.length > 0) {
+          sourceMessages = lcdRows.map(partsToMessage);
+          messageSource = "lcd";
+        }
+      }
       const agentId = data.conversationScope.agentId;
       const isSubAgent = data.metadata.parentSessionKey !== undefined;
       const partition = data.conversationScope.partition;
@@ -136,7 +152,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       // and arguments.action "attach"; their results contain the media ID.
       const attachMeta = new Map<string, { type: string; mimeType: string; fileName: string; caption: string }>();
       const attachMedia = new Map<string, string>(); // toolCallId → /media/... URL
-      for (const msg of data.messages) {
+      for (const msg of sourceMessages) {
         const m = msg as Record<string, unknown>;
         const role = m.role as string | undefined;
         if (role === "assistant" && Array.isArray(m.content)) {
@@ -196,7 +212,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       let inputTokens = 0;
       let outputTokens = 0;
       let hasApiUsage = false;
-      for (const msg of data.messages) {
+      for (const msg of sourceMessages) {
         const m = msg as Record<string, unknown>;
         const role = m.role as string | undefined;
 
@@ -269,7 +285,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
 
       // If no API usage data was found, estimate tokens from message content
       if (!hasApiUsage) {
-        for (const msg of data.messages) {
+        for (const msg of sourceMessages) {
           const m = msg as Record<string, unknown>;
           const role = m.role as string | undefined;
           const contentLen = typeof m.content === "string"
@@ -290,7 +306,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
         key: sessionKey,
         agentId,
         channelType,
-        messageCount: data.messages.length,
+        messageCount: sourceMessages.length,
         totalTokens,
         inputTokens,
         outputTokens,
@@ -312,6 +328,17 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
         limit,
         hasMore: offset + limit < messages.length,
       };
+      deps.logger.info({
+        step: "session-history-read",
+        tenantId: authority.tenantId,
+        agentId: authority.agentId,
+        conversationRef: parsedRef.data,
+        messageSource,
+        sourceMessageCount: sourceMessages.length,
+        visibleMessageCount: messages.length,
+        returnedMessageCount: paginated.length,
+        durationMs: Math.max(0, systemNowMs() - startedAt),
+      }, "Session history read complete");
       if (IS_DEV) SessionHistoryContract.response.parse(result);
       return result;
     },

@@ -32,6 +32,8 @@ import type { SessionHandlerDeps } from "./session-helpers.js";
 import { ok } from "@comis/shared";
 import {
   createConversationRef,
+  conversationScopeToSessionKey,
+  formatSessionKey,
   messageToParts,
   type ContextStoreScope,
   type ConversationScope,
@@ -63,6 +65,11 @@ const referenceFor = (agentId: string) => {
   const result = createConversationRef(scopeFor(agentId));
   if (!result.ok) throw result.error;
   return result.value;
+};
+const canonicalSessionKeyFor = (agentId: string) => {
+  const result = conversationScopeToSessionKey(scopeFor(agentId));
+  if (!result.ok) throw result.error;
+  return formatSessionKey(result.value);
 };
 
 function bindSessionReadHandlers(deps: SessionHandlerDeps): ReturnType<typeof bindSessionReadHandlersRaw> {
@@ -523,7 +530,7 @@ describe("session.history LCD transcript recovery", () => {
       tenantId: "test",
       agentId: "default",
       conversationRef,
-      sessionKey: SESSION_KEY,
+      sessionKey: canonicalSessionKeyFor("default"),
     });
     expect(result.messages).toEqual([
       {
