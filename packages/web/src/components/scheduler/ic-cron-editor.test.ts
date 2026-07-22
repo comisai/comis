@@ -346,6 +346,43 @@ describe("IcCronEditor", () => {
     expect(emptyMsg).toBeTruthy();
     expect(emptyMsg?.textContent).toBe("Enter a valid schedule");
   });
+
+  it("emits the strict authored cron contract without removed scheduler fields", async () => {
+    const el = document.createElement("ic-cron-editor") as IcCronEditor;
+    el.mode = "create";
+    el.agents = ["default"];
+    document.body.appendChild(el);
+    await (el as any).updateComplete;
+
+    (el as any)._name = "Strict report";
+    (el as any)._agentId = "default";
+    (el as any)._scheduleKind = "cron";
+    (el as any)._cronExpr = "0 9 * * *";
+    (el as any)._timezone = "UTC";
+    (el as any)._payloadKind = "agent_turn";
+    (el as any)._payloadText = "Generate the report";
+    (el as any)._sessionStrategy = "fresh";
+    (el as any)._continuationMode = "none";
+    await (el as any).updateComplete;
+
+    const saved = new Promise<Record<string, unknown>>((resolve) => {
+      el.addEventListener("save", (event) => {
+        resolve((event as CustomEvent<Record<string, unknown>>).detail);
+      }, { once: true });
+    });
+    (el.shadowRoot!.querySelector(".btn-save") as HTMLButtonElement).click();
+
+    await expect(saved).resolves.toEqual({
+      id: "",
+      name: "Strict report",
+      agentId: "default",
+      schedule: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
+      payload: { kind: "agent_turn", message: "Generate the report" },
+      paused: false,
+      sessionPolicy: { strategy: "fresh" },
+      continuationMode: "none",
+    });
+  });
 });
 
 describe("computeNextCronRuns", () => {
