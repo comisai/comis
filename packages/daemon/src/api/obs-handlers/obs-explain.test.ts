@@ -292,6 +292,85 @@ describe("bindObsExplainHandlers", () => {
     expect(r.likelyRootCause).toBeNull();
   });
 
+  it("cron root resolution drives the real nested session and trajectory layout", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-cron-root-"));
+    const sessionKey = "default:agent:default:scheduler-cron:scheduler:job-a:peer:scheduler-cron";
+    const executionId = "execution-cron-a";
+    const rootRunId = `root-cron-${executionId}`;
+    const logsDir = path.join(dataDir, "logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(logsDir, `session-index.${todayKey()}.jsonl`),
+      JSON.stringify({
+        traceSchema: "comis-session-index",
+        schemaVersion: 1,
+        event: "turn_completed",
+        traceId: executionId,
+        sessionId: sessionKey,
+      }) + "\n",
+      "utf-8",
+    );
+
+    const sessionDir = path.join(dataDir, "workspace", "sessions", "default", "scheduler");
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const sessionFile = path.join(sessionDir, "scheduler-cron~peer~scheduler-cron.jsonl");
+    const trajectoryFile = `${sessionFile}.trajectory.jsonl`;
+    fs.writeFileSync(sessionFile, "", "utf-8");
+    fs.writeFileSync(
+      trajectoryFile,
+      JSON.stringify({
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "execution.completed",
+        sessionId: sessionKey,
+        traceId: executionId,
+        data: { outcome: "success" },
+      }) + "\n",
+      "utf-8",
+    );
+    fs.writeFileSync(
+      `${sessionFile}.trajectory-path.json`,
+      JSON.stringify({
+        traceSchema: "comis-trajectory-pointer",
+        schemaVersion: 1,
+        sessionId: sessionKey,
+        runtimeFile: trajectoryFile,
+      }),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      sessionFile.replace(/\.jsonl$/u, "_session-metadata.json"),
+      JSON.stringify({
+        traceId: executionId,
+        runId: "run-cron-a",
+        sessionKey,
+        sessionEnd: {
+          type: "session_end",
+          endReason: "success",
+          durationMs: 50,
+          totalTokens: 10,
+          degraded: false,
+          costUsd: 0.001,
+          toolStats: {},
+          breakerTripCount: 0,
+          topErrorKinds: {},
+        },
+      }),
+      "utf-8",
+    );
+
+    const handlers = bindObsExplainHandlers(makeDeps({ dataDir }));
+    const report = (await handlers["obs.explain"]!({
+      rootRunId,
+      _trustLevel: "admin",
+    })) as IncidentReport;
+
+    expect(report.sessionKey).toBe(sessionKey);
+    expect(report.traceId).toBe(executionId);
+    expect(report.likelyRootCause?.code).not.toBe("session_not_found");
+    expect(report.coverage.trajectory).toEqual({ found: true, records: 1 });
+  });
+
   // ------------------------------------------------------------------------
   // An unresolvable traceId must be DISTINGUISHABLE from a clean, empty
   // session. Without the marker both yield the same empty report keyed on "".

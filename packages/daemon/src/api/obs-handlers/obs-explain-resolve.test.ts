@@ -203,6 +203,22 @@ describe("resolveRootRunToSession", () => {
     expect(resolved).toBe("default:u:c:42");
   });
 
+  it("resolves a cron root through its scheduler execution trace entry", async () => {
+    const dataDir = makeDataDirWithIndex([
+      JSON.stringify({
+        traceSchema: "comis-session-index",
+        schemaVersion: 1,
+        event: "turn_completed",
+        traceId: "execution-cron-a",
+        sessionId: "default:agent:default:scheduler-cron:scheduler:job-a:peer:scheduler-cron",
+      }),
+    ]);
+
+    const resolved = await resolveRootRunToSession(dataDir, "root-cron-execution-cron-a");
+
+    expect(resolved).toBe("default:agent:default:scheduler-cron:scheduler:job-a:peer:scheduler-cron");
+  });
+
   it("soft-fails to '' for an unknown rootRunId — NEVER fabricates a sessionKey", async () => {
     const dataDir = makeDataDirWithIndex([
       JSON.stringify({
