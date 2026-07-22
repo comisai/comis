@@ -53,7 +53,7 @@ describe("stripInternalFields()", () => {
   });
 
   it("exposes every dispatcher-injected internal field name in sorted order", () => {
-    expect(INTERNAL_FIELD_NAMES).toHaveLength(24);
+    expect(INTERNAL_FIELD_NAMES).toHaveLength(25);
     const sorted = [...INTERNAL_FIELD_NAMES].sort();
     expect([...INTERNAL_FIELD_NAMES]).toEqual(sorted);
   });
@@ -97,12 +97,12 @@ describe("stripInternalFields()", () => {
     expect(result._autonomyMode).toBeUndefined();
   });
 
-  it("places `_autonomyMode` immediately after `_agentId` (the canonical sort order)", () => {
+  it("keeps abort signal agent identity and autonomy mode in canonical sort order", () => {
     // The array is maintained in JS `.sort()`/localeCompare alphabetical order
     // (asserted by the sorted-order test above). "_agentId" < "_autonomyMode"
-    // (2nd char 'g' < 'u'), so `_autonomyMode` is index 1, right after `_agentId`.
-    // Catches an accidental mis-insertion of the new entry.
-    expect(INTERNAL_FIELD_NAMES[0]).toBe("_agentId");
-    expect(INTERNAL_FIELD_NAMES[1]).toBe("_autonomyMode");
+    // `_abortSignal` sorts first, followed by `_agentId` and `_autonomyMode`.
+    expect(INTERNAL_FIELD_NAMES[0]).toBe("_abortSignal");
+    expect(INTERNAL_FIELD_NAMES[1]).toBe("_agentId");
+    expect(INTERNAL_FIELD_NAMES[2]).toBe("_autonomyMode");
   });
 });

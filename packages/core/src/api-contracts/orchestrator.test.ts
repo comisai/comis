@@ -6,15 +6,15 @@
  *   - Aggregator sanity: count + method-name presence + scope assignments.
  *   - INTERNAL_FIELD_NAMES paired sanity (no contract request schema declares
  *     a dispatcher-injected `_X` key).
- *   - Single-scope invariant — every contract has `scopes.length === 1`. The
- *     `c.scopes[0]` collapse loop in handler wiring depends on this.
+ *   - Route-scope invariant — only owner-scoped subagent lifecycle contracts
+ *     expose both agent RPC and operator admin routes.
  *   - Per-contract spot-checks: request acceptance + rejection, response
- *     acceptance + rejection on representative shapes (cron.add gets extra
- *     emphasis because its handler normalizes multiple accepted wire shapes).
+ *     acceptance + rejection on representative strict wire shapes.
  *
  * @module
  */
 import { describe, it, expect } from "vitest";
+import { createConversationRef } from "../domain/conversation-scope.js";
 import {
   // cron-handlers.ts (8)
   CronAddContract,
@@ -24,7 +24,12 @@ import {
   CronStatusContract,
   CronRunsContract,
   CronRunContract,
+  CronResetContract,
   SchedulerWakeContract,
+  // task-handlers.ts (3)
+  TasksStatusContract,
+  TasksListContract,
+  TasksCancelContract,
   // graph-handlers.ts (12)
   GraphDefineContract,
   GraphExecuteContract,
@@ -43,10 +48,14 @@ import {
   HeartbeatGetContract,
   HeartbeatUpdateContract,
   HeartbeatTriggerContract,
-  // subagent-handlers.ts (3)
+  // subagent-handlers.ts (7)
   SubagentListContract,
+  SubagentWaitContract,
   SubagentKillContract,
   SubagentSteerContract,
+  SubagentPauseContract,
+  SubagentResumeContract,
+  SubagentStatusContract,
   // autonomy-handlers.ts (3) — admin-scoped autonomy live-control contracts
   LeaseRevokeContract,
   RunKillContract,
@@ -62,8 +71,8 @@ import {
 // ===========================================================================
 
 describe("orchestrator-umbrella domain contracts", () => {
-  it("ORCHESTRATOR_CONTRACTS has exactly 31 entries (8 cron + 12 graph + 4 heartbeat + 3 subagent + 3 autonomy + 1 replay)", () => {
-    expect(ORCHESTRATOR_CONTRACTS.length).toBe(31);
+  it("ORCHESTRATOR_CONTRACTS has exactly 40 entries", () => {
+    expect(ORCHESTRATOR_CONTRACTS.length).toBe(40);
   });
 
   it("method names match the 4 handler-factory PropertyAssignment keys", () => {
@@ -78,7 +87,13 @@ describe("orchestrator-umbrella domain contracts", () => {
         "cron.status",
         "cron.runs",
         "cron.run",
+        "cron.reset",
         "scheduler.wake",
+        // task-handlers.ts (4)
+        "tasks.status",
+        "tasks.list",
+        "tasks.cancel",
+        "tasks.reset",
         // graph-handlers.ts (12)
         "graph.define",
         "graph.execute",
@@ -97,10 +112,14 @@ describe("orchestrator-umbrella domain contracts", () => {
         "heartbeat.get",
         "heartbeat.update",
         "heartbeat.trigger",
-        // subagent-handlers.ts (3)
+        // subagent-handlers.ts (7)
         "subagent.list",
+        "subagent.wait",
         "subagent.kill",
         "subagent.steer",
+        "subagent.pause",
+        "subagent.resume",
+        "subagent.status",
         // autonomy-handlers.ts (3)
         "lease.revoke",
         "run.kill",
@@ -112,12 +131,20 @@ describe("orchestrator-umbrella domain contracts", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Single-scope invariant
+  // Route-scope invariant
   // -------------------------------------------------------------------------
 
-  it("every contract has scopes.length === 1 (handler-wiring collapse loop dependency)", () => {
+  it("only owner-scoped subagent lifecycle methods expose both agent and admin routes", () => {
+    const dualScopeMethods = new Set([
+      "subagent.list",
+      "subagent.wait",
+      "subagent.kill",
+      "subagent.steer",
+    ]);
     for (const c of ORCHESTRATOR_CONTRACTS) {
-      expect(c.scopes.length, `${c.method} must have exactly one scope (multi-scope breaks handler wiring)`).toBe(1);
+      expect(c.scopes, `${c.method} route scopes`).toEqual(
+        dualScopeMethods.has(c.method) ? ["rpc", "admin"] : [c.scopes[0]],
+      );
     }
   });
 
@@ -149,6 +176,7 @@ describe("orchestrator-umbrella domain contracts", () => {
       GraphDeleteRunContract,
     ];
     for (const c of cronAndGraph) expect(c.scopes, `${c.method} scopes`).toEqual(["rpc"]);
+    expect(CronResetContract.scopes).toEqual(["admin"]);
   });
 
   it("heartbeat-handlers: all 4 admin-scoped per setup-gateway-api.ts:327-329", () => {
@@ -161,13 +189,23 @@ describe("orchestrator-umbrella domain contracts", () => {
     for (const c of heartbeats) expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
   });
 
-  it("subagent-handlers: all 3 admin-scoped per setup-gateway-api.ts:207-209", () => {
+  it("follow-up task operator contracts stay admin-only", () => {
+    for (const contract of [TasksStatusContract, TasksListContract, TasksCancelContract]) {
+      expect(contract.scopes).toEqual(["admin"]);
+    }
+  });
+
+  it("owner-scoped subagent methods expose dual routes while the global gate stays admin-only", () => {
     const subagents = [
       SubagentListContract,
+      SubagentWaitContract,
       SubagentKillContract,
       SubagentSteerContract,
     ];
-    for (const c of subagents) expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
+    for (const c of subagents) expect(c.scopes, `${c.method} scopes`).toEqual(["rpc", "admin"]);
+    for (const c of [SubagentPauseContract, SubagentResumeContract, SubagentStatusContract]) {
+      expect(c.scopes, `${c.method} scopes`).toEqual(["admin"]);
+    }
   });
 
   it("autonomy-handlers: all 3 admin-scoped (→ ADMIN_METHODS → deny-by-origin)", () => {
@@ -249,21 +287,42 @@ describe("orchestrator-umbrella domain contracts", () => {
 });
 
 // ===========================================================================
-// cron.add (extra emphasis — the handler normalizes multiple wire shapes)
+// cron.add
 // ===========================================================================
 
-describe("CronAddContract (handler-normalized wire shapes)", () => {
+function cronDeliveryTarget() {
+  const destinationEndpoint = {
+    channelType: "telegram",
+    channelInstanceId: "bot-a",
+    conversationId: "chat-a",
+    threadId: "thread-a",
+    conversationKind: "direct" as const,
+  };
+  const conversationScope = {
+    tenantId: "tenant-a",
+    agentId: "agent-a",
+    partition: { kind: "endpoint-conversation" as const, endpoint: destinationEndpoint },
+  };
+  const conversationRef = createConversationRef(conversationScope);
+  if (!conversationRef.ok) throw conversationRef.error;
+  return {
+    conversation: { conversationScope, conversationRef: conversationRef.value },
+    destinationEndpoint,
+  };
+}
+
+describe("CronAddContract strict authoring projection", () => {
   it("exposes the canonical method name", () => {
     expect(CronAddContract.method).toBe("cron.add");
   });
 
-  it("accepts the WEB on-wire shape (nested schedule + message)", () => {
+  it("accepts an every schedule with an agent-turn payload", () => {
     expect(() =>
       CronAddContract.request.parse({
         name: "test-job",
         agentId: "default",
         schedule: { kind: "every", everyMs: 60000 },
-        message: "hello",
+        payload: { kind: "agent_turn", message: "hello" },
       }),
     ).not.toThrow();
   });
@@ -273,7 +332,7 @@ describe("CronAddContract (handler-normalized wire shapes)", () => {
       CronAddContract.request.parse({
         name: "morning",
         schedule: { kind: "cron", expr: "0 9 * * *", tz: "America/Los_Angeles" },
-        message: "good morning",
+        payload: { kind: "agent_turn", message: "good morning" },
       }),
     ).not.toThrow();
   });
@@ -283,51 +342,51 @@ describe("CronAddContract (handler-normalized wire shapes)", () => {
       CronAddContract.request.parse({
         name: "once",
         schedule: { kind: "at", at: "2026-06-01T12:00:00Z" },
-        message: "happy june",
+        payload: { kind: "delivery", text: "happy june" },
+        deliveryTarget: cronDeliveryTarget(),
       }),
     ).not.toThrow();
   });
 
-  it("accepts the flat chat-tool shape (schedule_kind + schedule_every_ms + payload_*)", () => {
+  it("rejects the removed flattened scheduler payload shape", () => {
     expect(() =>
       CronAddContract.request.parse({
         name: "heartbeat-check",
         schedule_kind: "every",
         schedule_every_ms: 30000,
-        payload_kind: "system_event",
+        payload_kind: "delivery",
         payload_text: "check-health",
       }),
-    ).not.toThrow();
+    ).toThrow();
   });
 
   it("rejects request missing name", () => {
     expect(() =>
       CronAddContract.request.parse({
         schedule: { kind: "every", everyMs: 60000 },
-        message: "hello",
+        payload: { kind: "agent_turn", message: "hello" },
       }),
     ).toThrow();
   });
 
-  it("accepts response with all fields", () => {
+  it("accepts a resolved persisted schedule response", () => {
     expect(() =>
       CronAddContract.response.parse({
         jobId: "uuid-1",
         name: "test-job",
-        schedule: { kind: "every", everyMs: 60000 },
-        model: "claude-sonnet-4-5",
+        schedule: { kind: "every", everyMs: 60000, anchorMs: 1_800_000_000_000 },
       }),
     ).not.toThrow();
   });
 
-  it("accepts response without optional model", () => {
+  it("rejects an unresolved every schedule response", () => {
     expect(() =>
       CronAddContract.response.parse({
         jobId: "uuid-1",
         name: "test-job",
         schedule: { kind: "every", everyMs: 60000 },
       }),
-    ).not.toThrow();
+    ).toThrow();
   });
 });
 
@@ -344,12 +403,30 @@ describe("CronListContract", () => {
     expect(() => CronListContract.response.parse({ jobs: [] })).not.toThrow();
   });
 
-  it("accepts response with loose-record jobs", () => {
+  it("accepts strict authored and built-in job projections", () => {
     expect(() =>
       CronListContract.response.parse({
         jobs: [
-          { id: "j1", name: "first", schedule: { kind: "every", everyMs: 60000 } },
-          { id: "j2", name: "second", payload: { kind: "system_event", text: "x" } },
+          {
+            id: "j1",
+            name: "first",
+            agentId: "agent-a",
+            source: "authored",
+            schedule: { kind: "every", everyMs: 60000, anchorMs: 1_800_000_000_000 },
+            lifecycle: { status: "scheduled", nextRunAtMs: 1_800_000_060_000, consecutiveDependencyErrors: 0 },
+            payload: { kind: "agent_turn", message: "hello" },
+            sessionPolicy: { strategy: "fresh" },
+            continuationMode: "none",
+          },
+          {
+            id: "j2",
+            name: "second",
+            agentId: "agent-a",
+            source: "built_in",
+            schedule: { kind: "cron", expr: "0 4 * * *", tz: "UTC" },
+            lifecycle: { status: "paused", nextRunAtMs: 1_800_086_400_000, consecutiveDependencyErrors: 2, reason: "dependency_errors" },
+            payload: { kind: "internal_action", action: "reflection" },
+          },
         ],
       }),
     ).not.toThrow();
@@ -361,18 +438,18 @@ describe("CronListContract", () => {
 // ===========================================================================
 
 describe("CronUpdateContract", () => {
-  it("accepts request with jobId + enabled patch", () => {
+  it("accepts request with jobId and a paused mutation", () => {
     expect(() =>
-      CronUpdateContract.request.parse({ jobId: "j1", enabled: false }),
+      CronUpdateContract.request.parse({ jobId: "j1", paused: true }),
     ).not.toThrow();
   });
 
-  it("accepts request with jobName + schedule + message", () => {
+  it("accepts request with jobName, schedule, and payload", () => {
     expect(() =>
       CronUpdateContract.request.parse({
         jobName: "old",
         schedule: { kind: "every", everyMs: 120000 },
-        message: "updated",
+        payload: { kind: "agent_turn", message: "updated" },
       }),
     ).not.toThrow();
   });
@@ -387,7 +464,7 @@ describe("CronUpdateContract", () => {
     expect(() =>
       CronUpdateContract.request.parse({
         jobId: "j1",
-        deliveryTarget: { channelId: "c", userId: "u", tenantId: "t" },
+        deliveryTarget: cronDeliveryTarget(),
       }),
     ).not.toThrow();
   });
@@ -426,13 +503,37 @@ describe("CronRemoveContract", () => {
 describe("CronStatusContract", () => {
   it("response: running + jobCount", () => {
     expect(() =>
-      CronStatusContract.response.parse({ running: true, jobCount: 3 }),
+      CronStatusContract.response.parse({
+        state: "active",
+        configuredEnabled: true,
+        running: true,
+        strictAuthoritiesValid: true,
+        ownershipReconciled: true,
+        jobCount: 3,
+        activeClaimCount: 0,
+        resolvedAgentId: "agent-a",
+        store: { exists: true, bytes: 10, digest: "a".repeat(64) },
+        ledger: { exists: true, bytes: 20, digest: "b".repeat(64) },
+        intent: { status: "none" },
+      }),
     ).not.toThrow();
   });
 
   it("response rejects non-numeric jobCount", () => {
     expect(() =>
-      CronStatusContract.response.parse({ running: true, jobCount: "x" as unknown as number }),
+      CronStatusContract.response.parse({
+        state: "active",
+        configuredEnabled: true,
+        running: true,
+        strictAuthoritiesValid: true,
+        ownershipReconciled: true,
+        jobCount: "x" as unknown as number,
+        activeClaimCount: 0,
+        resolvedAgentId: "agent-a",
+        store: { exists: true, bytes: 10, digest: "a".repeat(64) },
+        ledger: { exists: true, bytes: 20, digest: "b".repeat(64) },
+        intent: { status: "none" },
+      }),
     ).toThrow();
   });
 });
@@ -466,7 +567,13 @@ describe("CronRunContract", () => {
 
   it("response: triggered + mode + optional jobName", () => {
     expect(() =>
-      CronRunContract.response.parse({ triggered: true, mode: "force", jobName: "x" }),
+      CronRunContract.response.parse({
+        triggered: true,
+        mode: "force",
+        jobName: "x",
+        resolvedAgentId: "agent-a",
+        executionId: "execution-a",
+      }),
     ).not.toThrow();
   });
 });
@@ -477,19 +584,25 @@ describe("SchedulerWakeContract (registration-plane-agnostic)", () => {
     expect(SchedulerWakeContract.scopes).toEqual(["rpc"]);
   });
 
-  it("accepts empty request", () => {
-    expect(() => SchedulerWakeContract.request.parse({})).not.toThrow();
+  it("accepts an exact agent target kind", () => {
+    expect(() => SchedulerWakeContract.request.parse({ target: "agent" })).not.toThrow();
   });
 
-  it("accepts request with source", () => {
+  it("accepts the monitoring target kind", () => {
     expect(() =>
-      SchedulerWakeContract.request.parse({ source: "scheduler" }),
+      SchedulerWakeContract.request.parse({ target: "monitoring" }),
     ).not.toThrow();
   });
 
-  it("response carries woke + source", () => {
+  it("response carries the coordinator admission identity", () => {
     expect(() =>
-      SchedulerWakeContract.response.parse({ woke: true, source: "agent" }),
+      SchedulerWakeContract.response.parse({
+        status: "accepted",
+        disposition: "new_occurrence",
+        correlationId: "wake-1",
+        lane: "normal",
+        retainedReason: "wake",
+      }),
     ).not.toThrow();
   });
 });
@@ -778,34 +891,22 @@ describe("HeartbeatStatesContract", () => {
             agentId: "default",
             enabled: true,
             intervalMs: 60000,
-            lastRunMs: 1000,
-            nextDueMs: 61000,
-            consecutiveErrors: 0,
-            backoffUntilMs: 0,
-            tickStartedAtMs: 0,
-            lastAlertMs: 0,
-            lastErrorKind: null,
+            nextDueAtMs: 61000,
           },
         ],
       }),
     ).not.toThrow();
   });
 
-  it("response: lastErrorKind = transient|permanent|null", () => {
+  it("accepts a disabled agent with no armed periodic phase", () => {
     expect(() =>
       HeartbeatStatesContract.response.parse({
         agents: [
           {
             agentId: "x",
-            enabled: true,
+            enabled: false,
             intervalMs: 1,
-            lastRunMs: 0,
-            nextDueMs: 0,
-            consecutiveErrors: 0,
-            backoffUntilMs: 0,
-            tickStartedAtMs: 0,
-            lastAlertMs: 0,
-            lastErrorKind: "transient",
+            nextDueAtMs: null,
           },
         ],
       }),
@@ -841,16 +942,37 @@ describe("HeartbeatUpdateContract", () => {
     ).not.toThrow();
   });
 
-  it("accepts request with target sub-fields", () => {
+  it("accepts a complete exact delivery endpoint", () => {
+    expect(() =>
+      HeartbeatUpdateContract.request.parse({
+        agentId: "default",
+        target: {
+          channelType: "telegram",
+          channelInstanceId: "bot-main",
+          conversationId: "chat-1",
+          threadId: "thread-1",
+          conversationKind: "shared",
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects legacy flattened and incomplete delivery targets", () => {
     expect(() =>
       HeartbeatUpdateContract.request.parse({
         agentId: "default",
         targetChannelType: "telegram",
-        targetChannelId: "c-1",
+        targetChannelId: "bot-main",
         targetChatId: "chat-1",
         targetIsDm: false,
       }),
-    ).not.toThrow();
+    ).toThrow();
+    expect(() =>
+      HeartbeatUpdateContract.request.parse({
+        agentId: "default",
+        target: { channelType: "telegram", conversationId: "chat-1" },
+      }),
+    ).toThrow();
   });
 
   it("response: agentId + config + updated", () => {
@@ -859,6 +981,7 @@ describe("HeartbeatUpdateContract", () => {
         agentId: "default",
         config: { enabled: true, intervalMs: 60000 },
         updated: true,
+        nextDueAtMs: 61000,
       }),
     ).not.toThrow();
   });
@@ -875,7 +998,13 @@ describe("HeartbeatTriggerContract", () => {
     expect(() =>
       HeartbeatTriggerContract.response.parse({
         agentId: "default",
-        triggered: true,
+        admission: {
+          status: "accepted",
+          disposition: "new_occurrence",
+          correlationId: "heartbeat-1",
+          lane: "normal",
+          retainedReason: "manual",
+        },
       }),
     ).not.toThrow();
   });

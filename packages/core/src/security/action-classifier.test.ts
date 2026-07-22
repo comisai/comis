@@ -72,6 +72,7 @@ describe("classifyAction", () => {
       "session.list",
       "session.history",
       "session.status",
+      "subagent.wait",
       "message.fetch",
       "agents.list",
       "gateway.status",

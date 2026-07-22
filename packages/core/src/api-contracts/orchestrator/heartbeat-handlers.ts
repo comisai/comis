@@ -11,6 +11,7 @@
  * @module
  */
 import { z } from "zod";
+import { ChannelEndpointSchema } from "../../domain/conversation-scope.js";
 import { defineContract } from "../types.js";
 
 // ===========================================================================
@@ -40,14 +41,8 @@ export const HeartbeatStatesContract = defineContract({
       agentId: z.string(),
       enabled: z.boolean(),
       intervalMs: z.number(),
-      lastRunMs: z.number(),
-      nextDueMs: z.number(),
-      consecutiveErrors: z.number(),
-      backoffUntilMs: z.number(),
-      tickStartedAtMs: z.number(),
-      lastAlertMs: z.number(),
-      lastErrorKind: z.nullable(z.enum(["transient", "permanent"])),
-    })),
+      nextDueAtMs: z.number().int().nonnegative().safe().nullable(),
+    }).strict()),
   }),
   scopes: ["admin"] as const,
 });
@@ -100,47 +95,38 @@ export const HeartbeatGetContract = defineContract({
  *   - Missing `agentId` → `"Missing required parameter: agentId"`.
  *   - Unknown agentId → `"Agent not found: <id>"`.
  *
- * Request: `{ agentId?, ...patchFields }`. Patch fields include `enabled`,
- *   `intervalMs`, `showOk`, `showAlerts`, `prompt`, `model`, `session`,
- *   `allowDm`, `lightContext`, `ackMaxChars`, `responsePrefix`,
- *   `skipHeartbeatOnlyDelivery`, `alertThreshold`, `alertCooldownMs`,
- *   `staleMs`, plus optional `targetChannelType`/`targetChannelId`/
- *   `targetChatId`/`targetIsDm` (build target sub-object). The merged config
- *   is validated via `PerAgentHeartbeatConfigSchema.parse(merged)` in the
- *   handler.
+ * Request: `{ agentId?, ...patchFields }`. A delivery-target change supplies
+ *   one complete exact `ChannelEndpoint`; partial and flattened targets are
+ *   rejected. The merged config is validated via
+ *   `PerAgentHeartbeatConfigSchema.parse(merged)` in the handler.
  *
  * Response: `{ agentId, config, updated }`. `config` is the loose-record
  *   full PerAgentHeartbeatConfig.
  */
 export const HeartbeatUpdateContract = defineContract({
   method: "heartbeat.update",
-  request: z.object({
+  request: z.strictObject({
     agentId: z.string().optional(),
     enabled: z.boolean().optional(),
     intervalMs: z.number().optional(),
     showOk: z.boolean().optional(),
     showAlerts: z.boolean().optional(),
+    target: ChannelEndpointSchema.optional(),
     prompt: z.string().optional(),
-    model: z.string().optional(),
-    session: z.string().optional(),
     allowDm: z.boolean().optional(),
     lightContext: z.boolean().optional(),
     ackMaxChars: z.number().optional(),
     responsePrefix: z.string().optional(),
-    skipHeartbeatOnlyDelivery: z.boolean().optional(),
     alertThreshold: z.number().optional(),
     alertCooldownMs: z.number().optional(),
     staleMs: z.number().optional(),
-    targetChannelType: z.string().optional(),
-    targetChannelId: z.string().optional(),
-    targetChatId: z.string().optional(),
-    targetIsDm: z.boolean().optional(),
   }),
   response: z.object({
     agentId: z.string(),
     config: z.record(z.string(), z.unknown()),
     updated: z.boolean(),
-  }),
+    nextDueAtMs: z.number().int().nonnegative().safe().nullable(),
+  }).strict(),
   scopes: ["admin"] as const,
 });
 
@@ -156,7 +142,7 @@ export const HeartbeatUpdateContract = defineContract({
  * Bespoke pre-Zod validation:
  *   - `_trustLevel !== "admin"` → `"Admin access required for heartbeat trigger"`.
  *   - Missing `agentId` → `"Missing required parameter: agentId"`.
- *   - `!deps.perAgentRunner` → `"Heartbeat runner not available"`.
+ *   - an unavailable coordinator rejects trigger and periodic reconfiguration.
  *
  * Request: `{ agentId? }` (handler reads `_agentId` from rawParams as a
  *   fallback).
@@ -169,8 +155,22 @@ export const HeartbeatTriggerContract = defineContract({
   }),
   response: z.object({
     agentId: z.string(),
-    triggered: z.boolean(),
-  }),
+    admission: z.discriminatedUnion("status", [
+      z.strictObject({
+        status: z.literal("accepted"),
+        disposition: z.enum(["new_occurrence", "occurrence_upgraded"]),
+        correlationId: z.string().min(1),
+        lane: z.enum(["normal", "task"]),
+        retainedReason: z.enum(["interval", "manual", "hook", "wake", "exec-event", "cron", "task"]),
+      }),
+      z.strictObject({
+        status: z.literal("coalesced"),
+        correlationId: z.string().min(1),
+        lane: z.enum(["normal", "task"]),
+        retainedReason: z.enum(["interval", "manual", "hook", "wake", "exec-event", "cron", "task"]),
+      }),
+    ]),
+  }).strict(),
   scopes: ["admin"] as const,
 });
 

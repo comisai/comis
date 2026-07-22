@@ -123,6 +123,7 @@ const ACTION_REGISTRY = new Map<string, ActionClassification>([
 
   // Subagent operations
   ["subagent.list", "read"],
+  ["subagent.wait", "read"],
   ["subagent.kill", "mutate"],
   ["subagent.steer", "mutate"],
 

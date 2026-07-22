@@ -7,15 +7,17 @@
  * is compared against a snapshot in `contract-codegen-drift.test.ts`.
  *
  * Family files (mirrors `packages/daemon/src/api/` factory file naming):
- *   - cron-handlers.ts        ( 8 methods — cron.* + scheduler.wake)
+ *   - cron-handlers.ts        ( 9 methods — cron.* + scheduler.wake)
  *   - graph-handlers.ts       (12 methods — graph.*)
  *   - heartbeat-handlers.ts   ( 4 methods — heartbeat.*)
- *   - subagent-handlers.ts    ( 3 methods — subagent.*)
+ *   - subagent-handlers.ts    ( 7 methods — subagent.*)
  *   - autonomy-handlers.ts    ( 3 methods — lease.revoke + run.kill +
  *                               autonomy.evict)
  *   - replay-handlers.ts      ( 1 method  — orchestrate.replay)
  *
- * Total: 31 contracts. The bidirectional 1:1 architecture test treats the
+ *   - task-handlers.ts        ( 4 methods — tasks.status/list/cancel/reset)
+ *
+ * Total: 40 contracts. The bidirectional 1:1 architecture test treats the
  * spread order as documentation only (unordered set).
  *
  * @module
@@ -26,15 +28,31 @@ import { HEARTBEAT_HANDLERS_CONTRACTS } from "./heartbeat-handlers.js";
 import { SUBAGENT_HANDLERS_CONTRACTS } from "./subagent-handlers.js";
 import { AUTONOMY_HANDLERS_CONTRACTS } from "./autonomy-handlers.js";
 import { REPLAY_HANDLERS_CONTRACTS } from "./replay-handlers.js";
+import { TASK_HANDLERS_CONTRACTS } from "./task-handlers.js";
 
 // Each contract must remain individually exported (per-domain *.test.ts files
 // import them by name); use `export *` to preserve the entire surface.
 export * from "./cron-handlers.js";
 export * from "./graph-handlers.js";
 export * from "./heartbeat-handlers.js";
-export * from "./subagent-handlers.js";
+export {
+  SubagentListContract,
+  SubagentWaitContract,
+  SubagentKillContract,
+  SubagentSteerContract,
+  SubagentPauseContract,
+  SubagentResumeContract,
+  SubagentStatusContract,
+  SUBAGENT_HANDLERS_CONTRACTS,
+} from "./subagent-handlers.js";
 export * from "./autonomy-handlers.js";
 export * from "./replay-handlers.js";
+export {
+  TasksStatusContract,
+  TasksListContract,
+  TasksCancelContract,
+  TasksResetContract,
+} from "./task-handlers.js";
 
 export const ORCHESTRATOR_CONTRACTS = [
   ...CRON_HANDLERS_CONTRACTS,
@@ -43,4 +61,5 @@ export const ORCHESTRATOR_CONTRACTS = [
   ...SUBAGENT_HANDLERS_CONTRACTS,
   ...AUTONOMY_HANDLERS_CONTRACTS,
   ...REPLAY_HANDLERS_CONTRACTS,
+  ...TASK_HANDLERS_CONTRACTS,
 ] as const;

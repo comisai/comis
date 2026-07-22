@@ -1,308 +1,386 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Cron-handlers contract slice.
- *
- * Mirrors `packages/daemon/src/api/cron-handlers.ts` (8 methods — cron.* +
- * scheduler.wake). The spread order in `CRON_HANDLERS_CONTRACTS` is
- * load-bearing for `contracts.generated.*` artifacts byte-identical output.
- *
- * @module
- */
+/** Strict cron and scheduler RPC contracts. */
 import { z } from "zod";
+import {
+  ChannelEndpointSchema,
+  ConversationLocatorSchema,
+} from "../../domain/conversation-scope.js";
 import { defineContract } from "../types.js";
 
-// ===========================================================================
-// --- cron-handlers.ts ---
-// ===========================================================================
+const IdentifierSchema = z.string().min(1).max(256);
+const EpochMsSchema = z.number().int().nonnegative().safe();
+const PositiveSafeIntegerSchema = z.number().int().positive().safe();
+const NonnegativeSafeIntegerSchema = z.number().int().nonnegative().safe();
+const Sha256DigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const ErrorKindSchema = z.enum([
+  "config",
+  "network",
+  "auth",
+  "validation",
+  "precondition",
+  "timeout",
+  "resource",
+  "dependency",
+  "internal",
+  "platform",
+]);
+const CronMaintenanceErrorCodeSchema = z.enum([
+  "invalid_input",
+  "invalid_path",
+  "confirmation_required",
+  "digest_mismatch",
+  "intent_present",
+  "intent_invalid",
+  "intent_ambiguous",
+  "archive_conflict",
+  "lock_contended",
+  "lock_failed",
+  "io",
+  "interrupted",
+  "initialization_failed",
+  "ownership_reconciliation_failed",
+  "built_in_reconciliation_failed",
+  "snapshot_failed",
+  "active_execution",
+  "unsafe_single_file",
+  "post_reset_initialization_failed",
+  "dependency_not_ready",
+  "activation_failed",
+]);
 
-// ---------------------------------------------------------------------------
-// cron.add
-// ---------------------------------------------------------------------------
+const CronAuthoringScheduleSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("cron"),
+    expr: z.string().min(1).max(1_024),
+    tz: z.string().min(1).max(128).optional(),
+  }),
+  z.strictObject({
+    kind: z.literal("every"),
+    everyMs: PositiveSafeIntegerSchema,
+    anchorMs: EpochMsSchema.optional(),
+  }),
+  z.strictObject({
+    kind: z.literal("at"),
+    at: z.string().min(1).max(128),
+    tz: z.string().min(1).max(128).optional(),
+    fold: z.enum(["earlier", "later"]).optional(),
+  }),
+  z.strictObject({ kind: z.literal("in"), seconds: PositiveSafeIntegerSchema }),
+]);
 
-/**
- * `cron.add` — Register a new scheduled cron job. Rpc-scoped per
- * setup-gateway-api.ts:130-157. Handler path: cron-handlers.ts:71-133.
- *
- * The contract describes the WEB on-wire shape (nested `schedule.{kind,expr,
- * tz,everyMs,at}` + `message`); the handler body accepts BOTH the web shape
- * (nested) AND the chat-tool shape (flat `schedule_kind` /
- * `schedule_every_ms` / etc.) — the chat-tool path sends the flat fields.
- *
- * Bespoke pre-Zod validation: duplicate job-name guard reads name on
- * rawParams.name BEFORE the schedule normalization (preserves the
- * "A job named X already exists" message-text contract).
- *
- * Request: `{ name, agentId?, schedule, message }` (web shape) — the
- * handler also accepts `{ name, schedule_kind, schedule_every_ms?,
- * schedule_expr?, timezone?, schedule_at?, payload_kind?, payload_text }`
- * (flat chat-tool shape). Loose-record on `schedule` (variant inner shape per
- * schedule.kind).
- *
- * Response: `{ jobId, name, schedule, model? }`. `schedule` is the normalized
- * CronSchedule shape (`{ kind: "every" | "cron" | "at", ... }`).
- */
+const CronPersistedScheduleProjectionSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("cron"), expr: z.string(), tz: z.string() }),
+  z.strictObject({ kind: z.literal("every"), everyMs: PositiveSafeIntegerSchema, anchorMs: EpochMsSchema }),
+  z.strictObject({ kind: z.literal("at"), atMs: EpochMsSchema }),
+]);
+
+const CronAuthorablePayloadSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("heartbeat_event"),
+    text: z.string().min(1),
+    wakeMode: z.enum(["now", "next-heartbeat"]),
+  }),
+  z.strictObject({ kind: z.literal("delivery"), text: z.string().min(1) }),
+  z.strictObject({
+    kind: z.literal("agent_turn"),
+    message: z.string().min(1),
+    model: z.string().min(1).optional(),
+    timeoutSeconds: PositiveSafeIntegerSchema.max(86_400).optional(),
+  }),
+]);
+
+const CronSessionPolicySchema = z.discriminatedUnion("strategy", [
+  z.strictObject({ strategy: z.literal("fresh") }),
+  z.strictObject({ strategy: z.literal("rolling"), maxHistoryTurns: PositiveSafeIntegerSchema.max(20) }),
+]);
+
+const CronWakeGateSchema = z.strictObject({
+  script: z.string().min(1),
+  language: z.enum(["js", "ts"]),
+  timeoutSeconds: PositiveSafeIntegerSchema.max(300),
+});
+
+const CronToolPolicySchema = z.strictObject({
+  profile: z.enum(["minimal", "coding", "messaging", "supervisor", "full"]),
+  allow: z.array(IdentifierSchema).max(256),
+  deny: z.array(IdentifierSchema).max(256),
+});
+
+const CronDeliveryTargetSchema = z.strictObject({
+  conversation: ConversationLocatorSchema,
+  destinationEndpoint: ChannelEndpointSchema,
+}).superRefine((value, ctx) => {
+  const partition = value.conversation.conversationScope.partition;
+  const endpoint = value.destinationEndpoint;
+  if (partition.kind === "channel-principal" && partition.channelType !== endpoint.channelType) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["destinationEndpoint", "channelType"],
+      message: "destination channel type must match the conversation partition",
+    });
+  }
+  if (
+    (partition.kind === "endpoint-conversation" || partition.kind === "endpoint-conversation-principal")
+    && !endpointsEqual(partition.endpoint, endpoint)
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["destinationEndpoint"],
+      message: "destination endpoint must match the conversation partition",
+    });
+  }
+});
+
+const CronAddRequestSchema = z.strictObject({
+  name: z.string().min(1).max(200),
+  agentId: IdentifierSchema.optional(),
+  schedule: CronAuthoringScheduleSchema,
+  payload: CronAuthorablePayloadSchema,
+  sessionPolicy: CronSessionPolicySchema.optional(),
+  continuationMode: z.enum(["none", "heartbeat_excerpt", "origin_history"]).optional(),
+  deliveryTarget: CronDeliveryTargetSchema.optional(),
+  wakeGate: CronWakeGateSchema.optional(),
+  cacheRetention: z.enum(["none", "short", "long"]).optional(),
+  toolPolicy: CronToolPolicySchema.optional(),
+  maxConsecutiveDependencyErrors: NonnegativeSafeIntegerSchema.optional(),
+});
+
 export const CronAddContract = defineContract({
   method: "cron.add",
-  request: z.object({
-    // Web on-wire shape (nested schedule + message + agentId at top level).
-    name: z.string(),
-    agentId: z.string().optional(),
-    schedule: z.record(z.string(), z.unknown()).optional(),
-    message: z.string().optional(),
-    // Optional pass-through fields (preserved by handler normalization).
-    sessionTarget: z.string().optional(),
-    deliveryTarget: z.record(z.string(), z.unknown()).optional(),
-    enabled: z.boolean().optional(),
-    // Flat chat-tool shape (the chat-tool path sends these top-level fields).
-    schedule_kind: z.string().optional(),
-    payload_kind: z.string().optional(),
-    payload_text: z.string().optional(),
-    schedule_expr: z.string().optional(),
-    timezone: z.string().optional(),
-    schedule_every_ms: z.number().optional(),
-    schedule_at: z.string().optional(),
-    /** Relative one-shot: seconds from now (schedule_kind="in"). Timezone-free — for "in N minutes/hours" reminders. */
-    schedule_in_seconds: z.number().optional(),
-    // Optional model + session strategy + wake mode (read directly by handler).
-    model: z.string().optional(),
-    session_target: z.string().optional(),
-    wake_mode: z.string().optional(),
-    forward_to_main: z.boolean().optional(),
-    session_strategy: z.string().optional(),
-    max_history_turns: z.number().optional(),
-    // Optional pre-run wake-gate authoring: the flat chat-tool fields plus the
-    // nested web shape. Kept loose here (the closed js|ts language enum and its
-    // defaults are enforced downstream at the store).
-    wake_gate_script: z.string().optional(),
-    wake_gate_language: z.string().optional(),
-    wakeGate: z.record(z.string(), z.unknown()).optional(),
-  }),
-  response: z.object({
-    jobId: z.string(),
-    name: z.string(),
-    schedule: z.record(z.string(), z.unknown()),
-    model: z.string().optional(),
+  request: CronAddRequestSchema,
+  response: z.strictObject({
+    jobId: IdentifierSchema,
+    name: z.string().min(1),
+    schedule: CronPersistedScheduleProjectionSchema,
   }),
   scopes: ["rpc"] as const,
 });
 
-// ---------------------------------------------------------------------------
-// cron.list
-// ---------------------------------------------------------------------------
+const CronLifecycleProjectionSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("scheduled"),
+    nextRunAtMs: EpochMsSchema,
+    consecutiveDependencyErrors: NonnegativeSafeIntegerSchema,
+  }),
+  z.strictObject({
+    status: z.literal("paused"),
+    nextRunAtMs: EpochMsSchema,
+    consecutiveDependencyErrors: NonnegativeSafeIntegerSchema,
+    reason: z.enum(["operator", "dependency_errors"]),
+  }),
+  z.strictObject({
+    status: z.literal("one_shot_claimed"),
+    executionId: IdentifierSchema,
+    scheduledForMs: EpochMsSchema,
+    claimedAtMs: EpochMsSchema,
+  }),
+  z.strictObject({
+    status: z.literal("one_shot_terminal"),
+    terminalExecutionId: IdentifierSchema,
+    terminalAtMs: EpochMsSchema,
+  }),
+]);
 
-/**
- * `cron.list` — List scheduled jobs for the calling agent. Rpc-scoped per
- * setup-gateway-api.ts:130-134. Handler path: cron-handlers.ts:135-155.
- *
- * Request: `{}` (handler reads `_agentId` from rawParams).
- * Response: `{ jobs: Job[] }`. Each Job carries `id`, `name`, `agentId`,
- * `enabled`, `schedule`, `payload`, `sessionTarget`, `nextRunAtMs?`,
- * `lastRunAtMs?`, `consecutiveErrors`, `createdAtMs`, optional
- * `deliveryTarget`. The Job entries are loose-records — the schedule +
- * payload + deliveryTarget inner shapes vary by job kind.
- */
+const CronJobProjectionSchema = z.strictObject({
+  id: IdentifierSchema,
+  name: z.string().min(1),
+  agentId: IdentifierSchema,
+  source: z.enum(["authored", "built_in"]),
+  schedule: CronPersistedScheduleProjectionSchema,
+  lifecycle: CronLifecycleProjectionSchema,
+  payload: z.record(z.string(), z.unknown()),
+  maxConsecutiveDependencyErrors: NonnegativeSafeIntegerSchema.optional(),
+  sessionPolicy: CronSessionPolicySchema.optional(),
+  continuationMode: z.enum(["none", "heartbeat_excerpt", "origin_history"]).optional(),
+  deliveryTarget: CronDeliveryTargetSchema.optional(),
+  wakeGate: CronWakeGateSchema.optional(),
+  cacheRetention: z.enum(["none", "short", "long"]).optional(),
+  toolPolicy: CronToolPolicySchema.optional(),
+});
+
 export const CronListContract = defineContract({
   method: "cron.list",
-  // Optional explicit `agentId` selects one agent's jobs; `agentId: "*"` returns
-  // EVERY agent's jobs (each tagged by `agentId`) — the admin inventory view;
-  // without it a non-default agent's crons are invisible. Absent → connection
-  // `_agentId` ?? default (unchanged per-connection scoping).
-  request: z.object({ agentId: z.string().optional() }),
-  response: z.object({
-    jobs: z.array(z.record(z.string(), z.unknown())),
-  }),
+  request: z.strictObject({ agentId: z.string().min(1).optional() }),
+  response: z.strictObject({ jobs: z.array(CronJobProjectionSchema) }),
   scopes: ["rpc"] as const,
 });
 
-// ---------------------------------------------------------------------------
-// cron.update
-// ---------------------------------------------------------------------------
-
-/**
- * `cron.update` — Update an existing job's fields. Rpc-scoped per
- * setup-gateway-api.ts:155-157. Handler path: cron-handlers.ts:157-193.
- *
- * Bespoke pre-Zod validation:
- *   - Missing job (by jobId or jobName) → `"Job not found: <id>"`.
- *   - Ambiguous jobName → `"Ambiguous job name <name>: N jobs share this name"`.
- *
- * Request: `{ jobId?, jobName?, enabled?, name?, sessionTarget?, schedule?,
- *   message?, deliveryTarget? | null }`. Either `jobId` (web UI path) OR
- *   `jobName` (chat-tool path) resolves the job. `schedule` is the nested
- *   `{ kind, expr?, tz?, everyMs?, at? }`. `deliveryTarget = null` clears the
- *   field (channel un-binding).
- *
- * Response: `{ jobName, updated }`.
- */
 export const CronUpdateContract = defineContract({
   method: "cron.update",
-  request: z.object({
-    jobId: z.string().optional(),
-    jobName: z.string().optional(),
-    enabled: z.boolean().optional(),
-    name: z.string().optional(),
-    sessionTarget: z.string().optional(),
-    schedule: z.record(z.string(), z.unknown()).optional(),
-    message: z.string().optional(),
-    deliveryTarget: z.nullable(z.record(z.string(), z.unknown())).optional(),
-    // Optional pre-run wake-gate authoring: the flat chat-tool fields plus the
-    // nested web shape. Kept loose here (the closed js|ts language enum and its
-    // defaults are enforced downstream at the store).
-    wake_gate_script: z.string().optional(),
-    wake_gate_language: z.string().optional(),
-    wakeGate: z.record(z.string(), z.unknown()).optional(),
+  request: z.strictObject({
+    jobId: IdentifierSchema.optional(),
+    jobName: z.string().min(1).optional(),
+    name: z.string().min(1).max(200).optional(),
+    schedule: CronAuthoringScheduleSchema.optional(),
+    payload: CronAuthorablePayloadSchema.optional(),
+    sessionPolicy: CronSessionPolicySchema.optional(),
+    continuationMode: z.enum(["none", "heartbeat_excerpt", "origin_history"]).optional(),
+    deliveryTarget: CronDeliveryTargetSchema.nullable().optional(),
+    wakeGate: CronWakeGateSchema.nullable().optional(),
+    cacheRetention: z.enum(["none", "short", "long"]).nullable().optional(),
+    toolPolicy: CronToolPolicySchema.nullable().optional(),
+    maxConsecutiveDependencyErrors: NonnegativeSafeIntegerSchema.nullable().optional(),
+    paused: z.boolean().optional(),
+  }).refine((value) => value.jobId !== undefined || value.jobName !== undefined, {
+    message: "jobId or jobName is required",
   }),
-  response: z.object({
-    jobName: z.string(),
-    updated: z.boolean(),
-  }),
+  response: z.strictObject({ jobName: z.string(), updated: z.boolean() }),
   scopes: ["rpc"] as const,
 });
 
-// ---------------------------------------------------------------------------
-// cron.remove
-// ---------------------------------------------------------------------------
-
-/**
- * `cron.remove` — Remove a job by name. Rpc-scoped per
- * setup-gateway-api.ts:155-157. Handler path: cron-handlers.ts:195-202.
- *
- * Bespoke pre-Zod validation:
- *   - Unknown jobName → `"Job not found: <name>"`.
- *   - Ambiguous jobName → `"Ambiguous job name <name>: N jobs share this name"`.
- *
- * Request: `{ jobName }`. Resolves by name only (no jobId fallback for remove).
- * Response: `{ jobName, removed }`.
- */
 export const CronRemoveContract = defineContract({
   method: "cron.remove",
-  request: z.object({
-    jobName: z.string(),
-  }),
-  response: z.object({
-    jobName: z.string(),
-    removed: z.boolean(),
-  }),
+  request: z.strictObject({ jobId: IdentifierSchema.optional(), jobName: z.string().min(1).optional() })
+    .refine((value) => value.jobId !== undefined || value.jobName !== undefined, {
+      message: "jobId or jobName is required",
+    }),
+  response: z.strictObject({ jobName: z.string(), removed: z.boolean() }),
   scopes: ["rpc"] as const,
 });
 
-// ---------------------------------------------------------------------------
-// cron.status
-// ---------------------------------------------------------------------------
-
-/**
- * `cron.status` — Report scheduler availability for the calling agent.
- * Rpc-scoped per setup-gateway-api.ts:155-157. Handler path:
- * cron-handlers.ts:204-211.
- *
- * Request: `{}` (handler reads `_agentId` from rawParams).
- * Response: `{ running, jobCount }`. `running: true` only when the scheduler
- * is registered for the resolved agentId.
- */
 export const CronStatusContract = defineContract({
   method: "cron.status",
-  request: z.object({ agentId: z.string().optional() }), // explicit per-agent targeting
-  response: z.object({
+  request: z.strictObject({ agentId: z.string().min(1).optional() }),
+  response: z.strictObject({
+    state: z.enum(["initializing", "disabled", "ready", "active", "maintenance", "failed"]),
+    configuredEnabled: z.boolean(),
     running: z.boolean(),
-    jobCount: z.number(),
-    resolvedAgentId: z.string().optional(), // the agent this status is for
+    strictAuthoritiesValid: z.boolean(),
+    ownershipReconciled: z.boolean(),
+    jobCount: NonnegativeSafeIntegerSchema,
+    activeClaimCount: NonnegativeSafeIntegerSchema,
+    resolvedAgentId: IdentifierSchema,
+    store: rawAuthoritySchema(),
+    ledger: rawAuthoritySchema(),
+    intent: z.discriminatedUnion("status", [
+      z.strictObject({ status: z.literal("none") }),
+      z.strictObject({
+        status: z.literal("pending"),
+        operationId: IdentifierSchema,
+        target: z.enum(["store", "ledger", "all"]),
+        phase: z.enum(["prepared", "archives_recorded", "replacements_recorded", "completion_recorded"]),
+        digest: Sha256DigestSchema,
+      }),
+      z.strictObject({ status: z.literal("invalid"), digest: Sha256DigestSchema }),
+    ]),
+    lastError: z.strictObject({
+      code: CronMaintenanceErrorCodeSchema,
+      errorKind: ErrorKindSchema,
+    }).optional(),
   }),
   scopes: ["rpc"] as const,
 });
 
-// ---------------------------------------------------------------------------
-// cron.runs
-// ---------------------------------------------------------------------------
+const CronResetRequestSchema = z.discriminatedUnion("target", [
+  z.strictObject({
+    target: z.literal("store"),
+    expectedDigests: z.strictObject({ store: Sha256DigestSchema.nullable() }),
+    confirmed: z.literal(true),
+    agentId: IdentifierSchema.optional(),
+  }),
+  z.strictObject({
+    target: z.literal("ledger"),
+    expectedDigests: z.strictObject({ ledger: Sha256DigestSchema.nullable() }),
+    confirmed: z.literal(true),
+    agentId: IdentifierSchema.optional(),
+  }),
+  z.strictObject({
+    target: z.literal("all"),
+    expectedDigests: z.strictObject({
+      store: Sha256DigestSchema.nullable(),
+      ledger: Sha256DigestSchema.nullable(),
+    }),
+    confirmed: z.literal(true),
+    agentId: IdentifierSchema.optional(),
+  }),
+]);
 
-/**
- * `cron.runs` — Return execution-history entries for a job. Rpc-scoped per
- * setup-gateway-api.ts:155-157. Handler path: cron-handlers.ts:213-222.
- *
- * Bespoke pre-Zod validation: missing/unknown jobName falls through to the
- * tracker check (empty runs returned).
- *
- * Request: `{ jobName, limit? }`. `limit` defaults to 20 in the handler.
- * Response: `{ runs: RunEntry[] }`. RunEntry is a loose-record (tracker
- * shape: `{ runId, jobId, startedAt, completedAt, status, ... }`).
- */
+const DigestPairSchema = z.strictObject({
+  store: Sha256DigestSchema.nullable(),
+  ledger: Sha256DigestSchema.nullable(),
+});
+
+export const CronResetContract = defineContract({
+  method: "cron.reset",
+  request: CronResetRequestSchema,
+  response: z.strictObject({
+    operationId: IdentifierSchema,
+    target: z.enum(["store", "ledger", "all"]),
+    resolvedAgentId: IdentifierSchema,
+    beforeDigests: DigestPairSchema,
+    afterDigests: DigestPairSchema,
+    state: z.enum(["disabled", "ready", "active"]),
+    reactivated: z.boolean(),
+  }),
+  scopes: ["admin"] as const,
+});
+
+const CronExecutionGroupProjectionSchema = z.strictObject({
+  executionId: IdentifierSchema,
+  jobId: IdentifierSchema,
+  agentId: IdentifierSchema,
+  scheduledForMs: EpochMsSchema,
+  trigger: z.enum(["scheduled", "catchup", "manual"]),
+  workKind: z.enum(["agent_turn", "heartbeat_event", "internal_action", "delivery_only"]),
+  rootRunId: z.string().nullable(),
+  startedAtMs: EpochMsSchema,
+  terminalAtMs: EpochMsSchema.optional(),
+  durationMs: NonnegativeSafeIntegerSchema.optional(),
+  status: z.enum(["started", "dispatched", "completed", "failed", "aborted", "skipped", "unknown"]),
+  deliveryStatus: z.enum(["not_requested", "suppressed", "pre_send_failed", "accepted", "partial", "rejected", "unknown"]),
+  errorKind: ErrorKindSchema.optional(),
+});
+
 export const CronRunsContract = defineContract({
   method: "cron.runs",
-  request: z.object({
-    jobName: z.string(),
-    limit: z.number().optional(),
-    agentId: z.string().optional(), // which agent's run-history to read
+  request: z.strictObject({
+    jobName: z.string().min(1),
+    limit: PositiveSafeIntegerSchema.max(10_000).optional(),
+    agentId: z.string().min(1).optional(),
   }),
-  response: z.object({
-    runs: z.array(z.record(z.string(), z.unknown())),
-  }),
+  response: z.strictObject({ runs: z.array(CronExecutionGroupProjectionSchema) }),
   scopes: ["rpc"] as const,
 });
 
-// ---------------------------------------------------------------------------
-// cron.run
-// ---------------------------------------------------------------------------
-
-/**
- * `cron.run` — Trigger a job (force) or run all due jobs. Rpc-scoped per
- * setup-gateway-api.ts:155-157. Handler path: cron-handlers.ts:224-239.
- *
- * Bespoke pre-Zod validation:
- *   - Force mode + unknown jobName → `"Job not found: <name>"`.
- *
- * Request: `{ jobName?, mode? }`. `mode` defaults to "force"; "due" runs all
- *   missed jobs (no jobName required for "due").
- * Response: `{ triggered, mode, jobName? }`.
- */
 export const CronRunContract = defineContract({
   method: "cron.run",
-  request: z.object({
-    jobName: z.string().optional(),
-    mode: z.string().optional(),
-    // Explicit per-agent targeting. When present it selects that agent's
-    // per-agent scheduler; absent, the handler falls back to the connection `_agentId`
-    // then the default — but the response ALWAYS states the resolved agent.
-    agentId: z.string().optional(),
+  request: z.strictObject({
+    jobName: z.string().min(1).optional(),
+    mode: z.enum(["force", "due"]).optional(),
+    agentId: z.string().min(1).optional(),
   }),
-  response: z.object({
+  response: z.strictObject({
     triggered: z.boolean(),
-    mode: z.string(),
+    mode: z.enum(["force", "due"]),
     jobName: z.string().optional(),
-    // The agent the trigger actually acted on (never a silent default).
-    resolvedAgentId: z.string().optional(),
+    resolvedAgentId: IdentifierSchema,
+    executionId: IdentifierSchema.optional(),
+    executionIds: z.array(IdentifierSchema).optional(),
   }),
   scopes: ["rpc"] as const,
 });
 
-// ---------------------------------------------------------------------------
-// scheduler.wake
-// ---------------------------------------------------------------------------
-
-/**
- * `scheduler.wake` — Request an immediate heartbeat tick (debounced via
- * wakeCoalescer). Registration-plane-agnostic — there is NO explicit
- * setup-gateway-api.ts entry for `scheduler.wake`; the dispatcher resolves it
- * intrinsically through the rpcDispatch map. Scope is implicit rpc (no admin
- * trust check in handler body). Handler path: cron-handlers.ts:241-245.
- *
- * Request: `{ source? }`. `source` defaults to "agent" if not provided.
- * Response: `{ woke, source }`.
- */
 export const SchedulerWakeContract = defineContract({
   method: "scheduler.wake",
-  request: z.object({
-    source: z.string().optional(),
-  }),
-  response: z.object({
-    woke: z.boolean(),
-    source: z.string(),
-  }),
+  request: z.strictObject({ target: z.enum(["agent", "monitoring"]) }),
+  response: z.discriminatedUnion("status", [
+    z.strictObject({
+      status: z.literal("accepted"),
+      disposition: z.enum(["new_occurrence", "occurrence_upgraded"]),
+      correlationId: IdentifierSchema,
+      lane: z.enum(["normal", "task"]),
+      retainedReason: z.enum(["interval", "manual", "hook", "wake", "exec-event", "cron", "task"]),
+    }),
+    z.strictObject({
+      status: z.literal("coalesced"),
+      correlationId: IdentifierSchema,
+      lane: z.enum(["normal", "task"]),
+      retainedReason: z.enum(["interval", "manual", "hook", "wake", "exec-event", "cron", "task"]),
+    }),
+  ]),
   scopes: ["rpc"] as const,
 });
 
-/**
- * cron-handlers slice (8 contracts — cron.* + scheduler.wake). Spread order
- * is determinism-critical for codegen output stability.
- */
 export const CRON_HANDLERS_CONTRACTS = [
   CronAddContract,
   CronListContract,
@@ -311,5 +389,29 @@ export const CRON_HANDLERS_CONTRACTS = [
   CronStatusContract,
   CronRunsContract,
   CronRunContract,
+  CronResetContract,
   SchedulerWakeContract,
 ] as const;
+
+function rawAuthoritySchema() {
+  return z.strictObject({
+    exists: z.boolean(),
+    bytes: NonnegativeSafeIntegerSchema,
+    digest: Sha256DigestSchema.nullable(),
+  }).superRefine((value, ctx) => {
+    if (value.exists !== (value.digest !== null) || (!value.exists && value.bytes !== 0)) {
+      ctx.addIssue({ code: "custom", message: "raw authority existence, bytes, and digest must agree" });
+    }
+  });
+}
+
+function endpointsEqual(
+  left: z.infer<typeof ChannelEndpointSchema>,
+  right: z.infer<typeof ChannelEndpointSchema>,
+): boolean {
+  return left.channelType === right.channelType
+    && left.channelInstanceId === right.channelInstanceId
+    && left.conversationId === right.conversationId
+    && left.threadId === right.threadId
+    && left.conversationKind === right.conversationKind;
+}

@@ -19,6 +19,7 @@
 
 /** Dispatcher-injected internal-field names (sorted alphabetically). */
 export const INTERNAL_FIELD_NAMES = [
+  "_abortSignal",
   "_agentId",
   // The trusted autonomy mode signal. Injected by createAgentRpcCall
   // on the in-process leg from resolveAutonomy(...).mode; listed here so
