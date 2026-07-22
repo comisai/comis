@@ -366,7 +366,7 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           // (getSessionStats, replay, sessions.inspect RPC) sees the
           // redacted form even on the error path. Sanitization runs while
           // we still hold the write lock.
-          sanitizeSessionSecrets(sessionPath);
+          sanitizeSessionSecrets(sessionPath, deps.logger);
         }
       }, {
         retries: 10,

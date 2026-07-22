@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Post-execution JSONL secret sanitizer.
+ * Post-execution JSONL secret and permission sanitizer.
  *
- * Scans a session JSONL file for tool call blocks that contain sensitive
- * parameters (e.g., env_value in gateway env_set) and rewrites the file
- * with those values replaced by "[REDACTED]".
+ * Restricts the transcript to owner-only access, scans it for tool call
+ * blocks that contain sensitive parameters (e.g., env_value in gateway
+ * env_set), and rewrites those values as "[REDACTED]".
  *
  * Called after execution completes while the session write lock is still
  * held, so no concurrent reads can observe the unsanitized data window.
@@ -20,8 +20,10 @@
  * @module
  */
 
-import { readFileSync } from "node:fs";
+import { chmodSync, lstatSync, readFileSync } from "node:fs";
+import type { ComisLogger } from "@comis/core";
 import { writeRegularFile } from "@comis/observability";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // API key pattern detection
@@ -243,7 +245,8 @@ function sanitizeLine(line: string): [string, boolean] {
 }
 
 /**
- * Scan a JSONL session file and redact sensitive tool parameters in place.
+ * Restrict a JSONL session file to owner-only access and redact sensitive
+ * tool parameters in place.
  *
  * This is an idempotent operation: running it multiple times on the same
  * file produces the same result (already-redacted values are not modified).
@@ -251,12 +254,35 @@ function sanitizeLine(line: string): [string, boolean] {
  * @param sessionPath - Absolute path to the JSONL session file
  * @returns Number of lines that were sanitized
  */
-export function sanitizeSessionSecrets(sessionPath: string): number {
+function enforceSessionFileMode(sessionPath: string): Result<void, Error> {
+  const statResult = tryCatch(() => lstatSync(sessionPath));
+  if (!statResult.ok) return statResult;
+  if (statResult.value.isSymbolicLink() || !statResult.value.isFile()) {
+    return err(new Error("Session transcript path is not a regular file"));
+  }
+  if ((statResult.value.mode & 0o777) === 0o600) return ok(undefined);
+  return tryCatch(() => chmodSync(sessionPath, 0o600));
+}
+
+export function sanitizeSessionSecrets(sessionPath: string, logger?: ComisLogger): number {
   let content: string;
   try {
     content = readFileSync(sessionPath, "utf-8");
   } catch {
     return 0; // File doesn't exist or can't be read
+  }
+
+  const modeResult = enforceSessionFileMode(sessionPath);
+  if (!modeResult.ok) {
+    logger?.warn(
+      {
+        err: modeResult.error,
+        hint: "Ensure the session transcript is a writable regular file owned by the daemon service user",
+        errorKind: "resource" as const,
+        submodule: "session-secret-sanitizer",
+      },
+      "Session transcript permission correction failed",
+    );
   }
 
   const lines = content.split("\n");

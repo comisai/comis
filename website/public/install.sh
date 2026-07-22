@@ -4823,6 +4823,9 @@ Type=exec
 ${user_line}
 ${group_line}
 WorkingDirectory=${COMIS_WORKING_DIR}
+# Files created by runtime components default to owner-only access. This also
+# protects artifacts written by third-party libraries that do not set a mode.
+UMask=0077
 
 # --permission: Node permission model. fs-write scoped to paths the daemon
 # actually writes to at runtime:
