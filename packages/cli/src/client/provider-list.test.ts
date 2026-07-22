@@ -3,7 +3,7 @@
  * Unit tests for the shared provider-list utility.
  *
  * Verifies:
- * - RPC success path returns provider IDs as the daemon returned them
+ * - RPC success path returns provider rows as the daemon returned them
  * - RPC failure path falls back to the local pi-ai catalog (deduped + sorted)
  * - Malformed RPC shapes (null, missing key, non-array) trigger fallback
  * - Catastrophic failure (RPC fails AND local catalog throws) returns []
@@ -19,6 +19,10 @@ vi.mock("./rpc-client.js", () => ({
   withClient: vi.fn(),
 }));
 
+vi.mock("@earendil-works/pi-ai/compat", () => ({
+  getEnvApiKey: vi.fn(),
+}));
+
 // Mock @comis/core for the local-fallback path. createModelCatalog lives in
 // @comis/core (not routed through @comis/agent).
 vi.mock("@comis/core", async (importOriginal) => {
@@ -31,12 +35,23 @@ vi.mock("@comis/core", async (importOriginal) => {
 
 const { withClient } = await import("./rpc-client.js");
 const { createModelCatalog } = await import("@comis/core");
+const { getEnvApiKey } = await import("@earendil-works/pi-ai/compat");
 const { loadProvidersWithFallback } = await import("./provider-list.js");
+
+function unknownRow(provider: string, modelCount: number) {
+  return {
+    provider,
+    modelCount,
+    status: "unknown",
+    credentialSource: "daemon_unavailable",
+  } as const;
+}
 
 describe("loadProvidersWithFallback", () => {
   beforeEach(() => {
     vi.mocked(withClient).mockReset();
     vi.mocked(createModelCatalog).mockReset();
+    vi.mocked(getEnvApiKey).mockReset();
   });
 
   it("returns authoritative daemon provider rows when RPC succeeds", async () => {
@@ -66,6 +81,15 @@ describe("loadProvidersWithFallback", () => {
     expect(createModelCatalog).not.toHaveBeenCalled();
   });
 
+  it("does not hide an explicit agent lookup failure behind local fallback", async () => {
+    vi.mocked(withClient).mockRejectedValue(new Error("Agent not found: absent"));
+
+    await expect(loadProvidersWithFallback("absent")).rejects.toThrow(
+      "Agent not found: absent",
+    );
+    expect(createModelCatalog).not.toHaveBeenCalled();
+  });
+
   it("falls back to local catalog when RPC rejects (daemon not running)", async () => {
     vi.mocked(withClient).mockRejectedValue(new Error("ECONNREFUSED"));
 
@@ -86,8 +110,10 @@ describe("loadProvidersWithFallback", () => {
 
     const result = await loadProvidersWithFallback();
 
-    // Deduped + sorted
-    expect(result).toEqual(["anthropic", "openai"]);
+    expect(result).toEqual([
+      unknownRow("anthropic", 1),
+      unknownRow("openai", 2),
+    ]);
     expect(loadStatic).toHaveBeenCalledOnce();
   });
 
@@ -106,7 +132,7 @@ describe("loadProvidersWithFallback", () => {
 
     const result = await loadProvidersWithFallback();
 
-    expect(result).toEqual(["anthropic"]);
+    expect(result).toEqual([unknownRow("anthropic", 1)]);
   });
 
   it("falls back to local catalog when RPC returns non-array providers field", async () => {
@@ -130,7 +156,10 @@ describe("loadProvidersWithFallback", () => {
 
     const result = await loadProvidersWithFallback();
 
-    expect(result).toEqual(["anthropic", "openai"]);
+    expect(result).toEqual([
+      unknownRow("anthropic", 1),
+      unknownRow("openai", 1),
+    ]);
   });
 
   it("falls back to local catalog when RPC succeeds but providers key is missing", async () => {
@@ -148,7 +177,7 @@ describe("loadProvidersWithFallback", () => {
 
     const result = await loadProvidersWithFallback();
 
-    expect(result).toEqual(["openai"]);
+    expect(result).toEqual([unknownRow("openai", 1)]);
   });
 
   it("returns [] when RPC fails AND local catalog throws", async () => {
@@ -214,7 +243,59 @@ describe("loadProvidersWithFallback", () => {
 
     const result = await loadProvidersWithFallback();
 
-    expect(result).toEqual(["anthropic", "openai"]);
+    expect(result).toEqual([
+      unknownRow("anthropic", 2),
+      unknownRow("openai", 3),
+    ]);
     expect(result).toHaveLength(2);
+  });
+
+  it("reports only ambient credential truth when the daemon is unavailable", async () => {
+    vi.mocked(withClient).mockRejectedValue(new Error("ECONNREFUSED"));
+    vi.mocked(getEnvApiKey).mockImplementation((provider: string) =>
+      provider === "anthropic" ? "test-key" : undefined,
+    );
+    vi.mocked(createModelCatalog).mockReturnValue({
+      loadStatic: vi.fn(),
+      getAll: vi.fn(() => [
+        { provider: "anthropic", modelId: "claude-sonnet" },
+        { provider: "openai", modelId: "gpt-4o" },
+      ]),
+      get: vi.fn(),
+      getByProvider: vi.fn(),
+      mergeScanned: vi.fn(),
+      getProviders: vi.fn(),
+    } as never);
+
+    await expect(loadProvidersWithFallback()).resolves.toEqual([
+      {
+        provider: "anthropic",
+        modelCount: 1,
+        status: "configured",
+        credentialSource: "env_canonical",
+      },
+      unknownRow("openai", 1),
+    ]);
+  });
+
+  it("keeps local keyless providers truthful without a daemon", async () => {
+    vi.mocked(withClient).mockRejectedValue(new Error("ECONNREFUSED"));
+    vi.mocked(createModelCatalog).mockReturnValue({
+      loadStatic: vi.fn(),
+      getAll: vi.fn(() => [{ provider: "ollama", modelId: "local-model" }]),
+      get: vi.fn(),
+      getByProvider: vi.fn(),
+      mergeScanned: vi.fn(),
+      getProviders: vi.fn(),
+    } as never);
+
+    await expect(loadProvidersWithFallback()).resolves.toEqual([
+      {
+        provider: "ollama",
+        modelCount: 1,
+        status: "keyless",
+        credentialSource: "keyless",
+      },
+    ]);
   });
 });

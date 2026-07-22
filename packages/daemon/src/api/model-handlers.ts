@@ -13,6 +13,7 @@
 import { AuthorizationError } from "./errors.js";
 import { getProviders } from "@earendil-works/pi-ai/compat";
 import {
+  KEYLESS_PROVIDER_TYPES,
   ModelsListContract,
   ModelsListProvidersContract,
   ModelsTestContract,
@@ -20,6 +21,7 @@ import {
   systemGetEnv,
 } from "@comis/core";
 import type { RpcHandler } from "./types.js";
+import { resolveProviderCredentialWithStore } from "./shared/credential-resolver.js";
 
 // ---------------------------------------------------------------------------
 // Dev-mode response parse helper
@@ -123,10 +125,45 @@ export function createModelHandlers(deps: ModelHandlerDeps): Record<string, RpcH
         throw new AuthorizationError("Admin access required");
       }
       const userParams = stripInternalFields(rawParams);
-      ModelsListProvidersContract.request.parse(userParams);
+      const params = ModelsListProvidersContract.request.parse(userParams);
+      const agentId = params.agentId ?? deps.defaultAgentId;
+      const agentConfig = Object.entries(deps.agents)
+        .find(([candidateId]) => candidateId === agentId)?.[1];
+      if (!agentConfig) {
+        throw new Error(`Agent not found: ${agentId}`);
+      }
 
-      const providers = [...new Set<string>(getProviders())].sort();
-      const result = { providers, count: providers.length };
+      const providerIds = [...new Set<string>(getProviders())].sort();
+      const providers = [];
+      for (const provider of providerIds) {
+        if (KEYLESS_PROVIDER_TYPES.has(provider)) {
+          providers.push({
+            provider,
+            modelCount: deps.modelCatalog.getByProvider(provider).length,
+            status: "keyless" as const,
+            credentialSource: "keyless" as const,
+          });
+          continue;
+        }
+
+        const credential = await resolveProviderCredentialWithStore(provider, {
+          providerEntries: deps.providerEntries,
+          secretManager: deps.secretManager,
+          modelsConfig: deps.modelsConfig,
+          oauthProfiles: agentConfig.oauthProfiles,
+        }, deps.oauthCredentialStore);
+        if (!credential.ok) {
+          throw credential.error;
+        }
+        providers.push({
+          provider,
+          modelCount: deps.modelCatalog.getByProvider(provider).length,
+          status: credential.value.ok ? "configured" as const : "not_configured" as const,
+          credentialSource: credential.value.source ?? "none" as const,
+        });
+      }
+
+      const result = { agentId, providers, count: providers.length };
       if (IS_DEV) ModelsListProvidersContract.response.parse(result);
       return result;
     },

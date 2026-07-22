@@ -31,6 +31,15 @@ vi.mock("../../client/provider-list.js", () => ({
 import { providerStep } from "./03-provider.js";
 import { loadProvidersWithFallback } from "../../client/provider-list.js";
 
+function providerRows(...providers: string[]) {
+  return providers.map((provider) => ({
+    provider,
+    modelCount: 1,
+    status: "unknown" as const,
+    credentialSource: "daemon_unavailable" as const,
+  }));
+}
+
 // ---------- Mock Prompter Factory ----------
 
 function createMockPrompter(
@@ -70,9 +79,7 @@ function createMockPrompter(
 describe("providerStep", () => {
   beforeEach(() => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue([
-      "anthropic",
-      "openai",
-      "openrouter",
+      ...providerRows("anthropic", "openai", "openrouter"),
     ]);
   });
 
@@ -170,10 +177,7 @@ describe("providerStep", () => {
 
   it("renders all catalog providers + synthetic Custom (last)", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue([
-      "anthropic",
-      "openai",
-      "ollama",
-      "groq",
+      ...providerRows("anthropic", "openai", "ollama", "groq"),
     ]);
 
     const prompter = createMockPrompter({ select: "anthropic" });
@@ -208,7 +212,7 @@ describe("providerStep", () => {
 
   it("unknown catalog provider renders with capitalize-fallback label", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue([
-      "vercel-ai-gateway",
+      ...providerRows("vercel-ai-gateway"),
     ]);
 
     const prompter = createMockPrompter({ select: "vercel-ai-gateway" });
@@ -224,7 +228,7 @@ describe("providerStep", () => {
   });
 
   it("renders Amazon Bedrock with its AWS authentication guidance", async () => {
-    vi.mocked(loadProvidersWithFallback).mockResolvedValue(["amazon-bedrock"]);
+    vi.mocked(loadProvidersWithFallback).mockResolvedValue(providerRows("amazon-bedrock"));
 
     const prompter = createMockPrompter({ select: "amazon-bedrock" });
     await providerStep.execute({ ...INITIAL_STATE }, prompter);

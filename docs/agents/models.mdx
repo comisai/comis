@@ -25,7 +25,7 @@ You can set a default model for all agents, override it per agent, and configure
 The catalog is dynamic. Two CLI commands surface it:
 
 ```bash
-# List all providers with model counts and key status
+# List all providers with model counts and agent-scoped credential status
 comis providers list
 
 # Browse the full model catalog
@@ -38,6 +38,12 @@ comis models list --provider openrouter
 comis providers list --format json
 comis models list --format json
 ```
+
+With a running daemon, `providers list` evaluates the same credential chain the
+runtime uses for the selected agent, including encrypted static secrets and
+OAuth profiles. Use `--agent <id>` to select a non-default agent. Without the
+daemon, the catalog still works, but credentials that are not visible in the
+CLI process are reported as `unknown`, never as missing.
 
 Each command tries the daemon's `models.list_providers` / `models.list` RPC first, and falls back to the local pi-ai static catalog when the daemon isn't running (so the wizard still works pre-init).
 

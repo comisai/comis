@@ -400,15 +400,34 @@ export const ModelsListContract = defineContract({
  * Bespoke pre-Zod validation:
  *   - `_trustLevel !== "admin"` → `"Admin access required"`.
  *
- * Request: `{}`.
- * Response: `{ providers: string[], count: number }`.
+ * Request: `{ agentId? }`. An omitted selector resolves to the daemon's
+ * configured default agent.
+ * Response: `{ agentId, providers, count }`. Provider rows expose only
+ * credential availability and source category; credential values never cross
+ * the RPC boundary.
  */
 export const ModelsListProvidersContract = defineContract({
   method: "models.list_providers",
-  request: z.object({}),
+  request: z.object({
+    agentId: z.string().min(1).optional(),
+  }),
   response: z.object({
-    providers: z.array(z.string()),
-    count: z.number(),
+    agentId: z.string(),
+    providers: z.array(z.object({
+      provider: z.string(),
+      modelCount: z.number().int().nonnegative(),
+      status: z.enum(["configured", "keyless", "not_configured"]),
+      credentialSource: z.enum([
+        "keyless",
+        "providers_entry",
+        "env_canonical",
+        "oauth_profile",
+        "oauth_env_seed",
+        "secret_store_canonical",
+        "none",
+      ]),
+    })),
+    count: z.number().int().nonnegative(),
   }),
   scopes: ["admin"] as const,
 });

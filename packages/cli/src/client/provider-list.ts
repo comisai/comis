@@ -24,23 +24,57 @@
  * @module
  */
 
+import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import { callTyped, withClient } from "./rpc-client.js";
-import { createModelCatalog, ModelsListProvidersContract } from "@comis/core";
+import {
+  createModelCatalog,
+  KEYLESS_PROVIDER_TYPES,
+  ModelsListProvidersContract,
+} from "@comis/core";
+
+export type ProviderCredentialStatus =
+  | "configured"
+  | "keyless"
+  | "not_configured"
+  | "unknown";
+
+export type ProviderCredentialSource =
+  | "keyless"
+  | "providers_entry"
+  | "env_canonical"
+  | "oauth_profile"
+  | "oauth_env_seed"
+  | "secret_store_canonical"
+  | "none"
+  | "daemon_unavailable";
+
+export interface ProviderCatalogRow {
+  provider: string;
+  modelCount: number;
+  status: ProviderCredentialStatus;
+  credentialSource: ProviderCredentialSource;
+}
 
 /**
  * Defensive shape narrowing for the daemon RPC response.
  *
  * The daemon's `models.list_providers` handler is expected to return
- * `{ providers: string[]; count: number }` (verified in
- * `packages/daemon/src/api/model-handlers.ts:99-106`). We narrow at the
+ * `{ agentId, providers: ProviderCatalogRow[], count }`. We narrow at the
  * call site so a malformed response (e.g., daemon version skew, future
  * shape change) cannot crash the wizard.
  */
-function isValidProvidersResponse(value: unknown): value is { providers: string[] } {
+function isValidProvidersResponse(value: unknown): value is { providers: ProviderCatalogRow[] } {
   if (value === null || typeof value !== "object") return false;
   const candidate = value as { providers?: unknown };
   if (!Array.isArray(candidate.providers)) return false;
-  return candidate.providers.every((p) => typeof p === "string");
+  return candidate.providers.every((row) => {
+    if (row === null || typeof row !== "object") return false;
+    const provider = row as Partial<ProviderCatalogRow>;
+    return typeof provider.provider === "string"
+      && typeof provider.modelCount === "number"
+      && ["configured", "keyless", "not_configured"].includes(provider.status ?? "")
+      && typeof provider.credentialSource === "string";
+  });
 }
 
 /**
@@ -48,30 +82,32 @@ function isValidProvidersResponse(value: unknown): value is { providers: string[
  * back to the local pi-ai catalog when the daemon is unreachable.
  *
  * Contract:
- * - Returns `string[]` (the provider IDs).
- * - Never throws. All error paths are caught internally; the worst-case
- *   return is `[]`, which callers translate into a "no providers" UX.
+ * - Returns provider rows with model counts and credential status.
+ * - Without an explicit agent selector, all error paths fall back locally;
+ *   the worst-case return is `[]`.
+ * - With an explicit agent selector, RPC failure is returned to the caller
+ *   because a local catalog cannot validate that daemon-owned identity.
  * - When the RPC succeeds with a valid `{providers, count}` shape, the
  *   array is returned verbatim (the daemon already sorts; we trust it).
  * - When the local fallback runs, the result is deduped and sorted.
  *
- * @returns A list of provider IDs from the catalog, or `[]` on total
- *   failure.
+ * @returns Provider catalog rows, or `[]` on total failure.
  */
-export async function loadProvidersWithFallback(): Promise<string[]> {
+export async function loadProvidersWithFallback(agentId?: string): Promise<ProviderCatalogRow[]> {
   // RPC-first: daemon may have a richer/scanned catalog.
   try {
     // Uses callTyped via ModelsListProvidersContract. The defensive
     // shape-narrowing below remains in place — daemon version skew or
     // future shape changes would surface here, not as a crash.
     const result = await withClient(async (client) =>
-      callTyped(client, ModelsListProvidersContract, {}),
+      callTyped(client, ModelsListProvidersContract, agentId ? { agentId } : {}),
     );
     if (isValidProvidersResponse(result)) {
       return result.providers;
     }
     // Malformed shape -- fall through to local fallback (defensive).
-  } catch {
+  } catch (error) {
+    if (agentId) throw error;
     // Daemon not running, RPC error, or timeout -- fall through.
   }
 
@@ -79,8 +115,36 @@ export async function loadProvidersWithFallback(): Promise<string[]> {
   try {
     const catalog = createModelCatalog();
     catalog.loadStatic();
-    const providers = [...new Set(catalog.getAll().map((e) => e.provider))].sort();
-    return providers;
+    const modelCounts = new Map<string, number>();
+    for (const entry of catalog.getAll()) {
+      modelCounts.set(entry.provider, (modelCounts.get(entry.provider) ?? 0) + 1);
+    }
+    return [...modelCounts.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([provider, modelCount]) => {
+        if (KEYLESS_PROVIDER_TYPES.has(provider)) {
+          return {
+            provider,
+            modelCount,
+            status: "keyless" as const,
+            credentialSource: "keyless" as const,
+          };
+        }
+        if (getEnvApiKey(provider)) {
+          return {
+            provider,
+            modelCount,
+            status: "configured" as const,
+            credentialSource: "env_canonical" as const,
+          };
+        }
+        return {
+          provider,
+          modelCount,
+          status: "unknown" as const,
+          credentialSource: "daemon_unavailable" as const,
+        };
+      });
   } catch {
     // Catastrophic failure (rare): pi-ai SDK boot failure or similar.
     // Caller's UX layer reports "no providers" on empty result.

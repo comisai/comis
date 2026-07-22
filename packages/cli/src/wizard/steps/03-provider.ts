@@ -111,10 +111,10 @@ export const providerStep: WizardStep = {
     prompter.note(CATEGORY_NOTE, "Available Providers");
 
     // Build option list from live catalog (RPC-first, local fallback)
-    const providerIds = await loadProvidersWithFallback();
-    const options = providerIds.map((id) => {
-      const hint = getProviderHint(id);
-      return { value: id, label: hint.label, hint: hint.hint };
+    const providers = await loadProvidersWithFallback();
+    const options = providers.map(({ provider }) => {
+      const hint = getProviderHint(provider);
+      return { value: provider, label: hint.label, hint: hint.hint };
     });
 
     // Synthetic Custom option (always last, never in catalog)

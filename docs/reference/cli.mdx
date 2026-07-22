@@ -1172,27 +1172,37 @@ Provider management commands. Like `comis models`, the provider list is sourced 
 
 | Subcommand | Description |
 |------------|-------------|
-| `providers list` | List all available providers with model counts and key status |
+| `providers list` | List all available providers with model counts and credential status |
 
 #### `providers list`
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--format <format>` | `table` \| `json` | `table` | Output format |
+| `--agent <id>` | string | default agent | Resolve credential availability for this agent |
 
 The output includes three columns:
 
 - **Provider** — pi-ai provider id (e.g., `anthropic`, `openrouter`, `groq`)
 - **Models** — count of models the provider exposes in the catalog
-- **Status** — `configured` (canonical env key resolved), `missing key` (provider listed but key not in env), or `keyless` (local providers like ollama / lm-studio that don't need a key)
+- **Status** — `configured` when the daemon's runtime credential chain resolves for the selected agent, `not configured` when that authoritative chain has no usable credential, `keyless` for providers such as Ollama / LM Studio, or `unknown` when the daemon is unavailable and the local CLI cannot inspect encrypted credentials
+
+JSON output also includes `credentialSource`, a value-free category such as
+`secret_store_canonical`, `oauth_profile`, `env_canonical`, or `none`. It never
+includes a credential value. When the daemon is unavailable, the CLI can still
+recognize keyless and ambient-environment credentials; every encrypted-store
+case is reported as `unknown` with `credentialSource: "daemon_unavailable"`.
 
 ```bash
 # Default table output
 comis providers list
 
+# Inspect a specific agent
+comis providers list --agent research
+
 # Machine-readable
 comis providers list --format json
-# → [{"provider":"anthropic","modelCount":23,"status":"configured"}, ...]
+# → [{"provider":"anthropic","modelCount":14,"status":"configured","credentialSource":"secret_store_canonical"}, ...]
 ```
 
 To switch an agent to a different provider, use [`comis agent configure`](#comis-agent) with `--provider <id> --model <id>`.

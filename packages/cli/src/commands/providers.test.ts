@@ -4,12 +4,11 @@
  *
  * Verifies:
  * - Command/subcommand/option registration mirrors `commands/models.ts` shape
- * - RPC success path: provider list + per-provider model count
- * - RPC failure path: local pi-ai catalog fallback
+ * - daemon and offline provider status projections
  * - --format json structured output
  * - --format table (default)
  * - Empty-catalog branch
- * - Status column resolution (keyless / configured / missing key)
+ * - Status column resolution without credential values
  *
  * @module
  */
@@ -18,16 +17,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Command } from "commander";
 
 // ---------- Mocks (hoisted) ----------
-
-// importOriginal-based so callTyped resolves to the real wrapper while
-// withClient is mocked.
-vi.mock("../client/rpc-client.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../client/rpc-client.js")>();
-  return {
-    ...actual,
-    withClient: vi.fn(),
-  };
-});
 
 vi.mock("../client/provider-list.js", () => ({
   loadProvidersWithFallback: vi.fn(),
@@ -49,34 +38,12 @@ vi.mock("../output/format.js", () => ({
   json: vi.fn(),
 }));
 
-vi.mock("@earendil-works/pi-ai/compat", () => ({
-  getEnvApiKey: vi.fn(),
-}));
-
-// createModelCatalog lives in @comis/core.
-vi.mock("@comis/core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@comis/core")>();
-  return {
-    ...actual,
-    createModelCatalog: vi.fn(() => ({
-      loadStatic: vi.fn(),
-      getByProvider: vi.fn(() => []),
-      getAll: vi.fn(() => []),
-      get: vi.fn(),
-      mergeScanned: vi.fn(),
-      getProviders: vi.fn(),
-    })),
-  };
-});
-
 // Dynamic imports after mocks (vitest hoists `vi.mock`, but explicit
 // dynamic-import keeps the test file's intent crystal clear).
 const { registerProvidersCommand } = await import("./providers.js");
-const { withClient } = await import("../client/rpc-client.js");
 const { loadProvidersWithFallback } = await import("../client/provider-list.js");
 const { renderTable } = await import("../output/table.js");
 const { info, json, error } = await import("../output/format.js");
-const { getEnvApiKey } = await import("@earendil-works/pi-ai/compat");
 
 // ---------- Helpers ----------
 
@@ -85,6 +52,24 @@ function createTestProgram(): Command {
   program.exitOverride(); // throw instead of process.exit on parse errors
   registerProvidersCommand(program);
   return program;
+}
+
+function makeRow(
+  provider: string,
+  status: "configured" | "keyless" | "not_configured" | "unknown" = "configured",
+) {
+  return {
+    provider,
+    modelCount: 1,
+    status,
+    credentialSource: status === "keyless"
+      ? "keyless" as const
+      : status === "unknown"
+        ? "daemon_unavailable" as const
+        : status === "not_configured"
+          ? "none" as const
+          : "env_canonical" as const,
+  };
 }
 
 // ---------- Registration tests (mirrors models.test.ts shape) ----------
@@ -112,6 +97,7 @@ describe("registerProvidersCommand", () => {
 
     const optionNames = listCmd!.options.map((o) => o.long);
     expect(optionNames).toContain("--format");
+    expect(optionNames).toContain("--agent");
   });
 
   it("registers under the same program object as models (parallel structure)", () => {
@@ -129,13 +115,11 @@ describe("providers list", () => {
   let exitSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    vi.mocked(withClient).mockReset();
     vi.mocked(loadProvidersWithFallback).mockReset();
     vi.mocked(renderTable).mockReset();
     vi.mocked(info).mockReset();
     vi.mocked(json).mockReset();
     vi.mocked(error).mockReset();
-    vi.mocked(getEnvApiKey).mockReset();
     exitSpy = vi
       .spyOn(process, "exit")
       .mockImplementation(((_code?: number) => {
@@ -149,18 +133,10 @@ describe("providers list", () => {
 
   it("renders a 3-row table when RPC succeeds", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue([
-      "anthropic",
-      "openai",
-      "ollama",
+      makeRow("anthropic"),
+      makeRow("openai", "not_configured"),
+      makeRow("ollama", "keyless"),
     ]);
-    vi.mocked(withClient).mockImplementation(async () => [
-      { provider: "anthropic", modelId: "claude-1" },
-      { provider: "anthropic", modelId: "claude-2" },
-      { provider: "anthropic", modelId: "claude-3" },
-      { provider: "anthropic", modelId: "claude-4" },
-      { provider: "anthropic", modelId: "claude-5" },
-    ]);
-    vi.mocked(getEnvApiKey).mockReturnValue("sk-test");
 
     const program = createTestProgram();
     await program.parseAsync(["node", "comis", "providers", "list"]);
@@ -173,17 +149,13 @@ describe("providers list", () => {
 
   it("falls back to local catalog when daemon RPC fails", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue([
-      "anthropic",
+      makeRow("anthropic", "unknown"),
     ]);
-    vi.mocked(withClient).mockRejectedValue(new Error("ECONNREFUSED"));
-    vi.mocked(getEnvApiKey).mockReturnValue("sk-test");
 
     const program = createTestProgram();
     await program.parseAsync(["node", "comis", "providers", "list"]);
 
     expect(renderTable).toHaveBeenCalledOnce();
-    // The local fallback in getModelCount returns 0 for empty catalog;
-    // we still render the row -- the table presence is the contract.
     const [, rows] = vi.mocked(renderTable).mock.calls[0];
     expect(rows).toHaveLength(1);
     expect(rows[0][0]).toBe("anthropic");
@@ -191,11 +163,9 @@ describe("providers list", () => {
 
   it("--format json prints structured array, not a table", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue([
-      "anthropic",
-      "openai",
+      makeRow("anthropic"),
+      makeRow("openai"),
     ]);
-    vi.mocked(withClient).mockImplementation(async () => []);
-    vi.mocked(getEnvApiKey).mockReturnValue("sk-test");
 
     const program = createTestProgram();
     await program.parseAsync([
@@ -232,8 +202,6 @@ describe("providers list", () => {
         credentialSource: "secret_store_canonical",
       },
     ] as never);
-    vi.mocked(getEnvApiKey).mockReturnValue(undefined);
-
     const program = createTestProgram();
     await program.parseAsync([
       "node",
@@ -254,10 +222,24 @@ describe("providers list", () => {
     ]);
   });
 
+  it("forwards an explicit agent selector to the daemon-backed loader", async () => {
+    vi.mocked(loadProvidersWithFallback).mockResolvedValue([makeRow("anthropic")]);
+
+    const program = createTestProgram();
+    await program.parseAsync([
+      "node",
+      "comis",
+      "providers",
+      "list",
+      "--agent",
+      "research",
+    ]);
+
+    expect(loadProvidersWithFallback).toHaveBeenCalledWith("research");
+  });
+
   it("--format table (default) renders a table + info summary", async () => {
-    vi.mocked(loadProvidersWithFallback).mockResolvedValue(["anthropic"]);
-    vi.mocked(withClient).mockImplementation(async () => []);
-    vi.mocked(getEnvApiKey).mockReturnValue("sk-test");
+    vi.mocked(loadProvidersWithFallback).mockResolvedValue([makeRow("anthropic")]);
 
     const program = createTestProgram();
     await program.parseAsync(["node", "comis", "providers", "list"]);
@@ -283,9 +265,7 @@ describe("providers list", () => {
   });
 
   it("Status column = 'keyless' for ollama", async () => {
-    vi.mocked(loadProvidersWithFallback).mockResolvedValue(["ollama"]);
-    vi.mocked(withClient).mockImplementation(async () => []);
-    vi.mocked(getEnvApiKey).mockReturnValue(undefined);
+    vi.mocked(loadProvidersWithFallback).mockResolvedValue([makeRow("ollama", "keyless")]);
 
     const program = createTestProgram();
     await program.parseAsync(["node", "comis", "providers", "list"]);
@@ -295,9 +275,7 @@ describe("providers list", () => {
   });
 
   it("Status column = 'keyless' for lm-studio", async () => {
-    vi.mocked(loadProvidersWithFallback).mockResolvedValue(["lm-studio"]);
-    vi.mocked(withClient).mockImplementation(async () => []);
-    vi.mocked(getEnvApiKey).mockReturnValue(undefined);
+    vi.mocked(loadProvidersWithFallback).mockResolvedValue([makeRow("lm-studio", "keyless")]);
 
     const program = createTestProgram();
     await program.parseAsync(["node", "comis", "providers", "list"]);
@@ -306,12 +284,8 @@ describe("providers list", () => {
     expect(rows[0][2]).toBe("keyless");
   });
 
-  it("Status column = 'configured' when getEnvApiKey returns a key", async () => {
-    vi.mocked(loadProvidersWithFallback).mockResolvedValue(["anthropic"]);
-    vi.mocked(withClient).mockImplementation(async () => []);
-    vi.mocked(getEnvApiKey).mockImplementation((p: string) =>
-      p === "anthropic" ? "sk-test" : undefined,
-    );
+  it("Status column = 'configured' for an authoritative configured row", async () => {
+    vi.mocked(loadProvidersWithFallback).mockResolvedValue([makeRow("anthropic")]);
 
     const program = createTestProgram();
     await program.parseAsync(["node", "comis", "providers", "list"]);
@@ -320,15 +294,18 @@ describe("providers list", () => {
     expect(rows[0][2]).toBe("configured");
   });
 
-  it("Status column = 'missing key' when getEnvApiKey returns undefined", async () => {
-    vi.mocked(loadProvidersWithFallback).mockResolvedValue(["openai"]);
-    vi.mocked(withClient).mockImplementation(async () => []);
-    vi.mocked(getEnvApiKey).mockReturnValue(undefined);
+  it("Status column distinguishes not configured from an unavailable daemon", async () => {
+    vi.mocked(loadProvidersWithFallback).mockResolvedValue([
+      makeRow("openai", "not_configured"),
+      makeRow("anthropic", "unknown"),
+    ]);
 
     const program = createTestProgram();
     await program.parseAsync(["node", "comis", "providers", "list"]);
 
     const [, rows] = vi.mocked(renderTable).mock.calls[0];
-    expect(rows[0][2]).toBe("missing key");
+    expect(rows[0][2]).toBe("not configured");
+    expect(rows[1][2]).toBe("unknown");
+    expect(info).toHaveBeenCalledWith(expect.stringContaining("daemon"));
   });
 });
