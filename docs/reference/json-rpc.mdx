@@ -3905,23 +3905,29 @@ Slack platform action dispatch. Sends a platform-specific action to the Slack ch
 
 </Accordion>
 
-<Accordion title="subagent (3 methods)">
+<Accordion title="subagent (7 methods)">
 
-Sub-agent lifecycle management: list running sub-agents, kill stuck executions, and steer active sub-agents with new instructions.
+Sub-agent lifecycle management and process-lifetime spawn admission control. `subagent.list`, `subagent.wait`, `subagent.kill`, and `subagent.steer` have both `rpc` and `admin` routes. Agent callers on the `rpc` route are owner-scoped to runs created by the same caller agent and conversation; they cannot select global scope. Admin callers can inspect or control any selected run. `subagent.pause`, `subagent.resume`, and `subagent.status` are admin-only.
 
 | Method | Scope | Description |
 |--------|-------|-------------|
-| `subagent.list` | `admin` | List recent sub-agent runs |
-| `subagent.kill` | `admin` | Kill a running sub-agent |
-| `subagent.steer` | `admin` | Steer a running sub-agent -- inject a message into the live child (flag on) or kill+respawn (flag off, default) |
+| `subagent.list` | `rpc`, `admin` | List recent owner-scoped or admin-selected runs |
+| `subagent.wait` | `rpc`, `admin` | Wait for bounded completion outcomes without polling |
+| `subagent.kill` | `rpc`, `admin` | Kill an owned or admin-selected running sub-agent |
+| `subagent.steer` | `rpc`, `admin` | Inject into a live child or kill and respawn it, depending on configuration |
+| `subagent.pause` | `admin` | Pause admission of new sub-agent spawns for this daemon process |
+| `subagent.resume` | `admin` | Resume admission of new sub-agent spawns |
+| `subagent.status` | `admin` | Inspect the process-lifetime spawn-admission gate |
 
 ### `subagent.list`
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ recentMinutes?: number }` |
+| **Scope** | `rpc`, `admin` |
+| **Parameters** | `{ recentMinutes?: integer, agentId?: string, rootRunId?: string }` |
 | **Returns** | `{ runs: object[], total: number }` |
+
+`recentMinutes` defaults to 30 and accepts integers from 1 through 10,080. On the `rpc` route, `agentId` and `rootRunId` are forbidden and the response contains only runs owned by the caller's agent-and-conversation pair. Those records are a content-free projection: `runId`, `status`, `agentId`, `startedAt`, and, when present, `queuedAt`, `completion`, `depth`, `rootRunId`, `graphId`, and `nodeId`. Terminal `completion` exposes `endReason`, `completedAtMs`, and `errorKind` for unsuccessful runs. On the `admin` route, `agentId` and `rootRunId` are optional exact-match filters and `runs` contains the full diagnostic run records. `total` is the length of the returned `runs` array.
 
 <CodeGroup>
 ```json Request
@@ -3937,9 +3943,56 @@ Sub-agent lifecycle management: list running sub-agents, kill stuck executions, 
   "jsonrpc": "2.0",
   "result": {
     "runs": [
-      { "runId": "run_abc", "task": "Research quantum computing", "status": "running", "durationMs": 45000 }
+      { "runId": "run_abc", "status": "running", "agentId": "default", "startedAt": 1774368000000 }
     ],
     "total": 1
+  },
+  "id": 1
+}
+```
+</CodeGroup>
+
+### `subagent.wait`
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `rpc`, `admin` |
+| **Parameters** | `{ runIds?: string[], timeoutMs?: integer }` |
+| **Returns** | `{ results: WaitResult[] }` (at most 32 entries, in requested order) |
+
+`runIds`, when supplied, must contain 1–32 IDs; duplicates are removed. Without `runIds`, the handler selects up to 32 currently `running` or `queued` runs visible to the caller. Agent callers can wait only for owned runs; admins can wait for any selected runs. An unknown or unauthorized ID returns `denied_unknown`, deliberately avoiding run enumeration.
+
+`timeoutMs` accepts 0–300,000. When omitted, it uses `security.agentToAgent.waitTimeoutMs` (default 60,000) capped at 300,000.
+
+Each `results` entry includes its `runId`; its `status` is `completed`, `denied_unknown`, `timeout`, or `cancelled`:
+
+- `{ runId, status: "completed", completion }`
+- `{ runId, status: "denied_unknown" }`
+- `{ runId, status: "timeout" }`
+- `{ runId, status: "cancelled" }`
+
+`completion` always contains `endReason` and `completedAtMs`. A successful completion has `endReason: "completed"`. Failure end reasons are `failed`, `killed`, `watchdog_timeout`, or `ghost_sweep` and also carry `errorKind`. Both forms may include a bounded `summary` and `resultRef`. A `resultRef` contains `ref`, `kind`, `bytes`, `preview`, and `expiresAt`, with optional `rows` and `schema`; `kind` is one of `jsonl`, `json`, `csv`, `html`, `text`, or `binary`.
+
+<CodeGroup>
+```json Request
+{
+  "jsonrpc": "2.0",
+  "method": "subagent.wait",
+  "params": { "runIds": ["run_abc"], "timeoutMs": 60000 },
+  "id": 1
+}
+```
+```json Response
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "results": [
+      {
+        "runId": "run_abc",
+        "status": "completed",
+        "completion": { "endReason": "completed", "completedAtMs": 1774368060000, "summary": "Research completed" }
+      }
+    ]
   },
   "id": 1
 }
@@ -3950,9 +4003,11 @@ Sub-agent lifecycle management: list running sub-agents, kill stuck executions, 
 
 | Property | Value |
 |----------|-------|
-| **Scope** | `admin` |
-| **Parameters** | `{ target: string }` -- the `runId` of the sub-agent to kill |
+| **Scope** | `rpc`, `admin` |
+| **Parameters** | `{ target: string }` -- `target` is the sub-agent `runId` |
 | **Returns** | `{ killed: true, runId: string }` |
+
+Agent callers may kill only an owned direct child. Admin callers may target any run. On success, `killed` is `true` and `runId` repeats the target. A missing, unknown, or non-running target fails the RPC; it does not return `{ killed: false }`.
 
 <CodeGroup>
 ```json Request
@@ -3966,10 +4021,7 @@ Sub-agent lifecycle management: list running sub-agents, kill stuck executions, 
 ```json Response
 {
   "jsonrpc": "2.0",
-  "result": {
-    "killed": true,
-    "runId": "run_abc"
-  },
+  "result": { "killed": true, "runId": "run_abc" },
   "id": 1
 }
 ```
@@ -3979,16 +4031,48 @@ Sub-agent lifecycle management: list running sub-agents, kill stuck executions, 
 
 | Property | Value |
 |----------|-------|
+| **Scope** | `rpc`, `admin` |
+| **Parameters** | `{ target: string, message: string }` -- `target` is the sub-agent `runId` |
+| **Returns** | `{ status: "steered", oldRunId, newRunId } \| { status: "steered_inject", runId }` |
+
+Agent callers may steer only an owned direct child; admins may target any run. Behavior is gated on [`security.agentToAgent.steerInject`](/reference/config-yaml#security), which defaults to `false`:
+
+The `status` discriminator is `steered` with `oldRunId` and `newRunId`, or `steered_inject` with `runId`.
+
+- **Flag off (default)** -- kills the current run and respawns a new run with `message` as its task. The continuation preserves the original spawn tree, agent, capabilities, and parent lease, but receives a new run ID and discards the prior live transcript and progress. Returns `{ status: "steered", oldRunId, newRunId }`.
+- **Flag on** -- requires `target` to be `running` and injects `message` into the live child at its next step boundary. It preserves the transcript and progress, performs no kill or respawn, and continues with the same run ID. Returns `{ status: "steered_inject", runId }`. Injection does not interrupt a tool call mid-execution.
+
+Both modes share a per-controller, per-`target` rate limit of one steer every 2 seconds. The `message` is framed as untrusted external content and cannot grant capabilities or bypass the child's tool restrictions.
+
+### `subagent.pause`
+
+| Property | Value |
+|----------|-------|
 | **Scope** | `admin` |
-| **Parameters** | `{ target: string, message: string }` -- `target` is the runId; `message` is the steering text |
-| **Returns** | A discriminated union on `status` (see below) |
+| **Parameters** | `{}` (strict; no public fields) |
+| **Returns** | `{ paused: boolean, acceptingSpawns: boolean, resetsOnRestart: true, changed: boolean }` |
 
-Behavior is gated on [`security.agentToAgent.steerInject`](/reference/config-yaml#security) (default `false`):
+Sets the process-lifetime admission gate to paused. This blocks new sub-agent spawns only; existing running and queued work continues. The returned `paused`, `acceptingSpawns`, and literal `resetsOnRestart` fields describe the resulting gate. The call is idempotent: `changed` is `true` only when the gate transitions from unpaused to paused.
 
-- **Flag off (default)** -- kills the running child and respawns a fresh run with `message` as the new task. Returns `{ status: "steered", oldRunId, newRunId }`. The child's transcript and progress are discarded.
-- **Flag on** -- injects `message` into the *running* child's live session at its next step boundary, preserving the transcript and prior work (no kill, no respawn -- the same runId continues). Returns `{ status: "steered_inject", runId }`. The message lands as a user turn after the current step commits (it does not interrupt a tool call mid-execution).
+### `subagent.resume`
 
-Rate-limited to one steer per `target` every 2 seconds (shared across both modes). A steered message is a message, not a capability grant: the child's tool set is fixed at spawn, so a steered request for a tool on the sub-agent tool denylist is still refused (the [defense-in-depth](/security/defense-in-depth) governance applies regardless of message source).
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{}` (strict; no public fields) |
+| **Returns** | `{ paused: boolean, acceptingSpawns: boolean, resetsOnRestart: true, changed: boolean }` |
+
+Clears the process-lifetime pause. The returned `paused`, `acceptingSpawns`, and literal `resetsOnRestart` fields describe the resulting gate. The call is idempotent: `changed` is `true` only when the gate was paused. Resume does not reopen admission after daemon shutdown has set `acceptingSpawns: false`.
+
+### `subagent.status`
+
+| Property | Value |
+|----------|-------|
+| **Scope** | `admin` |
+| **Parameters** | `{}` (strict; no public fields) |
+| **Returns** | `{ paused: boolean, acceptingSpawns: boolean, resetsOnRestart: true }` |
+
+Returns the current in-memory admission state. `paused` is the operator pause; `acceptingSpawns` is the runner's broader admission state and becomes `false` during shutdown. `resetsOnRestart` is always `true`: pause state is not persisted, so every daemon restart starts unpaused.
 
 </Accordion>
 
