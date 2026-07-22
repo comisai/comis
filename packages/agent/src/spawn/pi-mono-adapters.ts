@@ -22,9 +22,10 @@ import { planInboundMessageProvenance } from "../session/inbound-message-provena
  * Create an ephemeral ComisSessionManager for sub-agent sessions.
  *
  * The returned adapter:
- * - `withSession`: Creates `SdkSessionManager.inMemory(cwd)`, passes it to the
- *   callback, returns the result wrapped in `ok()`. No write lock (no file
- *   contention), no `sanitizeSessionSecrets` (no file to sanitize).
+ * - `withSession`: Lazily creates one `SdkSessionManager.inMemory(cwd)` for the
+ *   adapter lifetime, passes it to every callback, and wraps the result in
+ *   `ok()`. No write lock (no file contention), no `sanitizeSessionSecrets`
+ *   (no file to sanitize).
  * - `destroySession`: No-op (nothing to destroy for in-memory sessions).
  * - `appendInboundMessageLedger`: No-op success (internal ephemeral turns are
  *   intentionally absent from the persistent channel-message ledger).
@@ -36,11 +37,12 @@ import { planInboundMessageProvenance } from "../session/inbound-message-provena
  * @returns ComisSessionManager with in-memory SDK session backend
  */
 export function createEphemeralComisSessionManager(cwd: string): ComisSessionManager {
+  let sessionManager: ReturnType<typeof SdkSessionManager.inMemory> | undefined;
   return {
     async withSession(_sessionKey, fn) {
       try {
-        const sm = SdkSessionManager.inMemory(cwd);
-        const result = await fn(sm);
+        sessionManager ??= SdkSessionManager.inMemory(cwd);
+        const result = await fn(sessionManager);
         return ok(result);
       } catch {
         return err("error" as const);

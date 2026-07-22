@@ -12,7 +12,108 @@
  * @module
  */
 import { describe, it, expect } from "vitest";
-import { SubagentSteerContract } from "./subagent-handlers.js";
+import {
+  SubagentListContract,
+  SubagentPauseContract,
+  SubagentResumeContract,
+  SubagentStatusContract,
+  SubagentSteerContract,
+  SubagentWaitContract,
+} from "./subagent-handlers.js";
+
+describe("SubagentWaitContract — bounded mixed per-run outcomes", () => {
+  it("accepts at most 32 requested ids and clamps the wait deadline", () => {
+    expect(SubagentWaitContract.request.parse({
+      runIds: ["run-1", "run-1", "run-2"],
+      timeoutMs: 30_000,
+    })).toEqual({ runIds: ["run-1", "run-1", "run-2"], timeoutMs: 30_000 });
+    expect(() => SubagentWaitContract.request.parse({
+      runIds: Array.from({ length: 33 }, (_, index) => `run-${index}`),
+    })).toThrow();
+    expect(() => SubagentWaitContract.request.parse({ timeoutMs: 300_001 })).toThrow();
+  });
+
+  it("parses completed failed timeout denied and cancelled waiter outcomes", () => {
+    const results = [
+      {
+        runId: "run-complete",
+        status: "completed",
+        completion: {
+          endReason: "completed",
+          completedAtMs: 123,
+          summary: "bounded result",
+        },
+      },
+      {
+        runId: "run-failed",
+        status: "completed",
+        completion: {
+          endReason: "failed",
+          completedAtMs: 124,
+          errorKind: "dependency",
+        },
+      },
+      { runId: "run-timeout", status: "timeout" },
+      { runId: "run-private", status: "denied_unknown" },
+      { runId: "run-cancelled", status: "cancelled" },
+    ];
+    expect(SubagentWaitContract.response.parse({ results })).toEqual({ results });
+  });
+
+  it("rejects raw provider output and mismatched completion discriminants", () => {
+    expect(() => SubagentWaitContract.response.parse({
+      results: [{
+        runId: "run-1",
+        status: "completed",
+        completion: {
+          endReason: "completed",
+          completedAtMs: 123,
+          errorKind: "internal",
+          response: "must not cross the boundary",
+        },
+      }],
+    })).toThrow();
+  });
+});
+
+describe("subagent spawn admission control contracts", () => {
+  it("keeps pause, resume, and status on the operator admin route", () => {
+    for (const contract of [SubagentPauseContract, SubagentResumeContract, SubagentStatusContract]) {
+      expect(contract.request.parse({})).toEqual({});
+      expect(contract.scopes).toEqual(["admin"]);
+    }
+  });
+
+  it("requires explicit process-lifetime state in every response", () => {
+    const state = { paused: true, acceptingSpawns: true, resetsOnRestart: true as const };
+    expect(SubagentStatusContract.response.parse(state)).toEqual(state);
+    expect(SubagentPauseContract.response.parse({ ...state, changed: true })).toEqual({
+      ...state,
+      changed: true,
+    });
+    expect(() => SubagentResumeContract.response.parse({
+      paused: false,
+      acceptingSpawns: true,
+      changed: true,
+      resetsOnRestart: false,
+    })).toThrow();
+  });
+});
+
+describe("SubagentListContract.request — explicit operator selectors", () => {
+  it("parses bounded recent time with optional agent and tree selectors", () => {
+    expect(SubagentListContract.request.parse({
+      recentMinutes: 45,
+      agentId: "researcher",
+      rootRunId: "root-run-1",
+    })).toEqual({ recentMinutes: 45, agentId: "researcher", rootRunId: "root-run-1" });
+  });
+
+  it("rejects nonpositive or unbounded recent time", () => {
+    expect(() => SubagentListContract.request.parse({ recentMinutes: 0 })).toThrow();
+    expect(() => SubagentListContract.request.parse({ recentMinutes: 10_081 })).toThrow();
+  });
+});
 
 describe("SubagentSteerContract.response — discriminated union on status", () => {
   it("parses the flag-off kill+respawn shape {status:'steered', oldRunId, newRunId}", () => {

@@ -64,6 +64,20 @@ describe("createEphemeralComisSessionManager", () => {
     expect(result).toEqual({ ok: true, value: "test-result" });
   });
 
+  it("reuses one in-memory session across repeated callbacks on the same adapter", async () => {
+    const callsBefore = mockInMemory.mock.calls.length;
+    const adapter = createEphemeralComisSessionManager("/tmp/test");
+    const sessionKey = { tenantId: "t", userId: "u", channelId: "c" };
+    const seen: unknown[] = [];
+
+    await adapter.withSession(sessionKey, async (sm) => { seen.push(sm); });
+    await adapter.withSession(sessionKey, async (sm) => { seen.push(sm); });
+
+    expect(mockInMemory.mock.calls).toHaveLength(callsBefore + 1);
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toBe(seen[0]);
+  });
+
   it("withSession returns err on callback failure", async () => {
     const adapter = createEphemeralComisSessionManager("/tmp/test");
     const sessionKey = { tenantId: "t", userId: "u", channelId: "c" };

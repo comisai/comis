@@ -6,6 +6,8 @@ import { z } from "zod";
 // SubagentResult Schema
 // ---------------------------------------------------------------------------
 
+export const SUBAGENT_RESULT_SUMMARY_MAX_CHARS = 10_000;
+
 /**
  * Structured result returned by a subagent upon completion.
  *
@@ -17,7 +19,7 @@ export const SubagentResultSchema = z.strictObject({
   /** Whether the subagent completed its task successfully */
   taskComplete: z.boolean(),
   /** Human-readable summary of what was accomplished */
-  summary: z.string().min(1).max(10_000),
+  summary: z.string().min(1).max(SUBAGENT_RESULT_SUMMARY_MAX_CHARS),
   /** Key conclusions or findings */
   conclusions: z.array(z.string().min(1)).min(1).max(50),
   /** File paths created or modified */
@@ -158,7 +160,6 @@ export interface SubAgentSpawnPreparedEvent {
   runId: string;
   parentSessionKey: string;
   agentId: string;
-  task: string;
   depth: number;
   maxDepth: number;
   artifactCount: number;
@@ -175,12 +176,12 @@ export interface SubAgentSpawnPreparedEvent {
 export interface SubAgentSpawnRejectedEvent {
   parentSessionKey: string;
   agentId: string;
-  task: string;
   reason:
     | "depth_exceeded"
     | "children_exceeded"
     | "queue_full"
     | "queue_timeout"
+    | "spawn_paused"
     // Tree-wide ceiling — concurrency/depth/fanout across the whole tree.
     | "ceiling_concurrency"
     | "ceiling_depth"
@@ -199,7 +200,6 @@ export interface SubAgentSpawnStartedEvent {
   runId: string;
   parentSessionKey: string;
   agentId: string;
-  task: string;
   depth: number;
   timestamp: number;
 }

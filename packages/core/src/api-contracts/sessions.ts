@@ -16,7 +16,7 @@
  *   - `session.status`      (rpc — read-only health/token check)
  *   - `session.history`     (rpc — read-only transcript)
  *   - `session.search`      (rpc — read-only full-text search)
- *   - `session.run_status`  (rpc — intrinsic registration via rpc-dispatch,
+ *   - `session.run_status`  (rpc/admin — owner-scoped intrinsic registration,
  *                                  same pattern as scheduler.wake / delivery.queue.status;
  *                                  no explicit setup-gateway-api.ts entry)
  *
@@ -65,8 +65,8 @@
  * strings), session.delete (sessionKey/deleted flag + transcript.messageCount),
  * session.reset (sessionKey/reset/previousMessageCount), session.compact
  * (sessionKey/messageCount/estimatedTokens/compactionTriggered/instructions
- * nullable), session.run_status (runId/status/agentId/task/sessionKey strings
- * + timestamps + tokensUsed/cost loose-records), session.spawn (4 response
+ * nullable), session.run_status (closed bounded sub-agent lifecycle projection
+ * + content-free telemetry), session.spawn (4 response
  * variants — async-running, async-queued, sync-success, timeout — see
  * per-contract JSDoc for variant union).
  *
@@ -82,6 +82,11 @@
  * @module
  */
 import { z } from "zod";
+import {
+  SubagentFailureCompletionSchema,
+  SubagentRunTelemetrySchema,
+  SubagentSuccessCompletionSchema,
+} from "./orchestrator/subagent-handlers.js";
 import { defineContract } from "./types.js";
 
 // ===========================================================================
@@ -419,50 +424,65 @@ export const SessionSpawnContract = defineContract({
 });
 
 // ---------------------------------------------------------------------------
-// session.run_status (rpc)
+// session.run_status (owner-scoped rpc/admin)
 // ---------------------------------------------------------------------------
 
 /**
- * `session.run_status` — Poll a sub-agent run by runId. Returns full
- * run status including elapsed runtime, response/tokens/cost on completion,
- * or error message on failure.
+ * `session.run_status` — Read a bounded, owner-authorized sub-agent run by runId,
+ * including elapsed runtime, closed completion reason, and content-free
+ * telemetry.
  * Handler path: session-handlers.ts:859-877.
  *
- * Bespoke pre-Zod:
- *   - Unknown runId → `"Unknown run ID: <id>"`.
+ * Missing and non-owned ids share the same authorization denial.
  *
  * Request: `{ run_id }`.
  *
- * Response: `{ runId, status, agentId, task, sessionKey, startedAt,
- * completedAt?, runtimeMs, response?, tokensUsed?, cost?, error? }`.
- * `runtimeMs` is computed (completedAt - startedAt OR Date.now() -
- * startedAt for still-running runs). `tokensUsed` and `cost` are
- * loose-records (provider-specific shapes — cost is `{ input, output,
- * total }` for some providers; runners may add cache fields).
+ * Response is the content-bounded closed run-state union. Raw provider output,
+ * task text, display session keys, and free-form error fields never cross this
+ * status surface.
  *
- * Intrinsic registration (no explicit setup-gateway-api.ts entry); same
- * pattern as scheduler.wake and delivery.queue.status. Scope: "rpc" per
- * the rpc-dispatch default.
+ * Intrinsic registration exposes both `rpc` and `admin`; the handler resolves
+ * exact caller or operator authority before reading the run.
  */
 export const SessionRunStatusContract = defineContract({
   method: "session.run_status",
-  request: z.object({
-    run_id: z.string(),
+  request: z.strictObject({
+    run_id: z.string().min(1).max(256),
   }),
-  response: z.object({
-    runId: z.string(),
-    status: z.string(),
-    agentId: z.string(),
-    task: z.string(),
-    sessionKey: z.string().optional(),
-    startedAt: z.number(),
-    completedAt: z.number().optional(),
-    runtimeMs: z.number(),
-    response: z.string().optional(),
-    tokensUsed: z.record(z.string(), z.unknown()).optional(),
-    cost: z.record(z.string(), z.unknown()).optional(),
-    error: z.string().optional(),
-  }),
+  response: z.discriminatedUnion("status", [
+    z.strictObject({
+      runId: z.string().min(1).max(256),
+      status: z.literal("queued"),
+      agentId: z.string().min(1).max(256),
+      queuedAt: z.number().int().nonnegative().safe(),
+      runtimeMs: z.number().nonnegative().finite(),
+    }),
+    z.strictObject({
+      runId: z.string().min(1).max(256),
+      status: z.literal("running"),
+      agentId: z.string().min(1).max(256),
+      startedAt: z.number().int().nonnegative().safe(),
+      runtimeMs: z.number().nonnegative().finite(),
+    }),
+    z.strictObject({
+      runId: z.string().min(1).max(256),
+      status: z.literal("completed"),
+      agentId: z.string().min(1).max(256),
+      startedAt: z.number().int().nonnegative().safe(),
+      runtimeMs: z.number().nonnegative().finite(),
+      completion: SubagentSuccessCompletionSchema,
+      telemetry: SubagentRunTelemetrySchema,
+    }),
+    z.strictObject({
+      runId: z.string().min(1).max(256),
+      status: z.literal("failed"),
+      agentId: z.string().min(1).max(256),
+      startedAt: z.number().int().nonnegative().safe().optional(),
+      runtimeMs: z.number().nonnegative().finite(),
+      completion: SubagentFailureCompletionSchema,
+      telemetry: SubagentRunTelemetrySchema.optional(),
+    }),
+  ]),
   scopes: ["rpc"] as const,
 });
 

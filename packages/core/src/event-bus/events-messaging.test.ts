@@ -174,14 +174,13 @@ describe("MessagingEvents payload structure", () => {
     expect(handler.mock.calls[2]![0].mode).toBe("ping-pong");
   });
 
-  it("session:sub_agent_spawned delivers runId, parentSessionKey, agentId, task", () => {
+  it("session:sub_agent_spawned delivers content-free lifecycle identifiers", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["session:sub_agent_spawned"] = {
       runId: "run-001",
       parentSessionKey: "parent-session",
       agentId: "sub-agent-1",
-      task: "summarize conversation",
       timestamp: Date.now(),
     };
 
@@ -193,7 +192,7 @@ describe("MessagingEvents payload structure", () => {
     expect(received.runId).toBe("run-001");
     expect(received.parentSessionKey).toBe("parent-session");
     expect(received.agentId).toBe("sub-agent-1");
-    expect(received.task).toBe("summarize conversation");
+    expect(received).not.toHaveProperty("task");
   });
 
   it("compaction:started delivers agentId, sessionKey, timestamp", () => {
@@ -660,14 +659,13 @@ describe("MessagingEvents payload structure", () => {
 // ---------------------------------------------------------------------------
 
 describe("Subagent context lifecycle events", () => {
-  it("session:sub_agent_spawn_prepared delivers rich payload", () => {
+  it("session:sub_agent_spawn_prepared delivers content-free lifecycle metadata", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["session:sub_agent_spawn_prepared"] = {
       runId: "run-spawn-001",
       parentSessionKey: "parent-session",
       agentId: "sub-agent-1",
-      task: "analyze codebase",
       depth: 1,
       maxDepth: 3,
       artifactCount: 5,
@@ -682,7 +680,7 @@ describe("Subagent context lifecycle events", () => {
     expect(received.runId).toBe("run-spawn-001");
     expect(received.parentSessionKey).toBe("parent-session");
     expect(received.agentId).toBe("sub-agent-1");
-    expect(received.task).toBe("analyze codebase");
+    expect(received).not.toHaveProperty("task");
     expect(received.depth).toBe(1);
     expect(received.maxDepth).toBe(3);
     expect(received.artifactCount).toBe(5);
@@ -749,7 +747,6 @@ describe("Subagent context lifecycle events", () => {
     const payload: EventMap["session:sub_agent_spawn_rejected"] = {
       parentSessionKey: "parent-session",
       agentId: "sub-agent-deep",
-      task: "go deeper",
       reason: "depth_exceeded",
       currentDepth: 3,
       maxDepth: 3,
@@ -796,14 +793,13 @@ describe("Subagent context lifecycle events", () => {
     expect(received.maxChildren).toBe(5);
   });
 
-  it("existing sub_agent_spawned event still works (regression guard)", () => {
+  it("sub_agent_spawned remains content-free when delivered", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["session:sub_agent_spawned"] = {
-      runId: "run-legacy-001",
+      runId: "run-001",
       parentSessionKey: "parent-session",
       agentId: "sub-agent-1",
-      task: "summarize conversation",
       timestamp: Date.now(),
     };
 
@@ -812,8 +808,8 @@ describe("Subagent context lifecycle events", () => {
 
     expect(handler).toHaveBeenCalledOnce();
     const received = handler.mock.calls[0]![0] as EventMap["session:sub_agent_spawned"];
-    expect(received.runId).toBe("run-legacy-001");
-    expect(received.task).toBe("summarize conversation");
+    expect(received.runId).toBe("run-001");
+    expect(received).not.toHaveProperty("task");
   });
 });
 

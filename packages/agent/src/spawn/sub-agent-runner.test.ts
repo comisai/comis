@@ -28,6 +28,7 @@ vi.mock("@comis/agent", () => ({
 import {
   createSubAgentRunner,
   ANNOUNCE_PARENT_TIMEOUT_MS,
+  SubAgentSpawnPausedError,
   type SubAgentRunnerDeps,
 } from "./sub-agent-runner.js";
 import {
@@ -218,7 +219,7 @@ describe("createSubAgentRunner", () => {
   // -----------------------------------------------------------------------
   // Run completes and updates status
   // -----------------------------------------------------------------------
-  it("run completes and updates status with result", async () => {
+  it("run completion retains one frozen bounded projection without raw output", async () => {
     const runner = createSubAgentRunner(deps);
     const runId = runner.spawn({
       task: "summarize document",
@@ -231,18 +232,30 @@ describe("createSubAgentRunner", () => {
     const run = runner.getRunStatus(runId);
     expect(run).toBeDefined();
     expect(run!.status).toBe("completed");
-    expect(run!.result).toBeDefined();
-    expect(run!.result!.response).toBe("task completed successfully");
-    expect(run!.result!.tokensUsed.total).toBe(200);
-    expect(run!.result!.cost.total).toBe(0.02);
-    expect(run!.result!.finishReason).toBe("stop");
-    expect(run!.completedAt).toBeDefined();
+    if (run!.status !== "completed") throw new Error("expected completed run");
+    expect(run.completion).toEqual({
+      endReason: "completed",
+      completedAtMs: expect.any(Number),
+      summary: "task completed successfully",
+    });
+    expect(Object.isFrozen(run.completion)).toBe(true);
+    expect(run.telemetry).toEqual({
+      tokensUsedTotal: 200,
+      costTotal: 0.02,
+      finishReason: "stop",
+      stepsExecuted: 3,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    });
+    expect(run).not.toHaveProperty("result");
+    expect(run).not.toHaveProperty("error");
+    expect(run).not.toHaveProperty("completedAt");
   });
 
   // -----------------------------------------------------------------------
   // Run failure sets status to "failed"
   // -----------------------------------------------------------------------
-  it("run failure sets status to failed with error message", async () => {
+  it("run failure stores a frozen failure completion without raw error state", async () => {
     vi.mocked(deps.executeAgent).mockRejectedValue(new Error("LLM quota exceeded"));
 
     const runner = createSubAgentRunner(deps);
@@ -250,14 +263,111 @@ describe("createSubAgentRunner", () => {
       task: "expensive task",
       agentId: "default",
     });
+    const failedWait = runner.waitForCompletion(runId);
 
     await vi.advanceTimersByTimeAsync(0);
 
     const run = runner.getRunStatus(runId);
     expect(run).toBeDefined();
     expect(run!.status).toBe("failed");
-    expect(run!.error).toBe("LLM quota exceeded");
-    expect(run!.completedAt).toBeDefined();
+    if (run!.status !== "failed") throw new Error("expected failed run");
+    expect(run.completion).toEqual({
+      endReason: "failed",
+      completedAtMs: expect.any(Number),
+      errorKind: "internal",
+      summary: "LLM quota exceeded",
+    });
+    expect(Object.isFrozen(run.completion)).toBe(true);
+    expect(run).not.toHaveProperty("result");
+    expect(run).not.toHaveProperty("error");
+    expect(run).not.toHaveProperty("completedAt");
+    await expect(failedWait).resolves.toBe(run.completion);
+  });
+
+  it("concurrent completion waiters share the runner-owned deferred", async () => {
+    let resolveExecution!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {
+      resolveExecution = resolve;
+    }));
+
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({ task: "shared wait", agentId: "default" });
+    const first = runner.waitForCompletion(runId);
+    const second = runner.waitForCompletion(runId);
+
+    expect(first).toBeDefined();
+    expect(second).toBe(first);
+
+    resolveExecution({
+      response: "shared result",
+      tokensUsed: { total: 10 },
+      cost: { total: 0.001 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const [firstCompletion, secondCompletion] = await Promise.all([first!, second!]);
+    expect(secondCompletion).toBe(firstCompletion);
+    expect(firstCompletion).toEqual({
+      endReason: "completed",
+      completedAtMs: expect.any(Number),
+      summary: "shared result",
+    });
+  });
+
+  it("waiter cancellation returns promptly without cancelling the child", async () => {
+    vi.mocked(deps.executeAgent).mockReturnValue(new Promise(() => {}));
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({ task: "keep running", agentId: "default" });
+    const controller = new AbortController();
+
+    const waiting = runner.waitForCompletions([runId], 60_000, controller.signal);
+    controller.abort();
+    await expect(waiting).resolves.toEqual([{ runId, status: "cancelled" }]);
+    expect(runner.getRunStatus(runId)?.status).toBe("running");
+  });
+
+  it("mixed completion waits preserve completed results and time out only pending children", async () => {
+    let resolveSecond!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
+    vi.mocked(deps.executeAgent)
+      .mockResolvedValueOnce({
+        response: "first complete",
+        tokensUsed: { total: 1 },
+        cost: { total: 0 },
+        finishReason: "stop",
+        stepsExecuted: 1,
+      })
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveSecond = resolve;
+      }));
+    const runner = createSubAgentRunner(deps);
+    const completedRunId = runner.spawn({ task: "complete", agentId: "default" });
+    const pendingRunId = runner.spawn({ task: "pending", agentId: "default" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const waiting = runner.waitForCompletions([completedRunId, pendingRunId], 250);
+    await vi.advanceTimersByTimeAsync(250);
+    await expect(waiting).resolves.toEqual([
+      {
+        runId: completedRunId,
+        status: "completed",
+        completion: expect.objectContaining({
+          endReason: "completed",
+          summary: "first complete",
+        }),
+      },
+      { runId: pendingRunId, status: "timeout" },
+    ]);
+    expect(runner.getRunStatus(pendingRunId)?.status).toBe("running");
+
+    resolveSecond({
+      response: "second eventually completes",
+      tokensUsed: { total: 1 },
+      cost: { total: 0 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -317,6 +427,9 @@ describe("createSubAgentRunner", () => {
     const runBefore = runner.getRunStatus(runId);
     expect(runBefore).toBeDefined();
     expect(runBefore!.status).toBe("completed");
+    await expect(runner.waitForCompletion(runId)).resolves.toMatchObject({
+      endReason: "completed",
+    });
 
     // Advance past retention period + sweep interval
     vi.advanceTimersByTime(60_000 + 300_001);
@@ -324,6 +437,7 @@ describe("createSubAgentRunner", () => {
     // Run should be archived (removed from Map)
     const runAfter = runner.getRunStatus(runId);
     expect(runAfter).toBeUndefined();
+    expect(runner.waitForCompletion(runId)).toBeUndefined();
 
     // sessionStore.delete should have been called
     expect(deps.sessionStore.delete).toHaveBeenCalledTimes(1);
@@ -410,10 +524,13 @@ describe("createSubAgentRunner", () => {
       expect.objectContaining({
         runId,
         agentId: "researcher",
-        task: "event test",
         parentSessionKey: formattedConversation(callerConversation),
       }),
     );
+    const spawnEvent = vi.mocked(deps.eventBus.emit).mock.calls.find(
+      ([event]) => event === "session:sub_agent_spawned",
+    );
+    expect(spawnEvent?.[1]).not.toHaveProperty("task");
 
     await vi.advanceTimersByTimeAsync(0);
 
@@ -622,6 +739,51 @@ describe("createSubAgentRunner", () => {
       agentId: "child-agent",
     })).toThrow("Sub-agent runner is shutting down");
     expect(deps.executeAgent).not.toHaveBeenCalled();
+  });
+
+  it("pauses spawn admission reversibly without reopening shutdown admission", async () => {
+    deps.logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+    const runner = createSubAgentRunner(deps);
+
+    expect(runner.pauseSpawns()).toEqual({
+      paused: true,
+      acceptingSpawns: true,
+      changed: true,
+      resetsOnRestart: true,
+    });
+    expect(runner.pauseSpawns().changed).toBe(false);
+    expect(() => runner.spawn({ task: "must wait", agentId: "child-agent" }))
+      .toThrow(SubAgentSpawnPausedError);
+    expect(deps.executeAgent).not.toHaveBeenCalled();
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "session:sub_agent_spawn_rejected",
+      expect.objectContaining({ reason: "spawn_paused" }),
+    );
+    expect(deps.logger!.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "spawn_paused", errorKind: "precondition" }),
+      "Sub-agent spawn rejected: admission paused",
+    );
+
+    expect(runner.resumeSpawns()).toEqual({
+      paused: false,
+      acceptingSpawns: true,
+      changed: true,
+      resetsOnRestart: true,
+    });
+    runner.spawn({ task: "may proceed", agentId: "child-agent" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.executeAgent).toHaveBeenCalledOnce();
+
+    runner.pauseSpawns();
+    await runner.shutdown();
+    runner.resumeSpawns();
+    expect(() => runner.spawn({ task: "cannot reopen shutdown", agentId: "child-agent" }))
+      .toThrow("Sub-agent runner is shutting down");
   });
 
   it("shutdown waits for a governed stop notice before the final batch drain", async () => {
@@ -859,6 +1021,10 @@ describe("createSubAgentRunner", () => {
       expect.objectContaining({ runId, agentId: "default" }),
       "Sub-agent spawn initiated",
     );
+    const spawnLog = logger.info.mock.calls.find(
+      (call: [Record<string, unknown>, string]) => call[1] === "Sub-agent spawn initiated",
+    );
+    expect(spawnLog?.[0]).not.toHaveProperty("task");
 
     // Allow execution to complete
     await vi.advanceTimersByTimeAsync(0);
@@ -1306,7 +1472,7 @@ describe("createSubAgentRunner", () => {
   // -----------------------------------------------------------------------
   // Kill log includes durationMs and task
   // -----------------------------------------------------------------------
-  it("kill log includes durationMs and task excerpt", async () => {
+  it("kill log includes duration without task content", async () => {
     const logger = {
       info: vi.fn(),
       warn: vi.fn(),
@@ -1337,14 +1503,12 @@ describe("createSubAgentRunner", () => {
       (call: [Record<string, unknown>, string]) => call[1] === "Sub-agent run killed",
     );
     expect(killCall).toBeDefined();
-    expect(killCall![0]).toEqual(
-      expect.objectContaining({
-        runId,
-        killedBy: "parent",
-        durationMs: expect.any(Number),
-        task: expect.stringContaining("long running task"),
-      }),
-    );
+    expect(killCall![0]).toEqual(expect.objectContaining({
+      runId,
+      killedBy: "parent",
+      durationMs: expect.any(Number),
+    }));
+    expect(killCall![0]).not.toHaveProperty("task");
     expect((killCall![0] as Record<string, unknown>).durationMs).toBeGreaterThan(0);
   });
 
@@ -1539,7 +1703,8 @@ describe("createSubAgentRunner", () => {
     const run = runner.getRunStatus(runId);
     expect(run).toBeDefined();
     expect(run!.status).toBe("completed");
-    expect(run!.result!.stepsExecuted).toBe(5);
+    if (run!.status !== "completed") throw new Error("expected completed run");
+    expect(run.telemetry.stepsExecuted).toBe(5);
   });
 
   // -----------------------------------------------------------------------
@@ -1964,6 +2129,7 @@ describe("createSubAgentRunner", () => {
         callerSessionKey: "default:user1:ch1", depth: 0, maxDepth: 3,
       });
       expect(runner.getRunStatus(runId2)!.status).toBe("queued");
+      const queuedWait = runner.waitForCompletion(runId2);
 
       // Resolve child 1 execution
       resolveExec1({
@@ -1978,6 +2144,10 @@ describe("createSubAgentRunner", () => {
       const run2 = runner.getRunStatus(runId2);
       expect(run2).toBeDefined();
       expect(run2!.status === "running" || run2!.status === "completed").toBe(true);
+      await expect(queuedWait).resolves.toMatchObject({
+        endReason: "completed",
+        summary: "done",
+      });
     });
 
     it("throws when queue is full (maxQueuedPerAgent exceeded)", () => {
@@ -2052,7 +2222,7 @@ describe("createSubAgentRunner", () => {
       );
     });
 
-    it("queued spawns timeout after queueTimeoutMs", () => {
+    it("queued spawns timeout after queueTimeoutMs", async () => {
       vi.useFakeTimers();
       const limitDeps: SubAgentRunnerDeps = {
         sessionStore: createMockSessionStore(),
@@ -2078,6 +2248,7 @@ describe("createSubAgentRunner", () => {
       const queuedRunId = runner.spawn({ task: "queued child", agentId: "agent-a", callerSessionKey: callerKey, depth: 0, maxDepth: 3 });
 
       expect(runner.getRunStatus(queuedRunId)!.status).toBe("queued");
+      const queuedWait = runner.waitForCompletion(queuedRunId);
 
       // Advance past queueTimeoutMs + sweep interval (300_000ms)
       vi.advanceTimersByTime(300_001);
@@ -2085,7 +2256,16 @@ describe("createSubAgentRunner", () => {
       // Queued run should have timed out
       const run = runner.getRunStatus(queuedRunId);
       expect(run!.status).toBe("failed");
-      expect(run!.error).toContain("Queue timeout");
+      if (run!.status !== "failed") throw new Error("expected failed run");
+      expect(run.completion).toMatchObject({
+        endReason: "failed",
+        errorKind: "timeout",
+        summary: expect.stringContaining("Queue timeout"),
+      });
+      await expect(queuedWait).resolves.toMatchObject({
+        endReason: "failed",
+        errorKind: "timeout",
+      });
 
       expect(limitDeps.eventBus.emit).toHaveBeenCalledWith(
         "session:sub_agent_spawn_rejected",
@@ -2564,13 +2744,22 @@ describe("createSubAgentRunner", () => {
       const runBefore = runner.getRunStatus(runId);
       expect(runBefore).toBeDefined();
       expect(runBefore!.status).toBe("running");
+      const watchdogWait = runner.waitForCompletion(runId);
 
       await vi.advanceTimersByTimeAsync(5_000);
 
       const runAfter = runner.getRunStatus(runId);
       expect(runAfter).toBeDefined();
       expect(runAfter!.status).toBe("failed");
-      expect(runAfter!.error).toContain("Execution timeout");
+      if (runAfter!.status !== "failed") throw new Error("expected failed run");
+      expect(runAfter.completion).toMatchObject({
+        endReason: "watchdog_timeout",
+        errorKind: "timeout",
+        summary: expect.stringContaining("Execution timeout"),
+      });
+      await expect(watchdogWait).resolves.toMatchObject({
+        endReason: "watchdog_timeout",
+      });
 
       // Failure notification delivered
       expect(deps.sendToChannel).toHaveBeenCalled();
@@ -2718,12 +2907,22 @@ describe("createSubAgentRunner", () => {
       // Backdate startedAt so the run appears ancient (past grace period)
       const run = runner.getRunStatus(runId)!;
       run.startedAt = Date.now() - 10_200_000; // 10_200s old > 10_120s grace
+      const ghostWait = runner.waitForCompletion(runId);
 
       // Next sweep fires at 600_000ms total; ghost sweep sees backdated run past grace
       await vi.advanceTimersByTimeAsync(300_000);
 
       expect(runner.getRunStatus(runId)!.status).toBe("failed");
-      expect(runner.getRunStatus(runId)!.error).toContain("Ghost run");
+      const failedRun = runner.getRunStatus(runId)!;
+      if (failedRun.status !== "failed") throw new Error("expected failed run");
+      expect(failedRun.completion).toMatchObject({
+        endReason: "ghost_sweep",
+        errorKind: "timeout",
+        summary: expect.stringContaining("Ghost run"),
+      });
+      await expect(ghostWait).resolves.toMatchObject({
+        endReason: "ghost_sweep",
+      });
 
       // Failure notification delivered via stored announce channel
       expect(deps.sendToChannel).toHaveBeenCalledWith(
@@ -3238,8 +3437,12 @@ describe("abort wiring in spawn", () => {
     expect(text).toContain("Abort: step_limit");
     expect(runner.getRunStatus(runId)).toMatchObject({
       status: "failed",
-      error: "Execution completed with finishReason: max_steps",
-      result: { finishReason: "max_steps" },
+      completion: {
+        endReason: "failed",
+        errorKind: "internal",
+        summary: "partial output",
+      },
+      telemetry: { finishReason: "max_steps" },
     });
   });
 
@@ -3829,7 +4032,12 @@ describe("persistFailureRecord integration", () => {
     // Check the run is marked failed
     const run = runner.getRunStatus(runId);
     expect(run!.status).toBe("failed");
-    expect(run!.error).toBe("execution crashed");
+    if (run!.status !== "failed") throw new Error("expected failed run");
+    expect(run.completion).toMatchObject({
+      endReason: "failed",
+      errorKind: "internal",
+      summary: "execution crashed",
+    });
 
     // Find the failure record on disk
     const resultsDir = join(failureDir, "subagent-results");
@@ -5554,7 +5762,13 @@ describe("killRun attribution + notification + trajectory teardown", () => {
       thresholdMs: 180_000,
     });
     expect(result.killed).toBe(true);
-    expect(runner.getRunStatus(runId)!.error).toBe(reason);
+    const killedRun = runner.getRunStatus(runId)!;
+    if (killedRun.status !== "failed") throw new Error("expected failed run");
+    expect(killedRun.completion).toMatchObject({
+      endReason: "killed",
+      errorKind: "timeout",
+      summary: reason,
+    });
 
     await new Promise((r) => setTimeout(r, 200));
     const resultsDir = join(killDir, "subagent-results");
@@ -5570,14 +5784,22 @@ describe("killRun attribution + notification + trajectory teardown", () => {
     fs.rmSync(killDir, { recursive: true, force: true });
   });
 
-  it("default kill keeps parent attribution (back-compat)", async () => {
+  it("default kill records parent attribution in the bounded completion", async () => {
     const localDeps = runningDeps();
     const runner = createSubAgentRunner(localDeps);
     const runId = runner.spawn({ task: "t", agentId: "default" });
     await new Promise((r) => setTimeout(r, 50));
+    const killedWait = runner.waitForCompletion(runId);
 
     expect(runner.killRun(runId).killed).toBe(true);
-    expect(runner.getRunStatus(runId)!.error).toBe("Killed by parent agent");
+    const killedRun = runner.getRunStatus(runId)!;
+    if (killedRun.status !== "failed") throw new Error("expected failed run");
+    expect(killedRun.completion).toMatchObject({
+      endReason: "killed",
+      errorKind: "precondition",
+      summary: "Killed by parent agent",
+    });
+    await expect(killedWait).resolves.toBe(killedRun.completion);
   });
 
   it("kill emits subagent:killed with a content-free telemetry payload", async () => {

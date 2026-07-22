@@ -23,8 +23,22 @@ export type { LifecycleHooksDeps } from "./lifecycle-hooks.js";
 
 export { createEphemeralComisSessionManager } from "./pi-mono-adapters.js";
 
-export { createSubAgentRunner } from "./sub-agent-runner.js";
-export type { SubAgentRunnerDeps, SubAgentRun, SpawnParams, SubAgentRunnerLogger } from "./sub-agent-runner.js";
+export { createSubAgentRunner, SubAgentSpawnPausedError } from "./sub-agent-runner.js";
+export type {
+  SubAgentRunnerDeps,
+  SubAgentRun,
+  SubAgentQueuedRun,
+  SubAgentRunningRun,
+  SubAgentCompletedRun,
+  SubAgentFailedRun,
+  SubAgentCompletion,
+  SubAgentRunTelemetry,
+  SubAgentWaitResult,
+  SpawnParams,
+  SubAgentRunnerLogger,
+  SubAgentSpawnAdmissionState,
+  SubAgentSpawnAdmissionMutation,
+} from "./sub-agent-runner.js";
 
 export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification } from "./sub-agent-result-processor.js";
 // createDeliveryDedup + DeliveryDedup cross the package boundary (the orchestrator

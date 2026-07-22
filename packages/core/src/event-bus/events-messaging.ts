@@ -96,7 +96,6 @@ export interface MessagingEvents {
     runId: string;
     parentSessionKey: string;
     agentId: string;
-    task: string;
     timestamp: number;
   };
 

@@ -74,7 +74,6 @@ export function createLifecycleHooks(deps: LifecycleHooksDeps) {
           runId: params.runId,
           parentSessionKey: params.parentSessionKey,
           agentId: params.agentId,
-          task: params.task,
           depth: params.depth,
           maxDepth: params.maxDepth,
           artifactCount: 0,

@@ -82,6 +82,7 @@ export {
   topologicalSort,
   validateAndSortGraph,
   // Subagent context lifecycle
+  SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
   SubagentResultSchema,
   SubagentEndReasonSchema,
   parseSubagentResult,

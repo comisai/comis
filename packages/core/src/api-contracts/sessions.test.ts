@@ -98,9 +98,9 @@ describe("SESSIONS_CONTRACTS aggregator", () => {
     ]);
   });
 
-  it("every contract has scopes.length === 1 (single-scope invariant)", () => {
+  it("keeps every session orchestration read on its declared single route", () => {
     for (const c of SESSIONS_CONTRACTS) {
-      expect(c.scopes.length, `${c.method} must have exactly one scope`).toBe(1);
+      expect(c.scopes, `${c.method} route scopes`).toEqual([c.scopes[0]]);
     }
   });
 });
@@ -548,14 +548,21 @@ describe("SessionRunStatusContract", () => {
       runId: "r1",
       status: "completed",
       agentId: "alpha",
-      task: "do thing",
-      sessionKey: "k",
       startedAt: 1714900000000,
-      completedAt: 1714900010000,
       runtimeMs: 10000,
-      response: "done",
-      tokensUsed: { total: 1234 },
-      cost: { input: 0.01, output: 0.02, total: 0.03 },
+      completion: {
+        endReason: "completed",
+        completedAtMs: 1714900010000,
+        summary: "done",
+      },
+      telemetry: {
+        tokensUsedTotal: 1234,
+        costTotal: 0.03,
+        finishReason: "stop",
+        stepsExecuted: 3,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
     })).toBeDefined();
   });
 
@@ -564,7 +571,6 @@ describe("SessionRunStatusContract", () => {
       runId: "r1",
       status: "running",
       agentId: "alpha",
-      task: "do thing",
       startedAt: 1714900000000,
       runtimeMs: 5000,
     })).toBeDefined();
@@ -575,11 +581,36 @@ describe("SessionRunStatusContract", () => {
       runId: "r1",
       status: "failed",
       agentId: "alpha",
-      task: "do thing",
       startedAt: 0,
       runtimeMs: 100,
-      error: "Tool exec failed",
+      completion: {
+        endReason: "failed",
+        completedAtMs: 100,
+        errorKind: "dependency",
+        summary: "Tool exec failed",
+      },
     })).toBeDefined();
+  });
+
+  it("uses the agent-reachable RPC route and rejects raw provider fields", () => {
+    expect(SessionRunStatusContract.scopes).toEqual(["rpc"]);
+    expect(() => SessionRunStatusContract.response.parse({
+      runId: "r1",
+      status: "completed",
+      agentId: "alpha",
+      startedAt: 0,
+      runtimeMs: 1,
+      completion: { endReason: "completed", completedAtMs: 1 },
+      telemetry: {
+        tokensUsedTotal: 1,
+        costTotal: 0,
+        finishReason: "stop",
+        stepsExecuted: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      response: "raw provider output",
+    })).toThrow();
   });
 });
 

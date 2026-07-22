@@ -151,7 +151,7 @@ describe("sub-agent lifecycle integration", () => {
   // 2. Run completes and status updates
   // -------------------------------------------------------------------------
 
-  it("run completes and status updates to completed with result", async () => {
+  it("run completion retains only the bounded terminal projection", async () => {
     vi.useFakeTimers();
     const runner = createSubAgentRunner(deps);
     const runId = runner.spawn({
@@ -165,20 +165,26 @@ describe("sub-agent lifecycle integration", () => {
     const run = runner.getRunStatus(runId);
     expect(run).toBeDefined();
     expect(run!.status).toBe("completed");
-    expect(run!.result).toBeDefined();
-    expect(run!.result!.response).toBe("task completed successfully");
-    expect(run!.result!.tokensUsed.total).toBe(200);
-    expect(run!.result!.cost.total).toBe(0.02);
-    expect(run!.result!.finishReason).toBe("stop");
-    expect(run!.completedAt).toBeDefined();
-    expect(run!.completedAt).toBeGreaterThanOrEqual(run!.startedAt);
+    if (run?.status !== "completed") throw new Error("expected completed run");
+    expect(run.completion).toEqual(expect.objectContaining({
+      endReason: "completed",
+      summary: "task completed successfully",
+    }));
+    expect(run.telemetry).toEqual(expect.objectContaining({
+      tokensUsedTotal: 200,
+      costTotal: 0.02,
+      finishReason: "stop",
+    }));
+    expect(run.completion.completedAtMs).toBeGreaterThanOrEqual(run.startedAt);
+    expect(run).not.toHaveProperty("result");
+    expect(run).not.toHaveProperty("completedAt");
   });
 
   // -------------------------------------------------------------------------
   // 3. Run failure sets status to "failed"
   // -------------------------------------------------------------------------
 
-  it("run failure sets status to failed with error message", async () => {
+  it("run failure retains only the bounded failure projection", async () => {
     vi.useFakeTimers();
     vi.mocked(deps.executeAgent).mockRejectedValue(new Error("LLM quota exceeded"));
 
@@ -193,8 +199,14 @@ describe("sub-agent lifecycle integration", () => {
     const run = runner.getRunStatus(runId);
     expect(run).toBeDefined();
     expect(run!.status).toBe("failed");
-    expect(run!.error).toBe("LLM quota exceeded");
-    expect(run!.completedAt).toBeDefined();
+    if (run?.status !== "failed") throw new Error("expected failed run");
+    expect(run.completion).toEqual(expect.objectContaining({
+      endReason: "failed",
+      errorKind: "internal",
+      summary: "LLM quota exceeded",
+    }));
+    expect(run).not.toHaveProperty("error");
+    expect(run).not.toHaveProperty("completedAt");
   });
 
   // -------------------------------------------------------------------------
@@ -386,7 +398,6 @@ describe("sub-agent lifecycle integration", () => {
       expect.objectContaining({
         runId,
         agentId: "researcher",
-        task: "event test",
         parentSessionKey: "test-tenant:user1:ch1",
       }),
     );
