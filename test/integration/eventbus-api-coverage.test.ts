@@ -150,7 +150,6 @@ describe("EventMap Payload Coverage", () => {
         runId: "run-001",
         parentSessionKey: "tenant:user1:ch1",
         agentId: "summarizer",
-        task: "Summarize conversation",
         timestamp: NOW,
       },
       "session:sub_agent_completed": {
@@ -298,34 +297,34 @@ describe("EventMap Payload Coverage", () => {
 
   describe("Domain 5: Scheduler/Tasks", () => {
     const EVENTS = {
-      "scheduler:job_started": {
+      "scheduler:cron_execution_started": {
+        executionId: "execution-001",
+        bootId: "boot-001",
         jobId: "job-001",
-        jobName: "daily-digest",
         agentId: "default",
-        timestamp: NOW,
+        scheduledForMs: NOW,
+        trigger: "scheduled" as const,
+        workKind: "agent_turn" as const,
+        rootRunId: "root-cron-execution-001",
+        startedAtMs: NOW,
       },
-      "scheduler:job_completed": {
+      "scheduler:cron_execution_terminal": {
+        executionId: "execution-001",
+        bootId: "boot-001",
         jobId: "job-001",
-        jobName: "daily-digest",
         agentId: "default",
+        scheduledForMs: NOW,
+        trigger: "scheduled" as const,
+        workKind: "agent_turn" as const,
+        terminalAtMs: NOW + 5_200,
         durationMs: 5200,
-        success: true,
-        error: "minor warning",
-        timestamp: NOW,
-      },
-      "scheduler:job_result": {
-        jobId: "job-001",
-        jobName: "daily-digest",
-        agentId: "default",
-        result: "Daily digest sent successfully",
-        success: true,
-        deliveryTarget: {
-          channelId: "ch-001",
-          userId: "user-001",
-          tenantId: "tenant-001",
-          channelType: "telegram",
-        },
-        timestamp: NOW,
+        outcomeKind: "agent_turn" as const,
+        executionStatus: "completed" as const,
+        deliveryStatus: "accepted" as const,
+        continuationStatus: "not_requested" as const,
+        deliveredChunks: 1,
+        failedChunks: 0,
+        ambiguousChunks: 0,
       },
       "scheduler:heartbeat_check": {
         checksRun: 4,
@@ -688,7 +687,7 @@ describe("EventMap Payload Coverage", () => {
       "diagnostic:webhook_delivered": {
         webhookId: "wh-001",
         source: "scheduler",
-        event: "job_completed",
+        event: "cron_execution_terminal",
         statusCode: 200,
         success: true,
         durationMs: 85,

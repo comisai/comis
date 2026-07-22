@@ -92,10 +92,12 @@ describe("Daemon Lifecycle", () => {
       expect(result.entry).toHaveProperty("agentId");
     });
 
-    it("logs per-agent cron scheduler start", () => {
+    it("logs explicit cron scheduler activation after initialization", () => {
       const entries = logCapture.getEntries();
-      const result = assertLogContains(entries, { msg: /Per-agent CronScheduler started/ });
+      const result = assertLogContains(entries, { msg: "Cron schedulers activated" });
       expect(result.matched, result.error).toBe(true);
+      expect(result.entry).toHaveProperty("schedulerCount", 1);
+      expect(result.entry).toHaveProperty("durationMs");
     });
 
     it("logs gateway server started", () => {
@@ -115,7 +117,8 @@ describe("Daemon Lifecycle", () => {
       const result = assertLogSequence(entries, [
         { msg: "Memory services initialized" },
         { msg: /Agent executor initialized/ },
-        { msg: /Per-agent CronScheduler started/ },
+        { msg: "Per-agent cron scheduler initialized" },
+        { msg: "Cron schedulers activated" },
         { msg: "Gateway server started" },
         { msg: "Comis daemon started" },
       ]);
@@ -215,9 +218,9 @@ describe("Daemon Lifecycle", () => {
       expect(result.matched, result.error).toBe(true);
     });
 
-    it("shutdown logs cron scheduler stop", () => {
+    it("shutdown logs cron admission closure", () => {
       const entries = logCapture.getEntries();
-      const result = assertLogContains(entries, { msg: /CronScheduler stopped/ });
+      const result = assertLogContains(entries, { msg: "Cron scheduler stopped accepting work" });
       expect(result.matched, result.error).toBe(true);
     });
 
@@ -237,7 +240,8 @@ describe("Daemon Lifecycle", () => {
       const entries = logCapture.getEntries();
       const result = assertLogSequence(entries, [
         { msg: /Graceful shutdown initiated/ },
-        { msg: /CronScheduler stopped/ },
+        { msg: "Cron scheduler stopped accepting work" },
+        { msg: "Component stopped", component: "cron-scheduler" },
         { msg: "Component stopped", component: "memory-database" },
         { msg: "Graceful shutdown complete" },
       ]);
