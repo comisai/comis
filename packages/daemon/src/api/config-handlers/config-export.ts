@@ -43,6 +43,7 @@ import {
   type ConfigHandlerDeps,
   deliverConfigWebhook,
 } from "./config-helpers.js";
+import { runCommittedConfigLifecycle } from "./config-lifecycle.js";
 import { coerceConfigValue, resolveSchemaForPath } from "./config-validate.js";
 import type { PatchBucket } from "./config-write.js";
 
@@ -168,6 +169,8 @@ export function bindConfigExportHandlers(
         const tmpPath = localPath + ".tmp";
         writeFileSync(tmpPath, yamlStringify(existingLocal), { encoding: "utf-8", mode: 0o600 });
         renameSync(tmpPath, localPath);
+
+        runCommittedConfigLifecycle(deps, validation.data, "config.apply");
 
         // Best-effort git commit
         if (deps.configGitManager) {

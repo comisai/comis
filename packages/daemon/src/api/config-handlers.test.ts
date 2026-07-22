@@ -139,6 +139,24 @@ describe("config.patch", () => {
     });
   });
 
+  it("notifies the committed-config lifecycle before scheduling restart", async () => {
+    const onConfigPersisted = vi.fn((nextConfig: { logLevel: string }) => {
+      expect(nextConfig.logLevel).toBe("debug");
+      expect(readFileSync(tempConfig.configPath, "utf-8")).toContain("logLevel: debug");
+      expect(killSpy).not.toHaveBeenCalled();
+    });
+    const deps = { ...makeDeps(tempConfig.configPath), onConfigPersisted };
+    const handlers = createConfigHandlers(deps);
+
+    await handlers["config.patch"]!({
+      section: "logLevel",
+      value: "debug",
+      _trustLevel: "admin",
+    });
+
+    expect(onConfigPersisted).toHaveBeenCalledOnce();
+  });
+
   it("written config file has mode 0o600", async () => {
     const deps = makeDeps(tempConfig.configPath);
     const handlers = createConfigHandlers(deps);
@@ -751,6 +769,24 @@ describe("config.apply", () => {
     // The scheduler section should contain exactly what we passed (plus Zod defaults are NOT in the YAML;
     // the YAML stores the raw value we wrote, and Zod defaults fill in at load time)
     expect(scheduler).toEqual({ cron: { enabled: true } });
+  });
+
+  it("notifies the committed-config lifecycle with the validated applied section", async () => {
+    const onConfigPersisted = vi.fn((nextConfig: { scheduler: { tasks: { enabled: boolean } } }) => {
+      expect(nextConfig.scheduler.tasks.enabled).toBe(false);
+      expect(readFileSync(tempConfig.configPath, "utf-8")).toContain("scheduler:");
+      expect(killSpy).not.toHaveBeenCalled();
+    });
+    const deps = { ...makeDeps(tempConfig.configPath), onConfigPersisted };
+    const handlers = createConfigHandlers(deps);
+
+    await handlers["config.apply"]!({
+      section: "scheduler",
+      value: { tasks: { enabled: false } },
+      _trustLevel: "admin",
+    });
+
+    expect(onConfigPersisted).toHaveBeenCalledOnce();
   });
 
   it("written config file has mode 0o600 after apply", async () => {
@@ -1812,7 +1848,7 @@ describe("config.patch type coercion", () => {
     const result = await handlers["config.patch"]!({
       section: "scheduler",
       key: "cron",
-      value: '{"enabled":"true","maxConcurrentRuns":"3"}',
+      value: '{"enabled":"true","maxRunsPerTick":"3"}',
       _trustLevel: "admin",
     });
 
@@ -1825,8 +1861,8 @@ describe("config.patch type coercion", () => {
     // JSON string should have been parsed, and nested values coerced
     expect(scheduler.cron.enabled).toBe(true);
     expect(typeof scheduler.cron.enabled).toBe("boolean");
-    expect(scheduler.cron.maxConcurrentRuns).toBe(3);
-    expect(typeof scheduler.cron.maxConcurrentRuns).toBe("number");
+    expect(scheduler.cron.maxRunsPerTick).toBe(3);
+    expect(typeof scheduler.cron.maxRunsPerTick).toBe("number");
   });
 
   it("coerces JSON-stringified object to real object with nested coercion", async () => {
@@ -1837,7 +1873,7 @@ describe("config.patch type coercion", () => {
     const result = await handlers["config.patch"]!({
       section: "scheduler",
       key: "cron",
-      value: '{"enabled":"false","maxConcurrentRuns":"5"}',
+      value: '{"enabled":"false","maxRunsPerTick":"5"}',
       _trustLevel: "admin",
     });
 
@@ -1849,8 +1885,8 @@ describe("config.patch type coercion", () => {
     const scheduler = parsed.scheduler as Record<string, Record<string, unknown>>;
     expect(scheduler.cron.enabled).toBe(false);
     expect(typeof scheduler.cron.enabled).toBe("boolean");
-    expect(scheduler.cron.maxConcurrentRuns).toBe(5);
-    expect(typeof scheduler.cron.maxConcurrentRuns).toBe("number");
+    expect(scheduler.cron.maxRunsPerTick).toBe(5);
+    expect(typeof scheduler.cron.maxRunsPerTick).toBe("number");
   });
 
   it("does not parse invalid JSON strings", async () => {
@@ -1884,7 +1920,7 @@ describe("config.patch type coercion", () => {
     const result = await handlers["config.patch"]!({
       section: "scheduler",
       key: "cron",
-      value: { enabled: "true", maxConcurrentRuns: "5" },
+      value: { enabled: "true", maxRunsPerTick: "5" },
       _trustLevel: "admin",
     });
 
@@ -1896,8 +1932,8 @@ describe("config.patch type coercion", () => {
     const scheduler = parsed.scheduler as Record<string, Record<string, unknown>>;
     expect(scheduler.cron.enabled).toBe(true);
     expect(typeof scheduler.cron.enabled).toBe("boolean");
-    expect(scheduler.cron.maxConcurrentRuns).toBe(5);
-    expect(typeof scheduler.cron.maxConcurrentRuns).toBe("number");
+    expect(scheduler.cron.maxRunsPerTick).toBe(5);
+    expect(typeof scheduler.cron.maxRunsPerTick).toBe("number");
   });
 
   // -------------------------------------------------------------------------

@@ -38,7 +38,6 @@ import type { ConfigWriteAuditRecordBase } from "@comis/observability";
 import { stringify as yamlStringify } from "yaml";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
-
 import { buildConfigAuditBase, appendConfigAuditWithOutcome } from "../../config/audit-hook.js";
 import type { RpcHandler } from "../types.js";
 import {
@@ -49,10 +48,10 @@ import {
   rejectDuplicateMcpServerNames,
   restoreMcpServerEnv,
   runAgentCredentialGuard,
-  validateMcpEnvRefs, valueChangeIndicator,
+  validateMcpEnvRefs,
 } from "./config-helpers.js";
+import { runCommittedConfigLifecycle, valueChangeIndicator } from "./config-lifecycle.js";
 import { coerceConfigValue, resolveSchemaForPath } from "./config-validate.js";
-
 /** Rate-limit bucket shape exposed by `createTokenBucket` in config-helpers.ts. */
 export interface PatchBucket {
   tryConsume(): { allowed: boolean; retryAfterMs?: number };
@@ -286,7 +285,7 @@ export function bindConfigWriteHandlers(
           };
           throw writeErr;
         }
-
+        runCommittedConfigLifecycle(deps, validation.data, "config.patch");
         // Best-effort git versioning
         if (deps.configGitManager) {
           const gitStart = systemNowMs();
