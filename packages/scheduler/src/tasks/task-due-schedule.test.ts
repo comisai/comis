@@ -3,7 +3,7 @@ import { ok, err } from "@comis/shared";
 import { describe, expect, it, vi } from "vitest";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
-import type { FollowupTaskStore } from "./task-store.js";
+import { FOLLOWUP_TASK_RETENTION_MS, type FollowupTaskStore } from "./task-store.js";
 import type { FollowupTaskStoreFile } from "./task-types.js";
 import { createTaskDueSchedule } from "./task-due-schedule.js";
 
@@ -33,6 +33,37 @@ function root(nextAttemptAtMs: number | null): FollowupTaskStoreFile {
       preAcceptanceFailureCount: 0,
       status: "pending",
       nextAttemptAtMs,
+    }],
+    attempts: [],
+    policySnapshots: [],
+  };
+}
+
+function terminalRoot(terminalAtMs: number): FollowupTaskStoreFile {
+  return {
+    formatVersion: 1,
+    tasks: [{
+      id: "task-a",
+      agentId: "agent-a",
+      origin: {} as never,
+      sourceExecutionId: "source-a",
+      lastSourceExecutionId: "source-a",
+      sourceOccurrenceCount: 1,
+      workspacePolicyHash: "a".repeat(64),
+      responseLocalePolicy: { source: "unset", enforceLocale: false },
+      text: "Check an outcome",
+      contentTrust: "derived",
+      confidence: 0.9,
+      createdAtMs: NOW_MS - 60_000,
+      dueEarliestMs: NOW_MS - 30_000,
+      dueLatestMs: NOW_MS,
+      expiresAtMs: NOW_MS,
+      dedupeKey: "b".repeat(64),
+      attemptCount: 1,
+      preAcceptanceFailureCount: 0,
+      status: "cancelled",
+      terminalAttemptId: null,
+      terminalAtMs,
     }],
     attempts: [],
     policySnapshots: [],
@@ -106,6 +137,30 @@ describe("follow-up task due schedule", () => {
       expect.objectContaining({ delay: 120_000, cancelled: true, unrefCalled: true }),
       expect.objectContaining({ delay: 30_000, cancelled: false, unrefCalled: true }),
     ]);
+  });
+
+  it("arms terminal-only retention maintenance without submitting a task wake", async () => {
+    const terminalAtMs = NOW_MS - 60_000;
+    const maintenanceAtMs = terminalAtMs + FOLLOWUP_TASK_RETENTION_MS;
+    const data = fixture(null);
+    data.setRoot(terminalRoot(terminalAtMs));
+
+    await expect(data.schedule.activate()).resolves.toEqual(ok({ nextDueAtMs: maintenanceAtMs }));
+    expect(data.timers.unrefRecord()).toEqual([
+      expect.objectContaining({
+        delay: maintenanceAtMs - NOW_MS,
+        cancelled: false,
+        unrefCalled: true,
+      }),
+    ]);
+
+    data.setRoot(root(null));
+    data.advance(maintenanceAtMs - NOW_MS);
+    await flush();
+
+    expect(data.read).toHaveBeenCalledTimes(2);
+    expect(data.submitTaskWake).not.toHaveBeenCalled();
+    expect(data.schedule.getNextDueAtMs()).toBeNull();
   });
 
   it("keeps one bounded retry when coordinator admission is temporarily closed", async () => {
