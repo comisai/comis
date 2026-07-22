@@ -22,7 +22,8 @@
  * @module
  */
 
-import type { SessionManager } from "@earendil-works/pi-coding-agent";
+import type { SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Structural entry views
@@ -76,4 +77,41 @@ export function rewriteSessionFile(sessionManager: SessionManager): boolean {
   if (typeof rewrite !== "function") return false;
   (rewrite as () => void).call(sessionManager);
   return true;
+}
+
+/**
+ * Replace the complete persisted tree with one already-ordered active branch.
+ * This is the guarded private-internals boundary for bounded session retention:
+ * it preserves the SDK header, rebuilds the SDK indexes/leaf, and rewrites the
+ * file before returning. Callers must already hold the session write lock.
+ */
+export function replaceSessionActiveBranch(
+  sessionManager: SessionManager,
+  branch: readonly SessionEntry[],
+): Result<void, Error> {
+  const internals = sessionManager as unknown as {
+    fileEntries?: unknown;
+    _buildIndex?: unknown;
+    _rewriteFile?: unknown;
+  };
+  const fileEntries = internals.fileEntries;
+  if (
+    !Array.isArray(fileEntries)
+    || typeof internals._buildIndex !== "function"
+    || typeof internals._rewriteFile !== "function"
+  ) {
+    return err(new Error("SDK session replacement internals are unavailable"));
+  }
+  const header = fileEntries.find((entry) =>
+    entry !== null
+    && typeof entry === "object"
+    && (entry as { type?: unknown }).type === "session");
+  if (header === undefined) return err(new Error("SDK session header is unavailable"));
+
+  const replaced = tryCatch(() => {
+    fileEntries.splice(0, fileEntries.length, header, ...branch);
+    (internals._buildIndex as () => void).call(sessionManager);
+    (internals._rewriteFile as () => void).call(sessionManager);
+  });
+  return replaced.ok ? ok(undefined) : replaced;
 }
