@@ -156,6 +156,40 @@ function taskTrajectoryLines(): string {
         decision: "allow",
       },
     },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "model.completed",
+      seq: 3,
+      traceId: TASK_CORRELATION_ID,
+      data: {
+        inputTokens: 1_000,
+        outputTokens: 200,
+        cacheReadTokens: 100,
+        cacheCreationTokens: 0,
+      },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "session.summary",
+      seq: 4,
+      traceId: TASK_CORRELATION_ID,
+      data: { costUsd: 0.015, turnCount: 1, degraded: false },
+    },
+    {
+      traceSchema: "comis-trajectory",
+      schemaVersion: 1,
+      type: "learning.outcome_observed",
+      seq: 5,
+      traceId: TASK_CORRELATION_ID,
+      data: {
+        trajectoryId: "task-trajectory-a",
+        outcome: "unknown",
+        source: "pipeline",
+        confidence: 0,
+      },
+    },
   ].map((line) => JSON.stringify(line)).join("\n") + "\n";
 }
 
@@ -187,6 +221,7 @@ function writeRealMetadata(sessionFile: string): void {
     metadataFile,
     JSON.stringify({
       traceId: "trace-1",
+      channel: { type: "telegram", id: "678314278" },
       sessionEnd: {
         type: "session_end",
         endReason: "completed_with_tool_errors",
@@ -315,7 +350,15 @@ describe("obs.explain golden real-layout end-to-end (real writers + makeRealRead
     );
 
     expect(report.sessionKey).toBe(SESSION_KEY);
-    expect(report.likelyRootCause?.code).not.toBe("session_not_found");
+    expect(report.outcome).toEqual({
+      endReason: "success",
+      degraded: false,
+      severity: "ok",
+    });
+    expect(report.summary).toBe("0 tool failures across 1 turns; endReason=success");
+    expect(report.likelyRootCause).toBeNull();
+    expect(report.cost).toMatchObject({ costUsd: 0.015, totalTokens: 1_300 });
+    expect(report.channel).toEqual({ type: "telegram", id: "678314278" });
     expect((report as unknown as Record<string, unknown>).taskCheck).toEqual({
       rootRunId: TASK_ROOT_RUN_ID,
       attemptId: "attempt-task-a",
