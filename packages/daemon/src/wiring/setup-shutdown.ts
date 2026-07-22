@@ -2,7 +2,7 @@
 /**
  * Shutdown setup: sole owner of the daemon teardown chain. Owns SIGTERM/
  * SIGINT/SIGUSR2 handler registration, the `shuttingDown` re-entrancy
- * guard, the 30s hard timeout, the per-step 5s timeout (`STEP_TIMEOUT_MS`),
+ * guard, the 45s default hard timeout, bounded component timeouts,
  * logger.flush, exit-code dispatch, the `process.on("exit", ...)` safety
  * net, and the ordered teardown of all 30+ subsystems. Inlines the
  * `process/graceful-shutdown.ts` body into this file so the entire chain
@@ -15,7 +15,7 @@ import type { ComisLogger } from "@comis/infra";
 import type { GatewayServerHandle } from "@comis/gateway";
 import type { CronScheduler } from "@comis/scheduler";
 import type { BrowserService, MediaTempManager } from "@comis/skills";
-import type { SessionResetScheduler } from "@comis/agent";
+import { SUB_AGENT_SHUTDOWN_TIMEOUT_MS, type SessionResetScheduler } from "@comis/agent";
 import { safePath, systemNowMs, systemSetTimeout, systemClearTimeout, systemClearInterval } from "@comis/core";
 import { withStepTimeout } from "./shutdown-step-timeout.js";
 import { releaseDataDirLock } from "./data-dir-lock.js";
@@ -374,7 +374,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         await withStepTimeout(async () => {
           await subAgentRunner.shutdown();
           daemonLogger.info({ component: "sub-agent-runner", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
-        }, "sub-agent-runner", daemonLogger);
+        }, "sub-agent-runner", daemonLogger, SUB_AGENT_SHUTDOWN_TIMEOUT_MS);
       }
 
       // Drain background-completion-runner before stopping
@@ -706,7 +706,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
       const lockDir = lockDataDir ?? dataDir;
       if (lockDir) { releaseDataDirLock(lockDir); }
 
-      // DB close is ALWAYS last -- no withStepTimeout (must complete or the outer 30s hard timeout handles it)
+      // DB close is ALWAYS last -- no withStepTimeout (must complete or the outer hard timeout handles it)
       {
         const stopMs = systemNowMs();
         try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch { /* best-effort flush before close */ }

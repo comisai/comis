@@ -469,7 +469,7 @@ export type { NarrativeCasterConfig, CastParams } from "./spawn/index.js";
 export { createLifecycleHooks, deriveSubagentContextEngineConfig } from "./spawn/index.js";
 export type { LifecycleHooksDeps } from "./spawn/index.js";
 export { createEphemeralComisSessionManager } from "./spawn/index.js";
-export { createSubAgentRunner } from "./spawn/index.js";
+export { createSubAgentRunner, SUB_AGENT_SHUTDOWN_TIMEOUT_MS } from "./spawn/index.js";
 export type {
   SubAgentRunnerDeps,
   SubAgentRun,

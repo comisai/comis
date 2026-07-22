@@ -86,6 +86,13 @@ import type { RunHandle } from "../executor/active-run-registry.js";
 export const ANNOUNCE_PARENT_TIMEOUT_MS = 300_000;
 const SHUTDOWN_ACTIVE_GRACE_MS = 30_000;
 const SHUTDOWN_NOTICE_GRACE_MS = 5_000;
+/**
+ * Maximum caller-side guard for a sub-agent runner shutdown. The runner owns
+ * the active-run drain and governed-notice grace, with a final bounded margin
+ * for its announcement batch and dead-letter drains.
+ */
+export const SUB_AGENT_SHUTDOWN_TIMEOUT_MS =
+  SHUTDOWN_ACTIVE_GRACE_MS + SHUTDOWN_NOTICE_GRACE_MS + 5_000;
 
 /**
  * Build the composite-key triple from a SubAgentRun for resolver lookups.

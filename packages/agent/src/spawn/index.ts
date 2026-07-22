@@ -23,7 +23,11 @@ export type { LifecycleHooksDeps } from "./lifecycle-hooks.js";
 
 export { createEphemeralComisSessionManager } from "./pi-mono-adapters.js";
 
-export { createSubAgentRunner, SubAgentSpawnPausedError } from "./sub-agent-runner.js";
+export {
+  createSubAgentRunner,
+  SUB_AGENT_SHUTDOWN_TIMEOUT_MS,
+  SubAgentSpawnPausedError,
+} from "./sub-agent-runner.js";
 export type {
   SubAgentRunnerDeps,
   SubAgentRun,
