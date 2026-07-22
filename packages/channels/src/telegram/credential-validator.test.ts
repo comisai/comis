@@ -65,6 +65,42 @@ describe("credential-validator", () => {
       }
     });
 
+    it("classifies transport failures separately from invalid credentials", async () => {
+      mockGetMe.mockRejectedValueOnce(
+        Object.assign(new Error("Network request for getMe failed"), { name: "HttpError" }),
+      );
+
+      const result = await validateBotToken("123:token", "http://127.0.0.1:54321");
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect((result.error as Error & { failureKind?: string }).failureKind).toBe("network");
+        expect(result.error.message).toContain("Telegram bot validation failed");
+      }
+    });
+
+    it("classifies Telegram authentication responses separately from service failures", async () => {
+      mockGetMe
+        .mockRejectedValueOnce(
+          Object.assign(new Error("Unauthorized"), { name: "GrammyError", error_code: 401 }),
+        )
+        .mockRejectedValueOnce(
+          Object.assign(new Error("Service unavailable"), { name: "GrammyError", error_code: 503 }),
+        );
+
+      const authResult = await validateBotToken("123:token");
+      const serviceResult = await validateBotToken("123:token");
+
+      expect(authResult.ok).toBe(false);
+      expect(serviceResult.ok).toBe(false);
+      if (!authResult.ok) {
+        expect((authResult.error as Error & { failureKind?: string }).failureKind).toBe("auth");
+      }
+      if (!serviceResult.ok) {
+        expect((serviceResult.error as Error & { failureKind?: string }).failureKind).toBe("dependency");
+      }
+    });
+
     it("redacts credentials embedded in Telegram SDK failures", async () => {
       const credential = `xoxb-${"s".repeat(32)}`;
       mockGetMe.mockRejectedValueOnce(new Error(`request failed with ${credential}`));
@@ -84,6 +120,7 @@ describe("credential-validator", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error.message).toContain("token must not be empty");
+        expect((result.error as Error & { failureKind?: string }).failureKind).toBe("validation");
       }
       expect(mockGetMe).not.toHaveBeenCalled();
     });

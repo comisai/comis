@@ -201,7 +201,10 @@ describe("bootstrapAdapters", () => {
   });
 
   it("skips Telegram adapter when validation fails", async () => {
-    vi.mocked(validateBotToken).mockResolvedValueOnce({ ok: false, error: new Error("bad token") } as any);
+    vi.mocked(validateBotToken).mockResolvedValueOnce({
+      ok: false,
+      error: Object.assign(new Error("bad token"), { failureKind: "auth" as const }),
+    } as any);
     const container = makeContainer({ telegram: { enabled: true, botToken: "invalid" } });
     const result = await bootstrapAdapters({ container, channelsLogger });
 
@@ -209,6 +212,35 @@ describe("bootstrapAdapters", () => {
     expect(channelsLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ errorKind: "auth" }),
       expect.stringContaining("Telegram credential validation failed"),
+    );
+  });
+
+  it("names the configured Telegram API endpoint when validation cannot reach it", async () => {
+    vi.mocked(validateBotToken).mockResolvedValueOnce({
+      ok: false,
+      error: Object.assign(new Error("Network request for getMe failed"), {
+        failureKind: "network" as const,
+      }),
+    } as any);
+    const apiRoot = "http://127.0.0.1:54321";
+    const container = makeContainer({
+      telegram: { enabled: true, botToken: "test-token", apiRoot },
+    });
+
+    const result = await bootstrapAdapters({ container, channelsLogger });
+
+    expect(result.adaptersByType.has("telegram")).toBe(false);
+    expect(channelsLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "network",
+        hint: expect.stringContaining("channels.telegram.apiRoot"),
+        apiRoot,
+      }),
+      "Telegram credential validation failed",
+    );
+    expect(channelsLogger.warn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ hint: expect.stringContaining("TELEGRAM_BOT_TOKEN") }),
+      expect.any(String),
     );
   });
 
