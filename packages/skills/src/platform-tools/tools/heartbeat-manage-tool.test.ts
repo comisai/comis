@@ -127,7 +127,13 @@ describe("heartbeat_manage tool", () => {
           agent_id: "test-agent",
           interval_ms: 600000,
           show_ok: true,
-          target_channel_type: "telegram",
+          target: {
+            channel_type: "telegram",
+            channel_instance_id: "bot-main",
+            conversation_id: "chat-1",
+            thread_id: "topic-2",
+            conversation_kind: "shared",
+          },
         } as never),
       );
 
@@ -136,7 +142,13 @@ describe("heartbeat_manage tool", () => {
         agentId: "test-agent",
         intervalMs: 600000,
         showOk: true,
-        targetChannelType: "telegram",
+        target: {
+          channelType: "telegram",
+          channelInstanceId: "bot-main",
+          conversationId: "chat-1",
+          threadId: "topic-2",
+          conversationKind: "shared",
+        },
       });
     });
 

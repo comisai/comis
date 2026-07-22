@@ -42,7 +42,7 @@ describe("cron tool", () => {
       name: "test-job",
       schedule_kind: "every",
       schedule_every_ms: 60000,
-      payload_kind: "system_event",
+      payload_kind: "delivery",
       payload_text: "Hello",
     } as never);
 
@@ -51,13 +51,8 @@ describe("cron tool", () => {
     expect(parsed.id).toBe("job-new");
     expect(mockRpcCall).toHaveBeenCalledWith("cron.add", {
       name: "test-job",
-      schedule_kind: "every",
-      schedule_expr: undefined,
-      schedule_every_ms: 60000,
-      schedule_at: undefined,
-      timezone: undefined,
-      payload_kind: "system_event",
-      payload_text: "Hello",
+      schedule: { kind: "every", everyMs: 60000 },
+      payload: { kind: "delivery", text: "Hello" },
     });
   });
 
@@ -81,7 +76,7 @@ describe("cron tool", () => {
     } as never);
 
     expect(mockRpcCall).toHaveBeenCalledWith("cron.add", expect.objectContaining({
-      model: "gemini-2.5-flash",
+      payload: { kind: "agent_turn", message: "Hello", model: "gemini-2.5-flash" },
     }));
   });
 
@@ -99,13 +94,13 @@ describe("cron tool", () => {
       name: "no-model-job",
       schedule_kind: "every",
       schedule_every_ms: 60000,
-      payload_kind: "system_event",
+      payload_kind: "delivery",
       payload_text: "Hello",
     } as never);
 
-    expect(mockRpcCall).toHaveBeenCalledWith("cron.add", expect.objectContaining({
-      model: undefined,
-    }));
+    const params = vi.mocked(mockRpcCall).mock.calls[0]![1] as Record<string, unknown>;
+    expect(params.payload).toEqual({ kind: "delivery", text: "Hello" });
+    expect(params).not.toHaveProperty("model");
   });
 
   it("add action passes session_strategy and max_history_turns to rpcCall", async () => {
@@ -129,8 +124,7 @@ describe("cron tool", () => {
     } as never);
 
     expect(mockRpcCall).toHaveBeenCalledWith("cron.add", expect.objectContaining({
-      session_strategy: "rolling",
-      max_history_turns: 5,
+      sessionPolicy: { strategy: "rolling", maxHistoryTurns: 5 },
     }));
   });
 
@@ -162,7 +156,7 @@ describe("cron tool", () => {
     const result = await tool.execute("call-4", {
       action: "update",
       job_name: "job-1",
-      enabled: false,
+      paused: true,
       name: "renamed-job",
     } as never);
 
@@ -171,7 +165,7 @@ describe("cron tool", () => {
     expect(parsed.jobName).toBe("job-1");
     expect(mockRpcCall).toHaveBeenCalledWith("cron.update", {
       jobName: "job-1",
-      enabled: false,
+      paused: true,
       name: "renamed-job",
     });
   });
@@ -307,10 +301,10 @@ describe("cron tool", () => {
   });
 
   describe("cron tool — wake action", () => {
-    it("wake action calls scheduler.wake with default source", async () => {
+    it("wake action calls scheduler.wake with the default agent target", async () => {
       const mockRpcCall: RpcCall = vi.fn(async (method, params) => {
         if (method === "scheduler.wake") {
-          return { woken: true, source: params.source };
+          return { status: "accepted", correlationId: "wake-a", target: params.target };
         }
         throw new Error(`Unexpected method: ${method}`);
       });
@@ -318,16 +312,16 @@ describe("cron tool", () => {
       const tool = createCronTool(mockRpcCall);
       const result = await tool.execute("call-wake-1", { action: "wake" } as never);
 
-      const parsed = parseResult(result) as { woken: boolean; source: string };
-      expect(parsed.woken).toBe(true);
-      expect(parsed.source).toBe("agent");
-      expect(mockRpcCall).toHaveBeenCalledWith("scheduler.wake", { source: "agent" });
+      const parsed = parseResult(result) as { status: string; target: string };
+      expect(parsed.status).toBe("accepted");
+      expect(parsed.target).toBe("agent");
+      expect(mockRpcCall).toHaveBeenCalledWith("scheduler.wake", { target: "agent" });
     });
 
-    it("wake action passes custom source", async () => {
+    it("wake action passes the monitoring target", async () => {
       const mockRpcCall: RpcCall = vi.fn(async (method, params) => {
         if (method === "scheduler.wake") {
-          return { woken: true, source: params.source };
+          return { status: "accepted", correlationId: "wake-a", target: params.target };
         }
         throw new Error(`Unexpected method: ${method}`);
       });
@@ -335,12 +329,12 @@ describe("cron tool", () => {
       const tool = createCronTool(mockRpcCall);
       const result = await tool.execute("call-wake-2", {
         action: "wake",
-        source: "cron-monitor",
+        wake_target: "monitoring",
       } as never);
 
-      const parsed = parseResult(result) as { woken: boolean; source: string };
-      expect(parsed.source).toBe("cron-monitor");
-      expect(mockRpcCall).toHaveBeenCalledWith("scheduler.wake", { source: "cron-monitor" });
+      const parsed = parseResult(result) as { target: string };
+      expect(parsed.target).toBe("monitoring");
+      expect(mockRpcCall).toHaveBeenCalledWith("scheduler.wake", { target: "monitoring" });
     });
 
     it("wake action re-throws rpcCall error", async () => {
@@ -380,10 +374,29 @@ describe("cron tool", () => {
       expect(mockRpcCall).toHaveBeenCalledWith(
         "cron.add",
         expect.objectContaining({
-          wake_gate_script: "await fetch(x)",
-          wake_gate_language: "ts",
+          wakeGate: {
+            script: "await fetch(x)",
+            language: "ts",
+            timeoutSeconds: 30,
+          },
         }),
       );
+    });
+
+    it("rejects wake-gate scripts on non-agent payloads with a structured error", async () => {
+      const mockRpcCall: RpcCall = vi.fn(async () => ({ created: true }));
+      const tool = createCronTool(mockRpcCall);
+
+      await expect(tool.execute("call-gate-invalid", {
+        action: "add",
+        name: "invalid-monitor",
+        schedule_kind: "every",
+        schedule_every_ms: 60_000,
+        payload_kind: "delivery",
+        payload_text: "status",
+        wake_gate_script: "console.log('{}')",
+      } as never)).rejects.toThrow(/\[invalid_value\].*agent_turn/);
+      expect(mockRpcCall).not.toHaveBeenCalled();
     });
 
     it("update threads wake_gate_script onto the cron.update rpcCall", async () => {
@@ -403,11 +416,13 @@ describe("cron tool", () => {
 
       expect(mockRpcCall).toHaveBeenCalledWith(
         "cron.update",
-        expect.objectContaining({ wake_gate_script: "s2" }),
+        expect.objectContaining({
+          wakeGate: { script: "s2", language: "js", timeoutSeconds: 30 },
+        }),
       );
     });
 
-    it("add without wake-gate params leaves the wake-gate values undefined (unchanged behavior)", async () => {
+    it("add without wake-gate params omits the wake-gate projection", async () => {
       const mockRpcCall = vi.fn(async () => ({ id: "job-plain", created: true }));
 
       const tool = createCronTool(mockRpcCall);
@@ -416,14 +431,13 @@ describe("cron tool", () => {
         name: "plain-job",
         schedule_kind: "every",
         schedule_every_ms: 60000,
-        payload_kind: "system_event",
+        payload_kind: "delivery",
         payload_text: "Hello",
       } as never);
 
       const [method, params] = mockRpcCall.mock.calls[0]! as [string, Record<string, unknown>];
       expect(method).toBe("cron.add");
-      expect(params.wake_gate_script).toBeUndefined();
-      expect(params.wake_gate_language).toBeUndefined();
+      expect(params).not.toHaveProperty("wakeGate");
     });
   });
 
@@ -466,10 +480,6 @@ describe("cron tool", () => {
   });
 
   describe("session_strategy parameter description", () => {
-    // The tool steers the LLM toward `fresh` for long cadences via the
-    // session_strategy parameter description. Cron uses a 5-min prompt cache TTL
-    // (OPERATION_CACHE_DEFAULTS.cron = "short"); cadences >= 10 min waste cache writes
-    // on rolling/accumulate because the cache is always cold by the next tick.
     function getSessionStrategyDescription(): string {
       const mockRpcCall: RpcCall = vi.fn(async () => ({}));
       const tool = createCronTool(mockRpcCall);
@@ -480,26 +490,25 @@ describe("cron tool", () => {
       return params.properties.session_strategy?.description ?? "";
     }
 
-    it("mentions the >= 10 minute fresh-default threshold", () => {
+    it("states that cron history strategies are bounded", () => {
       const desc = getSessionStrategyDescription();
-      expect(desc).toContain("≥ 10 minutes");
+      expect(desc).toContain("Bounded");
     });
 
-    it("mentions the < 5 minute rolling-only threshold", () => {
+    it("names the bounded rolling-history parameter", () => {
       const desc = getSessionStrategyDescription();
-      expect(desc).toContain("< 5 minutes");
+      expect(desc).toContain("max_history_turns");
     });
 
-    it("cites the 5-minute prompt cache TTL rationale", () => {
+    it("does not advertise the removed unbounded strategy", () => {
       const desc = getSessionStrategyDescription();
-      expect(desc).toContain("5-minute prompt cache TTL");
+      expect(desc).not.toContain("accumulate");
     });
 
-    it("retains the three valid values and the 'fresh' default", () => {
+    it("retains the fresh default and rolling alternative", () => {
       const desc = getSessionStrategyDescription();
       expect(desc).toContain("fresh");
       expect(desc).toContain("rolling");
-      expect(desc).toContain("accumulate");
       expect(desc.toLowerCase()).toContain("default");
     });
   });
