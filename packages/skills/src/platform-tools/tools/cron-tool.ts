@@ -59,7 +59,7 @@ const CronToolParams = Type.Object({
       Type.Literal("run"),
       Type.Literal("wake"),
     ],
-    { description: "Cron scheduling action. Valid values: add (create new job), list (show all jobs), update (modify job config), remove (delete a job), status (scheduler health), runs (job execution history), run (trigger job now), wake (wake scheduler loop)" },
+    { description: "Cron scheduling action. Valid values: add (create new job), list (show all jobs), update (modify job config), remove (delete a job), status (scheduler health), runs (job execution history), run (trigger job now), wake (request typed heartbeat coordinator admission)" },
   ),
   // add params
   name: Type.Optional(Type.String({ description: "Human-readable job name (for add/update)" })),
@@ -266,7 +266,7 @@ export function createCronTool(rpcCall: RpcCall): AgentTool<typeof CronToolParam
       "Manage cron jobs, scheduled tasks, wake events. Write reminder text as user-facing message. " +
       "DELIVERY AUTHORITY: the runtime binds agent_turn and delivery jobs to the trusted originating conversation. Omitting target fields does not disable delivery; this tool cannot create an unbound agent_turn or delivery job. Add/update results do not echo that trusted target, so never claim the job is unbound from an omitted parameter. " +
       "SCHEDULING RULE: for a RELATIVE reminder ('in 2 minutes', 'in an hour', 'remind me in 30 seconds', 'N minutes from now') you MUST use schedule_kind='in' with schedule_in_seconds = the number of seconds — do NOT compute an absolute datetime or timezone for a relative request (that is the #1 source of wrong-time reminders). Use schedule_kind='at' ONLY for an explicit clock time like 'at 9am tomorrow', and then always pass the user's timezone. " +
-      "MONITORING (wake-gate): for a job that watches something, supply a wake_gate_script that fetches or greps the thing to watch and prints a JSON verdict on stdout — {\"wake\":false} when nothing changed (the fire is skipped cheaply), or {\"wake\":true,\"context\":\"what you found\"} otherwise. The model runs ONLY when the gate wakes it, so a quiet monitor costs almost nothing. Example: a wake_gate_script that fetches a CI status prints {\"wake\":false} while the build is green, else {\"wake\":true,\"context\":\"build #123 failed\"}; set wake_gate_language to js (default) or ts. This wake-gate is NOT the `wake` action — that action just wakes/replays the scheduler loop to re-check due jobs, it is not a pre-run gate.",
+      "MONITORING (wake-gate): for a job that watches something, supply a wake_gate_script that fetches or greps the thing to watch and prints a JSON verdict on stdout — {\"wake\":false} when nothing changed (the fire is skipped cheaply), or {\"wake\":true,\"context\":\"what you found\"} otherwise. The model runs ONLY when the gate wakes it, so a quiet monitor costs almost nothing. Example: a wake_gate_script that fetches a CI status prints {\"wake\":false} while the build is green, else {\"wake\":true,\"context\":\"build #123 failed\"}; set wake_gate_language to js (default) or ts. This wake-gate is NOT the `wake` action — that action requests typed heartbeat coordinator admission for the selected target; it is not a pre-run gate.",
     parameters: CronToolParams,
 
     async execute(
