@@ -119,6 +119,7 @@ export async function bootstrapSession(
     readonly config: PerAgentConfig;
     readonly sessionKey: SessionKey;
     readonly overrides: ExecutionOverrides | undefined;
+    readonly executionId: string;
     /**
      * Optional ExecutionPlanPort holder. When provided and SEP is
      * enabled for this turn, the per-turn `executionPlanRef` is published into
@@ -145,6 +146,14 @@ export async function bootstrapSession(
   const result: ExecutionResult = {
     response: "",
     sessionKey: ctx.sessionKey,
+    executionId: ctx.executionId,
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
+    sideEffectSummary: {
+      schedulingCapabilityInvoked: false,
+      outboundDeliveryCapabilityInvoked: false,
+      deferredWorkCapabilityInvoked: false,
+      unclassifiedInvocationObserved: false,
+    },
     tokensUsed: { input: 0, output: 0, total: 0 },
     cost: { total: 0 },
     stepsExecuted: 0,

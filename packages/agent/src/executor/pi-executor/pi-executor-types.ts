@@ -68,7 +68,7 @@ export interface PiExecutorDeps {
   stepCounter: StepCounter; spendAccumulator?: import("../../budget/spend-accumulator.js").SpendAccumulator; spendConfig?: import("@comis/core").SpendConfig; // Spend kill-switch: daemon-wide accumulator REFERENCE (per-turn bridge) + config; absent ⇒ no-op.
   /** Late-bound per-root budget holder + rootRunId resolver, threaded into the bridge like spendAccumulator; absent ⇒ no-op. */
   boundedAutonomyBudget?: import("../../bridge/pi-event-bridge.js").BoundedAutonomyBudgetHolder;
-  resolveRootRunId?: (agentId: string, sessionKey: import("@comis/core").SessionKey) => string;
+  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
   eventBus: TypedEventBus;
   logger: ComisLogger;
   /** The daemon package.json version, stamped into trace.metadata's

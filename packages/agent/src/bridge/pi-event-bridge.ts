@@ -134,7 +134,11 @@ export function classifyToolError(_toolName: string, errorText: string | undefin
 import * as os from "node:os";
 import * as pathModule from "node:path";
 import { appendSessionIndexEntry } from "@comis/observability";
-import { createBridgeMetrics, buildBridgeResult } from "./bridge-metrics.js";
+import {
+  createBridgeMetrics,
+  buildBridgeResult,
+  recordToolInvocationSideEffects,
+} from "./bridge-metrics.js";
 import { drainAt, type DrainInflightState } from "../executor/drain-helper.js";
 import { checkStepLimit, emitStepLimitAbort, checkLoopLimit, emitLoopAbort, checkBudgetLimit, emitBudgetAbort, checkBudgetTrajectory, checkContextWindow, emitContextAbort, checkCircuitBreaker, emitCircuitBreakerAbort, buildAbortRedirectMessage, checkSpendLimit, emitSpendAbort } from "./bridge-safety-controls.js";
 import type { LoopStateReporter, SpendEmitHooks } from "./bridge-safety-controls.js";
@@ -402,7 +406,7 @@ export interface PiEventBridgeDeps {
    * resolver registers on first use (so a top-level, non-spawned loop is bounded
    * too). Required whenever {@link boundedAutonomyBudget} is present.
    */
-  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
+  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
   /** Callback to record cache reads for adaptive retention escalation. */
   onCacheReads?: (tokens: number) => void;
   /** Callback to record a completed turn with cache write token count.
@@ -574,6 +578,8 @@ export interface PiEventBridgeResult {
     channelType: string;
     channelId: string;
   }) => boolean;
+  /** Monotonically record runtime-owned background handoff acceptance. */
+  markDeferredWork: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -821,6 +827,11 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // -----------------------------------------------------------------
         case "tool_execution_start": {
           const toolEvent = event as { toolName: string; toolCallId: string; args?: unknown };
+          recordToolInvocationSideEffects(
+            m.sideEffectSummary,
+            getToolMetadata(toolEvent.toolName),
+            toolEvent.args,
+          );
           m.toolStartTimes.set(toolEvent.toolCallId, systemNowMs());
           m.toolCallHistory.push(toolEvent.toolName);
           m.lastActiveToolName = toolEvent.toolName;
@@ -2229,7 +2240,23 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // routes an `exceeded` outcome through the SAME m.aborted spend-abort path.
             const perRoot = deps.boundedAutonomyBudget?.current;
             if (perRoot && deps.resolveRootRunId && !m.aborted) {
-              const rootRunId = deps.resolveRootRunId(deps.agentId, deps.sessionKey);
+              const resolvedRoot = deps.resolveRootRunId(deps.agentId, deps.sessionKey);
+              if (!resolvedRoot.ok) {
+                deps.logger.warn(
+                  {
+                    agentId: deps.agentId,
+                    step: "per-root-budget",
+                    errorKind: resolvedRoot.error.errorKind,
+                    hint: "Preserve the trusted request agent, session, and root identity through the execution boundary before retrying",
+                  },
+                  "Per-root budget identity mismatch",
+                );
+                m.finishReason = "error";
+                m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
+                m.aborted = true;
+                deps.onAbort?.();
+              } else {
+                const rootRunId = resolvedRoot.value;
               // Re-anchor the per-root wall-clock + token limbs ONCE per
               // turn (this metrics state is per-turn, so the flag fires on the turn's
               // FIRST per-root reserve). An interactive session root (`root-session-*`)
@@ -2264,7 +2291,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 perRootEstUsd,
                 usage.totalTokens,
               );
-              if (rootGate.kind === "exceeded") {
+                if (rootGate.kind === "exceeded") {
                 m.finishReason = "spend_exceeded"; // reuse the single spend finishReason
                 m.abortResponse = buildAbortRedirectMessage(deps.executionPlan?.current, m.finishReason);
                 m.aborted = true;
@@ -2286,6 +2313,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                       }
                     : undefined,
                 );
+                }
               }
             }
 
@@ -2816,6 +2844,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
   const getResult = () => buildBridgeResult(m, deps.stepCounter.getCount());
 
+  const markDeferredWork = (): void => {
+    m.sideEffectSummary.deferredWorkCapabilityInvoked = true;
+  };
+
   /** Accumulate estimated cost from a timed-out API request. */
   const addGhostCost = (estimated: GhostCostEstimate): void => {
     m.ghostCostUsd += estimated.costUsd;
@@ -2872,5 +2904,6 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
     getDrainState,
     getUsedSkillIds,
     hasOutboundDelivery,
+    markDeferredWork,
   };
 }

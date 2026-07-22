@@ -616,6 +616,8 @@ export interface PromptAssemblyParams {
   logger: ComisLogger;
   /** Safety reinforcement line to prepend when InputSecurityGuard detects medium+ risk. */
   safetyReinforcement?: string;
+  /** Exact validated locale decision captured for delayed or background work. */
+  responseLocalePolicy?: ResponseLocalePolicy;
   /** Skip RAG memory injection for graph pipeline sub-agents. */
   skipRag?: boolean;
   /** Whether Silent Execution Planner (SEP) is enabled for this agent. */

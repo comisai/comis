@@ -11,7 +11,12 @@
  */
 
 import { systemNowMs } from "@comis/core";
-import type { ErrorKind } from "@comis/core";
+import type {
+  ComisToolMetadata,
+  ErrorKind,
+  ExecutionSideEffectSummary,
+  TrackedInvocationSideEffect,
+} from "@comis/core";
 import type { ExecutionResult } from "../executor/types.js";
 import type { ContextUsageData } from "../safety/context-window-guard.js";
 import type { ThinkingBlockHash } from "./thinking-block-hash-invariant.js";
@@ -77,6 +82,9 @@ export interface BridgeMetricsState {
    *  Incremented in pi-event-bridge's opened branch; forwarded as
    *  `bridgeResult.breakerTripCount` for the session-health rollup. */
   breakerTripCount: number;
+
+  /** Monotonic execution-scoped facts about capability invocation attempts. */
+  sideEffectSummary: ExecutionSideEffectSummary;
 
   // TTL-split cache write token tracking (estimated, normalized to SDK total)
   totalCacheWrite5mTokens: number;
@@ -237,6 +245,12 @@ export function createBridgeMetrics(): BridgeMetricsState {
     failedToolCount: 0,
     failedToolNames: [],
     breakerTripCount: 0,
+    sideEffectSummary: {
+      schedulingCapabilityInvoked: false,
+      outboundDeliveryCapabilityInvoked: false,
+      deferredWorkCapabilityInvoked: false,
+      unclassifiedInvocationObserved: false,
+    },
     cumulativeToolDurationMs: 0,
     cumulativeToolWallclockMs: 0,
     cumulativeLlmDurationMs: 0,
@@ -269,6 +283,80 @@ export function createBridgeMetrics(): BridgeMetricsState {
     // Cumulative SDK→corrected cost delta across all turns
     totalCostCorrectionDeltaUsd: 0,
   };
+}
+
+const TRACKED_INVOCATION_SIDE_EFFECTS: ReadonlySet<TrackedInvocationSideEffect> = new Set([
+  "scheduling",
+  "outbound_delivery",
+  "deferred_work",
+]);
+
+function markInvocationCapabilities(
+  summary: ExecutionSideEffectSummary,
+  capabilities: readonly TrackedInvocationSideEffect[],
+): void {
+  for (const capability of capabilities) {
+    switch (capability) {
+      case "scheduling":
+        summary.schedulingCapabilityInvoked = true;
+        break;
+      case "outbound_delivery":
+        summary.outboundDeliveryCapabilityInvoked = true;
+        break;
+      case "deferred_work":
+        summary.deferredWorkCapabilityInvoked = true;
+        break;
+      default: {
+        const _exhaustive: never = capability;
+        void _exhaustive;
+      }
+    }
+  }
+}
+
+function isCapabilityList(value: unknown): value is readonly TrackedInvocationSideEffect[] {
+  return Array.isArray(value) && value.every(
+    (entry) => typeof entry === "string"
+      && TRACKED_INVOCATION_SIDE_EFFECTS.has(entry as TrackedInvocationSideEffect),
+  );
+}
+
+/** Record one attempted invocation without ever clearing facts from earlier turns. */
+export function recordToolInvocationSideEffects(
+  summary: ExecutionSideEffectSummary,
+  metadata: ComisToolMetadata | undefined,
+  args: unknown,
+): void {
+  const declaration = metadata?.invocationSideEffects;
+  if (declaration === undefined) {
+    summary.unclassifiedInvocationObserved = true;
+    return;
+  }
+  if (declaration.kind === "always") {
+    if (!isCapabilityList(declaration.capabilities)) {
+      summary.unclassifiedInvocationObserved = true;
+      return;
+    }
+    markInvocationCapabilities(summary, declaration.capabilities);
+    return;
+  }
+  if (declaration.kind !== "by_action" || declaration.parameter !== "action") {
+    summary.unclassifiedInvocationObserved = true;
+    return;
+  }
+  const entries = Object.entries(declaration.actions);
+  if (entries.length === 0 || entries.some(([, capabilities]) => !isCapabilityList(capabilities))) {
+    summary.unclassifiedInvocationObserved = true;
+    return;
+  }
+  const action = typeof args === "object" && args !== null && !Array.isArray(args)
+    ? (args as { action?: unknown }).action
+    : undefined;
+  const selected = typeof action === "string"
+    ? entries.find(([candidate]) => candidate === action)?.[1]
+    : undefined;
+  const capabilities = selected ?? entries.flatMap(([, declared]) => declared);
+  markInvocationCapabilities(summary, capabilities);
 }
 
 /**
@@ -313,6 +401,7 @@ export function buildBridgeResult(
   totalCostCorrectionDeltaUsd?: number;
   /** Abort redirect message set at bridge abort sites; undefined for normal completions. */
   abortResponse?: string;
+  sideEffectSummary: ExecutionSideEffectSummary;
 } {
   return {
     tokensUsed: {
@@ -372,5 +461,6 @@ export function buildBridgeResult(
     totalCostCorrectionDeltaUsd: metrics.totalCostCorrectionDeltaUsd,
     // Abort redirect message — only set at abort sites; omitted for normal completions.
     abortResponse: metrics.abortResponse,
+    sideEffectSummary: { ...metrics.sideEffectSummary },
   };
 }

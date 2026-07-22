@@ -61,8 +61,11 @@ import {
   createConversationRef,
   emitObservationalEventSafely,
   safePath,
+  sanitizeLogString,
   toSafeErrorLogString,
   tryGetContext,
+  verifyWorkspacePolicySnapshot,
+  ResponseLocalePolicySchema,
   type SessionKey,
   type NormalizedMessage,
   type PerAgentConfig,
@@ -77,6 +80,7 @@ import { createMessageSendLimiter } from "../../safety/message-send-limiter.js";
 import type { ComisSessionManager } from "../../session/comis-session-manager.js";
 import type { RunHandle } from "../active-run-registry.js";
 import { repairOrphanedMessages, scrubPoisonedThinkingBlocks } from "../../session/orphaned-message-repair.js";
+import { projectPendingDeliveredAssistantHistory } from "../../session/pending-delivered-assistant-history.js";
 import { scrubRedactedToolCalls } from "../../session/scrub-redacted-tool-calls.js";
 import { scrubForgedContextMarkers } from "../../session/forged-context-markers.js";
 import {
@@ -119,6 +123,8 @@ import { observedModelId } from "../observed-model-id.js";
 import type { ModelProfile } from "../model-profile.js";
 import { resolveEffectiveContextWindow } from "../../model/effective-context-window.js";
 import { DEFAULT_EFFECTIVE_CAP_BY_CLASS } from "../../context-engine/budget-capacity-cap.js";
+import { CHARS_PER_TOKEN_RATIO } from "../../context-engine/constants.js";
+import { scriptTokenFactor } from "@comis/core";
 import { isAnthropicFamily, isGoogleFamily, resolveProviderCapabilities } from "../../provider/capabilities.js";
 import { detectOnboardingState } from "../../workspace/onboarding-detector.js";
 import { validateRoleAttribution, sessionTreeHasSameRoleAnomaly } from "../../context-engine/index.js";
@@ -152,6 +158,40 @@ import { computeOutputHeadroom } from "../../context-engine/output-headroom.js";
 
 /** Number of turns to restrict breakpoints after server eviction. */
 const EVICTION_COOLDOWN_TURNS = 2;
+
+interface ExternalAbortState {
+  emitted: boolean;
+}
+
+function settleExternalExecutionAbort(
+  state: ExternalAbortState,
+  result: ExecutionResult,
+  deps: Pick<PiExecutorDeps, "agentId" | "clock" | "eventBus" | "logger">,
+  sessionKey: SessionKey,
+): void {
+  if (state.emitted) return;
+  state.emitted = true;
+  result.finishReason = "prompt_timeout";
+  result.response = "The execution was cancelled before it could finish.";
+  result.errorContext = {
+    errorType: "PipelineTimeout",
+    retryable: false,
+    originalError: "Caller cancelled the agent execution",
+  };
+  deps.eventBus.emit("execution:aborted", {
+    sessionKey,
+    reason: "pipeline_timeout",
+    agentId: deps.agentId,
+    timestamp: deps.clock.now(),
+  });
+  deps.logger.warn({
+    agentId: deps.agentId,
+    sessionKey: formatSessionKey(sessionKey),
+    step: "external-abort",
+    errorKind: "timeout" as const,
+    hint: "Inspect the caller deadline or shutdown signal before retrying the execution",
+  }, "Agent execution cancelled by caller signal");
+}
 
 function trajectoryResumeErrorKind(
   failureKind: TrajectoryResumeFailureKind,
@@ -235,6 +275,7 @@ export function createPiExecutor(
       _prevTimestamp?: number,
       overrides?: ExecutionOverrides,
     ): Promise<ExecutionResult> {
+      const executionId = randomUUID();
       // Resolved request identity is write-once. An executor selected for a
       // different agent/session must not relabel the live ALS object and retain
       // the original principal's trust or delivery origin. Reject before OAuth,
@@ -268,11 +309,20 @@ export function createPiExecutor(
         return {
           response: "The request could not be executed safely because its identity context was inconsistent.",
           sessionKey,
+          executionId,
+          responseLocalePolicy: { source: "unset", enforceLocale: false },
+          sideEffectSummary: {
+            schedulingCapabilityInvoked: false,
+            outboundDeliveryCapabilityInvoked: false,
+            deferredWorkCapabilityInvoked: false,
+            unclassifiedInvocationObserved: false,
+          },
           tokensUsed: { input: 0, output: 0, total: 0 },
           cost: { total: 0 },
           stepsExecuted: 0,
           llmCalls: 0,
           finishReason: "error",
+          terminalErrorKind: "precondition",
           errorContext: {
             errorType: "RequestContextIdentityMismatch",
             retryable: false,
@@ -288,8 +338,19 @@ export function createPiExecutor(
       const { executionStartMs, result, sepEnabled, executionPlanRef } = await bootstrapSession(
         {},
         deps,
-        { config, sessionKey, overrides, executionPlanHolder: deps.executionPlanHolder },
+        {
+          config,
+          sessionKey,
+          overrides,
+          executionId,
+          executionPlanHolder: deps.executionPlanHolder,
+        },
       );
+      const externalAbortState: ExternalAbortState = { emitted: false };
+      if (overrides?.signal?.aborted) {
+        settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);
+        return result;
+      }
 
       // 2. Pre-lock safety gates: input validation, provider health, circuit
       //    breaker, fault injector (closure-extracted)
@@ -548,6 +609,7 @@ export function createPiExecutor(
           _prevTimestamp,
           executionOverrides,
           executionStartMs,
+          executionId,
           effectiveTimeout,
           sepEnabled,
           executionPlanRef,
@@ -562,6 +624,7 @@ export function createPiExecutor(
           cacheRetentionRef,
           adaptiveRetentionRef,
           minTokensOverrideRef,
+          externalAbortState,
         }),
       );
 
@@ -598,6 +661,7 @@ interface RunSessionLockedContext {
   readonly _prevTimestamp: number | undefined;
   readonly executionOverrides: ExecutionOverrides | undefined;
   readonly executionStartMs: number;
+  readonly executionId: string;
   readonly effectiveTimeout: EffectiveTimeout;
   readonly sepEnabled: boolean;
   readonly executionPlanRef: { current: import("../../planner/types.js").ExecutionPlan | undefined };
@@ -617,6 +681,7 @@ interface RunSessionLockedContext {
   readonly cacheRetentionRef: MutableRef<CacheRetention | undefined>;
   readonly adaptiveRetentionRef: MutableRef<AdaptiveCacheRetention | undefined>;
   readonly minTokensOverrideRef: MutableRef<number | undefined>;
+  readonly externalAbortState: ExternalAbortState;
 }
 
 async function runSessionLocked(
@@ -626,12 +691,18 @@ async function runSessionLocked(
   const {
     config, deps, result, msg, sessionKey, tools, onDelta, agentId,
     _directives, _prevTimestamp, executionOverrides, executionStartMs,
+    executionId,
     effectiveTimeout, sepEnabled, executionPlanRef, safetyReinforcement,
     resolvedModel, modelCompat, modelProfile, windowProvenance, activeStepCounter,
     budgetWindow,
     sessionAdapter,
     cacheRetentionRef, adaptiveRetentionRef, minTokensOverrideRef,
+    externalAbortState,
   } = ctx;
+  if (executionOverrides?.signal?.aborted) {
+    settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);
+    return result;
+  }
   const executionTurnScope = tryGetContext()?.turnScope;
   const executionConversationRef = executionTurnScope === undefined
     ? undefined
@@ -767,6 +838,55 @@ async function runSessionLocked(
     );
   }
 
+  const deliveredHistoryProjection = projectPendingDeliveredAssistantHistory(sm, {
+    conversationScope: executionTurnScope.conversation,
+    conversationRef: executionConversationRef.value,
+  });
+  let pendingDeliveredHistoryContext = "";
+  if (!deliveredHistoryProjection.ok) {
+    deps.logger.warn(
+      {
+        agentId: deps.agentId,
+        step: "delivered-history-projection",
+        failureCode: deliveredHistoryProjection.error.code,
+        hint: "Inspect the canonical SDK session tree and session storage health before retrying the turn.",
+        errorKind: deliveredHistoryProjection.error.errorKind,
+      },
+      "Delivered assistant history projection degraded",
+    );
+  } else {
+    pendingDeliveredHistoryContext = deliveredHistoryProjection.value.compiledContext;
+    const projectionDiagnostics = deliveredHistoryProjection.value.diagnostics;
+    const degraded = projectionDiagnostics.invalidEntries > 0
+      || projectionDiagnostics.authorityMismatches > 0
+      || projectionDiagnostics.omittedOversizedEntries > 0
+      || projectionDiagnostics.omittedOlderEntries > 0;
+    if (degraded) {
+      deps.logger.warn(
+        {
+          agentId: deps.agentId,
+          step: "delivered-history-projection",
+          ...projectionDiagnostics,
+          hint: "Inspect delivered-history session records; invalid authority is skipped and bounded older output is intentionally omitted.",
+          errorKind: projectionDiagnostics.invalidEntries > 0
+            || projectionDiagnostics.authorityMismatches > 0
+            ? ("validation" as const)
+            : ("resource" as const),
+        },
+        "Delivered assistant history projection degraded",
+      );
+    } else if (projectionDiagnostics.projectedEntries > 0) {
+      deps.logger.debug(
+        {
+          agentId: deps.agentId,
+          step: "delivered-history-projection",
+          projectedEntries: projectionDiagnostics.projectedEntries,
+        },
+        "Pending delivered assistant history projected",
+      );
+    }
+  }
+
   // Detect first message in session for BOOT.md injection
   const sessionContext = sm.buildSessionContext();
 
@@ -796,7 +916,61 @@ async function runSessionLocked(
   // worktree is the child's actual working tree, so onboarding state reflects it).
   const isOnboarding = await detectOnboardingState(effectiveWorkspaceDir);
 
-  let workspacePolicySnapshot = deps.workspacePolicySnapshot;
+  const capturedPolicySnapshot = executionOverrides?.workspacePolicySnapshot;
+  if (capturedPolicySnapshot !== undefined) {
+    const verification = verifyWorkspacePolicySnapshot(capturedPolicySnapshot);
+    const failureKind = !verification.ok
+      ? verification.error.code
+      : capturedPolicySnapshot.agentId === agentId
+        ? undefined
+        : "agent_mismatch";
+    if (failureKind !== undefined) {
+      deps.logger.error(
+        {
+          agentId,
+          step: "workspace-policy-verify",
+          failureKind,
+          hint: "Discard the captured work item and recreate it from a verified policy snapshot for this agent.",
+          errorKind: "validation" as const,
+        },
+        "Per-execution workspace policy snapshot verification failed",
+      );
+      result.finishReason = "error";
+      result.response = "The captured agent policy could not be verified safely.";
+      result.errorContext = {
+        errorType: "WorkspacePolicyError",
+        retryable: false,
+        originalError: "Per-execution workspace policy snapshot verification failed",
+      };
+      return result;
+    }
+  }
+
+  const capturedResponseLocalePolicy = executionOverrides?.responseLocalePolicy;
+  if (capturedResponseLocalePolicy !== undefined) {
+    const verification = ResponseLocalePolicySchema.safeParse(capturedResponseLocalePolicy);
+    if (!verification.success) {
+      deps.logger.error(
+        {
+          agentId,
+          step: "response-locale-policy-verify",
+          hint: "Discard the captured work item and recreate it with a valid canonical response locale policy.",
+          errorKind: "validation" as const,
+        },
+        "Per-execution response locale policy verification failed",
+      );
+      result.finishReason = "error";
+      result.response = "The captured response locale policy could not be verified safely.";
+      result.errorContext = {
+        errorType: "ResponseLocalePolicyError",
+        retryable: false,
+        originalError: "Per-execution response locale policy verification failed",
+      };
+      return result;
+    }
+  }
+
+  let workspacePolicySnapshot = capturedPolicySnapshot ?? deps.workspacePolicySnapshot;
   if (workspacePolicySnapshot === undefined && deps.workspacePolicyPort !== undefined) {
     const policyAgentId = deps.agentId;
     const policyLoadStartMs = deps.clock.now();
@@ -868,9 +1042,14 @@ async function runSessionLocked(
   // Capture prompt skills XML once at execution start.
   // Skills registered during tool calls (e.g., skill-creator creating stock-scanner)
   // do not mutate the system prompt until the next execution.
-  const frozenPromptSkillsXml = deps.getPromptSkillsXml?.();
-  const frozenPromptSkillLocations = deps.getPromptSkillLocations?.();
-  const frozenMcpInstructions = deps.getMcpServerInstructions?.() ?? [];
+  const capabilitiesDisabled = executionOverrides?.capabilityAccess === "none";
+  const frozenPromptSkillsXml = capabilitiesDisabled ? "" : deps.getPromptSkillsXml?.();
+  const frozenPromptSkillLocations = capabilitiesDisabled
+    ? new Map<string, string>()
+    : deps.getPromptSkillLocations?.();
+  const frozenMcpInstructions = capabilitiesDisabled
+    ? []
+    : deps.getMcpServerInstructions?.() ?? [];
   const stableGetPromptSkillsXml = frozenPromptSkillsXml !== undefined
     ? () => frozenPromptSkillsXml
     : deps.getPromptSkillsXml;
@@ -882,6 +1061,9 @@ async function runSessionLocked(
       ? {}
       : { getPromptSkillLocations: () => frozenPromptSkillLocations }),
     getMcpServerInstructions: () => frozenMcpInstructions,
+    toolCapabilityPort: deps.toolCapabilityPort,
+    subAgentToolNames: capabilitiesDisabled ? [] : deps.subAgentToolNames,
+    mcpToolsInherited: capabilitiesDisabled ? false : deps.mcpToolsInherited,
     workspacePolicySnapshot,
     isOnboarding,
   };
@@ -910,6 +1092,26 @@ async function runSessionLocked(
     recalledMemories,
     responseLocalePolicy,
   } = promptResult;
+  result.responseLocalePolicy = responseLocalePolicy;
+  const effectiveSystemPrompt = pendingDeliveredHistoryContext.length === 0
+    ? systemPrompt
+    : `${systemPrompt}\n\n${pendingDeliveredHistoryContext}`;
+  const effectiveSystemPromptBlocks = pendingDeliveredHistoryContext.length === 0
+    || systemPromptBlocks === undefined
+    ? systemPromptBlocks
+    : {
+        ...systemPromptBlocks,
+        semiStableBody: `${systemPromptBlocks.semiStableBody}\n\n${pendingDeliveredHistoryContext}`,
+      };
+  const pendingDeliveredHistoryTokens = pendingDeliveredHistoryContext.length === 0
+    ? 0
+    : Math.ceil(
+        pendingDeliveredHistoryContext.length
+        / scriptTokenFactor(pendingDeliveredHistoryContext)
+        / CHARS_PER_TOKEN_RATIO,
+      );
+  const effectiveCachedSystemTokensEstimate = cachedSystemTokensEstimate
+    + pendingDeliveredHistoryTokens;
 
   // Publish the exact per-turn decision only after prompt preparation resolves
   // both operator configuration and request metadata. Sub-agent and graph legs
@@ -971,7 +1173,7 @@ async function runSessionLocked(
   }
   const modelRequestResult = assembleModelRequest({
     preparedTurn: preparedTurnResult.value,
-    compiledPrompt: { systemPrompt },
+    compiledPrompt: { systemPrompt: effectiveSystemPrompt },
   });
   if (!modelRequestResult.ok) {
     deps.logger.error(
@@ -1001,7 +1203,11 @@ async function runSessionLocked(
     text: assembledCurrentRequest?.content ?? "",
   };
 
-  const resourceLoader = new DefaultResourceLoader(resourceLoaderOptions);
+  const effectiveResourceLoaderOptions = {
+    ...resourceLoaderOptions,
+    systemPromptOverride: (_base: string | undefined) => effectiveSystemPrompt,
+  };
+  const resourceLoader = new DefaultResourceLoader(effectiveResourceLoaderOptions);
   await resourceLoader.reload();
 
   // The SDK's `tools` is an allowlist of tool *names* (not definitions).
@@ -1032,7 +1238,28 @@ async function runSessionLocked(
     tools: mergedCustomTools.map((t) => t.name),
     customTools: mergedCustomTools,
   };
+  if (executionOverrides?.signal?.aborted) {
+    settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);
+    return result;
+  }
   const { session, modelFallbackMessage } = await createAgentSession(sessionOptions);
+  const executionSignal = executionOverrides?.signal;
+  const onExternalAbort = (): void => {
+    settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);
+    session.abortCompaction();
+    suppressError(
+      session.abort(),
+      "PiExecutor external execution signal abort",
+      (message) => deps.logger.debug(
+        { step: "external-abort" },
+        sanitizeLogString(message),
+      ),
+    );
+  };
+  if (executionSignal !== undefined) {
+    executionSignal.addEventListener("abort", onExternalAbort, { once: true });
+    if (executionSignal.aborted) onExternalAbort();
+  }
   if (modelFallbackMessage) {
     deps.logger.warn(
       { hint: modelFallbackMessage, errorKind: "config" as ErrorKind },
@@ -1379,7 +1606,7 @@ async function runSessionLocked(
   const streamSetup = setupStreamWrappers({
     config, deps, sessionKey, formattedKey, sm,
     resolvedModel, capabilityClass, modelProfile, executionOverrides,
-    deferralResult, systemPromptBlocks, agentId,
+    deferralResult, systemPromptBlocks: effectiveSystemPromptBlocks, agentId,
     // Forward the cache-trace recorder so the wrapper chain
     // can include the cache-trace `stream:context` emit. When the
     // recorder is null (disabled), setupStreamWrappers skips the wrapper.
@@ -1430,7 +1657,7 @@ async function runSessionLocked(
     resolvedModel, executionOverrides,
     cacheBreakDetector,
     contextEngineRef,
-    getCachedSystemTokensEstimate: () => cachedSystemTokensEstimate,
+    getCachedSystemTokensEstimate: () => effectiveCachedSystemTokensEstimate,
     getCachedFreshTailPreambleTokens: () => cachedFreshTailPreambleTokens,
     getTokenAnchor: () => tokenAnchor,
     onAnchorReset: () => { tokenAnchor = null; },
@@ -1699,7 +1926,6 @@ async function runSessionLocked(
   // Read the live ref at bridge-creation time — adaptiveRetention is set
   // synchronously by decodeExecutionOverrides() before this callback runs.
   const capturedBridgeRetention = adaptiveRetentionRef.get();
-  const executionId = randomUUID();
   // Budget trajectory warning: shared mutable ref between bridge (writer) and prompt runner (reader)
   const budgetWarningRef = { current: false };
   // Deltas (text + thinking) reset the stall budget — ALWAYS-
@@ -2060,6 +2286,7 @@ async function runSessionLocked(
         deps.backgroundTaskManager!,
         bgConfig,
         originResolver,
+        bridge.markDeferredWork,
       );
       tool.execute = (wrapped as unknown as typeof tool).execute;
     }
@@ -2081,7 +2308,7 @@ async function runSessionLocked(
         msg: dispatchMessage, session, config, sessionKey, formattedKey, agentId, result,
         executionOverrides, executionStartMs, effectiveTimeout, executionId,
         bridge, dynamicPreamble, responseLocalePolicy, deferredContext, capabilityIndexResult, inlineMemory,
-        systemPrompt,
+        systemPrompt: effectiveSystemPrompt,
         mergedCustomTools,
         cmdResult, sepEnabled, executionPlanRef,
         _directives, _prevTimestamp, resolvedModel, modelProfile,
@@ -2104,7 +2331,7 @@ async function runSessionLocked(
           // The canonical system-tokens estimate the pre-flight throws on, so
           // wrapEnvelope can size the tight-window residual and drop the heavy
           // tool-discovery preamble before it overflows (same S → no drift).
-          getSystemTokensEstimate: () => cachedSystemTokensEstimate,
+          getSystemTokensEstimate: () => effectiveCachedSystemTokensEstimate,
         },
         onResetTimer: (fn) => { currentResetTimer = fn; },
         getLastCacheWriteTokens: () => bridge.getResult().tokensUsed?.cacheWrite ?? 0,
@@ -2142,6 +2369,7 @@ async function runSessionLocked(
       { error, sessionKey, agentId, executionStartMs },
     );
   } finally {
+    executionSignal?.removeEventListener("abort", onExternalAbort);
     // Clear thinking ceiling so next execution recalculates from current state.
     // Defense-in-depth: context engine is recreated per execute(), but explicit clear
     // ensures no stale ceiling if engine lifetime changes in the future.

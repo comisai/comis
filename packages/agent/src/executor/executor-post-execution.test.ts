@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, expectTypeOf, vi } from "vitest";
-import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, unrecoveredFailedToolNames, recoveredFailedToolNames, type PostExecutionParams } from "./executor-post-execution.js";
+import { buildSessionEndMetadata, shouldStorePairedMemory, shouldRunContextStorePasses, emitSessionSummary, END_REASON_MAP, promoteOutputStarved, promoteNarrationStall, settleExecutionResult, unrecoveredFailedToolNames, recoveredFailedToolNames, type PostExecutionParams } from "./executor-post-execution.js";
 import { buildOutputStarvedAnnotation, buildContextExhaustedReply, buildLoopDetectedReply, buildDegradedReply } from "./degraded-reply.js";
 import { resolveResponseLocalePolicy } from "./resolve-response-locale-policy.js";
 import {
@@ -31,8 +31,61 @@ import { attributeRecallUsage } from "../rag/recall-attribution.js";
 // Imported here for the deterministic-bucket behavior probe (the emit's intent source).
 import { classifyIntent } from "../rag/query-understanding.js";
 import type { ConversationRef } from "@comis/core";
+import type { ExecutionResult } from "./types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+describe("settleExecutionResult", () => {
+  const emptySummary = {
+    schedulingCapabilityInvoked: false,
+    outboundDeliveryCapabilityInvoked: false,
+    deferredWorkCapabilityInvoked: false,
+    unclassifiedInvocationObserved: false,
+  };
+
+  function makeResult(): ExecutionResult {
+    return {
+      response: "done",
+      sessionKey: {} as never,
+      executionId: "exec-settle",
+      responseLocalePolicy: { source: "unset", enforceLocale: false },
+      sideEffectSummary: emptySummary,
+      tokensUsed: { input: 0, output: 0, total: 0 },
+      cost: { total: 0 },
+      stepsExecuted: 0,
+      llmCalls: 0,
+      finishReason: "stop",
+    };
+  }
+
+  it("publishes the authoritative promoted reason and bridge side-effect summary", () => {
+    const result = makeResult();
+    const summary = { ...emptySummary, deferredWorkCapabilityInvoked: true };
+
+    settleExecutionResult(result, "background_pending", {
+      sideEffectSummary: summary,
+      toolExecResults: [],
+    });
+
+    expect(result.finishReason).toBe("background_pending");
+    expect(result.sideEffectSummary).toEqual(summary);
+  });
+
+  it("uses the first failed tool classification for completed_with_tool_errors", () => {
+    const result = makeResult();
+
+    settleExecutionResult(result, "completed_with_tool_errors", {
+      sideEffectSummary: emptySummary,
+      toolExecResults: [
+        { toolName: "first", success: false, durationMs: 1, errorKind: "dependency" },
+        { toolName: "second", success: false, durationMs: 2, errorKind: "internal" },
+      ],
+    });
+
+    expect(result.finishReason).toBe("completed_with_tool_errors");
+    expect(result.terminalErrorKind).toBe("dependency");
+  });
+});
 const conversationRefForTest = (seed: string): ConversationRef =>
   `cv_${seed.padEnd(43, "x").slice(0, 43)}` as ConversationRef;
 

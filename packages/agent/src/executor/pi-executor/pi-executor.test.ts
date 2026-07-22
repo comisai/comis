@@ -11,13 +11,16 @@ import { resolveModelProfile } from "../model-profile.js";
 import type { ContextStorePort, PerAgentConfig, SessionKey, NormalizedMessage } from "@comis/core";
 import {
   createDeliveryOrigin,
+  createConversationRef,
+  computeWorkspacePolicyCombinedHash,
   formatSessionKey,
+  hashWorkspacePolicyContent,
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
   runWithContext,
   tryGetContext,
   TypedEventBus,
 } from "@comis/core";
-import type { ExecutionResult } from "../types.js";
+import type { ExecutionOverrides, ExecutionResult } from "../types.js";
 import { clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot } from "../prompt-assembly.js";
 import { clearSessionToolSchemaSnapshot } from "../executor-session-state.js";
 import { resetPairedMemoryDedupForTests } from "../executor-post-execution.js";
@@ -532,6 +535,7 @@ function createMockDeps(overrides?: Partial<PiExecutorDeps>): PiExecutorDeps {
         async (_sk: SessionKey, fn: (sm: any) => Promise<any>) => {
           const mockSm = {
             buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
+            getBranch: vi.fn().mockReturnValue([]),
             appendMessage: vi.fn(),
             appendCustomEntry: mockAppendCustomEntry,
             getSessionDir: vi.fn().mockReturnValue("/tmp/test-session"),
@@ -691,6 +695,153 @@ describe("PiExecutor", () => {
       expect(load).toHaveBeenCalledTimes(1);
       expect(load).toHaveBeenCalledWith("agent-1");
       expect(result.workspacePolicyHash).toBe(snapshot.combinedHash);
+    });
+
+    it("uses a hash-verified per-execution policy snapshot without rereading mutable workspace files", async () => {
+      const content = "# Scope\n\nUse the captured task scope.";
+      const section = {
+        id: "workspace:scope",
+        sourceKind: "operator" as const,
+        trust: "trusted" as const,
+        stability: "stable" as const,
+        content,
+        contentHash: hashWorkspacePolicyContent(content),
+        maxChars: 20_000,
+      };
+      const captured = {
+        agentId: "agent-1",
+        sections: [section],
+        combinedHash: computeWorkspacePolicyCombinedHash([section]),
+      };
+      const load = vi.fn().mockResolvedValue(ok({
+        agentId: "agent-1",
+        sections: [],
+        combinedHash: computeWorkspacePolicyCombinedHash([]),
+      }));
+      const deps = createMockDeps({
+        workspacePolicySnapshot: undefined,
+        workspacePolicyPort: { load, get: vi.fn() },
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage,
+        testSessionKey,
+        [],
+        undefined,
+        "agent-1",
+        undefined,
+        undefined,
+        { operationType: "taskExtraction", workspacePolicySnapshot: captured } as ExecutionOverrides,
+      );
+
+      expect(load).not.toHaveBeenCalled();
+      expect(result.workspacePolicyHash).toBe(captured.combinedHash);
+    });
+
+    it("rejects a corrupted per-execution policy snapshot before model dispatch or mutable policy fallback", async () => {
+      const content = "# Scope\n\nUse the captured task scope.";
+      const corrupted = {
+        agentId: "agent-1",
+        sections: [{
+          id: "workspace:scope",
+          sourceKind: "operator" as const,
+          trust: "trusted" as const,
+          stability: "stable" as const,
+          content,
+          contentHash: "f".repeat(64),
+          maxChars: 20_000,
+        }],
+        combinedHash: "f".repeat(64),
+      };
+      const load = vi.fn().mockResolvedValue(ok({
+        agentId: "agent-1",
+        sections: [],
+        combinedHash: computeWorkspacePolicyCombinedHash([]),
+      }));
+      const deps = createMockDeps({
+        workspacePolicySnapshot: undefined,
+        workspacePolicyPort: { load, get: vi.fn() },
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage,
+        testSessionKey,
+        [],
+        undefined,
+        "agent-1",
+        undefined,
+        undefined,
+        { operationType: "taskExtraction", workspacePolicySnapshot: corrupted } as ExecutionOverrides,
+      );
+
+      expect(result.finishReason).toBe("error");
+      expect(result.errorContext?.errorType).toBe("WorkspacePolicyError");
+      expect(load).not.toHaveBeenCalled();
+      expect(createAgentSession).not.toHaveBeenCalled();
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "workspace-policy-verify",
+          failureKind: "content_hash_mismatch",
+          hint: expect.any(String),
+          errorKind: "validation",
+        }),
+        "Per-execution workspace policy snapshot verification failed",
+      );
+    });
+
+    it("uses and reports the exact captured response locale policy for delayed work", async () => {
+      const responseLocalePolicy = {
+        locale: "en",
+        source: "explicit" as const,
+        enforceLocale: true,
+      };
+      const executor = createPiExecutor(testConfig, createMockDeps());
+
+      const result = await executor.execute(
+        testMessage,
+        testSessionKey,
+        [],
+        undefined,
+        "agent-1",
+        undefined,
+        undefined,
+        { operationType: "heartbeat", responseLocalePolicy },
+      );
+
+      expect(result.responseLocalePolicy).toEqual(responseLocalePolicy);
+    });
+
+    it("rejects an invalid captured response locale policy before model dispatch", async () => {
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage,
+        testSessionKey,
+        [],
+        undefined,
+        "agent-1",
+        undefined,
+        undefined,
+        {
+          operationType: "heartbeat",
+          responseLocalePolicy: { locale: "not a locale", source: "explicit", enforceLocale: true },
+        } as ExecutionOverrides,
+      );
+
+      expect(result.finishReason).toBe("error");
+      expect(result.errorContext?.errorType).toBe("ResponseLocalePolicyError");
+      expect(createAgentSession).not.toHaveBeenCalled();
+      expect(deps.logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "response-locale-policy-verify",
+          hint: expect.any(String),
+          errorKind: "validation",
+        }),
+        "Per-execution response locale policy verification failed",
+      );
     });
 
     it("stops before model dispatch when workspace policy loading fails", async () => {
@@ -1066,6 +1217,63 @@ describe("PiExecutor", () => {
       expect(mockResourceLoaderArgs.captured.systemPromptOverride).toBeTypeOf("function");
       const overrideResult = mockResourceLoaderArgs.captured.systemPromptOverride("");
       expect(overrideResult).toBe("assembled system prompt");
+    });
+
+    it.each([
+      ["enabled", testConfig],
+      ["disabled", {
+        ...testConfig,
+        contextEngine: { enabled: false, thinkingKeepTurns: 10, historyTurns: 15 },
+      } as PerAgentConfig],
+    ])("projects pending delivered history when the context engine is %s", async (_mode, config) => {
+      const conversation = {
+        tenantId: testSessionKey.tenantId,
+        agentId: "agent-1",
+        partition: { kind: "agent" as const },
+      };
+      const conversationRef = createConversationRef(conversation);
+      if (!conversationRef.ok) throw conversationRef.error;
+      const branch = [{
+        type: "custom",
+        customType: "delivered_assistant_history",
+        data: {
+          tenantId: testSessionKey.tenantId,
+          agentId: "agent-1",
+          conversationRef: conversationRef.value,
+          sourceExecutionId: "execution_a",
+          attemptId: "attempt_a",
+          deliveredAtMs: 1_700_000_000_000,
+          text: "pending-delivered-output",
+          contentTrust: "derived",
+        },
+      }];
+      const deps = createMockDeps({
+        sessionAdapter: {
+          withSession: vi.fn().mockImplementation(
+            async (_sk: SessionKey, fn: (sm: any) => Promise<any>) => withTestTurnScope(
+              "agent-1",
+              async () => ok(await fn({
+                buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
+                getBranch: vi.fn().mockReturnValue(branch),
+                appendMessage: vi.fn(),
+                appendCustomEntry: mockAppendCustomEntry,
+                getSessionDir: vi.fn().mockReturnValue("/tmp/test-session"),
+              })),
+            ),
+          ),
+          appendInboundMessageLedger: mockAppendInboundMessageLedger,
+          persistInboundMessage: vi.fn().mockResolvedValue(ok({ payloads: [], ledgerContent: "" })),
+          destroySession: vi.fn().mockResolvedValue(undefined),
+        } as PiExecutorDeps["sessionAdapter"],
+      });
+      const executor = createPiExecutor(config, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+
+      const overrideResult = mockResourceLoaderArgs.captured.systemPromptOverride("");
+      expect(overrideResult).toContain("assembled system prompt");
+      expect(overrideResult).toContain("pending-delivered-output");
+      expect(overrideResult).toContain("not a new user request");
     });
   });
 
@@ -3376,6 +3584,66 @@ describe("PiExecutor", () => {
       expect(mockAbort).toHaveBeenCalled();
     });
 
+    it("pre-aborted execution signal prevents model dispatch and emits the authoritative abort", async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { operationType: "cron", signal: controller.signal },
+      );
+
+      expect(mockPrompt).not.toHaveBeenCalled();
+      expect(result.finishReason).toBe("prompt_timeout");
+      expect(deps.eventBus.emit).toHaveBeenCalledWith("execution:aborted", {
+        sessionKey: testSessionKey,
+        reason: "pipeline_timeout",
+        agentId: "agent-1",
+        timestamp: expect.any(Number),
+      });
+    });
+
+    it("execution signal aborts the live SDK session and unregisters its listener", async () => {
+      const controller = new AbortController();
+      let releasePrompt!: () => void;
+      mockPrompt.mockImplementationOnce(() => new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      }));
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      const executing = executor.execute(
+        testMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { operationType: "cron", signal: controller.signal },
+      );
+      await vi.waitFor(() => expect(mockPrompt).toHaveBeenCalledTimes(1));
+
+      controller.abort();
+      await vi.waitFor(() => expect(mockAbort).toHaveBeenCalledTimes(1));
+      expect(mockAbortCompaction).toHaveBeenCalledTimes(1);
+      releasePrompt();
+      await executing;
+
+      mockAbort.mockClear();
+      controller.abort();
+      await Promise.resolve();
+      expect(mockAbort).not.toHaveBeenCalled();
+    });
+
     it("RunHandle.isStreaming delegates to session.isStreaming", async () => {
       const mockRegistry = createMockRegistry();
       mockSession.isStreaming = true;
@@ -4128,6 +4396,47 @@ describe("PiExecutor", () => {
       await executor.execute(testMessage, testSessionKey, perRequestTools as any);
 
       expect(mockSetActiveToolsByName).toHaveBeenCalledWith(["bash", "memory_search"]);
+    });
+
+    it("removes configured tools and prompt capabilities for an isolated model execution", async () => {
+      const getPromptSkillsXml = vi.fn(() => "<skills>must-not-appear</skills>");
+      const getPromptSkillLocations = vi.fn(() => new Map([["/skill", "must-not-appear"]]));
+      const getMcpServerInstructions = vi.fn(() => [{
+        serverName: "example",
+        instructions: "must not appear",
+      }]);
+      const configWithDiscovery = {
+        ...testConfig,
+        skills: { discoveryPaths: ["/configured/skills"], promptSkills: {} },
+      } as PerAgentConfig;
+      const deps = createMockDeps({
+        customTools: [{ name: "exec", description: "Execute", parameters: {} }] as any,
+        getPromptSkillsXml,
+        getPromptSkillLocations,
+        getMcpServerInstructions,
+      });
+      const executor = createPiExecutor(configWithDiscovery, deps);
+
+      await executor.execute(
+        testMessage,
+        testSessionKey,
+        [],
+        undefined,
+        "agent-1",
+        undefined,
+        undefined,
+        { operationType: "taskExtraction", capabilityAccess: "none" } as ExecutionOverrides,
+      );
+
+      expect(createAgentSession).toHaveBeenCalledWith(expect.objectContaining({ customTools: [] }));
+      expect(mockSetActiveToolsByName).toHaveBeenCalledWith([]);
+      expect(getPromptSkillsXml).not.toHaveBeenCalled();
+      expect(getPromptSkillLocations).not.toHaveBeenCalled();
+      expect(getMcpServerInstructions).not.toHaveBeenCalled();
+      expect(mockResourceLoaderArgs.captured).toMatchObject({
+        additionalSkillPaths: [],
+        noSkills: true,
+      });
     });
 
     it("continues execution if getAllTools throws", async () => {

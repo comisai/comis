@@ -36,6 +36,8 @@ import {
   // finds a redaction.
   validateMemoryWrite,
   type ResponseLocalePolicy,
+  type AgentExecutionFinishReason,
+  type ExecutionSideEffectSummary,
   createConversationRef,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
@@ -205,6 +207,7 @@ export interface PostExecutionBridgeResult {
    *  so a weak executive never free-associates after an abort. Mirrors
    *  bridge-metrics.ts BridgeResult.abortResponse. */
   abortResponse?: string;
+  sideEffectSummary?: ExecutionSideEffectSummary;
 }
 
 /** Bridge interface used by post-execution. */
@@ -740,6 +743,33 @@ export function promoteNarrationStall(
   return effectiveFinishReason;
 }
 
+/** Publish the single authoritative terminal reason and side-effect facts. */
+export function settleExecutionResult(
+  result: ExecutionResult,
+  finishReason: AgentExecutionFinishReason,
+  bridgeResult: {
+    sideEffectSummary: ExecutionSideEffectSummary;
+    toolExecResults?: PostExecutionBridgeResult["toolExecResults"];
+  },
+): void {
+  const mutableResult = result as ExecutionResult & {
+    finishReason: AgentExecutionFinishReason;
+    terminalErrorKind?: ErrorKind;
+  };
+  mutableResult.sideEffectSummary = { ...bridgeResult.sideEffectSummary };
+  mutableResult.finishReason = finishReason;
+  if (finishReason === "error" || finishReason === "completed_with_tool_errors") {
+    const firstFailedKind = bridgeResult.toolExecResults?.find(
+      (toolResult) => !toolResult.success,
+    )?.errorKind;
+    mutableResult.terminalErrorKind = firstFailedKind
+      ?? mutableResult.terminalErrorKind
+      ?? "internal";
+    return;
+  }
+  delete mutableResult.terminalErrorKind;
+}
+
 /**
  * Build the SessionMetadata payload written to `_session-metadata.json` at the
  * end of an execution.
@@ -1144,10 +1174,19 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     executionId,
     tasks: deps.backgroundTaskManager?.getTasks(effectiveAgentId) ?? [],
   });
-  const effectiveFinishReason = pendingBackground.finishReason ?? baseEffectiveFinishReason;
+  const effectiveFinishReasonCandidate = pendingBackground.finishReason ?? baseEffectiveFinishReason;
+  const effectiveFinishReason = (
+    effectiveFinishReasonCandidate === "end_turn"
+      ? "stop"
+      : effectiveFinishReasonCandidate
+  ) as AgentExecutionFinishReason;
   if (pendingBackground.finishReason !== undefined) {
     result.response = pendingBackground.response;
   }
+  settleExecutionResult(result, effectiveFinishReason, {
+    sideEffectSummary: bridgeResult.sideEffectSummary ?? result.sideEffectSummary,
+    toolExecResults: bridgeResult.toolExecResults,
+  });
 
   // Execution bookend INFO log with summary stats
   const durationMs = deps.clock.now() - executionStartMs;

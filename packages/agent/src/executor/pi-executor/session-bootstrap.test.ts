@@ -83,12 +83,28 @@ describe("bootstrapSession", () => {
       authStorage: { getApiKey: resolveProviderApiKey, getModelOverride: () => undefined } as unknown as PiExecutorDeps["authStorage"],
     } as unknown as PiExecutorDeps;
 
-    const result = await bootstrapSession({}, deps, { config: baseConfig, sessionKey, overrides: undefined });
+    const result = await bootstrapSession({}, deps, {
+      config: baseConfig,
+      sessionKey,
+      overrides: undefined,
+      executionId: "exec-bootstrap-1",
+    });
 
     expect(result.executionStartMs).toBe(1234);
     expect(result.result.response).toBe("");
     expect(result.result.tokensUsed).toEqual({ input: 0, output: 0, total: 0 });
     expect(result.result.finishReason).toBe("stop");
+    expect(result.result.executionId).toBe("exec-bootstrap-1");
+    expect(result.result.responseLocalePolicy).toEqual({
+      source: "unset",
+      enforceLocale: false,
+    });
+    expect(result.result.sideEffectSummary).toEqual({
+      schedulingCapabilityInvoked: false,
+      outboundDeliveryCapabilityInvoked: false,
+      deferredWorkCapabilityInvoked: false,
+      unclassifiedInvocationObserved: false,
+    });
     expect(result.sepEnabled).toBe(true);
     expect(result.executionPlanRef).toEqual({ current: undefined });
   });

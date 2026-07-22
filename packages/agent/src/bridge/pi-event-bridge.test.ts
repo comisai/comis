@@ -456,6 +456,91 @@ describe("createPiEventBridge", () => {
   // -------------------------------------------------------------------------
 
   describe("tool_execution_start", () => {
+    it("records action-scoped scheduling before a cron invocation settles", () => {
+      registerToolMetadata("test_cron_effect", {
+        invocationSideEffects: {
+          kind: "by_action",
+          parameter: "action",
+          actions: { add: ["scheduling"], list: [] },
+        },
+      });
+      const bridge = createPiEventBridge(deps);
+
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "test_cron_effect",
+        toolCallId: "tc-effect-cron",
+        args: { action: "add" },
+      } as any);
+
+      expect(bridge.getResult().sideEffectSummary).toEqual({
+        schedulingCapabilityInvoked: true,
+        outboundDeliveryCapabilityInvoked: false,
+        deferredWorkCapabilityInvoked: false,
+        unclassifiedInvocationObserved: false,
+      });
+    });
+
+    it("keeps reviewed empty actions clear and marks unknown tools unclassified", () => {
+      registerToolMetadata("test_empty_effect", {
+        invocationSideEffects: {
+          kind: "always",
+          capabilities: [],
+        },
+      });
+      const bridge = createPiEventBridge(deps);
+
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "test_empty_effect",
+        toolCallId: "tc-effect-empty",
+      } as any);
+      expect(bridge.getResult().sideEffectSummary).toEqual({
+        schedulingCapabilityInvoked: false,
+        outboundDeliveryCapabilityInvoked: false,
+        deferredWorkCapabilityInvoked: false,
+        unclassifiedInvocationObserved: false,
+      });
+
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "dynamic_unclassified_tool",
+        toolCallId: "tc-effect-unknown",
+      } as any);
+      expect(bridge.getResult().sideEffectSummary?.unclassifiedInvocationObserved).toBe(true);
+    });
+
+    it("conservatively records the declared union for missing or unknown actions and never clears it", () => {
+      registerToolMetadata("test_action_union_effect", {
+        invocationSideEffects: {
+          kind: "by_action",
+          parameter: "action",
+          actions: {
+            inspect: [],
+            schedule: ["scheduling"],
+            publish: ["outbound_delivery"],
+            delegate: ["deferred_work"],
+          },
+        },
+      });
+      const bridge = createPiEventBridge(deps);
+
+      bridge.listener({
+        type: "tool_execution_start",
+        toolName: "test_action_union_effect",
+        toolCallId: "tc-effect-missing-action",
+        args: {},
+      } as any);
+      bridge.listener({ type: "turn_start" } as any);
+
+      expect(bridge.getResult().sideEffectSummary).toEqual({
+        schedulingCapabilityInvoked: true,
+        outboundDeliveryCapabilityInvoked: true,
+        deferredWorkCapabilityInvoked: true,
+        unclassifiedInvocationObserved: false,
+      });
+    });
+
     it("does NOT emit tool:executed on eventBus (only tool_execution_end does)", () => {
       const { listener } = createPiEventBridge(deps);
 
@@ -6682,7 +6767,7 @@ describe("createPiEventBridge — per-root budget sibling", () => {
       model: "qwen2.5-coder-32b-instruct", // no native-anthropic catalog rate → "unknown"
       getCurrentModel: () => "qwen2.5-coder-32b-instruct",
       boundedAutonomyBudget: { current: meter },
-      resolveRootRunId: () => "root-loop-1",
+      resolveRootRunId: () => ({ ok: true, value: "root-loop-1" }),
     } as Partial<PiEventBridgeDeps>);
     const { listener, getResult } = createPiEventBridge(deps);
 
@@ -6708,7 +6793,7 @@ describe("createPiEventBridge — per-root budget sibling", () => {
       model: "qwen2.5-coder-32b-instruct",
       getCurrentModel: () => "qwen2.5-coder-32b-instruct",
       boundedAutonomyBudget: { current: meter },
-      resolveRootRunId: () => "root-wall-1",
+      resolveRootRunId: () => ({ ok: true, value: "root-wall-1" }),
     } as Partial<PiEventBridgeDeps>);
     const { listener, getResult } = createPiEventBridge(deps);
 
@@ -6736,7 +6821,7 @@ describe("createPiEventBridge — per-root budget sibling", () => {
           evictRootIfIdle,
         },
       },
-      resolveRootRunId: () => "root-session-conv",
+      resolveRootRunId: () => ({ ok: true, value: "root-session-conv" }),
     } as Partial<PiEventBridgeDeps>);
     const { listener } = createPiEventBridge(deps);
 
@@ -6761,7 +6846,7 @@ describe("createPiEventBridge — per-root budget sibling", () => {
       spendScope: { tenantId: "t1", agentId: "test-agent" } as SpendScope,
       spendConfig: { perAgentUsd: null, perTenantUsd: null, daemonGlobalUsd: 5.0, perTurnMax: 0.5, action: "abort", warnAtFraction: 0.8, pricingFallback: "snapshot", onUnknownPricing: "warn" } as SpendConfig,
       boundedAutonomyBudget: { current: { reserveBudget: spy, registerRoot: vi.fn() } },
-      resolveRootRunId: () => "root-args",
+      resolveRootRunId: () => ({ ok: true, value: "root-args" }),
     } as Partial<PiEventBridgeDeps>);
     const { listener } = createPiEventBridge(deps);
 
@@ -6794,7 +6879,7 @@ describe("createPiEventBridge — per-root budget sibling", () => {
       // the per-root block still reads spendConfig.perTurnMax as its estimate.
       spendConfig: { perAgentUsd: null, perTenantUsd: null, daemonGlobalUsd: null, perTurnMax: 0.5, action: "abort", warnAtFraction: 0.8, pricingFallback: "snapshot", onUnknownPricing: "warn" } as SpendConfig,
       boundedAutonomyBudget: { current: meter },
-      resolveRootRunId: () => "root-session-cheap",
+      resolveRootRunId: () => ({ ok: true, value: "root-session-cheap" }),
     } as Partial<PiEventBridgeDeps>);
     const { listener, getResult } = createPiEventBridge(deps);
 
@@ -6824,7 +6909,7 @@ describe("createPiEventBridge — per-root budget sibling", () => {
   it("a present holder whose `current` is undefined (cap layer not yet populated) is a no-op (byte-identical)", () => {
     deps = createMockDeps({
       boundedAutonomyBudget: { current: undefined },
-      resolveRootRunId: () => "root-x",
+      resolveRootRunId: () => ({ ok: true, value: "root-x" }),
     } as Partial<PiEventBridgeDeps>);
     const { listener, getResult } = createPiEventBridge(deps);
     listener(makeTurnEndEvent() as any);
