@@ -394,6 +394,83 @@ describe("strict cron RPC mutations", () => {
     }] });
   });
 
+  it("projects internal-action counters through cron.runs without model content", async () => {
+    const cronScheduler = scheduler([job({
+      id: "reflection-agent-a",
+      name: "Reflection",
+      source: "built_in",
+      payload: { kind: "internal_action", action: "reflection" },
+    } as Partial<CronJob>)]);
+    const history = [{
+      start: {
+        executionId: "execution-reflection-a",
+        bootId: "boot-a",
+        jobId: "reflection-agent-a",
+        agentId: "agent-a",
+        scheduledForMs: NOW_MS,
+        trigger: "scheduled",
+        recordType: "started",
+        workKind: "internal_action",
+        rootRunId: "root-cron-execution-reflection-a",
+        startedAtMs: NOW_MS,
+      },
+      terminal: {
+        executionId: "execution-reflection-a",
+        bootId: "boot-a",
+        jobId: "reflection-agent-a",
+        agentId: "agent-a",
+        scheduledForMs: NOW_MS,
+        trigger: "scheduled",
+        recordType: "terminal",
+        workKind: "internal_action",
+        terminalAtMs: NOW_MS + 50,
+        durationMs: 50,
+        outcome: {
+          kind: "internal_action",
+          action: "reflection",
+          rootRunId: "root-cron-execution-reflection-a",
+          modelResolved: "amazon-bedrock:model-a",
+          modelResolutionSource: "explicit_config",
+          metrics: { totalTokens: 0, costUsd: 0, llmCalls: 1 },
+          execution: {
+            status: "failed",
+            errorKind: "dependency",
+            counters: [
+              { name: "selected", value: 8 },
+              { name: "dependency_failures", value: 1 },
+            ],
+          },
+        },
+      },
+    }];
+    const executionTracker = tracker(history);
+    const bound = handlers(deps(cronScheduler, {
+      executionTrackers: new Map([["agent-a", executionTracker]]),
+    }));
+
+    await expect(bound["cron.runs"]!({ jobName: "Reflection", limit: 1 })).resolves.toEqual({
+      runs: [{
+        executionId: "execution-reflection-a",
+        jobId: "reflection-agent-a",
+        agentId: "agent-a",
+        scheduledForMs: NOW_MS,
+        trigger: "scheduled",
+        workKind: "internal_action",
+        rootRunId: "root-cron-execution-reflection-a",
+        startedAtMs: NOW_MS,
+        terminalAtMs: NOW_MS + 50,
+        durationMs: 50,
+        status: "failed",
+        deliveryStatus: "not_requested",
+        errorKind: "dependency",
+        counters: [
+          { name: "selected", value: 8 },
+          { name: "dependency_failures", value: 1 },
+        ],
+      }],
+    });
+  });
+
   it("removes authored jobs by stable id and rejects config-owned jobs", async () => {
     const authored = job();
     const builtIn = job({

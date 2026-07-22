@@ -168,6 +168,10 @@ describe("comis cron strict operator commands", () => {
         durationMs: 1_250,
         status: "completed" as const,
         deliveryStatus: "accepted" as const,
+        counters: [
+          { name: "selected", value: 8 },
+          { name: "dependency_failures", value: 1 },
+        ],
       }],
     };
     const { client, calls } = makeClient(() => response);
@@ -183,6 +187,8 @@ describe("comis cron strict operator commands", () => {
     expect(output).toContain("execution-a");
     expect(output).toContain("completed");
     expect(output).toContain("accepted");
+    expect(output).toContain("selected=8");
+    expect(output).toContain("dependency_failures=1");
   });
 
   it("renders scheduler status for one selected agent", async () => {

@@ -552,6 +552,36 @@ describe("CronRunsContract", () => {
   it("response with empty runs", () => {
     expect(() => CronRunsContract.response.parse({ runs: [] })).not.toThrow();
   });
+
+  it("response preserves bounded internal-action diagnostic counters", () => {
+    const run = {
+      executionId: "execution-a",
+      jobId: "job-a",
+      agentId: "agent-a",
+      scheduledForMs: 1_800_000_000_000,
+      trigger: "scheduled",
+      workKind: "internal_action",
+      rootRunId: "root-cron-execution-a",
+      startedAtMs: 1_800_000_000_000,
+      terminalAtMs: 1_800_000_000_050,
+      durationMs: 50,
+      status: "failed",
+      deliveryStatus: "not_requested",
+      errorKind: "dependency",
+      counters: [
+        { name: "selected", value: 8 },
+        { name: "dependency_failures", value: 1 },
+      ],
+    };
+
+    expect(CronRunsContract.response.parse({ runs: [run] })).toEqual({ runs: [run] });
+    expect(() => CronRunsContract.response.parse({
+      runs: [{
+        ...run,
+        counters: Array.from({ length: 33 }, (_, index) => ({ name: `counter_${index}`, value: index })),
+      }],
+    })).toThrow();
+  });
 });
 
 describe("CronRunContract", () => {
