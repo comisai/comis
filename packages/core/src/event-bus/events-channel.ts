@@ -325,7 +325,8 @@ export interface ChannelEvents {
     chunkIndex: number;
     totalChunks: number;
     charCount: number;
-    ok: boolean;
+    status: "accepted" | "rejected" | "unknown";
+    errorKind?: ErrorKind;
     retried: boolean;
     timestamp: number;
   };
@@ -334,9 +335,12 @@ export interface ChannelEvents {
   "delivery:complete": {
     channelId: string;
     channelType: string;
+    status: "accepted" | "partial" | "rejected" | "unknown";
+    errorKind?: ErrorKind;
     totalChunks: number;
     deliveredChunks: number;
     failedChunks: number;
+    ambiguousChunks: number;
     totalChars: number;
     durationMs: number;
     origin: string;

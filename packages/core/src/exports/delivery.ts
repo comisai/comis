@@ -77,6 +77,7 @@ export type {
   DeliverToChannelOptions,
   ChunkDeliveryResult,
   DeliveryResult,
+  DeliveryQueueDisposition,
   DeliveryQueueTransition,
   DeliveryQueueTransitionFailure,
 } from "../delivery/types.js";

@@ -45,9 +45,13 @@ import type { DeliveryQueuePort } from "../ports/delivery-queue.js";
 import type { DeliveryAuthority } from "../ports/delivery-queue.js";
 import type { ChannelEndpoint, ConversationRef } from "../domain/conversation-scope.js";
 import type { ComisLogger } from "../logging/log-fields.js";
-import { makeDeliveryService } from "../../../../test/support/factories.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 import { TypedEventBus } from "../event-bus/bus.js";
+
+const TEST_CLOCK = {
+  now: () => Date.now(),
+  nowDate: () => new Date(),
+};
 
 /**
  * Build a no-op HookRunner with vi.fn() spies on every method. The fields
@@ -95,8 +99,15 @@ function makeDeps(
     hookRunner: makeNoopHookRunner(),
     deliveryQueue: createNoOpDeliveryQueue(),
     logger: makeLogger(),
+    clock: TEST_CLOCK,
     ...overrides,
   };
+}
+
+function makeDeliveryService(
+  overrides: Partial<DeliveryServiceDeps> = {},
+): DeliveryService {
+  return createDeliveryService(makeDeps(overrides));
 }
 
 function makeLogger(): ComisLogger {
@@ -126,7 +137,7 @@ function deliver(
   adapter: DeliveryAdapter,
   channelId: string,
   text: string,
-  options: DeliverToChannelOptions = {},
+  options: Partial<DeliverToChannelOptions> = {},
 ) {
   const context = tryGetContext();
   const authority = context?.agentId === undefined
@@ -144,6 +155,7 @@ function deliver(
     conversationKind: "direct",
   };
   return service.deliverToChannel(adapter, channelId, text, {
+    completionMode: "settled",
     authority,
     destinationEndpoint,
     ...options,
@@ -175,23 +187,16 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     expect(() => createDeliveryService(makeDeps())).not.toThrow();
   });
 
-  it("empty text short-circuits with ok({ totalChunks: 0 }) and does NOT invoke runBeforeDelivery", async () => {
+  it("empty text returns a not-attempted error and does NOT invoke runBeforeDelivery", async () => {
     const runBeforeDelivery = vi.fn().mockResolvedValue({});
     const hookRunner = makeNoopHookRunner({ runBeforeDelivery });
     const service = createDeliveryService(makeDeps({ hookRunner }));
     const adapter = makeAdapter();
     const result = await deliver(service, adapter, "chat-1", "");
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value).toEqual({
-        ok: true,
-        totalChunks: 0,
-        deliveredChunks: 0,
-        failedChunks: 0,
-        chunks: [],
-        totalChars: 0,
-      });
-    }
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "delivery_not_attempted", reason: "empty_text" },
+    });
     // The empty-text branch runs BEFORE the hook block, so before_delivery
     // hooks never observe empty deliveries.
     expect(runBeforeDelivery).not.toHaveBeenCalled();
@@ -220,11 +225,10 @@ describe("createDeliveryService — factory contract (smoke-level)", () => {
     const result = await deliver(service, adapter, "chat-1", "hi");
     expect(adapter.sendMessage).not.toHaveBeenCalled();
     expect(runAfterDelivery).not.toHaveBeenCalled();
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.totalChunks).toBe(0);
-      expect(result.value.ok).toBe(false);
-    }
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: "delivery_not_attempted", reason: "hook_cancelled" },
+    });
   });
 
   it("runAfterDelivery rejection does NOT corrupt the request (suppressError wrap preserved)", async () => {
@@ -403,9 +407,8 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value).toMatchObject({
-          ok: true,
-          deliveredChunks: 1,
-          chunks: [{ ok: true, messageId: "platform-message-1" }],
+          platform: { status: "accepted", deliveredChunks: 1 },
+          chunks: [{ status: "accepted", messageId: "platform-message-1" }],
         });
       }
       expect(adapter.sendMessage).toHaveBeenCalledOnce();
@@ -518,19 +521,14 @@ describe("DeliveryService — full pipeline behavior", () => {
       service = makeDeliveryService();
     });
 
-    it("handles empty text (returns ok with 0 chunks)", async () => {
+    it("returns not-attempted for empty text", async () => {
       const adapter = createMockAdapter();
       const result = await deliver(service, adapter, "chat-1", "");
 
-      expect(result.ok).toBe(true);
-      if (result.ok) {
-        expect(result.value.ok).toBe(true);
-        expect(result.value.totalChunks).toBe(0);
-        expect(result.value.deliveredChunks).toBe(0);
-        expect(result.value.failedChunks).toBe(0);
-        expect(result.value.chunks).toEqual([]);
-        expect(result.value.totalChars).toBe(0);
-      }
+      expect(result).toMatchObject({
+        ok: false,
+        error: { kind: "delivery_not_attempted", reason: "empty_text" },
+      });
       expect(adapter.sendMessage).not.toHaveBeenCalled();
     });
   });
@@ -551,10 +549,8 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.totalChunks).toBe(1);
-        expect(result.value.deliveredChunks).toBe(1);
-        expect(result.value.failedChunks).toBe(0);
-        expect(result.value.ok).toBe(true);
+        expect(result.value.chunks).toHaveLength(1);
+        expect(result.value.platform).toMatchObject({ status: "accepted", deliveredChunks: 1 });
       }
       expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
     });
@@ -603,7 +599,7 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.totalChunks).toBeGreaterThan(1);
+        expect(result.value.chunks.length).toBeGreaterThan(1);
         expect(adapter.sendMessage.mock.calls.length).toBeGreaterThan(1);
       }
     });
@@ -619,7 +615,7 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.totalChunks).toBeGreaterThan(1);
+        expect(result.value.chunks.length).toBeGreaterThan(1);
       }
     });
 
@@ -632,7 +628,7 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.totalChunks).toBe(1);
+        expect(result.value.chunks).toHaveLength(1);
         expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
       }
     });
@@ -729,7 +725,7 @@ describe("DeliveryService — full pipeline behavior", () => {
   // -------------------------------------------------------------------------
 
   describe("failure handling", () => {
-    it("returns ok:false in DeliveryResult when send fails without retryEngine", async () => {
+    it("returns an unknown platform outcome when an unclassified send fails", async () => {
       const adapter = createMockAdapter("telegram");
       adapter.sendMessage.mockResolvedValue(err(new Error("Send failed")));
       const service = makeDeliveryService();
@@ -738,10 +734,12 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       expect(result.ok).toBe(true); // Result itself is ok (no exception)
       if (result.ok) {
-        expect(result.value.ok).toBe(false); // But delivery failed
-        expect(result.value.failedChunks).toBe(1);
-        expect(result.value.deliveredChunks).toBe(0);
-        expect(result.value.chunks[0].ok).toBe(false);
+        expect(result.value.platform).toMatchObject({
+          status: "unknown",
+          failedChunks: 1,
+          deliveredChunks: 0,
+        });
+        expect(result.value.chunks[0]?.status).toBe("unknown");
         expect(result.value.chunks[0].error).toBeInstanceOf(Error);
       }
     });
@@ -752,7 +750,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       adapter.sendMessage.mockImplementation(async (): Promise<Result<string, Error>> => {
         callCount++;
         if (callCount === 1) return ok("msg-1");
-        return err(new Error("Send failed on chunk 2"));
+        return err(new Error("400 Bad Request: chunk 2 rejected"));
       });
       const service = makeDeliveryService({ maxCharsOverride: 150 });
 
@@ -761,11 +759,12 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.ok).toBe(false); // Overall delivery failed
-        expect(result.value.deliveredChunks).toBeGreaterThanOrEqual(1);
-        expect(result.value.failedChunks).toBeGreaterThanOrEqual(1);
+        expect(result.value.platform.status).toBe("partial");
+        expect(result.value.platform.deliveredChunks).toBeGreaterThanOrEqual(1);
+        if (result.value.platform.status !== "partial") return;
+        expect(result.value.platform.failedChunks).toBeGreaterThanOrEqual(1);
         // all-or-abort (default): aborted after first failure, but at least 2 chunks processed
-        expect(result.value.totalChunks).toBeGreaterThan(1);
+        expect(result.value.chunks.length).toBeGreaterThan(1);
       }
     });
   });
@@ -797,7 +796,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(payload.channelType).toBe("telegram");
       expect(payload.chunkIndex).toBe(0);
       expect(payload.totalChunks).toBe(1);
-      expect(payload.ok).toBe(true);
+      expect(payload.status).toBe("accepted");
       expect(typeof payload.charCount).toBe("number");
       expect(typeof payload.timestamp).toBe("number");
     });
@@ -911,10 +910,8 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       // DeliveryResult inside
       if (result.ok) {
-        expect(result.value).toHaveProperty("ok");
-        expect(result.value).toHaveProperty("totalChunks");
-        expect(result.value).toHaveProperty("deliveredChunks");
-        expect(result.value).toHaveProperty("failedChunks");
+        expect(result.value).toHaveProperty("platform");
+        expect(result.value).toHaveProperty("queueDisposition");
         expect(result.value).toHaveProperty("chunks");
         expect(result.value).toHaveProperty("totalChars");
         expect(Array.isArray(result.value.chunks)).toBe(true);
@@ -957,7 +954,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(result.ok).toBe(true);
       if (result.ok) {
         // Should have chunked the HTML output
-        expect(result.value.totalChunks).toBeGreaterThan(1);
+        expect(result.value.chunks.length).toBeGreaterThan(1);
       }
     });
 
@@ -969,7 +966,7 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.totalChunks).toBeGreaterThan(1);
+        expect(result.value.chunks.length).toBeGreaterThan(1);
         // Discord chunks should still contain markdown
         const firstChunkText = adapter.sendMessage.mock.calls[0][1] as string;
         // Should be raw text (not HTML-converted)
@@ -985,7 +982,7 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.totalChunks).toBeGreaterThan(1);
+        expect(result.value.chunks.length).toBeGreaterThan(1);
       }
     });
   });
@@ -1005,7 +1002,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value.chunks[0].messageId).toBe("msg-abc-123");
-        expect(result.value.chunks[0].ok).toBe(true);
+        expect(result.value.chunks[0]?.status).toBe("accepted");
         expect(result.value.chunks[0].error).toBeUndefined();
       }
     });
@@ -1019,7 +1016,7 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.value.chunks[0].ok).toBe(false);
+        expect(result.value.chunks[0]?.status).toBe("unknown");
         expect(result.value.chunks[0].messageId).toBeUndefined();
         expect(result.value.chunks[0].error?.message).toBe("API error");
       }
@@ -1090,7 +1087,9 @@ describe("DeliveryService — full pipeline behavior", () => {
     it("defaults origin to unknown when not provided", async () => {
       const adapter = createMockAdapter("telegram");
 
-      await deliver(service, adapter, "chat-1", "Hello");
+      await deliver(service, adapter, "chat-1", "Hello", {
+        completionMode: "deferred_retry",
+      });
 
       const completeEvent = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls.find(
         (call: unknown[]) => call[0] === "delivery:complete",
@@ -1127,6 +1126,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       const service = createDeliveryService(makeDeps({ deliveryQueue: queue, eventBus }));
 
       const result = await service.deliverToChannel(adapter, "chat-1", "Hello", {
+        completionMode: "settled",
         authority: TEST_DELIVERY_AUTHORITY,
         destinationEndpoint: {
           channelType: "telegram",
@@ -1233,7 +1233,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       adapter.sendMessage.mockResolvedValue(err(new Error("Bad Request: chat not found")));
       const service = makeDeliveryService({ deliveryQueue: queue, eventBus });
 
-      await deliver(service, adapter, "chat-1", "Hello");
+      await deliver(service, adapter, "chat-1", "Hello", { completionMode: "deferred_retry" });
 
       expect(queue.fail).toHaveBeenCalledTimes(1);
       expect(queue.fail).toHaveBeenCalledWith(
@@ -1313,7 +1313,9 @@ describe("DeliveryService — full pipeline behavior", () => {
       adapter.sendMessage.mockResolvedValue(err(new Error("429 Too Many Requests")));
       const service = createDeliveryService(makeDeps({ deliveryQueue: queue, eventBus }));
 
-      await deliver(service, adapter, "chat-1", "Hello");
+      await deliver(service, adapter, "chat-1", "Hello", {
+        completionMode: "deferred_retry",
+      });
 
       expect(queue.nack).toHaveBeenCalledTimes(1);
       expect(queue.nack).toHaveBeenCalledWith(
@@ -1335,7 +1337,10 @@ describe("DeliveryService — full pipeline behavior", () => {
       if (!result.ok) {
         expect(result.error).toMatchObject({
           kind: "queue_transition_failed",
-          platformResult: { ok: true, deliveredChunks: 1 },
+          platformResult: {
+            platform: { status: "accepted", deliveredChunks: 1 },
+            queueDisposition: "transition_failed",
+          },
         });
       }
       expect(adapter.sendMessage).toHaveBeenCalledTimes(1);
@@ -1480,9 +1485,8 @@ describe("DeliveryService — full pipeline behavior", () => {
               },
             ],
             platformResult: {
-              ok: true,
-              deliveredChunks: 1,
-              failedChunks: 0,
+              platform: { status: "accepted", deliveredChunks: 1 },
+              queueDisposition: "transition_failed",
             },
           });
           const retained = result.error as Error & {
@@ -1559,9 +1563,8 @@ describe("DeliveryService — full pipeline behavior", () => {
               },
             ],
             platformResult: {
-              ok: true,
-              deliveredChunks: 1,
-              failedChunks: 0,
+              platform: { status: "accepted", deliveredChunks: 1 },
+              queueDisposition: "transition_failed",
             },
           });
         }
@@ -1594,7 +1597,9 @@ describe("DeliveryService — full pipeline behavior", () => {
           logger,
         } as DeliveryServiceDeps);
 
-        const result = await deliver(service, adapter, "chat-1", "Hello");
+        const result = await deliver(service, adapter, "chat-1", "Hello", {
+          completionMode: "deferred_retry",
+        });
 
         expect(result.ok).toBe(false);
         if (!result.ok) {
@@ -1608,9 +1613,8 @@ describe("DeliveryService — full pipeline behavior", () => {
               },
             ],
             platformResult: {
-              ok: false,
-              deliveredChunks: 0,
-              failedChunks: 1,
+              platform: { status: "rejected", deliveredChunks: 0, failedChunks: 1 },
+              queueDisposition: "transition_failed",
             },
           });
         }
@@ -1651,9 +1655,8 @@ describe("DeliveryService — full pipeline behavior", () => {
               },
             ],
             platformResult: {
-              ok: false,
-              deliveredChunks: 0,
-              failedChunks: 1,
+              platform: { status: "rejected", deliveredChunks: 0, failedChunks: 1 },
+              queueDisposition: "transition_failed",
             },
           });
         }
@@ -2149,7 +2152,7 @@ describe("DeliveryService — full pipeline behavior", () => {
         sendMessage: vi.fn().mockImplementation(async (): Promise<Result<string, Error>> => {
           const idx = callCount++;
           if (failOnCalls.includes(idx)) {
-            return err(new Error(`Chunk ${idx} failed`));
+            return err(new Error(`400 Bad Request: chunk ${idx} rejected`));
           }
           return ok(`msg-${idx}`);
         }),
@@ -2173,10 +2176,12 @@ describe("DeliveryService — full pipeline behavior", () => {
       if (result.ok) {
         // Should have stopped after 2 calls (1 success + 1 fail), not 3
         expect(adapter.sendMessage.mock.calls.length).toBe(2);
-        expect(result.value.deliveredChunks).toBe(1);
-        expect(result.value.failedChunks).toBe(1);
+        expect(result.value.platform.deliveredChunks).toBe(1);
+        expect(result.value.platform.status).toBe("partial");
+        if (result.value.platform.status !== "partial") return;
+        expect(result.value.platform.failedChunks).toBe(1);
         // totalChunks in result reflects chunks actually processed, not total planned
-        expect(result.value.totalChunks).toBe(2);
+        expect(result.value.chunks).toHaveLength(2);
       }
     });
 
@@ -2194,8 +2199,10 @@ describe("DeliveryService — full pipeline behavior", () => {
       if (result.ok) {
         // All 3 chunks should have been attempted
         expect(adapter.sendMessage.mock.calls.length).toBeGreaterThanOrEqual(3);
-        expect(result.value.deliveredChunks).toBeGreaterThanOrEqual(2);
-        expect(result.value.failedChunks).toBeGreaterThanOrEqual(1);
+        expect(result.value.platform.deliveredChunks).toBeGreaterThanOrEqual(2);
+        expect(result.value.platform.status).toBe("partial");
+        if (result.value.platform.status !== "partial") return;
+        expect(result.value.platform.failedChunks).toBeGreaterThanOrEqual(1);
       }
     });
 
@@ -2213,7 +2220,7 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(onChunkError).toHaveBeenCalledTimes(1);
       const [error, chunkIndex, totalChunks] = onChunkError.mock.calls[0];
       expect(error).toBeInstanceOf(Error);
-      expect(error.message).toBe("Chunk 1 failed");
+      expect(error.message).toBe("400 Bad Request: chunk 1 rejected");
       expect(chunkIndex).toBe(1);
       expect(typeof totalChunks).toBe("number");
       expect(totalChunks).toBeGreaterThanOrEqual(3);

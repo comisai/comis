@@ -12,6 +12,8 @@
 import type { SendMessageOptions } from "../ports/channel.js";
 import type { ChannelEndpoint } from "../domain/conversation-scope.js";
 import type { DeliveryAuthority } from "../ports/delivery-queue.js";
+import type { ErrorKind } from "../logging/log-fields.js";
+import type { PlatformDeliveryOutcome } from "./platform-delivery-outcome.js";
 import { ok, type Result } from "@comis/shared";
 
 // -------------------------------------------------------------------------
@@ -43,6 +45,8 @@ export interface DeliveryAdapter {
 /** Options for a single delivery call. */
 // @optional-field-count: 13 conditional per-call overrides; absence delegates to resolved-turn authority and service policy.
 export interface DeliverToChannelOptions {
+  /** Selects the sole owner of any future queue retry for this call. */
+  completionMode: "settled" | "deferred_retry";
   /** Explicit authority for deliveries created outside an active resolved turn. */
   authority?: DeliveryAuthority;
   /** Immutable destination endpoint captured when the delivery is created. */
@@ -82,34 +86,46 @@ export interface DeliverToChannelOptions {
 // Result shapes
 // -------------------------------------------------------------------------
 
-/** Per-chunk delivery result. */
-export interface ChunkDeliveryResult {
-  /** Whether this chunk was sent successfully. */
-  ok: boolean;
-  /** Platform message ID if available. */
-  messageId?: string;
-  /** Error if send failed. */
-  error?: Error;
-  /** Character count of the chunk. */
-  charCount: number;
-  /** Whether retry was used for this chunk. */
-  retried: boolean;
-}
+/** Per-chunk platform truth. */
+export type ChunkDeliveryResult =
+  | {
+      status: "accepted";
+      messageId?: string;
+      error?: never;
+      errorKind?: never;
+      charCount: number;
+      retried: boolean;
+    }
+  | {
+      status: "rejected" | "unknown";
+      messageId?: never;
+      error: Error;
+      errorKind: ErrorKind;
+      charCount: number;
+      retried: boolean;
+    };
+
+export type DeliveryQueueDisposition = "settled" | "retry_pending" | "transition_failed";
 
 /** Overall delivery result. */
 export interface DeliveryResult {
-  /** Whether all chunks were delivered. */
-  ok: boolean;
-  /** Total chunks attempted. */
-  totalChunks: number;
-  /** Successfully delivered chunks. */
-  deliveredChunks: number;
-  /** Failed chunks. */
-  failedChunks: number;
-  /** Per-chunk results. */
-  chunks: ChunkDeliveryResult[];
+  /** Per-chunk results in original send order. */
+  chunks: readonly ChunkDeliveryResult[];
   /** Total character count across all chunks. */
   totalChars: number;
+  /** Single aggregate platform truth derived from chunks. */
+  platform: PlatformDeliveryOutcome;
+  /** Durable retry ownership after all queue transitions settle. */
+  queueDisposition: DeliveryQueueDisposition;
+}
+
+export class DeliveryNotAttemptedError extends Error {
+  readonly kind = "delivery_not_attempted" as const;
+
+  constructor(readonly reason: "empty_text" | "hook_cancelled") {
+    super(reason === "empty_text" ? "Delivery text is empty" : "Delivery was cancelled by policy hook");
+    this.name = "DeliveryNotAttemptedError";
+  }
 }
 
 /** Durable queue state transitions performed around a platform send. */
@@ -136,7 +152,7 @@ export interface DeliveryQueueTransitionFailure {
  * not durably acknowledged" from "not sent and not durably rescheduled". The
  * outer Result exposes the durability ambiguity. Platform-truth consumers may
  * use the retained result, but the queue remains at-least-once: an unacknowledged
- * in-flight row can still be retried after restart.
+ * interrupted in-flight rows are recovered to terminal uncertain state.
  */
 export class DeliveryQueueTransitionError extends Error {
   readonly kind = "queue_transition_failed" as const;
@@ -158,6 +174,7 @@ export class DeliveryQueueTransitionError extends Error {
     this.platformResult = Object.freeze({
       ...platformResult,
       chunks,
+      platform: Object.freeze({ ...platformResult.platform }),
     });
   }
 }

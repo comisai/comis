@@ -36,6 +36,7 @@ import {
   type ChannelEndpoint,
 } from "../domain/conversation-scope.js";
 import type { DeliveryAuthority } from "../ports/delivery-queue.js";
+import type { ClockPort } from "../ports/clock.js";
 
 import { formatForChannel } from "./format-for-channel.js";
 import { chunkForDelivery } from "./chunk-for-delivery.js";
@@ -46,12 +47,13 @@ import {
   EXPLICIT_SEND_REJECTION_ERROR,
   RETRY_EXHAUSTED_SEND_ERROR,
   type RetryEngine,
+  type SendErrorClassification,
 } from "./retry-engine.js";
-import { isPermanentError } from "./permanent-errors.js";
 import { computeQueueBackoff, resolveChunkLimit } from "./queue-backoff.js";
 
 import {
   DeliveryQueueTransitionError,
+  DeliveryNotAttemptedError,
   type DeliveryQueueTransition,
   type DeliveryQueueTransitionFailure,
   type DeliveryAdapter,
@@ -59,8 +61,10 @@ import {
   type DeliveryStrategy,
   type ChunkDeliveryResult,
   type DeliveryResult,
+  type DeliveryQueueDisposition,
 } from "./types.js";
-import { systemNowMs, systemSetTimeout } from "../runtime/system-time.js";
+import { systemSetTimeout } from "../runtime/system-time.js";
+import { classifyPlatformDelivery } from "./platform-delivery-outcome.js";
 
 // ---------------------------------------------------------------------------
 // Constants — platform sets local to the delivery pipeline. The chunk-limit
@@ -172,6 +176,8 @@ export interface DeliveryServiceDeps {
   deliveryQueue: DeliveryQueuePort;
   /** Module-bound structured logger. REQUIRED for queue durability failures. */
   logger: ComisLogger;
+  /** Settlement clock for aggregate timestamps and telemetry. */
+  clock: ClockPort;
   /** Event bus. OPTIONAL — observability only; emits delivery:* events. */
   eventBus?: TypedEventBus;
 
@@ -207,12 +213,12 @@ function emitDeliveryEvent<K extends keyof EventMap>(
 }
 
 function reportQueueTransitionFailure(
-  deps: Pick<DeliveryServiceDeps, "eventBus" | "logger">,
+  deps: Pick<DeliveryServiceDeps, "eventBus" | "logger" | "clock">,
   transition: DeliveryQueueTransition, deliveryId: string | null, cause: Error,
   channelId: string, channelType: string,
 ): DeliveryQueueTransitionFailure {
   const errorKind = "dependency" as const;
-  const timestamp = systemNowMs();
+  const timestamp = deps.clock.now();
   deps.logger.warn({
     step: "delivery-queue-transition",
     transition,
@@ -245,7 +251,7 @@ export interface DeliveryService {
     adapter: DeliveryAdapter,
     channelId: string,
     text: string,
-    options?: DeliverToChannelOptions & { abortSignal?: AbortSignal },
+    options: DeliverToChannelOptions & { abortSignal?: AbortSignal },
   ): Promise<Result<DeliveryResult, Error>>;
 
   /**
@@ -284,21 +290,17 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
       adapter: DeliveryAdapter,
       channelId: string,
       text: string,
-      options?: DeliverToChannelOptions & { abortSignal?: AbortSignal },
+      options: DeliverToChannelOptions & { abortSignal?: AbortSignal },
     ): Promise<Result<DeliveryResult, Error>> {
-      const startTime = systemNowMs();
+      const startTime = deps.clock.now();
 
       try {
+        if (options.completionMode !== "settled" && options.completionMode !== "deferred_retry") {
+          return err(new Error("Delivery completion mode is required"));
+        }
         // --- 1. EARLY RETURN: empty text ---
         if (!text || !text.trim()) {
-          return ok({
-            ok: true,
-            totalChunks: 0,
-            deliveredChunks: 0,
-            failedChunks: 0,
-            chunks: [],
-            totalChars: 0,
-          });
+          return err(new DeliveryNotAttemptedError("empty_text"));
         }
 
         // --- 1b. HOOKS: before_delivery ---
@@ -326,7 +328,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               text: deliveryText,
               channelType: adapter.channelType,
               channelId,
-              options: (options ?? {}) as Record<string, unknown>,
+              options: options as unknown as Record<string, unknown>,
               origin: options?.origin ?? "unknown",
             },
             {
@@ -349,16 +351,9 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               channelType: adapter.channelType,
               reason: hookResult.cancelReason ?? "unknown",
               origin: options?.origin ?? "unknown",
-              timestamp: systemNowMs(),
+              timestamp: deps.clock.now(),
             });
-            return ok({
-              ok: false,
-              totalChunks: 0,
-              deliveredChunks: 0,
-              failedChunks: 0,
-              chunks: [],
-              totalChars: 0,
-            });
+            return err(new DeliveryNotAttemptedError("hook_cancelled"));
           }
 
           if (hookResult?.text !== undefined) {
@@ -374,14 +369,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
 
         // Post-format whitespace guard -- reject if formatting reduced text to whitespace
         if (!formatted.trim()) {
-          return ok({
-            ok: true,
-            totalChunks: 0,
-            deliveredChunks: 0,
-            failedChunks: 0,
-            chunks: [],
-            totalChars: 0,
-          });
+          return err(new DeliveryNotAttemptedError("empty_text"));
         }
 
         // --- 3. CHUNK: unless skipChunking ---
@@ -431,7 +419,13 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         // --- 4. SEND: each chunk ---
         const chunkResults: ChunkDeliveryResult[] = [];
         const queueTransitionFailures: DeliveryQueueTransitionFailure[] = [];
+        const failedQueueEntries: Array<{
+          entryId: string;
+          classification: SendErrorClassification;
+        }> = [];
+        let queueDisposition: DeliveryQueueDisposition = "settled";
         let aborted = false;
+        let abortError: Error | undefined;
 
         for (let i = 0; i < chunks.length; i++) {
           // --- Abort check ---
@@ -439,17 +433,18 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
             const abortCheck = checkAborted(options.abortSignal);
             if (!abortCheck.ok) {
               aborted = true;
+              abortError = abortCheck.error;
               const reason = abortCheck.error.message;
               // Emit delivery:aborted event
               emitDeliveryEvent(deps, "delivery:aborted", {
                 channelId,
                 channelType: adapter.channelType,
                 reason,
-                chunksDelivered: chunkResults.filter(r => r.ok).length,
+                chunksDelivered: chunkResults.filter((result) => result.status === "accepted").length,
                 totalChunks: chunks.length,
-                durationMs: systemNowMs() - startTime,
+                durationMs: deps.clock.now() - startTime,
                 origin: options?.origin ?? "unknown",
-                timestamp: systemNowMs(),
+                timestamp: deps.clock.now(),
               });
               break;
             }
@@ -536,9 +531,9 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               optionsJson: JSON.stringify(persistedOptions),
               origin: options?.origin ?? "unknown",
               maxAttempts: 5,
-              createdAt: systemNowMs(),
-              scheduledAt: systemNowMs(),
-              expireAt: systemNowMs() + 3_600_000, // 1 hour
+              createdAt: deps.clock.now(),
+              scheduledAt: deps.clock.now(),
+              expireAt: deps.clock.now() + 3_600_000, // 1 hour
               traceId,
             });
 
@@ -561,7 +556,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
 
           // Send with or without retry
           const retried = Boolean(deps.retryEngine);
-          const chunkSendStart = systemNowMs();
+          const chunkSendStart = deps.clock.now();
 
           // Build the send promise WITHOUT awaiting yet, so we can register it
           // in the internal inFlightSends Set synchronously before the
@@ -595,14 +590,13 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
 
           const result: Result<string, Error> = await sendPromise;
 
-          const chunkResult: ChunkDeliveryResult = {
-            ok: result.ok,
-            charCount: chunk.length,
-            retried,
-          };
-
           if (result.ok) {
-            chunkResult.messageId = result.value;
+            const chunkResult: ChunkDeliveryResult = {
+              status: "accepted",
+              messageId: result.value,
+              charCount: chunk.length,
+              retried,
+            };
 
             // --- Queue: ack on success ---
             if (entryId) {
@@ -613,8 +607,8 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                   channelId,
                   channelType: adapter.channelType,
                   messageId: result.value,
-                  durationMs: systemNowMs() - chunkSendStart,
-                  timestamp: systemNowMs(),
+                  durationMs: deps.clock.now() - chunkSendStart,
+                  timestamp: deps.clock.now(),
                 });
               } else {
                 queueTransitionFailures.push(reportQueueTransitionFailure(
@@ -657,75 +651,35 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                   channelType: adapter.channelType,
                   traceId,
                   agentId: persistenceScope.value.authority.agentId,
-                  timestamp: systemNowMs(),
+                  timestamp: deps.clock.now(),
                 });
               }
             }
+
+            chunkResults.push(chunkResult);
+
+            emitDeliveryEvent(deps, "delivery:chunk_sent", {
+              channelId,
+              channelType: adapter.channelType,
+              chunkIndex: i,
+              totalChunks: chunks.length,
+              charCount: chunk.length,
+              status: "accepted",
+              retried,
+              timestamp: deps.clock.now(),
+            });
           } else {
-            chunkResult.error = result.error;
-
-            // --- Queue: nack or fail on error ---
+            const errorClassification = classifySendError(result.error);
+            const status = errorClassification === "uncertain" ? "unknown" as const : "rejected" as const;
+            const chunkResult: ChunkDeliveryResult = {
+              status,
+              error: result.error,
+              errorKind: "platform" as const,
+              charCount: chunk.length,
+              retried,
+            };
             if (entryId) {
-              const errorMsg = result.error.message;
-              const errorClassification = classifySendError(result.error);
-              const uncertainOutcome = errorClassification === "uncertain";
-              const failReason = uncertainOutcome
-                ? "uncertain_outcome" as const
-                : strategy === "best-effort" ||
-                    isPermanentError(errorMsg) ||
-                    errorClassification === "markdown-fallback"
-                  ? "permanent_error" as const
-                  : deps.retryEngine
-                    ? "retries_exhausted" as const
-                    : null;
-              const persistedError = failReason === "uncertain_outcome"
-                ? AMBIGUOUS_SEND_OUTCOME_ERROR
-                : failReason === "retries_exhausted"
-                  ? RETRY_EXHAUSTED_SEND_ERROR
-                  : EXPLICIT_SEND_REJECTION_ERROR;
-
-              if (failReason !== null) {
-                const failResult = await deps.deliveryQueue.fail(entryId, persistedError);
-                if (failResult.ok) {
-                  emitDeliveryEvent(deps, "delivery:failed", {
-                    entryId,
-                    channelId,
-                    channelType: adapter.channelType,
-                    error: persistedError,
-                    reason: failReason,
-                    timestamp: systemNowMs(),
-                  });
-                } else {
-                  queueTransitionFailures.push(reportQueueTransitionFailure(
-                    deps, "fail", entryId, failResult.error,
-                    channelId, adapter.channelType,
-                  ));
-                }
-              } else {
-                // No retry engine -- nack for queue-level retry
-                const nextRetryAt = systemNowMs() + computeQueueBackoff(0);
-                const nackResult = await deps.deliveryQueue.nack(
-                  entryId,
-                  EXPLICIT_SEND_REJECTION_ERROR,
-                  nextRetryAt,
-                );
-                if (nackResult.ok) {
-                  emitDeliveryEvent(deps, "delivery:nacked", {
-                    entryId,
-                    channelId,
-                    channelType: adapter.channelType,
-                    error: EXPLICIT_SEND_REJECTION_ERROR,
-                    attemptCount: 1,
-                    nextRetryAt,
-                    timestamp: systemNowMs(),
-                  });
-                } else {
-                  queueTransitionFailures.push(reportQueueTransitionFailure(
-                    deps, "nack", entryId, nackResult.error,
-                    channelId, adapter.channelType,
-                  ));
-                }
-              }
+              failedQueueEntries.push({ entryId, classification: errorClassification });
             }
 
             // --- Strategy branching after failure ---
@@ -739,9 +693,10 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 chunkIndex: i,
                 totalChunks: chunks.length,
                 charCount: chunk.length,
-                ok: false,
+                status,
+                errorKind: "platform" as const,
                 retried,
-                timestamp: systemNowMs(),
+                timestamp: deps.clock.now(),
               });
             }
 
@@ -754,51 +709,117 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
               break;
             }
           }
-
-          chunkResults.push(chunkResult);
-
-          // Emit per-chunk event
-          if (deps.eventBus) {
-            emitDeliveryEvent(deps, "delivery:chunk_sent", {
-              channelId,
-              channelType: adapter.channelType,
-              chunkIndex: i,
-              totalChunks: chunks.length,
-              charCount: chunk.length,
-              ok: result.ok,
-              retried,
-              timestamp: systemNowMs(),
-            });
-          }
         }
 
         // --- 5. AGGREGATE ---
-        const deliveredChunks = chunkResults.filter((r) => r.ok).length;
-        const failedChunks = chunkResults.filter((r) => !r.ok).length;
+        if (chunkResults.length === 0) {
+          return err(abortError ?? new DeliveryNotAttemptedError("empty_text"));
+        }
+        const platformResult = classifyPlatformDelivery(chunkResults, deps.clock.now());
+        if (!platformResult.ok) {
+          return err(new Error(platformResult.error.message));
+        }
+
+        const mayDeferRejectedDelivery =
+          options.completionMode === "deferred_retry"
+          && platformResult.value.status === "rejected"
+          && deps.retryEngine === undefined
+          && failedQueueEntries.every((entry) => entry.classification === "retry");
+
+        for (const failedEntry of failedQueueEntries) {
+          if (mayDeferRejectedDelivery) {
+            const nextRetryAt = deps.clock.now() + computeQueueBackoff(0);
+            const nackResult = await deps.deliveryQueue.nack(
+              failedEntry.entryId,
+              EXPLICIT_SEND_REJECTION_ERROR,
+              nextRetryAt,
+            );
+            if (nackResult.ok) {
+              queueDisposition = "retry_pending";
+              emitDeliveryEvent(deps, "delivery:nacked", {
+                entryId: failedEntry.entryId,
+                channelId,
+                channelType: adapter.channelType,
+                error: EXPLICIT_SEND_REJECTION_ERROR,
+                attemptCount: 1,
+                nextRetryAt,
+                timestamp: deps.clock.now(),
+              });
+            } else {
+              queueTransitionFailures.push(reportQueueTransitionFailure(
+                deps, "nack", failedEntry.entryId, nackResult.error,
+                channelId, adapter.channelType,
+              ));
+            }
+            continue;
+          }
+
+          const uncertainOutcome = failedEntry.classification === "uncertain";
+          const retriesExhausted = deps.retryEngine !== undefined && failedEntry.classification === "retry";
+          const failReason = uncertainOutcome
+            ? "uncertain_outcome" as const
+            : retriesExhausted
+              ? "retries_exhausted" as const
+              : "permanent_error" as const;
+          const persistedError = uncertainOutcome
+            ? AMBIGUOUS_SEND_OUTCOME_ERROR
+            : retriesExhausted
+              ? RETRY_EXHAUSTED_SEND_ERROR
+              : EXPLICIT_SEND_REJECTION_ERROR;
+          const failResult = await deps.deliveryQueue.fail(failedEntry.entryId, persistedError);
+          if (failResult.ok) {
+            emitDeliveryEvent(deps, "delivery:failed", {
+              entryId: failedEntry.entryId,
+              channelId,
+              channelType: adapter.channelType,
+              error: persistedError,
+              reason: failReason,
+              timestamp: deps.clock.now(),
+            });
+          } else {
+            queueTransitionFailures.push(reportQueueTransitionFailure(
+              deps, "fail", failedEntry.entryId, failResult.error,
+              channelId, adapter.channelType,
+            ));
+          }
+        }
+
         const totalChars = chunkResults.reduce((sum, r) => sum + r.charCount, 0);
 
-        const deliveryResult: DeliveryResult = {
-          ok: failedChunks === 0,
-          totalChunks: chunkResults.length,
-          deliveredChunks,
-          failedChunks,
+        let deliveryResult: DeliveryResult = {
           chunks: chunkResults,
           totalChars,
+          platform: platformResult.value,
+          queueDisposition,
         };
 
+        if (queueTransitionFailures.length > 0) {
+          deliveryResult = { ...deliveryResult, queueDisposition: "transition_failed" };
+        }
+
         // Emit delivery:complete event (only if NOT aborted -- delivery:aborted was emitted in the loop)
-        if (deps.eventBus && !aborted) {
+        if (!aborted) {
+          const failedChunks = deliveryResult.platform.status === "accepted"
+            ? 0
+            : deliveryResult.platform.failedChunks;
           emitDeliveryEvent(deps, "delivery:complete", {
             channelId,
             channelType: adapter.channelType,
-            totalChunks: deliveryResult.totalChunks,
-            deliveredChunks: deliveryResult.deliveredChunks,
-            failedChunks: deliveryResult.failedChunks,
+            status: deliveryResult.platform.status,
+            errorKind: deliveryResult.platform.status === "accepted"
+              ? undefined
+              : deliveryResult.platform.errorKind,
+            totalChunks: deliveryResult.chunks.length,
+            deliveredChunks: deliveryResult.platform.deliveredChunks,
+            failedChunks,
+            ambiguousChunks: deliveryResult.platform.status === "unknown"
+              ? deliveryResult.platform.ambiguousChunks
+              : 0,
             totalChars: deliveryResult.totalChars,
-            durationMs: systemNowMs() - startTime,
+            durationMs: deps.clock.now() - startTime,
             origin: options?.origin ?? "unknown",
             strategy,
-            timestamp: systemNowMs(),
+            timestamp: deps.clock.now(),
           });
         }
 
@@ -813,7 +834,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
                 channelType: adapter.channelType,
                 channelId,
                 result: deliveryResult,
-                durationMs: systemNowMs() - startTime,
+                durationMs: deps.clock.now() - startTime,
                 origin: options?.origin ?? "unknown",
               },
               {
@@ -846,7 +867,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
     async drainInFlight(
       deadlineMs = 5000,
     ): Promise<{ drained: number; remaining: number; durationMs: number }> {
-      const start = systemNowMs();
+      const start = deps.clock.now();
       const inFlightCount = inFlightSends.size;
       if (inFlightCount === 0) {
         return { drained: 0, remaining: 0, durationMs: 0 };
@@ -864,7 +885,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
       return {
         drained: inFlightCount - inFlightSends.size,
         remaining: inFlightSends.size,
-        durationMs: systemNowMs() - start,
+        durationMs: deps.clock.now() - start,
       };
     },
   };
