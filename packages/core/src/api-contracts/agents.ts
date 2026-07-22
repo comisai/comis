@@ -347,7 +347,7 @@ export const AgentGetOperationModelsContract = defineContract({
       modelId: z.string(),
       source: z.string(),
       timeoutMs: z.number(),
-      cacheRetention: z.number().optional(),
+      cacheRetention: z.enum(["none", "short"]).optional(),
       tieringActive: z.boolean(),
       crossProvider: z.boolean(),
       apiKeyConfigured: z.boolean(),
