@@ -42,6 +42,23 @@ describe("reflection config default authority", () => {
   });
 });
 
+describe("reflection cancellation boundary", () => {
+  it("stops before source resolution when the owning occurrence is cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const resolve = vi.fn(async () => ok(success()));
+    const reflect = vi.fn(async () => ok(freshReflection()));
+    const result = await runReflection(makeDeps(
+      [traj(), traj({ trajectoryId: "traj-2", sessionId: "sess-2", sender: "user-2" })],
+      { signal: controller.signal, outcomeSignal: { resolve }, reflectionAdapter: { reflect } },
+    ));
+
+    expect(result.ok).toBe(false);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(reflect).not.toHaveBeenCalled();
+  });
+});
+
 const NOW = 1_700_000_000_000;
 const SCOPE = { tenantId: "t1", agentId: "a1", now: NOW };
 
@@ -150,6 +167,7 @@ function makeDeps(
       : {}),
     config,
     sourceTrajectories: trajectories,
+    ...(over.signal !== undefined ? { signal: over.signal } : {}),
     reflectionAdapter: { reflect },
     outcomeSignal: { resolve },
     // supersede is ALWAYS wired (production always injects it) — the engine routes a

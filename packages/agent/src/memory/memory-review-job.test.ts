@@ -904,6 +904,73 @@ describe("runMemoryReview", () => {
     expect(rename).not.toHaveBeenCalled();
   });
 
+  it("forwards caller cancellation into the in-flight review model request", async () => {
+    const controller = new AbortController();
+    const deps = makeDeps({ signal: controller.signal });
+    arrangeOneSession(deps);
+    let modelSignal: AbortSignal | undefined;
+    (completeSimple as Mock).mockImplementation(async (...args: unknown[]) => {
+      modelSignal = (args[2] as { signal?: AbortSignal }).signal;
+      await new Promise<void>((_resolve, reject) => {
+        modelSignal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+      return structuredResponse({ memories: [] });
+    });
+
+    const pending = runMemoryReview(deps);
+    await vi.waitFor(() => expect(completeSimple).toHaveBeenCalledOnce());
+    controller.abort();
+    const result = await pending;
+
+    expect(modelSignal?.aborted).toBe(true);
+    expect(result.ok).toBe(false);
+  });
+
+  it("reports exact SDK usage for cron root accounting", async () => {
+    const onUsage = vi.fn();
+    const deps = makeDeps({ onUsage });
+    arrangeOneSession(deps);
+    (completeSimple as Mock).mockResolvedValue({
+      ...structuredResponse({ memories: [] }),
+      usage: {
+        input: 100,
+        output: 25,
+        cacheRead: 10,
+        cacheWrite: 5,
+        cost: { input: 0.001, output: 0.002, cacheRead: 0.0001, cacheWrite: 0.0002, total: 0.0033 },
+      },
+    });
+
+    const result = await runMemoryReview(deps);
+
+    expect(result.ok).toBe(true);
+    expect(onUsage).toHaveBeenCalledWith({
+      inputTokens: 100,
+      outputTokens: 25,
+      cacheReadTokens: 10,
+      cacheWriteTokens: 5,
+      cost: { input: 0.001, output: 0.002, cacheRead: 0.0001, cacheWrite: 0.0002, total: 0.0033 },
+    });
+  });
+
+  it("does not persist extracted memories when the usage gate cancels after the model response", async () => {
+    const controller = new AbortController();
+    const deps = makeDeps({
+      signal: controller.signal,
+      onUsage: () => controller.abort(),
+    });
+    arrangeOneSession(deps);
+    (completeSimple as Mock).mockResolvedValue({
+      ...structuredResponse({ memories: [{ content: "User prefers concise updates", session: "s1" }] }),
+      usage: { input: 100, output: 25, cost: { total: 0.003 } },
+    });
+
+    const result = await runMemoryReview(deps);
+
+    expect(result.ok).toBe(false);
+    expect(deps.memoryPort.store).not.toHaveBeenCalled();
+  });
+
   // -------------------------------------------------------------------------
   // Long-session summarization (>20 messages → first-10 + last-10 windowing)
   // -------------------------------------------------------------------------

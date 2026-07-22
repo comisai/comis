@@ -81,6 +81,10 @@ export interface MemoryReviewDeps {
   provider: string;
   modelId: string;
   apiKey: string;
+  /** Scheduler-owned cancellation for the whole review occurrence. */
+  signal?: AbortSignal;
+  /** Exact usage sink for background-run budget and billing attribution. */
+  onUsage?: (usage: MemoryReviewLlmUsage) => void;
   customModel?: CustomCompletionsModelSpec; // keyless/local model spec so a YAML provider resolves (#223)
   /** Wall-clock reads — relative-date RESOLUTION ref + stored-entry timestamps. Never `Date.now()` (globals); daemon wires `createSystemClock()`. */
   clock: ClockPort;
@@ -99,6 +103,20 @@ export interface MemoryReviewDeps {
    * Optional; defaults to false.
    */
   hasCapableModelOverride?: boolean;
+}
+
+export interface MemoryReviewLlmUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cost: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+  };
 }
 
 /** Minimal ref-authorized transcript metadata consumed by the review job. */
@@ -159,6 +177,10 @@ interface ExtractedMemoryWithEntities {
 // ---------------------------------------------------------------------------
 
 const LLM_TIMEOUT_MS = 120_000;
+
+function isAbortRequested(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
 
 // ---------------------------------------------------------------------------
 // Watermark helpers
@@ -322,6 +344,7 @@ function extractResponseText(response: { content?: unknown[] }): string {
  */
 export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<void, Error>> {
   const { config, agentId, tenantId, memoryPort, sessionStore, eventBus, logger, clock } = deps;
+  if (isAbortRequested(deps.signal)) return err(new Error("Memory review aborted"));
   const startTime = clock.now();
   // Scope the per-stage step logs to a `submodule` child logger so an
   // operator can answer "what did extraction do?" from logs alone (AGENTS.md
@@ -479,6 +502,9 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
   }
 
   const controller = new AbortController();
+  const abortFromCaller = (): void => controller.abort(deps.signal?.reason);
+  if (isAbortRequested(deps.signal)) controller.abort(deps.signal?.reason);
+  else deps.signal?.addEventListener("abort", abortFromCaller, { once: true });
   const timer = systemSetTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
   let responseText: string;
@@ -503,13 +529,46 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       },
     );
 
+    if (deps.onUsage !== undefined) {
+      try {
+        const usage = (response as {
+          usage?: {
+            input?: number;
+            output?: number;
+            cacheRead?: number;
+            cacheWrite?: number;
+            cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; total?: number };
+          };
+        }).usage;
+        if (usage !== undefined) {
+          deps.onUsage({
+            inputTokens: usage.input ?? 0,
+            outputTokens: usage.output ?? 0,
+            cacheReadTokens: usage.cacheRead ?? 0,
+            cacheWriteTokens: usage.cacheWrite ?? 0,
+            cost: {
+              input: usage.cost?.input ?? 0,
+              output: usage.cost?.output ?? 0,
+              cacheRead: usage.cost?.cacheRead ?? 0,
+              cacheWrite: usage.cost?.cacheWrite ?? 0,
+              total: usage.cost?.total ?? 0,
+            },
+          });
+        }
+      } catch {
+        // Usage attribution is observational and must not fail the review result.
+      }
+    }
+
     responseText = extractResponseText(response);
   } catch (llmErr) {
     systemClearTimeout(timer);
     return err(new Error(`Memory review LLM call failed: ${llmErr instanceof Error ? llmErr.message : String(llmErr)}`));
   } finally {
     systemClearTimeout(timer);
+    deps.signal?.removeEventListener("abort", abortFromCaller);
   }
+  if (isAbortRequested(deps.signal)) return err(new Error("Memory review aborted"));
 
   // Parse LLM response into the zod-validated structured envelope. A total
   // parser: undefined on ANY whole-payload failure (bad JSON, schema

@@ -409,4 +409,32 @@ describe("reflection LLM usage attribution (onUsage hook)", () => {
     expect(res.ok).toBe(true);
     expect(onUsage).not.toHaveBeenCalled();
   });
+
+  it("forwards caller cancellation into an in-flight reflection model request", async () => {
+    const controller = new AbortController();
+    let modelSignal: AbortSignal | undefined;
+    (completeSimple as Mock).mockImplementation(async (...args: unknown[]) => {
+      modelSignal = (args[2] as { signal?: AbortSignal }).signal;
+      await new Promise<void>((_resolve, reject) => {
+        modelSignal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+      return textResponse(JSON.stringify(FRESH_DOC));
+    });
+    const adapter = createLlmReflectionAdapter({
+      provider: "anthropic",
+      modelId: "claude-x",
+      apiKey: "test-key",
+      clock: { now: () => SCOPE.now },
+      logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      signal: controller.signal,
+    });
+
+    const pending = adapter.reflect({ trajectoryText: "t", currentSections: [] });
+    await vi.waitFor(() => expect(completeSimple).toHaveBeenCalledOnce());
+    controller.abort();
+    const result = await pending;
+
+    expect(modelSignal?.aborted).toBe(true);
+    expect(result.ok).toBe(false);
+  });
 });

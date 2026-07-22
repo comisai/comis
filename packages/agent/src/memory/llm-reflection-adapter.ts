@@ -80,6 +80,8 @@ export interface LlmReflectionAdapterDeps {
   modelId: string;
   /** The API key for the resolved provider (resolved daemon-side; never logged). */
   apiKey: string;
+  /** Scheduler-owned cancellation for the enclosing reflection occurrence. */
+  signal?: AbortSignal;
   /** Custom-provider model spec (resolved `/v1` baseUrl) so a keyless/local YAML provider the
    *  pi-ai catalog can't see still resolves a model — else reflection is skipped on keyless. */
   customModel?: CustomCompletionsModelSpec;
@@ -307,6 +309,9 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
     }
 
     const controller = new AbortController();
+    const abortFromCaller = (): void => controller.abort(deps.signal?.reason);
+    if (deps.signal?.aborted === true) controller.abort(deps.signal.reason);
+    else deps.signal?.addEventListener("abort", abortFromCaller, { once: true });
     const timer = systemSetTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
     const callStartMs = clock.now();
 
@@ -326,6 +331,7 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
       ),
     );
     systemClearTimeout(timer);
+    deps.signal?.removeEventListener("abort", abortFromCaller);
 
     if (!responseResult.ok) {
       logger.warn(
