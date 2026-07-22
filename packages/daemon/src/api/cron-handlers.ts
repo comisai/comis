@@ -259,6 +259,9 @@ function projectRun(group: CronExecutionGroup) {
     ...(terminal === undefined
       ? {}
       : { terminalAtMs: terminal.terminalAtMs, durationMs: terminal.durationMs }),
+    ...(terminal?.outcome.kind === "internal_action"
+      ? { counters: terminal.outcome.execution.counters }
+      : {}),
     ...projection,
   };
 }

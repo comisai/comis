@@ -310,6 +310,11 @@ const DigestPairSchema = z.strictObject({
   ledger: Sha256DigestSchema.nullable(),
 });
 
+const CronDiagnosticCountersSchema = z.array(z.strictObject({
+  name: z.string().regex(/^[a-z][a-z0-9_]*$/).max(64),
+  value: NonnegativeSafeIntegerSchema,
+})).max(32);
+
 export const CronResetContract = defineContract({
   method: "cron.reset",
   request: CronResetRequestSchema,
@@ -339,6 +344,7 @@ const CronExecutionGroupProjectionSchema = z.strictObject({
   status: z.enum(["started", "dispatched", "completed", "failed", "aborted", "skipped", "unknown"]),
   deliveryStatus: z.enum(["not_requested", "suppressed", "pre_send_failed", "accepted", "partial", "rejected", "unknown"]),
   errorKind: ErrorKindSchema.optional(),
+  counters: CronDiagnosticCountersSchema.optional(),
 });
 
 export const CronRunsContract = defineContract({

@@ -88,6 +88,12 @@ function formatEpoch(epochMs: number | undefined): string {
   return epochMs === undefined ? "-" : systemDateFrom(epochMs).toISOString();
 }
 
+function formatCounters(counters: CronRunView["counters"]): string {
+  return counters === undefined || counters.length === 0
+    ? "-"
+    : counters.map((counter) => `${counter.name}=${counter.value}`).join(", ");
+}
+
 function formatSchedule(job: CronJobView): string {
   switch (job.schedule.kind) {
     case "cron":
@@ -144,13 +150,14 @@ function renderRuns(runs: readonly CronRunView[]): void {
     return;
   }
   renderTable(
-    ["Started", "Status", "Delivery", "Trigger", "Work", "Execution ID"],
+    ["Started", "Status", "Delivery", "Trigger", "Work", "Counters", "Execution ID"],
     runs.map((run) => [
       formatEpoch(run.startedAtMs),
       run.status,
       run.deliveryStatus,
       run.trigger,
       run.workKind,
+      formatCounters(run.counters),
       tableCell(run.executionId),
     ]),
   );
