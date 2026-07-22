@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts.
 /**
- * `IncidentSourceReader` — the four bounded source readers behind one DI seam.
+ * `IncidentSourceReader` — the bounded source readers behind one DI seam.
  *
- * `obs.explain` assembles an IncidentReport from four telemetry sources. They
+ * `obs.explain` assembles an IncidentReport from bounded telemetry sources. They
  * sit behind ONE interface so production reads real files while tests inject
  * fixture records (the fixture-injection seam):
  *
@@ -15,6 +15,10 @@
  *      `<sessionFile>.trajectory-path.json` pointer and use its `runtimeFile`,
  *      else fall back to the co-located `<sessionFile>.trajectory.jsonl` (the
  *      same resolution `bundle-exporter.ts:readRuntimeTrajectory` performs).
+ *      Ephemeral task-check sessions intentionally have no transcript or pointer;
+ *      their recorder uses the sanctioned workspace fallback, so this reader
+ *      also checks `<workspaceDir>/<safe-session-id>.trajectory.jsonl` when no
+ *      durable session artifact exists.
  *      Returns ALL parsed lines — log shape AND event shape — WITHOUT the
  *      production bundle reader's `traceSchema === "comis-trajectory"` envelope
  *      filter, so the frozen log-shape fixtures pass through to
@@ -30,6 +34,9 @@
  *      return the most-recent row across ALL sessions — the reader queries a
  *      window and filters AFTER. The window is a recency horizon: see
  *      `DIAGNOSTICS_QUERY_LIMIT` for why 1000 and the residual bound.
+ *   5. readTaskCheckLifecycle — the durable scheduler start/terminal diagnostic
+ *      for a rootRunId. Only allowlisted identifiers, disposition, and delivery
+ *      counts leave this reader; task text and free-form details never do.
  *
  * Why the workspace base (not `<dataDir>/sessions`): the writer's source of
  * truth is `<workspaceDir>/sessions/...` (`setup-agents-runtime.ts`:
@@ -46,8 +53,11 @@
 
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { parseFormattedSessionKey, safePath } from "@comis/core";
-import { resolveTrajectoryPointerFilePath } from "@comis/observability";
+import { parseFormattedSessionKey, safePath, type EventMap } from "@comis/core";
+import {
+  resolveTrajectoryPointerFilePath,
+  safeTrajectorySessionFileName,
+} from "@comis/observability";
 import type { ObservabilityStore } from "@comis/memory";
 
 /** Per-read line cap (mirrors observability's MAX_TRAJECTORY_RUNTIME_EVENTS
@@ -73,6 +83,46 @@ const MAX_RECORDS = 5_000;
  */
 const DIAGNOSTICS_QUERY_LIMIT = 1000;
 
+/** Task lifecycle identifiers are opaque but must stay small enough for the
+ * report-level structural bound. Invalid/oversized rows are ignored rather
+ * than truncated because truncating an identity could resolve the wrong run. */
+const MAX_TASK_IDENTIFIER_BYTES = 512;
+
+type TaskCheckOutcome = EventMap["scheduler:task_check_terminal"]["outcome"];
+type TaskCheckRecovery = EventMap["scheduler:task_check_terminal"]["recovery"];
+
+const TASK_CHECK_OUTCOMES: ReadonlySet<TaskCheckOutcome> = new Set([
+  "dismissed",
+  "retry_scheduled",
+  "expired",
+  "delivered",
+  "delivery_partial",
+  "delivery_unknown",
+  "configuration_disabled",
+  "delivery_window_closed",
+  "failed",
+]);
+
+const TASK_CHECK_RECOVERIES: ReadonlySet<TaskCheckRecovery> = new Set([
+  "live",
+  "ownership_recovery",
+]);
+
+/** Content-free durable evidence used both for root resolution and reporting. */
+export interface TaskCheckLifecycleEvidence {
+  readonly sessionKey: string;
+  readonly agentId?: string;
+  readonly rootRunId: string;
+  readonly attemptId: string;
+  readonly correlationId: string;
+  readonly lifecycle: "started" | "terminal";
+  readonly outcome?: TaskCheckOutcome;
+  readonly recovery?: TaskCheckRecovery;
+  readonly deliveredChunks?: number | null;
+  readonly failedChunks?: number | null;
+  readonly ambiguousChunks?: number | null;
+}
+
 /**
  * Bounded window queried from `obs_audit_events` (tenant-scoped) before the
  * caller's traceId filter. `AuditQueryParams` has no traceId predicate,
@@ -84,7 +134,7 @@ const DIAGNOSTICS_QUERY_LIMIT = 1000;
 const AUDIT_QUERY_LIMIT = 1000;
 
 /**
- * The four bounded source readers `obs.explain` consumes. One DI seam: the
+ * The bounded source readers `obs.explain` consumes. One DI seam: the
  * real implementation reads files; tests inject fixture records.
  */
 export interface IncidentSourceReader {
@@ -92,6 +142,13 @@ export interface IncidentSourceReader {
   readCacheTraceRecords(sessionKey: string): Promise<Array<Record<string, unknown>>>;
   readSessionMetadata(sessionKey: string): Promise<Record<string, unknown> | null>;
   readDiagnosticsRollup(sessionKey: string): Promise<Record<string, unknown> | null>;
+  /**
+   * Resolve one scheduler task-check root through the durable diagnostic row.
+   * OPTIONAL so existing fixture readers remain valid. Production implements
+   * it whenever an observability store is available and returns only the
+   * content-free allowlist above.
+   */
+  readTaskCheckLifecycle?(rootRunId: string): Promise<TaskCheckLifecycleEvidence | null>;
   /**
    * The `obs_audit_events` rows for this session's tenant
    * (the audit persists via SQLite, NOT a trajectory record — so the
@@ -430,6 +487,92 @@ function readJsonlBounded(file: string): Array<Record<string, unknown>> {
   return out;
 }
 
+function boundedTaskIdentifier(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  return Buffer.byteLength(value, "utf8") <= MAX_TASK_IDENTIFIER_BYTES ? value : undefined;
+}
+
+function taskCheckOutcome(value: unknown): TaskCheckOutcome | undefined {
+  return typeof value === "string" && TASK_CHECK_OUTCOMES.has(value as TaskCheckOutcome)
+    ? value as TaskCheckOutcome
+    : undefined;
+}
+
+function taskCheckRecovery(value: unknown): TaskCheckRecovery | undefined {
+  return typeof value === "string" && TASK_CHECK_RECOVERIES.has(value as TaskCheckRecovery)
+    ? value as TaskCheckRecovery
+    : undefined;
+}
+
+function optionalChunkCount(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function parseTaskCheckRow(
+  row: Record<string, unknown>,
+  rootRunId: string,
+): TaskCheckLifecycleEvidence | null {
+  if (
+    row.message !== "scheduler:task_check_started"
+    && row.message !== "scheduler:task_check_terminal"
+  ) return null;
+
+  let details: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(typeof row.details === "string" ? row.details : "") as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    details = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  const persistedRootRunId = boundedTaskIdentifier(details.rootRunId);
+  const sessionKey = boundedTaskIdentifier(row.sessionKey);
+  const attemptId = boundedTaskIdentifier(details.attemptId);
+  const correlationId = boundedTaskIdentifier(details.correlationId);
+  if (
+    persistedRootRunId !== rootRunId
+    || sessionKey === undefined
+    || attemptId === undefined
+    || correlationId === undefined
+  ) return null;
+
+  const agentId = boundedTaskIdentifier(row.agentId);
+  if (row.message === "scheduler:task_check_started") {
+    return {
+      sessionKey,
+      ...(agentId === undefined ? {} : { agentId }),
+      rootRunId: persistedRootRunId,
+      attemptId,
+      correlationId,
+      lifecycle: "started",
+    };
+  }
+
+  const outcome = taskCheckOutcome(details.outcome);
+  const recovery = taskCheckRecovery(details.recovery);
+  if (outcome === undefined || recovery === undefined) return null;
+  const deliveredChunks = optionalChunkCount(details.deliveredChunks);
+  const failedChunks = optionalChunkCount(details.failedChunks);
+  const ambiguousChunks = optionalChunkCount(details.ambiguousChunks);
+  return {
+    sessionKey,
+    ...(agentId === undefined ? {} : { agentId }),
+    rootRunId: persistedRootRunId,
+    attemptId,
+    correlationId,
+    lifecycle: "terminal",
+    outcome,
+    recovery,
+    ...(deliveredChunks === undefined ? {} : { deliveredChunks }),
+    ...(failedChunks === undefined ? {} : { failedChunks }),
+    ...(ambiguousChunks === undefined ? {} : { ambiguousChunks }),
+  };
+}
+
 /**
  * Build the production reader. `dataDir` is the file-system root (defaults to
  * `~/.comis`); `obsStore` (optional) backs the diagnostics-rollup fallback.
@@ -442,15 +585,26 @@ export function makeRealReader(
   // The writer's source of truth: sessions live under <workspaceDir>/sessions/,
   // and the default-agent workspace is <dataDir>/workspace (resolveWorkspaceDir).
   // Mirror that here (daemon.ts:570 uses the same default workspace base).
-  const sessionsBase = safePath(base, "workspace", "sessions");
+  const workspaceDir = safePath(base, "workspace");
+  const sessionsBase = safePath(workspaceDir, "sessions");
   const logsDir = safePath(base, "logs");
 
   return {
     async readSessionRecords(sessionKey: string): Promise<Array<Record<string, unknown>>> {
       const sessionFile = resolveSessionFile(sessionKey, sessionsBase);
-      if (sessionFile === undefined) return []; // Unparseable key — soft-fail.
-      const trajectoryFile = resolveTrajectoryFile(sessionFile);
-      return readJsonlBounded(trajectoryFile);
+      if (sessionFile !== undefined) {
+        return readJsonlBounded(resolveTrajectoryFile(sessionFile));
+      }
+      // Task-check model sessions are intentionally ephemeral: there is no raw
+      // transcript, metadata companion, or pointer. Their trajectory recorder
+      // falls through to its workspaceDir precedence rung. Mirror that exact
+      // safe filename mapping so the evidence is discoverable without inventing
+      // an ephemeral transcript or broadening the read outside this workspace.
+      const workspaceTrajectory = safePath(
+        workspaceDir,
+        `${safeTrajectorySessionFileName(sessionKey)}.trajectory.jsonl`,
+      );
+      return readJsonlBounded(workspaceTrajectory);
     },
 
     async readCacheTraceRecords(sessionKey: string): Promise<Array<Record<string, unknown>>> {
@@ -489,6 +643,22 @@ export function makeRealReader(
       });
       const match = rows.find((r) => r.sessionKey === sessionKey);
       return match === undefined ? null : (match as unknown as Record<string, unknown>);
+    },
+
+    async readTaskCheckLifecycle(rootRunId: string): Promise<TaskCheckLifecycleEvidence | null> {
+      if (obsStore === undefined || boundedTaskIdentifier(rootRunId) === undefined) return null;
+      const rows = obsStore.queryDiagnostics({
+        category: "health_signal",
+        limit: DIAGNOSTICS_QUERY_LIMIT,
+      }) as unknown as Array<Record<string, unknown>>;
+      let started: TaskCheckLifecycleEvidence | null = null;
+      for (const row of rows) {
+        const evidence = parseTaskCheckRow(row, rootRunId);
+        if (evidence === null) continue;
+        if (evidence.lifecycle === "terminal") return evidence;
+        started ??= evidence;
+      }
+      return started;
     },
 
     async readAuditEvents(sessionKey: string): Promise<Array<Record<string, unknown>>> {

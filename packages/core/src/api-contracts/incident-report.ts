@@ -172,6 +172,35 @@ export const IncidentReportSchema = z.object({
    *  additive, schemaVersion stays 1. MUST stay declared — the non-strict `.parse()`
    *  strips any undeclared key. {@link IncidentCronWakeGateSchema}. */
   cronWakeGate: IncidentCronWakeGateSchema.optional(),
+  /** Durable scheduler task-check lifecycle evidence. The task body and origin
+   *  content are deliberately absent: this section exposes only bounded
+   *  identifiers, the terminal disposition, and delivery counts needed to
+   *  diagnose a governed background attempt. */
+  taskCheck: z
+    .object({
+      rootRunId: z.string().min(1).max(512),
+      attemptId: z.string().min(1).max(512),
+      correlationId: z.string().min(1).max(512),
+      lifecycle: z.enum(["started", "terminal"]),
+      outcome: z
+        .enum([
+          "dismissed",
+          "retry_scheduled",
+          "expired",
+          "delivered",
+          "delivery_partial",
+          "delivery_unknown",
+          "configuration_disabled",
+          "delivery_window_closed",
+          "failed",
+        ])
+        .optional(),
+      recovery: z.enum(["live", "ownership_recovery"]).optional(),
+      deliveredChunks: z.number().int().nonnegative().nullable().optional(),
+      failedChunks: z.number().int().nonnegative().nullable().optional(),
+      ambiguousChunks: z.number().int().nonnegative().nullable().optional(),
+    })
+    .optional(),
   /** The per-turn context-budget CASCADE — the progression of budget checks toward
    *  the terminal `contextBudget`. Present only when ≥2 distinct budget states occurred (a single
    *  check adds nothing over `contextBudget`). Dedup'd on transition + capped to the most recent 40,
@@ -643,7 +672,7 @@ export type { IncidentFailure, IncidentSignals } from "./incident-report-signals
  *
  * Accepts ONE of `sessionKey`, `traceId`, or `rootRunId` (the
  * `.refine` rejects none-of-three). A `traceId` is canonicalized to its
- * sessionKey, and a `rootRunId` (an autonomy run) is canonicalized to the
+ * sessionKey, and a `rootRunId` (a governed run) is canonicalized to the
  * run's sessionKey, so there is one assembler path. `depth` selects the
  * summary (≤6 KB) vs. full projection. Admin-only; the handler is
  * non-mutating (read-only post-mortem).
@@ -654,8 +683,8 @@ export const ObsExplainContract = defineContract({
     .object({
       sessionKey: z.string().min(1).optional(),
       traceId: z.string().min(1).optional(),
-      // The 3rd ref shape — an autonomy run's rootRunId (the synthetic
-      // `root-session-<key>` or a real spawned/socket root). The daemon
+      // The 3rd ref shape — a governed run's rootRunId (a session, cron,
+      // task-check, or spawned/socket root). The daemon
       // canonicalizes it to its sessionKey FIRST (resolveRootRunToSession), so the
       // system→explain drill-down can paste the worst run's rootRunId straight in.
       rootRunId: z.string().min(1).optional(),

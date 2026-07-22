@@ -4507,6 +4507,30 @@ export const CONTRACTS = {
                   "internal",
                   "platform"
                 ]
+              },
+              "counters": {
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "pattern": "^[a-z][a-z0-9_]*$"
+                    },
+                    "value": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
               }
             },
             "required": [
@@ -11252,6 +11276,97 @@ export const CONTRACTS = {
             "durationMs",
             "toolCalls",
             "estTurnsSaved"
+          ],
+          "additionalProperties": false
+        },
+        "taskCheck": {
+          "type": "object",
+          "properties": {
+            "rootRunId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "attemptId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "correlationId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "lifecycle": {
+              "type": "string",
+              "enum": [
+                "started",
+                "terminal"
+              ]
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "dismissed",
+                "retry_scheduled",
+                "expired",
+                "delivered",
+                "delivery_partial",
+                "delivery_unknown",
+                "configuration_disabled",
+                "delivery_window_closed",
+                "failed"
+              ]
+            },
+            "recovery": {
+              "type": "string",
+              "enum": [
+                "live",
+                "ownership_recovery"
+              ]
+            },
+            "deliveredChunks": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "failedChunks": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ambiguousChunks": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "rootRunId",
+            "attemptId",
+            "correlationId",
+            "lifecycle"
           ],
           "additionalProperties": false
         },

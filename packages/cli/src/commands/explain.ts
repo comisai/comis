@@ -9,8 +9,8 @@
  * Usage:
  *   comis explain <sessionKey|traceId|rootRunId> [--format table|json] [--depth summary|full]
  *
- * Arg routing: a `root-` prefix → {rootRunId} (an
- * autonomy run — the synthetic `root-session-<key>` or a real spawned root,
+ * Arg routing: a `root-` prefix → {rootRunId} (a
+ * governed session, cron, task-check, or spawned root,
  * checked FIRST); else a session key contains ':' (tenant:user:channel:ts) →
  * {sessionKey}; a UUID (no ':') → {traceId}. The daemon canonicalizes a traceId
  * and a rootRunId to the run's sessionKey, so all three produce the identical
@@ -57,8 +57,8 @@ export function registerExplainCommand(program: Command): void {
         try {
           const depth = options.depth as "summary" | "full";
           // Route by arg shape: the `root-` prefix is the
-          // disambiguator for an autonomy run's rootRunId (a synthetic in-process
-          // root is `root-session-<key>`; a real spawned root is `root-…`) and is
+          // disambiguator for a governed run's rootRunId (a session root is
+          // `root-session-<key>`; scheduler and spawned roots are also `root-…`) and is
           // checked FIRST — a synthetic root contains ':' yet must NOT route to
           // sessionKey. Otherwise: a sessionKey is tenant:user:channel:ts (has
           // ':'); a traceId is a UUID (no ':').
@@ -143,6 +143,16 @@ export function registerExplainCommand(program: Command): void {
             `Timing:     ${report.timing.durationMs} ms · ${report.timing.turnCount} turns`,
           );
           info(`Summary:    ${report.summary}`);
+          if (report.taskCheck !== undefined) {
+            const task = report.taskCheck;
+            const disposition = task.outcome ?? task.lifecycle;
+            const delivered = task.deliveredChunks ?? "unknown";
+            const failed = task.failedChunks ?? "unknown";
+            const ambiguous = task.ambiguousChunks ?? "unknown";
+            info(
+              `Task check: ${disposition} · attempt=${task.attemptId} · correlation=${task.correlationId} · root=${task.rootRunId} · delivered=${delivered} failed=${failed} ambiguous=${ambiguous}`,
+            );
+          }
           // The root→children spawn tree (present only when the
           // session emitted per-cap audit records). Each node names its leaseId,
           // the parent edge (or "(root)"), the attenuated caps it held, the tool

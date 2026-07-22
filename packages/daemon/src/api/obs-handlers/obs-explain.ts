@@ -37,7 +37,12 @@ import {
   resolveRootRunToSession,
   traceIdFromCronRootRun,
 } from "./obs-explain-resolve.js";
-import { makeRealReader, resolveSessionFilePath, type IncidentSourceReader } from "./obs-explain-readers.js";
+import {
+  makeRealReader,
+  resolveSessionFilePath,
+  type IncidentSourceReader,
+  type TaskCheckLifecycleEvidence,
+} from "./obs-explain-readers.js";
 import { toIncidentSignals } from "./obs-explain-signals.js";
 import { assembleIncidentReport } from "./obs-explain-assemble.js";
 import { rootCause } from "./obs-explain-heuristics.js";
@@ -60,7 +65,7 @@ export interface AssembleIncidentReportParams {
   readonly sessionKey?: string;
   readonly traceId?: string;
   /**
-   * An autonomy run's rootRunId (the 3rd ref). Canonicalized to the
+   * A governed run's rootRunId (the 3rd ref). Canonicalized to the
    * run's sessionKey FIRST via {@link resolveRootRunToSession} — the synthetic
    * in-process root by a pure prefix-strip, a real socket/spawned root by the
    * session-index scan. An unresolvable rootRunId soft-fails to "" → the
@@ -164,6 +169,51 @@ function metadataForCronExecution(
 }
 
 /**
+ * Build identity metadata for an ephemeral task-check execution. The origin
+ * session metadata supplies only stable channel identity; its last-write-wins
+ * outcome/cost/timing belong to a different execution and must not leak into
+ * this root report. The scheduler correlation is the task model trace.
+ */
+function metadataForTaskCheckExecution(
+  originMetadata: Record<string, unknown> | null,
+  evidence: TaskCheckLifecycleEvidence,
+): Record<string, unknown> {
+  const originAgentId = typeof originMetadata?.agentId === "string"
+    ? originMetadata.agentId
+    : undefined;
+  const channel = typeof originMetadata?.channel === "object" && originMetadata.channel !== null
+    ? originMetadata.channel
+    : undefined;
+  return {
+    traceId: evidence.correlationId,
+    ...(evidence.agentId !== undefined
+      ? { agentId: evidence.agentId }
+      : originAgentId === undefined ? {} : { agentId: originAgentId }),
+    ...(channel === undefined ? {} : { channel }),
+  };
+}
+
+function taskCheckReportSection(
+  evidence: TaskCheckLifecycleEvidence,
+): NonNullable<IncidentReport["taskCheck"]> {
+  return {
+    rootRunId: evidence.rootRunId,
+    attemptId: evidence.attemptId,
+    correlationId: evidence.correlationId,
+    lifecycle: evidence.lifecycle,
+    ...(evidence.outcome === undefined ? {} : { outcome: evidence.outcome }),
+    ...(evidence.recovery === undefined ? {} : { recovery: evidence.recovery }),
+    ...(evidence.deliveredChunks === undefined
+      ? {}
+      : { deliveredChunks: evidence.deliveredChunks }),
+    ...(evidence.failedChunks === undefined ? {} : { failedChunks: evidence.failedChunks }),
+    ...(evidence.ambiguousChunks === undefined
+      ? {}
+      : { ambiguousChunks: evidence.ambiguousChunks }),
+  };
+}
+
+/**
  * The FROZEN `obs.explain` assembler pipeline, extracted from the RPC handler
  * so it can be shared by BOTH the admin RPC path (which keeps Step 1's admin
  * gate + Step 2's contract parse, then delegates here) AND the
@@ -199,10 +249,14 @@ export async function assembleIncidentReportFromSources(
   // so by-trace, by-rootRun, and by-session collapse to one assembler path. The
   // rootRunId arm is checked FIRST; `sessionKey` is present when both
   // traceId and rootRunId are absent (the contract .refine guarantees one of the
-  // three). The resolver's two sources (synthetic-strip + session-index scan)
-  // need no store, so deps.durableRuns is not threaded here.
+  // three). Scheduler task roots first load their durable lifecycle row: it is
+  // both the authoritative root→origin mapping and the report's content-free
+  // delivery evidence.
+  const taskCheck = params.rootRunId !== undefined && reader.readTaskCheckLifecycle !== undefined
+    ? await reader.readTaskCheckLifecycle(params.rootRunId)
+    : null;
   const sessionKey = params.rootRunId
-    ? await resolveRootRunToSession(dataDir, params.rootRunId)
+    ? await resolveRootRunToSession(dataDir, params.rootRunId, taskCheck)
     : params.traceId
       ? await resolveTraceToSession(dataDir, params.traceId, params.includeSynthetic)
       : params.sessionKey!;
@@ -226,28 +280,43 @@ export async function assembleIncidentReportFromSources(
   // Which ref missed — drives the not-found detail + truncation field below.
   const missedRefField = params.rootRunId !== undefined ? "rootRunId" : "traceId";
 
-  // Step 4: read the four bounded sources (production reads files; tests
+  // Step 4: read the bounded sources (production reads files; tests
   // inject the fixture reader).
   const sessionRecords = await reader.readSessionRecords(sessionKey);
   const sessionCache = await reader.readCacheTraceRecords(sessionKey);
   const sessionMetadata = await reader.readSessionMetadata(sessionKey);
   const sessionRollup = await reader.readDiagnosticsRollup(sessionKey);
-  const records = cronExecutionTraceId === undefined
-    ? sessionRecords
-    : sessionRecords.filter((record) => recordHasTraceId(record, cronExecutionTraceId));
-  const cache = cronExecutionTraceId === undefined
-    ? sessionCache
-    : sessionCache.filter((record) => recordHasTraceId(record, cronExecutionTraceId));
-  const metadata = cronExecutionTraceId === undefined
-    ? sessionMetadata
-    : metadataForCronExecution(sessionMetadata, records, cronExecutionTraceId);
+  const taskExecutionSessionKey = taskCheck === null
+    ? ""
+    : await resolveTraceToSession(dataDir, taskCheck.correlationId, params.includeSynthetic);
+  const taskSessionRecords = taskCheck === null || taskExecutionSessionKey.length === 0
+    ? []
+    : await reader.readSessionRecords(taskExecutionSessionKey);
+  const taskSessionCache = taskCheck === null || taskExecutionSessionKey.length === 0
+    ? []
+    : await reader.readCacheTraceRecords(taskExecutionSessionKey);
+  const records = taskCheck !== null
+    ? taskSessionRecords
+    : cronExecutionTraceId === undefined
+      ? sessionRecords
+      : sessionRecords.filter((record) => recordHasTraceId(record, cronExecutionTraceId));
+  const cache = taskCheck !== null
+    ? taskSessionCache
+    : cronExecutionTraceId === undefined
+      ? sessionCache
+      : sessionCache.filter((record) => recordHasTraceId(record, cronExecutionTraceId));
+  const metadata = taskCheck !== null
+    ? metadataForTaskCheckExecution(sessionMetadata, taskCheck)
+    : cronExecutionTraceId === undefined
+      ? sessionMetadata
+      : metadataForCronExecution(sessionMetadata, records, cronExecutionTraceId);
   // Diagnostics rows are session-scoped and last-write-wins. They cannot
   // safely contribute to a historical cron execution report.
-  const rollup = cronExecutionTraceId === undefined ? sessionRollup : null;
+  const rollup = taskCheck !== null || cronExecutionTraceId !== undefined ? null : sessionRollup;
   // A durable scheduler session emits session.started only once. Retain that
   // single session-invariant identity envelope for channel attribution, while
   // every execution-varying record remains selected by traceId above.
-  const sessionIdentityRecords = cronExecutionTraceId === undefined
+  const sessionIdentityRecords = taskCheck !== null || cronExecutionTraceId === undefined
     ? []
     : sessionRecords.filter((record) => record.type === "session.started");
   // The 5th source — the session's audit events (persisted
@@ -255,7 +324,8 @@ export async function assembleIncidentReportFromSources(
   // not folded from the record stream). Tenant-scoped + bounded by the reader;
   // filtered to the resolved traceId + aggregated counts-by-kind below. Optional
   // reader method — a fixture reader that omits it simply produces no audit?.
-  const auditRows = reader.readAuditEvents ? await reader.readAuditEvents(sessionKey) : [];
+  const auditSessionKey = taskExecutionSessionKey.length > 0 ? taskExecutionSessionKey : sessionKey;
+  const auditRows = reader.readAuditEvents ? await reader.readAuditEvents(auditSessionKey) : [];
 
   // Normalize both shapes → uniform signals; assemble the report;
   // stamp the deterministic root cause; bound to the depth budget.
@@ -292,7 +362,7 @@ export async function assembleIncidentReportFromSources(
   // relative/odd dataDir (e.g. the "." offline/CLI base); swallow to undefined so the pointer
   // is simply omitted rather than crashing the assembly (degrade, never error).
   let sessionSourcePath: string | undefined;
-  if (sessionKey !== "") {
+  if (sessionKey !== "" && taskCheck === null) {
     try {
       sessionSourcePath = resolveSessionFilePath(dataDir, sessionKey);
     } catch {
@@ -308,6 +378,7 @@ export async function assembleIncidentReportFromSources(
     candidateSessionKeys,
     sessionSourcePath,
   );
+  if (taskCheck !== null) report.taskCheck = taskCheckReportSection(taskCheck);
   // The report is genuinely empty only when NO source surfaced any activity.
   const reportIsEmpty =
     report.failures.length === 0 &&

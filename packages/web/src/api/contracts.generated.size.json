@@ -1,8 +1,8 @@
 {
-  "totalMinified": 180794,
-  "totalGzipped": 18143,
+  "totalMinified": 181904,
+  "totalGzipped": 18357,
   "budget": {
-    "minified": 181000,
+    "minified": 183000,
     "gzipped": 38912
   },
   "overBudget": false,
@@ -63,7 +63,7 @@
     "cron.remove": 424,
     "cron.reset": 2532,
     "cron.run": 741,
-    "cron.runs": 1808,
+    "cron.runs": 2100,
     "cron.status": 3057,
     "cron.update": 6491,
     "daemon.setLogLevel": 611,
@@ -157,7 +157,7 @@
     "obs.delivery.recent": 2223,
     "obs.delivery.stats": 629,
     "obs.diagnostics": 596,
-    "obs.explain": 13150,
+    "obs.explain": 14094,
     "obs.getCacheStats": 358,
     "obs.reset": 571,
     "obs.reset.table": 483,
