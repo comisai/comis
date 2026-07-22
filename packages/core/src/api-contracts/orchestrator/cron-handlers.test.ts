@@ -59,6 +59,25 @@ describe("strict cron wake-gate authoring contracts", () => {
 });
 
 describe("cron operator and agent route scopes", () => {
+  it("rejects open cron payload records from the inventory projection", () => {
+    const base = {
+      id: "job-1",
+      name: "Daily report",
+      agentId: "agent-a",
+      source: "authored" as const,
+      schedule: { kind: "cron" as const, expr: "0 9 * * *", tz: "UTC" },
+      lifecycle: {
+        status: "scheduled" as const,
+        nextRunAtMs: 2_000,
+        consecutiveDependencyErrors: 0,
+      },
+    };
+
+    expect(() => CronListContract.response.parse({
+      jobs: [{ ...base, payload: { kind: "unclassified", command: "run" } }],
+    })).toThrow();
+  });
+
   it("declares inventory history status and manual run as agent-reachable RPC routes", () => {
     for (const contract of [
       CronListContract,
