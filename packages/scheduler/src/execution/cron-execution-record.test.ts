@@ -110,6 +110,18 @@ describe("cron execution ledger row contracts", () => {
       rootRunId: "root-cron-execution_a",
       errorKind: "timeout",
     })).toEqual({ status: "unknown", deliveryStatus: "not_requested", errorKind: "timeout" });
+    expect(CronExecutionRowSchema.safeParse(terminal({
+      kind: "unsettled",
+      reason: "executor_rejected_after_invocation",
+      rootRunId: "root-cron-execution_a",
+      errorKind: "internal",
+    })).success).toBe(true);
+    expect(projectCronTerminalOutcome({
+      kind: "unsettled",
+      reason: "executor_rejected_after_invocation",
+      rootRunId: "root-cron-execution_a",
+      errorKind: "internal",
+    })).toEqual({ status: "unknown", deliveryStatus: "not_requested", errorKind: "internal" });
   });
 
   it("projects delivery-only acceptance, suppression, rejection, and ambiguity exactly", () => {

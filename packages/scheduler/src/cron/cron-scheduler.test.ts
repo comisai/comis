@@ -116,7 +116,10 @@ async function fixture(options: {
   store: CronStore;
   tracker: ExecutionTracker;
   eventBus: TypedEventBus;
-  logger: { info: ReturnType<typeof vi.fn> };
+  logger: {
+    info: ReturnType<typeof vi.fn>;
+    error: ReturnType<typeof vi.fn>;
+  };
   rootRegistrar: { register: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> };
   timer: ControlledTimer;
   clock: MutableClock;
@@ -301,6 +304,95 @@ describe("durable cron scheduler lifecycle", () => {
       stage: "executor_invalid_input",
       errorKind: "validation",
     });
+  });
+
+  it("terminalizes a synchronous executor throw as unknown without automatic replay", async () => {
+    let runtimeClock!: MutableClock;
+    const execute = vi.fn((_input: CronRuntimeExecutionInput) => {
+      runtimeClock.advance(7);
+      throw new Error("secret-bearing synchronous rejection");
+    });
+    const built = await fixture({ seedJob: job(), execute });
+    runtimeClock = built.clock;
+    const terminal = vi.fn();
+    built.eventBus.on("scheduler:cron_execution_terminal", terminal);
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
+
+    expect((await built.scheduler.runMissedJobs()).ok).toBe(true);
+
+    const history = await built.tracker.listHistory({ limit: 10 });
+    expect(history.ok && history.value[0]?.terminal?.outcome).toEqual({
+      kind: "unsettled",
+      reason: "executor_rejected_after_invocation",
+      rootRunId: "root-cron-execution_1",
+      errorKind: "internal",
+    });
+    expect(built.store.getSnapshot()).toMatchObject({
+      ok: true,
+      value: {
+        activeClaims: [],
+        jobs: [{ lifecycle: { status: "one_shot_terminal" } }],
+      },
+    });
+    expect(built.rootRegistrar.release).not.toHaveBeenCalled();
+    expect(built.logger.error).toHaveBeenCalledWith(expect.objectContaining({
+      errorKind: "internal",
+      hint: expect.any(String),
+      executionId: "execution_1",
+      jobId: "job_a",
+      step: "runtime_execute",
+      durationMs: 7,
+    }), "Cron runtime rejected outside its Result contract");
+    expect(terminal).toHaveBeenCalledWith(expect.objectContaining({
+      executionId: "execution_1",
+      jobId: "job_a",
+      outcomeKind: "unsettled",
+      executionStatus: "unknown",
+      errorKind: "internal",
+    }));
+    expect(JSON.stringify(built.logger.error.mock.calls)).not.toContain("secret-bearing");
+
+    expect((await built.scheduler.runMissedJobs()).ok).toBe(true);
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it("terminalizes a rejected executor promise as unknown without releasing its root", async () => {
+    let runtimeClock!: MutableClock;
+    const execute = vi.fn(async (_input: CronRuntimeExecutionInput) => {
+      runtimeClock.advance(11);
+      throw new Error("secret-bearing asynchronous rejection");
+    });
+    const built = await fixture({ seedJob: job(), execute });
+    runtimeClock = built.clock;
+    const terminal = vi.fn();
+    built.eventBus.on("scheduler:cron_execution_terminal", terminal);
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
+
+    expect((await built.scheduler.runMissedJobs()).ok).toBe(true);
+
+    const history = await built.tracker.listHistory({ limit: 10 });
+    expect(history.ok && history.value[0]?.terminal?.outcome).toEqual({
+      kind: "unsettled",
+      reason: "executor_rejected_after_invocation",
+      rootRunId: "root-cron-execution_1",
+      errorKind: "internal",
+    });
+    expect(built.store.getSnapshot()).toMatchObject({
+      ok: true,
+      value: { activeClaims: [] },
+    });
+    expect(built.rootRegistrar.release).not.toHaveBeenCalled();
+    expect(terminal).toHaveBeenCalledWith(expect.objectContaining({
+      outcomeKind: "unsettled",
+      executionStatus: "unknown",
+      errorKind: "internal",
+    }));
+    expect(JSON.stringify(built.logger.error.mock.calls)).not.toContain("secret-bearing");
+
+    expect((await built.scheduler.runMissedJobs()).ok).toBe(true);
+    expect(execute).toHaveBeenCalledOnce();
   });
 
   it("aborts at the deadline and persists unknown after termination grace", async () => {
