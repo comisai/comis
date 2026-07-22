@@ -1679,7 +1679,7 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
       expect(details.exitCode).toBe(42);
     });
 
-    it("background mode works through sandbox", { timeout: 15_000 }, async () => {
+    it("background mode exposes only its session handle through sandbox", { timeout: 15_000 }, async () => {
       const workspace = createTempDir("comis-sandbox-ws");
       const config = createRealSandboxConfig(workspace);
       const tool = createExecTool({ workspacePath: workspace, registry, secretManager: STUB_SM, platformSecretNames: STUB_PLATFORM_NAMES, sandboxConfig: config, toolCapabilityPort: createCapabilityPortStub() });
@@ -1687,9 +1687,10 @@ describe.skipIf(!realSandboxAvailable)("real sandbox-exec integration", () => {
         command: "sleep 0.1",
         background: true,
       });
-      const details = result.details as { status: string; pid: number };
+      const details = result.details as { status: string; sessionId: string };
       expect(details.status).toBe("started");
-      expect(details.pid).toBeDefined();
+      expect(details.sessionId).toBeDefined();
+      expect(details).not.toHaveProperty("pid");
     });
 
     it("streaming onUpdate works through sandbox", { timeout: 15_000 }, async () => {

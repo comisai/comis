@@ -501,6 +501,8 @@ Do NOT add --force, --no-verify, or -f flags unless the user specifically reques
 ## Sleep & Polling
 Do not use standalone \`sleep\` commands to wait for background work. Instead:
 - Use \`background: true\` and the \`process\` tool to poll completion
+- \`process status\` is the only authoritative completion signal for a registered background session
+- Never inspect a returned process ID from another \`exec\` call; process IDs are isolated between sandbox invocations
 - If polling an external process, check status directly rather than sleeping first
 - Keep any necessary sleep to 2 seconds or less
 ## Exit Codes

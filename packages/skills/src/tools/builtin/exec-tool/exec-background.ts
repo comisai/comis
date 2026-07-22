@@ -105,7 +105,7 @@ export function escalateToBackground(ctx: EscalationContext): void {
     const augmented = jsonResult({
       status: "backgrounded",
       sessionId: session.id,
-      pid: ctx.child.pid,
+      ...(ctx.sandboxConfig ? {} : { pid: ctx.child.pid }),
       stdoutSoFar: truncateTail(ctx.stdoutBuf).content,
       stderrSoFar: truncateTail(ctx.stderrBuf).content,
       ...(ctx.description && { description: ctx.description }),
@@ -120,7 +120,7 @@ export function escalateToBackground(ctx: EscalationContext): void {
   ctx.resolve(jsonResult({
     status: "backgrounded",
     sessionId: session.id,
-    pid: ctx.child.pid,
+    ...(ctx.sandboxConfig ? {} : { pid: ctx.child.pid }),
     stdoutSoFar: truncateTail(ctx.stdoutBuf).content,
     stderrSoFar: truncateTail(ctx.stderrBuf).content,
     ...(ctx.description && { description: ctx.description }),
@@ -238,7 +238,7 @@ export function executeBackground(
     const augmented = jsonResult({
       status: "started",
       sessionId,
-      pid: child.pid,
+      ...(sandboxConfig ? {} : { pid: child.pid }),
       ...(description && { description }),
       installDetourHint: hint.installDetourHint,
     });
@@ -251,7 +251,7 @@ export function executeBackground(
   return jsonResult({
     status: "started",
     sessionId,
-    pid: child.pid,
+    ...(sandboxConfig ? {} : { pid: child.pid }),
     ...(description && { description }),
   });
 }
