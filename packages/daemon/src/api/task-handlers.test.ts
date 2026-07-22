@@ -7,6 +7,7 @@ import { createTaskHandlers } from "./task-handlers.js";
 function setup() {
   const inspection = {
     fileDigest: "b".repeat(64),
+    quarantine: { exists: true, bytes: 256, digest: "c".repeat(64), recordCount: 2, state: "valid" as const },
     tasks: [
       {
         id: "task-a",
@@ -90,6 +91,7 @@ describe("follow-up task operator RPC handlers", () => {
       strictAuthorityValid: true,
       ownershipReconciled: true,
       store: { exists: true, bytes: 66, digest: "b".repeat(64) },
+      quarantine: { exists: true, bytes: 256, digest: "c".repeat(64), recordCount: 2, state: "valid" },
       intent: { status: "none" },
       counts: { total: 2, pending: 1, active: 0, terminal: 1 },
     });

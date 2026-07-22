@@ -13,6 +13,13 @@ const RawAuthorityStateSchema = z.strictObject({
   bytes: CountSchema,
   digest: Sha256DigestSchema.nullable(),
 });
+const TaskQuarantineStateSchema = z.strictObject({
+  exists: z.boolean(),
+  bytes: CountSchema,
+  digest: Sha256DigestSchema.nullable(),
+  recordCount: CountSchema,
+  state: z.enum(["valid", "invalid", "unavailable"]),
+});
 const ResetIntentProjectionSchema = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("none") }),
   z.strictObject({
@@ -59,6 +66,7 @@ export const TasksStatusContract = defineContract({
     strictAuthorityValid: z.boolean(),
     ownershipReconciled: z.boolean(),
     store: RawAuthorityStateSchema,
+    quarantine: TaskQuarantineStateSchema,
     intent: ResetIntentProjectionSchema,
     counts: z.strictObject({
       total: CountSchema,

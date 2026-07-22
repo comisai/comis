@@ -1,6 +1,6 @@
 {
-  "totalMinified": 180347,
-  "totalGzipped": 18101,
+  "totalMinified": 180794,
+  "totalGzipped": 18143,
   "budget": {
     "minified": 181000,
     "gzipped": 38912
@@ -212,7 +212,7 @@
     "tasks.cancel": 2193,
     "tasks.list": 1934,
     "tasks.reset": 908,
-    "tasks.status": 2186,
+    "tasks.status": 2682,
     "telegram.action": 268,
     "tokens.create": 564,
     "tokens.list": 499,

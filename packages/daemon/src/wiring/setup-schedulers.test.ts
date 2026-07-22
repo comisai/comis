@@ -62,7 +62,11 @@ function makeTaskStore() {
       recoveredDelivering: 0,
       recoveredAttempts: [],
     })),
-    inspect: vi.fn(async () => ok({ fileDigest: "e".repeat(64), tasks: [] })),
+    inspect: vi.fn(async () => ok({
+      fileDigest: "e".repeat(64),
+      tasks: [],
+      quarantine: { exists: false, bytes: 0, digest: null, recordCount: 0, state: "valid" as const },
+    })),
   };
 }
 

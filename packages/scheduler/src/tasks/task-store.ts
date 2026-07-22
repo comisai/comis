@@ -7,6 +7,7 @@ import {
   type ConversationRef,
   type ErrorKind,
   type FileLockPort,
+  safePath,
 } from "@comis/core";
 import { err, fromPromise, ok, tryCatch, type Result } from "@comis/shared";
 import { replaceDurableFile } from "../persistence/durable-file.js";
@@ -14,6 +15,7 @@ import type { BoundTaskCandidate } from "./task-extractor.js";
 import { admitTaskCandidate } from "./task-admission.js";
 import {
   parseFollowupTaskStoreFile,
+  FollowupTaskStoreEnvelopeSchema,
   SuccessfulTaskCheckExecutionEvidenceSchema,
   type FollowupTaskAttemptRecord,
   type FollowupTaskRecord,
@@ -27,14 +29,20 @@ import {
   type TaskCheckExecutionEvidence,
   type TaskDeliverySettlement,
 } from "./task-types.js";
+import { inspectTaskQuarantine, quarantineMalformedTerminalTaskGroups, type TaskQuarantineInspection } from "./task-quarantine.js";
 import { planDueTaskClaim, type TaskClaimResult } from "./task-selector.js";
 import {
   buildDeliveryTerminal,
   buildDismissedTerminal,
   buildRetryableFailure,
+  createTaskStoreMutex,
+  isTaskStoreNodeError,
   resolveClaimedTasks,
+  snapshotTaskStoreRoot,
   terminalizeClosedWindow,
   terminalizeConfigurationDisabled,
+  validTaskStoreId,
+  validTaskStoreTime,
 } from "./task-store-transitions.js";
 
 export const MAX_FOLLOWUP_TASK_STORE_BYTES = 16 * 1_024 * 1_024;
@@ -87,6 +95,7 @@ export interface FollowupTaskOperatorRecord {
 export interface FollowupTaskStoreInspection {
   readonly fileDigest: string;
   readonly tasks: readonly FollowupTaskOperatorRecord[];
+  readonly quarantine: TaskQuarantineInspection;
 }
 
 export type FollowupTaskCancellationOutcome =
@@ -155,24 +164,27 @@ export interface FollowupTaskStore {
 }
 
 export function createFollowupTaskStore(options: FollowupTaskStoreOptions): FollowupTaskStore {
-  const mutex = createMutex();
+  const mutex = createTaskStoreMutex();
   const pathError = validatePaths(options);
+  const quarantinePath = pathError === undefined
+    ? safePath(path.dirname(options.filePath), "tasks-quarantine.jsonl")
+    : "";
   let initialized = false;
 
   async function initialize(): Promise<Result<FollowupTaskStoreFile, FollowupTaskStoreError>> {
     return mutex.serialize(async () => withStoreLock(async () => {
       if (pathError !== undefined) return err(pathError);
-      const read = await readRoot(true);
-      if (!read.ok) return read;
       const nowMs = options.clock.now();
-      if (!validTime(nowMs)) return err(storeError("invalid_state", "internal", "Clock returned an invalid task-store time"));
+      if (!validTaskStoreTime(nowMs)) return err(storeError("invalid_state", "internal", "Clock returned an invalid task-store time"));
+      const read = await readRoot(true, nowMs);
+      if (!read.ok) return read;
       const maintained = maintainRoot(read.value, nowMs);
       if (maintained !== read.value) {
         const written = await writeRoot(maintained);
         if (!written.ok) return written;
       }
       initialized = true;
-      return ok(snapshot(maintained));
+      return ok(snapshotTaskStoreRoot(maintained));
     }));
   }
 
@@ -183,13 +195,13 @@ export function createFollowupTaskStore(options: FollowupTaskStoreOptions): Foll
       const current = await readRoot(false);
       if (!current.ok) return current;
       const nowMs = options.clock.now();
-      if (!validTime(nowMs)) return err(storeError("invalid_state", "internal", "Clock returned an invalid task-store time"));
+      if (!validTaskStoreTime(nowMs)) return err(storeError("invalid_state", "internal", "Clock returned an invalid task-store time"));
       const maintained = maintainRoot(current.value, nowMs);
       if (maintained !== current.value) {
         const written = await writeRoot(maintained);
         if (!written.ok) return written;
       }
-      return ok(snapshot(maintained));
+      return ok(snapshotTaskStoreRoot(maintained));
     }));
   }
 
@@ -200,7 +212,7 @@ export function createFollowupTaskStore(options: FollowupTaskStoreOptions): Foll
       const current = await readRoot(false);
       if (!current.ok) return current;
       const nowMs = options.clock.now();
-      if (!validTime(nowMs)) return err(storeError("invalid_state", "internal", "Clock returned an invalid task-store time"));
+      if (!validTaskStoreTime(nowMs)) return err(storeError("invalid_state", "internal", "Clock returned an invalid task-store time"));
       const maintained = maintainRoot(current.value, nowMs);
       if (maintained !== current.value) {
         const written = await writeRoot(maintained);
@@ -208,9 +220,12 @@ export function createFollowupTaskStore(options: FollowupTaskStoreOptions): Foll
       }
       const raw = await fromPromise(fs.readFile(options.filePath));
       if (!raw.ok) return err(storeError("io", "internal", "Unable to inspect follow-up task store"));
+      const quarantine = await inspectTaskQuarantine(quarantinePath);
+      if (!quarantine.ok) return quarantine;
       return ok({
         fileDigest: createHash("sha256").update(raw.value).digest("hex"),
         tasks: maintained.tasks.map(projectOperatorTask),
+        quarantine: quarantine.value,
       });
     }));
   }
@@ -219,7 +234,7 @@ export function createFollowupTaskStore(options: FollowupTaskStoreOptions): Foll
     readonly agentId: string;
     readonly taskId?: string;
   }): Promise<Result<FollowupTaskCancellationOutcome, FollowupTaskStoreError>> {
-    if (!validId(input.agentId) || (input.taskId !== undefined && !validId(input.taskId))) {
+    if (!validTaskStoreId(input.agentId) || (input.taskId !== undefined && !validTaskStoreId(input.taskId))) {
       return err(storeError("invalid_state", "validation", "Task cancellation input is invalid"));
     }
     return mutate<FollowupTaskCancellationOutcome>((root, nowMs) => {
@@ -279,7 +294,7 @@ export function createFollowupTaskStore(options: FollowupTaskStoreOptions): Foll
       const current = await readRoot(false);
       if (!current.ok) return current;
       const nowMs = options.clock.now();
-      if (!validTime(nowMs)) return err(storeError("invalid_state", "internal", "Clock returned an invalid task-store time"));
+      if (!validTaskStoreTime(nowMs)) return err(storeError("invalid_state", "internal", "Clock returned an invalid task-store time"));
       let root = maintainRoot(current.value, nowMs);
       const results: TaskAdmissionResult[] = [];
       const agents = new Set(input.candidates.map((candidate) => candidate.item.origin.turnScope.conversation.agentId));
@@ -323,10 +338,10 @@ export function createFollowupTaskStore(options: FollowupTaskStoreOptions): Foll
     readonly maxPerDayPerConversation: number;
   }): Promise<Result<TaskClaimResult | { readonly status: "disabled" }, FollowupTaskStoreError>> {
     if (
-      !validId(input.agentId)
-      || !validId(input.bootId)
-      || !validId(input.rootRunId)
-      || !validId(input.attemptId)
+      !validTaskStoreId(input.agentId)
+      || !validTaskStoreId(input.bootId)
+      || !validTaskStoreId(input.rootRunId)
+      || !validTaskStoreId(input.attemptId)
       || !Number.isSafeInteger(input.maxPerCheck)
       || input.maxPerCheck < 1
       || input.maxPerCheck > 8
@@ -359,7 +374,7 @@ export function createFollowupTaskStore(options: FollowupTaskStoreOptions): Foll
     readonly check: SuccessfulTaskCheckExecutionEvidence;
   }): Promise<Result<TaskBeginDeliveryResult, FollowupTaskStoreError>> {
     const check = SuccessfulTaskCheckExecutionEvidenceSchema.safeParse(input.check);
-    if (!validId(input.attemptId) || !check.success) {
+    if (!validTaskStoreId(input.attemptId) || !check.success) {
       return err(storeError("invalid_state", "validation", "Task send-boundary input is invalid"));
     }
     return mutate((root, nowMs) => {
@@ -401,7 +416,7 @@ export function createFollowupTaskStore(options: FollowupTaskStoreOptions): Foll
     readonly attemptId: string;
     readonly outcome: TaskDeliverySettlement;
   }): Promise<Result<"settled" | "already_settled", FollowupTaskStoreError>> {
-    if (!validId(input.attemptId)) {
+    if (!validTaskStoreId(input.attemptId)) {
       return err(storeError("invalid_state", "validation", "Task delivery settlement id is invalid"));
     }
     return mutate((root, nowMs) => {
@@ -421,7 +436,7 @@ export function createFollowupTaskStore(options: FollowupTaskStoreOptions): Foll
     readonly check: SuccessfulTaskCheckExecutionEvidence;
   }): Promise<Result<"settled" | "already_settled", FollowupTaskStoreError>> {
     const check = SuccessfulTaskCheckExecutionEvidenceSchema.safeParse(input.check);
-    if (!validId(input.attemptId) || !check.success) {
+    if (!validTaskStoreId(input.attemptId) || !check.success) {
       return err(storeError("invalid_state", "validation", "Task dismissal evidence is invalid"));
     }
     return mutate((root, nowMs) => {
@@ -440,7 +455,7 @@ export function createFollowupTaskStore(options: FollowupTaskStoreOptions): Foll
   async function failAttempt(
     input: TaskFailureInput,
   ): Promise<Result<"retry_scheduled" | "expired" | "already_settled", FollowupTaskStoreError>> {
-    if (!validId(input.attemptId)) {
+    if (!validTaskStoreId(input.attemptId)) {
       return err(storeError("invalid_state", "validation", "Task failure attempt id is invalid"));
     }
     return mutate((root, nowMs) => {
@@ -486,7 +501,7 @@ export function createFollowupTaskStore(options: FollowupTaskStoreOptions): Foll
     readonly currentBootId: string;
     readonly exclusiveDataDirLockOwned: boolean;
   }): Promise<Result<TaskOwnershipRecoveryResult, FollowupTaskStoreError>> {
-    if (!validId(input.currentBootId)) {
+    if (!validTaskStoreId(input.currentBootId)) {
       return err(storeError("invalid_state", "validation", "Task recovery boot id is invalid"));
     }
     if (!input.exclusiveDataDirLockOwned) {
@@ -564,7 +579,7 @@ export function createFollowupTaskStore(options: FollowupTaskStoreOptions): Foll
       const current = await readRoot(false);
       if (!current.ok) return current;
       const nowMs = options.clock.now();
-      if (!validTime(nowMs)) return err(storeError("invalid_state", "internal", "Clock returned an invalid task-store time"));
+      if (!validTaskStoreTime(nowMs)) return err(storeError("invalid_state", "internal", "Clock returned an invalid task-store time"));
       const maintained = maintainRoot(current.value, nowMs);
       const changed = change(maintained, nowMs);
       if (!changed.ok) return changed;
@@ -588,10 +603,10 @@ export function createFollowupTaskStore(options: FollowupTaskStoreOptions): Foll
     return locked.value;
   }
 
-  async function readRoot(createMissing: boolean): Promise<Result<FollowupTaskStoreFile, FollowupTaskStoreError>> {
+  async function readRoot(createMissing: boolean, quarantineAtMs?: number): Promise<Result<FollowupTaskStoreFile, FollowupTaskStoreError>> {
     const read = await fromPromise(fs.readFile(options.filePath));
     if (!read.ok) {
-      if (createMissing && isNodeError(read.error, "ENOENT")) {
+      if (createMissing && isTaskStoreNodeError(read.error, "ENOENT")) {
         const empty: FollowupTaskStoreFile = { formatVersion: 1, tasks: [], attempts: [], policySnapshots: [] };
         const written = await writeRoot(empty);
         return written.ok ? ok(empty) : written;
@@ -604,9 +619,20 @@ export function createFollowupTaskStore(options: FollowupTaskStoreOptions): Foll
     const decoded = tryCatch(() => JSON.parse(read.value.toString("utf8")) as unknown);
     if (!decoded.ok) return err(storeError("invalid_state", "validation", "Follow-up task store contains invalid JSON"));
     const parsed = parseFollowupTaskStoreFile(decoded.value);
-    return parsed.ok
-      ? ok(parsed.value)
-      : err(storeError("invalid_state", "validation", "Follow-up task store authority is invalid"));
+    if (parsed.ok) return ok(parsed.value);
+    if (quarantineAtMs === undefined) {
+      return err(storeError("invalid_state", "validation", "Follow-up task store authority is invalid"));
+    }
+    const envelope = FollowupTaskStoreEnvelopeSchema.safeParse(decoded.value);
+    if (!envelope.success) return err(storeError("invalid_state", "validation", "Follow-up task store authority is invalid"));
+    const quarantined = await quarantineMalformedTerminalTaskGroups({
+      raw: envelope.data,
+      quarantinePath,
+      quarantinedAtMs: quarantineAtMs,
+    });
+    if (!quarantined.ok) return quarantined;
+    const written = await writeRoot(quarantined.value.root);
+    return written.ok ? ok(quarantined.value.root) : written;
   }
 
   async function writeRoot(root: FollowupTaskStoreFile): Promise<Result<void, FollowupTaskStoreError>> {
@@ -769,31 +795,4 @@ function lockError(kind: "locked" | "error", message: string): FollowupTaskStore
 
 function storeError(code: FollowupTaskStoreErrorCode, errorKind: ErrorKind, message: string): FollowupTaskStoreError {
   return { code, errorKind, message };
-}
-
-function validTime(value: number): boolean {
-  return Number.isSafeInteger(value) && value >= 0;
-}
-
-function validId(value: string): boolean {
-  return value.length > 0 && value.length <= 256 && Buffer.byteLength(value, "utf8") <= 256;
-}
-
-function isNodeError(error: Error, code: string): boolean {
-  return "code" in error && (error as NodeJS.ErrnoException).code === code;
-}
-
-function snapshot(root: FollowupTaskStoreFile): FollowupTaskStoreFile {
-  return structuredClone(root);
-}
-
-function createMutex() {
-  let tail = Promise.resolve();
-  return {
-    serialize<T>(operation: () => Promise<T>): Promise<T> {
-      const current = tail.then(operation, operation);
-      tail = current.then(() => undefined, () => undefined);
-      return current;
-    },
-  };
 }

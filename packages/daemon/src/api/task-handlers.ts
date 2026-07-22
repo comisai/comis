@@ -61,6 +61,13 @@ export function createTaskHandlers(deps: TaskHandlerDeps): Record<string, RpcHan
         strictAuthorityValid: status.strictAuthorityValid,
         ownershipReconciled: status.ownershipReconciled,
         store: status.store,
+        quarantine: inspected?.quarantine ?? {
+          exists: false,
+          bytes: 0,
+          digest: null,
+          recordCount: 0,
+          state: "unavailable" as const,
+        },
         intent: status.intent,
         counts: {
           total,

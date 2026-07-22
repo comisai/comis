@@ -76,6 +76,7 @@ describe("comis tasks strict operator commands", () => {
       strictAuthorityValid: true,
       ownershipReconciled: true,
       store: { exists: true, bytes: 66, digest: "a".repeat(64) },
+      quarantine: { exists: true, bytes: 256, digest: "b".repeat(64), recordCount: 2, state: "valid" as const },
       intent: { status: "none" as const },
       counts: { total: 0, pending: 0, active: 0, terminal: 0 },
     };
@@ -87,6 +88,8 @@ describe("comis tasks strict operator commands", () => {
     expect(data.calls).toEqual([{ method: TasksStatusContract.method, params: { agentId: "agent-a" } }]);
     expect(getSpyOutput(consoleSpy.log)).toContain("disabled");
     expect(getSpyOutput(consoleSpy.log)).toContain("a".repeat(64));
+    expect(getSpyOutput(consoleSpy.log)).toContain("Quarantined records");
+    expect(getSpyOutput(consoleSpy.log)).toContain("2");
   });
 
   it("lists bounded content-free task projections through tasks.list", async () => {

@@ -211,6 +211,94 @@ describe("durable follow-up task store", () => {
     expect((await readFile(quarantinePath, "utf8")).trim().split("\n")).toHaveLength(2);
   });
 
+  it("preserves malformed active authority without creating quarantine evidence", async () => {
+    const clock = makeClock(61_000);
+    const data = await fixture({ clock });
+    expect((await data.store.initialize()).ok).toBe(true);
+    expect((await data.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 })).ok).toBe(true);
+    expect(await data.store.claimDue({
+      agentId: "agent-a",
+      bootId: "boot-a",
+      rootRunId: "root-task-a",
+      attemptId: "attempt-a",
+      maxPerCheck: 1,
+      maxPerDayPerConversation: 3,
+    })).toMatchObject({ ok: true, value: { status: "claimed" } });
+
+    const raw = JSON.parse(await readFile(data.filePath, "utf8")) as { tasks: Array<Record<string, unknown>> };
+    raw.tasks[0]!.text = "";
+    const malformedBytes = `${JSON.stringify(raw)}\n`;
+    await writeFile(data.filePath, malformedBytes);
+    const reopened = createFollowupTaskStore({
+      filePath: data.filePath,
+      lockPath: join(data.filePath, "..", "tasks.lock"),
+      fileLock: makeLock(),
+      clock,
+      idFactory: () => "opaque-reopen",
+      getRuntimeConfig: () => ({ enabled: true, preAcceptanceRetryLimit: 3, quietUntilMs: null }),
+    });
+
+    await expect(reopened.initialize()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "invalid_state", errorKind: "validation" },
+    });
+    expect(await readFile(data.filePath, "utf8")).toBe(malformedBytes);
+    await expect(stat(join(data.filePath, "..", "tasks-quarantine.jsonl"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("blocks new quarantine writes when prior evidence has a forged entry id", async () => {
+    const clock = makeClock(10_000);
+    const data = await fixture({ clock });
+    expect((await data.store.initialize()).ok).toBe(true);
+    expect((await data.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 })).ok).toBe(true);
+    expect((await data.store.cancelPending({ agentId: "agent-a" })).ok).toBe(true);
+
+    const corruptTerminalTask = async (): Promise<string> => {
+      const raw = JSON.parse(await readFile(data.filePath, "utf8")) as { tasks: Array<Record<string, unknown>> };
+      raw.tasks[0]!.text = "";
+      const malformedBytes = `${JSON.stringify(raw)}\n`;
+      await writeFile(data.filePath, malformedBytes);
+      return malformedBytes;
+    };
+    await corruptTerminalTask();
+    const reopen = () => createFollowupTaskStore({
+      filePath: data.filePath,
+      lockPath: join(data.filePath, "..", "tasks.lock"),
+      fileLock: makeLock(),
+      clock,
+      idFactory: () => "opaque-reopen",
+      getRuntimeConfig: () => ({ enabled: true, preAcceptanceRetryLimit: 3, quietUntilMs: null }),
+    });
+    expect((await reopen().initialize()).ok).toBe(true);
+
+    const quarantinePath = join(data.filePath, "..", "tasks-quarantine.jsonl");
+    const rows = (await readFile(quarantinePath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    rows[0]!.entryId = "0".repeat(64);
+    const forgedEvidence = `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`;
+    await writeFile(quarantinePath, forgedEvidence);
+
+    const second = makeCandidate({
+      item: { ...makeCandidate().item, itemId: "item-b", sourceExecutionId: "source-b" },
+      text: "Check another outcome",
+    });
+    const valid = reopen();
+    expect((await valid.initialize()).ok).toBe(true);
+    await expect(valid.inspect()).resolves.toMatchObject({
+      ok: true,
+      value: { quarantine: { exists: true, recordCount: 0, state: "invalid" } },
+    });
+    expect((await valid.admitCandidates({ candidates: [second], confidenceThreshold: 0.5 })).ok).toBe(true);
+    expect((await valid.cancelPending({ agentId: "agent-a" })).ok).toBe(true);
+    const malformedRoot = await corruptTerminalTask();
+
+    await expect(reopen().initialize()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "invalid_state", errorKind: "validation" },
+    });
+    expect(await readFile(data.filePath, "utf8")).toBe(malformedRoot);
+    expect(await readFile(quarantinePath, "utf8")).toBe(forgedEvidence);
+  });
+
   it("refreshes every public read under the cross-process lock", async () => {
     const fileLock = makeLock();
     const data = await fixture({ fileLock });

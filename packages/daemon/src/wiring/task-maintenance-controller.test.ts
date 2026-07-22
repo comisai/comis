@@ -14,7 +14,11 @@ const RAW: TaskAuthorityInspection = {
   store: { exists: true, bytes: 66, digest: "a".repeat(64) },
   intent: { status: "none" },
 };
-const EMPTY_INSPECTION: FollowupTaskStoreInspection = { fileDigest: "a".repeat(64), tasks: [] };
+const EMPTY_INSPECTION: FollowupTaskStoreInspection = {
+  fileDigest: "a".repeat(64),
+  tasks: [],
+  quarantine: { exists: false, bytes: 0, digest: null, recordCount: 0, state: "valid" },
+};
 
 function make(overrides: Partial<Parameters<typeof createTaskMaintenanceController>[0]> = {}) {
   const calls: string[] = [];
@@ -142,6 +146,7 @@ describe("follow-up task maintenance controller", () => {
     await activeAttempt.controller.initialize();
     activeAttempt.store.inspect = vi.fn(async () => ok({
       fileDigest: "a".repeat(64),
+      quarantine: { exists: false, bytes: 0, digest: null, recordCount: 0, state: "valid" },
       tasks: [{
         id: "task_1", agentId: "agent-a", status: "checking", dueEarliestMs: 1, dueLatestMs: 2,
         expiresAtMs: 3, attemptCount: 1, preAcceptanceFailureCount: 0, sourceExecutionId: "exec_1",

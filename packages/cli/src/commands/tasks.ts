@@ -153,6 +153,8 @@ export function registerTasksCommand(program: Command): void {
           ["Strict authority", response.strictAuthorityValid ? "valid" : "invalid"],
           ["Ownership", response.ownershipReconciled ? "reconciled" : "not reconciled"],
           ["File digest", response.store.digest ?? "missing"],
+          ["Quarantine", response.quarantine.state],
+          ["Quarantined records", String(response.quarantine.recordCount)],
           ["Reset intent", response.intent.status],
           ["Total", String(response.counts.total)],
           ["Pending", String(response.counts.pending)],

@@ -47,6 +47,7 @@ describe("follow-up task operator RPC contracts", () => {
       strictAuthorityValid: true,
       ownershipReconciled: true,
       store: { exists: true, bytes: 66, digest: "b".repeat(64) },
+      quarantine: { exists: false, bytes: 0, digest: null, recordCount: 0, state: "valid" },
       intent: { status: "none" },
       counts: { total: 1, pending: 1, active: 0, terminal: 0 },
     })).toBeDefined();

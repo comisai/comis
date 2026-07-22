@@ -59,6 +59,10 @@ export {
   type TaskFailureInput,
 } from "./task-store.js";
 export {
+  MAX_FOLLOWUP_TASK_QUARANTINE_BYTES,
+  type TaskQuarantineInspection,
+} from "./task-quarantine.js";
+export {
   planDueTaskClaim,
   type TaskClaimPlan,
   type TaskClaimResult,

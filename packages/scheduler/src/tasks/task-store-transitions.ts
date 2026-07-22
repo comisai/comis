@@ -300,3 +300,30 @@ function validUnknownDelivery(delivery: Extract<TaskDeliverySettlement, { status
 function transitionError(message: string): FollowupTaskStoreError {
   return { code: "invalid_state", errorKind: "validation", message };
 }
+
+export function validTaskStoreTime(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+export function validTaskStoreId(value: string): boolean {
+  return value.length > 0 && value.length <= 256 && Buffer.byteLength(value, "utf8") <= 256;
+}
+
+export function isTaskStoreNodeError(error: Error, code: string): boolean {
+  return "code" in error && (error as NodeJS.ErrnoException).code === code;
+}
+
+export function snapshotTaskStoreRoot(root: FollowupTaskStoreFile): FollowupTaskStoreFile {
+  return structuredClone(root);
+}
+
+export function createTaskStoreMutex() {
+  let tail = Promise.resolve();
+  return {
+    serialize<T>(operation: () => Promise<T>): Promise<T> {
+      const current = tail.then(operation, operation);
+      tail = current.then(() => undefined, () => undefined);
+      return current;
+    },
+  };
+}

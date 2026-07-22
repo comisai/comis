@@ -16229,6 +16229,51 @@ export const CONTRACTS = {
           ],
           "additionalProperties": false
         },
+        "quarantine": {
+          "type": "object",
+          "properties": {
+            "exists": {
+              "type": "boolean"
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "digest": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "recordCount": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "valid",
+                "invalid",
+                "unavailable"
+              ]
+            }
+          },
+          "required": [
+            "exists",
+            "bytes",
+            "digest",
+            "recordCount",
+            "state"
+          ],
+          "additionalProperties": false
+        },
         "intent": {
           "oneOf": [
             {
@@ -16338,6 +16383,7 @@ export const CONTRACTS = {
         "strictAuthorityValid",
         "ownershipReconciled",
         "store",
+        "quarantine",
         "intent",
         "counts"
       ],
