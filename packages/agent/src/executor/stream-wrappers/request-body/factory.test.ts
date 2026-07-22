@@ -1292,6 +1292,137 @@ describe("Multi-block system prompt injection", () => {
     expect(system[1]!.text).toBe("SEMI-STABLE BODY");
   });
 
+  it("omits an empty semi-stable system block from a Bedrock request", async () => {
+    const base = createMockStreamFn();
+    const wrapper = createRequestBodyInjector(
+      {
+        getCacheRetention: () => "none",
+        getSystemPromptBlocks: () => ({
+          staticPrefix: "STATIC PREFIX",
+          attribution: "ATTRIBUTION",
+          semiStableBody: "",
+        }),
+      },
+      logger,
+    );
+    const wrappedFn = wrapper(base);
+    const model = {
+      id: "global.anthropic.claude-opus-4-8",
+      provider: "amazon-bedrock",
+      api: "bedrock-converse-stream",
+    } as any;
+    wrappedFn(model, makeContext([]), {});
+
+    const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
+    const onPayload = receivedOptions.onPayload as (p: unknown, m: unknown) => Promise<unknown>;
+    const result = await onPayload(
+      { system: [{ text: "Original system prompt" }], messages: [] },
+      model,
+    ) as Record<string, unknown>;
+
+    const system = result.system as Array<Record<string, unknown>>;
+    expect(system).toHaveLength(2);
+    expect(system.map((block) => block.text)).toEqual([
+      "STATIC PREFIX" + SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+      "ATTRIBUTION",
+    ]);
+    expect(system.every((block) => typeof block.text === "string" && block.text.length > 0)).toBe(true);
+  });
+
+  it("removes historical Bedrock tool blocks when the current turn disables tools", async () => {
+    const base = createMockStreamFn();
+    const wrapper = createRequestBodyInjector(
+      { getCacheRetention: () => "none" },
+      logger,
+    );
+    const wrappedFn = wrapper(base);
+    const model = {
+      id: "global.anthropic.claude-opus-4-8",
+      provider: "amazon-bedrock",
+      api: "bedrock-converse-stream",
+    } as any;
+    wrappedFn(model, makeContext([]), {});
+
+    const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
+    const onPayload = receivedOptions.onPayload as (p: unknown, m: unknown) => Promise<unknown>;
+    const result = await onPayload(
+      {
+        system: [{ text: "System prompt" }],
+        toolConfig: undefined,
+        messages: [
+          { role: "user", content: [{ text: "Original request" }] },
+          {
+            role: "assistant",
+            content: [
+              { text: "Working." },
+              { toolUse: { toolUseId: "call_1", name: "read", input: {} } },
+            ],
+          },
+          {
+            role: "user",
+            content: [
+              { toolResult: { toolUseId: "call_1", content: [{ text: "result" }] } },
+              { cachePoint: { type: "default" } },
+            ],
+          },
+          { role: "assistant", content: [{ text: "Original answer" }] },
+          { role: "user", content: [{ text: "Rewrite the answer." }] },
+        ],
+      },
+      model,
+    ) as Record<string, unknown>;
+
+    expect((result.messages as Array<Record<string, unknown>>).map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+    ]);
+    expect(result.messages).toEqual([
+      { role: "user", content: [{ text: "Original request" }] },
+      { role: "assistant", content: [{ text: "Working." }, { text: "Original answer" }] },
+      { role: "user", content: [{ text: "Rewrite the answer." }] },
+    ]);
+  });
+
+  it("preserves historical Bedrock tool blocks when tool configuration is present", async () => {
+    const base = createMockStreamFn();
+    const wrapper = createRequestBodyInjector(
+      { getCacheRetention: () => "none" },
+      logger,
+    );
+    const wrappedFn = wrapper(base);
+    const model = {
+      id: "global.anthropic.claude-opus-4-8",
+      provider: "amazon-bedrock",
+      api: "bedrock-converse-stream",
+    } as any;
+    wrappedFn(model, makeContext([]), {});
+
+    const receivedOptions = base.mock.calls[0][2] as Record<string, unknown>;
+    const onPayload = receivedOptions.onPayload as (p: unknown, m: unknown) => Promise<unknown>;
+    const messages = [
+      { role: "user", content: [{ text: "Read the file." }] },
+      {
+        role: "assistant",
+        content: [{ toolUse: { toolUseId: "call_1", name: "read", input: {} } }],
+      },
+      {
+        role: "user",
+        content: [{ toolResult: { toolUseId: "call_1", content: [{ text: "result" }] } }],
+      },
+    ];
+    const result = await onPayload(
+      {
+        system: [{ text: "System prompt" }],
+        toolConfig: { tools: [{ toolSpec: { name: "read" } }] },
+        messages,
+      },
+      model,
+    ) as Record<string, unknown>;
+
+    expect(result.messages).toEqual(messages);
+  });
+
   it("appends SYSTEM_PROMPT_DYNAMIC_BOUNDARY to staticPrefix block (SYS-BOUNDARY)", async () => {
     const base = createMockStreamFn();
     const wrapper = createRequestBodyInjector(

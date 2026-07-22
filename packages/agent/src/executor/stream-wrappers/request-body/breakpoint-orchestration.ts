@@ -85,7 +85,12 @@ export function runCacheBreakpointPhase(
     if (promptBlocks.attribution) {
       blocks.push({ type: "text" as const, text: promptBlocks.attribution });
     }
-    blocks.push({ type: "text" as const, text: promptBlocks.semiStableBody });
+    // Provider request schemas reject zero-length text members. Prompt
+    // compilation can legitimately omit this section for minimal operations,
+    // so preserve that omission instead of serializing an empty block.
+    if (promptBlocks.semiStableBody) {
+      blocks.push({ type: "text" as const, text: promptBlocks.semiStableBody });
+    }
     result.system = blocks;
     // Only last system block gets cache_control -- cumulative hash covers
     // all prior blocks. Frees 2 breakpoint slots for message breakpoints.

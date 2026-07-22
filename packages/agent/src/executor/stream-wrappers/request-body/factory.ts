@@ -59,6 +59,7 @@ import { upgradeSdkMarkers } from "./marker-upgrade.js";
 import { placeSkipCacheWriteMarker } from "./skip-cache-write-marker.js";
 import { applyKillSwitch } from "./kill-switch.js";
 import { estimateTtlSplit } from "./ttl-split-estimation.js";
+import { stripBedrockToolHistory } from "./bedrock-tool-history.js";
 
 /**
  * Create a stream wrapper that mutates the outgoing request body via the
@@ -100,8 +101,14 @@ export function createRequestBodyInjector(
       // alone leaves the native `openai` provider (gpt-5.5 -> openai-responses) unstabilised
       // (5 floor-collapses observed live).
       const needsResponsesInputStabilizer = usesResponsesInputApi(model as { api?: string; provider?: string });
+      const needsBedrockToolHistoryRepair = (model as { api?: string }).api === "bedrock-converse-stream";
 
-      if (!needsCacheBreakpoints && !needsResponsesApiInjection && !needsResponsesInputStabilizer) {
+      if (
+        !needsCacheBreakpoints
+        && !needsResponsesApiInjection
+        && !needsResponsesInputStabilizer
+        && !needsBedrockToolHistoryRepair
+      ) {
         return next(model, context, options);
       }
 
@@ -202,8 +209,33 @@ export function createRequestBodyInjector(
             if (Array.isArray(params.tools)) {
               result.tools = structuredClone(params.tools);
             }
-            if (Array.isArray(params.messages)) {
-              result.messages = structuredClone(params.messages);
+          }
+          if (
+            (needsCacheBreakpoints || needsBedrockToolHistoryRepair)
+            && Array.isArray(params.messages)
+          ) {
+            result.messages = structuredClone(params.messages);
+          }
+
+          if (
+            needsBedrockToolHistoryRepair
+            && result.toolConfig === undefined
+            && Array.isArray(result.messages)
+          ) {
+            const rewrite = stripBedrockToolHistory(
+              result.messages as Array<Record<string, unknown>>,
+            );
+            result.messages = rewrite.messages;
+            if (rewrite.toolBlocksStripped > 0) {
+              logger.debug(
+                {
+                  toolBlocksStripped: rewrite.toolBlocksStripped,
+                  messagesDropped: rewrite.messagesDropped,
+                  messagesMerged: rewrite.messagesMerged,
+                  sessionKey: config.sessionKey,
+                },
+                "Historical Bedrock tool protocol removed for a tool-disabled turn",
+              );
             }
           }
 
