@@ -8,6 +8,10 @@ import {
   _clearRegistryForTest,
 } from "./tool-metadata.js";
 import type { ToolCapabilityMetadata, ComisToolMetadata } from "./tool-metadata.js";
+import type {
+  ToolInvocationSideEffects,
+  TrackedInvocationSideEffect,
+} from "./tool-metadata.js";
 
 // ---------------------------------------------------------------------------
 // Registry tests
@@ -64,6 +68,55 @@ describe("tool metadata registry", () => {
 
     // Clean up (registry already clear, but be explicit)
     _clearRegistryForTest();
+  });
+});
+
+describe("tool metadata invocation side-effect contract", () => {
+  it("stores an explicit always declaration including a reviewed empty capability set", () => {
+    const capabilities: readonly TrackedInvocationSideEffect[] = [];
+    const declaration: ToolInvocationSideEffects = {
+      kind: "always",
+      capabilities,
+    };
+
+    registerToolMetadata("reg_test_effects_empty", {
+      invocationSideEffects: declaration,
+    });
+
+    expect(getToolMetadata("reg_test_effects_empty")?.invocationSideEffects).toEqual({
+      kind: "always",
+      capabilities: [],
+    });
+  });
+
+  it("stores a closed action declaration without losing prior metadata", () => {
+    registerToolMetadata("reg_test_effects_action", { isReadOnly: false });
+    registerToolMetadata("reg_test_effects_action", {
+      invocationSideEffects: {
+        kind: "by_action",
+        parameter: "action",
+        actions: {
+          inspect: [],
+          publish: ["outbound_delivery"],
+          defer: ["deferred_work"],
+          schedule: ["scheduling"],
+        },
+      },
+    });
+
+    expect(getToolMetadata("reg_test_effects_action")).toMatchObject({
+      isReadOnly: false,
+      invocationSideEffects: {
+        kind: "by_action",
+        parameter: "action",
+        actions: {
+          inspect: [],
+          publish: ["outbound_delivery"],
+          defer: ["deferred_work"],
+          schedule: ["scheduling"],
+        },
+      },
+    });
   });
 });
 

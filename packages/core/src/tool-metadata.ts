@@ -35,12 +35,30 @@ export interface ToolCapabilityMetadata {
   readonly replacesPackages?: readonly string[];
 }
 
+export type TrackedInvocationSideEffect =
+  | "scheduling"
+  | "outbound_delivery"
+  | "deferred_work";
+
+export type ToolInvocationSideEffects =
+  | {
+      readonly kind: "always";
+      readonly capabilities: readonly TrackedInvocationSideEffect[];
+    }
+  | {
+      readonly kind: "by_action";
+      readonly parameter: "action";
+      readonly actions: Readonly<
+        Record<string, readonly TrackedInvocationSideEffect[]>
+      >;
+    };
+
 // ---------------------------------------------------------------------------
 // ComisToolMetadata interface
 // ---------------------------------------------------------------------------
 
 /** Per-tool metadata stored in the side-channel registry. All fields optional. */
-// @optional-field-count: 14 optional fields — this is a side-channel metadata
+// @optional-field-count: 15 optional fields — this is a side-channel metadata
 // aggregator keyed by tool name, registered incrementally via spread-merge from
 // independent sources (result caps, parallel-safety flags, action-gating
 // schema, MCP-export policy, capability routing, and the activity hints
@@ -62,6 +80,9 @@ export interface ComisToolMetadata {
   outputSchema?: Record<string, unknown>;
   /** Tool names that should be co-discovered whenever this tool is discovered (bidirectional). */
   coDiscoverWith?: string[];
+  /** Runtime-owned classification of effects attempted by an invocation.
+   *  Absence is fail-closed: the bridge records an unclassified invocation. */
+  invocationSideEffects?: ToolInvocationSideEffects;
   /** Valid `action` enum values for action-discriminated tools. Used by the
    *  generic schema-validator in @comis/skills/bridge to gate unknown actions
    *  before the per-tool validateInput runs. Field shape mirrors
