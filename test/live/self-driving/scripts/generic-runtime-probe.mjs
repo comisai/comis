@@ -219,7 +219,7 @@ async function deliveryProbe() {
         .filter((button) => typeof button.callback_data === "string")
         .map((button) => sha256(button.callback_data)),
     },
-    mirrorStatus: mirror?.status,
+    mirrorPromptInjectionStatus: mirror?.status,
     authority: mirror === undefined ? undefined : {
       tenantId: mirror.tenant_id,
       agentId: mirror.agent_id,
