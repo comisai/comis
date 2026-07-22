@@ -5,7 +5,11 @@ import {
   hashWorkspacePolicyContent,
 } from "@comis/core";
 import { describe, expect, it } from "vitest";
-import { parseFollowupTaskStoreFile } from "./task-types.js";
+import {
+  FollowupTaskAttemptRecordSchema,
+  FollowupTaskRecordSchema,
+  parseFollowupTaskStoreFile,
+} from "./task-types.js";
 
 function fixture() {
   const conversation = {
@@ -260,6 +264,214 @@ describe("follow-up task store schemas", () => {
       ...data.root,
       tasks: [{ ...base, status: "delivered", terminalAttemptId: "attempt-a", terminalAtMs: 62_000 }],
       attempts: [attempt],
+    })).toMatchObject({ ok: false, error: { code: "invalid_graph" } });
+  });
+
+  it("rejects malformed envelopes and duplicate attempt or policy identifiers", () => {
+    const data = fixture();
+    expect(parseFollowupTaskStoreFile(null)).toMatchObject({ ok: false, error: { code: "invalid_record" } });
+    const checking = {
+      ...attemptBase(data),
+      status: "checking",
+    };
+    expect(parseFollowupTaskStoreFile({
+      ...data.root,
+      tasks: [makeCheckingTask(data.task, "attempt-a")],
+      attempts: [checking, checking],
+    })).toMatchObject({ ok: false, error: { code: "duplicate_id" } });
+    expect(parseFollowupTaskStoreFile({
+      ...data.root,
+      policySnapshots: [data.policy, data.policy],
+    })).toMatchObject({ ok: false, error: { code: "duplicate_id" } });
+  });
+
+  it("rejects task authority whose identity text or timestamps contradict the base contract", () => {
+    const data = fixture();
+    expect(FollowupTaskRecordSchema.safeParse({ ...data.task, agentId: "agent-other" }).success).toBe(false);
+    expect(FollowupTaskRecordSchema.safeParse({ ...data.task, text: "é".repeat(2_049) }).success).toBe(false);
+    expect(FollowupTaskRecordSchema.safeParse({ ...data.task, nextAttemptAtMs: 500 }).success).toBe(false);
+    expect(FollowupTaskRecordSchema.safeParse({ ...data.task, nextAttemptAtMs: data.task.expiresAtMs + 1 }).success).toBe(false);
+    const { nextAttemptAtMs: _nextAttemptAtMs, ...terminalBase } = data.task;
+    expect(FollowupTaskRecordSchema.safeParse({
+      ...terminalBase,
+      status: "cancelled",
+      terminalAttemptId: null,
+      terminalAtMs: 500,
+    }).success).toBe(false);
+  });
+
+  it("rejects duplicate task ownership and contradictory attempt timestamps", () => {
+    const data = fixture();
+    expect(FollowupTaskAttemptRecordSchema.safeParse({
+      ...attemptBase(data),
+      status: "checking",
+      taskIds: ["task-a", "task-a"],
+    }).success).toBe(false);
+    expect(FollowupTaskAttemptRecordSchema.safeParse({
+      ...attemptBase(data),
+      status: "dismissed",
+      check: successfulCheck(),
+      terminalAtMs: 60_999,
+    }).success).toBe(false);
+    expect(FollowupTaskAttemptRecordSchema.safeParse({
+      ...attemptBase(data),
+      status: "delivering",
+      check: successfulCheck(),
+      deliveringAtMs: 60_999,
+    }).success).toBe(false);
+    expect(FollowupTaskAttemptRecordSchema.safeParse({
+      ...attemptBase(data),
+      status: "delivered",
+      check: successfulCheck(),
+      deliveringAtMs: 62_000,
+      deliveredChunks: 1,
+      failedChunks: 0,
+      lastPlatformMessageId: null,
+      deliveredAtMs: 61_500,
+      terminalAtMs: 61_900,
+      history: { status: "appended" },
+    }).success).toBe(false);
+  });
+
+  it("enforces fixed failure kinds output guard kinds and delivery evidence pairing", () => {
+    const data = fixture();
+    const failed = {
+      ...attemptBase(data),
+      status: "failed",
+      check: successfulCheck(),
+      deliveringAtMs: null,
+      failureStage: "deadline",
+      errorKind: "dependency",
+      deliveredChunks: 0,
+      failedChunks: 0,
+      terminalAtMs: 62_000,
+    };
+    expect(FollowupTaskAttemptRecordSchema.safeParse(failed).success).toBe(false);
+    expect(FollowupTaskAttemptRecordSchema.safeParse({
+      ...failed,
+      failureStage: "output_guard",
+      errorKind: "platform",
+    }).success).toBe(false);
+    expect(FollowupTaskAttemptRecordSchema.safeParse({
+      ...failed,
+      failureStage: "delivery_rejected",
+      errorKind: "platform",
+      failedChunks: 1,
+    }).success).toBe(false);
+    expect(FollowupTaskAttemptRecordSchema.safeParse({
+      ...failed,
+      failureStage: "model",
+      failedChunks: 1,
+    }).success).toBe(false);
+  });
+
+  it("rejects contradictory unknown-delivery chunk and ownership evidence", () => {
+    const data = fixture();
+    const deliveryUnknown = {
+      ...attemptBase(data),
+      status: "delivery_unknown",
+      check: successfulCheck(),
+      deliveringAtMs: 61_500,
+      terminalAtMs: 62_000,
+    };
+
+    expect(FollowupTaskAttemptRecordSchema.safeParse({
+      ...deliveryUnknown,
+      delivery: {
+        source: "platform_ambiguous",
+        errorKind: "platform",
+        deliveredChunks: 0,
+        failedChunks: 1,
+        ambiguousChunks: 2,
+        lastPlatformMessageId: null,
+      },
+    }).success).toBe(false);
+    expect(FollowupTaskAttemptRecordSchema.safeParse({
+      ...deliveryUnknown,
+      delivery: {
+        source: "owner_recovery",
+        errorKind: "timeout",
+        deliveredChunks: null,
+        failedChunks: null,
+        ambiguousChunks: null,
+        lastPlatformMessageId: null,
+      },
+    }).success).toBe(false);
+    expect(FollowupTaskAttemptRecordSchema.safeParse({
+      ...deliveryUnknown,
+      delivery: {
+        source: "runtime_unsettled",
+        errorKind: "internal",
+        deliveredChunks: null,
+        failedChunks: null,
+        ambiguousChunks: null,
+        lastPlatformMessageId: null,
+      },
+    }).success).toBe(false);
+  });
+
+  it("accepts owner recovery only with reserved not-returned evidence", () => {
+    const data = fixture();
+    const ownerRecovery = {
+      ...attemptBase(data),
+      status: "failed",
+      check: { status: "not_returned" },
+      deliveringAtMs: null,
+      failureStage: "owner_recovery_before_delivery",
+      errorKind: "internal",
+      deliveredChunks: 0,
+      failedChunks: 0,
+      terminalAtMs: 62_000,
+    };
+    expect(FollowupTaskAttemptRecordSchema.safeParse(ownerRecovery).success).toBe(true);
+    expect(FollowupTaskAttemptRecordSchema.safeParse({
+      ...ownerRecovery,
+      check: successfulCheck(),
+    }).success).toBe(false);
+  });
+
+  it("rejects graph edges with missing tasks or mismatched owner identity", () => {
+    const data = fixture();
+    const checking = { ...attemptBase(data), status: "checking" };
+    expect(parseFollowupTaskStoreFile({ ...data.root, attempts: [checking] })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_graph" },
+    });
+    expect(parseFollowupTaskStoreFile({
+      ...data.root,
+      tasks: [makeCheckingTask(data.task, "attempt-a")],
+      attempts: [{ ...checking, agentId: "agent-other" }],
+    })).toMatchObject({ ok: false, error: { code: "invalid_graph" } });
+    expect(parseFollowupTaskStoreFile({
+      ...data.root,
+      tasks: [makeCheckingTask(data.task, "attempt-a")],
+      attempts: [{ ...checking, tenantId: "tenant-other" }],
+    })).toMatchObject({ ok: false, error: { code: "invalid_graph" } });
+    expect(parseFollowupTaskStoreFile({
+      ...data.root,
+      tasks: [makeCheckingTask(data.task, "attempt-a")],
+      attempts: [{ ...checking, taskIds: ["task-other"] }],
+    })).toMatchObject({ ok: false, error: { code: "invalid_graph" } });
+  });
+
+  it("rejects terminal graph edges with missing attempts or mismatched terminal time", () => {
+    const data = fixture();
+    const { nextAttemptAtMs: _nextAttemptAtMs, ...base } = data.task;
+    const dismissed = {
+      ...attemptBase(data),
+      status: "dismissed",
+      check: successfulCheck(),
+      terminalAtMs: 62_000,
+    };
+    const terminalTask = { ...base, status: "dismissed", terminalAttemptId: "attempt-a", terminalAtMs: 62_000 };
+    expect(parseFollowupTaskStoreFile({ ...data.root, tasks: [terminalTask] })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_graph" },
+    });
+    expect(parseFollowupTaskStoreFile({
+      ...data.root,
+      tasks: [{ ...terminalTask, terminalAtMs: 62_001 }],
+      attempts: [dismissed],
     })).toMatchObject({ ok: false, error: { code: "invalid_graph" } });
   });
 });

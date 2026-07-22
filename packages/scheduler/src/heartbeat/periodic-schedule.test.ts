@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import { describe, expect, it, vi } from "vitest";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
@@ -12,12 +12,14 @@ function fixture(initialMs = NOW_MS, activate = true) {
   const clock = createFakeClock(initialMs);
   const timers = createFakeTimers(initialMs);
   const submitInterval = vi.fn(() => ok(undefined));
-  const schedule = createHeartbeatPeriodicSchedule({ clock, timers, submitInterval });
+  const logger = { warn: vi.fn(), error: vi.fn() };
+  const schedule = createHeartbeatPeriodicSchedule({ clock, timers, submitInterval, logger });
   if (activate) expect(schedule.activate()).toEqual(ok(undefined));
   return {
     clock,
     timers,
     submitInterval,
+    logger,
     schedule,
     advance(ms: number) {
       clock.advance(ms);
@@ -27,6 +29,40 @@ function fixture(initialMs = NOW_MS, activate = true) {
 }
 
 describe("periodic heartbeat phase schedule", () => {
+  it("keeps activation idempotent and fails closed after shutdown", () => {
+    const built = fixture();
+    expect(built.schedule.activate()).toEqual(ok(undefined));
+    built.schedule.shutdown();
+    built.schedule.shutdown();
+
+    expect(built.schedule.activate()).toMatchObject({
+      ok: false,
+      error: { code: "periodic_disabled", errorKind: "precondition" },
+    });
+    expect(built.schedule.configure({
+      agentId: "agent-a",
+      agentSchedulerSeed: "opaque-seed",
+      intervalMs: 60_000,
+      enabled: true,
+    })).toMatchObject({ ok: false, error: { code: "periodic_disabled" } });
+  });
+
+  it("rejects empty oversized and nonpositive periodic configuration", () => {
+    const built = fixture();
+    for (const config of [
+      { agentId: "", agentSchedulerSeed: "seed", intervalMs: 60_000, enabled: true },
+      { agentId: "agent-a", agentSchedulerSeed: "x".repeat(257), intervalMs: 60_000, enabled: true },
+      { agentId: "agent-a", agentSchedulerSeed: "seed", intervalMs: 0, enabled: true },
+      { agentId: "agent-a", agentSchedulerSeed: "seed", intervalMs: 1.5, enabled: true },
+    ]) {
+      expect(built.schedule.configure(config)).toMatchObject({
+        ok: false,
+        error: { code: "invalid_configuration", errorKind: "validation" },
+      });
+    }
+    expect(built.timers.unrefRecord()).toEqual([]);
+  });
+
   it("retains canonical phase configuration without arming until activation", () => {
     const built = fixture(NOW_MS, false);
     expect(built.schedule.configure({
@@ -115,5 +151,68 @@ describe("periodic heartbeat phase schedule", () => {
       error: { code: "epoch_overflow", errorKind: "precondition" },
     });
     expect(built.timers.unrefRecord()).toEqual([]);
+  });
+
+  it("keeps the next nominal phase armed after thrown and rejected admissions", () => {
+    for (const failure of [
+      () => { throw new Error("coordinator unavailable"); },
+      () => err({ errorKind: "precondition" as const, message: "not accepting" }),
+    ]) {
+      const built = fixture();
+      built.submitInterval.mockImplementationOnce(failure);
+      const configured = built.schedule.configure({
+        agentId: "agent-a",
+        agentSchedulerSeed: "opaque-seed",
+        intervalMs: 300_000,
+        enabled: true,
+      });
+      expect(configured.ok).toBe(true);
+      if (!configured.ok) continue;
+      built.advance(configured.value.nextDueAtMs! - NOW_MS);
+
+      expect(built.logger.warn).toHaveBeenCalledWith(expect.objectContaining({
+        agentId: "agent-a",
+        step: "periodic_admission",
+      }), "Periodic heartbeat occurrence was not admitted");
+      expect(built.schedule.getNextDueAtMs("agent-a")).toMatchObject({ ok: true });
+    }
+  });
+
+  it("removes an armed target once and cancels its timer", () => {
+    const built = fixture();
+    expect(built.schedule.remove("missing-agent")).toBe(false);
+    built.schedule.configure({
+      agentId: "agent-a",
+      agentSchedulerSeed: "opaque-seed",
+      intervalMs: 300_000,
+      enabled: true,
+    });
+
+    expect(built.schedule.remove("agent-a")).toBe(true);
+    expect(built.schedule.remove("agent-a")).toBe(false);
+    expect(built.timers.unrefRecord()[0]).toMatchObject({ cancelled: true });
+  });
+
+  it("removes a periodic target when its following safe epoch overflows", () => {
+    const initialMs = Number.MAX_SAFE_INTEGER - 300_000;
+    const built = fixture(initialMs);
+    const configured = built.schedule.configure({
+      agentId: "agent-a",
+      agentSchedulerSeed: "opaque-seed",
+      intervalMs: 300_000,
+      enabled: true,
+    });
+    expect(configured.ok).toBe(true);
+    if (!configured.ok) return;
+
+    built.advance(configured.value.nextDueAtMs! - initialMs);
+    expect(built.schedule.getNextDueAtMs("agent-a")).toMatchObject({
+      ok: false,
+      error: { code: "periodic_disabled" },
+    });
+    expect(built.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "periodic_phase_advance", errorKind: "precondition" }),
+      "Periodic heartbeat phase could not advance",
+    );
   });
 });

@@ -4,7 +4,7 @@ import {
   createConversationRef,
   hashWorkspacePolicyContent,
 } from "@comis/core";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import { describe, expect, it, vi } from "vitest";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import type { TaskExtractionItem } from "./task-extraction-queue.js";
@@ -111,6 +111,75 @@ function setup(overrides: Record<string, unknown> = {}) {
 }
 
 describe("governed task extraction runner", () => {
+  it("enforces lifecycle and single-operation admission before model work", async () => {
+    let resolveModel: ((value: ReturnType<typeof ok<{ raw: string }>>) => void) | undefined;
+    const data = setup();
+    data.modelRun.mockImplementationOnce(() => new Promise((resolve) => { resolveModel = resolve; }));
+
+    expect(data.runner.getStatus()).toEqual({ accepting: false, activeCount: 0 });
+    expect(data.runner.submit("agent-a", [item()])).toEqual(
+      err({ code: "not_accepting", errorKind: "precondition" }),
+    );
+    data.runner.activate();
+    expect(data.runner.submit("agent-a", [item()])).toEqual(ok(undefined));
+    expect(data.runner.submit("agent-a", [item()])).toEqual(
+      err({ code: "already_running", errorKind: "precondition" }),
+    );
+    expect(data.runner.getStatus()).toEqual({ accepting: true, activeCount: 1 });
+    await vi.waitFor(() => expect(data.withModelSession).toHaveBeenCalledOnce());
+    resolveModel?.(ok({ raw: validOutput() }));
+    await data.runner.waitForIdle();
+    expect(data.runner.close()).toEqual({ activeCount: 0 });
+    expect(data.runner.activate()).toEqual(err({ code: "closed", errorKind: "precondition" }));
+  });
+
+  it("rejects malformed identifiers batches ownership and timestamps", () => {
+    const base = item();
+    const wrongAgent = {
+      ...base,
+      origin: {
+        ...base.origin,
+        turnScope: {
+          ...base.origin.turnScope,
+          conversation: { ...base.origin.turnScope.conversation, agentId: "agent-b" },
+        },
+      },
+    };
+    const cases = [
+      setup({ idFactory: () => { throw new Error("identifier unavailable"); } }),
+      setup({ idFactory: () => "wrong-prefix" }),
+      setup({ idFactory: () => `root-task-extract-${"x".repeat(300)}` }),
+    ];
+    for (const data of cases) {
+      data.runner.activate();
+      expect(data.runner.submit("agent-a", [base])).toMatchObject({
+        ok: false,
+        error: { code: "invalid_batch", errorKind: "validation" },
+      });
+    }
+
+    const empty = setup();
+    empty.runner.activate();
+    expect(empty.runner.submit("", [base])).toMatchObject({ ok: false, error: { code: "invalid_batch" } });
+    expect(empty.runner.submit("agent-a", [])).toMatchObject({ ok: false, error: { code: "invalid_batch" } });
+    expect(empty.runner.submit("agent-a", Array.from({ length: 65 }, () => base))).toMatchObject({
+      ok: false,
+      error: { code: "invalid_batch" },
+    });
+    expect(empty.runner.submit("agent-a", [wrongAgent])).toMatchObject({
+      ok: false,
+      error: { code: "invalid_batch" },
+    });
+
+    const invalidClock = setup();
+    invalidClock.setNow(-1);
+    invalidClock.runner.activate();
+    expect(invalidClock.runner.submit("agent-a", [base])).toMatchObject({
+      ok: false,
+      error: { code: "invalid_batch" },
+    });
+  });
+
   it("runs one rooted model session and persists strictly bound candidates", async () => {
     const data = setup();
     expect(data.runner.activate()).toEqual(ok(undefined));
@@ -215,6 +284,202 @@ describe("governed task extraction runner", () => {
       status: "dropped",
       stage: "persistence_fence",
       errorKind: "precondition",
+    }));
+  });
+
+  it("reports rejected and explicit root registration failures without model access", async () => {
+    const rejected = setup({ registerRoot: async () => { throw new Error("registry unavailable"); } });
+    rejected.runner.activate();
+    rejected.runner.submit("agent-a", [item()]);
+    await rejected.runner.waitForIdle();
+    expect(rejected.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      status: "dropped",
+      stage: "root_registration",
+      errorKind: "internal",
+    }));
+    expect(rejected.withModelSession).not.toHaveBeenCalled();
+
+    const failed = setup({
+      registerRoot: async () => err({ code: "registry_denied", errorKind: "resource" }),
+    });
+    failed.runner.activate();
+    failed.runner.submit("agent-a", [item()]);
+    await failed.runner.waitForIdle();
+    expect(failed.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      stage: "root_registration",
+      errorKind: "resource",
+    }));
+  });
+
+  it("attaches rejected and explicit root release failures to the completed outcome", async () => {
+    const rejected = setup({ releaseRoot: async () => { throw new Error("release unavailable"); } });
+    rejected.runner.activate();
+    rejected.runner.submit("agent-a", [item()]);
+    await rejected.runner.waitForIdle();
+    expect(rejected.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      status: "persisted",
+      releaseErrorKind: "internal",
+    }));
+
+    const failed = setup({
+      releaseRoot: async () => err({ code: "release_denied", errorKind: "resource" }),
+    });
+    failed.runner.activate();
+    failed.runner.submit("agent-a", [item()]);
+    await failed.runner.waitForIdle();
+    expect(failed.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      status: "persisted",
+      releaseErrorKind: "resource",
+    }));
+  });
+
+  it("drops disabled and invalid-time operations before opening a model session", async () => {
+    for (const isEnabled of [() => false, () => { throw new Error("gate unavailable"); }]) {
+      const data = setup({ isEnabled });
+      data.runner.activate();
+      data.runner.submit("agent-a", [item()]);
+      await data.runner.waitForIdle();
+      expect(data.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+        status: "dropped",
+        stage: "live_gate",
+        errorKind: "precondition",
+      }));
+      expect(data.withModelSession).not.toHaveBeenCalled();
+    }
+
+    let readCount = 0;
+    const unsafeClock = setup({
+      clock: {
+        now: () => (++readCount === 1 ? 2_000 : Number.MAX_SAFE_INTEGER),
+        nowDate: () => new Date(0),
+      },
+    });
+    unsafeClock.runner.activate();
+    unsafeClock.runner.submit("agent-a", [item()]);
+    await unsafeClock.runner.waitForIdle();
+    expect(unsafeClock.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      stage: "internal",
+      errorKind: "internal",
+    }));
+  });
+
+  it("maps model session transport and provider failures to model outcomes", async () => {
+    const cases = [
+      setup({ withModelSession: async () => { throw new Error("session unavailable"); } }),
+      setup({ withModelSession: async () => err({ code: "session_failed", errorKind: "dependency" }) }),
+    ];
+    for (const data of cases) {
+      data.runner.activate();
+      data.runner.submit("agent-a", [item()]);
+      await data.runner.waitForIdle();
+      expect(data.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+        status: "dropped",
+        stage: "model",
+      }));
+    }
+
+    const rejectedRun = setup();
+    rejectedRun.modelRun.mockRejectedValueOnce(new Error("provider unavailable"));
+    rejectedRun.runner.activate();
+    rejectedRun.runner.submit("agent-a", [item()]);
+    await rejectedRun.runner.waitForIdle();
+    expect(rejectedRun.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      stage: "model",
+      errorKind: "internal",
+    }));
+
+    const failedRun = setup();
+    failedRun.modelRun.mockResolvedValueOnce(err({ code: "provider_failed", errorKind: "dependency" }));
+    failedRun.runner.activate();
+    failedRun.runner.submit("agent-a", [item()]);
+    await failedRun.runner.waitForIdle();
+    expect(failedRun.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      stage: "model",
+      errorKind: "dependency",
+    }));
+  });
+
+  it("maps invalid configuration and repair failures without persisting candidates", async () => {
+    const invalidConfig = setup({ getConfig: () => ({ batchMax: 0, defaultWindowMs: 0 }) });
+    invalidConfig.runner.activate();
+    invalidConfig.runner.submit("agent-a", [item()]);
+    await invalidConfig.runner.waitForIdle();
+    expect(invalidConfig.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      stage: "internal",
+      errorKind: "config",
+    }));
+
+    const rejectedRepair = setup();
+    rejectedRepair.modelRun
+      .mockResolvedValueOnce(ok({ raw: "{invalid" }))
+      .mockRejectedValueOnce(new Error("repair unavailable"));
+    rejectedRepair.runner.activate();
+    rejectedRepair.runner.submit("agent-a", [item()]);
+    await rejectedRepair.runner.waitForIdle();
+    expect(rejectedRepair.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      stage: "model",
+      errorKind: "internal",
+    }));
+
+    const failedRepair = setup();
+    failedRepair.modelRun
+      .mockResolvedValueOnce(ok({ raw: "{invalid" }))
+      .mockResolvedValueOnce(err({ code: "repair_failed", errorKind: "dependency" }));
+    failedRepair.runner.activate();
+    failedRepair.runner.submit("agent-a", [item()]);
+    await failedRepair.runner.waitForIdle();
+    expect(failedRepair.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      stage: "model",
+      errorKind: "dependency",
+    }));
+  });
+
+  it("enforces deadline and post-model live gate before durable persistence", async () => {
+    let resolveTimed: ((value: ReturnType<typeof ok<{ raw: string }>>) => void) | undefined;
+    const timed = setup();
+    timed.modelRun.mockImplementationOnce(() => new Promise((resolve) => { resolveTimed = resolve; }));
+    timed.runner.activate();
+    timed.runner.submit("agent-a", [item()]);
+    await vi.waitFor(() => expect(timed.withModelSession).toHaveBeenCalledOnce());
+    timed.timers.advance(30_000);
+    resolveTimed?.(ok({ raw: validOutput() }));
+    await timed.runner.waitForIdle();
+    expect(timed.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      stage: "deadline",
+      errorKind: "timeout",
+    }));
+    expect(timed.persistCandidates).not.toHaveBeenCalled();
+
+    let enabledReads = 0;
+    const disabledAfterModel = setup({ isEnabled: () => ++enabledReads === 1 });
+    disabledAfterModel.runner.activate();
+    disabledAfterModel.runner.submit("agent-a", [item()]);
+    await disabledAfterModel.runner.waitForIdle();
+    expect(disabledAfterModel.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      stage: "live_gate",
+      errorKind: "precondition",
+    }));
+  });
+
+  it("maps rejected and explicit persistence failures to store outcomes", async () => {
+    const rejected = setup({ persistCandidates: async () => { throw new Error("store unavailable"); } });
+    rejected.runner.activate();
+    rejected.runner.submit("agent-a", [item()]);
+    await rejected.runner.waitForIdle();
+    expect(rejected.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      stage: "store",
+      errorKind: "internal",
+    }));
+
+    const failed = setup({
+      persistCandidates: async () => err({ code: "write_failed", errorKind: "resource" }),
+    });
+    failed.runner.activate();
+    failed.runner.submit("agent-a", [item()]);
+    await failed.runner.waitForIdle();
+    expect(failed.onOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      stage: "store",
+      errorKind: "resource",
     }));
   });
 });

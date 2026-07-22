@@ -89,4 +89,12 @@ describe("possibly visible heartbeat duplicate detector", () => {
     detector.clear();
     expect(detector.check(candidate())).toBe(false);
   });
+
+  it("ignores malformed and oversized candidates for both check and recording", () => {
+    const detector = createDuplicateDetector({ clock: createFakeClock(1_000) });
+    const invalid = candidate({ agentId: "", text: "x".repeat(64 * 1_024 + 1) });
+    expect(detector.check(invalid)).toBe(false);
+    detector.recordPossiblyVisible(invalid);
+    expect(detector.check(invalid)).toBe(false);
+  });
 });

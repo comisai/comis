@@ -41,6 +41,16 @@ function fixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("monitoring heartbeat runner", () => {
+  it("fails closed when configured source identities are invalid or duplicated", async () => {
+    for (const sources of [[source("")], [source("monitor_disk"), source("monitor_disk")]]) {
+      const built = fixture({ sources });
+      await expect(built.runner.runOnce("manual", new AbortController().signal)).resolves.toEqual(err({
+        code: "precondition_failed",
+        errorKind: "precondition",
+      }));
+    }
+  });
+
   it("returns exact settled counters from closed source diagnostics", async () => {
     const healthy = source("monitor_disk");
     const critical = source("monitor_cpu", ok({
@@ -77,6 +87,25 @@ describe("monitoring heartbeat runner", () => {
     });
     expect(built.logger.error).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(built.logger.error.mock.calls)).not.toContain("secret-bearing adapter prose");
+  });
+
+  it("classifies malformed source diagnostics as validation failures", async () => {
+    const malformed = source("monitor_disk", ok({
+      level: "unknown",
+      observedAtMs: NOW_MS,
+      code: "invalid",
+      counters: [],
+    } as never));
+    const built = fixture({ sources: [malformed] });
+
+    await expect(built.runner.runOnce("hook", new AbortController().signal)).resolves.toMatchObject({
+      ok: true,
+      value: { checksRun: 1, checksFailed: 1, alertsRaised: 1 },
+    });
+    expect(built.logger.error).toHaveBeenCalledWith(expect.objectContaining({
+      sourceErrorCode: "invalid_diagnostic",
+      errorKind: "validation",
+    }), "Monitoring source check failed");
   });
 
   it("fails before a source starts when the requested trigger is invalid or already aborted", async () => {
@@ -121,6 +150,32 @@ describe("monitoring heartbeat runner", () => {
       alertsRaised: 1,
       durationMs: 1_000,
     }));
+  });
+
+  it("propagates parent shutdown abort and stops before the next source", async () => {
+    const parent = new AbortController();
+    const first: HeartbeatSourcePort = {
+      id: "monitor_disk",
+      check: vi.fn((signal) => new Promise((resolve) => {
+        signal.addEventListener("abort", () => resolve(ok({
+          level: "ok",
+          observedAtMs: NOW_MS,
+          code: "cancelled_cleanly",
+          counters: [],
+        })), { once: true });
+      })),
+    };
+    const second = source("monitor_cpu");
+    const built = fixture({ sources: [first, second] });
+    const running = built.runner.runOnce("wake", parent.signal);
+    await vi.waitFor(() => expect(first.check).toHaveBeenCalledOnce());
+    parent.abort("shutdown");
+
+    await expect(running).resolves.toMatchObject({
+      ok: true,
+      value: { status: "aborted", reason: "shutdown", checksRun: 1 },
+    });
+    expect(second.check).not.toHaveBeenCalled();
   });
 
   it("returns unsettled after grace while retaining the busy guard until late settlement", async () => {

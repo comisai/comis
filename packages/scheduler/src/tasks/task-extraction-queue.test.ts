@@ -5,7 +5,7 @@ import {
   hashWorkspacePolicyContent,
   type TaskExtractionTurn,
 } from "@comis/core";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import { describe, expect, it, vi } from "vitest";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import { createTaskExtractionQueue } from "./task-extraction-queue.js";
@@ -64,7 +64,7 @@ function turn(overrides: Partial<TaskExtractionTurn> = {}): TaskExtractionTurn {
   };
 }
 
-function setup() {
+function setup(overrides: Record<string, unknown> = {}) {
   const timers = createFakeTimers();
   const batches: unknown[][] = [];
   let sequence = 0;
@@ -72,17 +72,25 @@ function setup() {
     batches.push([...batch]);
     return ok(undefined);
   });
+  const onBatchFailed = vi.fn();
   const queue = createTaskExtractionQueue({
     timers,
     idFactory: () => `item-${++sequence}`,
     getConfig: () => ({ debounceMs: 1_000, batchMax: 8, heartbeatIntervalMs: 60_000 }),
     onBatch,
-    onBatchFailed: vi.fn(),
-  });
-  return { queue, timers, batches, onBatch };
+    onBatchFailed,
+    ...overrides,
+  } as never);
+  return { queue, timers, batches, onBatch, onBatchFailed };
 }
 
 describe("task extraction queue", () => {
+  it("rejects reactivation after permanent queue closure", () => {
+    const { queue } = setup();
+    queue.close();
+    expect(queue.activate()).toEqual(err({ code: "closed", errorKind: "precondition" }));
+  });
+
   it("rejects admission before activation and after closure", () => {
     const { queue } = setup();
     expect(queue.enqueue(turn())).toMatchObject({ ok: false, error: { code: "not_accepting" } });
@@ -192,5 +200,31 @@ describe("task extraction queue", () => {
     expect(timers.unrefRecord()[0]).toMatchObject({ cancelled: true });
     timers.advance(2_000);
     expect(batches).toHaveLength(0);
+  });
+
+  it("counts and reports failed batch ownership transfer", () => {
+    const { queue, timers, onBatch, onBatchFailed } = setup();
+    onBatch.mockImplementationOnce(() => err({ code: "runner_closed", errorKind: "precondition" }));
+    queue.activate();
+    queue.enqueue(turn());
+    timers.advance(1_000);
+
+    expect(onBatchFailed).toHaveBeenCalledWith("agent-a", {
+      code: "runner_closed",
+      errorKind: "precondition",
+    }, [expect.objectContaining({ itemId: "item-1" })]);
+    expect(queue.getStatus()).toMatchObject({ batchFailureCount: 1, itemCount: 0 });
+  });
+
+  it("rejects invalid debounce batch and heartbeat timing configuration", () => {
+    for (const config of [
+      { debounceMs: 0, batchMax: 8, heartbeatIntervalMs: 60_000 },
+      { debounceMs: 1_000, batchMax: 0, heartbeatIntervalMs: 60_000 },
+      { debounceMs: 1_000, batchMax: 8, heartbeatIntervalMs: 0 },
+    ]) {
+      const { queue } = setup({ getConfig: () => config });
+      queue.activate();
+      expect(queue.enqueue(turn())).toEqual(err({ code: "invalid_turn", errorKind: "validation" }));
+    }
   });
 });

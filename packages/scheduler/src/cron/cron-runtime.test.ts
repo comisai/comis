@@ -5,6 +5,8 @@ import {
   CronRuntimeExecutionInputSchema,
   CronRuntimeOutcomeSchema,
   CronRuntimeErrorSchema,
+  mapCronRuntimeErrorStage,
+  runtimeErrorKind,
 } from "./cron-runtime.js";
 
 const sessionKey = {
@@ -201,5 +203,17 @@ describe("cron runtime boundary contracts", () => {
       errorKind: "platform",
       message: "Send may have begun",
     }).success).toBe(false);
+  });
+
+  it("maps every runtime failure code and preserves its closed error kind", () => {
+    expect(mapCronRuntimeErrorStage("not_bound")).toBe("executor_not_bound");
+    expect(mapCronRuntimeErrorStage("invalid_input")).toBe("executor_invalid_input");
+    expect(mapCronRuntimeErrorStage("precondition_failed")).toBe("executor_precondition");
+    expect(mapCronRuntimeErrorStage("dispatch_rejected")).toBe("dispatch_rejected");
+    expect(runtimeErrorKind({
+      code: "dispatch_rejected",
+      errorKind: "dependency",
+      message: "Dispatch rejected",
+    })).toBe("dependency");
   });
 });

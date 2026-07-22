@@ -151,6 +151,24 @@ describe("isInQuietHours", () => {
 });
 
 describe("resolveQuietHoursEndMs", () => {
+  it("rejects timestamps outside the safe nonnegative clock domain", () => {
+    const config: QuietHoursConfig = {
+      enabled: true,
+      start: "22:00",
+      end: "07:00",
+      timezone: "UTC",
+    };
+
+    expect(resolveQuietHoursEndMs(config, -1)).toEqual({
+      ok: false,
+      error: { code: "invalid_config", errorKind: "config" },
+    });
+    expect(resolveQuietHoursEndMs(config, 1.5)).toEqual({
+      ok: false,
+      error: { code: "invalid_config", errorKind: "config" },
+    });
+  });
+
   it("returns null outside quiet hours and the exact UTC end while active", () => {
     const config: QuietHoursConfig = {
       enabled: true,

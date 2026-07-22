@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TypedEventBus, type FileLockPort, type LockError } from "@comis/core";
-import { ok, type Result } from "@comis/shared";
+import { err, ok, type Result } from "@comis/shared";
 import type { SchedulerLogger } from "../shared-types.js";
 import { createExecutionTracker, type ExecutionTracker } from "../execution/execution-tracker.js";
 import type {
@@ -275,5 +275,122 @@ describe("cron boot ownership reconciliation", () => {
       currentBootId: "boot-current",
       nowMs: NOW_MS + 80_000,
     })).toMatchObject({ ok: false, error: { code: "orphan_start", errorKind: "validation" } });
+  });
+
+  it("rejects invalid reconciliation identities, clocks, and durable reads", async () => {
+    const invalid = await fixture();
+    await expect(reconcileCronOwnership({
+      ...invalid,
+      currentBootId: "",
+      nowMs: NOW_MS,
+    })).resolves.toMatchObject({ ok: false, error: { code: "invalid_input" } });
+
+    vi.spyOn(invalid.store, "getSnapshot").mockReturnValueOnce(err({
+      code: "io",
+      errorKind: "internal",
+      message: "store unavailable",
+    }));
+    await expect(reconcileCronOwnership({
+      ...invalid,
+      currentBootId: "boot-current",
+      nowMs: NOW_MS,
+    })).resolves.toMatchObject({ ok: false, error: { code: "store_read" } });
+
+    vi.spyOn(invalid.tracker, "listOwnershipGroups").mockResolvedValueOnce(err({
+      code: "io",
+      errorKind: "internal",
+      message: "ledger unavailable",
+    }));
+    await expect(reconcileCronOwnership({
+      ...invalid,
+      currentBootId: "boot-current",
+      nowMs: NOW_MS,
+    })).resolves.toMatchObject({ ok: false, error: { code: "ledger_read" } });
+  });
+
+  it("rejects reconciliation before the prior owner durable fact", async () => {
+    const data = await fixture();
+    const claimed = await claim(data.store);
+
+    await expect(reconcileCronOwnership({
+      ...data,
+      currentBootId: "boot-current",
+      nowMs: claimed.claimedAtMs - 1,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "invalid_input", executionId: claimed.executionId },
+    });
+  });
+
+  it("propagates ledger append and claim settlement failures for every recovery state", async () => {
+    const beforeStartAppend = await fixture();
+    await claim(beforeStartAppend.store);
+    vi.spyOn(beforeStartAppend.tracker, "appendRecoveredExecution").mockResolvedValueOnce(err({
+      code: "io",
+      errorKind: "internal",
+      message: "ledger write failed",
+    }));
+    await expect(reconcileCronOwnership({
+      ...beforeStartAppend,
+      currentBootId: "boot-current",
+      nowMs: NOW_MS + 80_000,
+    })).resolves.toMatchObject({ ok: false, error: { code: "ledger_write", executionId: "execution-a" } });
+
+    const beforeStartSettle = await fixture();
+    await claim(beforeStartSettle.store);
+    vi.spyOn(beforeStartSettle.store, "settleClaim").mockResolvedValueOnce(err({
+      code: "io",
+      errorKind: "internal",
+      message: "store write failed",
+    }));
+    await expect(reconcileCronOwnership({
+      ...beforeStartSettle,
+      currentBootId: "boot-current",
+      nowMs: NOW_MS + 80_000,
+    })).resolves.toMatchObject({ ok: false, error: { code: "store_write", executionId: "execution-a" } });
+
+    const afterStartAppend = await fixture();
+    const startedClaim = await claim(afterStartAppend.store);
+    await afterStartAppend.tracker.appendStart(startFromClaim(startedClaim), [startedClaim.executionId]);
+    vi.spyOn(afterStartAppend.tracker, "appendTerminal").mockResolvedValueOnce(err({
+      code: "io",
+      errorKind: "internal",
+      message: "terminal append failed",
+    }));
+    await expect(reconcileCronOwnership({
+      ...afterStartAppend,
+      currentBootId: "boot-current",
+      nowMs: NOW_MS + 80_000,
+    })).resolves.toMatchObject({ ok: false, error: { code: "ledger_write", executionId: "execution-a" } });
+
+    const afterStartSettle = await fixture();
+    const unsettledClaim = await claim(afterStartSettle.store);
+    await afterStartSettle.tracker.appendStart(startFromClaim(unsettledClaim), [unsettledClaim.executionId]);
+    vi.spyOn(afterStartSettle.store, "settleClaim").mockResolvedValueOnce(err({
+      code: "io",
+      errorKind: "internal",
+      message: "store settle failed",
+    }));
+    await expect(reconcileCronOwnership({
+      ...afterStartSettle,
+      currentBootId: "boot-current",
+      nowMs: NOW_MS + 80_000,
+    })).resolves.toMatchObject({ ok: false, error: { code: "store_write", executionId: "execution-a" } });
+
+    const terminalSettle = await fixture();
+    const terminalClaim = await claim(terminalSettle.store);
+    const terminalStart = startFromClaim(terminalClaim);
+    await terminalSettle.tracker.appendStart(terminalStart, [terminalClaim.executionId]);
+    await terminalSettle.tracker.appendTerminal(failedTerminal(terminalStart), [terminalClaim.executionId]);
+    vi.spyOn(terminalSettle.store, "settleClaim").mockResolvedValueOnce(err({
+      code: "io",
+      errorKind: "internal",
+      message: "terminal settle failed",
+    }));
+    await expect(reconcileCronOwnership({
+      ...terminalSettle,
+      currentBootId: "boot-current",
+      nowMs: NOW_MS + 80_000,
+    })).resolves.toMatchObject({ ok: false, error: { code: "store_write", executionId: "execution-a" } });
   });
 });

@@ -64,4 +64,19 @@ describe("scheduler phase resolution", () => {
       },
     });
   });
+
+  it("rejects every invalid next-phase arithmetic input before bigint conversion", () => {
+    expect(resolveNextSchedulerPhaseAtMs(0, 0, 0)).toMatchObject({
+      ok: false,
+      error: { code: "invalid_modulus" },
+    });
+    expect(resolveNextSchedulerPhaseAtMs(5, 5, 0)).toMatchObject({
+      ok: false,
+      error: { code: "invalid_phase" },
+    });
+    expect(resolveNextSchedulerPhaseAtMs(0, 5, -1)).toMatchObject({
+      ok: false,
+      error: { code: "invalid_epoch" },
+    });
+  });
 });

@@ -110,6 +110,65 @@ async function flush(): Promise<void> {
 }
 
 describe("follow-up task due schedule", () => {
+  it("rejects scheduling before activation and after permanent shutdown", async () => {
+    const data = fixture();
+
+    await expect(data.schedule.requestRescan()).resolves.toEqual(
+      err({ code: "not_accepting", errorKind: "precondition" }),
+    );
+    data.schedule.shutdown();
+    data.schedule.shutdown();
+    await expect(data.schedule.activate()).resolves.toEqual(
+      err({ code: "not_accepting", errorKind: "precondition" }),
+    );
+  });
+
+  it("reports rejected and failed durable authority reads with their failure class", async () => {
+    const rejected = fixture();
+    rejected.read.mockRejectedValueOnce(new Error("store unavailable"));
+
+    await expect(rejected.schedule.activate()).resolves.toEqual(
+      err({ code: "store_unavailable", errorKind: "internal" }),
+    );
+    expect(rejected.logger.error).toHaveBeenCalledWith(expect.objectContaining({
+      errorKind: "internal",
+      step: "task_due_store_read",
+    }), "Task due schedule could not read durable authority");
+
+    const failed = fixture();
+    failed.read.mockResolvedValueOnce(err({ code: "read_failed", errorKind: "resource" }));
+    await expect(failed.schedule.activate()).resolves.toEqual(
+      err({ code: "store_unavailable", errorKind: "resource" }),
+    );
+  });
+
+  it("ignores an obsolete authority scan that resolves after a newer rescan", async () => {
+    const data = fixture(NOW_MS + 90_000);
+    let resolveFirst: ((value: ReturnType<typeof ok<FollowupTaskStoreFile>>) => void) | undefined;
+    data.read.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
+
+    const activation = data.schedule.activate();
+    await Promise.resolve();
+    await expect(data.schedule.requestRescan()).resolves.toEqual(ok({ nextDueAtMs: NOW_MS + 90_000 }));
+    resolveFirst?.(ok(root(NOW_MS + 10_000)));
+
+    await expect(activation).resolves.toEqual(ok({ nextDueAtMs: NOW_MS + 90_000 }));
+    expect(data.timers.unrefRecord()).toHaveLength(1);
+  });
+
+  it("rejects unsafe pending and retention timestamps from durable authority", async () => {
+    const invalidPending = fixture(Number.NaN);
+    await expect(invalidPending.schedule.activate()).resolves.toEqual(
+      err({ code: "invalid_state", errorKind: "validation" }),
+    );
+
+    const invalidRetention = fixture(null);
+    invalidRetention.setRoot(terminalRoot(Number.MAX_SAFE_INTEGER));
+    await expect(invalidRetention.schedule.activate()).resolves.toEqual(
+      err({ code: "invalid_state", errorKind: "validation" }),
+    );
+  });
+
   it("arms the earliest persisted task only after activation and submits through the shared coordinator", async () => {
     const data = fixture();
     expect(data.timers.unrefRecord()).toEqual([]);
@@ -309,6 +368,97 @@ describe("follow-up task due schedule", () => {
       retryScheduled: true,
       hint: "Verify the trusted due-task producer uses task reason with spacing_bypass timing before retrying",
     }, "Task due wake admission failed");
+  });
+
+  it("classifies invalid targets and thrown coordinator submissions for bounded retry", async () => {
+    const invalidTarget = fixture(NOW_MS);
+    invalidTarget.submitTaskWake.mockReturnValueOnce(err({
+      code: "invalid_target",
+      errorKind: "validation",
+    }));
+    await invalidTarget.schedule.activate();
+    invalidTarget.advance(0);
+    await flush();
+    expect(invalidTarget.logger.warn).toHaveBeenCalledWith(expect.objectContaining({
+      errorCode: "invalid_target",
+      retryScheduled: true,
+      hint: "Restore the configured agent target before the bounded due-task retry",
+    }), "Task due wake admission failed");
+
+    const thrown = fixture(NOW_MS);
+    thrown.submitTaskWake.mockImplementationOnce(() => { throw new Error("coordinator unavailable"); });
+    await thrown.schedule.activate();
+    thrown.advance(0);
+    await flush();
+    expect(thrown.logger.warn).toHaveBeenCalledWith(expect.objectContaining({
+      errorCode: "submission_failed",
+      errorKind: "internal",
+      hint: "Inspect the heartbeat coordinator submission boundary before the bounded due-task retry",
+    }), "Task due wake admission failed");
+  });
+
+  it("reports each permanent admission failure with its operator-specific recovery hint", async () => {
+    const cases = [
+      {
+        result: err({ code: "invalid_request" as const, errorKind: "validation" as const }),
+        hint: "Verify the trusted due-task producer timing, then request a new due-task schedule rescan",
+      },
+      {
+        result: err({ code: "invalid_target" as const, errorKind: "validation" as const }),
+        hint: "Restore the configured agent target, then request a new due-task schedule rescan",
+      },
+      {
+        result: undefined,
+        hint: "Inspect the heartbeat coordinator submission boundary, then request a new due-task schedule rescan",
+      },
+    ];
+
+    for (const candidate of cases) {
+      const data = fixture(NOW_MS);
+      if (candidate.result === undefined) {
+        data.submitTaskWake.mockImplementation(() => { throw new Error("coordinator unavailable"); });
+      } else {
+        data.submitTaskWake.mockReturnValue(candidate.result);
+      }
+      await data.schedule.activate();
+      data.advance(0);
+      await flush();
+      data.advance(30_000);
+      await flush();
+
+      expect(data.logger.warn).toHaveBeenLastCalledWith(expect.objectContaining({
+        retryScheduled: false,
+        hint: candidate.hint,
+      }), "Task due wake admission failed");
+    }
+  });
+
+  it("refuses an unsafe retry timestamp after a coordinator submission failure", async () => {
+    const nowMs = Number.MAX_SAFE_INTEGER - 10;
+    const clock = createFakeClock(nowMs);
+    const timers = createFakeTimers(nowMs);
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const schedule = createTaskDueSchedule({
+      agentId: "agent-a",
+      clock,
+      timers,
+      store: { read: async () => ok(root(nowMs)) },
+      submitTaskWake: () => err({ code: "not_accepting", errorKind: "precondition" }),
+      logger,
+    });
+
+    await schedule.activate();
+    timers.advance(0);
+    await flush();
+
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({
+      retryScheduled: false,
+      hint: "Activate heartbeat coordinator admission, then request a new due-task schedule rescan",
+    }), "Task due wake admission failed");
+    expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({
+      step: "task_due_wake_retry",
+      errorKind: "internal",
+    }), "Task due wake retry time overflowed");
   });
 
   it("cancels its timer and refuses rescans after shutdown", async () => {

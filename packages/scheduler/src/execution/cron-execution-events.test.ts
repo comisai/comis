@@ -9,6 +9,7 @@ import {
 import type {
   CronExecutionStartedRow,
   CronExecutionTerminalRow,
+  CronTerminalOutcome,
 } from "./cron-execution-record.js";
 
 function logger(): SchedulerLogger {
@@ -97,5 +98,78 @@ describe("durable cron execution event projection", () => {
       hint: expect.any(String),
       errorKind: "internal",
     }), "Cron observational event subscriber failed");
+  });
+
+  it("projects exact accepted partial rejected and ambiguous delivery counts", () => {
+    const outcomes: CronTerminalOutcome[] = [
+      { kind: "delivery_only", delivery: { status: "accepted", deliveredChunks: 2, settledAtMs: 200 } },
+      {
+        kind: "delivery_only",
+        delivery: { status: "partial", errorKind: "platform", deliveredChunks: 1, failedChunks: 2, settledAtMs: 200 },
+      },
+      {
+        kind: "delivery_only",
+        delivery: { status: "rejected", errorKind: "platform", deliveredChunks: 0, failedChunks: 3, settledAtMs: 200 },
+      },
+      {
+        kind: "delivery_only",
+        delivery: {
+          status: "unknown",
+          errorKind: "platform",
+          deliveredChunks: 1,
+          failedChunks: 2,
+          ambiguousChunks: 3,
+          settledAtMs: 200,
+        },
+      },
+    ];
+    const expected = [
+      { deliveredChunks: 2, failedChunks: 0, ambiguousChunks: 0 },
+      { deliveredChunks: 1, failedChunks: 2, ambiguousChunks: 0 },
+      { deliveredChunks: 0, failedChunks: 3, ambiguousChunks: 0 },
+      { deliveredChunks: 1, failedChunks: 2, ambiguousChunks: 3 },
+    ];
+
+    for (const [index, outcome] of outcomes.entries()) {
+      const eventBus = new TypedEventBus();
+      const ended = vi.fn();
+      eventBus.on("scheduler:cron_execution_terminal", ended);
+      emitDurableCronTerminal({
+        eventBus,
+        logger: logger(),
+        terminal: { ...terminal(), workKind: "delivery_only", outcome },
+      });
+      expect(ended).toHaveBeenCalledWith(expect.objectContaining(expected[index]));
+    }
+  });
+
+  it("projects admitted heartbeat continuation queue disposition", () => {
+    const eventBus = new TypedEventBus();
+    const ended = vi.fn();
+    eventBus.on("scheduler:cron_execution_terminal", ended);
+    const outcome: CronTerminalOutcome = {
+      kind: "wake_gate_skip",
+      rootRunId: "root-cron-execution-a",
+      gateDurationMs: 2,
+      gateToolCalls: 0,
+      delivery: { status: "not_requested" },
+      continuation: {
+        mode: "heartbeat_excerpt",
+        status: "admitted",
+        correlationId: "correlation-a",
+        queueDisposition: "accepted_oldest_dropped",
+      },
+    };
+
+    emitDurableCronTerminal({
+      eventBus,
+      logger: logger(),
+      terminal: { ...terminal(), outcome },
+    });
+
+    expect(ended).toHaveBeenCalledWith(expect.objectContaining({
+      continuationStatus: "admitted",
+      queueDisposition: "accepted_oldest_dropped",
+    }));
   });
 });

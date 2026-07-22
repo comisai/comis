@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClockPort, FileLockPort, LockError } from "@comis/core";
@@ -29,7 +29,10 @@ function lock(): FileLockPort {
   };
 }
 
-async function fixture(interruptAt?: CronAuthorityDurableStep): Promise<{
+async function fixture(
+  interruptAt?: CronAuthorityDurableStep,
+  overrides: Partial<Parameters<typeof createCronAuthorityMaintenance>[0]> = {},
+): Promise<{
   authority: CronAuthorityMaintenance;
   directory: string;
   storePath: string;
@@ -64,6 +67,7 @@ async function fixture(interruptAt?: CronAuthorityDurableStep): Promise<{
             ? err({ code: "interrupted" as const, errorKind: "internal" as const, message: "Simulated process interruption" })
             : ok(undefined),
         }),
+      ...overrides,
     }),
     directory,
     storePath,
@@ -257,5 +261,354 @@ describe("cron authority reset transaction", () => {
     expect(await readFile(interrupted.storePath)).toEqual(changed);
     expect(await readFile(interrupted.ledgerPath)).toEqual(ledgerBytes);
     expect((await readFile(interrupted.intentPath)).byteLength).toBeGreaterThan(0);
+  });
+
+  it("rejects non-normalized split and colliding authority paths", async () => {
+    const relative = await fixture(undefined, { directory: "relative" });
+    expect(await relative.authority.inspect()).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+    expect(await relative.authority.recoverPendingReset()).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+    expect(await relative.authority.reset({
+      target: "store", expectedDigests: { store: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+
+    const split = await fixture(undefined, { storePath: join(tmpdir(), "other-cron.json") });
+    expect(await split.authority.inspect()).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+
+    const collisionBase = await fixture();
+    const collision = createCronAuthorityMaintenance({
+      directory: collisionBase.directory,
+      storePath: collisionBase.storePath,
+      ledgerPath: collisionBase.storePath,
+      intentPath: collisionBase.intentPath,
+      storeLockPath: join(collisionBase.directory, "store.lock"),
+      ledgerLockPath: join(collisionBase.directory, "ledger.lock"),
+      fileLock: lock(),
+      clock: { now: () => 1, nowDate: () => new Date(1) },
+      idFactory: () => "opaque-a",
+    });
+    expect(await collision.inspect()).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+  });
+
+  it("maps outer and inner authority lock failures independently", async () => {
+    for (const [failureCall, kind, expected] of [[1, "locked", "lock_contended"], [2, "error", "lock_failed"]] as const) {
+      let call = 0;
+      const fileLock: FileLockPort = {
+        ...lock(),
+        withLock: async <T>(_path: string, operation: () => Promise<T>): Promise<Result<T, LockError>> => {
+          call += 1;
+          return call === failureCall
+            ? err({ kind, message: "expected lock failure" })
+            : ok(await operation());
+        },
+      };
+      const data = await fixture(undefined, { fileLock });
+      expect(await data.authority.inspect()).toMatchObject({ ok: false, error: { code: expected } });
+    }
+  });
+
+  it("reports pending malformed and absent intent states without mutating authority", async () => {
+    const none = await fixture();
+    expect(await none.authority.recoverPendingReset()).toEqual(ok({ status: "none" }));
+
+    const pending = await fixture("intent_prepared");
+    expect(await pending.authority.reset({
+      target: "all",
+      expectedDigests: { store: null, ledger: null },
+      confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "interrupted" } });
+    expect(await pending.authority.inspect()).toMatchObject({
+      ok: true,
+      value: { intent: { status: "pending", phase: "prepared", target: "all" } },
+    });
+    expect(await pending.authority.reset({
+      target: "all",
+      expectedDigests: { store: null, ledger: null },
+      confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "intent_present" } });
+
+    const malformed = await fixture();
+    await writeFile(malformed.intentPath, "{invalid", { mode: 0o600 });
+    expect(await malformed.authority.inspect()).toMatchObject({ ok: true, value: { intent: { status: "invalid" } } });
+    expect(await malformed.authority.reset({
+      target: "store", expectedDigests: { store: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "intent_invalid" } });
+  });
+
+  it("rejects malformed expected digests and invalid opaque operation identifiers", async () => {
+    const data = await fixture();
+    expect(await data.authority.reset({
+      target: "store", expectedDigests: { store: "not-a-digest" }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+    expect(await data.authority.reset({
+      target: "ledger", expectedDigests: { ledger: "not-a-digest" }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+
+    const invalidId = await fixture(undefined, { idFactory: () => "../escape" });
+    expect(await invalidId.authority.reset({
+      target: "store", expectedDigests: { store: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+
+    let call = 0;
+    const invalidSeed = await fixture(undefined, { idFactory: () => ++call === 1 ? "operation-a" : "../escape" });
+    expect(await invalidSeed.authority.reset({
+      target: "store", expectedDigests: { store: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+  });
+
+  it("resets only the ledger while leaving store bytes byte-identical", async () => {
+    const data = await fixture();
+    const storeBytes = Buffer.from("store-authority\n", "utf8");
+    const ledgerBytes = Buffer.from("ledger-authority\n", "utf8");
+    await writeFile(data.storePath, storeBytes, { mode: 0o600 });
+    await writeFile(data.ledgerPath, ledgerBytes, { mode: 0o600 });
+
+    expect(await data.authority.reset({
+      target: "ledger",
+      expectedDigests: { ledger: digest(ledgerBytes) },
+      confirmed: true,
+    })).toMatchObject({ ok: true, value: { target: "ledger" } });
+    expect(await readFile(data.storePath)).toEqual(storeBytes);
+    expect(await readFile(data.ledgerPath)).toEqual(Buffer.alloc(0));
+  });
+
+  it("rejects pre-existing archive names before preparing reset intent", async () => {
+    const data = await fixture(undefined, { idFactory: () => "fixed-operation" });
+    await writeFile(`${data.storePath}.fixed-operation.archive`, "existing", { mode: 0o600 });
+    expect(await data.authority.reset({
+      target: "store", expectedDigests: { store: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "archive_conflict" } });
+  });
+
+  it("maps thrown durable-step gates and invalid durable-file tokens", async () => {
+    const thrown = await fixture(undefined, {
+      durableStepGate: async () => { throw new Error("expected gate rejection"); },
+    });
+    expect(await thrown.authority.reset({
+      target: "ledger", expectedDigests: { ledger: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "interrupted" } });
+
+    let call = 0;
+    const invalidToken = await fixture(undefined, {
+      idFactory: () => ++call === 1 ? "operation-a" : "../escape",
+    });
+    expect(await invalidToken.authority.reset({
+      target: "ledger", expectedDigests: { ledger: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+  });
+
+  it("rejects directory authorities and malformed intent semantics", async () => {
+    const directoryAuthority = await fixture();
+    await mkdir(directoryAuthority.storePath);
+    expect(await directoryAuthority.authority.inspect()).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+
+    const semantics = await fixture();
+    const invalidIntent = {
+      formatVersion: 1,
+      operationId: "operation-a",
+      target: "store",
+      selectedTargets: ["ledger"],
+      expectedDigests: { store: null, ledger: null },
+      archiveNames: { store: null, ledger: "cron-executions.jsonl.operation-a.archive" },
+      replacementStoreSeed: null,
+      phase: "prepared",
+      createdAtMs: 1,
+    };
+    await writeFile(semantics.intentPath, `${JSON.stringify(invalidIntent)}\n`, { mode: 0o600 });
+    expect(await semantics.authority.inspect()).toMatchObject({ ok: true, value: { intent: { status: "invalid" } } });
+  });
+
+  it("propagates invalid store ledger intent and archive authorities", async () => {
+    const invalidLedger = await fixture();
+    await mkdir(invalidLedger.ledgerPath);
+    expect(await invalidLedger.authority.inspect()).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+
+    const invalidIntent = await fixture();
+    await mkdir(invalidIntent.intentPath);
+    expect(await invalidIntent.authority.recoverPendingReset()).toMatchObject({
+      ok: false,
+      error: { code: "invalid_path" },
+    });
+    expect(await invalidIntent.authority.reset({
+      target: "all", expectedDigests: { store: null, ledger: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+
+    const invalidStore = await fixture();
+    await mkdir(invalidStore.storePath);
+    expect(await invalidStore.authority.reset({
+      target: "store", expectedDigests: { store: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+
+    const invalidArchive = await fixture(undefined, { idFactory: () => "operation-a" });
+    await mkdir(`${invalidArchive.storePath}.operation-a.archive`);
+    expect(await invalidArchive.authority.reset({
+      target: "store", expectedDigests: { store: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+  });
+
+  it("propagates durable token failures from every all-target roll-forward phase", async () => {
+    for (const failingCall of [3, 4, 5, 6, 7, 8]) {
+      let call = 0;
+      const data = await fixture(undefined, {
+        idFactory: () => ++call === failingCall ? "../escape" : `opaque-${call}`,
+      });
+      expect(await data.authority.reset({
+        target: "all",
+        expectedDigests: { store: null, ledger: null },
+        confirmed: true,
+      })).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+    }
+  });
+
+  it("rejects unsafe reset intent time before archive mutation", async () => {
+    const data = await fixture(undefined, {
+      clock: { now: () => -1, nowDate: () => new Date(0) },
+    });
+
+    expect(await data.authority.reset({
+      target: "store", expectedDigests: { store: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "intent_invalid", errorKind: "validation" } });
+  });
+
+  it("detects target and archive races between archival and replacement", async () => {
+    let ledgerPath = "";
+    const changedTarget = await fixture(undefined, {
+      durableStepGate: async (step) => {
+        if (step === "store_archived") await mkdir(ledgerPath);
+        return ok(undefined);
+      },
+    });
+    ledgerPath = changedTarget.ledgerPath;
+    await writeFile(changedTarget.storePath, "store\n", { mode: 0o600 });
+    expect(await changedTarget.authority.reset({
+      target: "all",
+      expectedDigests: { store: digest("store\n"), ledger: null },
+      confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+
+    let archivePath = "";
+    const changedArchive = await fixture(undefined, {
+      idFactory: () => "operation-a",
+      durableStepGate: async (step) => {
+        if (step === "store_archived") await writeFile(archivePath, "changed\n", { mode: 0o600 });
+        return ok(undefined);
+      },
+    });
+    archivePath = `${changedArchive.storePath}.operation-a.archive`;
+    await writeFile(changedArchive.storePath, "store\n", { mode: 0o600 });
+    expect(await changedArchive.authority.reset({
+      target: "store", expectedDigests: { store: digest("store\n") }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "intent_ambiguous" } });
+
+    let unexpectedPath = "";
+    const unexpectedArchive = await fixture(undefined, {
+      idFactory: () => "operation-a",
+      durableStepGate: async (step) => {
+        if (step === "store_archived") await writeFile(unexpectedPath, "unexpected\n", { mode: 0o600 });
+        return ok(undefined);
+      },
+    });
+    unexpectedPath = `${unexpectedArchive.storePath}.operation-a.archive`;
+    expect(await unexpectedArchive.authority.reset({
+      target: "store", expectedDigests: { store: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "intent_ambiguous" } });
+  });
+
+  it("fails closed when cron authority facts change at every transaction boundary", async () => {
+    let archivePath = "";
+    const unexpectedArchive = await fixture(undefined, {
+      idFactory: () => "operation-a",
+      durableStepGate: async (step) => {
+        if (step === "intent_prepared") await writeFile(archivePath, "unexpected\n", { mode: 0o600 });
+        return ok(undefined);
+      },
+    });
+    archivePath = `${unexpectedArchive.storePath}.operation-a.archive`;
+    expect(await unexpectedArchive.authority.reset({
+      target: "store", expectedDigests: { store: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "intent_ambiguous" } });
+
+    let storePath = "";
+    const unexpectedAuthority = await fixture(undefined, {
+      durableStepGate: async (step) => {
+        if (step === "intent_prepared") await writeFile(storePath, "concurrent\n", { mode: 0o600 });
+        return ok(undefined);
+      },
+    });
+    storePath = unexpectedAuthority.storePath;
+    expect(await unexpectedAuthority.authority.reset({
+      target: "store", expectedDigests: { store: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "intent_ambiguous" } });
+
+    let changedStorePath = "";
+    const invalidReplacementTarget = await fixture(undefined, {
+      durableStepGate: async (step) => {
+        if (step === "store_archived") await mkdir(changedStorePath);
+        return ok(undefined);
+      },
+    });
+    changedStorePath = invalidReplacementTarget.storePath;
+    await writeFile(changedStorePath, "before\n", { mode: 0o600 });
+    expect(await invalidReplacementTarget.authority.reset({
+      target: "store", expectedDigests: { store: digest("before\n") }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+
+    let changedArchivePath = "";
+    const invalidReplacementArchive = await fixture(undefined, {
+      idFactory: () => "operation-a",
+      durableStepGate: async (step) => {
+        if (step === "store_archived") {
+          await rm(changedArchivePath, { force: true });
+          await mkdir(changedArchivePath);
+        }
+        return ok(undefined);
+      },
+    });
+    changedArchivePath = `${invalidReplacementArchive.storePath}.operation-a.archive`;
+    await writeFile(invalidReplacementArchive.storePath, "before\n", { mode: 0o600 });
+    expect(await invalidReplacementArchive.authority.reset({
+      target: "store", expectedDigests: { store: digest("before\n") }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+
+    let intentPath = "";
+    const unremovableIntent = await fixture(undefined, {
+      durableStepGate: async (step) => {
+        if (step === "completion_recorded") {
+          await rm(intentPath, { force: true });
+          await mkdir(intentPath);
+        }
+        return ok(undefined);
+      },
+    });
+    intentPath = unremovableIntent.intentPath;
+    expect(await unremovableIntent.authority.reset({
+      target: "store", expectedDigests: { store: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "io" } });
+
+    let completedStorePath = "";
+    const invalidCompletedStore = await fixture(undefined, {
+      durableStepGate: async (step) => {
+        if (step === "completion_recorded") {
+          await rm(completedStorePath, { force: true });
+          await mkdir(completedStorePath);
+        }
+        return ok(undefined);
+      },
+    });
+    completedStorePath = invalidCompletedStore.storePath;
+    expect(await invalidCompletedStore.authority.reset({
+      target: "store", expectedDigests: { store: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+
+    let completedLedgerPath = "";
+    const invalidCompletedLedger = await fixture(undefined, {
+      durableStepGate: async (step) => {
+        if (step === "completion_recorded") await mkdir(completedLedgerPath);
+        return ok(undefined);
+      },
+    });
+    completedLedgerPath = invalidCompletedLedger.ledgerPath;
+    expect(await invalidCompletedLedger.authority.reset({
+      target: "store", expectedDigests: { store: null }, confirmed: true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_path" } });
   });
 });

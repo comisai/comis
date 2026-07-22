@@ -3,11 +3,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TypedEventBus, type FileLockPort, type LockError, type TimerHandle, type TimerPort } from "@comis/core";
-import { ok, type Result } from "@comis/shared";
+import { createConversationRef, TypedEventBus, type FileLockPort, type LockError, type TimerHandle, type TimerPort } from "@comis/core";
+import { err, ok, type Result } from "@comis/shared";
 import { createExecutionTracker, type ExecutionTracker } from "../execution/execution-tracker.js";
 import { createCronStore, type CronStore } from "./cron-store.js";
-import { createCronScheduler, type CronScheduler } from "./cron-scheduler.js";
+import { createCronScheduler, type CronScheduler, type CronSchedulerDeps } from "./cron-scheduler.js";
 import type { CronJob } from "./cron-types.js";
 import type { CronRuntimeError, CronRuntimeExecutionInput, CronRuntimeOutcome } from "./cron-runtime.js";
 
@@ -81,6 +81,32 @@ function job(id = "job_a", schedule: CronJob["schedule"] = { kind: "at", atMs: N
   };
 }
 
+function deliveryJob(): CronJob {
+  const destinationEndpoint = {
+    channelType: "telegram",
+    channelInstanceId: "telegram-a",
+    conversationId: "chat-a",
+    conversationKind: "direct" as const,
+  };
+  const conversationScope = {
+    tenantId: "tenant-a",
+    agentId: "agent_a",
+    partition: { kind: "endpoint-conversation" as const, endpoint: destinationEndpoint },
+  };
+  const conversationRef = createConversationRef(conversationScope);
+  if (!conversationRef.ok) throw conversationRef.error;
+  const base = job("delivery");
+  const { sessionPolicy: _sessionPolicy, continuationMode: _continuationMode, ...common } = base;
+  return {
+    ...common,
+    payload: { kind: "delivery", text: "Maintenance complete" },
+    deliveryTarget: {
+      destinationEndpoint,
+      conversation: { conversationScope, conversationRef: conversationRef.value },
+    },
+  };
+}
+
 function completed(input: CronRuntimeExecutionInput): CronRuntimeOutcome {
   if (input.kind !== "agent_turn") throw new Error("Expected agent turn");
   return {
@@ -111,6 +137,7 @@ async function fixture(options: {
   defaultTimeoutMs?: number;
   staggerWindowMs?: number;
   maxRunsPerTick?: number;
+  schedulerOverrides?: Partial<CronSchedulerDeps>;
 } = {}): Promise<{
   scheduler: CronScheduler;
   store: CronStore;
@@ -171,6 +198,7 @@ async function fixture(options: {
       defaultTimeoutMs: options.defaultTimeoutMs ?? 30_000,
       staggerWindowMs: options.staggerWindowMs ?? 0,
     },
+    ...options.schedulerOverrides,
   });
   return { scheduler, store, tracker, eventBus, logger, rootRegistrar, timer, clock: fakeClock };
 }
@@ -433,6 +461,55 @@ describe("durable cron scheduler lifecycle", () => {
     await vi.waitFor(() => expect(built.rootRegistrar.release).toHaveBeenCalledOnce());
   });
 
+  it("accepts runtime settlement during the post-deadline termination grace", async () => {
+    let settleExecution!: (result: Result<CronRuntimeOutcome, CronRuntimeError>) => void;
+    let runtimeInput!: CronRuntimeExecutionInput;
+    const built = await fixture({
+      seedJob: job(),
+      defaultTimeoutMs: 100,
+      execute: (input) => {
+        runtimeInput = input;
+        return new Promise((resolve) => { settleExecution = resolve; });
+      },
+    });
+    await built.scheduler.initialize();
+    built.scheduler.activate();
+    const run = built.scheduler.runJob("job_a");
+    await vi.waitFor(() => expect(settleExecution).toBeTypeOf("function"));
+    built.timer.fireFirst(100);
+    settleExecution(ok(completed(runtimeInput)));
+
+    await expect(run).resolves.toEqual(ok("execution_1"));
+    expect(built.timer.records()).toContainEqual({ delayMs: 5_000, cancelled: true, unrefed: true });
+  });
+
+  it("logs a rejected runtime that settles after immutable timeout evidence", async () => {
+    let rejectExecution!: (reason: Error) => void;
+    const built = await fixture({
+      seedJob: job(),
+      defaultTimeoutMs: 100,
+      execute: () => new Promise((_resolve, reject) => { rejectExecution = reject; }),
+    });
+    await built.scheduler.initialize();
+    built.scheduler.activate();
+    const run = built.scheduler.runJob("job_a");
+    await vi.waitFor(() => expect(rejectExecution).toBeTypeOf("function"));
+    built.timer.fireFirst(100);
+    await vi.waitFor(() => expect(built.timer.records()).toContainEqual({
+      delayMs: 5_000,
+      cancelled: false,
+      unrefed: true,
+    }));
+    built.timer.fireFirst(5_000);
+    await expect(run).resolves.toEqual(ok("execution_1"));
+    rejectExecution(new Error("late runtime rejection"));
+
+    await vi.waitFor(() => expect(built.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "late_settlement", executionId: "execution_1" }),
+      "Cron runtime rejected outside its Result contract",
+    ));
+  });
+
   it("does not mutate scheduled lifecycle or breaker state for a manual run", async () => {
     const recurring = job("recurring", { kind: "every", everyMs: 60_000, anchorMs: NOW_MS + 60_000 });
     const built = await fixture({ seedJob: recurring });
@@ -683,5 +760,379 @@ describe("durable cron scheduler lifecycle", () => {
       ok: false,
       error: { code: "invalid_configuration", errorKind: "config" },
     });
+  });
+
+  it("initializes idempotently and rejects activation before initialization", async () => {
+    const built = await fixture();
+    expect(built.scheduler.activate()).toMatchObject({ ok: false, error: { code: "not_initialized" } });
+    expect(await built.scheduler.runJob("missing")).toMatchObject({ ok: false, error: { code: "not_initialized" } });
+    expect(await built.scheduler.initialize()).toEqual(ok(undefined));
+    expect(await built.scheduler.initialize()).toEqual(ok(undefined));
+    expect(built.scheduler.activate()).toEqual(ok(undefined));
+    expect(built.scheduler.activate()).toEqual(ok(undefined));
+  });
+
+  it("rejects every invalid scheduler configuration before loading authority", async () => {
+    for (const config of [
+      { maxRunsPerTick: 0, defaultTimeoutMs: 1, staggerWindowMs: 0 },
+      { maxRunsPerTick: 1, defaultTimeoutMs: 0, staggerWindowMs: 0 },
+      { maxRunsPerTick: 1, defaultTimeoutMs: 1, staggerWindowMs: -1 },
+    ]) {
+      const built = await fixture({ schedulerOverrides: { config } });
+      expect(await built.scheduler.initialize()).toMatchObject({
+        ok: false,
+        error: { code: "invalid_configuration", errorKind: "config" },
+      });
+    }
+    const built = await fixture({ schedulerOverrides: { bootId: "" } });
+    expect(await built.scheduler.initialize()).toMatchObject({ ok: false, error: { code: "invalid_configuration" } });
+  });
+
+  it("distinguishes store and execution-ledger initialization failures", async () => {
+    const storeFailure = await fixture();
+    vi.spyOn(storeFailure.store, "initialize").mockResolvedValue(err({ code: "io", errorKind: "internal", message: "expected store failure" }));
+    expect(await storeFailure.scheduler.initialize()).toMatchObject({
+      ok: false,
+      error: { code: "initialization_failed", message: expect.stringContaining("cron store") },
+    });
+
+    const trackerFailure = await fixture();
+    vi.spyOn(trackerFailure.tracker, "initialize").mockResolvedValue(err({ code: "io", errorKind: "internal", message: "expected ledger failure" }));
+    expect(await trackerFailure.scheduler.initialize()).toMatchObject({
+      ok: false,
+      error: { code: "initialization_failed", message: expect.stringContaining("cron execution ledger") },
+    });
+
+    const snapshotFailure = await fixture();
+    await snapshotFailure.scheduler.initialize();
+    vi.spyOn(snapshotFailure.store, "getSnapshot").mockReturnValueOnce(err({
+      code: "io",
+      errorKind: "internal",
+      message: "expected snapshot failure",
+    }));
+    expect(snapshotFailure.scheduler.activate()).toMatchObject({
+      ok: false,
+      error: { code: "operation_failed", message: expect.stringContaining("stagger eligibility") },
+    });
+  });
+
+  it("requires maintenance and idle execution before strict reload", async () => {
+    let resolveExecution!: (value: Result<CronRuntimeOutcome, CronRuntimeError>) => void;
+    const built = await fixture({
+      seedJob: job(),
+      execute: (input) => new Promise((resolve) => {
+        resolveExecution = (value) => resolve(value);
+        expect(input.kind).toBe("agent_turn");
+      }),
+    });
+    await built.scheduler.initialize();
+    built.scheduler.activate();
+    expect(await built.scheduler.reload()).toMatchObject({ ok: false, error: { code: "maintenance_required" } });
+    const running = built.scheduler.runJob("job_a");
+    await vi.waitFor(() => expect(resolveExecution).toBeTypeOf("function"));
+    built.scheduler.enterMaintenance();
+    expect(await built.scheduler.reload()).toMatchObject({ ok: false, error: { code: "active_execution" } });
+    resolveExecution(ok(completed({
+      kind: "agent_turn",
+      executionId: "execution_1",
+      rootRunId: "root-cron-execution_1",
+      scheduledForMs: NOW_MS,
+      trigger: "manual",
+      job: job(),
+    })));
+    await running;
+    expect(await built.scheduler.reload()).toEqual(ok(undefined));
+  });
+
+  it("guards job mutation APIs and maps each backing-store operation failure", async () => {
+    const built = await fixture();
+    expect(await built.scheduler.addJob(job())).toMatchObject({ ok: false, error: { code: "not_initialized" } });
+    expect(await built.scheduler.replaceJob("job_a", job())).toMatchObject({ ok: false, error: { code: "not_initialized" } });
+    expect(await built.scheduler.removeJob("job_a")).toMatchObject({ ok: false, error: { code: "not_initialized" } });
+    await built.scheduler.initialize();
+
+    vi.spyOn(built.store, "addJob").mockResolvedValueOnce(err({ code: "io", errorKind: "internal", message: "expected" }));
+    expect(await built.scheduler.addJob(job())).toMatchObject({ ok: false, error: { code: "operation_failed" } });
+    vi.spyOn(built.store, "replaceAuthoredJob").mockResolvedValueOnce(err({ code: "conflict", errorKind: "precondition", message: "expected" }));
+    expect(await built.scheduler.replaceJob("job_a", job())).toMatchObject({ ok: false, error: { code: "operation_failed" } });
+    vi.spyOn(built.store, "removeJob").mockResolvedValueOnce(err({ code: "not_found", errorKind: "validation", message: "expected" }));
+    expect(await built.scheduler.removeJob("job_a")).toMatchObject({ ok: false, error: { code: "operation_failed" } });
+    vi.spyOn(built.store, "listJobs").mockReturnValueOnce(err({ code: "io", errorKind: "internal", message: "expected" }));
+    expect(built.scheduler.getJobs()).toMatchObject({ ok: false, error: { code: "operation_failed" } });
+
+    const unsafeRecurring = job("job_a", { kind: "every", everyMs: 60_000, anchorMs: NOW_MS });
+    unsafeRecurring.lifecycle = {
+      status: "scheduled",
+      nextRunAtMs: Number.MAX_SAFE_INTEGER,
+      consecutiveDependencyErrors: 0,
+    };
+    const staggered = await fixture({ seedJob: job(), staggerWindowMs: 100 });
+    await staggered.scheduler.initialize();
+    expect(await staggered.scheduler.replaceJob("job_a", unsafeRecurring)).toMatchObject({
+      ok: false,
+      error: { code: "invalid_configuration" },
+    });
+  });
+
+  it("adds replaces removes and lists jobs through the scheduler authority", async () => {
+    const built = await fixture();
+    await built.scheduler.initialize();
+    expect(await built.scheduler.addJob(job())).toEqual(ok(undefined));
+    expect(built.scheduler.getJobs()).toMatchObject({ ok: true, value: [{ id: "job_a" }] });
+    expect(await built.scheduler.replaceJob("job_a", {
+      ...job(),
+      payload: { kind: "agent_turn", message: "updated" },
+    })).toEqual(ok(undefined));
+    expect(await built.scheduler.removeJob("job_a")).toEqual(ok(true));
+  });
+
+  it("requires active admission and maps snapshot selection and claim failures", async () => {
+    const built = await fixture({ seedJob: job() });
+    await built.scheduler.initialize();
+    expect(await built.scheduler.runMissedJobs()).toMatchObject({ ok: false, error: { code: "not_active" } });
+    expect(await built.scheduler.runJob("job_a")).toMatchObject({ ok: false, error: { code: "not_active" } });
+    built.scheduler.activate();
+
+    vi.spyOn(built.store, "getSnapshot").mockReturnValueOnce(err({ code: "io", errorKind: "internal", message: "expected" }));
+    expect(await built.scheduler.runMissedJobs()).toMatchObject({ ok: false, error: { code: "operation_failed" } });
+    vi.spyOn(built.store, "listJobs").mockReturnValueOnce(err({ code: "io", errorKind: "internal", message: "expected" }));
+    expect(await built.scheduler.runJob("job_a")).toMatchObject({ ok: false, error: { code: "operation_failed" } });
+    expect(await built.scheduler.runJob("missing")).toMatchObject({ ok: false, error: { code: "operation_failed" } });
+    vi.spyOn(built.store, "claim").mockResolvedValueOnce(err({ code: "conflict", errorKind: "precondition", message: "expected" }));
+    expect(await built.scheduler.runJob("job_a")).toMatchObject({ ok: false, error: { code: "operation_failed" } });
+  });
+
+  it("rejects duplicate active execution identifiers without invoking a second runtime", async () => {
+    let resolveExecution!: (value: Result<CronRuntimeOutcome, CronRuntimeError>) => void;
+    const execute = vi.fn((input: CronRuntimeExecutionInput) => new Promise<Result<CronRuntimeOutcome, CronRuntimeError>>((resolve) => {
+      resolveExecution = (value) => resolve(value);
+      expect(input.kind).toBe("agent_turn");
+    }));
+    const built = await fixture({ seedJob: job(), execute, schedulerOverrides: { idFactory: () => "same-execution" } });
+    await built.scheduler.initialize();
+    built.scheduler.activate();
+    const first = built.scheduler.runJob("job_a");
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
+    expect(await built.scheduler.runJob("job_a")).toMatchObject({ ok: false, error: { code: "operation_failed" } });
+    resolveExecution(ok(completed(execute.mock.calls[0]![0])));
+    await first;
+  });
+
+  it("rejects invalid runtime inputs and terminal evidence conservatively", async () => {
+    const invalidInput = await fixture({ seedJob: job() });
+    await invalidInput.scheduler.initialize();
+    invalidInput.scheduler.activate();
+    const originalClaim = invalidInput.store.claim.bind(invalidInput.store);
+    vi.spyOn(invalidInput.store, "claim").mockImplementation(async (input) => {
+      const claimed = await originalClaim(input);
+      if (!claimed.ok) return claimed;
+      return ok({ ...claimed.value, claim: { ...claimed.value.claim, rootRunId: null } });
+    });
+    expect(await invalidInput.scheduler.runJob("job_a")).toEqual(ok("execution_1"));
+
+    const invalidOutcome = await fixture({
+      seedJob: job(),
+      execute: async () => ok({ kind: "heartbeat_event", status: "dispatched", correlationId: "" } as CronRuntimeOutcome),
+    });
+    await invalidOutcome.scheduler.initialize();
+    invalidOutcome.scheduler.activate();
+    expect(await invalidOutcome.scheduler.runJob("job_a")).toMatchObject({
+      ok: false,
+      error: { code: "operation_failed", errorKind: "validation" },
+    });
+  });
+
+  it("executes heartbeat internal-action and delivery work through exact runtime variants", async () => {
+    const heartbeatBase = job("heartbeat");
+    const { sessionPolicy: _heartbeatSession, continuationMode: _heartbeatContinuation, ...heartbeatCommon } = heartbeatBase;
+    const heartbeat: CronJob = {
+      ...heartbeatCommon,
+      payload: { kind: "heartbeat_event", text: "inspect", wakeMode: "now" },
+    };
+    const heartbeatBuilt = await fixture({
+      seedJob: heartbeat,
+      execute: async (input) => {
+        expect(input.kind).toBe("heartbeat_event");
+        return ok({ kind: "heartbeat_event", status: "dispatched", correlationId: "correlation-a", queueDisposition: "accepted" });
+      },
+    });
+    await heartbeatBuilt.scheduler.initialize();
+    heartbeatBuilt.scheduler.activate();
+    expect(await heartbeatBuilt.scheduler.runJob("heartbeat")).toEqual(ok("execution_1"));
+
+    const internalBase = job("internal");
+    const { sessionPolicy: _internalSession, continuationMode: _internalContinuation, ...internalCommon } = internalBase;
+    const internal: CronJob = {
+      ...internalCommon,
+      source: "built_in",
+      payload: { kind: "internal_action", action: "memory_lifecycle" },
+    };
+    const internalBuilt = await fixture({
+      seedJob: internal,
+      execute: async (input) => {
+        expect(input.kind).toBe("internal_action");
+        if (input.kind !== "internal_action") throw new Error("Expected internal action");
+        return ok({
+          kind: "internal_action",
+          action: "memory_lifecycle",
+          rootRunId: input.rootRunId,
+          modelResolved: null,
+          modelResolutionSource: null,
+          metrics: { totalTokens: null, costUsd: null, llmCalls: 0 },
+          execution: { status: "completed", counters: [] },
+        });
+      },
+    });
+    await internalBuilt.scheduler.initialize();
+    internalBuilt.scheduler.activate();
+    expect(await internalBuilt.scheduler.runJob("internal")).toEqual(ok("execution_1"));
+
+    const deliveryBuilt = await fixture({
+      seedJob: deliveryJob(),
+      execute: async (input) => {
+        expect(input.kind).toBe("delivery_only");
+        return ok({ kind: "delivery_only", delivery: { status: "suppressed", reason: "quiet_hours" } });
+      },
+    });
+    await deliveryBuilt.scheduler.initialize();
+    deliveryBuilt.scheduler.activate();
+    expect(await deliveryBuilt.scheduler.runJob("delivery")).toEqual(ok("execution_1"));
+  });
+
+  it("persists wake-gate and pre-model skip evidence without widening runtime outcomes", async () => {
+    const outcomes: CronRuntimeOutcome[] = [
+      {
+        kind: "wake_gate_skip",
+        rootRunId: "root-cron-execution_1",
+        durationMs: 12,
+        toolCalls: 1,
+        delivery: { status: "not_requested" },
+        continuation: { mode: "none", status: "not_requested" },
+      },
+      {
+        kind: "agent_turn_pre_model_skip",
+        rootRunId: "root-cron-execution_1",
+        reason: "wake_gate_disabled",
+        errorKind: "precondition",
+        continuation: { mode: "none", status: "not_requested" },
+      },
+    ];
+    for (const outcome of outcomes) {
+      const built = await fixture({ seedJob: job(), execute: async () => ok(outcome) });
+      await built.scheduler.initialize();
+      built.scheduler.activate();
+      expect(await built.scheduler.runJob("job_a")).toEqual(ok("execution_1"));
+      const history = await built.tracker.listHistory({ limit: 1 });
+      expect(history.ok && history.value[0]?.terminal?.outcome.kind).toBe(outcome.kind);
+    }
+  });
+
+  it("fails closed when stagger eligibility becomes invalid at selection or timer arming", async () => {
+    const recurring = job("recurring", { kind: "every", everyMs: 60_000, anchorMs: NOW_MS });
+    const selected = await fixture({ seedJob: recurring, staggerWindowMs: 100 });
+    await selected.scheduler.initialize();
+    selected.scheduler.activate();
+    const selectedSnapshot = selected.store.getSnapshot();
+    if (!selectedSnapshot.ok) throw new Error("Expected initialized cron snapshot");
+    vi.spyOn(selected.store, "getSnapshot").mockReturnValueOnce(ok({
+      ...selectedSnapshot.value,
+      jobs: selectedSnapshot.value.jobs.map((candidate) => ({
+        ...candidate,
+        lifecycle: candidate.lifecycle.status === "scheduled"
+          ? { ...candidate.lifecycle, nextRunAtMs: Number.MAX_SAFE_INTEGER }
+          : candidate.lifecycle,
+      })),
+    }));
+    expect(await selected.scheduler.runMissedJobs()).toMatchObject({
+      ok: false,
+      error: { code: "invalid_configuration" },
+    });
+
+    const armed = await fixture({ seedJob: recurring, staggerWindowMs: 100 });
+    await armed.scheduler.initialize();
+    const armedSnapshot = armed.store.getSnapshot();
+    if (!armedSnapshot.ok) throw new Error("Expected initialized cron snapshot");
+    vi.spyOn(armed.store, "getSnapshot")
+      .mockReturnValueOnce(armedSnapshot)
+      .mockReturnValueOnce(ok({
+        ...armedSnapshot.value,
+        jobs: armedSnapshot.value.jobs.map((candidate) => ({
+          ...candidate,
+          lifecycle: candidate.lifecycle.status === "scheduled"
+            ? { ...candidate.lifecycle, nextRunAtMs: Number.MAX_SAFE_INTEGER }
+            : candidate.lifecycle,
+        })),
+      }));
+    expect(armed.scheduler.activate()).toEqual(ok(undefined));
+    expect(armed.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "timer_arm", jobId: "recurring" }),
+      "Cron timer eligibility is invalid",
+    );
+  });
+
+  it("maps terminal append and claim settlement failures without releasing durable truth", async () => {
+    const appendFailure = await fixture({ seedJob: job() });
+    await appendFailure.scheduler.initialize();
+    appendFailure.scheduler.activate();
+    vi.spyOn(appendFailure.tracker, "appendTerminal").mockResolvedValueOnce(err({ code: "io", errorKind: "internal", message: "expected" }));
+    expect(await appendFailure.scheduler.runJob("job_a")).toMatchObject({ ok: false, error: { code: "operation_failed" } });
+
+    const settleFailure = await fixture({ seedJob: job() });
+    await settleFailure.scheduler.initialize();
+    settleFailure.scheduler.activate();
+    vi.spyOn(settleFailure.store, "settleClaim").mockResolvedValueOnce(err({ code: "io", errorKind: "internal", message: "expected" }));
+    expect(await settleFailure.scheduler.runJob("job_a")).toMatchObject({ ok: false, error: { code: "operation_failed" } });
+  });
+
+  it("logs root release failure after otherwise durable completion", async () => {
+    const built = await fixture({ seedJob: job() });
+    built.rootRegistrar.release.mockResolvedValue(err({ errorKind: "internal", message: "expected release failure" }));
+    await built.scheduler.initialize();
+    built.scheduler.activate();
+    expect(await built.scheduler.runJob("job_a")).toEqual(ok("execution_1"));
+    expect(built.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "root_release", errorKind: "internal" }),
+      "Cron execution root release failed",
+    );
+  });
+
+  it("arms retention timers and logs timer snapshot or tick failures", async () => {
+    const terminal = {
+      ...job("terminal"),
+      lifecycle: { status: "one_shot_terminal" as const, terminalExecutionId: "exec-a", terminalAtMs: NOW_MS },
+    };
+    const built = await fixture({ seedJob: terminal });
+    await built.scheduler.initialize();
+    built.scheduler.activate();
+    expect(built.timer.records()).toEqual([{ delayMs: 60_000, cancelled: false, unrefed: true }]);
+
+    const validSnapshot = built.store.getSnapshot();
+    vi.spyOn(built.store, "getSnapshot")
+      .mockReturnValueOnce(validSnapshot)
+      .mockReturnValueOnce(err({ code: "io", errorKind: "internal", message: "expected" }));
+    built.scheduler.enterMaintenance();
+    built.scheduler.activate();
+    expect(built.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "timer_arm" }),
+      "Cron timer could not read scheduler state",
+    );
+
+    const ticking = await fixture({ seedJob: job("future", { kind: "at", atMs: NOW_MS + 1 }) });
+    await ticking.scheduler.initialize();
+    ticking.scheduler.activate();
+    vi.spyOn(ticking.store, "getSnapshot").mockReturnValueOnce(err({ code: "io", errorKind: "internal", message: "expected" }));
+    ticking.timer.fireFirst(1);
+    await vi.waitFor(() => expect(ticking.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ step: "timer_tick" }),
+      "Cron timer tick failed",
+    ));
+  });
+
+  it("reports scheduler-seed failures while validating recurring additions", async () => {
+    const built = await fixture({ staggerWindowMs: 100 });
+    await built.scheduler.initialize();
+    vi.spyOn(built.store, "getSnapshot").mockReturnValueOnce(err({ code: "io", errorKind: "internal", message: "expected" }));
+    expect(await built.scheduler.addJob(job("recurring", { kind: "every", everyMs: 60_000, anchorMs: NOW_MS })))
+      .toMatchObject({ ok: false, error: { code: "operation_failed" } });
   });
 });

@@ -191,4 +191,69 @@ describe("cron authoring schedule resolution", () => {
     );
     expect(result.ok).toBe(false);
   });
+
+  it("rejects invalid authored epochs timezones and cron expressions", () => {
+    expect(resolveCronAuthoringSchedule(
+      { kind: "every", everyMs: 60_000 },
+      -1,
+      "UTC",
+    )).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+    expect(resolveCronAuthoringSchedule(
+      { kind: "every", everyMs: 60_000 },
+      NOW_MS,
+      "Not/A_Zone",
+    )).toMatchObject({ ok: false, error: { code: "invalid_timezone" } });
+    expect(resolveCronAuthoringSchedule(
+      { kind: "cron", expr: "0 * * * *", tz: "Not/A_Zone" },
+      NOW_MS,
+      "UTC",
+    )).toMatchObject({ ok: false, error: { code: "invalid_timezone" } });
+    expect(resolveCronAuthoringSchedule(
+      { kind: "cron", expr: "not-a-cron", tz: "UTC" },
+      NOW_MS,
+      "UTC",
+    )).toMatchObject({ ok: false, error: { code: "invalid_expression" } });
+  });
+
+  it("rejects invalid wall clocks offsets and fold conflicts", () => {
+    expect(resolveCronAuthoringSchedule(
+      { kind: "at", at: "not-a-date", tz: "UTC" },
+      NOW_MS,
+      "UTC",
+    )).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+    expect(resolveCronAuthoringSchedule(
+      { kind: "at", at: "2027-02-30T12:00:00", tz: "UTC" },
+      NOW_MS,
+      "UTC",
+    )).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+    expect(resolveCronAuthoringSchedule(
+      { kind: "at", at: "2030-01-01T00:00:00Z", fold: "earlier" },
+      NOW_MS,
+      "UTC",
+    )).toMatchObject({ ok: false, error: { code: "conflicting_timezone" } });
+    expect(resolveCronAuthoringSchedule(
+      { kind: "at", at: "+275761-09-13T00:00:00.000Z" },
+      NOW_MS,
+      "UTC",
+    )).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+  });
+
+  it("preserves explicit interval anchors and offset-bearing instants", () => {
+    expect(resolveCronAuthoringSchedule(
+      { kind: "every", everyMs: 60_000, anchorMs: NOW_MS + 10_000 },
+      NOW_MS,
+      "UTC",
+    )).toEqual({
+      ok: true,
+      value: { kind: "every", everyMs: 60_000, anchorMs: NOW_MS + 10_000 },
+    });
+    expect(resolveCronAuthoringSchedule(
+      { kind: "at", at: "2030-01-01T00:00:00+02:00" },
+      NOW_MS,
+      "UTC",
+    )).toEqual({
+      ok: true,
+      value: { kind: "at", atMs: Date.parse("2030-01-01T00:00:00+02:00") },
+    });
+  });
 });

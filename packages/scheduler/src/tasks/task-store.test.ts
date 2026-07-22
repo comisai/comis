@@ -11,10 +11,11 @@ import {
   type FileLockPort,
   type LockError,
 } from "@comis/core";
-import { ok, type Result } from "@comis/shared";
+import { err, ok, type Result } from "@comis/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import type { BoundTaskCandidate } from "./task-extractor.js";
-import { createFollowupTaskStore, type FollowupTaskStore } from "./task-store.js";
+import { admitTaskCandidate } from "./task-admission.js";
+import { createFollowupTaskStore, encodeFollowupTaskStore, type FollowupTaskStore } from "./task-store.js";
 
 const dirs: string[] = [];
 
@@ -110,10 +111,22 @@ function makeCandidate(overrides: Partial<BoundTaskCandidate> = {}): BoundTaskCa
   };
 }
 
+function successfulCheck() {
+  return {
+    status: "settled" as const,
+    agentExecutionId: "execution-check-a",
+    modelResolved: "example:model",
+    modelResolutionSource: "family_default" as const,
+    execution: { status: "completed" as const, finishReason: "stop" as const },
+    metrics: { durationMs: 100, totalTokens: 20, costUsd: 0.001, toolCalls: 0 as const, llmCalls: 1 },
+  };
+}
+
 async function fixture(input: {
   clock?: ClockPort;
   fileLock?: ReturnType<typeof makeLock>;
   getRuntimeConfig?: () => { enabled: boolean; preAcceptanceRetryLimit: number; quietUntilMs: number | null };
+  idFactory?: () => string;
 } = {}): Promise<{
   store: FollowupTaskStore;
   filePath: string;
@@ -129,7 +142,7 @@ async function fixture(input: {
       lockPath: join(dir, ".scheduler", "tasks.lock"),
       fileLock,
       clock: input.clock ?? makeClock(),
-      idFactory: () => `opaque-${++nextId}`,
+      idFactory: input.idFactory ?? (() => `opaque-${++nextId}`),
       getRuntimeConfig: input.getRuntimeConfig ?? (() => ({
         enabled: true,
         preAcceptanceRetryLimit: 3,
@@ -911,5 +924,556 @@ describe("durable follow-up task store", () => {
     expect(snapshot.ok && snapshot.value.tasks.find((task) => task.status === "pending")).toMatchObject({
       nextAttemptAtMs: 86_463_000,
     });
+  });
+
+  it("rejects invalid paths lock outcomes and pre-initialization reads", async () => {
+    const relative = await fixture();
+    const invalidPathStore = createFollowupTaskStore({
+      filePath: "relative.json",
+      lockPath: relative.filePath,
+      fileLock: makeLock(),
+      clock: makeClock(),
+      idFactory: () => "opaque-a",
+      getRuntimeConfig: () => ({ enabled: true, preAcceptanceRetryLimit: 3, quietUntilMs: null }),
+    });
+    expect(await invalidPathStore.initialize()).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+
+    expect(await relative.store.read()).toMatchObject({ ok: false, error: { code: "not_initialized" } });
+    expect(await relative.store.inspect()).toMatchObject({ ok: false, error: { code: "not_initialized" } });
+
+    for (const kind of ["locked", "error"] as const) {
+      const fileLock = makeLock();
+      fileLock.withLock = async <T>(): Promise<Result<T, LockError>> => err({ kind, message: "expected lock failure" });
+      const data = await fixture({ fileLock });
+      expect(await data.store.initialize()).toMatchObject({
+        ok: false,
+        error: { code: kind === "locked" ? "lock_contended" : "lock_failed" },
+      });
+    }
+  });
+
+  it("rejects invalid clocks missing authority and oversized persisted bytes", async () => {
+    const invalidClock = await fixture({ clock: makeClock(-1) });
+    expect(await invalidClock.store.initialize()).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+
+    const missing = await fixture();
+    expect((await missing.store.initialize()).ok).toBe(true);
+    const { unlink } = await import("node:fs/promises");
+    await unlink(missing.filePath);
+    expect(await missing.store.read()).toMatchObject({ ok: false, error: { code: "io" } });
+
+    const oversized = await fixture();
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(join(oversized.filePath, ".."), { recursive: true });
+    await writeFile(oversized.filePath, Buffer.alloc(16 * 1_024 * 1_024 + 1, 0x20));
+    expect(await oversized.store.initialize()).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+  });
+
+  it("validates cancellation identifiers and reports absent or empty selections", async () => {
+    const data = await fixture();
+    await data.store.initialize();
+    expect(await data.store.cancelPending({ agentId: "" })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+    expect(await data.store.cancelPending({ agentId: "agent-a", taskId: "missing" })).toEqual(ok({
+      status: "not_found",
+      taskId: "missing",
+    }));
+    expect(await data.store.cancelPending({ agentId: "agent-a" })).toEqual(ok({
+      status: "nothing_pending",
+      activeTaskIds: [],
+    }));
+
+    await data.store.admitCandidates({
+      candidates: [makeCandidate(), makeCandidate({
+        item: { ...makeCandidate().item, itemId: "item-b", sourceExecutionId: "source-b" },
+        text: "Check another state",
+      })],
+      confidenceThreshold: 0.5,
+    });
+    expect(await data.store.cancelPending({ agentId: "agent-a" })).toMatchObject({
+      ok: true,
+      value: { status: "cancelled", taskIds: [expect.any(String), expect.any(String)], activeTaskIds: [] },
+    });
+
+    const activeClock = makeClock(61_000);
+    const active = await fixture({ clock: activeClock });
+    await active.store.initialize();
+    await active.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 });
+    await active.store.claimDue({
+      agentId: "agent-a", bootId: "boot-a", rootRunId: "root-a", attemptId: "attempt-a",
+      maxPerCheck: 3, maxPerDayPerConversation: 3,
+    });
+    expect(await active.store.cancelPending({ agentId: "agent-a" })).toEqual(ok({
+      status: "nothing_pending",
+      activeTaskIds: [expect.any(String)],
+    }));
+  });
+
+  it("rejects invalid admission batches cross-agent batches and runtime configuration", async () => {
+    const data = await fixture();
+    await data.store.initialize();
+    expect(await data.store.admitCandidates({ candidates: [], confidenceThreshold: Number.NaN })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_state" },
+    });
+    expect(await data.store.admitCandidates({
+      candidates: Array.from({ length: 65 }, () => makeCandidate()),
+      confidenceThreshold: 0.5,
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+    const other = makeCandidate();
+    expect(await data.store.admitCandidates({
+      candidates: [makeCandidate(), {
+        ...other,
+        item: {
+          ...other.item,
+          itemId: "item-b",
+          origin: {
+            ...other.item.origin,
+            turnScope: {
+              ...other.item.origin.turnScope,
+              conversation: { ...other.item.origin.turnScope.conversation, agentId: "agent-b" },
+            },
+          },
+        },
+      }],
+      confidenceThreshold: 0.5,
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+
+    const invalidConfig = await fixture({
+      getRuntimeConfig: () => ({ enabled: true, preAcceptanceRetryLimit: 4, quietUntilMs: null }),
+    });
+    await invalidConfig.store.initialize();
+    expect(await invalidConfig.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 }))
+      .toMatchObject({ ok: false, error: { code: "invalid_state", errorKind: "config" } });
+
+    expect(await data.store.admitCandidates({
+      candidates: [makeCandidate({ text: "" })],
+      confidenceThreshold: 0.5,
+    })).toMatchObject({ ok: false, error: { code: "invalid_state", errorKind: "validation" } });
+  });
+
+  it("enforces active-count and policy-hash authority inside candidate admission", () => {
+    const candidate = makeCandidate();
+    expect(admitTaskCandidate({
+      root: {
+        formatVersion: 1,
+        tasks: [{ status: "pending" } as never],
+        attempts: [],
+        policySnapshots: [],
+      },
+      candidate,
+      confidenceThreshold: 0.5,
+      nowMs: 10_000,
+      idFactory: () => "task-a",
+      maxActiveTasks: 1,
+      hasCapacity: () => true,
+    })).toEqual(ok({
+      root: {
+        formatVersion: 1,
+        tasks: [{ status: "pending" }],
+        attempts: [],
+        policySnapshots: [],
+      },
+      result: { itemId: "item-a", disposition: "store_full" },
+    }));
+
+    const conflictingPolicy = {
+      ...candidate.item.workspacePolicySnapshot,
+      sections: candidate.item.workspacePolicySnapshot.sections.map((section) => ({
+        ...section,
+        content: "Different policy bytes",
+      })),
+    };
+    expect(admitTaskCandidate({
+      root: { formatVersion: 1, tasks: [], attempts: [], policySnapshots: [conflictingPolicy] },
+      candidate,
+      confidenceThreshold: 0.5,
+      nowMs: 10_000,
+      idFactory: () => "task-a",
+      maxActiveTasks: 10,
+      hasCapacity: () => true,
+    })).toMatchObject({ ok: false, error: { code: "invalid_state", errorKind: "validation" } });
+  });
+
+  it("validates claim input disablement duplicate attempts and no-due selection", async () => {
+    const disabled = await fixture({
+      getRuntimeConfig: () => ({ enabled: false, preAcceptanceRetryLimit: 3, quietUntilMs: null }),
+    });
+    await disabled.store.initialize();
+    expect(await disabled.store.claimDue({
+      agentId: "agent-a", bootId: "boot-a", rootRunId: "root-a", attemptId: "attempt-a",
+      maxPerCheck: 0, maxPerDayPerConversation: 3,
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+    expect(await disabled.store.claimDue({
+      agentId: "agent-a", bootId: "boot-a", rootRunId: "root-a", attemptId: "attempt-a",
+      maxPerCheck: 3, maxPerDayPerConversation: 3,
+    })).toEqual(ok({ status: "disabled" }));
+
+    const clock = makeClock(61_000);
+    const data = await fixture({ clock });
+    await data.store.initialize();
+    expect(await data.store.claimDue({
+      agentId: "agent-a", bootId: "boot-a", rootRunId: "root-a", attemptId: "attempt-a",
+      maxPerCheck: 3, maxPerDayPerConversation: 3,
+    })).toEqual(ok({ status: "no_due" }));
+    await data.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 });
+    await data.store.claimDue({
+      agentId: "agent-a", bootId: "boot-a", rootRunId: "root-a", attemptId: "attempt-a",
+      maxPerCheck: 3, maxPerDayPerConversation: 3,
+    });
+    expect(await data.store.claimDue({
+      agentId: "agent-a", bootId: "boot-a", rootRunId: "root-b", attemptId: "attempt-a",
+      maxPerCheck: 3, maxPerDayPerConversation: 3,
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+  });
+
+  it("rejects malformed send-boundary evidence missing attempts and closed windows", async () => {
+    const clock = makeClock(61_000);
+    const data = await fixture({ clock });
+    await data.store.initialize();
+    expect(await data.store.beginDelivery({ attemptId: "", check: successfulCheck() })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_state" },
+    });
+    expect(await data.store.beginDelivery({ attemptId: "missing", check: successfulCheck() })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_state" },
+    });
+    await data.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 });
+    await data.store.claimDue({
+      agentId: "agent-a", bootId: "boot-a", rootRunId: "root-a", attemptId: "attempt-a",
+      maxPerCheck: 3, maxPerDayPerConversation: 3,
+    });
+    clock.set(121_001);
+    expect(await data.store.beginDelivery({ attemptId: "attempt-a", check: successfulCheck() })).toMatchObject({
+      ok: true,
+      value: { status: "delivery_window_closed" },
+    });
+  });
+
+  it("rejects settlement before send and invalid delivery evidence after send", async () => {
+    const clock = makeClock(61_000);
+    const data = await fixture({ clock });
+    await data.store.initialize();
+    await data.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 });
+    await data.store.claimDue({
+      agentId: "agent-a", bootId: "boot-a", rootRunId: "root-a", attemptId: "attempt-a",
+      maxPerCheck: 3, maxPerDayPerConversation: 3,
+    });
+    expect(await data.store.settleDelivery({ attemptId: "", outcome: {} as never })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_state" },
+    });
+    expect(await data.store.settleDelivery({
+      attemptId: "attempt-a",
+      outcome: { status: "accepted", deliveredChunks: 1, failedChunks: 0, lastPlatformMessageId: null, deliveredAtMs: 61_000, history: { status: "appended" } },
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+    await data.store.beginDelivery({ attemptId: "attempt-a", check: successfulCheck() });
+    expect(await data.store.settleDelivery({
+      attemptId: "attempt-a",
+      outcome: { status: "accepted", deliveredChunks: 0, failedChunks: 0, lastPlatformMessageId: null, deliveredAtMs: 61_000, history: { status: "appended" } },
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+    expect(await data.store.settleDelivery({
+      attemptId: "missing",
+      outcome: { status: "accepted", deliveredChunks: 1, failedChunks: 0, lastPlatformMessageId: null, deliveredAtMs: 61_000, history: { status: "appended" } },
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+  });
+
+  it("enforces dismissal and failure state boundaries with idempotent terminals", async () => {
+    const clock = makeClock(61_000);
+    const data = await fixture({ clock });
+    await data.store.initialize();
+    expect(await data.store.dismissAttempt({ attemptId: "", check: successfulCheck() })).toMatchObject({ ok: false });
+    expect(await data.store.dismissAttempt({ attemptId: "missing", check: successfulCheck() })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_state" },
+    });
+    expect(await data.store.failAttempt({
+      attemptId: "",
+      failureStage: "model",
+      errorKind: "dependency",
+      check: { status: "not_returned" },
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+    expect(await data.store.failAttempt({
+      attemptId: "missing",
+      failureStage: "model",
+      errorKind: "dependency",
+      check: { status: "not_returned" },
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+    await data.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 });
+    await data.store.claimDue({
+      agentId: "agent-a", bootId: "boot-a", rootRunId: "root-a", attemptId: "attempt-a",
+      maxPerCheck: 3, maxPerDayPerConversation: 3,
+    });
+    expect(await data.store.failAttempt({
+      attemptId: "attempt-a",
+      failureStage: "delivery_rejected",
+      errorKind: "platform",
+      failedChunks: 1,
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+    await data.store.beginDelivery({ attemptId: "attempt-a", check: successfulCheck() });
+    expect(await data.store.dismissAttempt({ attemptId: "attempt-a", check: successfulCheck() })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_state" },
+    });
+    expect(await data.store.failAttempt({
+      attemptId: "attempt-a",
+      failureStage: "model",
+      errorKind: "dependency",
+      check: { ...successfulCheck(), execution: { status: "failed", finishReason: "error", errorKind: "dependency" } },
+    })).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+    expect(await data.store.failAttempt({
+      attemptId: "attempt-a",
+      failureStage: "delivery_rejected",
+      errorKind: "platform",
+      failedChunks: 1,
+    })).toMatchObject({ ok: true, value: "expired" });
+    expect(await data.store.failAttempt({
+      attemptId: "attempt-a",
+      failureStage: "delivery_rejected",
+      errorKind: "platform",
+      failedChunks: 1,
+    })).toEqual(ok("already_settled"));
+  });
+
+  it("validates recovery boot identity and leaves current-boot attempts untouched", async () => {
+    const clock = makeClock(61_000);
+    const data = await fixture({ clock });
+    await data.store.initialize();
+    expect(await data.store.reconcileOwnership({ currentBootId: "", exclusiveDataDirLockOwned: true }))
+      .toMatchObject({ ok: false, error: { code: "invalid_state" } });
+    await data.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 });
+    await data.store.claimDue({
+      agentId: "agent-a", bootId: "boot-current", rootRunId: "root-a", attemptId: "attempt-a",
+      maxPerCheck: 3, maxPerDayPerConversation: 3,
+    });
+    expect(await data.store.reconcileOwnership({
+      currentBootId: "boot-current",
+      exclusiveDataDirLockOwned: true,
+    })).toEqual(ok({ recoveredChecking: 0, recoveredDelivering: 0, recoveredAttempts: [] }));
+  });
+
+  it("expires pending work and prunes closed task policy graphs after retention", async () => {
+    const clock = makeClock(61_000);
+    const data = await fixture({ clock });
+    await data.store.initialize();
+    await data.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 });
+    clock.set(121_001);
+    expect(await data.store.read()).toMatchObject({
+      ok: true,
+      value: { tasks: [{ status: "expired", terminalAttemptId: null, terminalAtMs: 121_001 }] },
+    });
+    clock.set(121_001 + 7 * 24 * 60 * 60 * 1_000);
+    expect(await data.store.read()).toMatchObject({
+      ok: true,
+      value: { tasks: [], attempts: [], policySnapshots: [] },
+    });
+  });
+
+  it("applies overdue maintenance during initialization before exposing authority", async () => {
+    const clock = makeClock(10_000);
+    const data = await fixture({ clock });
+    await data.store.initialize();
+    await data.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 });
+    clock.set(121_001);
+
+    const reloaded = createFollowupTaskStore({
+      filePath: data.filePath,
+      lockPath: join(data.filePath, "..", "tasks.lock"),
+      fileLock: makeLock(),
+      clock,
+      idFactory: () => "reload-token",
+      getRuntimeConfig: () => ({ enabled: true, preAcceptanceRetryLimit: 3, quietUntilMs: null }),
+    });
+    expect(await reloaded.initialize()).toMatchObject({
+      ok: true,
+      value: { tasks: [{ status: "expired", terminalAtMs: 121_001 }] },
+    });
+  });
+
+  it("reports invalid opaque temporary tokens during initial authority creation", async () => {
+    const data = await fixture();
+    const invalid = createFollowupTaskStore({
+      filePath: join(data.filePath, "..", "invalid-token.json"),
+      lockPath: join(data.filePath, "..", "invalid-token.lock"),
+      fileLock: makeLock(),
+      clock: makeClock(),
+      idFactory: () => "../escape",
+      getRuntimeConfig: () => ({ enabled: true, preAcceptanceRetryLimit: 3, quietUntilMs: null }),
+    });
+    expect(await invalid.initialize()).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+  });
+
+  it("propagates invalid task identifiers and replacement tokens during admission", async () => {
+    let invalidTaskCall = 0;
+    const invalidTask = await fixture({
+      idFactory: () => (++invalidTaskCall === 1 ? "initial-token" : "../invalid-task"),
+    });
+    await invalidTask.store.initialize();
+    expect(await invalidTask.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 }))
+      .toMatchObject({ ok: false, error: { code: "invalid_state" } });
+
+    let invalidWriteCall = 0;
+    const invalidWrite = await fixture({
+      idFactory: () => {
+        invalidWriteCall += 1;
+        if (invalidWriteCall === 1) return "initial-token";
+        if (invalidWriteCall === 2) return "task-token";
+        return "../invalid-replacement";
+      },
+    });
+    await invalidWrite.store.initialize();
+    expect(await invalidWrite.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 }))
+      .toMatchObject({ ok: false, error: { code: "invalid_state" } });
+  });
+
+  it("returns path and initialization guards from every protected operation family", async () => {
+    const base = await fixture();
+    const relative = createFollowupTaskStore({
+      filePath: "relative.json",
+      lockPath: base.filePath,
+      fileLock: makeLock(),
+      clock: makeClock(),
+      idFactory: () => "opaque-a",
+      getRuntimeConfig: () => ({ enabled: true, preAcceptanceRetryLimit: 3, quietUntilMs: null }),
+    });
+    expect(await relative.read()).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+    expect(await relative.inspect()).toMatchObject({ ok: false, error: { code: "invalid_path" } });
+    expect(await relative.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 }))
+      .toMatchObject({ ok: false, error: { code: "invalid_path" } });
+    expect(await relative.cancelPending({ agentId: "agent-a" }))
+      .toMatchObject({ ok: false, error: { code: "invalid_path" } });
+
+    expect(await base.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 }))
+      .toMatchObject({ ok: false, error: { code: "not_initialized" } });
+    expect(await base.store.cancelPending({ agentId: "agent-a" }))
+      .toMatchObject({ ok: false, error: { code: "not_initialized" } });
+  });
+
+  it("rejects an invalid live clock across reads inspection admission and mutation", async () => {
+    const clock = makeClock();
+    const data = await fixture({ clock });
+    expect((await data.store.initialize()).ok).toBe(true);
+    clock.set(-1);
+
+    expect(await data.store.read()).toMatchObject({ ok: false, error: { code: "invalid_state", errorKind: "internal" } });
+    expect(await data.store.inspect()).toMatchObject({ ok: false, error: { code: "invalid_state", errorKind: "internal" } });
+    expect(await data.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 }))
+      .toMatchObject({ ok: false, error: { code: "invalid_state", errorKind: "internal" } });
+    expect(await data.store.cancelPending({ agentId: "agent-a" }))
+      .toMatchObject({ ok: false, error: { code: "invalid_state", errorKind: "internal" } });
+  });
+
+  it("returns every non-created admission disposition without mutating unrelated authority", async () => {
+    const below = await fixture();
+    await below.store.initialize();
+    expect(await below.store.admitCandidates({ candidates: [makeCandidate({ confidence: 0.2 })], confidenceThreshold: 0.5 }))
+      .toEqual(ok([{ itemId: "item-a", disposition: "below_threshold" }]));
+
+    const expiredClock = makeClock(200_000);
+    const expired = await fixture({ clock: expiredClock });
+    await expired.store.initialize();
+    expect(await expired.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 }))
+      .toEqual(ok([{ itemId: "item-a", disposition: "expired" }]));
+
+    const activeClock = makeClock(61_000);
+    const active = await fixture({ clock: activeClock });
+    await active.store.initialize();
+    await active.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 });
+    await active.store.claimDue({
+      agentId: "agent-a", bootId: "boot-a", rootRunId: "root-a", attemptId: "attempt-a",
+      maxPerCheck: 3, maxPerDayPerConversation: 3,
+    });
+    const duplicate = makeCandidate({
+      item: { ...makeCandidate().item, itemId: "item-b", sourceExecutionId: "source-b" },
+    });
+    expect(await active.store.admitCandidates({ candidates: [duplicate], confidenceThreshold: 0.5 }))
+      .toEqual(ok([{ itemId: "item-b", disposition: "active_conflict" }]));
+
+    const extended = await fixture();
+    await extended.store.initialize();
+    await extended.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 });
+    const later = makeCandidate({
+      item: {
+        ...makeCandidate().item,
+        itemId: "item-later",
+        sourceExecutionId: "source-later",
+        capturedAtMs: 2_000,
+        minimumDueAtMs: 62_000,
+      },
+      dueEarliestMs: 62_000,
+      dueLatestMs: 2_592_001_500,
+      expiresAtMs: 2_592_002_000,
+    });
+    expect(await extended.store.admitCandidates({ candidates: [later], confidenceThreshold: 0.5 }))
+      .toEqual(ok([{ itemId: "item-later", disposition: "expired" }]));
+  });
+
+  it("propagates invalid runtime configuration at claim send failure and recovery boundaries", async () => {
+    let valid = true;
+    const config = () => valid
+      ? { enabled: true, preAcceptanceRetryLimit: 3, quietUntilMs: null }
+      : { enabled: true, preAcceptanceRetryLimit: 4, quietUntilMs: null };
+    const clock = makeClock(61_000);
+    const claimConfig = await fixture({ clock, getRuntimeConfig: config });
+    await claimConfig.store.initialize();
+    valid = false;
+    expect(await claimConfig.store.claimDue({
+      agentId: "agent-a", bootId: "boot-a", rootRunId: "root-a", attemptId: "attempt-a",
+      maxPerCheck: 3, maxPerDayPerConversation: 3,
+    })).toMatchObject({ ok: false, error: { errorKind: "config" } });
+
+    valid = true;
+    const active = await fixture({ clock, getRuntimeConfig: config });
+    await active.store.initialize();
+    await active.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 });
+    await active.store.claimDue({
+      agentId: "agent-a", bootId: "boot-old", rootRunId: "root-a", attemptId: "attempt-a",
+      maxPerCheck: 3, maxPerDayPerConversation: 3,
+    });
+    valid = false;
+    expect(await active.store.beginDelivery({ attemptId: "attempt-a", check: successfulCheck() }))
+      .toMatchObject({ ok: false, error: { errorKind: "config" } });
+    expect(await active.store.failAttempt({
+      attemptId: "attempt-a",
+      failureStage: "model",
+      errorKind: "dependency",
+      check: { status: "not_returned" },
+    })).toMatchObject({ ok: false, error: { errorKind: "config" } });
+    expect(await active.store.reconcileOwnership({ currentBootId: "boot-current", exclusiveDataDirLockOwned: true }))
+      .toMatchObject({ ok: false, error: { errorKind: "config" } });
+  });
+
+  it("prunes a retained terminal attempt task and policy as one closed graph", async () => {
+    const clock = makeClock(61_000);
+    const data = await fixture({ clock });
+    await data.store.initialize();
+    await data.store.admitCandidates({ candidates: [makeCandidate()], confidenceThreshold: 0.5 });
+    await data.store.claimDue({
+      agentId: "agent-a", bootId: "boot-a", rootRunId: "root-a", attemptId: "attempt-a",
+      maxPerCheck: 3, maxPerDayPerConversation: 3,
+    });
+    await data.store.dismissAttempt({ attemptId: "attempt-a", check: successfulCheck() });
+    clock.set(61_000 + 7 * 24 * 60 * 60 * 1_000);
+
+    expect(await data.store.read()).toEqual(ok({ formatVersion: 1, tasks: [], attempts: [], policySnapshots: [] }));
+  });
+
+  it("rejects changed strict authority on both read and mutation paths", async () => {
+    const data = await fixture();
+    await data.store.initialize();
+    await writeFile(data.filePath, "{}\n");
+    expect(await data.store.read()).toMatchObject({ ok: false, error: { code: "invalid_state" } });
+    expect(await data.store.cancelPending({ agentId: "agent-a" }))
+      .toMatchObject({ ok: false, error: { code: "invalid_state" } });
+
+    const malformedEnvelope = await fixture();
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(join(malformedEnvelope.filePath, ".."), { recursive: true });
+    await writeFile(malformedEnvelope.filePath, "{}\n");
+    expect(await malformedEnvelope.store.initialize())
+      .toMatchObject({ ok: false, error: { code: "invalid_state" } });
+
+    expect(encodeFollowupTaskStore({ formatVersion: 1, tasks: [{}], attempts: [], policySnapshots: [] } as never))
+      .toMatchObject({ ok: false, error: { code: "invalid_state" } });
   });
 });

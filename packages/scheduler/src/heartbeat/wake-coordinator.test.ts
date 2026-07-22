@@ -41,13 +41,14 @@ function makeCoordinator(overrides: Record<string, unknown> = {}, periodicEnable
   const eventBus = new TypedEventBus();
   let nextId = 0;
   const runAgent = vi.fn(async (input: HeartbeatCoordinatorAgentRunInput) => ok(settled(input)));
+  const logger = {
+    debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+  };
   const coordinator = createHeartbeatWakeCoordinator({
     clock,
     timers,
     eventBus,
-    logger: {
-      debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
-    } as never,
+    logger: logger as never,
     idFactory: () => `heartbeat_${++nextId}`,
     hasTarget: (wakeTarget) => wakeTarget.kind === "monitoring" || wakeTarget.agentId !== "missing",
     isTargetBusy: () => false,
@@ -75,7 +76,7 @@ function makeCoordinator(overrides: Record<string, unknown> = {}, periodicEnable
     }).ok).toBe(true);
   }
   expect(coordinator.activate()).toEqual(ok(undefined));
-  return { coordinator, clock, timers, eventBus, runAgent };
+  return { coordinator, clock, timers, eventBus, runAgent, logger };
 }
 
 async function flushDispatch(): Promise<void> {
@@ -113,6 +114,10 @@ describe("heartbeat wake coordinator", () => {
       target: target(),
       reason: "manual",
       timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+    })).toEqual({ ok: false, error: { code: "not_accepting", errorKind: "precondition" } });
+    expect(coordinator.admitSystemEventWake({
+      target: target(), reason: "wake", wakeMode: "now", notBeforeMs: NOW_MS,
+      event: { trigger: "wake", contextKey: "event-a", text: "inspect" },
     })).toEqual({ ok: false, error: { code: "not_accepting", errorKind: "precondition" } });
 
     expect(coordinator.activate()).toEqual(ok(undefined));
@@ -624,5 +629,338 @@ describe("heartbeat wake coordinator", () => {
         cancellationReason: "maintenance",
       }),
     ]);
+  });
+
+  it("rejects invalid requests targets and opaque correlation identifiers", () => {
+    const invalidId = makeCoordinator({ idFactory: () => "" }, false);
+    expect(invalidId.coordinator.submitWake({
+      target: target(), reason: "manual", timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+    })).toEqual({ ok: false, error: { code: "not_accepting", errorKind: "precondition" } });
+
+    const built = makeCoordinator({}, false);
+    expect(built.coordinator.submitWake({
+      target: target(), reason: "task", timing: { kind: "routine", notBeforeMs: NOW_MS },
+    })).toEqual({ ok: false, error: { code: "invalid_request", errorKind: "validation" } });
+    expect(built.coordinator.submitWake({
+      target: target("missing"), reason: "manual", timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+    })).toEqual({ ok: false, error: { code: "invalid_target", errorKind: "validation" } });
+  });
+
+  it("coalesces unchanged lane requests without rebasing the occurrence", () => {
+    const { coordinator } = makeCoordinator({}, false);
+    const first = coordinator.submitWake({
+      target: target(), reason: "manual", timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+    });
+    const second = coordinator.submitWake({
+      target: target(), reason: "manual", timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+    });
+    expect(second).toMatchObject({
+      ok: true,
+      value: {
+        status: "coalesced",
+        correlationId: first.ok ? first.value.correlationId : "",
+        retainedReason: "manual",
+      },
+    });
+  });
+
+  it("defers busy targets until the exact short recheck boundary", async () => {
+    let busy = true;
+    const built = makeCoordinator({ isTargetBusy: () => busy }, false);
+    const deferrals: unknown[] = [];
+    built.eventBus.on("scheduler:heartbeat_wake_deferred", (event) => deferrals.push(event));
+    built.coordinator.submitWake({
+      target: target(), reason: "manual", timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+    });
+    built.timers.advance(0);
+    await flushDispatch();
+    expect(built.runAgent).not.toHaveBeenCalled();
+    expect(deferrals).toEqual([expect.objectContaining({ reason: "session_busy", nextEligibleAtMs: NOW_MS + 1_000 })]);
+    busy = false;
+    built.clock.advance(1_000);
+    built.timers.advance(1_000);
+    await flushDispatch();
+    expect(built.runAgent).toHaveBeenCalledOnce();
+  });
+
+  it("terminalizes interval gate Result errors and rejected promises before root registration", async () => {
+    for (const checkIntervalFileGate of [
+      async () => err({ code: "precondition_failed" as const, errorKind: "precondition" as const }),
+      async () => { throw new Error("expected gate rejection"); },
+    ]) {
+      const registerRoot = vi.fn(async () => ok({ rootRunId: "root-a" }));
+      const built = makeCoordinator({ checkIntervalFileGate, registerRoot });
+      const terminals: unknown[] = [];
+      built.eventBus.on("scheduler:heartbeat_wake_terminal", (event) => terminals.push(event));
+      built.coordinator.submitWake({
+        target: target(), reason: "interval", timing: { kind: "routine", notBeforeMs: NOW_MS },
+      });
+      built.timers.advance(0);
+      await flushDispatch();
+      expect(registerRoot).not.toHaveBeenCalled();
+      expect(terminals).toEqual([expect.objectContaining({ status: "failed_before_side_effect" })]);
+    }
+  });
+
+  it("defers rejected and unavailable root registration with preserved error kinds", async () => {
+    for (const registerRoot of [
+      async () => err({ errorKind: "resource" as const }),
+      async () => { throw new Error("expected registration rejection"); },
+    ]) {
+      const built = makeCoordinator({ registerRoot }, false);
+      const deferrals: unknown[] = [];
+      built.eventBus.on("scheduler:heartbeat_wake_deferred", (event) => deferrals.push(event));
+      built.coordinator.submitWake({
+        target: target(), reason: "manual", timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+      });
+      built.timers.advance(0);
+      await flushDispatch();
+      expect(built.runAgent).not.toHaveBeenCalled();
+      expect(deferrals).toEqual([expect.objectContaining({
+        reason: "root_unavailable",
+        nextEligibleAtMs: NOW_MS + 60_000,
+      })]);
+    }
+  });
+
+  it("terminalizes runtime Result errors and rebinds claimed events for retry", async () => {
+    const runAgent = vi.fn(async () => err({ code: "precondition_failed" as const, errorKind: "precondition" as const }));
+    const built = makeCoordinator({ runAgent }, false);
+    const terminals: unknown[] = [];
+    built.eventBus.on("scheduler:heartbeat_wake_terminal", (event) => terminals.push(event));
+    built.coordinator.admitSystemEventWake({
+      target: target(), reason: "wake", wakeMode: "now", notBeforeMs: NOW_MS,
+      event: { trigger: "wake", contextKey: "wake:event-a", text: "inspect" },
+    });
+    built.timers.advance(0);
+    await flushDispatch();
+    expect(terminals).toEqual([expect.objectContaining({
+      status: "failed_before_side_effect",
+      eventEntryCount: 1,
+      errorKind: "precondition",
+    })]);
+    expect(built.coordinator.submitWake({
+      target: target(), reason: "manual", timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+    }).ok).toBe(true);
+  });
+
+  it("terminalizes rejected runtime promises as unsettled internal outcomes", async () => {
+    const built = makeCoordinator({ runAgent: async () => { throw new Error("expected runtime rejection"); } }, false);
+    const terminals: unknown[] = [];
+    built.eventBus.on("scheduler:heartbeat_wake_terminal", (event) => terminals.push(event));
+    built.coordinator.submitWake({
+      target: target(), reason: "manual", timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+    });
+    built.timers.advance(0);
+    await flushDispatch();
+    expect(terminals).toEqual([expect.objectContaining({ status: "unsettled", errorKind: "internal" })]);
+  });
+
+  it("runs monitoring targets without root registration and projects settled and failed outcomes", async () => {
+    const runMonitoring = vi.fn()
+      .mockResolvedValueOnce(ok({
+        status: "settled" as const,
+        trigger: "manual" as const,
+        checksRun: 1,
+        checksFailed: 0,
+        alertsRaised: 0,
+        durationMs: 2,
+      }))
+      .mockResolvedValueOnce(err({ code: "precondition_failed" as const, errorKind: "precondition" as const }));
+    const registerRoot = vi.fn();
+    const built = makeCoordinator({ runMonitoring, registerRoot }, false);
+    const terminals: unknown[] = [];
+    built.eventBus.on("scheduler:heartbeat_wake_terminal", (event) => terminals.push(event));
+    for (let index = 0; index < 2; index++) {
+      built.coordinator.submitWake({
+        target: { kind: "monitoring" }, reason: "manual", timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+      });
+      built.timers.advance(0);
+      await flushDispatch();
+    }
+    expect(registerRoot).not.toHaveBeenCalled();
+    expect(runMonitoring).toHaveBeenCalledTimes(2);
+    expect(terminals).toEqual([
+      expect.objectContaining({ status: "settled" }),
+      expect.objectContaining({ status: "failed_before_side_effect", errorKind: "precondition" }),
+    ]);
+  });
+
+  it("validates next-heartbeat phase and system-event schemas before queue mutation", () => {
+    const built = makeCoordinator({}, false);
+    expect(built.coordinator.admitSystemEventWake({
+      target: target(), reason: "wake", wakeMode: "now", notBeforeMs: NOW_MS,
+      event: { trigger: "cron", contextKey: "event-a", text: "inspect" },
+    })).toEqual({ ok: false, error: { code: "invalid_request", errorKind: "validation" } });
+    expect(built.coordinator.admitSystemEventWake({
+      target: target("missing"), reason: "wake", wakeMode: "now", notBeforeMs: NOW_MS,
+      event: { trigger: "wake", contextKey: "event-a", text: "inspect" },
+    })).toEqual({ ok: false, error: { code: "invalid_target", errorKind: "validation" } });
+    expect(built.coordinator.admitSystemEventWake({
+      target: target(), reason: "wake", wakeMode: "next-heartbeat", notBeforeMs: NOW_MS,
+      event: { trigger: "wake", contextKey: "event-a", text: "inspect" },
+    })).toEqual({ ok: false, error: { code: "not_accepting", errorKind: "precondition" } });
+
+    built.coordinator.configurePeriodicHeartbeat({
+      agentId: "agent_a", agentSchedulerSeed: "seed-a", intervalMs: 300_000, enabled: true,
+    });
+    const next = built.coordinator.getNextPeriodicPhaseMs("agent_a");
+    expect(next.ok).toBe(true);
+    if (!next.ok) return;
+    expect(built.coordinator.admitSystemEventWake({
+      target: target(), reason: "wake", wakeMode: "next-heartbeat", notBeforeMs: next.value + 1,
+      event: { trigger: "wake", contextKey: "event-a", text: "inspect" },
+    })).toEqual({ ok: false, error: { code: "invalid_request", errorKind: "validation" } });
+    expect(built.coordinator.admitSystemEventWake({
+      target: target(), reason: "wake", wakeMode: "next-heartbeat", notBeforeMs: next.value,
+      event: { trigger: "wake", contextKey: "event-a", text: "inspect" },
+    }).ok).toBe(true);
+  });
+
+  it("reports missing task lanes targets and closed activation without side effects", () => {
+    const built = makeCoordinator({}, false);
+    expect(built.coordinator.closeTaskLane("unknown", "feature_disabled"))
+      .toEqual({ cancelledCount: 0, activeCount: 0 });
+    expect(built.coordinator.removeTarget(target("unknown"))).toBe(false);
+    built.coordinator.shutdown();
+    expect(built.coordinator.activate()).toMatchObject({ ok: false, error: { code: "periodic_disabled" } });
+  });
+
+  it("logs release Result and promise failures while preserving immutable terminal outcome", async () => {
+    for (const releaseRoot of [
+      async () => err({ errorKind: "resource" as const }),
+      async () => { throw new Error("expected release rejection"); },
+    ]) {
+      const built = makeCoordinator({ releaseRoot }, false);
+      built.coordinator.submitWake({
+        target: target(), reason: "manual", timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+      });
+      built.timers.advance(0);
+      await flushDispatch();
+      expect(built.logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ step: "heartbeat_root_release" }),
+        "Heartbeat root release failed",
+      );
+    }
+  });
+
+  it("terminalizes task-store failure as unsettled when root release cannot be proven", async () => {
+    const built = makeCoordinator({
+      runAgent: async () => err({ code: "task_store_unavailable", errorKind: "resource" }),
+      releaseRoot: async () => err({ errorKind: "resource" }),
+    }, false);
+    const terminals: unknown[] = [];
+    built.eventBus.on("scheduler:heartbeat_wake_terminal", (event) => terminals.push(event));
+    built.coordinator.submitWake({
+      target: target(), reason: "task", timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+    });
+    built.timers.advance(0);
+    await flushDispatch();
+
+    expect(terminals).toEqual([expect.objectContaining({
+      status: "unsettled",
+      lane: "task",
+      errorKind: "resource",
+    })]);
+  });
+
+  it("rejects invalid event correlation ids and a full sealed event queue", async () => {
+    const invalidId = makeCoordinator({ idFactory: () => "" }, false);
+    expect(invalidId.coordinator.admitSystemEventWake({
+      target: target(), reason: "wake", wakeMode: "now", notBeforeMs: NOW_MS,
+      event: { trigger: "wake", contextKey: "event-a", text: "inspect" },
+    })).toEqual({ ok: false, error: { code: "not_accepting", errorKind: "precondition" } });
+
+    let finish!: () => void;
+    const held = new Promise<void>((resolve) => { finish = resolve; });
+    const built = makeCoordinator({
+      runAgent: async (input: HeartbeatCoordinatorAgentRunInput) => {
+        await held;
+        return ok(settled(input));
+      },
+    }, false);
+    for (let index = 0; index < 20; index += 1) {
+      expect(built.coordinator.admitSystemEventWake({
+        target: target(), reason: "wake", wakeMode: "now", notBeforeMs: NOW_MS,
+        event: { trigger: "wake", contextKey: `event-${index}`, text: "inspect" },
+      }).ok).toBe(true);
+    }
+    built.timers.advance(0);
+    await flushDispatch();
+    expect(built.coordinator.admitSystemEventWake({
+      target: target(), reason: "wake", wakeMode: "now", notBeforeMs: NOW_MS,
+      event: { trigger: "wake", contextKey: "event-overflow", text: "inspect" },
+    })).toEqual({ ok: false, error: { code: "queue_full", errorKind: "resource" } });
+    finish();
+    await flushDispatch();
+  });
+
+  it("cancels a selected task before start when maintenance wins registration", async () => {
+    let finishRegistration!: () => void;
+    const held = new Promise<void>((resolve) => { finishRegistration = resolve; });
+    const releaseRoot = vi.fn(async () => ok(undefined));
+    const built = makeCoordinator({
+      registerRoot: async () => {
+        await held;
+        return ok({ rootRunId: "root-task-a" });
+      },
+      releaseRoot,
+    }, false);
+    const terminals: unknown[] = [];
+    built.eventBus.on("scheduler:heartbeat_wake_terminal", (event) => terminals.push(event));
+    built.coordinator.submitWake({
+      target: target(), reason: "task", timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+    });
+    built.timers.advance(0);
+    await flushDispatch();
+
+    expect(built.coordinator.closeTaskLane("agent_a", "maintenance"))
+      .toEqual({ cancelledCount: 1, activeCount: 0 });
+    finishRegistration();
+    await flushDispatch();
+    expect(terminals).toEqual([expect.objectContaining({
+      status: "cancelled_before_start",
+      cancellationReason: "maintenance",
+    })]);
+    expect(releaseRoot).toHaveBeenCalledOnce();
+  });
+
+  it("cancels a selected target before start when removal wins registration", async () => {
+    let finishRegistration!: () => void;
+    const held = new Promise<void>((resolve) => { finishRegistration = resolve; });
+    const built = makeCoordinator({
+      registerRoot: async () => {
+        await held;
+        return ok({ rootRunId: "root-target-a" });
+      },
+    }, false);
+    const terminals: unknown[] = [];
+    built.eventBus.on("scheduler:heartbeat_wake_terminal", (event) => terminals.push(event));
+    built.coordinator.submitWake({
+      target: target(), reason: "manual", timing: { kind: "spacing_bypass", notBeforeMs: NOW_MS },
+    });
+    built.timers.advance(0);
+    await flushDispatch();
+
+    expect(built.coordinator.removeTarget(target())).toBe(true);
+    finishRegistration();
+    await flushDispatch();
+    expect(terminals).toEqual([expect.objectContaining({
+      status: "cancelled_before_start",
+      cancellationReason: "target_removed",
+    })]);
+  });
+
+  it("removes a periodic-only target without creating wake state", () => {
+    const built = makeCoordinator({}, false);
+    built.coordinator.configurePeriodicHeartbeat({
+      agentId: "agent-periodic",
+      agentSchedulerSeed: "seed-a",
+      intervalMs: 300_000,
+      enabled: true,
+    });
+
+    expect(built.coordinator.removeTarget(target("agent-periodic"))).toBe(true);
+    expect(built.coordinator.getNextPeriodicPhaseMs("agent-periodic").ok).toBe(false);
   });
 });
