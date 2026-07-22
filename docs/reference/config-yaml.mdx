@@ -1694,7 +1694,7 @@ Daemon process configuration for shutdown, metrics, logging, and config change w
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `shutdownTimeoutMs` | `number` | `30000` | Graceful shutdown timeout in ms |
+| `shutdownTimeoutMs` | `number` | `45000` | Graceful shutdown timeout in ms (minimum 40000) |
 | `metricsIntervalMs` | `number` | `30000` | Process metrics collection interval in ms |
 | `logLevels` | `Record<string, LogLevel>` | `{}` | Per-module log level overrides |
 

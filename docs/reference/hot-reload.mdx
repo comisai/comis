@@ -193,7 +193,7 @@ The shutdown handler stops components in dependency order:
 
 ### Hard Timeout
 
-The shutdown handler has a hard timeout of **30 seconds** (default `timeoutMs`). If the teardown sequence does not complete within this window, the process is forcibly terminated. This timeout must be less than the process manager's stop timeout (e.g., systemd `TimeoutStopSec`).
+The shutdown handler has a hard timeout of **45 seconds** (default `timeoutMs`). Scheduled work first receives a 30-second drain window and then a 5-second cancellation grace before dependent adapters close. If the complete teardown sequence does not finish within the hard timeout, the process is forcibly terminated. This timeout must be less than the process manager's stop timeout (e.g., systemd `TimeoutStopSec`).
 
 ### Signal Registration
 

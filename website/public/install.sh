@@ -4842,7 +4842,7 @@ ExecStart=${COMIS_NODE_BIN} --permission --allow-addons --allow-worker --allow-f
 
 Restart=on-failure
 RestartSec=5s
-TimeoutStopSec=45
+TimeoutStopSec=60
 # KillMode=process: on stop, systemd signals ONLY the main daemon process - NOT the whole
 # cgroup (the default 'control-group'). REQUIRED for durable terminal drives: a
 # durable session runs its child inside a detached 'tmux new-session -d' server that

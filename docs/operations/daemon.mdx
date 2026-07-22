@@ -118,7 +118,7 @@ The shutdown follows this order:
 9. **Memory database** -- Closes the SQLite database cleanly.
 
 <Info>
-The daemon waits up to 30 seconds for everything to stop cleanly. Active
+The daemon waits up to 45 seconds for everything to stop cleanly. Active
 conversations will finish processing before shutdown completes. If a component
 takes too long, the daemon logs a timeout warning and forces an exit.
 </Info>
@@ -203,13 +203,13 @@ do not need to change these -- the defaults work well for typical installations.
 ```yaml
 # config.yaml
 daemon:
-  shutdownTimeoutMs: 30000   # maximum time to wait for graceful shutdown
+  shutdownTimeoutMs: 45000   # maximum time to wait for graceful shutdown
   metricsIntervalMs: 30000   # how often to collect system metrics
 ```
 
 | Setting | Default | What It Controls |
 |---|---|---|
-| `shutdownTimeoutMs` | 30000 (30s) | Maximum time to wait for graceful shutdown before forcing exit. |
+| `shutdownTimeoutMs` | 45000 (45s, minimum 40000) | Maximum time to wait for graceful shutdown before forcing exit. |
 | `metricsIntervalMs` | 30000 (30s) | How often CPU, memory, and event loop metrics are collected. |
 
 <CardGroup cols={2}>
