@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { TypedEventBus } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { describe, expect, it, vi } from "vitest";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
@@ -6,6 +7,7 @@ import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import { FOLLOWUP_TASK_RETENTION_MS, type FollowupTaskStore } from "./task-store.js";
 import type { FollowupTaskStoreFile } from "./task-types.js";
 import { createTaskDueSchedule } from "./task-due-schedule.js";
+import { createHeartbeatWakeCoordinator } from "../heartbeat/wake-coordinator.js";
 
 const NOW_MS = 1_800_000_000_000;
 
@@ -127,6 +129,55 @@ describe("follow-up task due schedule", () => {
     expect(data.timers.unrefRecord()).toHaveLength(1);
   });
 
+  it("admits a persisted due task through the strict heartbeat coordinator contract", async () => {
+    const clock = createFakeClock(NOW_MS);
+    const timers = createFakeTimers(NOW_MS);
+    const eventBus = new TypedEventBus();
+    const admissions: unknown[] = [];
+    eventBus.on("scheduler:heartbeat_wake_admitted", (event) => admissions.push(event));
+    const coordinator = createHeartbeatWakeCoordinator({
+      clock,
+      timers,
+      eventBus,
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+      idFactory: () => "heartbeat-task-a",
+      hasTarget: () => true,
+      isTargetBusy: () => true,
+      isTaskEnabled: () => true,
+      checkIntervalFileGate: async () => ok(false),
+      registerRoot: async () => ok({ rootRunId: "root-task-a" }),
+      releaseRoot: async () => ok(undefined),
+      runAgent: vi.fn(),
+      runMonitoring: vi.fn(),
+    });
+    expect(coordinator.activate()).toEqual(ok(undefined));
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const schedule = createTaskDueSchedule({
+      agentId: "agent-a",
+      clock,
+      timers,
+      store: { read: async () => ok(root(NOW_MS)) },
+      submitTaskWake: coordinator.submitWake,
+      logger,
+    });
+
+    await expect(schedule.activate()).resolves.toEqual(ok({ nextDueAtMs: NOW_MS }));
+    timers.advance(0);
+    await flush();
+
+    expect(admissions).toEqual([
+      expect.objectContaining({
+        correlationId: "heartbeat-task-a",
+        target: { kind: "agent", agentId: "agent-a" },
+        lane: "task",
+        retainedReason: "task",
+      }),
+    ]);
+    expect(logger.warn).not.toHaveBeenCalled();
+    schedule.shutdown();
+    coordinator.shutdown();
+  });
+
   it("replaces the timer when durable task state changes", async () => {
     const data = fixture(NOW_MS + 120_000);
     await data.schedule.activate();
@@ -177,9 +228,27 @@ describe("follow-up task due schedule", () => {
     ]);
     expect(data.logger.warn).toHaveBeenCalledWith(expect.objectContaining({
       agentId: "agent-a",
+      errorCode: "not_accepting",
       errorKind: "precondition",
-      hint: expect.any(String),
+      hint: "Activate heartbeat coordinator admission before the bounded due-task retry",
     }), "Task due wake admission failed");
+  });
+
+  it("identifies a rejected trusted due-task timing contract without logging task content", async () => {
+    const data = fixture(NOW_MS);
+    data.submitTaskWake.mockReturnValueOnce(err({ code: "invalid_request", errorKind: "validation" }));
+    await data.schedule.activate();
+    data.advance(0);
+    await flush();
+
+    expect(data.logger.warn).toHaveBeenCalledWith({
+      agentId: "agent-a",
+      step: "task_due_wake_admission",
+      durationMs: 0,
+      errorCode: "invalid_request",
+      errorKind: "validation",
+      hint: "Verify the trusted due-task producer uses task reason with spacing_bypass timing before retrying",
+    }, "Task due wake admission failed");
   });
 
   it("cancels its timer and refuses rescans after shutdown", async () => {
