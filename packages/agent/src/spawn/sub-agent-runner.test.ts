@@ -3466,7 +3466,7 @@ describe("abort wiring in spawn", () => {
       status: "failed",
       completion: {
         endReason: "failed",
-        errorKind: "internal",
+        errorKind: "resource",
         summary: "partial output",
       },
       telemetry: { finishReason: "max_steps" },

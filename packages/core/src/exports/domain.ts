@@ -119,9 +119,11 @@ export {
   createConversationLocator,
   conversationScopeToSessionKey,
   CanonicalLocaleSchema,
+  AgentExecutionFinishReasonSchema,
   AgentExecutionAbortReasonSchema,
   ModelResolutionSourceSchema,
   AgentTurnExecutionOutcomeSchema,
+  classifyAgentFinishErrorKind,
   classifyAgentTurnExecutionOutcome,
 } from "../domain/index.js";
 

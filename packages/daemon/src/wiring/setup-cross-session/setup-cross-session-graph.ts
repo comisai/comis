@@ -7,7 +7,7 @@
  *
  * @module
  */
-import type { AgentCapability, NormalizedMessage, SessionKey, SpawnPacket, AppContainer, AgentConfig, FileLockPort, ConversationLocator, SessionStorePort } from "@comis/core";
+import type { AgentCapability, ErrorKind, NormalizedMessage, SessionKey, SpawnPacket, AppContainer, AgentConfig, FileLockPort, ConversationLocator, SessionStorePort } from "@comis/core";
 import { ConversationRefSchema, ConversationScopeSchema, tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -82,7 +82,15 @@ export type ExecuteSubAgentFn = (
       caps: readonly AgentCapability[];
     }): void;
   },
-) => Promise<{ response: string; tokensUsed: { total: number; cacheRead?: number; cacheWrite?: number }; cost: { total: number; cacheSaved?: number }; finishReason: string; stepsExecuted: number; toolCallHistory?: string[] }>;
+) => Promise<{
+  response: string;
+  tokensUsed: { total: number; cacheRead?: number; cacheWrite?: number };
+  cost: { total: number; cacheSaved?: number };
+  finishReason: string;
+  stepsExecuted: number;
+  toolCallHistory?: string[];
+  terminalErrorKind?: ErrorKind;
+}>;
 
 /**
  * Build the executeSubAgent callback wired into createSubAgentRunner. The
@@ -592,6 +600,9 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       finishReason: result.finishReason,
       stepsExecuted: result.stepsExecuted,
       toolCallHistory: result.toolCallHistory,
+      ...(result.terminalErrorKind === undefined
+        ? {}
+        : { terminalErrorKind: result.terminalErrorKind }),
     };
   };
 }
