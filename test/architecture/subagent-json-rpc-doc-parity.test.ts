@@ -58,7 +58,7 @@ describe("sub-agent JSON-RPC documentation parity", () => {
     ]);
   });
 
-  it("documents owner projection steer modes and restart-reset admission semantics", () => {
+  it("requires owner projection steer modes and restart-reset admission semantics", () => {
     expect(subagent).toMatch(/agent callers?.*owned|owner-scoped/isu);
     expect(methodSection("subagent.steer")).toMatch(/2 seconds|2s/iu);
     expect(methodSection("subagent.steer")).toMatch(/next step boundary/iu);
