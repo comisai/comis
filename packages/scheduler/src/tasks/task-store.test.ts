@@ -158,6 +158,59 @@ describe("durable follow-up task store", () => {
     expect(await readFile(data.filePath, "utf8")).toBe("{not-json");
   });
 
+  it("quarantines a referentially closed malformed terminal group exactly once", async () => {
+    const clock = makeClock(10_000);
+    const data = await fixture({ clock });
+    expect((await data.store.initialize()).ok).toBe(true);
+    expect((await data.store.admitCandidates({
+      candidates: [makeCandidate()],
+      confidenceThreshold: 0.5,
+    })).ok).toBe(true);
+    expect(await data.store.cancelPending({ agentId: "agent-a" })).toMatchObject({
+      ok: true,
+      value: { status: "cancelled" },
+    });
+
+    const raw = JSON.parse(await readFile(data.filePath, "utf8")) as {
+      tasks: Array<Record<string, unknown>>;
+    };
+    raw.tasks[0]!.text = "";
+    await writeFile(data.filePath, `${JSON.stringify(raw)}\n`);
+
+    let nextId = 100;
+    const reopen = () => createFollowupTaskStore({
+      filePath: data.filePath,
+      lockPath: join(data.filePath, "..", "tasks.lock"),
+      fileLock: makeLock(),
+      clock,
+      idFactory: () => `opaque-${++nextId}`,
+      getRuntimeConfig: () => ({ enabled: true, preAcceptanceRetryLimit: 3, quietUntilMs: null }),
+    });
+    const recovered = reopen();
+    await expect(recovered.initialize()).resolves.toMatchObject({
+      ok: true,
+      value: { tasks: [], attempts: [], policySnapshots: [] },
+    });
+
+    const quarantinePath = join(data.filePath, "..", "tasks-quarantine.jsonl");
+    const firstRows = (await readFile(quarantinePath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    expect(firstRows).toHaveLength(2);
+    expect(firstRows.map((row) => row.recordKind).sort()).toEqual(["policy_snapshot", "task"]);
+    expect(firstRows).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        formatVersion: 1,
+        recordKind: "task",
+        recordId: expect.any(String),
+        recordHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        record: expect.objectContaining({ text: "", status: "cancelled" }),
+      }),
+    ]));
+    expect((await stat(quarantinePath)).mode & 0o777).toBe(0o600);
+
+    await expect(reopen().initialize()).resolves.toMatchObject({ ok: true });
+    expect((await readFile(quarantinePath, "utf8")).trim().split("\n")).toHaveLength(2);
+  });
+
   it("refreshes every public read under the cross-process lock", async () => {
     const fileLock = makeLock();
     const data = await fixture({ fileLock });
