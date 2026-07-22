@@ -11,7 +11,6 @@ export { buildAttachments } from "./telegram/media-handler.js";
 export { validateBotToken, validateWebhookSecret } from "./telegram/credential-validator.js";
 export type {
   BotInfo,
-  TelegramCredentialValidationError,
   TelegramCredentialValidationFailureKind,
 } from "./telegram/credential-validator.js";
 export { createTelegramResolver } from "./telegram/telegram-resolver.js";
