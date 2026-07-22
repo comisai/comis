@@ -21,7 +21,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import { applyDeltaOps, renderStructuredBody, MAX_DOC_NAME_LENGTH } from "@comis/core";
 import type { ResolvedOutcome, StructuredBody } from "@comis/core";
 import { PROCEDURE_REFLECT_PROMPT, type ReflectionResult } from "./reflection-prompt.js";
@@ -1031,10 +1031,9 @@ describe("runReflection — empty-content guard (prior doc survives)", () => {
     expect(res.value.admissionOutcome).toBe("empty_reflection");
   });
 
-  it("a FAILED reflection (err) → store.admit NOT called, recorded empty_reflection (non-fatal)", async () => {
+  it("counts an adapter dependency fault separately from a legitimate empty reflection", async () => {
     const mocks: Partial<Mocks> = {};
-    const { err } = await import("@comis/shared");
-    const reflect = vi.fn(async () => err(new Error("LLM down")));
+    const reflect = vi.fn(async () => err(new Error("Model identifier is invalid")));
     const deps = makeDeps(
       [
         traj({ trajectoryId: "a", sessionId: "s1", sender: "u1", signature: "deploy the app" }),
@@ -1046,10 +1045,13 @@ describe("runReflection — empty-content guard (prior doc survives)", () => {
 
     const res = await runReflection(deps);
 
-    expect(res.ok).toBe(true); // the RUN survives a per-topic LLM fault
+    expect(res.ok).toBe(true);
     if (!res.ok) throw new Error("expected ok");
     expect(mocks.admit).not.toHaveBeenCalled();
     expect(res.value.admitted).toBe(0);
+    expect(res.value.skipped).toBe(1);
+    expect(res.value.emptyReflections).toBe(0);
+    expect(res.value.dependencyFailures).toBe(1);
   });
 
   it("a fresh reflection with an EMPTY section list → store.admit NOT called (no empty doc admitted)", async () => {

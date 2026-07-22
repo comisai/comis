@@ -66,10 +66,25 @@ function emptyReflectionResult() {
     distinctTopicKeys: 0,
     skipped: 0,
     emptyReflections: 0,
+    dependencyFailures: 0,
     untrustedDrops: 0,
     nameLengthRejections: 0,
     sourceTrajectoryCount: 0,
     totalSourceChars: 0,
+  };
+}
+
+function configureReflection(runtimeDeps: ReturnType<typeof deps>): void {
+  const agentConfig = (runtimeDeps.container as never as {
+    config: { agents: Record<string, Record<string, unknown>> };
+  }).config.agents["agent-a"]!;
+  agentConfig.learning = {
+    enabled: true,
+    reflect: {
+      minConfidence: 0.8,
+      maxDocsPerRun: 4,
+      corroboration: {},
+    },
   };
 }
 
@@ -221,17 +236,7 @@ describe("cron memory action runners", () => {
 
   it("admits native model auth and passes provider configuration into reflection", async () => {
     const runtimeDeps = deps();
-    const agentConfig = (runtimeDeps.container as never as {
-      config: { agents: Record<string, Record<string, unknown>> };
-    }).config.agents["agent-a"]!;
-    agentConfig.learning = {
-      enabled: true,
-      reflect: {
-        minConfidence: 0.8,
-        maxDocsPerRun: 4,
-        corroboration: {},
-      },
-    };
+    configureReflection(runtimeDeps);
     const runners = createCronMemoryActionRunners(runtimeDeps);
     const input = modelInput("reflection");
 
@@ -257,5 +262,102 @@ describe("cron memory action runners", () => {
       expect(adapterDeps).not.toHaveProperty("apiKey");
     }
     expect(runtimeDeps._readAuth).toHaveBeenCalledWith("amazon-bedrock");
+  });
+
+  it("reports dependency failure after partial reflection while retaining every counter", async () => {
+    const runtimeDeps = deps();
+    configureReflection(runtimeDeps);
+    agentMocks.runReflection
+      .mockResolvedValueOnce(ok({
+        ...emptyReflectionResult(),
+        selected: 2,
+        admitted: 1,
+        maxTopicCardinality: 2,
+        distinctTopicKeys: 1,
+        sourceTrajectoryCount: 2,
+        totalSourceChars: 80,
+      }))
+      .mockResolvedValueOnce(ok({
+        ...emptyReflectionResult(),
+        selected: 2,
+        skipped: 1,
+        dependencyFailures: 1,
+        maxTopicCardinality: 2,
+        distinctTopicKeys: 1,
+        sourceTrajectoryCount: 2,
+        totalSourceChars: 90,
+      }))
+      .mockResolvedValue(ok(emptyReflectionResult()));
+    const runners = createCronMemoryActionRunners(runtimeDeps);
+
+    const result = await runners.executeReflection({
+      input: modelInput("reflection"),
+      signal: new AbortController().signal,
+      resolution: {
+        provider: "amazon-bedrock",
+        modelId: "deepseek.v3.2",
+      } as never,
+      onUsage: vi.fn(),
+    });
+
+    expect(result).toEqual(ok({
+      status: "failed",
+      errorKind: "dependency",
+      counters: [
+        { name: "selected", value: 4 },
+        { name: "admitted", value: 1 },
+        { name: "skipped", value: 1 },
+        { name: "empty_reflections", value: 0 },
+        { name: "dependency_failures", value: 1 },
+        { name: "untrusted_drops", value: 0 },
+        { name: "name_length_rejections", value: 0 },
+        { name: "max_topic_cardinality", value: 2 },
+        { name: "single_owner_corroborated", value: 0 },
+        { name: "distinct_topic_keys", value: 2 },
+        { name: "source_trajectories", value: 4 },
+        { name: "source_chars", value: 170 },
+        { name: "failed_passes", value: 0 },
+      ],
+    }));
+  });
+
+  it("keeps a legitimate empty reflection completed without a dependency failure", async () => {
+    const runtimeDeps = deps();
+    configureReflection(runtimeDeps);
+    agentMocks.runReflection
+      .mockResolvedValueOnce(ok({
+        ...emptyReflectionResult(),
+        selected: 2,
+        skipped: 1,
+        emptyReflections: 1,
+        maxTopicCardinality: 2,
+        distinctTopicKeys: 1,
+        sourceTrajectoryCount: 2,
+        totalSourceChars: 70,
+      }))
+      .mockResolvedValue(ok(emptyReflectionResult()));
+    const runners = createCronMemoryActionRunners(runtimeDeps);
+
+    const result = await runners.executeReflection({
+      input: modelInput("reflection"),
+      signal: new AbortController().signal,
+      resolution: {
+        provider: "amazon-bedrock",
+        modelId: "anthropic.claude-sonnet",
+      } as never,
+      onUsage: vi.fn(),
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: "completed",
+        counters: expect.arrayContaining([
+          { name: "skipped", value: 1 },
+          { name: "empty_reflections", value: 1 },
+          { name: "dependency_failures", value: 0 },
+        ]),
+      },
+    });
   });
 });
