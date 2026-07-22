@@ -5,6 +5,9 @@
 
 // Executor types
 export type { AgentExecutor, ExecutionResult, ExecutionOverrides } from "./executor/types.js";
+export { retainLastCompleteUserTurns } from "./session/bounded-session-history.js";
+export { pruneAcknowledgedHeartbeatTurn } from "./session/acknowledged-heartbeat-turn.js";
+export { replaceContextStoreHistory } from "./session/context-history-replacement.js";
 
 // Step counter
 export { createStepCounter } from "./executor/step-counter.js";
@@ -157,6 +160,7 @@ export type { LastKnownModelTracker, LastKnownModelEntry } from "./model/last-kn
 // Session lifecycle
 export { createSessionLifecycle } from "./session/session-lifecycle.js";
 export type { SessionLifecycle, SessionLifecycleOptions } from "./session/session-lifecycle.js";
+export { createDeliveredAssistantHistoryAdapter } from "./session/delivered-assistant-history.js";
 
 // Session label store (human-readable session names via metadata.label)
 export { createSessionLabelStore } from "./session/session-label-store.js";
@@ -466,7 +470,12 @@ export { createLifecycleHooks, deriveSubagentContextEngineConfig } from "./spawn
 export type { LifecycleHooksDeps } from "./spawn/index.js";
 export { createEphemeralComisSessionManager } from "./spawn/index.js";
 export { createSubAgentRunner } from "./spawn/index.js";
-export type { SubAgentRunnerDeps, SubAgentRun, SpawnParams, SubAgentRunnerLogger } from "./spawn/index.js";
+export type {
+  SubAgentRunnerDeps,
+  SubAgentRun,
+  SpawnParams,
+  SubAgentRunnerLogger,
+} from "./spawn/index.js";
 export { sweepResultFiles, buildAnnouncementMessage, deliverFailureNotification } from "./spawn/index.js";
 export { createDeliveryDedup } from "./spawn/index.js";
 export type { DeliveryDedup } from "./spawn/index.js";
