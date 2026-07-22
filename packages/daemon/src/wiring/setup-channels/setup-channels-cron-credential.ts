@@ -2,34 +2,23 @@
 /**
  * Shared credential resolution for the background memory/learning cron jobs.
  *
- * Every background job (skill
- * synthesis, memory review/consolidation/reasoning, user-representation,
- * social-modeling, usefulness-judge, triple-extraction) resolves its model
- * credential via `secretManager.get(apiKeyName)` with a fallback ONLY for
- * `KEYLESS_PROVIDER_TYPES`. An **OAuth provider** (e.g. `openai-codex`) is
- * neither an API-key provider nor keyless, so the lookup returned "" and the
- * job SKIPPED — for an openai-codex main provider (the default secure posture)
- * the ENTIRE "memory gets smarter / verified learning" layer silently did
- * nothing (learned_skills / user_representation / memory_triples stayed 0).
- *
- * The INTERACTIVE path works because it resolves the OAuth access token through
- * `OAuthTokenManager.getApiKey(provider, { oauthProfiles })` (auto-refreshing)
- * and passes it as the pi-ai `apiKey` bearer. This helper threads that SAME
- * resolution into the background jobs: when there is no static API key and the
- * agent has an OAuth profile for the provider, resolve the OAuth access token
- * and use it as the credential.
- *
- * Additive + contained: the static-API-key and keyless paths are unchanged
- * (byte-identical for anthropic/openai/google/ollama agents); the OAuth branch
- * is reached ONLY when `secretManager.get` is empty AND the provider is not
- * keyless AND the agent has an oauthProfile for it.
+ * The per-agent AuthStorage is authoritative because it contains the same
+ * resolved key and provider configuration used by interactive model calls.
+ * Callers without that store retain direct-secret, keyless, and OAuth
+ * fallbacks. Canonical Bedrock may use its native AWS credential chain without
+ * a fabricated bearer; stored region/profile configuration is forwarded to
+ * the provider request and never logged here.
  *
  * @module
  */
 
 import type { AppContainer } from "@comis/core";
 import { KEYLESS_PROVIDER_TYPES, KEYLESS_API_KEY_SENTINEL } from "@comis/core";
-import type { CustomCompletionsModelSpec } from "@comis/agent";
+import {
+  getProviderSecretNames,
+  type AuthStorage,
+  type CustomCompletionsModelSpec,
+} from "@comis/agent";
 import { buildCustomJudgeModelSpec, type JudgeProviderEntry } from "../setup-learning-judge.js";
 
 /**
@@ -55,12 +44,14 @@ export type CronOAuthTokenResolver = (
 
 /** Outcome of background-job credential resolution. */
 export interface CronJobCredential {
-  /** The credential to pass to the model adapter (API key, keyless sentinel, or OAuth bearer). "" ⇒ none. */
-  apiKey: string;
-  /** The env/secret name probed (for the skip hint). */
+  /** The credential to pass to the model adapter (API key, keyless sentinel, or OAuth bearer). */
+  apiKey?: string;
+  /** Provider-scoped non-secret configuration forwarded to the model adapter. */
+  providerEnv?: Record<string, string>;
+  /** Operator-facing credential name used by an unavailable-credential hint. */
   apiKeyName: string;
-  /** Resolution source: static secret, keyless sentinel, OAuth access token, or none found. */
-  source: "secret" | "keyless" | "oauth" | "none";
+  /** Resolution source: stored secret, keyless sentinel, OAuth access token, native chain, or none. */
+  source: "secret" | "keyless" | "oauth" | "native" | "none";
   /** True when the agent HAS an oauthProfile for this provider (drives an OAuth-accurate skip hint). */
   hasOAuthProfile: boolean;
 }
@@ -68,32 +59,81 @@ export interface CronJobCredential {
 /**
  * Resolve the model credential for a background memory/learning cron job.
  *
- * Order: static API key (secretManager) → keyless sentinel → OAuth access token
- * (when the agent has an oauthProfile for the provider AND a resolver is wired)
- * → none.
+ * Order: per-agent credential store → direct secret fallback → keyless sentinel
+ * → canonical native provider chain → OAuth access token → none.
  */
 export async function resolveCronJobCredential(
   container: AppContainer,
   agentId: string,
   provider: string,
+  authStorage?: Pick<AuthStorage, "read">,
   resolveAccessToken?: CronOAuthTokenResolver,
 ): Promise<CronJobCredential> {
   const providerEntry = container.config.providers?.entries?.[provider];
-  const apiKeyName = providerEntry?.apiKeyName || `${provider.toUpperCase()}_API_KEY`;
+  const providerType = providerEntry?.type ?? provider;
+  const usesBuiltInProviderIdentity = providerEntry === undefined || provider === providerType;
+  const builtInSecretNames = usesBuiltInProviderIdentity
+    ? getProviderSecretNames(providerType)
+    : [];
+  const directSecretNames = providerEntry?.apiKeyName
+    ? [providerEntry.apiKeyName]
+    : builtInSecretNames.length > 0
+      ? builtInSecretNames
+      : [`${provider.toUpperCase()}_API_KEY`];
+  const apiKeyName = directSecretNames[0] ?? `${provider.toUpperCase()}_API_KEY`;
+  const supportsNativeAuth = provider === "amazon-bedrock"
+    && !providerEntry?.apiKeyName;
   const hasOAuthProfile = Boolean(
     container.config.agents?.[agentId]?.oauthProfiles?.[provider],
   );
 
-  const direct = container.secretManager.get(apiKeyName);
-  if (direct) return { apiKey: direct, apiKeyName, source: "secret", hasOAuthProfile };
+  const stored = await authStorage?.read(provider);
+  if (stored?.type === "api_key" && stored.key !== undefined && stored.key.length > 0) {
+    return {
+      apiKey: stored.key,
+      ...(stored.env === undefined ? {} : { providerEnv: stored.env }),
+      apiKeyName,
+      source: "secret",
+      hasOAuthProfile,
+    };
+  }
+  if (supportsNativeAuth && stored?.type === "api_key") {
+    return {
+      ...(stored.env === undefined ? {} : { providerEnv: stored.env }),
+      apiKeyName,
+      source: "native",
+      hasOAuthProfile,
+    };
+  }
+
+  for (const secretName of directSecretNames) {
+    const direct = container.secretManager.get(secretName);
+    if (direct !== undefined && direct.length > 0) {
+      return { apiKey: direct, apiKeyName: secretName, source: "secret", hasOAuthProfile };
+    }
+  }
 
   // Keyless-ness is a property of the provider TYPE (ollama / lm-studio), not its config NAME. A
   // user-NAMED entry (providers.entries["local-ollama"] = { type: "ollama" }) must still resolve
   // keyless — else the reflection/memory-review crons skip ("no API key") on a local keyless daemon,
   // silently disabling the learning loop. Mirrors the agent completion
   // path + setup-dialectic, which key off entry.type. Guarded by test/architecture/keyless-provider-by-type.
-  if (KEYLESS_PROVIDER_TYPES.has(providerEntry?.type ?? provider)) {
+  if (KEYLESS_PROVIDER_TYPES.has(providerType)) {
     return { apiKey: KEYLESS_API_KEY_SENTINEL, apiKeyName, source: "keyless", hasOAuthProfile };
+  }
+
+  if (supportsNativeAuth) {
+    const providerEnv: Record<string, string> = {};
+    const region = container.secretManager.get("AWS_REGION");
+    const profile = container.secretManager.get("AWS_PROFILE");
+    if (region !== undefined) providerEnv.AWS_REGION = region;
+    if (profile !== undefined) providerEnv.AWS_PROFILE = profile;
+    return {
+      ...(Object.keys(providerEnv).length === 0 ? {} : { providerEnv }),
+      apiKeyName,
+      source: "native",
+      hasOAuthProfile,
+    };
   }
 
   if (hasOAuthProfile && resolveAccessToken) {
@@ -101,7 +141,7 @@ export async function resolveCronJobCredential(
     if (token) return { apiKey: token, apiKeyName, source: "oauth", hasOAuthProfile };
   }
 
-  return { apiKey: "", apiKeyName, source: "none", hasOAuthProfile };
+  return { apiKeyName, source: "none", hasOAuthProfile };
 }
 
 /**

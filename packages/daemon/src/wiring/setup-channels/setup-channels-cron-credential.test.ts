@@ -67,9 +67,9 @@ describe("resolveCronJobCredential", () => {
       secrets: {},
       oauthProfiles: { "openai-codex": "openai-codex:user@example.com" },
     });
-    // No resolveAccessToken (the old behavior) → still empty → job would skip.
+    // No resolveAccessToken means no credential, so the job would skip.
     const cred = await resolveCronJobCredential(container, "default", "openai-codex");
-    expect(cred.apiKey).toBe("");
+    expect(cred.apiKey).toBeUndefined();
     expect(cred.source).toBe("none");
   });
 
@@ -158,8 +158,16 @@ describe("resolveCronJobCredential", () => {
     expect(authStorage.read).toHaveBeenCalledWith("amazon-bedrock");
   });
 
-  it("admits the ambient Bedrock credential chain without fabricating a bearer", async () => {
-    const container = makeContainer({ secrets: {} });
+  it("admits the ambient Bedrock credential chain when the configured key name is empty", async () => {
+    const container = makeContainer({
+      secrets: {},
+      entries: {
+        "amazon-bedrock": {
+          type: "amazon-bedrock",
+          apiKeyName: "",
+        },
+      },
+    });
     const authStorage = makeAuthStorage(undefined);
 
     const cred = await resolveCronJobCredential(
@@ -170,11 +178,11 @@ describe("resolveCronJobCredential", () => {
     );
 
     expect(cred).toMatchObject({
-      apiKey: undefined,
       apiKeyName: "AWS_BEARER_TOKEN_BEDROCK",
       source: "native",
       hasOAuthProfile: false,
     });
+    expect(cred.apiKey).toBeUndefined();
     expect(cred.providerEnv).toBeUndefined();
     expect(authStorage.read).toHaveBeenCalledWith("amazon-bedrock");
   });
@@ -203,12 +211,12 @@ describe("resolveCronJobCredential", () => {
 
   it("a custom-NAMED non-keyless entry (type: anthropic) without a key still skips honestly (no over-broadening)", async () => {
     const container = makeContainer({
-      secrets: {},
+      secrets: { ANTHROPIC_API_KEY: "test-key" },
       entries: { "my-anthropic": { type: "anthropic" } },
     });
     const cred = await resolveCronJobCredential(container, "default", "my-anthropic");
     expect(cred.source).toBe("none");
-    expect(cred.apiKey).toBe("");
+    expect(cred.apiKey).toBeUndefined();
   });
 
   it("OAuth resolver returning undefined (expired/no creds) → no credential, honest", async () => {
@@ -223,7 +231,7 @@ describe("resolveCronJobCredential", () => {
       undefined,
       async () => undefined,
     );
-    expect(cred.apiKey).toBe("");
+    expect(cred.apiKey).toBeUndefined();
     expect(cred.source).toBe("none");
     expect(cred.hasOAuthProfile).toBe(true);
   });

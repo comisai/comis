@@ -62,7 +62,7 @@ type ProactiveBootSlice = Pick<BootContext,
   | "capEndpointHandle"
   | "cronRuntimeBinding" | "activateCronSchedulers" | "getAgentSchedulerSeed"
   | "followupTaskStores" | "taskBootId" | "taskRuntimeGate"
-  | "wakeGateRunnerRef" | "costTrackers" | "stepCounters" | "oauthManagers"
+  | "wakeGateRunnerRef" | "costTrackers" | "stepCounters" | "oauthManagers" | "authStorages"
 >;
 
 export interface SetupProactiveSchedulersDeps {
@@ -346,6 +346,7 @@ export async function setupProactiveSchedulers(
     memoryLifecycleStore: runtime.memoryLifecycleStore,
     memoryApi: runtime.memoryApi,
     reflection,
+    authStorages: runtime.authStorages,
     resolveAccessToken: async (agentId, provider) => {
       const manager = runtime.oauthManagers?.get(agentId);
       if (manager === undefined) return undefined;

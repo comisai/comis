@@ -79,7 +79,9 @@ export interface LlmReflectionAdapterDeps {
   /** Model id of the resolved cheap model. */
   modelId: string;
   /** The API key for the resolved provider (resolved daemon-side; never logged). */
-  apiKey: string;
+  apiKey?: string;
+  /** Provider-scoped configuration for native model authentication; never logged. */
+  providerEnv?: Record<string, string>;
   /** Scheduler-owned cancellation for the enclosing reflection occurrence. */
   signal?: AbortSignal;
   /** Custom-provider model spec (resolved `/v1` baseUrl) so a keyless/local YAML provider the
@@ -197,7 +199,7 @@ function retainTrajectoryEdges(trajectoryText: string, retainedChars: number): s
  * content.
  */
 export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): ReflectionAdapter {
-  const { provider, modelId, apiKey, customModel, clock, logger } = deps;
+  const { provider, modelId, apiKey, providerEnv, customModel, clock, logger } = deps;
   // Per-kind prompt + source label — default to the skill values
   // so an existing skill adapter construction is byte-identical.
   const systemPrompt = deps.systemPrompt ?? REFLECT_PROMPT;
@@ -323,7 +325,8 @@ export function createLlmReflectionAdapter(deps: LlmReflectionAdapterDeps): Refl
           messages: [{ role: "user" as const, content: userContent, timestamp: clock.now() }],
         },
         {
-          apiKey,
+          ...(apiKey === undefined ? {} : { apiKey }),
+          ...(providerEnv === undefined ? {} : { env: providerEnv }),
           ...temperatureOption(model, REFLECT_TEMPERATURE),
           maxTokens: reflectionOutputTokens,
           signal: controller.signal,

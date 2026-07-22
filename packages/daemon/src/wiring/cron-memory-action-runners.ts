@@ -23,6 +23,7 @@ import {
   runMemoryReview,
   runReflection,
   TOPIC_REFLECT_PROMPT,
+  type AuthStorage,
   type ReflectionSourceTrajectory,
 } from "@comis/agent";
 import type { MemoryApi } from "@comis/memory";
@@ -57,6 +58,7 @@ export interface CronMemoryActionRunnerDeps {
   memoryLifecycleStore?: MemoryLifecyclePort;
   memoryApi?: Pick<MemoryApi, "inspect">;
   reflection?: ReflectionCronDeps;
+  authStorages?: ReadonlyMap<string, Pick<AuthStorage, "read">>;
   resolveAccessToken?: (agentId: string, provider: string) => Promise<string | undefined>;
 }
 
@@ -85,9 +87,10 @@ export function createCronMemoryActionRunners(
       deps.container,
       agentId,
       request.resolution.provider,
+      deps.authStorages?.get(agentId),
       deps.resolveAccessToken,
     );
-    if (!credential.apiKey) {
+    if (credential.source === "none") {
       deps.logger.warn({
         agentId,
         provider: request.resolution.provider,
@@ -130,7 +133,8 @@ export function createCronMemoryActionRunners(
       workspacePath: deps.workspaceDirs.get(agentId) ?? "",
       provider: request.resolution.provider,
       modelId: request.resolution.modelId,
-      apiKey: credential.apiKey,
+      ...(credential.apiKey === undefined ? {} : { apiKey: credential.apiKey }),
+      ...(credential.providerEnv === undefined ? {} : { providerEnv: credential.providerEnv }),
       ...cronCustomModelOpt(providerEntry, request.resolution.provider, request.resolution.modelId),
       clock: deps.clock,
       entityStore: deps.entityStore,
@@ -193,9 +197,10 @@ export function createCronMemoryActionRunners(
       deps.container,
       agentId,
       request.resolution.provider,
+      deps.authStorages?.get(agentId),
       deps.resolveAccessToken,
     );
-    if (!credential.apiKey) {
+    if (credential.source === "none") {
       deps.logger.warn({
         agentId,
         provider: request.resolution.provider,
@@ -230,7 +235,8 @@ export function createCronMemoryActionRunners(
       const adapter = createLlmReflectionAdapter({
         provider: request.resolution.provider,
         modelId: request.resolution.modelId,
-        apiKey: credential.apiKey,
+        ...(credential.apiKey === undefined ? {} : { apiKey: credential.apiKey }),
+        ...(credential.providerEnv === undefined ? {} : { providerEnv: credential.providerEnv }),
         clock: deps.clock,
         logger: deps.logger.child({ agentId, submodule: "reflection", reflectKind: pass.kind }),
         systemPrompt: pass.systemPrompt,

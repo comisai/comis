@@ -80,7 +80,9 @@ export interface MemoryReviewDeps {
   workspacePath: string;
   provider: string;
   modelId: string;
-  apiKey: string;
+  apiKey?: string;
+  /** Provider-scoped configuration for native model authentication; never logged. */
+  providerEnv?: Record<string, string>;
   /** Scheduler-owned cancellation for the whole review occurrence. */
   signal?: AbortSignal;
   /** Exact usage sink for background-run budget and billing attribution. */
@@ -522,7 +524,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
         ],
       },
       {
-        apiKey: deps.apiKey,
+        ...(deps.apiKey === undefined ? {} : { apiKey: deps.apiKey }),
+        ...(deps.providerEnv === undefined ? {} : { env: deps.providerEnv }),
         ...temperatureOption(model, 0.3),
         maxTokens: config.maxReviewTokens,
         signal: controller.signal,
