@@ -116,6 +116,19 @@ function executionDurationMs(records: ReadonlyArray<Record<string, unknown>>): n
   return modelCompletions > 0 ? modelDurationMs : undefined;
 }
 
+function successfulExecutionEndReason(
+  records: ReadonlyArray<Record<string, unknown>>,
+  summary: Record<string, unknown>,
+): "success" | undefined {
+  if (summary.degraded !== false) return undefined;
+  const finalModel = recordData(lastRecordOfType(records, "model.completed"));
+  if (finalModel.stopReason !== "stop") return undefined;
+  const delivered = records.some((record) =>
+    record.type === "delivery.dispatched" && recordData(record).status === "success"
+  );
+  return delivered ? "success" : undefined;
+}
+
 /**
  * Build the last-write rollup for one scheduler execution from that execution's
  * trajectory. Durable scheduler sessions reuse one metadata file, so metadata
@@ -131,8 +144,12 @@ function metadataForCronExecution(
     typeof matchingMetadata?.sessionEnd === "object" && matchingMetadata.sessionEnd !== null
       ? matchingMetadata.sessionEnd as Record<string, unknown>
       : {};
+  const hasMatchingSessionEnd = Object.keys(matchingSessionEnd).length > 0;
   const summary = recordData(lastRecordOfType(records, "session.summary"));
   const durationMs = matchingMetadata === undefined ? executionDurationMs(records) : undefined;
+  const endReason = hasMatchingSessionEnd
+    ? undefined
+    : successfulExecutionEndReason(records, summary);
 
   return {
     ...(matchingMetadata ?? {}),
@@ -141,6 +158,7 @@ function metadataForCronExecution(
       ...matchingSessionEnd,
       ...summary,
       ...(durationMs !== undefined ? { durationMs } : {}),
+      ...(endReason !== undefined ? { endReason } : {}),
     },
   };
 }
@@ -226,6 +244,12 @@ export async function assembleIncidentReportFromSources(
   // Diagnostics rows are session-scoped and last-write-wins. They cannot
   // safely contribute to a historical cron execution report.
   const rollup = cronExecutionTraceId === undefined ? sessionRollup : null;
+  // A durable scheduler session emits session.started only once. Retain that
+  // single session-invariant identity envelope for channel attribution, while
+  // every execution-varying record remains selected by traceId above.
+  const sessionIdentityRecords = cronExecutionTraceId === undefined
+    ? []
+    : sessionRecords.filter((record) => record.type === "session.started");
   // The 5th source — the session's audit events (persisted
   // via SQLite, NOT a trajectory record, so they are read HERE,
   // not folded from the record stream). Tenant-scoped + bounded by the reader;
@@ -235,7 +259,7 @@ export async function assembleIncidentReportFromSources(
 
   // Normalize both shapes → uniform signals; assemble the report;
   // stamp the deterministic root cause; bound to the depth budget.
-  const signals = toIncidentSignals([...records, ...cache]);
+  const signals = toIncidentSignals([...sessionIdentityRecords, ...records, ...cache]);
   // ZERO-RECORD MISS → "did you mean …?": a lossy/partial key (e.g.
   // `telegram:<chatId>` instead of the formatted `<agent>:<chatId>:<chatId>:peer:
   // <chatId>`) resolves nothing. Enumerate the closest REAL keys so the operator
