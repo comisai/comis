@@ -88,6 +88,7 @@ describe("delivered assistant history in the production session layout", () => {
       "telegram@3atelegram_primary@3achat_a",
       "conversation.jsonl",
     ));
+    expect(statSync(sessionFile).mode & 0o777).toBe(0o600);
     const runtimeFile = `${sessionFile}.trajectory.jsonl`;
     writeFileSync(runtimeFile, "", { mode: 0o600 });
     writeTrajectoryPointerFileBestEffort({ sessionFile, sessionId: formattedKey, runtimeFile });
