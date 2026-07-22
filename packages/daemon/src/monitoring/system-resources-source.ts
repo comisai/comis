@@ -9,19 +9,17 @@
  * - Fallback: os.freemem() for unsupported platforms
  */
 
-import type { ResourceMonitorConfig } from "@comis/core";
-import type { HeartbeatSourcePort, HeartbeatCheckResult } from "@comis/scheduler";
-import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
+import type { ClockPort, ResourceMonitorConfig } from "@comis/core";
+import type { HeartbeatSourcePort } from "@comis/scheduler";
+import { err, ok } from "@comis/shared";
 import { cpus, freemem, totalmem } from "node:os";
 import { execFile as execFileCb } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
-import { systemNowMs } from "@comis/core";
 
 const execFile = promisify(execFileCb);
 
-const SOURCE_ID = "monitor:system-resources";
-const SOURCE_NAME = "System Resources Monitor";
+const SOURCE_ID = "monitor_system_resources";
 const EXEC_TIMEOUT_MS = 5_000;
 
 /** Memory info with source provenance for observability. */
@@ -186,51 +184,38 @@ async function getMemoryUsagePercent(): Promise<MemoryInfo> {
  * Create a system resources heartbeat source.
  * Checks CPU and memory usage against configured thresholds.
  */
-export function createSystemResourcesSource(config: ResourceMonitorConfig): HeartbeatSourcePort {
+export function createSystemResourcesSource(
+  config: ResourceMonitorConfig,
+  clock: ClockPort,
+): HeartbeatSourcePort {
   return {
     id: SOURCE_ID,
-    name: SOURCE_NAME,
-
-    async check(): Promise<HeartbeatCheckResult> {
-      const now = systemNowMs();
-      const cpuPercent = getCpuUsagePercent();
-      const mem = await getMemoryUsagePercent();
+    async check(signal) {
+      if (signal.aborted) return err({ code: "cancelled", errorKind: "timeout" });
+      let cpuPercent: number;
+      let mem: MemoryInfo;
+      try {
+        cpuPercent = getCpuUsagePercent();
+        mem = await getMemoryUsagePercent();
+      } catch {
+        return err({ code: "resource_probe_failed", errorKind: "resource" });
+      }
+      if (signal.aborted) return err({ code: "cancelled", errorKind: "timeout" });
 
       const cpuOver = cpuPercent > config.cpuThresholdPercent;
       const memOver = mem.usedPercent > config.memoryThresholdPercent;
 
-      const metadata = {
-        cpuPercent: Number(cpuPercent.toFixed(1)),
-        memoryPercent: Number(mem.usedPercent.toFixed(1)),
-        totalMemoryGb: Number(mem.totalGb.toFixed(1)),
-        freeMemoryGb: Number(mem.freeGb.toFixed(1)),
-        memorySource: mem.source,
-      };
-
-      if (cpuOver || memOver) {
-        const alerts: string[] = [];
-        if (cpuOver) {
-          alerts.push(`CPU ${cpuPercent.toFixed(1)}% (threshold: ${config.cpuThresholdPercent}%)`);
-        }
-        if (memOver) {
-          alerts.push(
-            `Memory ${mem.usedPercent.toFixed(1)}% (threshold: ${config.memoryThresholdPercent}%)`,
-          );
-        }
-        return {
-          sourceId: SOURCE_ID,
-          text: `CRITICAL: High resource usage - ${alerts.join("; ")}`,
-          timestamp: now,
-          metadata,
-        };
-      }
-
-      return {
-        sourceId: SOURCE_ID,
-        text: `${HEARTBEAT_OK_TOKEN} Resources OK - CPU: ${cpuPercent.toFixed(1)}%, Memory: ${mem.usedPercent.toFixed(1)}%`,
-        timestamp: now,
-        metadata,
-      };
+      return ok({
+        level: cpuOver || memOver ? "critical" : "ok",
+        observedAtMs: clock.now(),
+        code: cpuOver || memOver ? "resource_threshold_exceeded" : "resources_healthy",
+        counters: [
+          { name: "cpu_percent", value: Math.max(0, Math.round(cpuPercent)) },
+          { name: "memory_percent", value: Math.max(0, Math.round(mem.usedPercent)) },
+          { name: "cpu_over_threshold", value: cpuOver ? 1 : 0 },
+          { name: "memory_over_threshold", value: memOver ? 1 : 0 },
+        ],
+      });
     },
   };
 }

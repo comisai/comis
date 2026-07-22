@@ -1,667 +1,209 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Unit tests for monitoring HeartbeatSourcePort implementations.
- * Each source factory is tested with mocked system calls to verify
- * correct ok/alert/critical classification.
- * For sources that use promisify(execFile), we mock node:child_process
- * with a properly-shaped execFile AND mock node:util to provide a
- * promisify that returns our async mock directly.
- */
+import { ok } from "@comis/shared";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
-import { HEARTBEAT_OK_TOKEN } from "@comis/shared";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+const mocks = vi.hoisted(() => ({
+  execFile: vi.fn(),
+  access: vi.fn(),
+  readFile: vi.fn(),
+  statfs: vi.fn(),
+  cpus: vi.fn(),
+  freemem: vi.fn(),
+  totalmem: vi.fn(),
+}));
 
-// ---------------------------------------------------------------------------
-// Helper: create exec mock + util mock pair
-// ---------------------------------------------------------------------------
-
-/**
- * Creates a pair of vi.doMock calls for node:child_process and node:util
- * that work correctly with `promisify(execFile)` in the source code.
- */
-function mockExec(
-  handler: (cmd: string, args: string[], opts: unknown) => { stdout: string; stderr: string },
-) {
-  const asyncHandler = async (cmd: string, args: string[], opts: unknown) =>
-    handler(cmd, args, opts);
-
-  vi.doMock("node:child_process", () => ({
-    execFile: vi.fn(),
-  }));
-  vi.doMock("node:util", () => ({
-    promisify: vi.fn().mockReturnValue(asyncHandler),
-  }));
-}
-
-/**
- * Creates an exec mock that always throws an error.
- */
-function mockExecError(errorMsg: string) {
-  const asyncHandler = async () => {
-    throw new Error(errorMsg);
+vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
+vi.mock("node:util", () => ({ promisify: vi.fn(() => mocks.execFile) }));
+vi.mock("node:fs/promises", () => ({
+  access: mocks.access,
+  constants: { F_OK: 0 },
+  readFile: mocks.readFile,
+  statfs: mocks.statfs,
+}));
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return {
+    ...actual,
+    default: {
+      ...actual.default,
+      cpus: mocks.cpus,
+      freemem: mocks.freemem,
+      totalmem: mocks.totalmem,
+    },
+    cpus: mocks.cpus,
+    freemem: mocks.freemem,
+    totalmem: mocks.totalmem,
   };
-  vi.doMock("node:child_process", () => ({
-    execFile: vi.fn(),
-  }));
-  vi.doMock("node:util", () => ({
-    promisify: vi.fn().mockReturnValue(asyncHandler),
-  }));
-}
+});
 
-// ---------------------------------------------------------------------------
-// Helper: mock process.platform
-// ---------------------------------------------------------------------------
+import {
+  createDiskSpaceSource,
+  createGitWatcherSource,
+  createSecurityUpdateSource,
+  createSystemdServiceSource,
+  createSystemResourcesSource,
+} from "./index.js";
 
+const NOW_MS = 1_800_000_000_000;
+const clock = createFakeClock(NOW_MS);
+const signal = new AbortController().signal;
 const originalPlatform = process.platform;
 
-function mockPlatform(platform: string) {
-  Object.defineProperty(process, "platform", { value: platform, configurable: true });
-}
-
-// ---------------------------------------------------------------------------
-// Disk Space Source (uses fs.statfs)
-// ---------------------------------------------------------------------------
-
-describe("createDiskSpaceSource", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    vi.restoreAllMocks();
-  });
-
-  it("returns HEARTBEAT_OK_TOKEN when disk usage is under threshold", async () => {
-    vi.doMock("node:fs/promises", () => ({
-      statfs: vi.fn().mockResolvedValue({
-        blocks: 1_000_000,
-        bsize: 4096,
-        bavail: 500_000,
-      }),
-    }));
-
-    const { createDiskSpaceSource } = await import("./disk-space-source.js");
-    const source = createDiskSpaceSource({
-      enabled: true,
-      paths: ["/"],
-      thresholdPercent: 90,
-    });
-
-    expect(source.id).toBe("monitor:disk-space");
-    expect(source.name).toBe("Disk Space Monitor");
-
-    const result = await source.check();
-    expect(result.sourceId).toBe("monitor:disk-space");
-    expect(result.text).toContain(HEARTBEAT_OK_TOKEN);
-    expect(result.timestamp).toBeGreaterThan(0);
-  });
-
-  it("returns CRITICAL when disk usage exceeds threshold", async () => {
-    vi.doMock("node:fs/promises", () => ({
-      statfs: vi.fn().mockResolvedValue({
-        blocks: 1_000_000,
-        bsize: 4096,
-        bavail: 50_000,
-      }),
-    }));
-
-    const { createDiskSpaceSource } = await import("./disk-space-source.js");
-    const source = createDiskSpaceSource({
-      enabled: true,
-      paths: ["/"],
-      thresholdPercent: 90,
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain("CRITICAL");
-    expect(result.text).toContain("95.0%");
-  });
-
-  it("handles statfs errors gracefully", async () => {
-    vi.doMock("node:fs/promises", () => ({
-      statfs: vi.fn().mockRejectedValue(new Error("Permission denied")),
-    }));
-
-    const { createDiskSpaceSource } = await import("./disk-space-source.js");
-    const source = createDiskSpaceSource({
-      enabled: true,
-      paths: ["/secret"],
-      thresholdPercent: 90,
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain("error");
-    expect(result.text).toContain("Permission denied");
-  });
+beforeEach(() => {
+  Object.defineProperty(process, "platform", { value: "freebsd", configurable: true });
+  vi.clearAllMocks();
+  mocks.access.mockResolvedValue(undefined);
+  mocks.statfs.mockResolvedValue({ blocks: 1_000, bsize: 1_024, bavail: 500 });
+  mocks.cpus.mockReturnValue([{ times: { user: 100, nice: 0, sys: 50, idle: 850, irq: 0 } }]);
+  mocks.freemem.mockReturnValue(4 * 1024 * 1024 * 1024);
+  mocks.totalmem.mockReturnValue(8 * 1024 * 1024 * 1024);
+  mocks.readFile.mockResolvedValue("MemTotal: 8388608 kB\nMemAvailable: 4194304 kB\n");
+  mocks.execFile.mockResolvedValue({ stdout: "", stderr: "" });
 });
 
-// ---------------------------------------------------------------------------
-// System Resources Source (uses os module + OS-aware memory detection)
-// ---------------------------------------------------------------------------
-
-describe("createSystemResourcesSource", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    vi.restoreAllMocks();
-  });
-
-  afterEach(() => {
-    Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
-  });
-
-  it("returns HEARTBEAT_OK_TOKEN when resources are under threshold (fallback path)", async () => {
-    mockPlatform("freebsd"); // triggers os.freemem fallback
-
-    vi.doMock("node:os", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("node:os")>()),
-      cpus: vi
-        .fn()
-        .mockReturnValue([{ times: { user: 100, nice: 0, sys: 50, idle: 850, irq: 0 } }]),
-      freemem: vi.fn().mockReturnValue(4 * 1024 * 1024 * 1024),
-      totalmem: vi.fn().mockReturnValue(8 * 1024 * 1024 * 1024),
-    }));
-
-    const { createSystemResourcesSource } = await import("./system-resources-source.js");
-    const source = createSystemResourcesSource({
-      enabled: true,
-      cpuThresholdPercent: 85,
-      memoryThresholdPercent: 90,
-    });
-
-    expect(source.id).toBe("monitor:system-resources");
-    expect(source.name).toBe("System Resources Monitor");
-
-    const result = await source.check();
-    expect(result.sourceId).toBe("monitor:system-resources");
-    expect(result.text).toContain(HEARTBEAT_OK_TOKEN);
-    expect((result.metadata as Record<string, unknown>).memorySource).toBe("os.freemem");
-  });
-
-  it("returns CRITICAL when CPU exceeds threshold", async () => {
-    mockPlatform("freebsd");
-
-    vi.doMock("node:os", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("node:os")>()),
-      cpus: vi.fn().mockReturnValue([{ times: { user: 900, nice: 0, sys: 50, idle: 50, irq: 0 } }]),
-      freemem: vi.fn().mockReturnValue(4 * 1024 * 1024 * 1024),
-      totalmem: vi.fn().mockReturnValue(8 * 1024 * 1024 * 1024),
-    }));
-
-    const { createSystemResourcesSource } = await import("./system-resources-source.js");
-    const source = createSystemResourcesSource({
-      enabled: true,
-      cpuThresholdPercent: 85,
-      memoryThresholdPercent: 90,
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain("CRITICAL");
-    expect(result.text).toContain("CPU");
-  });
-
-  it("returns CRITICAL when memory exceeds threshold (fallback path)", async () => {
-    mockPlatform("freebsd");
-
-    vi.doMock("node:os", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("node:os")>()),
-      cpus: vi
-        .fn()
-        .mockReturnValue([{ times: { user: 100, nice: 0, sys: 50, idle: 850, irq: 0 } }]),
-      freemem: vi.fn().mockReturnValue(0.5 * 1024 * 1024 * 1024),
-      totalmem: vi.fn().mockReturnValue(8 * 1024 * 1024 * 1024),
-    }));
-
-    const { createSystemResourcesSource } = await import("./system-resources-source.js");
-    const source = createSystemResourcesSource({
-      enabled: true,
-      cpuThresholdPercent: 85,
-      memoryThresholdPercent: 90,
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain("CRITICAL");
-    expect(result.text).toContain("Memory");
-  });
-
-  // -------------------------------------------------------------------------
-  // macOS: vm_stat path
-  // -------------------------------------------------------------------------
-
-  it("macOS: uses vm_stat for accurate memory reporting", async () => {
-    mockPlatform("darwin");
-
-    // 16 KB page size (Apple Silicon), total 16 GB
-    // free=200000 + inactive=300000 + purgeable=50000 + speculative=10000 = 560000 pages
-    // available = 560000 * 16384 = 9,175,040,000 bytes (~8.5 GB)
-    // total = 16 GB = 17,179,869,184 bytes
-    // used% = ((17179869184 - 9175040000) / 17179869184) * 100 ≈ 46.6%
-    const vmStatOutput = [
-      "Mach Virtual Memory Statistics: (page size of 16384 bytes)",
-      "Pages free:                              200000.",
-      "Pages active:                            400000.",
-      "Pages inactive:                          300000.",
-      "Pages speculative:                        10000.",
-      "Pages throttled:                              0.",
-      "Pages wired down:                        150000.",
-      "Pages purgeable:                          50000.",
-      'Pages stored in compressor:               80000.',
-      'Pages occupied by compressor:             20000.',
-      "",
-    ].join("\n");
-
-    mockExec((cmd) => {
-      if (cmd === "vm_stat") {
-        return { stdout: vmStatOutput, stderr: "" };
-      }
-      throw new Error(`unexpected command: ${cmd}`);
-    });
-
-    vi.doMock("node:os", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("node:os")>()),
-      cpus: vi
-        .fn()
-        .mockReturnValue([{ times: { user: 100, nice: 0, sys: 50, idle: 850, irq: 0 } }]),
-      totalmem: vi.fn().mockReturnValue(16 * 1024 * 1024 * 1024),
-    }));
-
-    const { createSystemResourcesSource } = await import("./system-resources-source.js");
-    const source = createSystemResourcesSource({
-      enabled: true,
-      cpuThresholdPercent: 85,
-      memoryThresholdPercent: 90,
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain(HEARTBEAT_OK_TOKEN);
-    const meta = result.metadata as Record<string, unknown>;
-    expect(meta.memorySource).toBe("vm_stat");
-    // ~46.6% used — well under 90% threshold
-    expect(meta.memoryPercent).toBeLessThan(50);
-  });
-
-  it("macOS: vm_stat failure falls back to os.freemem", async () => {
-    mockPlatform("darwin");
-
-    mockExecError("vm_stat: command not found");
-
-    vi.doMock("node:os", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("node:os")>()),
-      cpus: vi
-        .fn()
-        .mockReturnValue([{ times: { user: 100, nice: 0, sys: 50, idle: 850, irq: 0 } }]),
-      freemem: vi.fn().mockReturnValue(4 * 1024 * 1024 * 1024),
-      totalmem: vi.fn().mockReturnValue(16 * 1024 * 1024 * 1024),
-    }));
-
-    const { createSystemResourcesSource } = await import("./system-resources-source.js");
-    const source = createSystemResourcesSource({
-      enabled: true,
-      cpuThresholdPercent: 85,
-      memoryThresholdPercent: 90,
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain(HEARTBEAT_OK_TOKEN);
-    expect((result.metadata as Record<string, unknown>).memorySource).toBe("os.freemem");
-  });
-
-  // -------------------------------------------------------------------------
-  // Linux: /proc/meminfo path
-  // -------------------------------------------------------------------------
-
-  it("Linux: uses /proc/meminfo MemAvailable for accurate reporting", async () => {
-    mockPlatform("linux");
-
-    // MemTotal: 16 GB, MemAvailable: 10 GB → 37.5% used
-    const procMeminfo = [
-      "MemTotal:       16777216 kB",
-      "MemFree:          512000 kB",
-      "MemAvailable:   10485760 kB",
-      "Buffers:          256000 kB",
-      "Cached:          5120000 kB",
-      "SwapCached:            0 kB",
-    ].join("\n");
-
-    vi.doMock("node:fs/promises", () => ({
-      readFile: vi.fn().mockResolvedValue(procMeminfo),
-    }));
-
-    vi.doMock("node:os", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("node:os")>()),
-      cpus: vi
-        .fn()
-        .mockReturnValue([{ times: { user: 100, nice: 0, sys: 50, idle: 850, irq: 0 } }]),
-      totalmem: vi.fn().mockReturnValue(16 * 1024 * 1024 * 1024),
-    }));
-    // Mock child_process/util to no-ops (not used on Linux path)
-    vi.doMock("node:child_process", () => ({ execFile: vi.fn() }));
-    vi.doMock("node:util", () => ({ promisify: vi.fn().mockReturnValue(async () => ({})) }));
-
-    const { createSystemResourcesSource } = await import("./system-resources-source.js");
-    const source = createSystemResourcesSource({
-      enabled: true,
-      cpuThresholdPercent: 85,
-      memoryThresholdPercent: 90,
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain(HEARTBEAT_OK_TOKEN);
-    const meta = result.metadata as Record<string, unknown>;
-    expect(meta.memorySource).toBe("/proc/meminfo");
-    // 37.5% used — well under 90% threshold
-    expect(meta.memoryPercent).toBeLessThan(40);
-  });
-
-  it("Linux: falls back to MemFree+Buffers+Cached when MemAvailable absent", async () => {
-    mockPlatform("linux");
-
-    // Old kernel without MemAvailable
-    // MemTotal: 8 GB, MemFree: 1 GB, Buffers: 0.5 GB, Cached: 2.5 GB → available ~4 GB → 50% used
-    const procMeminfo = [
-      "MemTotal:        8388608 kB",
-      "MemFree:         1048576 kB",
-      "Buffers:          524288 kB",
-      "Cached:          2621440 kB",
-    ].join("\n");
-
-    vi.doMock("node:fs/promises", () => ({
-      readFile: vi.fn().mockResolvedValue(procMeminfo),
-    }));
-
-    vi.doMock("node:os", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("node:os")>()),
-      cpus: vi
-        .fn()
-        .mockReturnValue([{ times: { user: 100, nice: 0, sys: 50, idle: 850, irq: 0 } }]),
-      totalmem: vi.fn().mockReturnValue(8 * 1024 * 1024 * 1024),
-    }));
-    vi.doMock("node:child_process", () => ({ execFile: vi.fn() }));
-    vi.doMock("node:util", () => ({ promisify: vi.fn().mockReturnValue(async () => ({})) }));
-
-    const { createSystemResourcesSource } = await import("./system-resources-source.js");
-    const source = createSystemResourcesSource({
-      enabled: true,
-      cpuThresholdPercent: 85,
-      memoryThresholdPercent: 90,
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain(HEARTBEAT_OK_TOKEN);
-    const meta = result.metadata as Record<string, unknown>;
-    expect(meta.memorySource).toBe("/proc/meminfo");
-    expect(meta.memoryPercent).toBeLessThan(55);
-  });
-
-  it("Linux: /proc/meminfo failure falls back to os.freemem", async () => {
-    mockPlatform("linux");
-
-    vi.doMock("node:fs/promises", () => ({
-      readFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
-    }));
-
-    vi.doMock("node:os", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("node:os")>()),
-      cpus: vi
-        .fn()
-        .mockReturnValue([{ times: { user: 100, nice: 0, sys: 50, idle: 850, irq: 0 } }]),
-      freemem: vi.fn().mockReturnValue(4 * 1024 * 1024 * 1024),
-      totalmem: vi.fn().mockReturnValue(8 * 1024 * 1024 * 1024),
-    }));
-    vi.doMock("node:child_process", () => ({ execFile: vi.fn() }));
-    vi.doMock("node:util", () => ({ promisify: vi.fn().mockReturnValue(async () => { throw new Error("unused"); }) }));
-
-    const { createSystemResourcesSource } = await import("./system-resources-source.js");
-    const source = createSystemResourcesSource({
-      enabled: true,
-      cpuThresholdPercent: 85,
-      memoryThresholdPercent: 90,
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain(HEARTBEAT_OK_TOKEN);
-    expect((result.metadata as Record<string, unknown>).memorySource).toBe("os.freemem");
-  });
+afterEach(() => {
+  Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+  vi.restoreAllMocks();
 });
 
-// ---------------------------------------------------------------------------
-// systemd Service Source (uses child_process + fs/promises)
-// ---------------------------------------------------------------------------
-
-describe("createSystemdServiceSource", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    vi.restoreAllMocks();
-  });
-
-  it("returns OK when systemd is unavailable", async () => {
-    vi.doMock("node:fs/promises", () => ({
-      access: vi.fn().mockRejectedValue(new Error("ENOENT")),
-      constants: { F_OK: 0 },
+describe("closed monitoring source adapters", () => {
+  it("classifies disk health thresholds and stat failures without returning paths or prose", async () => {
+    const source = createDiskSpaceSource({ paths: ["/data"], thresholdPercent: 80 } as never, clock);
+    expect(source.id).toBe("monitor_disk_space");
+    await expect(source.check(signal)).resolves.toEqual(ok({
+      level: "ok",
+      observedAtMs: NOW_MS,
+      code: "disk_healthy",
+      counters: [
+        { name: "paths_checked", value: 1 },
+        { name: "over_threshold", value: 0 },
+        { name: "maximum_used_percent", value: 50 },
+      ],
     }));
-    mockExecError("not found");
 
-    const { createSystemdServiceSource } = await import("./systemd-service-source.js");
-    const source = createSystemdServiceSource({
-      enabled: true,
-      services: [],
+    mocks.statfs.mockResolvedValue({ blocks: 1_000, bsize: 1_024, bavail: 50 });
+    await expect(source.check(signal)).resolves.toMatchObject({
+      ok: true,
+      value: { level: "critical", code: "disk_threshold_exceeded" },
     });
-
-    expect(source.id).toBe("monitor:systemd-services");
-    expect(source.name).toBe("systemd Service Monitor");
-
-    const result = await source.check();
-    expect(result.text).toContain(HEARTBEAT_OK_TOKEN);
-    expect(result.text).toContain("systemd not available");
+    mocks.statfs.mockRejectedValue(new Error("/secret credential-bearing path"));
+    await expect(source.check(signal)).resolves.toEqual({
+      ok: false,
+      error: { code: "stat_failed", errorKind: "resource" },
+    });
   });
 
-  it("returns CRITICAL when failed services detected", async () => {
-    vi.doMock("node:fs/promises", () => ({
-      access: vi.fn().mockResolvedValue(undefined),
-      constants: { F_OK: 0 },
+  it("reports system CPU and memory only through bounded integer counters", async () => {
+    const source = createSystemResourcesSource({
+      cpuThresholdPercent: 80,
+      memoryThresholdPercent: 80,
+    } as never, clock);
+    expect(source.id).toBe("monitor_system_resources");
+    await expect(source.check(signal)).resolves.toEqual(ok({
+      level: "ok",
+      observedAtMs: NOW_MS,
+      code: "resources_healthy",
+      counters: [
+        { name: "cpu_percent", value: 15 },
+        { name: "memory_percent", value: 50 },
+        { name: "cpu_over_threshold", value: 0 },
+        { name: "memory_over_threshold", value: 0 },
+      ],
     }));
-    mockExec((cmd, args) => {
-      if (cmd === "systemctl" && args.includes("--failed")) {
-        return { stdout: "nginx.service loaded failed failed nginx\n", stderr: "" };
-      }
-      return { stdout: "", stderr: "" };
-    });
 
-    const { createSystemdServiceSource } = await import("./systemd-service-source.js");
-    const source = createSystemdServiceSource({
-      enabled: true,
-      services: [],
+    const critical = createSystemResourcesSource({
+      cpuThresholdPercent: 1,
+      memoryThresholdPercent: 1,
+    } as never, clock);
+    await expect(critical.check(signal)).resolves.toMatchObject({
+      ok: true,
+      value: { level: "critical", code: "resource_threshold_exceeded" },
     });
-
-    const result = await source.check();
-    expect(result.text).toContain("CRITICAL");
-    expect(result.text).toContain("nginx.service");
   });
 
-  it("filters to configured services only", async () => {
-    vi.doMock("node:fs/promises", () => ({
-      access: vi.fn().mockResolvedValue(undefined),
-      constants: { F_OK: 0 },
+  it("reports systemd availability failed counts and query errors as closed values", async () => {
+    const source = createSystemdServiceSource({ services: [] } as never, clock);
+    expect(source.id).toBe("monitor_systemd_services");
+    await expect(source.check(signal)).resolves.toEqual(ok({
+      level: "ok",
+      observedAtMs: NOW_MS,
+      code: "systemd_healthy",
+      counters: [{ name: "failed_services", value: 0 }],
     }));
-    mockExec((cmd, args) => {
-      if (cmd === "systemctl" && args.includes("--failed")) {
-        return {
-          stdout:
-            "nginx.service loaded failed failed nginx\napache.service loaded failed failed apache\n",
-          stderr: "",
-        };
-      }
-      return { stdout: "", stderr: "" };
+
+    mocks.execFile.mockResolvedValue({ stdout: "a.service loaded failed failed\n", stderr: "" });
+    await expect(source.check(signal)).resolves.toEqual(ok({
+      level: "critical",
+      observedAtMs: NOW_MS,
+      code: "systemd_services_failed",
+      counters: [{ name: "failed_services", value: 1 }],
+    }));
+    mocks.execFile.mockRejectedValue(new Error("systemctl secret prose"));
+    await expect(source.check(signal)).resolves.toEqual({
+      ok: false,
+      error: { code: "systemd_query_failed", errorKind: "dependency" },
     });
-
-    const { createSystemdServiceSource } = await import("./systemd-service-source.js");
-    const source = createSystemdServiceSource({
-      enabled: true,
-      services: ["nginx.service"],
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain("CRITICAL");
-    expect(result.text).toContain("nginx.service");
-    expect(result.text).not.toContain("apache.service");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Security Update Source (uses child_process)
-// ---------------------------------------------------------------------------
-
-describe("createSecurityUpdateSource", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    vi.restoreAllMocks();
   });
 
-  it("returns OK when no package manager found", async () => {
-    mockExecError("not found");
-
-    const { createSecurityUpdateSource } = await import("./security-update-source.js");
-    const source = createSecurityUpdateSource({
-      enabled: true,
-      securityOnly: true,
+  it("reports security update counts without package names or command output", async () => {
+    mocks.execFile.mockImplementation(async (command: string, args: string[]) => {
+      if (command === "which") return { stdout: args[0] === "apt-get" ? "/usr/bin/apt-get\n" : "", stderr: "" };
+      return {
+        stdout: "2 upgraded, 0 newly installed\nInst openssl [old] (new Ubuntu:security)\n",
+        stderr: "",
+      };
     });
+    const source = createSecurityUpdateSource({ securityOnly: true } as never, clock);
+    expect(source.id).toBe("monitor_security_updates");
+    await expect(source.check(signal)).resolves.toEqual(ok({
+      level: "critical",
+      observedAtMs: NOW_MS,
+      code: "security_updates_pending",
+      counters: [
+        { name: "updates_pending", value: 1 },
+        { name: "security_updates_pending", value: 1 },
+      ],
+    }));
 
-    expect(source.id).toBe("monitor:security-updates");
-    expect(source.name).toBe("Security Update Monitor");
-
-    const result = await source.check();
-    expect(result.text).toContain(HEARTBEAT_OK_TOKEN);
-    expect(result.text).toContain("No supported package manager");
+    mocks.execFile.mockRejectedValue(new Error("package manager secret prose"));
+    await expect(source.check(signal)).resolves.toEqual({
+      ok: true,
+      value: {
+        level: "ok",
+        observedAtMs: NOW_MS,
+        code: "package_manager_unavailable",
+        counters: [],
+      },
+    });
   });
 
-  it("returns CRITICAL when apt-get finds security updates", async () => {
-    mockExec((cmd, args) => {
-      if (cmd === "which" && args[0] === "apt-get") {
-        return { stdout: "/usr/bin/apt-get\n", stderr: "" };
-      }
-      if (cmd === "apt-get" && args.includes("-s")) {
-        return {
-          stdout:
-            "3 upgraded, 0 newly installed, 0 to remove.\nInst libssl3 (3.0.2 Ubuntu:22.04/jammy-security)\nInst curl (7.81.0 Ubuntu:22.04/jammy-security)\nInst vim (2:8.2 Ubuntu:22.04/jammy-updates)\n",
-          stderr: "",
-        };
-      }
-      throw new Error("not found");
+  it("reports git repository aggregate state without returning configured paths", async () => {
+    mocks.execFile.mockImplementation(async (_command: string, args: string[]) => {
+      if (args.includes("status")) return { stdout: " M file-a\n?? file-b\n", stderr: "" };
+      return { stdout: "3\n", stderr: "" };
     });
-
-    const { createSecurityUpdateSource } = await import("./security-update-source.js");
-    const source = createSecurityUpdateSource({
-      enabled: true,
-      securityOnly: true,
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain("CRITICAL");
-    expect(result.text).toContain("pending");
-  });
-
-  it("returns OK when apt-get finds no updates", async () => {
-    mockExec((cmd, args) => {
-      if (cmd === "which" && args[0] === "apt-get") {
-        return { stdout: "/usr/bin/apt-get\n", stderr: "" };
-      }
-      if (cmd === "apt-get" && args.includes("-s")) {
-        return { stdout: "0 upgraded, 0 newly installed, 0 to remove.\n", stderr: "" };
-      }
-      throw new Error("not found");
-    });
-
-    const { createSecurityUpdateSource } = await import("./security-update-source.js");
-    const source = createSecurityUpdateSource({
-      enabled: true,
-      securityOnly: true,
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain(HEARTBEAT_OK_TOKEN);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Git Watcher Source (uses child_process)
-// ---------------------------------------------------------------------------
-
-describe("createGitWatcherSource", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    vi.restoreAllMocks();
-  });
-
-  it("returns OK when no repositories configured", async () => {
-    const { createGitWatcherSource } = await import("./git-watcher-source.js");
     const source = createGitWatcherSource({
-      enabled: true,
-      repositories: [],
+      repositories: ["/private/repo"],
       checkRemote: true,
+    } as never, clock);
+    expect(source.id).toBe("monitor_git_repositories");
+    await expect(source.check(signal)).resolves.toEqual(ok({
+      level: "alert",
+      observedAtMs: NOW_MS,
+      code: "git_attention_required",
+      counters: [
+        { name: "repositories_checked", value: 1 },
+        { name: "repositories_failed", value: 0 },
+        { name: "uncommitted_files", value: 2 },
+        { name: "unpushed_commits", value: 3 },
+      ],
+    }));
+
+    mocks.execFile.mockRejectedValue(new Error("/private/repo secret prose"));
+    await expect(source.check(signal)).resolves.toEqual({
+      ok: false,
+      error: { code: "git_query_failed", errorKind: "dependency" },
     });
-
-    expect(source.id).toBe("monitor:git-watcher");
-    expect(source.name).toBe("Git Repository Monitor");
-
-    const result = await source.check();
-    expect(result.text).toContain(HEARTBEAT_OK_TOKEN);
-    expect(result.text).toContain("No git repositories configured");
-  });
-
-  it("returns OK when repos are clean", async () => {
-    mockExec((_cmd, args) => {
-      if (args.includes("--porcelain")) {
-        return { stdout: "", stderr: "" };
-      }
-      if (args.includes("rev-list")) {
-        return { stdout: "0\n", stderr: "" };
-      }
-      return { stdout: "", stderr: "" };
-    });
-
-    const { createGitWatcherSource } = await import("./git-watcher-source.js");
-    const source = createGitWatcherSource({
-      enabled: true,
-      repositories: ["/home/user/project"],
-      checkRemote: true,
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain(HEARTBEAT_OK_TOKEN);
-    expect(result.text).toContain("clean");
-  });
-
-  it("reports uncommitted changes", async () => {
-    mockExec((_cmd, args) => {
-      if (args.includes("--porcelain")) {
-        return { stdout: " M src/main.ts\n?? new-file.ts\n", stderr: "" };
-      }
-      if (args.includes("rev-list")) {
-        return { stdout: "0\n", stderr: "" };
-      }
-      return { stdout: "", stderr: "" };
-    });
-
-    const { createGitWatcherSource } = await import("./git-watcher-source.js");
-    const source = createGitWatcherSource({
-      enabled: true,
-      repositories: ["/home/user/project"],
-      checkRemote: true,
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain("attention");
-    expect(result.text).toContain("uncommitted");
-  });
-
-  it("handles git errors gracefully", async () => {
-    mockExecError("Not a git repository");
-
-    const { createGitWatcherSource } = await import("./git-watcher-source.js");
-    const source = createGitWatcherSource({
-      enabled: true,
-      repositories: ["/tmp/not-a-repo"],
-      checkRemote: false,
-    });
-
-    const result = await source.check();
-    expect(result.text).toContain("error");
-    expect(result.text).toContain("Not a git repository");
   });
 });
