@@ -68,6 +68,7 @@ import {
 } from "./setup-cross-session-graph.js";
 import { createWorktreeRegistry } from "../setup-worktree-sweep.js";
 import { createConversationLocator, runWithContext, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
+import type { ExecutionResult } from "@comis/agent";
 
 function makeConversation(tenantId: string, agentId: string) {
   const result = createConversationLocator({
@@ -148,18 +149,35 @@ describe("setup-cross-session-graph", () => {
     const sessionKey = { channelId: "chan-1", userId: "user-1", tenantId: "t-1", agentId: "agent-2" };
     const conversation = makeConversation("t-1", "agent-2");
 
+    function executionResult(
+      overrides: Partial<Omit<ExecutionResult, "finishReason" | "terminalErrorKind">> = {},
+    ): ExecutionResult {
+      return {
+        response: "done",
+        sessionKey,
+        executionId: "child-execution-a",
+        responseLocalePolicy: { source: "unset", enforceLocale: false },
+        sideEffectSummary: {
+          schedulingCapabilityInvoked: false,
+          outboundDeliveryCapabilityInvoked: false,
+          deferredWorkCapabilityInvoked: false,
+          unclassifiedInvocationObserved: false,
+        },
+        tokensUsed: { input: 5, output: 5, total: 10 },
+        cost: { total: 0.01 },
+        finishReason: "stop",
+        stepsExecuted: 1,
+        llmCalls: 1,
+        ...overrides,
+      };
+    }
+
     function makeGraphDeps(metadata: Record<string, unknown>) {
       const capturedOverrides: Array<Record<string, unknown>> = [];
       const executor = {
-        execute: vi.fn(async (...args: unknown[]) => {
+        execute: vi.fn(async (...args: unknown[]): Promise<ExecutionResult> => {
           capturedOverrides.push(args[7] as Record<string, unknown>);
-          return {
-            response: "done",
-            tokensUsed: { total: 10 },
-            cost: { total: 0.01 },
-            finishReason: "stop",
-            stepsExecuted: 1,
-          };
+          return executionResult();
         }),
       };
       const deps = {
@@ -255,6 +273,20 @@ describe("setup-cross-session-graph", () => {
 
       expect(executor.execute).toHaveBeenCalledOnce();
       expect(capturedOverrides[0].tokenBudget).toBeUndefined();
+    });
+
+    it("threads the executor terminal kind through the subagent execution boundary", async () => {
+      const { deps, executor } = makeGraphDeps({});
+      vi.mocked(executor.execute).mockResolvedValueOnce({
+        ...executionResult({ response: "" }),
+        finishReason: "error",
+        terminalErrorKind: "dependency",
+      });
+      const executeSubAgent = buildExecuteSubAgent(deps);
+
+      const result = await executeSubAgent("agent-2", sessionKey, conversation, "task");
+
+      expect((result as { terminalErrorKind?: string }).terminalErrorKind).toBe("dependency");
     });
 
     it("binds child tool assembly to the exact child session and inherited delivery origin", async () => {
