@@ -96,6 +96,7 @@ function createTestConversation(overrides: {
   agentId?: string;
   principalId?: string;
   conversationId?: string;
+  channelType?: string;
 } = {}): ConversationLocator {
   const locator = createConversationLocator({
     tenantId: overrides.tenantId ?? "default",
@@ -103,7 +104,7 @@ function createTestConversation(overrides: {
     partition: {
       kind: "endpoint-conversation-principal",
       endpoint: {
-        channelType: "test",
+        channelType: overrides.channelType ?? "test",
         channelInstanceId: "test-instance",
         conversationId: overrides.conversationId ?? "channel1",
         conversationKind: "direct",
@@ -113,6 +114,17 @@ function createTestConversation(overrides: {
   });
   if (!locator.ok) throw locator.error;
   return locator.value;
+}
+
+function conversationEndpoint(locator: ConversationLocator) {
+  const partition = locator.conversationScope.partition;
+  if (
+    partition.kind !== "endpoint-conversation"
+    && partition.kind !== "endpoint-conversation-principal"
+  ) {
+    throw new Error("Test conversation must carry an endpoint");
+  }
+  return partition.endpoint;
 }
 
 function formattedConversation(locator: ConversationLocator): string {
@@ -692,13 +704,15 @@ describe("createSubAgentRunner", () => {
     };
 
     const runner = createSubAgentRunner(deps);
-    const callerConversation = createTestConversation({ agentId: "parent-agent" });
+    const callerConversation = createTestConversation({ agentId: "parent-agent", channelType: "telegram" });
     runner.spawn({
       task: "complete during shutdown",
       agentId: "child-agent",
       callerAgentId: "parent-agent",
       callerSessionKey: formattedConversation(callerConversation),
       callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
       announceChannelType: "telegram",
       announceChannelId: "channel1",
     });
@@ -734,7 +748,7 @@ describe("createSubAgentRunner", () => {
       hasDelivered: vi.fn().mockReturnValue(false),
       markDelivered: vi.fn(),
     };
-    const callerConversation = createTestConversation({ agentId: "parent-agent" });
+    const callerConversation = createTestConversation({ agentId: "parent-agent", channelType: "telegram" });
     const runner = createSubAgentRunner(deps);
 
     runner.spawn({
@@ -744,6 +758,8 @@ describe("createSubAgentRunner", () => {
       callerAgentId: "parent-agent",
       callerSessionKey: formattedConversation(callerConversation),
       callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
       announceChannelType: "telegram",
       announceChannelId: "channel1",
     });
@@ -832,13 +848,15 @@ describe("createSubAgentRunner", () => {
     };
 
     const runner = createSubAgentRunner(deps);
-    const callerConversation = createTestConversation({ agentId: "parent-agent" });
+    const callerConversation = createTestConversation({ agentId: "parent-agent", channelType: "telegram" });
     runner.spawn({
       task: "hang until bounded shutdown",
       agentId: "child-agent",
       callerAgentId: "parent-agent",
       callerSessionKey: formattedConversation(callerConversation),
       callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
       announceChannelType: "telegram",
       announceChannelId: "channel1",
     });
@@ -883,13 +901,15 @@ describe("createSubAgentRunner", () => {
     };
 
     const runner = createSubAgentRunner(deps);
-    const callerConversation = createTestConversation({ agentId: "parent-agent" });
+    const callerConversation = createTestConversation({ agentId: "parent-agent", channelType: "telegram" });
     runner.spawn({
       task: "hang through shutdown notice grace",
       agentId: "child-agent",
       callerAgentId: "parent-agent",
       callerSessionKey: formattedConversation(callerConversation),
       callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
       announceChannelType: "telegram",
       announceChannelId: "channel1",
     });
@@ -934,13 +954,15 @@ describe("createSubAgentRunner", () => {
       markDelivered: vi.fn(),
     };
     const runner = createSubAgentRunner(deps);
-    const callerConversation = createTestConversation({ agentId: "parent-agent" });
+    const callerConversation = createTestConversation({ agentId: "parent-agent", channelType: "telegram" });
     runner.spawn({
       task: "complete before post-processing stalls",
       agentId: "child-agent",
       callerAgentId: "parent-agent",
       callerSessionKey: formattedConversation(callerConversation),
       callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
       announceChannelType: "telegram",
       announceChannelId: "channel1",
     });
@@ -991,13 +1013,15 @@ describe("createSubAgentRunner", () => {
       markDelivered: vi.fn(),
     };
     const runner = createSubAgentRunner(deps);
-    const callerConversation = createTestConversation({ agentId: "parent-agent" });
+    const callerConversation = createTestConversation({ agentId: "parent-agent", channelType: "telegram" });
     runner.spawn({
       task: "halt before post-processing stalls",
       agentId: "child-agent",
       callerAgentId: "parent-agent",
       callerSessionKey: formattedConversation(callerConversation),
       callerConversation,
+      callerEndpoint: conversationEndpoint(callerConversation),
+      callerType: "control-plane",
       announceChannelType: "telegram",
       announceChannelId: "channel1",
     });

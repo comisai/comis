@@ -22,7 +22,7 @@
  */
 
 import type { Result } from "@comis/shared";
-import type { ConversationLocator } from "@comis/core";
+import type { ChannelEndpoint, ConversationLocator } from "@comis/core";
 
 export interface AnnouncementOperationIdentity {
   agentId: string;
@@ -34,6 +34,7 @@ export interface GovernedCompletionAnnouncementRequest {
   agentId: string;
   callerSessionKey: string;
   callerConversation: ConversationLocator;
+  destinationEndpoint: ChannelEndpoint;
   runId: string;
   channelType: string;
   channelId: string;
@@ -78,6 +79,8 @@ export interface QueuedAnnouncementShape {
   callerAgentId: string;
   callerSessionKey: string;
   callerConversation: ConversationLocator;
+  /** Immutable channel endpoint captured from the authenticated caller turn. */
+  destinationEndpoint: ChannelEndpoint;
   /** Response locale resolved for the originating user turn. */
   resolvedLanguage?: string;
   runId: string;

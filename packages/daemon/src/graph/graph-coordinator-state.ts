@@ -19,6 +19,7 @@ import type {
   UserTrustLevel,
   AgentCapability,
   DeliveryOrigin,
+  ChannelEndpoint,
   ConversationLocator,
 } from "@comis/core";
 import type {
@@ -179,6 +180,8 @@ export interface GraphCoordinatorDeps {
       agentId: string;
       callerSessionKey?: string;
       callerAgentId?: string;
+      callerConversation?: ConversationLocator;
+      callerEndpoint?: ChannelEndpoint;
       model?: string;
       max_steps?: number;
       /** Per-spawn token budget — the child's own per-execution cap. */

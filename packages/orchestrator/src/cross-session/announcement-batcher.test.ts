@@ -24,6 +24,12 @@ function makeAnnouncement(overrides: Partial<QueuedAnnouncement> = {}): QueuedAn
     callerAgentId: "agent-main",
     callerSessionKey: "default:agent:agent-main:user1:chan1",
     callerConversation: makeCallerConversation(),
+    destinationEndpoint: {
+      channelType: "discord",
+      channelInstanceId: "test-instance",
+      conversationId: "chan-123",
+      conversationKind: "direct",
+    },
     runId: "run-1",
     ...overrides,
   };

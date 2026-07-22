@@ -315,6 +315,8 @@ export function spawnNode(
         tokenBudget: nodeTokenBudget,
         callerSessionKey: gs.callerSessionKey,
         callerAgentId: gs.callerAgentId,
+        callerConversation: gs.callerConversationLocator,
+        callerEndpoint: gs.callerEndpoint,
         callerType: "graph",
         callerTrustLevel: gs.callerTrustLevel,
         ...(gs.rootRunId !== undefined ? { rootRunId: gs.rootRunId } : {}),

@@ -23,6 +23,7 @@ import {
   type ConversationLocator,
   type ConversationRef,
   type ConversationScope,
+  type ChannelEndpoint,
   type SessionStorePort,
   type TypedEventBus,
   type AgentToAgentConfig,
@@ -203,7 +204,7 @@ export type SubAgentCompletion =
       resultRef?: ResultRef;
     };
 
-// @optional-field-count: 12 — these are independent routing/authority facets of
+// @optional-field-count: 13 — these are independent routing/authority facets of
 // one run. Lifecycle-dependent timing, telemetry, and completion are modeled by
 // the closed variants below rather than accumulating optional mutable fields.
 interface SubAgentRunCommon {
@@ -232,6 +233,8 @@ interface SubAgentRunCommon {
   /** Session key of the caller agent, used for active children counting. */
   callerSessionKey?: string;
   callerConversation?: ConversationLocator;
+  /** Immutable endpoint captured with the authenticated caller turn. */
+  callerEndpoint?: ChannelEndpoint;
   /** Authenticated caller agent that owns completion delivery. */
   callerAgentId?: string;
   /** Announce channel type for failure notifications (stored at spawn for ghost sweep access). */
@@ -609,6 +612,8 @@ export interface SpawnParams {
   agentId: string;
   callerSessionKey?: string;
   callerConversation?: ConversationLocator;
+  /** Trusted caller endpoint for context-independent graph/control-plane spawns. */
+  callerEndpoint?: ChannelEndpoint;
   callerAgentId?: string;
   announceChannelType?: string;
   announceChannelId?: string;
@@ -1513,6 +1518,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           callerAgentId: run.callerAgentId,
           callerSessionKey: run.callerSessionKey,  // shared dedup key
           callerConversation: run.callerConversation,
+          destinationEndpoint: run.callerEndpoint,
         }, deps));
       }
 
@@ -1608,6 +1614,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     const hasExplicitAnnouncementRoute = params.announceChannelType !== undefined
       || params.announceChannelId !== undefined;
     const reuseConversation = params.reuseConversation;
+    const callerEndpoint = isContextIndependentSpawn
+      ? params.callerEndpoint
+      : callerContext?.turnScope?.endpoint;
 
     const rejectCallerPrincipal = (): never => {
       deps.logger?.warn({
@@ -1705,6 +1714,11 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         ))
         || (reuseConversation !== undefined && (
           reuseConversation.conversationScope.tenantId !== requesterOrigin.tenantId
+        ))
+        || (callerEndpoint !== undefined && (
+          callerEndpoint.channelType !== requesterOrigin.channelType
+          || callerEndpoint.conversationId !== requesterOrigin.channelId
+          || callerEndpoint.threadId !== requesterOrigin.threadId
         ))
       );
     if (announcementRouteMismatch) {
@@ -2033,6 +2047,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           ...(params.parentLeaseId !== undefined ? { parentLeaseId: params.parentLeaseId } : {}),
           callerSessionKey: params.callerSessionKey,
           callerConversation: params.callerConversation,
+          callerEndpoint,
           callerAgentId: params.callerAgentId,
           announceChannelType: params.announceChannelType,
           announceChannelId: params.announceChannelId,
@@ -2192,6 +2207,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       ...(params.parentLeaseId !== undefined ? { parentLeaseId: params.parentLeaseId } : {}),
       callerSessionKey: params.callerSessionKey,
       callerConversation: params.callerConversation,
+      callerEndpoint,
       callerAgentId: params.callerAgentId,
       announceChannelType: params.announceChannelType,
       announceChannelId: params.announceChannelId,
@@ -2763,6 +2779,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               callerAgentId: params.callerAgentId,
               callerSessionKey: params.callerSessionKey,  // shared dedup key
               callerConversation: params.callerConversation,
+              destinationEndpoint: run.callerEndpoint,
             }, deps);
           }
         } else if (params.announceChannelType && params.announceChannelId) {
@@ -2817,6 +2834,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               callerAgentId: params.callerAgentId,
               callerSessionKey: params.callerSessionKey,
               callerConversation: params.callerConversation,
+              destinationEndpoint: run.callerEndpoint,
               resolvedLanguage: params.resolvedLanguage,
               runId,
               ...(validationResults?.some((output) => output.exists)
@@ -2959,6 +2977,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             callerAgentId: params.callerAgentId,
             callerSessionKey: params.callerSessionKey,  // shared dedup key
             callerConversation: params.callerConversation,
+            destinationEndpoint: run.callerEndpoint,
           }, deps);
         } else {
           // Log explicit reason when failure announcement cannot be routed
@@ -3096,6 +3115,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           callerAgentId: params.callerAgentId,
           callerSessionKey: params.callerSessionKey,  // shared dedup key
           callerConversation: params.callerConversation,
+          destinationEndpoint: run.callerEndpoint,
         }, deps));
       }
 
@@ -3361,6 +3381,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         callerAgentId: run.callerAgentId,
         callerSessionKey: run.callerSessionKey,  // shared dedup key
         callerConversation: run.callerConversation,
+        destinationEndpoint: run.callerEndpoint,
         detail: killedBy === "health_monitor"
           ? `The background task was stopped by the daemon health monitor${opts?.idleMs !== undefined ? ` after ${Math.round(opts.idleMs / 1000)}s without progress` : ""}${opts?.thresholdMs !== undefined ? ` (security.agentToAgent.subagentContext.stuckKillThresholdMs=${opts.thresholdMs})` : ""}.`
           : `The background task was stopped (${killedBy}).`,
@@ -3521,6 +3542,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
               callerAgentId: run.callerAgentId,
               callerSessionKey: run.callerSessionKey,
               callerConversation: run.callerConversation,
+              destinationEndpoint: run.callerEndpoint,
               detail: "The background task finished, but result delivery was stopped during daemon shutdown.",
             }, deps));
           }

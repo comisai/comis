@@ -22,6 +22,7 @@ import {
   toSafeErrorLogString,
   scrubSecretsFromText,
   type DeliveryOrigin,
+  type ChannelEndpoint,
   type ConversationLocator,
 } from "@comis/core";
 import { fromPromise, TimeoutError, withTimeout } from "@comis/shared";
@@ -430,6 +431,7 @@ export async function deliverAnnouncement(params: {
   callerAgentId?: string;
   callerSessionKey?: string;
   callerConversation?: ConversationLocator;
+  destinationEndpoint?: ChannelEndpoint;
   resolvedLanguage?: string;
   runId: string;
   attachments?: CompletionAttachmentShape[];
@@ -469,8 +471,21 @@ export async function deliverAnnouncement(params: {
   }
   const announcementText = announceScrub.redactions > 0 ? announceScrub.text : params.announcementText;
 
+  if (
+    deps.sendGovernedAnnouncement
+    && (!callerAgentId || !callerSessionKey || !params.callerConversation || !params.destinationEndpoint)
+  ) {
+    deps.logger?.warn({
+      runId,
+      channelType: announceChannelType,
+      hint: "Bind the completion to its authenticated caller conversation and endpoint before delivery",
+      errorKind: "precondition" as const,
+    }, "Governed completion announcement has no delivery authority");
+    return;
+  }
+
   // Route through batcher for coalesced delivery when available
-  if (deps.batcher && callerAgentId && callerSessionKey && params.callerConversation) {
+  if (deps.batcher && callerAgentId && callerSessionKey && params.callerConversation && params.destinationEndpoint) {
     const enqueued = await deps.batcher.enqueue({
       announcementText,
       announceChannelType,
@@ -479,6 +494,7 @@ export async function deliverAnnouncement(params: {
       callerAgentId,
       callerSessionKey,
       callerConversation: params.callerConversation,
+      destinationEndpoint: params.destinationEndpoint,
       ...(params.resolvedLanguage ? { resolvedLanguage: params.resolvedLanguage } : {}),
       runId,
       idempotencyKey: announceKey,
@@ -621,17 +637,13 @@ export async function deliverAnnouncement(params: {
   let lastError = "direct channel send failed";
   let identity: AnnouncementOperationIdentity | undefined;
 
-  if (deps.sendGovernedAnnouncement && (!callerAgentId || !callerSessionKey || !params.callerConversation)) {
-    deps.logger?.warn({
-      runId,
-      channelType: announceChannelType,
-      hint: "Bind the completion to its authenticated caller agent and session before delivery",
-      errorKind: "precondition" as const,
-    }, "Governed completion announcement has no owner identity");
-    return;
-  }
-
-  if (deps.sendGovernedAnnouncement && callerAgentId && callerSessionKey && params.callerConversation) {
+  if (
+    deps.sendGovernedAnnouncement
+    && callerAgentId
+    && callerSessionKey
+    && params.callerConversation
+    && params.destinationEndpoint
+  ) {
     const operations: Array<{
       text: string;
       partId?: string;
@@ -649,6 +661,7 @@ export async function deliverAnnouncement(params: {
         agentId: callerAgentId,
         callerSessionKey,
         callerConversation: params.callerConversation,
+        destinationEndpoint: params.destinationEndpoint,
         runId,
         channelType: announceChannelType,
         channelId: announceChannelId,
@@ -752,6 +765,8 @@ interface FailureNotificationParams {
   callerSessionKey?: string;
   /** Canonical caller authority for the governed outward operation. */
   callerConversation?: ConversationLocator;
+  /** Immutable endpoint captured with the authenticated caller turn. */
+  destinationEndpoint?: ChannelEndpoint;
   /** Topic captured from the exact requester route when the run was accepted. */
   threadId?: string;
   /** Cause line replacing the generic error sentence for attributed kills. */
@@ -820,13 +835,16 @@ async function deliverFailureNotificationOnce(
 
   const threadId = params.threadId;
 
-  if (deps.sendGovernedAnnouncement && (!params.callerAgentId || !params.callerSessionKey || !params.callerConversation)) {
+  if (
+    deps.sendGovernedAnnouncement
+    && (!params.callerAgentId || !params.callerSessionKey || !params.callerConversation || !params.destinationEndpoint)
+  ) {
     deps.logger?.warn({
       runId: params.runId,
       hint: "Bind the failure notice to its authenticated caller agent and session before delivery",
       errorKind: "precondition" as const,
-    }, "Governed failure notification has no owner identity");
-    return Promise.reject(new Error("Governed failure notification requires caller identity"));
+    }, "Governed failure notification has no delivery authority");
+    return Promise.reject(new Error("Governed failure notification requires caller delivery authority"));
   }
 
   let delivered: boolean;
@@ -836,6 +854,7 @@ async function deliverFailureNotificationOnce(
       agentId: params.callerAgentId!,
       callerSessionKey: params.callerSessionKey!,
       callerConversation: params.callerConversation!,
+      destinationEndpoint: params.destinationEndpoint!,
       runId: params.runId,
       channelType: params.channelType,
       channelId: params.channelId,

@@ -9,7 +9,7 @@
  * @module
  */
 
-import { conversationScopeToSessionKey, scrubSecretsFromText, toSafeErrorLogString, type ConversationLocator, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout } from "@comis/core";
+import { conversationScopeToSessionKey, scrubSecretsFromText, toSafeErrorLogString, type ChannelEndpoint, type ConversationLocator, type SessionKey, systemNowMs, systemSetTimeout, systemClearTimeout, systemScheduleTimeout } from "@comis/core";
 import { err, fromPromise, ok, TimeoutError, withTimeout, type Result } from "@comis/shared";
 import { createDeliveryDedup, type DeliveryDedup } from "@comis/agent";
 import type { ChannelType } from "./announcement-dead-letter.js";
@@ -39,6 +39,8 @@ export interface QueuedAnnouncement {
   callerSessionKey: string;
   /** Canonical parent conversation authority captured at spawn time. */
   callerConversation: ConversationLocator;
+  /** Immutable channel endpoint captured from the authenticated caller turn. */
+  destinationEndpoint: ChannelEndpoint;
   /** Response locale resolved for the originating user turn. */
   resolvedLanguage?: string;
   runId: string;
@@ -286,6 +288,7 @@ export function createAnnouncementBatcher(deps: AnnouncementBatcherDeps): Announ
         agentId: item.callerAgentId,
         callerSessionKey: item.callerSessionKey,
         callerConversation: item.callerConversation,
+        destinationEndpoint: item.destinationEndpoint,
         runId: item.runId,
         channelType: item.announceChannelType,
         channelId: item.announceChannelId,

@@ -6,6 +6,7 @@ import {
   emitObservationalEventSafely,
   systemNowMs,
   type ComisLogger,
+  type ChannelEndpoint,
   type ConversationLocator,
   type OutwardSendLedgerPort,
   type OutwardSendRecord,
@@ -91,6 +92,8 @@ export interface CompletionAnnouncementSendRequest {
   agentId: string;
   callerSessionKey: string;
   callerConversation: ConversationLocator;
+  /** Immutable authenticated endpoint captured with the caller turn. */
+  destinationEndpoint: ChannelEndpoint;
   runId: string;
   channelType: string;
   channelId: string;

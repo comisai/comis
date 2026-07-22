@@ -275,6 +275,7 @@ export async function handleGraphCompletion(
       agentId: callerAgentId,
       callerSessionKey,
       callerConversation,
+      destinationEndpoint: callerEndpoint,
       channelType: announceChannelType,
       channelId: announceChannelId,
       text: finalText,

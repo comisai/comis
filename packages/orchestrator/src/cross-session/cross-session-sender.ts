@@ -11,6 +11,7 @@
 
 import {
   conversationScopeToSessionKey,
+  type ChannelEndpoint,
   type ConversationLocator,
   formatSessionKey,
   type ConversationRef,
@@ -65,6 +66,8 @@ export interface CrossSessionSendParams {
   caller?: SessionQueryScope & { conversationRef: ConversationRef };
   callerSessionKey?: string;
   callerConversation?: ConversationLocator;
+  /** Immutable endpoint captured with the authenticated caller turn. */
+  callerEndpoint?: ChannelEndpoint;
   /** Framework-authenticated agent that owns the caller session. */
   callerAgentId?: string;
   /** Stable identity of the originating sessions_send tool call. */
@@ -93,6 +96,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
     callerAgentId: string | undefined,
     callerSessionKey: string | undefined,
     callerConversation: ConversationLocator | undefined,
+    callerEndpoint: ChannelEndpoint | undefined,
     announceOperationId: string | undefined,
   ): Promise<boolean> {
     if (!channelType || !channelId) return false;
@@ -101,7 +105,12 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
     if (!sendGovernedAnnouncement) {
       return deps.sendToChannel(channelType, channelId, text);
     }
-    if (callerAgentId === undefined || callerSessionKey === undefined || callerConversation === undefined) {
+    if (
+      callerAgentId === undefined
+      || callerSessionKey === undefined
+      || callerConversation === undefined
+      || callerEndpoint === undefined
+    ) {
       deps.logger?.error(
         {
           step: "completion-announcement",
@@ -131,6 +140,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       agentId: callerAgentId,
       callerSessionKey,
       callerConversation,
+      destinationEndpoint: callerEndpoint,
       runId: announceOperationId,
       channelType,
       channelId,
@@ -229,7 +239,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
         const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
         const announced = hadSkip
           ? false
-          : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.announceOperationId);
+          : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
         return {
           sent: true,
           response: stripped,
@@ -291,7 +301,7 @@ export function createCrossSessionSender(deps: CrossSessionSenderDeps) {
       const { stripped, hadSkip } = stripAnnounceSkip(lastResponse);
       const announced = hadSkip
         ? false
-        : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.announceOperationId);
+        : await announce(params.announceChannelType, params.announceChannelId, stripped, params.callerAgentId, params.callerSessionKey, params.callerConversation, params.callerEndpoint, params.announceOperationId);
 
       return {
         sent: true,

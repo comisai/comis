@@ -94,6 +94,7 @@ describe("completion announcement delivery wiring", () => {
       callerSessionKey: "default:user1:chan1",
       runId: "run-1",
       callerConversation: makeConversation(),
+      destinationEndpoint: makeChannelPrincipalCaller().endpoint,
       channelType: "telegram",
       channelId: "chat-1",
       text: "completion",
@@ -241,14 +242,17 @@ describe("completion announcement delivery wiring", () => {
       })),
     });
 
+    const caller = makeChannelPrincipalCaller();
     const result = await delivery.sendGovernedAnnouncement?.({
       agentId: "agent-1",
-      callerSessionKey: "default:agent:agent-1:user1:telegram:peer:user1",
-      callerConversation: makeConversation(),
+      callerSessionKey: "tenant-a:agent:agent-1:principal-a:telegram:peer:principal-a",
+      callerConversation: caller.locator,
+      destinationEndpoint: caller.endpoint,
       runId: "run-1",
       channelType: "telegram",
       channelId: "chat-1",
       text: "The report is ready.",
+      options: { threadId: "topic-7" },
       attachment: {
         sourceAgentId: "agent-1",
         path: "/workspace/reports/completion-report.csv",
@@ -265,7 +269,7 @@ describe("completion announcement delivery wiring", () => {
         mimeType: "text/csv",
         caption: "The report is ready.",
       }),
-      undefined,
+      { threadId: "topic-7" },
     );
     expect(deliveryService.deliverToChannel).not.toHaveBeenCalled();
     expect(ledger.commit).toHaveBeenCalledWith("root-1", 0, "document-message");

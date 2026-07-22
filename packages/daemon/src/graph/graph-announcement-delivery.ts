@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Awaited receipt-aware delivery for one terminal graph notification. */
 
-import { scrubSecretsFromText, type ConversationLocator } from "@comis/core";
+import {
+  scrubSecretsFromText,
+  type ChannelEndpoint,
+  type ConversationLocator,
+} from "@comis/core";
 import { err, fromPromise, ok, type Result } from "@comis/shared";
 import type {
   AnnouncementDeliveryOptions,
@@ -16,6 +20,7 @@ interface GraphAnnouncementDeliveryParams {
   agentId?: string;
   callerSessionKey?: string;
   callerConversation?: ConversationLocator;
+  destinationEndpoint?: ChannelEndpoint;
   channelType?: string;
   channelId?: string;
   text: string;
@@ -39,6 +44,7 @@ export async function deliverGovernedGraphAnnouncement(
     || params.agentId === undefined
     || params.callerSessionKey === undefined
     || params.callerConversation === undefined
+    || params.destinationEndpoint === undefined
     || params.channelType === undefined
     || params.channelId === undefined
   ) {
@@ -65,6 +71,7 @@ export async function deliverGovernedGraphAnnouncement(
     agentId: params.agentId,
     callerSessionKey: params.callerSessionKey,
     callerConversation: params.callerConversation,
+    destinationEndpoint: params.destinationEndpoint,
     runId: params.graphId,
     channelType: params.channelType,
     channelId: params.channelId,

@@ -21,6 +21,20 @@ function makeCallerConversation(agentId = "agent-main", tenantId = "default") {
   return result.value;
 }
 
+function makeCallerEndpoint(
+  channelType = "telegram",
+  conversationId = "chat-1",
+  threadId?: string,
+) {
+  return {
+    channelType,
+    channelInstanceId: "test-instance",
+    conversationId,
+    conversationKind: "direct" as const,
+    ...(threadId ? { threadId } : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // sweepResultFiles
 // ---------------------------------------------------------------------------
@@ -284,6 +298,7 @@ describe("deliverFailureNotification", () => {
       callerAgentId: "parent-agent",
       callerSessionKey: "default:user_a:chat-1",
       callerConversation: makeCallerConversation("parent-agent"),
+      destinationEndpoint: makeCallerEndpoint("telegram", "chat-1", "topic-1"),
     }, { sendToChannel, sendGovernedAnnouncement, deliveryDedup });
 
     expect(sendGovernedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({
@@ -309,6 +324,7 @@ describe("deliverFailureNotification", () => {
       callerAgentId: "parent-agent",
       callerSessionKey: "default:user_a:chat-1",
       callerConversation: makeCallerConversation("parent-agent"),
+      destinationEndpoint: makeCallerEndpoint(),
     };
     const falseOutcome = vi.fn().mockResolvedValue(ok({
       delivered: false as const,
@@ -345,6 +361,7 @@ describe("deliverFailureNotification", () => {
       callerAgentId: "parent-agent",
       callerSessionKey: "default:user_a:chat-1",
       callerConversation: makeCallerConversation("parent-agent"),
+      destinationEndpoint: makeCallerEndpoint(),
     };
 
     const first = deliverFailureNotification(params, { sendToChannel, sendGovernedAnnouncement });
@@ -371,7 +388,7 @@ describe("deliverFailureNotification", () => {
       runtimeMs: 1_000,
       runId: "run-ownerless",
     }, { sendToChannel, sendGovernedAnnouncement })).rejects.toThrow(
-      "Governed failure notification requires caller identity",
+      "Governed failure notification requires caller delivery authority",
     );
 
     expect(sendGovernedAnnouncement).not.toHaveBeenCalled();
@@ -696,6 +713,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       callerAgentId: "agent-main",
       callerSessionKey,
       callerConversation: makeCallerConversation(),
+      destinationEndpoint: makeCallerEndpoint(),
       runId: "run-reserved",
     }, {
       sendToChannel: vi.fn().mockResolvedValue(true),
@@ -732,6 +750,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
         tenantId: "default", agentId: "agent-main", userId: "user_a", channelId: "chat-1",
       }),
       callerConversation: makeCallerConversation(),
+      destinationEndpoint: makeCallerEndpoint(),
       runId: "run-restarted",
     }, {
       sendToChannel: vi.fn().mockResolvedValue(true),
@@ -847,6 +866,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
       callerAgentId: "agent-main",
       callerSessionKey,
       callerConversation: makeCallerConversation(),
+      destinationEndpoint: makeCallerEndpoint(),
       runId: "run-rewrite",
     }, {
       announceToParent: vi.fn().mockResolvedValue("rewritten"),
@@ -1022,6 +1042,7 @@ describe("deliverAnnouncement / deliverFailureNotification shared dedup without 
         callerAgentId: "agent-main",
         callerSessionKey: "default:u6:c6",
         callerConversation: makeCallerConversation(),
+        destinationEndpoint: makeCallerEndpoint("telegram", "chat-governed"),
         runId: "r-governed",
       },
       {
@@ -1257,6 +1278,7 @@ describe("deliverAnnouncement idempotency-key threading", () => {
       callerAgentId: "agent-main",
       callerSessionKey: "default:agent:agent-main:user1:telegram:peer:user1",
       callerConversation: makeCallerConversation(),
+      destinationEndpoint: makeCallerEndpoint(),
       runId: "run-report",
       attachments,
     }, {
@@ -1288,6 +1310,7 @@ describe("deliverAnnouncement idempotency-key threading", () => {
           tenantId: "default", agentId: "agent-main", userId: "user1", channelId: "chan1",
         }),
         callerConversation: makeCallerConversation(),
+        destinationEndpoint: makeCallerEndpoint("discord", "chan-1", "topic-42"),
         runId: "run-xyz",
       },
       { sendToChannel: vi.fn().mockResolvedValue(true), batcher },

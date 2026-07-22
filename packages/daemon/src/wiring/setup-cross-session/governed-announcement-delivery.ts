@@ -2,6 +2,8 @@
 /** Receipt-aware completion-announcement delivery wiring. */
 
 import {
+  ChannelEndpointSchema,
+  ConversationLocatorSchema,
   conversationScopeToSessionKey,
   resolvePlatformDeliveryResult,
   systemNowMs,
@@ -214,18 +216,8 @@ export function createAnnouncementDelivery(
     });
   };
 
-  const governedSender = deps.outwardLedger
-    ? createGovernedAnnouncementSender({
-        ledger: deps.outwardLedger,
-        sendToPlatform: (channelType, channelId, text, options, attachment) =>
-          attachment
-            ? sendAttachmentToChannelWithReceipt(channelType, channelId, text, attachment, options)
-            : sendToChannelWithReceipt(channelType, channelId, text, options),
-        eventBus: deps.eventBus,
-        ...(deps.logger ? { logger: deps.logger } : {}),
-      })
-    : undefined;
-  if (!governedSender) return { sendToChannelWithReceipt, sendToChannel };
+  const outwardLedger = deps.outwardLedger;
+  if (!outwardLedger) return { sendToChannelWithReceipt, sendToChannel };
 
   const sendGovernedAnnouncement: SendGovernedCompletionAnnouncement = async (request) => {
     const resolveRootRunId = deps.resolveRootRunId;
@@ -240,9 +232,52 @@ export function createAnnouncementDelivery(
       );
       return ok({ delivered: false, failure: "allocation_blocked" });
     }
-    const projectedSession = conversationScopeToSessionKey(
-      request.callerConversation.conversationScope,
-    );
+    const parsedCaller = ConversationLocatorSchema.safeParse(request.callerConversation);
+    const parsedEndpoint = ChannelEndpointSchema.safeParse(request.destinationEndpoint);
+    if (!parsedCaller.success || !parsedEndpoint.success) {
+      deps.logger?.error(
+        {
+          errorKind: "validation" as const,
+          hint: "retry with the authenticated caller conversation and immutable destination endpoint",
+          step: "completion-announcement-outward-ledger",
+        },
+        "Completion announcement caller authority invalid",
+      );
+      return ok({ delivered: false, failure: "allocation_blocked" });
+    }
+    const callerConversation = parsedCaller.data;
+    const callerScope = callerConversation.conversationScope;
+    const destinationEndpoint = parsedEndpoint.data;
+    const callerPartition = callerScope.partition;
+    const partitionChannelType = callerPartition.kind === "channel-principal"
+      ? callerPartition.channelType
+      : callerPartition.kind === "endpoint-conversation"
+        || callerPartition.kind === "endpoint-conversation-principal"
+        ? callerPartition.endpoint.channelType
+        : undefined;
+    if (
+      callerScope.agentId !== request.agentId
+      || (partitionChannelType !== undefined && partitionChannelType !== destinationEndpoint.channelType)
+      || destinationEndpoint.channelType !== request.channelType
+      || destinationEndpoint.conversationId !== request.channelId
+      || destinationEndpoint.threadId !== request.options?.threadId
+    ) {
+      deps.logger?.error(
+        {
+          errorKind: "precondition" as const,
+          hint: "retry with the authenticated caller conversation and its exact captured channel route",
+          step: "completion-announcement-outward-ledger",
+        },
+        "Completion announcement delivery route mismatch",
+      );
+      return ok({ delivered: false, failure: "allocation_blocked" });
+    }
+    const deliveryAuthority = {
+      tenantId: callerScope.tenantId,
+      agentId: callerScope.agentId,
+      conversationRef: callerConversation.conversationRef,
+    };
+    const projectedSession = conversationScopeToSessionKey(callerScope);
     if (!projectedSession.ok) {
       deps.logger?.error(
         {
@@ -302,6 +337,19 @@ export function createAnnouncementDelivery(
       ...(request.options ? { options: request.options } : {}),
       ...(prepared ? { attachment: prepared } : {}),
     };
+    const governedSender = createGovernedAnnouncementSender({
+      ledger: outwardLedger,
+      sendToPlatform: (channelType, channelId, text, options, attachment) =>
+        attachment
+          ? sendAttachmentToChannelWithReceipt(channelType, channelId, text, attachment, options)
+          : sendToChannelWithReceipt(channelType, channelId, text, {
+              ...options,
+              authority: deliveryAuthority,
+              destinationEndpoint,
+            }),
+      eventBus: deps.eventBus,
+      ...(deps.logger ? { logger: deps.logger } : {}),
+    });
     try {
       return await governedSender.send(operation);
     } finally {

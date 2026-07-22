@@ -63,6 +63,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       };
       let callerAuthority: typeof target | undefined;
       let callerConversation: import("@comis/core").ConversationLocator | undefined;
+      let callerEndpoint: import("@comis/core").ChannelEndpoint | undefined;
       if (callerAgentId !== undefined) {
         const rejectAuthorization = (
           failure: SessionSendAuthorizationFailure,
@@ -113,6 +114,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
           conversationScope: callerTurnScope.conversation,
           conversationRef: callerAuthority.conversationRef,
         };
+        callerEndpoint = callerTurnScope.endpoint;
         if (target.tenantId !== callerContext.tenantId) {
           rejectAuthorization("target tenant does not match the request principal");
         }
@@ -150,6 +152,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         callerSessionKey,
         ...(callerAuthority ? { caller: callerAuthority } : {}),
         ...(callerConversation ? { callerConversation } : {}),
+        ...(callerEndpoint ? { callerEndpoint } : {}),
         ...(callerAgentId !== undefined ? { callerAgentId } : {}),
         ...(announceOperationId !== undefined ? { announceOperationId } : {}),
         announceChannelType: callerChannelType,
@@ -401,6 +404,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
                 conversationScope: callerContext.turnScope.conversation,
                 conversationRef: callerConversationRef.value,
               },
+              callerEndpoint: callerContext.turnScope.endpoint,
             }
           : {}),
         ...inheritedAuthority.value,

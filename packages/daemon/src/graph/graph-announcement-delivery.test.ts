@@ -25,6 +25,9 @@ function params() {
     agentId: "agent-1",
     callerSessionKey: "tenant:user:chat-1",
     callerConversation: locator.value,
+    destinationEndpoint: locator.value.conversationScope.partition.kind === "endpoint-conversation-principal"
+      ? locator.value.conversationScope.partition.endpoint
+      : undefined,
     channelType: "telegram",
     channelId: "chat-1",
     text: "Graph complete",

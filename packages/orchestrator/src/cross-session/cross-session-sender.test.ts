@@ -36,6 +36,12 @@ const TARGET_ONE = conversation("user1", "channel1");
 const TARGET_TWO = conversation("user2", "channel2");
 const TARGET_THREE = conversation("user3", "channel3");
 const PARENT_TWO = conversation("user2", "channel2", "parent-agent");
+const PARENT_TWO_ENDPOINT = {
+  channelType: "discord",
+  channelInstanceId: "cross-session-test",
+  conversationId: "guild-channel-42",
+  conversationKind: "shared" as const,
+};
 const QUERY_ONE = { tenantId: "default", agentId: "default", conversationRef: TARGET_ONE.conversationRef };
 const QUERY_TWO = { tenantId: "default", agentId: "default", conversationRef: TARGET_TWO.conversationRef };
 const QUERY_THREE = { tenantId: "default", agentId: "default", conversationRef: TARGET_THREE.conversationRef };
@@ -431,6 +437,7 @@ describe("createCrossSessionSender uses the governed announcement port", () => {
     caller: QUERY_TWO,
     callerSessionKey: "default:user2:channel2",
     callerConversation: PARENT_TWO,
+    callerEndpoint: PARENT_TWO_ENDPOINT,
     callerAgentId: "parent-agent",
     announceOperationId: "announce-tool-call-1",
     announceChannelType: "discord",
@@ -454,6 +461,7 @@ describe("createCrossSessionSender uses the governed announcement port", () => {
       agentId: "parent-agent",
       callerSessionKey: "default:user2:channel2",
       callerConversation: PARENT_TWO,
+      destinationEndpoint: PARENT_TWO_ENDPOINT,
       runId: "announce-tool-call-1",
       channelType: "discord",
       channelId: "guild-channel-42",

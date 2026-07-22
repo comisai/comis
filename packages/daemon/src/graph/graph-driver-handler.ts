@@ -609,6 +609,8 @@ export function executeDriverAction(
           max_steps: action.maxSteps,
           callerSessionKey: gs.callerSessionKey,
           callerAgentId: gs.callerAgentId,
+          callerConversation: gs.callerConversationLocator,
+          callerEndpoint: gs.callerEndpoint,
           callerType: "graph",
           callerTrustLevel: gs.callerTrustLevel,
           // Share the graph run's tree root (killByRootRun reach).
@@ -671,6 +673,8 @@ export function executeDriverAction(
             max_steps: s.maxSteps,
             callerSessionKey: gs.callerSessionKey,
             callerAgentId: gs.callerAgentId,
+            callerConversation: gs.callerConversationLocator,
+            callerEndpoint: gs.callerEndpoint,
             callerType: "graph",
             callerTrustLevel: gs.callerTrustLevel,
             // Share the graph run's tree root (killByRootRun reach).
