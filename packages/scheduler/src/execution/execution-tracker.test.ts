@@ -1,270 +1,243 @@
 // SPDX-License-Identifier: Apache-2.0
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import type { ExecutionLogEntry } from "./execution-tracker.js";
-import { createExecutionTracker, computeMedian } from "./execution-tracker.js";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import type { FileLockPort, LockError } from "@comis/core";
+import { ok, type Result } from "@comis/shared";
+import {
+  createExecutionTracker,
+  type ExecutionTracker,
+} from "./execution-tracker.js";
+import type {
+  CronExecutionStartedRow,
+  CronExecutionTerminalRow,
+} from "./cron-execution-record.js";
 
-describe("execution-tracker", () => {
-  let testDir: string;
+const dirs: string[] = [];
 
-  beforeEach(() => {
-    testDir = fs.mkdtempSync(path.join(os.tmpdir(), "exec-tracker-test-"));
-  });
+afterEach(async () => {
+  const { rm } = await import("node:fs/promises");
+  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
-  afterEach(() => {
-    fs.rmSync(testDir, { recursive: true, force: true });
-  });
+function lock(): FileLockPort {
+  return {
+    acquire: async () => ok(async () => undefined),
+    release: async () => ok(undefined),
+    withLock: async <T>(_path: string, fn: () => Promise<T>): Promise<Result<T, LockError>> => ok(await fn()),
+    isLocked: async () => false,
+    cleanupStaleLocks: async () => 0,
+  };
+}
 
-  function makeEntry(overrides: Partial<ExecutionLogEntry> = {}): ExecutionLogEntry {
-    return {
-      ts: Date.now(),
-      jobId: "test-job",
-      status: "ok",
-      durationMs: 1000,
+async function fixture(overrides: Partial<Parameters<typeof createExecutionTracker>[0]> = {}): Promise<{
+  tracker: ExecutionTracker;
+  logPath: string;
+}> {
+  const dir = await mkdtemp(join(tmpdir(), "comis-execution-ledger-"));
+  dirs.push(dir);
+  const logPath = join(dir, "execution.jsonl");
+  let id = 0;
+  return {
+    tracker: createExecutionTracker({
+      logPath,
+      lockPath: join(dir, "execution.lock"),
+      fileLock: lock(),
+      idFactory: () => `opaque-${++id}`,
+      maxLogBytes: 1_000_000,
+      retainedExecutions: 2,
       ...overrides,
-    };
-  }
+    }),
+    logPath,
+  };
+}
 
-  describe("record", () => {
-    it("appends entry to JSONL file", async () => {
-      const tracker = createExecutionTracker({ logDir: testDir });
-      const entry = makeEntry();
-      await tracker.record(entry);
+function start(executionId: string, overrides: Partial<CronExecutionStartedRow> = {}): CronExecutionStartedRow {
+  return {
+    executionId,
+    bootId: "boot_a",
+    jobId: `job-${executionId}`,
+    agentId: "agent_a",
+    scheduledForMs: 10_000,
+    trigger: "scheduled",
+    recordType: "started",
+    workKind: "agent_turn",
+    rootRunId: `root-cron-${executionId}`,
+    startedAtMs: 10_010,
+    ...overrides,
+  };
+}
 
-      const content = fs.readFileSync(path.join(testDir, "execution.jsonl"), "utf-8");
-      const lines = content.trim().split("\n");
-      expect(lines).toHaveLength(1);
-      expect(JSON.parse(lines[0])).toEqual(entry);
+function terminal(
+  executionId: string,
+  overrides: Partial<CronExecutionTerminalRow> = {},
+): CronExecutionTerminalRow {
+  return {
+    executionId,
+    bootId: "boot_a",
+    jobId: `job-${executionId}`,
+    agentId: "agent_a",
+    scheduledForMs: 10_000,
+    trigger: "scheduled",
+    recordType: "terminal",
+    workKind: "agent_turn",
+    terminalAtMs: 10_030,
+    durationMs: 20,
+    outcome: {
+      kind: "pre_dispatch_failure",
+      stage: "root_registration",
+      errorKind: "internal",
+    },
+    ...overrides,
+  };
+}
+
+describe("strict cron execution tracker", () => {
+  it("initializes an empty secure ledger and returns its digest", async () => {
+    const { tracker, logPath } = await fixture();
+    const initialized = await tracker.initialize();
+
+    expect(initialized).toMatchObject({ ok: true, value: { executions: 0 } });
+    expect(initialized.ok && initialized.value.fileDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(await readFile(logPath, "utf8")).toBe("");
+    expect((await stat(logPath)).mode & 0o777).toBe(0o600);
+  });
+
+  it("conditionally appends one start and one immutable terminal", async () => {
+    const { tracker, logPath } = await fixture();
+    expect((await tracker.initialize()).ok).toBe(true);
+    expect((await tracker.appendStart(start("execution_a"))).ok).toBe(true);
+    expect((await tracker.appendTerminal(terminal("execution_a"))).ok).toBe(true);
+
+    const read = await tracker.readExecution("execution_a");
+    expect(read).toMatchObject({
+      ok: true,
+      value: {
+        start: { executionId: "execution_a", recordType: "started" },
+        terminal: { executionId: "execution_a", recordType: "terminal" },
+      },
     });
+    expect((await readFile(logPath, "utf8")).split("\n").filter(Boolean)).toHaveLength(2);
+  });
 
-    it("creates log directory if not exists", async () => {
-      const nestedDir = path.join(testDir, "deep", "nested");
-      const tracker = createExecutionTracker({ logDir: nestedDir });
+  it("durably appends a recovered start and terminal as one complete group", async () => {
+    const { tracker, logPath } = await fixture();
+    expect((await tracker.initialize()).ok).toBe(true);
 
-      expect(fs.existsSync(nestedDir)).toBe(false);
-      await tracker.record(makeEntry());
-      expect(fs.existsSync(nestedDir)).toBe(true);
+    expect(await tracker.appendRecoveredExecution(
+      start("execution_recovered"),
+      terminal("execution_recovered", {
+        outcome: {
+          kind: "pre_dispatch_failure",
+          stage: "start_record_recovery",
+          errorKind: "internal",
+        },
+      }),
+      ["execution_recovered"],
+    )).toEqual(ok(undefined));
+
+    expect(await tracker.readExecution("execution_recovered")).toMatchObject({
+      ok: true,
+      value: {
+        start: { executionId: "execution_recovered" },
+        terminal: {
+          executionId: "execution_recovered",
+          outcome: { kind: "pre_dispatch_failure", stage: "start_record_recovery" },
+        },
+      },
     });
+    expect((await readFile(logPath, "utf8")).split("\n").filter(Boolean)).toHaveLength(2);
+  });
 
-    it("writes log file with mode 0o600", async () => {
-      const tracker = createExecutionTracker({ logDir: testDir });
-      await tracker.record(makeEntry());
-
-      const logPath = path.join(testDir, "execution.jsonl");
-      const fileStat = fs.statSync(logPath);
-      const mode = fileStat.mode & 0o777;
-      expect(mode).toBe(0o600);
+  it("rejects duplicate starts, duplicate terminals, and terminal-without-start", async () => {
+    const { tracker } = await fixture();
+    expect((await tracker.initialize()).ok).toBe(true);
+    expect((await tracker.appendTerminal(terminal("missing")))).toMatchObject({
+      ok: false,
+      error: { code: "not_found" },
+    });
+    expect((await tracker.appendStart(start("execution_a"))).ok).toBe(true);
+    expect((await tracker.appendStart(start("execution_a")))).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect((await tracker.appendTerminal(terminal("execution_a"))).ok).toBe(true);
+    expect((await tracker.appendTerminal(terminal("execution_a")))).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
     });
   });
 
-  describe("getHistory", () => {
-    it("returns entries filtered by jobId", async () => {
-      const tracker = createExecutionTracker({ logDir: testDir });
-      await tracker.record(makeEntry({ jobId: "job-a", ts: 1 }));
-      await tracker.record(makeEntry({ jobId: "job-b", ts: 2 }));
-      await tracker.record(makeEntry({ jobId: "job-a", ts: 3 }));
+  it("preserves malformed existing bytes and blocks every append", async () => {
+    const { tracker, logPath } = await fixture();
+    const invalid = '{"recordType":"started","executionId":"broken"}\n';
+    await writeFile(logPath, invalid, { mode: 0o600 });
 
-      const history = await tracker.getHistory("job-a");
-      expect(history).toHaveLength(2);
-      expect(history.every((e) => e.jobId === "job-a")).toBe(true);
+    expect(await tracker.initialize()).toMatchObject({
+      ok: false,
+      error: { code: "invalid_state", errorKind: "validation", line: 1 },
     });
-
-    it("returns entries sorted by timestamp descending", async () => {
-      const tracker = createExecutionTracker({ logDir: testDir });
-      await tracker.record(makeEntry({ ts: 100 }));
-      await tracker.record(makeEntry({ ts: 300 }));
-      await tracker.record(makeEntry({ ts: 200 }));
-
-      const history = await tracker.getHistory("test-job");
-      expect(history[0].ts).toBe(300);
-      expect(history[1].ts).toBe(200);
-      expect(history[2].ts).toBe(100);
+    expect(await tracker.appendStart(start("execution_a"))).toMatchObject({
+      ok: false,
+      error: { code: "not_initialized" },
     });
+    expect(await readFile(logPath, "utf8")).toBe(invalid);
+  });
 
-    it("respects limit parameter", async () => {
-      const tracker = createExecutionTracker({ logDir: testDir });
-      for (let i = 0; i < 10; i++) {
-        await tracker.record(makeEntry({ ts: i }));
-      }
+  it("detects identity mismatches while scanning the entire ledger", async () => {
+    const { tracker, logPath } = await fixture();
+    const mismatched = terminal("execution_a", { jobId: "different-job" });
+    await writeFile(logPath, `${JSON.stringify(start("execution_a"))}\n${JSON.stringify(mismatched)}\n`, { mode: 0o600 });
 
-      const history = await tracker.getHistory("test-job", 3);
-      expect(history).toHaveLength(3);
-    });
-
-    it("returns empty array for unknown jobId", async () => {
-      const tracker = createExecutionTracker({ logDir: testDir });
-      await tracker.record(makeEntry({ jobId: "known" }));
-
-      const history = await tracker.getHistory("unknown");
-      expect(history).toEqual([]);
+    expect(await tracker.initialize()).toMatchObject({
+      ok: false,
+      error: { code: "invalid_state", errorKind: "validation", line: 2 },
     });
   });
 
-  describe("auto-prune", () => {
-    it("triggers when file exceeds maxLogBytes", async () => {
-      // Use a tiny maxLogBytes to trigger pruning easily
-      const tracker = createExecutionTracker({
-        logDir: testDir,
-        maxLogBytes: 200,
-        keepLines: 2,
-      });
+  it("prunes only complete oldest groups and never splits an unmatched start", async () => {
+    const { tracker } = await fixture({ retainedExecutions: 2 });
+    expect((await tracker.initialize()).ok).toBe(true);
+    for (const id of ["execution_a", "execution_b", "execution_c"]) {
+      expect((await tracker.appendStart(start(id))).ok).toBe(true);
+      expect((await tracker.appendTerminal(terminal(id, {
+        terminalAtMs: id === "execution_a" ? 20_000 : id === "execution_b" ? 30_000 : 40_000,
+      }))).ok).toBe(true);
+    }
+    expect((await tracker.appendStart(start("execution_pending"))).ok).toBe(true);
 
-      // Write enough entries to exceed 200 bytes
-      for (let i = 0; i < 10; i++) {
-        await tracker.record(makeEntry({ ts: i, jobId: `job-${i}` }));
-      }
-
-      const content = fs.readFileSync(path.join(testDir, "execution.jsonl"), "utf-8");
-      const lines = content.trim().split("\n");
-      expect(lines.length).toBeLessThanOrEqual(2);
-    });
-
-    it("keeps only keepLines most recent entries", async () => {
-      const tracker = createExecutionTracker({
-        logDir: testDir,
-        maxLogBytes: 100,
-        keepLines: 3,
-      });
-
-      for (let i = 0; i < 10; i++) {
-        await tracker.record(makeEntry({ ts: i, jobId: `job-${i}` }));
-      }
-
-      const content = fs.readFileSync(path.join(testDir, "execution.jsonl"), "utf-8");
-      const lines = content
-        .trim()
-        .split("\n")
-        .filter((l) => l.length > 0);
-      expect(lines.length).toBeLessThanOrEqual(3);
-    });
+    const history = await tracker.listHistory({ limit: 10 });
+    expect(history.ok && history.value.map((group) => group.start.executionId).sort()).toEqual([
+      "execution_b",
+      "execution_c",
+      "execution_pending",
+    ]);
+    expect(history.ok && history.value.find((group) => group.start.executionId === "execution_pending")?.terminal).toBeUndefined();
   });
 
-  describe("checkAnomaly", () => {
-    it("returns isAnomaly=false with fewer than 5 history entries", async () => {
-      const tracker = createExecutionTracker({ logDir: testDir });
-      // Only 3 entries
-      for (let i = 0; i < 3; i++) {
-        await tracker.record(makeEntry({ durationMs: 100, ts: i }));
-      }
+  it("retains a complete group named by an active claim during explicit pruning", async () => {
+    const { tracker } = await fixture({ retainedExecutions: 1 });
+    expect((await tracker.initialize()).ok).toBe(true);
+    for (const id of ["execution_a", "execution_b"]) {
+      expect((await tracker.appendStart(start(id))).ok).toBe(true);
+      expect((await tracker.appendTerminal(terminal(id), ["execution_a"])).ok).toBe(true);
+    }
+    expect((await tracker.prune(["execution_a"])).ok).toBe(true);
 
-      const result = await tracker.checkAnomaly("test-job", 10000);
-      expect(result.isAnomaly).toBe(false);
-    });
-
-    it("returns isAnomaly=true when durationMs > median * multiplier", async () => {
-      const tracker = createExecutionTracker({
-        logDir: testDir,
-        anomalyMultiplier: 3,
-      });
-
-      // 10 entries with duration ~100ms
-      for (let i = 0; i < 10; i++) {
-        await tracker.record(makeEntry({ durationMs: 100, ts: i }));
-      }
-
-      // 400ms is > 100 * 3 = 300ms threshold
-      const result = await tracker.checkAnomaly("test-job", 400);
-      expect(result.isAnomaly).toBe(true);
-      expect(result.medianMs).toBe(100);
-      expect(result.thresholdMs).toBe(300);
-    });
-
-    it("returns isAnomaly=false for normal duration", async () => {
-      const tracker = createExecutionTracker({
-        logDir: testDir,
-        anomalyMultiplier: 3,
-      });
-
-      for (let i = 0; i < 10; i++) {
-        await tracker.record(makeEntry({ durationMs: 100, ts: i }));
-      }
-
-      // 200ms is < 100 * 3 = 300ms threshold
-      const result = await tracker.checkAnomaly("test-job", 200);
-      expect(result.isAnomaly).toBe(false);
-      expect(result.medianMs).toBe(100);
-      expect(result.thresholdMs).toBe(300);
-    });
+    const first = await tracker.readExecution("execution_a");
+    expect(first.ok && first.value?.terminal).toBeDefined();
   });
 
-  describe("token/cost fields", () => {
-    it("records and retrieves entries with token/cost fields", async () => {
-      const tracker = createExecutionTracker({ logDir: testDir });
-      const entry = makeEntry({
-        totalTokens: 1500,
-        costUsd: 0.0045,
-        toolCalls: 3,
-        llmCalls: 2,
-        failedTools: ["bash"],
-      });
-      await tracker.record(entry);
-
-      const history = await tracker.getHistory("test-job");
-      expect(history).toHaveLength(1);
-      expect(history[0].totalTokens).toBe(1500);
-      expect(history[0].costUsd).toBe(0.0045);
-      expect(history[0].toolCalls).toBe(3);
-      expect(history[0].llmCalls).toBe(2);
-      expect(history[0].failedTools).toEqual(["bash"]);
+  it("reserves terminal capacity before dispatch and refuses unsafe starts", async () => {
+    const { tracker } = await fixture({
+      maxLogBytes: 500,
     });
+    expect((await tracker.initialize()).ok).toBe(true);
 
-    it("handles entries without token/cost fields (backward compat)", async () => {
-      const tracker = createExecutionTracker({ logDir: testDir });
-      await tracker.record(makeEntry());
-
-      const history = await tracker.getHistory("test-job");
-      expect(history).toHaveLength(1);
-      expect(history[0].totalTokens).toBeUndefined();
-      expect(history[0].costUsd).toBeUndefined();
-    });
-  });
-
-  describe("estTurnsSaved field", () => {
-    it("round-trips estTurnsSaved on a skipped row through the JSONL Zod parse", async () => {
-      const tracker = createExecutionTracker({ logDir: testDir });
-      const entry = makeEntry({
-        status: "skipped",
-        estTurnsSaved: 1,
-        toolCalls: 0,
-      });
-      await tracker.record(entry);
-
-      const history = await tracker.getHistory("test-job");
-      expect(history).toHaveLength(1);
-      expect(history[0].estTurnsSaved).toBe(1);
-      expect(history[0].toolCalls).toBe(0);
-    });
-
-    it("reads estTurnsSaved back as undefined when the row omits it (optional)", async () => {
-      const tracker = createExecutionTracker({ logDir: testDir });
-      await tracker.record(makeEntry());
-
-      const history = await tracker.getHistory("test-job");
-      expect(history).toHaveLength(1);
-      expect(history[0].estTurnsSaved).toBeUndefined();
-    });
-  });
-
-  describe("computeMedian", () => {
-    it("returns correct median for odd-length array", () => {
-      expect(computeMedian([1, 3, 5])).toBe(3);
-      expect(computeMedian([10, 20, 30, 40, 50])).toBe(30);
-    });
-
-    it("returns correct median for even-length array", () => {
-      expect(computeMedian([1, 2, 3, 4])).toBe(2.5);
-      expect(computeMedian([10, 20])).toBe(15);
-    });
-
-    it("returns the value for single-element array", () => {
-      expect(computeMedian([42])).toBe(42);
-    });
-
-    it("sorts unsorted input correctly", () => {
-      expect(computeMedian([5, 1, 3])).toBe(3);
-      expect(computeMedian([100, 1, 50, 25])).toBe(37.5);
+    expect(await tracker.appendStart(start("execution_a"))).toMatchObject({
+      ok: false,
+      error: { code: "capacity", errorKind: "resource" },
     });
   });
 });

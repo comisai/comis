@@ -1,684 +1,595 @@
 // SPDX-License-Identifier: Apache-2.0
-import { TypedEventBus } from "@comis/core";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { CronStore } from "./cron-store.js";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { TypedEventBus, type FileLockPort, type LockError, type TimerHandle, type TimerPort } from "@comis/core";
+import { ok, type Result } from "@comis/shared";
+import { createExecutionTracker, type ExecutionTracker } from "../execution/execution-tracker.js";
+import { createCronStore, type CronStore } from "./cron-store.js";
+import { createCronScheduler, type CronScheduler } from "./cron-scheduler.js";
 import type { CronJob } from "./cron-types.js";
-import { createCronScheduler } from "./cron-scheduler.js";
-import { createMockLogger } from "../../../../test/support/mock-logger.js";
-function makeJob(overrides: Partial<CronJob> = {}): CronJob {
+import type { CronRuntimeError, CronRuntimeExecutionInput, CronRuntimeOutcome } from "./cron-runtime.js";
+
+const NOW_MS = 1_800_000_000_000;
+const dirs: string[] = [];
+
+afterEach(async () => {
+  const { rm } = await import("node:fs/promises");
+  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+function lock(): FileLockPort {
   return {
-    id: overrides.id ?? `job-${Math.random().toString(36).slice(2)}`,
-    name: overrides.name ?? "test job",
-    agentId: overrides.agentId ?? "agent-1",
-    schedule: overrides.schedule ?? { kind: "every", everyMs: 60_000 },
-    payload: overrides.payload ?? { kind: "system_event", text: "hello" },
-    sessionTarget: overrides.sessionTarget ?? "isolated",
-    enabled: overrides.enabled ?? true,
-    consecutiveErrors: overrides.consecutiveErrors ?? 0,
-    createdAtMs: overrides.createdAtMs ?? 1_000_000,
-    ...(overrides.nextRunAtMs !== undefined ? { nextRunAtMs: overrides.nextRunAtMs } : {}),
-    ...(overrides.lastRunAtMs !== undefined ? { lastRunAtMs: overrides.lastRunAtMs } : {}),
-    ...(overrides.deliveryTarget !== undefined ? { deliveryTarget: overrides.deliveryTarget } : {}),
-    ...(overrides.maxConsecutiveErrors !== undefined ? { maxConsecutiveErrors: overrides.maxConsecutiveErrors } : {}),
+    acquire: async () => ok(async () => undefined),
+    release: async () => ok(undefined),
+    withLock: async <T>(_path: string, fn: () => Promise<T>): Promise<Result<T, LockError>> => ok(await fn()),
+    isLocked: async () => false,
+    cleanupStaleLocks: async () => 0,
   };
 }
 
-function createMockStore(initialJobs: CronJob[] = []): CronStore {
-  let jobs = [...initialJobs];
-  return {
-    load: vi.fn(async () => [...jobs]),
-    save: vi.fn(async (newJobs: CronJob[]) => {
-      jobs = [...newJobs];
-    }),
-    addJob: vi.fn(async (job: CronJob) => {
-      jobs.push(job);
-    }),
-    removeJob: vi.fn(async (jobId: string) => {
-      const idx = jobs.findIndex((j) => j.id === jobId);
-      if (idx === -1) return false;
-      jobs.splice(idx, 1);
-      return true;
-    }),
-    updateJob: vi.fn(async (jobId: string, update: Partial<CronJob>) => {
-      const idx = jobs.findIndex((j) => j.id === jobId);
-      if (idx === -1) return false;
-      jobs[idx] = { ...jobs[idx], ...update };
-      return true;
-    }),
-  };
+type MutableClock = { now(): number; nowDate(): Date; advance(ms: number): void };
+function clock(): MutableClock {
+  let now = NOW_MS;
+  return { now: () => now, nowDate: () => new Date(now), advance: (ms) => { now += ms; } };
 }
 
-describe("CronScheduler", () => {
-  let clock: number;
-
-  beforeEach(() => {
-    vi.useFakeTimers();
-    clock = 1_000_000;
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  function makeScheduler(
-    opts: {
-      jobs?: CronJob[];
-      executeJob?: (job: CronJob) => Promise<{ status: "ok" | "error"; error?: string }>;
-      maxConcurrentRuns?: number;
-      maxJobs?: number;
-      maxConsecutiveErrors?: number;
-    } = {},
-  ) {
-    const store = createMockStore(opts.jobs ?? []);
-    const executeJob = opts.executeJob ?? vi.fn(async () => ({ status: "ok" as const }));
-    const eventBus = new TypedEventBus();
-    const logger = createMockLogger();
-    const scheduler = createCronScheduler({
-      store,
-      executeJob,
-      eventBus,
-      logger,
-      config: {
-        maxConcurrentRuns: opts.maxConcurrentRuns ?? 5,
-        defaultTimezone: "UTC",
-        maxJobs: opts.maxJobs ?? 100,
-        maxConsecutiveErrors: opts.maxConsecutiveErrors ?? 5,
-      },
-      nowMs: () => clock,
-    });
-    return { scheduler, store, executeJob, eventBus, logger };
-  }
-
-  it("start() loads jobs from store and arms timer", async () => {
-    const job = makeJob({ id: "j1", nextRunAtMs: clock + 30_000 });
-    const { scheduler, store } = makeScheduler({ jobs: [job] });
-    await scheduler.start();
-    expect(store.load).toHaveBeenCalled();
-    // Timer should be armed (there's at least 1 pending timer)
-    expect(vi.getTimerCount()).toBeGreaterThanOrEqual(1);
-    scheduler.stop();
-  });
-
-  it("persist() flushes an in-place job mutation to the store so it survives a reload", async () => {
-    // Reproduces the cron.update durability shape: a caller mutates the live
-    // in-memory job through a getJobs() reference, then persist() must flush it.
-    // Without the flush the edit only lands on the next due tick's save, so a
-    // reload (a daemon restart) before then reverts it.
-    //
-    // Uses a JSON round-tripping store (DEEP copy on load/save) rather than the
-    // shared reference mock: otherwise the in-memory mutation would leak into the
-    // "reload" through a shared object reference and mask a missing persist().
-    const job = makeJob({ id: "j1", enabled: true, nextRunAtMs: clock + 60_000 });
-    let saved = JSON.stringify([job]);
-    const store: CronStore = {
-      load: vi.fn(async () => JSON.parse(saved) as CronJob[]),
-      save: vi.fn(async (jobs: CronJob[]) => { saved = JSON.stringify(jobs); }),
-      addJob: vi.fn(async () => undefined),
-      removeJob: vi.fn(async () => true),
-      updateJob: vi.fn(async () => true),
+type ControlledTimer = TimerPort & {
+  records(): ReadonlyArray<{ delayMs: number; cancelled: boolean; unrefed: boolean }>;
+  fireFirst(delayMs: number): void;
+};
+function timers(): ControlledTimer {
+  const entries: Array<{ callback: () => void; delayMs: number; cancelled: boolean; unrefed: boolean }> = [];
+  const add = (callback: () => void, delayMs: number): TimerHandle => {
+    const entry = { callback, delayMs, cancelled: false, unrefed: false };
+    entries.push(entry);
+    return {
+      get cancelled() { return entry.cancelled; },
+      cancel: () => { entry.cancelled = true; },
+      unref: () => { if (!entry.cancelled) entry.unrefed = true; },
     };
-    const scheduler = createCronScheduler({
-      store,
-      executeJob: vi.fn(async () => ({ status: "ok" as const })),
-      eventBus: new TypedEventBus(),
-      logger: createMockLogger(),
-      config: { maxConcurrentRuns: 5, defaultTimezone: "UTC", maxJobs: 100, maxConsecutiveErrors: 5 },
-      nowMs: () => clock,
+  };
+  return {
+    setTimeout: add,
+    setInterval: add,
+    records: () => entries.map(({ delayMs, cancelled, unrefed }) => ({ delayMs, cancelled, unrefed })),
+    fireFirst: (delayMs) => {
+      const entry = entries.find((candidate) => !candidate.cancelled && candidate.delayMs === delayMs);
+      if (entry === undefined) throw new Error(`No active ${delayMs}ms timer`);
+      entry.cancelled = true;
+      entry.callback();
+    },
+  };
+}
+
+function job(id = "job_a", schedule: CronJob["schedule"] = { kind: "at", atMs: NOW_MS }): CronJob {
+  return {
+    id,
+    name: id,
+    agentId: "agent_a",
+    schedule,
+    lifecycle: {
+      status: "scheduled",
+      nextRunAtMs: schedule.kind === "at" ? schedule.atMs : NOW_MS,
+      consecutiveDependencyErrors: 0,
+    },
+    source: "authored",
+    payload: { kind: "agent_turn", message: "Inspect health" },
+    sessionPolicy: { strategy: "fresh" },
+    continuationMode: "none",
+  };
+}
+
+function completed(input: CronRuntimeExecutionInput): CronRuntimeOutcome {
+  if (input.kind !== "agent_turn") throw new Error("Expected agent turn");
+  return {
+    kind: "agent_turn",
+    outcome: {
+      agentExecutionId: `agent-${input.executionId}`,
+      rootRunId: input.rootRunId,
+      sessionKey: {
+        tenantId: "tenant_a",
+        agentId: "agent_a",
+        userId: input.job.id,
+        channelId: "cron",
+      },
+      execution: { status: "completed", finishReason: "stop" },
+      modelResolved: "provider/model",
+      modelResolutionSource: "agent_primary",
+      metrics: { durationMs: 10, totalTokens: 5, costUsd: 0.01, toolCalls: 0, llmCalls: 1 },
+      wakeGate: { status: "not_configured" },
+      delivery: { status: "not_requested" },
+      continuation: { mode: "none", status: "not_requested" },
+    },
+  };
+}
+
+async function fixture(options: {
+  seedJob?: CronJob;
+  execute?: (input: CronRuntimeExecutionInput, signal: AbortSignal) => Promise<Result<CronRuntimeOutcome, CronRuntimeError>>;
+  defaultTimeoutMs?: number;
+  staggerWindowMs?: number;
+  maxRunsPerTick?: number;
+} = {}): Promise<{
+  scheduler: CronScheduler;
+  store: CronStore;
+  tracker: ExecutionTracker;
+  eventBus: TypedEventBus;
+  logger: { info: ReturnType<typeof vi.fn> };
+  rootRegistrar: { register: ReturnType<typeof vi.fn>; release: ReturnType<typeof vi.fn> };
+  timer: ControlledTimer;
+  clock: MutableClock;
+}> {
+  const dir = await mkdtemp(join(tmpdir(), "comis-cron-scheduler-"));
+  dirs.push(dir);
+  const fakeClock = clock();
+  const timer = timers();
+  let opaque = 0;
+  const store = createCronStore({
+    filePath: join(dir, "cron.json"),
+    lockPath: join(dir, "cron.lock"),
+    fileLock: lock(),
+    clock: fakeClock,
+    idFactory: () => `store-${++opaque}`,
+    maxAuthoredJobs: 10,
+  });
+  expect((await store.initialize()).ok).toBe(true);
+  if (options.seedJob !== undefined) expect((await store.addJob(options.seedJob)).ok).toBe(true);
+  const tracker = createExecutionTracker({
+    logPath: join(dir, "execution.jsonl"),
+    lockPath: join(dir, "execution.lock"),
+    fileLock: lock(),
+    idFactory: () => `ledger-${++opaque}`,
+  });
+  const eventBus = new TypedEventBus();
+  const rootRegistrar = {
+    register: vi.fn(async () => ok(undefined)),
+    release: vi.fn(async () => ok(undefined)),
+  };
+  const logger = {
+    info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    child() { return this; },
+  };
+  let execution = 0;
+  const scheduler = createCronScheduler({
+    store,
+    tracker,
+    executor: { execute: options.execute ?? (async (input) => ok(completed(input))) },
+    rootRegistrar,
+    eventBus,
+    logger,
+    clock: fakeClock,
+    timers: timer,
+    bootId: "boot_a",
+    idFactory: () => `execution_${++execution}`,
+    config: {
+      maxRunsPerTick: options.maxRunsPerTick ?? 2,
+      defaultTimeoutMs: options.defaultTimeoutMs ?? 30_000,
+      staggerWindowMs: options.staggerWindowMs ?? 0,
+    },
+  });
+  return { scheduler, store, tracker, eventBus, logger, rootRegistrar, timer, clock: fakeClock };
+}
+
+describe("durable cron scheduler lifecycle", () => {
+  it("initializes without a timer and arms only after explicit activation", async () => {
+    const { scheduler, timer } = await fixture({ seedJob: job("future", { kind: "at", atMs: NOW_MS + 5_000 }) });
+
+    expect((await scheduler.initialize()).ok).toBe(true);
+    expect(timer.records()).toEqual([]);
+    expect(scheduler.activate().ok).toBe(true);
+    expect(timer.records()).toEqual([{ delayMs: 5_000, cancelled: false, unrefed: true }]);
+  });
+
+  it("claims, records start, registers root, awaits direct execution, records terminal, then settles", async () => {
+    let store!: CronStore;
+    let tracker!: ExecutionTracker;
+    const execute = vi.fn(async (input: CronRuntimeExecutionInput) => {
+      const snapshot = store.getSnapshot();
+      expect(snapshot.ok && snapshot.value.activeClaims[0]?.executionId).toBe(input.executionId);
+      const ledger = await tracker.readExecution(input.executionId);
+      expect(ledger.ok && ledger.value?.start.rootRunId).toBe(input.kind === "agent_turn" ? input.rootRunId : null);
+      return ok(completed(input));
     });
-    await scheduler.start();
+    const built = await fixture({ seedJob: job(), execute });
+    ({ store, tracker } = built);
+    const started = vi.fn();
+    const terminal = vi.fn();
+    built.eventBus.on("scheduler:cron_execution_started", started);
+    built.eventBus.on("scheduler:cron_execution_terminal", terminal);
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
 
-    scheduler.getJobs().find((j) => j.id === "j1")!.enabled = false;
-    await scheduler.persist();
+    expect((await built.scheduler.runMissedJobs()).ok).toBe(true);
 
-    const reloaded = await store.load();
-    expect(reloaded.find((j) => j.id === "j1")?.enabled).toBe(false);
-    scheduler.stop();
+    expect(execute).toHaveBeenCalledOnce();
+    expect(built.rootRegistrar.register).toHaveBeenCalledBefore(execute);
+    expect(started).toHaveBeenCalledOnce();
+    expect(terminal).toHaveBeenCalledWith(expect.objectContaining({
+      executionStatus: "completed",
+      deliveryStatus: "not_requested",
+      outcomeKind: "agent_turn",
+    }));
+    const snapshot = store.getSnapshot();
+    expect(snapshot.ok && snapshot.value.activeClaims).toEqual([]);
+    expect(snapshot.ok && snapshot.value.jobs[0]?.lifecycle.status).toBe("one_shot_terminal");
   });
 
-  it("stop() clears active cron-scheduler timer to release event-loop reference", async () => {
-    const job = makeJob({ id: "j1", nextRunAtMs: clock + 30_000 });
-    const { scheduler } = makeScheduler({ jobs: [job] });
-    await scheduler.start();
-    scheduler.stop();
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it("due job fires executeJob callback", async () => {
-    const dueJob = makeJob({ id: "j1", nextRunAtMs: clock - 1 }); // Due now
-    const executeJob = vi.fn(async () => ({ status: "ok" as const }));
-    const { scheduler } = makeScheduler({ jobs: [dueJob], executeJob });
-    await scheduler.start();
-    // Advance timers to trigger the tick
-    await vi.advanceTimersByTimeAsync(100);
-    expect(executeJob).toHaveBeenCalledWith(expect.objectContaining({ id: "j1" }));
-    scheduler.stop();
-  });
-
-  it('a kind:"in" ONE-SHOT fires exactly once — never re-armed after completion (live-incident regression)', async () => {
-    // Live incident: "remind me in 1 minute" re-fired every ~minute forever — the
-    // post-completion recompute returned now+N unconditionally. With the
-    // job.createdAtMs anchor the fired one-shot terminates (nextRun undefined).
-    const oneShot = makeJob({
-      id: "reminder",
-      schedule: { kind: "in", seconds: 60 },
-      createdAtMs: clock - 120_000, // created 2 minutes ago
-      nextRunAtMs: clock - 1, // due now (the fire the user asked for)
-    });
-    const executeJob = vi.fn(async () => ({ status: "ok" as const }));
-    const { scheduler } = makeScheduler({ jobs: [oneShot], executeJob });
-    await scheduler.start();
-    await vi.advanceTimersByTimeAsync(100);
-    expect(executeJob).toHaveBeenCalledTimes(1); // the intended fire
-
-    // Let wall-clock + timers roll well past another interval — it must NOT re-fire.
-    clock += 61_000;
-    await vi.advanceTimersByTimeAsync(61_000);
-    clock += 61_000;
-    await vi.advanceTimersByTimeAsync(61_000);
-    expect(executeJob).toHaveBeenCalledTimes(1);
-    scheduler.stop();
-  });
-
-  it("a fire-and-forget system_event job logs 'dispatched', NOT 'completed' (work runs async)", async () => {
-    // The __REFLECT__ sentinel is a fire-and-forget system_event — executeJob
-    // dispatches and returns in ms while the reflection runs ~20s async. Logging "Job completed
-    // durationMs:15" reads as "finished in 15ms" and a completion-grep false-matches it. So a
-    // system_event dispatch logs "Job dispatched (fire-and-forget)" with dispatch:true instead.
-    const sysJob = makeJob({ id: "sys", nextRunAtMs: clock - 1, payload: { kind: "system_event", text: "__REFLECT__" } });
-    const { scheduler, logger } = makeScheduler({ jobs: [sysJob], executeJob: vi.fn(async () => ({ status: "ok" as const })) });
-    await scheduler.start();
-    await vi.advanceTimersByTimeAsync(100);
-    scheduler.stop();
-    const msgs = (logger.info as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
-    expect(msgs).toContain("Job dispatched (fire-and-forget)");
-    expect(msgs).not.toContain("Job completed");
-  });
-
-  it("an awaited agent_turn job logs 'completed' (durationMs is the real work)", async () => {
-    const turnJob = makeJob({ id: "turn", nextRunAtMs: clock - 1, payload: { kind: "agent_turn", message: "do the thing" } });
-    const { scheduler, logger } = makeScheduler({ jobs: [turnJob], executeJob: vi.fn(async () => ({ status: "ok" as const })) });
-    await scheduler.start();
-    await vi.advanceTimersByTimeAsync(100);
-    scheduler.stop();
-    const msgs = (logger.info as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
-    expect(msgs).toContain("Job completed");
-    expect(msgs).not.toContain("Job dispatched (fire-and-forget)");
-  });
-
-  it("non-due job is not fired", async () => {
-    const futureJob = makeJob({ id: "j1", nextRunAtMs: clock + 120_000 }); // 2 min from now
-    const executeJob = vi.fn(async () => ({ status: "ok" as const }));
-    const { scheduler } = makeScheduler({ jobs: [futureJob], executeJob });
-    await scheduler.start();
-    // Advance only 30s -- not enough to reach job
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(executeJob).not.toHaveBeenCalled();
-    scheduler.stop();
-  });
-
-  it("disabled job (enabled: false) is skipped", async () => {
-    const disabledJob = makeJob({ id: "j1", nextRunAtMs: clock - 1, enabled: false });
-    const executeJob = vi.fn(async () => ({ status: "ok" as const }));
-    const { scheduler } = makeScheduler({ jobs: [disabledJob], executeJob });
-    await scheduler.start();
-    await vi.advanceTimersByTimeAsync(100);
-    expect(executeJob).not.toHaveBeenCalled();
-    scheduler.stop();
-  });
-
-  it("successful execution resets consecutiveErrors and computes next run", async () => {
-    const job = makeJob({
-      id: "j1",
-      nextRunAtMs: clock - 1,
-      consecutiveErrors: 3,
-      schedule: { kind: "every", everyMs: 60_000, anchorMs: 0 },
-    });
-    const executeJob = vi.fn(async () => ({ status: "ok" as const }));
-    const { scheduler, store } = makeScheduler({ jobs: [job], executeJob });
-    await scheduler.start();
-    await vi.advanceTimersByTimeAsync(100);
-    // After success, store.save should have been called with errors reset
-    expect(store.save).toHaveBeenCalled();
-    const savedJobs = (store.save as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as CronJob[];
-    const updated = savedJobs?.find((j) => j.id === "j1");
-    expect(updated?.consecutiveErrors).toBe(0);
-    expect(updated?.nextRunAtMs).toBeDefined();
-    expect(updated!.nextRunAtMs!).toBeGreaterThan(clock);
-    scheduler.stop();
-  });
-
-  it("failed execution increments consecutiveErrors and applies backoff", async () => {
-    const job = makeJob({
-      id: "j1",
-      nextRunAtMs: clock - 1,
-      consecutiveErrors: 0,
-    });
-    const executeJob = vi.fn(async () => ({ status: "error" as const, error: "boom" }));
-    const { scheduler, store } = makeScheduler({ jobs: [job], executeJob });
-    await scheduler.start();
-    await vi.advanceTimersByTimeAsync(100);
-    expect(store.save).toHaveBeenCalled();
-    const savedJobs = (store.save as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as CronJob[];
-    const updated = savedJobs?.find((j) => j.id === "j1");
-    expect(updated?.consecutiveErrors).toBe(1);
-    // First error: 30s backoff
-    expect(updated?.nextRunAtMs).toBe(clock + 30_000);
-    scheduler.stop();
-  });
-
-  it("error backoff follows schedule: 30s, 1m, 5m, 15m, 60m (cap)", async () => {
-    // Test each backoff level by running multiple times
-    const backoffSchedule = [30_000, 60_000, 300_000, 900_000, 3_600_000];
-    for (let errors = 0; errors < backoffSchedule.length; errors++) {
-      const job = makeJob({
-        id: "j1",
-        nextRunAtMs: clock - 1,
-        consecutiveErrors: errors,
+  it("limits one tick by count and executes selected occurrences sequentially", async () => {
+    const releases: Array<() => void> = [];
+    let active = 0;
+    let peakActive = 0;
+    const execute = vi.fn((input: CronRuntimeExecutionInput) => new Promise<Result<CronRuntimeOutcome, CronRuntimeError>>((resolve) => {
+      active += 1;
+      peakActive = Math.max(peakActive, active);
+      releases.push(() => {
+        active -= 1;
+        resolve(ok(completed(input)));
       });
-      const executeJob = vi.fn(async () => ({ status: "error" as const, error: "boom" }));
-      const { scheduler, store } = makeScheduler({ jobs: [job], executeJob });
-      await scheduler.start();
-      await vi.advanceTimersByTimeAsync(100);
-      const savedJobs = (store.save as ReturnType<typeof vi.fn>).mock.calls.at(
-        -1,
-      )?.[0] as CronJob[];
-      const updated = savedJobs?.find((j) => j.id === "j1");
-      expect(updated?.consecutiveErrors).toBe(errors + 1);
-      expect(updated?.nextRunAtMs).toBe(clock + backoffSchedule[errors]);
-      scheduler.stop();
-    }
-    // Test cap: 6th error should still be 60m
-    const job = makeJob({ id: "j1", nextRunAtMs: clock - 1, consecutiveErrors: 5 });
-    const executeJob = vi.fn(async () => ({ status: "error" as const, error: "boom" }));
-    const { scheduler, store } = makeScheduler({ jobs: [job], executeJob });
-    await scheduler.start();
-    await vi.advanceTimersByTimeAsync(100);
-    const savedJobs = (store.save as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as CronJob[];
-    const updated = savedJobs?.find((j) => j.id === "j1");
-    expect(updated?.nextRunAtMs).toBe(clock + 3_600_000);
-    scheduler.stop();
+    }));
+    const built = await fixture({ seedJob: job("job_a"), execute, maxRunsPerTick: 2 });
+    expect((await built.store.addJob(job("job_b"))).ok).toBe(true);
+    expect((await built.store.addJob(job("job_c"))).ok).toBe(true);
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
+
+    const tick = built.scheduler.runMissedJobs();
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
+    releases.shift()?.();
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    releases.shift()?.();
+
+    await expect(tick).resolves.toMatchObject({ ok: true, value: ["execution_1", "execution_2"] });
+    expect(peakActive).toBe(1);
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 
-  it("maxConcurrentRuns limits jobs collected per tick", async () => {
-    // Create 3 due jobs but limit to 1 concurrent
-    // With sequential processing, only 1 is collected per tick
-    // Track which tick each job was dispatched in
-    let tickCounter = 0;
-    const jobTicks: Record<string, number> = {};
-
-    // Use a store that tracks save calls to count ticks
-    const jobs = [
-      makeJob({ id: "j1", nextRunAtMs: clock - 1 }),
-      makeJob({ id: "j2", nextRunAtMs: clock - 1 }),
-      makeJob({ id: "j3", nextRunAtMs: clock - 1 }),
-    ];
-    const store = createMockStore(jobs);
-    const origSave = store.save;
-    store.save = vi.fn(async (newJobs: CronJob[]) => {
-      tickCounter++;
-      await (origSave as (jobs: CronJob[]) => Promise<void>)(newJobs);
+  it("leaves a durable claim and performs no dispatch when start append fails", async () => {
+    const execute = vi.fn(async (input: CronRuntimeExecutionInput) => ok(completed(input)));
+    const built = await fixture({ seedJob: job(), execute });
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
+    vi.spyOn(built.tracker, "appendStart").mockResolvedValue({
+      ok: false,
+      error: { code: "io", errorKind: "internal", message: "disk unavailable" },
     });
 
-    const executeJob = vi.fn(async (job: CronJob) => {
-      jobTicks[job.id] = tickCounter;
-      return { status: "ok" as const };
+    expect(await built.scheduler.runMissedJobs()).toMatchObject({ ok: false });
+    expect(execute).not.toHaveBeenCalled();
+    expect(built.rootRegistrar.register).not.toHaveBeenCalled();
+    const snapshot = built.store.getSnapshot();
+    expect(snapshot.ok && snapshot.value.activeClaims).toHaveLength(1);
+  });
+
+  it("terminalizes and settles a root-registration failure without dispatch", async () => {
+    const execute = vi.fn(async (input: CronRuntimeExecutionInput) => ok(completed(input)));
+    const built = await fixture({ seedJob: job(), execute });
+    built.rootRegistrar.register.mockResolvedValue({
+      ok: false,
+      error: { errorKind: "internal", message: "root registry unavailable" },
     });
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
 
-    const eventBus = new TypedEventBus();
-    const logger = createMockLogger();
-    const scheduler = createCronScheduler({
-      store,
-      executeJob,
-      eventBus,
-      logger,
-      config: { maxConcurrentRuns: 1, defaultTimezone: "UTC", maxJobs: 100, maxConsecutiveErrors: 5 },
-      nowMs: () => clock,
+    expect((await built.scheduler.runMissedJobs()).ok).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    const history = await built.tracker.listHistory({ limit: 10 });
+    expect(history.ok && history.value[0]?.terminal?.outcome).toEqual({
+      kind: "pre_dispatch_failure",
+      stage: "root_registration",
+      errorKind: "internal",
     });
-
-    await scheduler.start();
-    // Let all ticks process (each tick handles 1 job, then re-arms)
-    await vi.advanceTimersByTimeAsync(200_000);
-    // All 3 jobs should have been executed, each in a different tick
-    expect(executeJob).toHaveBeenCalledTimes(3);
-    // Each job was in a different tick (tick 0, 1, 2)
-    expect(jobTicks["j1"]).toBe(0);
-    expect(jobTicks["j2"]).toBe(1);
-    expect(jobTicks["j3"]).toBe(2);
-    scheduler.stop();
+    expect(built.store.getSnapshot()).toMatchObject({ ok: true, value: { activeClaims: [] } });
   });
 
-  it("timer delay clamped to MAX_TIMER_DELAY_MS (60s)", async () => {
-    // Job is 10 minutes away, but timer should fire within 60s
-    const job = makeJob({ id: "j1", nextRunAtMs: clock + 600_000 });
-    const executeJob = vi.fn(async () => ({ status: "ok" as const }));
-    const { scheduler } = makeScheduler({ jobs: [job], executeJob });
-    await scheduler.start();
-    // Advance 60s -- timer should fire (re-check) even though job is 10 min away
-    await vi.advanceTimersByTimeAsync(60_001);
-    // Job is not due yet so executeJob should NOT be called
-    expect(executeJob).not.toHaveBeenCalled();
-    // But the timer re-armed (scheduler is still active)
-    expect(vi.getTimerCount()).toBeGreaterThanOrEqual(1);
-    scheduler.stop();
-  });
-
-  it("addJob persists to store and re-arms timer", async () => {
-    const { scheduler, store } = makeScheduler();
-    await scheduler.start();
-    const newJob = makeJob({ id: "new-j1", nextRunAtMs: clock + 30_000 });
-    await scheduler.addJob(newJob);
-    expect(store.addJob).toHaveBeenCalledWith(newJob);
-    // Timer should be armed
-    expect(vi.getTimerCount()).toBeGreaterThanOrEqual(1);
-    scheduler.stop();
-  });
-
-  it("addJob computes nextRunAtMs when missing", async () => {
-    const { scheduler } = makeScheduler();
-    await scheduler.start();
-    // Job without nextRunAtMs (simulates cron.add RPC behavior)
-    const newJob = makeJob({
-      id: "no-next",
-      schedule: { kind: "every", everyMs: 60_000 },
-    });
-    delete (newJob as Record<string, unknown>).nextRunAtMs;
-    await scheduler.addJob(newJob);
-    const jobs = scheduler.getJobs();
-    const added = jobs.find((j) => j.id === "no-next");
-    expect(added?.nextRunAtMs).toBeDefined();
-    expect(added!.nextRunAtMs!).toBeGreaterThanOrEqual(clock);
-    scheduler.stop();
-  });
-
-  it("removeJob removes from store and re-arms timer", async () => {
-    const job = makeJob({ id: "j1", nextRunAtMs: clock + 30_000 });
-    const { scheduler, store } = makeScheduler({ jobs: [job] });
-    await scheduler.start();
-    const removed = await scheduler.removeJob("j1");
-    expect(removed).toBe(true);
-    expect(store.removeJob).toHaveBeenCalledWith("j1");
-    scheduler.stop();
-  });
-
-  it("scheduler:job_started and scheduler:job_completed events emitted", async () => {
-    const job = makeJob({ id: "j1", name: "test job", agentId: "agent-1", nextRunAtMs: clock - 1 });
-    const executeJob = vi.fn(async () => ({ status: "ok" as const }));
-    const { scheduler, eventBus } = makeScheduler({ jobs: [job], executeJob });
-    const startedEvents: unknown[] = [];
-    const completedEvents: unknown[] = [];
-    eventBus.on("scheduler:job_started", (e) => startedEvents.push(e));
-    eventBus.on("scheduler:job_completed", (e) => completedEvents.push(e));
-    await scheduler.start();
-    await vi.advanceTimersByTimeAsync(100);
-    expect(startedEvents).toHaveLength(1);
-    expect(startedEvents[0]).toMatchObject({
-      jobId: "j1",
-      jobName: "test job",
-      agentId: "agent-1",
-    });
-    expect(completedEvents).toHaveLength(1);
-    expect(completedEvents[0]).toMatchObject({
-      jobId: "j1",
-      jobName: "test job",
-      agentId: "agent-1",
-      success: true,
-    });
-    scheduler.stop();
-  });
-
-  it("getJobs returns shallow copy of job list", async () => {
-    const job = makeJob({ id: "j1" });
-    const { scheduler } = makeScheduler({ jobs: [job] });
-    await scheduler.start();
-    const jobs = scheduler.getJobs();
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0].id).toBe("j1");
-    // Mutating returned array should not affect internal state
-    jobs.pop();
-    expect(scheduler.getJobs()).toHaveLength(1);
-    scheduler.stop();
-  });
-
-  // -----------------------------------------------------------------------
-  // maxJobs limit enforcement
-  // -----------------------------------------------------------------------
-
-  it("addJob throws when maxJobs limit is reached", async () => {
-    const { scheduler } = makeScheduler({ maxJobs: 2 });
-    await scheduler.start();
-    await scheduler.addJob(makeJob({ id: "mj-1" }));
-    await scheduler.addJob(makeJob({ id: "mj-2" }));
-    await expect(scheduler.addJob(makeJob({ id: "mj-3" }))).rejects.toThrow(
-      /maximum job count \(2\) reached/,
-    );
-    scheduler.stop();
-  });
-
-  it("maxJobs=0 means unlimited", async () => {
-    const { scheduler } = makeScheduler({ maxJobs: 0 });
-    await scheduler.start();
-    // Should be able to add many jobs without error
-    for (let i = 0; i < 10; i++) {
-      await scheduler.addJob(makeJob({ id: `unlimited-${i}` }));
-    }
-    expect(scheduler.getJobs()).toHaveLength(10);
-    scheduler.stop();
-  });
-
-  it("after removing a job, addJob succeeds again under maxJobs", async () => {
-    const { scheduler } = makeScheduler({ maxJobs: 2 });
-    await scheduler.start();
-    await scheduler.addJob(makeJob({ id: "cap-1" }));
-    await scheduler.addJob(makeJob({ id: "cap-2" }));
-    // At limit, remove one
-    await scheduler.removeJob("cap-1");
-    // Now adding should succeed
-    await scheduler.addJob(makeJob({ id: "cap-3" }));
-    expect(scheduler.getJobs()).toHaveLength(2);
-    expect(scheduler.getJobs().map((j) => j.id)).toEqual(["cap-2", "cap-3"]);
-    scheduler.stop();
-  });
-
-  // -----------------------------------------------------------------------
-  // executeJob throw path (unhandled exception, distinct from error status)
-  // -----------------------------------------------------------------------
-
-  it("handles executeJob throwing an unhandled Error", async () => {
-    const job = makeJob({
-      id: "throw-j1",
-      nextRunAtMs: clock - 1,
-      consecutiveErrors: 0,
-    });
-    const executeJob = vi.fn(async () => {
-      throw new Error("executeJob unhandled crash");
-    });
-    const { scheduler, store, eventBus, logger } = makeScheduler({
-      jobs: [job],
-      executeJob,
-    });
-
-    const completedEvents: Array<Record<string, unknown>> = [];
-    eventBus.on("scheduler:job_completed", (e) => completedEvents.push(e as Record<string, unknown>));
-
-    await scheduler.start();
-    await vi.advanceTimersByTimeAsync(100);
-
-    // consecutiveErrors should increment
-    const savedJobs = (store.save as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as CronJob[];
-    const updated = savedJobs?.find((j) => j.id === "throw-j1");
-    expect(updated?.consecutiveErrors).toBe(1);
-
-    // Backoff applied (30s for first error)
-    expect(updated?.nextRunAtMs).toBe(clock + 30_000);
-
-    // Error logged
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.objectContaining({
-        jobId: "throw-j1",
-        err: "executeJob unhandled crash",
-        errorKind: "internal",
+  it("maps a proven pre-dispatch runtime error without parsing prose", async () => {
+    const built = await fixture({
+      seedJob: job(),
+      execute: async () => ({
+        ok: false,
+        error: { code: "invalid_input", errorKind: "validation", message: "bad snapshot" },
       }),
-      "Job threw",
-    );
-
-    // Event emitted with success: false
-    expect(completedEvents).toHaveLength(1);
-    expect(completedEvents[0]).toMatchObject({
-      jobId: "throw-j1",
-      success: false,
-      error: "executeJob unhandled crash",
     });
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
+    expect((await built.scheduler.runMissedJobs()).ok).toBe(true);
 
-    scheduler.stop();
+    const history = await built.tracker.listHistory({ limit: 10 });
+    expect(history.ok && history.value[0]?.terminal?.outcome).toEqual({
+      kind: "pre_dispatch_failure",
+      stage: "executor_invalid_input",
+      errorKind: "validation",
+    });
   });
 
-  // -----------------------------------------------------------------------
-  // Auto-suspend after maxConsecutiveErrors
-  // -----------------------------------------------------------------------
-
-  it("auto-suspends job after maxConsecutiveErrors (default 5)", async () => {
-    const deliveryTarget = { channelId: "ch-1", userId: "u-1", tenantId: "t-1", channelType: "telegram" };
-    const job = makeJob({
-      id: "suspend-j1",
-      name: "failing job",
-      nextRunAtMs: clock - 1,
-      consecutiveErrors: 4, // One more error triggers suspension at 5
-      deliveryTarget,
+  it("aborts at the deadline and persists unknown after termination grace", async () => {
+    let resolveExecution!: (result: Result<CronRuntimeOutcome, CronRuntimeError>) => void;
+    let observedSignal: AbortSignal | undefined;
+    const execution = new Promise<Result<CronRuntimeOutcome, CronRuntimeError>>((resolve) => { resolveExecution = resolve; });
+    const built = await fixture({
+      seedJob: job("future", { kind: "at", atMs: NOW_MS + 10_000 }),
+      defaultTimeoutMs: 100,
+      execute: async (_input, signal) => {
+        observedSignal = signal;
+        return execution;
+      },
     });
-    const executeJob = vi.fn(async () => ({ status: "error" as const, error: "db down" }));
-    const { scheduler, store, eventBus } = makeScheduler({ jobs: [job], executeJob });
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
+    const run = built.scheduler.runJob("future");
+    await vi.waitFor(() => expect(observedSignal).toBeDefined());
+    built.timer.fireFirst(100);
+    await vi.waitFor(() => expect(observedSignal?.aborted).toBe(true));
+    built.timer.fireFirst(5_000);
 
-    const suspendedEvents: Array<Record<string, unknown>> = [];
-    eventBus.on("scheduler:job_suspended", (e) => suspendedEvents.push(e as Record<string, unknown>));
-
-    await scheduler.start();
-    await vi.advanceTimersByTimeAsync(100);
-
-    // Job should be disabled
-    const savedJobs = (store.save as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as CronJob[];
-    const updated = savedJobs?.find((j) => j.id === "suspend-j1");
-    expect(updated?.enabled).toBe(false);
-    expect(updated?.consecutiveErrors).toBe(5);
-
-    // scheduler:job_suspended event emitted with correct payload
-    expect(suspendedEvents).toHaveLength(1);
-    expect(suspendedEvents[0]).toMatchObject({
-      jobId: "suspend-j1",
-      jobName: "failing job",
-      consecutiveErrors: 5,
-      lastError: "db down",
-      deliveryTarget,
+    expect(await run).toMatchObject({ ok: true });
+    const history = await built.tracker.listHistory({ limit: 10 });
+    expect(history.ok && history.value[0]?.terminal?.outcome).toMatchObject({
+      kind: "unsettled",
+      reason: "deadline_termination_unestablished",
+      errorKind: "timeout",
     });
-
-    scheduler.stop();
+    expect(built.rootRegistrar.release).not.toHaveBeenCalled();
+    resolveExecution(ok({
+      kind: "agent_turn_pre_model_skip",
+      rootRunId: history.ok ? history.value[0]!.start.rootRunId! : "root-cron-late",
+      reason: "wake_gate_disabled",
+      errorKind: "precondition",
+      continuation: { mode: "none", status: "not_requested" },
+    }));
+    await vi.waitFor(() => expect(built.rootRegistrar.release).toHaveBeenCalledOnce());
   });
 
-  it("per-job maxConsecutiveErrors overrides global", async () => {
-    const job = makeJob({
-      id: "override-j1",
-      nextRunAtMs: clock - 1,
-      consecutiveErrors: 1, // One more error triggers at per-job threshold of 2
-      maxConsecutiveErrors: 2,
-    });
-    const executeJob = vi.fn(async () => ({ status: "error" as const, error: "timeout" }));
-    const { scheduler, store, eventBus } = makeScheduler({
-      jobs: [job],
-      executeJob,
-      maxConsecutiveErrors: 10, // Global is 10, but job override is 2
-    });
+  it("does not mutate scheduled lifecycle or breaker state for a manual run", async () => {
+    const recurring = job("recurring", { kind: "every", everyMs: 60_000, anchorMs: NOW_MS + 60_000 });
+    const built = await fixture({ seedJob: recurring });
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
+    const before = built.store.getSnapshot();
 
-    const suspendedEvents: Array<Record<string, unknown>> = [];
-    eventBus.on("scheduler:job_suspended", (e) => suspendedEvents.push(e as Record<string, unknown>));
-
-    await scheduler.start();
-    await vi.advanceTimersByTimeAsync(100);
-
-    const savedJobs = (store.save as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as CronJob[];
-    const updated = savedJobs?.find((j) => j.id === "override-j1");
-    expect(updated?.enabled).toBe(false);
-    expect(updated?.consecutiveErrors).toBe(2);
-    expect(suspendedEvents).toHaveLength(1);
-
-    scheduler.stop();
+    expect((await built.scheduler.runJob("recurring")).ok).toBe(true);
+    const after = built.store.getSnapshot();
+    expect(before.ok && after.ok && after.value.jobs[0]?.lifecycle).toEqual(before.ok ? before.value.jobs[0]?.lifecycle : undefined);
   });
 
-  it("maxConsecutiveErrors=0 never suspends", async () => {
-    const job = makeJob({
-      id: "never-j1",
-      nextRunAtMs: clock - 1,
-      consecutiveErrors: 99,
-    });
-    const executeJob = vi.fn(async () => ({ status: "error" as const, error: "still failing" }));
-    const { scheduler, store, eventBus } = makeScheduler({
-      jobs: [job],
-      executeJob,
-      maxConsecutiveErrors: 0, // Disable auto-suspend
-    });
+  it("cancels its opaque timer when stopped", async () => {
+    const built = await fixture({ seedJob: job("future", { kind: "at", atMs: NOW_MS + 5_000 }) });
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
 
-    const suspendedEvents: Array<Record<string, unknown>> = [];
-    eventBus.on("scheduler:job_suspended", (e) => suspendedEvents.push(e as Record<string, unknown>));
-
-    await scheduler.start();
-    await vi.advanceTimersByTimeAsync(100);
-
-    const savedJobs = (store.save as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as CronJob[];
-    const updated = savedJobs?.find((j) => j.id === "never-j1");
-    expect(updated?.enabled).toBe(true); // Still enabled
-    expect(updated?.consecutiveErrors).toBe(100);
-    expect(suspendedEvents).toHaveLength(0); // No suspension event
-
-    scheduler.stop();
+    expect((await built.scheduler.stop()).ok).toBe(true);
+    expect(built.timer.records()[0]).toMatchObject({ cancelled: true, unrefed: true });
   });
 
-  it("auto-suspend triggers on unhandled exception path", async () => {
-    const job = makeJob({
-      id: "throw-suspend-j1",
-      nextRunAtMs: clock - 1,
-      consecutiveErrors: 4, // One more triggers suspension at 5
+  it("drains an accepted execution before explicit shutdown cancellation", async () => {
+    let acceptedSignal: AbortSignal | undefined;
+    let resolveExecution!: (value: Result<CronRuntimeOutcome, CronRuntimeError>) => void;
+    const execution = new Promise<Result<CronRuntimeOutcome, CronRuntimeError>>((resolve) => {
+      resolveExecution = resolve;
     });
-    const executeJob = vi.fn(async () => {
-      throw new Error("uncaught crash");
+    const built = await fixture({
+      seedJob: job("draining"),
+      execute: async (_input, signal) => {
+        acceptedSignal = signal;
+        return execution;
+      },
     });
-    const { scheduler, store, eventBus } = makeScheduler({ jobs: [job], executeJob });
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
+    const run = built.scheduler.runJob("draining");
+    await vi.waitFor(() => expect(acceptedSignal).toBeDefined());
 
-    const suspendedEvents: Array<Record<string, unknown>> = [];
-    eventBus.on("scheduler:job_suspended", (e) => suspendedEvents.push(e as Record<string, unknown>));
-
-    await scheduler.start();
-    await vi.advanceTimersByTimeAsync(100);
-
-    const savedJobs = (store.save as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0] as CronJob[];
-    const updated = savedJobs?.find((j) => j.id === "throw-suspend-j1");
-    expect(updated?.enabled).toBe(false);
-    expect(updated?.consecutiveErrors).toBe(5);
-    expect(suspendedEvents).toHaveLength(1);
-    expect(suspendedEvents[0]).toMatchObject({
-      jobId: "throw-suspend-j1",
-      lastError: "uncaught crash",
+    const lifecycle = built.scheduler as CronScheduler & {
+      closeAdmission(): { readonly activeExecutions: number };
+      waitForIdle(): Promise<void>;
+      abortActive(): { readonly activeExecutions: number };
+    };
+    expect(lifecycle.closeAdmission()).toEqual({ activeExecutions: 1 });
+    expect(acceptedSignal?.aborted).toBe(false);
+    await expect(built.scheduler.runJob("draining")).resolves.toMatchObject({
+      ok: false,
+      error: { code: "not_active", errorKind: "precondition" },
     });
 
-    scheduler.stop();
+    let idle = false;
+    const idlePromise = lifecycle.waitForIdle().then(() => { idle = true; });
+    await Promise.resolve();
+    expect(idle).toBe(false);
+    expect(lifecycle.abortActive()).toEqual({ activeExecutions: 1 });
+    expect(acceptedSignal?.aborted).toBe(true);
+
+    resolveExecution(ok(completed((await built.store.getSnapshot()).ok
+      ? {
+          executionId: "execution-placeholder",
+          scheduledForMs: NOW_MS,
+          trigger: "manual",
+          kind: "agent_turn",
+          rootRunId: "root-cron-placeholder",
+          job: job("draining"),
+        }
+      : (undefined as never))));
+    await run;
+    await idlePromise;
+    expect(idle).toBe(true);
   });
 
-  it("suspended job is not picked up on next tick", async () => {
-    const job = makeJob({
-      id: "skip-j1",
-      nextRunAtMs: clock - 1,
-      consecutiveErrors: 4,
-      schedule: { kind: "every", everyMs: 1_000 },
+  it("enters maintenance immediately and reloads only after active executions settle", async () => {
+    let resolveExecution!: (value: Result<CronRuntimeOutcome, CronRuntimeError>) => void;
+    let accepted = false;
+    let acceptedInput: CronRuntimeExecutionInput | undefined;
+    const execution = new Promise<Result<CronRuntimeOutcome, CronRuntimeError>>((resolve) => {
+      resolveExecution = resolve;
     });
-    const executeJob = vi.fn(async () => ({ status: "error" as const, error: "fail" }));
-    const { scheduler } = makeScheduler({ jobs: [job], executeJob });
+    const built = await fixture({
+      seedJob: job("future", { kind: "at", atMs: NOW_MS + 5_000 }),
+      execute: async (input) => {
+        accepted = true;
+        acceptedInput = input;
+        return execution;
+      },
+    });
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
+    const run = built.scheduler.runJob("future");
+    await vi.waitFor(() => expect(accepted).toBe(true));
 
-    await scheduler.start();
-    // First tick: job runs and gets suspended
-    await vi.advanceTimersByTimeAsync(100);
-    expect(executeJob).toHaveBeenCalledTimes(1);
+    expect(built.scheduler.enterMaintenance()).toEqual(ok({ activeExecutions: 1 }));
+    expect(built.timer.records()[0]).toMatchObject({ cancelled: true });
+    expect(await built.scheduler.reload()).toMatchObject({
+      ok: false,
+      error: { code: "active_execution", errorKind: "precondition" },
+    });
+    expect(await built.scheduler.runJob("future")).toMatchObject({
+      ok: false,
+      error: { code: "not_active" },
+    });
 
-    // Advance more time -- job should NOT run again (enabled=false)
-    await vi.advanceTimersByTimeAsync(120_000);
-    expect(executeJob).toHaveBeenCalledTimes(1); // Still only 1 call
+    expect(acceptedInput).toBeDefined();
+    resolveExecution(ok(completed(acceptedInput!)));
+    expect((await run).ok).toBe(true);
+    expect(await built.scheduler.reload()).toEqual(ok(undefined));
+    expect(await built.scheduler.runJob("future")).toMatchObject({
+      ok: false,
+      error: { code: "not_active" },
+    });
+  });
 
-    scheduler.stop();
+  it("delays recurring eligibility by the stable store-seeded job phase", async () => {
+    const execute = vi.fn(async (input: CronRuntimeExecutionInput) => ok(completed(input)));
+    const recurring = job("recurring", { kind: "every", everyMs: 60_000, anchorMs: NOW_MS });
+    const built = await fixture({ seedJob: recurring, execute, staggerWindowMs: 1_000 });
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate()).toEqual({ ok: true, value: undefined });
+    expect(built.timer.records()[0]).toMatchObject({ delayMs: 111, unrefed: true });
+
+    expect((await built.scheduler.runMissedJobs()).ok).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    built.clock.advance(110);
+    expect((await built.scheduler.runMissedJobs()).ok).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    built.clock.advance(1);
+    expect((await built.scheduler.runMissedJobs()).ok).toBe(true);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute.mock.calls[0]![0].scheduledForMs).toBe(NOW_MS);
+  });
+
+  it("never staggers one-shot or explicit manual cron execution", async () => {
+    const oneShot = await fixture({
+      seedJob: job("one-shot", { kind: "at", atMs: NOW_MS }),
+      staggerWindowMs: 1_000,
+    });
+    expect((await oneShot.scheduler.initialize()).ok).toBe(true);
+    expect(oneShot.scheduler.activate().ok).toBe(true);
+    expect(oneShot.timer.records()[0]).toMatchObject({ delayMs: 0 });
+
+    const recurring = await fixture({
+      seedJob: job("recurring", { kind: "every", everyMs: 60_000, anchorMs: NOW_MS + 60_000 }),
+      staggerWindowMs: 1_000,
+    });
+    expect((await recurring.scheduler.initialize()).ok).toBe(true);
+    expect(recurring.scheduler.activate().ok).toBe(true);
+    expect((await recurring.scheduler.runJob("recurring")).ok).toBe(true);
+    expect(recurring.store.getSnapshot()).toMatchObject({
+      ok: true,
+      value: { jobs: [{ lifecycle: { nextRunAtMs: NOW_MS } }] },
+    });
+  });
+
+  it("emits content-free model drift evidence after a changed successful fire", async () => {
+    const models = [
+      { modelResolved: "provider/model-a", modelResolutionSource: "agent_primary" as const },
+      { modelResolved: "provider/model-b", modelResolutionSource: "family_default" as const },
+    ];
+    const built = await fixture({
+      seedJob: job("recurring", { kind: "every", everyMs: 60_000, anchorMs: NOW_MS + 60_000 }),
+      execute: async (input) => {
+        const outcome = completed(input);
+        if (outcome.kind !== "agent_turn") throw new Error("Expected agent turn");
+        Object.assign(outcome.outcome, models.shift());
+        return ok(outcome);
+      },
+    });
+    const drift = vi.fn();
+    built.eventBus.on("scheduler:cron_model_drift", drift);
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
+
+    expect((await built.scheduler.runJob("recurring")).ok).toBe(true);
+    expect((await built.scheduler.runJob("recurring")).ok).toBe(true);
+
+    expect(drift).toHaveBeenCalledOnce();
+    expect(drift).toHaveBeenCalledWith({
+      executionId: "execution_2",
+      previousExecutionId: "execution_1",
+      jobId: "recurring",
+      agentId: "agent_a",
+      workKind: "agent_turn",
+      previousModelResolved: "provider/model-a",
+      modelResolved: "provider/model-b",
+      previousModelResolutionSource: "agent_primary",
+      modelResolutionSource: "family_default",
+      timestamp: NOW_MS,
+    });
+    expect(built.logger.info).toHaveBeenCalledWith(expect.objectContaining({
+      executionId: "execution_2",
+      previousExecutionId: "execution_1",
+      jobId: "recurring",
+      workKind: "agent_turn",
+      modelResolved: "provider/model-b",
+      modelResolutionSource: "family_default",
+    }), "Cron execution model resolution changed");
+    expect(JSON.stringify(drift.mock.calls)).not.toContain("Inspect health");
+  });
+
+  it("compares model drift with the latest successfully completed fire", async () => {
+    const observations = [
+      { modelResolved: "provider/model-a", execution: { status: "completed", finishReason: "stop" } as const },
+      {
+        modelResolved: "provider/model-x",
+        execution: { status: "failed", finishReason: "provider_degraded", errorKind: "dependency" } as const,
+      },
+      { modelResolved: "provider/model-a", execution: { status: "completed", finishReason: "stop" } as const },
+    ];
+    const built = await fixture({
+      seedJob: job("recurring", { kind: "every", everyMs: 60_000, anchorMs: NOW_MS + 60_000 }),
+      execute: async (input) => {
+        const outcome = completed(input);
+        if (outcome.kind !== "agent_turn") throw new Error("Expected agent turn");
+        Object.assign(outcome.outcome, observations.shift());
+        return ok(outcome);
+      },
+    });
+    const drift = vi.fn();
+    built.eventBus.on("scheduler:cron_model_drift", drift);
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate().ok).toBe(true);
+
+    expect((await built.scheduler.runJob("recurring")).ok).toBe(true);
+    expect((await built.scheduler.runJob("recurring")).ok).toBe(true);
+    expect((await built.scheduler.runJob("recurring")).ok).toBe(true);
+
+    expect(drift).toHaveBeenCalledOnce();
+    expect(drift).toHaveBeenCalledWith(expect.objectContaining({
+      executionId: "execution_2",
+      previousExecutionId: "execution_1",
+      previousModelResolved: "provider/model-a",
+      modelResolved: "provider/model-x",
+    }));
+  });
+
+  it("rejects activation when recurring stagger eligibility would overflow", async () => {
+    const recurring = job("recurring", { kind: "every", everyMs: 60_000, anchorMs: NOW_MS });
+    recurring.lifecycle = {
+      status: "scheduled",
+      nextRunAtMs: Number.MAX_SAFE_INTEGER,
+      consecutiveDependencyErrors: 0,
+    };
+    const built = await fixture({ seedJob: recurring, staggerWindowMs: 1_000 });
+    expect((await built.scheduler.initialize()).ok).toBe(true);
+    expect(built.scheduler.activate()).toMatchObject({
+      ok: false,
+      error: { code: "invalid_configuration", errorKind: "config" },
+    });
   });
 });
