@@ -141,6 +141,9 @@
       "@anthropic-ai/sdk": ">=0.91.1",
       "ip-address": ">=10.1.1",
       "qs": ">=6.15.2"
+    },
+    "patchedDependencies": {
+      "@earendil-works/pi-ai@0.80.10": "patches/@earendil-works__pi-ai@0.80.10.patch"
     }
   }
 }

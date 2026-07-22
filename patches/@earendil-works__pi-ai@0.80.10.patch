@@ -1,0 +1,27 @@
+diff --git a/dist/utils/error-body.js b/dist/utils/error-body.js
+index e92f49d46692fc365524f859e9ffe101c0e2fd9f..c9ee36f8893ac00bba1426b2bbb8e88a4ed677f2 100644
+--- a/dist/utils/error-body.js
++++ b/dist/utils/error-body.js
+@@ -68,13 +68,21 @@ function pickBodyText(error) {
+     const responseBody = error.$response?.body;
+     if (typeof responseBody === "string")
+         return responseBody;
+-    if (isNonEmptyObject(responseBody))
++    if (isNonEmptyJsonBody(responseBody))
+         return safeJsonStringify(responseBody);
+     return undefined;
+ }
+ function isNonEmptyObject(value) {
+     return typeof value === "object" && value !== null && Object.keys(value).length > 0;
+ }
++function isNonEmptyJsonBody(value) {
++    if (Array.isArray(value))
++        return value.length > 0;
++    if (!isNonEmptyObject(value))
++        return false;
++    const prototype = Object.getPrototypeOf(value);
++    return prototype === Object.prototype || prototype === null;
++}
+ /**
+  * Compose a display string from a normalized error. When the message already
+  * carries the body (Anthropic / `@google/genai` happy path) or no body/status

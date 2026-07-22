@@ -31,6 +31,11 @@ overrides:
   ip-address: '>=10.1.1'
   qs: '>=6.15.2'
 
+patchedDependencies:
+  '@earendil-works/pi-ai@0.80.10':
+    hash: cd9c14af532b7e34ae9edad56278cb9271308eed6106177c3ad513c9075284a9
+    path: patches/@earendil-works__pi-ai@0.80.10.patch
+
 importers:
 
   .:
@@ -46,7 +51,7 @@ importers:
         version: 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@earendil-works/pi-ai':
         specifier: 0.80.10
-        version: 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+        version: 0.80.10(patch_hash=cd9c14af532b7e34ae9edad56278cb9271308eed6106177c3ad513c9075284a9)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.4.1(jiti@2.7.0))
@@ -160,7 +165,7 @@ importers:
         version: 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@earendil-works/pi-ai':
         specifier: 0.80.10
-        version: 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+        version: 0.80.10(patch_hash=cd9c14af532b7e34ae9edad56278cb9271308eed6106177c3ad513c9075284a9)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
         specifier: 0.80.10
         version: 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
@@ -297,7 +302,7 @@ importers:
         version: link:../shared
       '@earendil-works/pi-ai':
         specifier: 0.80.10
-        version: 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+        version: 0.80.10(patch_hash=cd9c14af532b7e34ae9edad56278cb9271308eed6106177c3ad513c9075284a9)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       better-sqlite3:
         specifier: 12.10.0
         version: 12.10.0
@@ -400,7 +405,7 @@ importers:
         version: 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@earendil-works/pi-ai':
         specifier: 0.80.10
-        version: 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+        version: 0.80.10(patch_hash=cd9c14af532b7e34ae9edad56278cb9271308eed6106177c3ad513c9075284a9)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@earendil-works/pi-coding-agent':
         specifier: 0.80.10
         version: 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
@@ -690,7 +695,7 @@ importers:
         version: link:../shared
       '@earendil-works/pi-ai':
         specifier: 0.80.10
-        version: 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+        version: 0.80.10(patch_hash=cd9c14af532b7e34ae9edad56278cb9271308eed6106177c3ad513c9075284a9)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       ipaddr.js:
         specifier: 2.4.0
         version: 2.4.0
@@ -752,9 +757,12 @@ importers:
       '@comis/skills':
         specifier: workspace:*
         version: link:../skills
-      '@earendil-works/pi-ai':
+      '@earendil-works/pi-agent-core':
         specifier: 0.80.10
         version: 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+      '@earendil-works/pi-ai':
+        specifier: 0.80.10
+        version: 0.80.10(patch_hash=cd9c14af532b7e34ae9edad56278cb9271308eed6106177c3ad513c9075284a9)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@google/genai':
         specifier: 1.52.0
         version: 1.52.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
@@ -925,7 +933,7 @@ importers:
         version: link:../shared
       '@earendil-works/pi-ai':
         specifier: 0.80.10
-        version: 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+        version: 0.80.10(patch_hash=cd9c14af532b7e34ae9edad56278cb9271308eed6106177c3ad513c9075284a9)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       better-sqlite3:
         specifier: 12.10.0
         version: 12.10.0
@@ -6305,7 +6313,7 @@ snapshots:
 
   '@earendil-works/pi-agent-core@0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:
-      '@earendil-works/pi-ai': 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+      '@earendil-works/pi-ai': 0.80.10(patch_hash=cd9c14af532b7e34ae9edad56278cb9271308eed6106177c3ad513c9075284a9)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       ignore: 7.0.5
       typebox: 1.2.8
       yaml: 2.9.0
@@ -6317,7 +6325,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
+  '@earendil-works/pi-ai@0.80.10(patch_hash=cd9c14af532b7e34ae9edad56278cb9271308eed6106177c3ad513c9075284a9)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:
       '@anthropic-ai/sdk': 0.109.0(zod@4.4.3)
       '@aws-sdk/client-bedrock-runtime': 3.1048.0
@@ -6341,7 +6349,7 @@ snapshots:
   '@earendil-works/pi-coding-agent@0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:
       '@earendil-works/pi-agent-core': 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
-      '@earendil-works/pi-ai': 0.80.10(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+      '@earendil-works/pi-ai': 0.80.10(patch_hash=cd9c14af532b7e34ae9edad56278cb9271308eed6106177c3ad513c9075284a9)(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@earendil-works/pi-tui': 0.80.10
       '@silvia-odwyer/photon-node': 0.3.4
       chalk: 5.6.2
