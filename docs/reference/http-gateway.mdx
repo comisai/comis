@@ -168,7 +168,9 @@ Event types are organized by category:
 
 **Observability:** `observability:metrics`, `observability:token_usage`, `observability:reset`
 
-**Scheduler:** `scheduler:job_started`, `scheduler:job_completed`, `scheduler:heartbeat_check`, `scheduler:heartbeat_delivered`, `scheduler:heartbeat_alert`
+**Scheduler:** `scheduler:cron_execution_started`, `scheduler:cron_execution_terminal`, `scheduler:heartbeat_wake_admitted`, `scheduler:heartbeat_wake_deferred`, `scheduler:heartbeat_wake_terminal`, `scheduler:heartbeat_alert`
+
+The three heartbeat wake events share a `correlationId`. Admission reports the retained target, lane, reason, and disposition; deferral adds the next eligible time and a closed reason; terminal reports the final status, duration, event-entry count, and optional error or cancellation category. `scheduler:heartbeat_alert` is a separate health signal and is not part of the correlated wake lifecycle.
 
 **Approvals:** `approval:requested`, `approval:resolved`
 

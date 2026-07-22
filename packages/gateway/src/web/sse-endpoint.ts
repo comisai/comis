@@ -29,7 +29,9 @@ const SSE_EVENTS: ReadonlyArray<keyof EventMap> = [
   "observability:token_usage",
   "scheduler:cron_execution_started",
   "scheduler:cron_execution_terminal",
-  "scheduler:heartbeat_check",
+  "scheduler:heartbeat_wake_admitted",
+  "scheduler:heartbeat_wake_deferred",
+  "scheduler:heartbeat_wake_terminal",
   "system:error",
   // Approval gate events
   "approval:requested",
@@ -42,7 +44,6 @@ const SSE_EVENTS: ReadonlyArray<keyof EventMap> = [
   "config:patched",
   "diagnostic:channel_health",
   "diagnostic:billing_snapshot",
-  "scheduler:heartbeat_delivered",
   "scheduler:heartbeat_alert",
   "skill:loaded",
   "skill:registry_reset",

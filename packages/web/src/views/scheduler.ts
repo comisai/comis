@@ -7,6 +7,12 @@ import type { EventDispatcher } from "../state/event-dispatcher.js";
 import { SseController } from "../state/sse-controller.js";
 import { IcToast } from "../components/feedback/ic-toast.js";
 import type { WebRpcMethodMap } from "../api/contracts.generated.js";
+import type {
+  HeartbeatWakeAdmittedEvent,
+  HeartbeatWakeDeferredEvent,
+  HeartbeatWakeTarget,
+  HeartbeatWakeTerminalEvent,
+} from "../api/types/index.js";
 
 // Side-effect imports (register custom elements)
 import "../components/nav/ic-tabs.js";
@@ -80,12 +86,6 @@ interface ExecutionRecord {
   errorKind?: string;
 }
 
-interface HeartbeatRecord {
-  checksRun: number;
-  alertsRaised: number;
-  timestamp: number;
-}
-
 interface HeartbeatAgentCard {
   agentId: string;
   enabled: boolean;
@@ -108,15 +108,10 @@ interface HeartbeatAlertRecord {
   timestamp: number;
 }
 
-interface HeartbeatDeliveryRecord {
-  agentId: string;
-  channelType: string;
-  outcome: "delivered" | "skipped" | "failed";
-  level: "ok" | "alert" | "critical";
-  reason?: string;
-  durationMs: number;
-  timestamp: number;
-}
+type HeartbeatWakeLifecycleRecord =
+  | ({ readonly phase: "admitted" } & HeartbeatWakeAdmittedEvent)
+  | ({ readonly phase: "deferred" } & HeartbeatWakeDeferredEvent)
+  | ({ readonly phase: "terminal" } & HeartbeatWakeTerminalEvent);
 
 /* ------------------------------------------------------------------ */
 /*  Tab definitions                                                    */
@@ -144,6 +139,10 @@ function formatSchedule(schedule: SchedulerCronSchedule): string {
     case "at":
       return systemDateFrom(schedule.atMs).toLocaleString();
   }
+}
+
+function formatHeartbeatTarget(target: HeartbeatWakeTarget): string {
+  return target.kind === "agent" ? target.agentId : "monitoring";
 }
 
 function formatMs(ms: number): string {
@@ -760,7 +759,6 @@ export class IcSchedulerView extends LitElement {
   @state() private _error = "";
   @state() private _activeTab = "cron-jobs";
   @state() private _executions: ExecutionRecord[] = [];
-  @state() private _heartbeats: HeartbeatRecord[] = [];
   @state() private _heartbeatEnabled = false;
   @state() private _heartbeatIntervalMs = 300_000;
   @state() private _editorOpen = false;
@@ -772,7 +770,7 @@ export class IcSchedulerView extends LitElement {
   @state() private _cronJobCount = 0;
   @state() private _heartbeatAgents: HeartbeatAgentCard[] = [];
   @state() private _heartbeatAlerts: HeartbeatAlertRecord[] = [];
-  @state() private _heartbeatDeliveries: HeartbeatDeliveryRecord[] = [];
+  @state() private _heartbeatWakeEvents: HeartbeatWakeLifecycleRecord[] = [];
 
   private _rpcStatusUnsubs: (() => void)[] = [];
   private _sse: SseController | null = null;
@@ -885,18 +883,17 @@ export class IcSchedulerView extends LitElement {
           this._executions = [record, ...this._executions].slice(0, 50);
         }
       },
-      "scheduler:heartbeat_delivered": (data) => {
-        const d = data as { agentId?: string; channelType?: string; outcome?: string; level?: string; reason?: string; durationMs?: number; timestamp?: number };
-        const record: HeartbeatDeliveryRecord = {
-          agentId: d.agentId ?? "",
-          channelType: d.channelType ?? "",
-          outcome: (d.outcome as "delivered" | "skipped" | "failed") ?? "delivered",
-          level: (d.level as "ok" | "alert" | "critical") ?? "ok",
-          reason: d.reason,
-          durationMs: d.durationMs ?? 0,
-          timestamp: d.timestamp ?? systemNowMs(),
-        };
-        this._heartbeatDeliveries = [record, ...this._heartbeatDeliveries].slice(0, 50);
+      "scheduler:heartbeat_wake_admitted": (data) => {
+        const event = data as HeartbeatWakeAdmittedEvent;
+        this._heartbeatWakeEvents = [{ phase: "admitted", ...event }, ...this._heartbeatWakeEvents].slice(0, 50);
+      },
+      "scheduler:heartbeat_wake_deferred": (data) => {
+        const event = data as HeartbeatWakeDeferredEvent;
+        this._heartbeatWakeEvents = [{ phase: "deferred", ...event }, ...this._heartbeatWakeEvents].slice(0, 50);
+      },
+      "scheduler:heartbeat_wake_terminal": (data) => {
+        const event = data as HeartbeatWakeTerminalEvent;
+        this._heartbeatWakeEvents = [{ phase: "terminal", ...event }, ...this._heartbeatWakeEvents].slice(0, 50);
       },
       "scheduler:heartbeat_alert": (data) => {
         const d = data as { agentId?: string; consecutiveErrors?: number; classification?: string; reason?: string; backoffMs?: number; timestamp?: number };
@@ -1409,7 +1406,7 @@ export class IcSchedulerView extends LitElement {
   private _renderHeartbeatTab() {
     if (this._heartbeatAgents.length === 0) {
       // Fall back to global heartbeat info if no per-agent data
-      if (this._heartbeatEnabled || this._heartbeats.length > 0) {
+      if (this._heartbeatEnabled) {
         return html`
           <div class="hb-summary-bar">
             <span>Global heartbeat: ${this._heartbeatEnabled ? "enabled" : "disabled"}</span>
@@ -1472,19 +1469,20 @@ export class IcSchedulerView extends LitElement {
           `
         : nothing}
 
-      ${this._heartbeatDeliveries.length > 0
+      ${this._heartbeatWakeEvents.length > 0
         ? html`
             <div class="hb-recent-section">
-              <h3>Recent Deliveries</h3>
+              <h3>Recent Wake Lifecycle</h3>
               <div class="hb-event-list">
-                ${this._heartbeatDeliveries.slice(0, 20).map(
-                  del => html`
+                ${this._heartbeatWakeEvents.slice(0, 20).map(
+                  wake => html`
                     <div class="hb-event-entry">
-                      <span class="hb-event-ts">${formatTimestamp(del.timestamp)}</span>
-                      <span class="hb-event-agent">${del.agentId}</span>
-                      <ic-tag variant=${del.outcome === "delivered" ? "success" : del.outcome === "failed" ? "error" : "warning"}>${del.outcome}</ic-tag>
-                      <span>${del.channelType}</span>
-                      <span class="hb-event-duration">(${formatMs(del.durationMs)})</span>
+                      <span class="hb-event-ts">${formatTimestamp(wake.timestamp)}</span>
+                      <span class="hb-event-agent">${formatHeartbeatTarget(wake.target)}</span>
+                      <ic-tag variant=${wake.phase === "terminal" ? "success" : wake.phase === "deferred" ? "warning" : "default"}>${wake.phase}</ic-tag>
+                      <span>${wake.phase === "admitted" ? wake.disposition : wake.phase === "deferred" ? wake.reason : wake.status}</span>
+                      <span>${wake.correlationId}</span>
+                      ${wake.phase === "terminal" ? html`<span class="hb-event-duration">(${formatMs(wake.durationMs)})</span>` : nothing}
                     </div>
                   `,
                 )}

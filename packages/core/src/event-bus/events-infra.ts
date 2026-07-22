@@ -412,13 +412,6 @@ export interface InfraEvents {
     timestamp: number;
   };
 
-  /** Scheduler: heartbeat check performed */
-  "scheduler:heartbeat_check": {
-    checksRun: number;
-    alertsRaised: number;
-    timestamp: number;
-  };
-
   /** A typed heartbeat occurrence was admitted or coalesced. Content-free. */
   "scheduler:heartbeat_wake_admitted": {
     correlationId: string;
@@ -451,19 +444,6 @@ export interface InfraEvents {
     eventEntryCount: number;
     durationMs: number;
     errorKind?: ErrorKind;
-    timestamp: number;
-  };
-
-  /** Scheduler: heartbeat notification delivery attempted */
-  "scheduler:heartbeat_delivered": {
-    agentId: string;
-    channelType: string;
-    channelId: string;
-    chatId: string;
-    level: "ok" | "alert" | "critical";
-    outcome: "delivered" | "skipped" | "failed";
-    reason?: string;
-    durationMs: number;
     timestamp: number;
   };
 

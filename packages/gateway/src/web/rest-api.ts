@@ -81,7 +81,9 @@ const ACTIVITY_EVENTS: ReadonlyArray<keyof EventMap> = [
   "skill:rejected",
   "scheduler:cron_execution_started",
   "scheduler:cron_execution_terminal",
-  "scheduler:heartbeat_check",
+  "scheduler:heartbeat_wake_admitted",
+  "scheduler:heartbeat_wake_deferred",
+  "scheduler:heartbeat_wake_terminal",
   "system:error",
 ];
 

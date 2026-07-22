@@ -822,7 +822,7 @@ describe("scheduler:wake_gate content-free event", () => {
     expect(source).toContain('"scheduler:wake_gate":');
     const wakeIdx = source.indexOf('"scheduler:wake_gate":');
     const cronTerminalIdx = source.indexOf('"scheduler:cron_execution_terminal":');
-    const heartbeatIdx = source.indexOf('"scheduler:heartbeat_check":');
+    const heartbeatIdx = source.indexOf('"scheduler:heartbeat_wake_admitted":');
     expect(cronTerminalIdx).toBeGreaterThan(-1);
     expect(heartbeatIdx).toBeGreaterThan(-1);
     expect(wakeIdx).toBeGreaterThan(cronTerminalIdx);

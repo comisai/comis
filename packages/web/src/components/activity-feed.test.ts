@@ -154,6 +154,26 @@ describe("summarizePayload", () => {
     const result = summarizePayload("custom:event", {});
     expect(result).toBe("");
   });
+
+  it("summarizes correlated heartbeat wake lifecycle events", () => {
+    const target = { kind: "agent", agentId: "agent_a" };
+
+    expect(summarizePayload("scheduler:heartbeat_wake_admitted", {
+      target,
+      disposition: "new_occurrence",
+      correlationId: "heartbeat-1",
+    })).toBe("agent_a: new_occurrence (heartbeat-1)");
+    expect(summarizePayload("scheduler:heartbeat_wake_deferred", {
+      target,
+      reason: "session_busy",
+      correlationId: "heartbeat-1",
+    })).toBe("agent_a: session_busy (heartbeat-1)");
+    expect(summarizePayload("scheduler:heartbeat_wake_terminal", {
+      target,
+      status: "settled",
+      correlationId: "heartbeat-1",
+    })).toBe("agent_a: settled (heartbeat-1)");
+  });
 });
 
 // ---- Component rendering tests ----
@@ -270,11 +290,14 @@ describe("IcActivityFeed", () => {
       const chips = el.shadowRoot?.querySelector("ic-filter-chips") as any;
       expect(chips).not.toBeNull();
       // The options property should have the same number of entries as EVENT_CONFIG
-      expect(chips.options.length).toBe(13); // 13 event types in EVENT_CONFIG
+      expect(chips.options.length).toBe(15); // 15 event types in EVENT_CONFIG
       const values = chips.options.map((o: { value: string }) => o.value);
       expect(values).toContain("message:received");
       expect(values).toContain("system:error");
       expect(values).toContain("scheduler:cron_execution_terminal");
+      expect(values).toContain("scheduler:heartbeat_wake_admitted");
+      expect(values).toContain("scheduler:heartbeat_wake_deferred");
+      expect(values).toContain("scheduler:heartbeat_wake_terminal");
     });
 
     it("setting active filters hides non-matching entries", async () => {

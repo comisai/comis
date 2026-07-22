@@ -9,8 +9,8 @@
  *     once >= maxConsecutiveErrors;
  *   - concurrency cap: N>maxConcurrentRuns due jobs ⇒ at most maxConcurrentRuns fire in one tick;
  *   - execution.jsonl: record() appends a row (0o600); getHistory(jobId) reads it back;
- *   - heartbeat ok/alert: runOnce() ⇒ scheduler:heartbeat_check; an ok-token source ⇒ alertsRaised:0; an
- *     alert-text source ⇒ alertsRaised>0 + onNotification({level:"alert"|"critical"}).
+ *   - heartbeat ok/alert: a monitoring wake emits correlated admission + terminal events while the
+ *     runner outcome preserves its alert count.
  *
  * Uses STUB executeJob / HeartbeatSourcePort + an injectable nowMs clock + a real TypedEventBus. The
  * real-LLM-turn-FROM-cron is Stage-C (it.skip). The tests drive runMissedJobs()/runOnce() directly — they
@@ -22,17 +22,21 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { createCronScheduler, createExecutionTracker, createHeartbeatRunner } from "@comis/scheduler";
+import {
+  createCronScheduler,
+  createExecutionTracker,
+  createHeartbeatRunner,
+  createHeartbeatWakeCoordinator,
+} from "@comis/scheduler";
 import { TypedEventBus } from "@comis/core";
+import { ok } from "@comis/shared";
+import { createFakeClock } from "../../../support/fake-clock.js";
+import { createFakeTimers } from "../../../support/fake-timers.js";
 import {
   makeCronJob,
   makeInMemoryCronStore,
-  makeStubHeartbeatSource,
   makeNoopSchedulerLogger,
   makeTmpDataDir,
-  QUIET_HOURS_OFF,
-  OK_HEARTBEAT_TEXT,
-  ALERT_HEARTBEAT_TEXT,
 } from "../../harness/plat-config.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -178,53 +182,93 @@ describe("PLAT-04 Stage-B — execution.jsonl record + getHistory read-back", ()
 });
 
 // ---------------------------------------------------------------------------
-// PLAT-04 Stage-B — heartbeat ok / alert (via the runner output, not the internal classifier)
+// PLAT-04 Stage-B — correlated heartbeat wake lifecycle + runner classification
 // ---------------------------------------------------------------------------
 
+async function runMonitoringWake(level: "ok" | "alert" | "critical") {
+  const now = 1_000_000;
+  const clock = createFakeClock(now);
+  const timers = createFakeTimers(now);
+  const eventBus = new TypedEventBus();
+  const logger = makeNoopSchedulerLogger();
+  const admitted: Array<{ correlationId: string }> = [];
+  const terminal: Array<{ correlationId: string; status: string }> = [];
+  const outcomes: Array<{ checksRun: number; alertsRaised: number }> = [];
+  eventBus.on("scheduler:heartbeat_wake_admitted", (event) => admitted.push(event));
+  eventBus.on("scheduler:heartbeat_wake_terminal", (event) => terminal.push(event));
+  const runner = createHeartbeatRunner({
+    sources: [{
+      id: "monitor_status",
+      check: async () => ok({
+        level,
+        observedAtMs: now,
+        code: "monitor_status",
+        counters: [],
+      }),
+    }],
+    clock,
+    timers,
+    eventBus,
+    logger,
+    staleMs: 30_000,
+  });
+  const coordinator = createHeartbeatWakeCoordinator({
+    clock,
+    timers,
+    eventBus,
+    logger,
+    idFactory: () => "heartbeat-monitoring-1",
+    hasTarget: (target) => target.kind === "monitoring",
+    isTargetBusy: () => false,
+    isTaskEnabled: () => false,
+    checkIntervalFileGate: async () => ok(false),
+    registerRoot: async () => ok({ rootRunId: "unused" }),
+    releaseRoot: async () => ok(undefined),
+    runAgent: vi.fn(),
+    runMonitoring: async (input) => {
+      const outcome = await runner.runOnce(input.reason, input.signal);
+      if (outcome.ok) outcomes.push(outcome.value);
+      return outcome;
+    },
+  });
+  expect(coordinator.activate()).toEqual(ok(undefined));
+  const admission = coordinator.submitWake({
+    target: { kind: "monitoring" },
+    reason: "manual",
+    timing: { kind: "spacing_bypass", notBeforeMs: now },
+  });
+  expect(admission.ok).toBe(true);
+  timers.advance(0);
+  for (let index = 0; index < 12; index++) await Promise.resolve();
+  await coordinator.waitForIdle();
+  return { admitted, terminal, outcomes };
+}
+
 describe("PLAT-04 Stage-B — heartbeat ok / alert classification", () => {
-  it("an ok-token source ⇒ scheduler:heartbeat_check with alertsRaised:0", async () => {
-    const bus = new TypedEventBus();
-    const checks: Array<{ checksRun: number; alertsRaised: number }> = [];
-    bus.on("scheduler:heartbeat_check", (e) => checks.push(e));
-    const runner = createHeartbeatRunner({
-      sources: [makeStubHeartbeatSource("s1", "S1", OK_HEARTBEAT_TEXT)],
-      eventBus: bus,
-      logger: makeNoopSchedulerLogger(),
-      config: { intervalMs: 300_000, showOk: true, showAlerts: true },
-      quietHoursConfig: QUIET_HOURS_OFF,
-      criticalBypass: true,
-      onNotification: () => {},
-      nowMs: () => Date.now(),
-    });
+  it("an ok monitoring wake emits one correlated terminal with alertsRaised zero", async () => {
+    const lifecycle = await runMonitoringWake("ok");
 
-    await runner.runOnce();
-
-    expect(checks.length).toBe(1);
-    expect(checks[0]!.checksRun).toBe(1);
-    expect(checks[0]!.alertsRaised).toBe(0);
+    expect(lifecycle.admitted).toHaveLength(1);
+    expect(lifecycle.terminal).toEqual([
+      expect.objectContaining({
+        correlationId: lifecycle.admitted[0]!.correlationId,
+        status: "settled",
+      }),
+    ]);
+    expect(lifecycle.outcomes[0]).toMatchObject({ checksRun: 1, alertsRaised: 0 });
   });
 
-  it("emits alertsRaised>0 + onNotification(level alert|critical) when a source returns alert text", async () => {
-    const bus = new TypedEventBus();
-    const checks: Array<{ alertsRaised: number }> = [];
-    const notes: Array<{ level: string }> = [];
-    bus.on("scheduler:heartbeat_check", (e) => checks.push(e));
-    const runner = createHeartbeatRunner({
-      sources: [makeStubHeartbeatSource("s2", "S2", ALERT_HEARTBEAT_TEXT)],
-      eventBus: bus,
-      logger: makeNoopSchedulerLogger(),
-      config: { intervalMs: 300_000, showOk: true, showAlerts: true },
-      quietHoursConfig: QUIET_HOURS_OFF,
-      criticalBypass: true,
-      onNotification: (n) => notes.push(n),
-      nowMs: () => Date.now(),
-    });
+  it("an alert monitoring wake keeps alert classification through correlated settlement", async () => {
+    const lifecycle = await runMonitoringWake("alert");
 
-    await runner.runOnce();
-
-    expect(checks[0]!.alertsRaised).toBeGreaterThan(0);
-    expect(notes.length).toBeGreaterThan(0);
-    expect(["alert", "critical"]).toContain(notes[0]!.level);
+    expect(lifecycle.admitted).toHaveLength(1);
+    expect(lifecycle.terminal).toEqual([
+      expect.objectContaining({
+        correlationId: lifecycle.admitted[0]!.correlationId,
+        status: "settled",
+      }),
+    ]);
+    expect(lifecycle.outcomes[0]).toMatchObject({ checksRun: 1, alertsRaised: 1 });
   });
 });
 

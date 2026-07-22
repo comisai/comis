@@ -4,6 +4,7 @@ import type { IcAgentDetail } from "./agent-detail.js";
 import { formatTokens } from "./agent-detail.js";
 import type { RpcClient } from "../../api/rpc-client.js";
 import type { AgentDetail, AgentBilling, HeartbeatAgentStateDto } from "../../api/types/index.js";
+import type { EventDispatcher } from "../../state/event-dispatcher.js";
 
 // Side-effect import to register custom element
 import "./agent-detail.js";
@@ -326,6 +327,39 @@ describe("IcAgentDetail", () => {
     const text = hbCard!.textContent!;
     expect(text).toContain("healthy");
     expect(text).toContain("Every 15m"); // 900000ms = 15 minutes
+  });
+
+  it("refreshes agent state when a heartbeat wake reaches terminal status", async () => {
+    const eventDispatcher = {
+      connected: true,
+      start: vi.fn(),
+      stop: vi.fn(),
+      addEventListener: vi.fn(() => vi.fn()),
+    } satisfies EventDispatcher;
+    const el = await createElement<IcAgentDetail>("ic-agent-detail", {
+      rpcClient: createMockRpcClient(),
+      agentId: "default",
+      eventDispatcher,
+    });
+    const scheduleReload = vi.spyOn(
+      el as unknown as { _scheduleReload(delayMs?: number): void },
+      "_scheduleReload",
+    );
+
+    document.dispatchEvent(new CustomEvent("scheduler:heartbeat_wake_terminal", {
+      detail: {
+        correlationId: "heartbeat-1",
+        target: { kind: "agent", agentId: "default" },
+        lane: "normal",
+        retainedReason: "manual",
+        status: "settled",
+        eventEntryCount: 0,
+        durationMs: 5,
+        timestamp: 10,
+      },
+    }));
+
+    expect(scheduleReload).toHaveBeenCalledOnce();
   });
 
   it("action buttons (edit, suspend, delete) are rendered", async () => {

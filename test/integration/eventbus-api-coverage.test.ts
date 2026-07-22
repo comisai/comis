@@ -326,10 +326,31 @@ describe("EventMap Payload Coverage", () => {
         failedChunks: 0,
         ambiguousChunks: 0,
       },
-      "scheduler:heartbeat_check": {
-        checksRun: 4,
-        alertsRaised: 1,
+      "scheduler:heartbeat_wake_admitted": {
+        correlationId: "heartbeat-001",
+        target: { kind: "agent" as const, agentId: "default" },
+        lane: "normal" as const,
+        retainedReason: "manual" as const,
+        disposition: "new_occurrence" as const,
         timestamp: NOW,
+      },
+      "scheduler:heartbeat_wake_deferred": {
+        correlationId: "heartbeat-001",
+        target: { kind: "agent" as const, agentId: "default" },
+        lane: "normal" as const,
+        reason: "session_busy" as const,
+        nextEligibleAtMs: NOW + 1_000,
+        timestamp: NOW,
+      },
+      "scheduler:heartbeat_wake_terminal": {
+        correlationId: "heartbeat-001",
+        target: { kind: "agent" as const, agentId: "default" },
+        lane: "normal" as const,
+        retainedReason: "manual" as const,
+        status: "settled" as const,
+        eventEntryCount: 0,
+        durationMs: 5,
+        timestamp: NOW + 5,
       },
     } satisfies Partial<EventMap>;
 

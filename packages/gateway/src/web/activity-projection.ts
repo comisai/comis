@@ -22,7 +22,9 @@ const PROJECTED_EVENTS = new Set<string>([
   "observability:token_usage",
   "scheduler:cron_execution_started",
   "scheduler:cron_execution_terminal",
-  "scheduler:heartbeat_check",
+  "scheduler:heartbeat_wake_admitted",
+  "scheduler:heartbeat_wake_deferred",
+  "scheduler:heartbeat_wake_terminal",
   "system:error",
   "approval:requested",
   "approval:resolved",
@@ -32,7 +34,6 @@ const PROJECTED_EVENTS = new Set<string>([
   "config:patched",
   "diagnostic:channel_health",
   "diagnostic:billing_snapshot",
-  "scheduler:heartbeat_delivered",
   "scheduler:heartbeat_alert",
   "skill:registry_reset",
   "model:catalog_loaded",
@@ -104,6 +105,7 @@ const SAFE_SCALAR_FIELDS = new Set([
   "graphId",
   "nodeId",
   "jobId",
+  "correlationId",
   "executionId",
   "bootId",
   "taskId",
@@ -118,6 +120,9 @@ const SAFE_SCALAR_FIELDS = new Set([
   "kind",
   "classification",
   "outcome",
+  "lane",
+  "retainedReason",
+  "disposition",
   // Approval-gate resolution metadata — the operator approval queue + history
   // render these. `action` above is the bounded capability verb; these are the
   // outcome (boolean), the resolver identity, and the request/resolution
@@ -151,9 +156,9 @@ const SAFE_SCALAR_FIELDS = new Set([
   "terminalAtMs",
   "scheduledForMs",
   "completedAt",
+  "nextEligibleAtMs",
   "expiresAt",
-  "checksRun",
-  "alertsRaised",
+  "eventEntryCount",
   "deliveredChunks",
   "failedChunks",
   "ambiguousChunks",
@@ -203,6 +208,35 @@ function projectSessionKey(
   if (typeof key.agentId === "string") target.agentId = key.agentId;
 }
 
+function projectHeartbeatTarget(
+  target: Record<string, unknown>,
+  value: unknown,
+): void {
+  const wakeTarget = asRecord(value);
+  if (wakeTarget?.kind === "monitoring") {
+    target.target = { kind: "monitoring" };
+    return;
+  }
+  if (wakeTarget?.kind === "agent" && typeof wakeTarget.agentId === "string") {
+    target.target = { kind: "agent", agentId: wakeTarget.agentId };
+  }
+}
+
+const HEARTBEAT_DEFERRAL_REASONS = new Set([
+  "session_busy",
+  "spacing_deferred",
+  "flood_deferred",
+  "root_unavailable",
+  "task_store_unavailable",
+]);
+
+const HEARTBEAT_CANCELLATION_REASONS = new Set([
+  "shutdown",
+  "target_removed",
+  "feature_disabled",
+  "maintenance",
+]);
+
 /** Project one internal EventBus payload to a strict content-free API shape. */
 export function projectActivityPayload(
   event: string,
@@ -247,6 +281,30 @@ export function projectActivityPayload(
       ...(typeof record.source === "string" ? { source: record.source } : {}),
       ...(errorName !== undefined ? { errorName } : {}),
     };
+  }
+
+  if (
+    event === "scheduler:heartbeat_wake_admitted"
+    || event === "scheduler:heartbeat_wake_deferred"
+    || event === "scheduler:heartbeat_wake_terminal"
+  ) {
+    const projected = copySafeScalars(record);
+    projectHeartbeatTarget(projected, record.target);
+    if (
+      event === "scheduler:heartbeat_wake_deferred"
+      && typeof record.reason === "string"
+      && HEARTBEAT_DEFERRAL_REASONS.has(record.reason)
+    ) {
+      projected.reason = record.reason;
+    }
+    if (
+      event === "scheduler:heartbeat_wake_terminal"
+      && typeof record.cancellationReason === "string"
+      && HEARTBEAT_CANCELLATION_REASONS.has(record.cancellationReason)
+    ) {
+      projected.cancellationReason = record.cancellationReason;
+    }
+    return projected;
   }
 
   const projected = copySafeScalars(record);

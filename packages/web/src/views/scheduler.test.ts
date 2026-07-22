@@ -122,9 +122,8 @@ function priv(el: IcSchedulerView) {
     _error: string;
     _activeTab: string;
     _executions: Array<{ executionId: string; jobId: string; status: string; deliveryStatus?: string; durationMs?: number }>;
-    _heartbeats: Array<{ checksRun: number; alertsRaised: number; timestamp: number }>;
     _heartbeatAlerts: Array<{ agentId: string; classification: string; reason: string; consecutiveErrors: number; backoffMs: number; timestamp: number }>;
-    _heartbeatDeliveries: Array<{ agentId: string; channelType: string; outcome: string; level: string; durationMs: number; timestamp: number }>;
+    _heartbeatWakeEvents: Array<{ phase: string; correlationId: string; status?: string; reason?: string; disposition?: string }>;
     _heartbeatEnabled: boolean;
     _heartbeatIntervalMs: number;
     _editorOpen: boolean;
@@ -726,25 +725,52 @@ describe("IcSchedulerView", () => {
     expect(priv(el)._executions.length).toBe(execBefore);
   });
 
-  it("23 - SSE heartbeat_delivered event adds delivery record", async () => {
+  it("23 - SSE heartbeat wake events retain one correlated lifecycle", async () => {
     const rpc = createSchedulerMockRpcClient();
     const mockDispatcher = createMockEventDispatcher();
     const el = await createElement({ rpcClient: rpc, eventDispatcher: mockDispatcher });
     await flush(el);
 
-    mockDispatcher._fire("scheduler:heartbeat_delivered", {
-      agentId: "default",
-      channelType: "telegram",
-      outcome: "delivered",
-      level: "ok",
-      durationMs: 250,
-      timestamp: Date.now(),
+    const target = { kind: "agent", agentId: "default" };
+    mockDispatcher._fire("scheduler:heartbeat_wake_admitted", {
+      correlationId: "heartbeat-1",
+      target,
+      lane: "normal",
+      retainedReason: "manual",
+      disposition: "new_occurrence",
+      timestamp: 1,
+    });
+    mockDispatcher._fire("scheduler:heartbeat_wake_deferred", {
+      correlationId: "heartbeat-1",
+      target,
+      lane: "normal",
+      reason: "session_busy",
+      nextEligibleAtMs: 3,
+      timestamp: 2,
+    });
+    mockDispatcher._fire("scheduler:heartbeat_wake_terminal", {
+      correlationId: "heartbeat-1",
+      target,
+      lane: "normal",
+      retainedReason: "manual",
+      status: "settled",
+      eventEntryCount: 0,
+      durationMs: 4,
+      timestamp: 5,
     });
     await (el as any).updateComplete;
 
-    expect(priv(el)._heartbeatDeliveries).toHaveLength(1);
-    expect(priv(el)._heartbeatDeliveries[0].agentId).toBe("default");
-    expect(priv(el)._heartbeatDeliveries[0].outcome).toBe("delivered");
+    expect(priv(el)._heartbeatWakeEvents).toHaveLength(3);
+    expect(priv(el)._heartbeatWakeEvents.map((event) => event.phase)).toEqual([
+      "terminal",
+      "deferred",
+      "admitted",
+    ]);
+    expect(priv(el)._heartbeatWakeEvents.map((event) => event.correlationId)).toEqual([
+      "heartbeat-1",
+      "heartbeat-1",
+      "heartbeat-1",
+    ]);
   });
 
   it("24 - loads heartbeat config on connect", async () => {

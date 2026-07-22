@@ -274,7 +274,7 @@ Channel registration, sender blocking, command queuing, streaming delivery, typi
 
 </Accordion>
 
-<Accordion title="InfraEvents (55 events)">
+<Accordion title="InfraEvents">
 
 Approval gates, config patches, plugin lifecycle, hook execution, auth token rotation, diagnostics, media file extraction, scheduler (cron, heartbeat, tasks), process metrics, observability admin, agent hot-add/remove, MCP server connection lifecycle, notifications, background task lifecycle, system lifecycle, secret management, security warnings, and lifecycle reaction events.
 
@@ -315,13 +315,17 @@ Approval gates, config patches, plugin lifecycle, hook execution, auth token rot
 | `reaction:phase_changed` | messageId, channelType, channelId, chatId, phase, emoji, previousPhase, timestamp |
 | `reaction:stall_detected` | messageId, channelType, channelId, chatId, phase, severity, stallMs, timestamp |
 | `reaction:terminal` | messageId, channelType, channelId, chatId, phase, emoji, timestamp |
+| `scheduler:cron_execution_started` | executionId, bootId, jobId, agentId, scheduledForMs, trigger, workKind, rootRunId, startedAtMs |
+| `scheduler:cron_execution_terminal` | executionId, bootId, jobId, agentId, scheduledForMs, trigger, workKind, terminalAtMs, durationMs, outcomeKind, executionStatus, deliveryStatus, continuationStatus, queueDisposition, deliveredChunks, failedChunks, ambiguousChunks, errorKind |
+| `scheduler:cron_model_drift` | executionId, previousExecutionId, jobId, agentId, previousModelResolved, modelResolved, previousModelResolutionSource, modelResolutionSource, timestamp, workKind, action |
+| `scheduler:cron_ownership_reconciliation` | agentId, durationMs, timestamp, status, recoveredBeforeStart, ownerLostAfterStart, settledFromTerminal, retainedCurrentBoot, errorCode, errorKind |
+| `scheduler:cron_store_reset` | agentId, operationId, target, beforeDigests, afterDigests, reactivated, timestamp |
 | `scheduler:heartbeat_alert` | agentId, consecutiveErrors, classification, reason, backoffMs, timestamp |
-| `scheduler:heartbeat_check` | checksRun, alertsRaised, timestamp |
-| `scheduler:heartbeat_delivered` | agentId, channelType, channelId, chatId, level, outcome, reason, durationMs, timestamp |
-| `scheduler:job_completed` | jobId, jobName, agentId, durationMs, success, error, timestamp |
-| `scheduler:job_result` | jobId, jobName, agentId, result, success, deliveryTarget, timestamp, payloadKind, sessionStrategy, maxHistoryTurns, cronJobModel, onComplete |
-| `scheduler:job_started` | jobId, jobName, agentId, timestamp |
+| `scheduler:heartbeat_wake_admitted` | correlationId, target, lane, retainedReason, disposition, timestamp |
+| `scheduler:heartbeat_wake_deferred` | correlationId, target, lane, reason, nextEligibleAtMs, errorKind, timestamp |
+| `scheduler:heartbeat_wake_terminal` | correlationId, target, lane, retainedReason, status, cancellationReason, eventEntryCount, durationMs, errorKind, timestamp |
 | `scheduler:job_suspended` | jobId, jobName, agentId, consecutiveErrors, lastError, timestamp, deliveryTarget |
+| `scheduler:wake_gate` | jobId, agentId, wake, durationMs, toolCalls, estTurnsSaved, failedOpen, timestamp |
 | `secret:accessed` | secretName, agentId, outcome, timestamp |
 | `secret:modified` | secretName, action, timestamp |
 | `security:warn` | category, agentId, message, timestamp |

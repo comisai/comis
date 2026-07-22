@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
+import type { ErrorKind } from "@comis/core";
+
 /**
  * Heartbeat domain types.
  *
- * Interfaces for heartbeat agent state, alert events, and
- * delivery events used in the scheduler and agent detail views.
+ * Interfaces for heartbeat agent state, correlated wake lifecycle events,
+ * and alert events used in the scheduler and agent detail views.
  */
 
 /** Per-agent heartbeat state DTO (from heartbeat.states RPC) */
@@ -30,15 +32,62 @@ export interface HeartbeatAlertEvent {
   readonly timestamp: number;
 }
 
-/** Heartbeat delivery event payload (scheduler:heartbeat_delivered SSE) */
-export interface HeartbeatDeliveredEvent {
-  readonly agentId: string;
-  readonly channelType: string;
-  readonly channelId: string;
-  readonly chatId: string;
-  readonly level: "ok" | "alert" | "critical";
-  readonly outcome: "delivered" | "skipped" | "failed";
-  readonly reason?: string;
+export type HeartbeatWakeTarget =
+  | { readonly kind: "agent"; readonly agentId: string }
+  | { readonly kind: "monitoring" };
+
+export type HeartbeatWakeLane = "normal" | "task";
+export type HeartbeatWakeReason =
+  | "interval"
+  | "manual"
+  | "hook"
+  | "wake"
+  | "exec-event"
+  | "cron"
+  | "task";
+
+/** Heartbeat admission event payload (scheduler:heartbeat_wake_admitted SSE). */
+export interface HeartbeatWakeAdmittedEvent {
+  readonly correlationId: string;
+  readonly target: HeartbeatWakeTarget;
+  readonly lane: HeartbeatWakeLane;
+  readonly retainedReason: HeartbeatWakeReason;
+  readonly disposition: "new_occurrence" | "occurrence_upgraded" | "coalesced";
+  readonly timestamp: number;
+}
+
+/** Heartbeat deferral event payload (scheduler:heartbeat_wake_deferred SSE). */
+export interface HeartbeatWakeDeferredEvent {
+  readonly correlationId: string;
+  readonly target: HeartbeatWakeTarget;
+  readonly lane: HeartbeatWakeLane;
+  readonly reason:
+    | "session_busy"
+    | "spacing_deferred"
+    | "flood_deferred"
+    | "root_unavailable"
+    | "task_store_unavailable";
+  readonly nextEligibleAtMs: number;
+  readonly errorKind?: ErrorKind;
+  readonly timestamp: number;
+}
+
+/** Heartbeat terminal event payload (scheduler:heartbeat_wake_terminal SSE). */
+export interface HeartbeatWakeTerminalEvent {
+  readonly correlationId: string;
+  readonly target: HeartbeatWakeTarget;
+  readonly lane: HeartbeatWakeLane;
+  readonly retainedReason: HeartbeatWakeReason;
+  readonly status:
+    | "settled"
+    | "skipped"
+    | "aborted"
+    | "unsettled"
+    | "failed_before_side_effect"
+    | "cancelled_before_start";
+  readonly cancellationReason?: "shutdown" | "target_removed" | "feature_disabled" | "maintenance";
+  readonly eventEntryCount: number;
   readonly durationMs: number;
+  readonly errorKind?: ErrorKind;
   readonly timestamp: number;
 }

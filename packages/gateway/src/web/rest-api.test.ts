@@ -673,4 +673,45 @@ describe("subscribeActivityBuffer", () => {
 
     expect(buffer.size).toBe(0);
   });
+
+  it("captures every correlated heartbeat wake lifecycle event", () => {
+    const eventBus = new TypedEventBus();
+    const buffer = new ActivityRingBuffer(100);
+    const unsubscribe = subscribeActivityBuffer(eventBus, buffer);
+    const target = { kind: "monitoring" as const };
+
+    eventBus.emit("scheduler:heartbeat_wake_admitted", {
+      correlationId: "heartbeat-1",
+      target,
+      lane: "normal",
+      retainedReason: "manual",
+      disposition: "new_occurrence",
+      timestamp: 1,
+    });
+    eventBus.emit("scheduler:heartbeat_wake_deferred", {
+      correlationId: "heartbeat-1",
+      target,
+      lane: "normal",
+      reason: "spacing_deferred",
+      nextEligibleAtMs: 3,
+      timestamp: 2,
+    });
+    eventBus.emit("scheduler:heartbeat_wake_terminal", {
+      correlationId: "heartbeat-1",
+      target,
+      lane: "normal",
+      retainedReason: "manual",
+      status: "settled",
+      eventEntryCount: 0,
+      durationMs: 4,
+      timestamp: 5,
+    });
+
+    expect(buffer.getRecent(3).map((entry) => entry.event)).toEqual([
+      "scheduler:heartbeat_wake_admitted",
+      "scheduler:heartbeat_wake_deferred",
+      "scheduler:heartbeat_wake_terminal",
+    ]);
+    unsubscribe();
+  });
 });

@@ -444,8 +444,8 @@ describe("file-size — per-file caps", () => {
     // heartbeat.states/trigger moved out). The remaining residual size is
     // dominated by 2 tab renderers (cron jobs, heartbeat), the embedded
     // ic-cron-editor overlay wiring (preserved verbatim here), SSE event
-    // handling for scheduler:job_started/job_completed/
-    // heartbeat_delivered/heartbeat_alert, optimistic-update edit/delete
+    // handling for correlated cron and heartbeat wake lifecycle events plus
+    // heartbeat_alert, optimistic-update edit/delete
     // flows, and detailed per-job/per-heartbeat row templates with
     // relative-time formatting.
     "packages/web/src/views/scheduler.ts",
@@ -649,7 +649,7 @@ describe("file-size — per-file caps", () => {
     // daemon-config → AgentDetail _mapToAgentDetail() mapper with 7 nested
     // optional shape branches, the SseController consumer driving debounced
     // reload from observability:token_usage +
-    // scheduler:heartbeat_delivered events, the suspend/resume + delete
+    // scheduler:heartbeat_wake_terminal events, the suspend/resume + delete
     // action flow with ic-confirm-dialog lifecycle + IcToast surfacing, and
     // the heartbeat status renderer with backoff / consecutive-error /
     // running-tick state coalescing — all tightly DOM-coupled.

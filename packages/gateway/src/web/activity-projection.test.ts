@@ -208,4 +208,64 @@ describe("activity event projection", () => {
     });
     expect(JSON.stringify({ started, completed })).not.toContain(PRIVATE_TEXT);
   });
+
+  it("retains correlated heartbeat wake lifecycle fields without forwarding free text", () => {
+    const admitted = projectActivityPayload("scheduler:heartbeat_wake_admitted", {
+      correlationId: "heartbeat-1",
+      target: { kind: "agent", agentId: "agent_a" },
+      lane: "normal",
+      retainedReason: "manual",
+      disposition: "new_occurrence",
+      timestamp: 10,
+      privateText: PRIVATE_TEXT,
+    });
+    const deferred = projectActivityPayload("scheduler:heartbeat_wake_deferred", {
+      correlationId: "heartbeat-1",
+      target: { kind: "agent", agentId: "agent_a" },
+      lane: "normal",
+      reason: "session_busy",
+      nextEligibleAtMs: 20,
+      timestamp: 11,
+      privateText: PRIVATE_TEXT,
+    });
+    const terminal = projectActivityPayload("scheduler:heartbeat_wake_terminal", {
+      correlationId: "heartbeat-1",
+      target: { kind: "agent", agentId: "agent_a" },
+      lane: "normal",
+      retainedReason: "manual",
+      status: "settled",
+      eventEntryCount: 2,
+      durationMs: 25,
+      timestamp: 35,
+      privateText: PRIVATE_TEXT,
+    });
+
+    expect(admitted).toEqual({
+      correlationId: "heartbeat-1",
+      lane: "normal",
+      retainedReason: "manual",
+      disposition: "new_occurrence",
+      timestamp: 10,
+      target: { kind: "agent", agentId: "agent_a" },
+    });
+    expect(deferred).toEqual({
+      correlationId: "heartbeat-1",
+      lane: "normal",
+      nextEligibleAtMs: 20,
+      timestamp: 11,
+      target: { kind: "agent", agentId: "agent_a" },
+      reason: "session_busy",
+    });
+    expect(terminal).toEqual({
+      correlationId: "heartbeat-1",
+      lane: "normal",
+      retainedReason: "manual",
+      status: "settled",
+      eventEntryCount: 2,
+      durationMs: 25,
+      timestamp: 35,
+      target: { kind: "agent", agentId: "agent_a" },
+    });
+    expect(JSON.stringify({ admitted, deferred, terminal })).not.toContain(PRIVATE_TEXT);
+  });
 });

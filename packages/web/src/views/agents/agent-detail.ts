@@ -2,7 +2,12 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles, focusStyles } from "../../styles/shared.js";
-import type { AgentDetail, AgentBilling, HeartbeatAgentStateDto } from "../../api/types/index.js";
+import type {
+  AgentDetail,
+  AgentBilling,
+  HeartbeatAgentStateDto,
+  HeartbeatWakeTerminalEvent,
+} from "../../api/types/index.js";
 import type { ApiClient } from "../../api/api-client.js";
 import type { RpcClient } from "../../api/rpc-client.js";
 import type { EventDispatcher } from "../../state/event-dispatcher.js";
@@ -431,7 +436,12 @@ export class IcAgentDetail extends LitElement {
     if (!this.eventDispatcher || this._sse) return;
     this._sse = new SseController(this, this.eventDispatcher, {
       "observability:token_usage": () => { this._scheduleReload(); },
-      "scheduler:heartbeat_delivered": () => { this._scheduleReload(); },
+      "scheduler:heartbeat_wake_terminal": (data) => {
+        const event = data as Partial<HeartbeatWakeTerminalEvent>;
+        if (event.target?.kind === "agent" && event.target.agentId === this.agentId) {
+          this._scheduleReload();
+        }
+      },
     });
   }
 
