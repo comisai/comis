@@ -49,6 +49,7 @@ import { assertNotAgentOrigin } from "./shared/assert-not-agent-origin.js";
 import { emitCapabilityAudit } from "./shared/emit-capability-audit.js";
 
 import { createCronHandlers } from "./cron-handlers.js";
+import { createTaskHandlers } from "./task-handlers.js";
 import { createMemoryHandlers } from "./memory-handlers.js";
 // memory.ask extracted from memory-handlers.ts for the file-size cap — composed
 // HERE (handler files never import each other; daemon architecture invariant).
@@ -159,17 +160,15 @@ export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: st
 // Deny-by-origin: the authoritative admin-method set.
 // ---------------------------------------------------------------------------
 //
-// Derived ONCE from the contract registry (`scopes.includes("admin")`) — the
-// single source of truth for the ~146 admin-scoped control-plane methods. This
-// is drift-proof: a NEW admin contract is automatically covered by the
-// chokepoint below; there is NO hand-maintained method list to fall out of
-// sync. The chokepoint (in the dispatch closure) calls `assertNotAgentOrigin`
-// for exactly the methods in this set, so an agent-origin (`_agentId`-bearing)
-// call can never reach an admin handler, INDEPENDENT of its ALS `_trustLevel`.
-// Non-admin methods are NOT in this set, so an agent's own `_agentId` rides
-// them untouched for self-scoping.
+// Derived once from the contract registry. Admin-only methods are control-plane
+// operations and pass through the origin guard. A dual-route method is excluded:
+// its RPC route is intentionally agent-reachable and its handler owns the exact
+// caller-vs-operator authorization policy. This keeps route declaration and
+// deny-by-origin behavior aligned without a hand-maintained method list.
 const ADMIN_METHODS: ReadonlySet<string> = new Set(
-  API_CONTRACTS_ORDERED.filter((c) => c.scopes.includes("admin")).map((c) => c.method),
+  API_CONTRACTS_ORDERED
+    .filter((contract) => contract.scopes.includes("admin") && !contract.scopes.includes("rpc"))
+    .map((contract) => contract.method),
 );
 
 /**
@@ -201,6 +200,17 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
   // Build handler maps from each domain factory
   const handlers: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
     ...createCronHandlers(deps),
+    ...createTaskHandlers({
+      defaultAgentId: deps.defaultAgentId,
+      tenantId: deps.tenantId,
+      tasksEnabled: () => deps.container.config.scheduler.tasks.enabled,
+      followupTaskStores: deps.followupTaskStores,
+      taskMaintenanceControllers: deps.taskMaintenanceControllers,
+      requestTaskRescan: deps.requestTaskRescan,
+      schedulerNowMs: deps.schedulerNowMs,
+      eventBus: deps.container.eventBus,
+      logger: deps.logger,
+    }),
     ...createMemoryHandlers(deps),
     ...bindMemoryAskHandler(deps),
     // context.* operator-browse RPCs (conversations + tree). Shares the
@@ -513,7 +523,10 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
           adapter,
           target.channelId,
           text,
-          { origin: "mcp.oauth_login.headless_completed" },
+          {
+            completionMode: "deferred_retry",
+            origin: "mcp.oauth_login.headless_completed",
+          },
         );
         if (!deliveryResult.ok) throw deliveryResult.error;
       },
@@ -538,7 +551,6 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
     // Heartbeat management handlers — consumes OrchestratorApiDeps.
     ...createHeartbeatHandlers({
       ...deps,
-      perAgentRunner: deps.perAgentRunner,
       agents: deps.agents,
       persistDeps: deps.container ? {
         container: deps.container,

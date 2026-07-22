@@ -114,7 +114,10 @@ vi.mock("./browser-handlers.js", () => ({
 
 vi.mock("./subagent-handlers.js", () => ({
   createSubagentHandlers: vi.fn(() => ({
-    "subagent.run": vi.fn(async () => ({ result: "" })),
+    "subagent.list": vi.fn(async () => ({ runs: [], total: 0 })),
+    "subagent.wait": vi.fn(async () => ({ results: [] })),
+    "subagent.kill": vi.fn(async () => ({ killed: true, runId: "run-1" })),
+    "subagent.steer": vi.fn(async () => ({ status: "steered_inject", runId: "run-1" })),
   })),
 }));
 
@@ -554,7 +557,7 @@ describe("createRpcDispatch", () => {
       "image.analyze",
       "config.get",
       "browser.navigate",
-      "subagent.run",
+      "subagent.list",
       "agent.list",
       "obs.diagnostics",
       "model.list",
@@ -816,6 +819,10 @@ describe("createRpcDispatch", () => {
     "session.list",
     "session.compact",
     "session.reset",
+    "subagent.list",
+    "subagent.wait",
+    "subagent.kill",
+    "subagent.steer",
   ];
 
   it("an agent-origin call to its OWN orch-gated method (with the cap held) REACHES the handler, not a deny-by-origin throw", async () => {
@@ -1206,7 +1213,7 @@ describe("createRpcDispatch — chokepoint deny-catch: never-hang escalate + bre
         config: { providers: { entries: {} }, tenantId: "tenant-a" },
       },
       resolveRootRunId: (_agentId: string, key: { tenantId: string; userId: string; channelId: string }) =>
-        `root-session-${key.tenantId}:${key.userId}:${key.channelId}`,
+        ({ ok: true, value: `root-session-${key.tenantId}:${key.userId}:${key.channelId}` }),
       denialBreaker,
       evictRegistry,
       escalate,
@@ -1604,7 +1611,7 @@ describe("createRpcDispatch — chokepoint effectiveMode: evict-mid-run demote +
         config: { providers: { entries: {} }, tenantId: "tenant-a" },
       },
       resolveRootRunId: (_agentId: string, key: { tenantId: string; userId: string; channelId: string }) =>
-        `root-session-${key.tenantId}:${key.userId}:${key.channelId}`,
+        ({ ok: true, value: `root-session-${key.tenantId}:${key.userId}:${key.channelId}` }),
       denialBreaker,
       evictRegistry,
       escalate,

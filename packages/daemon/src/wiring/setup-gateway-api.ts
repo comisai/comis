@@ -7,17 +7,9 @@
  * requires only adding a contract entry to the registry — no edit to
  * this file is needed.
  *
- * Nested-loop pattern: the outer loop iterates contracts; the inner loop
- * iterates each contract's `scopes`. Today every contract has
- * `scopes.length === 1` (verified by `sessions.test.ts`). The nested loop
- * nonetheless supports future multi-scope contracts (e.g., a method
- * exposed at both rpc AND admin scopes simultaneously) without requiring
- * this dispatcher to change.
- *
- * The cron.add inline transformer that previously lived here has been
- * folded into cron-handlers.ts. The handler body now normalizes the WEB
- * on-wire shape (nested `schedule` + `message`) into the flat fields used
- * by buildCronSchedule. No special-case registrations remain.
+ * Each contract registers once with one required scope or an any-of scope
+ * set. Parameters are stripped of internal fields before trusted gateway
+ * authority and method capability metadata are injected.
  *
  * Extracted from setup-gateway.ts.
  * @module
@@ -30,7 +22,7 @@ import {
   type AppContainer,
 } from "@comis/core";
 import type { RpcCall } from "@comis/skills/platform-tools";
-import type { DynamicMethodRouter } from "@comis/gateway";
+import { checkScope, type DynamicMethodRouter } from "@comis/gateway";
 
 // ---------------------------------------------------------------------------
 // Deps type
@@ -69,19 +61,14 @@ export interface RpcMethodDeps {
  * architecture test (`test/architecture/api-contracts-bidirectional.test.ts`)
  * catches misalignment between registry and handlers.
  *
- * Multi-scope handling: every contract today declares exactly one scope
- * (verified by `sessions.test.ts`). The nested loop iterates `c.scopes` so
- * that future contracts authored with multiple scopes (e.g., the same
- * method available at both rpc + admin) work automatically.
+ * Dual-route contracts receive an any-of scope set. The authenticated
+ * request context determines whether the handler receives admin authority.
  */
 export function registerRpcMethods(deps: RpcMethodDeps): void {
   const { dynamicRouter, rpcCall } = deps;
 
-  // Outer loop iterates contracts; inner loop iterates each contract's
-  // scopes. For single-scope contracts (the common case) the inner loop
-  // runs once and registers the method under that scope. For multi-scope
-  // contracts (none today; future-proof) the method registers separately
-  // under each scope.
+  // Each contract registers exactly once. A dual-route contract supplies an
+  // any-of scope set to the router, avoiding duplicate method registration.
   // Strip INTERNAL_FIELD_NAMES from external
   // WS/REST caller params at BOTH branches before dispatch. External callers
   // must never be able to forge an `_X` control field; in particular, after
@@ -108,26 +95,21 @@ export function registerRpcMethods(deps: RpcMethodDeps): void {
     const capInject: { _capabilities?: string[] } = requiredCap?.startsWith("orch:")
       ? { _capabilities: [requiredCap] }
       : {};
-    for (const scope of c.scopes) {
-      if (scope === "admin") {
-        dynamicRouter.registerMethod(
-          c.method,
-          "admin",
-          async (params: Record<string, unknown> | undefined) =>
-            rpcCall(c.method, {
-              ...stripInternalFields(params ?? {}),
-              _trustLevel: "admin",
-              ...capInject,
-            }),
-        );
-      } else {
-        dynamicRouter.registerMethod(
-          c.method,
-          "rpc",
-          async (params: Record<string, unknown> | undefined) =>
-            rpcCall(c.method, { ...stripInternalFields(params ?? {}), ...capInject }),
-        );
-      }
-    }
+    const routeScopes = c.scopes.length === 1 ? c.scopes[0]! : c.scopes;
+    dynamicRouter.registerMethod(
+      c.method,
+      routeScopes,
+      async (params: Record<string, unknown> | undefined, context) => {
+        const adminOnly = c.scopes.length === 1 && c.scopes[0] === "admin";
+        const authenticatedAsAdmin = c.scopes.includes("admin")
+          && context !== undefined
+          && checkScope(context.scopes, "admin");
+        return rpcCall(c.method, {
+          ...stripInternalFields(params ?? {}),
+          ...(adminOnly || authenticatedAsAdmin ? { _trustLevel: "admin" } : {}),
+          ...capInject,
+        });
+      },
+    );
   }
 }

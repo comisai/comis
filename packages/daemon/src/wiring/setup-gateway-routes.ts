@@ -211,7 +211,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
         result,
         lifecycle: authoritativeAbortReason !== undefined
           ? classifyExecutionAbortReason(authoritativeAbortReason)
-          : classifyExecutionFinishReason(result.finishReason),
+          : classifyExecutionFinishReason(result),
       };
     } finally {
       activeForTrace.delete(active);
@@ -366,7 +366,7 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
                 undefined,
                 execAgentId,
               );
-              const outcome = classifyExecutionFinishReason(executionResult.finishReason);
+              const outcome = classifyExecutionFinishReason(executionResult);
               if (outcome.status !== "success") {
                 throw new Error(`Webhook agent execution ended with ${executionResult.finishReason}`);
               }

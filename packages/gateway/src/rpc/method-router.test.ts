@@ -151,6 +151,30 @@ describe("createDynamicMethodRouter", () => {
     expect(response!.error!.message).toContain("Insufficient scope");
   });
 
+  it("accepts any declared route scope while rejecting unrelated credentials", async () => {
+    const router = createDynamicMethodRouter();
+    const handler = vi.fn(() => ({ ok: true }));
+    router.registerMethod("subagent.list", ["rpc", "admin"], handler);
+
+    const rpcResponse = await router.server.receive(
+      { jsonrpc: "2.0", method: "subagent.list", params: {}, id: 21 },
+      RPC_CTX,
+    );
+    const adminResponse = await router.server.receive(
+      { jsonrpc: "2.0", method: "subagent.list", params: {}, id: 22 },
+      ADMIN_CTX,
+    );
+    const deniedResponse = await router.server.receive(
+      { jsonrpc: "2.0", method: "subagent.list", params: {}, id: 23 },
+      { clientId: "ws-only", scopes: ["ws"] },
+    );
+
+    expect(rpcResponse?.result).toEqual({ ok: true });
+    expect(adminResponse?.result).toEqual({ ok: true });
+    expect(deniedResponse?.error?.message).toContain("Insufficient scope");
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
   it("hasMethod returns true for registered, false for unregistered", () => {
     const router = createDynamicMethodRouter();
 

@@ -72,7 +72,7 @@ const CORE_METHODS: ReadonlySet<string> = new Set<string>([
  */
 export interface DynamicMethodRouter {
   /** Register a new RPC method with scope enforcement. */
-  registerMethod(name: string, scope: string, handler: RpcMethodHandler): void;
+  registerMethod(name: string, scope: string | readonly string[], handler: RpcMethodHandler): void;
   /** Check if a method is registered. */
   hasMethod(name: string): boolean;
   /** Get the underlying JSONRPCServer for receive() calls. */
@@ -106,7 +106,7 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
   // handler's free-text message and stack directly to stderr. The trace wrapper
   // below owns structured failure logging; suppress the duplicate raw sink.
   const server = new JSONRPCServer<RpcContext>({ errorListener: () => undefined });
-  const registeredScopes = new Map<string, string>();
+  const registeredScopes = new Map<string, string | readonly string[]>();
 
   /**
    * Classify an RPC method error for structured logging.
@@ -267,7 +267,11 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
     }
   }
 
-  function registerMethod(name: string, scope: string, handler: RpcMethodHandler): void {
+  function registerMethod(
+    name: string,
+    scope: string | readonly string[],
+    handler: RpcMethodHandler,
+  ): void {
     // Validate namespace for non-core methods
     if (!CORE_METHODS.has(name) && !name.includes(".")) {
       throw new Error(`Method name must use namespace prefix (e.g., 'cron.list'), got: ${name}`);
@@ -278,14 +282,20 @@ export function createDynamicMethodRouter(initialMethods?: RpcMethodMap, logger?
       throw new Error(`Method '${name}' is already registered`);
     }
 
+    const acceptedScopes = typeof scope === "string" ? [scope] : [...scope];
+    if (acceptedScopes.length === 0) {
+      throw new Error(`Method '${name}' must declare at least one scope`);
+    }
+
     registeredScopes.set(name, scope);
 
     const traced = wrapWithTrace(name, handler);
     server.addMethod(name, (params, context) => {
-      if (!checkScope(context.scopes, scope)) {
-        throw new JSONRPCErrorException(`Insufficient scope: requires '${scope}'`, -32603, {
+      if (!acceptedScopes.some((requiredScope) => checkScope(context.scopes, requiredScope))) {
+        const requirement = acceptedScopes.join("' or '");
+        throw new JSONRPCErrorException(`Insufficient scope: requires '${requirement}'`, -32603, {
           clientId: context.clientId,
-          required: scope,
+          required: acceptedScopes,
         });
       }
       return traced(params, context);
