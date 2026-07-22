@@ -1,544 +1,497 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
-/**
- * Cron RPC handler module.
- * Handles all cron-related and scheduler RPC methods:
- *   cron.add, cron.list, cron.update, cron.remove,
- *   cron.status, cron.runs, cron.run, scheduler.wake
- *
- * Handlers use computed-property keys (`[<Contract>.method]:`) so the
- * bidirectional 1:1 architecture test resolves them to the registry.
- * Per-method pipeline: bespoke pre-Zod guards FIRST (using rawParams reads —
- * preserves user-friendly error messages matching existing handler-test
- * assertions) → stripInternalFields → request.parse → business logic →
- * dev-mode response.parse.
- *
- * The `cron.add` body normalizes the WEB shape (nested
- * `schedule.{kind,expr,tz,everyMs,at}` + `message`) into the legacy flat
- * shape (`schedule_kind`/`schedule_every_ms`/etc.) before calling
- * `buildCronSchedule`. The flat path is exercised by existing tests.
- *
- * @module
- */
-
-import { sanitizeToolOutput } from "@comis/agent";
+// @allow-throw: RPC handlers throw typed boundary errors that rpc-dispatch maps to JSON-RPC errors.
+/** Strict cron authoring, inventory, history, and manual-run RPC handlers. */
+import { randomUUID } from "node:crypto";
 import {
   CronAddContract,
   CronListContract,
-  CronUpdateContract,
   CronRemoveContract,
-  CronStatusContract,
-  CronRunsContract,
+  CronResetContract,
   CronRunContract,
+  CronRunsContract,
+  CronStatusContract,
+  CronUpdateContract,
   SchedulerWakeContract,
-  stripInternalFields,
   requireCapability,
+  stripInternalFields,
   systemGetEnv,
-  systemNowMs,
+  type ClockPort,
 } from "@comis/core";
-import { buildCronSchedule } from "../wiring/daemon-utils.js";
-import type { CronSchedule } from "@comis/scheduler";
-import { CronDeliveryTargetSchema } from "@comis/scheduler";
-import { randomUUID } from "node:crypto";
-
+import {
+  CronDeliveryTargetSchema,
+  CronPersistedJobSchema,
+  computeNextRunAtMs,
+  projectCronTerminalOutcome,
+  resolveCronAuthoringSchedule,
+  type CronAuthorablePayload,
+  type CronAuthoringSchedule,
+  type CronDeliveryTarget,
+  type CronExecutionGroup,
+  type CronJob,
+  type CronJobLifecycle,
+  type CronPersistedSchedule,
+} from "@comis/scheduler";
+import type { Result } from "@comis/shared";
+import { AuthorizationError, PreconditionError, ValidationError } from "./errors.js";
+import type { OrchestratorApiDeps } from "./types.js";
 import type { RpcHandler } from "./types.js";
 
-// ---------------------------------------------------------------------------
-// Dev-mode response parse helper
-// ---------------------------------------------------------------------------
-
-/**
- * Run `contract.response.parse(result)` only when NODE_ENV !== "production".
- * Daemon side is the trust boundary; in production the trust check is
- * the in-handler logic, not the contract parse.
- */
 const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+export type CronHandlerDeps = OrchestratorApiDeps & { clock?: ClockPort };
 
-// Single source of truth: OrchestratorApiDeps (shared with graph, heartbeat,
-// subagent handlers).
-import type { OrchestratorApiDeps as CronHandlerDeps } from "./types.js";
-export type { CronHandlerDeps };
+type CronMutationError = { errorKind: string; message: string };
 
-type CronDeliveryTarget = {
-  channelId: string;
-  userId: string;
-  tenantId: string;
-  channelType?: string;
-};
+function unwrap<T>(result: Result<T, CronMutationError>): T {
+  if (result.ok) return result.value;
+  if (result.error.errorKind === "validation") throw new ValidationError(result.error.message);
+  throw new PreconditionError(result.error.message);
+}
 
-function parseDeliveryTarget(value: unknown): CronDeliveryTarget {
+function parseTarget(value: unknown): CronDeliveryTarget {
   const parsed = CronDeliveryTargetSchema.safeParse(value);
-  if (!parsed.success) {
-    throw new Error(
-      `Invalid deliveryTarget: ${parsed.error.issues
-        .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
-        .join("; ")}. Required: channelId, userId, tenantId (channelType optional).`,
-    );
-  }
+  if (!parsed.success) throw new ValidationError("Invalid exact cron delivery target");
   return parsed.data;
 }
 
-function sameDeliveryTarget(a: CronDeliveryTarget, b: CronDeliveryTarget): boolean {
-  return a.channelId === b.channelId
-    && a.userId === b.userId
-    && a.tenantId === b.tenantId
-    && a.channelType === b.channelType;
+function targetsEqual(left: CronDeliveryTarget, right: CronDeliveryTarget): boolean {
+  const leftEndpoint = left.destinationEndpoint;
+  const rightEndpoint = right.destinationEndpoint;
+  return left.conversation.conversationRef === right.conversation.conversationRef
+    && leftEndpoint.channelType === rightEndpoint.channelType
+    && leftEndpoint.channelInstanceId === rightEndpoint.channelInstanceId
+    && leftEndpoint.conversationId === rightEndpoint.conversationId
+    && leftEndpoint.threadId === rightEndpoint.threadId
+    && leftEndpoint.conversationKind === rightEndpoint.conversationKind;
 }
 
-/** Resolve the immutable route of an agent-authored cron mutation. */
-function resolveAgentDeliveryTarget(
+function resolveAgentId(
+  deps: CronHandlerDeps,
   rawParams: Record<string, unknown>,
-): CronDeliveryTarget | undefined {
-  if (typeof rawParams._agentId !== "string") return undefined;
-  if (rawParams._deliveryTarget === undefined) {
-    throw new Error("Agent-authored cron mutations require a trusted deliveryTarget");
+  requestedAgentId?: string,
+): string {
+  const callerAgentId = typeof rawParams._agentId === "string" ? rawParams._agentId : undefined;
+  const selected = requestedAgentId ?? callerAgentId ?? deps.defaultAgentId;
+  if (
+    requestedAgentId !== undefined
+    && requestedAgentId !== callerAgentId
+    && rawParams._trustLevel !== "admin"
+  ) {
+    throw new AuthorizationError("Admin access required for cross-agent cron selection");
   }
-  const trusted = parseDeliveryTarget(rawParams._deliveryTarget);
-  if (rawParams.deliveryTarget !== undefined) {
-    if (rawParams.deliveryTarget === null) {
-      throw new Error("Agent-authored cron mutations cannot clear the trusted deliveryTarget");
-    }
-    const requested = parseDeliveryTarget(rawParams.deliveryTarget);
-    if (!sameDeliveryTarget(trusted, requested)) {
-      throw new Error("Agent-authored cron deliveryTarget must exactly match the trusted request route");
-    }
+  return selected;
+}
+
+function resolveTarget(
+  rawParams: Record<string, unknown>,
+  agentId: string,
+  requested: CronDeliveryTarget | null | undefined,
+): CronDeliveryTarget | undefined {
+  const callerAgentId = typeof rawParams._agentId === "string" ? rawParams._agentId : undefined;
+  if (callerAgentId !== agentId) return requested ?? undefined;
+  const trusted = rawParams._deliveryTarget === undefined
+    ? undefined
+    : parseTarget(rawParams._deliveryTarget);
+  if (requested === null) {
+    throw new AuthorizationError("Agent-authored cron mutations cannot clear the trusted request route");
+  }
+  if (requested !== undefined && (trusted === undefined || !targetsEqual(trusted, requested))) {
+    throw new AuthorizationError("Agent-authored cron delivery target must exactly match the trusted request route");
   }
   return trusted;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+function getJobs(scheduler: ReturnType<CronHandlerDeps["getAgentCronScheduler"]>): readonly CronJob[] {
+  return unwrap(scheduler.getJobs());
+}
 
-/**
- * Resolve a job by its human-readable name.
- * Throws if no match or if multiple jobs share the same name.
- */
-function resolveJobByName(
-  scheduler: { getJobs(): Array<{ id: string; name: string }> },
-  jobName: string | undefined,
-): { id: string; name: string } {
-  if (!jobName) {
-    // Echoing the unmatched var produced "Job not found: undefined" when a
-    // caller used the wrong param key (observed in a live run).
-    throw new Error("Missing required parameter: jobName (resolve names via cron.list)");
+function findJob(
+  scheduler: ReturnType<CronHandlerDeps["getAgentCronScheduler"]>,
+  params: { jobId?: string; jobName?: string },
+): CronJob {
+  const jobs = getJobs(scheduler);
+  if (params.jobId !== undefined) {
+    const match = jobs.find((candidate) => candidate.id === params.jobId);
+    if (match === undefined) throw new ValidationError(`Cron job not found: ${params.jobId}`);
+    return match;
   }
-  const matches = scheduler.getJobs().filter((j) => j.name === jobName);
-  if (matches.length === 0) throw new Error(`Job not found: ${jobName}`);
-  if (matches.length > 1)
-    throw new Error(
-      `Ambiguous job name "${jobName}": ${matches.length} jobs share this name. Use cron.list to see all jobs.`,
-    );
+  if (params.jobName === undefined) {
+    throw new ValidationError("Missing required parameter: jobId or jobName");
+  }
+  const matches = jobs.filter((candidate) => candidate.name === params.jobName);
+  if (matches.length === 0) throw new ValidationError(`Cron job not found: ${params.jobName}`);
+  if (matches.length > 1) {
+    throw new ValidationError(`Cron job name is ambiguous: ${params.jobName}`);
+  }
   return matches[0]!;
 }
 
-/**
- * Resolve a job by ID (preferred) or name (fallback for chat tool compat).
- * Web UI sends jobId; chat tool sends jobName.
- */
-function resolveJob(
-  scheduler: { getJobs(): Array<{ id: string; name: string }> },
-  params: Record<string, unknown>,
-): { id: string; name: string } {
-  const jobId = params.jobId as string | undefined;
-  if (jobId) {
-    const match = scheduler.getJobs().find((j) => j.id === jobId);
-    if (!match) throw new Error(`Job not found: ${jobId}`);
-    return match;
-  }
-  const jobName = params.jobName as string | undefined;
-  if (!jobName) {
-    // Echoing the unmatched var produced "Job not found: undefined" when a
-    // caller used the wrong param key (observed in a live run).
-    throw new Error(
-      "Missing required parameter: jobId or jobName (resolve names via cron.list)",
-    );
-  }
-  return resolveJobByName(scheduler, jobName);
+function resolveSchedule(
+  deps: CronHandlerDeps,
+  agentId: string,
+  schedule: CronAuthoringSchedule,
+  authoredAtMs: number,
+): CronPersistedSchedule {
+  const config = deps.getAgentCronAuthoringConfig(agentId);
+  return unwrap(resolveCronAuthoringSchedule(schedule, authoredAtMs, config.defaultTimezone));
 }
 
-/**
- * Normalize cron.add params: convert WEB shape (nested `schedule` + `message`
- * + top-level `agentId`) into the flat shape used by buildCronSchedule.
- * Returns the params unchanged if already in flat shape (legacy chat-tool
- * path — exercised by existing handler-test assertions).
- *
- * Server-side normalization belongs in the handler, not the dispatcher.
- */
-function normalizeCronAddParams(params: Record<string, unknown>): Record<string, unknown> {
-  // Already in flat shape (schedule_kind present) — pass through unchanged.
-  // The legacy chat-tool path uses schedule_kind + payload_text directly.
-  if (typeof params.schedule_kind === "string") {
-    return params;
+function scheduledLifecycle(
+  schedule: CronPersistedSchedule,
+  authoredAtMs: number,
+): Extract<CronJobLifecycle, { status: "scheduled" }> {
+  const nextRunAtMs = computeNextRunAtMs(schedule, authoredAtMs);
+  if (nextRunAtMs === undefined) {
+    throw new ValidationError("Cron schedule has no future occurrence");
   }
-  // Web shape — nested schedule + message at the top level.
-  const schedule = params.schedule as Record<string, unknown> | undefined;
+  return { status: "scheduled", nextRunAtMs, consecutiveDependencyErrors: 0 };
+}
+
+function buildAuthoredJob(input: {
+  id: string;
+  name: string;
+  agentId: string;
+  schedule: CronPersistedSchedule;
+  lifecycle: CronJobLifecycle;
+  payload: CronAuthorablePayload;
+  sessionPolicy?: unknown;
+  continuationMode?: unknown;
+  deliveryTarget?: CronDeliveryTarget;
+  wakeGate?: unknown;
+  cacheRetention?: unknown;
+  toolPolicy?: unknown;
+  maxConsecutiveDependencyErrors?: number;
+}): CronJob {
+  const common = {
+    id: input.id,
+    name: input.name,
+    agentId: input.agentId,
+    source: "authored" as const,
+    schedule: input.schedule,
+    lifecycle: input.lifecycle,
+    ...(input.maxConsecutiveDependencyErrors === undefined
+      ? {}
+      : { maxConsecutiveDependencyErrors: input.maxConsecutiveDependencyErrors }),
+  };
+  let candidate: unknown;
+  switch (input.payload.kind) {
+    case "heartbeat_event":
+      candidate = { ...common, payload: input.payload };
+      break;
+    case "delivery":
+      if (input.deliveryTarget === undefined) {
+        throw new ValidationError("Direct-delivery cron jobs require an exact delivery target");
+      }
+      candidate = { ...common, payload: input.payload, deliveryTarget: input.deliveryTarget };
+      break;
+    case "agent_turn":
+      candidate = {
+        ...common,
+        payload: input.payload,
+        sessionPolicy: input.sessionPolicy ?? { strategy: "fresh" },
+        continuationMode: input.continuationMode ?? "none",
+        ...(input.deliveryTarget === undefined ? {} : { deliveryTarget: input.deliveryTarget }),
+        ...(input.wakeGate === undefined ? {} : { wakeGate: input.wakeGate }),
+        ...(input.cacheRetention === undefined ? {} : { cacheRetention: input.cacheRetention }),
+        ...(input.toolPolicy === undefined ? {} : { toolPolicy: input.toolPolicy }),
+      };
+      break;
+    default: {
+      const _exhaustive: never = input.payload;
+      throw new ValidationError(`Unsupported cron payload: ${String(_exhaustive)}`);
+    }
+  }
+  const parsed = CronPersistedJobSchema.safeParse(candidate);
+  if (!parsed.success) throw new ValidationError("Cron job does not satisfy the strict persisted contract");
+  return parsed.data;
+}
+
+function replacementLifecycle(
+  existing: CronJob,
+  schedule: CronPersistedSchedule,
+  nowMs: number,
+  scheduleChanged: boolean,
+  paused: boolean | undefined,
+): CronJobLifecycle {
+  if (scheduleChanged) {
+    const next = scheduledLifecycle(schedule, nowMs);
+    return paused === true
+      ? {
+          status: "paused",
+          nextRunAtMs: next.nextRunAtMs,
+          consecutiveDependencyErrors: next.consecutiveDependencyErrors,
+          reason: "operator",
+        }
+      : next;
+  }
+  if (paused === undefined) return existing.lifecycle;
+  if (existing.lifecycle.status !== "scheduled" && existing.lifecycle.status !== "paused") {
+    throw new PreconditionError("Terminal or claimed one-shot jobs cannot be paused or resumed");
+  }
+  return paused
+    ? {
+        status: "paused",
+        nextRunAtMs: existing.lifecycle.nextRunAtMs,
+        consecutiveDependencyErrors: existing.lifecycle.consecutiveDependencyErrors,
+        reason: "operator",
+      }
+    : {
+        status: "scheduled",
+        nextRunAtMs: existing.lifecycle.nextRunAtMs,
+        consecutiveDependencyErrors: existing.lifecycle.consecutiveDependencyErrors,
+      };
+}
+
+function projectRun(group: CronExecutionGroup) {
+  const terminal = group.terminal;
+  const projection = terminal === undefined
+    ? { status: "started" as const, deliveryStatus: "not_requested" as const }
+    : projectCronTerminalOutcome(terminal.outcome);
   return {
-    ...params,
-    name: params.name,
-    schedule_kind: schedule?.kind ?? "cron",
-    payload_kind: "agent_turn",
-    payload_text: params.message,
-    // Empty string -> undefined so handler uses defaultAgentId.
-    _agentId: params._agentId ?? (params.agentId ? params.agentId : undefined),
-    // Flat schedule params expected by buildCronSchedule.
-    schedule_expr: schedule?.expr,
-    timezone: schedule?.tz,
-    schedule_every_ms: schedule?.everyMs,
-    schedule_at: schedule?.at,
-    schedule_in_seconds: schedule?.seconds,
-    // Fold the web nested wake-gate into the flat authoring fields the cron.add
-    // body reads. The script is code for the jail and is carried through
-    // untouched -- it is never scrubbed as payload text.
-    wake_gate_script: (params.wakeGate as { script?: string } | undefined)?.script,
-    wake_gate_language: (params.wakeGate as { language?: string } | undefined)?.language,
+    executionId: group.start.executionId,
+    jobId: group.start.jobId,
+    agentId: group.start.agentId,
+    scheduledForMs: group.start.scheduledForMs,
+    trigger: group.start.trigger,
+    workKind: group.start.workKind,
+    rootRunId: group.start.rootRunId,
+    startedAtMs: group.start.startedAtMs,
+    ...(terminal === undefined
+      ? {}
+      : { terminalAtMs: terminal.terminalAtMs, durationMs: terminal.durationMs }),
+    ...projection,
   };
 }
 
-/**
- * Create a record of cron/scheduler RPC handlers bound to the given deps.
- */
 export function createCronHandlers(deps: CronHandlerDeps): Record<string, RpcHandler> {
+  const clock = deps.clock;
+  if (clock === undefined) {
+    throw new PreconditionError("Cron RPC handlers require an injected clock");
+  }
   return {
     [CronAddContract.method]: async (rawParams) => {
-      // In-process capability gate — the agent loop skips
-      // checkScope, so orch:cron is enforced here, reading the injected
-      // _capabilities from raw params BEFORE the strip.
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:cron");
-
-      // Normalize WEB shape (nested schedule + message) into flat shape
-      // BEFORE the bespoke duplicate-name guard so the name reads
-      // consistently. The legacy flat shape passes through unchanged.
-      const normalized = normalizeCronAddParams(rawParams);
-
-      const name = normalized.name as string;
-      const scheduleKind = normalized.schedule_kind as CronSchedule["kind"];
-      const payloadKind = normalized.payload_kind as string;
-      const payloadText = normalized.payload_text as string;
-
-      // Reject duplicate job names (bespoke FIRST — preserves error message).
-      const cronAgentIdForCheck = (normalized._agentId as string) ?? deps.defaultAgentId;
-      const existingScheduler = deps.cronSchedulers.get(cronAgentIdForCheck);
-      if (existingScheduler && existingScheduler.getJobs().some((j) => j.name === name)) {
-        throw new Error(`A job named "${name}" already exists. Use a different name or remove the existing job first.`);
+      const params = CronAddContract.request.parse(stripInternalFields(rawParams));
+      const agentId = resolveAgentId(deps, rawParams, params.agentId);
+      const scheduler = deps.getAgentCronScheduler(agentId);
+      if (getJobs(scheduler).some((candidate) => candidate.name === params.name)) {
+        throw new PreconditionError(`A cron job named "${params.name}" already exists`);
       }
-
-      // Dev-mode contract.request.parse runs on the WEB on-wire shape (the
-      // original rawParams), NOT the normalized flat shape — the contract
-      // describes the on-wire shape only. Internal fields are stripped before
-      // parse.
-      const userParams = stripInternalFields(rawParams);
-      CronAddContract.request.parse(userParams);
-
-      const model = normalized.model as string | undefined;
-
-      // Sanitize payload text to prevent prompt injection
-      const sanitizedText = sanitizeToolOutput(payloadText);
-
-      // Build schedule from normalized params
-      const schedule = buildCronSchedule(scheduleKind, normalized);
-
-      // Build payload
-      const payload =
-        payloadKind === "agent_turn"
-          ? { kind: "agent_turn" as const, message: sanitizedText, ...(model ? { model } : {}) }
-          : { kind: "system_event" as const, text: sanitizedText };
-
-      // Build CronJob
-      const cronAgentId = (normalized._agentId as string) ?? deps.defaultAgentId;
-      const sessionTarget = (normalized.session_target as string) ?? "isolated";
-      const wakeMode = (normalized.wake_mode as string) ?? "next-heartbeat";
-      const forwardToMain = (normalized.forward_to_main as boolean) ?? false;
-      const sessionStrategy = (normalized.session_strategy as string) ?? "fresh";
-      const maxHistoryTurns = (normalized.max_history_turns as number) ?? undefined;
-      // Pre-run wake-gate authoring. The script is CODE for the jail, so it is
-      // read raw and NEVER passed through sanitizeToolOutput (that helper scrubs
-      // payload TEXT). Language falls back to the store schema value.
-      const wakeGateScript = normalized.wake_gate_script as string | undefined;
-      const wakeGateLanguage = normalized.wake_gate_language as "js" | "ts" | undefined;
-      // Agent-authored jobs are permanently bound to the authenticated request
-      // route. Operator RPCs may instead supply an independently validated target.
-      const agentDeliveryTarget = resolveAgentDeliveryTarget(rawParams);
-      const resolvedDeliveryTarget = agentDeliveryTarget
-        ?? (rawParams.deliveryTarget != null
-          ? parseDeliveryTarget(rawParams.deliveryTarget)
-          : undefined);
-      const job = {
+      const nowMs = clock.now();
+      const schedule = resolveSchedule(deps, agentId, params.schedule, nowMs);
+      const deliveryTarget = resolveTarget(rawParams, agentId, params.deliveryTarget);
+      const job = buildAuthoredJob({
         id: randomUUID(),
-        name,
-        agentId: cronAgentId,
+        name: params.name,
+        agentId,
         schedule,
-        payload,
-        sessionTarget: sessionTarget as "main" | "isolated",
-        wakeMode: wakeMode as "now" | "next-heartbeat",
-        forwardToMain,
-        sessionStrategy: sessionStrategy as "fresh" | "rolling" | "accumulate",
-        ...(maxHistoryTurns !== undefined ? { maxHistoryTurns } : {}),
-        // A wake-gate is added only when a script was authored -- an un-gated job
-        // is byte-identical to one built without these params. The script is
-        // stored verbatim (never sanitized); language falls back to the store
-        // schema value.
-        ...(wakeGateScript
-          ? { wakeGate: { script: wakeGateScript, language: wakeGateLanguage ?? "js", timeoutSeconds: 30 } }
-          : {}),
-        enabled: true,
-        consecutiveErrors: 0,
-        createdAtMs: systemNowMs(),
-        // Delivery target: the context-injected `_deliveryTarget` (agent-origin,
-        // forgery-proof — set from the turn's session in setup-tools-capabilities)
-        // takes PRECEDENCE so an agent can never redirect a cron's delivery. An
-        // explicit `deliveryTarget` param is honored only as a FALLBACK when no
-        // context is injected (an operator/kit RPC with no turn), validated like
-        // cron.update. Without this, an RPC-scripted cron had no target and
-        // fired "no delivery target, skipping delivery".
-        deliveryTarget: resolvedDeliveryTarget,
-      };
-
-      const agentScheduler = deps.getAgentCronScheduler(cronAgentId);
-      await agentScheduler.addJob(job);
-      const result = {
-        jobId: job.id,
-        name: job.name,
-        schedule: job.schedule as unknown as Record<string, unknown>,
-        ...(payloadKind === "agent_turn" ? { model: model ?? "default" } : {}),
-      };
+        lifecycle: scheduledLifecycle(schedule, nowMs),
+        payload: params.payload,
+        sessionPolicy: params.sessionPolicy,
+        continuationMode: params.continuationMode,
+        deliveryTarget,
+        wakeGate: params.wakeGate,
+        cacheRetention: params.cacheRetention,
+        toolPolicy: params.toolPolicy,
+        maxConsecutiveDependencyErrors: params.maxConsecutiveDependencyErrors,
+      });
+      unwrap(await scheduler.addJob(job));
+      const result = { jobId: job.id, name: job.name, schedule: job.schedule };
       if (IS_DEV) CronAddContract.response.parse(result);
       return result;
     },
 
     [CronListContract.method]: async (rawParams) => {
-      const userParams = stripInternalFields(rawParams);
-      const params = CronListContract.request.parse(userParams);
-
-      // Job → wire shape (each row carries its own agentId, so the "*" all-agents
-      // view is self-describing).
-      const mapJob = (j: ReturnType<ReturnType<CronHandlerDeps["getAgentCronScheduler"]>["getJobs"]>[number]) => ({
-        id: j.id,
-        name: j.name,
-        agentId: j.agentId,
-        enabled: j.enabled,
-        schedule: j.schedule,
-        payload: j.payload,
-        sessionTarget: j.sessionTarget,
-        nextRunAtMs: j.nextRunAtMs,
-        lastRunAtMs: j.lastRunAtMs,
-        consecutiveErrors: j.consecutiveErrors,
-        createdAtMs: j.createdAtMs,
-        deliveryTarget: j.deliveryTarget,
-        // Surface the pre-run wake-gate so the web scheduler editor can DISPLAY
-        // and edit an existing gate (scheduler.ts reads job.wakeGate). Without
-        // this the gate is invisible in the UI (appears absent) and uneditable.
-        // Content is the operator's own authored job config, like `payload`.
-        wakeGate: j.wakeGate,
-      });
-
-      // `agentId: "*"` → every agent's jobs (the admin inventory view; without
-      // it a non-default agent's crons were invisible).
+      const params = CronListContract.request.parse(stripInternalFields(rawParams));
       if (params.agentId === "*") {
-        const jobs: Array<ReturnType<typeof mapJob>> = [];
-        for (const scheduler of deps.cronSchedulers.values()) {
-          jobs.push(...scheduler.getJobs().map(mapJob));
+        if (rawParams._trustLevel !== "admin") {
+          throw new AuthorizationError("Admin access required for all-agent cron inventory");
         }
-        const result = { jobs: jobs as unknown as Array<Record<string, unknown>> };
+        const jobs = [...deps.cronSchedulers.values()].flatMap((scheduler) => [...getJobs(scheduler)]);
+        const result = { jobs };
         if (IS_DEV) CronListContract.response.parse(result);
         return result;
       }
-
-      // Explicit `agentId` wins over the connection `_agentId`, then the default
-      // (preserves per-connection scoping for the un-targeted call).
-      const cronAgentId = params.agentId ?? (rawParams._agentId as string) ?? deps.defaultAgentId;
-      const scheduler = deps.cronSchedulers.get(cronAgentId);
-      if (!scheduler) {
-        const result = { jobs: [] };
-        if (IS_DEV) CronListContract.response.parse(result);
-        return result;
-      }
-      const result = {
-        jobs: scheduler.getJobs().map(mapJob) as unknown as Array<Record<string, unknown>>,
-      };
+      const agentId = resolveAgentId(deps, rawParams, params.agentId);
+      const scheduler = deps.cronSchedulers.get(agentId);
+      const result = { jobs: scheduler === undefined ? [] : [...getJobs(scheduler)] };
       if (IS_DEV) CronListContract.response.parse(result);
       return result;
     },
 
     [CronUpdateContract.method]: async (rawParams) => {
-      // In-process capability gate (see cron.add).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:cron");
-
-      const userParams = stripInternalFields(rawParams);
-      CronUpdateContract.request.parse(userParams);
-
-      const cronAgentId = (rawParams._agentId as string) ?? deps.defaultAgentId;
-      const agentScheduler = deps.getAgentCronScheduler(cronAgentId);
-      const matched = resolveJob(agentScheduler, rawParams);
-      const jobs = agentScheduler.getJobs();
-      const job = jobs.find((j) => j.id === matched.id)!;
-      // Validate the agent's immutable route before mutating any in-memory job
-      // fields, so a rejected redirect cannot leave a partial update behind.
-      const agentDeliveryTarget = resolveAgentDeliveryTarget(rawParams);
-      if (rawParams.enabled !== undefined) job.enabled = rawParams.enabled as boolean;
-      if (rawParams.name !== undefined) job.name = rawParams.name as string;
-      if (rawParams.sessionTarget !== undefined) job.sessionTarget = rawParams.sessionTarget as "main" | "isolated";
-      // Schedule: accept raw schedule object (web UI) or build from schedule_kind (chat tool)
-      if (rawParams.schedule !== undefined) {
-        // Closed-union retype: Zod-validated upstream, structurally compatible with CronSchedule.
-        // We narrow via discriminator + presence checks rather than `as CronSchedule` to preserve the existing partial-shape tolerance for legacy payloads.
-        const sched = rawParams.schedule as { kind: CronSchedule["kind"]; everyMs?: number; expr?: string; tz?: string; at?: string };
-        if (sched.kind === "every" && sched.everyMs) {
-          job.schedule = { kind: "every" as const, everyMs: sched.everyMs };
-        } else if (sched.kind === "cron" && sched.expr) {
-          job.schedule = { kind: "cron" as const, expr: sched.expr, tz: sched.tz };
-        } else if (sched.kind === "at" && sched.at) {
-          job.schedule = { kind: "at" as const, at: sched.at };
-        }
+      const params = CronUpdateContract.request.parse(stripInternalFields(rawParams));
+      const agentId = resolveAgentId(deps, rawParams);
+      const scheduler = deps.getAgentCronScheduler(agentId);
+      const existing = findJob(scheduler, params);
+      if (existing.source === "built_in") {
+        throw new PreconditionError("Config-owned cron jobs cannot be updated through cron.update");
       }
-      // Payload message: accept message (web UI) or payload object
-      if (rawParams.message !== undefined) {
-        job.payload = { ...job.payload, kind: "agent_turn" as const, message: rawParams.message as string };
-      }
-      // Wake-gate: accept the flat (chat tool) or nested (web) shape. The script
-      // is CODE for the jail, so it is set raw and NEVER passed through
-      // sanitizeToolOutput. A non-empty script sets/replaces the gate; an
-      // explicit empty script CLEARS it; an absent script leaves the existing
-      // gate untouched. Language falls back to the store schema value.
-      const wakeGateNested = rawParams.wakeGate as
-        | { script?: string; language?: "js" | "ts"; timeoutSeconds?: number }
-        | undefined;
-      const updateWakeGateScript = (rawParams.wake_gate_script as string | undefined) ?? wakeGateNested?.script;
-      if (updateWakeGateScript === "") {
-        // An explicit empty script clears the gate. Writing { script: "" } would
-        // fail the store schema (script.min(1)) and drop the whole job on the
-        // next reload -- clearing is the only safe reading of "".
-        job.wakeGate = undefined;
-      } else if (updateWakeGateScript !== undefined) {
-        const updateWakeGateLanguage =
-          (rawParams.wake_gate_language as "js" | "ts" | undefined) ?? wakeGateNested?.language;
-        job.wakeGate = {
-          script: updateWakeGateScript,
-          language: updateWakeGateLanguage ?? "js",
-          timeoutSeconds: wakeGateNested?.timeoutSeconds ?? 30,
-        };
-      }
-      // Delivery target: set structured target or clear with null. Validate a
-      // caller-supplied target against the SAME schema the cron store enforces on
-      // load (CronDeliveryTargetSchema, required channelId/userId/tenantId) — a
-      // bare cast let a partial target (e.g. {channelType,channelId}) persist, and
-      // because cron-store.load() parses the WHOLE job array atomically, that one
-      // invalid job made the store "return empty job list" on the next reload,
-      // silently dropping every cron on a restart. Reject at the API boundary
-      // instead (mirrors the wake-gate empty-clear guard above).
-      if (agentDeliveryTarget !== undefined) {
-        job.deliveryTarget = agentDeliveryTarget;
-      } else if (rawParams.deliveryTarget !== undefined) {
-        if (rawParams.deliveryTarget === null) {
-          job.deliveryTarget = undefined;
-        } else {
-          job.deliveryTarget = parseDeliveryTarget(rawParams.deliveryTarget);
-        }
-      }
-      // Persist the in-place mutations NOW. The field-by-field updates above mutate
-      // the live in-memory job (a getJobs() reference); without this flush the edit
-      // only reaches the store on the next due fire's tick save, so a daemon
-      // restart before then silently REVERTS the update (e.g. a cleared wake-gate
-      // reappears). This makes cron.update durable, matching cron.add/remove.
-      await agentScheduler.persist();
-      const result = { jobName: job.name, updated: true };
+      const nowMs = clock.now();
+      const schedule = params.schedule === undefined
+        ? existing.schedule
+        : resolveSchedule(deps, agentId, params.schedule, nowMs);
+      const payload = params.payload ?? existing.payload;
+      const requestedTarget = params.deliveryTarget === undefined
+        ? ("deliveryTarget" in existing ? existing.deliveryTarget : undefined)
+        : params.deliveryTarget;
+      const deliveryTarget = resolveTarget(rawParams, agentId, requestedTarget);
+      const updated = buildAuthoredJob({
+        id: existing.id,
+        name: params.name ?? existing.name,
+        agentId,
+        schedule,
+        lifecycle: replacementLifecycle(existing, schedule, nowMs, params.schedule !== undefined, params.paused),
+        payload,
+        sessionPolicy: params.sessionPolicy
+          ?? ("sessionPolicy" in existing ? existing.sessionPolicy : undefined),
+        continuationMode: params.continuationMode
+          ?? ("continuationMode" in existing ? existing.continuationMode : undefined),
+        deliveryTarget,
+        wakeGate: params.wakeGate === null
+          ? undefined
+          : params.wakeGate ?? ("wakeGate" in existing ? existing.wakeGate : undefined),
+        cacheRetention: params.cacheRetention === null
+          ? undefined
+          : params.cacheRetention ?? ("cacheRetention" in existing ? existing.cacheRetention : undefined),
+        toolPolicy: params.toolPolicy === null
+          ? undefined
+          : params.toolPolicy ?? ("toolPolicy" in existing ? existing.toolPolicy : undefined),
+        maxConsecutiveDependencyErrors: params.maxConsecutiveDependencyErrors === null
+          ? undefined
+          : params.maxConsecutiveDependencyErrors ?? existing.maxConsecutiveDependencyErrors,
+      });
+      unwrap(await scheduler.replaceJob(existing.id, updated));
+      const result = { jobName: updated.name, updated: true };
       if (IS_DEV) CronUpdateContract.response.parse(result);
       return result;
     },
 
     [CronRemoveContract.method]: async (rawParams) => {
-      // In-process capability gate (see cron.add).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:cron");
-
-      const userParams = stripInternalFields(rawParams);
-      CronRemoveContract.request.parse(userParams);
-
-      const cronAgentId = (rawParams._agentId as string) ?? deps.defaultAgentId;
-      const agentScheduler = deps.getAgentCronScheduler(cronAgentId);
-      const jobName = rawParams.jobName as string;
-      const matched = resolveJobByName(agentScheduler, jobName);
-      const removed = await agentScheduler.removeJob(matched.id);
-      const result = { jobName, removed };
+      const params = CronRemoveContract.request.parse(stripInternalFields(rawParams));
+      const agentId = resolveAgentId(deps, rawParams);
+      const scheduler = deps.getAgentCronScheduler(agentId);
+      const existing = findJob(scheduler, params);
+      if (existing.source === "built_in") {
+        throw new PreconditionError("Config-owned cron jobs cannot be removed through cron.remove");
+      }
+      const removed = unwrap(await scheduler.removeJob(existing.id));
+      const result = { jobName: existing.name, removed };
       if (IS_DEV) CronRemoveContract.response.parse(result);
       return result;
     },
 
     [CronStatusContract.method]: async (rawParams) => {
-      const userParams = stripInternalFields(rawParams);
-      const params = CronStatusContract.request.parse(userParams);
-
-      const cronAgentId = params.agentId ?? (rawParams._agentId as string) ?? deps.defaultAgentId; // explicit agentId wins over the connection default
-      const scheduler = deps.cronSchedulers.get(cronAgentId);
+      const params = CronStatusContract.request.parse(stripInternalFields(rawParams));
+      const agentId = resolveAgentId(deps, rawParams, params.agentId);
+      const controller = deps.cronMaintenanceControllers.get(agentId);
+      if (controller === undefined) throw new ValidationError(`Cron maintenance state not found: ${agentId}`);
+      const status = unwrap(await controller.status());
       const result = {
-        running: scheduler !== undefined,
-        jobCount: scheduler ? scheduler.getJobs().length : 0,
-        resolvedAgentId: cronAgentId,
+        ...status,
+        running: status.state === "active",
+        resolvedAgentId: agentId,
       };
       if (IS_DEV) CronStatusContract.response.parse(result);
       return result;
     },
 
-    [CronRunsContract.method]: async (rawParams) => {
-      const userParams = stripInternalFields(rawParams);
-      const params = CronRunsContract.request.parse(userParams);
-
-      const cronAgentId = params.agentId ?? (rawParams._agentId as string) ?? deps.defaultAgentId; // explicit agentId wins over the connection default
-      const scheduler = deps.cronSchedulers.get(cronAgentId);
-      const tracker = deps.executionTrackers.get(cronAgentId);
-      if (!tracker || !scheduler) {
-        const result = { runs: [] };
-        if (IS_DEV) CronRunsContract.response.parse(result);
-        return result;
+    [CronResetContract.method]: async (rawParams) => {
+      if (rawParams._trustLevel !== "admin") {
+        throw new AuthorizationError("Admin access required for cron authority reset");
       }
-      const matched = resolveJobByName(scheduler, params.jobName);
-      const limit = params.limit ?? 20;
-      const runs = await tracker.getHistory(matched.id, limit);
-      const result = { runs: runs as unknown as Array<Record<string, unknown>> };
+      const params = CronResetContract.request.parse(stripInternalFields(rawParams));
+      const agentId = params.agentId ?? deps.defaultAgentId;
+      const controller = deps.cronMaintenanceControllers.get(agentId);
+      if (controller === undefined) throw new ValidationError(`Cron maintenance state not found: ${agentId}`);
+      const resetResult = params.target === "store"
+        ? await controller.reset({
+          target: "store",
+          expectedDigests: params.expectedDigests,
+          confirmed: true,
+          actorScope: "admin",
+        })
+        : params.target === "ledger"
+          ? await controller.reset({
+            target: "ledger",
+            expectedDigests: params.expectedDigests,
+            confirmed: true,
+            actorScope: "admin",
+          })
+          : await controller.reset({
+            target: "all",
+            expectedDigests: params.expectedDigests,
+            confirmed: true,
+            actorScope: "admin",
+          });
+      const reset = unwrap(resetResult);
+      const result = { ...reset, resolvedAgentId: agentId };
+      if (IS_DEV) CronResetContract.response.parse(result);
+      return result;
+    },
+
+    [CronRunsContract.method]: async (rawParams) => {
+      const params = CronRunsContract.request.parse(stripInternalFields(rawParams));
+      const agentId = resolveAgentId(deps, rawParams, params.agentId);
+      const scheduler = deps.cronSchedulers.get(agentId);
+      const tracker = deps.executionTrackers.get(agentId);
+      if (scheduler === undefined || tracker === undefined) return { runs: [] };
+      const existing = findJob(scheduler, { jobName: params.jobName });
+      const history = unwrap(await tracker.listHistory({ jobId: existing.id, limit: params.limit ?? 20 }));
+      const result = { runs: history.map(projectRun) };
       if (IS_DEV) CronRunsContract.response.parse(result);
       return result;
     },
 
     [CronRunContract.method]: async (rawParams) => {
-      // In-process capability gate (see cron.add).
       requireCapability(rawParams._capabilities as string[] | undefined, "orch:cron");
-
-      const userParams = stripInternalFields(rawParams);
-      const params = CronRunContract.request.parse(userParams);
-
-      // Explicit request `agentId` wins over the connection `_agentId`,
-      // then the default — and we ALWAYS report the agent we resolved (no silent
-      // default; a silently-defaulted target triggered the wrong agent's cron 3× in live runs).
-      const cronAgentId = params.agentId ?? (rawParams._agentId as string) ?? deps.defaultAgentId;
-      const agentScheduler = deps.getAgentCronScheduler(cronAgentId);
-      const jobName = params.jobName;
-      const mode = params.mode ?? "force";
-      if (mode === "due") {
-        await agentScheduler.runMissedJobs();
-        const result = { triggered: true, mode: "due", resolvedAgentId: cronAgentId };
+      const params = CronRunContract.request.parse(stripInternalFields(rawParams));
+      const agentId = resolveAgentId(deps, rawParams, params.agentId);
+      const scheduler = deps.getAgentCronScheduler(agentId);
+      if ((params.mode ?? "force") === "due") {
+        const executionIds = unwrap(await scheduler.runMissedJobs());
+        const result = { triggered: true, mode: "due" as const, resolvedAgentId: agentId, executionIds };
         if (IS_DEV) CronRunContract.response.parse(result);
         return result;
       }
-      // Force mode: resolve by name, make immediately due, execute via normal pipeline
-      const matched = resolveJobByName(agentScheduler, jobName!);
-      const job = agentScheduler.getJobs().find((j) => j.id === matched.id);
-      if (job) job.nextRunAtMs = 0;
-      await agentScheduler.runMissedJobs();
-      const result = { triggered: true, mode: "force", jobName: matched.name, resolvedAgentId: cronAgentId };
+      const existing = findJob(scheduler, { jobName: params.jobName });
+      const executionId = unwrap(await scheduler.runJob(existing.id));
+      const result = {
+        triggered: true,
+        mode: "force" as const,
+        jobName: existing.name,
+        resolvedAgentId: agentId,
+        executionId,
+      };
       if (IS_DEV) CronRunContract.response.parse(result);
       return result;
     },
 
     [SchedulerWakeContract.method]: async (rawParams) => {
-      const userParams = stripInternalFields(rawParams);
-      const params = SchedulerWakeContract.request.parse(userParams);
-
-      // Fire-and-forget debounced dispatch via coalescer
-      deps.wakeCoalescer.requestHeartbeatNow("wake");
-      const result = { woke: true, source: params.source ?? "agent" };
+      const params = SchedulerWakeContract.request.parse(stripInternalFields(rawParams));
+      if (deps.heartbeatCoordinator === undefined) {
+        throw new PreconditionError("Heartbeat coordinator not available");
+      }
+      const target = params.target === "monitoring"
+        ? { kind: "monitoring" as const }
+        : { kind: "agent" as const, agentId: resolveAgentId(deps, rawParams) };
+      if (target.kind === "agent" && deps.agents[target.agentId] === undefined) {
+        throw new ValidationError(`Agent not found: ${target.agentId}`);
+      }
+      const admitted = deps.heartbeatCoordinator.submitWake({
+        target,
+        reason: "wake",
+        timing: { kind: "routine", notBeforeMs: deps.schedulerNowMs() },
+      });
+      if (!admitted.ok) {
+        if (admitted.error.errorKind === "validation") {
+          throw new ValidationError(`Scheduler wake admission failed: ${admitted.error.code}`);
+        }
+        throw new PreconditionError(`Scheduler wake admission failed: ${admitted.error.code}`);
+      }
+      const result = admitted.value;
       if (IS_DEV) SchedulerWakeContract.response.parse(result);
       return result;
     },

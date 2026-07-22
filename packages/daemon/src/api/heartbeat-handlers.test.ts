@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createHeartbeatHandlers } from "./heartbeat-handlers.js";
 import type { HeartbeatHandlerDeps } from "./heartbeat-handlers.js";
 import type { PersistToConfigDeps } from "./shared/persist-to-config.js";
+import { ok } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Helper: mock factories
@@ -24,14 +25,61 @@ function createMockPersistDeps(): PersistToConfigDeps {
   };
 }
 
-function createMockPerAgentRunner() {
+function createMockHeartbeatCoordinator() {
   return {
-    start: vi.fn(),
-    stop: vi.fn(),
-    runAgentOnce: vi.fn(),
-    addAgent: vi.fn(),
-    removeAgent: vi.fn(),
-    getAgentStates: vi.fn().mockReturnValue(new Map()),
+    submitWake: vi.fn(() => ok({
+      status: "accepted" as const,
+      disposition: "new_occurrence" as const,
+      correlationId: "heartbeat-1",
+      lane: "normal" as const,
+      retainedReason: "manual" as const,
+    })),
+    configurePeriodicHeartbeat: vi.fn(() => ok({
+      status: "armed" as const,
+      nextDueAtMs: 700_000,
+    })),
+    getNextPeriodicPhaseMs: vi.fn(() => ok(700_000)),
+    activate: vi.fn(() => ok(undefined)),
+    admitSystemEventWake: vi.fn(),
+    removeTarget: vi.fn(),
+    shutdown: vi.fn(),
+  } as unknown as NonNullable<HeartbeatHandlerDeps["heartbeatCoordinator"]>;
+}
+
+function makeDeps(overrides: Partial<HeartbeatHandlerDeps> = {}): HeartbeatHandlerDeps {
+  return {
+    getAgentCronScheduler: vi.fn() as never,
+    getAgentCronAuthoringConfig: vi.fn(() => ({
+      defaultTimezone: "UTC",
+      maxConsecutiveDependencyErrors: 3,
+    })),
+    cronSchedulers: new Map(),
+    executionTrackers: new Map(),
+    heartbeatCoordinator: createMockHeartbeatCoordinator(),
+    getAgentSchedulerSeed: vi.fn(() => ok("agent-seed")),
+    schedulerNowMs: () => 123_000,
+    globalHeartbeatConfig: {
+      enabled: true,
+      intervalMs: 300_000,
+      showOk: false,
+      showAlerts: true,
+      alertThreshold: 2,
+      alertCooldownMs: 300_000,
+      staleMs: 120_000,
+    },
+    defaultAgentId: "default",
+    tenantId: "tenant-test",
+    agents: {},
+    securityConfig: {},
+    logger: {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+      audit: vi.fn(),
+    } as never,
+    subAgentRunner: {} as never,
+    ...overrides,
   };
 }
 
@@ -41,7 +89,7 @@ function createMockPerAgentRunner() {
 
 describe("createHeartbeatHandlers", () => {
   it("returns all four handler methods", () => {
-    const deps: HeartbeatHandlerDeps = { perAgentRunner: undefined, agents: {} };
+    const deps = makeDeps();
     const handlers = createHeartbeatHandlers(deps);
 
     expect(handlers["heartbeat.states"]).toBeDefined();
@@ -56,75 +104,46 @@ describe("createHeartbeatHandlers", () => {
   // -----------------------------------------------------------------------
 
   describe("heartbeat.states", () => {
-    it("returns empty array when perAgentRunner is undefined", async () => {
-      const deps: HeartbeatHandlerDeps = { perAgentRunner: undefined, agents: {} };
+    it("returns an empty array when no agents are configured", async () => {
+      const deps = makeDeps();
       const handlers = createHeartbeatHandlers(deps);
 
       const result = await handlers["heartbeat.states"]({});
       expect(result).toEqual({ agents: [] });
     });
 
-    it("returns mapped agent states", async () => {
-      const statesMap = new Map();
-      statesMap.set("agent-healthy", {
-        agentId: "agent-healthy",
-        config: { enabled: true, intervalMs: 60_000, showOk: true, showAlerts: true },
-        lastRunMs: 1000,
-        nextDueMs: 61_000,
-        consecutiveErrors: 0,
-        backoffUntilMs: 0,
-        tickStartedAtMs: 0,
-        lastAlertMs: 0,
-        lastErrorKind: null,
-      });
-      statesMap.set("agent-backoff", {
-        agentId: "agent-backoff",
-        config: { enabled: false, intervalMs: 120_000, showOk: false, showAlerts: true },
-        lastRunMs: 5000,
-        nextDueMs: 125_000,
-        consecutiveErrors: 3,
-        backoffUntilMs: 305_000,
-        tickStartedAtMs: 0,
-        lastAlertMs: 10_000,
-        lastErrorKind: "transient" as const,
-      });
-
-      const deps: HeartbeatHandlerDeps = {
-        perAgentRunner: {
-          ...createMockPerAgentRunner(),
-          getAgentStates: vi.fn().mockReturnValue(statesMap),
+    it("projects configured agents and their periodic coordinator phase", async () => {
+      const coordinator = createMockHeartbeatCoordinator();
+      const phase = coordinator.getNextPeriodicPhaseMs as ReturnType<typeof vi.fn>;
+      phase.mockImplementation((agentId: string) => agentId === "agent-enabled"
+        ? ok(700_000)
+        : ok(900_000));
+      const deps = makeDeps({
+        heartbeatCoordinator: coordinator,
+        agents: {
+          "agent-enabled": { scheduler: { heartbeat: { enabled: true, intervalMs: 60_000 } } } as never,
+          "agent-disabled": { scheduler: { heartbeat: { enabled: false, intervalMs: 120_000 } } } as never,
         },
-        agents: {},
-      };
+      });
 
       const handlers = createHeartbeatHandlers(deps);
       const result = (await handlers["heartbeat.states"]({})) as { agents: Array<Record<string, unknown>> };
 
       expect(result.agents).toHaveLength(2);
       expect(result.agents[0]).toEqual({
-        agentId: "agent-healthy",
+        agentId: "agent-enabled",
         enabled: true,
         intervalMs: 60_000,
-        lastRunMs: 1000,
-        nextDueMs: 61_000,
-        consecutiveErrors: 0,
-        backoffUntilMs: 0,
-        tickStartedAtMs: 0,
-        lastAlertMs: 0,
-        lastErrorKind: null,
+        nextDueAtMs: 700_000,
       });
       expect(result.agents[1]).toEqual({
-        agentId: "agent-backoff",
+        agentId: "agent-disabled",
         enabled: false,
         intervalMs: 120_000,
-        lastRunMs: 5000,
-        nextDueMs: 125_000,
-        consecutiveErrors: 3,
-        backoffUntilMs: 305_000,
-        tickStartedAtMs: 0,
-        lastAlertMs: 10_000,
-        lastErrorKind: "transient",
+        nextDueAtMs: null,
       });
+      expect(phase).toHaveBeenCalledOnce();
+      expect(phase).toHaveBeenCalledWith("agent-enabled");
     });
   });
 
@@ -134,7 +153,7 @@ describe("createHeartbeatHandlers", () => {
 
   describe("heartbeat.get", () => {
     it("returns per-agent config for existing agent", async () => {
-      const deps: HeartbeatHandlerDeps = {
+      const deps = makeDeps({
         agents: {
           "agent-a": {
             scheduler: {
@@ -142,7 +161,7 @@ describe("createHeartbeatHandlers", () => {
             },
           } as never,
         },
-      };
+      });
 
       const handlers = createHeartbeatHandlers(deps);
       const result = (await handlers["heartbeat.get"]({ agentId: "agent-a" })) as Record<string, unknown>;
@@ -151,12 +170,12 @@ describe("createHeartbeatHandlers", () => {
     });
 
     it("throws when agentId is missing", async () => {
-      const handlers = createHeartbeatHandlers({ agents: {} });
+      const handlers = createHeartbeatHandlers(makeDeps());
       await expect(handlers["heartbeat.get"]({})).rejects.toThrow("Missing required parameter: agentId");
     });
 
     it("throws when agent is not found", async () => {
-      const handlers = createHeartbeatHandlers({ agents: {} });
+      const handlers = createHeartbeatHandlers(makeDeps());
       await expect(handlers["heartbeat.get"]({ agentId: "nonexistent" })).rejects.toThrow("Agent not found: nonexistent");
     });
   });
@@ -167,9 +186,9 @@ describe("createHeartbeatHandlers", () => {
 
   describe("heartbeat.update", () => {
     it("rejects non-admin callers", async () => {
-      const handlers = createHeartbeatHandlers({
+      const handlers = createHeartbeatHandlers(makeDeps({
         agents: { a: { scheduler: { heartbeat: {} } } as never },
-      });
+      }));
 
       await expect(
         handlers["heartbeat.update"]({ agentId: "a", _trustLevel: "user", enabled: true }),
@@ -184,7 +203,7 @@ describe("createHeartbeatHandlers", () => {
           },
         },
       };
-      const handlers = createHeartbeatHandlers({ agents });
+      const handlers = createHeartbeatHandlers(makeDeps({ agents }));
 
       const result = (await handlers["heartbeat.update"]({
         agentId: "a",
@@ -206,7 +225,7 @@ describe("createHeartbeatHandlers", () => {
           },
         },
       };
-      const handlers = createHeartbeatHandlers({ agents });
+      const handlers = createHeartbeatHandlers(makeDeps({ agents }));
 
       await handlers["heartbeat.update"]({
         agentId: "a",
@@ -228,10 +247,10 @@ describe("createHeartbeatHandlers", () => {
         a: { scheduler: { heartbeat: {} } },
       };
 
-      const handlers = createHeartbeatHandlers({
+      const handlers = createHeartbeatHandlers(makeDeps({
         agents,
         persistDeps: mockPersistDeps,
-      });
+      }));
 
       // Should not throw even if persist fails (it's warn-only)
       await handlers["heartbeat.update"]({
@@ -249,53 +268,61 @@ describe("createHeartbeatHandlers", () => {
   // -----------------------------------------------------------------------
 
   describe("heartbeat.trigger", () => {
-    it("calls runAgentOnce on the runner", async () => {
-      const mockRunner = createMockPerAgentRunner();
-      const handlers = createHeartbeatHandlers({
-        agents: {},
-        perAgentRunner: mockRunner,
-      });
+    it("admits a spacing-bypass manual wake for the selected agent", async () => {
+      const coordinator = createMockHeartbeatCoordinator();
+      const handlers = createHeartbeatHandlers(makeDeps({
+        agents: { a: {} as never },
+        heartbeatCoordinator: coordinator,
+      }));
 
       const result = (await handlers["heartbeat.trigger"]({
         agentId: "a",
         _trustLevel: "admin",
-      })) as Record<string, unknown>;
+      })) as { agentId: string; admission: Record<string, unknown> };
 
-      expect(mockRunner.runAgentOnce).toHaveBeenCalledWith("a");
-      expect(result.triggered).toBe(true);
+      expect(coordinator.submitWake).toHaveBeenCalledWith({
+        target: { kind: "agent", agentId: "a" },
+        reason: "manual",
+        timing: { kind: "spacing_bypass", notBeforeMs: 123_000 },
+      });
       expect(result.agentId).toBe("a");
+      expect(result.admission).toMatchObject({
+        status: "accepted",
+        correlationId: "heartbeat-1",
+      });
     });
 
     it("rejects non-admin callers", async () => {
-      const handlers = createHeartbeatHandlers({
-        agents: {},
-        perAgentRunner: createMockPerAgentRunner(),
-      });
+      const handlers = createHeartbeatHandlers(makeDeps({ agents: { a: {} as never } }));
 
       await expect(
         handlers["heartbeat.trigger"]({ agentId: "a", _trustLevel: "user" }),
       ).rejects.toThrow("Admin access required");
     });
 
-    it("throws when runner is not available", async () => {
-      const handlers = createHeartbeatHandlers({
-        agents: {},
-        perAgentRunner: undefined,
-      });
+    it("throws when the coordinator is not available", async () => {
+      const handlers = createHeartbeatHandlers(makeDeps({
+        agents: { a: {} as never },
+        heartbeatCoordinator: undefined,
+      }));
 
       await expect(
         handlers["heartbeat.trigger"]({ agentId: "a", _trustLevel: "admin" }),
-      ).rejects.toThrow("Heartbeat runner not available");
+      ).rejects.toThrow("Heartbeat coordinator not available");
     });
 
     it("rejects heartbeat.trigger when agentId is missing from request payload", async () => {
-      const handlers = createHeartbeatHandlers({
-        agents: {},
-        perAgentRunner: createMockPerAgentRunner(),
-      });
+      const handlers = createHeartbeatHandlers(makeDeps());
       await expect(
         handlers["heartbeat.trigger"]({ _trustLevel: "admin" }),
       ).rejects.toThrow(/Missing required parameter: agentId/i);
+    });
+
+    it("rejects heartbeat.trigger when the selected agent is not configured", async () => {
+      const handlers = createHeartbeatHandlers(makeDeps());
+      await expect(
+        handlers["heartbeat.trigger"]({ agentId: "missing", _trustLevel: "admin" }),
+      ).rejects.toThrow("Agent not found: missing");
     });
   });
 
@@ -306,29 +333,28 @@ describe("createHeartbeatHandlers", () => {
 
   describe("heartbeat.get with globalHeartbeatConfig", () => {
     it("returns effective config when globalHeartbeatConfig resolution succeeds for valid input", async () => {
-      const handlers = createHeartbeatHandlers({
+      const handlers = createHeartbeatHandlers(makeDeps({
         agents: { "a": { scheduler: { heartbeat: { enabled: true, intervalMs: 60_000 } } } as never },
-        globalHeartbeatConfig: { defaults: { enabled: true, intervalMs: 60_000 } } as never,
-      });
+      }));
       const result = (await handlers["heartbeat.get"]({ agentId: "a" })) as Record<string, unknown>;
       expect(result.agentId).toBe("a");
       expect(result.effective).toBeDefined();
     });
 
     it("returns effective config (or undefined when resolver fails) when globalHeartbeatConfig is provided", async () => {
-      const handlers = createHeartbeatHandlers({
+      const handlers = createHeartbeatHandlers(makeDeps({
         agents: { "a": { scheduler: { heartbeat: {} } } as never },
         globalHeartbeatConfig: { enabled: true, intervalMs: 60_000 } as never,
-      });
+      }));
       const result = (await handlers["heartbeat.get"]({ agentId: "a" })) as Record<string, unknown>;
       // Either the resolver returned an effective config or threw and we got undefined
       expect(result.effective !== undefined || result.effective === undefined).toBe(true);
     });
 
     it("falls back to _agentId field when agentId param is absent in heartbeat.get rawParams", async () => {
-      const handlers = createHeartbeatHandlers({
+      const handlers = createHeartbeatHandlers(makeDeps({
         agents: { "agent-self": { scheduler: { heartbeat: {} } } as never },
-      });
+      }));
       const result = (await handlers["heartbeat.get"]({ _agentId: "agent-self" })) as Record<string, unknown>;
       expect(result.agentId).toBe("agent-self");
     });
@@ -336,14 +362,14 @@ describe("createHeartbeatHandlers", () => {
 
   describe("heartbeat.update target subobject + edge cases", () => {
     it("rejects heartbeat.update when agentId is missing from request payload", async () => {
-      const handlers = createHeartbeatHandlers({ agents: {} });
+      const handlers = createHeartbeatHandlers(makeDeps());
       await expect(
         handlers["heartbeat.update"]({ _trustLevel: "admin", intervalMs: 60_000 }),
       ).rejects.toThrow(/Missing required parameter: agentId/i);
     });
 
     it("rejects heartbeat.update when agent does not exist in deps.agents map", async () => {
-      const handlers = createHeartbeatHandlers({ agents: {} });
+      const handlers = createHeartbeatHandlers(makeDeps());
       await expect(
         handlers["heartbeat.update"]({
           _trustLevel: "admin",
@@ -353,40 +379,63 @@ describe("createHeartbeatHandlers", () => {
       ).rejects.toThrow(/Agent not found/i);
     });
 
-    it("applies target subobject deep-merge when at least one target field is provided in update", async () => {
+    it("replaces the delivery target only from a complete exact endpoint", async () => {
       const agents: Record<string, any> = {
         a: {
           scheduler: {
             heartbeat: {
               enabled: true,
               intervalMs: 60_000,
-              target: { channelType: "telegram", channelId: "old-chan" },
+              target: {
+                channelType: "telegram",
+                channelInstanceId: "old-bot",
+                conversationId: "old-chat",
+                conversationKind: "direct",
+              },
             },
           },
         },
       };
-      const handlers = createHeartbeatHandlers({ agents });
+      const handlers = createHeartbeatHandlers(makeDeps({ agents }));
       await handlers["heartbeat.update"]({
         agentId: "a",
         _trustLevel: "admin",
-        targetChannelId: "new-chan",
-        targetChatId: "chat-42",
-      });
-      // existing channelType preserved, channelId overwritten, chatId added
-      expect(agents.a.scheduler.heartbeat.target).toEqual(
-        expect.objectContaining({
+        target: {
           channelType: "telegram",
-          channelId: "new-chan",
-          chatId: "chat-42",
-        }),
-      );
+          channelInstanceId: "new-bot",
+          conversationId: "chat-42",
+          threadId: "topic-7",
+          conversationKind: "shared",
+        },
+      });
+      expect(agents.a.scheduler.heartbeat.target).toEqual({
+        channelType: "telegram",
+        channelInstanceId: "new-bot",
+        conversationId: "chat-42",
+        threadId: "topic-7",
+        conversationKind: "shared",
+      });
+    });
+
+    it("rejects legacy flattened delivery target fields", async () => {
+      const handlers = createHeartbeatHandlers(makeDeps({
+        agents: { a: { scheduler: { heartbeat: {} } } as never },
+      }));
+      await expect(handlers["heartbeat.update"]({
+        agentId: "a",
+        _trustLevel: "admin",
+        targetChannelType: "telegram",
+        targetChannelId: "bot-main",
+        targetChatId: "chat-42",
+        targetIsDm: false,
+      })).rejects.toThrow();
     });
 
     it("creates scheduler subobject when agent has no scheduler config at all before update", async () => {
       const agents: Record<string, any> = {
         a: {}, // no scheduler
       };
-      const handlers = createHeartbeatHandlers({ agents });
+      const handlers = createHeartbeatHandlers(makeDeps({ agents }));
       await handlers["heartbeat.update"]({
         agentId: "a",
         _trustLevel: "admin",
@@ -410,7 +459,7 @@ describe("createHeartbeatHandlers", () => {
       const agents: Record<string, any> = {
         a: { scheduler: { heartbeat: {} } },
       };
-      const handlers = createHeartbeatHandlers({ agents, persistDeps });
+      const handlers = createHeartbeatHandlers(makeDeps({ agents, persistDeps }));
       // Should not throw even if persist fails
       const result = (await handlers["heartbeat.update"]({
         agentId: "a",

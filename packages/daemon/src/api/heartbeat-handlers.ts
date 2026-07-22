@@ -60,7 +60,7 @@ export type { HeartbeatHandlerDeps };
 
 /**
  * Create heartbeat RPC handlers.
- * @param deps - Injected dependencies (perAgentRunner, agents, persistDeps, globalHeartbeatConfig)
+ * @param deps - Injected coordinator, agents, persistence, and global heartbeat config
  * @returns Record mapping method names to handler functions
  */
 export function createHeartbeatHandlers(deps: HeartbeatHandlerDeps): Record<string, RpcHandler> {
@@ -72,38 +72,26 @@ export function createHeartbeatHandlers(deps: HeartbeatHandlerDeps): Record<stri
       const userParams = stripInternalFields(rawParams);
       HeartbeatStatesContract.request.parse(userParams);
 
-      if (!deps.perAgentRunner) {
-        const result = { agents: [] };
-        if (IS_DEV) HeartbeatStatesContract.response.parse(result);
-        return result;
-      }
-
-      const states = deps.perAgentRunner.getAgentStates();
       const agents: Array<{
         agentId: string;
         enabled: boolean;
         intervalMs: number;
-        lastRunMs: number;
-        nextDueMs: number;
-        consecutiveErrors: number;
-        backoffUntilMs: number;
-        tickStartedAtMs: number;
-        lastAlertMs: number;
-        lastErrorKind: "transient" | "permanent" | null;
+        nextDueAtMs: number | null;
       }> = [];
 
-      for (const state of states.values()) {
+      for (const [agentId, config] of Object.entries(deps.agents)) {
+        const effective = resolveEffectiveHeartbeatConfig(
+          deps.globalHeartbeatConfig as Parameters<typeof resolveEffectiveHeartbeatConfig>[0],
+          config.scheduler?.heartbeat,
+        );
+        const next = effective.enabled
+          ? deps.heartbeatCoordinator?.getNextPeriodicPhaseMs(agentId)
+          : undefined;
         agents.push({
-          agentId: state.agentId,
-          enabled: state.config.enabled,
-          intervalMs: state.config.intervalMs,
-          lastRunMs: state.lastRunMs,
-          nextDueMs: state.nextDueMs,
-          consecutiveErrors: state.consecutiveErrors,
-          backoffUntilMs: state.backoffUntilMs,
-          tickStartedAtMs: state.tickStartedAtMs,
-          lastAlertMs: state.lastAlertMs,
-          lastErrorKind: state.lastErrorKind,
+          agentId,
+          enabled: effective.enabled,
+          intervalMs: effective.intervalMs,
+          nextDueAtMs: next?.ok ? next.value : null,
         });
       }
 
@@ -180,44 +168,38 @@ export function createHeartbeatHandlers(deps: HeartbeatHandlerDeps): Record<stri
       if (params.intervalMs !== undefined) update.intervalMs = params.intervalMs;
       if (params.showOk !== undefined) update.showOk = params.showOk;
       if (params.showAlerts !== undefined) update.showAlerts = params.showAlerts;
+      if (params.target !== undefined) update.target = params.target;
       if (params.prompt !== undefined) update.prompt = params.prompt;
-      if (params.model !== undefined) update.model = params.model;
-      if (params.session !== undefined) update.session = params.session;
       if (params.allowDm !== undefined) update.allowDm = params.allowDm;
       if (params.lightContext !== undefined) update.lightContext = params.lightContext;
       if (params.ackMaxChars !== undefined) update.ackMaxChars = params.ackMaxChars;
       if (params.responsePrefix !== undefined) update.responsePrefix = params.responsePrefix;
-      if (params.skipHeartbeatOnlyDelivery !== undefined) update.skipHeartbeatOnlyDelivery = params.skipHeartbeatOnlyDelivery;
       if (params.alertThreshold !== undefined) update.alertThreshold = params.alertThreshold;
       if (params.alertCooldownMs !== undefined) update.alertCooldownMs = params.alertCooldownMs;
       if (params.staleMs !== undefined) update.staleMs = params.staleMs;
-
-      // Build target sub-object if any target fields provided
-      const targetChannelType = params.targetChannelType;
-      const targetChannelId = params.targetChannelId;
-      const targetChatId = params.targetChatId;
-      const targetIsDm = params.targetIsDm;
-      if (targetChannelType !== undefined || targetChannelId !== undefined || targetChatId !== undefined || targetIsDm !== undefined) {
-        const target: Record<string, unknown> = {};
-        if (targetChannelType !== undefined) target.channelType = targetChannelType;
-        if (targetChannelId !== undefined) target.channelId = targetChannelId;
-        if (targetChatId !== undefined) target.chatId = targetChatId;
-        if (targetIsDm !== undefined) target.isDm = targetIsDm;
-        update.target = target;
-      }
 
       // Deep-merge with existing per-agent heartbeat config
       const existing = deps.agents[agentId]?.scheduler?.heartbeat ?? {};
       const merged: Record<string, unknown> = { ...existing, ...update };
 
-      // Deep-merge target sub-object separately
-      if (update.target) {
-        const existingTarget = (existing as Record<string, unknown>).target as Record<string, unknown> | undefined;
-        merged.target = { ...existingTarget, ...update.target as Record<string, unknown> };
-      }
-
       // Validate merged config against schema
       const validated = PerAgentHeartbeatConfigSchema.parse(merged);
+      const effective = resolveEffectiveHeartbeatConfig(
+        deps.globalHeartbeatConfig as Parameters<typeof resolveEffectiveHeartbeatConfig>[0],
+        validated,
+      );
+      if (!deps.heartbeatCoordinator || !deps.getAgentSchedulerSeed) {
+        throw new Error("Heartbeat coordinator not available");
+      }
+      const seed = deps.getAgentSchedulerSeed(agentId);
+      if (!seed.ok) throw new Error("Heartbeat scheduler seed not available");
+      const configured = deps.heartbeatCoordinator.configurePeriodicHeartbeat({
+        agentId,
+        agentSchedulerSeed: seed.value,
+        enabled: effective.enabled,
+        intervalMs: effective.intervalMs,
+      });
+      if (!configured.ok) throw new Error("Heartbeat schedule update failed");
 
       // Apply in-memory: ensure scheduler config exists
       if (!deps.agents[agentId].scheduler) {
@@ -248,7 +230,12 @@ export function createHeartbeatHandlers(deps: HeartbeatHandlerDeps): Record<stri
         }
       }
 
-      const result = { agentId, config: validated as unknown as Record<string, unknown>, updated: true };
+      const result = {
+        agentId,
+        config: validated as unknown as Record<string, unknown>,
+        updated: true,
+        nextDueAtMs: configured.value.nextDueAtMs,
+      };
       if (IS_DEV) HeartbeatUpdateContract.response.parse(result);
       return result;
     },
@@ -268,17 +255,18 @@ export function createHeartbeatHandlers(deps: HeartbeatHandlerDeps): Record<stri
         throw new Error("Missing required parameter: agentId");
       }
 
-      if (!deps.perAgentRunner) {
-        throw new Error("Heartbeat runner not available");
-      }
-
       const userParams = stripInternalFields(rawParams);
       HeartbeatTriggerContract.request.parse(userParams);
+      if (deps.agents[agentId] === undefined) throw new Error(`Agent not found: ${agentId}`);
+      if (!deps.heartbeatCoordinator) throw new Error("Heartbeat coordinator not available");
+      const admitted = deps.heartbeatCoordinator.submitWake({
+        target: { kind: "agent", agentId },
+        reason: "manual",
+        timing: { kind: "spacing_bypass", notBeforeMs: deps.schedulerNowMs() },
+      });
+      if (!admitted.ok) throw new Error(`Heartbeat admission failed: ${admitted.error.code}`);
 
-      // Fire-and-forget: runAgentOnce triggers an immediate tick
-      deps.perAgentRunner.runAgentOnce(agentId);
-
-      const result = { agentId, triggered: true };
+      const result = { agentId, admission: admitted.value };
       if (IS_DEV) HeartbeatTriggerContract.response.parse(result);
       return result;
     },
