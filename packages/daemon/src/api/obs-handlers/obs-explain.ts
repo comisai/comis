@@ -184,12 +184,19 @@ function metadataForTaskCheckExecution(
   const channel = typeof originMetadata?.channel === "object" && originMetadata.channel !== null
     ? originMetadata.channel
     : undefined;
+  // A persisted delivered terminal is the task attempt's authoritative local
+  // outcome. Other terminal dispositions need their own reviewed severity
+  // classification, so they remain unresolved instead of being guessed here.
+  const sessionEnd = evidence.lifecycle === "terminal" && evidence.outcome === "delivered"
+    ? { endReason: "success", degraded: false }
+    : undefined;
   return {
     traceId: evidence.correlationId,
     ...(evidence.agentId !== undefined
       ? { agentId: evidence.agentId }
       : originAgentId === undefined ? {} : { agentId: originAgentId }),
     ...(channel === undefined ? {} : { channel }),
+    ...(sessionEnd === undefined ? {} : { sessionEnd }),
   };
 }
 

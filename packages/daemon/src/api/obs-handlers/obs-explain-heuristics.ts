@@ -536,11 +536,16 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   // 13) outcome_unresolved (LOWEST-priority, BENIGN, the
   //     generic learning catch-all). A finished trajectory the learning shadow saw
   //     but where NO signal tier resolved an outcome AND neither skill verdict
-  //     fired. Defer ≠ Retry: dead-last (every acute cause + the two skill verdicts
-  //     out-rank it). Absent/resolved learning block ⇒ no verdict (no 678/503
-  //     fixture regression).
+  //     fired. An authoritative successful terminal outcome also suppresses this
+  //     advisory: a shadow observation cannot overrule the durable completion.
+  //     Defer ≠ Retry: dead-last (every acute cause + the two skill verdicts
+  //     out-rank it). Absent/resolved learning block ⇒ no verdict.
   (s) => {
-    if (s.learning === undefined || s.learning.outcomeResolved) return null;
+    if (
+      s.learning === undefined
+      || s.learning.outcomeResolved
+      || s.endReason === "success"
+    ) return null;
     return {
       code: "outcome_unresolved",
       detail:
