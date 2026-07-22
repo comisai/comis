@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ok, type Result } from "@comis/shared";
 import type { FileLockPort, LockError } from "@comis/core";
-import { createCronStore, type CronJob, type CronStore } from "./index.js";
+import {
+  createCronStore,
+  CronStoreRootSchema,
+  type CronJob,
+  type CronStore,
+} from "./index.js";
 
 const NOW_MS = 1_800_000_000_000;
 const dirs: string[] = [];
@@ -28,21 +33,23 @@ function lock(): FileLockPort {
 async function fixture(overrides: Partial<Parameters<typeof createCronStore>[0]> = {}): Promise<{
   store: CronStore;
   filePath: string;
+  lockPath: string;
 }> {
   const dir = await mkdtemp(join(tmpdir(), "comis-cron-store-target-"));
   dirs.push(dir);
   const filePath = join(dir, "cron-store.json");
+  const lockPath = join(dir, "cron-store.lock");
   let id = 0;
   const store = createCronStore({
     filePath,
-    lockPath: join(dir, "cron-store.lock"),
+    lockPath,
     fileLock: lock(),
     clock: { now: () => NOW_MS, nowDate: () => new Date(NOW_MS) },
     idFactory: () => `opaque-${++id}`,
     maxAuthoredJobs: 2,
     ...overrides,
   });
-  return { store, filePath };
+  return { store, filePath, lockPath };
 }
 
 function recurringJob(id = "job-a", source: "authored" | "built_in" = "authored"): CronJob {
@@ -127,6 +134,52 @@ describe("strict cron store root", () => {
       ok: false,
       error: { code: "capacity", errorKind: "resource" },
     });
+  });
+
+  it("preserves independent store mutations and active claims from canonical locked state", async () => {
+    const sharedLock = lock();
+    const fakeClock = { now: () => NOW_MS, nowDate: () => new Date(NOW_MS) };
+    const { store: storeA, filePath, lockPath } = await fixture({
+      fileLock: sharedLock,
+      clock: fakeClock,
+      idFactory: () => "seed-a",
+      maxAuthoredJobs: 4,
+    });
+    const storeB = createCronStore({
+      filePath,
+      lockPath,
+      fileLock: sharedLock,
+      clock: fakeClock,
+      idFactory: () => "seed-b",
+      maxAuthoredJobs: 4,
+    });
+    expect((await storeA.initialize()).ok).toBe(true);
+    expect((await storeB.initialize()).ok).toBe(true);
+
+    expect((await storeA.addJob(recurringJob("job-a"))).ok).toBe(true);
+    expect((await storeB.addJob(recurringJob("job-b"))).ok).toBe(true);
+    expect((await storeA.claim({
+      jobId: "job-a",
+      executionId: "exec-a",
+      bootId: "boot-a",
+      rootRunId: "root-cron-exec-a",
+      trigger: "scheduled",
+      scheduledForMs: NOW_MS + 60_000,
+      claimedAtMs: NOW_MS + 60_000,
+    })).ok).toBe(true);
+    expect((await storeB.addJob(recurringJob("job-c"))).ok).toBe(true);
+
+    const persisted = CronStoreRootSchema.safeParse(JSON.parse(await readFile(filePath, "utf8")));
+    expect(persisted.success).toBe(true);
+    if (!persisted.success) return;
+    expect(persisted.data.jobs.map((entry) => entry.id).sort()).toEqual([
+      "job-a",
+      "job-b",
+      "job-c",
+    ]);
+    expect(persisted.data.activeClaims).toEqual([
+      expect.objectContaining({ executionId: "exec-a", jobId: "job-a" }),
+    ]);
   });
 });
 
