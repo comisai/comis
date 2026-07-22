@@ -300,6 +300,8 @@ export interface RunReflectionResult {
    * aggregates to `empty_reflection`, not a mis-attributed `rejected_validation`. Counts only.
    */
   emptyReflections: number;
+  /** Model/store faults; also in `skipped`, never in `emptyReflections`. */
+  dependencyFailures: number;
   /**
    * How many `success` sources were dropped at SELECT for an
    * untrusted origin (axis 1) or external-trust source (axis 2). Counts only.
@@ -613,8 +615,8 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
     // When nothing survived SELECT, the acute reason is `untrusted_origin` if
     // some success was dropped for an untrusted origin / external-trust source, else `no_successes`.
     const emptyOutcome = classifyReflectOutcome({ selected: 0, maxTopicCardinality: 0, admitted: 0, emptyReflections: 0, untrustedDrops });
-    logRunComplete(deps, startMs, { selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0, singleOwnerCorroborated: 0 });
-    return ok({ admissionOutcome: emptyOutcome, selected: 0, admitted: 0, maxTopicCardinality: 0, singleOwnerCorroborated: 0, distinctTopicKeys: 0, skipped: 0, emptyReflections: 0, untrustedDrops, nameLengthRejections: 0, sourceTrajectoryCount, totalSourceChars });
+    logRunComplete(deps, startMs, { selected: 0, admitted: 0, maxTopicCardinality: 0, skipped: 0, emptyReflections: 0, dependencyFailures: 0, untrustedDrops, nameLengthRejections: 0, singleOwnerCorroborated: 0 });
+    return ok({ admissionOutcome: emptyOutcome, selected: 0, admitted: 0, maxTopicCardinality: 0, singleOwnerCorroborated: 0, distinctTopicKeys: 0, skipped: 0, emptyReflections: 0, dependencyFailures: 0, untrustedDrops, nameLengthRejections: 0, sourceTrajectoryCount, totalSourceChars });
   }
 
   // 2. GROUP: Map<topicKey, members[]> via the per-kind
@@ -669,6 +671,7 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
   let admitted = 0;
   let skipped = 0;
   let emptyReflections = 0;
+  let dependencyFailures = 0;
   // Corroborated topics whose reflected doc NAME was over-cap.
   let nameLengthRejections = 0;
   let maxTopicCardinality = 0;
@@ -703,6 +706,9 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
     if (r === "empty") {
       emptyReflections += 1;
       skipped += 1;
+    } else if (r === "dependency_failure") {
+      dependencyFailures += 1;
+      skipped += 1;
     } else if (r === "rejected") {
       skipped += 1;
     } else if (r === "rejected_name_length") {
@@ -712,22 +718,19 @@ export async function runReflection(deps: RunReflectionDeps): Promise<Result<Run
       skipped += 1;
     } else if (r === "admitted") {
       admitted += 1;
-    }
-    // "skipped" (a per-topic reflect/admit fault) increments neither admit nor empty.
+    } else if (r === "skipped") { skipped += 1; }
   }
 
   const admissionOutcome = classifyReflectOutcome({ selected: selected.length, maxTopicCardinality, admitted, emptyReflections, untrustedDrops, nameLengthRejections });
-
-  logRunComplete(deps, startMs, { selected: selected.length, admitted, maxTopicCardinality, skipped, emptyReflections, untrustedDrops, nameLengthRejections, singleOwnerCorroborated });
-
-  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, singleOwnerCorroborated, distinctTopicKeys: corroborationGroups.length, skipped, emptyReflections, untrustedDrops, nameLengthRejections, sourceTrajectoryCount, totalSourceChars });
+  logRunComplete(deps, startMs, { selected: selected.length, admitted, maxTopicCardinality, skipped, emptyReflections, dependencyFailures, untrustedDrops, nameLengthRejections, singleOwnerCorroborated });
+  return ok({ admissionOutcome, selected: selected.length, admitted, maxTopicCardinality, singleOwnerCorroborated, distinctTopicKeys: corroborationGroups.length, skipped, emptyReflections, dependencyFailures, untrustedDrops, nameLengthRejections, sourceTrajectoryCount, totalSourceChars });
 }
 
 // ---------------------------------------------------------------------------
 // Per-topic reflect + guard + admit
 // ---------------------------------------------------------------------------
 
-type TopicOutcome = "admitted" | "empty" | "rejected" | "rejected_name_length" | "skipped";
+type TopicOutcome = "admitted" | "empty" | "dependency_failure" | "rejected" | "rejected_name_length" | "skipped";
 
 interface ReflectTopicArgs {
   deps: RunReflectionDeps;
@@ -761,7 +764,7 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
       },
       "reflection: prior-doc read faulted, skipping topic",
     );
-    return "skipped";
+    return "dependency_failure";
   }
   const prior = priorRes.value.value; // MentalModel | undefined
   const priorSections: DocSection[] = prior?.structuredBody?.sections ?? [];
@@ -777,14 +780,12 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
     }),
   );
   if (!reflectRes.ok || !reflectRes.value.ok) {
-    // A per-topic reflect fault (transport / model error). NON-FATAL: the topic is
-    // skipped and the prior doc survives (the adapter already WARNed with the
-    // network/dependency errorKind). Treated as empty-content: NO admit.
+    // A model fault is non-fatal to other topics, distinct from empty output, and preserves the prior doc.
     logger.debug(
       { agentId, step: "reflect" as const, topicKey, hint: "reflect call faulted — topic skipped, prior doc survives" },
       "reflection call faulted for topic, skipping",
     );
-    return "empty";
+    return "dependency_failure";
   }
   if (reflectionAbortRequested(deps.signal)) return "skipped";
   const reflection = reflectRes.value.value;
@@ -867,7 +868,7 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
         { agentId, step: "admit" as const, errorKind: "dependency" as const, topicKey, hint: "store.supersede faulted — topic skipped (prior doc intact)" },
         "reflection supersede faulted, skipping topic",
       );
-      return "skipped";
+      return "dependency_failure";
     }
     if (supersedeRes.value.value === "superseded") {
       // A profile/topic correction landed in history (the prior body preserved).
@@ -915,7 +916,7 @@ async function reflectTopic(args: ReflectTopicArgs): Promise<TopicOutcome> {
       { agentId, step: "admit" as const, errorKind: "dependency" as const, topicKey, hint: "store.admit faulted — topic skipped" },
       "reflection admit faulted, skipping topic",
     );
-    return "skipped";
+    return "dependency_failure";
   }
   // `admitted:false` (an idempotent re-admit of an unchanged doc) is not a NEW doc.
   return admitRes.value.value.admitted ? "admitted" : "skipped";
@@ -959,6 +960,7 @@ function logRunComplete(
     maxTopicCardinality: number;
     skipped: number;
     emptyReflections: number;
+    dependencyFailures: number;
     untrustedDrops: number;
     nameLengthRejections: number;
     singleOwnerCorroborated: number;
@@ -983,6 +985,7 @@ function logRunComplete(
       // an operator can see the mode is active without turning on debug (the §2.7 litmus test).
       singleOwnerCorroborated: counts.singleOwnerCorroborated,
       skipped: counts.skipped,
+      dependencyFailures: counts.dependencyFailures,
       admissionOutcome, // the readable "why 0 admitted" verdict, grep-able in the log
       durationMs: deps.clock.now() - startMs,
     },

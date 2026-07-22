@@ -297,7 +297,7 @@ export function createCronMemoryActionRunners(
       timestamp: deps.clock.now(),
     });
     const counters = reflectionCounters(totals, failedPasses);
-    return failedPasses > 0
+    return failedPasses > 0 || totals.dependencyFailures > 0
       ? ok({ status: "failed", errorKind: "dependency", counters })
       : ok({ status: "completed", counters });
   }
@@ -311,6 +311,7 @@ interface ReflectionTotals {
   distinctTopicKeys: number;
   skipped: number;
   emptyReflections: number;
+  dependencyFailures: number;
   untrustedDrops: number;
   nameLengthRejections: number;
   sourceTrajectoryCount: number;
@@ -321,7 +322,7 @@ function emptyReflectionTotals(): ReflectionTotals {
   return {
     selected: 0, admitted: 0, maxTopicCardinality: 0,
     singleOwnerCorroborated: 0, distinctTopicKeys: 0, skipped: 0,
-    emptyReflections: 0, untrustedDrops: 0, nameLengthRejections: 0,
+    emptyReflections: 0, dependencyFailures: 0, untrustedDrops: 0, nameLengthRejections: 0,
     sourceTrajectoryCount: 0, totalSourceChars: 0,
   };
 }
@@ -334,6 +335,7 @@ function addReflectionTotals(totals: ReflectionTotals, value: ReflectionTotals):
   totals.distinctTopicKeys += value.distinctTopicKeys;
   totals.skipped += value.skipped;
   totals.emptyReflections += value.emptyReflections;
+  totals.dependencyFailures += value.dependencyFailures;
   totals.untrustedDrops += value.untrustedDrops;
   totals.nameLengthRejections += value.nameLengthRejections;
   totals.sourceTrajectoryCount += value.sourceTrajectoryCount;
@@ -346,6 +348,7 @@ function reflectionCounters(totals: ReflectionTotals, failedPasses: number) {
     { name: "admitted", value: totals.admitted },
     { name: "skipped", value: totals.skipped },
     { name: "empty_reflections", value: totals.emptyReflections },
+    { name: "dependency_failures", value: totals.dependencyFailures },
     { name: "untrusted_drops", value: totals.untrustedDrops },
     { name: "name_length_rejections", value: totals.nameLengthRejections },
     { name: "max_topic_cardinality", value: totals.maxTopicCardinality },
