@@ -83,6 +83,12 @@ export async function enforceResponseLocale(input: {
   }
 
   const response = input.getVisibleResponse();
+  if (response.trim().length === 0) {
+    return err({
+      cause: new Error("Locale repair produced no visible response"),
+      finding: initialFinding,
+    });
+  }
   const finalFinding = evaluateResponseLocale(input.policy, response);
   return ok({
     response,

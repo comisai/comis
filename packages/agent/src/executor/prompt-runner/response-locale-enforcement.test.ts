@@ -120,6 +120,73 @@ describe("enforceResponseLocale", () => {
 });
 
 describe("applyResponseLocaleEnforcement", () => {
+  it("preserves the original response when locale repair records an empty provider error", async () => {
+    let now = 10;
+    const eventBus = new TypedEventBus();
+    const recoveryEvent = vi.fn();
+    eventBus.on("execution:recovery_attempted", recoveryEvent);
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    };
+    const originalResponse = "English answer after the requested tools completed.";
+    const session = {
+      agent: { state: { tools: [{ name: "write" }] } },
+      messages: [{
+        role: "assistant",
+        content: [{ type: "text", text: originalResponse }],
+        stopReason: "stop",
+      }],
+      prompt: vi.fn(async (instruction: string) => {
+        now = 17;
+        session.messages.push({
+          role: "user",
+          content: [{ type: "text", text: instruction }],
+          stopReason: "stop",
+        });
+        session.messages.push({
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+        });
+      }),
+    };
+    const result = { response: originalResponse };
+    const params = {
+      responseLocalePolicy: ARABIC_POLICY,
+      result,
+      session,
+      agentId: "agent-a",
+      sessionKey: {
+        tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
+      },
+      deps: {
+        eventBus,
+        logger,
+        clock: { now: () => now, nowDate: () => new Date(now) },
+      },
+    } as unknown as RunPromptParams;
+
+    await applyResponseLocaleEnforcement(params);
+
+    expect(result.response).toBe(originalResponse);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        durationMs: 7,
+        errorKind: "dependency",
+        step: "response-locale-repair",
+      }),
+      "Response locale repair failed",
+    );
+    expect(logger.info).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "Response locale repair completed",
+    );
+    expect(recoveryEvent).toHaveBeenCalledWith(expect.objectContaining({
+      reason: "locale_fidelity",
+      succeeded: false,
+    }));
+  });
+
   it("records a content-free recovery event and duration for a repaired response", async () => {
     let now = 10;
     const eventBus = new TypedEventBus();
