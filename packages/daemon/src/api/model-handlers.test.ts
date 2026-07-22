@@ -217,26 +217,61 @@ describe("createModelHandlers - model management", () => {
   // -------------------------------------------------------------------------
 
   describe("models.list_providers", () => {
-    it("returns sorted, de-duplicated provider list with count", async () => {
-      const deps = makeDeps();
+    it("returns sorted provider rows with agent-scoped credential truth", async () => {
+      const deps = makeDeps({
+        defaultAgentId: "main",
+        secretManager: {
+          has: (name: string) => name === "AWS_BEARER_TOKEN_BEDROCK",
+        } as never,
+      });
       const handlers = createModelHandlers(deps);
 
       const result = (await handlers["models.list_providers"]!({
         _trustLevel: "admin",
-      })) as { providers: string[]; count: number };
+      })) as {
+        agentId: string;
+        providers: Array<{
+          provider: string;
+          modelCount: number;
+          status: string;
+          credentialSource: string;
+        }>;
+        count: number;
+      };
 
       expect(Array.isArray(result.providers)).toBe(true);
+      expect(result.agentId).toBe("main");
       expect(typeof result.count).toBe("number");
       expect(result.count).toBe(result.providers.length);
       expect(result.count).toBeGreaterThanOrEqual(10);
 
       // Sorted ascending
-      const sorted = [...result.providers].sort();
-      expect(result.providers).toEqual(sorted);
+      const providerIds = result.providers.map((row) => row.provider);
+      const sorted = [...providerIds].sort();
+      expect(providerIds).toEqual(sorted);
 
       // De-duplicated
-      const unique = new Set(result.providers);
+      const unique = new Set(providerIds);
       expect(unique.size).toBe(result.providers.length);
+
+      expect(result.providers.find((row) => row.provider === "amazon-bedrock")).toMatchObject({
+        status: "configured",
+        credentialSource: "secret_store_canonical",
+      });
+      expect(result.providers.find((row) => row.provider === "anthropic")).toMatchObject({
+        status: "not_configured",
+        credentialSource: "none",
+      });
+    });
+
+    it("rejects an unknown explicit agent selector", async () => {
+      const deps = makeDeps({ defaultAgentId: "main" });
+      const handlers = createModelHandlers(deps);
+
+      await expect(handlers["models.list_providers"]!({
+        _trustLevel: "admin",
+        agentId: "absent",
+      })).rejects.toThrow("Agent not found: absent");
     });
 
     it("rejects when trust level is not admin", async () => {

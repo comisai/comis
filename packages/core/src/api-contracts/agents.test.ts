@@ -354,16 +354,37 @@ describe("ModelsListProvidersContract", () => {
     expect(ModelsListProvidersContract.request.parse({})).toEqual({});
   });
 
-  it("response carries providers[] + count", () => {
+  it("accepts an explicit agent selector", () => {
+    expect(ModelsListProvidersContract.request.parse({ agentId: "alpha" })).toEqual({
+      agentId: "alpha",
+    });
+  });
+
+  it("response carries agent-scoped provider credential status", () => {
     expect(ModelsListProvidersContract.response.parse({
-      providers: ["anthropic", "openai"],
+      agentId: "alpha",
+      providers: [
+        {
+          provider: "amazon-bedrock",
+          modelCount: 109,
+          status: "configured",
+          credentialSource: "secret_store_canonical",
+        },
+        {
+          provider: "anthropic",
+          modelCount: 14,
+          status: "not_configured",
+          credentialSource: "none",
+        },
+      ],
       count: 2,
     })).toBeDefined();
   });
 
   it("rejects response without count", () => {
     expect(() => ModelsListProvidersContract.response.parse({
-      providers: ["x"],
+      agentId: "alpha",
+      providers: [],
     })).toThrow();
   });
 });

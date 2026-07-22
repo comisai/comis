@@ -39,15 +39,30 @@ describe("loadProvidersWithFallback", () => {
     vi.mocked(createModelCatalog).mockReset();
   });
 
-  it("returns RPC providers verbatim when RPC succeeds with valid shape", async () => {
+  it("returns authoritative daemon provider rows when RPC succeeds", async () => {
     vi.mocked(withClient).mockImplementation(async () => ({
-      providers: ["anthropic", "openai", "ollama"],
-      count: 3,
+      agentId: "default",
+      providers: [
+        {
+          provider: "amazon-bedrock",
+          modelCount: 109,
+          status: "configured",
+          credentialSource: "secret_store_canonical",
+        },
+      ],
+      count: 1,
     }));
 
     const result = await loadProvidersWithFallback();
 
-    expect(result).toEqual(["anthropic", "openai", "ollama"]);
+    expect(result).toEqual([
+      {
+        provider: "amazon-bedrock",
+        modelCount: 109,
+        status: "configured",
+        credentialSource: "secret_store_canonical",
+      },
+    ]);
     expect(createModelCatalog).not.toHaveBeenCalled();
   });
 

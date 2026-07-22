@@ -223,6 +223,37 @@ describe("providers list", () => {
     });
   });
 
+  it("preserves daemon credential truth when encrypted credentials are not in the CLI environment", async () => {
+    vi.mocked(loadProvidersWithFallback).mockResolvedValue([
+      {
+        provider: "amazon-bedrock",
+        modelCount: 109,
+        status: "configured",
+        credentialSource: "secret_store_canonical",
+      },
+    ] as never);
+    vi.mocked(getEnvApiKey).mockReturnValue(undefined);
+
+    const program = createTestProgram();
+    await program.parseAsync([
+      "node",
+      "comis",
+      "providers",
+      "list",
+      "--format",
+      "json",
+    ]);
+
+    expect(json).toHaveBeenCalledWith([
+      expect.objectContaining({
+        provider: "amazon-bedrock",
+        modelCount: 109,
+        status: "configured",
+        credentialSource: "secret_store_canonical",
+      }),
+    ]);
+  });
+
   it("--format table (default) renders a table + info summary", async () => {
     vi.mocked(loadProvidersWithFallback).mockResolvedValue(["anthropic"]);
     vi.mocked(withClient).mockImplementation(async () => []);
