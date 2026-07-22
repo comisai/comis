@@ -87,7 +87,7 @@ Every runtime change must pass this review before implementation and again durin
 - No config keys, port methods, or feature flags without a concrete caller.
 - No speculative abstractions. Duplicate small local logic when it preserves clarity.
 - Extract shared helpers only after the rule of three; preserve package boundaries.
-- Before adding a dependency, climb the ladder: stdlib / Node built-in → native platform or language feature → a dep already in the tree → a few lines of our own. A new package must clear a bar those rungs can't — every dependency is supply-chain attack surface (see CLAUDE.md "Supply-chain invariants"). "Saves a few lines" is not that bar.
+- Before adding a dependency, climb the ladder: stdlib / Node built-in → native platform or language feature → a dep already in the tree → a few lines of our own. A new package must clear a bar those rungs can't — every dependency is supply-chain attack surface (§2.15). "Saves a few lines" is not that bar.
 - Minimalism never buys simplicity with correctness. YAGNI deletes speculative features and abstractions — never input validation, error/`Result` handling, edge cases, or the security/observability floor (§2.1, §2.2, §2.7). Between two equally small options, take the one that's correct on the edges.
 
 ### 2.4 Composition root + factories
@@ -125,6 +125,31 @@ Every runtime change must pass this review before implementation and again durin
 - **Instrument for troubleshooting.** Every code path that crosses a boundary (channel inbound, RPC, tool call, external API, queue hop) must be reconstructable from logs + events alone — no debugger, no live repro required. Minimum coverage on any new boundary: an INFO completion line carrying `durationMs`, an ERROR/WARN with `hint` + `errorKind` on every failure branch, and a `step:`-tagged DEBUG per intermediate stage. `traceId` (auto-injected) ties a single request together across packages — never swallow it by starting a new context mid-flow. When a path can fail in a way an operator must act on, both log it (with an actionable `hint`) and emit the matching `eventBus` health/state event so observability snapshots stay complete. Litmus test: if you cannot describe how a future failure in the code you just wrote would be diagnosed from its logs, it is under-instrumented. And the converse is a standing obligation: when a real investigation shows the instrumentation was insufficient (you needed a debugger, a raw-log grep, a hand-join, or an error's `hint` named the wrong knob), closing that gap is part of *that* fix — done unprompted, not deferred to a future ask.
 
 **Contract vs implementation.** `ComisLogger`, `LogFields`, and `ErrorKind` are **structural type contracts** that live in `@comis/core/src/logging/log-fields.ts`. The Pino-backed runtime implementation lives in `@comis/infra` and is assignable to the contract (`expectTypeOf<PinoComisLogger>().toExtend<ComisLogger>()` proves this in `packages/infra/src/logging/__tests__/logger-contract.test.ts`). Type-only consumers (agent, channels, gateway, skills, scheduler) import the contract from `@comis/core`. Only the daemon (composition root) and infra itself import the Pino runtime. Pino's auto-redaction (`apiKey`, `token`, `password`, etc., 3 levels deep) is a runtime feature of the Pino implementation; the structural contract does not (and cannot) enforce redaction.
+
+#### Diagnosing a degraded session or the daemon (read-order)
+
+Start with the observability surfaces, not a raw log grep — they exist so one call replaces a four-file hand-join. The CLI is **not on PATH**; prefix with `node packages/cli/dist/cli.js`.
+
+- **Daemon-wide** ("review the production logs", cross-session health): `system-health --since <hours>` — degraded rate, top `errorKind`s, breaker trips, cost, plus health/model/config-posture signals. Content-free counts and hints only, so it is safe to paste into a review.
+- **One session** (you have a `sessionKey` or `traceId`): `explain "<ref>"` — deterministic `likelyRootCause`, outcome, cost, per-tool pass/fail, breaker timeline, context budget.
+- **Two-tier workflow:** `system-health` to find the recurring pattern → `explain` on the worst session it names.
+- **Ground-truth read-order:** surface reply → session trajectory + metadata rollup → `explain` → `system-health` → **only then** a raw `daemon.log` grep. Drop to raw files only when debugging the observability layer itself. A false "verified" is the worst outcome — corroborate every claim against the trajectory or store, never a surface reply alone.
+- **Multi-agent:** cron and session RPCs take an optional `agentId` — pass it explicitly, or the default agent is silently resolved and you diagnose the wrong one. Sub-agent history keys on the **durable** `conversation_ref`, not the human-readable `sessionKey`, which cannot recover it.
+- **Restart before verifying a change against live data.** The running daemon holds its `dist/` in memory; `pnpm build` does not hot-reload it. Checking a fix against a stale process produces a confident wrong answer.
+
+#### Closing instrumentation gaps (troubleshooting retro)
+
+An investigation is not finished when the root cause is found — it is finished when the next occurrence of that class is diagnosable in one or two calls. Do this **unprompted**, in the same change when small, as an immediate follow-up when structural. The scope includes the tooling you investigated *with*: if a harness or script drifted or misled you, fix it too. Convert each friction into a change, test-first, citing the incident:
+
+- **You grepped raw logs or hand-joined files** → thread that data into the trajectory and onto the incident/health report, and make the verdict consume it.
+- **An error said WHAT but not WHICH KNOB** → name the exact config key and the actual conflicting values in the message.
+- **A message pointed the wrong way** → branch it by failure class so each class gets the hint that fits.
+- **Load-bearing evidence was DEBUG-only** → promote a once-per-operation summary to INFO. Diagnosability must not depend on debug logging having been enabled before the incident.
+- **One field name meant different things on different lines, or two lenses double-counted** → rename or dedupe until the numbers reconcile.
+- **A tool was unreachable in the exact failure mode it exists to diagnose** (daemon down, token broken) → give it an offline path with honest coverage degradation, never a silent empty result.
+- **The verdict ranked chronic noise above the acute event** → fix the ordering or severity classification.
+
+If you cannot say "next time, one command answers this", the loop is not closed.
 
 #### User-authored channel message retrieval
 
@@ -202,6 +227,25 @@ Uncommitted work does not exist. A session ends with `git status --short` empty 
 - **Report tree state when the task ends.** State the branch, the commit sequence (`git log --oneline <base>..HEAD`), and that the tree is clean. If anything is intentionally left uncommitted, say so and why — silence is not acceptable.
 
 An agent that produces a large, correct, fully-passing change set and leaves it uncommitted has not completed the task.
+
+### 2.14 Docs-current (docs change in the same commit)
+
+`docs/**/*.mdx` is updated in the **same change** that alters anything it describes. A patch that leaves the docs describing the old behavior is incomplete, not "a follow-up".
+
+The docs sit **outside every code gate** — build, lint, cycles, and coverage all scope to `packages/*` — so documentation drift **fails silently** rather than breaking a check. `COMIS_LOG_PATH`'s documented default stayed wrong for months because nothing compared it to the code. Treat that as the default outcome of skipping this rule.
+
+In scope whenever you touch them: user-facing behavior, config keys and defaults, CLI commands and flags, file paths and the `~/.comis` data-dir layout (`docs/operations/data-directory.mdx`), environment variables (`docs/reference/environment-variables.mdx`), logging fields, and install/release steps.
+
+- Renaming or moving a path, flag, or key: `grep -rn '<old-name>' docs/` and fix **every** hit in the same commit.
+- Run `pnpm docs:check` — it compiles every MDX file and catches a bare `<` or `{` in prose that would otherwise fail only at deploy time. It is cheap and needs no build.
+
+### 2.15 Dependency and supply-chain invariants
+
+These are load-bearing for `npm install -g comisai`; breaking one is a release-blocking defect, not a style issue.
+
+- **Every `dependencies` / `devDependencies` entry is exact-pinned** — no `^`, no `~`, no ranges — across every `packages/*/package.json` and `website/package.json`. `workspace:*` is the only permitted non-numeric specifier; the pack step rewrites it to a literal version.
+- **`@comis/*` workspace packages are `"private": true` and shipped via `bundledDependencies`.** Never publish them to the npm registry and never convert one to a registry dependency.
+- Adding a dependency at all is the last rung of the §2.3 ladder — every package is supply-chain attack surface.
 
 ## 3) Naming Contract
 
@@ -288,10 +332,26 @@ Register metadata via `registerToolMetadata(name, meta)` in `packages/skills/src
 
 ## 7) Validation
 
-Required before any commit:
+The full gate — required before declaring a task complete, and before any push or PR:
 ```bash
-pnpm validate  # = pnpm build && pnpm test && pnpm lint:security && pnpm cycles
+pnpm validate
+# = pnpm docs:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage
 ```
+
+Each step is deliberate — do not substitute a cheaper one and call it validated:
+
+- **`docs:check`** runs first because it is cheap and needs no build. It compiles every `docs/**/*.mdx`; the docs are otherwise outside every gate (§2.14).
+- **`build:clean`** (not incremental `build`) — a stale `dist/` hides workspace-dependency cycles.
+- **`cycles`** (madge, dist `.d.ts`) and **`cycles:refs`** (`tsc -b --dry`, project-reference/TS6202) are **two different checks**; running only the first misses reference cycles.
+- **`test:coverage`** (not bare `test`) — the per-package coverage floors only run under coverage. Skipping incremental-vs-clean build and coverage is exactly what let a build-cycle + coverage cascade reach `main`.
+
+`pnpm test` alone is `vitest` in **watch mode** and will hang a non-interactive session — use `CI=true pnpm test` for a single run, or `pnpm test:coverage`.
+
+**Per commit** (§2.13), run the targeted tests for the slice you are committing — `pnpm vitest run <path>` — not the full gate; `build:clean` plus coverage is far too slow to repeat per commit. The full `pnpm validate` runs once at the end.
+
+A **pre-push hook** (`.githooks/pre-push`, installed by the `prepare` script) runs `pnpm validate` and blocks the push on failure. Bypass a single push with `git push --no-verify` only for docs-only changes.
+
+**Local green ≠ CI green.** `pnpm validate` is the cross-platform *floor*, not the full surface. Three CI classes cannot run on macOS: (1) the **Docker image build** — its hand-maintained selective `COPY packages/<n>/package.json` list drifts, so a package missing from it fails only in the image build; (2) **`*.linux.test.ts`**, which silently **skip** on macOS (real-`bwrap` gated); (3) **integration tests**, which run from a separate config via `pnpm validate:full`, not `validate`. Before merging anything touching sandboxing, packaging, or daemon behavior, run `pnpm validate:full` on Linux. Never report "validate passed" as if it meant CI-green — say which tiers actually ran.
 
 By change type:
 - Security/gateway/daemon: include at least one boundary/failure-mode test.
@@ -301,7 +361,7 @@ By change type:
 - Injection patterns: test detection accuracy and false positives.
 - Integration tests: `pnpm build` first; run via `pnpm test:integration` (or `:mock` / `test:orchestrate`). Required per-commit when retargeting a production caller from a global to a port, and when splitting executor files.
 
-Coverage: `pnpm test --coverage` enforces `lines: 90 / branches: 85 / functions: 90` on `packages/*/src/**/*.ts` via `@vitest/coverage-v8`; integration tier ≥80% line. `coverageWaiver` is for test-impractical files only.
+Coverage: `pnpm test:coverage` enforces `lines: 90 / branches: 85 / functions: 90` on `packages/*/src/**/*.ts` via `@vitest/coverage-v8`; integration tier ≥80% line. `coverageWaiver` is for test-impractical files only.
 
 If full validation is impractical, document what was run and what was skipped.
 
@@ -349,4 +409,17 @@ If full validation is impractical, document what was run and what was skipped.
 - `AGENTS.md` is the authoritative protocol for all coding agents in this repository.
 - `CLAUDE.md` may contain Claude-specific operational shortcuts, daemon notes, or release notes, but it must not weaken or override this file.
 - If `CLAUDE.md` and `AGENTS.md` conflict, follow `AGENTS.md` and update the stale companion file.
+- **This file must be self-contained.** No rule here may delegate a normative requirement to `CLAUDE.md` ("see CLAUDE.md for X") — agents other than Claude never read it, so a delegated rule is an unenforced rule. If a requirement belongs to all agents, state it here in full and let the companion file cross-reference *this* file, not the reverse.
 - **Self-correction loop**: when the user corrects an approach in a way that would apply to future sessions, propose the `AGENTS.md` or `CLAUDE.md` edit before moving on.
+
+## 11) Release and Worktree Hygiene
+
+**Releasing `vX.Y.Z`** (maintainer operation — never performed without an explicit request):
+
+1. Bump **all 16 `packages/*/package.json` to the same version** — they move together. The umbrella package bundles the others, so drift surfaces at publish time, not in a local build.
+2. Sweep for stray pins: `grep -rn '<old-version>' --include='*.json' --include='*.mdx' --include='*.md' .` (excluding `node_modules`, `dist/`, lockfiles, changelog). Docs are intentionally un-pinned; a version appearing there is usually a regression.
+3. `pnpm validate`, plus `pnpm validate:full` on Linux for the integration and tarball tiers.
+4. Commit, push, tag. The `vX.Y.Z` tag triggers npm publish (with provenance) and the multi-arch image builds.
+5. **Verify the publish actually landed** — `npm view comisai dist-tags` must show the new version. The publish job has silently drifted before; a green workflow is not proof.
+
+**Worktrees.** After merging a worktree branch back, remove the worktree and delete its tracking branch in the same step — do not leave stale worktrees behind.
