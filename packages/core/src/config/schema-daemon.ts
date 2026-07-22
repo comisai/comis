@@ -101,7 +101,7 @@ const ConfigWebhookSchema = z.strictObject({
  */
 export const DaemonConfigSchema = z.strictObject({
     /** Graceful shutdown timeout in milliseconds */
-    shutdownTimeoutMs: z.number().int().positive().default(30_000),
+    shutdownTimeoutMs: z.number().int().min(40_000).default(45_000),
     /** Process metrics collection interval in milliseconds */
     metricsIntervalMs: z.number().int().positive().default(30_000),
     /** Per-module log level overrides (module name -> level) */
