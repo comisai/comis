@@ -14,13 +14,24 @@
  * published separately.
  */
 
-import { cpSync, mkdirSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, existsSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const comisRoot = resolve(__dirname, "..");
 const monoRoot = resolve(comisRoot, "../..");
+const patchedProviderSource = realpathSync(
+  join(monoRoot, "node_modules", "@earendil-works", "pi-ai"),
+);
+const patchedProviderMarker = join(patchedProviderSource, "dist", "utils", "error-body.js");
+if (
+  !existsSync(patchedProviderMarker)
+  || !readFileSync(patchedProviderMarker, "utf8").includes("function isNonEmptyJsonBody")
+) {
+  console.error("ERROR: installed @earendil-works/pi-ai does not contain the required dependency patch");
+  process.exit(1);
+}
 
 // Single source of truth: bundledDependencies in our own package.json.
 // Tarball-smoke and umbrella-bundling test read the SAME source.
@@ -137,7 +148,23 @@ if (removed > 0) {
   console.log(`  removed ${removed} pnpm entries from node_modules/`);
 }
 
-// --- Step 4: Bundle native-dep helpers that npm fails to install ---
+// --- Step 4: Bundle the patched provider package ---
+// pnpm patches modify the local dependency tree, but npm consumers do not
+// read pnpm.patchedDependencies. Copy the verified installed artifact into
+// the umbrella package so global installs execute the same provider code.
+const patchedProviderDest = join(bundledModules, "@earendil-works", "pi-ai");
+mkdirSync(patchedProviderDest, { recursive: true });
+for (const entry of ["dist", "README.md", "package.json"]) {
+  const source = join(patchedProviderSource, entry);
+  if (!existsSync(source)) {
+    console.error(`ERROR: required patched provider file is missing: ${source}`);
+    process.exit(1);
+  }
+  cpSync(source, join(patchedProviderDest, entry), { recursive: true });
+}
+console.log("  bundled patched @earendil-works/pi-ai@0.80.10");
+
+// --- Step 5: Bundle native-dep helpers that npm fails to install ---
 // npm's reify creates empty directories for transitive deps of non-bundled
 // native modules (better-sqlite3 → bindings → file-uri-to-path) when
 // bundledDependencies is present. Ship them in the tarball so they're always

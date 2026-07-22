@@ -52,6 +52,7 @@
   "files": [
     "dist",
     "node_modules/@comis",
+    "node_modules/@earendil-works/pi-ai",
     "node_modules/bindings",
     "node_modules/file-uri-to-path"
   ],
@@ -153,6 +154,7 @@
     "@comis/observability",
     "@comis/observability-otel",
     "@comis/web",
+    "@earendil-works/pi-ai",
     "bindings",
     "file-uri-to-path"
   ],

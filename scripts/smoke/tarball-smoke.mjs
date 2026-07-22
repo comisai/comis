@@ -10,7 +10,7 @@
  * source of truth) is bundled with a populated `dist/` directory inside
  * `package/node_modules/@comis/`.
  *
- * Assertions (4):
+ * Assertions (5):
  *   1. The `node_modules/@comis/<pkg>` directory count matches the
  *      `@comis/*` entries in bundledDependencies.
  *   2. The set of bundled directories equals the set of `@comis/*`
@@ -18,13 +18,15 @@
  *   3. Every bundled `@comis/<pkg>` has a non-empty `dist/` subdirectory.
  *   4. `node_modules/@comis/orchestrator/dist/` exists (explicit check —
  *      guards against silent regression of the orchestrator extraction).
+ *   5. The patched provider error normalizer is bundled, so a clean npm
+ *      install cannot replace it with the unpatched registry artifact.
  *
  * Working-tree defense-in-depth checks (run AFTER cleanup):
- *   a. `git status --porcelain packages/comis/package.json` is empty.
+ *   a. `packages/comis/package.json` is byte-identical before and after pack.
  *      The `prepack.js` rewrite of `workspace:*` → real versions is expected
  *      to be reverted by `postpack.js` from `package.json.workspace-backup`.
- *      We verify this so a future regression in postpack.js cannot poison
- *      the working tree for the next `pnpm install`.
+ *      Comparing bytes supports intentional uncommitted package edits while
+ *      still preventing pack from poisoning the next `pnpm install`.
  *   b. `packages/comis/package.json.workspace-backup` does NOT exist.
  *      `postpack.js` removes it after restoring; we verify it was cleaned up.
  *
@@ -69,7 +71,8 @@ const ok = (msg) => console.log(`OK: ${msg}`);
 // `node_modules/@comis/` directory.
 
 const comisPkgPath = join(repoRoot, "packages/comis/package.json");
-const comisPkg = JSON.parse(readFileSync(comisPkgPath, "utf8"));
+const originalComisPkgContent = readFileSync(comisPkgPath, "utf8");
+const comisPkg = JSON.parse(originalComisPkgContent);
 const expectedPackages = (comisPkg.bundledDependencies ?? [])
   .filter((s) => typeof s === "string" && s.startsWith("@comis/"))
   .map((s) => s.replace(/^@comis\//, ""));
@@ -194,6 +197,22 @@ try {
   } else {
     ok(`@comis/orchestrator/dist/ present (explicit check)`);
   }
+
+  // Assertion 5 — the dependency patch must cross the npm distribution boundary.
+  const providerErrorBody = join(
+    extractDir,
+    "package/node_modules/@earendil-works/pi-ai/dist/utils/error-body.js",
+  );
+  if (!existsSync(providerErrorBody)) {
+    fail(`patched @earendil-works/pi-ai error normalizer missing at ${providerErrorBody}`);
+  } else {
+    const providerSource = readFileSync(providerErrorBody, "utf8");
+    if (!providerSource.includes("function isNonEmptyJsonBody")) {
+      fail(`bundled @earendil-works/pi-ai does not contain the dependency patch`);
+    } else {
+      ok(`patched @earendil-works/pi-ai error normalizer is bundled`);
+    }
+  }
 } finally {
   // Step 6 — Cleanup tmpdir.
   rmSync(packDest, { recursive: true, force: true });
@@ -201,22 +220,19 @@ try {
 
 // --- Step 7: Working-tree defense-in-depth checks (AFTER tmpdir cleanup) ---
 
-// Check (a): working tree clean for packages/comis/package.json.
+// Check (a): package.json restored byte-for-byte to its pre-pack state.
 try {
-  const status = execSync("git status --porcelain packages/comis/package.json", {
-    cwd: repoRoot,
-    encoding: "utf8",
-  }).trim();
-  if (status.length > 0) {
+  const restoredComisPkgContent = readFileSync(comisPkgPath, "utf8");
+  if (restoredComisPkgContent !== originalComisPkgContent) {
     fail(
-      `postpack did NOT restore packages/comis/package.json — git status reports: ` +
-        `\n${status}\nThis would poison the next \`pnpm install\`.`,
+      `postpack did NOT restore packages/comis/package.json to its pre-pack contents; ` +
+        `this would poison the next \`pnpm install\`.`,
     );
   } else {
-    ok(`postpack restored packages/comis/package.json (working tree clean)`);
+    ok(`postpack restored packages/comis/package.json byte-for-byte`);
   }
 } catch (e) {
-  fail(`could not run git status --porcelain packages/comis/package.json: ${e.message}`);
+  fail(`could not verify restored packages/comis/package.json: ${e.message}`);
 }
 
 // Check (b): workspace-backup file removed.
