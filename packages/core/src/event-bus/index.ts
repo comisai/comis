@@ -17,6 +17,7 @@ export type { ModelEvents } from "./events-model.js";
 export type { OrchestrationEvents } from "./events-orchestration.js";
 export type { ChannelEvents } from "./events-channel.js";
 export type { InfraEvents, WebhookFailureReason } from "./events-infra.js";
+export type { SchedulerTaskEvents } from "./events-scheduler-tasks.js";
 // ReflectAdmissionOutcome — the closed content-free verdict enum on
 // reflect:funnel.admissionOutcome. Canonical in events-learning.ts
 // (the event that carries it) since core cannot import @comis/agent; re-exported

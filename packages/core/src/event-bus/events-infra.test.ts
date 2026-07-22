@@ -291,99 +291,281 @@ describe("InfraEvents payload structure", () => {
     expect(received.durationMs).toBe(850);
   });
 
-  it("scheduler:job_result delivers nested deliveryTarget and optional payloadKind union", () => {
+  it("durable cron lifecycle events carry only closed execution evidence", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
-
-    // With payloadKind
-    const payload: EventMap["scheduler:job_result"] = {
+    const started: EventMap["scheduler:cron_execution_started"] = {
+      executionId: "execution-001",
+      bootId: "boot-001",
       jobId: "job-001",
-      jobName: "daily-summary",
       agentId: "agent-1",
-      result: "Daily summary generated successfully",
-      success: true,
-      deliveryTarget: {
-        channelId: "c1",
-        userId: "u1",
-        tenantId: "t1",
-        channelType: "telegram",
-      },
-      timestamp: Date.now(),
-      payloadKind: "agent_turn",
+      scheduledForMs: 1_000,
+      trigger: "scheduled",
+      workKind: "agent_turn",
+      rootRunId: "root-cron-execution-001",
+      startedAtMs: 1_010,
     };
-
-    bus.on("scheduler:job_result", handler);
-    bus.emit("scheduler:job_result", payload);
-
-    const received = handler.mock.calls[0]![0] as EventMap["scheduler:job_result"];
-    expect(received.deliveryTarget.channelId).toBe("c1");
-    expect(received.deliveryTarget.userId).toBe("u1");
-    expect(received.deliveryTarget.tenantId).toBe("t1");
-    expect(received.deliveryTarget.channelType).toBe("telegram");
-    expect(received.payloadKind).toBe("agent_turn");
-    expect(received.onComplete).toBeUndefined(); // optional field
-
-    // With onComplete callback
-    const completeSpy = vi.fn();
-    const withCallback: EventMap["scheduler:job_result"] = {
-      ...payload,
-      jobId: "job-001b",
-      onComplete: completeSpy,
-    };
-    bus.emit("scheduler:job_result", withCallback);
-    const receivedWithCb = handler.mock.calls[1]![0] as EventMap["scheduler:job_result"];
-    receivedWithCb.onComplete?.({ status: "error", error: "overloaded" });
-    expect(completeSpy).toHaveBeenCalledWith({ status: "error", error: "overloaded" });
-
-    // Without payloadKind
-    const noKindPayload: EventMap["scheduler:job_result"] = {
-      jobId: "job-002",
-      jobName: "heartbeat",
+    const terminal: EventMap["scheduler:cron_execution_terminal"] = {
+      executionId: "execution-001",
+      bootId: "boot-001",
+      jobId: "job-001",
       agentId: "agent-1",
-      result: "OK",
-      success: true,
-      deliveryTarget: { channelId: "c2", userId: "u2", tenantId: "t1" },
-      timestamp: Date.now(),
+      scheduledForMs: 1_000,
+      trigger: "scheduled",
+      workKind: "agent_turn",
+      terminalAtMs: 1_110,
+      durationMs: 100,
+      outcomeKind: "agent_turn",
+      executionStatus: "completed",
+      deliveryStatus: "accepted",
+      continuationStatus: "not_requested",
+      deliveredChunks: 1,
+      failedChunks: 0,
+      ambiguousChunks: 0,
     };
-    bus.emit("scheduler:job_result", noKindPayload);
-    expect(handler.mock.calls[2]![0].payloadKind).toBeUndefined();
+    bus.on("scheduler:cron_execution_started", handler);
+    bus.on("scheduler:cron_execution_terminal", handler);
+    bus.emit("scheduler:cron_execution_started", started);
+    bus.emit("scheduler:cron_execution_terminal", terminal);
+
+    expect(handler).toHaveBeenNthCalledWith(1, started);
+    expect(handler).toHaveBeenNthCalledWith(2, terminal);
+    expect(JSON.stringify([started, terminal])).not.toContain("Daily summary");
   });
 
-  it("scheduler:job_result accepts cronJobModel field", () => {
+  it("scheduled-model drift carries only model resolution identities", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
-
-    const payload: EventMap["scheduler:job_result"] = {
-      jobId: "j1",
-      jobName: "test-cron",
-      agentId: "a1",
-      result: "ok",
-      success: true,
-      deliveryTarget: { channelId: "c1", userId: "u1", tenantId: "t1" },
-      timestamp: Date.now(),
-      payloadKind: "agent_turn",
-      cronJobModel: "anthropic:claude-haiku-4-5-20251001",
+    const payload: EventMap["scheduler:cron_model_drift"] = {
+      executionId: "execution-002",
+      previousExecutionId: "execution-001",
+      jobId: "job-001",
+      agentId: "agent-1",
+      workKind: "internal_action",
+      action: "memory_review",
+      previousModelResolved: "provider/model-a",
+      modelResolved: "provider/model-b",
+      previousModelResolutionSource: "agent_primary",
+      modelResolutionSource: "family_default",
+      timestamp: 1_200,
     };
 
-    bus.on("scheduler:job_result", handler);
-    bus.emit("scheduler:job_result", payload);
+    bus.on("scheduler:cron_model_drift", handler);
+    bus.emit("scheduler:cron_model_drift", payload);
 
-    const received = handler.mock.calls[0]![0] as EventMap["scheduler:job_result"];
-    expect(received.cronJobModel).toBe("anthropic:claude-haiku-4-5-20251001");
+    expect(handler).toHaveBeenCalledWith(payload);
+    expect(Object.keys(payload).sort()).toEqual([
+      "action",
+      "agentId",
+      "executionId",
+      "jobId",
+      "modelResolutionSource",
+      "modelResolved",
+      "previousExecutionId",
+      "previousModelResolutionSource",
+      "previousModelResolved",
+      "timestamp",
+      "workKind",
+    ]);
+    expect(JSON.stringify(payload)).not.toMatch(/prompt|message|result|secret|token/iu);
+  });
 
-    // Without cronJobModel (undefined)
-    const noCronModel: EventMap["scheduler:job_result"] = {
-      jobId: "j2",
-      jobName: "sys-event",
-      agentId: "a1",
-      result: "text",
-      success: true,
-      deliveryTarget: { channelId: "c1", userId: "u1", tenantId: "t1" },
-      timestamp: Date.now(),
-      payloadKind: "system_event",
+  it("scheduler ownership reconciliation reports completed and failed boot health", () => {
+    const eventSource = readFileSync(new URL("./events-infra.ts", import.meta.url), "utf8");
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const completed: EventMap["scheduler:cron_ownership_reconciliation"] = {
+      agentId: "agent-1",
+      status: "completed",
+      recoveredBeforeStart: 1,
+      ownerLostAfterStart: 2,
+      settledFromTerminal: 3,
+      retainedCurrentBoot: 0,
+      durationMs: 7,
+      timestamp: 1_000,
     };
-    bus.emit("scheduler:job_result", noCronModel);
-    expect(handler.mock.calls[1]![0].cronJobModel).toBeUndefined();
+    const failed: EventMap["scheduler:cron_ownership_reconciliation"] = {
+      agentId: "agent-1",
+      status: "failed",
+      errorCode: "identity_mismatch",
+      errorKind: "validation",
+      durationMs: 4,
+      timestamp: 2_000,
+    };
+
+    bus.on("scheduler:cron_ownership_reconciliation", handler);
+    bus.emit("scheduler:cron_ownership_reconciliation", completed);
+    bus.emit("scheduler:cron_ownership_reconciliation", failed);
+
+    expect(handler).toHaveBeenNthCalledWith(1, completed);
+    expect(handler).toHaveBeenNthCalledWith(2, failed);
+    expect(eventSource).toContain('"scheduler:cron_ownership_reconciliation":');
+  });
+
+  it("follow-up task ownership reconciliation reports content-free recovery health", () => {
+    const eventSource = readFileSync(new URL("./events-scheduler-tasks.ts", import.meta.url), "utf8");
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const completed: EventMap["scheduler:task_ownership_reconciliation"] = {
+      agentId: "agent-1",
+      status: "completed",
+      recoveredChecking: 2,
+      recoveredDelivering: 1,
+      durationMs: 7,
+      timestamp: 1_000,
+    };
+    const failed: EventMap["scheduler:task_ownership_reconciliation"] = {
+      agentId: "agent-1",
+      status: "failed",
+      errorCode: "ownership_unproven",
+      errorKind: "precondition",
+      durationMs: 4,
+      timestamp: 2_000,
+    };
+
+    bus.on("scheduler:task_ownership_reconciliation", handler);
+    bus.emit("scheduler:task_ownership_reconciliation", completed);
+    bus.emit("scheduler:task_ownership_reconciliation", failed);
+
+    expect(handler).toHaveBeenNthCalledWith(1, completed);
+    expect(handler).toHaveBeenNthCalledWith(2, failed);
+    expect(eventSource).toContain('"scheduler:task_ownership_reconciliation":');
+  });
+
+  it("follow-up task lifecycle events expose closed content-free correlation evidence", () => {
+    const eventSource = readFileSync(new URL("./events-scheduler-tasks.ts", import.meta.url), "utf8");
+    const bus = new TypedEventBus();
+    const extractionCompleted: EventMap["scheduler:task_extraction_completed"] = {
+      agentId: "agent-1",
+      rootRunId: "root-task-extract-a",
+      itemCount: 2,
+      candidateCount: 1,
+      createdCount: 1,
+      mergedCount: 0,
+      sourceExecutionIds: ["execution-a"],
+      taskIds: ["task-a"],
+      durationMs: 8,
+      timestamp: 1_000,
+    };
+    const extractionFailed: EventMap["scheduler:task_extraction_failed"] = {
+      agentId: "agent-1",
+      rootRunId: null,
+      itemCount: 2,
+      sourceExecutionIds: ["execution-a", "execution-b"],
+      stage: "queue_transfer",
+      errorKind: "precondition",
+      durationMs: 0,
+      timestamp: 2_000,
+    };
+    const checkStarted: EventMap["scheduler:task_check_started"] = {
+      agentId: "agent-1",
+      attemptId: "attempt-a",
+      rootRunId: "root-task-check-a",
+      correlationId: "correlation-a",
+      taskIds: ["task-a"],
+      sourceExecutionIds: ["execution-a"],
+      originTraceIds: ["trace-a"],
+      durationMs: 3,
+      timestamp: 3_000,
+    };
+    const checkTerminal: EventMap["scheduler:task_check_terminal"] = {
+      ...checkStarted,
+      outcome: "delivered",
+      recovery: "live",
+      deliveredChunks: 1,
+      failedChunks: 0,
+      ambiguousChunks: 0,
+      durationMs: 50,
+      timestamp: 3_050,
+    };
+    const historyFailed: EventMap["scheduler:task_delivery_history_failed"] = {
+      agentId: "agent-1",
+      attemptId: "attempt-a",
+      rootRunId: "root-task-check-a",
+      taskIds: ["task-a"],
+      errorKind: "resource",
+      durationMs: 4,
+      timestamp: 3_040,
+    };
+    const capDeferred: EventMap["scheduler:task_cap_deferred"] = {
+      agentId: "agent-1",
+      rootRunId: "root-task-check-b",
+      correlationId: "correlation-b",
+      deferredTaskCount: 2,
+      expiredTaskCount: 1,
+      durationMs: 2,
+      timestamp: 4_000,
+    };
+    const storeDegraded: EventMap["scheduler:task_store_degraded"] = {
+      agentId: "agent-1",
+      operation: "claim",
+      errorCode: "lock_contended",
+      errorKind: "resource",
+      rootRunId: "root-task-check-b",
+      attemptId: "attempt-b",
+      durationMs: 2,
+      timestamp: 4_000,
+    };
+    const cancelled: EventMap["scheduler:task_cancelled"] = {
+      agentId: "agent-1",
+      taskIds: ["task-a"],
+      activeTaskCount: 0,
+      durationMs: 3,
+      timestamp: 5_000,
+    };
+    const reset: EventMap["scheduler:task_store_reset"] = {
+      agentId: "agent-1",
+      operationId: "operation-a",
+      beforeDigest: "a".repeat(64),
+      afterDigest: "b".repeat(64),
+      durationMs: 5,
+      timestamp: 6_000,
+    };
+
+    const events = [
+      ["scheduler:task_extraction_completed", extractionCompleted],
+      ["scheduler:task_extraction_failed", extractionFailed],
+      ["scheduler:task_check_started", checkStarted],
+      ["scheduler:task_check_terminal", checkTerminal],
+      ["scheduler:task_delivery_history_failed", historyFailed],
+      ["scheduler:task_cap_deferred", capDeferred],
+      ["scheduler:task_store_degraded", storeDegraded],
+      ["scheduler:task_cancelled", cancelled],
+      ["scheduler:task_store_reset", reset],
+    ] as const;
+
+    for (const [eventName, payload] of events) {
+      const handler = vi.fn();
+      bus.on(eventName, handler as never);
+      bus.emit(eventName, payload as never);
+      expect(handler).toHaveBeenCalledWith(payload);
+      expect(eventSource).toContain(`"${eventName}":`);
+    }
+    expect(eventSource).not.toContain('"scheduler:task_extraction_outcome":');
+    expect(eventSource).not.toContain('"scheduler:task_history_append_failed":');
+    expect(JSON.stringify(events)).not.toMatch(/task text|prompt|assistant body|archive path/iu);
+  });
+
+  it("scheduler cron reset reports only content-free authority state", () => {
+    const eventSource = readFileSync(new URL("./events-infra.ts", import.meta.url), "utf8");
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["scheduler:cron_store_reset"] = {
+      agentId: "agent-1",
+      operationId: "operation-1",
+      target: "all",
+      beforeDigests: { store: "a".repeat(64), ledger: "b".repeat(64) },
+      afterDigests: { store: "c".repeat(64), ledger: "d".repeat(64) },
+      reactivated: true,
+      timestamp: 3_000,
+    };
+
+    bus.on("scheduler:cron_store_reset", handler);
+    bus.emit("scheduler:cron_store_reset", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    expect(JSON.stringify(payload)).not.toContain("archive");
+    expect(eventSource).toContain('"scheduler:cron_store_reset":');
   });
 
   it("observability:metrics delivers nested eventLoopDelayMs with min/max/mean/p50/p99", () => {
@@ -636,15 +818,14 @@ describe("scheduler:wake_gate content-free event", () => {
     return rest.slice(0, end);
   }
 
-  it("is declared in the scheduler family, beside scheduler:job_result", () => {
+  it("is declared between durable cron terminal and heartbeat events", () => {
     expect(source).toContain('"scheduler:wake_gate":');
     const wakeIdx = source.indexOf('"scheduler:wake_gate":');
-    const jobResultIdx = source.indexOf('"scheduler:job_result":');
+    const cronTerminalIdx = source.indexOf('"scheduler:cron_execution_terminal":');
     const heartbeatIdx = source.indexOf('"scheduler:heartbeat_check":');
-    expect(jobResultIdx).toBeGreaterThan(-1);
+    expect(cronTerminalIdx).toBeGreaterThan(-1);
     expect(heartbeatIdx).toBeGreaterThan(-1);
-    // Sits inside the scheduler block: after job_result, before heartbeat.
-    expect(wakeIdx).toBeGreaterThan(jobResultIdx);
+    expect(wakeIdx).toBeGreaterThan(cronTerminalIdx);
     expect(wakeIdx).toBeLessThan(heartbeatIdx);
   });
 

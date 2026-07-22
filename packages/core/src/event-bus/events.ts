@@ -7,6 +7,7 @@ import type { LearningEvents } from "./events-learning.js";
 import type { TrajectoryEvents } from "./events-trajectory.js";
 import type { ChannelEvents } from "./events-channel.js";
 import type { InfraEvents } from "./events-infra.js";
+import type { SchedulerTaskEvents } from "./events-scheduler-tasks.js";
 import type { TerminalEvents } from "./events-terminal.js";
 import type {
   MediaGenerationEvents,
@@ -44,6 +45,7 @@ export interface EventMap
     TrajectoryEvents,
     ChannelEvents,
     InfraEvents,
+    SchedulerTaskEvents,
     TerminalEvents,
     MediaGenerationEvents,
     MediaVisionEvents,
