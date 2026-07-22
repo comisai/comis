@@ -4,52 +4,80 @@ description: "Create scheduled jobs and manage agent heartbeat timing"
 icon: "clock"
 ---
 
-**What it does:** Lets agents create automated tasks that run on a schedule -- daily briefings, periodic health checks, end-of-day summaries, weekly reports.
+**What it does:** Lets an agent create durable scheduled work, inspect its execution history, and manage the agent's periodic heartbeat.
 
-**Who it's for:** Anyone who wants their agent to wake up on a fixed cadence (or at a specific moment in time) without being prompted. The `cron` tool covers user-defined jobs; `heartbeat_manage` covers the agent's own internal periodic check-in.
+**Who it's for:** Anyone who wants an agent to act at a fixed cadence, at an absolute time, or after a relative delay without another user prompt. The `cron` tool manages authored jobs; `heartbeat_manage` manages the agent's built-in periodic check-in.
 
 ## cron -- Scheduled Jobs
 
-The `cron` tool manages scheduled jobs with **8 actions** (`add`, `list`, `update`, `remove`, `status`, `runs`, `run`, `wake`) and **3 schedule types** (`cron`, `every`, `at`). Jobs are persisted in `~/.comis/data.db` (SQLite) so they survive daemon restarts -- on startup the scheduler replays missed firings and resumes future schedules. Agents can create, update, monitor, and remove jobs from within a conversation.
+The `cron` tool has **8 actions** (`add`, `list`, `update`, `remove`, `status`, `runs`, `run`, `wake`) and **4 schedule types** (`cron`, `every`, `at`, `in`). Each agent owns a JSON job store at `<agentWorkspace>/.scheduler/cron-jobs.json` and an append-only execution ledger at `<agentWorkspace>/.scheduler/cron-executions.jsonl`. These files survive daemon restarts and are the scheduler's durable authorities.
 
-Each cron job runs with its own [tool policy](/skills/tool-policy) -- the `cron-minimal` profile is the default, restricting the job to a safe subset (web_search, message, read/write file, list_dir, memory_store/search, cron, discover). Override per job to give a scheduled agent more or fewer tools.
+The scheduler writes a durable claim for an occurrence and appends its started record before dispatch. Startup reconciliation can release a claim that provably stopped before start. Once a durable started record exists, or dispatch may have happened but its result is uncertain, the occurrence is terminalized as unknown and is **never automatically replayed**. New due occurrences and future schedules can still run normally.
+
+`agent_turn` and `delivery` jobs created through the tool are bound to the **trusted originating conversation** as their exact delivery target. The tool does not expose target fields, and omitting them does not create an unbound job. Add and update responses do not echo that trusted route.
+
+Tool profiles are explicit policy choices. [`cron-minimal`](/skills/tool-policy) is opt-in and is never silently applied to a job.
 
 ### Schedule Types
 
-| Type | Syntax | Example | Meaning |
-|------|--------|---------|---------|
-| `cron` | Standard cron expression | `0 9 * * *` | Every day at 9:00 AM |
-| `every` | Interval in milliseconds | `1800000` | Every 30 minutes |
-| `at` | ISO 8601 timestamp | `2026-03-15T14:00:00Z` | One-time at a specific time |
+| Type | Tool field | Example | Meaning |
+|------|------------|---------|---------|
+| `cron` | `schedule_expr` | `0 9 * * *` | Recurring cron expression |
+| `every` | `schedule_every_ms` | `1800000` | Recurring fixed interval in positive milliseconds |
+| `at` | `schedule_at` | `2026-08-15T09:00:00` | One-shot absolute or wall-clock time |
+| `in` | `schedule_in_seconds` | `120` | One-shot positive delay measured from now; resolved to a persisted `at` schedule |
 
 <Tip>
-Use `cron` for recurring jobs on a fixed schedule (like "every weekday at 9am"). Use `every` for repeating intervals specified in milliseconds. Use `at` for one-time tasks at a specific moment.
+Use `in` for relative requests such as "in two minutes"; it needs no timezone or datetime calculation. Use `at` only for an absolute clock time. Pass an IANA `timezone` for user-facing wall-clock `cron` and `at` schedules so they resolve in the user's locale; an omitted timezone uses the agent's configured scheduler timezone.
 </Tip>
+
+### Payload and continuation behavior
+
+| Payload | Behavior |
+|---------|----------|
+| `heartbeat_event` | Enqueues a typed event for the agent. `wake_mode: now` requests an immediate heartbeat admission; `next-heartbeat` holds it for the next periodic phase. |
+| `delivery` | Delivers `payload_text` exactly to the trusted originating conversation without a model turn. |
+| `agent_turn` | Runs the agent with `payload_text` as its message and delivers visible output through the trusted originating conversation route. An optional `model` overrides the job's model. |
+
+Only `agent_turn` jobs have a session strategy or continuation mode:
+
+- `fresh` starts a fresh scheduled session for every occurrence.
+- `rolling` retains a bounded history; `max_history_turns` is required and may be 1--20.
+- `none` performs no post-run continuation.
+- `heartbeat_excerpt` admits up to 4 KiB of completed visible output as a typed event for the next periodic heartbeat.
+- `origin_history` appends fully accepted delivered output idempotently to the originating conversation history. It requires the exact delivery target supplied by the trusted route.
 
 ### Actions
 
 <AccordionGroup>
   <Accordion title="add -- Create a scheduled job">
-    Creates a new cron job with a specified schedule and payload.
+    Creates a new job. The tool resolves authoring schedules before storing them and returns strict `{ jobId, name, schedule }` data.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Must be `add` |
-    | `name` | string | Yes | A human-readable name for the job |
-    | `schedule_kind` | string | Yes | Schedule type: `cron`, `every`, or `at` |
-    | `schedule_expr` | string | For cron | Standard cron expression (for `schedule_kind: cron`) |
-    | `schedule_every_ms` | integer | For every | Interval in milliseconds (for `schedule_kind: every`) |
-    | `schedule_at` | string | For at | ISO 8601 datetime string (for `schedule_kind: at`) |
-    | `timezone` | string | No | IANA timezone (e.g., `America/New_York`). Defaults to UTC. |
-    | `payload_kind` | string | Yes | What happens when the job fires: `system_event` or `agent_turn` |
-    | `payload_text` | string | Yes | The message or payload content sent when the job triggers |
-    | `session_strategy` | string | No | Session history strategy for recurring jobs: `fresh` (new session each run, default), `rolling` (keep last N turns), or `accumulate` (keep all history) |
-    | `max_history_turns` | integer | No | Number of recent turns to keep when using `rolling` strategy (default: 3) |
-    | `model` | string | No | Model override for cron-triggered agent turns (e.g., `gemini-2.5-flash`). Only applies to `agent_turn` payload kind. |
+    | `name` | string | Yes | Human-readable job name; names must be unique for the agent |
+    | `schedule_kind` | string | Yes | `cron`, `every`, `at`, or `in` |
+    | `schedule_expr` | string | For cron | Cron expression |
+    | `schedule_every_ms` | integer | For every | Positive interval in milliseconds |
+    | `schedule_at` | string | For at | ISO 8601 absolute time or wall-clock datetime |
+    | `schedule_in_seconds` | integer | For in | Positive number of seconds from now |
+    | `timezone` | string | For local time | IANA timezone for `cron` or wall-clock `at` schedules |
+    | `payload_kind` | string | Yes | `heartbeat_event`, `delivery`, or `agent_turn` |
+    | `payload_text` | string | Yes | Event text, exact delivery text, or agent-turn message |
+    | `wake_mode` | string | For heartbeat event | `now` (default) or `next-heartbeat` |
+    | `session_strategy` | string | For agent turn | `fresh` (default) or `rolling` |
+    | `max_history_turns` | integer | For rolling | Bounded retained turns, 1--20 |
+    | `model` | string | No | Model override; valid only for `agent_turn` |
+    | `continuation_mode` | string | For agent turn | `none` (default), `heartbeat_excerpt`, or `origin_history` |
+    | `wake_gate_script` | string | No | Pre-run gate script; valid only for `agent_turn` |
+    | `wake_gate_language` | string | No | `js` (default) or `ts` |
+    | `wake_gate_timeout_seconds` | integer | No | Gate timeout, 1--300 seconds (default: 30) |
 
-    **Example -- Daily 9am briefing:**
+    **Daily 9am briefing:**
+
     ```yaml
     action: add
     name: morning-briefing
@@ -57,247 +85,256 @@ Use `cron` for recurring jobs on a fixed schedule (like "every weekday at 9am").
     schedule_expr: "0 9 * * *"
     timezone: America/New_York
     payload_kind: agent_turn
-    payload_text: "Good morning! Run the daily briefing."
+    payload_text: "Prepare a concise morning briefing for this conversation."
     session_strategy: rolling
     max_history_turns: 5
+    continuation_mode: origin_history
     ```
 
-    **Example -- One-time reminder:**
+    **Relative reminder:**
+
     ```yaml
     action: add
-    name: meeting-reminder
-    schedule_kind: at
-    schedule_at: "2026-03-15T14:00:00Z"
-    payload_kind: agent_turn
-    payload_text: "Reminder: Team meeting starts now."
+    name: stretch-reminder
+    schedule_kind: in
+    schedule_in_seconds: 120
+    payload_kind: delivery
+    payload_text: "Time to stretch."
     ```
 
-    **Example -- Periodic system event every 30 minutes:**
+    **Event for the next heartbeat:**
+
     ```yaml
     action: add
-    name: health-check
+    name: next-check-in
     schedule_kind: every
     schedule_every_ms: 1800000
-    payload_kind: system_event
-    payload_text: "Run health check"
+    payload_kind: heartbeat_event
+    payload_text: "Review the current project risks."
+    wake_mode: next-heartbeat
     ```
   </Accordion>
 
   <Accordion title="list -- List all scheduled jobs">
-    Lists all scheduled jobs with their names, schedules, and current status.
+    Lists authored and config-owned jobs. Each projection includes `id`, `name`, `agentId`, `source`, resolved `schedule`, `lifecycle`, and `payload`, plus the session, continuation, target, gate, cache, or tool-policy fields that apply to that job kind.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Must be `list` |
-
-    Returns a list of all jobs including their name, schedule type, expression, and whether they are active or paused.
   </Accordion>
 
   <Accordion title="update -- Update an existing job">
-    Modifies an existing scheduled job. You can change the name or enable/disable the job.
+    Changes an authored job. Config-owned jobs cannot be edited through this action. Supply a complete schedule or payload field group when replacing that part of the job. `session_strategy` and `continuation_mode` cannot be changed by the current tool; remove and recreate the job when those policies must change. A wake-gate can be set or replaced, but the tool does not expose a clear operation.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Must be `update` |
-    | `job_name` | string | Yes | The name of the job to update |
-    | `name` | string | No | New name for the job |
-    | `enabled` | boolean | No | Enable or disable the job |
+    | `job_name` | string | Yes | Current job name |
+    | `name` | string | No | Replacement job name |
+    | `paused` | boolean | No | `true` pauses future occurrences; `false` resumes them |
+    | `schedule_kind` | string | No | Begin a complete schedule replacement: `cron`, `every`, `at`, or `in` |
+    | `schedule_expr` | string | For cron | Replacement cron expression |
+    | `schedule_every_ms` | integer | For every | Replacement positive interval in milliseconds |
+    | `schedule_at` | string | For at | Replacement ISO 8601 time |
+    | `schedule_in_seconds` | integer | For in | Replacement positive delay from now |
+    | `timezone` | string | For local time | IANA timezone for the replacement schedule |
+    | `payload_kind` | string | No | Begin a complete payload replacement |
+    | `payload_text` | string | With payload kind | Replacement event, delivery, or turn text |
+    | `wake_mode` | string | For heartbeat event | `now` (default) or `next-heartbeat` |
+    | `model` | string | For agent turn | Replacement model override |
+    | `wake_gate_script` | string | No | Set or replace the `agent_turn` pre-run gate |
+    | `wake_gate_language` | string | With gate | `js` (default) or `ts` |
+    | `wake_gate_timeout_seconds` | integer | With gate | Gate timeout, 1--300 seconds (default: 30) |
 
-    **Example -- Disable a job:**
     ```yaml
     action: update
     job_name: morning-briefing
-    enabled: false
+    paused: true
     ```
+
+    Returns `{ jobName, updated }`.
   </Accordion>
 
   <Accordion title="remove -- Delete a scheduled job">
-    Permanently deletes a scheduled job. This is a destructive action requiring user confirmation.
+    Permanently removes an authored job. Config-owned jobs cannot be removed. This destructive action uses the tool confirmation handshake.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Must be `remove` |
-    | `job_name` | string | Yes | The name of the job to delete |
+    | `job_name` | string | Yes | Job name to remove |
+    | `_confirmed` | boolean | On approved retry | The agent sets this to `true` only after the user approves the returned confirmation request |
+
+    Returns `{ jobName, removed }`.
   </Accordion>
 
-  <Accordion title="status -- Check scheduler status">
-    Shows the current status of the scheduler, including overall health information.
+  <Accordion title="status -- Check scheduler authority">
+    Returns maintenance and authority state, not a loose health summary. The strict result contains `state`, `configuredEnabled`, `running`, `strictAuthoritiesValid`, `ownershipReconciled`, `jobCount`, `activeClaimCount`, `resolvedAgentId`, raw `store` and `ledger` evidence, reset `intent`, and optional `lastError`.
+
+    `state` is one of `initializing`, `disabled`, `ready`, `active`, `maintenance`, or `failed`. Each raw authority reports `exists`, `bytes`, and its SHA-256 `digest`; the intent reports no intent, a bounded pending phase, or an invalid digest.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Must be `status` |
-
-    Returns the scheduler's health status, active job count, and overall state.
   </Accordion>
 
-  <Accordion title="runs -- View recent run history">
-    Shows recent execution history for a job, including success/failure status and timestamps.
+  <Accordion title="runs -- View immutable run history">
+    Reads immutable start/terminal groups for one job from the execution ledger. Each run projects `executionId`, `jobId`, `agentId`, `scheduledForMs`, `trigger`, `workKind`, `rootRunId`, `startedAtMs`, optional `terminalAtMs` and `durationMs`, `status`, `deliveryStatus`, and optional `errorKind`.
+
+    Run `status` is `started`, `dispatched`, `completed`, `failed`, `aborted`, `skipped`, or `unknown`. Delivery `deliveryStatus` is `not_requested`, `suppressed`, `pre_send_failed`, `accepted`, `partial`, `rejected`, or `unknown`. These are separate: a completed model turn does not imply that platform delivery was accepted.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Must be `runs` |
-    | `job_name` | string | Yes | The name of the job |
-    | `limit` | integer | No | Maximum number of run history entries to return (default: 20) |
+    | `job_name` | string | Yes | Job name |
+    | `limit` | integer | No | Positive history limit, at most 10,000 (default: 20) |
   </Accordion>
 
-  <Accordion title="run -- Manually trigger a job">
-    Immediately triggers a scheduled job, regardless of its schedule. Useful for testing or one-off execution.
+  <Accordion title="run -- Manually trigger cron execution">
+    `force` runs the selected job without waiting for its schedule and returns `triggered`, `mode`, `jobName`, `resolvedAgentId`, and one `executionId`. `due` asks the scheduler to claim all currently overdue occurrences for the agent and returns `triggered`, `mode`, `resolvedAgentId`, and the `executionIds` array.
+
+    The current tool requires `job_name` for both modes. In `due` mode the backend does not use that name as a filter; it evaluates the agent's complete due set.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Must be `run` |
-    | `job_name` | string | Yes | The name of the job to trigger |
-    | `mode` | string | No | Run mode: `force` (ignore schedule, run now -- default) or `due` (run only if overdue) |
+    | `job_name` | string | Yes | Selected job for `force`; required but not filtering for `due` |
+    | `mode` | string | No | `force` (default) or `due` |
   </Accordion>
 
-  <Accordion title="wake -- Wake the scheduler">
-    Wakes the scheduler after a daemon restart. This is primarily used internally to ensure the scheduler picks up any jobs that were due while the daemon was stopped.
+  <Accordion title="wake -- Submit a scheduler wake">
+    Submits a routine wake to the heartbeat coordinator. `agent` targets the calling agent; `monitoring` targets the monitoring lane. This action does not inspect or execute cron jobs.
+
+    The result is either `accepted` or `coalesced` and always carries `correlationId`, `lane`, and `retainedReason`. An `accepted` result also reports whether the wake created a new occurrence or upgraded one already admitted.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Must be `wake` |
-    | `source` | string | No | Audit trail source identifier (default: `agent`) |
+    | `wake_target` | string | No | `agent` (default) or `monitoring` |
   </Accordion>
 </AccordionGroup>
 
 ## Wake-Gate -- Run the Model Only When It Matters
 
-A scheduled job may carry an optional **wake-gate**: a small pre-run script that runs *before* the job's payload and decides whether to invoke the model at all. It is the efficiency layer for a polling job -- a monitor that fires every few minutes usually finds nothing changed, and a wake-gate lets it answer "nothing to do" *without* spending a model turn.
+An `agent_turn` job may carry a wake-gate: a pre-run script that inspects a condition and decides whether the model should run for that occurrence. A quiet monitoring job can therefore poll cheaply and invoke the model only when the gate finds something actionable.
 
-The gate runs in the same jailed sandbox an autonomous [`orchestrate`](/agent-tools/orchestrate) script uses, under the agent's own resolved capabilities -- it can `web_fetch`, `read`, `grep`, and the other tools the agent already holds, but grants no new reach. It carries three fields:
+The gate runs in the same jailed sandbox as an autonomous [`orchestrate`](/agent-tools/orchestrate) script, under the agent's resolved capabilities. It grants no additional capability. The cron tool exposes all three gate fields:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `script` | string | -- | The gate source -- the code that inspects the world and prints a verdict |
-| `language` | `js` \| `ts` | `js` | The gate language |
-| `timeoutSeconds` | integer | `30` | Wall-clock budget for the gate (1--300); a gate that overruns wakes the model |
+| `wake_gate_script` | string | -- | Gate source code; valid only for `agent_turn` jobs |
+| `wake_gate_language` | `js` \| `ts` | `js` | Gate language |
+| `wake_gate_timeout_seconds` | integer | `30` | Positive timeout bounded to 1--300 seconds by the scheduler contract |
 
-An agent attaches a gate when it creates or edits a job -- pass the gate source as **`wake_gate_script`** (and optionally **`wake_gate_language`**, `js` or `ts`) to the `cron` tool's `add` or `update` action. Only the script and language are authorable this way: a gate created through the `cron` tool or the web editor always uses the 30-second default `timeoutSeconds` -- the field is not exposed as a tool or editor parameter.
+The same fields can set or replace a gate through `add` and `update`. The timeout defaults to 30 seconds. A timed-out or failed gate is fail-open: the model wakes instead of silently dropping the occurrence.
 
 ### The verdict protocol
 
-The gate decides by what it prints. Its **last non-empty line of stdout** is read as the verdict:
+The last non-empty stdout line is the verdict:
 
 | Last line | Meaning |
 |-----------|---------|
-| `{"wake": false}` | **Skip** -- the payload never runs and the model is never invoked |
-| `{"wake": true, "context": "..."}` | **Wake** -- run the model, injecting the pre-gathered `context` finding so the turn starts already informed |
-| `{"wake": false, "deliver": "..."}` | **Routine status** -- deliver the `deliver` text straight to the job's channel with **no** model turn |
-| `HEARTBEAT_OK` or `NO_REPLY` | **Skip** -- a bare sentinel line, same as `{"wake": false}` |
-| `[SILENT]` or `[SILENT] <status>` | **Skip** -- a trailing `<status>` after `[SILENT]` is delivered like `deliver` |
-| anything else | **Wake** -- a bounded tail of the gate's stdout rides along as `context` |
-
-The sentinel match is case-insensitive. Both `context` and `deliver` are bounded (roughly the last 4,000 characters) so a gate injects a content-light finding rather than an unbounded script dump, and a delivered status is scrubbed for secrets before it reaches the channel.
+| `{"wake": false}` | Skip the model turn |
+| `{"wake": true, "context": "..."}` | Run the model and inject the bounded context |
+| `{"wake": false, "deliver": "..."}` | Deliver the bounded status directly without a model turn |
+| `HEARTBEAT_OK` or `NO_REPLY` | Skip the model turn |
+| `[SILENT]` or `[SILENT] <status>` | Skip; a trailing status can be delivered directly |
+| anything else | Fail open and wake the model with a bounded stdout tail as context |
 
 <Warning>
-**The gate is fail-open.** A gate that crashes, exits non-zero, times out, over-caps its output, or prints no parseable verdict **wakes** the model -- a broken monitor is never silently dropped. Only an explicit `{"wake": false}` (or a silent sentinel) on the last line skips a fire. If the host cannot build the sandbox, or the agent's autonomy is disabled, the job simply runs as it would without a gate.
+A crash, non-zero exit, timeout, output-cap failure, or unparseable verdict wakes the model. If the sandbox cannot be created or scheduler-initiated gates are disabled, the occurrence runs as if it had no gate.
 </Warning>
 
-### Example -- skip the model when the queue is empty
-
-A gate that checks a build queue and only wakes the agent when something is waiting:
-
 ```javascript
-// wake-gate script (language: js). The jailed SDK is imported, not global —
-// the same typed `comis_tools` an orchestrate script uses.
 import { comis_tools } from "./comis_tools.js";
 
-// web_fetch returns a ResultRef; inspect it with .jq()/.grep() (or .preview).
 const queue = await comis_tools.web_fetch({ url: "https://ci.example.com/api/queue" });
 const pending = await queue.jq(".pending | length");
 
 if (pending === 0) {
-  // Nothing to triage -- deliver a one-line status, no model turn.
-  console.log('{"wake": false, "deliver": "Build queue clear ✓"}');
+  console.log('{"wake": false, "deliver": "Build queue clear"}');
 } else {
-  // Wake the agent with the pending count pre-gathered as context.
   console.log(JSON.stringify({ wake: true, context: `Pending builds: ${pending}` }));
 }
 ```
 
-On an empty queue the fire costs one sandboxed HTTP call and zero model turns; only a non-empty queue pays for a model turn, and that turn starts with the pending list already in hand.
-
 <Note>
-**A wake-gate is not the `wake` action.** The `cron` tool's `wake` action (and the `scheduler.wake` RPC) is a **restart-replay** -- it nudges the scheduler to pick up firings missed while the daemon was down. A **wake-gate** is a per-job pre-run decision about a *single* fire. They share a word and nothing else.
+A wake-gate is a per-job pre-run decision. The `wake` action submits a typed heartbeat-coordinator wake. Neither mechanism authorizes another occurrence of uncertain cron work.
 </Note>
 
-Every gated fire is observable without exposing what the gate gathered: a skipped fire is recorded in the job's run history (`runs` shows it with a `skipped` status and the avoided-turn count), and the daemon-wide skip-rate, turns-saved, and gate tool-call cost roll up into the [system health report](/reference/cli#comis-system-health). See the [operations scheduler guide](/operations/scheduler#wake-gate-efficiency) for the operator view.
+Gated occurrences remain visible without exposing gathered content: a skipped occurrence appears as `skipped` in `runs`, while aggregate gate efficiency appears in the [system health report](/reference/cli#comis-system-health). See the [operations scheduler guide](/operations/scheduler#wake-gate-efficiency) for the operator view.
 
 ## heartbeat_manage -- Agent Heartbeat
 
-The `heartbeat_manage` tool controls the agent's periodic heartbeat -- a built-in scheduled event that fires on its own clock (separate from `cron` jobs). The heartbeat runs with the `heartbeat-minimal` tool policy by default (just `message`, `memory_store`, `memory_search`, `discover`) and is intended for lightweight check-ins.
+The `heartbeat_manage` tool controls the agent's periodic heartbeat, which uses a separate clock from authored cron jobs. All four actions require admin trust. The [`heartbeat-minimal`](/skills/tool-policy) tool profile is opt-in and is never silently applied.
 
-**Heartbeat semantics:**
-
-- The agent runs its heartbeat prompt every `interval_ms` (millisecond resolution).
-- Output is filtered before delivery: a special `HEARTBEAT_OK` token signals "all good" and is silently dropped, so users only see something when there is actually something to report.
-- `light_context: true` boots the heartbeat with just `HEARTBEAT.md` in scope, keeping context tiny.
-- Alert thresholds (`alert_threshold`, `alert_cooldown_ms`) let the agent escalate after N consecutive failures while avoiding alert spam.
-- Stale detection (`stale_ms`) flags an agent whose heartbeats stop landing.
+Heartbeat response processing recognizes `HEARTBEAT_OK` as a soft acknowledgement. `show_ok` and `show_alerts` control visibility, `light_context` limits bootstrap context to `HEARTBEAT.md`, `ack_max_chars` bounds acknowledgement detection, and `response_prefix` removes a configured prefix before delivery. `alert_threshold` and `alert_cooldown_ms` govern heartbeat-source alerts; `stale_ms` bounds stuck-tick detection.
 
 ### Actions
 
 <AccordionGroup>
   <Accordion title="get -- View heartbeat configuration">
-    Returns the current heartbeat settings (per-agent and effective config), including the interval and the prompt that runs on each beat.
+    Calls `heartbeat.get` and returns `{ agentId, perAgent, effective }`: the stored per-agent patch and, when resolvable, the effective merged configuration.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Must be `get` |
-    | `agent_id` | string | No | Agent ID to inspect (defaults to the calling agent) |
+    | `agent_id` | string | No | Agent to inspect (defaults to the calling agent) |
   </Accordion>
 
   <Accordion title="update -- Change heartbeat settings">
-    Updates the heartbeat configuration. Pass only the fields you want to change.
+    Calls `heartbeat.update`, deep-merges the supplied fields into the per-agent config, validates the result, reconfigures periodic admission, and persists the config when persistence is available. It returns `{ agentId, config, updated, nextDueAtMs }`.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Must be `update` |
-    | `agent_id` | string | No | Agent ID to update (defaults to the calling agent) |
-    | `enabled` | boolean | No | Enable or disable the heartbeat |
-    | `interval_ms` | integer | No | Heartbeat interval in milliseconds (e.g., `300000` for 5 min) |
-    | `prompt` | string | No | Custom heartbeat prompt text |
-    | `model` | string | No | Model override for heartbeat LLM calls |
-    | `target_channel_type` | string | No | Delivery target channel type (e.g., `telegram`, `discord`) |
-    | `target_channel_id` | string | No | Delivery target channel identifier |
-    | `target_chat_id` | string | No | Delivery target chat/conversation ID |
-    | `target_is_dm` | boolean | No | Whether the delivery target is a DM conversation |
-    | `light_context` | boolean | No | Use lightweight bootstrap context (HEARTBEAT.md only) |
-    | `show_ok` | boolean | No | Show OK status notifications |
-    | `show_alerts` | boolean | No | Show alert notifications |
-    | `allow_dm` | boolean | No | Allow DM delivery of heartbeat alerts |
-    | `alert_threshold` | integer | No | Consecutive failures before alerting |
-    | `alert_cooldown_ms` | integer | No | Minimum ms between alerts |
-    | `stale_ms` | integer | No | Max ms before stuck detection triggers |
+    | `agent_id` | string | No | Agent to update (defaults to the calling agent) |
+    | `enabled` | boolean | No | Enable or disable periodic heartbeat admission |
+    | `interval_ms` | integer | No | Positive heartbeat interval in milliseconds |
+    | `prompt` | string | No | Heartbeat prompt text |
+    | `target` | object | No | Complete exact delivery endpoint described below |
+    | `light_context` | boolean | No | Use `HEARTBEAT.md`-only bootstrap context |
+    | `show_ok` | boolean | No | Surface soft acknowledgements |
+    | `show_alerts` | boolean | No | Surface alert-level results |
+    | `allow_dm` | boolean | No | Allow heartbeat alert delivery to direct conversations |
+    | `ack_max_chars` | integer | No | Maximum response length treated as a soft acknowledgement |
+    | `response_prefix` | string | No | Prefix removed before heartbeat response classification and delivery |
+    | `alert_threshold` | integer | No | Consecutive source failures before heartbeat alerting |
+    | `alert_cooldown_ms` | integer | No | Minimum time between alerts for the same heartbeat source |
+    | `stale_ms` | integer | No | Maximum tick duration before stuck detection |
 
-    **Example -- Check for new emails every 5 minutes:**
-    ```yaml
-    action: update
-    interval_ms: 300000
-    prompt: "Check for new emails and summarize any important ones."
-    ```
+    **Target object:**
+
+    | Field | Type | Required | Description |
+    |-------|------|----------|-------------|
+    | `channel_type` | string | Yes | Channel adapter type |
+    | `channel_instance_id` | string | Yes | Registered channel adapter instance |
+    | `conversation_id` | string | Yes | Exact platform conversation identifier |
+    | `thread_id` | string | No | Exact platform thread or topic identifier |
+    | `conversation_kind` | string | Yes | `direct` or `shared` |
+
+    The `target` object is atomic: flattened or partial endpoint fields are rejected.
   </Accordion>
 
   <Accordion title="status -- Check heartbeat status">
-    Shows runtime heartbeat state across all agents, including last fire time and next scheduled fire.
+    Calls `heartbeat.states` and returns runtime state for every agent. Each entry contains exactly `agentId`, `enabled`, `intervalMs`, and nullable `nextDueAtMs`.
 
     **Parameters:**
 
@@ -306,60 +343,61 @@ The `heartbeat_manage` tool controls the agent's periodic heartbeat -- a built-i
     | `action` | string | Yes | Must be `status` |
   </Accordion>
 
-  <Accordion title="trigger -- Manually trigger a heartbeat">
-    Immediately fires the heartbeat for an agent, running the configured prompt right now.
+  <Accordion title="trigger -- Submit a manual heartbeat">
+    Calls `heartbeat.trigger` with a manual spacing bypass. The coordinator may return `accepted` or `coalesced`; both results include `correlationId`, `lane`, and `retainedReason`. Accepted admissions also include their disposition. A successful tool call therefore proves admission, not necessarily a new independently running occurrence.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
     | `action` | string | Yes | Must be `trigger` |
-    | `agent_id` | string | No | Agent ID to fire (defaults to the calling agent) |
+    | `agent_id` | string | No | Agent to trigger (defaults to the calling agent) |
   </Accordion>
 </AccordionGroup>
 
 ## End-to-end example: daily research summary
 
-A common workflow is to have an agent run an autonomous research pass every weekday morning and post the findings to a Discord channel. You can set this up entirely in chat -- the agent calls `cron` once and the daemon handles the rest:
+In a conversation, ask the agent to send a weekday summary back to that same conversation:
 
 ```
-You: Every weekday at 9am Eastern, research the latest AI infrastructure
-     news from the last 24 hours and post a 3-bullet summary to my
-     #ai-news Discord channel.
+You: Every weekday at 9am Eastern, research the latest infrastructure
+     news from the last 24 hours and send me a three-bullet summary here.
 ```
 
-The agent translates that into a single `cron` add call:
+The agent creates a job without caller-supplied routing fields:
 
 ```yaml
 action: add
-name: ai-news-daily-summary
+name: daily-research-summary
 schedule_kind: cron
-schedule_expr: "0 9 * * 1-5"            # 9:00 AM, Monday through Friday
+schedule_expr: "0 9 * * 1-5"
 timezone: America/New_York
 payload_kind: agent_turn
 payload_text: >
-  Research the latest AI infrastructure news from the past 24 hours
-  using web_search. Post a 3-bullet summary (sources linked) to the
-  #ai-news Discord channel via the message tool.
-session_strategy: rolling                # Keep last 3 turns for continuity
+  Research the latest infrastructure news from the past 24 hours.
+  Return a concise three-bullet summary with source links.
+session_strategy: rolling
 max_history_turns: 3
+continuation_mode: origin_history
 ```
 
 What happens next:
 
-1. The cron entry persists in `~/.comis/data.db` immediately.
-2. At 9:00 ET each weekday the scheduler enqueues an agent turn with the configured payload.
-3. The agent runs against the `cron-minimal` tool policy by default -- enough to call `web_search` and `message`.
-4. Output lands in `#ai-news` as a normal Discord message; the `runs` action shows the per-execution log.
+1. The resolved job is written to `<agentWorkspace>/.scheduler/cron-jobs.json`; execution starts and terminals append to `<agentWorkspace>/.scheduler/cron-executions.jsonl`.
+2. The daemon binds the exact delivery target from the trusted originating conversation. Missing target parameters do not weaken that authority.
+3. At 9:00 Eastern on weekdays, the scheduler durably claims the occurrence, records its start, and dispatches the agent turn.
+4. The visible result is delivered back to the originating conversation. Because `origin_history` is selected, fully accepted text is also appended idempotently to that conversation's history.
 
-Use `cron action: runs name: ai-news-daily-summary limit: 5` to inspect recent executions, or `cron action: run name: ai-news-daily-summary` to fire it immediately for a sanity check.
+Use `cron action: runs job_name: daily-research-summary limit: 5` to inspect execution and delivery outcomes, or `cron action: run job_name: daily-research-summary mode: force` to submit a manual occurrence.
 
 ## Failure modes
 
-- **Invalid cron expression** -- the `add` action validates the expression up front and returns a structured error before persisting anything.
-- **Missed firings during downtime** -- on daemon restart, the `wake` action replays any jobs whose `schedule_at` or cron tick was missed while the daemon was offline.
-- **Agent turn errors** -- failures are logged with `errorKind` in the run history; alerts fire when `alert_threshold` consecutive failures occur within `alert_cooldown_ms`.
-- **Heartbeat suppression** -- a heartbeat that returns `HEARTBEAT_OK` is silenced before delivery, so users only see meaningful pings.
+- **Invalid schedule or field group** -- strict authoring validation rejects malformed expressions, non-positive intervals, missing schedule-specific fields, unsupported values, and incomplete payload replacements before persistence.
+- **Uncertain execution** -- a durable started occurrence whose owner or terminal result is lost becomes an unknown terminal. The scheduler never guesses that it is safe to replay.
+- **Cron dependency suspension** -- only consecutive provider/dependency failures count toward `maxConsecutiveDependencyErrors`; reaching the configured limit pauses that cron job. Ordinary validation or agent-output failures do not consume this dependency-only budget.
+- **Heartbeat alerting** -- `alert_threshold` and `alert_cooldown_ms` are separate heartbeat-source alert controls; they do not suspend cron jobs.
+- **Delivery ambiguity** -- `runs` keeps computation `status` separate from `deliveryStatus`, including `partial` and `unknown`, so accepted platform delivery is never inferred from a completed turn.
+- **Heartbeat suppression** -- `HEARTBEAT_OK`, visibility settings, an empty response, or a missing target can legitimately produce no delivered heartbeat message while the execution remains observable.
 
 ## Related
 
@@ -370,10 +408,10 @@ Use `cron action: runs name: ai-news-daily-summary limit: 5` to inspect recent e
   <Card title="Agent Tools Overview" icon="toolbox" href="/agent-tools/index">
     Master reference table of all tools
   </Card>
-  <Card title="Messaging" icon="paper-plane" href="/agent-tools/messaging">
-    Send, reply, react, edit, and delete messages
+  <Card title="Tool Policy" icon="shield" href="/skills/tool-policy">
+    Explicit tool-profile selection for scheduled work
   </Card>
   <Card title="Sessions" icon="users" href="/agent-tools/sessions">
-    Sub-agents, pipelines, and session management
+    Session and history behavior
   </Card>
 </CardGroup>
