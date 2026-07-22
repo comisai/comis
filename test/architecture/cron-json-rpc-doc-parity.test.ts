@@ -89,7 +89,7 @@ describe("cron JSON-RPC documentation parity", () => {
     expect(status).not.toMatch(/single cron job|\{ name: string \}/iu);
   });
 
-  it("documents immutable execution history and bounded diagnostic counters", () => {
+  it("requires immutable execution history and bounded diagnostic counters", () => {
     const runs = between(cron, "### `cron.runs`", "### `cron.remove`");
     expectTokens(runs, [
       "jobName",
