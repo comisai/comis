@@ -284,6 +284,33 @@ describe("createSubAgentRunner", () => {
     await expect(failedWait).resolves.toBe(run.completion);
   });
 
+  it("uses the executor terminal kind even when failure prose suggests another classification", async () => {
+    vi.mocked(deps.executeAgent).mockResolvedValue({
+      response: "",
+      tokensUsed: { total: 7 },
+      cost: { total: 0.01 },
+      finishReason: "error",
+      stepsExecuted: 1,
+      terminalErrorKind: "dependency",
+      errorContext: {
+        errorType: "PromptTimeout",
+        retryable: false,
+        originalError: "authentication wording must not control the terminal kind",
+      },
+    } as Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>> & {
+      terminalErrorKind: "dependency";
+    });
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({ task: "inspect dependency", agentId: "default" });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    const run = runner.getRunStatus(runId);
+    expect(run?.status).toBe("failed");
+    if (run?.status !== "failed") return;
+    expect(run.completion.errorKind).toBe("dependency");
+  });
+
   it("concurrent completion waiters share the runner-owned deferred", async () => {
     let resolveExecution!: (value: Awaited<ReturnType<SubAgentRunnerDeps["executeAgent"]>>) => void;
     vi.mocked(deps.executeAgent).mockReturnValue(new Promise((resolve) => {

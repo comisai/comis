@@ -7,7 +7,7 @@ import {
   unwrapExternalContent,
   type PerAgentConfig,
 } from "@comis/core";
-import type { AgentExecutor } from "@comis/agent";
+import type { AgentExecutor, ExecutionResult } from "@comis/agent";
 import { ok } from "@comis/shared";
 import type { CronRuntimeExecutionInput } from "@comis/scheduler";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +16,43 @@ import { createCronAgentTurnExecutor } from "./cron-agent-turn-executor.js";
 
 const NOW_MS = 1_800_000_000_000;
 const EXECUTION_ID = "11111111-1111-4111-8111-111111111111";
+const AGENT_EXECUTION_ID = "executor-issued-execution-a";
+
+function successfulExecution(
+  sessionKey: ExecutionResult["sessionKey"],
+  overrides: Partial<Omit<ExecutionResult, "finishReason" | "terminalErrorKind">> = {},
+): ExecutionResult {
+  return {
+    response: " Queue healthy ",
+    sessionKey,
+    executionId: AGENT_EXECUTION_ID,
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
+    sideEffectSummary: {
+      schedulingCapabilityInvoked: false,
+      outboundDeliveryCapabilityInvoked: false,
+      deferredWorkCapabilityInvoked: false,
+      unclassifiedInvocationObserved: false,
+    },
+    tokensUsed: { input: 20, output: 5, total: 25 },
+    cost: { total: 0.004 },
+    stepsExecuted: 1,
+    llmCalls: 1,
+    finishReason: "stop",
+    ...overrides,
+  };
+}
+
+function failedExecution(
+  sessionKey: ExecutionResult["sessionKey"],
+  terminalErrorKind: "auth" | "dependency",
+): ExecutionResult {
+  return {
+    ...successfulExecution(sessionKey),
+    response: "",
+    finishReason: "error",
+    terminalErrorKind,
+  };
+}
 
 function target() {
   const destinationEndpoint = {
@@ -81,15 +118,7 @@ function makeDeps() {
       expect(context?.rootRunId).toBe(`root-cron-${EXECUTION_ID}`);
       expect(context?.sessionKey).toBe(formatSessionKey(sessionKey));
       expect(tools?.map((tool) => tool.name)).toEqual(["read"]);
-      return {
-        response: " Queue healthy ",
-        sessionKey,
-        tokensUsed: { input: 20, output: 5, total: 25 },
-        cost: { total: 0.004 },
-        stepsExecuted: 1,
-        llmCalls: 1,
-        finishReason: "stop" as const,
-      };
+      return successfulExecution(sessionKey);
     }),
   };
   const sessionPolicy = {
@@ -165,7 +194,7 @@ describe("cron governed agent-turn executor", () => {
     });
     expect(overrides?.signal).toBeInstanceOf(AbortSignal);
     expect(result.value.outcome).toMatchObject({
-      agentExecutionId: "agent-execution-a",
+      agentExecutionId: AGENT_EXECUTION_ID,
       rootRunId: `root-cron-${EXECUTION_ID}`,
       execution: { status: "completed", finishReason: "stop" },
       modelResolved: "openai:gpt-5-mini",
@@ -188,7 +217,7 @@ describe("cron governed agent-turn executor", () => {
     expect(result.ok).toBe(true);
     expect(deps.continueTurn).toHaveBeenCalledWith({
       input: expect.objectContaining({ executionId: EXECUTION_ID }),
-      sourceExecutionId: "agent-execution-a",
+      sourceExecutionId: AGENT_EXECUTION_ID,
       visibleText: "Queue healthy",
       delivery: {
         status: "accepted",
@@ -261,15 +290,12 @@ describe("cron governed agent-turn executor", () => {
         agentId: "agent-a",
         timestamp: NOW_MS,
       });
-      return {
+      return successfulExecution(sessionKey, {
         response: "late response",
-        sessionKey,
         tokensUsed: { input: 10, output: 2, total: 12 },
         cost: { total: 0.001 },
         stepsExecuted: 0,
-        llmCalls: 1,
-        finishReason: "stop",
-      };
+      });
     });
     const execute = createCronAgentTurnExecutor(deps);
 
@@ -286,6 +312,28 @@ describe("cron governed agent-turn executor", () => {
     expect(result.value.outcome.delivery).toEqual({ status: "not_requested" });
   });
 
+  it.each([
+    ["dependency", "dependency"],
+    ["auth", "auth"],
+  ] as const)("preserves the executor %s terminal kind on a failed cron turn", async (_label, errorKind) => {
+    const deps = makeDeps();
+    vi.mocked(deps._executor.execute).mockImplementationOnce(async (_message, sessionKey) => (
+      failedExecution(sessionKey, errorKind)
+    ));
+    const execute = createCronAgentTurnExecutor(deps);
+
+    const result = await execute(input({ deliveryTarget: undefined }), new AbortController().signal);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.value.kind !== "agent_turn") return;
+    expect(result.value.outcome.agentExecutionId).toBe(AGENT_EXECUTION_ID);
+    expect(result.value.outcome.execution).toEqual({
+      status: "failed",
+      finishReason: "error",
+      errorKind,
+    });
+  });
+
   it("frames wake-gate context separately from the stored job message", async () => {
     const deps = makeDeps();
     deps.runWakeGate.mockResolvedValue({
@@ -294,15 +342,14 @@ describe("cron governed agent-turn executor", () => {
       toolCalls: 1,
       context: "Gate observed a queue transition",
     });
-    vi.mocked(deps._executor.execute).mockImplementationOnce(async (_message, sessionKey) => ({
-      response: "done",
-      sessionKey,
-      tokensUsed: { input: 1, output: 1, total: 2 },
-      cost: { total: 0 },
-      stepsExecuted: 0,
-      llmCalls: 1,
-      finishReason: "stop",
-    }));
+    vi.mocked(deps._executor.execute).mockImplementationOnce(async (_message, sessionKey) => (
+      successfulExecution(sessionKey, {
+        response: "done",
+        tokensUsed: { input: 1, output: 1, total: 2 },
+        cost: { total: 0 },
+        stepsExecuted: 0,
+      })
+    ));
     const execute = createCronAgentTurnExecutor(deps);
 
     const result = await execute(input({
