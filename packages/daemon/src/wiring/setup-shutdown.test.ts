@@ -767,6 +767,53 @@ describe("setupShutdown", () => {
     );
   }, 15_000);
 
+  it("keeps sub-agent dependencies live through the governed shutdown bound", async () => {
+    vi.useFakeTimers();
+    try {
+      const subAgentRunner = {
+        shutdown: vi.fn(() => new Promise<void>(() => {})),
+      };
+      const trajectoryRegistry = {
+        closeAll: vi.fn(async () => {}),
+      } as any;
+      const deps = createMinimalDeps({
+        subAgentRunner,
+        trajectoryRegistry,
+        timeoutMs: 45_000,
+      });
+
+      const setupShutdown = await getSetupShutdown();
+      const result = setupShutdown(deps);
+      const shutdown = result.shutdownHandle.trigger("SIGTERM");
+
+      // The runner owns a 30-second active drain followed by a 5-second
+      // notification grace. Its outer guard must not close dependencies at
+      // or before that governed window.
+      await vi.advanceTimersByTimeAsync(35_000);
+      expect(trajectoryRegistry.closeAll).not.toHaveBeenCalled();
+
+      // A stuck runner still needs a finite guard below the daemon's 45-second
+      // hard timeout so the remaining teardown steps can run.
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(trajectoryRegistry.closeAll).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await shutdown;
+
+      expect(trajectoryRegistry.closeAll).toHaveBeenCalledOnce();
+      expect(deps.daemonLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          component: "sub-agent-runner",
+          timeoutMs: 40_000,
+          errorKind: "timeout",
+        }),
+        "Shutdown step timed out or failed, continuing",
+      );
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // -------------------------------------------------------------------------
   // 18. Per-step timer does not leak on the fast path
   // -------------------------------------------------------------------------
