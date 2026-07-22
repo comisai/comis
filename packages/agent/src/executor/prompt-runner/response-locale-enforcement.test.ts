@@ -116,6 +116,55 @@ describe("enforceResponseLocale", () => {
     });
   });
 
+  it("preserves the truthful draft when a locale-correct repair drops exact literals", async () => {
+    const originalResponse = [
+      "The operation succeeded for record item-alpha-7 after 3600000 ms.",
+      "Details: https://example.com/items/item-alpha-7",
+      "Result: `result_ok`",
+    ].join("\n");
+    let visibleResponse = originalResponse;
+    let repairPrompt = "";
+    const tools = [{ name: "write" }];
+    const session = {
+      agent: { state: { tools } },
+      prompt: vi.fn(async (prompt: string) => {
+        expect(session.agent.state.tools).toEqual([]);
+        repairPrompt = prompt;
+        visibleResponse = "لم تنجح العملية ولا يوجد سجل أو نتيجة موثوقة.";
+      }),
+    };
+
+    const outcome = await enforceResponseLocale({
+      policy: ARABIC_POLICY,
+      response: originalResponse,
+      session,
+      getVisibleResponse: () => visibleResponse,
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.value).toMatchObject({
+      response: originalResponse,
+      attempted: true,
+      repaired: false,
+      preservationFinding: {
+        kind: "locale_literal_preservation_failed",
+        requiredCount: 4,
+        missingCount: 4,
+        missingCategories: expect.arrayContaining(["identifier", "number", "url", "code"]),
+      },
+    });
+    expect(outcome.value.finalFinding).toBeUndefined();
+    expect(session.agent.state.tools).toEqual(tools);
+    expect(repairPrompt).toContain("rewrite-only transform");
+    expect(repairPrompt).toContain("not factual validation");
+    expect(repairPrompt).toContain("Do not reassess, retract, dispute, or re-verify");
+    expect(JSON.stringify(outcome.value.preservationFinding)).not.toContain("item-alpha-7");
+    expect(JSON.stringify(outcome.value.preservationFinding)).not.toContain("3600000");
+    expect(JSON.stringify(outcome.value.preservationFinding)).not.toContain("example.com");
+    expect(JSON.stringify(outcome.value.preservationFinding)).not.toContain("result_ok");
+  });
+
   it("restores tools and reports the remaining mismatch when the bounded repair fails", async () => {
     let visibleResponse = "This answer is still in English.";
     const { session, tools } = makeSession(() => {
@@ -278,5 +327,68 @@ describe("applyResponseLocaleEnforcement", () => {
     }));
     expect(JSON.stringify(recoveryEvent.mock.calls)).not.toContain("English draft");
     expect(JSON.stringify(recoveryEvent.mock.calls)).not.toContain("إجابة مصححة");
+  });
+
+  it("warns without content and reports failed recovery when repair drops literals", async () => {
+    let now = 10;
+    const eventBus = new TypedEventBus();
+    const recoveryEvent = vi.fn();
+    eventBus.on("execution:recovery_attempted", recoveryEvent);
+    const logger = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+    };
+    const originalResponse = "The operation succeeded for item-alpha-7 after 3600000 ms.";
+    const tools = [{ name: "write" }];
+    const session = {
+      agent: { state: { tools } },
+      messages: [{ role: "assistant", content: [{ type: "text", text: originalResponse }] }],
+      prompt: vi.fn(async () => {
+        expect(session.agent.state.tools).toEqual([]);
+        now = 17;
+        session.messages.push({
+          role: "assistant",
+          content: [{ type: "text", text: "لم تنجح العملية ولا يوجد سجل." }],
+        });
+      }),
+    };
+    const result = { response: originalResponse };
+    const params = {
+      responseLocalePolicy: ARABIC_POLICY,
+      result,
+      session,
+      agentId: "agent-a",
+      sessionKey: {
+        tenantId: "tenant-a", agentId: "agent-a", channelId: "channel-a", userId: "user_a",
+      },
+      deps: {
+        eventBus,
+        logger,
+        clock: { now: () => now, nowDate: () => new Date(now) },
+      },
+    } as unknown as RunPromptParams;
+
+    await applyResponseLocaleEnforcement(params);
+
+    expect(result.response).toBe(originalResponse);
+    expect(session.agent.state.tools).toEqual(tools);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        step: "response-locale-literal-preservation",
+        durationMs: 7,
+        errorKind: "validation",
+        requiredLiteralCount: 2,
+        missingLiteralCount: 2,
+        missingLiteralCategories: expect.arrayContaining(["identifier", "number"]),
+        hint: expect.stringContaining("original response was preserved"),
+      }),
+      "Response locale repair dropped required literals",
+    );
+    expect(logger.info).not.toHaveBeenCalled();
+    expect(recoveryEvent).toHaveBeenCalledWith(expect.objectContaining({
+      reason: "locale_fidelity",
+      succeeded: false,
+    }));
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("item-alpha-7");
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain("3600000");
   });
 });
