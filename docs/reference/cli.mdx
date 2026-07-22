@@ -6,7 +6,7 @@ icon: "terminal"
 
 **What this is for:** the `comis` command is how you set up your daemon, manage agents and channels, browse memory, audit security, and operate the running system from the terminal. **Who it's for:** operators and developers running Comis on their own machine or a server.
 
-Comis currently ships **30 top-level command groups**. Some commands call the
+Comis currently ships **31 top-level command groups**. Some commands call the
 running daemon over JSON-RPC; others inspect or update local state. The built-in
 `--help` output is authoritative for the installed version.
 
@@ -275,6 +275,42 @@ comis cache stats --since 7d --provider anthropic
 # Machine-readable output
 comis cache stats --format json
 ```
+
+---
+
+### `comis cron`
+
+Inspect persisted cron jobs, force a named job to run, and read immutable execution history through the running daemon's strict JSON-RPC contracts. The CLI does not parse scheduler files and has no offline mode; an unreachable daemon is an error.
+
+#### Subcommands
+
+| Subcommand | Description |
+|------------|-------------|
+| `cron list` | List persisted jobs for one agent, or all agents with admin trust |
+| `cron run <jobName>` | Force one unambiguous named job to run |
+| `cron runs <jobName>` | Show immutable execution groups for one named job |
+| `cron status` | Show whether one agent's scheduler is active and its job count |
+
+All subcommands accept `--agent <id>` and `--format table|json`. `cron list` additionally accepts `--all`; it sends the explicit all-agent selector and requires an admin operator token. `--all` and `--agent` cannot be combined. `cron runs` accepts `--limit <n>` from 1 through 10,000 and otherwise uses the daemon's bounded default.
+
+```bash
+# Inspect one agent's schedules without displaying job payload text
+comis cron list --agent default
+
+# Admin inventory across every active agent scheduler
+comis cron list --all --format json
+
+# Force one named job and retain its execution id
+comis cron run "Daily status" --agent default --format json
+
+# Inspect terminal status and delivery outcome for recent fires
+comis cron runs "Daily status" --agent default --limit 20
+
+# Confirm scheduler activation and persisted job count
+comis cron status --agent default
+```
+
+Cross-agent selection is authorized by the daemon, not trusted from CLI arguments. Agent-origin RPC calls remain self-scoped. Table inventory deliberately omits payload bodies; JSON is the complete typed operator projection.
 
 ---
 
