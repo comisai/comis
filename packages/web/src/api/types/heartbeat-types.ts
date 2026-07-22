@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { ErrorKind } from "@comis/core";
+import type { WebRpcMethodMap } from "../contracts.generated.js";
+
+type ErrorKind = NonNullable<
+  WebRpcMethodMap["cron.runs"]["result"]["runs"][number]["errorKind"]
+>;
 
 /**
  * Heartbeat domain types.

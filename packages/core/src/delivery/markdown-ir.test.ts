@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { parseMarkdownToIR } from "./markdown-ir.js";
-import type { MarkdownBlock, MarkdownSpan, MarkdownIR } from "./markdown-ir.js";
+import type { MarkdownBlock, MarkdownSpan } from "./markdown-ir.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -375,7 +375,7 @@ describe("parseMarkdownToIR", () => {
       },
     );
 
-    it("parses inline code", () => {
+    it("parses inline code spans into typed content", () => {
       const spans = firstBlockSpans("Use `console.log`");
       expect(spans).toHaveLength(2);
       expect(spans[0]).toMatchObject({ type: "text", text: "Use " });
@@ -389,7 +389,7 @@ describe("parseMarkdownToIR", () => {
       expect(spans[1]).toMatchObject({ type: "text", text: " text" });
     });
 
-    it("parses links", () => {
+    it("parses links with labels and destination URLs", () => {
       const spans = firstBlockSpans("[click](https://example.com)");
       expect(spans).toHaveLength(1);
       expect(spans[0]).toMatchObject({

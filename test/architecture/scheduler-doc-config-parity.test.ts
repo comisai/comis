@@ -134,7 +134,7 @@ describe("scheduler documentation configuration parity", () => {
     expect(`${operationsTasks}\n${referenceTasks}`).toMatch(/explicit opt-in/iu);
   });
 
-  it("documents UTC quiet hours and durable per-tick safety", () => {
+  it("requires UTC quiet hours and durable per-tick safety", () => {
     const operationsQuietHours = between(operationsDoc, "## Quiet Hours", "## Wake-Gate Efficiency");
     const referenceQuietHours = between(
       configDoc,
