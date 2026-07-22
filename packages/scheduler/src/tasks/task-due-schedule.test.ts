@@ -234,6 +234,57 @@ describe("follow-up task due schedule", () => {
     }), "Task due wake admission failed");
   });
 
+  it("stops after one failed coordinator retry until durable state is rescanned", async () => {
+    const data = fixture(NOW_MS);
+    data.submitTaskWake
+      .mockReturnValueOnce(err({ code: "not_accepting", errorKind: "precondition" }))
+      .mockReturnValueOnce(err({ code: "not_accepting", errorKind: "precondition" }));
+    await data.schedule.activate();
+    data.advance(0);
+    await flush();
+
+    data.advance(30_000);
+    await flush();
+    expect(data.read).toHaveBeenCalledTimes(2);
+    expect(data.submitTaskWake).toHaveBeenCalledTimes(2);
+    expect(data.timers.unrefRecord().filter((record) => !record.cancelled)).toEqual([]);
+    expect(data.logger.warn).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      agentId: "agent-a",
+      errorCode: "not_accepting",
+      errorKind: "precondition",
+      hint: "Activate heartbeat coordinator admission, then request a new due-task schedule rescan",
+    }), "Task due wake admission failed");
+
+    data.advance(300_000);
+    await flush();
+    expect(data.submitTaskWake).toHaveBeenCalledTimes(2);
+
+    data.setRoot(root(data.clock.now() + 60_000));
+    await expect(data.schedule.requestRescan()).resolves.toEqual(ok({
+      nextDueAtMs: data.clock.now() + 60_000,
+    }));
+    data.advance(60_000);
+    await flush();
+    expect(data.submitTaskWake).toHaveBeenCalledTimes(3);
+  });
+
+  it("rechecks durable task authority before attempting the bounded admission retry", async () => {
+    const data = fixture(NOW_MS);
+    data.submitTaskWake.mockReturnValueOnce(err({ code: "not_accepting", errorKind: "precondition" }));
+    await data.schedule.activate();
+    data.advance(0);
+    await flush();
+
+    data.setRoot(root(null));
+    data.advance(30_000);
+    await flush();
+
+    expect(data.read).toHaveBeenCalledTimes(2);
+    expect(data.submitTaskWake).toHaveBeenCalledTimes(1);
+    expect(data.timers.unrefRecord().filter((record) => !record.cancelled)).toEqual([]);
+    expect(data.schedule.getNextDueAtMs()).toBeNull();
+  });
+
   it("identifies a rejected trusted due-task timing contract without logging task content", async () => {
     const data = fixture(NOW_MS);
     data.submitTaskWake.mockReturnValueOnce(err({ code: "invalid_request", errorKind: "validation" }));
