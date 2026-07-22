@@ -264,6 +264,31 @@ describe("createModelHandlers - model management", () => {
       });
     });
 
+    it("classifies a configured provider alias by its keyless provider type", async () => {
+      const deps = makeDeps({
+        defaultAgentId: "main",
+        providerEntries: {
+          anthropic: { type: "ollama" } as never,
+        },
+      });
+      const handlers = createModelHandlers(deps);
+
+      const result = (await handlers["models.list_providers"]!({
+        _trustLevel: "admin",
+      })) as {
+        providers: Array<{
+          provider: string;
+          status: string;
+          credentialSource: string;
+        }>;
+      };
+
+      expect(result.providers.find((row) => row.provider === "anthropic")).toMatchObject({
+        status: "keyless",
+        credentialSource: "keyless",
+      });
+    });
+
     it("rejects an unknown explicit agent selector", async () => {
       const deps = makeDeps({ defaultAgentId: "main" });
       const handlers = createModelHandlers(deps);
