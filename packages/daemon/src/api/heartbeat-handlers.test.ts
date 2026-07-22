@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { createHeartbeatHandlers } from "./heartbeat-handlers.js";
 import type { HeartbeatHandlerDeps } from "./heartbeat-handlers.js";
 import type { PersistToConfigDeps } from "./shared/persist-to-config.js";
@@ -88,6 +89,16 @@ function makeDeps(overrides: Partial<HeartbeatHandlerDeps> = {}): HeartbeatHandl
 // ---------------------------------------------------------------------------
 
 describe("createHeartbeatHandlers", () => {
+  it("threads the configured heartbeat defaults into the live RPC dispatcher", () => {
+    const daemonSource = readFileSync(new URL("../daemon.ts", import.meta.url), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+
+    expect(daemonSource).toMatch(
+      /globalHeartbeatConfig:\s*c\.container\.config\.scheduler\.heartbeat/,
+    );
+  });
+
   it("returns all four handler methods", () => {
     const deps = makeDeps();
     const handlers = createHeartbeatHandlers(deps);
