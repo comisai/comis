@@ -18,10 +18,11 @@ import type {
 } from "@comis/core";
 import { createConversationRef } from "@comis/core";
 import { resolveInternalTurnIdentity } from "@comis/orchestrator";
-import { isInQuietHours, parseTimeToMinutes, getCurrentMinutesInTimezone, createDuplicateDetector } from "@comis/scheduler";
+import { isInQuietHours, parseTimeToMinutes, getCurrentMinutesInTimezone } from "@comis/scheduler";
 import type { QuietHoursConfig } from "@comis/scheduler";
 import { createRateLimiter } from "./rate-limiter.js";
 import type { RateLimiter } from "./rate-limiter.js";
+import { createNotificationDuplicateDetector } from "./notification-duplicate-detector.js";
 import { resolveNotificationChannel } from "./channel-resolver.js";
 import type { ChannelResolverDeps } from "./channel-resolver.js";
 
@@ -216,9 +217,9 @@ export function createNotificationService(deps: NotificationServiceDeps): Notifi
     nowMs: deps.nowMs,
   });
 
-  const dedupDetector = createDuplicateDetector({
+  const dedupDetector = createNotificationDuplicateDetector({
     ttlMs: deps.defaultConfig.dedupeWindowMs,
-    nowMs: deps.nowMs,
+    nowMs: getNow,
   });
 
   return {
