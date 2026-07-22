@@ -72,6 +72,16 @@ export type {
 } from "./session-store-types.js";
 export type { ContextStorePort, ContextBrowsePort, LcdProvenanceReadStore } from "./context-store.js";
 export type {
+  DeliveredAssistantHistoryPort,
+  DeliveredAssistantHistoryInput,
+  DeliveredAssistantHistoryError,
+} from "./delivered-assistant-history.js";
+export type {
+  TaskExtractionPort,
+  TaskExtractionTurn,
+  TaskExtractionQueueError,
+} from "./task-extraction.js";
+export type {
   LcdMessage,
   LcdMessagePart,
   LcdPartMetadata,

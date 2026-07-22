@@ -9,6 +9,8 @@ import type { PluginRegistry } from "./hooks/plugin-registry.js";
 import type { HookRunner } from "./hooks/hook-runner.js";
 import type { WorkspacePolicyPort } from "./ports/workspace-policy.js";
 import type { PrincipalResolverPort } from "./ports/principal-resolver.js";
+import type { DeliveredAssistantHistoryPort } from "./ports/delivered-assistant-history.js";
+import type { TaskExtractionPort } from "./ports/task-extraction.js";
 import { loadLayered } from "./config/layered.js";
 import { buildGatewayEnvLayer } from "./config/env-layer.js";
 import { TypedEventBus } from "./event-bus/index.js";
@@ -75,6 +77,10 @@ export interface BootstrapOptions {
   secretManager?: SecretManager;
   /** Runtime adapter factory supplied by the outer daemon composition root. */
   workspacePolicyPortFactory?: (config: AppConfig) => WorkspacePolicyPort;
+  /** Stable scheduler capture proxy, bound only after dependent runtime construction. */
+  taskExtractionPort: TaskExtractionPort;
+  /** Stable delivered-history proxy, bound only after agent session construction. */
+  deliveredAssistantHistoryPort: DeliveredAssistantHistoryPort;
 }
 
 /**
@@ -106,6 +112,10 @@ export interface AppContainer {
   readonly principalResolver: PrincipalResolverPort;
   /** Immutable per-turn operator-policy loader, when the runtime supplies its filesystem adapter. */
   readonly workspacePolicyPort?: WorkspacePolicyPort;
+  /** Stable task-capture boundary supplied by the daemon composition root. */
+  readonly taskExtractionPort: TaskExtractionPort;
+  /** Stable locked delivered-history boundary supplied by the daemon composition root. */
+  readonly deliveredAssistantHistoryPort: DeliveredAssistantHistoryPort;
   /** Graceful shutdown — cleans up resources */
   shutdown: () => Promise<void>;
 }
@@ -185,6 +195,8 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
     pluginRegistry,
     hookRunner,
     principalResolver: principalResolver.value,
+    taskExtractionPort: options.taskExtractionPort,
+    deliveredAssistantHistoryPort: options.deliveredAssistantHistoryPort,
     ...(workspacePolicyPort !== undefined ? { workspacePolicyPort } : {}),
     shutdown: async () => {
       await pluginRegistry.deactivateAll();

@@ -11,12 +11,15 @@ export {
   createResolvedRequestContext,
   enrichCurrentContext,
   getContext,
+  resolveContextRootRunId,
   tryGetContext,
   runWithContext,
 } from "../context/index.js";
 
 export type {
   RequestContext,
+  RootRunContextError,
+  RootRunIdResolver,
   ResolvedRequestContextSeed,
   UserTrustLevel,
 } from "../context/index.js";
