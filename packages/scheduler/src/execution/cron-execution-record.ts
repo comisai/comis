@@ -75,6 +75,12 @@ export const CronUnsettledOutcomeSchema = z.union([
     rootRunId: RootRunIdSchema.nullable(),
     errorKind: z.literal("internal"),
   }),
+  z.strictObject({
+    kind: z.literal("unsettled"),
+    reason: z.literal("executor_rejected_after_invocation"),
+    rootRunId: RootRunIdSchema.nullable(),
+    errorKind: z.literal("internal"),
+  }),
 ]);
 export type CronUnsettledOutcome = z.infer<typeof CronUnsettledOutcomeSchema>;
 

@@ -105,6 +105,7 @@ export interface CronScheduler {
 
 type ExecutionWaitResult =
   | { kind: "settled"; result: Result<CronRuntimeOutcome, CronRuntimeError> }
+  | { kind: "rejected" }
   | { kind: "unsettled" };
 
 export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
@@ -359,7 +360,7 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
     }
 
     const timeoutMs = resolveTimeoutMs(claimed.value.job, deps.config.defaultTimeoutMs);
-    const waited = await awaitRuntime(input.value, timeoutMs, rootRunId, controller);
+    const waited = await awaitRuntime(input.value, timeoutMs, rootRunId, startedAtMs, controller);
     if (!waited.ok) return waited;
     let outcome: CronTerminalOutcome;
     let keepRoot = false;
@@ -370,6 +371,21 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
         reason: "deadline_termination_unestablished",
         rootRunId,
         errorKind: "timeout",
+      };
+    } else if (waited.value.kind === "rejected") {
+      keepRoot = rootRunId !== null;
+      const rejectedAtMs = deps.clock.now();
+      logRuntimeRejection(
+        executionId,
+        claimed.value.job.id,
+        "runtime_execute",
+        rejectedAtMs - startedAtMs,
+      );
+      outcome = {
+        kind: "unsettled",
+        reason: "executor_rejected_after_invocation",
+        rootRunId,
+        errorKind: "internal",
       };
     } else if (!waited.value.result.ok) {
       outcome = {
@@ -401,28 +417,27 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
     input: CronRuntimeExecutionInput,
     timeoutMs: number,
     rootRunId: string | null,
+    startedAtMs: number,
     controller: AbortController,
   ): Promise<Result<ExecutionWaitResult, CronSchedulerLifecycleError>> {
     let execution: Promise<Result<CronRuntimeOutcome, CronRuntimeError>>;
     try {
       execution = deps.executor.execute(input, controller.signal);
-    } catch (cause) {
-      return runtimeRejection(cause, input.executionId);
+    } catch {
+      return ok({ kind: "rejected" });
     }
+    const settlement = execution.then(
+      (result) => ({ kind: "settled" as const, result }),
+      () => ({ kind: "rejected" as const }),
+    );
     const firstDeadline = deferredSignal();
     const deadlineHandle = deps.timers.setTimeout(() => firstDeadline.resolve(), timeoutMs);
     deadlineHandle.unref();
-    let first: { kind: "settled"; result: Result<CronRuntimeOutcome, CronRuntimeError> } | { kind: "deadline" };
-    try {
-      first = await Promise.race([
-        execution.then((result) => ({ kind: "settled" as const, result })),
-        firstDeadline.promise.then(() => ({ kind: "deadline" as const })),
-      ]);
-    } catch (cause) {
-      deadlineHandle.cancel();
-      return runtimeRejection(cause, input.executionId);
-    }
-    if (first.kind === "settled") {
+    const first = await Promise.race([
+      settlement,
+      firstDeadline.promise.then(() => ({ kind: "deadline" as const })),
+    ]);
+    if (first.kind !== "deadline") {
       deadlineHandle.cancel();
       return ok(first);
     }
@@ -431,28 +446,28 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
     const graceSignal = deferredSignal();
     const graceHandle = deps.timers.setTimeout(() => graceSignal.resolve(), SCHEDULER_TERMINATION_GRACE_MS);
     graceHandle.unref();
-    let grace: { kind: "settled"; result: Result<CronRuntimeOutcome, CronRuntimeError> } | { kind: "expired" };
-    try {
-      grace = await Promise.race([
-        execution.then((result) => ({ kind: "settled" as const, result })),
-        graceSignal.promise.then(() => ({ kind: "expired" as const })),
-      ]);
-    } catch (cause) {
-      graceHandle.cancel();
-      return runtimeRejection(cause, input.executionId);
-    }
-    if (grace.kind === "settled") {
+    const grace = await Promise.race([
+      settlement,
+      graceSignal.promise.then(() => ({ kind: "expired" as const })),
+    ]);
+    if (grace.kind !== "expired") {
       graceHandle.cancel();
       return ok(grace);
     }
 
-    void execution.then(
-      async () => {
+    void settlement.then(
+      async (late) => {
+        if (late.kind === "rejected") {
+          logRuntimeRejection(
+            input.executionId,
+            input.job.id,
+            "late_settlement",
+            deps.clock.now() - startedAtMs,
+          );
+          return;
+        }
         if (rootRunId !== null) await releaseRoot(rootRunId);
         deps.logger.info({ executionId: input.executionId, step: "late_settlement" }, "Cron runtime settled after immutable unknown outcome");
-      },
-      (cause: unknown) => {
-        logRuntimeRejection(cause, input.executionId, "late_settlement");
       },
     );
     return ok({ kind: "unsettled" });
@@ -583,6 +598,22 @@ export function createCronScheduler(deps: CronSchedulerDeps): CronScheduler {
     fields: Record<string, unknown> & { hint: string },
   ): void {
     deps.logger.error({ ...fields, err: failure.message, errorKind: failure.errorKind }, message);
+  }
+
+  function logRuntimeRejection(
+    executionId: string,
+    jobId: string,
+    step: "runtime_execute" | "late_settlement",
+    durationMs: number,
+  ): void {
+    deps.logger.error({
+      executionId,
+      jobId,
+      step,
+      durationMs,
+      errorKind: "internal" as const,
+      hint: "Inspect the cron runtime adapter; durable unknown evidence retains root ownership for explicit recovery",
+    }, "Cron runtime rejected outside its Result contract");
   }
 
   function currentJobCount(): number {
@@ -815,22 +846,6 @@ function deferredSignal(): { promise: Promise<void>; resolve(): void } {
   let resolve!: () => void;
   const promise = new Promise<void>((settle) => { resolve = settle; });
   return { promise, resolve };
-}
-
-function runtimeRejection(
-  cause: unknown,
-  executionId: string,
-): Result<never, CronSchedulerLifecycleError> {
-  logRuntimeRejection(cause, executionId, "runtime_execute");
-  return err(schedulerError(
-    "operation_failed",
-    "internal",
-    "Cron runtime rejected outside its Result contract; the durable started claim remains for owner recovery",
-  ));
-}
-
-function logRuntimeRejection(_cause: unknown, _executionId: string, _step: string): void {
-  // The daemon executor must translate throwing boundaries into its closed Result.
 }
 
 function initializationFailure(
