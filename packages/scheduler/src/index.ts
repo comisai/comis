@@ -123,7 +123,6 @@ export type {
   FollowupTaskStore,
   FollowupTaskCancellationOutcome,
   FollowupTaskStoreInspection,
-  TaskQuarantineInspection,
   TaskOwnershipRecoveryResult,
   TaskDueSchedule,
   TaskDueScheduleDeps,

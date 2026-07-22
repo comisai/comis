@@ -51,7 +51,7 @@ describe("durable terminal sessions survive a daemon restart (KillMode=process)"
     expect(daemonUnit).not.toMatch(/^NotifyAccess=/m);
   });
 
-  it("the deployed daemon unit gives new private artifacts an owner-only mode", () => {
+  it("applies an owner-only mode to new private artifacts in the deployed daemon unit", () => {
     expect(readDeployedDaemonUnit()).toMatch(/^UMask=0077\s*$/m);
   });
 });

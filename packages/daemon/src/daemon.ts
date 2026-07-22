@@ -401,11 +401,7 @@ function buildChannelManagerDeps(deps: {
       getInboundMessageIdResolver()?.record(msg, channelType);
     },
     onMessageProcessed: (msg, channelType) => {
-      continuationTracker.complete({
-        channelType,
-        channelId: msg.channelId,
-        userId: msg.senderId,
-      });
+      continuationTracker.complete({ channelType, channelId: msg.channelId, userId: msg.senderId });
       getSessionTracker()?.recordActivity(defaultAgentId, channelType, msg.channelId);
     },
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
