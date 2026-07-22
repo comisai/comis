@@ -700,6 +700,43 @@ describe("hardenDataDirPermissions", () => {
     const stat = fs.statSync(secretsJsonPath);
     expect(stat.mode & 0o777).toBe(0o600);
   });
+
+  it("hardens every artifact in the nested production session layout without following symlinks", () => {
+    fs.chmodSync(testDir, 0o700);
+    const sessionsDir = nodePath.join(testDir, "workspace", "sessions");
+    const tenantDir = nodePath.join(sessionsDir, "tenant_a");
+    const channelDir = nodePath.join(tenantDir, "telegram_a");
+    fs.mkdirSync(channelDir, { recursive: true, mode: 0o755 });
+    const artifacts = [
+      nodePath.join(channelDir, "conversation.jsonl"),
+      nodePath.join(channelDir, "conversation.jsonl.trajectory.jsonl"),
+      nodePath.join(channelDir, "conversation.jsonl.trajectory-path.json"),
+      nodePath.join(channelDir, "conversation_session-metadata.json"),
+    ];
+    for (const artifact of artifacts) {
+      fs.writeFileSync(artifact, "test artifact\n", { mode: 0o644 });
+      fs.chmodSync(artifact, 0o644);
+    }
+    fs.chmodSync(sessionsDir, 0o755);
+    fs.chmodSync(tenantDir, 0o755);
+    fs.chmodSync(channelDir, 0o755);
+    const outsideArtifact = nodePath.join(testDir, "outside-session.jsonl");
+    fs.writeFileSync(outsideArtifact, "outside\n", { mode: 0o644 });
+    fs.chmodSync(outsideArtifact, 0o644);
+    fs.symlinkSync(outsideArtifact, nodePath.join(channelDir, "outside-link.jsonl"));
+
+    const corrections = hardenDataDirPermissions(testDir);
+
+    for (const directory of [sessionsDir, tenantDir, channelDir]) {
+      expect(fs.statSync(directory).mode & 0o777).toBe(0o700);
+      expect(corrections).toContainEqual({ file: directory, oldMode: 0o755, newMode: 0o700 });
+    }
+    for (const artifact of artifacts) {
+      expect(fs.statSync(artifact).mode & 0o777).toBe(0o600);
+      expect(corrections).toContainEqual({ file: artifact, oldMode: 0o644, newMode: 0o600 });
+    }
+    expect(fs.statSync(outsideArtifact).mode & 0o777).toBe(0o644);
+  });
 });
 
 describe("runPreflightDoctor", () => {
