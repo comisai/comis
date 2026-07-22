@@ -230,6 +230,7 @@ describe("follow-up task due schedule", () => {
       agentId: "agent-a",
       errorCode: "not_accepting",
       errorKind: "precondition",
+      retryScheduled: true,
       hint: "Activate heartbeat coordinator admission before the bounded due-task retry",
     }), "Task due wake admission failed");
   });
@@ -248,10 +249,17 @@ describe("follow-up task due schedule", () => {
     expect(data.read).toHaveBeenCalledTimes(2);
     expect(data.submitTaskWake).toHaveBeenCalledTimes(2);
     expect(data.timers.unrefRecord().filter((record) => !record.cancelled)).toEqual([]);
+    expect(data.schedule.getNextDueAtMs()).toBeNull();
+    expect(data.logger.debug).toHaveBeenLastCalledWith(expect.objectContaining({
+      step: "task_due_rescan",
+      nextDueAtMs: null,
+      boundaryKind: "none",
+    }), "Task due schedule rescanned");
     expect(data.logger.warn).toHaveBeenNthCalledWith(2, expect.objectContaining({
       agentId: "agent-a",
       errorCode: "not_accepting",
       errorKind: "precondition",
+      retryScheduled: false,
       hint: "Activate heartbeat coordinator admission, then request a new due-task schedule rescan",
     }), "Task due wake admission failed");
 
@@ -298,6 +306,7 @@ describe("follow-up task due schedule", () => {
       durationMs: 0,
       errorCode: "invalid_request",
       errorKind: "validation",
+      retryScheduled: true,
       hint: "Verify the trusted due-task producer uses task reason with spacing_bypass timing before retrying",
     }, "Task due wake admission failed");
   });

@@ -17,10 +17,33 @@ import { FOLLOWUP_TASK_RETENTION_MS, type FollowupTaskStore } from "./task-store
 import type { FollowupTaskRecord } from "./task-types.js";
 
 const TASK_WAKE_RETRY_MS = 30_000;
-type TaskScheduleBoundaryKind = "task_due" | "retention";
+type TaskScheduleBoundary = {
+  readonly atMs: number;
+  readonly kind: "task_due" | "retention" | "admission_retry";
+};
+type TaskDueRescanMode = "schedule" | "admission_retry";
 type TaskWakeAdmissionFailureCode = HeartbeatWakeAdmissionError["code"] | "submission_failed";
 
-function taskWakeAdmissionHint(errorCode: TaskWakeAdmissionFailureCode): string {
+function taskWakeAdmissionHint(
+  errorCode: TaskWakeAdmissionFailureCode,
+  retryScheduled: boolean,
+): string {
+  if (!retryScheduled) {
+    switch (errorCode) {
+      case "invalid_request":
+        return "Verify the trusted due-task producer timing, then request a new due-task schedule rescan";
+      case "invalid_target":
+        return "Restore the configured agent target, then request a new due-task schedule rescan";
+      case "not_accepting":
+        return "Activate heartbeat coordinator admission, then request a new due-task schedule rescan";
+      case "submission_failed":
+        return "Inspect the heartbeat coordinator submission boundary, then request a new due-task schedule rescan";
+      default: {
+        const _exhaustive: never = errorCode;
+        return _exhaustive;
+      }
+    }
+  }
   switch (errorCode) {
     case "invalid_request":
       return "Verify the trusted due-task producer uses task reason with spacing_bypass timing before retrying";
@@ -74,6 +97,12 @@ export function createTaskDueSchedule(deps: TaskDueScheduleDeps): TaskDueSchedul
   }
 
   async function requestRescan(): Promise<Result<{ readonly nextDueAtMs: number | null }, TaskDueScheduleError>> {
+    return rescan("schedule");
+  }
+
+  async function rescan(
+    mode: TaskDueRescanMode,
+  ): Promise<Result<{ readonly nextDueAtMs: number | null }, TaskDueScheduleError>> {
     if (!active || closed) return err({ code: "not_accepting", errorKind: "precondition" });
     const generation = ++scanGeneration;
     const startedAtMs = deps.clock.now();
@@ -121,20 +150,31 @@ export function createTaskDueSchedule(deps: TaskDueScheduleDeps): TaskDueSchedul
       : nextRetentionAtMs === null
         ? null
         : { atMs: nextRetentionAtMs, kind: "retention" as const };
-    armAt(boundaryPlan);
+    if (
+      mode === "admission_retry"
+      && boundaryPlan?.kind === "task_due"
+      && boundaryPlan.atMs <= deps.clock.now()
+    ) {
+      timer?.cancel();
+      timer = undefined;
+      nextDueAtMs = null;
+      submitDueWake(boundaryPlan.atMs, false);
+    } else {
+      armAt(boundaryPlan);
+    }
     deps.logger.debug({
       agentId: deps.agentId,
       step: "task_due_rescan",
       pendingCount: pending.length,
       terminalCount: terminalTimes.length,
-      nextDueAtMs: boundaryPlan?.atMs ?? null,
-      boundaryKind: boundaryPlan?.kind ?? "none",
+      nextDueAtMs,
+      boundaryKind: nextDueAtMs === null ? "none" : boundaryPlan?.kind ?? "none",
       durationMs: Math.max(0, deps.clock.now() - startedAtMs),
     }, "Task due schedule rescanned");
-    return ok({ nextDueAtMs: boundaryPlan?.atMs ?? null });
+    return ok({ nextDueAtMs });
   }
 
-  function armAt(boundary: { readonly atMs: number; readonly kind: TaskScheduleBoundaryKind } | null): void {
+  function armAt(boundary: TaskScheduleBoundary | null): void {
     timer?.cancel();
     timer = undefined;
     nextDueAtMs = boundary?.atMs ?? null;
@@ -143,7 +183,18 @@ export function createTaskDueSchedule(deps: TaskDueScheduleDeps): TaskDueSchedul
       if (timer === handle) timer = undefined;
       nextDueAtMs = null;
       if (boundary.kind === "task_due") {
-        submitDueWake(boundary.atMs);
+        submitDueWake(boundary.atMs, true);
+        return;
+      }
+      if (boundary.kind === "admission_retry") {
+        suppressError(
+          rescan("admission_retry"),
+          "task due admission retry rescan",
+          (message) => deps.logger.debug({
+            agentId: deps.agentId,
+            step: "task_due_wake_retry_rescan",
+          }, message),
+        );
         return;
       }
       suppressError(
@@ -159,7 +210,7 @@ export function createTaskDueSchedule(deps: TaskDueScheduleDeps): TaskDueSchedul
     timer = handle;
   }
 
-  function submitDueWake(nominalDueAtMs: number): void {
+  function submitDueWake(nominalDueAtMs: number, retryAvailable: boolean): void {
     if (!active || closed) return;
     const startedAtMs = deps.clock.now();
     const submitted = tryCatch(() => deps.submitTaskWake({
@@ -185,17 +236,20 @@ export function createTaskDueSchedule(deps: TaskDueScheduleDeps): TaskDueSchedul
         errorKind = admission.error.errorKind;
       }
     }
+    const retryAtMs = deps.clock.now() + TASK_WAKE_RETRY_MS;
+    const retryScheduled = retryAvailable && Number.isSafeInteger(retryAtMs);
     deps.logger.warn({
       agentId: deps.agentId,
       step: "task_due_wake_admission",
       durationMs: Math.max(0, deps.clock.now() - startedAtMs),
       errorCode,
       errorKind,
-      hint: taskWakeAdmissionHint(errorCode),
+      retryScheduled,
+      hint: taskWakeAdmissionHint(errorCode, retryScheduled),
     }, "Task due wake admission failed");
-    const retryAtMs = deps.clock.now() + TASK_WAKE_RETRY_MS;
-    if (Number.isSafeInteger(retryAtMs)) armAt({ atMs: retryAtMs, kind: "task_due" });
-    else {
+    if (retryScheduled) {
+      armAt({ atMs: retryAtMs, kind: "admission_retry" });
+    } else if (retryAvailable && !Number.isSafeInteger(retryAtMs)) {
       deps.logger.error({
         agentId: deps.agentId,
         step: "task_due_wake_retry",
