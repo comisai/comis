@@ -392,6 +392,33 @@ describe("createRpcDispatch", () => {
     expect(result.jobId).toBe("j1");
   });
 
+  it("wires runtime credential authorities into provider catalog status", async () => {
+    const { createModelHandlers } = await import("./model-handlers.js");
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const secretManager = { has: vi.fn(() => true) };
+    const modelsConfig = { defaultProvider: "amazon-bedrock" };
+    const oauthCredentialStore = { list: vi.fn() };
+
+    createRpcDispatch({
+      ...mockDeps,
+      oauthCredentialStore,
+      container: {
+        ...mockDeps.container,
+        secretManager,
+        config: {
+          ...mockDeps.container.config,
+          models: modelsConfig,
+        },
+      },
+    } as never);
+
+    expect(createModelHandlers).toHaveBeenCalledWith(expect.objectContaining({
+      secretManager,
+      modelsConfig,
+      oauthCredentialStore,
+    }));
+  });
+
   it("throws for unknown RPC method", async () => {
     const dispatch = await getDispatch();
 
