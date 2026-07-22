@@ -275,6 +275,24 @@ export type {
   ConversationRef,
   ConversationLocator,
 } from "./conversation-scope.js";
+
+export {
+  AgentExecutionFinishReasonSchema,
+  AgentExecutionAbortReasonSchema,
+  ModelResolutionSourceSchema,
+  ExecutionSideEffectSummarySchema,
+  AgentTurnExecutionOutcomeSchema,
+  classifyAgentFinishErrorKind,
+  classifyAgentAbortErrorKind,
+  classifyAgentTurnExecutionOutcome,
+} from "./agent-execution-outcome.js";
+export type {
+  AgentExecutionFinishReason,
+  AgentExecutionAbortReason,
+  ModelResolutionSource,
+  ExecutionSideEffectSummary,
+  AgentTurnExecutionOutcome,
+} from "./agent-execution-outcome.js";
 export {
   PrincipalMappingSchema,
   createPrincipalResolver,

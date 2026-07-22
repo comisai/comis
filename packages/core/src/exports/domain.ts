@@ -108,10 +108,15 @@ export {
   ConversationScopeSchema,
   ResolvedTurnScopeSchema,
   ConversationRefSchema,
+  ConversationLocatorSchema,
   createConversationRef,
   createConversationLocator,
   conversationScopeToSessionKey,
   CanonicalLocaleSchema,
+  AgentExecutionAbortReasonSchema,
+  ModelResolutionSourceSchema,
+  AgentTurnExecutionOutcomeSchema,
+  classifyAgentTurnExecutionOutcome,
 } from "../domain/index.js";
 
 export { BackgroundTaskOriginSchema } from "../domain/background-task-origin.js";
@@ -207,4 +212,9 @@ export type {
   ResolvedTurnScope,
   ConversationRef,
   ConversationLocator,
+  AgentExecutionFinishReason,
+  AgentExecutionAbortReason,
+  ModelResolutionSource,
+  ExecutionSideEffectSummary,
+  AgentTurnExecutionOutcome,
 } from "../domain/index.js";

@@ -10,6 +10,7 @@ import {
   createResolvedRequestContext,
   enrichCurrentContext,
   getContext,
+  resolveContextRootRunId,
   tryGetContext,
   runWithContext,
 } from "./context.js";
@@ -58,6 +59,43 @@ describe("RequestContext", () => {
       expect(Reflect.set(result.value, "agentId", "agent-2")).toBe(false);
       expect(Reflect.set(result.value, "resolvedLanguage", "en")).toBe(true);
       expect(result.value.resolvedLanguage).toBe("en");
+    });
+
+    it("carries and locks a trusted root run identity on a synthetic boundary", () => {
+      const result = createResolvedRequestContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        rootRunId: "root-cron-execution-1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "user",
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.rootRunId).toBe("root-cron-execution-1");
+      expect(Object.getOwnPropertyDescriptor(result.value, "rootRunId")).toMatchObject({
+        writable: false,
+        configurable: false,
+      });
+      expect(Reflect.set(result.value, "rootRunId", "root-forged")).toBe(false);
+    });
+
+    it("rejects an empty trusted root run identity", () => {
+      const result = createResolvedRequestContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        rootRunId: "",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "user",
+      });
+
+      expect(result.ok).toBe(false);
     });
 
     it("freezes a coherent delivery origin and rejects conflicting identities", () => {
@@ -146,6 +184,65 @@ describe("RequestContext", () => {
     });
   });
 
+  describe("resolveContextRootRunId", () => {
+    it("returns the trusted root only for the exact agent and formatted session", () => {
+      const created = createResolvedRequestContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        rootRunId: "root-cron-1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "user",
+      });
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+
+      const result = runWithContext(created.value, () =>
+        resolveContextRootRunId("agent-1", makeResolvedSession()));
+
+      expect(result).toEqual({ ok: true, value: "root-cron-1" });
+    });
+
+    it("fails closed when a trusted root is resolved for a different agent or session", () => {
+      const created = createResolvedRequestContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        rootRunId: "root-cron-1",
+        traceId: randomUUID(),
+        startedAt: Date.now(),
+        trustLevel: "user",
+      });
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+
+      const agentMismatch = runWithContext(created.value, () =>
+        resolveContextRootRunId("agent-2", makeResolvedSession({ agentId: "agent-2" })));
+      const sessionMismatch = runWithContext(created.value, () =>
+        resolveContextRootRunId("agent-1", makeResolvedSession({ channelId: "chat-2" })));
+
+      expect(agentMismatch).toMatchObject({
+        ok: false,
+        error: { code: "context_identity_mismatch", errorKind: "precondition" },
+      });
+      expect(sessionMismatch).toMatchObject({
+        ok: false,
+        error: { code: "context_identity_mismatch", errorKind: "precondition" },
+      });
+    });
+
+    it("returns no override when the active context has no trusted root", () => {
+      const ctx = makeContext({ agentId: "agent-1" });
+      const result = runWithContext(ctx, () =>
+        resolveContextRootRunId("agent-1", makeResolvedSession()));
+
+      expect(result).toEqual({ ok: true, value: undefined });
+    });
+  });
+
   describe("enrichCurrentContext", () => {
     it("persists the resolved structured turn scope on request context", () => {
       const ctx = makeContext({ userId: undefined, sessionKey: undefined, agentId: undefined });
@@ -177,6 +274,29 @@ describe("RequestContext", () => {
 
       expect(result.ok).toBe(true);
       expect(ctx.turnScope).toEqual(turnScope);
+    });
+
+    it("locks the trusted root run identity resolved by internal ingress", () => {
+      const ctx = makeContext({ userId: undefined, sessionKey: undefined, agentId: undefined });
+
+      const result = runWithContext(ctx, () => enrichCurrentContext({
+        tenantId: "tenant-1",
+        userId: "user-1",
+        sessionKey: makeResolvedSession(),
+        agentId: "agent-1",
+        rootRunId: "root-internal-1",
+        trustLevel: "user",
+        deliveryOrigin: {
+          channelType: "telegram",
+          channelId: "chat-1",
+          userId: "user-1",
+          tenantId: "tenant-1",
+        },
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(ctx.rootRunId).toBe("root-internal-1");
+      expect(Reflect.set(ctx, "rootRunId", "root-forged")).toBe(false);
     });
 
     it("fills resolved turn identity on the existing inbound context object", () => {

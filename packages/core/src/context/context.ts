@@ -47,6 +47,8 @@ export const RequestContextSchema = z.strictObject({
     sessionKey: z.string().min(1).optional(),
     /** Resolved agent id for the turn, filled by the inbound pipeline. */
     agentId: z.string().min(1).optional(),
+    /** Immutable trusted execution-tree root; never sourced from user content. */
+    rootRunId: z.string().min(1).optional(),
     /** Validated endpoint, principal, and conversation authority for the turn. */
     turnScope: ResolvedTurnScopeSchema.optional(),
     /** Authenticated gateway client identity for request-scoped, client-targeted delivery. */
@@ -76,12 +78,24 @@ export const RequestContextSchema = z.strictObject({
 
 export type RequestContext = z.infer<typeof RequestContextSchema>;
 
+export interface RootRunContextError {
+  code: "context_identity_mismatch";
+  errorKind: "precondition";
+  message: string;
+}
+
+export type RootRunIdResolver = (
+  agentId: string,
+  sessionKey: SessionKey,
+) => Result<string, RootRunContextError>;
+
 /** Turn identity resolved after channel ingress selects an agent and session. */
 export interface ResolvedRequestContext {
   tenantId: string;
   userId: string;
   sessionKey: SessionKey;
   agentId: string;
+  rootRunId?: string;
   trustLevel: UserTrustLevel;
   senderTrustTier?: string;
   senderTrustExplicit?: boolean;
@@ -96,6 +110,7 @@ export interface ResolvedRequestContextSeed {
   userId: string;
   sessionKey: SessionKey;
   agentId: string;
+  rootRunId?: string;
   clientId?: string;
   traceId: string;
   startedAt: number;
@@ -125,6 +140,7 @@ const lockedContextFields = [
   "userId",
   "sessionKey",
   "agentId",
+  "rootRunId",
   "turnScope",
   "clientId",
   "traceId",
@@ -231,6 +247,7 @@ function lockResolvedContext(
       ["userId", parsed.userId],
       ["sessionKey", parsed.sessionKey],
       ["agentId", parsed.agentId],
+      ["rootRunId", parsed.rootRunId],
       ["turnScope", parsed.turnScope],
       ["clientId", parsed.clientId],
       ["traceId", parsed.traceId],
@@ -285,6 +302,7 @@ export function createResolvedRequestContext(
     userId: seed.userId,
     sessionKey: seed.sessionKey,
     agentId: seed.agentId,
+    rootRunId: seed.rootRunId,
     clientId: seed.clientId,
     traceId: seed.traceId,
     startedAt: seed.startedAt,
@@ -399,6 +417,30 @@ export function tryGetContext(): RequestContext | undefined {
 }
 
 /**
+ * Resolve a trusted execution-tree root from the active request scope.
+ * A present root is usable only by the exact agent/session pair that entered
+ * the scope; cross-context charging fails closed instead of falling back to a
+ * synthetic session root.
+ */
+export function resolveContextRootRunId(
+  agentId: string,
+  sessionKey: SessionKey,
+): Result<string | undefined, RootRunContextError> {
+  const context = requestContextStorage.getStore();
+  if (context?.rootRunId === undefined) return ok(undefined);
+
+  const formattedSessionKey = formatSessionKey(sessionKey);
+  if (context.agentId !== agentId || context.sessionKey !== formattedSessionKey) {
+    return err({
+      code: "context_identity_mismatch",
+      errorKind: "precondition",
+      message: "Trusted root run identity does not match the requested agent and session",
+    });
+  }
+  return ok(context.rootRunId);
+}
+
+/**
  * Fill the unresolved fields on the existing inbound context without creating
  * a nested AsyncLocalStorage scope. Trace identity and ingress time are kept.
  */
@@ -422,6 +464,7 @@ export function enrichCurrentContext(
     userId: enrichment.userId,
     sessionKey: enrichment.sessionKey,
     agentId: enrichment.agentId,
+    rootRunId: enrichment.rootRunId,
     trustLevel: enrichment.trustLevel,
     senderTrustTier: enrichment.senderTrustTier,
     senderTrustExplicit: enrichment.senderTrustExplicit,
@@ -484,6 +527,7 @@ export function enrichCurrentContext(
     userId: resolved.userId,
     sessionKey: formattedSessionKey,
     agentId: resolved.agentId,
+    rootRunId: resolved.rootRunId,
     turnScope: resolved.turnScope,
     trustLevel: resolved.trustLevel,
     senderTrustTier: resolved.senderTrustTier,
@@ -504,6 +548,7 @@ export function enrichCurrentContext(
     userId: inspectedValue(inspection, "userId"),
     sessionKey: inspectedValue(inspection, "sessionKey"),
     agentId: inspectedValue(inspection, "agentId"),
+    rootRunId: inspectedValue(inspection, "rootRunId"),
     turnScope: inspectedValue(inspection, "turnScope"),
     clientId: inspectedValue(inspection, "clientId"),
     trustLevel: inspectedValue(inspection, "trustLevel"),
@@ -512,6 +557,7 @@ export function enrichCurrentContext(
     authorizationAlreadyResolved: inspectedValue(inspection, "userId") !== undefined
       || inspectedValue(inspection, "clientId") !== undefined
       || inspectedValue(inspection, "agentId") !== undefined
+      || inspectedValue(inspection, "rootRunId") !== undefined
       || inspectedValue(inspection, "turnScope") !== undefined
       || inspectedValue(inspection, "sessionKey") !== undefined
       || inspectedValue(inspection, "deliveryOrigin") !== undefined,
@@ -533,6 +579,12 @@ export function enrichCurrentContext(
   }
   if (snapshot.agentId !== undefined && snapshot.agentId !== parsed.data.agentId) {
     return err(new Error("Resolved request context conflicts with existing agentId"));
+  }
+  if (
+    snapshot.rootRunId !== undefined
+    && snapshot.rootRunId !== parsed.data.rootRunId
+  ) {
+    return err(new Error("Resolved request context conflicts with existing rootRunId"));
   }
   if (
     snapshot.learningEligible !== undefined

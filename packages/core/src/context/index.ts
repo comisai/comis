@@ -5,12 +5,15 @@ export {
   createResolvedRequestContext,
   enrichCurrentContext,
   getContext,
+  resolveContextRootRunId,
   tryGetContext,
   runWithContext,
 } from "./context.js";
 
 export type {
   RequestContext,
+  RootRunContextError,
+  RootRunIdResolver,
   ResolvedRequestContext,
   ResolvedRequestContextSeed,
   UserTrustLevel,

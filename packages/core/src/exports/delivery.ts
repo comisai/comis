@@ -37,6 +37,14 @@ export type {
   BlockRetryGuard,
 } from "../delivery/retry-engine.js";
 export { isPermanentError, PERMANENT_ERROR_PATTERNS } from "../delivery/permanent-errors.js";
+export {
+  PlatformDeliveryOutcomeSchema,
+  classifyPlatformDelivery,
+} from "../delivery/platform-delivery-outcome.js";
+export type {
+  PlatformDeliveryOutcome,
+  PlatformChunkDeliveryOutcome,
+} from "../delivery/platform-delivery-outcome.js";
 
 // Markdown IR types — re-exported as a narrow public type surface so the
 // Signal channel adapter (signal-format.ts, signal-adapter.ts) can keep its
