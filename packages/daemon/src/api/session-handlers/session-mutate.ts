@@ -384,6 +384,9 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         ...(callerAgentIdInternal !== undefined ? { callerAgentId: callerAgentIdInternal } : {}),
         ...(deps.resolveRootRunId !== undefined ? { resolveRootRunId: deps.resolveRootRunId } : {}),
       });
+      if (!inheritedAuthority.ok) {
+        throw new Error(inheritedAuthority.error.message);
+      }
 
       // Async (only path): non-blocking spawn.
       const runId = deps.subAgentRunner.spawn({
@@ -400,7 +403,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
               },
             }
           : {}),
-        ...inheritedAuthority,
+        ...inheritedAuthority.value,
         announceChannelType,
         announceChannelId,
         model: params.model,

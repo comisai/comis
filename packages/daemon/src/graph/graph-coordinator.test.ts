@@ -4448,7 +4448,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       });
       const { deps, runner } = createTestDeps({
         durableRuns,
-        resolveRootRunId: () => "root-launch-authority",
+        resolveRootRunId: () => ({ ok: true, value: "root-launch-authority" }),
       });
       const coordinator = createGraphCoordinator(deps);
       const callerSessionKey = "test-tenant:user_a:telegram:chat_a";
@@ -4502,7 +4502,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       });
       const { deps, runner, eventBus } = createTestDeps({
         durableRuns,
-        resolveRootRunId: () => "root-queued-authority",
+        resolveRootRunId: () => ({ ok: true, value: "root-queued-authority" }),
         maxGlobalSubAgents: 1,
         maxConcurrency: 2,
       });
@@ -4564,7 +4564,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       });
       const { deps, runner } = createTestDeps({
         durableRuns,
-        resolveRootRunId: () => "root-shutdown-authority",
+        resolveRootRunId: () => ({ ok: true, value: "root-shutdown-authority" }),
       });
       const coordinator = createGraphCoordinator(deps);
       const callerSessionKey = "test-tenant:user_a:telegram:chat_a";
@@ -4669,7 +4669,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       const { deps, runner, eventBus } = createTestDeps({
         durableRuns,
         // Resolve a stable root for the graph run (the durable key).
-        resolveRootRunId: () => "root-graph-1",
+        resolveRootRunId: () => ({ ok: true, value: "root-graph-1" }),
       });
       const coordinator = createGraphCoordinator(deps);
 
@@ -4724,7 +4724,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
     });
 
     it("does NOT checkpoint when no durableRuns store is wired (graph runs normally without durability)", async () => {
-      const { deps, runner } = createTestDeps({ resolveRootRunId: () => "root-x" });
+      const { deps, runner } = createTestDeps({ resolveRootRunId: () => ({ ok: true, value: "root-x" }) });
       const coordinator = createGraphCoordinator(deps);
       const graph = buildGraph([{ nodeId: "A" }]);
       // No durableRuns → no throw, graph runs normally.
@@ -4759,7 +4759,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       const releaseDurableRoot = vi.fn();
       const { deps, runner, eventBus } = createTestDeps({
         durableRuns,
-        resolveRootRunId: () => "root-done",
+        resolveRootRunId: () => ({ ok: true, value: "root-done" }),
         retainDurableRoot,
         releaseDurableRoot,
       });
@@ -4805,7 +4805,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       const upsert = vi.mocked(durableRuns.upsertCheckpoint);
       const { deps, runner, eventBus } = createTestDeps({
         durableRuns,
-        resolveRootRunId: () => "root-ordered-checkpoint",
+        resolveRootRunId: () => ({ ok: true, value: "root-ordered-checkpoint" }),
       });
       const coordinator = createGraphCoordinator(deps);
       const callerSessionKey = "test-tenant:user_a:telegram:chat_a";
@@ -4857,7 +4857,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       const upsert = vi.mocked(durableRuns.upsertCheckpoint);
       const { deps, runner, eventBus } = createTestDeps({
         durableRuns,
-        resolveRootRunId: () => "root-failed-checkpoint",
+        resolveRootRunId: () => ({ ok: true, value: "root-failed-checkpoint" }),
       });
       const coordinator = createGraphCoordinator(deps);
       const callerSessionKey = "test-tenant:user_a:telegram:chat_a";
@@ -4918,7 +4918,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       });
       const { deps, runner, eventBus } = createTestDeps({
         durableRuns,
-        resolveRootRunId: () => "root-terminal-order",
+        resolveRootRunId: () => ({ ok: true, value: "root-terminal-order" }),
         sendGovernedAnnouncement,
       });
       const coordinator = createGraphCoordinator(deps);
@@ -4973,7 +4973,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       });
       const { deps, runner, eventBus } = createTestDeps({
         durableRuns,
-        resolveRootRunId: () => "root-terminal-failed",
+        resolveRootRunId: () => ({ ok: true, value: "root-terminal-failed" }),
         logger: {
           info: loggerInfo,
           warn: vi.fn(),

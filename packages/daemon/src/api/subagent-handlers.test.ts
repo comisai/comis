@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createConversationRef, type ConversationLocator } from "@comis/core";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createSubagentHandlers, type SubagentHandlerDeps } from "./subagent-handlers.js";
 
@@ -6,7 +7,23 @@ import { createSubagentHandlers, type SubagentHandlerDeps } from "./subagent-han
 // Mock helpers
 // ---------------------------------------------------------------------------
 
+const CALLER_SCOPE = {
+  tenantId: "default",
+  agentId: "parent-agent",
+  partition: { kind: "principal" as const, principalId: "user1" },
+};
+
+function makeCallerConversation(
+  overrides: Partial<typeof CALLER_SCOPE> = {},
+): ConversationLocator {
+  const conversationScope = { ...CALLER_SCOPE, ...overrides };
+  const reference = createConversationRef(conversationScope);
+  if (!reference.ok) throw reference.error;
+  return { conversationScope, conversationRef: reference.value };
+}
+
 function createMockDeps(): SubagentHandlerDeps {
+  const callerConversation = makeCallerConversation();
   return {
     subAgentRunner: {
       spawn: vi.fn().mockReturnValue("new-run-id"),
@@ -19,6 +36,8 @@ function createMockDeps(): SubagentHandlerDeps {
         startedAt: Date.now() - 10_000,
         completedAt: Date.now(),
         error: "Killed by parent agent",
+        callerAgentId: "parent-agent",
+        callerConversation,
       }),
       listRuns: vi.fn().mockReturnValue([
         {
@@ -28,6 +47,8 @@ function createMockDeps(): SubagentHandlerDeps {
           task: "research AI",
           sessionKey: "default:sub-agent-run-1:sub-agent:run-1",
           startedAt: Date.now() - 5_000,
+          callerAgentId: "parent-agent",
+          callerConversation,
         },
         {
           runId: "run-2",
@@ -37,10 +58,33 @@ function createMockDeps(): SubagentHandlerDeps {
           sessionKey: "default:sub-agent-run-2:sub-agent:run-2",
           startedAt: Date.now() - 60_000,
           completedAt: Date.now() - 30_000,
+          callerAgentId: "other-agent",
+        },
+        {
+          runId: "run-3",
+          status: "running",
+          agentId: "researcher",
+          task: "same agent, different conversation",
+          sessionKey: "default:sub-agent-run-3:sub-agent:run-3",
+          startedAt: Date.now() - 1_000,
+          callerAgentId: "parent-agent",
+          callerConversation: makeCallerConversation({
+            partition: { kind: "principal", principalId: "user2" },
+          } as never),
         },
       ]),
+      waitForCompletions: vi.fn().mockResolvedValue([]),
       killRun: vi.fn().mockReturnValue({ killed: true }),
       steerRun: vi.fn().mockResolvedValue({ steered: true, mode: "steer" }),
+      pauseSpawns: vi.fn().mockReturnValue({
+        paused: true, acceptingSpawns: true, changed: true, resetsOnRestart: true,
+      }),
+      resumeSpawns: vi.fn().mockReturnValue({
+        paused: false, acceptingSpawns: true, changed: true, resetsOnRestart: true,
+      }),
+      spawnAdmissionStatus: vi.fn().mockReturnValue({
+        paused: false, acceptingSpawns: true, resetsOnRestart: true,
+      }),
       shutdown: vi.fn(),
     },
     defaultAgentId: "default",
@@ -57,6 +101,16 @@ function createMockDeps(): SubagentHandlerDeps {
   };
 }
 
+function createAdminHandlers(
+  deps: SubagentHandlerDeps,
+): Record<string, (params: Record<string, unknown>) => Promise<unknown>> {
+  const rawHandlers = createSubagentHandlers(deps);
+  return Object.fromEntries(Object.entries(rawHandlers).map(([method, handler]) => [
+    method,
+    (params: Record<string, unknown>) => handler({ _trustLevel: "admin", ...params }),
+  ]));
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -67,7 +121,203 @@ describe("createSubagentHandlers", () => {
 
   beforeEach(() => {
     deps = createMockDeps();
-    handlers = createSubagentHandlers(deps);
+    handlers = createAdminHandlers(deps);
+  });
+
+  it("agent controllers list only exact direct children through a content-free projection", async () => {
+    const result = await handlers["subagent.list"]!({
+      _agentId: "parent-agent",
+      _callerConversationScope: {
+        tenantId: "default",
+        agentId: "parent-agent",
+        partition: { kind: "principal", principalId: "user1" },
+      },
+    }) as { runs: Array<Record<string, unknown>>; total: number };
+
+    expect(result.total).toBe(1);
+    expect(result.runs[0]).toMatchObject({ runId: "run-1", agentId: "researcher", status: "running" });
+    expect(result.runs[0]).not.toHaveProperty("task");
+    expect(result.runs[0]).not.toHaveProperty("result");
+    expect(result.runs[0]).not.toHaveProperty("error");
+  });
+
+  it("agent controllers cannot distinguish a foreign target from an unknown target", async () => {
+    vi.mocked(deps.subAgentRunner.getRunStatus).mockImplementation((runId) => runId === "foreign"
+      ? ({
+          runId,
+          status: "running",
+          agentId: "researcher",
+          callerAgentId: "other-agent",
+          task: "private task",
+        } as never)
+      : undefined);
+    const authority = {
+      _agentId: "parent-agent",
+      _callerConversationScope: {
+        tenantId: "default",
+        agentId: "parent-agent",
+        partition: { kind: "principal", principalId: "user1" },
+      },
+    };
+
+    await expect(handlers["subagent.kill"]!({ ...authority, target: "foreign" }))
+      .rejects.toThrow("Sub-agent target is unavailable");
+    await expect(handlers["subagent.kill"]!({ ...authority, target: "missing" }))
+      .rejects.toThrow("Sub-agent target is unavailable");
+    expect(deps.subAgentRunner.killRun).not.toHaveBeenCalled();
+  });
+
+  it("agent wait defaults to active exact direct children", async () => {
+    vi.mocked(deps.subAgentRunner.waitForCompletions).mockResolvedValue([{
+      runId: "run-1",
+      status: "completed",
+      completion: { endReason: "completed", completedAtMs: 123, summary: "done" },
+    }]);
+
+    const result = await handlers["subagent.wait"]!({
+      _agentId: "parent-agent",
+      _callerConversationScope: CALLER_SCOPE,
+    });
+
+    expect(deps.subAgentRunner.waitForCompletions).toHaveBeenCalledWith(
+      ["run-1"],
+      30_000,
+      undefined,
+    );
+    expect(result).toEqual({
+      results: [{
+        runId: "run-1",
+        status: "completed",
+        completion: { endReason: "completed", completedAtMs: 123, summary: "done" },
+      }],
+    });
+  });
+
+  it("agent wait returns indistinguishable denied outcomes without waiting on foreign or missing ids", async () => {
+    const callerConversation = makeCallerConversation();
+    vi.mocked(deps.subAgentRunner.getRunStatus).mockImplementation((runId) => {
+      if (runId === "owned") {
+        return {
+          runId,
+          status: "running",
+          agentId: "researcher",
+          callerAgentId: "parent-agent",
+          callerConversation,
+        } as never;
+      }
+      if (runId === "foreign") {
+        return {
+          runId,
+          status: "running",
+          agentId: "researcher",
+          callerAgentId: "other-agent",
+        } as never;
+      }
+      return undefined;
+    });
+    vi.mocked(deps.subAgentRunner.waitForCompletions).mockResolvedValue([{
+      runId: "owned",
+      status: "timeout",
+    }]);
+
+    const result = await handlers["subagent.wait"]!({
+      _agentId: "parent-agent",
+      _callerConversationScope: CALLER_SCOPE,
+      runIds: ["owned", "foreign", "missing"],
+      timeoutMs: 25,
+    });
+
+    expect(deps.subAgentRunner.waitForCompletions).toHaveBeenCalledWith(
+      ["owned"],
+      25,
+      undefined,
+    );
+    expect(result).toEqual({
+      results: [
+        { runId: "owned", status: "timeout" },
+        { runId: "foreign", status: "denied_unknown" },
+        { runId: "missing", status: "denied_unknown" },
+      ],
+    });
+  });
+
+  it("wait forwards the trusted in-process cancellation signal", async () => {
+    const controller = new AbortController();
+    vi.mocked(deps.subAgentRunner.waitForCompletions).mockResolvedValue([{
+      runId: "run-1",
+      status: "cancelled",
+    }]);
+
+    await handlers["subagent.wait"]!({
+      _agentId: "parent-agent",
+      _callerConversationScope: CALLER_SCOPE,
+      runIds: ["run-1"],
+      _abortSignal: controller.signal,
+    });
+
+    expect(deps.subAgentRunner.waitForCompletions).toHaveBeenCalledWith(
+      ["run-1"],
+      30_000,
+      controller.signal,
+    );
+  });
+
+  it("invalid agent-origin authority never falls back to an injected admin trust value", async () => {
+    await expect(handlers["subagent.list"]!({
+      _agentId: "parent-agent",
+      _callerConversationScope: { forged: true },
+      _trustLevel: "admin",
+    })).rejects.toThrow("Sub-agent controller authority is invalid");
+    expect(deps.subAgentRunner.listRuns).not.toHaveBeenCalled();
+  });
+
+  it("partial agent-origin correlation fields never fall back to operator authority", async () => {
+    await expect(handlers["subagent.list"]!({
+      _rootRunId: "root-run-1",
+      _trustLevel: "admin",
+    })).rejects.toThrow("Sub-agent controller authority is invalid");
+    expect(deps.subAgentRunner.listRuns).not.toHaveBeenCalled();
+  });
+
+  it("operator list selectors filter by exact agent and spawn tree", async () => {
+    vi.mocked(deps.subAgentRunner.listRuns).mockReturnValue([
+      { runId: "run-a", agentId: "researcher", rootRunId: "root-a", status: "running" },
+      { runId: "run-b", agentId: "researcher", rootRunId: "root-b", status: "running" },
+      { runId: "run-c", agentId: "coder", rootRunId: "root-a", status: "running" },
+    ] as never);
+
+    const result = await handlers["subagent.list"]!({
+      agentId: "researcher",
+      rootRunId: "root-a",
+    }) as { runs: Array<{ runId: string }>; total: number };
+
+    expect(result).toEqual({
+      runs: [expect.objectContaining({ runId: "run-a" })],
+      total: 1,
+    });
+  });
+
+  it("admin callers pause, inspect, and resume the process-lifetime spawn gate", async () => {
+    await expect(handlers["subagent.pause"]!({})).resolves.toMatchObject({ paused: true, changed: true });
+    await expect(handlers["subagent.status"]!({})).resolves.toEqual({
+      paused: false,
+      acceptingSpawns: true,
+      resetsOnRestart: true,
+    });
+    await expect(handlers["subagent.resume"]!({})).resolves.toMatchObject({ paused: false, changed: true });
+    expect(deps.subAgentRunner.pauseSpawns).toHaveBeenCalledOnce();
+    expect(deps.subAgentRunner.spawnAdmissionStatus).toHaveBeenCalledOnce();
+    expect(deps.subAgentRunner.resumeSpawns).toHaveBeenCalledOnce();
+  });
+
+  it("agent-origin callers cannot operate the global spawn gate even with admin trust", async () => {
+    const rawHandlers = createSubagentHandlers(deps);
+    await expect(rawHandlers["subagent.pause"]!({
+      _agentId: "parent-agent",
+      _callerConversationScope: CALLER_SCOPE,
+      _trustLevel: "admin",
+    })).rejects.toThrow("Sub-agent spawn admission control requires operator authority");
+    expect(deps.subAgentRunner.pauseSpawns).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
@@ -79,8 +329,8 @@ describe("createSubagentHandlers", () => {
 
     expect(deps.subAgentRunner.listRuns).toHaveBeenCalledWith(60);
     const r = result as { runs: unknown[]; total: number };
-    expect(r.runs).toHaveLength(2);
-    expect(r.total).toBe(2);
+    expect(r.runs).toHaveLength(3);
+    expect(r.total).toBe(3);
   });
 
   it("subagent.list defaults recentMinutes to 30", async () => {
@@ -129,16 +379,18 @@ describe("createSubagentHandlers", () => {
       message: "new task description",
       _callerSessionKey: "default:user1:channel1",
       _agentId: "parent-agent",
+      _callerConversationScope: CALLER_SCOPE,
     });
 
     expect(deps.subAgentRunner.killRun).toHaveBeenCalledWith("run-1");
     expect(deps.subAgentRunner.getRunStatus).toHaveBeenCalledWith("run-1");
     expect(deps.subAgentRunner.spawn).toHaveBeenCalledWith({
-      task: "new task description",
+      task: expect.stringMatching(/new task description/),
       agentId: "researcher",
       callerType: "agent",
       callerSessionKey: "default:user1:channel1",
       callerAgentId: "parent-agent",
+      callerConversation: makeCallerConversation(),
     });
 
     const r = result as { status: string; oldRunId: string; newRunId: string };
@@ -213,25 +465,29 @@ describe("createSubagentHandlers", () => {
         startedAt: Date.now() - 10_000,
         completedAt: Date.now(),
         error: "Killed by parent agent",
+        callerAgentId: "parent-agent",
+        callerConversation: makeCallerConversation(),
       } as ReturnType<typeof deps.subAgentRunner.getRunStatus>);
-      handlers = createSubagentHandlers(deps);
+      handlers = createAdminHandlers(deps);
 
       const result = await handlers["subagent.steer"]!({
         target: "run-off",
         message: "new task description",
         _callerSessionKey: "default:user1:channel1",
         _agentId: "parent-agent",
+        _callerConversationScope: CALLER_SCOPE,
       });
 
       // Byte-identical to the existing :120 golden: killRun → getRunStatus → spawn.
       expect(deps.subAgentRunner.killRun).toHaveBeenCalledWith("run-off");
       expect(deps.subAgentRunner.getRunStatus).toHaveBeenCalledWith("run-off");
       expect(deps.subAgentRunner.spawn).toHaveBeenCalledWith({
-        task: "new task description",
+        task: expect.stringMatching(/new task description/),
         agentId: "researcher",
         callerType: "agent",
         callerSessionKey: "default:user1:channel1",
         callerAgentId: "parent-agent",
+        callerConversation: makeCallerConversation(),
       });
       // steerRun (the inject mechanism) must NOT run on the flag-off path.
       expect(deps.subAgentRunner.steerRun).not.toHaveBeenCalled();
@@ -260,7 +516,7 @@ describe("createSubagentHandlers", () => {
 
     beforeEach(() => {
       deps.securityConfig = { agentToAgent: { waitTimeoutMs: 30_000, steerInject: true } };
-      handlers = createSubagentHandlers(deps);
+      handlers = createAdminHandlers(deps);
     });
 
     it("calls getRunStatus + steerRun (NOT killRun/spawn), emits subagent:steered, returns {status:'steered_inject', runId}", async () => {
@@ -273,7 +529,13 @@ describe("createSubagentHandlers", () => {
       });
 
       expect(deps.subAgentRunner.getRunStatus).toHaveBeenCalledWith("run-inj");
-      expect(deps.subAgentRunner.steerRun).toHaveBeenCalledWith("run-inj", "adjust the approach");
+      expect(deps.subAgentRunner.steerRun).toHaveBeenCalledWith(
+        "run-inj",
+        expect.stringMatching(/adjust the approach/),
+      );
+      const framedMessage = vi.mocked(deps.subAgentRunner.steerRun).mock.calls[0]![1];
+      expect(framedMessage).not.toBe("adjust the approach");
+      expect(framedMessage).toMatch(/<<<UNTRUSTED_/);
       // NO kill, NO respawn on the inject path.
       expect(deps.subAgentRunner.killRun).not.toHaveBeenCalled();
       expect(deps.subAgentRunner.spawn).not.toHaveBeenCalled();
@@ -392,7 +654,7 @@ describe("createSubagentHandlers", () => {
         startedAt: Date.now(),
       } as ReturnType<typeof deps.subAgentRunner.getRunStatus>);
       vi.mocked(deps.subAgentRunner.steerRun).mockResolvedValue({ steered: true, mode: "steer" });
-      handlers = createSubagentHandlers(deps);
+      handlers = createAdminHandlers(deps);
 
       await handlers["subagent.steer"]!({ target: "run-rl", message: "first" });
 
@@ -400,12 +662,42 @@ describe("createSubagentHandlers", () => {
         handlers["subagent.steer"]!({ target: "run-rl", message: "second" }),
       ).rejects.toThrow("Rate limited: wait 2s between steers to same target");
     });
+
+    it("keys the limit by controller and target so operator activity cannot throttle the owner", async () => {
+      deps.securityConfig = { agentToAgent: { waitTimeoutMs: 30_000, steerInject: true } };
+      vi.mocked(deps.subAgentRunner.getRunStatus).mockReturnValue({
+        runId: "run-controller-key",
+        status: "running",
+        agentId: "researcher",
+        task: "t",
+        sessionKey: "default:sub-agent-run-controller-key:sub-agent:run-controller-key",
+        startedAt: Date.now(),
+        callerAgentId: "parent-agent",
+        callerConversation: makeCallerConversation(),
+      } as ReturnType<typeof deps.subAgentRunner.getRunStatus>);
+      vi.mocked(deps.subAgentRunner.steerRun).mockResolvedValue({ steered: true, mode: "steer" });
+      const rawHandlers = createSubagentHandlers(deps);
+
+      await rawHandlers["subagent.steer"]!({
+        _trustLevel: "admin",
+        target: "run-controller-key",
+        message: "operator steer",
+      });
+      await rawHandlers["subagent.steer"]!({
+        _agentId: "parent-agent",
+        _callerConversationScope: CALLER_SCOPE,
+        target: "run-controller-key",
+        message: "owner steer",
+      });
+
+      expect(deps.subAgentRunner.steerRun).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe("kill ≠ steer: subagent.kill is unchanged on both flag settings", () => {
     it("subagent.kill calls killRun and returns {killed, runId} with steerInject:false", async () => {
       deps.securityConfig = { agentToAgent: { waitTimeoutMs: 30_000, steerInject: false } };
-      handlers = createSubagentHandlers(deps);
+      handlers = createAdminHandlers(deps);
 
       const result = await handlers["subagent.kill"]!({ target: "run-1" });
 
@@ -416,7 +708,7 @@ describe("createSubagentHandlers", () => {
 
     it("subagent.kill calls killRun and returns {killed, runId} with steerInject:true", async () => {
       deps.securityConfig = { agentToAgent: { waitTimeoutMs: 30_000, steerInject: true } };
-      handlers = createSubagentHandlers(deps);
+      handlers = createAdminHandlers(deps);
 
       const result = await handlers["subagent.kill"]!({ target: "run-1" });
 

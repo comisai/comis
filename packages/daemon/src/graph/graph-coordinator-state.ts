@@ -231,7 +231,7 @@ export interface GraphCoordinatorDeps {
    * absent ⇒ each node mints its own root (graph fan-out is
    * still bounded by the graph concurrency gate).
    */
-  resolveRootRunId?: (agentId: string, sessionKey: SessionKey) => string;
+  resolveRootRunId?: import("@comis/core").RootRunIdResolver;
   /**
    * The durable run-checkpoint store. When
    * present AND the graph run has a resolved tree-stable `rootRunId`, the

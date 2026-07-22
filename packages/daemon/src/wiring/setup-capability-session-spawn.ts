@@ -10,6 +10,7 @@ import {
   stripInternalFields,
   systemNowMs,
   type ComisLogger,
+  type ConversationScope,
   type RequestContext,
 } from "@comis/core";
 import type { LeaseInfo } from "@comis/infra";
@@ -18,6 +19,7 @@ import { err, ok, type Result } from "@comis/shared";
 interface LeaseRequestPrincipal {
   context: RequestContext;
   callerSessionKey: string;
+  callerConversationScope: ConversationScope;
   callerChannelType?: string;
   callerChannelId?: string;
   deliveryTarget?: {
@@ -96,6 +98,7 @@ function resolveLeaseRequestPrincipal(
   return ok({
     context: context.value,
     callerSessionKey: lease.sessionKey,
+    callerConversationScope: turnScope.conversation,
     ...(deliveryOrigin !== undefined
       ? {
           callerChannelType: deliveryOrigin.channelType,
@@ -169,6 +172,7 @@ export async function dispatchValidatedLeaseRpc(
     _userId: principal.value.context.userId,
     _sessionKey: lease.sessionKey,
     _callerSessionKey: principal.value.callerSessionKey,
+    _callerConversationScope: principal.value.callerConversationScope,
     ...(lease.parentLeaseId !== undefined ? { _parentLeaseId: lease.parentLeaseId } : {}),
     ...(lease.checkpointId !== undefined ? { _checkpointId: lease.checkpointId } : {}),
     ...(principal.value.callerChannelType !== undefined

@@ -427,7 +427,7 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
     const projectedCallerSession = callerTurnScope === undefined
       ? undefined
       : conversationScopeToSessionKey(callerTurnScope.conversation);
-    const graphRootRunId = callerAuthorityValid
+    const graphRootResolution = callerAuthorityValid
       ? params.callerRootRunId
         ?? graphParentRun?.rootRunId
         ?? (
@@ -436,6 +436,18 @@ export function createGraphCoordinator(deps: GraphCoordinatorDeps): GraphCoordin
             : undefined
         )
       : undefined;
+    if (typeof graphRootResolution !== "string" && graphRootResolution !== undefined && !graphRootResolution.ok) {
+      deps.logger?.warn({
+        agentId: params.callerAgentId,
+        mismatchField: "root-run",
+        hint: "Reject the graph and preserve the authenticated caller root through submission",
+        errorKind: graphRootResolution.error.errorKind,
+      }, "Graph caller root context mismatch");
+      return err("Graph caller root does not match the request context");
+    }
+    const graphRootRunId = typeof graphRootResolution === "string"
+      ? graphRootResolution
+      : graphRootResolution?.value;
 
     const gs: GraphRunState = {
       graphId,

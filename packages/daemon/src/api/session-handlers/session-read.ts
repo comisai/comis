@@ -26,7 +26,11 @@ import {
 import type { DeliveryQueueEntry, DeliveryQueuePort } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type SessionHandlerDeps } from "./session-helpers.js";
-import { PreconditionError } from "../errors.js";
+import { AuthorizationError, PreconditionError } from "../errors.js";
+import {
+  resolveSubagentController,
+  subagentControllerOwnsRun,
+} from "../subagent-handlers.js";
 
 /**
  * Bind the session read handlers. Object-spread compatible with
@@ -313,26 +317,60 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
     },
 
     [SessionRunStatusContract.method]: async (rawParams) => {
+      const controller = resolveSubagentController(rawParams);
       const userParams = stripInternalFields(rawParams);
       const params = SessionRunStatusContract.request.parse(userParams);
 
       const runId = params.run_id;
       const run = deps.subAgentRunner.getRunStatus(runId);
-      if (!run) throw new Error(`Unknown run ID: ${runId}`);
-      const result = {
-        runId: run.runId,
-        status: run.status,
-        agentId: run.agentId,
-        task: run.task,
-        sessionKey: run.sessionKey,
-        startedAt: run.startedAt,
-        completedAt: run.completedAt,
-        runtimeMs: run.completedAt ? run.completedAt - run.startedAt : systemNowMs() - run.startedAt,
-        response: run.result?.response,
-        tokensUsed: run.result?.tokensUsed,
-        cost: run.result?.cost,
-        error: run.error,
-      };
+      if (
+        !run
+        || (controller.kind === "caller" && !subagentControllerOwnsRun(controller, run))
+      ) {
+        throw new AuthorizationError("Sub-agent target is unavailable");
+      }
+      const now = systemNowMs();
+      let result: Record<string, unknown>;
+      if (run.status === "queued") {
+        result = {
+          runId: run.runId,
+          status: run.status,
+          agentId: run.agentId,
+          queuedAt: run.queuedAt,
+          runtimeMs: Math.max(0, now - run.queuedAt),
+        };
+      } else if (run.status === "running") {
+        result = {
+          runId: run.runId,
+          status: run.status,
+          agentId: run.agentId,
+          startedAt: run.startedAt,
+          runtimeMs: Math.max(0, now - run.startedAt),
+        };
+      } else {
+        const completion = controller.kind === "admin"
+          ? run.completion
+          : {
+              endReason: run.completion.endReason,
+              completedAtMs: run.completion.completedAtMs,
+              ...(run.completion.endReason !== "completed"
+                ? { errorKind: run.completion.errorKind }
+                : {}),
+            };
+        const startedAt = run.startedAt;
+        result = {
+          runId: run.runId,
+          status: run.status,
+          agentId: run.agentId,
+          ...(startedAt !== undefined ? { startedAt } : {}),
+          runtimeMs: Math.max(
+            0,
+            run.completion.completedAtMs - (startedAt ?? run.completion.completedAtMs),
+          ),
+          completion,
+          ...(run.telemetry ? { telemetry: run.telemetry } : {}),
+        };
+      }
       if (IS_DEV) SessionRunStatusContract.response.parse(result);
       return result;
     },

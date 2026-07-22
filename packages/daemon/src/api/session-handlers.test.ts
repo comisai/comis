@@ -1271,3 +1271,98 @@ describe("createSessionHandlers - session management", () => {
     });
   });
 });
+
+describe("session.run_status owner-scoped bounded projection", () => {
+  const callerScope: ConversationScope = {
+    tenantId: "default",
+    agentId: "parent-agent",
+    partition: { kind: "principal", principalId: "user1" },
+  };
+  const callerReference = createConversationRef(callerScope);
+  if (!callerReference.ok) throw callerReference.error;
+  const callerConversation = {
+    conversationScope: callerScope,
+    conversationRef: callerReference.value,
+  };
+
+  function completedRun(overrides: Record<string, unknown> = {}) {
+    return {
+      runId: "run-1",
+      status: "completed",
+      agentId: "child-agent",
+      startedAt: 100,
+      completion: {
+        endReason: "completed",
+        completedAtMs: 200,
+        summary: "child-authored summary",
+      },
+      telemetry: {
+        tokensUsedTotal: 10,
+        costTotal: 0.01,
+        finishReason: "stop",
+        stepsExecuted: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      callerAgentId: "parent-agent",
+      callerConversation,
+      ...overrides,
+    };
+  }
+
+  it("returns content-free completion details to the exact direct parent", async () => {
+    const deps = makeDeps({
+      subAgentRunner: { getRunStatus: vi.fn().mockReturnValue(completedRun()) } as never,
+    });
+    const handlers = createSessionHandlersRaw(deps);
+
+    const result = await handlers["session.run_status"]!({
+      run_id: "run-1",
+      _agentId: "parent-agent",
+      _callerConversationScope: callerScope,
+    }) as Record<string, unknown>;
+
+    expect(result).toMatchObject({
+      runId: "run-1",
+      status: "completed",
+      completion: { endReason: "completed", completedAtMs: 200 },
+      runtimeMs: 100,
+    });
+    expect(result).not.toHaveProperty("task");
+    expect(result).not.toHaveProperty("sessionKey");
+    expect(result).not.toHaveProperty("response");
+    expect(result).not.toHaveProperty("error");
+    expect(result.completion).not.toHaveProperty("summary");
+  });
+
+  it("returns the bounded completion to an authenticated operator", async () => {
+    const deps = makeDeps({
+      subAgentRunner: { getRunStatus: vi.fn().mockReturnValue(completedRun()) } as never,
+    });
+    const handlers = createSessionHandlersRaw(deps);
+
+    await expect(handlers["session.run_status"]!({
+      run_id: "run-1",
+      _trustLevel: "admin",
+    })).resolves.toMatchObject({
+      completion: { summary: "child-authored summary" },
+    });
+  });
+
+  it("makes a foreign target and an unknown target indistinguishable", async () => {
+    const getRunStatus = vi.fn((runId: string) => runId === "foreign"
+      ? completedRun({ callerAgentId: "other-agent" })
+      : undefined);
+    const deps = makeDeps({ subAgentRunner: { getRunStatus } as never });
+    const handlers = createSessionHandlersRaw(deps);
+    const authority = {
+      _agentId: "parent-agent",
+      _callerConversationScope: callerScope,
+    };
+
+    await expect(handlers["session.run_status"]!({ ...authority, run_id: "foreign" }))
+      .rejects.toThrow("Sub-agent target is unavailable");
+    await expect(handlers["session.run_status"]!({ ...authority, run_id: "missing" }))
+      .rejects.toThrow("Sub-agent target is unavailable");
+  });
+});

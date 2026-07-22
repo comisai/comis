@@ -63,6 +63,7 @@ describe("capability session.spawn strict-handler integration", () => {
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
       task: "bounded work",
       _outwardOperationId: "socket-operation-1",
+      _callerConversationScope: resolved.turnScope.conversation,
     }));
   });
 
