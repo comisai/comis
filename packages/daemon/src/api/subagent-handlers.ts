@@ -21,7 +21,6 @@
  */
 
 import {
-  ConversationScopeSchema,
   SubagentListContract,
   SubagentKillContract,
   SubagentPauseContract,
@@ -29,14 +28,19 @@ import {
   SubagentStatusContract,
   SubagentSteerContract,
   SubagentWaitContract,
-  createConversationRef,
   stripInternalFields,
   systemGetEnv,
   systemNowMs,
   wrapExternalContent,
 } from "@comis/core";
-import type { ConversationLocator } from "@comis/core";
-
+import {
+  assertSubagentTargetAuthorized,
+  projectCallerSubagentRun,
+  requireSubagentOperatorController,
+  resolveSubagentController,
+  subagentControllerOwnsRun,
+  subagentControllerRateKey,
+} from "./subagent-controller.js";
 import { AuthorizationError } from "./errors.js";
 import type { RpcHandler } from "./types.js";
 
@@ -60,131 +64,6 @@ const IS_DEV = systemGetEnv("NODE_ENV") !== "production";
 // heartbeat handlers).
 import type { OrchestratorApiDeps as SubagentHandlerDeps } from "./types.js";
 export type { SubagentHandlerDeps };
-
-export type SubagentController =
-  | {
-      kind: "caller";
-      agentId: string;
-      conversationRef: ConversationLocator["conversationRef"];
-      conversation: ConversationLocator;
-      rootRunId?: string;
-    }
-  | { kind: "admin"; agentId?: string };
-
-const AGENT_ORIGIN_FIELDS = [
-  "_agentId",
-  "_autonomyMode",
-  "_callerConversationScope",
-  "_callerSessionKey",
-  "_capabilities",
-  "_leaseId",
-  "_parentLeaseId",
-  "_rootRunId",
-] as const;
-
-/** Resolve the only two authorities allowed to operate on sub-agent runs. */
-export function resolveSubagentController(
-  rawParams: Record<string, unknown>,
-): SubagentController {
-  const hasAgentOrigin = AGENT_ORIGIN_FIELDS.some((field) => rawParams[field] !== undefined);
-  if (hasAgentOrigin) {
-    const agentId = rawParams._agentId;
-    const parsedScope = ConversationScopeSchema.safeParse(rawParams._callerConversationScope);
-    if (typeof agentId !== "string" || agentId.length === 0 || !parsedScope.success) {
-      throw new AuthorizationError("Sub-agent controller authority is invalid");
-    }
-    if (parsedScope.data.agentId !== agentId) {
-      throw new AuthorizationError("Sub-agent controller authority is invalid");
-    }
-    const conversationRef = createConversationRef(parsedScope.data);
-    if (!conversationRef.ok) {
-      throw new AuthorizationError("Sub-agent controller authority is invalid");
-    }
-    const rootRunId = rawParams._rootRunId;
-    if (rootRunId !== undefined && (typeof rootRunId !== "string" || rootRunId.length === 0)) {
-      throw new AuthorizationError("Sub-agent controller authority is invalid");
-    }
-    return {
-      kind: "caller",
-      agentId,
-      conversationRef: conversationRef.value,
-      conversation: {
-        conversationScope: parsedScope.data,
-        conversationRef: conversationRef.value,
-      },
-      ...(typeof rootRunId === "string" ? { rootRunId } : {}),
-    };
-  }
-
-  if (rawParams._trustLevel !== "admin") {
-    throw new AuthorizationError("Sub-agent controller authority is invalid");
-  }
-  const selectedAgentId = rawParams.agentId;
-  return {
-    kind: "admin",
-    ...(typeof selectedAgentId === "string" ? { agentId: selectedAgentId } : {}),
-  };
-}
-
-type RunnerRun = NonNullable<
-  ReturnType<SubagentHandlerDeps["subAgentRunner"]["getRunStatus"]>
->;
-
-export function subagentControllerOwnsRun(controller: SubagentController, run: RunnerRun): boolean {
-  return controller.kind === "admin" || (
-    run.callerAgentId === controller.agentId
-    && run.callerConversation?.conversationRef === controller.conversationRef
-  );
-}
-
-function assertTargetAuthorized(
-  controller: SubagentController,
-  run: RunnerRun | undefined,
-): void {
-  if (controller.kind === "caller" && (run === undefined || !subagentControllerOwnsRun(controller, run))) {
-    throw new AuthorizationError("Sub-agent target is unavailable");
-  }
-}
-
-function projectCallerRun(run: RunnerRun): Record<string, unknown> {
-  const terminalProjection = run.status === "completed" || run.status === "failed"
-    ? {
-        completion: {
-          endReason: run.completion.endReason,
-          completedAtMs: run.completion.completedAtMs,
-          ...(run.completion.endReason !== "completed"
-            ? { errorKind: run.completion.errorKind }
-            : {}),
-        },
-      }
-    : {};
-  return {
-    runId: run.runId,
-    status: run.status,
-    agentId: run.agentId,
-    startedAt: run.startedAt,
-    ...(run.queuedAt !== undefined ? { queuedAt: run.queuedAt } : {}),
-    ...terminalProjection,
-    ...(run.depth !== undefined ? { depth: run.depth } : {}),
-    ...(run.rootRunId !== undefined ? { rootRunId: run.rootRunId } : {}),
-    ...(run.graphId !== undefined ? { graphId: run.graphId } : {}),
-    ...(run.nodeId !== undefined ? { nodeId: run.nodeId } : {}),
-  };
-}
-
-function controllerRateKey(controller: SubagentController, target: string): string {
-  const controllerKey = controller.kind === "caller"
-    ? `caller:${controller.agentId}:${controller.conversationRef}`
-    : `admin:${controller.agentId ?? "all"}`;
-  return `${controllerKey}:target:${target}`;
-}
-
-function requireOperatorController(rawParams: Record<string, unknown>): void {
-  const controller = resolveSubagentController(rawParams);
-  if (controller.kind !== "admin") {
-    throw new AuthorizationError("Sub-agent spawn admission control requires operator authority");
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Rate-limit state for steer
@@ -219,7 +98,7 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
             && (params.rootRunId === undefined || run.rootRunId === params.rootRunId)
           ));
       const runs = controller.kind === "caller"
-        ? selectedRuns.map(projectCallerRun)
+        ? selectedRuns.map(projectCallerSubagentRun)
         : selectedRuns;
       const result = { runs, total: runs.length };
       if (IS_DEV) SubagentListContract.response.parse(result);
@@ -304,7 +183,7 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
       const userParams = stripInternalFields(rawParams);
       SubagentKillContract.request.parse(userParams);
 
-      assertTargetAuthorized(controller, deps.subAgentRunner.getRunStatus(target));
+      assertSubagentTargetAuthorized(controller, deps.subAgentRunner.getRunStatus(target));
 
       const killResult = deps.subAgentRunner.killRun(target);
       if (!killResult.killed) {
@@ -327,10 +206,10 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
       SubagentSteerContract.request.parse(userParams);
 
       const run = deps.subAgentRunner.getRunStatus(target);
-      assertTargetAuthorized(controller, run);
+      assertSubagentTargetAuthorized(controller, run);
 
       // Rate limit: 2s between steers by the same controller to the same target.
-      const rateKey = controllerRateKey(controller, target);
+      const rateKey = subagentControllerRateKey(controller, target);
       const lastSteer = steerTimestamps.get(rateKey);
       if (lastSteer && systemNowMs() - lastSteer < 2000) {
         throw new Error("Rate limited: wait 2s between steers to same target");
@@ -451,7 +330,7 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
 
     [SubagentPauseContract.method]: async (rawParams) => {
       const startedAtMs = systemNowMs();
-      requireOperatorController(rawParams);
+      requireSubagentOperatorController(rawParams);
       SubagentPauseContract.request.parse(stripInternalFields(rawParams));
       const result = deps.subAgentRunner.pauseSpawns();
       deps.logger?.info(
@@ -470,7 +349,7 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
 
     [SubagentResumeContract.method]: async (rawParams) => {
       const startedAtMs = systemNowMs();
-      requireOperatorController(rawParams);
+      requireSubagentOperatorController(rawParams);
       SubagentResumeContract.request.parse(stripInternalFields(rawParams));
       const result = deps.subAgentRunner.resumeSpawns();
       deps.logger?.info(
@@ -489,7 +368,7 @@ export function createSubagentHandlers(deps: SubagentHandlerDeps): Record<string
 
     [SubagentStatusContract.method]: async (rawParams) => {
       const startedAtMs = systemNowMs();
-      requireOperatorController(rawParams);
+      requireSubagentOperatorController(rawParams);
       SubagentStatusContract.request.parse(stripInternalFields(rawParams));
       const result = deps.subAgentRunner.spawnAdmissionStatus();
       deps.logger?.info(
