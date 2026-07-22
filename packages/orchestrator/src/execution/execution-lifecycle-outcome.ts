@@ -16,9 +16,9 @@ export interface LifecycleOutcome {
 
 /** Classify the executor's closed terminal reason before filter/delivery policy. */
 export function classifyExecutionFinishReason(
-  finishReason: ExecutionResult["finishReason"],
+  result: ExecutionResult,
 ): LifecycleOutcome {
-  switch (finishReason) {
+  switch (result.finishReason) {
     case "stop":
       return { status: "success" };
     case "prompt_timeout":
@@ -36,16 +36,21 @@ export function classifyExecutionFinishReason(
     case "provider_degraded":
       return { status: "error", failureStage: "execution", errorKind: "dependency" };
     case "session_reset":
+    case "narration_stall":
       return { status: "error", failureStage: "execution", errorKind: "internal" };
+    case "background_pending":
+      return { status: "error", failureStage: "execution", errorKind: "precondition" };
     case "input_too_large":
       return { status: "error", failureStage: "execution", errorKind: "validation" };
     case "error":
-      // The executor currently preserves the terminal error but not every
-      // originating ErrorKind. Keep the missing kind explicit instead of
-      // manufacturing a misleading classification.
-      return { status: "error", failureStage: "execution" };
+    case "completed_with_tool_errors":
+      return {
+        status: "error",
+        failureStage: "execution",
+        errorKind: result.terminalErrorKind,
+      };
     default: {
-      const _exhaustive: never = finishReason;
+      const _exhaustive: never = result;
       return _exhaustive;
     }
   }

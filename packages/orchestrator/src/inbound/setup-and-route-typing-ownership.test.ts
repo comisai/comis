@@ -102,12 +102,10 @@ function makeAdapter(): ChannelPort {
 function makeDeliveryService(): DeliveryService {
   return {
     deliverToChannel: vi.fn(async () => ok({
-      ok: true,
-      totalChunks: 1,
-      deliveredChunks: 1,
-      failedChunks: 0,
-      chunks: [{ index: 0, ok: true, messageId: "reply-1" }],
+      chunks: [{ status: "accepted" as const, messageId: "reply-1", charCount: 2, retried: false }],
       totalChars: 2,
+      platform: { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: "reply-1" },
+      queueDisposition: "settled" as const,
     })),
     drainInFlight: vi.fn(async () => ({
       drained: 0,

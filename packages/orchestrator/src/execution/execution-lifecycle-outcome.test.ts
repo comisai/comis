@@ -5,6 +5,37 @@ import {
   classifyExecutionAbortReason,
   classifyExecutionFinishReason,
 } from "./execution-lifecycle-outcome.js";
+import type { ExecutionResult } from "@comis/agent";
+
+function makeExecutionResult(
+  terminal: Pick<ExecutionResult, "finishReason" | "terminalErrorKind">,
+): ExecutionResult {
+  return {
+    response: "",
+    sessionKey: {
+      tenantId: "tenant_a",
+      channel: "echo",
+      channelInstanceId: "echo_a",
+      channelId: "channel_a",
+      userId: "user_a",
+      agentId: "agent_a",
+      chatType: "dm",
+    },
+    executionId: "execution_a",
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
+    sideEffectSummary: {
+      schedulingCapabilityInvoked: false,
+      outboundDeliveryCapabilityInvoked: false,
+      deferredWorkCapabilityInvoked: false,
+      unclassifiedInvocationObserved: false,
+    },
+    tokensUsed: { input: 0, output: 0, total: 0 },
+    cost: { total: 0 },
+    stepsExecuted: 0,
+    llmCalls: 0,
+    ...terminal,
+  } as ExecutionResult;
+}
 
 describe("execution lifecycle outcome classification", () => {
   it.each([
@@ -22,9 +53,12 @@ describe("execution lifecycle outcome classification", () => {
     ["session_reset", { status: "error", failureStage: "execution", errorKind: "internal" }],
     ["prompt_timeout", { status: "timeout", failureStage: "execution", errorKind: "timeout" }],
     ["input_too_large", { status: "error", failureStage: "execution", errorKind: "validation" }],
-    ["error", { status: "error", failureStage: "execution" }],
+    ["error", { status: "error", failureStage: "execution", errorKind: "dependency" }],
   ] as const)("classifies finish reason %s", (finishReason, expected) => {
-    expect(classifyExecutionFinishReason(finishReason)).toEqual(expected);
+    const result = finishReason === "error"
+      ? makeExecutionResult({ finishReason, terminalErrorKind: "dependency" })
+      : makeExecutionResult({ finishReason });
+    expect(classifyExecutionFinishReason(result as never)).toEqual(expected);
   });
 
   it.each([

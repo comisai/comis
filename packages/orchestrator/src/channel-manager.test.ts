@@ -9,6 +9,7 @@ import { ok, err } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockLogger } from "../../../test/support/mock-logger.js";
 import { createFakePrincipalResolver } from "../../../test/support/fake-principal-resolver.js";
+import { createFakeClock } from "../../../test/support/fake-clock.js";
 import { createChannelManager, type ChannelManagerDeps } from "./channel-manager.js";
 import { processInboundMessage as realProcessInboundMessage } from "./inbound/inbound-pipeline.js";
 
@@ -35,18 +36,14 @@ function makeFakeDeliveryService(): DeliveryService {
       const finalOpts = options ? sendOpts : undefined;
       const result = await adapter.sendMessage(channelId, text, finalOpts);
       return ok({
-        ok: result.ok,
-        totalChunks: 1,
-        deliveredChunks: result.ok ? 1 : 0,
-        failedChunks: result.ok ? 0 : 1,
-        chunks: [{
-          ok: result.ok,
-          messageId: result.ok ? result.value : undefined,
-          error: result.ok ? undefined : result.error,
-          charCount: text.length,
-          retried: false,
-        }],
+        chunks: result.ok
+          ? [{ status: "accepted" as const, messageId: result.value, charCount: text.length, retried: false }]
+          : [{ status: "rejected" as const, error: result.error, errorKind: "platform" as const, charCount: text.length, retried: false }],
         totalChars: text.length,
+        platform: result.ok
+          ? { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: result.value }
+          : { status: "rejected" as const, errorKind: "platform" as const, deliveredChunks: 0 as const, failedChunks: 1, settledAtMs: 2_000 },
+        queueDisposition: "settled" as const,
       });
     }),
     drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
@@ -73,12 +70,10 @@ function makeFakeDeliveryServiceWithTracker(): {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only stub
     deliverToChannel: vi.fn(async (_adapter: any, _channelId: string, _text: string, _options?: any) => {
       return ok({
-        ok: true,
-        totalChunks: 1,
-        deliveredChunks: 1,
-        failedChunks: 0,
-        chunks: [{ ok: true, messageId: "stub", charCount: _text.length, retried: false }],
+        chunks: [{ status: "accepted" as const, messageId: "stub", charCount: _text.length, retried: false }],
         totalChars: _text.length,
+        platform: { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: "stub" },
+        queueDisposition: "settled" as const,
       });
     }),
     drainInFlight: async (deadlineMs = 5000) => {
@@ -230,6 +225,7 @@ function makeDeps(overrides?: Partial<ChannelManagerDeps>): ChannelManagerDeps {
   return {
     tenantId: "default",
     eventBus: makeEventBus(),
+    clock: createFakeClock(2_000),
     messageRouter: makeRouter(),
     principalResolver,
     getDmScope: () => ({ mode: "per-account-channel-peer", threadIsolation: true }),

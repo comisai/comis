@@ -316,6 +316,7 @@ describe("evaluateInboundGate /config command interception", () => {
       adapter,
       "chat-1",
       "config view response",
+      { completionMode: "deferred_retry" },
     );
   });
 

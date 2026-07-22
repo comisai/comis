@@ -8,7 +8,7 @@
  * @module
  */
 
-import type { ChannelPort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryQueuePort, DeliveryService, ErrorKind } from "@comis/core";
+import type { ChannelPort, ClockPort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryQueuePort, DeliveryService, ErrorKind } from "@comis/core";
 import type { PerChannelStreamingConfig, StreamingConfig } from "@comis/core";
 import { ERROR_KINDS } from "@comis/core";
 import type { SendPolicyConfig, ElevatedReplyConfig } from "@comis/core";
@@ -42,7 +42,10 @@ import { executeLlm } from "./execution-execute.js";
 import {
   filterExecutionResponse,
 } from "./execution-filter.js";
-import { deliverExecutionResponse } from "./execution-deliver.js";
+import {
+  deliverExecutionResponse,
+  toActivityDeliveryStageResult,
+} from "./execution-deliver.js";
 import { emitObservationalEvent } from "./execution-event-emitter.js";
 import { createMediaDeliveryFailureReceipt } from "./execution-media-receipt.js";
 import { runExecutionPolicy } from "./execution-policy.js";
@@ -56,6 +59,10 @@ import {
   createSourceTerminalScope,
   type SourceTerminalScope,
 } from "../source-message-terminal.js";
+import {
+  captureTaskExtractionTurn,
+  type TaskExtractionCaptureDeps,
+} from "./task-extraction-capture.js";
 
 export {
   buildThreadSendOpts,
@@ -71,6 +78,8 @@ export {
 export interface ExecutionPipelineDeps {
   eventBus: TypedEventBus;
   logger: ComisLogger;
+  /** Authoritative clock for settled interactive-delivery timestamps. */
+  clock: ClockPort;
   streamingConfig?: StreamingConfig;
   sendPolicyConfig?: SendPolicyConfig;
   getElevatedReplyConfig?: (agentId: string) => ElevatedReplyConfig | undefined;
@@ -117,6 +126,8 @@ export interface ExecutionPipelineDeps {
    * Optional — present only when activity rendering is wired for the turn.
    */
   coordinatorFactory?: (ctx: TurnActivityContext) => ActivityTurnCoordinator;
+  /** Stable scheduler capture proxy plus immutable policy lookup. */
+  taskCapture?: TaskExtractionCaptureDeps;
 }
 
 // ---------------------------------------------------------------------------
@@ -357,7 +368,7 @@ export async function executeAndDeliver(
       llmCalls: policyResult.llmCalls,
     };
     if (await stopForQueueAbort()) return;
-    const policyLifecycle = classifyExecutionFinishReason(policyResult.finishReason);
+    const policyLifecycle = classifyExecutionFinishReason(policyResult);
     emitDiagnostic(
       policyResult.tokensUsed.total,
       policyResult.cost.total,
@@ -454,7 +465,7 @@ export async function executeAndDeliver(
       const abortReason = execResult.currentAbortReason();
       return abortReason !== undefined
         ? classifyExecutionAbortReason(abortReason)
-        : classifyExecutionFinishReason(execResult.result!.finishReason);
+        : classifyExecutionFinishReason(execResult.result!);
     };
 
     const readCoordinatorExecutionOutcome = (): TurnOutcome | undefined => {
@@ -580,25 +591,64 @@ export async function executeAndDeliver(
     const deliverySignal = queueSignal === undefined
       ? execResult.deliverySignal
       : AbortSignal.any([execResult.deliverySignal, queueSignal]);
-    const deliveryReceipt = await deliverExecutionResponse(
+    const strictDeliveryOutcome = await deliverExecutionResponse(
       deps, adapter, effectiveMsg, filterResult.text,
       blockStreamCfg, activePacers, replyTo,
       deliverySignal, typingLifecycle,
     );
+    const deliveryReceipt = toActivityDeliveryStageResult(strictDeliveryOutcome);
 
     // A queue abort that lands after the platform accepted chunks must not
     // erase the delivered turn from the record — the user HAS the message, so
     // message:sent and the success lifecycle below stay authoritative. Only a
     // turn that delivered nothing (no text chunk, no voice/media) may still
     // finalize as aborted.
-    const textChunksDelivered = deliveryReceipt.ok
-      ? deliveryReceipt.value.deliveredChunks
-      : 0;
+    const textChunksDelivered = strictDeliveryOutcome.ok
+      ? strictDeliveryOutcome.value.status === "suppressed"
+        ? 0
+        : strictDeliveryOutcome.value.deliveredChunks
+      : strictDeliveryOutcome.error.deliveredChunks;
     if (
       textChunksDelivered === 0 &&
       !nonTextSendCompleted &&
       (await stopForQueueAbort())
     ) return;
+
+    const taskCaptureAbortReason = execResult.currentAbortReason();
+    const taskCapture = captureTaskExtractionTurn(deps.taskCapture, {
+      agentId,
+      channelInstanceId: adapter.channelId,
+      effectiveMsg,
+      originalMsg,
+      result: execResult.result!,
+      filterResult,
+      delivery: strictDeliveryOutcome,
+      requestContext: tryGetContext(),
+      ...(taskCaptureAbortReason === undefined
+        ? {}
+        : { abortReason: taskCaptureAbortReason }),
+    });
+    if (taskCapture.status === "enqueued" && taskCapture.disposition === "oldest_dropped") {
+      deps.logger.warn({
+        agentId,
+        step: "task_extraction_capture",
+        disposition: taskCapture.disposition,
+        hint: "Increase extraction throughput or reduce task inference load; the newest eligible turn was retained",
+        errorKind: "resource" as const,
+      }, "Task extraction queue dropped its oldest item");
+    } else if (taskCapture.status === "rejected") {
+      deps.logger.debug({
+        agentId,
+        step: "task_extraction_capture",
+        reason: taskCapture.reason,
+      }, "Task extraction capture was not admitted");
+    } else if (taskCapture.status === "skipped") {
+      deps.logger.debug({
+        agentId,
+        step: "task_extraction_capture",
+        reason: taskCapture.reason,
+      }, "Task extraction capture skipped");
+    }
 
     // Emit message:sent with the REAL last-chunk message id from the receipt
     // (replaces the prior synthetic placeholder id). On a delivery

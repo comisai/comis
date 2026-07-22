@@ -91,19 +91,32 @@ function makeDeliveryService(): DeliverDeps["deliveryService"] {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test fake
     deliverToChannel: vi.fn(async (adapter: any, channelId: string, text: string) => {
       const result = await adapter.sendMessage(channelId, text, undefined);
+      const chunks = [{
+        status: result.ok ? "accepted" as const : "rejected" as const,
+        ...(result.ok
+          ? { messageId: result.value }
+          : { error: result.error, errorKind: "platform" as const }),
+        charCount: text.length,
+        retried: false,
+      }];
       return ok({
-        ok: result.ok,
-        totalChunks: 1,
-        deliveredChunks: result.ok ? 1 : 0,
-        failedChunks: result.ok ? 0 : 1,
-        chunks: [{
-          ok: result.ok,
-          messageId: result.ok ? result.value : undefined,
-          error: result.ok ? undefined : result.error,
-          charCount: text.length,
-          retried: false,
-        }],
+        chunks,
         totalChars: text.length,
+        platform: result.ok
+          ? {
+              status: "accepted" as const,
+              deliveredChunks: 1,
+              settledAtMs: 2_000,
+              ...(result.value === undefined ? {} : { lastMessageId: result.value }),
+            }
+          : {
+              status: "rejected" as const,
+              errorKind: "platform" as const,
+              deliveredChunks: 0 as const,
+              failedChunks: 1,
+              settledAtMs: 2_000,
+            },
+        queueDisposition: "settled" as const,
       });
     }),
     drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
@@ -127,6 +140,7 @@ function makeDeps(overrides?: Partial<DeliverDeps>): DeliverDeps {
   return {
     eventBus: makeEventBus(),
     logger: createMockLogger(),
+    clock: createFakeClock(2_000),
     deliveryService: makeDeliveryService(),
     ...overrides,
   } as DeliverDeps;
@@ -174,7 +188,10 @@ describe("deliverExecutionResponse — aborted-signal skip honesty", () => {
 
     // Nothing was sent (the pacer's external-abort hard stop).
     expect(send).not.toHaveBeenCalled();
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { deliveredChunks: 0, failedChunks: 0, errorKind: "precondition" },
+    });
 
     const logger = deps.logger as unknown as { debug: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> };
     const completion = logger.debug.mock.calls.find((c) => c[1] === "Block delivery complete");
@@ -217,6 +234,93 @@ describe("deliverExecutionResponse — aborted-signal skip honesty", () => {
 });
 
 describe("deliverExecutionResponse — delivery receipt", () => {
+  it("returns the strict accepted aggregate with durable queue disposition", async () => {
+    const result = await deliverExecutionResponse(
+      makeDeps(), makeAdapter(), makeMessage(), "hello", makeBlockStreamCfg(),
+      new Set<BlockPacer>(), undefined, new AbortController().signal, NO_TYPING,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: "accepted",
+        deliveredChunks: 1,
+        queueDisposition: "settled",
+      },
+    });
+    if (!result.ok || result.value.status !== "accepted") return;
+    expect(result.value.settledAtMs).toBeGreaterThan(0);
+    expect(result.value.lastMessageId).toBe("msg-1");
+  });
+
+  it("retains partial platform truth instead of collapsing it into a boolean failure", async () => {
+    let callCount = 0;
+    const deliveryService: DeliverDeps["deliveryService"] = {
+      deliverToChannel: vi.fn(async (_adapter, _channelId, text) => {
+        callCount += 1;
+        const accepted = callCount === 1;
+        return ok({
+          chunks: accepted
+            ? [{ status: "accepted" as const, messageId: "msg-first", charCount: text.length, retried: false }]
+            : [{ status: "rejected" as const, error: new Error("rejected"), errorKind: "platform" as const, charCount: text.length, retried: false }],
+          totalChars: text.length,
+          platform: accepted
+            ? { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: "msg-first" }
+            : { status: "rejected" as const, errorKind: "platform" as const, deliveredChunks: 0 as const, failedChunks: 1, settledAtMs: 2_001 },
+          queueDisposition: "settled" as const,
+        });
+      }),
+      drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
+    };
+
+    const result = await deliverExecutionResponse(
+      makeDeps({ deliveryService }), makeAdapter(), makeMessage(),
+      "abcdefghij klmnopqrst", makeBlockStreamCfg(), new Set<BlockPacer>(),
+      undefined, new AbortController().signal, NO_TYPING,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: "partial",
+        deliveredChunks: 1,
+        failedChunks: expect.any(Number),
+        queueDisposition: "settled",
+        lastMessageId: "msg-first",
+      },
+    });
+    if (result.ok && result.value.status === "partial") {
+      expect(result.value.failedChunks).toBeGreaterThan(0);
+    }
+  });
+
+  it("propagates retry-pending queue ownership beside accepted platform truth", async () => {
+    const deliveryService: DeliverDeps["deliveryService"] = {
+      deliverToChannel: vi.fn(async (_adapter, _channelId, text) => ok({
+        chunks: [{ status: "accepted" as const, messageId: "msg-retry", charCount: text.length, retried: false }],
+        totalChars: text.length,
+        platform: { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: "msg-retry" },
+        queueDisposition: "retry_pending" as const,
+      })),
+      drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
+    };
+
+    const result = await deliverExecutionResponse(
+      makeDeps({ deliveryService }), makeAdapter(), makeMessage(), "hello",
+      makeBlockStreamCfg(), new Set<BlockPacer>(), undefined,
+      new AbortController().signal, NO_TYPING,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: "accepted",
+        deliveredChunks: 1,
+        queueDisposition: "retry_pending",
+      },
+    });
+  });
+
   it("returns ok(receipt) with deliveredChunks and the real lastChunkMessageId on full success", async () => {
     let counter = 0;
     const send = vi.fn(async () => ok(`msg-${++counter}`));
@@ -234,18 +338,21 @@ describe("deliverExecutionResponse — delivery receipt", () => {
     if (!result.ok) return;
     expect(result.value.deliveredChunks).toBeGreaterThanOrEqual(2);
     // The id must be the LAST chunk's real id, not a synthetic constant.
-    expect(result.value.lastChunkMessageId).toBe(`msg-${counter}`);
-    expect(result.value.lastChunkMessageId).not.toBe("block-delivery");
+    expect(result.value.lastMessageId).toBe(`msg-${counter}`);
+    expect(result.value.lastMessageId).not.toBe("block-delivery");
   });
 
   it("keeps a successful platform send successful when only queue durability failed", async () => {
     const platformResult: DeliveryResult = {
-      ok: true,
-      totalChunks: 1,
-      deliveredChunks: 1,
-      failedChunks: 0,
-      chunks: [{ ok: true, messageId: "platform-msg-1", charCount: 5, retried: false }],
+      chunks: [{ status: "accepted", messageId: "platform-msg-1", charCount: 5, retried: false }],
       totalChars: 5,
+      platform: {
+        status: "accepted",
+        deliveredChunks: 1,
+        settledAtMs: 2_000,
+        lastMessageId: "platform-msg-1",
+      },
+      queueDisposition: "transition_failed",
     };
     const queueError = new DeliveryQueueTransitionError([{
       transition: "ack",
@@ -270,8 +377,10 @@ describe("deliverExecutionResponse — delivery receipt", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value).toMatchObject({
+      status: "accepted",
       deliveredChunks: 1,
-      lastChunkMessageId: "platform-msg-1",
+      lastMessageId: "platform-msg-1",
+      queueDisposition: "transition_failed",
     });
     expect(logger.warn).not.toHaveBeenCalledWith(
       expect.anything(),
@@ -299,13 +408,13 @@ describe("deliverExecutionResponse — delivery receipt", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    // deliveredAtMs is captured after the last send resolved: strictly after the
+    // settledAtMs is captured after the last send resolved: strictly after the
     // pre-delivery clock reading and == the clock value once every send ran.
-    expect(result.value.deliveredAtMs).toBeGreaterThan(before);
-    expect(result.value.deliveredAtMs).toBe(clock.now());
+    expect(result.value.settledAtMs).toBeGreaterThan(before);
+    expect(result.value.settledAtMs).toBe(clock.now());
   });
 
-  it("returns err(DeliveryFailureReceipt) with errorKind and a truncated lastError on a chunk failure", async () => {
+  it("returns strict rejected platform truth on a definite chunk failure", async () => {
     const longMessage = "x".repeat(500);
     const send = vi.fn(async () => err(new Error(longMessage)));
     const adapter = makeAdapter(send as unknown as ChannelPort["sendMessage"]);
@@ -316,14 +425,19 @@ describe("deliverExecutionResponse — delivery receipt", () => {
       new Set<BlockPacer>(), undefined, new AbortController().signal, NO_TYPING,
     );
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.totalChunks).toBe(
-      result.error.deliveredChunks + result.error.failedChunks,
-    );
-    expect(result.error.failedChunks).toBeGreaterThanOrEqual(1);
-    expect(result.error.errorKind).toBe("platform");
-    expect(result.error.lastError.length).toBeLessThanOrEqual(200);
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: "rejected",
+        deliveredChunks: 0,
+        failedChunks: expect.any(Number),
+        errorKind: "platform",
+        queueDisposition: "settled",
+      },
+    });
+    if (result.ok && result.value.status === "rejected") {
+      expect(result.value.failedChunks).toBeGreaterThan(0);
+    }
   });
 
   it("classifies a chunk failure surfaced via DeliveryResult.chunks[].error (deliverToChannel ok, inner chunk failed)", async () => {
@@ -333,12 +447,22 @@ describe("deliverExecutionResponse — delivery receipt", () => {
       deliveryService: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test fake
         deliverToChannel: vi.fn(async (_a: any, _c: string, text: string) => ok({
-          ok: false,
-          totalChunks: 1,
-          deliveredChunks: 0,
-          failedChunks: 1,
-          chunks: [{ ok: false, error: new Error("inner-chunk-boom"), charCount: text.length, retried: false }],
+          chunks: [{
+            status: "rejected" as const,
+            error: new Error("inner-chunk-boom"),
+            errorKind: "platform" as const,
+            charCount: text.length,
+            retried: false,
+          }],
           totalChars: text.length,
+          platform: {
+            status: "rejected" as const,
+            errorKind: "platform" as const,
+            deliveredChunks: 0 as const,
+            failedChunks: 1,
+            settledAtMs: 2_000,
+          },
+          queueDisposition: "settled" as const,
         })),
         drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
       } as DeliverDeps["deliveryService"],
@@ -349,17 +473,19 @@ describe("deliverExecutionResponse — delivery receipt", () => {
       new Set<BlockPacer>(), undefined, new AbortController().signal, NO_TYPING,
     );
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.errorKind).toBe("platform");
-    expect(result.error.lastError).toContain("inner-chunk-boom");
-    // failedAtMs comes from systemNowMs() when no clock injected.
-    expect(result.error.failedAtMs).toBeGreaterThan(0);
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: "rejected",
+        errorKind: "platform",
+        failedChunks: 1,
+      },
+    });
   });
 
-  it("uses systemNowMs for deliveredAtMs on success when no clock is injected", async () => {
+  it("uses the required injected clock for settledAtMs on success", async () => {
     const adapter = makeAdapter(vi.fn(async () => ok("msg-real")) as unknown as ChannelPort["sendMessage"]);
-    const deps = makeDeps(); // no clock
+    const deps = makeDeps({ clock: createFakeClock(7_000) });
 
     const result = await deliverExecutionResponse(
       deps, adapter, makeMessage(), "abcdefghij", makeBlockStreamCfg(),
@@ -368,8 +494,8 @@ describe("deliverExecutionResponse — delivery receipt", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.lastChunkMessageId).toBe("msg-real");
-    expect(result.value.deliveredAtMs).toBeGreaterThan(0);
+    expect(result.value.lastMessageId).toBe("msg-real");
+    expect(result.value.settledAtMs).toBe(7_000);
   });
 });
 
@@ -390,11 +516,12 @@ describe("deliverExecutionResponse — visibleReplies enforcement", () => {
       { visibleReplies: { direct: "automatic", group: "message_tool" }, messageToolActed: false },
     );
 
-    // Suppressed: nothing sent to the channel, success receipt with 0 chunks.
+    // Suppressed: nothing sent to the channel, with a closed policy reason.
     expect(send).not.toHaveBeenCalled();
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value.deliveredChunks).toBe(0);
+    expect(result).toEqual({
+      ok: true,
+      value: { status: "suppressed", reason: "visible_replies" },
+    });
   });
 
   it("delivers final assistant text under group:message_tool when the message tool acted (send/reply/attach)", async () => {

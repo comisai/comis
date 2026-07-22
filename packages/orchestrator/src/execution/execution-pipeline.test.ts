@@ -1,5 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { ChannelPort, NormalizedMessage, RequestContext, SessionKey, DeliveryService } from "@comis/core";
+import type {
+  ChannelPort,
+  DeliveryService,
+  NormalizedMessage,
+  RequestContext,
+  SessionKey,
+  TaskExtractionPort,
+  WorkspacePolicyPort,
+  WorkspacePolicySnapshot,
+} from "@comis/core";
 import type { PerChannelStreamingConfig, StreamingConfig } from "@comis/core";
 import { StreamingConfigSchema, PerChannelStreamingConfigSchema } from "@comis/core";
 import type { AgentExecutor } from "@comis/agent";
@@ -8,6 +17,7 @@ import type { AgentExecutor } from "@comis/agent";
 import { err, ok } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import type {
   TypingController,
   TypingLifecycleController,
@@ -127,18 +137,14 @@ function makeFakeDeliveryService(): DeliveryService {
       const finalOpts = options ? sendOpts : undefined;
       const result = await adapter.sendMessage(channelId, text, finalOpts);
       return ok({
-        ok: result.ok,
-        totalChunks: 1,
-        deliveredChunks: result.ok ? 1 : 0,
-        failedChunks: result.ok ? 0 : 1,
-        chunks: [{
-          ok: result.ok,
-          messageId: result.ok ? result.value : undefined,
-          error: result.ok ? undefined : result.error,
-          charCount: text.length,
-          retried: false,
-        }],
+        chunks: result.ok
+          ? [{ status: "accepted" as const, messageId: result.value, charCount: text.length, retried: false }]
+          : [{ status: "rejected" as const, error: result.error, errorKind: "platform" as const, charCount: text.length, retried: false }],
         totalChars: text.length,
+        platform: result.ok
+          ? { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: result.value }
+          : { status: "rejected" as const, errorKind: "platform" as const, deliveredChunks: 0 as const, failedChunks: 1, settledAtMs: 2_000 },
+        queueDisposition: "settled" as const,
       });
     }),
     // DeliveryService exposes drainInFlight(). Default fake returns empty
@@ -152,6 +158,7 @@ function makeDeps(overrides?: Partial<ExecutionPipelineDeps>): ExecutionPipeline
   return {
     eventBus: makeEventBus(),
     logger: createMockLogger(),
+    clock: createFakeClock(2_000),
     deliveryService: makeFakeDeliveryService(),
     ...overrides,
   };
@@ -477,12 +484,14 @@ describe("executeAndDeliver", () => {
           agentIdInDelivery = tryGetContext()?.agentId;
           const result = await adapter.sendMessage(channelId, text, undefined);
           return ok({
-            ok: result.ok,
-            totalChunks: 1,
-            deliveredChunks: result.ok ? 1 : 0,
-            failedChunks: result.ok ? 0 : 1,
-            chunks: [{ ok: result.ok, messageId: result.ok ? result.value : undefined, error: result.ok ? undefined : result.error, charCount: text.length, retried: false }],
+            chunks: result.ok
+              ? [{ status: "accepted" as const, messageId: result.value, charCount: text.length, retried: false }]
+              : [{ status: "rejected" as const, error: result.error, errorKind: "platform" as const, charCount: text.length, retried: false }],
             totalChars: text.length,
+            platform: result.ok
+              ? { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: result.value }
+              : { status: "rejected" as const, errorKind: "platform" as const, deliveredChunks: 0 as const, failedChunks: 1, settledAtMs: 2_000 },
+            queueDisposition: "settled" as const,
           });
         }),
         drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
@@ -570,6 +579,7 @@ describe("executeAndDeliver", () => {
 
     it("reports execution and delivery stage durations separately", async () => {
       vi.useFakeTimers({ now: 1_000 });
+      const clock = createFakeClock(1_100);
       const eventBus = makeEventBus();
       const executor = makeExecutor({
         execute: vi.fn(async () => {
@@ -588,12 +598,13 @@ describe("executeAndDeliver", () => {
       const adapter = makeAdapter({
         sendMessage: vi.fn(async () => {
           vi.setSystemTime(1_140);
+          clock.advance(40);
           return ok("msg-timed");
         }),
       });
 
       await executeAndDeliver(
-        makeDeps({ eventBus }), adapter, makeMessage(), makeMessage(), executor,
+        makeDeps({ eventBus, clock }), adapter, makeMessage(), makeMessage(), executor,
         makeSessionKey(), "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
       );
 
@@ -609,6 +620,7 @@ describe("executeAndDeliver", () => {
 
     it("excludes ingress queueing and preprocessing from execution duration", async () => {
       vi.useFakeTimers({ now: 1_100 });
+      const clock = createFakeClock(1_300);
       const eventBus = makeEventBus();
       const assembleToolsForAgent = vi.fn(async () => {
         vi.setSystemTime(1_200);
@@ -631,12 +643,13 @@ describe("executeAndDeliver", () => {
       const adapter = makeAdapter({
         sendMessage: vi.fn(async () => {
           vi.setSystemTime(1_340);
+          clock.advance(40);
           return ok("msg-timed");
         }),
       });
 
       await executeAndDeliver(
-        makeDeps({ eventBus, assembleToolsForAgent }),
+        makeDeps({ eventBus, clock, assembleToolsForAgent }),
         adapter,
         makeMessage(),
         makeMessage(),
@@ -716,12 +729,10 @@ describe("executeAndDeliver", () => {
           timestamp: systemNowMs(),
         });
         return ok({
-          ok: true,
-          totalChunks: 1,
-          deliveredChunks: 1,
-          failedChunks: 0,
-          chunks: [{ ok: true, messageId: "msg-stopped", charCount: 19, retried: false }],
+          chunks: [{ status: "accepted" as const, messageId: "msg-stopped", charCount: 19, retried: false }],
           totalChars: 19,
+          platform: { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: "msg-stopped" },
+          queueDisposition: "settled" as const,
         });
       });
       const deps = makeDeps({
@@ -2359,6 +2370,133 @@ describe("executeAndDeliver", () => {
 
       expect(capturedTraceId, "policy-deny executor should see ingress traceId, not a fresh mint").toBe(ingressTraceId);
     });
+  });
+});
+
+describe("task extraction capture at the settled delivery boundary", () => {
+  it("enqueues the raw physical API turn after a successful accepted text delivery", async () => {
+    const snapshot: WorkspacePolicySnapshot = {
+      agentId: "agent-1",
+      sections: [],
+      combinedHash: "policy-hash-a",
+    };
+    const enqueue = vi.fn(() => ok("enqueued" as const));
+    const taskExtractionPort = { enqueue } as TaskExtractionPort;
+    const workspacePolicyPort = {
+      get: vi.fn(() => ok(snapshot)),
+      load: vi.fn(),
+    } as unknown as WorkspacePolicyPort;
+    const executor = makeExecutor({
+      execute: vi.fn(async () => ({
+        response: "I will follow up.",
+        sessionKey: makeSessionKey(),
+        executionId: "execution-a",
+        workspacePolicyHash: snapshot.combinedHash,
+        responseLocalePolicy: {
+          locale: "en",
+          source: "request" as const,
+          enforceLocale: true,
+        },
+        sideEffectSummary: {
+          schedulingCapabilityInvoked: false,
+          outboundDeliveryCapabilityInvoked: false,
+          deferredWorkCapabilityInvoked: false,
+          unclassifiedInvocationObserved: false,
+        },
+        tokensUsed: { input: 10, output: 5, total: 15 },
+        cost: { total: 0 },
+        stepsExecuted: 0,
+        llmCalls: 1,
+        finishReason: "stop" as const,
+      })),
+    });
+    const rawText = "Please check the queue tomorrow.";
+    const effectiveMsg = makeMessage({
+      text: "English security envelope around the user-authored request",
+      originalMessages: [{
+        id: "00000000-0000-0000-0000-000000000001",
+        channelId: "12345",
+        channelType: "telegram",
+        senderId: "user-1",
+        text: rawText,
+        timestamp: 1_000,
+      }],
+    });
+    const originalMsg = makeMessage({ text: rawText, originalMessages: undefined });
+    const deps = makeDeps({
+      clock: createFakeClock(2_000),
+      taskCapture: { taskExtractionPort, workspacePolicyPort },
+    });
+    const context = makeResolvedContext({
+      userId: "principal-a",
+      learningEligible: true,
+      deliveryOrigin: {
+        channelType: "telegram",
+        channelId: "12345",
+        userId: "principal-a",
+        tenantId: "default",
+      },
+      turnScope: {
+        conversation: {
+          tenantId: "default",
+          agentId: "agent-1",
+          partition: { kind: "principal", principalId: "principal-a" },
+        },
+        principal: { principalId: "principal-a" },
+        endpoint: {
+          channelType: "telegram",
+          channelInstanceId: "telegram-123",
+          conversationId: "12345",
+          conversationKind: "direct",
+        },
+      },
+    });
+
+    await runWithContext(context, () => executeAndDeliver(
+      deps,
+      makeAdapter(),
+      effectiveMsg,
+      originalMsg,
+      executor,
+      makeSessionKey(),
+      "agent-1",
+      makeBlockStreamCfg(),
+      new Set(),
+      makeSendOverrides(),
+    ));
+
+    expect(enqueue).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      sourceExecutionId: "execution-a",
+      userText: rawText,
+      deliveredAssistantText: "I will follow up.",
+      capturedAtMs: 2_000,
+      workspacePolicySnapshot: snapshot,
+    }));
+    expect(workspacePolicyPort.load).not.toHaveBeenCalled();
+  });
+
+  it("records the closed capture skip reason for operator diagnosis", async () => {
+    const deps = makeDeps();
+    const msg = makeMessage();
+
+    await executeAndDeliver(
+      deps,
+      makeAdapter(),
+      msg,
+      msg,
+      makeExecutor(),
+      makeSessionKey(),
+      "agent-1",
+      makeBlockStreamCfg(),
+      new Set(),
+      makeSendOverrides(),
+    );
+
+    expect(deps.logger.debug).toHaveBeenCalledWith({
+      agentId: "agent-1",
+      step: "task_extraction_capture",
+      reason: "capture_unavailable",
+    }, "Task extraction capture skipped");
   });
 });
 

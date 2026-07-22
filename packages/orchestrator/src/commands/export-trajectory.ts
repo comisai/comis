@@ -35,7 +35,7 @@ export interface HandleExportTrajectoryDeps {
       adapter: DeliveryAdapter,
       channelId: string,
       text: string,
-      opts?: DeliverToChannelOptions,
+      opts: DeliverToChannelOptions,
     ) => Promise<unknown>;
   };
   exportSessionBundle: (sessionId: string) => Promise<{ bundlePath: string }>;
@@ -69,7 +69,7 @@ export async function handleExportTrajectory(
       adapter,
       msg.channelId,
       "Access denied: /export-trajectory is owner-only.",
-      { skipChunking: true },
+      { completionMode: "deferred_retry", skipChunking: true },
     );
     return { action: "handled" };
   }
@@ -86,7 +86,7 @@ export async function handleExportTrajectory(
       adapter,
       msg.channelId,
       "Bundle sent to owner DM.",
-      { skipChunking: true },
+      { completionMode: "deferred_retry", skipChunking: true },
     );
   }
 
@@ -106,7 +106,7 @@ export async function handleExportTrajectory(
       adapter,
       msg.channelId,
       `Bundle export failed: ${reason}`,
-      { skipChunking: true },
+      { completionMode: "deferred_retry", skipChunking: true },
     );
     return { action: "handled" };
   }
@@ -126,10 +126,10 @@ export async function handleExportTrajectory(
   } else {
     // DM context: inline reply is safe — it goes only to the owner.
     await deliveryService.deliverToChannel(adapter, msg.channelId, message, {
+      completionMode: "deferred_retry",
       skipChunking: true,
     });
   }
 
   return { action: "handled" };
 }
-

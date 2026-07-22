@@ -6,6 +6,7 @@ import type { ApprovalRequest, ChannelPort, NormalizedMessage, DeliveryService, 
 import { createConversationRef, formatSessionKey, runWithContext, tryGetContext } from "@comis/core";
 import { ok } from "@comis/shared";
 import { randomUUID } from "node:crypto";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
 import {
   matchesResetTrigger,
@@ -40,12 +41,10 @@ function makeFakeDeliveryService(): DeliveryService {
     deliverToChannel: vi.fn(async (adapter: any, channelId: string, text: string) => {
       await adapter.sendMessage(channelId, text);
       return ok({
-        ok: true,
-        totalChunks: 1,
-        deliveredChunks: 1,
-        failedChunks: 0,
-        chunks: [{ ok: true, messageId: "m1", charCount: text.length, retried: false }],
+        chunks: [{ status: "accepted" as const, messageId: "m1", charCount: text.length, retried: false }],
         totalChars: text.length,
+        platform: { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: "m1" },
+        queueDisposition: "settled" as const,
       });
     }),
     // DeliveryService provides drainInFlight(). Default fake returns empty
@@ -319,6 +318,7 @@ function makeMinimalDeps(overrides?: Partial<InboundPipelineDeps>): InboundPipel
   const emit = vi.fn(() => true);
   return {
     tenantId: "default",
+    clock: createFakeClock(2_000),
     eventBus: {
       emit,
       emitSafely: vi.fn((event, payload) => {
@@ -463,17 +463,15 @@ describe("resolved inbound request context", () => {
         deliveryContext = tryGetContext();
         await adapter.sendMessage(channelId, text);
         return ok({
-          ok: true,
-          totalChunks: 1,
-          deliveredChunks: 1,
-          failedChunks: 0,
           chunks: [{
-            ok: true,
+            status: "accepted" as const,
             messageId: "m1",
             charCount: text.length,
             retried: false,
           }],
           totalChars: text.length,
+          platform: { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: "m1" },
+          queueDisposition: "settled" as const,
         });
       },
     );

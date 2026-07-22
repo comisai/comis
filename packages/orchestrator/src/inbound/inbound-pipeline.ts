@@ -17,7 +17,7 @@ import type { CommandQueue } from "../queue/command-queue.js";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 // Relative path used because orchestrator cannot import its own published name.
 import type { InteractiveCallbackRouter } from "../approval/index.js";
-import type { ApprovalGate, ChannelPort, ConversationRef, DeliveryQueuePort, DmScopeConfig, EventMap, LocalizationPort, NormalizedMessage, PrincipalResolverPort, RequestContext, ResolvedTurnScope, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
+import type { ApprovalGate, ChannelPort, ClockPort, ConversationRef, DeliveryQueuePort, DmScopeConfig, EventMap, LocalizationPort, NormalizedMessage, PrincipalResolverPort, RequestContext, ResolvedTurnScope, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 // The orchestrator imports ONLY the @comis/core activity port + ctx type
 // (never the observability impl — hexagonal boundary). The
 // ActivityTurnCoordinator is a local execution type.
@@ -55,6 +55,7 @@ import {
 } from "../source-message-terminal.js";
 import { emitObservationalEvent } from "../execution/execution-event-emitter.js";
 import { resolveExecutionTrustLevel } from "../execution/execution-policy.js";
+import type { TaskExtractionCaptureDeps } from "../execution/task-extraction-capture.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -65,6 +66,8 @@ export interface InboundPipelineDeps {
   /** Configured tenant authority for channel-originated session construction. */
   tenantId: string;
   eventBus: TypedEventBus;
+  /** Authoritative clock for settled interactive delivery. */
+  clock: ClockPort;
   logger: ComisLogger;
   messageRouter: MessageRouter;
   sessionManager: SessionLifecycle;
@@ -156,6 +159,8 @@ export interface InboundPipelineDeps {
   activityStreamPort?: ActivityStreamPort;
   /** See ChannelManagerDeps. */
   coordinatorFactory?: (ctx: TurnActivityContext) => ActivityTurnCoordinator;
+  /** Stable scheduler capture proxy plus immutable policy lookup. */
+  taskCapture?: TaskExtractionCaptureDeps;
   /** Optional allowFrom sender filter lookup. Returns allowed sender IDs for a channel type. Empty array = allow all. */
   getAllowFrom?: (channelType: string) => string[];
   /** Optional duplicate-inbound detector. The exact channel/source tuple is

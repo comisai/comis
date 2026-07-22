@@ -24,6 +24,7 @@ import {
   systemNowMs,
   systemSetTimeout,
   tryGetContext,
+  wrapExternalContent,
 } from "@comis/core";
 import type {
   AgentExecutor,
@@ -89,6 +90,7 @@ export type SetupAndRouteDeps = Pick<
   // From inbound-setup.ts (5 fields; 4 shared with route):
   | "logger"
   | "eventBus"
+  | "clock"
   | "channelRegistry"
   | "lifecycleReactionsEnabled"
   | "streamingConfig"
@@ -112,6 +114,7 @@ export type SetupAndRouteDeps = Pick<
   // Propagated onto execDeps for the pipeline gate (see execution-pipeline.ts).
   | "activityStreamPort"
   | "coordinatorFactory"
+  | "taskCapture"
 >;
 
 // ---------------------------------------------------------------------------
@@ -299,6 +302,7 @@ export async function setupAndRoute(
     const execDeps = {
       eventBus: deps.eventBus,
       logger: deps.logger,
+      clock: deps.clock,
       streamingConfig: deps.streamingConfig,
       sendPolicyConfig: deps.sendPolicyConfig,
       getElevatedReplyConfig: deps.getElevatedReplyConfig,
@@ -316,6 +320,7 @@ export async function setupAndRoute(
       enforceFinalTag: deps.getEnforceFinalTag?.(agentId),
       activityStreamPort: deps.activityStreamPort,
       coordinatorFactory: deps.coordinatorFactory,
+      taskCapture: deps.taskCapture,
     };
 
     // -------------------------------------------------------------------
@@ -337,7 +342,7 @@ export async function setupAndRoute(
         const runHandle = deps.sessionResolver.resolveActiveSession(conversationRef);
 
         if (runHandle) {
-          const messageText = msg.text ?? "";
+          const messageText = wrapExternalContent(msg.text ?? "", { source: "unknown" });
 
           if (runHandle.isStreaming() && !runHandle.isCompacting()) {
             // Session is streaming -- inject via SDK steer

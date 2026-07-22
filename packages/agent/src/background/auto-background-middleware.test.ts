@@ -210,6 +210,51 @@ describe("wrapToolForAutoBackground", () => {
     expect(tasks[0]!.status).toBe("running");
   });
 
+  it("marks deferred work exactly when background ownership is accepted", async () => {
+    const tool = createMockTool({ resolveAfterMs: 200, result: toolOk("slow-result") });
+    const onPromoted = vi.fn();
+    const wrapped = wrapToolForAutoBackground(
+      tool,
+      manager,
+      config,
+      () => buildOrigin({ agentId: "agent-1" }),
+      onPromoted,
+    );
+
+    expect(onPromoted).not.toHaveBeenCalled();
+    await wrapped.execute("call-accepted", {}, undefined, undefined, undefined);
+
+    expect(onPromoted).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mark deferred work for foreground completion or rejected promotion", async () => {
+    const onForegroundPromoted = vi.fn();
+    const foreground = wrapToolForAutoBackground(
+      createMockTool({ resolveAfterMs: 5 }),
+      manager,
+      config,
+      () => buildOrigin({ agentId: "agent-1" }),
+      onForegroundPromoted,
+    );
+    await foreground.execute("call-foreground", {}, undefined, undefined, undefined);
+    expect(onForegroundPromoted).not.toHaveBeenCalled();
+
+    const rejectingManager = {
+      ...manager,
+      promote: vi.fn().mockReturnValue({ ok: false, error: "limit" }),
+    } as unknown as BackgroundTaskManager;
+    const onRejectedPromoted = vi.fn();
+    const rejected = wrapToolForAutoBackground(
+      createMockTool({ resolveAfterMs: 75 }),
+      rejectingManager,
+      config,
+      () => buildOrigin({ agentId: "agent-1" }),
+      onRejectedPromoted,
+    );
+    await rejected.execute("call-rejected", {}, undefined, undefined, undefined);
+    expect(onRejectedPromoted).not.toHaveBeenCalled();
+  });
+
   it("completes the background task when the tool eventually resolves", async () => {
     const tool = createMockTool({ resolveAfterMs: 100, result: toolOk("slow-result") });
     const wrapped = wrapToolForAutoBackground(tool, manager, config, () => buildOrigin({ agentId: "agent-1" }));

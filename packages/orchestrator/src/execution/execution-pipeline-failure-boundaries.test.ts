@@ -43,6 +43,7 @@ vi.mock("@comis/channels", async (importOriginal) => {
   };
 });
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import type { ActivityTurnCoordinator } from "./activity-turn-coordinator.js";
 import {
   executeAndDeliver,
@@ -102,17 +103,20 @@ function makeExecutor(): AgentExecutor {
 function makeDeliveryService(
   deliverToChannel: DeliveryService["deliverToChannel"] = vi.fn(async () =>
     ok({
-      ok: true,
-      totalChunks: 1,
-      deliveredChunks: 1,
-      failedChunks: 0,
       chunks: [{
-        ok: true,
+        status: "accepted" as const,
         messageId: "platform-message-1",
         charCount: 18,
         retried: false,
       }],
       totalChars: 18,
+      platform: {
+        status: "accepted" as const,
+        deliveredChunks: 1,
+        settledAtMs: 2_000,
+        lastMessageId: "platform-message-1",
+      },
+      queueDisposition: "settled" as const,
     })
   ),
 ): DeliveryService {
@@ -222,6 +226,7 @@ function makeHarness(overrides: HarnessOverrides = {}) {
   const deps: ExecutionPipelineDeps = {
     eventBus,
     logger,
+    clock: createFakeClock(2_000),
     deliveryService: makeDeliveryService(),
     ...overrides,
   };

@@ -12,12 +12,14 @@ import type {
   ChannelPort,
   NormalizedMessage,
   PerChannelStreamingConfig,
-  ClockPort,
   DeliveryStageResult,
-  FinalDeliveryReceipt,
   DeliveryFailureReceipt,
+  DeliveryQueueDisposition,
+  PlatformChunkDeliveryOutcome,
+  PlatformDeliveryOutcome,
 } from "@comis/core";
 import {
+  classifyPlatformDelivery,
   resolvePlatformDeliveryResult,
   tryGetContext,
   chunkForDelivery,
@@ -25,7 +27,7 @@ import {
   systemNowMs,
   sanitizeLogString,
 } from "@comis/core";
-import { ok, err } from "@comis/shared";
+import { ok, err, type Result } from "@comis/shared";
 
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";
 import { buildThreadSendOpts } from "./execution-pipeline.js";
@@ -40,16 +42,8 @@ import type { BlockPacer, TypingLifecycleController } from "@comis/channels";
 /** Minimal deps needed for the delivery stage. */
 export type DeliverDeps = Pick<
   ExecutionPipelineDeps,
-  "eventBus" | "logger" | "streamingConfig" | "channelRegistry" | "retryEngine" | "deliveryQueue" | "deliveryService"
-> & {
-  /**
-   * Optional injected clock. When present, `deliveredAtMs` is read from it
-   * (deterministic in tests). When absent, the sanctioned-root `systemNowMs()`
-   * is used — this stage is one of the sanctioned roots for `systemNowMs`
-   * (it already uses it for delivery metrics).
-   */
-  clock?: ClockPort;
-};
+  "eventBus" | "logger" | "clock" | "streamingConfig" | "channelRegistry" | "retryEngine" | "deliveryQueue" | "deliveryService"
+>;
 
 /**
  * `delivery.visibleReplies` policy threaded into the delivery stage.
@@ -68,12 +62,47 @@ export interface VisibleRepliesEnforcement {
 /** Truncation cap for the failure receipt's `lastError`. */
 const MAX_LAST_ERROR_CHARS = 200;
 
-/** A success receipt for a turn where delivery was intentionally suppressed (visibleReplies). */
-const SUPPRESSED_RECEIPT: FinalDeliveryReceipt = {
-  ok: true,
-  deliveredChunks: 0,
-  deliveredAtMs: 0,
-};
+/** Exact platform and durable-queue truth for interactive text delivery. */
+export type InteractiveDeliveryStageOutcome =
+  | { readonly status: "suppressed"; readonly reason: "visible_replies" }
+  | (PlatformDeliveryOutcome & {
+      readonly queueDisposition: DeliveryQueueDisposition;
+    });
+
+export type InteractiveDeliveryStageResult = Result<
+  InteractiveDeliveryStageOutcome,
+  DeliveryFailureReceipt
+>;
+
+/** Project strict delivery truth onto the older activity-renderer receipt. */
+export function toActivityDeliveryStageResult(
+  result: InteractiveDeliveryStageResult,
+): DeliveryStageResult {
+  if (!result.ok) return result;
+  const outcome = result.value;
+  if (outcome.status === "suppressed") {
+    return ok({ ok: true, deliveredChunks: 0, deliveredAtMs: 0 });
+  }
+  if (outcome.status === "accepted") {
+    return ok({
+      ok: true,
+      deliveredChunks: outcome.deliveredChunks,
+      ...(outcome.lastMessageId === undefined
+        ? {}
+        : { lastChunkMessageId: outcome.lastMessageId }),
+      deliveredAtMs: outcome.settledAtMs,
+    });
+  }
+  return err({
+    ok: false,
+    totalChunks: outcome.deliveredChunks + outcome.failedChunks,
+    deliveredChunks: outcome.deliveredChunks,
+    failedChunks: outcome.failedChunks,
+    errorKind: outcome.errorKind,
+    lastError: "Interactive text delivery was not fully accepted",
+    failedAtMs: outcome.settledAtMs,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Stage function
@@ -96,7 +125,7 @@ export async function deliverExecutionResponse(
   deliverySignal: AbortSignal,
   typingLifecycle: TypingLifecycleController | undefined,
   enforcement?: VisibleRepliesEnforcement,
-): Promise<DeliveryStageResult> {
+): Promise<InteractiveDeliveryStageResult> {
   // === VISIBLE-REPLIES ENFORCEMENT ===
   // Runs AFTER the response filter (the caller passes the post-filter
   // finalDeliveryText) and BEFORE any assistant-text delivery. When the chat
@@ -117,7 +146,7 @@ export async function deliverExecutionResponse(
         policy,
         messageToolActed: false,
       }, "Final assistant text suppressed by visibleReplies=message_tool");
-      return ok(SUPPRESSED_RECEIPT);
+      return ok({ status: "suppressed", reason: "visible_replies" });
     }
   }
 
@@ -184,10 +213,10 @@ export async function deliverExecutionResponse(
   const deliveryStartMs = performance.now();
   let deliveredChunks = 0;
   let failedChunks = 0;
-  // The REAL message id of the last successfully-delivered chunk
-  // (replaces the synthetic "block-delivery" id at the pipeline call site) and
-  // the first failure's classified error (for the DeliveryFailureReceipt).
-  let lastChunkMessageId = "";
+  const platformChunks: PlatformChunkDeliveryOutcome[] = [];
+  const queueDispositions: DeliveryQueueDisposition[] = [];
+  // A pre-platform failure cannot be represented as platform truth. Preserve
+  // its bounded diagnostic in the Result error branch instead.
   let firstFailure: { errorKind: DeliveryFailureReceipt["errorKind"]; message: string } | undefined;
 
   // Create block pacer for human-like delivery timing
@@ -210,6 +239,7 @@ export async function deliverExecutionResponse(
       // deliveryQueue / eventBus / in-flight tracking are captured by the
       // closure at composition root; replyMode + abortSignal still ride per-call.
       const deliveryResult = await deps.deliveryService.deliverToChannel(adapter, effectiveMsg.channelId, text, {
+        completionMode: "settled",
         replyTo: blockIndex === 0 ? replyTo : undefined,
         // Original subject rides through so subject-threading channels (email)
         // can form a "Re: <subject>" reply; only inbound email messages carry
@@ -227,13 +257,12 @@ export async function deliverExecutionResponse(
       const platformDelivery = resolvePlatformDeliveryResult(deliveryResult);
       const platformResult = platformDelivery.ok ? platformDelivery.value : undefined;
 
-      if (platformResult === undefined || !platformResult.ok) {
-        failedChunks++;
+      if (platformResult === undefined || platformResult.platform.status !== "accepted") {
         const chunkErr = platformDelivery.ok ? undefined : platformDelivery.error;
         // Record the FIRST failure for the DeliveryFailureReceipt.
         // Chat-platform send failures classify as "platform" (AGENTS.md §2.1).
         if (!firstFailure) {
-          const failChunk = platformResult?.chunks.find((c) => !c.ok);
+          const failChunk = platformResult?.chunks.find((chunk) => chunk.status !== "accepted");
           const rawMessage =
             chunkErr instanceof Error ? chunkErr.message
               : failChunk?.error instanceof Error ? failChunk.error.message
@@ -258,13 +287,16 @@ export async function deliverExecutionResponse(
           return;
         }
       } else {
-        deliveredChunks++;
         blockGuard?.recordSuccess();
-        // Capture the real last-chunk message id from the delivery result.
-        // The last successful chunk in this group wins; the final group's last
-        // chunk is the receipt's lastChunkMessageId.
-        const lastOk = [...platformResult.chunks].reverse().find((c) => c.ok && c.messageId);
-        if (lastOk?.messageId) lastChunkMessageId = lastOk.messageId;
+      }
+
+      if (platformResult !== undefined) {
+        platformChunks.push(...platformResult.chunks);
+        queueDispositions.push(platformResult.queueDisposition);
+        deliveredChunks += platformResult.platform.deliveredChunks;
+        failedChunks += platformResult.platform.status === "accepted"
+          ? 0
+          : platformResult.platform.failedChunks;
       }
 
       // Pipeline-specific UX event: block index tracking for streaming progress.
@@ -286,10 +318,9 @@ export async function deliverExecutionResponse(
 
   // Capture the settle timestamp the moment the last chunk's send-promise
   // resolved — i.e. right after pacer.deliver settles, before any post-delivery
-  // bookkeeping. Injected ClockPort when present (deterministic tests); otherwise
-  // the sanctioned-root systemNowMs (this stage is a sanctioned root). Used as
-  // deliveredAtMs on the success receipt and failedAtMs on the failure receipt.
-  const settledAtMs = deps.clock ? deps.clock.now() : systemNowMs();
+  // bookkeeping. The injected clock is the single authority for the aggregate
+  // settled timestamp used by delivery lifecycle and task capture.
+  const settledAtMs = deps.clock.now();
 
   // Blocks the pacer never attempted because the external signal aborted
   // mid-delivery (its hard-stop skips the remainder WITHOUT sending). Counting
@@ -356,10 +387,12 @@ export async function deliverExecutionResponse(
     typingLifecycle.markRunComplete();
   }
 
-  // === DELIVERY RECEIPT ===
-  // Any failed chunk => err(DeliveryFailureReceipt) so the coordinator can
-  // classify the turn as kind:"failure" and keep the activity trail.
-  if (failedChunks > 0 || firstFailure) {
+  // === DELIVERY OUTCOME ===
+  // A boundary failure without platform evidence stays in Result.error. Once
+  // platform evidence exists, accepted/partial/rejected/unknown remains a
+  // first-class value so downstream capture cannot mistake queue durability or
+  // partial delivery for full acceptance.
+  if (firstFailure !== undefined && platformChunks.length === 0) {
     const rawError = firstFailure?.message ?? "delivery failed";
     // Redact credentials, then bound to the receipt's ≤200-char contract.
     const lastError = sanitizeLogString(rawError).slice(0, MAX_LAST_ERROR_CHARS);
@@ -374,10 +407,22 @@ export async function deliverExecutionResponse(
     });
   }
 
-  return ok({
-    ok: true,
-    deliveredChunks,
-    ...(lastChunkMessageId ? { lastChunkMessageId } : {}),
-    deliveredAtMs: settledAtMs,
-  });
+  const platform = classifyPlatformDelivery(platformChunks, settledAtMs);
+  if (!platform.ok) {
+    return err({
+      ok: false,
+      totalChunks: deliveredChunks + failedChunks,
+      deliveredChunks,
+      failedChunks,
+      errorKind: platform.error.errorKind,
+      lastError: platform.error.message.slice(0, MAX_LAST_ERROR_CHARS),
+      failedAtMs: settledAtMs,
+    });
+  }
+  const queueDisposition: DeliveryQueueDisposition = queueDispositions.includes("retry_pending")
+    ? "retry_pending"
+    : queueDispositions.includes("transition_failed")
+      ? "transition_failed"
+      : "settled";
+  return ok({ ...platform.value, queueDisposition });
 }

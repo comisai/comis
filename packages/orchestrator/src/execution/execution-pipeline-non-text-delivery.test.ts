@@ -11,6 +11,7 @@ import type { AgentExecutor } from "@comis/agent";
 import type { SendOverrideStore } from "@comis/channels";
 import { ok } from "@comis/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
 const channelDeliveryMocks = vi.hoisted(() => ({
   deliverOutboundMedia: vi.fn(),
@@ -110,17 +111,20 @@ function makeEventBus() {
 function makeDeliveryService(): DeliveryService {
   return {
     deliverToChannel: vi.fn(async () => ok({
-      ok: true,
-      totalChunks: 1,
-      deliveredChunks: 1,
-      failedChunks: 0,
       chunks: [{
-        ok: true,
+        status: "accepted" as const,
         messageId: "text-message-1",
         charCount: 1,
         retried: false,
       }],
       totalChars: 1,
+      platform: {
+        status: "accepted" as const,
+        deliveredChunks: 1,
+        settledAtMs: 2_000,
+        lastMessageId: "text-message-1",
+      },
+      queueDisposition: "settled" as const,
     })),
     drainInFlight: vi.fn(async () => ({
       drained: 0,
@@ -173,6 +177,7 @@ function makeHarness(overrides: Partial<ExecutionPipelineDeps> = {}) {
   const dispose = vi.fn();
   const deps: ExecutionPipelineDeps = {
     eventBus: eventBus as unknown as ExecutionPipelineDeps["eventBus"],
+    clock: createFakeClock(2_000),
     logger: {
       trace: vi.fn(),
       debug: vi.fn(),

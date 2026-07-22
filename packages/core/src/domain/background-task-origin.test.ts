@@ -87,4 +87,38 @@ describe("BackgroundTaskOriginSchema", () => {
       },
     }))).toThrow();
   });
+
+  it("rejects delivery conversation ids that differ from the resolved endpoint", () => {
+    expect(() => BackgroundTaskOriginSchema.parse(makeOrigin({
+      deliveryOrigin: {
+        channelType: "echo",
+        channelId: "conversation-other",
+        userId: "principal-1",
+        tenantId: "tenant-1",
+      },
+    }))).toThrow();
+  });
+
+  it("rejects delivery principals that differ from the authenticated principal", () => {
+    expect(() => BackgroundTaskOriginSchema.parse(makeOrigin({
+      deliveryOrigin: {
+        channelType: "echo",
+        channelId: "conversation-1",
+        userId: "principal-other",
+        tenantId: "tenant-1",
+      },
+    }))).toThrow();
+  });
+
+  it("rejects delivery threads that differ from the resolved endpoint", () => {
+    expect(() => BackgroundTaskOriginSchema.parse(makeOrigin({
+      deliveryOrigin: {
+        channelType: "echo",
+        channelId: "conversation-1",
+        userId: "principal-1",
+        threadId: "thread-other",
+        tenantId: "tenant-1",
+      },
+    }))).toThrow();
+  });
 });

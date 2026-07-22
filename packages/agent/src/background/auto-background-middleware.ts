@@ -89,6 +89,7 @@ export function wrapToolForAutoBackground(
   manager: BackgroundTaskManager,
   config: BackgroundTasksConfig,
   originResolver: () => BackgroundTaskOrigin | undefined,
+  onPromoted?: () => void,
 ): ToolDefinition {
   // `exec` opts out of the generic auto-background wrapper to enforce
   // single-owner backgrounding. The exec-tool's own internal escalation path
@@ -169,6 +170,8 @@ export function wrapToolForAutoBackground(
         // Concurrency limit hit: fall back to foreground (await normally)
         return await taskPromise;
       }
+
+      onPromoted?.();
 
       // Promotion succeeded: sever onUpdate before the agent moves on.
       onUpdateActive = false;

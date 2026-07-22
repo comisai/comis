@@ -25,7 +25,7 @@ import type { SessionLifecycle } from "@comis/agent";
 import type { CommandQueue } from "./queue/command-queue.js";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { InteractiveCallbackRouter } from "./approval/index.js";
-import type { ApprovalGate, ChannelPort, DeliveryQueuePort, DmScopeConfig, EventMap, LocalizationPort, NormalizedMessage, NormalizedReaction, PrincipalResolverPort, RequestContext, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
+import type { ApprovalGate, ChannelPort, ClockPort, DeliveryQueuePort, DmScopeConfig, EventMap, LocalizationPort, NormalizedMessage, NormalizedReaction, PrincipalResolverPort, RequestContext, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 // Orchestrator imports ONLY the @comis/core activity port + ctx type
 // (never the observability impl — hexagonal boundary). The
 // ActivityTurnCoordinator is a local execution type.
@@ -59,6 +59,7 @@ import type { PreflightResult } from "@comis/channels";
 import type { RetryEngine } from "@comis/core";
 import type { VoiceResponsePipelineDeps } from "@comis/channels";
 import { createSourceTerminalScope } from "./source-message-terminal.js";
+import type { TaskExtractionCaptureDeps } from "./execution/task-extraction-capture.js";
 
 // inbound-pipeline.ts lives in @comis/orchestrator. Channels cannot import
 // from orchestrator (forbidden direction — channels is downstream of
@@ -154,6 +155,8 @@ export interface ChannelManagerDeps {
   /** Configured tenant authority for every channel-originated turn. */
   tenantId: string;
   eventBus: TypedEventBus;
+  /** Authoritative clock for settled interactive delivery. */
+  clock: ClockPort;
   messageRouter: MessageRouter;
   sessionManager: SessionLifecycle;
   principalResolver: PrincipalResolverPort;
@@ -275,6 +278,8 @@ export interface ChannelManagerDeps {
    *  (setup-channels-runtime.ts). The pipeline calls it once both this and
    *  `activityStreamPort` are present (execution-pipeline.ts:395). */
   coordinatorFactory?: (ctx: TurnActivityContext) => ActivityTurnCoordinator;
+  /** Stable scheduler capture proxy plus immutable policy lookup. */
+  taskCapture?: TaskExtractionCaptureDeps;
   /**
    * REQUIRED. Inbound message processor — injected at composition root from
    * `@comis/orchestrator.processInboundMessage`. Lives on deps so the

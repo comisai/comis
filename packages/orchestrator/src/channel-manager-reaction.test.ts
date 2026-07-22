@@ -79,12 +79,10 @@ function makeNoReactionAdapter(): ChannelPort {
 function makeFakeDeliveryService(): DeliveryService {
   return {
     deliverToChannel: vi.fn(async () => ok({
-      ok: true,
-      totalChunks: 1,
-      deliveredChunks: 1,
-      failedChunks: 0,
-      chunks: [{ ok: true, messageId: "stub", charCount: 5, retried: false }],
+      chunks: [{ status: "accepted" as const, messageId: "stub", charCount: 5, retried: false }],
       totalChars: 5,
+      platform: { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: "stub" },
+      queueDisposition: "settled" as const,
     })),
     drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
   };

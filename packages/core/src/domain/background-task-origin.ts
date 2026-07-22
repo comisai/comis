@@ -46,6 +46,9 @@ export const BackgroundTaskOriginSchema = z.strictObject({
   if (
     value.deliveryOrigin.tenantId !== value.turnScope.conversation.tenantId
     || value.deliveryOrigin.channelType !== value.turnScope.endpoint.channelType
+    || value.deliveryOrigin.channelId !== value.turnScope.endpoint.conversationId
+    || value.deliveryOrigin.userId !== value.turnScope.principal.principalId
+    || value.deliveryOrigin.threadId !== value.turnScope.endpoint.threadId
   ) {
     ctx.addIssue({
       code: "custom",

@@ -24,6 +24,7 @@ import { ok } from "@comis/shared";
 import { setupAndRoute, type SetupAndRouteDeps } from "./setup-and-route.js";
 import { createCommandQueue } from "../queue/command-queue.js";
 import type { SourceTerminalScope } from "../source-message-terminal.js";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
 // ---------------------------------------------------------------------------
 // Helpers (union of the two source-test helper sets; the route-side adapter
@@ -101,12 +102,10 @@ function makeFakeDeliveryService(): DeliveryService {
   return {
     deliverToChannel: vi.fn(async () =>
       ok({
-        ok: true,
-        totalChunks: 1,
-        deliveredChunks: 1,
-        failedChunks: 0,
-        chunks: [],
-        totalChars: 0,
+        chunks: [{ status: "accepted" as const, messageId: "reply-1", charCount: 2, retried: false }],
+        totalChars: 2,
+        platform: { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 2_000, lastMessageId: "reply-1" },
+        queueDisposition: "settled" as const,
       }),
     ),
     // DeliveryService provides drainInFlight(). Default fake returns empty
@@ -153,6 +152,7 @@ function makeMinimalDeps(overrides?: Partial<SetupAndRouteDeps>): SetupAndRouteD
     eventBus: eventBus as any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     logger: logger as any,
+    clock: createFakeClock(2_000),
     deliveryService: makeFakeDeliveryService(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ...(overrides as any),
@@ -527,7 +527,9 @@ describe("setupAndRoute steer+followup routing", () => {
       EMPTY_INBOUND_PROVENANCE,
     );
 
-    expect(runHandle.steer).toHaveBeenCalledWith("hello");
+    expect(runHandle.steer).toHaveBeenCalledWith(expect.stringMatching(
+      /SECURITY NOTICE:[\s\S]*<<<UNTRUSTED_[a-f0-9]+>>>[\s\S]*hello[\s\S]*<<<END_UNTRUSTED_/u,
+    ));
     expect(laterObserver).toHaveBeenCalledWith(
       expect.objectContaining({ agentId: "agent-1" }),
     );
@@ -579,7 +581,9 @@ describe("setupAndRoute steer+followup routing", () => {
     );
 
     expect(runHandle.steer).toHaveBeenCalledOnce();
-    expect(runHandle.followUp).toHaveBeenCalledWith("hello");
+    expect(runHandle.followUp).toHaveBeenCalledWith(expect.stringMatching(
+      /SECURITY NOTICE:[\s\S]*<<<UNTRUSTED_[a-f0-9]+>>>[\s\S]*hello[\s\S]*<<<END_UNTRUSTED_/u,
+    ));
   });
 
   it("sanitizes SDK steer failures before logging them", async () => {
@@ -1274,6 +1278,7 @@ describe("setupAndRoute command-queue routing", () => {
 
   it("uses channel ingress time for direct execution diagnostics without a queue", async () => {
     vi.useFakeTimers({ now: 1_000 });
+    const clock = createFakeClock(1_100);
     const eventBus = makeMinimalDeps().eventBus;
     const executor = makeExecutor();
     vi.mocked(executor.execute).mockImplementation(async () => {
@@ -1291,16 +1296,15 @@ describe("setupAndRoute command-queue routing", () => {
     const deliveryService = makeFakeDeliveryService();
     vi.mocked(deliveryService.deliverToChannel).mockImplementation(async () => {
       vi.setSystemTime(1_140);
+      clock.advance(40);
       return ok({
-        ok: true,
-        totalChunks: 1,
-        deliveredChunks: 1,
-        failedChunks: 0,
-        chunks: [],
+        chunks: [{ status: "accepted" as const, messageId: "reply-1", charCount: 2, retried: false }],
         totalChars: 2,
+        platform: { status: "accepted" as const, deliveredChunks: 1, settledAtMs: 1_140, lastMessageId: "reply-1" },
+        queueDisposition: "settled" as const,
       });
     });
-    const deps = makeMinimalDeps({ eventBus, deliveryService });
+    const deps = makeMinimalDeps({ eventBus, clock, deliveryService });
     const ingressStartedAt = 800;
 
     await runWithContext({
