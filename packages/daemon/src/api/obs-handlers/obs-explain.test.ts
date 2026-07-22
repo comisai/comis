@@ -85,6 +85,31 @@ function seedSessionIndex(): string {
   return dataDir;
 }
 
+function seedCronTraceIndex(
+  dataDir: string,
+  sessionKey: string,
+  traceIds: readonly string[],
+): void {
+  const logsDir = path.join(dataDir, "logs");
+  fs.mkdirSync(logsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(logsDir, `session-index.${todayKey()}.jsonl`),
+    traceIds.map((traceId) => JSON.stringify({
+      traceSchema: "comis-session-index",
+      schemaVersion: 1,
+      event: "turn_completed",
+      ts: "2026-07-22T10:00:00.000Z",
+      traceId,
+      sessionId: sessionKey,
+      durationMs: 100,
+      inputTokens: 10,
+      outputTokens: 5,
+      lastError: null,
+    })).join("\n") + "\n",
+    "utf-8",
+  );
+}
+
 describe("bindObsExplainHandlers", () => {
   it("returns exactly one handler keyed obs.explain", () => {
     const handlers = bindObsExplainHandlers(makeDeps());
@@ -490,6 +515,102 @@ describe("bindObsExplainHandlers", () => {
     expect(second.timing).toMatchObject({ durationMs: 222, turnCount: 2 });
     expect(second.cost.costUsd).toBe(0.02);
     expect(second.coverage.trajectory).toEqual({ found: true, records: 3 });
+  });
+
+  it("historical cron execution derives success from its selected terminal evidence", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-cron-outcome-"));
+    const sessionKey = "default:agent:default:scheduler-cron:scheduler:job-a:peer:scheduler-cron";
+    const firstExecutionId = "execution-cron-outcome-first";
+    const secondExecutionId = "execution-cron-outcome-second";
+    seedCronTraceIndex(dataDir, sessionKey, [firstExecutionId, secondExecutionId]);
+    const records: Array<Record<string, unknown>> = [
+      {
+        traceSchema: "comis-trajectory", type: "model.completed", traceId: firstExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T10:00:00.090Z",
+        data: { stopReason: "stop", durationMs: 90, inputTokens: 10, outputTokens: 5 },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "session.summary", traceId: firstExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T10:00:00.100Z",
+        data: { degraded: false, turnCount: 1, costUsd: 0.01, toolStats: {}, breakerTripCount: 0 },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "delivery.dispatched", traceId: firstExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T10:00:00.110Z",
+        data: { status: "success", totalChunks: 1, deliveredChunks: 1, failedChunks: 0 },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "session.summary", traceId: secondExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T11:00:00.100Z",
+        data: { degraded: false, turnCount: 2, costUsd: 0.02, toolStats: {}, breakerTripCount: 0 },
+      },
+    ];
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => records,
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({
+        traceId: secondExecutionId,
+        sessionEnd: { endReason: "success", durationMs: 200, degraded: false },
+      }),
+      readDiagnosticsRollup: async () => null,
+      readAuditEvents: async () => [],
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, dataDir, {
+      rootRunId: `root-cron-${firstExecutionId}`,
+    });
+
+    expect(report.outcome).toMatchObject({ endReason: "success", degraded: false, severity: "ok" });
+    expect(report.timing.turnCount).toBe(1);
+    expect(report.cost.costUsd).toBe(0.01);
+  });
+
+  it("recurring cron execution retains session channel identity without prior execution metrics", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "obs-explain-cron-channel-"));
+    const sessionKey = "default:agent:default:scheduler-cron:scheduler:job-b:peer:scheduler-cron";
+    const firstExecutionId = "execution-cron-channel-first";
+    const secondExecutionId = "execution-cron-channel-second";
+    seedCronTraceIndex(dataDir, sessionKey, [firstExecutionId, secondExecutionId]);
+    const records: Array<Record<string, unknown>> = [
+      {
+        traceSchema: "comis-trajectory", type: "session.started", traceId: firstExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T10:00:00.000Z",
+        data: { channelType: "scheduler", channelId: "job-b" },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "session.summary", traceId: firstExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T10:00:00.100Z",
+        data: { degraded: false, turnCount: 4, costUsd: 0.04, toolStats: {}, breakerTripCount: 0 },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "model.completed", traceId: secondExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T11:00:00.090Z",
+        data: { stopReason: "stop", durationMs: 90, inputTokens: 20, outputTokens: 10 },
+      },
+      {
+        traceSchema: "comis-trajectory", type: "session.summary", traceId: secondExecutionId,
+        sessionKey, agentId: "default", ts: "2026-07-22T11:00:00.100Z",
+        data: { degraded: false, turnCount: 1, costUsd: 0.02, toolStats: {}, breakerTripCount: 0 },
+      },
+    ];
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => records,
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({
+        traceId: secondExecutionId,
+        sessionEnd: { endReason: "success", durationMs: 100, degraded: false },
+      }),
+      readDiagnosticsRollup: async () => null,
+      readAuditEvents: async () => [],
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, dataDir, {
+      rootRunId: `root-cron-${secondExecutionId}`,
+    });
+
+    expect(report.channel).toEqual({ type: "scheduler", id: "job-b" });
+    expect(report.timing.turnCount).toBe(1);
+    expect(report.cost.costUsd).toBe(0.02);
   });
 
   // ------------------------------------------------------------------------
