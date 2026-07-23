@@ -78,10 +78,22 @@ function tmuxSocketHead(tmuxPath: string, socketPath: string | undefined): strin
 }
 
 /**
- * Build `tmux new-session -d -s <name> -x <cols> -y <rows> -- <bin> <binArgv…>`: a
+ * Build `tmux new-session -d -s <name> -x <cols> -y <rows> [-e K=V …] -- <bin> <binArgv…>`: a
  * DETACHED named session whose command is the driven CLI. Detached (`-d`) so the tmux
  * server owns the PTY and the session outlives the worker (survival). The driven
  * `{bin,binArgv}` ride at the tail VERBATIM (the worker's already-composed plan command).
+ *
+ * ENV FRESHNESS (`-e`). A pane inherits the tmux SERVER's GLOBAL environment, which is
+ * captured ONCE when the server first starts and NEVER refreshed — so on a long-lived server
+ * (it outlives daemon restarts by design) a later session's pane would see the value the
+ * server booted with, not the daemon's current one (proven live on tmux 3.4: a 2nd session's
+ * pane read the boot-time value; a `-e KEY=VALUE` pane read the injected one). A rotated
+ * secret (e.g. the ADO PAT) would otherwise never reach a new drive. So each session's
+ * `{opts.env}` (the worker's already-SCRUBBED env) is injected per-session via `-e`, which
+ * overrides the stale server-global value on that pane — decoupling the pane env from the
+ * server's boot-time capture. Injected BEFORE `--` (env options precede the command); every
+ * value is a plain string passed as a distinct argv element (execFileSync, no shell), so no
+ * escaping is needed. Absent/empty env ⇒ no `-e` (the pure builder stays minimal).
  */
 export function buildTmuxSpawnArgv(opts: {
   tmuxPath: string;
@@ -91,7 +103,13 @@ export function buildTmuxSpawnArgv(opts: {
   binArgv: readonly string[];
   cols: number;
   rows: number;
+  /** The scrubbed child env — injected per-session as `-e KEY=VALUE` for freshness (see above). */
+  env?: NodeJS.ProcessEnv;
 }): string[] {
+  const envArgs: string[] = [];
+  for (const [key, value] of Object.entries(opts.env ?? {})) {
+    if (typeof value === "string") envArgs.push("-e", `${key}=${value}`);
+  }
   return [
     ...tmuxSocketHead(opts.tmuxPath, opts.socketPath),
     "new-session",
@@ -102,6 +120,7 @@ export function buildTmuxSpawnArgv(opts: {
     String(opts.cols),
     "-y",
     String(opts.rows),
+    ...envArgs,
     "--",
     opts.bin,
     ...opts.binArgv,
@@ -218,7 +237,7 @@ export interface TmuxBackendDeps {
  * (the worker's `reattach` handler) then replies `ok:false`, NEVER a fresh CLI.
  */
 export function createTmuxBackend(deps: TmuxBackendDeps): FakePtyLike | undefined {
-  const { sessionId, bin, argv, cols, rows, tmuxPath, socketPath, hasSession, runOneShot, spawnAttachPty, forceAttachOnly } =
+  const { sessionId, bin, argv, cols, rows, env, tmuxPath, socketPath, hasSession, runOneShot, spawnAttachPty, forceAttachOnly } =
     deps;
   const name = tmuxSessionName(sessionId);
 
@@ -230,7 +249,9 @@ export function createTmuxBackend(deps: TmuxBackendDeps): FakePtyLike | undefine
     // fresh new-session (a double-drive).
     if (forceAttachOnly === true) return undefined;
     // Fresh session: create it DETACHED (the tmux server owns the PTY so it outlives this worker).
-    runOneShot(buildTmuxSpawnArgv({ tmuxPath, socketPath, name, bin, binArgv: argv, cols, rows }));
+    // The scrubbed `env` rides as per-session `-e` so this pane gets the CURRENT env (freshness),
+    // not whatever the server captured at its boot — see buildTmuxSpawnArgv.
+    runOneShot(buildTmuxSpawnArgv({ tmuxPath, socketPath, name, bin, binArgv: argv, cols, rows, env }));
   }
 
   // Configure the session for TRANSPARENT pty-driving (idempotent ⇒ safe on re-attach too):

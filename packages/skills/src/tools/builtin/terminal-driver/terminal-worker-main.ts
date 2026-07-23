@@ -182,11 +182,16 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
   const legacySocket = resolveTmuxSocketPath(durableDir());
   // eslint-disable-next-line no-restricted-syntax -- worker PROCESS entry: the daemon threads the (non-secret) per-boot tmux socket via env when forking; not a SecretManager value.
   const bootSocket = process.env.COMIS_TERMINAL_TMUX_SOCKET ?? legacySocket;
+  // The has-session probe runs with the SCRUBBED session env, same as new-session. `has-session`
+  // does not start a server on tmux 3.4, so new-session (also scrubbed) is the sole server-starting
+  // command — but passing the scrubbed env here too makes "the tmux server is only ever started
+  // scrubbed" hold BY CONSTRUCTION, independent of tmux's has-session behavior, so no invocation
+  // that could conceivably seed the server ever inherits the worker's (unscrubbed) daemon env.
   const hasSessionOn =
-    (socket: string) =>
+    (socket: string, env: NodeJS.ProcessEnv) =>
     (name: string): boolean => {
       try {
-        execFileSync(tmuxPath, ["-S", socket, "has-session", "-t", name], { stdio: "ignore" });
+        execFileSync(tmuxPath, ["-S", socket, "has-session", "-t", name], { env, stdio: "ignore" });
         return true;
       } catch {
         return false;
@@ -224,7 +229,7 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
         env: a.env,
         tmuxPath,
         socketPath: bootSocket,
-        hasSession: hasSessionOn(bootSocket),
+        hasSession: hasSessionOn(bootSocket, a.env),
         runOneShot: runOneShot(a.env),
         spawnAttachPty: spawnAttachPtyOn(bootSocket, a),
       })!,
@@ -243,7 +248,7 @@ export function buildLoadTmux(tmuxPath: string, loadPty: () => PtyModuleLike): T
         env: a.env,
         tmuxPath,
         socketPath: socket,
-        hasSession: hasSessionOn(socket),
+        hasSession: hasSessionOn(socket, a.env),
         runOneShot: runOneShot(a.env),
         spawnAttachPty: spawnAttachPtyOn(socket, a),
         forceAttachOnly: true,

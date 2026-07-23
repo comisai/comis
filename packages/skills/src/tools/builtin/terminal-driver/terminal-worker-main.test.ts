@@ -12,6 +12,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { execFileSync } from "node:child_process";
 
 import {
   parseStuckMs,
@@ -21,6 +22,13 @@ import {
   createFileLogger,
   warnIfDurableTmuxUnavailable,
 } from "./terminal-worker-main.js";
+
+// Mock the sync child-process runner so we can assert WHICH env each tmux invocation runs with,
+// without a live tmux server. Only execFileSync is replaced; the rest of node:child_process is real.
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, execFileSync: vi.fn() };
+});
 
 const origData = process.env.COMIS_TERMINAL_DATA_DIR;
 const origStuck = process.env.COMIS_TERMINAL_STUCK_MS;
@@ -84,6 +92,28 @@ describe("terminal-worker-main helpers", () => {
     // Not invoked here: spawn() would run tmux has-session / new-session against a real
     // server. The 2-arg seam (tmuxPath + the node-pty loader the attach client reuses) is
     // what's under test — drivability comes from attaching a pty, not a capture-pane.
+  });
+
+  it("runs the has-session probe with the SCRUBBED session env (no daemon env can seed the tmux server via any invocation)", () => {
+    // The tmux SERVER captures its global env from whatever command first starts it. `new-session`
+    // already runs scrubbed, and `has-session` does not start a server on tmux 3.4 — but that leans
+    // on a tmux behavioral invariant. Passing the scrubbed env to the probe too makes the guarantee
+    // hold BY CONSTRUCTION: no tmux invocation that could conceivably start a server ever inherits
+    // the worker's (unscrubbed) daemon env. Defense-in-depth, not a load-bearing fix.
+    const mock = vi.mocked(execFileSync);
+    mock.mockClear();
+    mock.mockReturnValue(Buffer.from("")); // has-session "succeeds" (no throw) → treated as existing
+    const fakePty = { pid: 1, onData: () => {}, onExit: () => {}, write: () => {}, resize: () => {}, kill: () => {} };
+    const loadTmux = buildLoadTmux("/usr/bin/tmux", () => ({ spawn: () => fakePty }));
+
+    const scrubbedEnv = { PATH: "/usr/bin", AZURE_DEVOPS_EXT_PAT: "pat-marker" } as NodeJS.ProcessEnv;
+    loadTmux.spawn({ sessionId: "s1", bin: "/bin/claude", argv: [], cols: 80, rows: 24, env: scrubbedEnv });
+
+    const probe = mock.mock.calls.find((c) => Array.isArray(c[1]) && (c[1] as string[]).includes("has-session"));
+    expect(probe).toBeDefined();
+    const opts = probe?.[2] as { env?: NodeJS.ProcessEnv } | undefined;
+    expect(opts?.env).toBeDefined(); // pre-patch: the probe passed NO env (inherited the worker's) → RED
+    expect(opts?.env).toMatchObject(scrubbedEnv);
   });
 });
 
