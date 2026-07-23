@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# VPS (run as ROOT) — clean slate then relaunch. Wipes the test session + LCD + logs; PRESERVES
-# config.yaml, secrets.db, and the master key (~/.comis/.env). Then restarts the PRODUCTION daemon
-# via systemd (the installed comis.service — the unit handles the SIGUSR2 exit-42 hot-restart, so
-# there is no supervisor to manage).
+# VPS (run as ROOT) — clean slate then relaunch. Wipes the test session + LCD + follow-up tasks +
+# logs; PRESERVES config.yaml, secrets.db, and the master key (~/.comis/.env). Then restarts the
+# PRODUCTION daemon via systemd (the installed comis.service — the unit handles the SIGUSR2 exit-42
+# hot-restart, so there is no supervisor to manage).
 #   Usage:  [WIPE_CRONS=1] bash /root/clean-restart.sh
 # Env: SERVICE (comis), DATA (/home/comis/.comis), COMIS_USER (comis), GW_PORT (4766) —
 # /root/comis-rig.env (rendered by deploy-scripts.sh) supplies per-box values; explicit env wins.
@@ -47,6 +47,10 @@ sudo -u "$COMIS_USER" bash -c "
   # is the correct slate. (Targeted single-session severs use session.reset_conversation, not this script.)
   rm -rf '$DATA'/workspace/sessions/default/* '$DATA'/workspace/sessions/*/sub-agent*
   rm -f '$DATA'/memory.db '$DATA'/memory.db-wal '$DATA'/memory.db-shm
+  # Follow-up task authority is scoped to the sessions and workspace-policy snapshots wiped above.
+  # Keeping it produces either orphaned work or a strict-schema boot failure after a code update.
+  # Remove the authority, reset intent, quarantine, and lock so boot recreates one empty valid store.
+  rm -f '$DATA'/workspace*/.scheduler/tasks.json '$DATA'/workspace*/.scheduler/tasks-reset-intent.json '$DATA'/workspace*/.scheduler/tasks-quarantine.jsonl '$DATA'/workspace*/.scheduler/tasks.lock
   # NOT just *.log — system's activeChannels/activeAgents enumerate session-index.<date>.jsonl
   # (the whole-day file, not time-windowed), and cache-trace.jsonl pollutes the cache lens, so a
   # bare '*.log' leaves a 'clean' rig surfacing prior runs.
