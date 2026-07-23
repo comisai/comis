@@ -10,27 +10,36 @@ const MOCK_JOBS = [
     id: "daily-summary",
     name: "Daily Summary",
     agentId: "agent-default",
+    source: "authored",
     schedule: { kind: "cron", expr: "0 9 * * *", tz: "UTC" },
-    payload: { kind: "message", message: "Generate daily summary" },
-    sessionTarget: "dedicated",
-    enabled: true,
-    nextRunAtMs: Date.now() + 3600000,
-    lastRunAtMs: Date.now() - 86400000,
-    consecutiveErrors: 0,
-    createdAtMs: Date.now() - 604800000,
+    lifecycle: {
+      status: "scheduled",
+      nextRunAtMs: Date.now() + 3_600_000,
+      consecutiveDependencyErrors: 0,
+    },
+    payload: {
+      kind: "heartbeat_event",
+      text: "Generate daily summary",
+      wakeMode: "next-heartbeat",
+    },
   },
   {
     id: "hourly-check",
     name: "Hourly Check",
     agentId: "agent-default",
-    schedule: { kind: "every", everyMs: 3600000 },
-    payload: { kind: "message", message: "Run hourly check" },
-    sessionTarget: "shared",
-    enabled: false,
-    nextRunAtMs: null,
-    lastRunAtMs: Date.now() - 7200000,
-    consecutiveErrors: 2,
-    createdAtMs: Date.now() - 604800000,
+    source: "authored",
+    schedule: { kind: "every", everyMs: 3_600_000, anchorMs: Date.now() },
+    lifecycle: {
+      status: "paused",
+      nextRunAtMs: Date.now() + 3_600_000,
+      consecutiveDependencyErrors: 2,
+      reason: "dependency_errors",
+    },
+    payload: {
+      kind: "heartbeat_event",
+      text: "Run hourly check",
+      wakeMode: "next-heartbeat",
+    },
   },
   // A job WITH a pre-run wake-gate — exercises the editor's wake-gate field
   // populate-from-existing path in a real browser (the piece the RPC/component
@@ -40,14 +49,16 @@ const MOCK_JOBS = [
     id: "gated-monitor",
     name: "Gated Monitor",
     agentId: "agent-default",
-    schedule: { kind: "every", everyMs: 3600000 },
-    payload: { kind: "message", message: "check CI" },
-    sessionTarget: "dedicated",
-    enabled: true,
-    nextRunAtMs: Date.now() + 3600000,
-    lastRunAtMs: null,
-    consecutiveErrors: 0,
-    createdAtMs: Date.now() - 604800000,
+    source: "authored",
+    schedule: { kind: "every", everyMs: 3_600_000, anchorMs: Date.now() },
+    lifecycle: {
+      status: "scheduled",
+      nextRunAtMs: Date.now() + 3_600_000,
+      consecutiveDependencyErrors: 0,
+    },
+    payload: { kind: "agent_turn", message: "check CI" },
+    sessionPolicy: { strategy: "fresh" },
+    continuationMode: "none",
     wakeGate: { script: 'console.log(JSON.stringify({ wake: false }));', language: "js", timeoutSeconds: 30 },
   },
 ];
@@ -55,7 +66,7 @@ const MOCK_JOBS = [
 /** RPC handlers for scheduler methods, merged with default handlers */
 const SCHEDULER_RPC_HANDLERS: Record<string, unknown> = {
   ...DEFAULT_RPC_HANDLERS,
-  "cron.list": MOCK_JOBS,
+  "cron.list": { jobs: MOCK_JOBS },
   "cron.add": { jobId: "new-job" },
   "cron.update": { success: true },
   "cron.remove": { success: true },
@@ -88,27 +99,26 @@ test.describe("Scheduler - Cron Jobs", () => {
     await expect(scheduler.getByText("0 9 * * *")).toBeVisible();
   });
 
-  test("shows enabled and disabled status for jobs", async ({ page }) => {
+  test("shows active and dependency-error status for jobs", async ({ page }) => {
     const scheduler = page.locator("ic-scheduler-view");
     await expect(scheduler).toBeVisible({ timeout: 10_000 });
 
-    // Daily Summary is enabled with 0 errors -> active status dot (green)
+    // Daily Summary has a scheduled lifecycle with no dependency errors.
     const dailyRow = scheduler.locator(".grid-row").filter({ hasText: "Daily Summary" });
     await expect(dailyRow.locator(".status-dot--active")).toBeVisible();
 
-    // Hourly Check is disabled (enabled=false) -> inactive status dot regardless of errors
-    // Logic: enabled ? (errors > 0 ? error : active) : inactive
+    // Hourly Check is paused by its dependency breaker.
     const hourlyRow = scheduler.locator(".grid-row").filter({ hasText: "Hourly Check" });
-    await expect(hourlyRow.locator(".status-dot--inactive")).toBeVisible();
+    await expect(hourlyRow.locator(".status-dot--error")).toBeVisible();
   });
 
   test("shows error count for failing jobs", async ({ page }) => {
     const scheduler = page.locator("ic-scheduler-view");
     await expect(scheduler).toBeVisible({ timeout: 10_000 });
 
-    // Hourly Check has 2 consecutive errors -- shown even when disabled
+    // The strict lifecycle carries the exact dependency-error count.
     const hourlyRow = scheduler.locator(".grid-row").filter({ hasText: "Hourly Check" });
-    await expect(hourlyRow.getByText("2 errors")).toBeVisible();
+    await expect(hourlyRow.getByText("2 dependency errors")).toBeVisible();
   });
 
   test("has Add Job button", async ({ page }) => {
@@ -174,4 +184,3 @@ test.describe("Scheduler - Heartbeat", () => {
     await expect(scheduler.getByText("No heartbeat agents")).toBeVisible();
   });
 });
-

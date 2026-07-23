@@ -290,8 +290,8 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
   },
   {
     file: "packages/web/src/components/scheduler/ic-cron-editor.ts",
-    lines: 872,
-    reason: "Graph form component (NO-RPC variant); preview-debounce orchestration extracted via ic-cron-editor-controller.ts — view has 0 rpcClient.call sites at HEAD (form-only, no daemon I/O) and now delegates the preview-recompute debounce + next-runs dispatch to the controller. Controller fits the tightest 500L cap (136L). View cap tightened from 800L to 500L; the residual ≤875L is dominated by ~190L of component-scoped CSS, the 5-field cron-expression form renderer (cron / every / at variants with conditional input fields), the 10-entry TIMEZONE dropdown renderer, the agent-selector dropdown + message textarea + maxConcurrent + sessionTarget + deliveryMode form-fields renderer, the next-5-runs preview rendering with timezone-aware Intl.DateTimeFormat, the _populateFromJob() / _assembleJob() pure mappers between view @state and CronJobInput shape (parent-binding contract with scheduler view), the willUpdate() hook for job-property + agents-property propagation into @state, the updated() hook for schedule-field change detection driving the debounce, and the save / cancel CustomEvent dispatchers — all tightly DOM-coupled with the parent scheduler view's <ic-cron-editor> @property bindings. The 16 form @state fields stay on the view because they are the form contract — the controller would not satisfy the parent scheduler view's expectation of @state semantics, and the existing 24 view tests rely on direct @state access via priv().",
+    lines: 1071,
+    reason: "Lit cron editor form with no daemon I/O; ic-cron-editor-controller.ts owns preview debounce and next-run dispatch. The view is dominated by component-scoped CSS, cron-expression and timezone controls, payload/session-policy/continuation/delivery fields, next-run rendering, and pure mappers between view state and CronJobInput. Form state remains on the view because it is the parent-facing binding contract and the view tests exercise that state directly.",
     removedIn: "deferred",
   },
   {

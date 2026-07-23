@@ -1038,22 +1038,20 @@ All fields are optional and inherit from the global `scheduler.heartbeat` when o
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | `boolean` | _(inherit)_ | Override heartbeat enabled state |
-| `intervalMs` | `number` | _(inherit)_ | Override heartbeat interval in ms |
-| `showOk` | `boolean` | _(inherit)_ | Override show OK status |
-| `showAlerts` | `boolean` | _(inherit)_ | Override show alerts |
-| `target` | `HeartbeatTarget` | _(unset)_ | Delivery target channel (channelType, channelId, chatId, isDm) |
+| `enabled` | `boolean` | _(unset)_ | Override heartbeat enabled state |
+| `intervalMs` | `number` | _(unset)_ | Override heartbeat interval in ms |
+| `showOk` | `boolean` | _(unset)_ | Override show OK status |
+| `showAlerts` | `boolean` | _(unset)_ | Override show alerts |
+| `target` | `ChannelEndpoint` | _(unset)_ | Exact delivery endpoint (`channelType`, `channelInstanceId`, `conversationId`, optional `threadId`, and `conversationKind`) |
 | `prompt` | `string` | _(unset)_ | Custom heartbeat prompt |
-| `model` | `string` | _(unset)_ | Model override for heartbeat LLM calls |
-| `session` | `string` | _(unset)_ | Session key for heartbeat isolation |
-| `allowDm` | `boolean` | _(inherit)_ | Allow heartbeat in DM conversations |
+| `allowDm` | `boolean` | _(unset)_ | Allow heartbeat delivery to direct conversations |
 | `lightContext` | `boolean` | _(unset)_ | Include ONLY HEARTBEAT.md in bootstrap context |
 | `ackMaxChars` | `number` | _(unset)_ | Max chars for soft acknowledgment threshold |
 | `responsePrefix` | `string` | _(unset)_ | Prefix to strip from LLM responses before delivery |
-| `skipHeartbeatOnlyDelivery` | `boolean` | _(unset)_ | Suppress delivery of HEARTBEAT_OK-only responses |
-| `alertThreshold` | `number` | _(inherit)_ | Consecutive failure threshold for alerting |
-| `alertCooldownMs` | `number` | _(inherit)_ | Alert cooldown period in ms |
-| `staleMs` | `number` | _(inherit)_ | Stuck detection timeout in ms |
+| `alertThreshold` | `number` | _(unset)_ | Consecutive failure threshold for alerting |
+| `alertCooldownMs` | `number` | _(unset)_ | Alert cooldown period in ms |
+| `staleMs` | `number` | _(unset)_ | Stuck detection timeout in ms |
+| `toolPolicy` | `ToolPolicy` | _(unset)_ | Additional heartbeat restriction applied after the agent policy; it cannot restore a denied tool or capability |
 
 ```yaml
 agents:

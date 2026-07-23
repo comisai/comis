@@ -156,7 +156,6 @@ webhooks:
 scheduler:
   cron:
     enabled: false
-    storeDir: ./data/scheduler
     defaultTimezone: UTC
     maxJobs: 100
   heartbeat:
@@ -171,16 +170,11 @@ scheduler:
     timezone: ""
     criticalBypass: true
   execution:
-    lockDir: ./data/scheduler/locks
-    staleMs: 600000
-    updateMs: 30000
-    logDir: ./data/scheduler/logs
     maxLogBytes: 2000000
-    keepLines: 2000
+    retainedExecutions: 1000
   tasks:
     enabled: false
     confidenceThreshold: 0.8
-    storeDir: ./data/scheduler/tasks
 memory:
   dbPath: test-memory-system-api.db
 security:
