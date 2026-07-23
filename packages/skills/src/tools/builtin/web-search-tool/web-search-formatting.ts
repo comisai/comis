@@ -112,7 +112,7 @@ export const WebSearchParams = Type.Object({
   provider: Type.Optional(
     Type.String({
       description:
-        "Override search provider for this call. Options: brave, perplexity, grok, duckduckgo, searxng, tavily, exa, jina. Default: use configured provider with fallback chain.",
+        "Select the first search provider for this call. Options: brave, perplexity, grok, duckduckgo, searxng, tavily, exa, jina. Eligible configured fallbacks remain active.",
     }),
   ),
 });
@@ -276,19 +276,16 @@ export async function executeWebSearch(params: {
     };
   }
 
-  // Build provider chain: runtime override = single provider (no fallback)
-  let chain: SearchProviderName[];
-  if (runtimeProvider) {
-    chain = [runtimeProvider];
-  } else {
-    const configuredFallbacks = params.config?.fallbackProviders
-      ?? resolveConfiguredFallbackProviders(params.provider, params.config);
-    const eligibleFallbacks = configuredFallbacks.filter((provider) => {
-      const authority = resolveApiKey(provider, params.config);
-      return typeof authority === "string" && authority.trim().length > 0;
-    });
-    chain = buildProviderChain(params.provider, eligibleFallbacks);
-  }
+  // A per-call provider selects the primary without weakening the fallback
+  // contract. Only an explicit empty fallbackProviders list disables failover.
+  const primaryProvider = runtimeProvider ?? params.provider;
+  const configuredFallbacks = params.config?.fallbackProviders
+    ?? resolveConfiguredFallbackProviders(primaryProvider, params.config);
+  const eligibleFallbacks = configuredFallbacks.filter((provider) => {
+    const authority = resolveApiKey(provider, params.config);
+    return typeof authority === "string" && authority.trim().length > 0;
+  });
+  const chain = buildProviderChain(primaryProvider, eligibleFallbacks);
 
   const count = resolveSearchCount(
     params.rawParams.count ?? params.config?.maxResults,

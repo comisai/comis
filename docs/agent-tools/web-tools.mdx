@@ -24,7 +24,7 @@ The `web_search` tool queries a search engine and returns results. Comis support
 | `country` | string | No | 2-letter country code for region-specific results (e.g., `DE`, `US`). Default: `US`. |
 | `search_lang` | string | No | ISO language code for results (e.g., `de`, `en`, `fr`) |
 | `freshness` | string | No | Filter results by discovery time. Shortcuts: `pd` (past day), `pw` (past week), `pm` (past month), `py` (past year). Date range `YYYY-MM-DDtoYYYY-MM-DD` is supported by Brave, Tavily, and Exa. Supported by Brave, DuckDuckGo, Tavily, Exa, and SearXNG; ignored by grok, perplexity, jina. |
-| `provider` | string | No | Override search provider for this call (`brave`, `perplexity`, `grok`, `duckduckgo`, `searxng`, `tavily`, `exa`, `jina`). Defaults to the configured provider with fallback chain. |
+| `provider` | string | No | Select the first provider for this call (`brave`, `perplexity`, `grok`, `duckduckgo`, `searxng`, `tavily`, `exa`, `jina`). Eligible configured fallbacks remain active. |
 
 ## Search Providers
 
@@ -125,7 +125,8 @@ wins.
 
 Programmatic integrations can set `fallbackProviders` to choose an explicit
 order. An explicit empty list disables provider fallback. A `provider` argument
-on an individual tool call remains a single-provider override.
+on an individual tool call selects the first provider without bypassing the
+remaining eligible chain.
 
 ### Environment Variables Reference
 
