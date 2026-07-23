@@ -135,6 +135,26 @@ describe("proactive scheduler activation", () => {
     expect(runtime.activateCronSchedulers).not.toHaveBeenCalled();
   });
 
+  it("keeps every scheduler quiescent when task preflight fails", async () => {
+    const runtime = makeDeps({
+      prepareTaskSchedules: vi.fn(async () => err({
+        code: "schedule_initialization_failed",
+        errorKind: "resource",
+        message: "task store unavailable",
+      })),
+    });
+
+    expect(await activateProactiveSchedulers(runtime.deps)).toMatchObject({
+      ok: false,
+      error: { code: "task_preflight_failed", errorKind: "resource" },
+    });
+    expect(runtime.activate).not.toHaveBeenCalled();
+    expect(runtime.activateCronSchedulers).not.toHaveBeenCalled();
+    expect(runtime.activateTaskSchedules).not.toHaveBeenCalled();
+    expect(runtime.rollbackTaskSchedules).toHaveBeenCalledOnce();
+    expect(runtime.shutdown).toHaveBeenCalledOnce();
+  });
+
   it("rolls back heartbeat and cron timers when cron activation fails", async () => {
     const runtime = makeDeps({
       activateCronSchedulers: vi.fn(() => err({
