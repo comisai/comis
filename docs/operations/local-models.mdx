@@ -97,7 +97,7 @@ OOM-or-thrash caveat documented at the
 
 - `agents.<id>.promptTimeout.promptTimeoutMs` is a **stall budget**, not a wall clock: the
   deadline resets on stream activity (text and thinking deltas, throttled to about once per
-  second) and on tool completions, so only a fully silent gap kills the turn. It needs to cover
+  second), tool progress, and tool completions, so only a fully silent gap kills the turn. It needs to cover
   the longest silent stretch — in practice the prefill before the first token, which on a
   loaded local GPU can exceed the 180000 ms default. Raise it for local deployments (e.g.
   `300000`). See [Prompt Timeout](/reference/config-yaml#prompt-timeout-agents-prompttimeout).

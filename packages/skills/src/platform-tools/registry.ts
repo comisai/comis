@@ -158,6 +158,8 @@ export interface PlatformToolBuildContext {
   readonly videoStatusEnabled?: unknown;
   /** `background_tasks` tool's conditional predicate signal (truthy when manager wired). */
   readonly backgroundTaskManager?: unknown;
+  /** Progress heartbeat derived from the owning agent's prompt stall budget. */
+  readonly backgroundTaskWaitHeartbeatMs?: number;
   /** Per-agent tool capability port (resolved via daemon's deps map). */
   readonly toolCapabilityPort?: unknown;
   /** `browser` tool's conditional predicate. */
@@ -275,6 +277,7 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
         createBackgroundTasksTool({
           manager: ctx.backgroundTaskManager as never,
           agentId: ctx.agentId,
+          waitHeartbeatMs: ctx.backgroundTaskWaitHeartbeatMs,
         }),
     },
 

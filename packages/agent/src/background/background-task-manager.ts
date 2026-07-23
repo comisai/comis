@@ -8,8 +8,15 @@
  * @module
  */
 import { randomUUID } from "node:crypto";
-import { ok, err, fromPromise, type Result } from "@comis/shared";
-import { BackgroundTaskOriginSchema, emitObservationalEventSafely, type TypedEventBus, type ClockPort, type TimerPort } from "@comis/core";
+import { ok, err, fromPromise, tryCatch, type Result } from "@comis/shared";
+import {
+  BackgroundTaskOriginSchema,
+  emitObservationalEventSafely,
+  type TypedEventBus,
+  type ClockPort,
+  type TimerHandle,
+  type TimerPort,
+} from "@comis/core";
 import { persistTaskSync, recoverTasks, removeTaskFile } from "./background-task-persistence.js";
 import type {
   BackgroundTask,
@@ -66,8 +73,17 @@ export interface BackgroundTaskManager {
   fail(taskId: string, error: unknown): void;
   cancel(taskId: string): Result<void, Error>;
   getTask(taskId: string): BackgroundTask | undefined;
-  /** Wait for a live promoted task and return its terminal state. */
-  waitForTask(taskId: string): Promise<Result<BackgroundTask, Error>>;
+  /**
+   * Wait for a live promoted task and return its terminal state.
+   * `onWaiting` is a content-free liveness heartbeat for the active tool call;
+   * callers use it to keep prompt stall detection distinct from a healthy,
+   * long-running task wait.
+   */
+  waitForTask(
+    taskId: string,
+    onWaiting?: () => void,
+    waitHeartbeatMs?: number,
+  ): Promise<Result<BackgroundTask, Error>>;
   getTasks(agentId: string): BackgroundTask[];
   getAllTasks(): BackgroundTask[];
   recoverOnStartup(): void;
@@ -258,7 +274,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       return tasks.get(taskId);
     },
 
-    async waitForTask(taskId) {
+    async waitForTask(taskId, onWaiting, waitHeartbeatMs = 60_000) {
       const task = tasks.get(taskId);
       if (!task) return err(new Error(`Background task not found: ${taskId}`));
       if (task.status !== "running") return ok(task);
@@ -266,7 +282,28 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         return err(new Error(`Background task ${taskId} has no live execution to await`));
       }
 
+      let waitHeartbeat: TimerHandle | undefined;
+      if (onWaiting) {
+        waitHeartbeat = timers.setInterval(() => {
+          const progress = tryCatch(onWaiting);
+          if (!progress.ok) {
+            waitHeartbeat?.cancel();
+            logger.warn(
+              {
+                taskId,
+                toolName: task.toolName,
+                hint: "Inspect the background_tasks progress callback; the underlying task continues",
+                errorKind: "internal" as const,
+              },
+              "Background task wait heartbeat failed",
+            );
+          }
+        }, waitHeartbeatMs);
+        waitHeartbeat.unref();
+      }
+
       const settled = await fromPromise(task._promise);
+      waitHeartbeat?.cancel();
       const current = tasks.get(taskId);
       if (!current) return err(new Error(`Background task not found after waiting: ${taskId}`));
       if (current.status !== "running") return ok(current);

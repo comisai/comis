@@ -148,7 +148,7 @@ The `background_tasks` tool lets agents inspect and manage the daemon's backgrou
 | `cancel` | Cancel a running task (destructive; requires `_confirmed`) |
 | `read_output` | Wait for a running promoted tool call, then return its terminal output |
 
-Use `background_tasks` to inspect a promoted tool call, consume its eventual result with one `read_output` call, or cancel a runaway job. Do not poll `read_output`: when the task is still live, the call waits on the original execution. Permissions are gated to admin-trust agents because cancellation can affect other users' work.
+Use `background_tasks` to inspect a promoted tool call, consume its eventual result with one `read_output` call, or cancel a runaway job. Do not poll `read_output`: when the task is still live, the call waits on the original execution and emits bounded progress heartbeats so prompt stall detection does not mistake a healthy long-running wait for an unresponsive turn. Permissions are gated to admin-trust agents because cancellation can affect other users' work.
 
 ## mcp_manage -- MCP Server Lifecycle
 

@@ -498,6 +498,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         videoGenProvider: deps.videoGenProvider,
         videoStatusEnabled: deps.videoStatusEnabled, // gates the video_status descriptor
         backgroundTaskManager: deps.backgroundTaskManager,
+        backgroundTaskWaitHeartbeatMs: Math.max(
+          1,
+          Math.floor((agentConfig?.promptTimeout?.promptTimeoutMs ?? 180_000) / 3),
+        ),
         toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
         builtinToolsBrowserEnabled: skillsConfig.builtinTools.browser,
         // Opt-in gate for the memory_ask (dialectic) tool. `=== true` so an

@@ -1329,7 +1329,7 @@ describe("createPiEventBridge", () => {
   describe("tool_execution_update", () => {
     it("resets the prompt stall timer when a blocking tool reports progress", () => {
       const resetPromptStall = vi.fn();
-      deps = createMockDeps({ onToolExecutionEnd: resetPromptStall });
+      deps = createMockDeps({ onToolActivity: resetPromptStall });
       const { listener } = createPiEventBridge(deps);
 
       listener({
