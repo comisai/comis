@@ -23,6 +23,8 @@ This file records user-visible changes to Comis. Detailed release history is ava
 - Verified files declared in a sub-agent's `expected_outputs` are delivered as governed channel attachments when the task completes, including when the parent rewrite produces no text or fails before delivery; synthetic parent turns accept their workspace-policy hash without failing completion delivery.
 - JSONL-backed conversations now retain ownership of promoted tool completions even when the SQLite session index has no row: completions re-enter the originating conversation, pending turns cannot finalize unrelated recalled text, failed tasks are labeled accurately, and MCP results above 8 KB are offloaded for file-based analysis.
 - Promoted tool completions now retain the originating response-locale policy and deliver the finalized continuation through the exact captured channel instance and conversation authority.
+- Incomplete tool-use history is repaired without inventing a daemon-restart cause.
+- Session explanations prioritize an unfinished background continuation over incidental recall misses and point operators to its promotion, completion, re-entry, and delivery evidence.
 - Provider status, CLI setup guidance, token-limit labels, and degraded-response instructions now reflect the runtime behavior.
 - Dashboard controls have clearer accessible names and reduce accidental secret exposure.
 - Gateway RPC failures no longer return internal exception details to clients.
