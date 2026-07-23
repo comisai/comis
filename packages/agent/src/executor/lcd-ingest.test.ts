@@ -266,7 +266,7 @@ describe("ingestTurn", () => {
     const db = new Database(":memory:");
     initSchema(db, 1536);
     const store = createLcdStore(db);
-    const username = "fleet-user-a";
+    const username = "example-user-a";
     const password = "test-secret-pass-747!";
     const turn: AgentMessage[] = [
       userMsg(

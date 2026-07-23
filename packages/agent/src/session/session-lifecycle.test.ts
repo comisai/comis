@@ -507,7 +507,7 @@ describe("ComisSessionManager — abnormal-termination cleanup contract via with
 
   it("projects natural-language secret confirmations before the SDK flushes JSONL", async () => {
     const { mgr, sessionKey, sessionPath, readFileSync } = await bootstrap("natural-language-pre-persist");
-    const username = "fleet-user-a";
+    const username = "example-user-a";
     const password = "test-secret-pass-747!";
 
     const result = await mgr.withSession(sessionKey, async (sm: import("@earendil-works/pi-coding-agent").SessionManager) => {

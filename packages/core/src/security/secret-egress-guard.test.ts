@@ -86,7 +86,7 @@ describe("scrubSecretsFromText", () => {
   });
 
   it("scrubs a confirmed username value from a natural-language approval", () => {
-    const username = "fleet-user-a";
+    const username = "example-user-a";
     const result = scrubSecretsFromText(
       `I confirm storing SERVICE_USERNAME in the encrypted secret store. The confirmed value is ${username}. Store it now, then continue.`,
     );
