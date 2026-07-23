@@ -33,6 +33,11 @@ function makeOrigin(overrides: Record<string, unknown> = {}) {
     },
     traceId: "abc-123",
     backgroundHopCount: 0,
+    responseLocalePolicy: {
+      locale: "he",
+      source: "request",
+      enforceLocale: true,
+    },
     ...overrides,
   };
 }
@@ -53,6 +58,14 @@ describe("BackgroundTaskOriginSchema", () => {
 
   it("accepts a positive integer background hop count", () => {
     expect(BackgroundTaskOriginSchema.parse(makeOrigin({ backgroundHopCount: 2 })).backgroundHopCount).toBe(2);
+  });
+
+  it("preserves the exact response locale policy for delayed re-entry", () => {
+    expect(BackgroundTaskOriginSchema.parse(makeOrigin()).responseLocalePolicy).toEqual({
+      locale: "he",
+      source: "request",
+      enforceLocale: true,
+    });
   });
 
   it("rejects a negative background hop count", () => {

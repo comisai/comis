@@ -106,6 +106,7 @@ describe("createBackgroundCompletionRunner", () => {
     maxBackgroundHops = 3,
     isTurnInFlight?: (key: string) => boolean,
     assembleToolsForAgent?: BackgroundCompletionRunnerDeps["assembleToolsForAgent"],
+    deliverCompletion?: (input: Record<string, unknown>) => Promise<unknown>,
   ) {
     return createBackgroundCompletionRunner({
       eventBus,
@@ -116,8 +117,9 @@ describe("createBackgroundCompletionRunner", () => {
       maxBackgroundHops,
       ...(isTurnInFlight ? { isTurnInFlight } : {}),
       ...(assembleToolsForAgent ? { assembleToolsForAgent } : {}),
+      ...(deliverCompletion ? { deliverCompletion } : {}),
       logger: makeLogger(),
-    });
+    } as unknown as BackgroundCompletionRunnerDeps);
   }
 
   it("LIVE-TURN skip: origin turn in flight → NO re-entry turn (the live turn owns consumption)", async () => {
@@ -174,6 +176,56 @@ describe("createBackgroundCompletionRunner", () => {
     expect(reentered.hopCount).toBe(1);
     expect(reentered.sessionKey).toBe(originSessionKey(task.origin));
     await runner.shutdown();
+  });
+
+  it("delivers the finalized re-entry response to the exact origin with its captured locale", async () => {
+    const responseLocalePolicy = {
+      locale: "he",
+      source: "request" as const,
+      enforceLocale: true,
+    };
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ responseLocalePolicy } as Partial<BackgroundTaskOrigin>),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    executor.execute.mockResolvedValue({
+      response: "תוצאת הרקע הושלמה",
+      executionId: "execution-1",
+      finishReason: "stop",
+    });
+    const deliverCompletion = vi.fn().mockResolvedValue(ok(undefined));
+    const runner = build(3, undefined, undefined, deliverCompletion);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await runner.shutdown();
+
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      undefined,
+      undefined,
+      "default",
+      undefined,
+      undefined,
+      {
+        operationType: "interactive",
+        responseLocalePolicy,
+      },
+    );
+    expect(deliverCompletion).toHaveBeenCalledWith({
+      taskId: task.id,
+      origin: task.origin,
+      response: "תוצאת הרקע הושלמה",
+      executionId: "execution-1",
+    });
   });
 
   it("continues re-entry execution and reaches later observers when the first re-entry subscriber throws", async () => {
