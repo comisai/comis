@@ -136,28 +136,76 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     };
   }
 
-  function reportIncidentFailure(input: BackgroundRecoveryIncidentInput): void {
-    if (!healthAnnounced.has(input.taskId)) {
-      healthAnnounced.add(input.taskId);
+  function reportFailure(
+    input: BackgroundRecoveryIncidentInput,
+    kind: "authority_storage" | "trajectory" | "configuration",
+    source: string,
+    message: string,
+    hint: string,
+    errorKind: "resource" | "config",
+    retry: boolean,
+  ): void {
+    const key = `${input.taskId}:${kind}`;
+    if (!healthAnnounced.has(key)) {
+      healthAnnounced.add(key);
       emitObservationalEventSafely(
         { eventBus: deps.eventBus, logger: deps.logger },
         "system:error",
         {
-          error: new Error("Background recovery incident persistence failed"),
-          source: "background-task-recovery",
+          error: new Error(message),
+          source,
         },
       );
       deps.logger.warn(
         {
           taskId: input.taskId,
           toolName: input.toolName,
-          hint: "Repair the trajectory store; the background recovery incident will retry",
-          errorKind: "resource" as const,
+          hint,
+          errorKind,
         },
-        "Background recovery incident persistence failed",
+        message,
       );
     }
-    scheduleIncidentRetry(input.taskId);
+    if (retry) scheduleIncidentRetry(input.taskId);
+  }
+
+  function reportAuthorityStorageFailure(
+    authority: BackgroundRecoveryAuthority,
+    reason: BackgroundRecoveryIncidentInput["reason"],
+  ): void {
+    reportFailure(
+      incidentInput(authority, reason),
+      "authority_storage",
+      "background-recovery-authority-storage",
+      "Background recovery authority persistence failed",
+      "Repair protected background recovery authority storage; persistence will retry",
+      "resource",
+      true,
+    );
+  }
+
+  function reportTrajectoryFailure(input: BackgroundRecoveryIncidentInput): void {
+    reportFailure(
+      input,
+      "trajectory",
+      "background-recovery-trajectory",
+      "Background recovery trajectory persistence failed",
+      "Repair the trajectory store; the background recovery incident will retry",
+      "resource",
+      true,
+    );
+  }
+
+  function reportResolutionSuppressed(input: BackgroundRecoveryIncidentInput): void {
+    reportFailure(
+      input,
+      "configuration",
+      "background-recovery-configuration",
+      "Background recovery resolution is suppressed",
+      "Enable diagnostics.trajectory.enabled and allow background_task.notified in diagnostics.trajectory.eventTypes, then restart the daemon",
+      "config",
+      false,
+    );
   }
 
   function commitAuthority(authority: BackgroundRecoveryAuthority): boolean {
@@ -166,13 +214,17 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
       authority,
       deps.persistenceOps,
     );
-    if (!persisted.ok) {
-      reportIncidentFailure(
-        incidentInput(authority, "recovery_retry_required"),
+    if (!persisted.ok || persisted.value.kind !== "committed") {
+      reportAuthorityStorageFailure(
+        authority,
+        authority.resolutionRequested
+          ? "recovery_resolved"
+          : "recovery_retry_required",
       );
       return false;
     }
     dirtyAuthorities.delete(authority.taskId);
+    healthAnnounced.delete(`${authority.taskId}:authority_storage`);
     return true;
   }
 
@@ -190,15 +242,15 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
       deps.persistenceOps,
     );
     if (!removed.ok) {
-      reportIncidentFailure(
-        incidentInput(authority, "recovery_resolved"),
-      );
+      reportAuthorityStorageFailure(authority, "recovery_resolved");
       return false;
     }
     authorities.delete(authority.taskId);
     dirtyAuthorities.delete(authority.taskId);
     restoredAuthorityIds.delete(authority.taskId);
-    healthAnnounced.delete(authority.taskId);
+    for (const key of healthAnnounced) {
+      if (key.startsWith(`${authority.taskId}:`)) healthAnnounced.delete(key);
+    }
     incidentRetries.get(authority.taskId)?.cancel();
     incidentRetries.delete(authority.taskId);
     return true;
@@ -221,9 +273,10 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
       if (!trajectoryAccepted.has(requiredKey)) {
         const recorded = recorder(required);
         if (!recorded.ok) {
-          reportIncidentFailure(required);
+          reportTrajectoryFailure(required);
           return;
         }
+        healthAnnounced.delete(`${taskId}:trajectory`);
         if (recorded.value === "accepted") {
           trajectoryAccepted.add(requiredKey);
           announceAccepted(required);
@@ -248,13 +301,17 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     if (!trajectoryAccepted.has(resolvedKey)) {
       const recorded = recorder(resolved);
       if (!recorded.ok) {
-        reportIncidentFailure(resolved);
+        reportTrajectoryFailure(resolved);
         return;
       }
-      if (recorded.value === "accepted") {
-        trajectoryAccepted.add(resolvedKey);
-        announceAccepted(resolved);
+      healthAnnounced.delete(`${taskId}:trajectory`);
+      if (recorded.value === "suppressed") {
+        reportResolutionSuppressed(resolved);
+        return;
       }
+      healthAnnounced.delete(`${taskId}:configuration`);
+      trajectoryAccepted.add(resolvedKey);
+      announceAccepted(resolved);
     }
     removeAuthority(authority);
   }

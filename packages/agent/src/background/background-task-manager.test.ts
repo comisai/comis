@@ -714,7 +714,7 @@ describe("BackgroundTaskManager", () => {
         expect(eventBus.emit).toHaveBeenCalledWith(
           "system:error",
           expect.objectContaining({
-            source: "background-task-recovery",
+            source: "background-recovery-authority-storage",
           }),
         );
         await vi.advanceTimersByTimeAsync(1_001);

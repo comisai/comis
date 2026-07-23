@@ -69,6 +69,7 @@ describe("background task recovery controller", () => {
     const eventBus = new TypedEventBus();
     const notified = vi.fn();
     const systemErrors = vi.fn();
+    const logger = { warn: vi.fn() };
     eventBus.on("background_task:notified", notified);
     eventBus.on("system:error", systemErrors);
     let retry: (() => void) | undefined;
@@ -82,7 +83,7 @@ describe("background task recovery controller", () => {
       .mockReturnValue(ok("accepted" as const));
     const controller = createBackgroundTaskRecoveryController({
       eventBus,
-      logger: { warn: vi.fn() },
+      logger,
       clock: { now: () => 10, nowDate: () => new Date(10) },
       dataDir,
       timers: {
@@ -103,6 +104,16 @@ describe("background task recovery controller", () => {
 
     expect(notified).not.toHaveBeenCalled();
     expect(systemErrors).toHaveBeenCalledTimes(1);
+    expect(systemErrors).toHaveBeenCalledWith(expect.objectContaining({
+      source: "background-recovery-trajectory",
+    }));
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("trajectory store"),
+        errorKind: "resource",
+      }),
+      "Background recovery trajectory persistence failed",
+    );
     retry?.();
     expect(recorder).toHaveBeenCalledTimes(2);
     expect(notified).toHaveBeenCalledTimes(1);
@@ -357,6 +368,79 @@ describe("background task recovery controller", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
+  it("waits for confirmed authority durability before canonical recording", () => {
+    const dataDir = safePath(tmpdir(), `comis-recovery-controller-${randomUUID()}`);
+    mkdirSync(dataDir, { recursive: true });
+    const eventBus = new TypedEventBus();
+    const systemErrors = vi.fn();
+    eventBus.on("system:error", systemErrors);
+    const logger = { warn: vi.fn() };
+    const scheduled: Array<() => void> = [];
+    const directoryDescriptors = new Set<number>();
+    let directorySyncFailures = 2;
+    const recorder = vi.fn(() => ok("accepted" as const));
+    const controller = createBackgroundTaskRecoveryController({
+      eventBus,
+      logger,
+      clock: { now: () => 10, nowDate: () => new Date(10) },
+      timers: {
+        setTimeout: (callback) => {
+          scheduled.push(callback);
+          return {
+            cancelled: false,
+            cancel: vi.fn(),
+            unref: vi.fn(),
+          };
+        },
+        setInterval: vi.fn(),
+      },
+      dataDir,
+      persistenceOps: {
+        open: (path, flags, mode) => {
+          const fd = openSync(path, flags, mode);
+          if (flags === "r") directoryDescriptors.add(fd);
+          return fd;
+        },
+        write: writeFileSync,
+        sync: (fd) => {
+          if (directoryDescriptors.has(fd) && directorySyncFailures > 0) {
+            directorySyncFailures--;
+            throw new Error("directory sync unavailable");
+          }
+          fsyncSync(fd);
+        },
+        close: (fd) => {
+          directoryDescriptors.delete(fd);
+          closeSync(fd);
+        },
+        rename: renameSync,
+        unlink: unlinkSync,
+      },
+    });
+    controller.setRecorder(recorder);
+
+    controller.recordTask({
+      id: "task-durability-order",
+      toolName: "report",
+      origin: makeOrigin(),
+    });
+
+    expect(recorder).not.toHaveBeenCalled();
+    expect(systemErrors).toHaveBeenCalledWith(expect.objectContaining({
+      source: "background-recovery-authority-storage",
+    }));
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("authority storage"),
+        errorKind: "resource",
+      }),
+      "Background recovery authority persistence failed",
+    );
+    scheduled.shift()?.();
+    expect(recorder).toHaveBeenCalledTimes(1);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
   it("closes suppressed recovery authority without claiming trajectory acceptance", () => {
     const dataDir = safePath(tmpdir(), `comis-recovery-controller-${randomUUID()}`);
     mkdirSync(dataDir, { recursive: true });
@@ -402,6 +486,140 @@ describe("background task recovery controller", () => {
     restarted.setRecorder(restartedRecorder);
     restarted.reportScanFailures([], [], vi.fn());
     expect(restartedRecorder).not.toHaveBeenCalled();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("retains accepted authority while resolution recording is suppressed", () => {
+    const dataDir = safePath(tmpdir(), `comis-recovery-controller-${randomUUID()}`);
+    mkdirSync(dataDir, { recursive: true });
+    const timers = {
+      setTimeout: vi.fn(() => ({
+        cancelled: false,
+        cancel: vi.fn(),
+        unref: vi.fn(),
+      })),
+      setInterval: vi.fn(),
+    };
+    const task = {
+      id: "task-resolution-suppressed",
+      toolName: "report",
+      origin: makeOrigin(),
+    };
+    const first = createBackgroundTaskRecoveryController({
+      eventBus: new TypedEventBus(),
+      logger: { warn: vi.fn() },
+      clock: { now: () => 10, nowDate: () => new Date(10) },
+      timers,
+      dataDir,
+    });
+    first.setRecorder(vi.fn(() => ok("accepted" as const)));
+    first.recordTask(task);
+
+    const suppressedTimers = {
+      setTimeout: vi.fn(() => ({
+        cancelled: false,
+        cancel: vi.fn(),
+        unref: vi.fn(),
+      })),
+      setInterval: vi.fn(),
+    };
+    const suppressedLogger = { warn: vi.fn() };
+    const suppressedRecorder = vi.fn(() => ok("suppressed" as const));
+    const suppressed = createBackgroundTaskRecoveryController({
+      eventBus: new TypedEventBus(),
+      logger: suppressedLogger,
+      clock: { now: () => 20, nowDate: () => new Date(20) },
+      timers: suppressedTimers,
+      dataDir,
+    });
+    suppressed.setRecorder(suppressedRecorder);
+    suppressed.reportScanFailures([], [], vi.fn());
+
+    expect(suppressedRecorder.mock.calls.map(([input]) => input.reason)).toEqual([
+      "recovery_resolved",
+    ]);
+    expect(suppressedTimers.setTimeout).not.toHaveBeenCalled();
+    expect(suppressedLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("diagnostics.trajectory.enabled"),
+        errorKind: "config",
+      }),
+      "Background recovery resolution is suppressed",
+    );
+
+    const acceptedRecorder = vi.fn(() => ok("accepted" as const));
+    const accepted = createBackgroundTaskRecoveryController({
+      eventBus: new TypedEventBus(),
+      logger: { warn: vi.fn() },
+      clock: { now: () => 30, nowDate: () => new Date(30) },
+      timers,
+      dataDir,
+    });
+    accepted.setRecorder(acceptedRecorder);
+    accepted.reportScanFailures([], [], vi.fn());
+
+    expect(acceptedRecorder.mock.calls.map(([input]) => input.reason)).toEqual([
+      "recovery_resolved",
+    ]);
+    const afterResolutionRecorder = vi.fn(() => ok("accepted" as const));
+    const afterResolution = createBackgroundTaskRecoveryController({
+      eventBus: new TypedEventBus(),
+      logger: { warn: vi.fn() },
+      clock: { now: () => 40, nowDate: () => new Date(40) },
+      timers,
+      dataDir,
+    });
+    afterResolution.setRecorder(afterResolutionRecorder);
+    afterResolution.reportScanFailures([], [], vi.fn());
+    expect(afterResolutionRecorder).not.toHaveBeenCalled();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("reports authority unlink failures against protected storage", () => {
+    const dataDir = safePath(tmpdir(), `comis-recovery-controller-${randomUUID()}`);
+    mkdirSync(dataDir, { recursive: true });
+    const logger = { warn: vi.fn() };
+    const controller = createBackgroundTaskRecoveryController({
+      eventBus: new TypedEventBus(),
+      logger,
+      clock: { now: () => 10, nowDate: () => new Date(10) },
+      timers: {
+        setTimeout: vi.fn(() => ({
+          cancelled: false,
+          cancel: vi.fn(),
+          unref: vi.fn(),
+        })),
+        setInterval: vi.fn(),
+      },
+      dataDir,
+      persistenceOps: {
+        open: openSync,
+        write: writeFileSync,
+        sync: fsyncSync,
+        close: closeSync,
+        rename: renameSync,
+        unlink: vi.fn(() => {
+          throw new Error("unlink unavailable");
+        }),
+      },
+    });
+    controller.setRecorder(vi.fn(() => ok("accepted" as const)));
+    const task = {
+      id: "task-unlink-failure",
+      toolName: "report",
+      origin: makeOrigin(),
+    };
+
+    controller.recordTask(task);
+    controller.resolveTask(task);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hint: expect.stringContaining("authority storage"),
+        errorKind: "resource",
+      }),
+      "Background recovery authority persistence failed",
+    );
     rmSync(dataDir, { recursive: true, force: true });
   });
 
