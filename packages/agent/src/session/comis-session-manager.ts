@@ -5,7 +5,8 @@
  * Absorbs the lifecycle management into a single
  * interface. Each `withSession` call acquires a per-session write lock,
  * creates or opens the session file via the SDK's SessionManager, executes
- * the callback, sanitizes secrets, and releases the lock.
+ * the callback, projects secrets out before persistence, repairs the durable
+ * file defensively, and releases the lock.
  *
  * Key design decisions:
  * - `SdkSessionManager.open(explicitPath)` handles both new and existing files:
@@ -32,6 +33,7 @@ import {
 } from "./session-key-mapper.js";
 import { withSessionLock } from "./session-write-lock.js";
 import { sanitizeSessionSecrets } from "./sanitize-session-secrets.js";
+import { installSecretSafeSessionPersistence } from "./session-manager-internals.js";
 import {
   planInboundMessageProvenance,
   type InboundMessageProvenancePlan,
@@ -354,19 +356,20 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
         // - New file: creates in-memory header with flushed=false, defers
         //   file write until first assistant message (SDK's _persist guard)
         const sm = SdkSessionManager.open(sessionPath, dirname(sessionPath));
+        const persistenceGuard = installSecretSafeSessionPersistence(
+          sm,
+          deps.logger,
+          sessionKeyStr,
+        );
+        if (!persistenceGuard.ok) return Promise.reject(persistenceGuard.error);
 
         try {
           const result = await fn(sm);
           return result;
         } finally {
-          // ALWAYS sanitize, even on throw — the SDK flushes entries to the
-          // JSONL file before / during fn execution, so a mid-execution
-          // exception can leave unredacted tool parameters (env_value, etc.)
-          // on disk. Running in finally ensures the next reader of the file
-          // (getSessionStats, replay, sessions.inspect RPC) sees the
-          // redacted form even on the error path. Sanitization runs while
-          // we still hold the write lock.
+          // Defense in depth also repairs entries written by an older process.
           sanitizeSessionSecrets(sessionPath, deps.logger);
+          persistenceGuard.value.reportRedactions();
         }
       }, {
         retries: 10,

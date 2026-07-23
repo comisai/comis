@@ -21,7 +21,7 @@ export interface ScrubResult {
 const REDACTED = "[REDACTED]";
 
 const SECRET_FIELD_FRAGMENT =
-  "(?:password|passwd|pwd|secret|token|api[_-]?key|credential|private[_-]?key)";
+  "(?:password|passwd|pwd|secret|token|api[_-]?key|credential|private[_-]?key|username|env[_-]?value)";
 const SECRET_FIELD_HINTS = [
   "password",
   "passwd",
@@ -34,6 +34,9 @@ const SECRET_FIELD_HINTS = [
   "credential",
   "private_key",
   "private-key",
+  "username",
+  "env_value",
+  "env-value",
 ] as const;
 
 const LABELED_SECRET_ASSIGNMENT_RE = new RegExp(

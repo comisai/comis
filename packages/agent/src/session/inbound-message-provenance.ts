@@ -3,10 +3,12 @@
  * Durable structured provenance for physical inbound channel messages.
  *
  * Queue coalescing changes the prompt presented to the model, but must not
- * erase the operator's ability to recover each original message. A dedicated
- * append-only ledger is committed before model setup, while matching SDK
- * custom entries keep completed transcripts self-describing. Neither record
- * type enters `buildSessionContext()` or alters model context.
+ * erase the operator's ability to recover each original message identity. A
+ * dedicated append-only ledger is committed before model setup, while matching
+ * SDK custom entries keep completed transcripts self-describing. Credential
+ * assignments are redacted in both durable forms without changing the live
+ * message delivered to the model. Neither record type enters
+ * `buildSessionContext()` or alters model context.
  */
 
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -14,6 +16,7 @@ import {
   getOriginalInboundMessages,
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
   parseInboundMessageProvenanceBatch,
+  scrubSecretsFromText,
   type NormalizedMessage,
 } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
@@ -51,9 +54,9 @@ export function planInboundMessageProvenance(
   message: NormalizedMessage,
   recordedAt: number,
 ): Result<InboundMessageProvenancePlan, InboundMessageProvenancePlanError> {
-  const originalMessages = getOriginalInboundMessages(message);
+  const sourceMessages = getOriginalInboundMessages(message);
   let rawMessageBytes = 0;
-  for (const original of originalMessages) {
+  for (const original of sourceMessages) {
     const serialized = tryCatch(() => JSON.stringify(original));
     if (!serialized.ok || serialized.value === undefined) {
       return err({
@@ -71,6 +74,12 @@ export function planInboundMessageProvenance(
       });
     }
   }
+  const originalMessages = sourceMessages.map((original) => {
+    const scrubbed = scrubSecretsFromText(original.text);
+    return scrubbed.redactions === 0
+      ? original
+      : { ...original, text: scrubbed.text };
+  });
   const parsed = parseInboundMessageProvenanceBatch({
     schemaVersion: 1,
     batchId: message.id,

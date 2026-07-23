@@ -23,7 +23,9 @@
  */
 
 import type { SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
+import type { ComisLogger } from "@comis/core";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
+import { projectSessionValueForPersistence } from "./sanitize-session-secrets.js";
 
 // ---------------------------------------------------------------------------
 // Structural entry views
@@ -77,6 +79,96 @@ export function rewriteSessionFile(sessionManager: SessionManager): boolean {
   if (typeof rewrite !== "function") return false;
   (rewrite as () => void).call(sessionManager);
   return true;
+}
+
+/**
+ * Install a projection at the SDK's single entry-persistence chokepoint.
+ * `_appendEntry` has already inserted the entry object into `fileEntries` when
+ * `_persist` runs, so replacing the root object's fields updates both the
+ * in-memory persisted tree and the exact object the SDK is about to write,
+ * while leaving the agent state's original nested message object untouched.
+ */
+export function installSessionPersistenceProjector(
+  sessionManager: SessionManager,
+  projector: (entry: SessionEntry) => {
+    readonly value: SessionEntry;
+    readonly redactions: number;
+  },
+  onRedactions?: (count: number) => void,
+): boolean {
+  const internals = sessionManager as unknown as {
+    _persist?: (entry: SessionEntry) => void;
+  };
+  const persist = internals._persist;
+  if (typeof persist !== "function") return false;
+
+  internals._persist = function projectedPersist(entry: SessionEntry): void {
+    const projected = projector(entry);
+    if (
+      projected.redactions > 0
+      && projected.value !== entry
+      && typeof projected.value === "object"
+      && projected.value !== null
+    ) {
+      const mutableEntry = entry as unknown as Record<string, unknown>;
+      for (const key of Object.keys(mutableEntry)) {
+        delete mutableEntry[key];
+      }
+      Object.assign(mutableEntry, projected.value);
+      onRedactions?.(projected.redactions);
+    }
+    persist.call(sessionManager, entry);
+  };
+  return true;
+}
+
+export interface SessionPersistenceSecretGuard {
+  reportRedactions(): void;
+}
+
+/**
+ * Install the mandatory secret projection and own its content-free operator
+ * signals. A missing SDK hook is a dependency failure, never permission to
+ * persist an unprojected session entry.
+ */
+export function installSecretSafeSessionPersistence(
+  sessionManager: SessionManager,
+  logger: ComisLogger | undefined,
+  sessionKey: string,
+): Result<SessionPersistenceSecretGuard, Error> {
+  let redactions = 0;
+  const installed = installSessionPersistenceProjector(
+    sessionManager,
+    projectSessionValueForPersistence,
+    (count) => {
+      redactions += count;
+    },
+  );
+  if (!installed) {
+    logger?.error(
+      {
+        step: "session-persistence",
+        sessionKey,
+        hint: "The SDK session persistence hook is unavailable; keep the daemon stopped until the pinned session SDK contract is restored",
+        errorKind: "dependency" as const,
+      },
+      "Session persistence stopped because secret redaction could not be installed",
+    );
+    return err(new Error("Session persistence secret projector is unavailable"));
+  }
+  return ok({
+    reportRedactions() {
+      if (redactions === 0) return;
+      logger?.info(
+        {
+          step: "session-persistence",
+          sessionKey,
+          redactions,
+        },
+        "Redacted secret-bearing fields before session persistence",
+      );
+    },
+  });
 }
 
 /**

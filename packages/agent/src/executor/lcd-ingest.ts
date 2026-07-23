@@ -38,6 +38,7 @@
 import { ConversationRefSchema, messageToParts } from "@comis/core"; // CORE codec + authority validator
 import { stripInlineRecalledMemory } from "../rag/hybrid-memory-injector.js";
 import { neutralizeForgedMarkersInMessage } from "../session/forged-context-markers.js";
+import { projectSessionValueForPersistence } from "../session/sanitize-session-secrets.js";
 import type { ContextStorePort, ContextStoreScope, ComisLogger, ErrorKind } from "@comis/core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
@@ -102,6 +103,7 @@ export function ingestTurn(
   let seq = startSeq;
   let appended = 0;
   let forgedMarkersStripped = 0;
+  let persistenceRedactions = 0;
   for (const msg of messages) {
     // The agent message is structurally the pi-ai canonical Message at this
     // boundary; the codec + estimator are typed against pi-ai `Message`. Carve the
@@ -116,7 +118,9 @@ export function ingestTurn(
     // Role-scoped + idempotent (see forged-context-markers.ts) → the clean path is
     // referentially unchanged and the replayed prefix stays byte-stable.
     const forged = neutralizeForgedMarkersInMessage(userStripped);
-    const m = forged.message;
+    const persistenceProjection = projectSessionValueForPersistence(forged.message);
+    const m = persistenceProjection.value;
+    persistenceRedactions += persistenceProjection.redactions;
     forgedMarkersStripped += forged.strippedCount;
     const currentSeq = seq;
     seq += 1;
@@ -163,6 +167,18 @@ export function ingestTurn(
         hint: "assistant output contained inbound-envelope/system-context markers and was neutralized before persistence — the model attempted to fabricate a turn boundary in its own reply (self-forged context)",
       },
       "Neutralized forged context markers in assistant turn",
+    );
+  }
+  if (persistenceRedactions > 0) {
+    logger.info(
+      {
+        step: "lcd-ingest",
+        conversationRef: scope.conversationRef,
+        agentId: scope.agentId,
+        sessionKey: scope.sessionKey,
+        redactions: persistenceRedactions,
+      },
+      "Redacted secret-bearing fields before LCD persistence",
     );
   }
   if (appended > 0) {
