@@ -9,15 +9,10 @@
  *   (`executor/prompt-runner/envelope-wrapper.ts`) around an inbound-envelope
  *   header `[<channel>] <senderId> (<time>):` (`envelope/message-envelope.ts`).
  *   That format carries NO unforgeable boundary (unlike external content, which
- *   is fenced with a per-session nonce by `wrapExternalContent`). A model that
- *   has seen dozens of these exemplars in its own context can — and in
- *   production did — reproduce the exact grammar in its OWN output, fabricating
- *   a "next user turn" (e.g. `[telegram] 297133260 (12:11 PM): …`). The SDK
- *   persists the raw completion verbatim, the LCD store ingests it, and the
- *   assembler re-emits it as genuine history — so on the next turn the model
- *   re-reads its own fabrication as a real inbound message and acts on it. The
- *   forgery self-reinforces until an out-of-band signal (a user screenshot)
- *   breaks it.
+ *   is fenced with a per-session nonce by `wrapExternalContent`). A model can
+ *   reproduce the grammar in its OWN output and fabricate a "next user turn".
+ *   Without this boundary defense, replay would present the fabrication as
+ *   genuine history and let it self-reinforce.
  *
  * Fix shape (mirrors `wrapExternalContent`'s `replaceMarkers` forge defense):
  *   Model output can never legitimately contain the boundary literals that

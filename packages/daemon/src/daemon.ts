@@ -2127,7 +2127,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
       }
       return ok(loaded.value);
     },
-    // The orchestrate-kind resume + orphan-reclaim seams (workspace resolver + real existsSync + result-ref-store.cleanupRun + a safePath-guarded rmSync). Populated ONLY when durability is enabled (a default install builds no unused store) so a resumable orchestrate row's pinned script + checkpoint are VERIFIED on boot and a dead run's artifacts are RECLAIMED on orphan; absent ⇒ a scriptRef row degrades to the plain flat re-anchor (deny-by-absence — the runner only writes scriptRef rows under orchestrateResume).
+    // The orchestrate-kind resume + orphan-reclaim seams (workspace resolver + real existsSync + result-ref-store.cleanupRun + a safePath-guarded rmSync). Populated only when durability is enabled so a resumable orchestrate row's pinned script + checkpoint are verified on boot and a dead run's artifacts are reclaimed on orphan; absent ⇒ a scriptRef row degrades to the plain flat re-anchor (deny-by-absence — the runner only writes scriptRef rows under orchestrateResume).
     ...(durabilityCfg.enabled ? { orchestrateResume: buildOrchestrateResumeWiring({ workspaceDirs, logger: daemonLogger }) } : {}),
   });
   Object.assign(boot, { durableRunStore: durableResume.durableRunStore, outwardLedger: durableResume.outwardLedger, durableResumeShutdown: durableResume.shutdown });

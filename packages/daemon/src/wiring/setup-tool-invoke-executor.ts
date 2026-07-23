@@ -190,7 +190,7 @@ export interface ToolInvokeExecutorDeps {
    */
   writeSurfaceEnabled?: (agentId: string) => boolean;
   /**
-   * The per-agent RESUME-SURFACE gate — the default-OFF durability toggle
+   * The per-agent RESUME-SURFACE gate — the default-on durability toggle
    * (`autonomy.durability.orchestrateResume`) consulted BEFORE any checkpoint/resume
    * dispatch. checkpoint→orch:write and resume→orch:read reuse the FLOOR caps, so
    * the cap the lease holds is NOT enough — this surface is the AUTHORITATIVE gate
@@ -538,8 +538,8 @@ export function createToolInvokeExecutor(
   /**
    * The RESUME surface gate (deny-by-absence, fail-closed) shared by checkpoint +
    * resume. checkpoint→orch:write / resume→orch:read are FLOOR caps, so the cap the
-   * lease holds is NOT the gate — the default-OFF `orchestrateResumeEnabled`
-   * predicate is (mirrors the write surface). Absent predicate ⇒ deny (T-233-04).
+   * lease holds is NOT the gate — the `orchestrateResumeEnabled` predicate is
+   * (mirrors the write surface). Absent predicate ⇒ deny.
    * Returns a content-free error-result on deny, `undefined` on allow.
    */
   function resumeSurfaceDeny(tool: "checkpoint" | "resume", lease: ToolInvokeLease): { error: string } | undefined {

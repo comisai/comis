@@ -38,7 +38,6 @@ import { withPromptTimeout, withResettablePromptTimeout, PromptTimeoutError } fr
 import { describeTimeoutKnob, describeRetryTimeoutKnob } from "./timeout-knob.js";
 import { normalizeModelId } from "../provider/model-id-normalize.js";
 import { classifyError } from "./error-classifier.js";
-import type { Result } from "@comis/shared";
 import type { ProviderDispatchGuard } from "./provider-dispatch.js";
 
 // ---------------------------------------------------------------------------

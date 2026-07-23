@@ -175,7 +175,11 @@ recovery.
 
 ## Dead-letter queue
 
-When an announcement delivery fails terminally — a permanent failure, or a
+This section describes the ordinary sub-agent announcement path. Promoted
+background-task continuations use the durable outbox described
+[below](#promoted-background-continuation-delivery).
+
+When an ordinary announcement delivery fails terminally — a permanent failure, or a
 transient one whose [retries are exhausted](#self-healing-delivery-retries)
 (for example, the channel stays unreachable) — the message is saved to a
 persistent dead-letter queue backed by a JSONL file at
@@ -195,8 +199,9 @@ and delivered once the provider recovers.
 
 ### Delivery idempotency
 
-Each sub-agent completion delivery is tagged with an idempotency key derived from
-the caller's session key and the sub-agent run ID. The delivery batcher tracks
+Each ordinary sub-agent completion announcement is tagged with an idempotency
+key derived from the caller's session key and the sub-agent run ID. The
+delivery batcher tracks
 keys whose delivery has already succeeded, so a completion that is enqueued twice
 within a process lifetime is delivered **once** — the second enqueue is a no-op.
 This prevents a fallback or retry from double-notifying the parent.
@@ -215,6 +220,27 @@ ends in error — a budget breach, watchdog timeout, ghost sweep, or degraded
 provider) shares the same delivered-key set, so it is idempotent on the same
 key. A node that ends in failure and is swept twice notifies the channel
 **once** — the second failure notification is a no-op.
+
+### Promoted background continuation delivery
+
+A task promoted into the background persists its origin and execution identity
+under [`background-tasks/`](/operations/data-directory#background-tasks). When
+the task finishes, Comis durably records the finalized result and continuation
+outbox before attempting exact-origin delivery. The originating live turn can
+consume that result once with `background_tasks.read_output`; otherwise the
+completion runner re-enters the same conversation for a continuation turn or
+delivers a bounded fallback notice.
+
+The persisted delivery lifecycle survives daemon restart. A delivery protected
+by the outward ledger retries only when the ledger proves the send was not
+attempted; a committed operation is accepted without another send. A permanent
+failure parks the record permanently, while an outcome that may have crossed
+the channel boundary parks it as uncertain for operator reconciliation rather
+than risking a duplicate. Without an outward ledger, an ambiguous failed send
+is likewise parked uncertain. The content-free
+`background_task:notified` and `background_task:reentered` events let
+`comis explain` distinguish live-turn consumption, continuation delivery,
+fallback delivery, retry, and either parked state.
 
 ```yaml
 security:

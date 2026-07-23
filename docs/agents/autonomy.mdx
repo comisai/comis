@@ -62,9 +62,9 @@ can **evict** an in-flight run back to `default` -- see
 `standard`'s capability set and attaches a not-yet-available notice (logged at
 boot). Comis **never silently grants** a capability whose
 enforcement floor is not yet built, so you are told rather than over-granted.
-(**Durable runs** are not one of the deferred surfaces -- they ship as an opt-in
-knob orthogonal to the profile; see [Durability & Resume](#durability-resume)
-below.)
+(**Durable runs** are not one of the deferred surfaces -- they are enabled by
+default and remain orthogonal to the profile; see
+[Durability & Resume](#durability-resume) below.)
 </Info>
 
 ### The `unattended` profile
@@ -292,21 +292,20 @@ original -- it gains no new privilege.
 
 ## Durability & Resume
 
-By default an in-flight autonomy run lives only in the daemon's memory: kill the
-daemon mid-pipeline and that run is gone. Turn on
+Durability is enabled by default for autonomy-bearing agents. A long-running
+run is **resumable across a daemon restart**, with durable duplicate suppression
+and explicit uncertainty parking for outward sends. Set
 [`autonomy.durability.enabled`](/reference/config-yaml#autonomy-agents-autonomy)
-(**off by default** -- a default install builds no durable stores and is
-byte-identical) and a long-running run becomes **resumable across a restart**,
-with durable duplicate suppression and explicit uncertainty parking for
-outward sends.
+to `false` only when you deliberately want in-flight runs to remain
+process-local.
 
-```yaml title="~/.comis/config.yaml -- make a cron-fired pipeline survive a restart"
+```yaml title="~/.comis/config.yaml -- opt out of durable autonomy runs"
 agents:
   default:
     autonomy:
       profile: standard
       durability:
-        enabled: true          # opt-in; off by default
+        enabled: false
 ```
 
 **What it gives you:**
@@ -334,12 +333,12 @@ agents:
   dead-letter queue uses the same retained operation identity and ledger. The typed
   [`comis_tools.message_send`/`reply`/`react`](/agent-tools/orchestrate#the-typed-mutation-surface-write-and-message)
   outward methods dispatch that same `message.*` path, so they ride the same
-  protection. **This protection is active only under durability.** With durability off
-  (the default), an outward send is a best-effort pass-through -- still delivered,
-  but without a retained operation record across a crash. Even with durability
-  enabled, Comis does not claim universal exactly-once delivery: an ambiguous
-  platform outcome requires operator verification before the operation can be
-  attempted again.
+  protection. **This protection is active only under durability.** With
+  durability off (an explicit opt-out), an outward send is a best-effort
+  pass-through -- still delivered, but without a retained operation record
+  across a crash. Even with durability enabled, Comis does not claim universal
+  exactly-once delivery: an ambiguous platform outcome requires operator
+  verification before the operation can be attempted again.
 - **A resumed run never broadens its authority.** On resume the lease is
   re-minted from the run's **persisted, already-attenuated** capabilities -- never
   re-attenuated from a live parent (which could be broader), and never a superset
@@ -353,15 +352,21 @@ agents:
   the same retained identity is short-circuited when committed and blocked when
   uncertain; it is not blindly replayed. (Intra-node LLM/tool state is not
   checkpointed -- resume is per node, not mid-node.)
+- **Plain sub-agents resume from a protected restart boundary.** The durable
+  checkpoint pins the child conversation, task declaration, model, budget,
+  workspace-policy hash, and attenuated capabilities. Recovery validates that
+  descriptor and then re-executes the declared task in the same child
+  conversation. It does not resume a half-finished provider turn.
 
 **The config knobs** (all under `autonomy.durability`):
 
 | Field | Default | What it does |
 |-------|---------|--------------|
-| `enabled` | `false` | Master switch. Off → no durable stores, no watchdog, byte-identical install. |
+| `enabled` | `true` | Master switch. Set `false` to disable durable stores, boot recovery, and the watchdog. |
 | `keepAliveMs` | `30000` | How often a live run stamps its heartbeat (independent of step/spawn completion, so a long child never looks stale). |
 | `staleHeartbeatMs` | `120000` | A run whose heartbeat is older than this is treated as crashed and orphan-swept. Default is 4× `keepAliveMs` -- the conservative ratio that keeps a transiently-slow run from being falsely failed (and its work duplicated). |
 | `recoveryBudgetMs` | `30000` | Wall-clock budget for one recovery pass. A backlog larger than the budget is partially recovered and the remainder deferred to the next pass -- no thundering herd on a large crash backlog. |
+| `orchestrateResume` | `true` | Preserve a timed-out `orchestrate` run's pinned script and last checkpoint so an explicit `orchestrate({resumeRunId})` can restart it from those verified artifacts. |
 
 <Note>
 **The uncertainty rule is channel-independent.** Comis does not treat a content
@@ -376,13 +381,12 @@ effect. This is deliberately narrower than exactly-once delivery.
 <Note>
 **Resume scope.** A resumed run is re-anchored under the bounded-autonomy
 meter (bounded, killable, and with uncertain outward rows parked across the
-restart) from its persisted checkpoint -- it is **not** re-entered into the agent
-loop from the exact step it was on. Resuming the model turn itself from a
-mid-run step needs a wider checkpoint and is a later enhancement; today's
-contract is "the run survives, stays bounded, suppresses a repeated retained
-operation, and stops for operator review on send ambiguity," not "the model
-picks up its half-finished thought" or "every platform side effect is exactly
-once."
+restart) from its persisted checkpoint. DAG work resumes at an incomplete node
+boundary, a plain sub-agent restarts its declared task from its validated
+descriptor, and `orchestrate` resumes only through an explicit
+`resumeRunId` against verified pinned artifacts. None of these resumes a
+half-finished provider turn or promises that every platform side effect occurs
+exactly once.
 </Note>
 
 ## Legible Boot Logging

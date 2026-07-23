@@ -199,12 +199,11 @@ export function buildAutonomyToolWiring(input: AutonomyToolInputs): AutonomyTool
   const resolved = degradeAutonomy(resolveAutonomy(input.agentConfig?.autonomy), {
     namespacePreflightOk: input.namespacePreflightOk ?? true,
   }).resolved;
-  // The resume surface gate (default-OFF, deny-by-absence): the durable-run store
-  // is forwarded into the runner ONLY when THIS agent has opted into resumable
-  // orchestrate runs. Reads the SAME config path as the capability endpoint's
-  // orchestrateResumeEnabled predicate (`=== true` so an absent/typo'd durability
-  // block resolves OFF) — so a store the composition root always threads under a
-  // durability-enabled boot goes live in the runner only for an opted-in agent.
+  // The resume surface gate is default-on after config parsing: the durable-run
+  // store is forwarded into the runner only when this agent's resolved config
+  // enables resumable orchestrate runs. Reads the same config path as the
+  // capability endpoint's orchestrateResumeEnabled predicate; strict equality
+  // keeps malformed/unparsed input fail-closed.
   const orchestrateResumeOn =
     input.agentConfig?.autonomy?.durability?.orchestrateResume === true;
   const handle = input.capEndpointHandle;

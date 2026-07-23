@@ -405,13 +405,11 @@ function buildToolInvokeExecutor(
       const agentCfg = Object.entries(deps.agents).find(([id]) => id === agentId)?.[1];
       return agentCfg?.autonomy?.write !== false;
     },
-    // The resume surface is disabled by default: checkpoint/
-    // resume reuse the orch:write/orch:read FLOOR caps, so the cap is NOT the gate —
-    // this predicate is (default-off `autonomy.durability.orchestrateResume`).
-    // Resolved PER agentId from THAT agent's nested durability toggle
-    // (prototype-safe own-entry lookup, EXACTLY mirroring writeSurfaceEnabled).
-    // Absent/false ⇒ the executor denies BOTH arms even though the lease holds the
-    // floor cap — deny-by-absence, fail-closed.
+    // The resume surface is enabled by the parsed default configuration.
+    // checkpoint/resume reuse the orch:write/orch:read FLOOR caps, so the cap is
+    // NOT the gate — this per-agent predicate is. The strict equality preserves a
+    // fail-closed boundary for malformed/unparsed input; explicit false denies
+    // BOTH arms even though the lease holds the floor cap.
     orchestrateResumeEnabled: (agentId): boolean => {
       const agentCfg = Object.entries(deps.agents).find(([id]) => id === agentId)?.[1];
       return agentCfg?.autonomy?.durability?.orchestrateResume === true;
@@ -462,8 +460,8 @@ function buildToolInvokeExecutor(
  * content-free `{seq, method, paramsDigest, resultDigest} → pointer` line per successful cap
  * dispatch, so a later deterministic replay has recorded results to serve
  * back. Recording is gated per-run on
- * `autonomy.durability.orchestrateResume` (default-off), so a wired-but-disabled
- * agent still records nothing.
+ * `autonomy.durability.orchestrateResume` (default-on after config parsing), so
+ * an explicitly disabled agent still records nothing.
  */
 function buildReplayRecorder(
   deps: CapabilityLayerDeps,
@@ -490,9 +488,10 @@ function buildReplayRecorder(
   };
 
   return createReplayRecorder({
-    // Default-OFF per-run gate: record ONLY when orchestrateResume is on for the
-    // lease's agent (prototype-safe own-entry lookup, EXACTLY mirroring the
-    // executor's orchestrateResumeEnabled predicate). Absent/false ⇒ a full no-op.
+    // Per-run gate: record only when orchestrateResume resolves on for the
+    // lease's agent (prototype-safe own-entry lookup, exactly mirroring the
+    // executor's orchestrateResumeEnabled predicate). Explicit false or malformed
+    // unparsed input ⇒ a full no-op.
     isEnabled: (agentId): boolean => {
       const agentCfg = Object.entries(deps.agents).find(([id]) => id === agentId)?.[1];
       if (agentCfg?.autonomy?.durability?.orchestrateResume !== true) return false;

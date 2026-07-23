@@ -391,9 +391,11 @@ reference; this page describes the concept.
 
 ## DAG context store (the default engine; in-session expansion tools)
 
-The DAG (LCD) context store preserves the full conversation history losslessly —
-every message, tool call, and tool result kept verbatim and paired by id. It backs
-the **default** lossless DAG engine (`contextEngine.version` defaults to `"dag"` — full details
+The DAG (LCD) context store preserves the full conversation structure and
+tool-call/result pairing after the mandatory secret-persistence projection. The
+[Data Directory reference](/operations/data-directory#lcd-store--durable-conversation-history)
+owns the durability and on-disk security contract. It backs the **default**
+lossless DAG engine (`contextEngine.version` defaults to `"dag"` — full details
 in [Context Management](/agents/context-management#dag-mode-the-default-engine)). In DAG mode
 the engine compresses old turns into a zoomable summary hierarchy, and three
 dedicated **in-session** expansion tools (`ctx_search`, `ctx_inspect`,
