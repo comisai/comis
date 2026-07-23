@@ -85,6 +85,28 @@ describe("scrubSecretsFromText", () => {
     expect(result.redactions).toBe(3);
   });
 
+  it("scrubs a confirmed username value from a natural-language approval", () => {
+    const username = "fleet-user-a";
+    const result = scrubSecretsFromText(
+      `I confirm storing SERVICE_USERNAME in the encrypted secret store. The confirmed value is ${username}. Store it now, then continue.`,
+    );
+
+    expect(result.text).not.toContain(username);
+    expect(result.text).toContain("[REDACTED]");
+    expect(result.redactions).toBe(1);
+  });
+
+  it("scrubs a password value from a final natural-language confirmation", () => {
+    const password = "test-secret-pass-747!";
+    const result = scrubSecretsFromText(
+      `Final confirmation: store SERVICE_PASSWORD in the encrypted secret store with the value ${password}, then continue.`,
+    );
+
+    expect(result.text).not.toContain(password);
+    expect(result.text).toContain("[REDACTED]");
+    expect(result.redactions).toBe(1);
+  });
+
   it("preserves environment references and existing redaction sentinels", () => {
     const input = "PASSWORD=${SERVICE_PASSWORD}\napi_key: [REDACTED]";
     expect(scrubSecretsFromText(input)).toEqual({ text: input, redactions: 0 });

@@ -101,6 +101,24 @@ describe("persistInboundMessageProvenance", () => {
     expect(message.text).toContain(password);
   });
 
+  it("redacts natural-language secret confirmations from durable inbound provenance", () => {
+    const password = "test-secret-pass-747!";
+    const message = {
+      ...first,
+      text: `Final confirmation: store SERVICE_PASSWORD in the encrypted secret store with the value ${password}, then continue.`,
+      attachments: [],
+      metadata: {},
+    } satisfies NormalizedMessage;
+
+    const planned = planInboundMessageProvenance(message, RECORDED_AT);
+
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(JSON.stringify(planned.value)).not.toContain(password);
+    expect(JSON.stringify(planned.value)).toContain("[REDACTED]");
+    expect(message.text).toContain(password);
+  });
+
   it("splits a large physical batch into complete markers below the offline reader record ceiling", () => {
     const appendCustomEntry = vi.fn()
       .mockImplementation(() => `entry-${appendCustomEntry.mock.calls.length}`);

@@ -262,6 +262,29 @@ describe("ingestTurn", () => {
     expect(databaseBytes.indexOf(Buffer.from("[REDACTED]"))).toBeGreaterThanOrEqual(0);
   });
 
+  it("keeps natural-language secret confirmations out of LCD base rows and FTS indexes", () => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const username = "fleet-user-a";
+    const password = "test-secret-pass-747!";
+    const turn: AgentMessage[] = [
+      userMsg(
+        `I confirm storing SERVICE_USERNAME in the encrypted secret store. The confirmed value is ${username}. Store it now.`,
+      ) as AgentMessage,
+      userMsg(
+        `Final confirmation: store SERVICE_PASSWORD in the encrypted secret store with the value ${password}, then continue.`,
+      ) as AgentMessage,
+    ];
+
+    ingestTurn(store, SCOPE, 0, turn, FIXED_NOW, createMockLogger());
+
+    const databaseBytes = db.serialize();
+    expect(databaseBytes.indexOf(Buffer.from(username))).toBe(-1);
+    expect(databaseBytes.indexOf(Buffer.from(password))).toBe(-1);
+    expect(databaseBytes.indexOf(Buffer.from("[REDACTED]"))).toBeGreaterThanOrEqual(0);
+  });
+
   it("tokenCount is computed agent-side via estimateMessageTokens; thinking tokens ARE counted", () => {
     const { store, appended } = makeRecordingStore();
     const logger = createMockLogger();

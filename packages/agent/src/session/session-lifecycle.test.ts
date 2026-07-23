@@ -505,6 +505,33 @@ describe("ComisSessionManager — abnormal-termination cleanup contract via with
     expect(result.ok).toBe(true);
   });
 
+  it("projects natural-language secret confirmations before the SDK flushes JSONL", async () => {
+    const { mgr, sessionKey, sessionPath, readFileSync } = await bootstrap("natural-language-pre-persist");
+    const username = "fleet-user-a";
+    const password = "test-secret-pass-747!";
+
+    const result = await mgr.withSession(sessionKey, async (sm: import("@earendil-works/pi-coding-agent").SessionManager) => {
+      sm.appendMessage({
+        role: "user",
+        content: `I confirm storing SERVICE_USERNAME in the encrypted secret store. The confirmed value is ${username}. Store it now.`,
+        timestamp: 1_789_000_000_001,
+      } as never);
+      sm.appendMessage({
+        role: "user",
+        content: `Final confirmation: store SERVICE_PASSWORD in the encrypted secret store with the value ${password}, then continue.`,
+        timestamp: 1_789_000_000_002,
+      } as never);
+
+      const duringCallback = readFileSync(sessionPath, "utf8");
+      expect(duringCallback).not.toContain(username);
+      expect(duringCallback).not.toContain(password);
+      expect(duringCallback).toContain("[REDACTED]");
+      return "ok";
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it("redacts gateway env_value parameter when the withSession callback throws (env_set secret-leak guard)", async () => {
     const { mgr, sessionKey, sessionPath, writeFile, readFileSync } = await bootstrap("env-set");
 
