@@ -2,7 +2,12 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { PerAgentCronConfigSchema, SchedulerConfigSchema } from "@comis/core";
+import { parse } from "yaml";
+import {
+  PerAgentCronConfigSchema,
+  PerAgentHeartbeatConfigSchema,
+  SchedulerConfigSchema,
+} from "@comis/core";
 
 const root = resolve(import.meta.dirname, "../..");
 const operationsDoc = readFileSync(resolve(root, "docs/operations/scheduler.mdx"), "utf8");
@@ -32,6 +37,33 @@ const taskDefaults = {
   maxPerDayPerConversation: "3",
   defaultWindowMs: "43200000",
   preAcceptanceRetryLimit: "3",
+} as const;
+
+const heartbeatDefaults = {
+  enabled: "true",
+  intervalMs: "300000",
+  showOk: "false",
+  showAlerts: "true",
+  alertThreshold: "2",
+  alertCooldownMs: "300000",
+  staleMs: "120000",
+} as const;
+
+const perAgentHeartbeatDefaults = {
+  enabled: "(unset)",
+  intervalMs: "(unset)",
+  showOk: "(unset)",
+  showAlerts: "(unset)",
+  target: "(unset)",
+  prompt: "(unset)",
+  allowDm: "(unset)",
+  lightContext: "(unset)",
+  ackMaxChars: "(unset)",
+  responsePrefix: "(unset)",
+  alertThreshold: "(unset)",
+  alertCooldownMs: "(unset)",
+  staleMs: "(unset)",
+  toolPolicy: "(unset)",
 } as const;
 
 function between(document: string, startMarker: string, endMarker: string): string {
@@ -109,6 +141,41 @@ describe("scheduler documentation configuration parity", () => {
     }
   });
 
+  it("documents the complete global and per-agent heartbeat surfaces", () => {
+    const scheduler = SchedulerConfigSchema.parse({});
+    const perAgentHeartbeat = PerAgentHeartbeatConfigSchema.parse({});
+    const globalHeartbeat = between(
+      configDoc,
+      "**Heartbeat (scheduler.heartbeat)**",
+      "**Quiet Hours (scheduler.quietHours)**",
+    );
+    const agentHeartbeat = between(
+      configDoc,
+      "**Heartbeat (agents.*.scheduler.heartbeat)**",
+      "```yaml",
+    );
+
+    expect(scheduler.heartbeat).toEqual({
+      enabled: true,
+      intervalMs: 300_000,
+      showOk: false,
+      showAlerts: true,
+      alertThreshold: 2,
+      alertCooldownMs: 300_000,
+      staleMs: 120_000,
+    });
+    expect(perAgentHeartbeat).toEqual({});
+    expectTableDefaults(globalHeartbeat, heartbeatDefaults);
+    expectTableDefaults(agentHeartbeat, perAgentHeartbeatDefaults);
+    expect(agentHeartbeat).toMatch(
+      /channelType.*channelInstanceId.*conversationId.*threadId.*conversationKind/isu,
+    );
+    expect(agentHeartbeat).not.toMatch(
+      /\| `(?:model|session|skipHeartbeatOnlyDelivery)`|channelId|chatId|isDm/iu,
+    );
+    expect(agentHeartbeat).toMatch(/additional restriction|cannot restore/iu);
+  });
+
   it("documents only the current execution ledger settings", () => {
     const operationsExecution = between(operationsDoc, "## Execution Ledger", "## Full Configuration Reference");
     const referenceExecution = between(
@@ -166,5 +233,18 @@ describe("scheduler documentation configuration parity", () => {
     }
     expect(fullConfiguration).not.toMatch(/storeDir|maxConcurrentRuns|maxConsecutiveErrors|lockDir|logDir|keepLines/iu);
     expect(concurrency).toContain("| `maxConcurrentRuns` | `number` | `4` |");
+  });
+
+  it("keeps executable system fixtures on the strict scheduler schema", () => {
+    for (const name of ["integrations", "manual", "crud", "api"]) {
+      const document = parse(readFileSync(
+        resolve(root, `test/config/config.test-system-${name}.yaml`),
+        "utf8",
+      )) as { scheduler?: unknown };
+      expect(
+        SchedulerConfigSchema.safeParse(document.scheduler),
+        `config.test-system-${name}.yaml scheduler`,
+      ).toMatchObject({ success: true });
+    }
   });
 });
