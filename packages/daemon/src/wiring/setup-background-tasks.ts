@@ -7,7 +7,7 @@
  */
 
 import { createBackgroundTaskManager, TASK_DIR_NAME, type BackgroundTaskManager } from "@comis/agent";
-import type { TypedEventBus, ClockPort, TimerPort } from "@comis/core";
+import type { TypedEventBus, ClockPort, TimerPort, BackgroundTasksConfig } from "@comis/core";
 import { safePath } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
@@ -19,6 +19,7 @@ export interface BackgroundTasksContext {
 /** Dependencies for background task system setup. */
 export interface SetupBackgroundTasksDeps {
   dataDir: string;
+  config: BackgroundTasksConfig;
   eventBus: TypedEventBus;
   logger: ComisLogger;
   /** Wall-clock + monotonic time reads. */
@@ -49,6 +50,9 @@ export function setupBackgroundTasks(deps: SetupBackgroundTasksDeps): Background
     logger: deps.logger,
     clock: deps.clock,
     timers: deps.timers,
+    maxPerAgent: deps.config.maxPerAgent,
+    maxTotal: deps.config.maxTotal,
+    maxBackgroundDurationMs: deps.config.maxBackgroundDurationMs,
   });
 
   // Startup recovery is deferred to daemon.ts (after the completion runner subscribes).

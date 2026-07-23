@@ -13,7 +13,15 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { sep } from "node:path";
-import { safePath, type ClockPort, type TimerPort, type TimerHandle } from "@comis/core";
+import {
+  BackgroundTasksConfigSchema,
+  createConversationRef,
+  safePath,
+  type BackgroundTaskOrigin,
+  type ClockPort,
+  type TimerPort,
+  type TimerHandle,
+} from "@comis/core";
 import { TASK_DIR_NAME } from "@comis/agent";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
@@ -50,6 +58,37 @@ function wrapTimerHandle(t: NodeJS.Timeout): TimerHandle {
 const testClock: ClockPort = {
   now: () => Date.now(),
   nowDate: () => new Date(),
+};
+
+const TEST_TURN_SCOPE = {
+  conversation: {
+    tenantId: "tenant-1",
+    agentId: "agent-1",
+    partition: { kind: "agent" as const },
+  },
+  principal: { principalId: "principal-1" },
+  endpoint: {
+    channelType: "echo",
+    channelInstanceId: "echo-main",
+    conversationId: "conversation-1",
+    conversationKind: "direct" as const,
+  },
+};
+
+const testConversationRef = createConversationRef(TEST_TURN_SCOPE.conversation);
+if (!testConversationRef.ok) throw testConversationRef.error;
+
+const TEST_ORIGIN: BackgroundTaskOrigin = {
+  turnScope: TEST_TURN_SCOPE,
+  conversationRef: testConversationRef.value,
+  deliveryOrigin: {
+    channelType: "echo",
+    channelId: "conversation-1",
+    userId: "principal-1",
+    tenantId: "tenant-1",
+  },
+  traceId: "trace-1",
+  backgroundHopCount: 0,
 };
 
 /**
@@ -101,6 +140,7 @@ function makeDeps(overrides: Partial<Parameters<typeof setupBackgroundTasks>[0]>
   const ownDataDir = overrides.dataDir === undefined;
   const deps: Parameters<typeof setupBackgroundTasks>[0] = {
     dataDir,
+    config: BackgroundTasksConfigSchema.parse({}),
     eventBus: createMockEventBus(),
     logger: createMockLogger(),
     clock: testClock,
@@ -174,6 +214,31 @@ describe("setupBackgroundTasks -- daemon wiring", () => {
     expect(intervalEntries).toHaveLength(1);
     expect(timeoutEntries).toHaveLength(0);
     expect(intervalEntries[0]!.delay).toBe(3_600_000);
+  });
+
+  it("uses the configured hard timeout for promoted background tasks", () => {
+    const fakeTimers = createFakeTimers();
+    const { deps, cleanup } = makeDeps({ timers: fakeTimers });
+    cleanups.push(cleanup);
+    const configuredDeps = {
+      ...deps,
+      config: BackgroundTasksConfigSchema.parse({
+        maxBackgroundDurationMs: 2_700_000,
+      }),
+    };
+
+    const { backgroundTaskManager } = setupBackgroundTasks(configuredDeps);
+    const promoted = backgroundTaskManager.promote(
+      "slow_tool",
+      new Promise(() => {}),
+      new AbortController(),
+      TEST_ORIGIN,
+    );
+
+    expect(promoted.ok).toBe(true);
+    const timeoutEntries = fakeTimers.unrefRecord().filter((entry) => entry.kind === "timeout");
+    expect(timeoutEntries).toHaveLength(1);
+    expect(timeoutEntries[0]!.delay).toBe(2_700_000);
   });
 
   it("shutdown handle cancels every scheduled timer via TimerHandle.cancel()", () => {
