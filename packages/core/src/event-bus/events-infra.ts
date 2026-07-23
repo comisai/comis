@@ -694,6 +694,7 @@ export interface InfraEvents {
     /** Closed-union: why the dispatcher took the fallback/suppress path. */
     reason:
       | "live_turn_consumed"
+      | "silent_consumed"
       | "continuation_accepted"
       | "fallback_accepted"
       | "retry_scheduled"

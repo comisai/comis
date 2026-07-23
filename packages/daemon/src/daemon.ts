@@ -2312,21 +2312,11 @@ async function bootChannels(boot: BootContext): Promise<void> {
         sessionKey: incident.sessionKey,
         sessionFile: sessionAdapter.getSessionPath(incident.projectedSessionKey),
         logger: daemonLogger,
-        confinedBaseDir: dataDir,
+        confinedBaseDir: container.config.dataDir || ".",
       },
       container.eventBus,
     );
     if (!recorder.ok) return err(recorder.error);
-    container.eventBus.emit("background_task:notified", {
-      agentId: incident.agentId,
-      taskId: incident.taskId,
-      toolName: incident.toolName,
-      sessionKey: incident.sessionKey,
-      notified: false,
-      reason: "recovery_retry_required",
-      traceId: incident.traceId,
-      timestamp: incident.timestamp,
-    });
     return ok(undefined);
   });
 

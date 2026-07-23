@@ -197,6 +197,7 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       }
       if (
         reason === "live_turn_consumed"
+        || reason === "silent_consumed"
         || reason === "continuation_accepted"
         || reason === "fallback_accepted"
         || reason === "permanent_parked"

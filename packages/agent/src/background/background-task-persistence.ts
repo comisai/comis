@@ -15,7 +15,6 @@
  */
 import {
   closeSync,
-  existsSync,
   fsyncSync,
   openSync,
   readFileSync,
@@ -26,13 +25,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { BackgroundTaskOriginSchema, safePath } from "@comis/core";
+import { safePath } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 import {
-  BackgroundContinuationOutboxSchema,
-  BackgroundFinalizedResultSchema,
+  PersistedTaskStateSchema,
   type BackgroundTask,
+  type BackgroundTaskOrigin,
   type PersistedTaskState,
 } from "./background-task-types.js";
 
@@ -73,6 +72,36 @@ export interface AtomicTaskPersistenceOps {
   close(fd: number): void;
   rename(from: string, to: string): void;
   unlink(path: string): void;
+}
+
+export interface TaskRecoveryOps {
+  readdir(path: string): string[];
+  stat(path: string): NonNullable<ReturnType<typeof statSync>>;
+  read(path: string): string;
+}
+
+export type TaskRecoveryFailureKind =
+  | "root_read"
+  | "agent_path"
+  | "agent_stat"
+  | "agent_read"
+  | "task_path"
+  | "task_read"
+  | "task_parse"
+  | "task_validation";
+
+export interface TaskRecoveryFailure {
+  readonly kind: TaskRecoveryFailureKind;
+  readonly identity?: {
+    readonly id: string;
+    readonly toolName: string;
+    readonly origin: BackgroundTaskOrigin;
+  };
+}
+
+export interface TaskRecoveryScan {
+  readonly tasks: PersistedTaskState[];
+  readonly failures: TaskRecoveryFailure[];
 }
 
 export type AtomicTaskPersistenceOutcome =
@@ -183,76 +212,87 @@ export function loadTask(dataDir: string, agentId: string, taskId: string): Pers
 /**
  * Recover all task records from disk without changing their lifecycle state.
  */
-export function recoverTasks(dataDir: string): PersistedTaskState[] {
-  const recovered: PersistedTaskState[] = [];
-  if (!existsSync(dataDir)) return recovered;
-
-  let agentDirs: string[];
-  try {
-    agentDirs = readdirSync(dataDir);
-  } catch {
-    return recovered;
+export function recoverTasks(
+  dataDir: string,
+  ops: TaskRecoveryOps = {
+    readdir: readdirSync,
+    stat: (path) => statSync(path),
+    read: (path) => readFileSync(path, "utf-8"),
+  },
+): TaskRecoveryScan {
+  const tasks: PersistedTaskState[] = [];
+  const failures: TaskRecoveryFailure[] = [];
+  const root = tryCatch(() => ops.readdir(dataDir));
+  if (!root.ok) {
+    const code = "code" in root.error ? root.error.code : undefined;
+    if (code !== "ENOENT") failures.push({ kind: "root_read" });
+    return { tasks, failures };
   }
 
-  for (const agentId of agentDirs) {
-    const agentDir = safePath(dataDir, agentId);
-    // Guard against non-directory entries in dataDir. statSync may throw if
-    // the entry vanished between readdirSync and here; skip gracefully.
-    // Non-directory entries (lock files, READMEs, accidental
-    // file-with-agentId-name) MUST be skipped explicitly so they don't
-    // shadow legitimate agent recovery silently.
-    let dirStat: ReturnType<typeof statSync>;
-    try {
-      dirStat = statSync(agentDir);
-    } catch {
+  for (const agentId of root.value) {
+    const resolvedAgentDir = tryCatch(() => safePath(dataDir, agentId));
+    if (!resolvedAgentDir.ok) {
+      failures.push({ kind: "agent_path" });
       continue;
     }
-    if (!dirStat.isDirectory()) continue;
-
-    let files: string[];
-    try {
-      files = readdirSync(agentDir);
-    } catch {
+    const agentDir = resolvedAgentDir.value;
+    const dirStat = tryCatch(() => ops.stat(agentDir));
+    if (!dirStat.ok) {
+      failures.push({ kind: "agent_stat" });
+      continue;
+    }
+    if (!dirStat.value.isDirectory()) continue;
+    const files = tryCatch(() => ops.readdir(agentDir));
+    if (!files.ok) {
+      failures.push({ kind: "agent_read" });
       continue;
     }
 
-    for (const file of files) {
+    for (const file of files.value) {
       if (!file.endsWith(".json")) continue;
-      const filePath = safePath(agentDir, file);
-      try {
-        const raw = readFileSync(filePath, "utf-8");
-        const parsed = JSON.parse(raw) as Partial<PersistedTaskState>;
-        // Shape guard — skip completely malformed files. Tasks always carry
-        // id + toolName + origin; the producer-side persistTaskSync writes
-        // all three unconditionally. A file failing this guard is either
-        // truncated mid-write or a stale artifact operators should clean
-        // up manually.
-        if (
-          !parsed.id
-          || !parsed.toolName
-          || !parsed.continuationExecutionId
-          || !Number.isInteger(parsed.dispatchAttempts)
-          || !BackgroundTaskOriginSchema.safeParse(parsed.origin).success
-          || (
-            parsed.continuationOutbox !== undefined
-            && !BackgroundContinuationOutboxSchema.safeParse(parsed.continuationOutbox).success
-          )
-          || (
-            parsed.finalizedResult !== undefined
-            && !BackgroundFinalizedResultSchema.safeParse(parsed.finalizedResult).success
-          )
-        ) {
-          continue;
-        }
-        const task = parsed as PersistedTaskState;
-        recovered.push(task);
-      } catch {
-        // Skip unparseable files
+      const resolvedFile = tryCatch(() => safePath(agentDir, file));
+      if (!resolvedFile.ok) {
+        failures.push({ kind: "task_path" });
+        continue;
       }
+      const raw = tryCatch(() => ops.read(resolvedFile.value));
+      if (!raw.ok) {
+        failures.push({ kind: "task_read" });
+        continue;
+      }
+      const decoded = tryCatch(() => JSON.parse(raw.value) as unknown);
+      if (!decoded.ok) {
+        failures.push({ kind: "task_parse" });
+        continue;
+      }
+      const parsed = PersistedTaskStateSchema.safeParse(decoded.value);
+      if (!parsed.success) {
+        const candidate = decoded.value as Record<string, unknown>;
+        const identity = typeof candidate.id === "string"
+          && candidate.id.length <= 512
+          && typeof candidate.toolName === "string"
+          && candidate.toolName.length <= 256
+          ? PersistedTaskStateSchema.shape.origin.safeParse(candidate.origin)
+          : undefined;
+        failures.push({
+          kind: "task_validation",
+          ...(identity?.success
+            ? {
+                identity: {
+                  id: candidate.id as string,
+                  toolName: candidate.toolName as string,
+                  origin: identity.data,
+                },
+              }
+            : {}),
+        });
+        continue;
+      }
+      tasks.push(parsed.data);
     }
   }
 
-  return recovered;
+  return { tasks, failures };
 }
 
 /**

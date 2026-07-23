@@ -21,6 +21,7 @@ import {
   type ExecutionResult,
 } from "@comis/agent";
 import { randomUUID } from "node:crypto";
+import type { Result } from "@comis/shared";
 import type { GitExec } from "@comis/skills/tools";
 import type { WorktreeRegistry } from "../setup-worktree-sweep.js";
 import { resolveGraphCacheRetention } from "./graph-cache-retention.js";

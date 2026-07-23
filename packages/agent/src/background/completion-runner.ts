@@ -112,13 +112,6 @@ export interface BackgroundCompletionRunnerDeps {
   logger: ComisLogger;
 }
 
-/**
- * Rebuild the request authority for a persisted completion without consulting
- * ambient AsyncLocalStorage. A completion can resume after the originating
- * request ended or while an unrelated request is active, so persisted routing
- * identity is the only valid source and the resumed turn always starts as a
- * guest.
- */
 function createReentryContext(
   origin: BackgroundTaskOrigin,
   parsedKey: SessionKey,
@@ -161,6 +154,7 @@ export function createBackgroundCompletionRunner(
       | "live_turn_consumed"
       | "continuation_accepted"
       | "fallback_accepted"
+      | "silent_consumed"
       | "retry_scheduled"
       | "permanent_parked"
       | "uncertain_parked",
@@ -235,7 +229,6 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    // Terminal and parked states never execute or deliver again automatically.
     if (
       task.dispatchState === "delivered"
       || task.dispatchState === "parked_permanent"
@@ -246,8 +239,6 @@ export function createBackgroundCompletionRunner(
         {
           taskId,
           dispatchState: task.dispatchState,
-          // Include originating traceId so operator log streams stay
-          // continuous across the dispatcher / runner boundary.
           traceId: task.origin?.traceId ?? undefined,
           hint: "Dispatcher already fired fallback notification (at-most-once)",
         },
@@ -295,12 +286,19 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    // origin is producer-required (background-task-manager promote()
-    // rejects missing-origin) so we read it directly.
     const origin = task.origin;
     const agentId = origin.turnScope.conversation.agentId;
     if (task.notificationPolicy === "silent") {
-      commitState(taskId, "delivered", ["execution_claimed"]);
+      const delivered = commitState(taskId, "delivered", ["execution_claimed"]);
+      if (!delivered.ok) {
+        recovery.scheduleStateRecovery(
+          taskId,
+          origin,
+          task.toolName,
+          "delivered",
+          ["execution_claimed"],
+        );
+      }
       return;
     }
     if (task.notificationPolicy === "immediate") {
@@ -326,8 +324,6 @@ export function createBackgroundCompletionRunner(
     const parsedKey = projectedSession.value;
     const formattedSessionKey = formatSessionKey(parsedKey);
 
-    // Hop cap. Read incoming hop count from origin (schema field populated
-    // by the originResolver).
     const nextHopCount = (origin.backgroundHopCount ?? 0) + 1;
     if (nextHopCount >= deps.maxBackgroundHops) {
       log.info(
@@ -337,7 +333,6 @@ export function createBackgroundCompletionRunner(
           agentId,
           hopCount: nextHopCount,
           max: deps.maxBackgroundHops,
-          // traceId from origin keeps operator logs threaded.
           traceId: origin.traceId ?? undefined,
         },
         "Background completion: hop cap reached, falling back to user notification",
@@ -351,15 +346,18 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
-    // LIVE-TURN skip (when wired): the origin turn is STILL EXECUTING and owns
-    // consumption through one blocking background_tasks read_output call — a
-    // re-entry turn would only serialize a redundant continuation behind the
-    // live turn. The dispatcher's matching check already suppressed the
-    // fallback notice; the result stays readable if the live turn raced past it.
     if (deps.isTurnInFlight?.(formattedSessionKey) === true) {
       const consumed = commitState(taskId, "consumed_live", ["execution_claimed"]);
       if (consumed.ok && consumed.value) {
         emitRoutingOutcome(taskId, origin, task.toolName, false, "live_turn_consumed");
+      } else if (!consumed.ok) {
+        recovery.scheduleStateRecovery(
+          taskId,
+          origin,
+          task.toolName,
+          "consumed_live",
+          ["execution_claimed"],
+        );
       }
       log.debug(
         {

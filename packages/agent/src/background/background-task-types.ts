@@ -5,11 +5,12 @@
  * @module
  */
 
-import type { BackgroundTaskOrigin, TimerHandle } from "@comis/core";
+import { BackgroundTaskOriginSchema, type BackgroundTaskOrigin, type TimerHandle } from "@comis/core";
 import { z } from "zod";
 export type { BackgroundTaskOrigin };
 
-export type BackgroundTaskStatus = "running" | "completed" | "failed" | "cancelled";
+export const BackgroundTaskStatusSchema = z.enum(["running", "completed", "failed", "cancelled"]);
+export type BackgroundTaskStatus = z.infer<typeof BackgroundTaskStatusSchema>;
 
 /**
  * Notification policy for a background task. Typed enum (NOT a boolean):
@@ -29,21 +30,24 @@ export type BackgroundTaskStatus = "running" | "completed" | "failed" | "cancell
  *
  * Default for new promote() calls: "deferred".
  */
-export type BackgroundTaskNotificationPolicy = "deferred" | "immediate" | "silent";
+export const BackgroundTaskNotificationPolicySchema = z.enum(["deferred", "immediate", "silent"]);
+export type BackgroundTaskNotificationPolicy = z.infer<typeof BackgroundTaskNotificationPolicySchema>;
 
 /** Durable execution, outbox delivery, and reconciliation lifecycle. */
-export type BackgroundSessionState =
-  | "pending"
-  | "execution_claimed"
-  | "executing"
-  | "cleanup_pending"
-  | "ready_to_deliver"
-  | "pre_send"
-  | "delivering"
-  | "delivered"
-  | "parked_permanent"
-  | "parked_uncertain"
-  | "consumed_live";
+export const BackgroundSessionStateSchema = z.enum([
+  "pending",
+  "execution_claimed",
+  "executing",
+  "cleanup_pending",
+  "ready_to_deliver",
+  "pre_send",
+  "delivering",
+  "delivered",
+  "parked_permanent",
+  "parked_uncertain",
+  "consumed_live",
+]);
+export type BackgroundSessionState = z.infer<typeof BackgroundSessionStateSchema>;
 
 export const BackgroundContinuationOutboxSchema = z.strictObject({
   kind: z.enum(["continuation", "fallback"]),
@@ -62,6 +66,23 @@ export const BackgroundFinalizedResultSchema = z.strictObject({
 });
 
 export type BackgroundFinalizedResult = z.infer<typeof BackgroundFinalizedResultSchema>;
+
+export const PersistedTaskStateSchema = z.strictObject({
+  id: z.string().min(1).max(512),
+  toolName: z.string().min(1).max(256),
+  status: BackgroundTaskStatusSchema,
+  startedAt: z.number().finite(),
+  completedAt: z.number().finite().optional(),
+  result: z.string().max(102_400).optional(),
+  error: z.string().max(102_400).optional(),
+  origin: BackgroundTaskOriginSchema,
+  notificationPolicy: BackgroundTaskNotificationPolicySchema.optional(),
+  dispatchState: BackgroundSessionStateSchema.optional(),
+  continuationExecutionId: z.string().min(1).max(512),
+  dispatchAttempts: z.number().int().nonnegative(),
+  continuationOutbox: BackgroundContinuationOutboxSchema.optional(),
+  finalizedResult: BackgroundFinalizedResultSchema.optional(),
+});
 
 export interface BackgroundTask {
   id: string;
@@ -123,4 +144,12 @@ export interface PersistedTaskState {
   dispatchAttempts: number;
   continuationOutbox?: BackgroundContinuationOutbox;
   finalizedResult?: BackgroundFinalizedResult;
+}
+
+export function isClosedBackgroundTask(task: Pick<BackgroundTask, "status" | "dispatchState">): boolean {
+  return task.status === "cancelled"
+    || task.dispatchState === "delivered"
+    || task.dispatchState === "parked_permanent"
+    || task.dispatchState === "parked_uncertain"
+    || task.dispatchState === "consumed_live";
 }

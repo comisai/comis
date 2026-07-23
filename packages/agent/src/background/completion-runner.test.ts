@@ -227,6 +227,70 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
+  it("retries a failed live-turn consumption commit without re-entry", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    commitDispatchState.mockImplementation((_taskId, next, expected) => {
+      const current = task.dispatchState ?? "pending";
+      if (expected && !expected.includes(current)) return ok(false);
+      if (next === "consumed_live") return err(new Error("storage unavailable"));
+      task.dispatchState = next;
+      return ok(true);
+    });
+    const runner = build(3, () => true);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(taskManager.scheduleStateRetry).toHaveBeenCalledWith(
+      task.id,
+      "consumed_live",
+      ["execution_claimed"],
+    );
+    expect(taskManager.recordRecoveryIncident).toHaveBeenCalledWith(task.id);
+    expect(executor.execute).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
+  it("retries a failed silent terminal commit without continuation execution", async () => {
+    const task = buildTask({ result: "ok", notificationPolicy: "silent" });
+    taskManager.getTask.mockReturnValue(task);
+    commitDispatchState.mockImplementation((_taskId, next, expected) => {
+      const current = task.dispatchState ?? "pending";
+      if (expected && !expected.includes(current)) return ok(false);
+      if (next === "delivered") return err(new Error("storage unavailable"));
+      task.dispatchState = next;
+      return ok(true);
+    });
+    const runner = build();
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(taskManager.scheduleStateRetry).toHaveBeenCalledWith(
+      task.id,
+      "delivered",
+      ["execution_claimed"],
+    );
+    expect(taskManager.recordRecoveryIncident).toHaveBeenCalledWith(task.id);
+    expect(executor.execute).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
   it("retries a completion claim after acknowledged storage failure", async () => {
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);

@@ -17,7 +17,9 @@ import {
   recoverTasks,
   removeTaskFile,
   type AtomicTaskPersistenceOps,
+  type TaskRecoveryOps,
 } from "./background-task-persistence.js";
+import { createBackgroundTaskRecoveryController } from "./background-task-recovery-controller.js";
 import type {
   BackgroundTask,
   BackgroundContinuationOutbox,
@@ -29,6 +31,7 @@ import type {
 import {
   BackgroundContinuationOutboxSchema,
   BackgroundFinalizedResultSchema,
+  isClosedBackgroundTask,
 } from "./background-task-types.js";
 
 /** Notification callback fired when background task completes or fails. */
@@ -55,6 +58,7 @@ export interface BackgroundTaskManagerOpts {
   maxTotal?: number;
   maxBackgroundDurationMs?: number;
   persistenceOps?: AtomicTaskPersistenceOps;
+  recoveryOps?: TaskRecoveryOps;
 }
 
 export interface BackgroundTaskManager {
@@ -69,12 +73,6 @@ export interface BackgroundTaskManager {
   fail(taskId: string, error: unknown): Result<void, Error>;
   cancel(taskId: string): Result<void, Error>;
   getTask(taskId: string): BackgroundTask | undefined;
-  /**
-   * Wait for a live promoted task and return its terminal state.
-   * `onWaiting` is a content-free liveness heartbeat for the active tool call;
-   * callers use it to keep prompt stall detection distinct from a healthy,
-   * long-running task wait.
-   */
   waitForTask(
     taskId: string,
     onWaiting?: () => void,
@@ -106,7 +104,7 @@ export interface BackgroundTaskManager {
     result: BackgroundFinalizedResult,
     expected?: readonly BackgroundSessionState[],
   ): Result<void, Error>;
-  recordRecoveryIncident(taskId: string): Result<void, Error>;
+  recordRecoveryIncident(taskId: string): void;
   scheduleDispatchRetry(taskId: string): void;
   scheduleStateRetry(
     taskId: string,
@@ -138,6 +136,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     maxTotal = 20,
     maxBackgroundDurationMs = 300_000,
     persistenceOps,
+    recoveryOps,
   } = opts;
 
   const tasks = new Map<string, BackgroundTask>();
@@ -147,9 +146,12 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
   const stateRetryTimers = new Map<string, TimerHandle>();
   const perAgentCount = new Map<string, number>();
   let totalCount = 0;
-  let recoveryIncidentRecorder:
-    ((input: BackgroundRecoveryIncidentInput) => Result<void, Error>)
-    | undefined;
+  const recoveryController = createBackgroundTaskRecoveryController({
+    eventBus,
+    logger,
+    clock,
+    timers,
+  });
 
   function reportPersistenceOutcome(
     task: BackgroundTask,
@@ -262,7 +264,6 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
 
   const manager: BackgroundTaskManager = {
     promote(toolName, promise, ac, origin, notificationPolicy) {
-      // Reject calls with missing/invalid origin (no silent fallback).
       const parsedOrigin = BackgroundTaskOriginSchema.safeParse(origin);
       if (!parsedOrigin.success) {
         return err(new Error("BackgroundTaskOrigin requires valid structured turn authority"));
@@ -284,9 +285,6 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         status: "running",
         startedAt: clock.now(),
         origin: acceptedOrigin,
-        // Seed the dispatch state machine. Default policy is "deferred" —
-        // the dispatcher inspects dispatchState before firing fallback notify
-        // (at-most-once).
         notificationPolicy: notificationPolicy ?? "deferred",
         dispatchState: "pending",
         continuationExecutionId: taskId,
@@ -330,7 +328,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           manager.fail(taskId, new Error("Hard timeout exceeded"));
         }
       }, maxBackgroundDurationMs);
-      timer.unref();   // TimerHandle exposes .unref() by contract.
+      timer.unref();
       task._hardTimeoutTimer = timer;
 
       tasks.set(taskId, task);
@@ -493,16 +491,12 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     },
 
     recoverOnStartup(recordIncident) {
-      recoveryIncidentRecorder = recordIncident;
-      const recovered = recoverTasks(dataDir);
+      recoveryController.setRecorder(recordIncident);
+      const recovered = recoverTasks(dataDir, recoveryOps);
       let count = 0;
       let dispatchPreserved = 0;
-      for (const persisted of recovered) {
-        // The persistence-write contract guarantees populated origin /
-        // notificationPolicy / dispatchState on every task file.
-        // background-task-persistence.ts rejects shape-malformed files
-        // (missing id / toolName) before they reach here; we propagate the
-        // persisted record as-is.
+      for (const persisted of recovered.tasks) {
+        if (tasks.has(persisted.id)) continue;
         const task: BackgroundTask = persisted as BackgroundTask;
         task.continuationExecutionId = persisted.continuationExecutionId;
         if (persisted.status === "running") {
@@ -514,9 +508,14 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           };
           const committed = persistTaskAtomically(dataDir, terminal, persistenceOps);
           if (!committed.ok) {
+            task._pendingTerminal = {
+              status: "failed",
+              completedAt: terminal.completedAt,
+              error: terminal.error,
+            };
             tasks.set(task.id, task);
-            const incident = buildRecoveryIncident(task);
-            if (incident.ok) recordIncident(incident.value);
+            scheduleTerminalRetry(task.id);
+            recoveryController.recordTask(task);
             logger.warn(
               {
                 taskId: task.id,
@@ -575,16 +574,15 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           "Recovered tasks with preserved dispatch state (no re-emit)",
         );
       }
+      recoveryController.reportScanFailures(
+        recovered.failures,
+        () => manager.recoverOnStartup(recordIncident),
+      );
     },
 
     recordRecoveryIncident(taskId) {
       const task = tasks.get(taskId);
-      if (!task) return err(new Error(`Background task not found: ${taskId}`));
-      if (!recoveryIncidentRecorder) {
-        return err(new Error("Background recovery incident recorder is not configured"));
-      }
-      const incident = buildRecoveryIncident(task);
-      return incident.ok ? recoveryIncidentRecorder(incident.value) : incident;
+      if (task) recoveryController.recordTask(task);
     },
 
     commitDispatchState(taskId, next, expected) {
@@ -749,6 +747,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
             next !== "delivered"
             && next !== "parked_permanent"
             && next !== "parked_uncertain"
+            && next !== "consumed_live"
           )
         ) return;
         const incident = buildRecoveryIncident(task);
@@ -758,14 +757,18 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           taskId,
           toolName: task.toolName,
           sessionKey: incident.value.sessionKey,
-          notified: next === "delivered",
+          notified: next === "delivered" && task.notificationPolicy !== "silent",
           reason: next === "delivered"
-            ? task.continuationOutbox?.kind === "fallback"
-              ? "fallback_accepted"
-              : "continuation_accepted"
-            : next === "parked_permanent"
-              ? "permanent_parked"
-              : "uncertain_parked",
+            ? task.notificationPolicy === "silent"
+              ? "silent_consumed"
+              : task.continuationOutbox?.kind === "fallback"
+                ? "fallback_accepted"
+                : "continuation_accepted"
+            : next === "consumed_live"
+              ? "live_turn_consumed"
+              : next === "parked_permanent"
+                ? "permanent_parked"
+                : "uncertain_parked",
           traceId: incident.value.traceId,
           timestamp: clock.now(),
         });
@@ -777,7 +780,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     cleanup(maxAgeMs = 86_400_000) {
       const cutoff = clock.now() - maxAgeMs;
       for (const [taskId, task] of tasks) {
-        if (task.status !== "running" && (task.completedAt ?? task.startedAt) < cutoff) {
+        if (isClosedBackgroundTask(task) && (task.completedAt ?? task.startedAt) < cutoff) {
           tasks.delete(taskId);
           terminalSignals.delete(taskId);
           dispatchRetryTimers.get(taskId)?.cancel();

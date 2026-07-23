@@ -773,8 +773,8 @@ describe("assembleIncidentReportFromSources", () => {
         data: {
           taskId: "task-recovery-a",
           toolName: "report",
-          notified: true,
-          reason: "continuation_accepted",
+          notified: false,
+          reason: "silent_consumed",
         },
       },
     ];

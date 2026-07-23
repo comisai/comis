@@ -54,6 +54,13 @@ export async function processFailurePath(
   // When all models fail with a context overflow error, attempt to reduce
   // context via truncation and emergency compaction, then retry.
   if (promptError && isContextOverflowError(promptError)) {
+    const guardProviderDispatch = resolveProviderDispatchGuard(
+      params.executionOverrides?.onProviderStart,
+    );
+    const initialAdmission = guardProviderDispatch();
+    if (!initialAdmission.ok) {
+      return { promptSucceeded: false, promptError: initialAdmission.error, ghostCost };
+    }
     const { wrapper: recoveryWrapper, getResult: getRecoveryResult } =
       createOverflowRecoveryWrapper(
         { maxContextChars: config.maxContextChars },
@@ -64,13 +71,11 @@ export async function processFailurePath(
     const originalStreamFn = session.agent.streamFn;
     session.agent.streamFn = recoveryWrapper(originalStreamFn);
 
-    const admitted = resolveProviderDispatchGuard(
-      params.executionOverrides?.onProviderStart,
-    )();
-    if (!admitted.ok) {
-      return { promptSucceeded: false, promptError: admitted.error, ghostCost };
-    }
     try {
+      const admitted = guardProviderDispatch();
+      if (!admitted.ok) {
+        return { promptSucceeded: false, promptError: admitted.error, ghostCost };
+      }
       await withPromptTimeout(
         session.prompt(messageText, {
           expandPromptTemplates: false,

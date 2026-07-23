@@ -7,6 +7,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   statSync,
@@ -196,14 +197,14 @@ describe("background-task-persistence", () => {
       persistTaskSync(dataDir, completed);
 
       const recovered = recoverTasks(dataDir);
-      expect(recovered).toHaveLength(2);
+      expect(recovered.tasks).toHaveLength(2);
 
-      const t1 = recovered.find((t) => t.id === "t1");
+      const t1 = recovered.tasks.find((t) => t.id === "t1");
       expect(t1?.status).toBe("running");
       expect(t1?.error).toBeUndefined();
       expect(t1?.completedAt).toBeUndefined();
 
-      const t2 = recovered.find((t) => t.id === "t2");
+      const t2 = recovered.tasks.find((t) => t.id === "t2");
       expect(t2?.status).toBe("completed");
     });
 
@@ -228,13 +229,47 @@ describe("background-task-persistence", () => {
       });
 
       const recovered = recoverTasks(dataDir);
-      expect(recovered).toHaveLength(2);
-      expect(recovered.every((t) => t.status === "running")).toBe(true);
+      expect(recovered.tasks).toHaveLength(2);
+      expect(recovered.tasks.every((t) => t.status === "running")).toBe(true);
     });
 
-    it("returns empty array for nonexistent dataDir", () => {
+    it("returns an empty scan for a nonexistent dataDir", () => {
       const recovered = recoverTasks(`/tmp/nonexistent-${randomUUID()}`);
-      expect(recovered).toEqual([]);
+      expect(recovered).toEqual({ tasks: [], failures: [] });
+    });
+
+    it("returns a closed read failure and recovers on the next scan", () => {
+      persistTaskSync(dataDir, {
+        id: "transient-read",
+        toolName: "exec",
+        status: "completed",
+        startedAt: 1,
+        completedAt: 2,
+        origin: buildOrigin({ agentId: "a1" }),
+        continuationExecutionId: "transient-read",
+        dispatchAttempts: 0,
+        dispatchState: "delivered",
+      });
+      let failRead = true;
+      const ops = {
+        readdir: readdirSync,
+        stat: statSync,
+        read: (path: string) => {
+          if (failRead) {
+            failRead = false;
+            throw new Error("injected read failure");
+          }
+          return readFileSync(path, "utf-8");
+        },
+      };
+
+      expect(recoverTasks(dataDir, ops)).toEqual({
+        tasks: [],
+        failures: [{ kind: "task_read" }],
+      });
+      expect(recoverTasks(dataDir, ops).tasks).toEqual([
+        expect.objectContaining({ id: "transient-read" }),
+      ]);
     });
 
     it("preserves recovery status on disk for the manager owner", () => {
@@ -254,7 +289,7 @@ describe("background-task-persistence", () => {
       expect(onDisk.status).toBe("running");
     });
 
-    it("skips files missing id or toolName (sanity guard)", () => {
+    it("reports files missing durable task identity", () => {
       // Write a completely malformed file (no id or toolName)
       const agentDir = safePath(dataDir, "bad-agent");
       mkdirSync(agentDir, { recursive: true });
@@ -262,11 +297,11 @@ describe("background-task-persistence", () => {
       writeFileSync(filePath, JSON.stringify({ status: "running", startedAt: 1000 }, null, 2), "utf-8");
 
       const recovered = recoverTasks(dataDir);
-      // Malformed file is skipped
-      expect(recovered.find((t) => t.id === undefined)).toBeUndefined();
+      expect(recovered.tasks).toEqual([]);
+      expect(recovered.failures).toEqual([{ kind: "task_validation" }]);
     });
 
-    it("skips persisted tasks whose origin lacks canonical turn authority", () => {
+    it("reports tasks whose origin lacks canonical turn authority", () => {
       const agentDir = safePath(dataDir, "default");
       mkdirSync(agentDir, { recursive: true });
       const filePath = safePath(agentDir, "stale-origin.json");
@@ -286,7 +321,10 @@ describe("background-task-persistence", () => {
         },
       }, null, 2), "utf-8");
 
-      expect(recoverTasks(dataDir)).toEqual([]);
+      expect(recoverTasks(dataDir)).toEqual({
+        tasks: [],
+        failures: [{ kind: "task_validation" }],
+      });
     });
 
     it("skips non-directory entries in dataDir without losing legitimate agent tasks", () => {
@@ -312,9 +350,9 @@ describe("background-task-persistence", () => {
 
       // Recovery must return the legitimate task.
       const recovered = recoverTasks(dataDir);
-      expect(recovered).toHaveLength(1);
-      expect(recovered[0]!.id).toBe("wr-04-task");
-      expect(recovered[0]!.origin.turnScope.conversation.agentId).toBe("real-agent");
+      expect(recovered.tasks).toHaveLength(1);
+      expect(recovered.tasks[0]!.id).toBe("wr-04-task");
+      expect(recovered.tasks[0]!.origin.turnScope.conversation.agentId).toBe("real-agent");
 
       // The stale file is untouched.
       expect(existsSync(stalePath)).toBe(true);
@@ -327,7 +365,7 @@ describe("background-task-persistence", () => {
       writeFileSync(safePath(dataDir, "lock2"), "y", "utf-8");
 
       const recovered = recoverTasks(dataDir);
-      expect(recovered).toEqual([]);
+      expect(recovered).toEqual({ tasks: [], failures: [] });
     });
   });
 

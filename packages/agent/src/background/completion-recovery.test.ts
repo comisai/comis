@@ -49,6 +49,7 @@ describe("createCompletionRecovery", () => {
       "finishCleanup",
       "reconcileDeliveryClaim",
       "recoverClaimedTask",
+      "scheduleStateRecovery",
     ]);
   });
 

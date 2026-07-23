@@ -588,4 +588,41 @@ describe("processFailurePath — knob-named timeout diagnostics", () => {
     expect(warnCall![0].hint).toBe("All models failed (primary + fallbacks)");
     expect(result.finishReason).toBe("error");
   });
+
+  it("restores overflow recovery mutation when terminal admission changes before dispatch", async () => {
+    const { params } = makeFailureParams("c-overflow-terminal");
+    const originalStreamFn = vi.fn();
+    const prompt = vi.fn();
+    let admissionChecks = 0;
+    const denial = new Error("execution terminalized");
+    (params.session as unknown as {
+      agent: { streamFn: unknown };
+      prompt: ReturnType<typeof vi.fn>;
+    }).agent.streamFn = originalStreamFn;
+    (params.session as unknown as {
+      agent: { streamFn: unknown };
+      prompt: ReturnType<typeof vi.fn>;
+    }).prompt = prompt;
+    params.executionOverrides = {
+      onProviderStart: () => {
+        admissionChecks += 1;
+        return admissionChecks === 1 ? ok(undefined) : err(denial);
+      },
+    };
+
+    const outcome = await processFailurePath(
+      params,
+      "hello",
+      undefined,
+      new Error("context length exceeded"),
+    );
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect((params.session as unknown as { agent: { streamFn: unknown } }).agent.streamFn)
+      .toBe(originalStreamFn);
+    expect(outcome).toMatchObject({
+      promptSucceeded: false,
+      promptError: denial,
+    });
+  });
 });

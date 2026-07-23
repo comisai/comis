@@ -55,6 +55,7 @@ interface CompletionRecoveryDeps {
     reason:
       | "continuation_accepted"
       | "fallback_accepted"
+      | "silent_consumed"
       | "retry_scheduled"
       | "permanent_parked"
       | "uncertain_parked",
@@ -74,6 +75,18 @@ export function createCompletionRecovery(deps: CompletionRecoveryDeps) {
   ): void {
     deps.taskManager.recordRecoveryIncident(taskId);
     deps.taskManager.scheduleDispatchRetry(taskId);
+    deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+  }
+
+  function scheduleStateRecovery(
+    taskId: string,
+    origin: BackgroundTaskOrigin,
+    toolName: string,
+    next: BackgroundSessionState,
+    expected: readonly BackgroundSessionState[],
+  ): void {
+    deps.taskManager.scheduleStateRetry(taskId, next, expected);
+    deps.taskManager.recordRecoveryIncident(taskId);
     deps.emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
   }
 
@@ -281,5 +294,5 @@ export function createCompletionRecovery(deps: CompletionRecoveryDeps) {
     }
   }
 
-  return { finishCleanup, recoverClaimedTask, reconcileDeliveryClaim };
+  return { finishCleanup, recoverClaimedTask, reconcileDeliveryClaim, scheduleStateRecovery };
 }
