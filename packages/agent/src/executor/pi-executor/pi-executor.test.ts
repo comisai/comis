@@ -16,6 +16,7 @@ import {
   formatSessionKey,
   hashWorkspacePolicyContent,
   INBOUND_MESSAGE_PROVENANCE_CUSTOM_TYPE,
+  registerToolMetadata,
   runWithContext,
   tryGetContext,
   TypedEventBus,
@@ -6010,10 +6011,92 @@ describe("PiExecutor", () => {
   });
 
   // -------------------------------------------------------------------------
-  // afterToolCall provider guard
+  // afterToolCall result handling
   // -------------------------------------------------------------------------
 
-  describe("afterToolCall provider guard", () => {
+  describe("afterToolCall result handling", () => {
+    it("appends an active declared alternative after its matching structured failure", async () => {
+      registerToolMetadata("search_primary_fallback_test", {
+        failureFallbacks: [{
+          onErrorCode: "all_providers_failed",
+          toolName: "browser_fallback_test",
+          guidance: "Use browser_fallback_test next for the same query.",
+        }],
+      } as unknown as Parameters<typeof registerToolMetadata>[1]);
+
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+
+      const afterToolCall = mockSession.agent.afterToolCall;
+      const result = {
+        content: [{ type: "text" as const, text: "{\"error\":\"all_providers_failed\"}" }],
+        details: { error: "all_providers_failed" },
+      };
+      const replacement = await afterToolCall({
+        toolCall: { name: "search_primary_fallback_test" },
+        args: { query: "latest AI news" },
+        result,
+        isError: false,
+        context: {
+          tools: [
+            { name: "search_primary_fallback_test" },
+            { name: "browser_fallback_test" },
+          ],
+        },
+      });
+
+      expect(replacement).toEqual({
+        content: [
+          ...result.content,
+          {
+            type: "text",
+            text: expect.stringContaining(
+              "Use browser_fallback_test next for the same query.",
+            ),
+          },
+        ],
+      });
+      expect(deps.logger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          step: "tool-failure-alternative",
+          toolName: "search_primary_fallback_test",
+          alternativeToolName: "browser_fallback_test",
+          errorCode: "all_providers_failed",
+        }),
+        "Added active alternative guidance to failed tool result",
+      );
+    });
+
+    it("does not append a declared alternative that is absent from the live tool set", async () => {
+      registerToolMetadata("search_disabled_fallback_test", {
+        failureFallbacks: [{
+          onErrorCode: "all_providers_failed",
+          toolName: "browser_disabled_fallback_test",
+          guidance: "Use browser_disabled_fallback_test next for the same query.",
+        }],
+      } as unknown as Parameters<typeof registerToolMetadata>[1]);
+
+      const deps = createMockDeps();
+      const executor = createPiExecutor(testConfig, deps);
+
+      await executor.execute(testMessage, testSessionKey);
+
+      const replacement = await mockSession.agent.afterToolCall({
+        toolCall: { name: "search_disabled_fallback_test" },
+        args: { query: "latest AI news" },
+        result: {
+          content: [{ type: "text" as const, text: "{\"error\":\"all_providers_failed\"}" }],
+          details: { error: "all_providers_failed" },
+        },
+        isError: false,
+        context: { tools: [{ name: "search_disabled_fallback_test" }] },
+      });
+
+      expect(replacement).toBeUndefined();
+    });
+
     it("skips mid-turn tool injection for OpenAI providers", async () => {
       const deps = createMockDeps({
         modelRegistry: {

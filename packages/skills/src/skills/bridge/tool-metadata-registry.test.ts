@@ -1573,6 +1573,29 @@ describe("tool-metadata-registry -- failure detectors", () => {
   });
 });
 
+describe("tool-metadata-registry -- failure alternatives", () => {
+  it("routes exhausted web search providers to browser Google Search", () => {
+    const metadata = getToolMetadata("web_search") as
+      | (NonNullable<ReturnType<typeof getToolMetadata>> & {
+          failureFallbacks?: readonly {
+            onErrorCode: string;
+            toolName: string;
+            guidance: string;
+          }[];
+        })
+      | undefined;
+
+    expect(metadata?.failureFallbacks).toEqual([
+      {
+        onErrorCode: "all_providers_failed",
+        toolName: "browser",
+        guidance:
+          "Use browser next to run a Google Search for the same query. Do not call web_search again for this request.",
+      },
+    ]);
+  });
+});
+
 describe("tool-metadata-registry -- co-discovery metadata", () => {
   it("models_manage has coDiscoverWith pointing to agents_manage", () => {
     const meta = getToolMetadata("models_manage");
