@@ -83,7 +83,10 @@ export interface BackgroundTaskManager {
   recoverOnStartup(
     recordIncident: (
       input: BackgroundRecoveryIncidentInput,
-    ) => Result<BackgroundRecoveryRecorderDisposition, Error>,
+    ) => Result<
+      BackgroundRecoveryRecorderDisposition,
+      BackgroundRecoveryRecorderFailure
+    >,
   ): void;
   cleanup(maxAgeMs?: number): void;
   commitDispatchState(
@@ -116,6 +119,17 @@ export interface BackgroundTaskManager {
 }
 
 export type BackgroundRecoveryRecorderDisposition = "accepted" | "suppressed";
+
+export type BackgroundRecoveryRecorderFailureKind =
+  | "session_adapter_unavailable"
+  | "protected_path_unavailable"
+  | "persisted_state_invalid"
+  | "recorder_rejected";
+
+export interface BackgroundRecoveryRecorderFailure {
+  readonly kind: BackgroundRecoveryRecorderFailureKind;
+  readonly cause: Error;
+}
 
 export interface BackgroundRecoveryIncidentInput {
   readonly agentId: string;

@@ -24,6 +24,16 @@ import {
 } from "@comis/core";
 import { err, ok } from "@comis/shared";
 import { createBackgroundTaskRecoveryController } from "./background-task-recovery-controller.js";
+import type {
+  BackgroundRecoveryRecorderFailure,
+  BackgroundRecoveryRecorderFailureKind,
+} from "./background-task-manager.js";
+
+function makeRecorderFailure(
+  kind: BackgroundRecoveryRecorderFailureKind,
+): BackgroundRecoveryRecorderFailure {
+  return { kind, cause: new Error("trajectory unavailable") };
+}
 
 function makeOrigin(): BackgroundTaskOrigin {
   const endpoint = {
@@ -79,7 +89,7 @@ describe("background task recovery controller", () => {
       unref: vi.fn(),
     };
     const recorder = vi.fn()
-      .mockReturnValueOnce(err(new Error("trajectory unavailable")))
+      .mockReturnValueOnce(err(makeRecorderFailure("recorder_rejected")))
       .mockReturnValue(ok("accepted" as const));
     const controller = createBackgroundTaskRecoveryController({
       eventBus,
@@ -105,14 +115,14 @@ describe("background task recovery controller", () => {
     expect(notified).not.toHaveBeenCalled();
     expect(systemErrors).toHaveBeenCalledTimes(1);
     expect(systemErrors).toHaveBeenCalledWith(expect.objectContaining({
-      source: "background-recovery-trajectory",
+      source: "background-recovery-recorder-capacity",
     }));
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
-        hint: expect.stringContaining("trajectory store"),
+        hint: expect.stringContaining("recorder queue capacity"),
         errorKind: "resource",
       }),
-      "Background recovery trajectory persistence failed",
+      "Background recovery trajectory admission rejected",
     );
     retry?.();
     expect(recorder).toHaveBeenCalledTimes(2);
@@ -122,6 +132,142 @@ describe("background task recovery controller", () => {
       reason: "recovery_retry_required",
       trajectoryRecorded: true,
     }));
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("maps closed recorder failures to actionable health evidence", () => {
+    const cases = [
+      {
+        kind: "session_adapter_unavailable",
+        source: "background-recovery-session-adapter",
+        message: "Background recovery session adapter unavailable",
+        hint: "agent session adapter",
+        errorKind: "precondition",
+      },
+      {
+        kind: "protected_path_unavailable",
+        source: "background-recovery-trajectory-path",
+        message: "Background recovery trajectory path unavailable",
+        hint: "path permissions",
+        errorKind: "resource",
+      },
+      {
+        kind: "persisted_state_invalid",
+        source: "background-recovery-trajectory-state",
+        message: "Background recovery trajectory state invalid",
+        hint: "persisted trajectory JSONL",
+        errorKind: "validation",
+      },
+      {
+        kind: "recorder_rejected",
+        source: "background-recovery-recorder-capacity",
+        message: "Background recovery trajectory admission rejected",
+        hint: "recorder queue capacity",
+        errorKind: "resource",
+      },
+    ] as const;
+
+    for (const entry of cases) {
+      const dataDir = safePath(tmpdir(), `comis-recovery-controller-${randomUUID()}`);
+      mkdirSync(dataDir, { recursive: true });
+      const eventBus = new TypedEventBus();
+      const systemErrors = vi.fn();
+      const logger = { warn: vi.fn() };
+      eventBus.on("system:error", systemErrors);
+      const controller = createBackgroundTaskRecoveryController({
+        eventBus,
+        logger,
+        clock: { now: () => 10, nowDate: () => new Date(10) },
+        dataDir,
+        timers: {
+          setTimeout: vi.fn(() => ({
+            cancelled: false,
+            cancel: vi.fn(),
+            unref: vi.fn(),
+          })),
+          setInterval: vi.fn(),
+        },
+      });
+      controller.setRecorder(vi.fn(() => err(makeRecorderFailure(entry.kind))));
+
+      controller.recordTask({
+        id: `task-${entry.kind}`,
+        toolName: "report",
+        origin: makeOrigin(),
+      });
+
+      expect(systemErrors).toHaveBeenCalledWith(expect.objectContaining({
+        source: entry.source,
+      }));
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hint: expect.stringContaining(entry.hint),
+          errorKind: entry.errorKind,
+        }),
+        entry.message,
+      );
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("caps recorder retry backoff and resets after accepted recording", () => {
+    const dataDir = safePath(tmpdir(), `comis-recovery-controller-${randomUUID()}`);
+    mkdirSync(dataDir, { recursive: true });
+    const scheduled: Array<{ callback: () => void; delayMs: number }> = [];
+    const logger = { warn: vi.fn() };
+    let accepted = false;
+    const recorder = vi.fn(() => accepted
+      ? ok("accepted" as const)
+      : err(makeRecorderFailure("recorder_rejected")));
+    const controller = createBackgroundTaskRecoveryController({
+      eventBus: new TypedEventBus(),
+      logger,
+      clock: { now: () => 10, nowDate: () => new Date(10) },
+      dataDir,
+      timers: {
+        setTimeout: (callback, delayMs) => {
+          scheduled.push({ callback, delayMs });
+          return {
+            cancelled: false,
+            cancel: vi.fn(),
+            unref: vi.fn(),
+          };
+        },
+        setInterval: vi.fn(),
+      },
+    });
+    controller.setRecorder(recorder);
+    const task = {
+      id: "task-recorder-backoff",
+      toolName: "report",
+      origin: makeOrigin(),
+    };
+
+    controller.recordTask(task);
+    controller.recordTask(task);
+    expect(scheduled).toHaveLength(1);
+    for (let index = 0; index < 7; index++) {
+      scheduled[index]?.callback();
+    }
+    expect(scheduled.map(({ delayMs }) => delayMs)).toEqual([
+      1_000,
+      2_000,
+      4_000,
+      8_000,
+      16_000,
+      32_000,
+      60_000,
+      60_000,
+    ]);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+
+    accepted = true;
+    scheduled[7]?.callback();
+    accepted = false;
+    controller.resolveTask(task);
+
+    expect(scheduled[8]?.delayMs).toBe(1_000);
+    expect(logger.warn).toHaveBeenCalledTimes(2);
     rmSync(dataDir, { recursive: true, force: true });
   });
 
@@ -267,7 +413,7 @@ describe("background task recovery controller", () => {
     mkdirSync(dataDir, { recursive: true });
     const scheduled: Array<() => void> = [];
     const recorder = vi.fn()
-      .mockReturnValueOnce(err(new Error("trajectory unavailable")))
+      .mockReturnValueOnce(err(makeRecorderFailure("protected_path_unavailable")))
       .mockReturnValue(ok("accepted" as const));
     const controller = createBackgroundTaskRecoveryController({
       eventBus: new TypedEventBus(),
@@ -365,6 +511,66 @@ describe("background task recovery controller", () => {
     storageAvailable = true;
     scheduled.shift()?.();
     expect(recorder).toHaveBeenCalledTimes(1);
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("backs off authority storage retries and resets after confirmed commit", () => {
+    const dataDir = safePath(tmpdir(), `comis-recovery-controller-${randomUUID()}`);
+    mkdirSync(dataDir, { recursive: true });
+    const scheduled: Array<{ callback: () => void; delayMs: number }> = [];
+    const logger = { warn: vi.fn() };
+    let storageAvailable = false;
+    let unlinkAvailable = true;
+    const controller = createBackgroundTaskRecoveryController({
+      eventBus: new TypedEventBus(),
+      logger,
+      clock: { now: () => 10, nowDate: () => new Date(10) },
+      timers: {
+        setTimeout: (callback, delayMs) => {
+          scheduled.push({ callback, delayMs });
+          return {
+            cancelled: false,
+            cancel: vi.fn(),
+            unref: vi.fn(),
+          };
+        },
+        setInterval: vi.fn(),
+      },
+      dataDir,
+      persistenceOps: {
+        open: (path, flags, mode) => {
+          if (!storageAvailable) throw new Error("storage unavailable");
+          return openSync(path, flags, mode);
+        },
+        write: writeFileSync,
+        sync: fsyncSync,
+        close: closeSync,
+        rename: renameSync,
+        unlink: (path) => {
+          if (!unlinkAvailable) throw new Error("unlink unavailable");
+          unlinkSync(path);
+        },
+      },
+    });
+    controller.setRecorder(vi.fn(() => ok("accepted" as const)));
+    const task = {
+      id: "task-authority-backoff",
+      toolName: "report",
+      origin: makeOrigin(),
+    };
+
+    controller.recordTask(task);
+    scheduled[0]?.callback();
+    expect(scheduled.map(({ delayMs }) => delayMs)).toEqual([1_000, 2_000]);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+
+    storageAvailable = true;
+    scheduled[1]?.callback();
+    unlinkAvailable = false;
+    controller.resolveTask(task);
+
+    expect(scheduled[2]?.delayMs).toBe(1_000);
+    expect(logger.warn).toHaveBeenCalledTimes(2);
     rmSync(dataDir, { recursive: true, force: true });
   });
 

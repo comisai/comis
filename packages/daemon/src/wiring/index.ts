@@ -94,6 +94,8 @@ export { setupBackgroundCompletionRunner } from "./setup-background-completion-r
 export {
   createBackgroundRecoveryRecorder,
   type BackgroundRecoveryRecorderDisposition,
+  type BackgroundRecoveryRecorderFailure,
+  type BackgroundRecoveryRecorderFailureKind,
   type BackgroundRecoveryRecorderDeps,
   type BackgroundRecoveryTrajectoryInput,
 } from "./background-recovery-recorder.js";

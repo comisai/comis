@@ -11,6 +11,8 @@ import {
 import { err, ok, type Result } from "@comis/shared";
 import type {
   BackgroundRecoveryIncidentInput,
+  BackgroundRecoveryRecorderFailure,
+  BackgroundRecoveryRecorderFailureKind,
   BackgroundRecoveryRecorderDisposition,
 } from "./background-task-manager.js";
 import type { BackgroundTask } from "./background-task-types.js";
@@ -42,7 +44,10 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
   let recorder:
     ((
       input: BackgroundRecoveryIncidentInput,
-    ) => Result<BackgroundRecoveryRecorderDisposition, Error>)
+    ) => Result<
+      BackgroundRecoveryRecorderDisposition,
+      BackgroundRecoveryRecorderFailure
+    >)
     | undefined;
   let scanRetry: TimerHandle | undefined;
   let authorityLoadRetry: TimerHandle | undefined;
@@ -63,6 +68,7 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
   const authorities = new Map<string, BackgroundRecoveryAuthority>();
   const dirtyAuthorities = new Set<string>();
   const incidentRetries = new Map<string, TimerHandle>();
+  const incidentRetryAttempts = new Map<string, number>();
   const pendingResolutionTaskIds = new Set<string>();
   const restoredAuthorityIds = new Set<string>();
   const pendingRecordTasks = new Map<
@@ -110,12 +116,21 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
 
   function scheduleIncidentRetry(taskId: string): void {
     if (incidentRetries.has(taskId)) return;
+    const attempt = incidentRetryAttempts.get(taskId) ?? 0;
+    const delayMs = Math.min(60_000, 1_000 * (2 ** Math.min(attempt, 6)));
+    incidentRetryAttempts.set(taskId, attempt + 1);
     const timer = deps.timers.setTimeout(() => {
       incidentRetries.delete(taskId);
       driveAuthority(taskId);
-    }, 1_000);
+    }, delayMs);
     timer.unref();
     incidentRetries.set(taskId, timer);
+  }
+
+  function resetIncidentRetry(taskId: string): void {
+    incidentRetryAttempts.delete(taskId);
+    incidentRetries.get(taskId)?.cancel();
+    incidentRetries.delete(taskId);
   }
 
   function incidentInput(
@@ -138,11 +153,14 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
 
   function reportFailure(
     input: BackgroundRecoveryIncidentInput,
-    kind: "authority_storage" | "trajectory" | "configuration",
+    kind:
+      | "authority_storage"
+      | "configuration"
+      | `trajectory_${BackgroundRecoveryRecorderFailureKind}`,
     source: string,
     message: string,
     hint: string,
-    errorKind: "resource" | "config",
+    errorKind: "resource" | "config" | "precondition" | "validation",
     retry: boolean,
   ): void {
     const key = `${input.taskId}:${kind}`;
@@ -184,19 +202,64 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     );
   }
 
-  function reportTrajectoryFailure(input: BackgroundRecoveryIncidentInput): void {
-    reportFailure(
-      input,
-      "trajectory",
-      "background-recovery-trajectory",
-      "Background recovery trajectory persistence failed",
-      "Repair the trajectory store; the background recovery incident will retry",
-      "resource",
-      true,
-    );
+  function reportTrajectoryFailure(
+    input: BackgroundRecoveryIncidentInput,
+    failure: BackgroundRecoveryRecorderFailure,
+  ): void {
+    switch (failure.kind) {
+      case "session_adapter_unavailable":
+        reportFailure(
+          input,
+          "trajectory_session_adapter_unavailable",
+          "background-recovery-session-adapter",
+          "Background recovery session adapter unavailable",
+          "Configure and start the affected agent session adapter; recovery will retry",
+          "precondition",
+          true,
+        );
+        return;
+      case "protected_path_unavailable":
+        reportFailure(
+          input,
+          "trajectory_protected_path_unavailable",
+          "background-recovery-trajectory-path",
+          "Background recovery trajectory path unavailable",
+          "Repair trajectory path permissions, confinement, symlinks, or I/O; recovery will retry",
+          "resource",
+          true,
+        );
+        return;
+      case "persisted_state_invalid":
+        reportFailure(
+          input,
+          "trajectory_persisted_state_invalid",
+          "background-recovery-trajectory-state",
+          "Background recovery trajectory state invalid",
+          "Repair or remove the invalid or oversized persisted trajectory JSONL; recovery will retry",
+          "validation",
+          true,
+        );
+        return;
+      case "recorder_rejected":
+        reportFailure(
+          input,
+          "trajectory_recorder_rejected",
+          "background-recovery-recorder-capacity",
+          "Background recovery trajectory admission rejected",
+          "Inspect diagnostics.trajectory.maxFileBytes and recorder queue capacity; recovery will retry",
+          "resource",
+          true,
+        );
+        return;
+      default: {
+        const exhaustive: never = failure.kind;
+        return exhaustive;
+      }
+    }
   }
 
   function reportResolutionSuppressed(input: BackgroundRecoveryIncidentInput): void {
+    resetIncidentRetry(input.taskId);
     reportFailure(
       input,
       "configuration",
@@ -225,6 +288,7 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     }
     dirtyAuthorities.delete(authority.taskId);
     healthAnnounced.delete(`${authority.taskId}:authority_storage`);
+    resetIncidentRetry(authority.taskId);
     return true;
   }
 
@@ -251,8 +315,7 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     for (const key of healthAnnounced) {
       if (key.startsWith(`${authority.taskId}:`)) healthAnnounced.delete(key);
     }
-    incidentRetries.get(authority.taskId)?.cancel();
-    incidentRetries.delete(authority.taskId);
+    resetIncidentRetry(authority.taskId);
     return true;
   }
 
@@ -273,11 +336,16 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
       if (!trajectoryAccepted.has(requiredKey)) {
         const recorded = recorder(required);
         if (!recorded.ok) {
-          reportTrajectoryFailure(required);
+          reportTrajectoryFailure(required, recorded.error);
           return;
         }
-        healthAnnounced.delete(`${taskId}:trajectory`);
+        for (const key of healthAnnounced) {
+          if (key.startsWith(`${taskId}:trajectory_`)) {
+            healthAnnounced.delete(key);
+          }
+        }
         if (recorded.value === "accepted") {
+          resetIncidentRetry(taskId);
           trajectoryAccepted.add(requiredKey);
           announceAccepted(required);
         }
@@ -301,15 +369,20 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     if (!trajectoryAccepted.has(resolvedKey)) {
       const recorded = recorder(resolved);
       if (!recorded.ok) {
-        reportTrajectoryFailure(resolved);
+        reportTrajectoryFailure(resolved, recorded.error);
         return;
       }
-      healthAnnounced.delete(`${taskId}:trajectory`);
+      for (const key of healthAnnounced) {
+        if (key.startsWith(`${taskId}:trajectory_`)) {
+          healthAnnounced.delete(key);
+        }
+      }
       if (recorded.value === "suppressed") {
         reportResolutionSuppressed(resolved);
         return;
       }
       healthAnnounced.delete(`${taskId}:configuration`);
+      resetIncidentRetry(taskId);
       trajectoryAccepted.add(resolvedKey);
       announceAccepted(resolved);
     }

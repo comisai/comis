@@ -5,7 +5,8 @@ import {
   TypedEventBus,
   conversationScopeToSessionKey,
 } from "@comis/core";
-import { ok } from "@comis/shared";
+import { TrajectoryResumeError } from "@comis/observability";
+import { err, ok } from "@comis/shared";
 import { createBackgroundRecoveryRecorder } from "./background-recovery-recorder.js";
 import { resolveEffectiveTrajectoryConfig } from "./trajectory-runtime-config.js";
 
@@ -117,7 +118,78 @@ describe("background recovery trajectory recorder", () => {
 
     const result = recorder(makeInput());
 
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "recorder_rejected",
+        cause: expect.any(Error),
+      },
+    });
+  });
+
+  it("classifies missing session authority without exposing adapter details", () => {
+    const recorder = createBackgroundRecoveryRecorder({
+      dataDir: "/resolved/data",
+      eventBus: new TypedEventBus(),
+      logger: {} as never,
+      trajectoryConfig: {
+        enabled: true,
+        maxFileBytes: 4_096,
+      },
+      sessionAdapters: new Map(),
+      trajectoryRegistry: { getOrCreate: vi.fn() } as never,
+    });
+
+    const result = recorder(makeInput());
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        kind: "session_adapter_unavailable",
+        cause: expect.any(Error),
+      },
+    });
+  });
+
+  it("classifies protected path and persisted state initialization failures", () => {
+    const cases = [
+      {
+        failureKind: "permission",
+        expected: "protected_path_unavailable",
+      },
+      {
+        failureKind: "invalid_jsonl",
+        expected: "persisted_state_invalid",
+      },
+    ] as const;
+
+    for (const entry of cases) {
+      const cause = new TrajectoryResumeError(entry.failureKind);
+      const recorder = createBackgroundRecoveryRecorder({
+        dataDir: "/resolved/data",
+        eventBus: new TypedEventBus(),
+        logger: {} as never,
+        trajectoryConfig: {
+          enabled: true,
+          maxFileBytes: 4_096,
+        },
+        sessionAdapters: new Map([[
+          "agent-a",
+          { getSessionPath: vi.fn(() => "/resolved/data/session.jsonl") },
+        ]]),
+        trajectoryRegistry: {
+          getOrCreate: vi.fn(() => err(cause)),
+        } as never,
+      });
+
+      expect(recorder(makeInput())).toEqual({
+        ok: false,
+        error: {
+          kind: entry.expected,
+          cause,
+        },
+      });
+    }
   });
 
   it("uses one effective configuration for normal and recovery trajectory creation", () => {

@@ -32,6 +32,8 @@ export {
   createBackgroundTaskManager,
 } from "./background-task-manager.js";
 export type {
+  BackgroundRecoveryRecorderFailure,
+  BackgroundRecoveryRecorderFailureKind,
   BackgroundRecoveryRecorderDisposition,
   BackgroundTaskManager,
   BackgroundTaskManagerOpts,
