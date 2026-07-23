@@ -140,6 +140,7 @@ function makeDeps(overrides: Partial<Parameters<typeof setupBackgroundTasks>[0]>
   const ownDataDir = overrides.dataDir === undefined;
   const deps: Parameters<typeof setupBackgroundTasks>[0] = {
     dataDir,
+    config: BackgroundTasksConfigSchema.parse({}),
     eventBus: createMockEventBus(),
     logger: createMockLogger(),
     clock: testClock,
@@ -224,7 +225,7 @@ describe("setupBackgroundTasks -- daemon wiring", () => {
       config: BackgroundTasksConfigSchema.parse({
         maxBackgroundDurationMs: 2_700_000,
       }),
-    } as Parameters<typeof setupBackgroundTasks>[0];
+    };
 
     const { backgroundTaskManager } = setupBackgroundTasks(configuredDeps);
     const promoted = backgroundTaskManager.promote(
