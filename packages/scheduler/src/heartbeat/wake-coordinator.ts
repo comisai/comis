@@ -82,10 +82,29 @@ export interface SystemEventWakeAdmissionOutcome {
   readonly wake: HeartbeatWakeAdmissionOutcome;
 }
 
+export type HeartbeatSuppressionReason =
+  | "heartbeat_token"
+  | "ack_under_threshold"
+  | "empty_reply"
+  | "response_filter"
+  | "no_target"
+  | "dm_policy"
+  | "channel_not_ready"
+  | "quiet_hours"
+  | "visibility_filter"
+  | "duplicate";
+export type HeartbeatPreSendFailureReason =
+  | "output_guard"
+  | "target_precondition"
+  | "cancelled";
 export type HeartbeatDeliveryOutcome =
   | { readonly status: "not_requested" }
-  | { readonly status: "suppressed"; readonly reason: string }
-  | { readonly status: "pre_send_failed"; readonly reason: string; readonly errorKind: ErrorKind }
+  | { readonly status: "suppressed"; readonly reason: HeartbeatSuppressionReason }
+  | {
+      readonly status: "pre_send_failed";
+      readonly reason: HeartbeatPreSendFailureReason;
+      readonly errorKind: ErrorKind;
+    }
   | PlatformDeliveryOutcome;
 export type HeartbeatTickError =
   | { readonly code: "invalid_input" | "invalid_target"; readonly errorKind: "validation" }

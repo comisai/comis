@@ -52,7 +52,7 @@ export function createHeartbeatSettledDelivery(deps: HeartbeatSettledDeliveryDep
     if (request.signal.aborted) return cancelledDelivery();
     const parsedEndpoint = ChannelEndpointSchema.safeParse(request.endpoint);
     if (!parsedEndpoint.success) {
-      return { status: "pre_send_failed", reason: "invalid_target", errorKind: "validation" };
+      return { status: "pre_send_failed", reason: "target_precondition", errorKind: "validation" };
     }
     const endpoint = parsedEndpoint.data;
     if (endpoint.conversationKind === "direct" && request.allowDm === false) {
@@ -67,7 +67,7 @@ export function createHeartbeatSettledDelivery(deps: HeartbeatSettledDeliveryDep
         errorKind: quiet.error.errorKind,
         hint: "Repair the validated scheduler quiet-hours configuration before the next heartbeat delivery",
       }, "Heartbeat quiet-hours evaluation failed");
-      return { status: "pre_send_failed", reason: "quiet_hours", errorKind: quiet.error.errorKind };
+      return { status: "pre_send_failed", reason: "target_precondition", errorKind: quiet.error.errorKind };
     }
     if (quiet.value && (request.level !== "critical" || !deps.criticalBypass)) {
       return { status: "suppressed", reason: "quiet_hours" };
@@ -111,7 +111,7 @@ export function createHeartbeatSettledDelivery(deps: HeartbeatSettledDeliveryDep
       partition: { kind: "endpoint-conversation", endpoint },
     });
     if (!locator.ok) {
-      return { status: "pre_send_failed", reason: "invalid_target", errorKind: "validation" };
+      return { status: "pre_send_failed", reason: "target_precondition", errorKind: "validation" };
     }
     const delivered = await fromPromise(deps.deliveryService.deliverToChannel(
       adapter,

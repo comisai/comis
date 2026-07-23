@@ -85,6 +85,8 @@ export type {
   SystemEventWakeAdmissionRequest,
   SystemEventWakeAdmissionOutcome,
   SystemEventWakeAdmissionError,
+  HeartbeatSuppressionReason,
+  HeartbeatPreSendFailureReason,
   HeartbeatDeliveryOutcome,
   HeartbeatTickOutcome,
   HeartbeatTickError,

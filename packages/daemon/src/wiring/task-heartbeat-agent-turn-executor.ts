@@ -311,7 +311,11 @@ export function createTaskHeartbeatAgentTurnExecutor(deps: TaskHeartbeatAgentTur
         }
         return settle(deps, input, agentExecutionId, resolution.value, projected.outcome, projected.metrics, {
           status: "suppressed",
-          reason: response.kind === "acknowledged_ok" ? "task_declined" : "visibility_policy",
+          reason: response.kind === "acknowledged_ok"
+            ? response.reason
+            : response.kind === "empty"
+              ? "empty_reply"
+              : "visibility_filter",
         }, elapsed(deps.clock, startedAtMs));
       }
 
@@ -339,7 +343,7 @@ export function createTaskHeartbeatAgentTurnExecutor(deps: TaskHeartbeatAgentTur
         emitFailureTerminal(deps, input, batch.tasks, attemptId, failed.value, mapped.errorKind, startedAtMs);
         return settle(deps, input, agentExecutionId, resolution.value, projected.outcome, projected.metrics, {
           status: "pre_send_failed",
-          reason: prepared.error.code,
+          reason: mapped.deliveryReason,
           errorKind: prepared.error.errorKind,
         }, elapsed(deps.clock, startedAtMs));
       }
@@ -355,7 +359,7 @@ export function createTaskHeartbeatAgentTurnExecutor(deps: TaskHeartbeatAgentTur
         }, startedAtMs);
         return settle(deps, input, agentExecutionId, resolution.value, projected.outcome, projected.metrics, {
           status: "pre_send_failed",
-          reason: begun.value.status,
+          reason: "target_precondition",
           errorKind: "precondition",
         }, elapsed(deps.clock, startedAtMs));
       }
@@ -657,11 +661,20 @@ async function persistDelivery(
 
 function mapPrepareFailure(error: TaskDeliveryPrepareError, signal: AbortSignal): {
   failureStage: "deadline" | "output_guard" | "target_precondition";
+  deliveryReason: "cancelled" | "output_guard" | "target_precondition";
   errorKind: ErrorKind;
 } {
-  if (error.code === "cancelled" || signal.aborted) return { failureStage: "deadline", errorKind: "timeout" };
-  if (error.code === "output_guard") return { failureStage: "output_guard", errorKind: error.errorKind };
-  return { failureStage: "target_precondition", errorKind: "precondition" };
+  if (error.code === "cancelled" || signal.aborted) {
+    return { failureStage: "deadline", deliveryReason: "cancelled", errorKind: "timeout" };
+  }
+  if (error.code === "output_guard") {
+    return { failureStage: "output_guard", deliveryReason: "output_guard", errorKind: error.errorKind };
+  }
+  return {
+    failureStage: "target_precondition",
+    deliveryReason: "target_precondition",
+    errorKind: "precondition",
+  };
 }
 
 function localePoliciesEqual(left: ResponseLocalePolicy | undefined, right: ResponseLocalePolicy): boolean {

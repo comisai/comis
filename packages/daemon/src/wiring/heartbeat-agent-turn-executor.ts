@@ -281,11 +281,11 @@ export function createHeartbeatAgentTurnExecutor(deps: HeartbeatAgentTurnExecuto
       if (response.kind === "empty") {
         delivery = { status: "suppressed", reason: "empty_reply" };
       } else if (response.kind === "acknowledged_ok" && !config.showOk) {
-        delivery = { status: "suppressed", reason: "visibility_policy" };
+        delivery = { status: "suppressed", reason: response.reason };
       } else if (response.kind === "alert" && response.level === "alert" && !config.showAlerts) {
-        delivery = { status: "suppressed", reason: "visibility_policy" };
+        delivery = { status: "suppressed", reason: "visibility_filter" };
       } else if (config.target === undefined) {
-        delivery = { status: "not_requested" };
+        delivery = { status: "suppressed", reason: "no_target" };
       } else {
         const delivered = await fromPromise(deps.deliver({
           correlationId: input.correlationId,
