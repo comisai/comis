@@ -488,7 +488,7 @@ export function registerAllToolMetadata(): void {
       onErrorCode: "all_providers_failed",
       toolName: "browser",
       guidance:
-        "Use browser next to run a Google Search for the same query. Do not call web_search again for this request.",
+        "Use browser next: call action start, then action open with a Google Search URL for the same query. Do not call web_search again for this request.",
     }],
     outputSchema: {
       type: "object",

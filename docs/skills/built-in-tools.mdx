@@ -403,8 +403,8 @@ count: 5
   content for the top results, saving separate `web_fetch` calls
 - If the primary provider fails, the tool automatically tries fallback providers
 - If every configured search provider fails and `browser` is enabled for the
-  turn, the next recovery path is a browser-based Google Search. The agent does
-  not retry `web_search` again for that request.
+  turn, the next recovery path starts the browser and opens a Google Search.
+  The agent does not retry `web_search` again for that request.
 - See [Web Tools Guide](/agent-tools/web-tools) for provider setup details
 
 </Accordion>
