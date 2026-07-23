@@ -38,6 +38,21 @@ export const MAX_SEARCH_COUNT = 10;
 /** Providers that support native time-range filtering. */
 export const FRESHNESS_PROVIDERS = new Set<SearchProviderName>(["brave", "duckduckgo", "tavily", "exa", "searxng"]);
 
+/**
+ * Stable order for automatically discovered fallback providers. DuckDuckGo is
+ * the keyless default primary; the remaining providers enter the automatic
+ * chain only when their credential or endpoint is configured.
+ */
+const AUTOMATIC_FALLBACK_PROVIDER_ORDER: readonly SearchProviderName[] = [
+  "brave",
+  "perplexity",
+  "tavily",
+  "exa",
+  "jina",
+  "grok",
+  "searxng",
+];
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -54,7 +69,8 @@ export interface WebSearchConfig {
   cacheTtlMinutes?: number;
   /** Timeout for API calls in seconds (default 30). */
   timeoutSeconds?: number;
-  /** Fallback providers tried in order when primary fails. Empty = no fallback. */
+  /** Fallback providers tried in order when primary fails. Undefined discovers
+   *  configured providers automatically; an empty array disables fallback. */
   fallbackProviders?: SearchProviderName[];
   /** Perplexity provider configuration. */
   perplexity?: {
@@ -164,6 +180,24 @@ export function resolveApiKey(provider: SearchProviderName, config: WebSearchCon
     case "jina": return config?.jina?.apiKey;
     default: return undefined;
   }
+}
+
+/**
+ * Resolve the implicit fallback chain from configured provider authority.
+ *
+ * A provider with no API key (or no SearXNG endpoint) is omitted instead of
+ * producing a guaranteed authentication failure. Runtime failures from the
+ * remaining providers are handled sequentially by the search orchestrator.
+ */
+export function resolveConfiguredFallbackProviders(
+  primary: SearchProviderName,
+  config: WebSearchConfig | undefined,
+): SearchProviderName[] {
+  return AUTOMATIC_FALLBACK_PROVIDER_ORDER.filter((provider) => {
+    if (provider === primary) return false;
+    const authority = resolveApiKey(provider, config);
+    return typeof authority === "string" && authority.trim().length > 0;
+  });
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- reserved for future provider-specific error payloads

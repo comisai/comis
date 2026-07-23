@@ -40,6 +40,7 @@ import {
   MAX_SEARCH_COUNT,
   parseProvider,
   resolveApiKey,
+  resolveConfiguredFallbackProviders,
   resolveSearchCount,
   type SearchProviderName,
   type WebSearchConfig,
@@ -280,7 +281,13 @@ export async function executeWebSearch(params: {
   if (runtimeProvider) {
     chain = [runtimeProvider];
   } else {
-    chain = buildProviderChain(params.provider, params.config?.fallbackProviders);
+    const configuredFallbacks = params.config?.fallbackProviders
+      ?? resolveConfiguredFallbackProviders(params.provider, params.config);
+    const eligibleFallbacks = configuredFallbacks.filter((provider) => {
+      const authority = resolveApiKey(provider, params.config);
+      return typeof authority === "string" && authority.trim().length > 0;
+    });
+    chain = buildProviderChain(params.provider, eligibleFallbacks);
   }
 
   const count = resolveSearchCount(

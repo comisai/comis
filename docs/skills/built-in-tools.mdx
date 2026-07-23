@@ -401,10 +401,11 @@ count: 5
 - Results are cached for 15 minutes by default to reduce API calls
 - When `deepFetch` is greater than 0, the tool automatically fetches full page
   content for the top results, saving separate `web_fetch` calls
-- If the primary provider fails, the tool automatically tries fallback providers
-- If every configured search provider fails and `browser` is enabled for the
-  turn, the next recovery path starts the browser and opens a Google Search.
-  The agent does not retry `web_search` again for that request.
+- If the primary provider fails, the tool automatically tries providers with
+  configured API keys or endpoints. Providers without authority are skipped.
+- Only after every eligible search provider fails does an enabled `browser`
+  become the next recovery path. The agent starts it and opens a Google Search
+  instead of retrying `web_search` again for that request.
 - See [Web Tools Guide](/agent-tools/web-tools) for provider setup details
 
 </Accordion>

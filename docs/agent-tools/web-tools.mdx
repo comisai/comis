@@ -117,25 +117,22 @@ Comis supports 8 search providers. Each has different strengths, and some requir
 
 ## Configuring Search Providers
 
-Configure your preferred search providers in `config.yaml`. Providers are tried in order -- if the first one fails, the next is attempted automatically.
+DuckDuckGo is the default primary provider. When it fails, Comis automatically
+tries the providers for which credentials or an endpoint are configured.
+Missing-key providers are skipped rather than called with empty authentication.
+Each eligible provider is attempted sequentially; the first successful result
+wins.
 
-```yaml
-skills:
-  builtinTools:
-    webSearch:
-      providers:
-        - brave
-        - duckduckgo   # Free fallback if Brave fails
-```
-
-You can list as many providers as you like. The agent uses the first available provider by default, or you can specify a provider in the tool call.
+Programmatic integrations can set `fallbackProviders` to choose an explicit
+order. An explicit empty list disables provider fallback. A `provider` argument
+on an individual tool call remains a single-provider override.
 
 ### Environment Variables Reference
 
 | Provider | Environment Variable |
 |----------|---------------------|
-| Brave | `BRAVE_API_KEY` |
-| Perplexity | `OPENROUTER_API_KEY` |
+| Brave | `SEARCH_API_KEY` |
+| Perplexity | `PERPLEXITY_API_KEY` |
 | Grok | `XAI_API_KEY` |
 | DuckDuckGo | *(none required)* |
 | SearXNG | `SEARXNG_URL` |
@@ -143,9 +140,9 @@ You can list as many providers as you like. The agent uses the first available p
 | Exa | `EXA_API_KEY` |
 | Jina | `JINA_API_KEY` |
 
-<Tip>
-A good starter configuration is `brave` as the primary provider (fast and reliable) with `duckduckgo` as a free fallback that requires no API key.
-</Tip>
+If every eligible provider fails and the browser tool is enabled, Comis starts
+the browser and opens a Google Search. Browser fallback never preempts another
+credentialed search provider.
 
 ## web_fetch -- Page Content Fetching
 

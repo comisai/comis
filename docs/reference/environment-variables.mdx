@@ -666,7 +666,8 @@ DEEPGRAM_API_KEY=dg-...
 
 ## Web Search Providers
 
-Optional. The agent picks an enabled provider when a `web_search` tool runs. Leave them all unset and the agent falls back to a no-op or the LLM's own search capability.
+Optional. DuckDuckGo is the keyless primary provider. If it fails, providers
+with configured keys are attempted sequentially before browser fallback.
 
 | Variable | Provider |
 |----------|----------|
