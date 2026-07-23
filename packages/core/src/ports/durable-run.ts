@@ -103,7 +103,10 @@ export interface DurableRunPort {
   markOrphaned(checkpointId: string, reason: string): Promise<Result<void, Error>>;
 
   /** Flip a record to status `completed` — the run finished; resume skips it. */
-  markCompleted(checkpointId: string): Promise<Result<void, Error>>;
+  markCompleted(
+    checkpointId: string,
+    terminalReason: NonNullable<DurableRunRecord["terminalReason"]>,
+  ): Promise<Result<void, Error>>;
 
   /**
    * The keep-alive write: stamp `lastHeartbeatAt = atMs`. A run whose

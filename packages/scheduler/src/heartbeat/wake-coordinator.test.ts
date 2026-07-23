@@ -745,7 +745,11 @@ describe("heartbeat wake coordinator", () => {
   });
 
   it("terminalizes rejected runtime promises as unsettled internal outcomes", async () => {
-    const built = makeCoordinator({ runAgent: async () => { throw new Error("expected runtime rejection"); } }, false);
+    const releaseRoot = vi.fn(async () => ok(undefined));
+    const built = makeCoordinator({
+      runAgent: async () => { throw new Error("expected runtime rejection"); },
+      releaseRoot,
+    }, false);
     const terminals: unknown[] = [];
     built.eventBus.on("scheduler:heartbeat_wake_terminal", (event) => terminals.push(event));
     built.coordinator.submitWake({
@@ -754,6 +758,7 @@ describe("heartbeat wake coordinator", () => {
     built.timers.advance(0);
     await flushDispatch();
     expect(terminals).toEqual([expect.objectContaining({ status: "unsettled", errorKind: "internal" })]);
+    expect(releaseRoot).not.toHaveBeenCalled();
   });
 
   it("runs monitoring targets without root registration and projects settled and failed outcomes", async () => {

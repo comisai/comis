@@ -470,6 +470,13 @@ export { createLifecycleHooks, deriveSubagentContextEngineConfig } from "./spawn
 export type { LifecycleHooksDeps } from "./spawn/index.js";
 export { createEphemeralComisSessionManager } from "./spawn/index.js";
 export { createSubAgentRunner, SUB_AGENT_SHUTDOWN_TIMEOUT_MS } from "./spawn/index.js";
+export {
+  SubAgentResumeDescriptorSchema,
+  hashSubAgentResumeDescriptor,
+  parseSubAgentResumeDescriptor,
+  validateSubAgentResumeAuthority,
+  type SubAgentResumeDescriptor,
+} from "./spawn/sub-agent-resume-descriptor.js";
 export type {
   SubAgentRunnerDeps,
   SubAgentRun,

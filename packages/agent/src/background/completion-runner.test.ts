@@ -69,6 +69,9 @@ function buildTask(over: Partial<BackgroundTask> = {}): BackgroundTask {
     startedAt: 1,
     completedAt: 2,
     origin: buildOrigin(),
+    continuationExecutionId: "task-1",
+    dispatchAttempts: 0,
+    dispatchState: "pending",
     ...over,
   };
 }
@@ -87,7 +90,7 @@ describe("createBackgroundCompletionRunner", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
   let sessionStore: { loadByRef: ReturnType<typeof vi.fn> };
-  let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn> };
+  let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn>; scheduleDispatchRetry: ReturnType<typeof vi.fn> };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
   let transitionDispatchState: ReturnType<typeof vi.fn>;
 
@@ -99,6 +102,7 @@ describe("createBackgroundCompletionRunner", () => {
     taskManager = {
       getTask: vi.fn(),
       transitionDispatchState,
+      scheduleDispatchRetry: vi.fn(),
     };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
   });
@@ -114,7 +118,15 @@ describe("createBackgroundCompletionRunner", () => {
       getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
-      fallbackNotifyFn,
+      deliverFallback: async ({ origin, response }) => {
+        await fallbackNotifyFn({
+          agentId: origin.turnScope.conversation.agentId,
+          message: response,
+          priority: "normal",
+          origin: "background_task",
+        });
+        return ok(undefined);
+      },
       maxBackgroundHops,
       ...(isTurnInFlight ? { isTurnInFlight } : {}),
       ...(assembleToolsForAgent ? { assembleToolsForAgent } : {}),
@@ -655,7 +667,7 @@ describe("trace continuity sub-tests", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
   let sessionStore: { loadByRef: ReturnType<typeof vi.fn> };
-  let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn> };
+  let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn>; scheduleDispatchRetry: ReturnType<typeof vi.fn> };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
   let logger: ReturnType<typeof makeLogger>;
 
@@ -666,6 +678,7 @@ describe("trace continuity sub-tests", () => {
     taskManager = {
       getTask: vi.fn(),
       transitionDispatchState: vi.fn().mockReturnValue(true),
+      scheduleDispatchRetry: vi.fn(),
     };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
     logger = makeLogger();
@@ -678,7 +691,15 @@ describe("trace continuity sub-tests", () => {
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
       deliverCompletion: async () => ok(undefined),
-      fallbackNotifyFn,
+      deliverFallback: async ({ origin, response }) => {
+        await fallbackNotifyFn({
+          agentId: origin.turnScope.conversation.agentId,
+          message: response,
+          priority: "normal",
+          origin: "background_task",
+        });
+        return ok(undefined);
+      },
       maxBackgroundHops,
       logger,
     });

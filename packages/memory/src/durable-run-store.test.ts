@@ -135,7 +135,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       expect(secondStored.ok && secondStored.value?.spawnTree).toEqual(["other-node"]);
       expect(db.prepare("SELECT COUNT(*) AS c FROM durable_run_checkpoints").get()).toEqual({ c: 2 });
 
-      expect((await store.markCompleted("checkpoint-a")).ok).toBe(true);
+      expect((await store.markCompleted("checkpoint-a", "completed")).ok).toBe(true);
       expect((await store.invalidateForRevoke("tree-root")).ok).toBe(true);
       const afterFirst = await store.getByCheckpoint("checkpoint-a");
       const afterSecond = await store.getByCheckpoint("checkpoint-b");
@@ -685,7 +685,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       // The same terminal-preserve holds for completed/orphaned — a late checkpoint
       // upsert must not flip a finished run back to a resumable 'running'.
       await store.upsertCheckpoint(makeRecord({ rootRunId: "r-comp", status: "running" }));
-      await store.markCompleted("r-comp");
+      await store.markCompleted("r-comp", "completed");
       await store.upsertCheckpoint(makeRecord({ rootRunId: "r-comp", status: "running" }));
       const comp = await store.getByCheckpoint("r-comp");
       if (comp.ok && comp.value) expect(comp.value.status).toBe("completed");
@@ -1145,7 +1145,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       expect((await store.markOrphaned("r-terminal-race", "invalid durable record")).ok).toBe(
         true,
       );
-      expect((await store.markCompleted("r-terminal-race")).ok).toBe(true);
+      expect((await store.markCompleted("r-terminal-race", "completed")).ok).toBe(true);
 
       const stored = await store.getByCheckpoint("r-terminal-race");
       expect(stored.ok && stored.value?.status).toBe("revoked");
@@ -1172,11 +1172,14 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
 
     it("markCompleted sets status='completed' (resume skips it)", async () => {
       await store.upsertCheckpoint(makeRecord({ rootRunId: "r-done", status: "running" }));
-      const m = await store.markCompleted("r-done");
+      const m = await store.markCompleted("r-done", "watchdog_timeout");
       expect(m.ok).toBe(true);
       const got = await store.getByCheckpoint("r-done");
       expect(got.ok).toBe(true);
-      if (got.ok && got.value) expect(got.value.status).toBe("completed");
+      if (got.ok && got.value) {
+        expect(got.value.status).toBe("completed");
+        expect(got.value.terminalReason).toBe("watchdog_timeout");
+      }
     });
   });
 
@@ -1202,7 +1205,7 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
 
     it("refuses to refresh a terminal or missing checkpoint", async () => {
       await store.upsertCheckpoint(makeRecord({ checkpointId: "r-terminal-hb" }));
-      await store.markCompleted("r-terminal-hb");
+      await store.markCompleted("r-terminal-hb", "completed");
       expect((await store.touchHeartbeat("r-terminal-hb", 1_700_000_555_000)).ok).toBe(false);
       expect((await store.touchHeartbeat("missing-hb", 1_700_000_555_000)).ok).toBe(false);
     });
@@ -1398,7 +1401,7 @@ describe("createSqliteDurableRunStore — store-error resilience (every method r
   });
 
   it("markCompleted returns err on a driver failure (no throw)", async () => {
-    const r = await makeClosedStore().markCompleted("run-err");
+    const r = await makeClosedStore().markCompleted("run-err", "completed");
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBeInstanceOf(Error);
   });

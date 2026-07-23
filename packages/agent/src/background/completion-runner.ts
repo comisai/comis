@@ -25,8 +25,8 @@
  * @module
  */
 
-import { randomUUID } from "node:crypto";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { randomUUID } from "node:crypto";
 import { fromPromise, isSilentResponse, suppressError, tryCatch, type Result } from "@comis/shared";
 import {
   createDeliveryOrigin,
@@ -51,7 +51,7 @@ import {
 } from "@comis/core";
 import type { AgentExecutor } from "../executor/types.js";
 import { formatCompletionAnnouncement } from "./completion-formatter.js";
-import type { BackgroundTaskManager, NotifyFn } from "./background-task-manager.js";
+import type { BackgroundTaskManager } from "./background-task-manager.js";
 
 /** Public-facing handle on the runner returned by createBackgroundCompletionRunner. */
 export interface BackgroundCompletionRunner {
@@ -70,6 +70,7 @@ export interface BackgroundCompletionDeliveryInput {
   readonly origin: BackgroundTaskOrigin;
   readonly response: string;
   readonly executionId: string;
+  readonly idempotencyKey: string;
 }
 
 /** Session-store dependency retained by daemon composition; it is not routing authority. */
@@ -95,13 +96,18 @@ export interface BackgroundCompletionRunnerDeps {
    * setup-background-completion-runner.ts already passes a manager with
    * both methods.
    */
-  taskManager: Pick<BackgroundTaskManager, "getTask" | "transitionDispatchState">;
+  taskManager: Pick<
+    BackgroundTaskManager,
+    "getTask" | "transitionDispatchState" | "scheduleDispatchRetry"
+  >;
   /** Deliver the finalized continuation through the exact persisted channel
    *  authority. The runner owns execution; the composition root owns adapters. */
   deliverCompletion: (
     input: BackgroundCompletionDeliveryInput,
   ) => Promise<Result<void, BackgroundCompletionDeliveryError>>;
-  fallbackNotifyFn: NotifyFn;
+  deliverFallback: (
+    input: BackgroundCompletionDeliveryInput,
+  ) => Promise<Result<void, BackgroundCompletionDeliveryError>>;
   maxBackgroundHops: number;
   /**
    * LIVE-TURN oracle (mirrors CompletionDispatcherDeps.isTurnInFlight): true
@@ -191,7 +197,11 @@ export function createBackgroundCompletionRunner(
     // task.dispatchState. When state is "notified", the dispatcher fired
     // the user-visible fallback; the runner stays out of the way to
     // enforce single-owner notification routing (zero spurious outbound).
-    if (task.dispatchState === "notified") {
+    if (
+      task.dispatchState === "delivered"
+      || task.dispatchState === "fallback_delivered"
+      || task.dispatchState === "consumed_live"
+    ) {
       log.debug(
         {
           taskId,
@@ -205,11 +215,31 @@ export function createBackgroundCompletionRunner(
       );
       return;
     }
+    if (!deps.taskManager.transitionDispatchState(taskId, "executing", ["pending"])) {
+      log.debug(
+        { taskId, dispatchState: task.dispatchState, hint: "Another completion attempt owns this task" },
+        "Background completion runner: retry claim not acquired",
+      );
+      return;
+    }
 
     // origin is producer-required (background-task-manager promote()
     // rejects missing-origin) so we read it directly.
     const origin = task.origin;
     const agentId = origin.turnScope.conversation.agentId;
+    if (task.notificationPolicy === "silent") {
+      deps.taskManager.transitionDispatchState(taskId, "delivered", ["executing"]);
+      return;
+    }
+    if (task.notificationPolicy === "immediate") {
+      await fallbackForTask(
+        task.id,
+        agentId,
+        task.toolName,
+        `Background task "${task.toolName}" ${kind}.`,
+      );
+      return;
+    }
     const projectedSession = conversationScopeToSessionKey(origin.turnScope.conversation);
     if (!projectedSession.ok) {
       log.warn({
@@ -255,6 +285,7 @@ export function createBackgroundCompletionRunner(
     // live turn. The dispatcher's matching check already suppressed the
     // fallback notice; the result stays readable if the live turn raced past it.
     if (deps.isTurnInFlight?.(formattedSessionKey) === true) {
+      deps.taskManager.transitionDispatchState(taskId, "consumed_live", ["executing"]);
       log.debug(
         {
           taskId,
@@ -292,7 +323,7 @@ export function createBackgroundCompletionRunner(
 
     // Construct the synthetic NormalizedMessage (hop counter in metadata).
     const syntheticMsg: NormalizedMessage = {
-      id: randomUUID(),
+      id: task.continuationExecutionId,
       channelId: origin.deliveryOrigin.channelId,
       channelType: "background_task",
       senderId: "background-task-runner",
@@ -373,11 +404,14 @@ export function createBackgroundCompletionRunner(
         },
         "Background completion: executor.execute() rejected",
       );
+      deps.taskManager.transitionDispatchState(taskId, "pending", ["executing"]);
+      deps.taskManager.scheduleDispatchRetry(taskId);
       return;
     }
 
     const result = executionResult.value;
     if (isSilentResponse(result.response)) {
+      deps.taskManager.transitionDispatchState(taskId, "delivered", ["executing"]);
       log.info(
         {
           taskId,
@@ -390,12 +424,14 @@ export function createBackgroundCompletionRunner(
       return;
     }
 
+    if (!deps.taskManager.transitionDispatchState(taskId, "delivering", ["executing"])) return;
     const deliveryStartedAt = systemNowMs();
     const deliveryAttempt = await fromPromise(deps.deliverCompletion({
       taskId: task.id,
       origin,
       response: result.response,
       executionId: result.executionId,
+      idempotencyKey: `background-continuation:${task.continuationExecutionId}`,
     }));
     const deliveryResult = deliveryAttempt.ok ? deliveryAttempt.value : deliveryAttempt;
     const deliveryDurationMs = Math.max(0, systemNowMs() - deliveryStartedAt);
@@ -416,8 +452,11 @@ export function createBackgroundCompletionRunner(
         },
         "Background completion delivery failed",
       );
+      deps.taskManager.transitionDispatchState(taskId, "pending", ["delivering"]);
+      deps.taskManager.scheduleDispatchRetry(taskId);
       return;
     }
+    deps.taskManager.transitionDispatchState(taskId, "delivered", ["delivering"]);
     log.info(
       {
         taskId,
@@ -430,45 +469,35 @@ export function createBackgroundCompletionRunner(
     );
   }
 
-  /**
-   * Two-phase commit:
-   *
-   * 1. transitionDispatchState(taskId, "notified") — synchronously persists
-   *    `dispatchState = "notified"` to disk (via persistTaskSync inside the
-   *    manager). This MUST run before fallbackNotifyFn so a SIGKILL between
-   *    persist and fire does NOT leak a duplicate on recovery: the at-most-
-   *    once gate at the top of handleEvent (which reads task.dispatchState)
-   *    sees "notified" and skips re-firing. Without this ordering, the gate
-   *    misses and the user receives the notification twice.
-   *
-   * 2. fallbackNotifyFn(...) — actually deliver the user-visible
-   *    notification. May reject (channel offline, rate-limited, etc.); the
-   *    failure is logged at WARN. The persisted state stays at "notified" —
-   *    the user did not see the notification, but the at-most-once contract
-   *    takes precedence over delivery completeness.
-   */
   async function fallbackForTask(taskId: string, agentId: string, toolName: string, message: string): Promise<void> {
-    // Phase 1: persist state. transitionDispatchState may return false if
-    // the task disappeared from the manager between handler entry and this
-    // call (e.g., explicit cleanup). In that case there is nothing to gate
-    // on; we still fire so the user sees the completion. The persist is
-    // synchronous so the on-disk state is updated before phase 2.
-    deps.taskManager.transitionDispatchState(taskId, "notified");
-
-    // Phase 2: fire user-visible notification.
-    try {
-      await deps.fallbackNotifyFn({
-        agentId,
-        message,
-        priority: "normal",
-        origin: "background_task",
-      });
-    } catch (err) {
+    const task = deps.taskManager.getTask(taskId);
+    if (!task) return;
+    if (!deps.taskManager.transitionDispatchState(taskId, "fallback_pending", ["executing"])) return;
+    const attempted = await fromPromise(deps.deliverFallback({
+      taskId,
+      origin: task.origin,
+      response: message,
+      executionId: task.continuationExecutionId,
+      idempotencyKey: `background-fallback:${task.continuationExecutionId}`,
+    }));
+    const result = attempted.ok ? attempted.value : attempted;
+    if (!result.ok) {
+      deps.taskManager.transitionDispatchState(taskId, "pending", ["fallback_pending"]);
+      deps.taskManager.scheduleDispatchRetry(taskId);
       log.warn(
-        { taskId, toolName, agentId, err, hint: "fallbackNotifyFn rejected; user will not see the completion notification for this task. dispatchState already persisted as \"notified\" — no duplicate on recovery.", errorKind: "internal" as const },
-        "Background completion: fallbackNotifyFn rejected (post-persist)",
+        {
+          taskId,
+          toolName,
+          agentId,
+          err: result.error.message,
+          hint: "Fallback delivery remains pending and will retry on recovery",
+          errorKind: "errorKind" in result.error ? result.error.errorKind : "internal" as const,
+        },
+        "Background completion fallback delivery failed",
       );
+      return;
     }
+    deps.taskManager.transitionDispatchState(taskId, "fallback_delivered", ["fallback_pending"]);
   }
 
   return {

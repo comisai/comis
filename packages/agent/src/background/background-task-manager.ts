@@ -94,7 +94,12 @@ export interface BackgroundTaskManager {
    * calls this from its handler so SIGKILL-recovery preserves the recovered
    * state across daemon restart.
    */
-  transitionDispatchState(taskId: string, next: BackgroundSessionState): boolean;
+  transitionDispatchState(
+    taskId: string,
+    next: BackgroundSessionState,
+    expected?: readonly BackgroundSessionState[],
+  ): boolean;
+  scheduleDispatchRetry(taskId: string): void;
 }
 
 const MAX_RESULT_CHARS = 102_400; // 100KB
@@ -112,6 +117,8 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
   } = opts;
 
   const tasks = new Map<string, BackgroundTask>();
+  const terminalSignals = new Map<string, { promise: Promise<void>; resolve: () => void }>();
+  const dispatchRetryTimers = new Map<string, TimerHandle>();
   const perAgentCount = new Map<string, number>();
   let totalCount = 0;
 
@@ -153,6 +160,19 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       }
 
       const taskId = randomUUID();
+      let resolveTerminal = (): void => undefined;
+      const terminalPromise = new Promise<void>((resolve) => {
+        resolveTerminal = resolve;
+      });
+      let terminalResolved = false;
+      terminalSignals.set(taskId, {
+        promise: terminalPromise,
+        resolve: () => {
+          if (terminalResolved) return;
+          terminalResolved = true;
+          resolveTerminal();
+        },
+      });
       const task: BackgroundTask = {
         id: taskId,
         toolName,
@@ -164,6 +184,8 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         // (at-most-once).
         notificationPolicy: notificationPolicy ?? "deferred",
         dispatchState: "pending",
+        continuationExecutionId: taskId,
+        dispatchAttempts: 0,
         _promise: promise,
         _abortController: ac,
       };
@@ -199,6 +221,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       task.status = "completed";
       task.completedAt = clock.now();
       task.result = truncateResult(result);
+      terminalSignals.get(taskId)?.resolve();
 
       if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
       decrementCounters(task.origin.turnScope.conversation.agentId);
@@ -228,6 +251,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       task.status = "failed";
       task.completedAt = clock.now();
       task.error = error instanceof Error ? error.message : String(error);
+      terminalSignals.get(taskId)?.resolve();
 
       if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
       decrementCounters(task.origin.turnScope.conversation.agentId);
@@ -254,6 +278,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
 
       task.status = "cancelled";
       task.completedAt = clock.now();
+      terminalSignals.get(taskId)?.resolve();
 
       if (task._abortController) task._abortController.abort();
       if (task._hardTimeoutTimer) task._hardTimeoutTimer.cancel();
@@ -302,14 +327,22 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         waitHeartbeat.unref();
       }
 
-      const settled = await fromPromise(task._promise);
+      const providerSettlement = fromPromise(task._promise);
+      const terminalSignal = terminalSignals.get(taskId);
+      const settled = terminalSignal
+        ? await Promise.race([
+            providerSettlement.then((result) => ({ kind: "provider" as const, result })),
+            terminalSignal.promise.then(() => ({ kind: "terminal" as const })),
+          ])
+        : { kind: "provider" as const, result: await providerSettlement };
       waitHeartbeat?.cancel();
       const current = tasks.get(taskId);
       if (!current) return err(new Error(`Background task not found after waiting: ${taskId}`));
       if (current.status !== "running") return ok(current);
 
-      if (settled.ok) manager.complete(taskId, settled.value);
-      else manager.fail(taskId, settled.error);
+      if (settled.kind === "terminal") return ok(current);
+      if (settled.result.ok) manager.complete(taskId, settled.result.value);
+      else manager.fail(taskId, settled.result.error);
       const terminal = tasks.get(taskId);
       return terminal
         ? ok(terminal)
@@ -335,31 +368,43 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         // (missing id / toolName) before they reach here; we propagate the
         // persisted record as-is.
         const task: BackgroundTask = persisted as BackgroundTask;
+        task.continuationExecutionId = persisted.continuationExecutionId;
         tasks.set(task.id, task);
 
-        if (persisted.status === "failed" && persisted.error === "Daemon restarted while task was running") {
-          // Recovery-without-events: if dispatchState is already "notified" or
-          // "dispatched", the dispatcher already routed pre-restart; do NOT
-          // re-emit the background_task:failed event (which would re-trigger
-          // fallback).
-          if (task.dispatchState === "notified" || task.dispatchState === "dispatched") {
-            dispatchPreserved++;
-            logger.debug(
-              {
-                taskId: task.id,
-                dispatchState: task.dispatchState,
-                hint: "Pre-restart dispatch state preserved; skipping re-emit (recovery-without-events)",
-              },
-              "Recovery: skipped re-emit",
-            );
-            continue;
-          }
+        if (
+          task.dispatchState === "delivered"
+          || task.dispatchState === "fallback_delivered"
+          || task.dispatchState === "consumed_live"
+          || persisted.status === "cancelled"
+        ) {
+          dispatchPreserved++;
+          continue;
+        }
+        if (
+          task.dispatchState === "executing"
+          || task.dispatchState === "delivering"
+          || task.dispatchState === "fallback_pending"
+        ) {
+          task.dispatchState = "pending";
+          persistTaskSync(dataDir, task);
+        }
+        if (persisted.status === "completed") {
+          count++;
+          emitObservationalEventSafely({ eventBus, logger }, "background_task:completed", {
+            agentId: task.origin.turnScope.conversation.agentId,
+            taskId: task.id,
+            toolName: task.toolName,
+            durationMs: (persisted.completedAt ?? clock.now()) - persisted.startedAt,
+            origin: task.origin,
+            timestamp: clock.now(),
+          });
+        } else if (persisted.status === "failed") {
           count++;
           emitObservationalEventSafely({ eventBus, logger }, "background_task:failed", {
             agentId: task.origin.turnScope.conversation.agentId,
             taskId: task.id,
             toolName: task.toolName,
-            error: persisted.error,
+            error: persisted.error ?? "Background task failed",
             durationMs: (persisted.completedAt ?? clock.now()) - persisted.startedAt,
             origin: task.origin,
             timestamp: clock.now(),
@@ -377,9 +422,12 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       }
     },
 
-    transitionDispatchState(taskId, next) {
+    transitionDispatchState(taskId, next, expected) {
       const task = tasks.get(taskId);
       if (!task) return false;
+      const current = task.dispatchState ?? "pending";
+      if (expected && !expected.includes(current)) return false;
+      if (next === "executing") task.dispatchAttempts++;
       // Idempotent — same-state transitions are allowed (no-op write).
       task.dispatchState = next;
       // Persist atomically so recovery-after-SIGKILL sees the transition.
@@ -387,11 +435,49 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       return true;
     },
 
+    scheduleDispatchRetry(taskId) {
+      const task = tasks.get(taskId);
+      if (!task || task.dispatchState !== "pending" || dispatchRetryTimers.has(taskId)) return;
+      const delayMs = Math.min(60_000, 1_000 * (2 ** Math.min(task.dispatchAttempts, 6)));
+      const retry = timers.setTimeout(() => {
+        dispatchRetryTimers.delete(taskId);
+        const current = tasks.get(taskId);
+        if (!current || current.dispatchState !== "pending") return;
+        const event = current.status === "completed"
+          ? "background_task:completed" as const
+          : current.status === "failed"
+            ? "background_task:failed" as const
+            : undefined;
+        if (event === undefined) return;
+        const common = {
+          agentId: current.origin.turnScope.conversation.agentId,
+          taskId: current.id,
+          toolName: current.toolName,
+          durationMs: (current.completedAt ?? clock.now()) - current.startedAt,
+          origin: current.origin,
+          timestamp: clock.now(),
+        };
+        if (event === "background_task:completed") {
+          emitObservationalEventSafely({ eventBus, logger }, event, common);
+        } else {
+          emitObservationalEventSafely({ eventBus, logger }, event, {
+            ...common,
+            error: current.error ?? "Background task failed",
+          });
+        }
+      }, delayMs);
+      retry.unref();
+      dispatchRetryTimers.set(taskId, retry);
+    },
+
     cleanup(maxAgeMs = 86_400_000) {
       const cutoff = clock.now() - maxAgeMs;
       for (const [taskId, task] of tasks) {
         if (task.status !== "running" && (task.completedAt ?? task.startedAt) < cutoff) {
           tasks.delete(taskId);
+          terminalSignals.delete(taskId);
+          dispatchRetryTimers.get(taskId)?.cancel();
+          dispatchRetryTimers.delete(taskId);
           removeTaskFile(dataDir, task.origin.turnScope.conversation.agentId, taskId);
         }
       }

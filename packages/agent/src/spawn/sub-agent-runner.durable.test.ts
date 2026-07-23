@@ -22,6 +22,11 @@ vi.mock("@comis/agent", () => ({
 }));
 
 import { createSubAgentRunner, type SubAgentRunnerDeps } from "./sub-agent-runner.js";
+import {
+  hashSubAgentResumeDescriptor,
+  type SubAgentResumeDescriptor,
+} from "./sub-agent-resume-descriptor.js";
+import { createConversationRef } from "@comis/core";
 import type {
   ClockPort,
   TimerPort,
@@ -57,20 +62,23 @@ const testTimers: TimerPort = {
 interface RecordingStore extends DurableRunPort {
   readonly checkpoints: DurableRunRecord[];
   readonly heartbeats: Array<{ checkpointId: string; atMs: number }>;
-  readonly completed: string[];
+  readonly completed: Array<{ checkpointId: string; terminalReason: DurableRunRecord["terminalReason"] }>;
 }
 
 function createRecordingStore(): RecordingStore {
   const checkpoints: DurableRunRecord[] = [];
   const heartbeats: Array<{ checkpointId: string; atMs: number }> = [];
-  const completed: string[] = [];
+  const completed: Array<{ checkpointId: string; terminalReason: DurableRunRecord["terminalReason"] }> = [];
   return {
     checkpoints,
     heartbeats,
     completed,
     upsertCheckpoint: (record): Promise<Result<void, Error>> => { checkpoints.push(record); return Promise.resolve(ok(undefined)); },
     touchHeartbeat: (checkpointId, atMs): Promise<Result<void, Error>> => { heartbeats.push({ checkpointId, atMs }); return Promise.resolve(ok(undefined)); },
-    markCompleted: (checkpointId): Promise<Result<void, Error>> => { completed.push(checkpointId); return Promise.resolve(ok(undefined)); },
+    markCompleted: (checkpointId, terminalReason): Promise<Result<void, Error>> => {
+      completed.push({ checkpointId, terminalReason });
+      return Promise.resolve(ok(undefined));
+    },
     listResumable: () => Promise.resolve(ok({ records: [], invalid: [] })),
     getByCheckpoint: () => Promise.resolve(ok(undefined)),
     markOrphaned: () => Promise.resolve(ok(undefined)),
@@ -273,13 +281,119 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     const runId = runner.spawn({ task: "quick task", agentId: "worker", rootRunId: "root-DONE" });
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(store.completed).toContain(runId);
+    expect(store.completed).toContainEqual({ checkpointId: runId, terminalReason: "completed" });
 
     // After completion the heartbeat interval is cancelled — advancing the clock
     // produces NO further heartbeats (the leaked-timer guard).
     const before = store.checkpoints.length;
     await vi.advanceTimersByTimeAsync(5_000);
     expect(store.checkpoints.length).toBe(before);
+  });
+
+  it("watchdog immediately closes durable resources when execution ignores abort", async () => {
+    const store = createRecordingStore();
+    const closeTrajectory = vi.fn(async () => undefined);
+    const runner = createSubAgentRunner(createDeps({
+      durableRuns: store,
+      closeTrajectory,
+      durability: { keepAliveMs: 1_000, staleHeartbeatMs: 4_000 },
+      config: {
+        ...createDeps().config,
+        subagentContext: { maxRunTimeoutMs: 500, perStepTimeoutMs: 500 },
+      },
+      executeAgent: vi.fn().mockReturnValue(new Promise(() => undefined)),
+    }));
+    const runId = runner.spawn({ task: "stuck task", agentId: "worker", rootRunId: "root-timeout" });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(store.completed).toContainEqual({
+      checkpointId: runId,
+      terminalReason: "watchdog_timeout",
+    });
+    expect(closeTrajectory).toHaveBeenCalledOnce();
+    const before = store.checkpoints.length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(store.checkpoints.length).toBe(before);
+  });
+
+  it("re-enters a protected durable descriptor with the reserved execution identity", async () => {
+    const endpoint = {
+      channelType: "telegram",
+      channelInstanceId: "telegram-main",
+      conversationId: "chat-a",
+      conversationKind: "direct" as const,
+    };
+    const conversationScope = {
+      tenantId: "default",
+      agentId: "worker",
+      partition: {
+        kind: "endpoint-conversation-principal" as const,
+        endpoint,
+        principalId: "user_a",
+      },
+    };
+    const conversationRef = createConversationRef(conversationScope);
+    expect(conversationRef.ok).toBe(true);
+    if (!conversationRef.ok) return;
+    const descriptor: SubAgentResumeDescriptor = {
+      kind: "subagent_resume",
+      task: "continue protected work",
+      agentId: "worker",
+      depth: 0,
+      maxDepth: 3,
+      rootRunId: "root-resume",
+      capabilityCeiling: ["orch:read"],
+      workspacePolicyHash: "b".repeat(64),
+    };
+    const record: DurableRunRecord = {
+      checkpointId: "run-resume",
+      rootRunId: "root-resume",
+      tenantId: "default",
+      agentId: "worker",
+      conversationRef: conversationRef.value,
+      conversationScope,
+      principalId: "user_a",
+      deliveryOrigin: null,
+      spawnTree: ["run-resume"],
+      caps: ["orch:read"],
+      leaseIds: ["lease-old"],
+      budgetConsumed: 0,
+      rootBudget: { startedAtMs: 1, tokensConsumed: 0, usdConsumed: 0 },
+      cronOrigin: null,
+      trustLevel: "user",
+      status: "running",
+      lastHeartbeatAt: 1,
+      scriptRef: null,
+      checkpointRef: null,
+      workspacePolicyHash: descriptor.workspacePolicyHash,
+      resumeDescriptorHash: hashSubAgentResumeDescriptor(descriptor),
+    };
+    const executeAgent = vi.fn().mockResolvedValue({
+      response: "done",
+      tokensUsed: { total: 1 },
+      cost: { total: 0 },
+      finishReason: "stop",
+      stepsExecuted: 1,
+    });
+    const runner = createSubAgentRunner(createDeps({
+      durableRuns: createRecordingStore(),
+      executeAgent,
+      sessionStore: {
+        save: vi.fn(() => ok(undefined)),
+        delete: vi.fn(() => ok(false)),
+        loadByRef: vi.fn(() => ok({
+          conversationRef: conversationRef.value,
+          conversationScope,
+          messages: [],
+          metadata: { durableResumeDescriptor: descriptor },
+          createdAt: 1,
+          updatedAt: 1,
+        })),
+      },
+    }));
+    const resumed = await runner.resumeDurable(record, "lease-resumed");
+    expect(resumed).toEqual(ok("run-resume"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(executeAgent).toHaveBeenCalledOnce();
   });
 
   it("no durableRuns store wired ⇒ zero checkpoint/heartbeat work (default install)", async () => {

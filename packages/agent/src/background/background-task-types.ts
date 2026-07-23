@@ -42,7 +42,14 @@ export type BackgroundTaskNotificationPolicy = "deferred" | "immediate" | "silen
  * - "dispatched" — Re-entry triggered against the originating session;
  *                   no fallback notification needed.
  */
-export type BackgroundSessionState = "pending" | "notified" | "dispatched";
+export type BackgroundSessionState =
+  | "pending"
+  | "executing"
+  | "delivering"
+  | "delivered"
+  | "fallback_pending"
+  | "fallback_delivered"
+  | "consumed_live";
 
 export interface BackgroundTask {
   id: string;
@@ -63,6 +70,8 @@ export interface BackgroundTask {
    *  "pending" when absent. The dispatcher inspects this before firing
    *  fallbackNotifyFn. */
   dispatchState?: BackgroundSessionState;
+  continuationExecutionId: string;
+  dispatchAttempts: number;
   // In-memory only (not serialized):
   _promise?: Promise<unknown>;
   _abortController?: AbortController;
@@ -92,4 +101,6 @@ export interface PersistedTaskState {
    * when absent. The dispatcher inspects this before firing fallbackNotifyFn.
    */
   dispatchState?: BackgroundSessionState;
+  continuationExecutionId: string;
+  dispatchAttempts: number;
 }

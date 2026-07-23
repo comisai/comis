@@ -423,6 +423,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
       // so a jailed script cannot pin a child for an arbitrarily long window.
       const timeoutMs = clampTimeoutMs(params.timeoutMs);
       let skipCleanup = false;
+      let durableTerminalReason: "completed" | "failed" = "failed";
       let claimedResume:
         | { authority: ResumeAuthority; scriptRef: string }
         | undefined;
@@ -809,7 +810,10 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           }
           if (registered.ok && resumeAuthority !== undefined) {
             resumeReplacementStarted = true;
-            await deps.durableRuns.markCompleted?.(resumeAuthority.sourceCheckpointId);
+            await deps.durableRuns.markCompleted?.(
+              resumeAuthority.sourceCheckpointId,
+              "completed",
+            );
           }
         }
 
@@ -853,6 +857,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
           { runId, step: "complete", durationMs: now() - startedMs, stdoutBytes: stdout.length },
           "orchestrate run complete",
         );
+        durableTerminalReason = "completed";
         return { content: bounced, details: { runId, stdoutBytes: stdout.length } };
       } catch (err) {
         // Every failure class emits a run_summary too — mapped to the closed
@@ -931,6 +936,7 @@ export function createOrchestrateTool(deps: OrchestrateToolDeps): AgentTool<type
               scriptRef: scriptName,
               workspacePath,
               runId,
+              terminalReason: durableTerminalReason,
             },
             log,
           );

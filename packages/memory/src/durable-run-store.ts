@@ -44,6 +44,8 @@ const durableCheckpointPayloadSchema = z.strictObject({
   spawnTree: z.unknown(),
   rootBudget: DurableRootBudgetSchema,
   workspacePolicyHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  resumeDescriptorHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  terminalReason: z.enum(["completed", "failed", "killed", "watchdog_timeout", "ghost_sweep"]).optional(),
 });
 const resumeClaimSchema = z.strictObject({
   checkpointId: z.string().min(1),
@@ -71,6 +73,8 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
   let conversationScope: unknown;
   let rootBudget: unknown;
   let workspacePolicyHash: string | undefined;
+  let resumeDescriptorHash: string | undefined;
+  let terminalReason: DurableRunRecord["terminalReason"];
   try {
     const payload = durableCheckpointPayloadSchema.safeParse(JSON.parse(row.spawn_tree));
     if (!payload.success) {
@@ -79,6 +83,8 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
     spawnTree = payload.data.spawnTree;
     rootBudget = payload.data.rootBudget;
     workspacePolicyHash = payload.data.workspacePolicyHash;
+    resumeDescriptorHash = payload.data.resumeDescriptorHash;
+    terminalReason = payload.data.terminalReason;
     caps = JSON.parse(row.caps);
     leaseIds = JSON.parse(row.lease_ids);
     deliveryOrigin = row.delivery_origin === null ? null : JSON.parse(row.delivery_origin);
@@ -120,6 +126,10 @@ function rowToRecord(row: DurableRunDbRow): Result<DurableRunRecord, Error> {
     ...(workspacePolicyHash === undefined
       ? {}
       : { workspacePolicyHash }),
+    ...(resumeDescriptorHash === undefined
+      ? {}
+      : { resumeDescriptorHash }),
+    ...(terminalReason === undefined ? {} : { terminalReason }),
   });
   if (!parsed.ok) {
     return err(new Error(`durable checkpoint validation failed: ${parsed.error.message}`));
@@ -212,7 +222,9 @@ export function createSqliteDurableRunStore(
   `);
   const markCompletedStmt = db.prepare(`
     UPDATE durable_run_checkpoints
-    SET status = 'completed', updated_at_ms = ?
+    SET status = 'completed',
+        spawn_tree = json_set(spawn_tree, '$.terminalReason', ?),
+        updated_at_ms = ?
     WHERE checkpoint_id = ? AND status = 'running'
   `);
   const touchHeartbeatStmt = db.prepare(`
@@ -248,6 +260,12 @@ export function createSqliteDurableRunStore(
         ...(record.workspacePolicyHash === undefined
           ? {}
           : { workspacePolicyHash: record.workspacePolicyHash }),
+        ...(record.resumeDescriptorHash === undefined
+          ? {}
+          : { resumeDescriptorHash: record.resumeDescriptorHash }),
+        ...(record.terminalReason === undefined
+          ? {}
+          : { terminalReason: record.terminalReason }),
       }),
       JSON.stringify(record.caps),
       JSON.stringify(record.leaseIds),
@@ -418,7 +436,11 @@ export function createSqliteDurableRunStore(
         return err(new Error(`durable replacement validation failed: ${replacementResult.error.message}`));
       }
 
-      const completed = markCompletedStmt.run(claim.claimedAtMs, record.checkpointId);
+      const completed = markCompletedStmt.run(
+        "completed",
+        claim.claimedAtMs,
+        record.checkpointId,
+      );
       if (completed.changes !== 1) return ok({ kind: "not_resumable" });
       // A constraint failure here throws at the SQLite boundary and rolls the
       // transaction back, including the source completion.
@@ -522,9 +544,9 @@ export function createSqliteDurableRunStore(
       }
     },
 
-    markCompleted(checkpointId): Promise<Result<void, Error>> {
+    markCompleted(checkpointId, terminalReason): Promise<Result<void, Error>> {
       try {
-        markCompletedStmt.run(nowMs(), checkpointId);
+        markCompletedStmt.run(terminalReason, nowMs(), checkpointId);
         return Promise.resolve(ok(undefined));
       } catch (cause) {
         return Promise.resolve(err(cause instanceof Error ? cause : new Error(String(cause))));

@@ -2094,12 +2094,23 @@ async function bootChannels(boot: BootContext): Promise<void> {
     record: import("@comis/core").DurableRunRecord,
     lease: import("./autonomy/durable-resume-engine.js").IssuedLease,
   ) => Promise<import("@comis/shared").Result<void, Error>> } = {};
+  const plainResumeHolder: { ref?: (
+    record: import("@comis/core").DurableRunRecord,
+    lease: import("./autonomy/durable-resume-engine.js").IssuedLease,
+  ) => Promise<import("@comis/shared").Result<void, Error>> } = {};
   const { durableResume, startAndResumeDurable, durableRunFacts } = buildDurableResume({
     db, durabilityCfg, durableRunStore: durableRunStoreEarly, outwardLedger: outwardLedgerEarly,
     boundedAutonomy: capEndpointHandle?.boundedAutonomy, sharedLeaseManager: handle.sharedLeaseManager!,
     eventBus: container.eventBus, logger: daemonLogger, clock: handle.clock, timers: handle.timers,
     // Route a DAG record (spawn_tree objects w/ status) to coordinator.resumeGraph via the late-bound holder.
     resumeGraph: (record, lease) => graphResumeHolder.ref ? graphResumeHolder.ref(record, lease) : Promise.resolve(err(new Error("resumeGraph holder unpopulated (coordinator not built)"))),
+    resumePlain: (record, lease) => plainResumeHolder.ref ? plainResumeHolder.ref(record, lease) : Promise.resolve(err(new Error("plain sub-agent resume holder is unavailable"))),
+    resolveWorkspacePolicy: (policyHash) => {
+      const resolved = container.workspacePolicyPort?.get(policyHash);
+      return resolved?.ok
+        ? ok(undefined)
+        : err(new Error("The immutable workspace policy snapshot is unavailable"));
+    },
     // The orchestrate-kind resume + orphan-reclaim seams (workspace resolver + real existsSync + result-ref-store.cleanupRun + a safePath-guarded rmSync). Populated ONLY when durability is enabled (a default install builds no unused store) so a resumable orchestrate row's pinned script + checkpoint are VERIFIED on boot and a dead run's artifacts are RECLAIMED on orphan; absent ⇒ a scriptRef row degrades to the plain flat re-anchor (deny-by-absence — the runner only writes scriptRef rows under orchestrateResume).
     ...(durabilityCfg.enabled ? { orchestrateResume: buildOrchestrateResumeWiring({ workspaceDirs, logger: daemonLogger }) } : {}),
   });
@@ -2243,6 +2254,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     eventBus: container.eventBus, getExecutor: handle.getExecutor, sessionStore,
     assembleToolsForAgent, adaptersByType, deliveryService,
     taskManager: backgroundTaskManager, fallbackNotifyFn: bgNotifyFn,
+    ...(durableResume.outwardLedger ? { outwardLedger: durableResume.outwardLedger } : {}),
     maxBackgroundHops: bgConfigForRunner.maxBackgroundHops, logger: daemonLogger,
   });
   // eventBus.on("system:shutdown", () =>
@@ -2386,6 +2398,10 @@ async function bootChannels(boot: BootContext): Promise<void> {
   subAgentRunner.setGraphCoordinator(graphCoordinator);
   // Populate the late-bound holder so resumeRun (fires at resumeAndStart, after channels) routes a DAG record to coordinator.resumeGraph (incomplete-node re-entry).
   graphResumeHolder.ref = (record, lease) => graphCoordinator.resumeGraph(record, lease);
+  plainResumeHolder.ref = async (record, lease) => {
+    const resumed = await subAgentRunner.resumeDurable(record, lease.leaseId);
+    return resumed.ok ? ok(undefined) : resumed;
+  };
   const namedGraphStore = createNamedGraphStore(db);
   // Seed the four canonical small-model DAG templates into the named-graph store. Idempotent (INSERT-OR-IGNORE in the seeder), so operator-customized templates survive restarts and re-running on every boot is safe.
   seedDefaultDagTemplates(namedGraphStore);

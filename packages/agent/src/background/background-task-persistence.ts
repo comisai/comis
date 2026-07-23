@@ -39,6 +39,8 @@ function toPersistedState(task: BackgroundTask | PersistedTaskState): PersistedT
     result: task.result,
     error: task.error,
     origin: task.origin,
+    continuationExecutionId: task.continuationExecutionId,
+    dispatchAttempts: task.dispatchAttempts,
     ...(task.notificationPolicy !== undefined && { notificationPolicy: task.notificationPolicy }),
     ...(task.dispatchState !== undefined && { dispatchState: task.dispatchState }),
   };
@@ -133,6 +135,8 @@ export function recoverTasks(dataDir: string): PersistedTaskState[] {
         if (
           !parsed.id
           || !parsed.toolName
+          || !parsed.continuationExecutionId
+          || !Number.isInteger(parsed.dispatchAttempts)
           || !BackgroundTaskOriginSchema.safeParse(parsed.origin).success
         ) {
           continue;

@@ -281,6 +281,42 @@ describe("BackgroundTaskManager", () => {
       expect(result.ok).toBe(true);
       expect(cancelInterval).toHaveBeenCalledTimes(1);
     });
+
+    it("returns after hard timeout when the provider ignores abort", async () => {
+      let hardTimeout: (() => void) | undefined;
+      const cancelHeartbeat = vi.fn();
+      const controlledManager = createBackgroundTaskManager({
+        dataDir,
+        eventBus,
+        logger,
+        clock: testClock,
+        timers: {
+          setTimeout: vi.fn((callback) => {
+            hardTimeout = callback;
+            return { cancelled: false, cancel: vi.fn(), unref: vi.fn() };
+          }),
+          setInterval: vi.fn(() => ({
+            cancelled: false,
+            cancel: cancelHeartbeat,
+            unref: vi.fn(),
+          })),
+        },
+        maxBackgroundDurationMs: 1_000,
+      });
+      const promoted = controlledManager.promote(
+        "abort_insensitive",
+        new Promise(() => undefined),
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+      expect(promoted.ok).toBe(true);
+      if (!promoted.ok) return;
+      const waiting = controlledManager.waitForTask(promoted.value, vi.fn(), 100);
+      hardTimeout?.();
+      const result = await waiting;
+      expect(result).toMatchObject({ ok: true, value: { status: "failed", error: "Hard timeout exceeded" } });
+      expect(cancelHeartbeat).toHaveBeenCalledOnce();
+    });
   });
 
   describe("fail", () => {
@@ -396,6 +432,8 @@ describe("BackgroundTaskManager", () => {
         status: "running",
         startedAt: 1000,
         origin: buildOrigin({ agentId: "a1" }),
+        continuationExecutionId: "recovered-1",
+        dispatchAttempts: 0,
       };
       persistTaskSync(dataDir, task);
 
@@ -532,6 +570,8 @@ describe("BackgroundTaskManager", () => {
           completedAt: Date.now() - 4000,
           error: "Daemon restarted while task was running",
           origin,
+          continuationExecutionId: "restart-task-1",
+          dispatchAttempts: 0,
         };
 
         // Write directly to the agent subdir using safePath
@@ -585,7 +625,9 @@ describe("BackgroundTaskManager", () => {
           startedAt: Date.now() - 5000,
           completedAt: Date.now() - 4000,
           origin,
-          dispatchState: "notified",
+          dispatchState: "fallback_delivered",
+          continuationExecutionId: "disp-task-1",
+          dispatchAttempts: 1,
         };
 
         const agentDir = safePath(testDir, origin.turnScope.conversation.agentId);
@@ -610,7 +652,7 @@ describe("BackgroundTaskManager", () => {
             })
           | undefined;
         expect(recovered).toBeDefined();
-        expect(recovered?.dispatchState).toBe("notified");
+        expect(recovered?.dispatchState).toBe("fallback_delivered");
       } finally {
         rmSync(testDir, { recursive: true, force: true });
       }

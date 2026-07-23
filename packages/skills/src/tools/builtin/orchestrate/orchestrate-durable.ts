@@ -79,7 +79,10 @@ export interface OrchestrateDurableRuns {
    * `DurableRunPort.markCompleted`; optional so a minimal store stub compiles (the
    * concrete store always provides it, and the runner skips it on a resumable timeout).
    */
-  markCompleted?(checkpointId: string): Promise<Result<void, Error>>;
+  markCompleted?(
+    checkpointId: string,
+    terminalReason: "completed" | "failed",
+  ): Promise<Result<void, Error>>;
   /** Quarantine a replacement whose pinned artifact cannot be loaded. */
   markOrphaned?(checkpointId: string, reason: string): Promise<Result<void, Error>>;
   /**
@@ -368,11 +371,12 @@ export async function finalizeCompletedRun(
     scriptRef: string;
     workspacePath: string;
     runId: string;
+    terminalReason: "completed" | "failed";
   },
   logger?: ComisLogger,
 ): Promise<void> {
   if (runs === undefined) return; // resume surface off — nothing durable to finalize.
-  const done = await runs.markCompleted?.(input.checkpointId);
+  const done = await runs.markCompleted?.(input.checkpointId, input.terminalReason);
   if (done !== undefined && !done.ok) {
     logger?.warn(
       { runId: input.runId, rootRunId: input.rootRunId, err: toSafeErrorLogString(done.error), errorKind: "internal" as const, hint: "the durable row could not be marked completed — the watchdog re-anchor cap eventually orphans the stale 'running' row after repeated no-progress attempts (no live impact)" },

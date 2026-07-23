@@ -471,6 +471,8 @@ export function buildDurableResume(deps: {
    * without node re-entry.
    */
   resumeGraph?: (record: DurableRunRecord, lease: IssuedLease) => Promise<Result<void, Error>>;
+  resumePlain?: (record: DurableRunRecord, lease: IssuedLease) => Promise<Result<void, Error>>;
+  resolveWorkspacePolicy?: (policyHash: string) => Result<void, Error>;
   /**
    * The orchestrate-kind resume + orphan-reclaim seams (workspace resolver +
    * fs-exists probe + cleanupRun/rmSync reclaim). When present: a flat row with
@@ -483,7 +485,7 @@ export function buildDurableResume(deps: {
    */
   orchestrateResume?: OrchestrateResumeWiring;
 }): DurableResumeWiring {
-  const { durabilityCfg, durableRunStore, outwardLedger, boundedAutonomy, sharedLeaseManager, eventBus, logger, clock, timers, resumeGraph, orchestrateResume } = deps;
+  const { durabilityCfg, durableRunStore, outwardLedger, boundedAutonomy, sharedLeaseManager, eventBus, logger, clock, timers, resumeGraph, resumePlain, resolveWorkspacePolicy, orchestrateResume } = deps;
   // Bind the engine's orphan-reclaim hook to the wiring's
   // reclaim seams (workspace + cleanupRun + guarded rmSync). The bound helper is
   // scoped (a non-orchestrate row is a no-op) + idempotent. Absent ⇒ no reclaim.
@@ -534,14 +536,33 @@ export function buildDurableResume(deps: {
           // durable:orphaned (closed-enum) + reclaim — do NOT emit orphaned here.
           const verified = verifyOrchestrateResumable(record, orchestrateResume);
           if (!verified.ok) return verified;
-          // PRESENT → fall through to the re-anchor (surface-only; no re-spawn on boot).
+          try {
+            boundedAutonomy?.registerRoot(record.rootRunId, lease.leaseId);
+            return ok(undefined);
+          } catch (cause) {
+            return err(cause instanceof Error ? cause : new Error(String(cause)));
+          }
         }
+        if (
+          record.resumeDescriptorHash === undefined
+          || record.workspacePolicyHash === undefined
+          || resumePlain === undefined
+          || resolveWorkspacePolicy === undefined
+        ) {
+          return err(new Error("Plain sub-agent checkpoint lacks protected restart authority"));
+        }
+        const policy = resolveWorkspacePolicy(record.workspacePolicyHash);
+        if (!policy.ok) return policy;
         try {
           boundedAutonomy?.registerRoot(record.rootRunId, lease.leaseId);
-          return ok(undefined);
         } catch (cause) {
           return err(cause instanceof Error ? cause : new Error(String(cause)));
         }
+        const resumed = await resumePlain(record, lease);
+        if (!resumed.ok) {
+          boundedAutonomy?.evictRootIfIdle(record.rootRunId);
+        }
+        return resumed;
       };
       const internalIdentity = resolveInternalTurnIdentity({
         tenantId: record.tenantId,

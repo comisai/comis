@@ -4788,7 +4788,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       simulateCompletion(eventBus, aRun, true);
       await completed;
       await coordinator.shutdown();
-      expect(durableRuns.markCompleted).toHaveBeenCalledWith(runResult.value);
+      expect(durableRuns.markCompleted).toHaveBeenCalledWith(runResult.value, "completed");
       const finalCheckpoint = durableRuns._checkpoints().at(-1);
       expect(finalCheckpoint).toBeDefined();
       expect(finalCheckpoint?.checkpointId).toBe(runResult.value);
@@ -4956,6 +4956,7 @@ describe("createGraphCoordinator — DAG durability across daemon restarts", () 
       await authorityCompleted;
       expect(durableRuns.markCompleted).toHaveBeenCalledWith(
         runResult.ok ? runResult.value : "",
+        "completed",
       );
       expect(sendGovernedAnnouncement).toHaveBeenCalledTimes(1);
       expect(completedEvents).toHaveLength(1);
