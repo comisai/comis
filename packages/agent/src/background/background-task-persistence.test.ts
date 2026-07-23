@@ -101,6 +101,45 @@ describe("background-task-persistence", () => {
       },
     );
 
+    it("reports committed state when directory durability remains uncertain", () => {
+      const prior: PersistedTaskState = {
+        id: "atomic-directory-task",
+        toolName: "exec_command",
+        status: "completed",
+        startedAt: 1,
+        completedAt: 2,
+        origin: buildOrigin({ agentId: "agent-a" }),
+        continuationExecutionId: "execution-directory",
+        dispatchAttempts: 0,
+        dispatchState: "pending",
+      };
+      persistTaskSync(dataDir, prior);
+      const directoryDescriptors = new Set<number>();
+      const attempted = persistTaskAtomically(
+        dataDir,
+        { ...prior, dispatchState: "ready_to_deliver" },
+        {
+          open: (path, flags, mode) => {
+            const fd = openSync(path, flags, mode);
+            if (flags === "r") directoryDescriptors.add(fd);
+            return fd;
+          },
+          write: writeFileSync,
+          sync: (fd) => {
+            if (directoryDescriptors.has(fd)) throw new Error("injected directory sync failure");
+            fsyncSync(fd);
+          },
+          close: closeSync,
+          rename: renameSync,
+          unlink: unlinkSync,
+        },
+      );
+      expect(attempted.ok).toBe(true);
+      if (!attempted.ok) return;
+      expect(attempted.value.kind).toBe("committed_durability_uncertain");
+      expect(loadTask(dataDir, "agent-a", prior.id)?.dispatchState).toBe("ready_to_deliver");
+    });
+
     it("writes and reads back a task", () => {
       const task: PersistedTaskState = {
         id: "task-1",

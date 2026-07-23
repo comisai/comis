@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { ok } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import {
   createBackgroundCompletionRunner,
   type BackgroundCompletionRunnerDeps,
@@ -86,33 +86,49 @@ function makeLogger() {
   } as unknown as import("@comis/core").ComisLogger;
 }
 
+function executeFinalized(result: Record<string, unknown>) {
+  return async (...args: unknown[]) => {
+    const overrides = args[7] as {
+      onFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+    } | undefined;
+    await overrides?.onFinalizedResult?.(result);
+    return result;
+  };
+}
+
 describe("createBackgroundCompletionRunner", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
   let sessionStore: { loadByRef: ReturnType<typeof vi.fn> };
   let taskManager: {
     getTask: ReturnType<typeof vi.fn>;
-    transitionDispatchState: ReturnType<typeof vi.fn>;
+    commitDispatchState: ReturnType<typeof vi.fn>;
     persistContinuationOutbox: ReturnType<typeof vi.fn>;
     scheduleDispatchRetry: ReturnType<typeof vi.fn>;
   };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
-  let transitionDispatchState: ReturnType<typeof vi.fn>;
+  let commitDispatchState: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     eventBus = createFakeEventBus();
-    executor = { execute: vi.fn().mockResolvedValue({ ok: true }) };
+    executor = {
+      execute: vi.fn(executeFinalized({
+        response: "continued",
+        executionId: "execution-default",
+        finishReason: "stop",
+      })),
+    };
     sessionStore = { loadByRef: vi.fn().mockReturnValue(ok({ messages: [] })) };
-    transitionDispatchState = vi.fn((_taskId, next, expected) => {
+    commitDispatchState = vi.fn((_taskId, next, expected) => {
       const task = taskManager.getTask();
       const current = task?.dispatchState ?? "pending";
-      if (!task || (expected && !expected.includes(current))) return false;
+      if (!task || (expected && !expected.includes(current))) return ok(false);
       task.dispatchState = next;
-      return true;
+      return ok(true);
     });
     taskManager = {
       getTask: vi.fn(),
-      transitionDispatchState,
+      commitDispatchState,
       persistContinuationOutbox: vi.fn((_taskId, outbox, expected) => {
         const task = taskManager.getTask();
         const current = task?.dispatchState ?? "pending";
@@ -175,6 +191,31 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
+  it("retries a completion claim after acknowledged storage failure", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    commitDispatchState.mockReturnValueOnce(err(new Error("storage unavailable")));
+    const outcomes: Array<{ reason: string }> = [];
+    eventBus.on("background_task:notified", (event) => outcomes.push(event));
+    const runner = build();
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(task.dispatchState).toBe("pending");
+    expect(taskManager.scheduleDispatchRetry).toHaveBeenCalledWith(task.id);
+    expect(outcomes).toContainEqual(expect.objectContaining({ reason: "retry_scheduled" }));
+    expect(executor.execute).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
   it("completed event triggers executor.execute with synthetic message AND emits background_task:reentered", async () => {
     const reenteredEvents: unknown[] = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data));
@@ -224,11 +265,11 @@ describe("createBackgroundCompletionRunner", () => {
       origin: buildOrigin({ responseLocalePolicy } as Partial<BackgroundTaskOrigin>),
     });
     taskManager.getTask.mockReturnValue(task);
-    executor.execute.mockResolvedValue({
+    executor.execute.mockImplementation(executeFinalized({
       response: "תוצאת הרקע הושלמה",
       executionId: "execution-1",
       finishReason: "stop",
-    });
+    }));
     const deliverCompletion = vi.fn().mockResolvedValue({ kind: "accepted" });
     const runner = build(3, undefined, undefined, deliverCompletion);
 
@@ -250,10 +291,11 @@ describe("createBackgroundCompletionRunner", () => {
       "default",
       undefined,
       undefined,
-      {
+      expect.objectContaining({
         operationType: "interactive",
         responseLocalePolicy,
-      },
+        onFinalizedResult: expect.any(Function),
+      }),
     );
     expect(deliverCompletion).toHaveBeenCalledWith({
       taskId: task.id,
@@ -309,10 +351,14 @@ describe("createBackgroundCompletionRunner", () => {
     eventBus.on("background_task:reentered", () => {
       reenteredContext = getContext();
     });
-    executor.execute.mockImplementation(async () => {
+    executor.execute.mockImplementation(async (...args) => {
       await Promise.resolve();
       executorContext = getContext();
-      return { ok: true };
+      return executeFinalized({
+        response: "continued",
+        executionId: "execution-context",
+        finishReason: "stop",
+      })(...args);
     });
 
     const ambientAdmin = RequestContextSchema.parse({
@@ -416,10 +462,14 @@ describe("createBackgroundCompletionRunner", () => {
     eventBus.on("background_task:reentered", () => {
       reenteredContext = getContext();
     });
-    executor.execute.mockImplementation(async () => {
+    executor.execute.mockImplementation(async (...args) => {
       await Promise.resolve();
       executorContext = getContext();
-      return { ok: true };
+      return executeFinalized({
+        response: "continued",
+        executionId: "execution-restart-context",
+        finishReason: "stop",
+      })(...args);
     });
 
     const runner = build();
@@ -511,10 +561,16 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  it("subscription survives a handler error", async () => {
+  it("parks an ambiguous executor rejection without replaying it", async () => {
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);
-    executor.execute.mockRejectedValueOnce(new Error("transient")).mockResolvedValue({});
+    executor.execute
+      .mockRejectedValueOnce(new Error("transient"))
+      .mockImplementationOnce(executeFinalized({
+        response: "continued",
+        executionId: "execution-retry",
+        finishReason: "stop",
+      }));
     const runner = build();
     eventBus.emit("background_task:completed", {
       agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
@@ -528,7 +584,8 @@ describe("createBackgroundCompletionRunner", () => {
     });
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
-    expect(executor.execute).toHaveBeenCalledTimes(2);
+    expect(executor.execute).toHaveBeenCalledOnce();
+    expect(task.dispatchState).toBe("parked_uncertain");
     await runner.shutdown();
   });
 
@@ -628,7 +685,7 @@ describe("createBackgroundCompletionRunner", () => {
 
     taskManager.getTask.mockReset();
     taskManager.getTask.mockReturnValue(task);
-    transitionDispatchState.mockReset();
+    commitDispatchState.mockReset();
     fallbackNotifyFn.mockReset();
     executor.execute.mockReset();
     const recoveredRunner = build(3);
@@ -640,7 +697,7 @@ describe("createBackgroundCompletionRunner", () => {
     await new Promise((r) => setImmediate(r));
 
     expect(fallbackNotifyFn).not.toHaveBeenCalled();
-    expect(transitionDispatchState).not.toHaveBeenCalled();
+    expect(commitDispatchState).not.toHaveBeenCalled();
     expect(executor.execute).not.toHaveBeenCalled();
     await recoveredRunner.shutdown();
   });
@@ -652,7 +709,7 @@ describe("trace continuity sub-tests", () => {
   let sessionStore: { loadByRef: ReturnType<typeof vi.fn> };
   let taskManager: {
     getTask: ReturnType<typeof vi.fn>;
-    transitionDispatchState: ReturnType<typeof vi.fn>;
+    commitDispatchState: ReturnType<typeof vi.fn>;
     persistContinuationOutbox: ReturnType<typeof vi.fn>;
     scheduleDispatchRetry: ReturnType<typeof vi.fn>;
   };
@@ -661,11 +718,17 @@ describe("trace continuity sub-tests", () => {
 
   beforeEach(() => {
     eventBus = createFakeEventBus();
-    executor = { execute: vi.fn().mockResolvedValue({ ok: true }) };
+    executor = {
+      execute: vi.fn(executeFinalized({
+        response: "continued",
+        executionId: "execution-trace",
+        finishReason: "stop",
+      })),
+    };
     sessionStore = { loadByRef: vi.fn().mockReturnValue(ok({ messages: [] })) };
     taskManager = {
       getTask: vi.fn(),
-      transitionDispatchState: vi.fn().mockReturnValue(true),
+      commitDispatchState: vi.fn().mockReturnValue(ok(true)),
       persistContinuationOutbox: vi.fn().mockReturnValue(ok(undefined)),
       scheduleDispatchRetry: vi.fn(),
     };

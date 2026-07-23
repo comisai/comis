@@ -239,6 +239,35 @@ describe("setup-cross-session-graph", () => {
       });
     });
 
+    it("acknowledges provider start only after child preparation completes", async () => {
+      const { deps, executor } = makeGraphDeps({});
+      const order: string[] = [];
+      vi.mocked(deps.assembleToolsForAgent).mockImplementation(async () => {
+        order.push("assembled");
+        return [{ name: "tool-1" }] as never;
+      });
+      vi.mocked(executor.execute).mockImplementation(async () => {
+        order.push("executed");
+        return executionResult();
+      });
+      const executeSubAgent = buildExecuteSubAgent(deps);
+
+      await executeSubAgent(
+        "agent-2",
+        sessionKey,
+        conversation,
+        "task",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { onProviderStart: () => order.push("provider-started") },
+      );
+
+      expect(order).toEqual(["assembled", "provider-started", "executed"]);
+    });
+
     // -----------------------------------------------------------------------
     // The per-spawn tokenBudget (the 7th executeSubAgent arg) rides
     // the existing executionOverrides channel into the child executor, where

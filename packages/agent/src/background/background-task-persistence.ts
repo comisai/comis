@@ -73,6 +73,10 @@ export interface AtomicTaskPersistenceOps {
   unlink(path: string): void;
 }
 
+export type AtomicTaskPersistenceOutcome =
+  | { readonly kind: "committed" }
+  | { readonly kind: "committed_durability_uncertain"; readonly error: Error };
+
 const defaultAtomicTaskPersistenceOps: AtomicTaskPersistenceOps = {
   open: openSync,
   write: writeFileSync,
@@ -86,7 +90,7 @@ export function persistTaskAtomically(
   dataDir: string,
   task: BackgroundTask | PersistedTaskState,
   ops: AtomicTaskPersistenceOps = defaultAtomicTaskPersistenceOps,
-): Result<void, Error> {
+): Result<AtomicTaskPersistenceOutcome, Error> {
   const agentDir = safePath(dataDir, task.origin.turnScope.conversation.agentId);
   const ensured = ensureContainedDir({ dir: agentDir, mode: 0o700, confinedBaseDir: dataDir });
   if (!ensured.ok) return err(ensured.error);
@@ -104,10 +108,6 @@ export function persistTaskAtomically(
     fileDescriptor = undefined;
     ops.rename(tempPath, filePath);
     renamed = true;
-    directoryDescriptor = ops.open(agentDir, "r");
-    ops.sync(directoryDescriptor);
-    ops.close(directoryDescriptor);
-    directoryDescriptor = undefined;
   });
   if (!written.ok) {
     if (fileDescriptor !== undefined) {
@@ -121,7 +121,25 @@ export function persistTaskAtomically(
     }
     return err(written.error);
   }
-  return ok(undefined);
+  let durabilityError: Error | undefined;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const synced = tryCatch(() => {
+      directoryDescriptor = ops.open(agentDir, "r");
+      ops.sync(directoryDescriptor);
+      ops.close(directoryDescriptor);
+      directoryDescriptor = undefined;
+    });
+    if (synced.ok) return ok({ kind: "committed" });
+    durabilityError = synced.error;
+    if (directoryDescriptor !== undefined) {
+      tryCatch(() => ops.close(directoryDescriptor!));
+      directoryDescriptor = undefined;
+    }
+  }
+  return ok({
+    kind: "committed_durability_uncertain",
+    error: durabilityError ?? new Error("Background task directory durability was not confirmed"),
+  });
 }
 
 /**

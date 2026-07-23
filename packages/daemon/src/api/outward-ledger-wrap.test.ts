@@ -82,6 +82,7 @@ function makeStubLedger(
       calls.push("markUnknown");
       return overrides.markUnknownResult ?? ok(undefined);
     }),
+    reclaimPreSend: vi.fn(async () => ok(true)),
     commit: vi.fn(async () => {
       calls.push("commit");
       return overrides.commitResult ?? ok(undefined);

@@ -95,17 +95,6 @@ export interface BackgroundTaskManager {
   getAllTasks(): BackgroundTask[];
   recoverOnStartup(): void;
   cleanup(maxAgeMs?: number): void;
-  /**
-   * Atomically transition the in-memory task's dispatchState AND persist.
-   * Returns true on success; false if task does not exist. The dispatcher
-   * calls this from its handler so SIGKILL-recovery preserves the recovered
-   * state across daemon restart.
-   */
-  transitionDispatchState(
-    taskId: string,
-    next: BackgroundSessionState,
-    expected?: readonly BackgroundSessionState[],
-  ): boolean;
   commitDispatchState(
     taskId: string,
     next: BackgroundSessionState,
@@ -138,6 +127,22 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
   const dispatchRetryTimers = new Map<string, TimerHandle>();
   const perAgentCount = new Map<string, number>();
   let totalCount = 0;
+
+  function reportPersistenceOutcome(
+    task: BackgroundTask,
+    outcome: import("./background-task-persistence.js").AtomicTaskPersistenceOutcome,
+  ): void {
+    if (outcome.kind === "committed") return;
+    logger.warn(
+      {
+        taskId: task.id,
+        toolName: task.toolName,
+        hint: "Check protected background-task storage durability before restarting the daemon",
+        errorKind: "resource" as const,
+      },
+      "Background task state committed without confirmed directory durability",
+    );
+  }
 
   function incrementCounters(agentId: string): void {
     perAgentCount.set(agentId, (perAgentCount.get(agentId) ?? 0) + 1);
@@ -394,21 +399,60 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           dispatchPreserved++;
           continue;
         }
+        let recoveredLifecycle = true;
         if (task.dispatchState === "execution_claimed") {
           const candidate = { ...task, dispatchState: "pending" as const };
           const persistedReset = persistTaskAtomically(dataDir, candidate);
-          if (persistedReset.ok) task.dispatchState = "pending";
+          if (persistedReset.ok) {
+            task.dispatchState = "pending";
+            reportPersistenceOutcome(task, persistedReset.value);
+          } else {
+            recoveredLifecycle = false;
+          }
         } else if (task.dispatchState === "executing") {
           const candidate = { ...task, dispatchState: "parked_uncertain" as const };
           const persistedReset = persistTaskAtomically(dataDir, candidate);
-          if (persistedReset.ok) task.dispatchState = "parked_uncertain";
+          if (persistedReset.ok) {
+            task.dispatchState = "parked_uncertain";
+            reportPersistenceOutcome(task, persistedReset.value);
+          } else {
+            recoveredLifecycle = false;
+          }
         } else if (task.dispatchState === "delivering") {
           const recoveredState: BackgroundSessionState = task.continuationOutbox?.deliveryProtection === "ledger"
             ? "ready_to_deliver"
             : "parked_uncertain";
           const candidate = { ...task, dispatchState: recoveredState };
           const persistedReset = persistTaskAtomically(dataDir, candidate);
-          if (persistedReset.ok) task.dispatchState = recoveredState;
+          if (persistedReset.ok) {
+            task.dispatchState = recoveredState;
+            reportPersistenceOutcome(task, persistedReset.value);
+          } else {
+            recoveredLifecycle = false;
+          }
+        }
+        if (!recoveredLifecycle) {
+          logger.warn(
+            {
+              taskId: task.id,
+              toolName: task.toolName,
+              dispatchState: task.dispatchState,
+              hint: "Repair protected background-task storage, then restart to retry lifecycle recovery",
+              errorKind: "resource" as const,
+            },
+            "Background task lifecycle recovery could not be persisted",
+          );
+          emitObservationalEventSafely({ eventBus, logger }, "background_task:notified", {
+            agentId: task.origin.turnScope.conversation.agentId,
+            taskId: task.id,
+            toolName: task.toolName,
+            sessionKey: task.origin.conversationRef,
+            notified: false,
+            reason: "recovery_retry_required",
+            traceId: task.origin.traceId,
+            timestamp: clock.now(),
+          });
+          continue;
         }
         if (persisted.status === "completed") {
           count++;
@@ -444,19 +488,6 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       }
     },
 
-    transitionDispatchState(taskId, next, expected) {
-      const task = tasks.get(taskId);
-      if (!task) return false;
-      const current = task.dispatchState ?? "pending";
-      if (expected && !expected.includes(current)) return false;
-      if (next === "executing") task.dispatchAttempts++;
-      // Idempotent — same-state transitions are allowed (no-op write).
-      task.dispatchState = next;
-      // Persist atomically so recovery-after-SIGKILL sees the transition.
-      persistTaskSync(dataDir, task);
-      return true;
-    },
-
     commitDispatchState(taskId, next, expected) {
       const task = tasks.get(taskId);
       if (!task) return ok(false);
@@ -470,6 +501,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       if (!persisted.ok) return persisted;
       task.dispatchState = next;
       task.dispatchAttempts = dispatchAttempts;
+      reportPersistenceOutcome(task, persisted.value);
       return ok(true);
     },
 
@@ -491,6 +523,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       if (!persisted.ok) return persisted;
       task.continuationOutbox = parsed.data;
       task.dispatchState = "ready_to_deliver";
+      reportPersistenceOutcome(task, persisted.value);
       return ok(undefined);
     },
 

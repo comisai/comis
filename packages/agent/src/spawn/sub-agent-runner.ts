@@ -375,6 +375,9 @@ export interface SubAgentRunnerDeps {
         caps: readonly AgentCapability[];
       }): void;
     },
+    providerLifecycle?: {
+      onProviderStart(): void;
+    },
   ) => Promise<{
     response: string;
     tokensUsed: { total: number; cacheRead?: number; cacheWrite?: number };
@@ -546,8 +549,7 @@ export interface SubAgentRunnerDeps {
   durableRuns?: DurableRunPort;
   resolveWorkspacePolicySnapshot?: (
     agentId: string,
-    policyHash: string,
-  ) => Result<WorkspacePolicySnapshot, Error>;
+  ) => Promise<Result<WorkspacePolicySnapshot, Error>>;
   /**
    * The keep-alive cadence + lapsed threshold (from
    * `autonomy.durability`). `keepAliveMs` drives the heartbeat-refresh interval
@@ -823,11 +825,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   }
   const completionDeferreds = new Map<string, CompletionDeferred>();
   const startDeferreds = new Map<string, StartDeferred>();
+  const durableResumeHandshakeRunIds = new Set<string>();
   const activePromises = new Set<Promise<void>>();
   const activeRunIds = new Set<string>();
   const providerSettledRunIds = new Set<string>();
   const deliverySuppressedRunIds = new Set<string>();
   const forcedTerminalRunIds = new Set<string>();
+  const durableTerminalReasons = new Map<string, DurableRunTerminalReason>();
   const trajectoryClosedRunIds = new Set<string>();
   const watchdogTimers = new Map<string, TimerHandle>();
   const failureNotificationPromises = new Set<Promise<void>>();
@@ -962,6 +966,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     startDeferreds.get(runId)?.resolve(
       err(new Error(`Sub-agent provider did not start: ${completion.endReason}`)),
     );
+    if (!durableResumeHandshakeRunIds.has(runId)) {
+      startDeferreds.delete(runId);
+    }
     removeDedupEntry(terminal);
     completionDeferreds.get(runId)?.resolve(completion);
     return terminal;
@@ -1088,6 +1095,9 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   ): Promise<Result<void, Error>> {
     const store = deps.durableRuns;
     if (!store) return ok(undefined);
+    if (runs.get(run.runId)?.status !== "running" || durableTerminalReasons.has(run.runId)) {
+      return err(new Error("Durable checkpoint write was suppressed after terminal state"));
+    }
     const rootRunId = run.rootRunId;
     const facts = deps.durableRunFacts?.(rootRunId, params.agentId);
     const leaseIds = facts?.leaseIds ?? [run.parentLeaseId, run.leaseId]
@@ -1132,11 +1142,26 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         workspacePolicyHash,
         resumeDescriptorHash: hashSubAgentResumeDescriptor(descriptor),
       }));
-    return written.ok ? written.value : err(written.error);
+    if (!written.ok) return err(written.error);
+    if (!written.value.ok) return written.value;
+    const terminalReason = durableTerminalReasons.get(run.runId);
+    if (runs.get(run.runId)?.status !== "running" || terminalReason !== undefined) {
+      const reapplied = await fromPromise(
+        store.markCompleted(run.runId, terminalReason ?? "failed"),
+      );
+      if (!reapplied.ok) return err(reapplied.error);
+      if (!reapplied.value.ok) return reapplied.value;
+      return err(new Error("Durable checkpoint terminal state won the admission race"));
+    }
+    return ok(undefined);
   }
 
   function persistDurableCheckpoint(run: SubAgentRun, params: SpawnParams): void {
-    if (!deps.durableRuns) return;
+    if (
+      !deps.durableRuns
+      || runs.get(run.runId)?.status !== "running"
+      || durableTerminalReasons.has(run.runId)
+    ) return;
     suppressError(
       writeDurableCheckpoint(run, params).then((written) => {
         if (!written.ok) {
@@ -1162,15 +1187,23 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   ): Promise<Result<void, Error>> {
     const store = deps.durableRuns;
     if (!store) return ok(undefined);
+    if (runs.get(run.runId)?.status !== "running" || durableTerminalReasons.has(run.runId)) {
+      return err(new Error("Durable checkpoint admission was suppressed after terminal state"));
+    }
     const written = await writeDurableCheckpoint(run, params);
     if (!written.ok) return written;
+    if (runs.get(run.runId)?.status !== "running" || durableTerminalReasons.has(run.runId)) {
+      return err(new Error("Durable checkpoint heartbeat was suppressed after terminal state"));
+    }
 
     // A keep-alive that fires INDEPENDENT of step/spawn completion so a
     // long-running child never trips the watchdog's stale threshold.
     // One interval per run, cleared on terminal settle (no leaked timer).
     if (!heartbeatTimers.has(run.runId)) {
       const handle = timers.setInterval(() => {
-        persistDurableCheckpoint(run, params);
+        if (runs.get(run.runId)?.status === "running" && !durableTerminalReasons.has(run.runId)) {
+          persistDurableCheckpoint(run, params);
+        }
       }, DURABLE_KEEPALIVE_MS);
       handle.unref();
       heartbeatTimers.set(run.runId, handle);
@@ -1189,6 +1222,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     run: SubAgentRun,
     terminalReason: DurableRunTerminalReason,
   ): void {
+    durableTerminalReasons.set(run.runId, terminalReason);
     const handle = heartbeatTimers.get(run.runId);
     if (handle) {
       handle.cancel();
@@ -1227,6 +1261,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   ): void {
     if (forcedTerminalRunIds.has(run.runId)) return;
     forcedTerminalRunIds.add(run.runId);
+    durableTerminalReasons.set(run.runId, terminalReason);
     watchdogTimers.get(run.runId)?.cancel();
     watchdogTimers.delete(run.runId);
     finishDurableCheckpoint(run, terminalReason);
@@ -1458,7 +1493,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         removeDedupEntry(run);
         runs.delete(runId);
         completionDeferreds.delete(runId);
+        startDeferreds.delete(runId);
+        durableResumeHandshakeRunIds.delete(runId);
         forcedTerminalRunIds.delete(runId);
+        durableTerminalReasons.delete(runId);
         trajectoryClosedRunIds.delete(runId);
         resumeDescriptors.delete(runId);
       }
@@ -1484,7 +1522,10 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         removeDedupEntry(pruneRun);
         runs.delete(pruneRunId);
         completionDeferreds.delete(pruneRunId);
+        startDeferreds.delete(pruneRunId);
+        durableResumeHandshakeRunIds.delete(pruneRunId);
         forcedTerminalRunIds.delete(pruneRunId);
+        durableTerminalReasons.delete(pruneRunId);
         trajectoryClosedRunIds.delete(pruneRunId);
         resumeDescriptors.delete(pruneRunId);
       }
@@ -2370,36 +2411,35 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     });
     const subSessionKey = display.key;
     const formattedKey = display.formatted;
-    const workspacePolicyHash = params.workspacePolicyHash ?? tryGetContext()?.workspacePolicyHash;
-    let durableAdmissionError: Error | undefined;
-    if (deps.durableRuns) {
-      if (workspacePolicyHash === undefined) {
-        durableAdmissionError = new DurableSubAgentAdmissionError(
-          "Durable sub-agent workspace policy authority is missing",
-        );
-      }
-      const snapshotResult = params.workspacePolicySnapshot !== undefined
-        ? ok(params.workspacePolicySnapshot)
-        : workspacePolicyHash === undefined
-          ? err(new Error("Durable sub-agent workspace policy snapshot is missing"))
-          : deps.resolveWorkspacePolicySnapshot?.(params.agentId, workspacePolicyHash)
-            ?? err(new Error("Durable sub-agent workspace policy resolver is missing"));
+    let workspacePolicyHash = params.workspacePolicyHash;
+
+    async function prepareDurableAuthority(): Promise<Result<void, Error>> {
+      if (!deps.durableRuns) return ok(undefined);
+      const snapshotResult = params.callerType === "durable-resume"
+        ? params.workspacePolicySnapshot === undefined
+          ? err(new Error("Durable sub-agent resume workspace policy snapshot is missing"))
+          : ok(params.workspacePolicySnapshot)
+        : deps.resolveWorkspacePolicySnapshot === undefined
+          ? err(new Error("Durable sub-agent workspace policy resolver is missing"))
+          : await deps.resolveWorkspacePolicySnapshot(params.agentId);
+      if (!snapshotResult.ok) return snapshotResult;
+      const verified = verifyWorkspacePolicySnapshot(snapshotResult.value);
       if (
-        !snapshotResult.ok
-        || !verifyWorkspacePolicySnapshot(snapshotResult.value).ok
+        !verified.ok
         || snapshotResult.value.agentId !== params.agentId
-        || snapshotResult.value.combinedHash !== workspacePolicyHash
+        || (
+          params.callerType === "durable-resume"
+          && params.workspacePolicyHash !== snapshotResult.value.combinedHash
+        )
       ) {
-        durableAdmissionError = new DurableSubAgentAdmissionError(
-          "Durable sub-agent workspace policy snapshot verification failed",
-        );
-      } else {
-        params = {
-          ...params,
-          workspacePolicyHash: snapshotResult.value.combinedHash,
-          workspacePolicySnapshot: snapshotResult.value,
-        };
+        return err(new Error("Durable sub-agent workspace policy snapshot verification failed"));
       }
+      workspacePolicyHash = snapshotResult.value.combinedHash;
+      params = {
+        ...params,
+        workspacePolicyHash,
+        workspacePolicySnapshot: snapshotResult.value,
+      };
       const descriptor = SubAgentResumeDescriptorSchema.safeParse({
         kind: "subagent_resume",
         task: params.task,
@@ -2435,15 +2475,20 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         workspacePolicyHash,
       });
       if (!descriptor.success) {
-        durableAdmissionError = new DurableSubAgentAdmissionError(
-          "Durable sub-agent resume descriptor validation failed",
-        );
-      } else {
-        resumeDescriptors.set(runId, descriptor.data);
+        return err(new Error("Durable sub-agent resume descriptor validation failed"));
       }
+      resumeDescriptors.set(runId, descriptor.data);
+      return ok(undefined);
     }
 
-    if (durableAdmissionError === undefined && !params.reuseConversation) {
+    function saveSession(): Result<void, Error> {
+      if (params.reuseConversation) {
+        deps.logger?.info(
+          { runId, conversationRef: run.conversationRef, agentId: params.agentId },
+          "Reusing persistent conversation for multi-round driver",
+        );
+        return ok(undefined);
+      }
       const saved = deps.sessionStore.save(run.conversationScope, [], {
         agentId: params.agentId,
         parentSessionKey: params.callerSessionKey,
@@ -2476,15 +2521,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           ? { durableResumeDescriptor: resumeDescriptors.get(runId) }
           : {}),
       });
+      return saved.ok ? ok(undefined) : err(saved.error);
+    }
+
+    if (!deps.durableRuns) {
+      const saved = saveSession();
       if (!saved.ok) {
         // @allow-throw: session creation is part of the synchronous spawn admission boundary.
         throw saved.error;
       }
-    } else if (durableAdmissionError === undefined) {
-      deps.logger?.info(
-        { runId, conversationRef: run.conversationRef, agentId: params.agentId },
-        "Reusing persistent conversation for multi-round driver",
-      );
     }
 
     // Update run with canonical session info. Queued records were replaced by
@@ -2499,7 +2544,27 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       const traceId = params.graphTraceId ?? randomUUID();
 
       try {
-        if (durableAdmissionError !== undefined) throw durableAdmissionError;
+        const authority = await prepareDurableAuthority();
+        if (!authority.ok) {
+          throw new DurableSubAgentAdmissionError(
+            "Durable sub-agent workspace policy admission failed",
+            authority.error,
+          );
+        }
+        if (runs.get(runId)?.status !== "running" || deliverySuppressedRunIds.has(runId)) {
+          throw new DurableSubAgentAdmissionError(
+            "Sub-agent terminalized during workspace policy admission",
+          );
+        }
+        if (deps.durableRuns) {
+          const saved = saveSession();
+          if (!saved.ok) {
+            throw new DurableSubAgentAdmissionError(
+              "Durable sub-agent session admission failed",
+              saved.error,
+            );
+          }
+        }
         const durableAdmission = await startDurableCheckpoint(run, params);
         if (!durableAdmission.ok) {
           throw new DurableSubAgentAdmissionError(
@@ -2669,8 +2734,15 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
                 persistDurableCheckpoint(run, params);
               },
               },
+              {
+                onProviderStart: () => {
+                  startDeferreds.get(runId)?.resolve(ok(undefined));
+                  if (!durableResumeHandshakeRunIds.has(runId)) {
+                    startDeferreds.delete(runId);
+                  }
+                },
+              },
             );
-            startDeferreds.get(runId)?.resolve(ok(undefined));
             return providerExecution;
           },
         );
@@ -3806,6 +3878,8 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       }
     }
 
+    startDeferreds.clear();
+    durableResumeHandshakeRunIds.clear();
   }
 
   function shutdown(): Promise<void> {
@@ -3884,6 +3958,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     ) {
       return err(new Error("Verified sub-agent resume workspace policy mismatch"));
     }
+    durableResumeHandshakeRunIds.add(record.checkpointId);
     const resumed = tryCatch(() => spawn({
       task: descriptor.value.task,
       agentId: descriptor.value.agentId,
@@ -3926,13 +4001,22 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       jobId: descriptor.value.jobId,
       jobName: descriptor.value.jobName,
     }));
-    if (!resumed.ok) return resumed;
+    if (!resumed.ok) {
+      durableResumeHandshakeRunIds.delete(record.checkpointId);
+      startDeferreds.delete(record.checkpointId);
+      return resumed;
+    }
     if (resumed.value !== record.checkpointId) {
       return err(new Error("Durable sub-agent resume execution identity mismatch"));
     }
     const started = startDeferreds.get(resumed.value);
-    if (!started) return err(new Error("Durable sub-agent resume start handshake is missing"));
+    if (!started) {
+      durableResumeHandshakeRunIds.delete(resumed.value);
+      return err(new Error("Durable sub-agent resume start handshake is missing"));
+    }
     const admitted = await started.promise;
+    startDeferreds.delete(resumed.value);
+    durableResumeHandshakeRunIds.delete(resumed.value);
     return admitted.ok ? ok(resumed.value) : admitted;
   }
 

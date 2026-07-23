@@ -276,6 +276,10 @@ export function createPiExecutor(
       overrides?: ExecutionOverrides,
     ): Promise<ExecutionResult> {
       const executionId = randomUUID();
+      const finalizeResult = async (candidate: ExecutionResult): Promise<ExecutionResult> => {
+        await overrides?.onFinalizedResult?.(candidate);
+        return candidate;
+      };
       // Resolved request identity is write-once. An executor selected for a
       // different agent/session must not relabel the live ALS object and retain
       // the original principal's trust or delivery origin. Reject before OAuth,
@@ -306,7 +310,7 @@ export function createPiExecutor(
           message: "Agent execution rejected because request context identity did not match the selected execution identity",
           timestamp: deps.clock.now(),
         });
-        return {
+        return finalizeResult({
           response: "The request could not be executed safely because its identity context was inconsistent.",
           sessionKey,
           executionId,
@@ -328,7 +332,7 @@ export function createPiExecutor(
             retryable: false,
             originalError: "Resolved request context identity did not match execution identity",
           },
-        };
+        });
       }
 
       agentId = deps.agentId;
@@ -349,7 +353,7 @@ export function createPiExecutor(
       const externalAbortState: ExternalAbortState = { emitted: false };
       if (overrides?.signal?.aborted) {
         settleExternalExecutionAbort(externalAbortState, result, deps, sessionKey);
-        return result;
+        return finalizeResult(result);
       }
 
       // 2. Pre-lock safety gates: input validation, provider health, circuit
@@ -359,7 +363,7 @@ export function createPiExecutor(
         deps,
         { msg, sessionKey, agentId, provider: config.provider },
       );
-      if (!safetyOutcome.passed) return result;
+      if (!safetyOutcome.passed) return finalizeResult(result);
       const safetyReinforcement = safetyOutcome.safetyReinforcement;
 
       // 3. Decode per-execute overrides into the factory's mutable refs
@@ -630,11 +634,12 @@ export function createPiExecutor(
 
       // 6. Post-lock outcome: destroy session if session_reset; map lock failure
       //    (closure-extracted)
-      return finalizeLockResult(
+      const finalized = await finalizeLockResult(
         { result },
         deps,
         { lockResult, sessionAdapter, sessionKey },
       );
+      return finalizeResult(finalized);
     },
   };
 }

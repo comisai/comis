@@ -72,12 +72,10 @@ describe("completion dispatcher observation boundary", () => {
   it("observes a terminal task without mutating delivery ownership", async () => {
     const eventBus = new TypedEventBus();
     const task = makeTask();
-    const transitionDispatchState = vi.fn();
     const dispatcher = createCompletionDispatcher({
       eventBus,
       taskManager: {
         getTask: () => task,
-        transitionDispatchState,
       },
       logger: {
         child: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }),
@@ -94,7 +92,6 @@ describe("completion dispatcher observation boundary", () => {
     });
     await dispatcher.shutdown();
 
-    expect(transitionDispatchState).not.toHaveBeenCalled();
     expect(task.dispatchState).toBe("ready_to_deliver");
   });
 });

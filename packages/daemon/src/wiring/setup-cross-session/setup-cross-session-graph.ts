@@ -88,6 +88,9 @@ export type ExecuteSubAgentFn = (
       caps: readonly AgentCapability[];
     }): void;
   },
+  providerLifecycle?: {
+    onProviderStart(): void;
+  },
 ) => Promise<Pick<ExecutionResult, "response" | "tokensUsed" | "cost" | "finishReason" | "stepsExecuted" | "toolCallHistory" | "terminalErrorKind">>;
 /**
  * Build the executeSubAgent callback wired into createSubAgentRunner. The
@@ -112,6 +115,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
     graphOverrides,
     tokenBudget,
     autonomyContext,
+    providerLifecycle,
   ) => {
     deps.logger?.debug({
       agentId,
@@ -548,6 +552,7 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
     };
     let result;
     try {
+      providerLifecycle?.onProviderStart();
       result = ctx
         ? await runWithContext(ctx, () =>
             getExecutor(effectiveAgentId).execute(

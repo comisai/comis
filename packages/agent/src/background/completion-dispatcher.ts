@@ -71,23 +71,10 @@ export interface DispatcherSessionStore {
 }
 
 /**
- * Minimal taskManager contract: read + (optionally) persist transitions.
- *
- * `transitionDispatchState` is optional so the dispatcher composes cleanly
- * with the test fixture in completion-dispatcher.test.ts (which constructs
- * `taskManager: { getTask: vi.fn() }` and asserts the at-most-once gate
- * without exercising state persistence). Production wiring adds
- * `transitionDispatchState` on the real BackgroundTaskManager so the
- * recovery-after-SIGKILL contract is binding.
+ * Minimal read-only task-manager contract for the routing observer.
  */
 export interface DispatcherTaskManager {
   getTask(taskId: string): BackgroundTask | undefined;
-  /**
-   * Atomically transition the in-memory task's dispatchState AND persist.
-   * Returns true on success; false if task does not exist. Optional —
-   * when absent, the dispatcher routes purely via in-memory state.
-   */
-  transitionDispatchState?(taskId: string, next: BackgroundSessionState): boolean;
 }
 
 /**
@@ -136,11 +123,7 @@ export interface CompletionDispatcherDeps {
  * Wire the completion dispatcher against an event bus + task manager.
  * Subscriptions are installed synchronously; call shutdown() to remove them.
  *
- * At-most-once fallback: the state-machine transitions on
- * `task.dispatchState` are the single source of truth. The dispatcher's
- * synchronous transitionDispatchState runs BEFORE the completion-runner's
- * handler reads the updated state, by virtue of the event-bus subscribing
- * the dispatcher first (see setup-background-completion-runner.ts).
+ * The completion runner is the sole owner of durable routing transitions.
  */
 export function createCompletionDispatcher(
   deps: CompletionDispatcherDeps,

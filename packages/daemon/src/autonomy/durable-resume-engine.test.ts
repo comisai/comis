@@ -131,6 +131,10 @@ function makeLedger(opts?: {
       record("markUnknown", rootRunId, stepIndex);
       return ok(undefined);
     },
+    reclaimPreSend: async (rootRunId, stepIndex) => {
+      record("reclaimPreSend", rootRunId, stepIndex);
+      return ok(true);
+    },
     commit: async (rootRunId, stepIndex, platformMessageId) => {
       record("commit", rootRunId, stepIndex, platformMessageId);
       return ok(undefined);

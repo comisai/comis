@@ -15,6 +15,16 @@ import { createBackgroundTaskManager } from "@comis/agent";
 import { ok } from "@comis/shared";
 import { setupBackgroundCompletionRunner } from "./setup-background-completion-runner.js";
 
+function executeFinalized(result: Record<string, unknown>) {
+  return async (...args: unknown[]) => {
+    const overrides = args[7] as {
+      onFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+    } | undefined;
+    await overrides?.onFinalizedResult?.(result);
+    return result;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Lightweight port wrappers that delegate to globals.
 // ---------------------------------------------------------------------------
@@ -240,9 +250,9 @@ describe("setupBackgroundCompletionRunner", () => {
     }));
     const taskManager = {
       getTask: vi.fn(() => task),
-      transitionDispatchState: vi.fn((_taskId: string, next: import("@comis/agent").BackgroundSessionState) => {
+      commitDispatchState: vi.fn((_taskId: string, next: import("@comis/agent").BackgroundSessionState) => {
         task.dispatchState = next;
-        return true;
+        return ok(true);
       }),
       persistContinuationOutbox: vi.fn((_taskId, outbox) => {
         task.continuationOutbox = outbox;
@@ -259,11 +269,11 @@ describe("setupBackgroundCompletionRunner", () => {
         drainInFlight: vi.fn(),
       },
       getExecutor: vi.fn().mockReturnValue({
-        execute: vi.fn().mockResolvedValue({
+        execute: vi.fn(executeFinalized({
           response: "finalized completion",
           executionId: "execution-1",
           finishReason: "stop",
-        }),
+        })),
       }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       sessionStore: { loadByRef: vi.fn().mockReturnValue(ok(undefined)) },
@@ -323,9 +333,9 @@ describe("setupBackgroundCompletionRunner", () => {
     const deliverToChannel = vi.fn().mockRejectedValue(new Error("transport disconnected"));
     const taskManager = {
       getTask: () => task,
-      transitionDispatchState: (_taskId: string, next: import("@comis/agent").BackgroundSessionState) => {
+      commitDispatchState: (_taskId: string, next: import("@comis/agent").BackgroundSessionState) => {
         task.dispatchState = next;
-        return true;
+        return ok(true);
       },
       persistContinuationOutbox: (_taskId: string, outbox: import("@comis/agent").BackgroundContinuationOutbox) => {
         task.continuationOutbox = outbox;
@@ -334,11 +344,11 @@ describe("setupBackgroundCompletionRunner", () => {
       },
       scheduleDispatchRetry: vi.fn(),
     };
-    const execute = vi.fn().mockResolvedValue({
+    const execute = vi.fn(executeFinalized({
       response: "finalized completion",
       executionId: "execution-uncertain",
       finishReason: "stop",
-    });
+    }));
     const ctx = setupBackgroundCompletionRunner({
       eventBus: recording.bus,
       adaptersByType: new Map([[adapter.channelType, adapter]]) as never,
@@ -413,6 +423,7 @@ describe("setupBackgroundCompletionRunner", () => {
         .mockResolvedValueOnce(ok(ledgerRow)),
       begin: vi.fn().mockResolvedValue(ok(undefined)),
       markUnknown: vi.fn().mockResolvedValue(ok(undefined)),
+      reclaimPreSend: vi.fn().mockResolvedValue(ok(true)),
       commit: vi.fn().mockResolvedValue(ok(undefined)),
       markFailed: vi.fn().mockResolvedValue(ok(undefined)),
       parkUncertain: vi.fn().mockResolvedValue(ok(true)),
@@ -421,9 +432,9 @@ describe("setupBackgroundCompletionRunner", () => {
     };
     const taskManager = {
       getTask: () => task,
-      transitionDispatchState: (_taskId: string, next: import("@comis/agent").BackgroundSessionState) => {
+      commitDispatchState: (_taskId: string, next: import("@comis/agent").BackgroundSessionState) => {
         task.dispatchState = next;
-        return true;
+        return ok(true);
       },
       persistContinuationOutbox: (_taskId: string, outbox: import("@comis/agent").BackgroundContinuationOutbox) => {
         task.continuationOutbox = outbox;
@@ -440,11 +451,11 @@ describe("setupBackgroundCompletionRunner", () => {
         drainInFlight: vi.fn(),
       },
       getExecutor: () => ({
-        execute: vi.fn().mockResolvedValue({
+        execute: vi.fn(executeFinalized({
           response: "finalized completion",
           executionId: "execution-permanent",
           finishReason: "stop",
-        }),
+        })),
       }) as never,
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       sessionStore: { loadByRef: vi.fn().mockReturnValue(ok(undefined)) },
@@ -484,7 +495,7 @@ describe("setupBackgroundCompletionRunner", () => {
         sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
         taskManager: {
           getTask: vi.fn(),
-          transitionDispatchState: vi.fn(),
+          commitDispatchState: vi.fn().mockReturnValue(ok(false)),
         } as unknown as import("@comis/agent").BackgroundTaskManager,
         fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
         maxBackgroundHops: 3,
@@ -509,7 +520,7 @@ describe("setupBackgroundCompletionRunner", () => {
         sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
         taskManager: {
           getTask: vi.fn(),
-          transitionDispatchState: vi.fn(),
+          commitDispatchState: vi.fn().mockReturnValue(ok(false)),
         } as unknown as import("@comis/agent").BackgroundTaskManager,
         fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
         maxBackgroundHops: 3,
@@ -526,8 +537,8 @@ describe("setupBackgroundCompletionRunner", () => {
     it("on background_task:completed, the dispatcher observes before the runner", async () => {
       const recording = makeRecordingEventBus();
       const callOrder: string[] = [];
-      const transitionDispatchState = vi.fn(() => {
-        return true;
+      const commitDispatchState = vi.fn(() => {
+        return ok(true);
       });
       const getTaskMock = vi.fn().mockImplementation((id: string) => {
         callOrder.push(`getTask:${callOrder.length}`);
@@ -552,7 +563,7 @@ describe("setupBackgroundCompletionRunner", () => {
         sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: { messages: [] } }) },
         taskManager: {
           getTask: getTaskMock,
-          transitionDispatchState,
+          commitDispatchState,
           persistContinuationOutbox: vi.fn(),
           scheduleDispatchRetry: vi.fn(),
         } as unknown as import("@comis/agent").BackgroundTaskManager,

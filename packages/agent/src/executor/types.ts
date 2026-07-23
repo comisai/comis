@@ -140,7 +140,7 @@ export type ExecutionResult = ExecutionResultBase & (
 );
 
 /** Optional overrides for per-execution behavior (e.g., sub-agent isolation). */
-// @optional-field-count: 18 — ExecutionOverrides is the per-EXECUTION override bag;
+// @optional-field-count: 19 — ExecutionOverrides is the per-EXECUTION override bag;
 // every `?` field is an independent per-run knob the caller MAY set (stepCounter/
 // tokenBudget for sub-agent isolation, spawnPacket/model/cacheRetention/skipRag/
 // graphId/nodeId/activeToolGroups for graph nodes, ephemeralSessionAdapter/skipSep/
@@ -202,6 +202,8 @@ export interface ExecutionOverrides {
   workspacePolicySnapshot?: WorkspacePolicySnapshot;
   /** Immutable locale decision captured with delayed or background work. */
   responseLocalePolicy?: ResponseLocalePolicy;
+  /** Awaited after the exact terminal result is finalized and before execute resolves. */
+  onFinalizedResult?: (result: ExecutionResult) => Promise<void>;
   /** Graph ID for cache write signal emission. Set only for graph subagents. */
   graphId?: string;
   /** Graph node ID for cache write signal emission. Set only for graph subagents. */

@@ -44,12 +44,7 @@ export interface BackgroundCompletionRunnerContext {
 }
 
 /**
- * The taskManager arg widened to require `transitionDispatchState` so the
- * dispatcher can persist state-machine transitions.
- *
- * The runner only consumes `getTask` (existing contract); the dispatcher
- * consumes both `getTask` and `transitionDispatchState`. Daemon callers
- * pass the full BackgroundTaskManager so structural subtyping covers both.
+ * The task manager supplies acknowledged durable transitions to the runner.
  */
 export interface SetupBackgroundCompletionRunnerDeps {
   eventBus: TypedEventBus;
@@ -59,12 +54,11 @@ export interface SetupBackgroundCompletionRunnerDeps {
   deliveryService: DeliveryService;
   sessionStore: RunnerSessionStore;
   /**
-   * Must support `transitionDispatchState`; the dispatcher persists state
-   * machine transitions through it. The runner only needs `getTask`.
+   * The runner commits every lifecycle transition before acting on it.
    */
   taskManager: Pick<
     BackgroundTaskManager,
-    "getTask" | "commitDispatchState" | "transitionDispatchState" | "persistContinuationOutbox" | "scheduleDispatchRetry"
+    "getTask" | "commitDispatchState" | "persistContinuationOutbox" | "scheduleDispatchRetry"
   >;
   /** bgNotifyFn closure used when the originating session is gone. */
   fallbackNotifyFn: NotifyFn;
@@ -165,9 +159,7 @@ export function setupBackgroundCompletionRunner(
         : { kind: "uncertain", errorKind: "dependency", message };
     }
     if (failure instanceof OutwardSendPreSendError) {
-      const reclaimed = deps.outwardLedger.reclaimPreSend
-        ? await deps.outwardLedger.reclaimPreSend(rootRunId, allocated.value)
-        : err(new Error("The outward ledger cannot reclaim a proven pre-send attempt"));
+      const reclaimed = await deps.outwardLedger.reclaimPreSend(rootRunId, allocated.value);
       return reclaimed.ok && reclaimed.value
         ? { kind: "retryable_pre_send", errorKind: "dependency", message }
         : {

@@ -698,7 +698,8 @@ export interface InfraEvents {
       | "fallback_accepted"
       | "retry_scheduled"
       | "permanent_parked"
-      | "uncertain_parked";
+      | "uncertain_parked"
+      | "recovery_retry_required";
     /** traceId from task.origin for operator log continuity (null when absent). */
     traceId: string | null;
     timestamp: number;

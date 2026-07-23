@@ -953,6 +953,7 @@ function makeStubLedger(
     }),
     begin: vi.fn(async () => options.beginResult ?? ok(undefined)),
     markUnknown: vi.fn(async () => options.markUnknownResult ?? ok(undefined)),
+    reclaimPreSend: vi.fn(async () => ok(true)),
     commit: vi.fn(async () => ok(undefined)),
     markFailed: vi.fn(async () => ok(undefined)),
     parkUncertain: vi.fn(async () => options.parkResult ?? ok(true)),

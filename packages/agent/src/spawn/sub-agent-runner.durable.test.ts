@@ -112,10 +112,10 @@ function createDeps(over: Partial<SubAgentRunnerDeps> = {}): SubAgentRunnerDeps 
     tenantId: "default",
     clock: testClock,
     timers: testTimers,
-    resolveWorkspacePolicySnapshot: (agentId, policyHash) => ok({
+    resolveWorkspacePolicySnapshot: async (agentId) => ok({
       agentId,
       sections: [],
-      combinedHash: policyHash,
+      combinedHash: POLICY_HASH,
     }),
     ...over,
   };
@@ -190,6 +190,32 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     expect(runner.getRunStatus(runId)?.status).toBe("failed");
   });
 
+  it("loads the target agent policy instead of inheriting caller authority", async () => {
+    const store = createRecordingStore();
+    const resolveWorkspacePolicySnapshot = vi.fn(async (agentId: string) => ok({
+      agentId,
+      sections: [],
+      combinedHash: POLICY_HASH,
+    }));
+    const runner = createSubAgentRunner(createDeps({
+      durableRuns: store,
+      resolveWorkspacePolicySnapshot,
+    }));
+
+    runner.spawn({
+      task: "cross-agent task",
+      agentId: "worker",
+      callerAgentId: "caller",
+      rootRunId: "root-target-policy",
+      workspacePolicyHash: "f".repeat(64),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(resolveWorkspacePolicySnapshot).toHaveBeenCalledWith("worker");
+    expect(store.checkpoints[0]?.agentId).toBe("worker");
+    expect(store.checkpoints[0]?.workspacePolicyHash).toBe(POLICY_HASH);
+  });
+
   it("does not start the provider when watchdog terminalizes deferred checkpoint admission", async () => {
     let releaseCheckpoint!: (value: Result<void, Error>) => void;
     const store = createRecordingStore();
@@ -216,6 +242,13 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(executeAgent).not.toHaveBeenCalled();
     expect(runner.getRunStatus(runId)?.status).toBe("failed");
+    expect(store.completed.at(-1)).toEqual({
+      checkpointId: runId,
+      terminalReason: "watchdog_timeout",
+    });
+    const checkpointCount = store.checkpoints.length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(store.checkpoints).toHaveLength(checkpointCount);
   });
 
   it("does not start the provider when watchdog terminalizes deferred spawn preparation", async () => {
@@ -472,12 +505,17 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
       workspacePolicyHash: descriptor.workspacePolicyHash,
       resumeDescriptorHash: hashSubAgentResumeDescriptor(descriptor),
     };
-    const executeAgent = vi.fn().mockResolvedValue({
-      response: "done",
-      tokensUsed: { total: 1 },
-      cost: { total: 0 },
-      finishReason: "stop",
-      stepsExecuted: 1,
+    const executeAgent = vi.fn(async (
+      ...args: Parameters<SubAgentRunnerDeps["executeAgent"]>
+    ) => {
+      args[9]?.onProviderStart();
+      return {
+        response: "done",
+        tokensUsed: { total: 1 },
+        cost: { total: 0 },
+        finishReason: "stop",
+        stepsExecuted: 1,
+      };
     });
     const runner = createSubAgentRunner(createDeps({
       durableRuns: createRecordingStore(),
@@ -495,13 +533,18 @@ describe("sub-agent-runner durable checkpoint and keep-alive heartbeat", () => {
         })),
       },
     }));
-    const resumed = await runner.resumeDurable(record, "lease-resumed", {
+    const resumePromise = runner.resumeDurable(record, "lease-resumed", {
       agentId: "worker",
       sections: [],
       combinedHash: descriptor.workspacePolicyHash,
     });
-    expect(resumed).toEqual(ok("run-resume"));
+    await vi.advanceTimersByTimeAsync(0);
     expect(executeAgent).toHaveBeenCalledOnce();
+    expect(executeAgent.mock.calls[0]?.[9]).toEqual({
+      onProviderStart: expect.any(Function),
+    });
+    const resumed = await resumePromise;
+    expect(resumed).toEqual(ok("run-resume"));
     expect(executeAgent.mock.calls[0]![6]).toEqual({
       reuseConversation: {
         conversationRef: record.conversationRef,

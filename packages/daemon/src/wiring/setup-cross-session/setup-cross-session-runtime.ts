@@ -572,8 +572,8 @@ export function setupCrossSession(deps: {
     // absent; the daemon wires these only when durability is enabled.
     ...(deps.durableRuns ? { durableRuns: deps.durableRuns } : {}),
     ...(deps.durableRuns ? {
-      resolveWorkspacePolicySnapshot: (agentId: string, policyHash: string) => {
-        const snapshot = container.workspacePolicyPort?.get(policyHash);
+      resolveWorkspacePolicySnapshot: async (agentId: string) => {
+        const snapshot = await container.workspacePolicyPort?.load(agentId);
         if (snapshot === undefined) return err(new Error("Workspace policy port is unavailable"));
         if (!snapshot.ok) return err(new Error(`Workspace policy snapshot unavailable for ${agentId}`));
         return snapshot.value.agentId === agentId

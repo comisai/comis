@@ -26,6 +26,7 @@ function makeLedger(): OutwardSendLedgerPort {
     lookup: vi.fn(async () => ok(undefined)),
     begin: vi.fn(async () => ok(undefined)),
     markUnknown: vi.fn(async () => ok(undefined)),
+    reclaimPreSend: vi.fn(async () => ok(true)),
     commit: vi.fn(async () => ok(undefined)),
     markFailed: vi.fn(async () => ok(undefined)),
     parkUncertain: vi.fn(async () => ok(true)),

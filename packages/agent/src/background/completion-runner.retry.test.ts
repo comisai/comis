@@ -70,16 +70,16 @@ describe("background completion retry lifecycle", () => {
       dispatchState: "pending",
     };
     const scheduleDispatchRetry = vi.fn();
-    const transitionDispatchState = vi.fn((
+    const commitDispatchState = vi.fn((
       _taskId: string,
       next: BackgroundSessionState,
       expected?: readonly BackgroundSessionState[],
     ) => {
       const current = task.dispatchState ?? "pending";
-      if (expected && !expected.includes(current)) return false;
+      if (expected && !expected.includes(current)) return ok(false);
       task.dispatchState = next;
       if (next === "executing") task.dispatchAttempts++;
-      return true;
+      return ok(true);
     });
     const deliverCompletion = vi.fn()
       .mockResolvedValueOnce({
@@ -88,9 +88,16 @@ describe("background completion retry lifecycle", () => {
         message: "offline",
       })
       .mockResolvedValueOnce({ kind: "accepted" });
-    const execute = vi.fn().mockResolvedValue({
-      response: "continued",
-      executionId: "executor-result-a",
+    const execute = vi.fn(async (...args: unknown[]) => {
+      const result = {
+        response: "continued",
+        executionId: "executor-result-a",
+      };
+      const overrides = args[7] as {
+        onFinalizedResult?: (value: typeof result) => Promise<void>;
+      } | undefined;
+      await overrides?.onFinalizedResult?.(result);
+      return result;
     });
     const runner = createBackgroundCompletionRunner({
       eventBus,
@@ -100,7 +107,7 @@ describe("background completion retry lifecycle", () => {
       sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
       taskManager: {
         getTask: () => task,
-        transitionDispatchState,
+        commitDispatchState,
         persistContinuationOutbox: (_taskId, outbox, expected) => {
           const current = task.dispatchState ?? "pending";
           if (expected && !expected.includes(current)) {
@@ -166,15 +173,15 @@ describe("background completion retry lifecycle", () => {
     };
     const execute = vi.fn();
     const deliverCompletion = vi.fn().mockResolvedValue({ kind: "accepted" });
-    const transitionDispatchState = vi.fn((
+    const commitDispatchState = vi.fn((
       _taskId: string,
       next: BackgroundSessionState,
       expected?: readonly BackgroundSessionState[],
     ) => {
       const current = task.dispatchState ?? "pending";
-      if (expected && !expected.includes(current)) return false;
+      if (expected && !expected.includes(current)) return ok(false);
       task.dispatchState = next;
-      return true;
+      return ok(true);
     });
     const runner = createBackgroundCompletionRunner({
       eventBus,
@@ -182,7 +189,7 @@ describe("background completion retry lifecycle", () => {
       sessionStore: { loadByRef: vi.fn(() => ok(undefined)) },
       taskManager: {
         getTask: () => task,
-        transitionDispatchState,
+        commitDispatchState,
         persistContinuationOutbox: vi.fn(),
         scheduleDispatchRetry: vi.fn(),
       },
