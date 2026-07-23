@@ -190,7 +190,7 @@ describe("cron governed agent-turn executor", () => {
       operationType: "cron",
       model: "openai:gpt-5-mini",
       cacheRetention: "short",
-      promptTimeout: { promptTimeoutMs: 150_000, retryPromptTimeoutMs: 150_000 },
+      promptTimeout: { promptTimeoutMs: 600_000, retryPromptTimeoutMs: 600_000 },
     });
     expect(overrides?.signal).toBeInstanceOf(AbortSignal);
     expect(result.value.outcome).toMatchObject({
