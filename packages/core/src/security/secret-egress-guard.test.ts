@@ -71,6 +71,20 @@ describe("scrubSecretsFromText", () => {
     expect(result.text).not.toContain(yamlValue);
   });
 
+  it("scrubs credential usernames and write-only environment values from install instructions", () => {
+    const username = "example-user-value";
+    const password = "test-password-value";
+    const environmentValue = "test-environment-value";
+    const result = scrubSecretsFromText(
+      `{"SERVICE_USERNAME":"${username}","SERVICE_PASSWORD":"${password}","env_value":"${environmentValue}"}`,
+    );
+
+    expect(result.text).not.toContain(username);
+    expect(result.text).not.toContain(password);
+    expect(result.text).not.toContain(environmentValue);
+    expect(result.redactions).toBe(3);
+  });
+
   it("preserves environment references and existing redaction sentinels", () => {
     const input = "PASSWORD=${SERVICE_PASSWORD}\napi_key: [REDACTED]";
     expect(scrubSecretsFromText(input)).toEqual({ text: input, redactions: 0 });
