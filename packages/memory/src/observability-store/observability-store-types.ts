@@ -305,8 +305,9 @@ export interface CostBucketFilter {
 /**
  * Per-session health rollup (A1 `aggregateSessionsInWindow`): reduced over ALL
  * in-window `session_summary` rows per key (one per execution) — additive fields
- * sum, `degraded` ORs, `endReason` keeps the latest degraded execution's cause.
- * `source` is the provenance enum the A2 reducer filters on. */
+ * sum, real degradations remain sticky, and a clean continuation resolves a
+ * transitional `background_pending` state. `source` is the provenance enum the
+ * A2 reducer filters on. */
 export interface SessionSummaryRollup {
   sessionKey: string;
   lastTs: number;

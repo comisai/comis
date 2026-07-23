@@ -273,9 +273,9 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
     const rows = parsed.ok ? parsed.value : [];
     // One accumulator per session_key, reduced over ALL its in-window rows
     // (one row per execution). Additive fields SUM; `degraded` ORs; the state
-    // fields (`lastTs`/`source`) take the latest row (rows arrive in id order);
-    // `endReason` keeps the latest DEGRADED row's named cause so a later clean
-    // execution does not erase what degradedByCause buckets on.
+    // fields (`lastTs`/`source`) take the latest row (rows arrive in id order).
+    // Real degradations remain sticky, while a successful continuation resolves
+    // the transitional `background_pending` state.
     const bySession = new Map<string, SessionSummaryRollup>();
     for (const r of rows) {
       let d: Record<string, unknown>;
@@ -329,12 +329,21 @@ export function bindQueries(db: Database.Database): ObservabilityQueries {
       acc.source = typeof d.source === "string" ? d.source : "runtime";
       // The named degradation cause. Pre-change rows (and a blank value)
       // parse-default to "unknown" so degradedByCause always has a stable,
-      // finite bucket key. A degraded row's cause overwrites; a clean row's
-      // endReason only applies while the session has no degradation yet.
+      // finite bucket key. A real degraded row's cause overwrites and remains
+      // sticky. `background_pending` describes an unfinished continuation, so
+      // the later clean execution resolves it without erasing real failures.
       const rowEndReason =
         typeof d.endReason === "string" && d.endReason.length > 0 ? d.endReason : "unknown";
-      if (rowDegraded || !acc.degraded) acc.endReason = rowEndReason;
-      acc.degraded = acc.degraded || rowDegraded;
+      if (rowDegraded) {
+        const isPendingContinuation = rowEndReason === "background_pending";
+        if (!isPendingContinuation || !acc.degraded) acc.endReason = rowEndReason;
+        acc.degraded = true;
+      } else if (acc.endReason === "background_pending") {
+        acc.endReason = rowEndReason;
+        acc.degraded = false;
+      } else if (!acc.degraded) {
+        acc.endReason = rowEndReason;
+      }
       bySession.set(r.session_key, acc);
     }
     return [...bySession.values()];
