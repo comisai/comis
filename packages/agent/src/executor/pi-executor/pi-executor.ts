@@ -2276,6 +2276,7 @@ async function runSessionLocked(
         conversationRef: conversationRef.value,
         deliveryOrigin: context.deliveryOrigin,
         traceId: executionId ?? null,
+        responseLocalePolicy,
         backgroundHopCount: incomingHopCount,
       };
     };

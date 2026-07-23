@@ -28,6 +28,7 @@ function pendingTask(): Extract<FollowupTaskRecord, { status: "pending" }> {
         userId: "user-a",
       },
       traceId: null,
+      responseLocalePolicy: { source: "unset", enforceLocale: false },
       backgroundHopCount: 0,
     },
     sourceExecutionId: "source-a",

@@ -65,6 +65,7 @@ function taskOrigin(): BackgroundTaskOrigin {
       userId: "user-a",
     },
     traceId: "origin-trace-a",
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
   };
 }

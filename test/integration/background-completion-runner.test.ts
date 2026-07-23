@@ -97,6 +97,7 @@ function makeTestOrigin(
     conversationRef: conversationRef.value,
     deliveryOrigin: { channelType, channelId, userId, tenantId },
     traceId: null,
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
     ...Object.fromEntries(
       Object.entries(over).filter(

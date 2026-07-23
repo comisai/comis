@@ -13,8 +13,10 @@
  * 1. **Orphaned user messages** -- trailing user turn without an assistant reply.
  * 2. **Tool-result tails** -- session ends with a tool result (role "tool" or
  *    "toolResult") after an assistant toolUse, or with an assistant message
- *    whose stopReason is "toolUse" (interrupted before tool results arrived).
- *    Both cases arise when a daemon restart kills execution mid-tool-call.
+ *    whose stopReason is "toolUse" (the turn ended before a result was
+ *    recorded). These cases may follow background promotion, cancellation,
+ *    timeout, or process interruption; the session alone does not identify
+ *    the cause.
  *
  * **Mid-session anomalies (Case 4, full scan):**
  * 4. **Consecutive same-role messages** -- user-user or assistant-assistant at
@@ -63,8 +65,8 @@ export interface RepairResult {
  * 2. Trailing tool result (role "tool" or "toolResult") -- execution was
  *    interrupted by a restart after tool calls completed but before the
  *    assistant processed results.
- * 3. Trailing assistant message with stopReason "toolUse" -- execution was
- *    interrupted before tool results arrived.
+ * 3. Trailing assistant message with stopReason "toolUse" -- the turn ended
+ *    before a tool result was recorded.
  * 4. Mid-session consecutive same-role messages (user-user or
  *    assistant-assistant) at any position. Detected by scanning the
  *    getBranch() entry path. Repaired via branch() + re-append with
@@ -137,9 +139,9 @@ export function repairOrphanedMessages(sessionManager: SessionManager): RepairRe
       // results arrived.
       appendSyntheticAssistant(
         sessionManager,
-        "(previous tool execution was interrupted by a system restart)",
+        "(the previous turn ended before this tool result was recorded)",
       );
-      reasons.push("assistant toolUse interrupted before processing results");
+      reasons.push("assistant toolUse without a recorded result");
     }
   }
 

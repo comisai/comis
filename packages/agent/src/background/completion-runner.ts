@@ -27,7 +27,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fromPromise, suppressError, tryCatch, type Result } from "@comis/shared";
+import { fromPromise, isSilentResponse, suppressError, tryCatch, type Result } from "@comis/shared";
 import {
   createDeliveryOrigin,
   createResolvedRequestContext,
@@ -40,6 +40,7 @@ import {
   toSafeErrorLogString,
   type BackgroundTaskOrigin,
   type ComisLogger,
+  type ErrorKind,
   type NormalizedMessage,
   type RequestContext,
   type ResolvedRequestContextSeed,
@@ -57,6 +58,18 @@ export interface BackgroundCompletionRunner {
   /** Unsubscribe from the event bus. Idempotent. Awaitable so callers can
    *  ensure no in-flight handler outlives the daemon shutdown. */
   shutdown(): Promise<void>;
+}
+
+export interface BackgroundCompletionDeliveryError {
+  readonly errorKind: ErrorKind;
+  readonly message: string;
+}
+
+export interface BackgroundCompletionDeliveryInput {
+  readonly taskId: string;
+  readonly origin: BackgroundTaskOrigin;
+  readonly response: string;
+  readonly executionId: string;
 }
 
 /** Session-store dependency retained by daemon composition; it is not routing authority. */
@@ -83,6 +96,11 @@ export interface BackgroundCompletionRunnerDeps {
    * both methods.
    */
   taskManager: Pick<BackgroundTaskManager, "getTask" | "transitionDispatchState">;
+  /** Deliver the finalized continuation through the exact persisted channel
+   *  authority. The runner owns execution; the composition root owns adapters. */
+  deliverCompletion: (
+    input: BackgroundCompletionDeliveryInput,
+  ) => Promise<Result<void, BackgroundCompletionDeliveryError>>;
   fallbackNotifyFn: NotifyFn;
   maxBackgroundHops: number;
   /**
@@ -329,6 +347,12 @@ export function createBackgroundCompletionRunner(
           toolAssembly?.value,
           undefined,
           agentId,
+          undefined,
+          undefined,
+          {
+            operationType: "interactive",
+            responseLocalePolicy: origin.responseLocalePolicy,
+          },
         ));
         if (!execution.ok) return execution;
         return fromPromise(execution.value);
@@ -349,7 +373,61 @@ export function createBackgroundCompletionRunner(
         },
         "Background completion: executor.execute() rejected",
       );
+      return;
     }
+
+    const result = executionResult.value;
+    if (isSilentResponse(result.response)) {
+      log.info(
+        {
+          taskId,
+          agentId,
+          durationMs: 0,
+          traceId: reentryContext.value.traceId,
+        },
+        "Background completion intentionally suppressed",
+      );
+      return;
+    }
+
+    const deliveryStartedAt = systemNowMs();
+    const deliveryAttempt = await fromPromise(deps.deliverCompletion({
+      taskId: task.id,
+      origin,
+      response: result.response,
+      executionId: result.executionId,
+    }));
+    const deliveryResult = deliveryAttempt.ok ? deliveryAttempt.value : deliveryAttempt;
+    const deliveryDurationMs = Math.max(0, systemNowMs() - deliveryStartedAt);
+    if (!deliveryResult.ok) {
+      const errorKind = "errorKind" in deliveryResult.error
+        ? deliveryResult.error.errorKind
+        : ("internal" as const);
+      log.warn(
+        {
+          taskId,
+          agentId,
+          channelType: origin.deliveryOrigin.channelType,
+          durationMs: deliveryDurationMs,
+          err: toSafeErrorLogString(new Error(deliveryResult.error.message)),
+          traceId: reentryContext.value.traceId,
+          hint: "Inspect the exact originating channel adapter and delivery queue before retrying the completion",
+          errorKind,
+        },
+        "Background completion delivery failed",
+      );
+      return;
+    }
+    log.info(
+      {
+        taskId,
+        agentId,
+        channelType: origin.deliveryOrigin.channelType,
+        durationMs: deliveryDurationMs,
+        traceId: reentryContext.value.traceId,
+      },
+      "Background completion delivered",
+    );
   }
 
   /**

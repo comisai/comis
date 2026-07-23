@@ -49,6 +49,7 @@ function buildOrigin(over: Partial<BackgroundTaskOrigin> & { agentId?: string; s
     conversationRef: conversationRef.value,
     deliveryOrigin: { channelType, channelId, userId, tenantId },
     traceId: null,
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
     ...Object.fromEntries(Object.entries(over).filter(([key]) => !["agentId", "sessionKey", "channelType", "channelId", "userId"].includes(key))),
   };
@@ -106,6 +107,7 @@ describe("createBackgroundCompletionRunner", () => {
     maxBackgroundHops = 3,
     isTurnInFlight?: (key: string) => boolean,
     assembleToolsForAgent?: BackgroundCompletionRunnerDeps["assembleToolsForAgent"],
+    deliverCompletion: BackgroundCompletionRunnerDeps["deliverCompletion"] = vi.fn().mockResolvedValue(ok(undefined)),
   ) {
     return createBackgroundCompletionRunner({
       eventBus,
@@ -116,6 +118,7 @@ describe("createBackgroundCompletionRunner", () => {
       maxBackgroundHops,
       ...(isTurnInFlight ? { isTurnInFlight } : {}),
       ...(assembleToolsForAgent ? { assembleToolsForAgent } : {}),
+      deliverCompletion,
       logger: makeLogger(),
     });
   }
@@ -174,6 +177,56 @@ describe("createBackgroundCompletionRunner", () => {
     expect(reentered.hopCount).toBe(1);
     expect(reentered.sessionKey).toBe(originSessionKey(task.origin));
     await runner.shutdown();
+  });
+
+  it("delivers the finalized re-entry response to the exact origin with its captured locale", async () => {
+    const responseLocalePolicy = {
+      locale: "he",
+      source: "request" as const,
+      enforceLocale: true,
+    };
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ responseLocalePolicy } as Partial<BackgroundTaskOrigin>),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    executor.execute.mockResolvedValue({
+      response: "תוצאת הרקע הושלמה",
+      executionId: "execution-1",
+      finishReason: "stop",
+    });
+    const deliverCompletion = vi.fn().mockResolvedValue(ok(undefined));
+    const runner = build(3, undefined, undefined, deliverCompletion);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await runner.shutdown();
+
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      undefined,
+      undefined,
+      "default",
+      undefined,
+      undefined,
+      {
+        operationType: "interactive",
+        responseLocalePolicy,
+      },
+    );
+    expect(deliverCompletion).toHaveBeenCalledWith({
+      taskId: task.id,
+      origin: task.origin,
+      response: "תוצאת הרקע הושלמה",
+      executionId: "execution-1",
+    });
   });
 
   it("continues re-entry execution and reaches later observers when the first re-entry subscriber throws", async () => {
@@ -624,6 +677,7 @@ describe("trace continuity sub-tests", () => {
       getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
+      deliverCompletion: async () => ok(undefined),
       fallbackNotifyFn,
       maxBackgroundHops,
       logger,

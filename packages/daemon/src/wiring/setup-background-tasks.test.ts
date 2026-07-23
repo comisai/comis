@@ -88,6 +88,7 @@ const TEST_ORIGIN: BackgroundTaskOrigin = {
     tenantId: "tenant-1",
   },
   traceId: "trace-1",
+  responseLocalePolicy: { source: "unset", enforceLocale: false },
   backgroundHopCount: 0,
 };
 

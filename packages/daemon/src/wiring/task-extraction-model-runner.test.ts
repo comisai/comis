@@ -52,6 +52,7 @@ function taskItem(): TaskExtractionItem {
         userId: "user-a",
       },
       traceId: "trace-source-a",
+      responseLocalePolicy: { source: "unset", enforceLocale: false },
       backgroundHopCount: 0,
     },
     workspacePolicySnapshot: {

@@ -2241,7 +2241,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const bgConfigForRunner = BackgroundTasksConfigSchema.parse(agents[defaultAgentId]?.backgroundTasks ?? {});
   const bgCompletionRunnerContext = setupBackgroundCompletionRunner({
     eventBus: container.eventBus, getExecutor: handle.getExecutor, sessionStore,
-    assembleToolsForAgent,
+    assembleToolsForAgent, adaptersByType, deliveryService,
     taskManager: backgroundTaskManager, fallbackNotifyFn: bgNotifyFn,
     maxBackgroundHops: bgConfigForRunner.maxBackgroundHops, logger: daemonLogger,
   });

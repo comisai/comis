@@ -16,6 +16,7 @@
 import { z } from "zod";
 import { DeliveryOriginSchema } from "./delivery-origin.js";
 import { ConversationRefSchema, ResolvedTurnScopeSchema, createConversationRef } from "./conversation-scope.js";
+import { ResponseLocalePolicySchema } from "./response-locale-policy.js";
 
 /**
  * Origin context captured at promote() time. All string fields are
@@ -28,6 +29,9 @@ export const BackgroundTaskOriginSchema = z.strictObject({
   deliveryOrigin: DeliveryOriginSchema,
   /** Per-execution trace identifier; null when no trace was active. */
   traceId: z.string().nullable(),
+  /** Exact locale decision captured before promotion. Delayed re-entry must
+   *  not infer a locale from the internal completion envelope. */
+  responseLocalePolicy: ResponseLocalePolicySchema,
   /** Recursion-bound counter. Captured at promote-time from the inbound
    *  NormalizedMessage's metadata.backgroundHopCount (defaults to 0 for
    *  top-level user messages). The completion runner increments this

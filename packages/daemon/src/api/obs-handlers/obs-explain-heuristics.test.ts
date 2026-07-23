@@ -514,6 +514,18 @@ describe("obs-explain-heuristics", () => {
 
   const allMissRecall = { recalls: 2, zeroHits: 2, lastLanes: 3, lastFinalCount: 0, rerankerAvailable: false };
 
+  it("background pending outranks an incidental recall miss", () => {
+    const r = rootCause(makeSignals({
+      endReason: "background_pending",
+      degraded: true,
+      recall: allMissRecall,
+    }));
+    expect(r).not.toBeNull();
+    expect(r!.code).toBe("background_pending");
+    expect(r!.detail).toMatch(/completion|background/i);
+    expect(r!.suggestedNextSteps.join(" ")).toMatch(/delivery|lifecycle/i);
+  });
+
   it("a DEGRADED session whose recalls ALL missed (no tool/context cause) → recall_miss", () => {
     // Grounded in live Hebrew-language runs where recall silently returned
     // nothing and comis explain root-caused nothing.
