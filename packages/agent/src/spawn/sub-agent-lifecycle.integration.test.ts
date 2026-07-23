@@ -110,7 +110,7 @@ describe("sub-agent lifecycle integration", () => {
   // 1. Async spawn returns runId immediately
   // -------------------------------------------------------------------------
 
-  it("async spawn returns runId immediately (non-blocking)", () => {
+  it("async spawn returns runId immediately (non-blocking)", async () => {
     // Use a never-resolving promise to prove spawn is non-blocking
     let resolveExec!: (v: unknown) => void;
     vi.mocked(deps.executeAgent).mockReturnValue(
@@ -130,8 +130,11 @@ describe("sub-agent lifecycle integration", () => {
     expect(typeof runId).toBe("string");
     expect(runId.length).toBeGreaterThan(0);
 
-    // executeAgent was called (fire-and-forget in background)
-    expect(deps.executeAgent).toHaveBeenCalledTimes(1);
+    // Durable admission is asynchronous; provider execution starts after it
+    // completes without delaying the synchronous runId return above.
+    await vi.waitFor(() => {
+      expect(deps.executeAgent).toHaveBeenCalledTimes(1);
+    });
 
     // Status is "running"
     const status = runner.getRunStatus(runId);
@@ -234,7 +237,7 @@ describe("sub-agent lifecycle integration", () => {
   // 5. Empty allowlist allows any agent
   // -------------------------------------------------------------------------
 
-  it("empty allowlist allows any agent", () => {
+  it("empty allowlist allows any agent", async () => {
     deps.config.allowAgents = [];
 
     const runner = createSubAgentRunner(deps);
@@ -245,7 +248,9 @@ describe("sub-agent lifecycle integration", () => {
     });
 
     expect(typeof runId).toBe("string");
-    expect(deps.executeAgent).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(deps.executeAgent).toHaveBeenCalledTimes(1);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -392,7 +397,9 @@ describe("sub-agent lifecycle integration", () => {
       callerSessionKey: "test-tenant:user1:ch1",
     });
 
-    // Spawn event emitted immediately
+    // Durable admission completes asynchronously before provider start and
+    // lifecycle event emission.
+    await vi.advanceTimersByTimeAsync(0);
     expect(deps.eventBus.emit).toHaveBeenCalledWith(
       "session:sub_agent_spawned",
       expect.objectContaining({
@@ -401,8 +408,6 @@ describe("sub-agent lifecycle integration", () => {
         parentSessionKey: "test-tenant:user1:ch1",
       }),
     );
-
-    await vi.advanceTimersByTimeAsync(0);
 
     // Completion event emitted after execution
     expect(deps.eventBus.emit).toHaveBeenCalledWith(
