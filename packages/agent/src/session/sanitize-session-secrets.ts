@@ -1,27 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Post-execution JSONL secret and permission sanitizer.
+ * Session-persistence secret projection and durable-file repair.
  *
- * Restricts the transcript to owner-only access, scans it for tool call
- * blocks that contain sensitive parameters (e.g., env_value in gateway
- * env_set), and rewrites those values as "[REDACTED]".
+ * The SDK persistence boundary projects secret-bearing values out of every
+ * entry before its first write while leaving the current model/tool value
+ * available in memory. The file repair keeps owner-only permissions and
+ * cleans records written by older processes or unsupported write paths.
  *
- * Called after execution completes while the session write lock is still
- * held, so no concurrent reads can observe the unsanitized data window.
- *
- * Why post-execution rather than pre-write:
- * - The pi-coding-agent SDK writes tool_use blocks to JSONL synchronously
- *   via appendFileSync BEFORE calling tool.execute(). There is no SDK hook
- *   to intercept writes before they hit disk.
- * - Wrapping SessionManager to proxy appendMessage() is fragile and would
- *   break if the SDK adds new write paths.
- * - Post-execution rewrite within the lock is simple, reliable, and correct.
+ * Both paths run while the session write lock is held. A guarded SDK canary
+ * fails the build if the private persistence seam changes.
  *
  * @module
  */
 
 import { chmodSync, lstatSync, readFileSync } from "node:fs";
-import type { ComisLogger } from "@comis/core";
+import { scrubSecretsFromText, type ComisLogger } from "@comis/core";
 import { writeRegularFile } from "@comis/observability";
 import { err, ok, tryCatch, type Result } from "@comis/shared";
 
@@ -49,7 +42,11 @@ const API_KEY_PATTERNS: RegExp[] = [
 ];
 
 /** Argument names that are always sensitive regardless of value pattern. */
-const SENSITIVE_ARG_NAMES = /^(api[_-]?key|apikey|token|secret|password|credential|auth[_-]?key|access[_-]?key|private[_-]?key)$/i;
+const SENSITIVE_ARG_NAMES =
+  /(?:^|[_-])(?:api[_-]?key|apikey|token|secret|password|credential|auth[_-]?key|access[_-]?key|private[_-]?key|username|env[_-]?value)(?:$|[_-])/i;
+
+// eslint-disable-next-line no-restricted-syntax -- durable-session redaction sentinel (not the Pino censor literal)
+const REDACTION_PLACEHOLDER = "[REDACTED]";
 
 /**
  * Check if a string value looks like an API key.
@@ -90,6 +87,95 @@ function redactKeysInCommand(command: string): [string, boolean] {
     result = replaced;
   }
   return [result, changed];
+}
+
+export interface PersistenceSecretProjection<T> {
+  readonly value: T;
+  readonly redactions: number;
+}
+
+function isSafePersistencePlaceholder(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === REDACTION_PLACEHOLDER
+    || (trimmed.startsWith("${") && trimmed.endsWith("}"));
+}
+
+function projectPersistenceValue(
+  value: unknown,
+  fieldName: string | undefined,
+  seen: WeakSet<object>,
+): PersistenceSecretProjection<unknown> {
+  if (typeof value === "string") {
+    if (
+      fieldName !== undefined
+      && SENSITIVE_ARG_NAMES.test(fieldName)
+      && value.length > 0
+      && !isSafePersistencePlaceholder(value)
+    ) {
+      return { value: REDACTION_PLACEHOLDER, redactions: 1 };
+    }
+    if (looksLikeApiKey(value)) {
+      return { value: REDACTION_PLACEHOLDER, redactions: 1 };
+    }
+    const scrubbed = scrubSecretsFromText(value);
+    return { value: scrubbed.text, redactions: scrubbed.redactions };
+  }
+  if (value === null || typeof value !== "object") {
+    return { value, redactions: 0 };
+  }
+  if (seen.has(value)) {
+    return { value, redactions: 0 };
+  }
+  if (Array.isArray(value)) {
+    seen.add(value);
+    let redactions = 0;
+    let changed = false;
+    const projected = value.map((item) => {
+      const next = projectPersistenceValue(item, undefined, seen);
+      redactions += next.redactions;
+      if (next.value !== item) changed = true;
+      return next.value;
+    });
+    seen.delete(value);
+    return {
+      value: changed ? projected : value,
+      redactions,
+    };
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return { value, redactions: 0 };
+  }
+
+  seen.add(value);
+  let redactions = 0;
+  let changed = false;
+  const projected: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    const next = projectPersistenceValue(item, key, seen);
+    projected[key] = next.value;
+    redactions += next.redactions;
+    if (next.value !== item) changed = true;
+  }
+  seen.delete(value);
+  return {
+    value: changed ? projected : value,
+    redactions,
+  };
+}
+
+/**
+ * Produce a secret-free persistence projection without mutating the live value
+ * used by the current model/tool execution.
+ */
+export function projectSessionValueForPersistence<T>(
+  value: T,
+): PersistenceSecretProjection<T> {
+  const projected = projectPersistenceValue(value, undefined, new WeakSet<object>());
+  return {
+    value: projected.value as T,
+    redactions: projected.redactions,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +291,11 @@ function sanitizeLine(line: string): [string, boolean] {
     entry = JSON.parse(line);
   } catch {
     return [line, false]; // Malformed line -- leave as-is
+  }
+
+  const fullProjection = projectSessionValueForPersistence(entry);
+  if (fullProjection.redactions > 0) {
+    return [JSON.stringify(fullProjection.value), true];
   }
 
   if (entry.type !== "message") return [line, false];

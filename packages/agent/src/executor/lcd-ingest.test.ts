@@ -230,6 +230,61 @@ describe("ingestTurn", () => {
     expect(JSON.stringify(appended[0]!.parts)).toContain("Relevant context from memory");
   });
 
+  it("keeps credential-bearing install messages and secret-setting tool calls out of LCD base rows and FTS indexes", () => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const username = "example-user-value";
+    const password = "test-password-value";
+    const turn: AgentMessage[] = [
+      userMsg(
+        `Install with {"SERVICE_USERNAME":"${username}","SERVICE_PASSWORD":"${password}"}`,
+      ) as AgentMessage,
+      assistantToolCall("tc-user", "gateway", {
+        action: "env_set",
+        env_key: "SERVICE_USERNAME",
+        env_value: username,
+      }) as AgentMessage,
+      toolResult("tc-user", "gateway", "stored") as AgentMessage,
+      assistantToolCall("tc-password", "gateway", {
+        action: "env_set",
+        env_key: "SERVICE_PASSWORD",
+        env_value: password,
+      }) as AgentMessage,
+      toolResult("tc-password", "gateway", "stored") as AgentMessage,
+    ];
+
+    ingestTurn(store, SCOPE, 0, turn, FIXED_NOW, createMockLogger());
+
+    const databaseBytes = db.serialize();
+    expect(databaseBytes.indexOf(Buffer.from(username))).toBe(-1);
+    expect(databaseBytes.indexOf(Buffer.from(password))).toBe(-1);
+    expect(databaseBytes.indexOf(Buffer.from("[REDACTED]"))).toBeGreaterThanOrEqual(0);
+  });
+
+  it("keeps natural-language secret confirmations out of LCD base rows and FTS indexes", () => {
+    const db = new Database(":memory:");
+    initSchema(db, 1536);
+    const store = createLcdStore(db);
+    const username = "example-user-a";
+    const password = "test-secret-pass-747!";
+    const turn: AgentMessage[] = [
+      userMsg(
+        `I confirm storing SERVICE_USERNAME in the encrypted secret store. The confirmed value is ${username}. Store it now.`,
+      ) as AgentMessage,
+      userMsg(
+        `Final confirmation: store SERVICE_PASSWORD in the encrypted secret store with the value ${password}, then continue.`,
+      ) as AgentMessage,
+    ];
+
+    ingestTurn(store, SCOPE, 0, turn, FIXED_NOW, createMockLogger());
+
+    const databaseBytes = db.serialize();
+    expect(databaseBytes.indexOf(Buffer.from(username))).toBe(-1);
+    expect(databaseBytes.indexOf(Buffer.from(password))).toBe(-1);
+    expect(databaseBytes.indexOf(Buffer.from("[REDACTED]"))).toBeGreaterThanOrEqual(0);
+  });
+
   it("tokenCount is computed agent-side via estimateMessageTokens; thinking tokens ARE counted", () => {
     const { store, appended } = makeRecordingStore();
     const logger = createMockLogger();

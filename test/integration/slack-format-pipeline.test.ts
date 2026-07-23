@@ -123,16 +123,25 @@ describe("Slack Format Pipeline E2E", () => {
       adapter,
       "C-test-channel",
       "Hello **bold** and [link](https://example.com)",
-      { origin: "test:slack-fmt-03", authority, destinationEndpoint },
+      {
+        completionMode: "settled",
+        origin: "test:slack-fmt-03",
+        authority,
+        destinationEndpoint,
+      },
     );
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
     // At least one chunk delivered
-    expect(result.value.totalChunks).toBeGreaterThanOrEqual(1);
-    expect(result.value.deliveredChunks).toBe(result.value.totalChunks);
-    expect(result.value.failedChunks).toBe(0);
+    expect(result.value.chunks.length).toBeGreaterThanOrEqual(1);
+    expect(result.value.chunks.every((chunk) => chunk.status === "accepted")).toBe(true);
+    expect(result.value.platform).toMatchObject({
+      status: "accepted",
+      deliveredChunks: result.value.chunks.length,
+    });
+    expect(result.value.queueDisposition).toBe("settled");
 
     // Verify the mock adapter received mrkdwn, not raw markdown
     expect(adapter.captured.length).toBeGreaterThanOrEqual(1);

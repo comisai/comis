@@ -8,6 +8,12 @@ export default defineConfig({
     // adapter SDKs that are not hoisted to the repo root, so it cannot
     // run from the default `pnpm test` invocation in a clean install).
     projects: ["packages/*", "test/architecture", "scripts/contracts"],
+    // Coverage instrumentation transforms several large workspace graphs at
+    // once. Deriving the worker count from every host CPU can saturate that
+    // transform pipeline so thoroughly that otherwise millisecond-scale tests
+    // expire before their first assertion. Keep enough parallelism for the
+    // workspace while bounding per-test scheduling latency.
+    maxWorkers: 4,
     // Forked workers reuse one process across many test files. Libraries
     // (better-sqlite3, Pino transports, node-llama-cpp, ...) that register
     // `process.on("unhandledRejection", ...)` on import accumulate listeners

@@ -71,6 +71,57 @@ describe("scrubSecretsFromText", () => {
     expect(result.text).not.toContain(yamlValue);
   });
 
+  it("scrubs credential usernames and write-only environment values from install instructions", () => {
+    const username = "example-user-value";
+    const password = "test-password-value";
+    const environmentValue = "test-environment-value";
+    const result = scrubSecretsFromText(
+      `{"SERVICE_USERNAME":"${username}","SERVICE_PASSWORD":"${password}","env_value":"${environmentValue}"}`,
+    );
+
+    expect(result.text).not.toContain(username);
+    expect(result.text).not.toContain(password);
+    expect(result.text).not.toContain(environmentValue);
+    expect(result.redactions).toBe(3);
+  });
+
+  it("scrubs a confirmed username value from a natural-language approval", () => {
+    const username = "example-user-a";
+    const result = scrubSecretsFromText(
+      `I confirm storing SERVICE_USERNAME in the encrypted secret store. The confirmed value is ${username}. Store it now, then continue.`,
+    );
+
+    expect(result.text).not.toContain(username);
+    expect(result.text).toContain("[REDACTED]");
+    expect(result.text).toContain("The confirmed value is [REDACTED]. Store it now");
+    expect(result.redactions).toBe(1);
+  });
+
+  it("scrubs a password value from a final natural-language confirmation", () => {
+    const password = "test-secret-pass-747!";
+    const result = scrubSecretsFromText(
+      `Final confirmation: store SERVICE_PASSWORD in the encrypted secret store with the value ${password}, then continue.`,
+    );
+
+    expect(result.text).not.toContain(password);
+    expect(result.text).toContain("[REDACTED]");
+    expect(result.text).toContain("with the value [REDACTED], then continue");
+    expect(result.redactions).toBe(1);
+  });
+
+  it("preserves environment references in natural-language storage confirmations", () => {
+    const input =
+      "Confirm storing SERVICE_PASSWORD in the encrypted secret store. The confirmed value is ${SERVICE_PASSWORD}.";
+
+    expect(scrubSecretsFromText(input)).toEqual({ text: input, redactions: 0 });
+  });
+
+  it("preserves descriptive credential prose that does not supply a value", () => {
+    const input = "The password value is required before the service can start.";
+
+    expect(scrubSecretsFromText(input)).toEqual({ text: input, redactions: 0 });
+  });
+
   it("preserves environment references and existing redaction sentinels", () => {
     const input = "PASSWORD=${SERVICE_PASSWORD}\napi_key: [REDACTED]";
     expect(scrubSecretsFromText(input)).toEqual({ text: input, redactions: 0 });

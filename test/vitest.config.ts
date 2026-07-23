@@ -39,6 +39,10 @@ export default defineConfig({
     teardownTimeout: 30_000,
     pool: "forks",
     maxConcurrency: 1,
+    // Integration and live scenarios start daemons and share host resources.
+    // Serialize files as well as tests within each file so those processes
+    // cannot race over ports, generated state, or repository preconditions.
+    fileParallelism: false,
     retry: 1,
     env: {
       // Repo root, exposed to test daemon configs as ${COMIS_REPO_ROOT}.
@@ -62,6 +66,9 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "json"],
+      // Keep this collector isolated from the unit tier so independently
+      // invoked validation commands cannot delete each other's temp files.
+      reportsDirectory: "coverage/integration",
       include: ["packages/*/dist/**/*.js"],
       exclude: [
         "**/*.test.js",

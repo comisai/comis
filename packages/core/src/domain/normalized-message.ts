@@ -44,8 +44,9 @@ export type Attachment = z.infer<typeof AttachmentSchema>;
  * One physical channel message represented inside a synthetic coalesced turn.
  *
  * The queue may combine multiple rapid messages into one model prompt. This
- * content-preserving projection keeps the original identities available for
- * durable session provenance without retaining adapter-specific metadata.
+ * credential-redacted projection keeps the original identities available for
+ * durable session provenance without retaining adapter-specific metadata or
+ * plaintext secret assignments.
  */
 const OriginalInboundMessageSchema = z.strictObject({
     id: z.guid(),
@@ -58,7 +59,7 @@ const OriginalInboundMessageSchema = z.strictObject({
 
 export type OriginalInboundMessage = z.infer<typeof OriginalInboundMessageSchema>;
 
-/** Session custom-entry payload containing the exact physical inbound batch. */
+/** Session custom-entry payload containing the credential-redacted physical batch. */
 const InboundMessageProvenanceBatchSchema = z.strictObject({
     schemaVersion: z.literal(1),
     batchId: z.guid(),

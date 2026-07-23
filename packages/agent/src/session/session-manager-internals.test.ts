@@ -10,13 +10,16 @@
  * no-ops on shape mismatch). The canary test here turns that silent no-op
  * into a loud CI failure at SDK-bump time.
  */
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import {
   getSessionFileEntries,
+  installSecretSafeSessionPersistence,
+  installSessionPersistenceProjector,
   rewriteSessionFile,
 } from "./session-manager-internals.js";
 
@@ -71,16 +74,52 @@ function appendAssistant(sm: SessionManager, text: string): void {
 // ---------------------------------------------------------------------------
 
 describe("session-manager-internals SDK canary", () => {
-  it("CANARY: SessionManager still carries fileEntries[] and _rewriteFile() — the scrubbers' repair seam", () => {
+  it("CANARY: SessionManager still carries the private persistence and repair seams", () => {
     const sm = SessionManager.inMemory("/tmp/test-cwd");
     // If either assertion fails after an SDK bump, the private internals were
     // renamed/removed: the session scrubbers (poisoned-thinking, redacted
     // tool-call, forged-marker) would silently no-op. Re-point the guarded
     // boundary in session-manager-internals.ts — do NOT patch the scrubbers
     // individually.
-    const internals = sm as unknown as { fileEntries?: unknown; _rewriteFile?: unknown };
+    const internals = sm as unknown as {
+      fileEntries?: unknown;
+      _persist?: unknown;
+      _rewriteFile?: unknown;
+    };
     expect(Array.isArray(internals.fileEntries)).toBe(true);
+    expect(typeof internals._persist).toBe("function");
     expect(typeof internals._rewriteFile).toBe("function");
+  });
+});
+
+describe("session persistence projection", () => {
+  it("rejects a missing persistence hook instead of permitting unprojected writes", () => {
+    const error = vi.fn();
+    const logger = createMockLogger({ error });
+
+    const result = installSecretSafeSessionPersistence(
+      {} as SessionManager,
+      logger,
+      "agent_a:telegram:user_a",
+    );
+
+    expect(result.ok).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorKind: "dependency",
+        step: "session-persistence",
+      }),
+      expect.stringContaining("stopped"),
+    );
+  });
+
+  it("returns false from the guarded low-level installer on a shape mismatch", () => {
+    const installed = installSessionPersistenceProjector(
+      {} as SessionManager,
+      (entry) => ({ value: entry, redactions: 0 }),
+    );
+
+    expect(installed).toBe(false);
   });
 });
 

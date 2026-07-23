@@ -202,8 +202,13 @@ describe("resilience E2E: prompt timeout pipeline", () => {
     // Verify run is failed
     const status = runner.getRunStatus(runId);
     expect(status).toBeDefined();
-    expect(status!.status).toBe("failed");
-    expect(status!.error).toBeDefined();
+    expect(status?.status).toBe("failed");
+    if (status?.status !== "failed") return;
+    expect(status.completion).toMatchObject({
+      endReason: "failed",
+      errorKind: "internal",
+      summary: expect.stringContaining("timed out"),
+    });
 
     // Verify sendToChannel was called with canned failure text
     expect(deps.sendToChannel).toHaveBeenCalled();
@@ -262,11 +267,13 @@ describe("resilience E2E: prompt timeout pipeline", () => {
     }
 
     const status = runner.getRunStatus(runId);
-    expect(status!.status).toBe("failed");
+    expect(status?.status).toBe("failed");
+    if (status?.status !== "failed") return;
 
     // The error message comes from PromptTimeoutError which extends TimeoutError:
     // "Prompt execution timed out after {timeoutMs}ms"
-    expect(status!.error).toContain("timed out");
+    expect(status.completion.summary).toContain("timed out");
+    expect(status.completion.errorKind).toBe("internal");
 
     // Verify the runner's catch block logged at ERROR (not WARN -- it's a catch-all)
     const errorCalls = vi.mocked(deps.logger!.error).mock.calls;

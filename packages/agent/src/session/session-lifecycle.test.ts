@@ -469,6 +469,69 @@ describe("ComisSessionManager — abnormal-termination cleanup contract via with
     expect(after).not.toContain("sk-test-abc-xyz-1234567890-DEF");
   });
 
+  it("projects credential-bearing messages to a redacted JSONL form before the SDK flushes them", async () => {
+    const { mgr, sessionKey, sessionPath, readFileSync } = await bootstrap("pre-persist");
+    const username = "example-user-value";
+    const password = "test-password-value";
+
+    const result = await mgr.withSession(sessionKey, async (sm: import("@earendil-works/pi-coding-agent").SessionManager) => {
+      sm.appendMessage({
+        role: "user",
+        content: `Install with {"SERVICE_USERNAME":"${username}","SERVICE_PASSWORD":"${password}"}`,
+        timestamp: 1_789_000_000_001,
+      } as never);
+      sm.appendMessage({
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: "tc-pre-persist",
+          name: "gateway",
+          arguments: {
+            action: "env_set",
+            env_key: "SERVICE_USERNAME",
+            env_value: username,
+          },
+        }],
+        timestamp: 1_789_000_000_002,
+      } as never);
+
+      const duringCallback = readFileSync(sessionPath, "utf8");
+      expect(duringCallback).not.toContain(username);
+      expect(duringCallback).not.toContain(password);
+      expect(duringCallback).toContain("[REDACTED]");
+      return "ok";
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("projects natural-language secret confirmations before the SDK flushes JSONL", async () => {
+    const { mgr, sessionKey, sessionPath, readFileSync } = await bootstrap("natural-language-pre-persist");
+    const username = "example-user-a";
+    const password = "test-secret-pass-747!";
+
+    const result = await mgr.withSession(sessionKey, async (sm: import("@earendil-works/pi-coding-agent").SessionManager) => {
+      sm.appendMessage({
+        role: "user",
+        content: `I confirm storing SERVICE_USERNAME in the encrypted secret store. The confirmed value is ${username}. Store it now.`,
+        timestamp: 1_789_000_000_001,
+      } as never);
+      sm.appendMessage({
+        role: "assistant",
+        content: `Final confirmation: store SERVICE_PASSWORD in the encrypted secret store with the value ${password}, then continue.`,
+        timestamp: 1_789_000_000_002,
+      } as never);
+
+      const duringCallback = readFileSync(sessionPath, "utf8");
+      expect(duringCallback).not.toContain(username);
+      expect(duringCallback).not.toContain(password);
+      expect(duringCallback).toContain("[REDACTED]");
+      return "ok";
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it("redacts gateway env_value parameter when the withSession callback throws (env_set secret-leak guard)", async () => {
     const { mgr, sessionKey, sessionPath, writeFile, readFileSync } = await bootstrap("env-set");
 
