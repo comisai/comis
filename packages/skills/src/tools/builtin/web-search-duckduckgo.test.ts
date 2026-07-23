@@ -331,7 +331,7 @@ describe("runDuckDuckGoSearch", () => {
       ok: true,
       status: 200,
       statusText: "OK",
-      text: async () => wrapDdgPage(""),
+      text: async () => makeDdgEmptyResultsPage(),
     });
 
     await runDuckDuckGoSearch({
