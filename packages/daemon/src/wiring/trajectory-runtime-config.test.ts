@@ -10,7 +10,7 @@ describe("effective trajectory runtime configuration", () => {
           enabled: false,
           dir: "/diagnostics/trajectory",
           maxFileBytes: 4_096,
-          eventTypes: ["background_task:notified"],
+          eventTypes: ["background_task.notified"],
         },
       },
       observability: {
@@ -33,7 +33,7 @@ describe("effective trajectory runtime configuration", () => {
       enabled: false,
       dir: "/diagnostics/trajectory",
       maxFileBytes: 4_096,
-      eventTypes: ["background_task:notified"],
+      eventTypes: ["background_task.notified"],
     });
     expect(override).toEqual({
       enabled: true,

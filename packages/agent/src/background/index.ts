@@ -32,6 +32,7 @@ export {
   createBackgroundTaskManager,
 } from "./background-task-manager.js";
 export type {
+  BackgroundRecoveryRecorderDisposition,
   BackgroundTaskManager,
   BackgroundTaskManagerOpts,
   NotifyFn,

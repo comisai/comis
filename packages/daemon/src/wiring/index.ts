@@ -93,6 +93,7 @@ export { setupBackgroundTasks, type BackgroundTasksContext } from "./setup-backg
 export { setupBackgroundCompletionRunner } from "./setup-background-completion-runner.js";
 export {
   createBackgroundRecoveryRecorder,
+  type BackgroundRecoveryRecorderDisposition,
   type BackgroundRecoveryRecorderDeps,
   type BackgroundRecoveryTrajectoryInput,
 } from "./background-recovery-recorder.js";

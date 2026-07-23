@@ -252,7 +252,7 @@ describe("durable dispatch lifecycle and recovery", () => {
       maxTotal: 20,
       maxBackgroundDurationMs: 60_000,
     });
-    manager.recoverOnStartup(() => ok(undefined));
+    manager.recoverOnStartup(() => ok("accepted" as const));
 
     // No notify event was emitted.
     const notifyEvents = mockBus.emits.filter(
@@ -297,7 +297,7 @@ describe("durable dispatch lifecycle and recovery", () => {
         timers: testTimers,
       });
 
-      manager.recoverOnStartup(() => ok(undefined));
+      manager.recoverOnStartup(() => ok("accepted" as const));
 
       expect(manager.getTask(task.id)?.dispatchState).toBe("delivering");
     },

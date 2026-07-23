@@ -175,6 +175,7 @@ export type { TrajectoryResumeFailureKind } from "./trajectory/persisted-state.j
 
 export {
   attachTrajectoryToEventBus,
+  createTrajectoryEventTypeFilter,
   TRAJECTORY_BRIDGE_MAPPING,
 } from "./trajectory/event-bus-bridge.js";
 export type { TrajectoryBridgedEventName } from "./trajectory/event-bus-bridge.js";

@@ -63,7 +63,7 @@ describe("background recovery trajectory recorder", () => {
         enabled: true,
         dir: "/resolved/trajectory",
         maxFileBytes: 4_096,
-        eventTypes: ["background_task:notified"],
+        eventTypes: ["background_task.notified"],
       },
       sessionAdapters: new Map([[
         "agent-a",
@@ -74,7 +74,7 @@ describe("background recovery trajectory recorder", () => {
 
     const result = recorder(makeInput());
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({ ok: true, value: "accepted" });
     expect(getOrCreate).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
@@ -126,7 +126,7 @@ describe("background recovery trajectory recorder", () => {
         trajectory: {
           enabled: true,
           maxFileBytes: 8_192,
-          eventTypes: ["background_task:notified"],
+          eventTypes: ["background_task.notified"],
         },
       },
       observability: {
@@ -148,12 +148,12 @@ describe("background recovery trajectory recorder", () => {
       trajectoryRegistry: { getOrCreate } as never,
     });
 
-    expect(recorder(makeInput()).ok).toBe(true);
+    expect(recorder(makeInput())).toEqual({ ok: true, value: "accepted" });
     expect(effective).toEqual({
       enabled: true,
       dir: "/configured/trajectory",
       maxFileBytes: 8_192,
-      eventTypes: ["background_task:notified"],
+      eventTypes: ["background_task.notified"],
     });
     expect(getOrCreate).toHaveBeenCalledWith(
       expect.any(String),
@@ -166,7 +166,7 @@ describe("background recovery trajectory recorder", () => {
     );
   });
 
-  it("does not initialize a recorder when trajectory recording is disabled or filtered", () => {
+  it("returns suppressed without initializing a disabled or filtered recorder", () => {
     const getOrCreate = vi.fn();
     const base = {
       dataDir: "/resolved/data",
@@ -185,12 +185,40 @@ describe("background recovery trajectory recorder", () => {
       trajectoryConfig: {
         enabled: true,
         maxFileBytes: 4_096,
-        eventTypes: ["tool:executed"],
+        eventTypes: ["tool.result"],
       },
     });
 
-    expect(disabled(makeInput()).ok).toBe(true);
-    expect(filtered(makeInput()).ok).toBe(true);
+    expect(disabled(makeInput())).toEqual({ ok: true, value: "suppressed" });
+    expect(filtered(makeInput())).toEqual({ ok: true, value: "suppressed" });
     expect(getOrCreate).not.toHaveBeenCalled();
+  });
+
+  it("uses documented trajectory event names for bridge filtering", () => {
+    const getOrCreate = vi.fn(() => ok({
+      recorder: {
+        recordEvent: vi.fn(() => "queued" as const),
+      },
+    }));
+    const recorder = createBackgroundRecoveryRecorder({
+      dataDir: "/resolved/data",
+      eventBus: new TypedEventBus(),
+      logger: {} as never,
+      trajectoryConfig: {
+        enabled: true,
+        maxFileBytes: 4_096,
+        eventTypes: ["background_task.notified"],
+      },
+      sessionAdapters: new Map([[
+        "agent-a",
+        { getSessionPath: vi.fn(() => "/resolved/data/session.jsonl") },
+      ]]),
+      trajectoryRegistry: { getOrCreate } as never,
+    });
+
+    expect(recorder(makeInput())).toEqual({ ok: true, value: "accepted" });
+    const filter = getOrCreate.mock.calls[0]?.[3];
+    expect(filter?.("background_task:notified")).toBe(true);
+    expect(filter?.("tool:executed")).toBe(false);
   });
 });

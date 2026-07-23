@@ -37,7 +37,7 @@ export const BackgroundRecoveryAuthoritySchema = z.strictObject({
   traceId: z.string().max(512).nullable(),
   timestamp: z.number().finite(),
   source: z.enum(["task", "scan"]),
-  requiredAccepted: z.boolean(),
+  requiredDisposition: z.enum(["pending", "accepted", "suppressed"]),
   resolutionRequested: z.boolean(),
 });
 

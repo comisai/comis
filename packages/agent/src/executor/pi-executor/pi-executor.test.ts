@@ -7397,6 +7397,7 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     expect(src).toMatch(/deps\.trajectoryConfig\?\.enabled/);
     expect(src).toMatch(/deps\.trajectoryConfig\?\.dir/);
     expect(src).toMatch(/deps\.trajectoryConfig\?\.maxFileBytes/);
+    expect(src).toMatch(/createTrajectoryEventTypeFilter\(eventTypes\)/);
   });
 
   it("forwards the executor logger into the trajectory recorder init", async () => {

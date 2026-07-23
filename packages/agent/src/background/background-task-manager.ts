@@ -81,7 +81,9 @@ export interface BackgroundTaskManager {
   getTasks(agentId: string): BackgroundTask[];
   getAllTasks(): BackgroundTask[];
   recoverOnStartup(
-    recordIncident: (input: BackgroundRecoveryIncidentInput) => Result<void, Error>,
+    recordIncident: (
+      input: BackgroundRecoveryIncidentInput,
+    ) => Result<BackgroundRecoveryRecorderDisposition, Error>,
   ): void;
   cleanup(maxAgeMs?: number): void;
   commitDispatchState(
@@ -112,6 +114,8 @@ export interface BackgroundTaskManager {
     expected: readonly BackgroundSessionState[],
   ): void;
 }
+
+export type BackgroundRecoveryRecorderDisposition = "accepted" | "suppressed";
 
 export interface BackgroundRecoveryIncidentInput {
   readonly agentId: string;
@@ -583,6 +587,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       }
       recoveryController.reportScanFailures(
         recovered.failures,
+        recovered.tasks.map((task) => task.id),
         () => manager.recoverOnStartup(recordIncident),
       );
     },

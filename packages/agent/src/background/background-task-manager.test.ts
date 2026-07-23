@@ -508,7 +508,7 @@ describe("BackgroundTaskManager", () => {
         maxPerAgent: 5,
         maxTotal: 20,
       });
-      mgr2.recoverOnStartup(() => ok(undefined));
+      mgr2.recoverOnStartup(() => ok("accepted" as const));
 
       const recovered = mgr2.getTask("recovered-1");
       expect(recovered).toBeDefined();
@@ -529,7 +529,7 @@ describe("BackgroundTaskManager", () => {
       );
     });
 
-    it("records a canonical incident when startup terminalization cannot persist", () => {
+    it("defers canonical incident recording until recovery authority persists", () => {
       const task: PersistedTaskState = {
         id: "recovered-storage-failure",
         toolName: "tool1",
@@ -540,7 +540,7 @@ describe("BackgroundTaskManager", () => {
         dispatchAttempts: 0,
       };
       persistTaskSync(dataDir, task);
-      const recordIncident = vi.fn(() => ok(undefined));
+      const recordIncident = vi.fn(() => ok("accepted" as const));
       const mgr2 = createBackgroundTaskManager({
         dataDir,
         eventBus,
@@ -562,12 +562,7 @@ describe("BackgroundTaskManager", () => {
       mgr2.recoverOnStartup(recordIncident);
 
       expect(mgr2.getTask(task.id)?.status).toBe("running");
-      expect(recordIncident).toHaveBeenCalledWith(expect.objectContaining({
-        taskId: task.id,
-        toolName: task.toolName,
-        sessionKey: expect.any(String),
-        projectedSessionKey: expect.any(Object),
-      }));
+      expect(recordIncident).not.toHaveBeenCalled();
     });
 
     it("retries startup terminalization until the failed state commits", async () => {
@@ -606,7 +601,7 @@ describe("BackgroundTaskManager", () => {
           },
         });
 
-        mgr2.recoverOnStartup(() => ok(undefined));
+        mgr2.recoverOnStartup(() => ok("accepted" as const));
         expect(mgr2.getTask(task.id)?.status).toBe("running");
 
         await vi.advanceTimersByTimeAsync(1_001);
@@ -664,7 +659,7 @@ describe("BackgroundTaskManager", () => {
         });
 
         failNextOpen = true;
-        controlled.recoverOnStartup(() => ok(undefined));
+        controlled.recoverOnStartup(() => ok("accepted" as const));
         await vi.advanceTimersByTimeAsync(1_001);
 
         const next = controlled.promote(
@@ -682,7 +677,7 @@ describe("BackgroundTaskManager", () => {
       }
     });
 
-    it("surfaces and retries canonical incident persistence failures", async () => {
+    it("retries authority persistence before canonical incident recording", async () => {
       vi.useFakeTimers();
       try {
         const task: PersistedTaskState = {
@@ -695,9 +690,7 @@ describe("BackgroundTaskManager", () => {
           dispatchAttempts: 0,
         };
         persistTaskSync(dataDir, task);
-        const recorder = vi.fn()
-          .mockReturnValueOnce(err(new Error("trajectory unavailable")))
-          .mockReturnValue(ok(undefined));
+        const recorder = vi.fn(() => ok("accepted" as const));
         const mgr2 = createBackgroundTaskManager({
           dataDir,
           eventBus,
@@ -719,14 +712,13 @@ describe("BackgroundTaskManager", () => {
         mgr2.recoverOnStartup(recorder);
 
         expect(eventBus.emit).toHaveBeenCalledWith(
-          "background_task:notified",
+          "system:error",
           expect.objectContaining({
-            taskId: task.id,
-            reason: "recovery_retry_required",
+            source: "background-task-recovery",
           }),
         );
         await vi.advanceTimersByTimeAsync(1_001);
-        expect(recorder).toHaveBeenCalledTimes(2);
+        expect(recorder).not.toHaveBeenCalled();
       } finally {
         vi.useRealTimers();
       }
@@ -767,7 +759,7 @@ describe("BackgroundTaskManager", () => {
           },
         });
 
-        mgr2.recoverOnStartup(() => ok(undefined));
+        mgr2.recoverOnStartup(() => ok("accepted" as const));
         expect(mgr2.getTask(task.id)).toBeUndefined();
         expect(eventBus.emit).toHaveBeenCalledWith(
           "system:error",
@@ -794,7 +786,7 @@ describe("BackgroundTaskManager", () => {
         continuationExecutionId: "invalid-state",
         dispatchAttempts: 0,
       }));
-      const recorder = vi.fn(() => ok(undefined));
+      const recorder = vi.fn(() => ok("accepted" as const));
       const mgr2 = createBackgroundTaskManager({
         dataDir,
         eventBus,
@@ -845,7 +837,7 @@ describe("BackgroundTaskManager", () => {
         dispatchAttempts: 0,
         dispatchState: "delivered",
       });
-      manager.recoverOnStartup(() => ok(undefined));
+      manager.recoverOnStartup(() => ok("accepted" as const));
 
       manager.cleanup(0);
 
@@ -870,7 +862,7 @@ describe("BackgroundTaskManager", () => {
         dispatchAttempts: 1,
         dispatchState: "execution_claimed",
       });
-      manager.recoverOnStartup(() => ok(undefined));
+      manager.recoverOnStartup(() => ok("accepted" as const));
 
       manager.scheduleStateRetry(
         "silent-state-retry",
@@ -1014,7 +1006,7 @@ describe("BackgroundTaskManager", () => {
           maxPerAgent: 5,
           maxTotal: 20,
         });
-        recoverMgr.recoverOnStartup(() => ok(undefined));
+        recoverMgr.recoverOnStartup(() => ok("accepted" as const));
 
         expect((recoverEventBus.emit as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
           "background_task:failed",
@@ -1060,7 +1052,7 @@ describe("BackgroundTaskManager", () => {
           clock: testClock,
           timers: testTimers,
         });
-        recovered.recoverOnStartup(() => ok(undefined));
+        recovered.recoverOnStartup(() => ok("accepted" as const));
         expect(recovered.getTask("exec-task-1")?.dispatchState).toBe(dispatchState);
         expect(loadTask(testDir, "exec-agent", "exec-task-1")?.dispatchState).toBe(dispatchState);
       } finally {
@@ -1101,7 +1093,7 @@ describe("BackgroundTaskManager", () => {
           maxPerAgent: 5,
           maxTotal: 20,
         });
-        dispMgr.recoverOnStartup(() => ok(undefined));
+        dispMgr.recoverOnStartup(() => ok("accepted" as const));
 
         const recovered = dispMgr.getTask("disp-task-1") as
           | (import("./background-task-types.js").BackgroundTask & {

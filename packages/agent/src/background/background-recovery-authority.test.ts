@@ -31,7 +31,7 @@ function makeAuthority(): BackgroundRecoveryAuthority {
     traceId: null,
     timestamp: 10,
     source: "scan",
-    requiredAccepted: true,
+    requiredDisposition: "accepted",
     resolutionRequested: false,
   };
 }

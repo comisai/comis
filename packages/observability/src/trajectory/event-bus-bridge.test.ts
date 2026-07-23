@@ -25,7 +25,11 @@ import { describe, it, expect, vi } from "vitest";
 import { TypedEventBus } from "@comis/core";
 import type { EventMap } from "@comis/core";
 
-import { attachTrajectoryToEventBus, TRAJECTORY_BRIDGE_MAPPING } from "./event-bus-bridge.js";
+import {
+  attachTrajectoryToEventBus,
+  createTrajectoryEventTypeFilter,
+  TRAJECTORY_BRIDGE_MAPPING,
+} from "./event-bus-bridge.js";
 import type { TrajectoryEventType, TrajectoryRecorder } from "./types.js";
 import { TRAJECTORY_EVENT_TYPES } from "./types.js";
 
@@ -38,6 +42,19 @@ interface CapturedCall {
   readonly data: unknown;
   readonly parentEntryId: string | undefined;
 }
+
+describe("trajectory event type filtering", () => {
+  it("matches documented trajectory names through the bridge mapping", () => {
+    const filter = createTrajectoryEventTypeFilter([
+      "background_task.notified",
+      "tool.result",
+    ]);
+
+    expect(filter?.("background_task:notified")).toBe(true);
+    expect(filter?.("tool:executed")).toBe(true);
+    expect(filter?.("tool:started")).toBe(false);
+  });
+});
 
 function createCaptureRecorder(filePath = "/tmp/x.jsonl"): TrajectoryRecorder & { calls: CapturedCall[] } {
   const calls: CapturedCall[] = [];

@@ -5,7 +5,10 @@ import type {
   TypedEventBus,
 } from "@comis/core";
 import type { ComisSessionManager } from "@comis/agent";
-import type { SessionTrajectoryHandleRegistry } from "@comis/observability";
+import {
+  createTrajectoryEventTypeFilter,
+  type SessionTrajectoryHandleRegistry,
+} from "@comis/observability";
 import { err, ok, type Result } from "@comis/shared";
 import type { EffectiveTrajectoryConfig } from "./trajectory-runtime-config.js";
 
@@ -32,17 +35,21 @@ export interface BackgroundRecoveryRecorderDeps {
   readonly trajectoryRegistry: SessionTrajectoryHandleRegistry;
 }
 
+export type BackgroundRecoveryRecorderDisposition = "accepted" | "suppressed";
+
 export function createBackgroundRecoveryRecorder(
   deps: BackgroundRecoveryRecorderDeps,
-): (input: BackgroundRecoveryTrajectoryInput) => Result<void, Error> {
+): (
+  input: BackgroundRecoveryTrajectoryInput,
+) => Result<BackgroundRecoveryRecorderDisposition, Error> {
   return (input) => {
-    if (!deps.trajectoryConfig.enabled) return ok(undefined);
+    if (!deps.trajectoryConfig.enabled) return ok("suppressed");
     if (
       deps.trajectoryConfig.eventTypes !== undefined
       && deps.trajectoryConfig.eventTypes.length > 0
-      && !deps.trajectoryConfig.eventTypes.includes("background_task:notified")
+      && !deps.trajectoryConfig.eventTypes.includes("background_task.notified")
     ) {
-      return ok(undefined);
+      return ok("suppressed");
     }
     const sessionAdapter = deps.sessionAdapters.get(input.agentId);
     if (sessionAdapter === undefined) {
@@ -63,14 +70,11 @@ export function createBackgroundRecoveryRecorder(
         maxRuntimeFileBytes: deps.trajectoryConfig.maxFileBytes,
       },
       deps.eventBus,
-      deps.trajectoryConfig.eventTypes !== undefined
-        && deps.trajectoryConfig.eventTypes.length > 0
-        ? (eventName) => deps.trajectoryConfig.eventTypes?.includes(eventName) ?? false
-        : undefined,
+      createTrajectoryEventTypeFilter(deps.trajectoryConfig.eventTypes),
     );
     if (!handle.ok) return err(handle.error);
     if (handle.value.recorder === null) {
-      return err(new Error("Background recovery trajectory recorder is disabled"));
+      return ok("suppressed");
     }
     const disposition = handle.value.recorder.recordEvent(
       "background_task.notified",
@@ -82,7 +86,7 @@ export function createBackgroundRecoveryRecorder(
       },
     );
     return disposition === "queued"
-      ? ok(undefined)
+      ? ok("accepted")
       : err(new Error("Background recovery trajectory rejected the event"));
   };
 }

@@ -37,6 +37,7 @@ import * as os from "node:os";
 
 import {
   attachTrajectoryToEventBus,
+  createTrajectoryEventTypeFilter,
   createTrajectoryRecorder,
   type TrajectoryRecorder,
   type TrajectoryResumeError,
@@ -1377,10 +1378,7 @@ async function runSessionLocked(
         : {}),
     };
     const eventTypes = deps.trajectoryConfig?.eventTypes;
-    const eventTypesFilter =
-      eventTypes && eventTypes.length > 0
-        ? (n: string) => eventTypes.includes(n)
-        : undefined;
+    const eventTypesFilter = createTrajectoryEventTypeFilter(eventTypes);
 
     const reportTrajectoryResumeFailure = (
       error: TrajectoryResumeError,

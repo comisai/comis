@@ -498,6 +498,14 @@ export const TRAJECTORY_BRIDGE_MAPPING = {
  */
 export type TrajectoryBridgedEventName = keyof typeof TRAJECTORY_BRIDGE_MAPPING;
 
+export function createTrajectoryEventTypeFilter(
+  eventTypes: readonly string[] | undefined,
+): ((eventName: TrajectoryBridgedEventName) => boolean) | undefined {
+  if (eventTypes === undefined || eventTypes.length === 0) return undefined;
+  const allowed = new Set(eventTypes);
+  return (eventName) => allowed.has(TRAJECTORY_BRIDGE_MAPPING[eventName]);
+}
+
 // ---------------------------------------------------------------------------
 // Attach
 // ---------------------------------------------------------------------------

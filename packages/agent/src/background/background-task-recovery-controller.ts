@@ -11,11 +11,13 @@ import {
 import { err, ok, type Result } from "@comis/shared";
 import type {
   BackgroundRecoveryIncidentInput,
+  BackgroundRecoveryRecorderDisposition,
 } from "./background-task-manager.js";
 import type { BackgroundTask } from "./background-task-types.js";
-import type { TaskRecoveryFailure } from "./background-task-persistence.js";
 import type {
   AtomicTaskPersistenceOps,
+  TaskRecoveryFailure,
+  TaskRecoveryOps,
 } from "./background-task-persistence.js";
 import {
   persistBackgroundRecoveryAuthority,
@@ -33,11 +35,14 @@ interface RecoveryControllerDeps {
   timers: TimerPort;
   dataDir: string;
   persistenceOps?: AtomicTaskPersistenceOps;
+  authorityRecoveryOps?: TaskRecoveryOps;
 }
 
 export function createBackgroundTaskRecoveryController(deps: RecoveryControllerDeps) {
   let recorder:
-    ((input: BackgroundRecoveryIncidentInput) => Result<void, Error>)
+    ((
+      input: BackgroundRecoveryIncidentInput,
+    ) => Result<BackgroundRecoveryRecorderDisposition, Error>)
     | undefined;
   let scanRetry: TimerHandle | undefined;
   let authorityLoadRetry: TimerHandle | undefined;
@@ -45,12 +50,28 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
   let lastScanEvidenceAt: number | undefined;
   let lastScanEvidenceKey: string | undefined;
   let authorityLoadAnnounced = false;
+  let authoritiesLoaded = false;
+  let scanSnapshot:
+    | {
+      complete: boolean;
+      presentTaskIds: ReadonlySet<string>;
+    }
+    | undefined;
   const healthAnnounced = new Set<string>();
   const durableAnnounced = new Set<string>();
   const trajectoryAccepted = new Set<string>();
   const authorities = new Map<string, BackgroundRecoveryAuthority>();
   const dirtyAuthorities = new Set<string>();
   const incidentRetries = new Map<string, TimerHandle>();
+  const pendingResolutionTaskIds = new Set<string>();
+  const restoredAuthorityIds = new Set<string>();
+  const pendingRecordTasks = new Map<
+    string,
+    {
+      task: Pick<BackgroundTask, "id" | "toolName" | "origin">;
+      source: BackgroundRecoveryAuthority["source"];
+    }
+  >();
 
   function buildIncident(
     task: Pick<BackgroundTask, "id" | "toolName" | "origin">,
@@ -118,7 +139,14 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
   function reportIncidentFailure(input: BackgroundRecoveryIncidentInput): void {
     if (!healthAnnounced.has(input.taskId)) {
       healthAnnounced.add(input.taskId);
-      emitRecoveryLifecycle(input, false);
+      emitObservationalEventSafely(
+        { eventBus: deps.eventBus, logger: deps.logger },
+        "system:error",
+        {
+          error: new Error("Background recovery incident persistence failed"),
+          source: "background-task-recovery",
+        },
+      );
       deps.logger.warn(
         {
           taskId: input.taskId,
@@ -155,83 +183,87 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     emitRecoveryLifecycle(input, true);
   }
 
-  function driveAuthority(taskId: string): void {
-    let authority = authorities.get(taskId);
-    if (authority === undefined) return;
-    const requiredKey = `${taskId}:recovery_retry_required`;
-    if (dirtyAuthorities.has(taskId) && !commitAuthority(authority)) {
-      if (!authority.requiredAccepted && !trajectoryAccepted.has(requiredKey)) {
-        const required = incidentInput(authority, "recovery_retry_required");
-        const persisted = recorder?.(required)
-          ?? err(new Error("Background recovery incident recorder is not configured"));
-        if (!persisted.ok) {
-          reportIncidentFailure(required);
-          return;
-        }
-        trajectoryAccepted.add(requiredKey);
-        announceAccepted(required);
-        authority = { ...authority, requiredAccepted: true };
-        authorities.set(taskId, authority);
-        dirtyAuthorities.add(taskId);
-      }
-      return;
-    }
-
-    if (!authority.requiredAccepted) {
-      const required = incidentInput(authority, "recovery_retry_required");
-      if (!trajectoryAccepted.has(requiredKey)) {
-        const persisted = recorder?.(required)
-          ?? err(new Error("Background recovery incident recorder is not configured"));
-        if (!persisted.ok) {
-          reportIncidentFailure(required);
-          return;
-        }
-        trajectoryAccepted.add(requiredKey);
-        announceAccepted(required);
-      }
-      authority = { ...authority, requiredAccepted: true };
-      authorities.set(taskId, authority);
-      dirtyAuthorities.add(taskId);
-      if (!commitAuthority(authority)) return;
-    }
-
-    if (!authority.resolutionRequested) return;
-    const resolvedKey = `${taskId}:recovery_resolved`;
-    const resolved = incidentInput(authority, "recovery_resolved");
-    if (!trajectoryAccepted.has(resolvedKey)) {
-      const persisted = recorder?.(resolved)
-        ?? err(new Error("Background recovery incident recorder is not configured"));
-      if (!persisted.ok) {
-        reportIncidentFailure(resolved);
-        return;
-      }
-      trajectoryAccepted.add(resolvedKey);
-      announceAccepted(resolved);
-    }
+  function removeAuthority(authority: BackgroundRecoveryAuthority): boolean {
     const removed = removeBackgroundRecoveryAuthority(
       deps.dataDir,
       authority,
       deps.persistenceOps,
     );
     if (!removed.ok) {
-      reportIncidentFailure(resolved);
-      return;
+      reportIncidentFailure(
+        incidentInput(authority, "recovery_resolved"),
+      );
+      return false;
     }
-    authorities.delete(taskId);
-    dirtyAuthorities.delete(taskId);
-    healthAnnounced.delete(taskId);
-    incidentRetries.get(taskId)?.cancel();
-    incidentRetries.delete(taskId);
+    authorities.delete(authority.taskId);
+    dirtyAuthorities.delete(authority.taskId);
+    restoredAuthorityIds.delete(authority.taskId);
+    healthAnnounced.delete(authority.taskId);
+    incidentRetries.get(authority.taskId)?.cancel();
+    incidentRetries.delete(authority.taskId);
+    return true;
   }
 
-  function recordTask(
-    task: Pick<BackgroundTask, "id" | "toolName" | "origin">,
-    source: BackgroundRecoveryAuthority["source"] = "task",
-  ): void {
-    if (authorities.has(task.id)) {
-      driveAuthority(task.id);
+  function driveAuthority(taskId: string): void {
+    let authority = authorities.get(taskId);
+    if (authority === undefined) return;
+    if (
+      recorder === undefined
+      || (restoredAuthorityIds.has(taskId) && scanSnapshot === undefined)
+    ) {
       return;
     }
+    const requiredKey = `${taskId}:recovery_retry_required`;
+    if (dirtyAuthorities.has(taskId) && !commitAuthority(authority)) return;
+
+    if (authority.requiredDisposition === "pending") {
+      const required = incidentInput(authority, "recovery_retry_required");
+      if (!trajectoryAccepted.has(requiredKey)) {
+        const recorded = recorder(required);
+        if (!recorded.ok) {
+          reportIncidentFailure(required);
+          return;
+        }
+        if (recorded.value === "accepted") {
+          trajectoryAccepted.add(requiredKey);
+          announceAccepted(required);
+        }
+        authority = {
+          ...authority,
+          requiredDisposition: recorded.value,
+        };
+        authorities.set(taskId, authority);
+        dirtyAuthorities.add(taskId);
+      }
+      if (!commitAuthority(authority)) return;
+    }
+
+    if (!authority.resolutionRequested) return;
+    if (authority.requiredDisposition === "suppressed") {
+      removeAuthority(authority);
+      return;
+    }
+    const resolvedKey = `${taskId}:recovery_resolved`;
+    const resolved = incidentInput(authority, "recovery_resolved");
+    if (!trajectoryAccepted.has(resolvedKey)) {
+      const recorded = recorder(resolved);
+      if (!recorded.ok) {
+        reportIncidentFailure(resolved);
+        return;
+      }
+      if (recorded.value === "accepted") {
+        trajectoryAccepted.add(resolvedKey);
+        announceAccepted(resolved);
+      }
+    }
+    removeAuthority(authority);
+  }
+
+  function installTaskAuthority(
+    task: Pick<BackgroundTask, "id" | "toolName" | "origin">,
+    source: BackgroundRecoveryAuthority["source"],
+  ): void {
+    if (authorities.has(task.id)) return;
     const incident = buildIncident(task, "recovery_retry_required");
     if (!incident.ok) return;
     const authority: BackgroundRecoveryAuthority = {
@@ -243,11 +275,22 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
       traceId: incident.value.traceId,
       timestamp: incident.value.timestamp,
       source,
-      requiredAccepted: false,
+      requiredDisposition: "pending",
       resolutionRequested: false,
     };
     authorities.set(task.id, authority);
     dirtyAuthorities.add(task.id);
+  }
+
+  function recordTask(
+    task: Pick<BackgroundTask, "id" | "toolName" | "origin">,
+    source: BackgroundRecoveryAuthority["source"] = "task",
+  ): void {
+    if (!authoritiesLoaded) {
+      pendingRecordTasks.set(task.id, { task, source });
+      return;
+    }
+    installTaskAuthority(task, source);
     driveAuthority(task.id);
   }
 
@@ -255,7 +298,10 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     task: Pick<BackgroundTask, "id">,
   ): void {
     const authority = authorities.get(task.id);
-    if (authority === undefined) return;
+    if (authority === undefined) {
+      if (!authoritiesLoaded) pendingResolutionTaskIds.add(task.id);
+      return;
+    }
     const requested = { ...authority, resolutionRequested: true };
     authorities.set(task.id, requested);
     dirtyAuthorities.add(task.id);
@@ -264,20 +310,17 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
 
   function reportScanFailures(
     failures: readonly TaskRecoveryFailure[],
+    recoveredTaskIds: readonly string[],
     retry: () => void,
   ): void {
-    const currentTaskIds = new Set(
+    const failedTaskIds = new Set(
       failures.flatMap((failure) => failure.identity === undefined ? [] : [failure.identity.id]),
     );
-    if (failures.every((failure) => failure.identity !== undefined)) {
-      for (const [taskId, authority] of authorities) {
-        if (authority.source !== "scan") continue;
-        if (currentTaskIds.has(taskId)) continue;
-        resolveTask({
-          id: authority.taskId,
-        });
-      }
-    }
+    scanSnapshot = {
+      complete: failures.every((failure) => failure.identity !== undefined),
+      presentTaskIds: new Set([...recoveredTaskIds, ...failedTaskIds]),
+    };
+    reconcileAuthorities();
     if (failures.length === 0) {
       scanFailureAttempts = 0;
       lastScanEvidenceAt = undefined;
@@ -285,7 +328,7 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
       return;
     }
     const kinds = [...new Set(failures.map((failure) => failure.kind))].sort();
-    const evidenceKey = `${kinds.join(",")}:${[...currentTaskIds].sort().join(",")}`;
+    const evidenceKey = `${kinds.join(",")}:${[...failedTaskIds].sort().join(",")}`;
     const now = deps.clock.now();
     if (
       evidenceKey !== lastScanEvidenceKey
@@ -323,9 +366,39 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     scanRetry.unref();
   }
 
+  function reconcileAuthorities(): void {
+    if (!authoritiesLoaded) return;
+    for (const taskId of pendingResolutionTaskIds) {
+      const authority = authorities.get(taskId);
+      if (authority !== undefined) {
+        authorities.set(taskId, {
+          ...authority,
+          resolutionRequested: true,
+        });
+        dirtyAuthorities.add(taskId);
+      }
+    }
+    pendingResolutionTaskIds.clear();
+    if (scanSnapshot?.complete) {
+      for (const [taskId, authority] of authorities) {
+        if (scanSnapshot.presentTaskIds.has(taskId)) continue;
+        authorities.set(taskId, {
+          ...authority,
+          resolutionRequested: true,
+        });
+        dirtyAuthorities.add(taskId);
+      }
+    }
+    if (scanSnapshot !== undefined) restoredAuthorityIds.clear();
+    if (recorder !== undefined) {
+      for (const taskId of authorities.keys()) driveAuthority(taskId);
+    }
+  }
+
   function restoreAuthorities(): void {
     const recovered = recoverBackgroundRecoveryAuthorities(
       deps.dataDir,
+      deps.authorityRecoveryOps,
     );
     if (!recovered.ok) {
       if (!authorityLoadAnnounced) {
@@ -356,14 +429,18 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
       return;
     }
     authorityLoadAnnounced = false;
+    authoritiesLoaded = true;
     for (const authority of recovered.value) {
       if (!authorities.has(authority.taskId)) {
         authorities.set(authority.taskId, authority);
+        restoredAuthorityIds.add(authority.taskId);
       }
     }
-    if (recorder !== undefined) {
-      for (const taskId of authorities.keys()) driveAuthority(taskId);
+    for (const { task, source } of pendingRecordTasks.values()) {
+      installTaskAuthority(task, source);
     }
+    pendingRecordTasks.clear();
+    reconcileAuthorities();
   }
 
   restoreAuthorities();
@@ -371,7 +448,9 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
   return {
     setRecorder(next: typeof recorder): void {
       recorder = next;
-      for (const taskId of authorities.keys()) driveAuthority(taskId);
+      if (authoritiesLoaded) {
+        reconcileAuthorities();
+      }
     },
     recordTask,
     resolveTask,

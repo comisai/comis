@@ -685,7 +685,7 @@ describe("setupBackgroundCompletionRunner", () => {
         maxBackgroundDurationMs: 60_000,
       });
 
-      manager.recoverOnStartup(() => ok(undefined));
+      manager.recoverOnStartup(() => ok("accepted" as const));
 
       // The recovered task is in memory, with dispatchState preserved.
       const recovered = manager.getTask("ac5-task-1") as
