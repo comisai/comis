@@ -4,6 +4,7 @@ import { TypedEventBus } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
+import { setupMemory as setupMemoryUnderTest } from "./setup-memory.js";
 
 // setupMemory requires a ClockPort (createCircuitBreaker(..., clock)).
 // Inject the project-standard fake so every call exercises the real signature.
@@ -288,8 +289,7 @@ describe("setupMemory", () => {
   });
 
   async function getSetupMemory() {
-    const mod = await import("./setup-memory.js");
-    return mod.setupMemory;
+    return setupMemoryUnderTest;
   }
 
   // -------------------------------------------------------------------------
@@ -1375,8 +1375,7 @@ describe("setupMemory recall-counter wiring", () => {
   });
 
   async function getSetupMemory() {
-    const mod = await import("./setup-memory.js");
-    return mod.setupMemory;
+    return setupMemoryUnderTest;
   }
 
   /** A container whose eventBus is a REAL TypedEventBus so the wired subscriber

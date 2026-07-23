@@ -56,6 +56,10 @@ import {
   createObservabilityStore,
 } from "@comis/memory";
 import type { AuditEventRow } from "@comis/memory";
+// Preload the runtime graph during test-file setup. Production keeps the
+// offline seam lazy; timed assertions should measure bundle generation rather
+// than Vitest's first-time transform of the daemon graph.
+import "@comis/daemon";
 
 import { generateSupportBundle } from "./generate.js";
 

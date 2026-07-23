@@ -37,6 +37,10 @@ import * as path from "node:path";
 import { safePath } from "@comis/core";
 import type { SystemHealthReport } from "@comis/core";
 import { writeTrajectoryPointerFileBestEffort } from "@comis/observability";
+// Preload the runtime graph during test-file setup. Production keeps the
+// offline seam lazy; timed assertions should measure pointer resolution rather
+// than Vitest's first-time transform of the daemon graph.
+import "@comis/daemon";
 
 import { generateSupportBundle } from "./generate.js";
 
@@ -237,8 +241,6 @@ function walkFiles(dir: string): string[] {
 }
 
 describe("support bundle --session — resolves the incident via the on-disk pointer, not a flat guess", () => {
-  // Generous timeout: the first offline call lazy-loads the whole daemon graph
-  // (~10s cold under vitest's transform); the session path pays it once.
   it(
     "assembles explain.json from the pointer target and never the co-located decoy",
     { timeout: 30_000 },

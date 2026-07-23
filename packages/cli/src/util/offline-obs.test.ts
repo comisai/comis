@@ -34,6 +34,10 @@ import {
   createObservabilityStore,
 } from "@comis/memory";
 import type { AuditEventRow } from "@comis/memory";
+// Preload the runtime graph during test-file setup. Production keeps the
+// offline seam lazy; timed assertions should measure offline assembly rather
+// than Vitest's first-time transform of the daemon graph.
+import "@comis/daemon";
 import {
   assembleIncidentReportOffline,
   assembleSystemHealthReportOffline,
@@ -280,9 +284,6 @@ function writeSessionRollup(
 }
 
 describe("assembleIncidentReportOffline — real nested layout, no daemon, no memory.db", () => {
-  // Generous timeout: the FIRST offline call lazy-loads the whole @comis/daemon
-  // graph (a deliberate trade — CLI startup stays light; the offline
-  // path pays once). Under vitest's transform that load can take ~10s cold.
   it("assembles the numbers-backed context_exhausted post-mortem from disk alone", { timeout: 30_000 }, async () => {
     const dataDir = tmpDataDir();
     buildLiveShapedSession(dataDir);
