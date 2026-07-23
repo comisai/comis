@@ -33,7 +33,7 @@ Comis supports 8 search providers. Each has different strengths, and some requir
 | Provider | API Key Required | Description |
 |----------|-----------------|-------------|
 | `brave` | Yes | Brave Search API -- fast, privacy-focused |
-| `perplexity` | Yes | Perplexity AI via OpenRouter -- AI-enhanced results |
+| `perplexity` | Yes | Perplexity AI directly or via OpenRouter -- AI-enhanced results |
 | `grok` | Yes | xAI Responses API -- Grok-powered search |
 | `duckduckgo` | No | DuckDuckGo -- no API key needed, uses HTML scraping |
 | `searxng` | No | SearXNG -- self-hosted meta-search engine |
@@ -47,7 +47,7 @@ Comis supports 8 search providers. Each has different strengths, and some requir
   <Accordion title="Brave Search" icon="shield">
     Fast, privacy-focused search powered by Brave's independent search index.
 
-    **API key:** Required. Set `BRAVE_API_KEY` in your environment.
+    **API key:** Required. Set `SEARCH_API_KEY` in your environment.
 
     **Best for:** General-purpose searching with strong privacy. A good default choice for most setups.
 
@@ -55,9 +55,9 @@ Comis supports 8 search providers. Each has different strengths, and some requir
   </Accordion>
 
   <Accordion title="Perplexity" icon="brain">
-    AI-enhanced search results delivered through OpenRouter. Returns synthesized answers alongside traditional search results.
+    AI-enhanced search results delivered through Perplexity directly or through OpenRouter. Returns synthesized answers alongside traditional search results.
 
-    **API key:** Required. Set `OPENROUTER_API_KEY` in your environment.
+    **API key:** Required. Set `PERPLEXITY_API_KEY` in your environment. Comis selects the direct Perplexity or OpenRouter endpoint from the key prefix.
 
     **Best for:** Questions that benefit from AI synthesis, such as "explain the differences between X and Y" or "what are the pros and cons of Z."
   </Accordion>
