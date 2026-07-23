@@ -59,6 +59,30 @@ ${resultsHtml}
 </html>`;
 }
 
+function makeDdgEmptyResultsPage(): string {
+  return wrapDdgPage(`
+<div class="result results_links results_links_deep web-result result--no-result">
+  <div class="links_main links_deep result__body">
+    <h2 class="result__title"></h2>
+    <div class="no-results">No results.</div>
+  </div>
+</div>`);
+}
+
+function makeDdgChallengePage(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><title>DuckDuckGo</title></head>
+<body>
+  <div class="anomaly-modal">
+    <p>Unfortunately, bots use DuckDuckGo too.</p>
+    <p>Please complete the following challenge to confirm this search was made by a human.</p>
+    <form id="challenge-form" action="//duckduckgo.com/anomaly.js"></form>
+  </div>
+</body>
+</html>`;
+}
+
 // ---------------------------------------------------------------------------
 // parseDdgHtml (unit tests for parser)
 // ---------------------------------------------------------------------------
@@ -213,7 +237,7 @@ describe("runDuckDuckGoSearch", () => {
       ok: true,
       status: 200,
       statusText: "OK",
-      text: async () => wrapDdgPage(""),
+      text: async () => makeDdgEmptyResultsPage(),
     });
 
     const result = await runDuckDuckGoSearch({
@@ -224,6 +248,43 @@ describe("runDuckDuckGoSearch", () => {
 
     expect(result.count).toBe(0);
     expect(result.results).toEqual([]);
+  });
+
+  it.each([200, 202])(
+    "rejects an anti-automation challenge returned with HTTP %i",
+    async (status) => {
+      mockImpitFetch.mockResolvedValue({
+        ok: true,
+        status,
+        statusText: status === 200 ? "OK" : "Accepted",
+        text: async () => makeDdgChallengePage(),
+      });
+
+      await expect(
+        runDuckDuckGoSearch({
+          query: "latest artificial intelligence news today",
+          count: 5,
+          timeoutSeconds: 10,
+        }),
+      ).rejects.toThrow("DuckDuckGo search blocked by CAPTCHA challenge");
+    },
+  );
+
+  it("rejects an unrecognized parsed-empty response instead of reporting real zero results", async () => {
+    mockImpitFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      text: async () => wrapDdgPage(""),
+    });
+
+    await expect(
+      runDuckDuckGoSearch({
+        query: "parser drift",
+        count: 5,
+        timeoutSeconds: 10,
+      }),
+    ).rejects.toThrow("DuckDuckGo search returned an unrecognized empty response");
   });
 
   it("respects count limit", async () => {

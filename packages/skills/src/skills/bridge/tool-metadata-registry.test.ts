@@ -1287,6 +1287,23 @@ describe("tool-metadata-registry -- failure detectors", () => {
     });
   });
 
+  it("web_search flags a failure carried by the AgentToolResult details envelope", () => {
+    const detect = webSearchDetector()!;
+    expect(
+      detect(
+        {
+          content: [{ type: "text", text: "{\"error\":\"all_providers_failed\"}" }],
+          details: {
+            error: "all_providers_failed",
+            message: "All web_search providers failed: duckduckgo: blocked by CAPTCHA challenge",
+            failures: ["duckduckgo: blocked by CAPTCHA challenge"],
+          },
+        },
+        false,
+      ),
+    ).toEqual({ errorKind: "dependency", classifiedField: "error" });
+  });
+
   // REGRESSION (production session 678314278): a SUCCESSFUL web_search (results present, NO
   // top-level `error`) whose snippets contain "rate limit"/"blocked"/"forbidden" as legitimate
   // content must NOT be flagged. This FAILS on the body-substring detector.
@@ -1382,6 +1399,26 @@ describe("tool-metadata-registry -- failure detectors", () => {
     expect(detect({ url: "https://e.com", error: "Fetch failed: connection refused" }, false)).toEqual({
       errorKind: "dependency",
       classifiedField: "error",
+    });
+  });
+
+  it("web_fetch flags a failure carried by the AgentToolResult details envelope", () => {
+    const detect = webFetchDetector()!;
+    expect(
+      detect(
+        {
+          content: [{ type: "text", text: "{\"status\":403}" }],
+          details: {
+            url: "https://example.com",
+            status: 403,
+          },
+        },
+        false,
+      ),
+    ).toEqual({
+      errorKind: "dependency",
+      classifiedField: "status",
+      matchedToken: "403",
     });
   });
 
