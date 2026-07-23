@@ -47,7 +47,6 @@ export type {
   CronAuthorityResetTarget,
   CronRootRegistrar,
   CronScheduler,
-  CronSchedulerLifecycleError,
   WakeGateVerdict,
 } from "./cron/index.js";
 
@@ -85,8 +84,6 @@ export type {
   SystemEventWakeAdmissionRequest,
   SystemEventWakeAdmissionOutcome,
   SystemEventWakeAdmissionError,
-  HeartbeatSuppressionReason,
-  HeartbeatPreSendFailureReason,
   HeartbeatDeliveryOutcome,
   HeartbeatTickOutcome,
   HeartbeatTickError,

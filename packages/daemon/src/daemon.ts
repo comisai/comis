@@ -111,6 +111,7 @@ import { createModelCatalog, resolveWorkspaceDir, type AppConfig } from "@comis/
 import { createWorkspacePolicyResolveDir } from "./wiring/workspace-policy-resolve-dir.js";
 import { createSchedulerCorePortBindings } from "./wiring/scheduler-core-port-bindings.js";
 import { setupProactiveSchedulers } from "./wiring/setup-proactive-schedulers.js";
+import { closePartialBootSchedulerAdmission } from "./wiring/daemon-utils.js";
 import { createFileStateTracker, detectSandboxProvider } from "@comis/skills";
 import { reapNeverTaskedDrives as reapNeverTaskedDrivesInRegistry, createOrchestrateReplayRespawn } from "@comis/skills/tools";
 import { constructCapabilityLayer } from "./wiring/setup-capability-endpoint-boot.js"; // the sandbox/capability endpoint layer
@@ -2952,16 +2953,6 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     throw e;
   }
 }
-
-function closePartialBootSchedulerAdmission(boot: BootContext): void {
-  boot.proactiveSchedulers?.shutdown();
-  for (const scheduler of boot.ownedCronSchedulers?.values() ?? []) {
-    scheduler.closeAdmission();
-  }
-  boot.cronRuntimeBinding?.close();
-  boot.schedulerCorePortBindings?.close();
-}
-
 // Only run when invoked directly (not imported).
 // Under pm2, process.argv[1] is ProcessContainerFork.js — detect via pm_id env var.
 const isDirectRun =

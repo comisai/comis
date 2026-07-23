@@ -8,6 +8,23 @@
 import type { ChannelPort } from "@comis/core";
 import type { CronAuthoringSchedule } from "@comis/scheduler";
 
+interface PartialBootSchedulerAdmission {
+  readonly proactiveSchedulers?: { shutdown(): void };
+  readonly ownedCronSchedulers?: ReadonlyMap<string, { closeAdmission(): void }>;
+  readonly cronRuntimeBinding?: { close(): void };
+  readonly schedulerCorePortBindings?: { close(): void };
+}
+
+/** Close scheduler admission surfaces that may exist after partial daemon boot. */
+export function closePartialBootSchedulerAdmission(boot: PartialBootSchedulerAdmission): void {
+  boot.proactiveSchedulers?.shutdown();
+  for (const scheduler of boot.ownedCronSchedulers?.values() ?? []) {
+    scheduler.closeAdmission();
+  }
+  boot.cronRuntimeBinding?.close();
+  boot.schedulerCorePortBindings?.close();
+}
+
 /** Resolve a channel adapter by type, throwing if not found. */
 export function resolveAdapter(channelType: string, registry: Map<string, ChannelPort>): ChannelPort {
   const adapter = registry.get(channelType);
