@@ -223,6 +223,64 @@ describe("BackgroundTaskManager", () => {
         expect.objectContaining({ taskId: promoted.value, toolName: "tool" }),
       );
     });
+
+    it("reports periodic wait progress and clears the heartbeat after settlement", async () => {
+      let resolveTask: ((value: string) => void) | undefined;
+      let intervalCallback: (() => void) | undefined;
+      const cancelInterval = vi.fn();
+      const controlledTimers: TimerPort = {
+        setTimeout: vi.fn(() => ({
+          cancelled: false,
+          cancel: vi.fn(),
+          unref: vi.fn(),
+        })),
+        setInterval: vi.fn((callback) => {
+          intervalCallback = callback;
+          return {
+            cancelled: false,
+            cancel: cancelInterval,
+            unref: vi.fn(),
+          };
+        }),
+      };
+      const controlledManager = createBackgroundTaskManager({
+        dataDir,
+        eventBus,
+        logger,
+        clock: testClock,
+        timers: controlledTimers,
+        maxBackgroundDurationMs: 300_000,
+      });
+      const promise = new Promise<string>((resolve) => {
+        resolveTask = resolve;
+      });
+      const promoted = controlledManager.promote(
+        "slow_report",
+        promise,
+        new AbortController(),
+        buildOrigin({ agentId: "agent-1" }),
+      );
+      expect(promoted.ok).toBe(true);
+      if (!promoted.ok) return;
+
+      const onWaiting = vi.fn();
+      const waitWithProgress = controlledManager.waitForTask as unknown as (
+        taskId: string,
+        progress: () => void,
+        intervalMs: number,
+      ) => ReturnType<BackgroundTaskManager["waitForTask"]>;
+      const waiting = waitWithProgress(promoted.value, onWaiting, 60_000);
+
+      expect(controlledTimers.setInterval).toHaveBeenCalledWith(expect.any(Function), 60_000);
+      intervalCallback?.();
+      expect(onWaiting).toHaveBeenCalledTimes(1);
+
+      resolveTask?.("arrived");
+      const result = await waiting;
+
+      expect(result.ok).toBe(true);
+      expect(cancelInterval).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("fail", () => {

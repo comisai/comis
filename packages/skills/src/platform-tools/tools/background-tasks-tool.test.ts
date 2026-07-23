@@ -201,6 +201,50 @@ describe("background_tasks tool", () => {
       expect(text).not.toContain("still running");
     });
 
+    it("forwards manager wait heartbeats as tool progress updates", async () => {
+      const running = {
+        id: "t1", origin: origin(), toolName: "mcp__example--slow_report",
+        status: "running" as const, startedAt: 1000,
+      };
+      const completed = {
+        ...running,
+        status: "completed" as const,
+        completedAt: 2000,
+        result: '{"data":"arrived"}',
+      };
+      const waitForTask = vi.fn(async (
+        _taskId: string,
+        onWaiting?: () => void,
+      ) => {
+        onWaiting?.();
+        return ok(completed);
+      });
+      manager = {
+        cancel: vi.fn(() => ok(undefined)),
+        getTask: vi.fn(() => running),
+        getTasks: vi.fn(() => [running]),
+        waitForTask,
+      } as unknown as BackgroundTaskManagerLike;
+      const tool = createBackgroundTasksTool({
+        manager,
+        agentId: AGENT_ID,
+      });
+      const onUpdate = vi.fn();
+
+      await tool.execute(
+        "call-1",
+        { action: "read_output", taskId: "t1" },
+        undefined,
+        onUpdate,
+      );
+
+      expect(waitForTask).toHaveBeenCalledWith("t1", expect.any(Function), expect.any(Number));
+      expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({
+        content: [{ type: "text", text: "Background task is still running." }],
+        details: { taskId: "t1", status: "running" },
+      }));
+    });
+
     it("returns failure message for failed task", async () => {
       const task = {
         id: "t1", origin: origin(), toolName: "web_fetch",
