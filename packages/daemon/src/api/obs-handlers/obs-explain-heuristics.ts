@@ -75,6 +75,7 @@ import {
 import { learnedSkillFailingVerdict, synthesisAbstainedVerdict } from "./obs-explain-learning-verdicts.js";
 import { spendExceededVerdict } from "./obs-explain-spend-verdict.js"; // NAMED spend verdict (sibling — subdir cap)
 import { subagentStuckKilledVerdict } from "./obs-explain-subagent-killed-verdict.js"; // health-monitor-killed sub-agent (sibling — subdir cap)
+import { backgroundPendingVerdict } from "./obs-explain-background-pending-verdict.js";
 import { recallMissVerdict } from "./obs-explain-recall-verdict.js"; // recall_miss verdict (sibling — subdir cap)
 import { terminalDriveNoTaskVerdict } from "./obs-explain-terminal-drive-verdict.js"; // unattended abandoned-drive (sibling — subdir cap)
 import { terminalDriveEvictedVerdict } from "./obs-explain-terminal-drive-evicted-verdict.js"; // reaper-killed drive (sibling — subdir cap)
@@ -464,7 +465,12 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
     };
   },
 
-  // 9c) recall_miss. A DEGRADED session whose memory recalls ALL
+  // 9c) background_pending. The foreground turn deliberately deferred its
+  //     terminal outcome to promoted work, so incidental recall evidence must
+  //     not replace the pending completion lifecycle as the primary diagnosis.
+  backgroundPendingVerdict,
+
+  // 9d) recall_miss. A DEGRADED session whose memory recalls ALL
   //     returned zero injected memories AND that matched no tool/context/breaker
   //     cause above — the agent ran with no memory context. Low-noise by
   //     construction: requires EVERY recall to have missed (zeroHits === recalls),
@@ -473,7 +479,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     obs-explain-recall-verdict.ts module doc).
   recallMissVerdict,
 
-  // 9d) terminal_drive_opened_without_task — a coding-CLI/terminal drive was opened
+  // 9e) terminal_drive_opened_without_task — a coding-CLI/terminal drive was opened
   //     but never given a task (no terminal_session_send_text). ABOVE the
   //     completed_with_tool_errors catch-all: when a drive is opened-but-untasked, a
   //     stray failure during the stall (e.g. reading a directory → EISDIR) is
@@ -481,7 +487,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     never fires on a non-terminal session (no 678/503 regression). Sibling file.
   terminalDriveNoTaskVerdict,
 
-  // 9e) terminal_drive_evicted — a durable drive was reaped by the idle-TTL or
+  // 9f) terminal_drive_evicted — a durable drive was reaped by the idle-TTL or
   //     wall-clock cap, cutting a (possibly still-working) autonomous drive short. AFTER
   //     9d: a drive opened-but-never-tasked THEN idle-reaped is rooted in the no-task
   //     stall (the eviction is its consequence); ABOVE the catch-all: a reaper kill is a
@@ -490,7 +496,7 @@ export const HEURISTICS: ReadonlyArray<(s: IncidentSignals) => RootCause | null>
   //     Keys only on terminalDriveEvicted (absent on 678/503), so no regression. Sibling.
   terminalDriveEvictedVerdict,
 
-  // 9f) orchestrate_failed — an orchestrate run (a jailed child script driving tools
+  // 9g) orchestrate_failed — an orchestrate run (a jailed child script driving tools
   //     through the capability socket) exited non-zero, or a tool.invoke inside the
   //     jail was denied by the run's attenuated lease. ABOVE the
   //     completed_with_tool_errors catch-all: a failed run is a specific terminal
