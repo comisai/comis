@@ -48,6 +48,7 @@ function classifyTrajectoryFailure(
 ): BackgroundRecoveryRecorderFailure {
   switch (kind) {
     case "size_limit":
+      return { kind: "persisted_state_capacity", cause };
     case "invalid_jsonl":
       return { kind: "persisted_state_invalid", cause };
     case "permission":

@@ -123,6 +123,7 @@ export type BackgroundRecoveryRecorderDisposition = "accepted" | "suppressed";
 export type BackgroundRecoveryRecorderFailureKind =
   | "session_adapter_unavailable"
   | "protected_path_unavailable"
+  | "persisted_state_capacity"
   | "persisted_state_invalid"
   | "recorder_rejected";
 

@@ -159,6 +159,14 @@ describe("background task recovery controller", () => {
         errorKind: "validation",
       },
       {
+        kind: "persisted_state_capacity",
+        source: "background-recovery-trajectory-capacity",
+        message: "Background recovery trajectory exceeds configured capacity",
+        hint: "diagnostics.trajectory.maxFileBytes",
+        additionalHint: "safely archive",
+        errorKind: "config",
+      },
+      {
         kind: "recorder_rejected",
         source: "background-recovery-recorder-capacity",
         message: "Background recovery trajectory admission rejected",
@@ -206,6 +214,20 @@ describe("background task recovery controller", () => {
         }),
         entry.message,
       );
+      if ("additionalHint" in entry) {
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            hint: expect.stringContaining(entry.additionalHint),
+          }),
+          entry.message,
+        );
+        expect(logger.warn).not.toHaveBeenCalledWith(
+          expect.objectContaining({
+            hint: expect.stringMatching(/delete|repair/i),
+          }),
+          entry.message,
+        );
+      }
       rmSync(dataDir, { recursive: true, force: true });
     }
   });

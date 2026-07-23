@@ -161,6 +161,10 @@ describe("background recovery trajectory recorder", () => {
         failureKind: "invalid_jsonl",
         expected: "persisted_state_invalid",
       },
+      {
+        failureKind: "size_limit",
+        expected: "persisted_state_capacity",
+      },
     ] as const;
 
     for (const entry of cases) {

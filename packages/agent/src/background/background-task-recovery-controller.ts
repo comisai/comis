@@ -235,8 +235,19 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
           "trajectory_persisted_state_invalid",
           "background-recovery-trajectory-state",
           "Background recovery trajectory state invalid",
-          "Repair or remove the invalid or oversized persisted trajectory JSONL; recovery will retry",
+          "Repair or remove the invalid persisted trajectory JSONL; recovery will retry",
           "validation",
+          true,
+        );
+        return;
+      case "persisted_state_capacity":
+        reportFailure(
+          input,
+          "trajectory_persisted_state_capacity",
+          "background-recovery-trajectory-capacity",
+          "Background recovery trajectory exceeds configured capacity",
+          "Raise diagnostics.trajectory.maxFileBytes or safely archive the trajectory file before restarting; recovery will retry",
+          "config",
           true,
         );
         return;
