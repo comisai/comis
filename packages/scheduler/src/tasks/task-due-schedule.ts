@@ -62,6 +62,7 @@ function taskWakeAdmissionHint(
 
 export type TaskDueScheduleError =
   | { readonly code: "not_accepting"; readonly errorKind: "precondition" }
+  | { readonly code: "not_initialized"; readonly errorKind: "precondition" }
   | { readonly code: "store_unavailable"; readonly errorKind: ErrorKind }
   | { readonly code: "invalid_state"; readonly errorKind: "validation" | "internal" };
 
@@ -77,23 +78,36 @@ export interface TaskDueScheduleDeps {
 }
 
 export interface TaskDueSchedule {
-  activate(): Promise<Result<{ readonly nextDueAtMs: number | null }, TaskDueScheduleError>>;
+  initialize(): Promise<Result<{ readonly nextDueAtMs: number | null }, TaskDueScheduleError>>;
+  activate(): Result<{ readonly nextDueAtMs: number | null }, TaskDueScheduleError>;
   requestRescan(): Promise<Result<{ readonly nextDueAtMs: number | null }, TaskDueScheduleError>>;
   getNextDueAtMs(): number | null;
   shutdown(): void;
 }
 
 export function createTaskDueSchedule(deps: TaskDueScheduleDeps): TaskDueSchedule {
+  let initialized = false;
   let active = false;
   let closed = false;
   let timer: TimerHandle | undefined;
   let nextDueAtMs: number | null = null;
+  let preparedBoundary: TaskScheduleBoundary | null = null;
   let scanGeneration = 0;
 
-  async function activate(): Promise<Result<{ readonly nextDueAtMs: number | null }, TaskDueScheduleError>> {
+  async function initialize(): Promise<Result<{ readonly nextDueAtMs: number | null }, TaskDueScheduleError>> {
     if (closed) return err({ code: "not_accepting", errorKind: "precondition" });
+    const prepared = await rescan("schedule", true);
+    if (prepared.ok) initialized = true;
+    return prepared;
+  }
+
+  function activate(): Result<{ readonly nextDueAtMs: number | null }, TaskDueScheduleError> {
+    if (closed) return err({ code: "not_accepting", errorKind: "precondition" });
+    if (!initialized) return err({ code: "not_initialized", errorKind: "precondition" });
+    if (active) return ok({ nextDueAtMs });
     active = true;
-    return requestRescan();
+    armAt(preparedBoundary);
+    return ok({ nextDueAtMs });
   }
 
   async function requestRescan(): Promise<Result<{ readonly nextDueAtMs: number | null }, TaskDueScheduleError>> {
@@ -102,12 +116,16 @@ export function createTaskDueSchedule(deps: TaskDueScheduleDeps): TaskDueSchedul
 
   async function rescan(
     mode: TaskDueRescanMode,
+    allowInactive = false,
   ): Promise<Result<{ readonly nextDueAtMs: number | null }, TaskDueScheduleError>> {
-    if (!active || closed) return err({ code: "not_accepting", errorKind: "precondition" });
+    if ((!active && !allowInactive) || closed) {
+      return err({ code: "not_accepting", errorKind: "precondition" });
+    }
     const generation = ++scanGeneration;
     const startedAtMs = deps.clock.now();
     const boundary = await fromPromise(deps.store.read());
-    if (closed || generation !== scanGeneration) return ok({ nextDueAtMs });
+    if (closed) return err({ code: "not_accepting", errorKind: "precondition" });
+    if (generation !== scanGeneration) return ok({ nextDueAtMs });
     if (!boundary.ok || !boundary.value.ok) {
       let errorKind: ErrorKind = "internal";
       if (boundary.ok) {
@@ -160,7 +178,8 @@ export function createTaskDueSchedule(deps: TaskDueScheduleDeps): TaskDueSchedul
       nextDueAtMs = null;
       submitDueWake(boundaryPlan.atMs, false);
     } else {
-      armAt(boundaryPlan);
+      if (active) armAt(boundaryPlan);
+      else prepareBoundary(boundaryPlan);
     }
     deps.logger.debug({
       agentId: deps.agentId,
@@ -174,13 +193,22 @@ export function createTaskDueSchedule(deps: TaskDueScheduleDeps): TaskDueSchedul
     return ok({ nextDueAtMs });
   }
 
+  function prepareBoundary(boundary: TaskScheduleBoundary | null): void {
+    timer?.cancel();
+    timer = undefined;
+    preparedBoundary = boundary;
+    nextDueAtMs = boundary?.atMs ?? null;
+  }
+
   function armAt(boundary: TaskScheduleBoundary | null): void {
     timer?.cancel();
     timer = undefined;
+    preparedBoundary = boundary;
     nextDueAtMs = boundary?.atMs ?? null;
     if (!active || closed || boundary === null) return;
     const handle = deps.timers.setTimeout(() => {
       if (timer === handle) timer = undefined;
+      preparedBoundary = null;
       nextDueAtMs = null;
       if (boundary.kind === "task_due") {
         submitDueWake(boundary.atMs, true);
@@ -262,12 +290,14 @@ export function createTaskDueSchedule(deps: TaskDueScheduleDeps): TaskDueSchedul
   function shutdown(): void {
     if (closed) return;
     closed = true;
+    initialized = false;
     active = false;
     scanGeneration += 1;
     timer?.cancel();
     timer = undefined;
+    preparedBoundary = null;
     nextDueAtMs = null;
   }
 
-  return { activate, requestRescan, getNextDueAtMs: () => nextDueAtMs, shutdown };
+  return { initialize, activate, requestRescan, getNextDueAtMs: () => nextDueAtMs, shutdown };
 }

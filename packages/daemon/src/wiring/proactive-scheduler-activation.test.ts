@@ -34,7 +34,7 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
   const deactivateCronSchedulers = vi.fn(() => {
     calls.push("cron_deactivate");
   });
-  const activateTaskSchedules = vi.fn(async () => {
+  const activateTaskSchedules = vi.fn(() => {
     calls.push("task_activate");
     return ok(undefined);
   });
@@ -80,6 +80,7 @@ describe("proactive scheduler activation", () => {
     });
     expect(runtime.calls).toEqual([
       "configure",
+      "task_prepare",
       "heartbeat_activate",
       "cron_activate",
       "task_activate",
@@ -175,7 +176,7 @@ describe("proactive scheduler activation", () => {
 
   it("rolls back heartbeat cron and task timers when task activation fails", async () => {
     const runtime = makeDeps({
-      activateTaskSchedules: vi.fn(async () => err({
+      activateTaskSchedules: vi.fn(() => err({
         code: "schedule_activation_failed",
         errorKind: "resource",
         message: "task store unavailable",

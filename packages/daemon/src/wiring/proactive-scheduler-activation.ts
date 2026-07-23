@@ -34,7 +34,8 @@ export interface ProactiveSchedulerActivationDeps {
   coordinator: CoordinatorLifecycle;
   activateCronSchedulers(): Result<void, SeedError>;
   deactivateCronSchedulers(): void;
-  activateTaskSchedules?(): Promise<Result<void, SeedError>>;
+  prepareTaskSchedules?(): Promise<Result<void, SeedError>>;
+  activateTaskSchedules?(): Result<void, SeedError>;
   rollbackTaskSchedules?(): void;
   logger: Pick<ComisLogger, "info" | "error">;
 }
@@ -42,6 +43,7 @@ export interface ProactiveSchedulerActivationDeps {
 export interface ProactiveSchedulerActivationError {
   readonly code:
     | "heartbeat_configuration_failed"
+    | "task_preflight_failed"
     | "heartbeat_activation_failed"
     | "cron_activation_failed"
     | "task_activation_failed";
@@ -76,8 +78,25 @@ export async function activateProactiveSchedulers(
     }
   }
 
+  const tasksPrepared = await (deps.prepareTaskSchedules?.() ?? Promise.resolve(ok(undefined)));
+  if (!tasksPrepared.ok) {
+    deps.rollbackTaskSchedules?.();
+    deps.coordinator.shutdown();
+    deps.logger.error({
+      step: "task_preflight",
+      errorKind: tasksPrepared.error.errorKind,
+      hint: "Keep every scheduler quiescent and restore the strict task authority before restart",
+    }, "Follow-up task schedule preflight failed");
+    return err({
+      code: "task_preflight_failed",
+      errorKind: tasksPrepared.error.errorKind,
+      message: tasksPrepared.error.message,
+    });
+  }
+
   const heartbeatActivated = deps.coordinator.activate();
   if (!heartbeatActivated.ok) {
+    deps.rollbackTaskSchedules?.();
     deps.coordinator.shutdown();
     deps.logger.error({
       step: "heartbeat_activation",
@@ -93,6 +112,7 @@ export async function activateProactiveSchedulers(
 
   const cronActivated = deps.activateCronSchedulers();
   if (!cronActivated.ok) {
+    deps.rollbackTaskSchedules?.();
     deps.deactivateCronSchedulers();
     deps.coordinator.shutdown();
     deps.logger.error({
@@ -107,7 +127,7 @@ export async function activateProactiveSchedulers(
     });
   }
 
-  const tasksActivated = await (deps.activateTaskSchedules?.() ?? Promise.resolve(ok(undefined)));
+  const tasksActivated = deps.activateTaskSchedules?.() ?? ok(undefined);
   if (!tasksActivated.ok) {
     deps.rollbackTaskSchedules?.();
     deps.deactivateCronSchedulers();

@@ -104,7 +104,8 @@ describe("follow-up task runtime composition", () => {
     expect(runtime.ok).toBe(true);
     if (!runtime.ok) return;
 
-    await expect(runtime.value.activate()).resolves.toEqual(ok(undefined));
+    await expect(runtime.value.initialize()).resolves.toEqual(ok(undefined));
+    expect(runtime.value.activate()).toEqual(ok(undefined));
     expect(data.read).toHaveBeenCalledOnce();
     await expect(runtime.value.executeTaskTurn(taskInput())).resolves.toMatchObject({
       ok: true,
@@ -134,7 +135,8 @@ describe("follow-up task runtime composition", () => {
     expect(runtime.ok).toBe(true);
     if (!runtime.ok) return;
 
-    await expect(runtime.value.activate()).resolves.toEqual(ok(undefined));
+    await expect(runtime.value.initialize()).resolves.toEqual(ok(undefined));
+    expect(runtime.value.activate()).toEqual(ok(undefined));
     await expect(runtime.value.requestRescan("agent-a")).resolves.toEqual(ok(undefined));
     await expect(runtime.value.requestRescan("missing-agent")).resolves.toMatchObject({
       ok: false,
@@ -164,7 +166,8 @@ describe("follow-up task runtime composition", () => {
     const runtime = createFollowupTaskRuntime(data.deps);
     expect(runtime.ok).toBe(true);
     if (!runtime.ok) return;
-    await runtime.value.activate();
+    await runtime.value.initialize();
+    runtime.value.activate();
     const executing = runtime.value.executeTaskTurn(taskInput());
     await Promise.resolve();
 
@@ -207,7 +210,8 @@ describe("follow-up task runtime composition", () => {
     const runtime = createFollowupTaskRuntime(data.deps);
     expect(runtime.ok).toBe(true);
     if (!runtime.ok) return;
-    await runtime.value.activate();
+    await runtime.value.initialize();
+    runtime.value.activate();
     const executing = runtime.value.executeTaskTurn(taskInput());
     await Promise.resolve();
     expect(data.timers.unrefRecord().some((entry) => !entry.cancelled)).toBe(true);

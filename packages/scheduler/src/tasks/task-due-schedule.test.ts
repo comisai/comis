@@ -109,6 +109,13 @@ async function flush(): Promise<void> {
   for (let index = 0; index < 8; index += 1) await Promise.resolve();
 }
 
+async function initializeAndActivate(
+  schedule: ReturnType<typeof createTaskDueSchedule>,
+) {
+  const initialized = await schedule.initialize();
+  return initialized.ok ? schedule.activate() : initialized;
+}
+
 describe("follow-up task due schedule", () => {
   it("rejects scheduling before activation and after permanent shutdown", async () => {
     const data = fixture();
@@ -118,7 +125,10 @@ describe("follow-up task due schedule", () => {
     );
     data.schedule.shutdown();
     data.schedule.shutdown();
-    await expect(data.schedule.activate()).resolves.toEqual(
+    await expect(data.schedule.initialize()).resolves.toEqual(
+      err({ code: "not_accepting", errorKind: "precondition" }),
+    );
+    expect(data.schedule.activate()).toEqual(
       err({ code: "not_accepting", errorKind: "precondition" }),
     );
   });
@@ -127,7 +137,7 @@ describe("follow-up task due schedule", () => {
     const rejected = fixture();
     rejected.read.mockRejectedValueOnce(new Error("store unavailable"));
 
-    await expect(rejected.schedule.activate()).resolves.toEqual(
+    await expect(rejected.schedule.initialize()).resolves.toEqual(
       err({ code: "store_unavailable", errorKind: "internal" }),
     );
     expect(rejected.logger.error).toHaveBeenCalledWith(expect.objectContaining({
@@ -137,34 +147,35 @@ describe("follow-up task due schedule", () => {
 
     const failed = fixture();
     failed.read.mockResolvedValueOnce(err({ code: "read_failed", errorKind: "resource" }));
-    await expect(failed.schedule.activate()).resolves.toEqual(
+    await expect(failed.schedule.initialize()).resolves.toEqual(
       err({ code: "store_unavailable", errorKind: "resource" }),
     );
   });
 
   it("ignores an obsolete authority scan that resolves after a newer rescan", async () => {
     const data = fixture(NOW_MS + 90_000);
+    await initializeAndActivate(data.schedule);
     let resolveFirst: ((value: ReturnType<typeof ok<FollowupTaskStoreFile>>) => void) | undefined;
     data.read.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }));
 
-    const activation = data.schedule.activate();
+    const firstRescan = data.schedule.requestRescan();
     await Promise.resolve();
     await expect(data.schedule.requestRescan()).resolves.toEqual(ok({ nextDueAtMs: NOW_MS + 90_000 }));
     resolveFirst?.(ok(root(NOW_MS + 10_000)));
 
-    await expect(activation).resolves.toEqual(ok({ nextDueAtMs: NOW_MS + 90_000 }));
-    expect(data.timers.unrefRecord()).toHaveLength(1);
+    await expect(firstRescan).resolves.toEqual(ok({ nextDueAtMs: NOW_MS + 90_000 }));
+    expect(data.timers.unrefRecord().filter((record) => !record.cancelled)).toHaveLength(1);
   });
 
   it("rejects unsafe pending and retention timestamps from durable authority", async () => {
     const invalidPending = fixture(Number.NaN);
-    await expect(invalidPending.schedule.activate()).resolves.toEqual(
+    await expect(invalidPending.schedule.initialize()).resolves.toEqual(
       err({ code: "invalid_state", errorKind: "validation" }),
     );
 
     const invalidRetention = fixture(null);
     invalidRetention.setRoot(terminalRoot(Number.MAX_SAFE_INTEGER));
-    await expect(invalidRetention.schedule.activate()).resolves.toEqual(
+    await expect(invalidRetention.schedule.initialize()).resolves.toEqual(
       err({ code: "invalid_state", errorKind: "validation" }),
     );
   });
@@ -173,7 +184,9 @@ describe("follow-up task due schedule", () => {
     const data = fixture();
     expect(data.timers.unrefRecord()).toEqual([]);
 
-    await expect(data.schedule.activate()).resolves.toEqual(ok({ nextDueAtMs: NOW_MS + 60_000 }));
+    await expect(data.schedule.initialize()).resolves.toEqual(ok({ nextDueAtMs: NOW_MS + 60_000 }));
+    expect(data.timers.unrefRecord()).toEqual([]);
+    expect(data.schedule.activate()).toEqual(ok({ nextDueAtMs: NOW_MS + 60_000 }));
     expect(data.timers.unrefRecord()).toEqual([
       expect.objectContaining({ delay: 60_000, cancelled: false, unrefCalled: true }),
     ]);
@@ -220,7 +233,8 @@ describe("follow-up task due schedule", () => {
       logger,
     });
 
-    await expect(schedule.activate()).resolves.toEqual(ok({ nextDueAtMs: NOW_MS }));
+    await expect(schedule.initialize()).resolves.toEqual(ok({ nextDueAtMs: NOW_MS }));
+    expect(schedule.activate()).toEqual(ok({ nextDueAtMs: NOW_MS }));
     timers.advance(0);
     await flush();
 
@@ -239,7 +253,7 @@ describe("follow-up task due schedule", () => {
 
   it("replaces the timer when durable task state changes", async () => {
     const data = fixture(NOW_MS + 120_000);
-    await data.schedule.activate();
+    await initializeAndActivate(data.schedule);
     data.setRoot(root(NOW_MS + 30_000));
 
     await expect(data.schedule.requestRescan()).resolves.toEqual(ok({ nextDueAtMs: NOW_MS + 30_000 }));
@@ -255,7 +269,7 @@ describe("follow-up task due schedule", () => {
     const data = fixture(null);
     data.setRoot(terminalRoot(terminalAtMs));
 
-    await expect(data.schedule.activate()).resolves.toEqual(ok({ nextDueAtMs: maintenanceAtMs }));
+    await expect(initializeAndActivate(data.schedule)).resolves.toEqual(ok({ nextDueAtMs: maintenanceAtMs }));
     expect(data.timers.unrefRecord()).toEqual([
       expect.objectContaining({
         delay: maintenanceAtMs - NOW_MS,
@@ -276,7 +290,7 @@ describe("follow-up task due schedule", () => {
   it("keeps one bounded retry when coordinator admission is temporarily closed", async () => {
     const data = fixture(NOW_MS);
     data.submitTaskWake.mockReturnValueOnce(err({ code: "not_accepting", errorKind: "precondition" }));
-    await data.schedule.activate();
+    await initializeAndActivate(data.schedule);
     data.advance(0);
     await flush();
 
@@ -299,7 +313,7 @@ describe("follow-up task due schedule", () => {
     data.submitTaskWake
       .mockReturnValueOnce(err({ code: "not_accepting", errorKind: "precondition" }))
       .mockReturnValueOnce(err({ code: "not_accepting", errorKind: "precondition" }));
-    await data.schedule.activate();
+    await initializeAndActivate(data.schedule);
     data.advance(0);
     await flush();
 
@@ -338,7 +352,7 @@ describe("follow-up task due schedule", () => {
   it("rechecks durable task authority before attempting the bounded admission retry", async () => {
     const data = fixture(NOW_MS);
     data.submitTaskWake.mockReturnValueOnce(err({ code: "not_accepting", errorKind: "precondition" }));
-    await data.schedule.activate();
+    await initializeAndActivate(data.schedule);
     data.advance(0);
     await flush();
 
@@ -355,7 +369,7 @@ describe("follow-up task due schedule", () => {
   it("identifies a rejected trusted due-task timing contract without logging task content", async () => {
     const data = fixture(NOW_MS);
     data.submitTaskWake.mockReturnValueOnce(err({ code: "invalid_request", errorKind: "validation" }));
-    await data.schedule.activate();
+    await initializeAndActivate(data.schedule);
     data.advance(0);
     await flush();
 
@@ -376,7 +390,7 @@ describe("follow-up task due schedule", () => {
       code: "invalid_target",
       errorKind: "validation",
     }));
-    await invalidTarget.schedule.activate();
+    await initializeAndActivate(invalidTarget.schedule);
     invalidTarget.advance(0);
     await flush();
     expect(invalidTarget.logger.warn).toHaveBeenCalledWith(expect.objectContaining({
@@ -387,7 +401,7 @@ describe("follow-up task due schedule", () => {
 
     const thrown = fixture(NOW_MS);
     thrown.submitTaskWake.mockImplementationOnce(() => { throw new Error("coordinator unavailable"); });
-    await thrown.schedule.activate();
+    await initializeAndActivate(thrown.schedule);
     thrown.advance(0);
     await flush();
     expect(thrown.logger.warn).toHaveBeenCalledWith(expect.objectContaining({
@@ -420,7 +434,7 @@ describe("follow-up task due schedule", () => {
       } else {
         data.submitTaskWake.mockReturnValue(candidate.result);
       }
-      await data.schedule.activate();
+      await initializeAndActivate(data.schedule);
       data.advance(0);
       await flush();
       data.advance(30_000);
@@ -447,7 +461,7 @@ describe("follow-up task due schedule", () => {
       logger,
     });
 
-    await schedule.activate();
+    await initializeAndActivate(schedule);
     timers.advance(0);
     await flush();
 
@@ -463,7 +477,7 @@ describe("follow-up task due schedule", () => {
 
   it("cancels its timer and refuses rescans after shutdown", async () => {
     const data = fixture();
-    await data.schedule.activate();
+    await initializeAndActivate(data.schedule);
     data.schedule.shutdown();
 
     expect(data.timers.unrefRecord()[0]).toMatchObject({ cancelled: true });

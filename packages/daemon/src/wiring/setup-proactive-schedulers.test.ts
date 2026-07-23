@@ -78,7 +78,9 @@ describe("proactive scheduler composition", () => {
   it("binds and activates the complete task runtime instead of leaving an enabled capture-only path", () => {
     const source = readFileSync(new URL("./setup-proactive-schedulers.ts", import.meta.url), "utf8");
     expect(source).toContain("createFollowupTaskRuntime(");
-    expect(source).toContain("await taskRuntime.activate()");
+    expect(source).toContain("await taskRuntime.initialize()");
+    expect(source).toContain("activateTaskSchedules: () => {");
+    expect(source).toContain("const result = taskRuntime.activate()");
     expect(source).toContain("taskExtractionPort: taskRuntime.taskExtractionPort");
     expect(source).toContain("taskRuntime.executeTaskTurn(input)");
     expect(source).not.toContain("Task inference is enabled but its durable runtime is not bound");

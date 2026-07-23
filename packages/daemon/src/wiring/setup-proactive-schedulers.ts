@@ -425,8 +425,17 @@ export async function setupProactiveSchedulers(
     ...(taskRuntime === undefined
       ? {}
       : {
-        activateTaskSchedules: async () => {
-          const result = await taskRuntime.activate();
+        prepareTaskSchedules: async () => {
+          const result = await taskRuntime.initialize();
+          return result.ok
+            ? result
+            : err({
+              errorKind: result.error.errorKind,
+              message: "Follow-up task schedules could not be initialized",
+            });
+        },
+        activateTaskSchedules: () => {
+          const result = taskRuntime.activate();
           return result.ok
             ? result
             : err({

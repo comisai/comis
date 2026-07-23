@@ -58,7 +58,8 @@ export interface FollowupTaskRuntimeDeps {
 
 export interface FollowupTaskRuntime {
   readonly taskExtractionPort: TaskExtractionPort;
-  activate(): Promise<Result<void, FollowupTaskRuntimeError>>;
+  initialize(): Promise<Result<void, FollowupTaskRuntimeError>>;
+  activate(): Result<void, FollowupTaskRuntimeError>;
   executeTaskTurn(
     input: HeartbeatCoordinatorAgentRunInput,
   ): Promise<Result<HeartbeatTickOutcome, HeartbeatTickError>>;
@@ -81,6 +82,7 @@ export interface FollowupTaskRuntime {
 
 export type FollowupTaskRuntimeError =
   | { readonly code: "extraction_unavailable"; readonly errorKind: "precondition" | "config" | "internal" }
+  | { readonly code: "schedule_initialization_failed"; readonly errorKind: ErrorKind }
   | { readonly code: "schedule_activation_failed"; readonly errorKind: ErrorKind };
 
 export function createFollowupTaskRuntime(
@@ -158,9 +160,27 @@ export function createFollowupTaskRuntime(
     logger: deps.logger,
   });
 
-  async function activate(): Promise<Result<void, FollowupTaskRuntimeError>> {
+  async function initialize(): Promise<Result<void, FollowupTaskRuntimeError>> {
     for (const [agentId, schedule] of schedules) {
-      const activated = await schedule.activate();
+      const initialized = await schedule.initialize();
+      if (initialized.ok) continue;
+      for (const active of schedules.values()) active.shutdown();
+      extractionRuntime.closeAdmission();
+      extractionRuntime.abortActive();
+      deps.logger.error({
+        agentId,
+        step: "task_due_schedule_initialization",
+        errorKind: initialized.error.errorKind,
+        hint: "Restore the strict task store before enabling inferred follow-up tasks",
+      }, "Task due schedule initialization failed");
+      return err({ code: "schedule_initialization_failed", errorKind: initialized.error.errorKind });
+    }
+    return ok(undefined);
+  }
+
+  function activate(): Result<void, FollowupTaskRuntimeError> {
+    for (const [agentId, schedule] of schedules) {
+      const activated = schedule.activate();
       if (activated.ok) continue;
       for (const active of schedules.values()) active.shutdown();
       extractionRuntime.closeAdmission();
@@ -169,7 +189,7 @@ export function createFollowupTaskRuntime(
         agentId,
         step: "task_due_schedule_activation",
         errorKind: activated.error.errorKind,
-        hint: "Restore the strict task store before enabling inferred follow-up tasks",
+        hint: "Keep scheduler admission closed and repair task lifecycle initialization before restart",
       }, "Task due schedule activation failed");
       return err({ code: "schedule_activation_failed", errorKind: activated.error.errorKind });
     }
@@ -211,6 +231,7 @@ export function createFollowupTaskRuntime(
 
   return ok({
     taskExtractionPort: extractionRuntime.taskExtractionPort,
+    initialize,
     activate,
     executeTaskTurn,
     async requestRescan(agentId) {
