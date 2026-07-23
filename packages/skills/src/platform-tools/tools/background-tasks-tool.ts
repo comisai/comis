@@ -42,7 +42,11 @@ interface TaskInfo {
 /** Subset of BackgroundTaskManager consumed by this tool. */
 export interface BackgroundTaskManagerLike {
   getTask(taskId: string): TaskInfo | undefined;
-  waitForTask(taskId: string): Promise<Result<TaskInfo, Error>>;
+  waitForTask(
+    taskId: string,
+    onWaiting?: () => void,
+    waitHeartbeatMs?: number,
+  ): Promise<Result<TaskInfo, Error>>;
   getTasks(agentId: string): TaskInfo[];
   cancel(taskId: string): Result<void, Error>;
 }
@@ -100,6 +104,8 @@ const VALID_ACTIONS = ["list", "get", "cancel", "read_output"] as const;
 export function createBackgroundTasksTool(deps: {
   manager: BackgroundTaskManagerLike;
   agentId: string;
+  /** Derived from the owning agent's prompt stall budget. */
+  waitHeartbeatMs?: number;
 }): AgentTool<typeof BackgroundTasksToolParams> {
   return {
     name: "background_tasks",
@@ -112,6 +118,8 @@ export function createBackgroundTasksTool(deps: {
     async execute(
       _toolCallId: string,
       params: BackgroundTasksToolParamsType,
+      _signal?: AbortSignal,
+      onUpdate?: (partialResult: AgentToolResult<unknown>) => void,
     ): Promise<AgentToolResult<unknown>> {
       const p = params as unknown as Record<string, unknown>;
       const action = readEnumParam(p, "action", VALID_ACTIONS);
@@ -184,7 +192,16 @@ export function createBackgroundTasksTool(deps: {
             });
           }
           if (task.status === "running") {
-            const waited = await deps.manager.waitForTask(taskId!);
+            const waited = await deps.manager.waitForTask(
+              taskId!,
+              onUpdate
+                ? () => onUpdate({
+                    content: [{ type: "text", text: "Background task is still running." }],
+                    details: { taskId, status: "running" },
+                  })
+                : undefined,
+              deps.waitHeartbeatMs ?? 60_000,
+            );
             if (!waited.ok) {
               return throwToolError("conflict", waited.error.message, {
                 hint: "Inspect the task details before retrying the underlying operation",

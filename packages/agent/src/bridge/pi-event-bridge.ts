@@ -367,8 +367,8 @@ export interface PiEventBridgeDeps {
   compactionSettings?: { enabled: boolean; reserveTokens: number; keepRecentTokens: number };
   /** Optional provider health monitor for cross-agent failure aggregation. */
   providerHealth?: ProviderHealthMonitor;
-  /** Called when a tool execution completes -- used by pi-executor to reset prompt timeout. */
-  onToolExecutionEnd?: () => void;
+  /** Called when a tool reports progress or completes -- used to reset prompt stall timeout. */
+  onToolActivity?: () => void;
   /** Returns current model ID for per-turn pricing resolution. Updated on manual /model switch. */
   getCurrentModel?: () => string;
   /**
@@ -887,6 +887,15 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             { toolName: toolEvent.toolName, argumentCount },
             "Tool execution started",
           );
+          break;
+        }
+
+        case "tool_execution_update": {
+          // A tool progress update is genuine execution activity. In
+          // particular, background_tasks read_output emits bounded heartbeats
+          // while awaiting a durable promoted call, so the model stall budget
+          // must not misclassify that healthy wait as a hung prompt.
+          deps.onToolActivity?.();
           break;
         }
 
@@ -1443,7 +1452,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
           // Reset prompt timeout after each tool completion so slow tools
           // do not starve subsequent LLM turns.
-          deps.onToolExecutionEnd?.();
+          deps.onToolActivity?.();
 
           // Safety: check step limit (delegated to bridge-safety-controls)
           {

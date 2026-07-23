@@ -421,7 +421,7 @@ agents:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `promptTimeoutMs` | `number` | `180000` | Stall budget for primary prompt calls (3 minutes): the deadline resets on activity — stream text/thinking deltas (throttled ~1/s) and tool completions. A turn dies only when NO activity occurs for this long. Stall semantics apply to all providers. |
+| `promptTimeoutMs` | `number` | `180000` | Stall budget for primary prompt calls (3 minutes): the deadline resets on activity — stream text/thinking deltas (throttled ~1/s), tool progress, and tool completions. A turn dies only when NO activity occurs for this long. Stall semantics apply to all providers. |
 | `retryPromptTimeoutMs` | `number` | `60000` | Wall-clock timeout for retry and fallback prompt calls (1 minute). Used during auth rotation and model fallback attempts. Whole-turn (not stall-based) — retry and fallback prompts do not reset on activity. |
 | `stallCeilingMultiplier` | `number` | `10` | Makespan ceiling: a turn is aborted at `promptTimeoutMs × stallCeilingMultiplier` even while still streaming — bounds runaway generations that would otherwise reset the stall budget forever. Valid range 1–100 (a value below 1 would fire the ceiling before the stall budget; the product is additionally capped at Node's ~24.8-day timer limit). Runtime-tunable. |
 
@@ -2640,7 +2640,7 @@ security:
 
 The operator override always takes precedence over the capability-class default.
 
-**Prompt timeout for local Ollama.** `promptTimeoutMs` is a stall budget: the deadline resets on stream activity (text/thinking deltas, throttled ~1/s) and tool completions, so it only needs to cover the longest SILENT gap — in practice the prefill before the first token, which on a loaded local GPU (e.g., qwen3.6 with multiple concurrent agents) can exceed the 180,000 ms default. Once the model streams, activity keeps the turn alive; the makespan ceiling (`promptTimeoutMs × stallCeilingMultiplier`, default ×10) still bounds the total turn even while streaming. For local deployments, raise the stall budget to cover slow prefill:
+**Prompt timeout for local Ollama.** `promptTimeoutMs` is a stall budget: the deadline resets on stream activity (text/thinking deltas, throttled ~1/s), tool progress, and tool completions, so it only needs to cover the longest SILENT gap — in practice the prefill before the first token, which on a loaded local GPU (e.g., qwen3.6 with multiple concurrent agents) can exceed the 180,000 ms default. Once the model streams, activity keeps the turn alive; the makespan ceiling (`promptTimeoutMs × stallCeilingMultiplier`, default ×10) still bounds the total turn even while streaming. For local deployments, raise the stall budget to cover slow prefill:
 
 ```yaml
 agents:

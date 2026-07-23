@@ -196,7 +196,7 @@ describe("background_tasks tool", () => {
       const result = await tool.execute("call-1", { action: "read_output", taskId: "t1" });
       const text = (result as { content: Array<{ text: string }> }).content[0].text;
 
-      expect(waitForTask).toHaveBeenCalledWith("t1");
+      expect(waitForTask).toHaveBeenCalledWith("t1", undefined, 60_000);
       expect(text).toContain("arrived");
       expect(text).not.toContain("still running");
     });

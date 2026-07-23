@@ -2106,7 +2106,8 @@ async function runSessionLocked(
       keepRecentTokens: config.session?.compaction?.keepRecentTokens ?? 32768,
     },
     providerHealth: deps.providerHealth,
-    onToolExecutionEnd: () => { currentResetTimer?.(); },
+    // Tool progress and completion both reset the prompt stall budget.
+    onToolActivity: () => { currentResetTimer?.(); },
     // When the configured model is unregistered, pi
     // falls back to its own default model object (e.g. gemini-*); record the
     // CONFIGURED model so token_usage/cost are not mislabeled. See observedModelId.
