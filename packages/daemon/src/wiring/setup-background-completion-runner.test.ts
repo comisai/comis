@@ -12,6 +12,7 @@ import {
   type TimerHandle,
 } from "@comis/core";
 import { createBackgroundTaskManager } from "@comis/agent";
+import { ok } from "@comis/shared";
 import { setupBackgroundCompletionRunner } from "./setup-background-completion-runner.js";
 
 // ---------------------------------------------------------------------------
@@ -107,6 +108,16 @@ function makeLogger() {
   } as unknown as import("@comis/infra").ComisLogger;
 }
 
+function makeDeliveryDeps() {
+  return {
+    adaptersByType: new Map(),
+    deliveryService: {
+      deliverToChannel: vi.fn(),
+      drainInFlight: vi.fn(),
+    } as unknown as import("@comis/core").DeliveryService,
+  };
+}
+
 function buildOrigin(
   over: Partial<BackgroundTaskOrigin> & { agentId?: string } = {},
 ): BackgroundTaskOrigin {
@@ -141,6 +152,7 @@ function buildOrigin(
       channelId: "test",
     },
     traceId: null,
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
     ...authorityOverrides,
   };
@@ -150,6 +162,7 @@ describe("setupBackgroundCompletionRunner", () => {
   it("returns a context object with a runner.shutdown function", async () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
+      ...makeDeliveryDeps(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
@@ -166,6 +179,7 @@ describe("setupBackgroundCompletionRunner", () => {
   it("shutdown() resolves cleanly", async () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
+      ...makeDeliveryDeps(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
@@ -180,6 +194,7 @@ describe("setupBackgroundCompletionRunner", () => {
   it("shutdown() is idempotent", async () => {
     const ctx = setupBackgroundCompletionRunner({
       eventBus: makeFakeEventBus(),
+      ...makeDeliveryDeps(),
       getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
       assembleToolsForAgent: vi.fn().mockResolvedValue([]),
       sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
@@ -190,6 +205,91 @@ describe("setupBackgroundCompletionRunner", () => {
     });
     await ctx.runner.shutdown();
     await expect(ctx.runner.shutdown()).resolves.toBeUndefined();
+  });
+
+  it("delivers the continuation through the exact persisted channel authority", async () => {
+    const recording = makeRecordingEventBus();
+    const origin = buildOrigin();
+    const task: import("@comis/agent").BackgroundTask = {
+      id: "task-delivery",
+      toolName: "report",
+      status: "completed" as const,
+      startedAt: 1,
+      completedAt: 2,
+      result: "raw result",
+      origin,
+      dispatchState: "pending",
+    };
+    const adapter = {
+      channelId: origin.turnScope.endpoint.channelInstanceId,
+      channelType: origin.turnScope.endpoint.channelType,
+      sendMessage: vi.fn(),
+    };
+    const deliverToChannel = vi.fn().mockResolvedValue(ok({
+      chunks: [],
+      totalChars: 19,
+      queueDisposition: "settled" as const,
+      platform: {
+        status: "accepted" as const,
+        deliveredChunks: 1,
+        settledAtMs: 4,
+        lastMessageId: "outbound-1",
+      },
+    }));
+    const taskManager = {
+      getTask: vi.fn(() => task),
+      transitionDispatchState: vi.fn((_taskId: string, next: "notified" | "dispatched") => {
+        task.dispatchState = next;
+        return true;
+      }),
+    };
+    const ctx = setupBackgroundCompletionRunner({
+      eventBus: recording.bus,
+      adaptersByType: new Map([[adapter.channelType, adapter]]) as never,
+      deliveryService: {
+        deliverToChannel,
+        drainInFlight: vi.fn(),
+      },
+      getExecutor: vi.fn().mockReturnValue({
+        execute: vi.fn().mockResolvedValue({
+          response: "finalized completion",
+          executionId: "execution-1",
+          finishReason: "stop",
+        }),
+      }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
+      assembleToolsForAgent: vi.fn().mockResolvedValue([]),
+      sessionStore: { loadByRef: vi.fn().mockReturnValue(ok(undefined)) },
+      taskManager: taskManager as unknown as import("@comis/agent").BackgroundTaskManager,
+      fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),
+      maxBackgroundHops: 3,
+      logger: makeLogger(),
+    });
+
+    recording.bus.emit("background_task:completed", {
+      agentId: "default",
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin,
+      timestamp: 3,
+    });
+    await ctx.runner.shutdown();
+
+    expect(deliverToChannel).toHaveBeenCalledWith(
+      adapter,
+      origin.turnScope.endpoint.conversationId,
+      "finalized completion",
+      {
+        completionMode: "settled",
+        authority: {
+          tenantId: origin.turnScope.conversation.tenantId,
+          agentId: origin.turnScope.conversation.agentId,
+          conversationRef: origin.conversationRef,
+        },
+        destinationEndpoint: origin.turnScope.endpoint,
+        origin: "background-completion",
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -203,6 +303,7 @@ describe("setupBackgroundCompletionRunner", () => {
       const recording = makeRecordingEventBus();
       setupBackgroundCompletionRunner({
         eventBus: recording.bus,
+        ...makeDeliveryDeps(),
         getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
         assembleToolsForAgent: vi.fn().mockResolvedValue([]),
         sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
@@ -227,6 +328,7 @@ describe("setupBackgroundCompletionRunner", () => {
     it("returns a dispatcher handle alongside the runner; both shut down cleanly", async () => {
       const ctx = setupBackgroundCompletionRunner({
         eventBus: makeFakeEventBus(),
+        ...makeDeliveryDeps(),
         getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
         assembleToolsForAgent: vi.fn().mockResolvedValue([]),
         sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: undefined }) },
@@ -272,6 +374,7 @@ describe("setupBackgroundCompletionRunner", () => {
 
       setupBackgroundCompletionRunner({
         eventBus: recording.bus,
+        ...makeDeliveryDeps(),
         getExecutor: vi.fn().mockReturnValue({ execute: vi.fn() }) as unknown as (agentId: string) => import("@comis/agent").AgentExecutor,
         assembleToolsForAgent: vi.fn().mockResolvedValue([]),
         sessionStore: { loadByRef: vi.fn().mockReturnValue({ ok: true, value: { messages: [] } }) },

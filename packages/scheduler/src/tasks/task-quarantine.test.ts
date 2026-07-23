@@ -70,6 +70,7 @@ function rawRoot(taskOverrides: Record<string, unknown> = {}) {
         userId: "user-a",
       },
       traceId: "trace-a",
+      responseLocalePolicy: { source: "unset", enforceLocale: false },
       backgroundHopCount: 0,
     },
     sourceExecutionId: "source-a",

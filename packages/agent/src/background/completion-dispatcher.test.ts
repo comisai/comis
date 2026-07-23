@@ -30,6 +30,7 @@ function buildOrigin(over: Partial<BackgroundTaskOrigin> & { agentId?: string; s
     conversationRef: conversationRef.value,
     deliveryOrigin: { channelType: "echo", channelId: "test", userId: "user1", tenantId },
     traceId: null,
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
     ...Object.fromEntries(Object.entries(over).filter(([key]) => key !== "agentId" && key !== "sessionKey")),
   };

@@ -26,6 +26,7 @@ function item(overrides: Partial<TaskExtractionItem> = {}): TaskExtractionItem {
         userId: "user-a",
       },
       traceId: "trace-a",
+      responseLocalePolicy: { source: "unset", enforceLocale: false },
       backgroundHopCount: 0,
     },
     workspacePolicySnapshot: { agentId: "agent-a", sections: [], combinedHash: "a".repeat(64) },

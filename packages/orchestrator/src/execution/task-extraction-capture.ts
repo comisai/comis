@@ -153,6 +153,7 @@ export function captureTaskExtractionTurn(
     conversationRef: conversationRef.value,
     deliveryOrigin,
     traceId: context.traceId ?? null,
+    responseLocalePolicy: input.result.responseLocalePolicy,
     backgroundHopCount,
   });
   if (!origin.success) return { status: "skipped", reason: "origin_mismatch" };

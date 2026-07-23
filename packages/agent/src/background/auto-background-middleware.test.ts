@@ -95,6 +95,7 @@ function buildOrigin(
       tenantId,
     },
     traceId: null,
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
     ...Object.fromEntries(
       Object.entries(overrides).filter(([key]) => key !== "agentId" && key !== "sessionKey"),

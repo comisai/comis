@@ -50,6 +50,7 @@ function turn(): TaskExtractionTurn {
         userId: "user-a",
       },
       traceId: "trace-a",
+      responseLocalePolicy: { source: "unset", enforceLocale: false },
       backgroundHopCount: 0,
     },
     workspacePolicySnapshot: {

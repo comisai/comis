@@ -26,7 +26,13 @@ import {
   type CompletionDispatcher,
   type NotifyFn,
 } from "@comis/agent";
-import type { TypedEventBus } from "@comis/core";
+import {
+  resolvePlatformDeliveryResult,
+  type ChannelPort,
+  type DeliveryService,
+  type TypedEventBus,
+} from "@comis/core";
+import { err, fromPromise, ok } from "@comis/shared";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor } from "@comis/agent";
 import type { RunnerSessionStore } from "@comis/agent";
@@ -49,6 +55,8 @@ export interface SetupBackgroundCompletionRunnerDeps {
   eventBus: TypedEventBus;
   getExecutor: (agentId: string) => AgentExecutor;
   assembleToolsForAgent: NonNullable<BackgroundCompletionRunnerDeps["assembleToolsForAgent"]>;
+  adaptersByType: ReadonlyMap<string, ChannelPort>;
+  deliveryService: DeliveryService;
   sessionStore: RunnerSessionStore;
   /**
    * Must support `transitionDispatchState`; the dispatcher persists state
@@ -101,6 +109,52 @@ export function setupBackgroundCompletionRunner(
     assembleToolsForAgent: deps.assembleToolsForAgent,
     sessionStore: deps.sessionStore,
     taskManager: deps.taskManager,
+    deliverCompletion: async ({ origin, response }) => {
+      const endpoint = origin.turnScope.endpoint;
+      const adapter = deps.adaptersByType.get(endpoint.channelType);
+      if (adapter === undefined || adapter.channelId !== endpoint.channelInstanceId) {
+        return err({
+          errorKind: "precondition" as const,
+          message: "The originating channel adapter instance is not active",
+        });
+      }
+      const attempted = await fromPromise(deps.deliveryService.deliverToChannel(
+        adapter,
+        endpoint.conversationId,
+        response,
+        {
+          completionMode: "settled",
+          authority: {
+            tenantId: origin.turnScope.conversation.tenantId,
+            agentId: origin.turnScope.conversation.agentId,
+            conversationRef: origin.conversationRef,
+          },
+          destinationEndpoint: endpoint,
+          ...(endpoint.threadId === undefined ? {} : { threadId: endpoint.threadId }),
+          origin: "background-completion",
+        },
+      ));
+      if (!attempted.ok) {
+        return err({
+          errorKind: "dependency" as const,
+          message: attempted.error.message,
+        });
+      }
+      const resolved = resolvePlatformDeliveryResult(attempted.value);
+      if (!resolved.ok) {
+        return err({
+          errorKind: "dependency" as const,
+          message: resolved.error.message,
+        });
+      }
+      if (resolved.value.platform.status !== "accepted") {
+        return err({
+          errorKind: resolved.value.platform.errorKind,
+          message: "The completion response was not fully accepted by the originating platform",
+        });
+      }
+      return ok(undefined);
+    },
     fallbackNotifyFn: deps.fallbackNotifyFn,
     maxBackgroundHops: deps.maxBackgroundHops,
     isTurnInFlight: (key) => turnFlight.isTurnInFlight(key),

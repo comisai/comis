@@ -49,6 +49,7 @@ function buildOrigin(over: Partial<BackgroundTaskOrigin> & { agentId?: string; s
     conversationRef: conversationRef.value,
     deliveryOrigin: { channelType, channelId, userId, tenantId },
     traceId: null,
+    responseLocalePolicy: { source: "unset", enforceLocale: false },
     backgroundHopCount: 0,
     ...Object.fromEntries(Object.entries(over).filter(([key]) => !["agentId", "sessionKey", "channelType", "channelId", "userId"].includes(key))),
   };
@@ -106,7 +107,7 @@ describe("createBackgroundCompletionRunner", () => {
     maxBackgroundHops = 3,
     isTurnInFlight?: (key: string) => boolean,
     assembleToolsForAgent?: BackgroundCompletionRunnerDeps["assembleToolsForAgent"],
-    deliverCompletion?: (input: Record<string, unknown>) => Promise<unknown>,
+    deliverCompletion: BackgroundCompletionRunnerDeps["deliverCompletion"] = vi.fn().mockResolvedValue(ok(undefined)),
   ) {
     return createBackgroundCompletionRunner({
       eventBus,
@@ -117,9 +118,9 @@ describe("createBackgroundCompletionRunner", () => {
       maxBackgroundHops,
       ...(isTurnInFlight ? { isTurnInFlight } : {}),
       ...(assembleToolsForAgent ? { assembleToolsForAgent } : {}),
-      ...(deliverCompletion ? { deliverCompletion } : {}),
+      deliverCompletion,
       logger: makeLogger(),
-    } as unknown as BackgroundCompletionRunnerDeps);
+    });
   }
 
   it("LIVE-TURN skip: origin turn in flight → NO re-entry turn (the live turn owns consumption)", async () => {
@@ -676,6 +677,7 @@ describe("trace continuity sub-tests", () => {
       getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
+      deliverCompletion: async () => ok(undefined),
       fallbackNotifyFn,
       maxBackgroundHops,
       logger,

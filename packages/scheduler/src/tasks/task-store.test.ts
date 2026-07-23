@@ -93,6 +93,7 @@ function makeCandidate(overrides: Partial<BoundTaskCandidate> = {}): BoundTaskCa
           userId: "user-a",
         },
         traceId: "trace-a",
+        responseLocalePolicy: { source: "unset", enforceLocale: false },
         backgroundHopCount: 0,
       },
       workspacePolicySnapshot,
