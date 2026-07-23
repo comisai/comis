@@ -131,7 +131,7 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
       escalationAttempted: false,
       promptError: denial,
     });
-    expect(emit).not.toHaveBeenCalledWith("execution:output_escalated", expect.anything());
+    expect(emit).toHaveBeenCalledWith("execution:output_escalated", expect.anything());
   });
 
   it("restores overflow recovery state after one terminal admission denial", async () => {
@@ -166,6 +166,65 @@ describe("output-escalation.ts — escalation gate (max_tokens truncation)", () 
     expect(result).toMatchObject({
       promptSucceeded: false,
       promptError: denial,
+    });
+  });
+
+  it("does not acknowledge provider start when escalation instrumentation fails", async () => {
+    const instrumentationError = new Error("listener failed");
+    const onProviderStart = vi.fn(() => {
+      throw new Error("provider start must not run");
+    });
+    const prompt = vi.fn();
+    const params = {
+      msg: { channelId: "channel-a" },
+      session: {
+        agent: {
+          state: { model: { maxTokens: 8_192 } },
+          streamFn: vi.fn(),
+        },
+        prompt,
+      },
+      sessionKey: { tenantId: "default", channelId: "channel-a", userId: "user_a" },
+      agentId: "agent-a",
+      bridge: { getResult: () => ({ lastStopReason: "maxTokens" }) },
+      config: {
+        provider: "test-provider",
+        model: "test-model",
+        contextEngine: { outputEscalation: { enabled: true } },
+      },
+      effectiveTimeout: {
+        promptTimeoutMs: 1_000,
+        retryPromptTimeoutMs: 1_000,
+        stallCeilingMultiplier: 2,
+        source: "agent_config",
+      },
+      executionOverrides: { onProviderStart },
+      result: {},
+      deps: {
+        logger: { info: vi.fn(), warn: vi.fn() },
+        eventBus: { emit: vi.fn(() => { throw instrumentationError; }) },
+        clock: { now: () => 10 },
+      },
+    } as never;
+
+    const result = await escalateOutput(
+      params,
+      "hello",
+      undefined,
+      undefined,
+      false,
+      undefined,
+      true,
+      undefined,
+      false,
+    );
+
+    expect(onProviderStart).not.toHaveBeenCalled();
+    expect(prompt).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      promptSucceeded: false,
+      escalationAttempted: false,
+      promptError: instrumentationError,
     });
   });
 });

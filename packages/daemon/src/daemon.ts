@@ -87,6 +87,7 @@ import {
   acquireDataDirLock,
   releaseDataDirLock,
 } from "./wiring/index.js";
+import { resolveEffectiveTrajectoryConfig } from "./wiring/trajectory-runtime-config.js";
 import { SENSITIVE_EXACT_KEYS, SENSITIVE_PREFIXES, buildMergedEnv } from "./wiring/env-scrub.js";
 import {
   createActiveRunRegistry,
@@ -2304,6 +2305,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     dataDir: boot.dataDir,
     eventBus: container.eventBus,
     logger: daemonLogger,
+    trajectoryConfig: resolveEffectiveTrajectoryConfig(container.config),
     sessionAdapters: handle.piSessionAdapters,
     trajectoryRegistry: handle.trajectoryRegistry,
   }));

@@ -7,6 +7,7 @@ import {
 } from "@comis/core";
 import { ok } from "@comis/shared";
 import { createBackgroundRecoveryRecorder } from "./background-recovery-recorder.js";
+import { resolveEffectiveTrajectoryConfig } from "./trajectory-runtime-config.js";
 
 function makeInput() {
   const endpoint = {
@@ -58,6 +59,12 @@ describe("background recovery trajectory recorder", () => {
       dataDir: "/resolved/data",
       eventBus: new TypedEventBus(),
       logger: {} as never,
+      trajectoryConfig: {
+        enabled: true,
+        dir: "/resolved/trajectory",
+        maxFileBytes: 4_096,
+        eventTypes: ["background_task:notified"],
+      },
       sessionAdapters: new Map([[
         "agent-a",
         { getSessionPath: vi.fn(() => "/resolved/data/session.jsonl") },
@@ -70,8 +77,13 @@ describe("background recovery trajectory recorder", () => {
     expect(result.ok).toBe(true);
     expect(getOrCreate).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ confinedBaseDir: "/resolved/data" }),
+      expect.objectContaining({
+        trajectoryDir: "/resolved/trajectory",
+        enabled: true,
+        maxRuntimeFileBytes: 4_096,
+      }),
       expect.any(TypedEventBus),
+      expect.any(Function),
     );
     expect(recordEvent).toHaveBeenCalledWith("background_task.notified", {
       taskId: "task-a",
@@ -86,6 +98,10 @@ describe("background recovery trajectory recorder", () => {
       dataDir: "/resolved/data",
       eventBus: new TypedEventBus(),
       logger: {} as never,
+      trajectoryConfig: {
+        enabled: true,
+        maxFileBytes: 4_096,
+      },
       sessionAdapters: new Map([[
         "agent-a",
         { getSessionPath: vi.fn(() => "/resolved/data/session.jsonl") },
@@ -102,5 +118,79 @@ describe("background recovery trajectory recorder", () => {
     const result = recorder(makeInput());
 
     expect(result.ok).toBe(false);
+  });
+
+  it("uses one effective configuration for normal and recovery trajectory creation", () => {
+    const effective = resolveEffectiveTrajectoryConfig({
+      diagnostics: {
+        trajectory: {
+          enabled: true,
+          maxFileBytes: 8_192,
+          eventTypes: ["background_task:notified"],
+        },
+      },
+      observability: {
+        trajectory: { dirOverride: "/configured/trajectory" },
+      },
+    } as never);
+    const getOrCreate = vi.fn(() => ok({
+      recorder: { recordEvent: vi.fn(() => "queued" as const) } as never,
+    }));
+    const recorder = createBackgroundRecoveryRecorder({
+      dataDir: "/resolved/data",
+      eventBus: new TypedEventBus(),
+      logger: {} as never,
+      trajectoryConfig: effective,
+      sessionAdapters: new Map([[
+        "agent-a",
+        { getSessionPath: vi.fn(() => "/resolved/data/session.jsonl") },
+      ]]),
+      trajectoryRegistry: { getOrCreate } as never,
+    });
+
+    expect(recorder(makeInput()).ok).toBe(true);
+    expect(effective).toEqual({
+      enabled: true,
+      dir: "/configured/trajectory",
+      maxFileBytes: 8_192,
+      eventTypes: ["background_task:notified"],
+    });
+    expect(getOrCreate).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        trajectoryDir: effective.dir,
+        maxRuntimeFileBytes: effective.maxFileBytes,
+      }),
+      expect.any(TypedEventBus),
+      expect.any(Function),
+    );
+  });
+
+  it("does not initialize a recorder when trajectory recording is disabled or filtered", () => {
+    const getOrCreate = vi.fn();
+    const base = {
+      dataDir: "/resolved/data",
+      eventBus: new TypedEventBus(),
+      logger: {} as never,
+      sessionAdapters: new Map(),
+      trajectoryRegistry: { getOrCreate } as never,
+    };
+
+    const disabled = createBackgroundRecoveryRecorder({
+      ...base,
+      trajectoryConfig: { enabled: false, maxFileBytes: 4_096 },
+    });
+    const filtered = createBackgroundRecoveryRecorder({
+      ...base,
+      trajectoryConfig: {
+        enabled: true,
+        maxFileBytes: 4_096,
+        eventTypes: ["tool:executed"],
+      },
+    });
+
+    expect(disabled(makeInput()).ok).toBe(true);
+    expect(filtered(makeInput()).ok).toBe(true);
+    expect(getOrCreate).not.toHaveBeenCalled();
   });
 });

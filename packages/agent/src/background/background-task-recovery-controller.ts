@@ -14,6 +14,15 @@ import type {
 } from "./background-task-manager.js";
 import type { BackgroundTask } from "./background-task-types.js";
 import type { TaskRecoveryFailure } from "./background-task-persistence.js";
+import type {
+  AtomicTaskPersistenceOps,
+} from "./background-task-persistence.js";
+import {
+  persistBackgroundRecoveryAuthority,
+  recoverBackgroundRecoveryAuthorities,
+  removeBackgroundRecoveryAuthority,
+  type BackgroundRecoveryAuthority,
+} from "./background-recovery-authority.js";
 
 interface RecoveryControllerDeps {
   eventBus: TypedEventBus;
@@ -22,6 +31,8 @@ interface RecoveryControllerDeps {
   };
   clock: ClockPort;
   timers: TimerPort;
+  dataDir: string;
+  persistenceOps?: AtomicTaskPersistenceOps;
 }
 
 export function createBackgroundTaskRecoveryController(deps: RecoveryControllerDeps) {
@@ -29,20 +40,17 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     ((input: BackgroundRecoveryIncidentInput) => Result<void, Error>)
     | undefined;
   let scanRetry: TimerHandle | undefined;
+  let authorityLoadRetry: TimerHandle | undefined;
   let scanFailureAttempts = 0;
   let lastScanEvidenceAt: number | undefined;
   let lastScanEvidenceKey: string | undefined;
+  let authorityLoadAnnounced = false;
   const healthAnnounced = new Set<string>();
   const durableAnnounced = new Set<string>();
-  const scanTaskIds = new Set<string>();
-  const unresolvedTasks = new Map<
-    string,
-    Pick<BackgroundTask, "id" | "toolName" | "origin">
-  >();
-  const incidentRetries = new Map<string, {
-    input: BackgroundRecoveryIncidentInput;
-    timer?: TimerHandle;
-  }>();
+  const trajectoryAccepted = new Set<string>();
+  const authorities = new Map<string, BackgroundRecoveryAuthority>();
+  const dirtyAuthorities = new Set<string>();
+  const incidentRetries = new Map<string, TimerHandle>();
 
   function buildIncident(
     task: Pick<BackgroundTask, "id" | "toolName" | "origin">,
@@ -80,31 +88,34 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
   }
 
   function scheduleIncidentRetry(taskId: string): void {
-    const pending = incidentRetries.get(taskId);
-    if (pending === undefined || pending.timer !== undefined) return;
-    pending.timer = deps.timers.setTimeout(() => {
-      pending.timer = undefined;
-      persistIncident(pending.input);
+    if (incidentRetries.has(taskId)) return;
+    const timer = deps.timers.setTimeout(() => {
+      incidentRetries.delete(taskId);
+      driveAuthority(taskId);
     }, 1_000);
-    pending.timer.unref();
+    timer.unref();
+    incidentRetries.set(taskId, timer);
   }
 
-  function persistIncident(input: BackgroundRecoveryIncidentInput): void {
-    const persisted = recorder?.(input)
-      ?? err(new Error("Background recovery incident recorder is not configured"));
-    if (persisted.ok) {
-      incidentRetries.delete(input.taskId);
-      const durableKey = `${input.taskId}:${input.reason}`;
-      if (!durableAnnounced.has(durableKey)) {
-        durableAnnounced.add(durableKey);
-        emitRecoveryLifecycle(input, true);
-      }
-      return;
-    }
-    incidentRetries.set(input.taskId, {
-      input,
-      timer: incidentRetries.get(input.taskId)?.timer,
-    });
+  function incidentInput(
+    authority: BackgroundRecoveryAuthority,
+    reason: BackgroundRecoveryIncidentInput["reason"],
+  ): BackgroundRecoveryIncidentInput {
+    return {
+      agentId: authority.agentId,
+      taskId: authority.taskId,
+      toolName: authority.toolName,
+      sessionKey: authority.sessionKey,
+      projectedSessionKey: authority.projectedSessionKey,
+      traceId: authority.traceId,
+      timestamp: reason === "recovery_retry_required"
+        ? authority.timestamp
+        : deps.clock.now(),
+      reason,
+    };
+  }
+
+  function reportIncidentFailure(input: BackgroundRecoveryIncidentInput): void {
     if (!healthAnnounced.has(input.taskId)) {
       healthAnnounced.add(input.taskId);
       emitRecoveryLifecycle(input, false);
@@ -121,28 +132,134 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     scheduleIncidentRetry(input.taskId);
   }
 
+  function commitAuthority(authority: BackgroundRecoveryAuthority): boolean {
+    const persisted = persistBackgroundRecoveryAuthority(
+      deps.dataDir,
+      authority,
+      deps.persistenceOps,
+    );
+    if (!persisted.ok) {
+      reportIncidentFailure(
+        incidentInput(authority, "recovery_retry_required"),
+      );
+      return false;
+    }
+    dirtyAuthorities.delete(authority.taskId);
+    return true;
+  }
+
+  function announceAccepted(input: BackgroundRecoveryIncidentInput): void {
+    const key = `${input.taskId}:${input.reason}`;
+    if (durableAnnounced.has(key)) return;
+    durableAnnounced.add(key);
+    emitRecoveryLifecycle(input, true);
+  }
+
+  function driveAuthority(taskId: string): void {
+    let authority = authorities.get(taskId);
+    if (authority === undefined) return;
+    const requiredKey = `${taskId}:recovery_retry_required`;
+    if (dirtyAuthorities.has(taskId) && !commitAuthority(authority)) {
+      if (!authority.requiredAccepted && !trajectoryAccepted.has(requiredKey)) {
+        const required = incidentInput(authority, "recovery_retry_required");
+        const persisted = recorder?.(required)
+          ?? err(new Error("Background recovery incident recorder is not configured"));
+        if (!persisted.ok) {
+          reportIncidentFailure(required);
+          return;
+        }
+        trajectoryAccepted.add(requiredKey);
+        announceAccepted(required);
+        authority = { ...authority, requiredAccepted: true };
+        authorities.set(taskId, authority);
+        dirtyAuthorities.add(taskId);
+      }
+      return;
+    }
+
+    if (!authority.requiredAccepted) {
+      const required = incidentInput(authority, "recovery_retry_required");
+      if (!trajectoryAccepted.has(requiredKey)) {
+        const persisted = recorder?.(required)
+          ?? err(new Error("Background recovery incident recorder is not configured"));
+        if (!persisted.ok) {
+          reportIncidentFailure(required);
+          return;
+        }
+        trajectoryAccepted.add(requiredKey);
+        announceAccepted(required);
+      }
+      authority = { ...authority, requiredAccepted: true };
+      authorities.set(taskId, authority);
+      dirtyAuthorities.add(taskId);
+      if (!commitAuthority(authority)) return;
+    }
+
+    if (!authority.resolutionRequested) return;
+    const resolvedKey = `${taskId}:recovery_resolved`;
+    const resolved = incidentInput(authority, "recovery_resolved");
+    if (!trajectoryAccepted.has(resolvedKey)) {
+      const persisted = recorder?.(resolved)
+        ?? err(new Error("Background recovery incident recorder is not configured"));
+      if (!persisted.ok) {
+        reportIncidentFailure(resolved);
+        return;
+      }
+      trajectoryAccepted.add(resolvedKey);
+      announceAccepted(resolved);
+    }
+    const removed = removeBackgroundRecoveryAuthority(
+      deps.dataDir,
+      authority,
+      deps.persistenceOps,
+    );
+    if (!removed.ok) {
+      reportIncidentFailure(resolved);
+      return;
+    }
+    authorities.delete(taskId);
+    dirtyAuthorities.delete(taskId);
+    healthAnnounced.delete(taskId);
+    incidentRetries.get(taskId)?.cancel();
+    incidentRetries.delete(taskId);
+  }
+
   function recordTask(
     task: Pick<BackgroundTask, "id" | "toolName" | "origin">,
+    source: BackgroundRecoveryAuthority["source"] = "task",
   ): void {
-    if (unresolvedTasks.has(task.id)) return;
+    if (authorities.has(task.id)) {
+      driveAuthority(task.id);
+      return;
+    }
     const incident = buildIncident(task, "recovery_retry_required");
     if (!incident.ok) return;
-    unresolvedTasks.set(task.id, task);
-    persistIncident(incident.value);
+    const authority: BackgroundRecoveryAuthority = {
+      agentId: incident.value.agentId,
+      taskId: incident.value.taskId,
+      toolName: incident.value.toolName,
+      sessionKey: incident.value.sessionKey,
+      projectedSessionKey: incident.value.projectedSessionKey,
+      traceId: incident.value.traceId,
+      timestamp: incident.value.timestamp,
+      source,
+      requiredAccepted: false,
+      resolutionRequested: false,
+    };
+    authorities.set(task.id, authority);
+    dirtyAuthorities.add(task.id);
+    driveAuthority(task.id);
   }
 
   function resolveTask(
-    task: Pick<BackgroundTask, "id" | "toolName" | "origin">,
+    task: Pick<BackgroundTask, "id">,
   ): void {
-    const unresolved = unresolvedTasks.get(task.id);
-    if (unresolved === undefined) return;
-    unresolvedTasks.delete(task.id);
-    scanTaskIds.delete(task.id);
-    healthAnnounced.delete(task.id);
-    incidentRetries.get(task.id)?.timer?.cancel();
-    incidentRetries.delete(task.id);
-    const resolved = buildIncident(task, "recovery_resolved");
-    if (resolved.ok) persistIncident(resolved.value);
+    const authority = authorities.get(task.id);
+    if (authority === undefined) return;
+    const requested = { ...authority, resolutionRequested: true };
+    authorities.set(task.id, requested);
+    dirtyAuthorities.add(task.id);
+    driveAuthority(task.id);
   }
 
   function reportScanFailures(
@@ -153,10 +270,12 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
       failures.flatMap((failure) => failure.identity === undefined ? [] : [failure.identity.id]),
     );
     if (failures.every((failure) => failure.identity !== undefined)) {
-      for (const taskId of scanTaskIds) {
+      for (const [taskId, authority] of authorities) {
+        if (authority.source !== "scan") continue;
         if (currentTaskIds.has(taskId)) continue;
-        const task = unresolvedTasks.get(taskId);
-        if (task !== undefined) resolveTask(task);
+        resolveTask({
+          id: authority.taskId,
+        });
       }
     }
     if (failures.length === 0) {
@@ -191,9 +310,8 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     }
     for (const failure of failures) {
       if (failure.identity === undefined) continue;
-      if (unresolvedTasks.has(failure.identity.id)) continue;
-      scanTaskIds.add(failure.identity.id);
-      recordTask(failure.identity);
+      if (authorities.has(failure.identity.id)) continue;
+      recordTask(failure.identity, "scan");
     }
     if (scanRetry !== undefined) return;
     const delayMs = Math.min(60_000, 1_000 * (2 ** Math.min(scanFailureAttempts, 6)));
@@ -205,9 +323,55 @@ export function createBackgroundTaskRecoveryController(deps: RecoveryControllerD
     scanRetry.unref();
   }
 
+  function restoreAuthorities(): void {
+    const recovered = recoverBackgroundRecoveryAuthorities(
+      deps.dataDir,
+    );
+    if (!recovered.ok) {
+      if (!authorityLoadAnnounced) {
+        authorityLoadAnnounced = true;
+        deps.logger.warn(
+          {
+            hint: "Repair protected background recovery authority storage; loading will retry",
+            errorKind: "resource" as const,
+          },
+          "Background recovery authority loading failed",
+        );
+        emitObservationalEventSafely(
+          { eventBus: deps.eventBus, logger: deps.logger },
+          "system:error",
+          {
+            error: new Error("Background recovery authority loading failed"),
+            source: "background-task-recovery",
+          },
+        );
+      }
+      if (authorityLoadRetry === undefined) {
+        authorityLoadRetry = deps.timers.setTimeout(() => {
+          authorityLoadRetry = undefined;
+          restoreAuthorities();
+        }, 1_000);
+        authorityLoadRetry.unref();
+      }
+      return;
+    }
+    authorityLoadAnnounced = false;
+    for (const authority of recovered.value) {
+      if (!authorities.has(authority.taskId)) {
+        authorities.set(authority.taskId, authority);
+      }
+    }
+    if (recorder !== undefined) {
+      for (const taskId of authorities.keys()) driveAuthority(taskId);
+    }
+  }
+
+  restoreAuthorities();
+
   return {
     setRecorder(next: typeof recorder): void {
       recorder = next;
+      for (const taskId of authorities.keys()) driveAuthority(taskId);
     },
     recordTask,
     resolveTask,

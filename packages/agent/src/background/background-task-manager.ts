@@ -152,6 +152,8 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
     logger,
     clock,
     timers,
+    dataDir,
+    ...(persistenceOps !== undefined ? { persistenceOps } : {}),
   });
 
   function reportPersistenceOutcome(
@@ -538,6 +540,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           }
           Object.assign(task, terminal);
           reportPersistenceOutcome(task, committed.value);
+          recoveryController.resolveTask(task);
         }
         tasks.set(task.id, task);
 
@@ -603,6 +606,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       task.dispatchState = next;
       task.dispatchAttempts = dispatchAttempts;
       reportPersistenceOutcome(task, persisted.value);
+      recoveryController.resolveTask(task);
       return ok(true);
     },
 

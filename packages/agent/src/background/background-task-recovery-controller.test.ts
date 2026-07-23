@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import {
   TypedEventBus,
   createConversationRef,
+  safePath,
   type BackgroundTaskOrigin,
   type TimerHandle,
 } from "@comis/core";
@@ -48,6 +52,8 @@ function makeOrigin(): BackgroundTaskOrigin {
 
 describe("background task recovery controller", () => {
   it("surfaces and retries a failed canonical incident write", () => {
+    const dataDir = safePath(tmpdir(), `comis-recovery-controller-${randomUUID()}`);
+    mkdirSync(dataDir, { recursive: true });
     const eventBus = new TypedEventBus();
     const notified = vi.fn();
     eventBus.on("background_task:notified", notified);
@@ -64,6 +70,7 @@ describe("background task recovery controller", () => {
       eventBus,
       logger: { warn: vi.fn() },
       clock: { now: () => 10, nowDate: () => new Date(10) },
+      dataDir,
       timers: {
         setTimeout: (callback) => {
           retry = callback;
@@ -87,9 +94,12 @@ describe("background task recovery controller", () => {
     retry?.();
     expect(recorder).toHaveBeenCalledTimes(2);
     expect(notified).toHaveBeenCalledTimes(2);
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   it("backs off repeated scan failures and records task resolution", () => {
+    const dataDir = safePath(tmpdir(), `comis-recovery-controller-${randomUUID()}`);
+    mkdirSync(dataDir, { recursive: true });
     const eventBus = new TypedEventBus();
     const systemErrors = vi.fn();
     const notified = vi.fn();
@@ -103,6 +113,7 @@ describe("background task recovery controller", () => {
       eventBus,
       logger,
       clock: { now: () => now, nowDate: () => new Date(now) },
+      dataDir,
       timers: {
         setTimeout: (callback, delayMs) => {
           scheduled.push({ callback, delayMs });
@@ -154,5 +165,112 @@ describe("background task recovery controller", () => {
       reason: "recovery_resolved",
       trajectoryRecorded: true,
     }));
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("serializes required evidence before resolution and restores authority after restart", () => {
+    const dataDir = safePath(tmpdir(), `comis-recovery-controller-${randomUUID()}`);
+    mkdirSync(dataDir, { recursive: true });
+    const eventBus = new TypedEventBus();
+    const timers = {
+      setTimeout: vi.fn(() => ({
+        cancelled: false,
+        cancel: vi.fn(),
+        unref: vi.fn(),
+      })),
+      setInterval: vi.fn(),
+    };
+    const firstRecorder = vi.fn(() => ok(undefined));
+    const first = createBackgroundTaskRecoveryController({
+      eventBus,
+      logger: { warn: vi.fn() },
+      clock: { now: () => 10, nowDate: () => new Date(10) },
+      timers,
+      dataDir,
+    });
+    first.setRecorder(firstRecorder);
+    const identity = {
+      id: "task-restart",
+      toolName: "report",
+      origin: makeOrigin(),
+    };
+
+    first.reportScanFailures(
+      [{ kind: "task_validation", identity }],
+      vi.fn(),
+    );
+    expect(firstRecorder).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: "task-restart",
+      reason: "recovery_retry_required",
+    }));
+
+    const secondRecorder = vi.fn(() => ok(undefined));
+    const restarted = createBackgroundTaskRecoveryController({
+      eventBus,
+      logger: { warn: vi.fn() },
+      clock: { now: () => 20, nowDate: () => new Date(20) },
+      timers,
+      dataDir,
+    });
+    restarted.setRecorder(secondRecorder);
+    restarted.reportScanFailures([], vi.fn());
+
+    expect(secondRecorder.mock.calls.map(([input]) => input.reason)).toEqual([
+      "recovery_resolved",
+    ]);
+    const thirdRecorder = vi.fn(() => ok(undefined));
+    const afterResolution = createBackgroundTaskRecoveryController({
+      eventBus,
+      logger: { warn: vi.fn() },
+      clock: { now: () => 30, nowDate: () => new Date(30) },
+      timers,
+      dataDir,
+    });
+    afterResolution.setRecorder(thirdRecorder);
+    expect(thirdRecorder).not.toHaveBeenCalled();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("retains a pending required record when resolution is requested", () => {
+    const dataDir = safePath(tmpdir(), `comis-recovery-controller-${randomUUID()}`);
+    mkdirSync(dataDir, { recursive: true });
+    const scheduled: Array<() => void> = [];
+    const recorder = vi.fn()
+      .mockReturnValueOnce(err(new Error("trajectory unavailable")))
+      .mockReturnValue(ok(undefined));
+    const controller = createBackgroundTaskRecoveryController({
+      eventBus: new TypedEventBus(),
+      logger: { warn: vi.fn() },
+      clock: { now: () => 10, nowDate: () => new Date(10) },
+      timers: {
+        setTimeout: (callback) => {
+          scheduled.push(callback);
+          return {
+            cancelled: false,
+            cancel: vi.fn(),
+            unref: vi.fn(),
+          };
+        },
+        setInterval: vi.fn(),
+      },
+      dataDir,
+    });
+    controller.setRecorder(recorder);
+    const task = {
+      id: "task-ordered",
+      toolName: "report",
+      origin: makeOrigin(),
+    };
+
+    controller.recordTask(task);
+    controller.resolveTask(task);
+    scheduled.shift()?.();
+
+    expect(recorder.mock.calls.map(([input]) => input.reason)).toEqual([
+      "recovery_retry_required",
+      "recovery_retry_required",
+      "recovery_resolved",
+    ]);
+    rmSync(dataDir, { recursive: true, force: true });
   });
 });

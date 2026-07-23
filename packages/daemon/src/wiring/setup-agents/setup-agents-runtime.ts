@@ -56,6 +56,7 @@ import { createAcpWiring } from "./setup-acp-wiring.js";
 import { wireAuthProvider } from "./setup-agents-oauth.js";
 import { buildPromptSkillLocationIndex, renderLearnedSkillsXml } from "./learned-skill-surface.js";
 import { wireAgentLearnedSkillSurface } from "./learned-skill-surface-registry.js";
+import { resolveEffectiveTrajectoryConfig } from "../trajectory-runtime-config.js";
 import type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
 // Re-export types so consumers preserve the historic import shape (parity-tests + setup-agents.test.ts inspect by name).
 export type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
@@ -496,16 +497,7 @@ export async function setupSingleAgent(
     //   2. observability.trajectory.dirOverride (env-layer / YAML knob)
     //   3. env fallback inside paths.ts:readEnvDir() (defense-in-depth)
     //   4. session co-location / cwd (default)
-    trajectoryConfig: container.config.diagnostics?.trajectory
-      ? {
-          enabled: container.config.diagnostics.trajectory.enabled,
-          dir:
-            container.config.diagnostics.trajectory.dir ??
-            container.config.observability?.trajectory?.dirOverride,
-          maxFileBytes: container.config.diagnostics.trajectory.maxFileBytes,
-          eventTypes: container.config.diagnostics.trajectory.eventTypes,
-        }
-      : undefined,
+    trajectoryConfig: resolveEffectiveTrajectoryConfig(container.config),
     // Session-scoped trajectory recorder registry — same instance for
     // every per-agent executor so a session's recorder spans every
     // turn (session-scoped recorder lifecycle invariant). Daemon shutdown drains via

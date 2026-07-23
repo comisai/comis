@@ -14,7 +14,7 @@
 
 import { formatSessionKey, toSafeErrorLogString } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
-import { err, ok, type Result } from "@comis/shared";
+import { err, ok, tryCatch, type Result } from "@comis/shared";
 import { withPromptTimeout } from "../prompt-timeout.js";
 import { runContinuationTurn } from "../continuation-turn.js";
 import {
@@ -116,21 +116,7 @@ async function maybeEscalateOutput(
   const guardProviderDispatch = resolveProviderDispatchGuard(
     params.executionOverrides?.onProviderStart,
   );
-
-  const originalStreamFn = session.agent.streamFn;
-  let escalationUsed = false;
-  session.agent.streamFn = (model, context, options) => {
-    if (!escalationUsed) {
-      escalationUsed = true;
-      const merged = { ...options, maxTokens: escalatedMaxTokens };
-      return originalStreamFn(model, context, merged);
-    }
-    return originalStreamFn(model, context, options);
-  };
-
-  try {
-    const admitted = guardProviderDispatch();
-    if (!admitted.ok) return err(admitted.error);
+  const instrumented = tryCatch(() => {
     deps.logger.info(
       {
         originalMaxTokens,
@@ -146,6 +132,23 @@ async function maybeEscalateOutput(
       escalatedMaxTokens,
       timestamp: deps.clock.now(),
     });
+  });
+  if (!instrumented.ok) return err(instrumented.error);
+
+  const originalStreamFn = session.agent.streamFn;
+  let escalationUsed = false;
+  session.agent.streamFn = (model, context, options) => {
+    if (!escalationUsed) {
+      escalationUsed = true;
+      const merged = { ...options, maxTokens: escalatedMaxTokens };
+      return originalStreamFn(model, context, merged);
+    }
+    return originalStreamFn(model, context, options);
+  };
+
+  try {
+    const admitted = guardProviderDispatch();
+    if (!admitted.ok) return err(admitted.error);
     await withPromptTimeout(
       session.prompt(messageText, {
         expandPromptTemplates: false,
