@@ -45,4 +45,15 @@ describe("scheduler activation composition wiring", () => {
     expect(activation).toBeGreaterThan(cronBind);
     expect(activation).toBeGreaterThan(corePortsBind);
   });
+
+  it("closes every scheduler admission surface when a later boot stage fails", () => {
+    const catchBlock = daemonSource.slice(
+      daemonSource.lastIndexOf("} catch (e: unknown) {"),
+      daemonSource.indexOf("// Only run when invoked directly"),
+    );
+
+    expect(catchBlock).toContain("closePartialBootSchedulerAdmission(boot)");
+    expect(catchBlock.indexOf("closePartialBootSchedulerAdmission(boot)"))
+      .toBeLessThan(catchBlock.indexOf("releaseDataDirLock(boot.dataDir)"));
+  });
 });

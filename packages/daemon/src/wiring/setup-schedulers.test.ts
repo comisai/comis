@@ -27,6 +27,7 @@ function makeScheduler() {
     reload: vi.fn(async () => ok(undefined)),
     activate: vi.fn(() => ok(undefined)),
     enterMaintenance: vi.fn(() => ok({ activeExecutions: 0 })),
+    closeAdmission: vi.fn(() => ({ activeExecutions: 0 })),
     stop: vi.fn(async () => ok(undefined)),
     getJobs: vi.fn(() => ok([])),
   };
@@ -573,7 +574,7 @@ describe("scheduler composition lifecycle", () => {
     expect(schedulers[0]!.activate).toHaveBeenCalledOnce();
   });
 
-  it("isolates a later scheduler activation failure without stopping a ready sibling", async () => {
+  it("rolls back every earlier cron timer when a later scheduler activation fails", async () => {
     const { setupSchedulers } = await import("./setup-schedulers.js");
     const runtimeDeps = deps({ "agent-a": agent(true), "agent-b": agent(true) });
     const result = await setupSchedulers(runtimeDeps);
@@ -586,8 +587,11 @@ describe("scheduler composition lifecycle", () => {
       rootRegistrar: { register: vi.fn(), release: vi.fn() } as never,
     });
 
-    expect(result.activateCronSchedulers()).toEqual(ok(undefined));
-    expect(schedulers[0]!.stop).not.toHaveBeenCalled();
+    expect(result.activateCronSchedulers()).toMatchObject({
+      ok: false,
+      error: { code: "activation_failed", errorKind: "validation" },
+    });
+    expect(schedulers[0]!.closeAdmission).toHaveBeenCalledOnce();
     expect(result.cronSchedulers.has("agent-a")).toBe(true);
     expect(result.cronSchedulers.has("agent-b")).toBe(false);
     expect(runtimeDeps.schedulerLogger.error).toHaveBeenCalledWith(expect.objectContaining({
