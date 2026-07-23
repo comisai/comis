@@ -146,7 +146,7 @@ describe("heartbeat agent turn executor", () => {
     expect(result).toMatchObject({
       ok: true,
       value: {
-        delivery: { status: "suppressed", reason: "visibility_policy" },
+        delivery: { status: "suppressed", reason: "heartbeat_token" },
         sessionMaintenance: { status: "completed" },
         eventBatch: { status: "none" },
       },
@@ -174,6 +174,38 @@ describe("heartbeat agent turn executor", () => {
     });
     expect(pruneAcknowledgedTurn).not.toHaveBeenCalled();
     expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it("records closed visibility and target suppression reasons", async () => {
+    const hidden = makeDeps({
+      agents: {
+        "agent-a": agentConfig({ target: endpoint, showOk: false, showAlerts: false }),
+      },
+    });
+    hidden.execute.mockResolvedValueOnce(executionResult("Routine alert"));
+
+    const hiddenResult = await createHeartbeatAgentTurnExecutor(hidden.deps)(runInput({ eventBatch: [] }));
+
+    expect(hiddenResult).toMatchObject({
+      ok: true,
+      value: { delivery: { status: "suppressed", reason: "visibility_filter" } },
+    });
+    expect(hidden.deliver).not.toHaveBeenCalled();
+
+    const targetless = makeDeps({
+      agents: {
+        "agent-a": agentConfig({ showOk: false, showAlerts: true }),
+      },
+    });
+    targetless.execute.mockResolvedValueOnce(executionResult("Routine alert"));
+
+    const targetlessResult = await createHeartbeatAgentTurnExecutor(targetless.deps)(runInput({ eventBatch: [] }));
+
+    expect(targetlessResult).toMatchObject({
+      ok: true,
+      value: { delivery: { status: "suppressed", reason: "no_target" } },
+    });
+    expect(targetless.deliver).not.toHaveBeenCalled();
   });
 
   it("keeps critical output visible when ordinary alerts are hidden", async () => {

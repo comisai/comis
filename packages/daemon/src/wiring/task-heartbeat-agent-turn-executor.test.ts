@@ -256,7 +256,7 @@ describe("task heartbeat agent turn executor", () => {
         rootRunId: "root-task-check-a",
         agentExecutionId: "agent-execution-1",
         metrics: { totalTokens: 16, costUsd: 0.002, toolCalls: 0, llmCalls: 1 },
-        delivery: { status: "suppressed", reason: "task_declined" },
+        delivery: { status: "suppressed", reason: "heartbeat_token" },
       },
     });
     expect(data.dismissAttempt).toHaveBeenCalledWith(expect.objectContaining({
@@ -384,13 +384,16 @@ describe("task heartbeat agent turn executor", () => {
   });
 
   it("dismisses empty or hidden alert output without crossing the send boundary", async () => {
-    for (const response of ["", "Routine follow-up"]) {
+    for (const [response, reason] of [
+      ["", "empty_reply"],
+      ["Routine follow-up", "visibility_filter"],
+    ] as const) {
       const data = makeDeps(response);
       if (response.length > 0) data.deps.agents["agent-a"] = agentConfig(false);
       const result = await createTaskHeartbeatAgentTurnExecutor(data.deps)(runInput());
       expect(result).toMatchObject({
         ok: true,
-        value: { delivery: { status: "suppressed", reason: "visibility_policy" } },
+        value: { delivery: { status: "suppressed", reason } },
       });
       expect(data.dismissAttempt).toHaveBeenCalledOnce();
       expect(data.beginDelivery).not.toHaveBeenCalled();
@@ -422,6 +425,32 @@ describe("task heartbeat agent turn executor", () => {
       errorKind: "auth",
     }));
     expect(guard.beginDelivery).not.toHaveBeenCalled();
+  });
+
+  it("maps pre-send task conditions onto the closed heartbeat reason contract", async () => {
+    const invalidOrigin = makeDeps();
+    invalidOrigin.prepare.mockReturnValueOnce(err({ code: "invalid_origin", errorKind: "validation" }));
+    const invalidOriginResult = await createTaskHeartbeatAgentTurnExecutor(invalidOrigin.deps)(runInput());
+    expect(invalidOriginResult).toMatchObject({
+      ok: true,
+      value: { delivery: { status: "pre_send_failed", reason: "target_precondition", errorKind: "validation" } },
+    });
+
+    const cancelled = makeDeps();
+    cancelled.prepare.mockReturnValueOnce(err({ code: "cancelled", errorKind: "precondition" }));
+    const cancelledResult = await createTaskHeartbeatAgentTurnExecutor(cancelled.deps)(runInput());
+    expect(cancelledResult).toMatchObject({
+      ok: true,
+      value: { delivery: { status: "pre_send_failed", reason: "cancelled", errorKind: "precondition" } },
+    });
+
+    const disabled = makeDeps();
+    disabled.beginDelivery.mockResolvedValueOnce(ok({ status: "configuration_disabled" }));
+    const disabledResult = await createTaskHeartbeatAgentTurnExecutor(disabled.deps)(runInput());
+    expect(disabledResult).toMatchObject({
+      ok: true,
+      value: { delivery: { status: "pre_send_failed", reason: "target_precondition", errorKind: "precondition" } },
+    });
   });
 
   it("terminalizes partial and ambiguous delivery without appending a retry", async () => {

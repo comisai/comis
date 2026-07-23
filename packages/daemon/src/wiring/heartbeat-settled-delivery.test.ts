@@ -188,4 +188,31 @@ describe("heartbeat settled delivery", () => {
     expect(outcome).toEqual({ status: "pre_send_failed", reason: "output_guard", errorKind: "internal" });
     expect(blocked.recordPossiblyVisible).not.toHaveBeenCalled();
   });
+
+  it("maps invalid delivery prerequisites onto the closed target reason", async () => {
+    const invalid = makeDeps();
+    const invalidOutcome = await createHeartbeatSettledDelivery(invalid.deps)({
+      correlationId: "heartbeat-a", agentId: "agent-a",
+      endpoint: { ...endpoint, conversationId: "" },
+      text: "hello", level: "alert", allowDm: true, signal: new AbortController().signal,
+    });
+    expect(invalidOutcome).toEqual({
+      status: "pre_send_failed",
+      reason: "target_precondition",
+      errorKind: "validation",
+    });
+
+    const quietFailure = makeDeps({
+      isQuietHours: vi.fn(() => err({ errorKind: "validation" as const })),
+    });
+    const quietOutcome = await createHeartbeatSettledDelivery(quietFailure.deps)({
+      correlationId: "heartbeat-b", agentId: "agent-a", endpoint,
+      text: "hello", level: "alert", allowDm: true, signal: new AbortController().signal,
+    });
+    expect(quietOutcome).toEqual({
+      status: "pre_send_failed",
+      reason: "target_precondition",
+      errorKind: "validation",
+    });
+  });
 });
