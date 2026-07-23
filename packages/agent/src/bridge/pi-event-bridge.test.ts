@@ -1326,6 +1326,28 @@ describe("createPiEventBridge", () => {
     });
   });
 
+  describe("tool_execution_update", () => {
+    it("resets the prompt stall timer when a blocking tool reports progress", () => {
+      const resetPromptStall = vi.fn();
+      deps = createMockDeps({ onToolExecutionEnd: resetPromptStall });
+      const { listener } = createPiEventBridge(deps);
+
+      listener({
+        type: "tool_execution_update",
+        toolName: "background_tasks",
+        toolCallId: "tc-wait",
+        args: { action: "read_output" },
+        partialResult: {
+          content: [{ type: "text", text: "Background task is still running." }],
+          details: { status: "running" },
+        },
+      } as any);
+
+      expect(resetPromptStall).toHaveBeenCalledTimes(1);
+      expect(deps.stepCounter.increment).not.toHaveBeenCalled();
+    });
+  });
+
   // -------------------------------------------------------------------------
   // single emission per tool lifecycle
   // -------------------------------------------------------------------------
