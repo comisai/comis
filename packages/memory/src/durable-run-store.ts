@@ -45,7 +45,7 @@ const durableCheckpointPayloadSchema = z.strictObject({
   rootBudget: DurableRootBudgetSchema,
   workspacePolicyHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   resumeDescriptorHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  terminalReason: z.enum(["completed", "failed", "killed", "watchdog_timeout", "ghost_sweep"]).optional(),
+  terminalReason: z.enum(["completed", "failed", "killed", "watchdog_timeout", "ghost_sweep", "superseded"]).optional(),
 });
 const resumeClaimSchema = z.strictObject({
   checkpointId: z.string().min(1),
@@ -437,7 +437,7 @@ export function createSqliteDurableRunStore(
       }
 
       const completed = markCompletedStmt.run(
-        "completed",
+        "superseded",
         claim.claimedAtMs,
         record.checkpointId,
       );

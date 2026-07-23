@@ -49,9 +49,10 @@ import {
   type MemoryWriteEntry,
   type MemoryWriteScope,
   type ResolvedTurnScope,
+  type WorkspacePolicySnapshot,
   SUBAGENT_RESULT_SUMMARY_MAX_CHARS,
 } from "@comis/core";
-import { err, ok, suppressError, tryCatch, type Result } from "@comis/shared";
+import { err, fromPromise, ok, suppressError, tryCatch, type Result } from "@comis/shared";
 import {
   createCoordinatorProgressFork,
   type CoordinatorProgressForkHandle,
@@ -337,6 +338,13 @@ export class SubAgentSpawnPausedError extends Error {
   }
 }
 
+class DurableSubAgentAdmissionError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "DurableSubAgentAdmissionError";
+  }
+}
+
 export interface SubAgentRunnerDeps {
   sessionStore: Pick<SessionStorePort, "save" | "delete" | "loadByRef">;
   executeAgent: (
@@ -346,7 +354,13 @@ export interface SubAgentRunnerDeps {
     task: string,
     maxSteps?: number,
     callerAgentId?: string,
-    overrides?: { graphId?: string; nodeId?: string; reuseConversation?: ConversationLocator; graphNodeDepth?: number },
+    overrides?: {
+      graphId?: string;
+      nodeId?: string;
+      reuseConversation?: ConversationLocator;
+      graphNodeDepth?: number;
+      workspacePolicySnapshot?: WorkspacePolicySnapshot;
+    },
     /** Per-spawn token budget — becomes the child's BudgetGuard per-execution cap. */
     tokenBudget?: number,
     /** Exact parent authority used to attenuate the child's own tool assembly. */
@@ -752,6 +766,7 @@ export interface SpawnParams {
    */
   worktree?: boolean;
   workspacePolicyHash?: string;
+  workspacePolicySnapshot?: WorkspacePolicySnapshot;
 }
 
 // ---------------------------------------------------------------------------
@@ -1040,9 +1055,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
    * the keep-alive heartbeat.
    * Inert when no store is wired. Never throws.
    */
-  function persistDurableCheckpoint(run: SubAgentRun, params: SpawnParams): void {
+  async function writeDurableCheckpoint(
+    run: SubAgentRun,
+    params: SpawnParams,
+  ): Promise<Result<void, Error>> {
     const store = deps.durableRuns;
-    if (!store) return;
+    if (!store) return ok(undefined);
     const rootRunId = run.rootRunId;
     const facts = deps.durableRunFacts?.(rootRunId, params.agentId);
     const leaseIds = facts?.leaseIds ?? [run.parentLeaseId, run.leaseId]
@@ -1055,19 +1073,14 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     const cronOrigin = deriveCronOrigin(params);
     const partition = run.conversationScope.partition;
     if (partition.kind !== "endpoint-conversation-principal") {
-      deps.logger?.warn(
-        {
-          runId: run.runId,
-          rootRunId,
-          hint: "Persist the child with the canonical sub-agent principal partition before starting durability",
-          errorKind: "validation" as const,
-        },
-        "Durable checkpoint skipped: invalid child conversation authority",
-      );
-      return;
+      return err(new Error("Durable child conversation authority is invalid"));
     }
-    void store
-      .upsertCheckpoint({
+    const descriptor = resumeDescriptors.get(run.runId);
+    const workspacePolicyHash = params.workspacePolicyHash ?? tryGetContext()?.workspacePolicyHash;
+    if (descriptor === undefined || workspacePolicyHash === undefined) {
+      return err(new Error("Durable sub-agent restart authority is incomplete"));
+    }
+    const written = await fromPromise(store.upsertCheckpoint({
         checkpointId: run.runId,
         rootRunId,
         tenantId: run.conversationScope.tenantId,
@@ -1089,32 +1102,41 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         lastHeartbeatAt: clock.now(),
         scriptRef: null,
         checkpointRef: null,
-        workspacePolicyHash: params.workspacePolicyHash ?? tryGetContext()?.workspacePolicyHash,
-        ...(resumeDescriptors.has(run.runId)
-          ? { resumeDescriptorHash: hashSubAgentResumeDescriptor(resumeDescriptors.get(run.runId)!) }
-          : {}),
-      })
-      .then((r) => {
-        if (!r.ok) {
+        workspacePolicyHash,
+        resumeDescriptorHash: hashSubAgentResumeDescriptor(descriptor),
+      }));
+    return written.ok ? written.value : err(written.error);
+  }
+
+  function persistDurableCheckpoint(run: SubAgentRun, params: SpawnParams): void {
+    if (!deps.durableRuns) return;
+    suppressError(
+      writeDurableCheckpoint(run, params).then((written) => {
+        if (!written.ok) {
           deps.logger?.warn(
-            { rootRunId, err: toSafeErrorLogString(r.error), hint: "durable checkpoint upsert failed — the run still proceeds; it will not be resumable after a crash", errorKind: "internal" as const },
-            "Durable checkpoint: upsert failed (run continues)",
+            {
+              rootRunId: run.rootRunId,
+              err: toSafeErrorLogString(written.error),
+              hint: "Inspect durable-run storage before relying on further checkpoint progress",
+              errorKind: "internal" as const,
+            },
+            "Durable checkpoint progress write failed",
           );
         }
-      })
-      .catch((err: unknown) => {
-        deps.logger?.warn(
-          { rootRunId, err: toSafeErrorLogString(err), hint: "durable checkpoint upsert threw — the run still proceeds", errorKind: "internal" as const },
-          "Durable checkpoint: upsert threw (run continues)",
-        );
-      });
+      }),
+      "durable checkpoint progress write",
+    );
   }
 
   /** Write the initial durable row and start its independent keep-alive. */
-  function startDurableCheckpoint(run: SubAgentRun, params: SpawnParams): void {
+  async function startDurableCheckpoint(
+    run: SubAgentRun,
+    params: SpawnParams,
+  ): Promise<Result<void, Error>> {
     const store = deps.durableRuns;
-    if (!store) return;
-    persistDurableCheckpoint(run, params);
+    if (!store) return ok(undefined);
+    const written = await writeDurableCheckpoint(run, params);
+    if (!written.ok) return written;
 
     // A keep-alive that fires INDEPENDENT of step/spawn completion so a
     // long-running child never trips the watchdog's stale threshold.
@@ -1126,6 +1148,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       handle.unref();
       heartbeatTimers.set(run.runId, handle);
     }
+    return ok(undefined);
   }
 
   /**
@@ -2320,7 +2343,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     const subSessionKey = display.key;
     const formattedKey = display.formatted;
     const workspacePolicyHash = params.workspacePolicyHash ?? tryGetContext()?.workspacePolicyHash;
-    if (deps.durableRuns && workspacePolicyHash !== undefined) {
+    let durableAdmissionError: Error | undefined;
+    if (deps.durableRuns) {
+      if (workspacePolicyHash === undefined) {
+        durableAdmissionError = new DurableSubAgentAdmissionError(
+          "Durable sub-agent workspace policy authority is missing",
+        );
+      }
       const descriptor = SubAgentResumeDescriptorSchema.safeParse({
         kind: "subagent_resume",
         task: params.task,
@@ -2355,10 +2384,16 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         worktree: params.worktree,
         workspacePolicyHash,
       });
-      if (descriptor.success) resumeDescriptors.set(runId, descriptor.data);
+      if (!descriptor.success) {
+        durableAdmissionError = new DurableSubAgentAdmissionError(
+          "Durable sub-agent resume descriptor validation failed",
+        );
+      } else {
+        resumeDescriptors.set(runId, descriptor.data);
+      }
     }
 
-    if (!params.reuseConversation) {
+    if (durableAdmissionError === undefined && !params.reuseConversation) {
       const saved = deps.sessionStore.save(run.conversationScope, [], {
         agentId: params.agentId,
         parentSessionKey: params.callerSessionKey,
@@ -2395,7 +2430,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // @allow-throw: session creation is part of the synchronous spawn admission boundary.
         throw saved.error;
       }
-    } else {
+    } else if (durableAdmissionError === undefined) {
       deps.logger?.info(
         { runId, conversationRef: run.conversationRef, agentId: params.agentId },
         "Reusing persistent conversation for multi-round driver",
@@ -2408,60 +2443,56 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     run.sessionKey = formattedKey;
     run.startedAt = clock.now();
 
-    // The SPAWN BOUNDARY — the run is now registered
-    // + running, so write the initial durable checkpoint (stepIndex -1) + start
-    // the keep-alive heartbeat. Inert when no durable store is wired. The keep-
-    // alive is cleared + the record marked completed in the terminal `finally`.
-    startDurableCheckpoint(run, params);
-
-    // Start the ~30s read-only progress fork so a long-running child
-    // surfaces its advance (a content-free session:sub_agent_progress) WITHOUT
-    // completing. Stopped in the terminal `finally` (no leaked timer). Runs
-    // independent of the durable store.
-    startProgressFork(run, params);
-
-    deps.logger?.info({
-      runId, agentId: params.agentId,
-      callerAgentId: params.callerAgentId ?? "unknown",
-      parentSessionKey: params.callerSessionKey ?? "unknown",
-      maxSteps: params.max_steps ?? deps.config.subAgentMaxSteps,
-      toolProfile: deps.config.subAgentToolGroups,
-    }, "Sub-agent spawn initiated");
-
-    // Emit spawn event
-    deps.eventBus.emit("session:sub_agent_spawned", {
-      runId, parentSessionKey: params.callerSessionKey ?? "unknown",
-      agentId: params.agentId, timestamp: clock.now(),
-    });
-
     // Async execution
     const execPromise = (async () => {
-      // Lifecycle hook - prepareSpawn
       let rollbackHandle: { rollback: () => Promise<void> } | undefined;
-      if (deps.lifecycleHooks) {
-        try {
-          rollbackHandle = await deps.lifecycleHooks.prepareSpawn({
-            runId,
-            parentSessionKey: params.callerSessionKey ?? "unknown",
-            childSessionKey: formattedKey,
-            agentId: params.agentId,
-            task: params.task,
-            depth: currentDepth,
-            maxDepth,
-          });
-        } catch (hookErr) {
-          deps.logger?.warn({
-            runId, err: hookErr,
-            hint: "prepareSubagentSpawn hook failed; proceeding with legacy spawn",
-            errorKind: "internal" as const,
-          }, "Lifecycle hook prepareSpawn failed");
-        }
-      }
-
-      // Hoist traceId for availability in catch block (failure record correlation)
       const traceId = params.graphTraceId ?? randomUUID();
 
       try {
+        if (durableAdmissionError !== undefined) throw durableAdmissionError;
+        const durableAdmission = await startDurableCheckpoint(run, params);
+        if (!durableAdmission.ok) {
+          throw new DurableSubAgentAdmissionError(
+            "Durable sub-agent checkpoint admission failed",
+            durableAdmission.error,
+          );
+        }
+
+        if (deps.lifecycleHooks) {
+          try {
+            rollbackHandle = await deps.lifecycleHooks.prepareSpawn({
+              runId,
+              parentSessionKey: params.callerSessionKey ?? "unknown",
+              childSessionKey: formattedKey,
+              agentId: params.agentId,
+              task: params.task,
+              depth: currentDepth,
+              maxDepth,
+            });
+          } catch (hookErr) {
+            deps.logger?.warn({
+              runId, err: hookErr,
+              hint: "prepareSubagentSpawn hook failed; inspect lifecycle integration",
+              errorKind: "internal" as const,
+            }, "Lifecycle hook prepareSpawn failed");
+          }
+        }
+
+        startProgressFork(run, params);
+
+        deps.logger?.info({
+          runId, agentId: params.agentId,
+          callerAgentId: params.callerAgentId ?? "unknown",
+          parentSessionKey: params.callerSessionKey ?? "unknown",
+          maxSteps: params.max_steps ?? deps.config.subAgentMaxSteps,
+          toolProfile: deps.config.subAgentToolGroups,
+        }, "Sub-agent spawn initiated");
+
+        deps.eventBus.emit("session:sub_agent_spawned", {
+          runId, parentSessionKey: params.callerSessionKey ?? "unknown",
+          agentId: params.agentId, timestamp: clock.now(),
+        });
+
         deps.logger?.info({
           runId, agentId: params.agentId,
           ...(params.graphId ? { graphId: params.graphId } : {}),
@@ -2510,6 +2541,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
           agentId: run.agentId,
           startedAt: clock.now(),
           trustLevel: run.trustLevel,
+          workspacePolicyHash,
           // Propagate channel context for downstream tool RPC injection
           ...(subDeliveryOrigin && { channelType: subDeliveryOrigin.channelType }),
           ...(subDeliveryOrigin && { deliveryOrigin: subDeliveryOrigin }),
@@ -2537,10 +2569,21 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             params.max_steps,
             params.callerAgentId,
             params.graphId && params.nodeId
-              ? { graphId: params.graphId, nodeId: params.nodeId, reuseConversation: params.reuseConversation, graphNodeDepth: params.graphNodeDepth }
+              ? {
+                  graphId: params.graphId,
+                  nodeId: params.nodeId,
+                  reuseConversation: params.reuseConversation,
+                  graphNodeDepth: params.graphNodeDepth,
+                  workspacePolicySnapshot: params.workspacePolicySnapshot,
+                }
               : params.reuseConversation
-                ? { reuseConversation: params.reuseConversation }
-                : undefined,
+                ? {
+                    reuseConversation: params.reuseConversation,
+                    workspacePolicySnapshot: params.workspacePolicySnapshot,
+                  }
+                : params.workspacePolicySnapshot === undefined
+                  ? undefined
+                  : { workspacePolicySnapshot: params.workspacePolicySnapshot },
             params.tokenBudget,
             {
               rootRunId: run.rootRunId,
@@ -2989,6 +3032,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
 
         const completedAt = clock.now();
         const errorMessage = error instanceof Error ? error.message : String(error);
+        const admissionRejected = error instanceof DurableSubAgentAdmissionError;
         const runtimeMs = completedAt - run.startedAt;
         terminalizeRun(runId, {
           endReason: "failed",
@@ -3000,13 +3044,13 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         deps.logger?.error({
           runId,
           durationMs: runtimeMs,
-          err: error,
+          err: toSafeErrorLogString(error),
           hint: "Sub-agent execution failed; check agent config, model availability, and API key",
           errorKind: "internal" as const,
         }, "Sub-agent execution failed");
 
         // Persist failure record BEFORE rollback deletes the directory
-        if (deps.dataDir) {
+        if (deps.dataDir && !admissionRejected) {
           await persistFailureRecord({
             dataDir: deps.dataDir,
             sessionKey: formattedKey,
@@ -3059,7 +3103,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         emitProxyStop(run, runId, "failed");
 
         // Announce failure to channel -- LLM-free direct send
-        if (params.announceChannelType && params.announceChannelId) {
+        if (!admissionRejected && params.announceChannelType && params.announceChannelId) {
           await deliverFailureNotification({
             channelType: params.announceChannelType,
             channelId: params.announceChannelId,
@@ -3076,7 +3120,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
             callerConversation: params.callerConversation,
             destinationEndpoint: run.callerEndpoint,
           }, deps);
-        } else {
+        } else if (!admissionRejected) {
           // Log explicit reason when failure announcement cannot be routed
           deps.logger?.debug({
             runId,
@@ -3086,7 +3130,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         }
 
         // Lifecycle hook - onEnded (failure path)
-        if (deps.lifecycleHooks) {
+        if (deps.lifecycleHooks && !admissionRejected) {
           try {
             await deps.lifecycleHooks.onEnded({
               runId,
@@ -3740,6 +3784,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   async function resumeDurable(
     record: DurableRunRecord,
     leaseId: string,
+    workspacePolicySnapshot: WorkspacePolicySnapshot,
   ): Promise<Result<string, Error>> {
     const loaded = deps.sessionStore.loadByRef(
       { tenantId: record.tenantId, agentId: record.agentId },
@@ -3763,6 +3808,12 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
     if (!authority.ok) return authority;
     if (descriptor.value.workspacePolicyHash !== record.workspacePolicyHash) {
       return err(new Error("Protected sub-agent resume workspace policy mismatch"));
+    }
+    if (
+      workspacePolicySnapshot.agentId !== record.agentId
+      || workspacePolicySnapshot.combinedHash !== descriptor.value.workspacePolicyHash
+    ) {
+      return err(new Error("Verified sub-agent resume workspace policy mismatch"));
     }
     const resumed = tryCatch(() => spawn({
       task: descriptor.value.task,
@@ -3797,6 +3848,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       graphToolNames: descriptor.value.graphToolNames,
       worktree: descriptor.value.worktree,
       workspacePolicyHash: descriptor.value.workspacePolicyHash,
+      workspacePolicySnapshot,
       reuseConversation: {
         conversationRef: record.conversationRef,
         conversationScope: record.conversationScope,

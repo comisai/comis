@@ -20,10 +20,12 @@ import {
 import { persistTaskSync, recoverTasks, removeTaskFile } from "./background-task-persistence.js";
 import type {
   BackgroundTask,
+  BackgroundContinuationOutbox,
   BackgroundTaskOrigin,
   BackgroundSessionState,
   BackgroundTaskNotificationPolicy,
 } from "./background-task-types.js";
+import { BackgroundContinuationOutboxSchema } from "./background-task-types.js";
 
 /** Notification callback fired when background task completes or fails. */
 export type NotifyFn = (opts: {
@@ -99,6 +101,11 @@ export interface BackgroundTaskManager {
     next: BackgroundSessionState,
     expected?: readonly BackgroundSessionState[],
   ): boolean;
+  persistContinuationOutbox(
+    taskId: string,
+    outbox: BackgroundContinuationOutbox,
+    expected?: readonly BackgroundSessionState[],
+  ): Result<void, Error>;
   scheduleDispatchRetry(taskId: string): void;
 }
 
@@ -237,11 +244,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         timestamp: clock.now(),
       });
 
-      // Notification routing lives in the completion-dispatcher (subscribed
-      // to background_task:completed above). The dispatcher inspects
-      // task.dispatchState before firing the user-visible fallback, and the
-      // runner skips when state is "notified" (single-owner contract, zero
-      // spurious outbound).
+      // Notification routing lives in the completion runner subscribed above.
     },
 
     fail(taskId, error) {
@@ -373,7 +376,8 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
 
         if (
           task.dispatchState === "delivered"
-          || task.dispatchState === "fallback_delivered"
+          || task.dispatchState === "parked_permanent"
+          || task.dispatchState === "parked_uncertain"
           || task.dispatchState === "consumed_live"
           || persisted.status === "cancelled"
         ) {
@@ -382,10 +386,13 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
         }
         if (
           task.dispatchState === "executing"
-          || task.dispatchState === "delivering"
-          || task.dispatchState === "fallback_pending"
         ) {
           task.dispatchState = "pending";
+          persistTaskSync(dataDir, task);
+        } else if (task.dispatchState === "delivering") {
+          task.dispatchState = task.continuationOutbox?.deliveryProtection === "ledger"
+            ? "ready_to_deliver"
+            : "parked_uncertain";
           persistTaskSync(dataDir, task);
         }
         if (persisted.status === "completed") {
@@ -435,14 +442,36 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       return true;
     },
 
+    persistContinuationOutbox(taskId, outbox, expected) {
+      const parsed = BackgroundContinuationOutboxSchema.safeParse(outbox);
+      if (!parsed.success) return err(new Error("Background continuation outbox validation failed"));
+      const task = tasks.get(taskId);
+      if (!task) return err(new Error(`Background task not found: ${taskId}`));
+      const current = task.dispatchState ?? "pending";
+      if (expected && !expected.includes(current)) {
+        return err(new Error(`Background task ${taskId} cannot persist an outbox from ${current}`));
+      }
+      task.continuationOutbox = parsed.data;
+      task.dispatchState = "ready_to_deliver";
+      persistTaskSync(dataDir, task);
+      return ok(undefined);
+    },
+
     scheduleDispatchRetry(taskId) {
       const task = tasks.get(taskId);
-      if (!task || task.dispatchState !== "pending" || dispatchRetryTimers.has(taskId)) return;
+      if (
+        !task
+        || (task.dispatchState !== "pending" && task.dispatchState !== "ready_to_deliver")
+        || dispatchRetryTimers.has(taskId)
+      ) return;
       const delayMs = Math.min(60_000, 1_000 * (2 ** Math.min(task.dispatchAttempts, 6)));
       const retry = timers.setTimeout(() => {
         dispatchRetryTimers.delete(taskId);
         const current = tasks.get(taskId);
-        if (!current || current.dispatchState !== "pending") return;
+        if (
+          !current
+          || (current.dispatchState !== "pending" && current.dispatchState !== "ready_to_deliver")
+        ) return;
         const event = current.status === "completed"
           ? "background_task:completed" as const
           : current.status === "failed"

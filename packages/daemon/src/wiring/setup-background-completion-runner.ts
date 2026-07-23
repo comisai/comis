@@ -18,12 +18,14 @@ import {
   createTurnFlightTracker,
   type BackgroundCompletionRunner,
   type BackgroundCompletionRunnerDeps,
+  type BackgroundCompletionDeliveryOutcome,
   type BackgroundTaskManager,
   type CompletionDispatcher,
   type NotifyFn,
 } from "@comis/agent";
 import {
   resolvePlatformDeliveryResult,
+  isPermanentError,
   type ChannelPort,
   type DeliveryService,
   type OutwardSendLedgerPort,
@@ -62,7 +64,7 @@ export interface SetupBackgroundCompletionRunnerDeps {
    */
   taskManager: Pick<
     BackgroundTaskManager,
-    "getTask" | "transitionDispatchState" | "scheduleDispatchRetry"
+    "getTask" | "transitionDispatchState" | "persistContinuationOutbox" | "scheduleDispatchRetry"
   >;
   /** bgNotifyFn closure used when the originating session is gone. */
   fallbackNotifyFn: NotifyFn;
@@ -85,24 +87,29 @@ export function setupBackgroundCompletionRunner(
 ): BackgroundCompletionRunnerContext {
   async function deliver(
     input: Parameters<BackgroundCompletionRunnerDeps["deliverCompletion"]>[0],
-  ) {
+  ): Promise<BackgroundCompletionDeliveryOutcome> {
     const { origin, response, idempotencyKey } = input;
     const endpoint = origin.turnScope.endpoint;
     const adapter = deps.adaptersByType.get(endpoint.channelType);
     if (adapter === undefined || adapter.channelId !== endpoint.channelInstanceId) {
-      return err({
+      return {
+        kind: "retryable_pre_send",
         errorKind: "precondition" as const,
         message: "The originating channel adapter instance is not active",
-      });
+      };
     }
     const rootRunId = `background-task:${input.taskId}`;
     const allocated = deps.outwardLedger
       ? await deps.outwardLedger.allocateStep(rootRunId, idempotencyKey)
       : ok<number | undefined>(undefined);
     if (!allocated.ok) {
-      return err({ errorKind: "dependency" as const, message: allocated.error.message });
+      return {
+        kind: "retryable_pre_send",
+        errorKind: "dependency",
+        message: allocated.error.message,
+      };
     }
-    const sent = await wrapOutwardSend({
+    const attemptedSend = await fromPromise(wrapOutwardSend({
       ledger: deps.outwardLedger,
       rootRunId,
       outwardStepIndex: allocated.value,
@@ -142,10 +149,42 @@ export function setupBackgroundCompletionRunner(
             ? err(new Error("The originating platform did not return a delivery receipt"))
             : ok({ messageId: idempotencyKey });
       },
-    });
-    return sent.ok
-      ? ok(undefined)
-      : err({ errorKind: "dependency" as const, message: sent.error.message });
+    }));
+    let failure: unknown;
+    if (!attemptedSend.ok) {
+      failure = attemptedSend.error;
+    } else if (!attemptedSend.value.ok) {
+      failure = attemptedSend.value.error;
+    } else {
+      return { kind: "accepted" };
+    }
+    const message = failure instanceof Error ? failure.message : String(failure);
+    if (!deps.outwardLedger || allocated.value === undefined) {
+      return isPermanentError(message)
+        ? { kind: "permanent", errorKind: "platform", message }
+        : { kind: "uncertain", errorKind: "dependency", message };
+    }
+    const retained = await deps.outwardLedger.lookup(rootRunId, allocated.value);
+    if (!retained.ok) {
+      return { kind: "uncertain", errorKind: "dependency", message: retained.error.message };
+    }
+    if (retained.value === undefined) {
+      return { kind: "retryable_pre_send", errorKind: "dependency", message };
+    }
+    switch (retained.value.state) {
+      case "committed":
+        return { kind: "accepted" };
+      case "failed":
+        return { kind: "permanent", errorKind: "platform", message };
+      case "send_attempt_started":
+      case "unknown_after_send":
+      case "unresolved":
+        return { kind: "uncertain", errorKind: "dependency", message };
+      default: {
+        const _exhaustive: never = retained.value.state;
+        return _exhaustive;
+      }
+    }
   }
   // LIVE-TURN oracle shared by dispatcher + runner: a tool auto-backgrounded
   // mid-turn is consumed by its own still-running turn (the background_tasks
@@ -174,6 +213,7 @@ export function setupBackgroundCompletionRunner(
     taskManager: deps.taskManager,
     deliverCompletion: deliver,
     deliverFallback: deliver,
+    deliveryProtection: deps.outwardLedger ? "ledger" : "none",
     maxBackgroundHops: deps.maxBackgroundHops,
     isTurnInFlight: (key) => turnFlight.isTurnInFlight(key),
     logger: deps.logger,

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// dispatchState 3-state machine + persistence + recovery.
+// Durable dispatch lifecycle, protected outbox persistence, and recovery.
 //
-//   - BackgroundSessionState: "pending" | "notified" | "dispatched"
+//   - BackgroundSessionState preserves execution, delivery, and parked outcomes
 //   - BackgroundTaskNotificationPolicy: typed enum (NOT a boolean)
 //   - dispatchState persists alongside BackgroundTask JSON file
 //   - Recovery-without-events: on daemon restart, recover dispatchState from
@@ -120,7 +120,7 @@ async function loadDispatchTypes(): Promise<
   }
 }
 
-describe("dispatchState 3-state machine + persistence + recovery", () => {
+describe("durable dispatch lifecycle and recovery", () => {
   let dataDir: string;
 
   beforeEach(() => {
@@ -132,11 +132,20 @@ describe("dispatchState 3-state machine + persistence + recovery", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("BackgroundSessionState is a 3-element typed enum (pending/notified/dispatched)", async () => {
+  it("BackgroundSessionState exposes the closed durable delivery lifecycle", async () => {
     const mod = await loadDispatchTypes();
     expect(mod).toBeDefined();
     if (!mod) return;
-    expect(mod.STATES).toEqual(["pending", "notified", "dispatched"]);
+    expect(mod.STATES).toEqual([
+      "pending",
+      "executing",
+      "ready_to_deliver",
+      "delivering",
+      "delivered",
+      "parked_permanent",
+      "parked_uncertain",
+      "consumed_live",
+    ]);
   });
 
   it("BackgroundTaskNotificationPolicy is a typed enum (NOT a boolean) and round-trips through JSON", async () => {
@@ -172,6 +181,8 @@ describe("dispatchState 3-state machine + persistence + recovery", () => {
       completedAt: 2,
       origin: buildOrigin({ agentId: "agent-a" }),
       dispatchState: "pending",
+      continuationExecutionId: "task-pending",
+      dispatchAttempts: 0,
       _promise: Promise.resolve(),
     };
     persistTaskSync(dataDir, taskWithPromise as unknown as import("./background-task-types.js").BackgroundTask);
@@ -182,15 +193,25 @@ describe("dispatchState 3-state machine + persistence + recovery", () => {
     // PersistedTaskState carries dispatchState — assertion holds.
     expect(parsed.dispatchState).toBe("pending");
 
-    // Advance through the BackgroundTask path to "notified".
-    const advanced: Record<string, unknown> = { ...taskWithPromise, dispatchState: "notified" };
+    const advanced: Record<string, unknown> = {
+      ...taskWithPromise,
+      dispatchState: "ready_to_deliver",
+      continuationOutbox: {
+        kind: "continuation",
+        response: "exact response",
+        executionId: "execution-a",
+        idempotencyKey: "continuation-a",
+        deliveryProtection: "ledger",
+      },
+    };
     persistTaskSync(dataDir, advanced as unknown as import("./background-task-types.js").BackgroundTask);
     const reread = JSON.parse(readFileSync(filePath, "utf-8")) as Record<string, unknown>;
-    expect(reread.dispatchState).toBe("notified");
+    expect(reread.dispatchState).toBe("ready_to_deliver");
+    expect(reread.continuationOutbox).toEqual(advanced.continuationOutbox);
   });
 
   it("recovery-without-events preserves dispatchState", () => {
-    // Seed a task JSON file with dispatchState: "notified" already on disk.
+    // Seed a terminal parked task already on disk.
     const agentDir = safePath(dataDir, "agent-recover");
     mkdirSync(agentDir, { recursive: true });
     const filePath = safePath(agentDir, "task-recovered.json");
@@ -201,7 +222,16 @@ describe("dispatchState 3-state machine + persistence + recovery", () => {
       startedAt: 1,
       completedAt: 2,
       origin: buildOrigin({ agentId: "agent-recover" }),
-      dispatchState: "notified",
+      dispatchState: "parked_uncertain",
+      continuationExecutionId: "task-recovered",
+      dispatchAttempts: 1,
+      continuationOutbox: {
+        kind: "continuation",
+        response: "exact response",
+        executionId: "execution-a",
+        idempotencyKey: "continuation-a",
+        deliveryProtection: "none",
+      },
     };
     writeFileSync(filePath, JSON.stringify(seeded, null, 2), "utf-8");
 
@@ -227,11 +257,49 @@ describe("dispatchState 3-state machine + persistence + recovery", () => {
     );
     expect(notifyEvents).toHaveLength(0);
 
-    // The recovered task's dispatchState is "notified".
     const recovered = manager.getTask("task-recovered") as
       | (import("./background-task-types.js").BackgroundTask & { dispatchState?: string })
       | undefined;
     expect(recovered).toBeDefined();
-    expect(recovered?.dispatchState).toBe("notified");
+    expect(recovered?.dispatchState).toBe("parked_uncertain");
   });
+
+  it.each([
+    ["none", "parked_uncertain"],
+    ["ledger", "ready_to_deliver"],
+  ] as const)(
+    "recovers an interrupted %s-protected delivery as %s",
+    (deliveryProtection, expectedState) => {
+      const task: PersistedTaskState = {
+        id: `task-${deliveryProtection}`,
+        toolName: "exec",
+        status: "completed",
+        startedAt: 1,
+        completedAt: 2,
+        origin: buildOrigin({ agentId: "agent-recovering" }),
+        dispatchState: "delivering",
+        continuationExecutionId: `task-${deliveryProtection}`,
+        dispatchAttempts: 1,
+        continuationOutbox: {
+          kind: "continuation",
+          response: "exact response",
+          executionId: "execution-a",
+          idempotencyKey: `continuation-${deliveryProtection}`,
+          deliveryProtection,
+        },
+      };
+      persistTaskSync(dataDir, task);
+      const manager = createBackgroundTaskManager({
+        dataDir,
+        eventBus: createMockEventBus().bus,
+        logger: createMockLogger(),
+        clock: testClock,
+        timers: testTimers,
+      });
+
+      manager.recoverOnStartup();
+
+      expect(manager.getTask(task.id)?.dispatchState).toBe(expectedState);
+    },
+  );
 });

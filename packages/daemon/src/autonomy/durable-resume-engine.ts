@@ -696,7 +696,9 @@ export function createDurableResumeEngine(deps: DurableResumeEngineDeps): Durabl
           resumed++;
           emitObservationalEventSafely({ eventBus, logger }, "durable:resumed", {
             rootRunId,
+            sourceCheckpointId: sourceRecord.checkpointId,
             checkpointId: record.checkpointId,
+            sourceTerminalReason: "superseded",
             timestamp: nowMs(),
           });
           logger.info(

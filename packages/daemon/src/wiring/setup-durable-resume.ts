@@ -28,7 +28,7 @@
 
 import { existsSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import type { ClockPort, TimerPort, TimerHandle, DurableRunPort, OutwardSendLedgerPort, DurableRunRecord, PerAgentConfig, AgentCapability, TypedEventBus } from "@comis/core";
+import type { ClockPort, TimerPort, TimerHandle, DurableRunPort, OutwardSendLedgerPort, DurableRunRecord, PerAgentConfig, AgentCapability, TypedEventBus, WorkspacePolicySnapshot } from "@comis/core";
 import {
   createDeliveryOrigin,
   createResolvedRequestContext,
@@ -471,8 +471,15 @@ export function buildDurableResume(deps: {
    * without node re-entry.
    */
   resumeGraph?: (record: DurableRunRecord, lease: IssuedLease) => Promise<Result<void, Error>>;
-  resumePlain?: (record: DurableRunRecord, lease: IssuedLease) => Promise<Result<void, Error>>;
-  resolveWorkspacePolicy?: (policyHash: string) => Result<void, Error>;
+  resumePlain?: (
+    record: DurableRunRecord,
+    lease: IssuedLease,
+    workspacePolicySnapshot: WorkspacePolicySnapshot,
+  ) => Promise<Result<void, Error>>;
+  resolveWorkspacePolicy?: (
+    agentId: string,
+    policyHash: string,
+  ) => Promise<Result<WorkspacePolicySnapshot, Error>>;
   /**
    * The orchestrate-kind resume + orphan-reclaim seams (workspace resolver +
    * fs-exists probe + cleanupRun/rmSync reclaim). When present: a flat row with
@@ -506,10 +513,8 @@ export function buildDurableResume(deps: {
     revokeLease: (leaseId) => {
       sharedLeaseManager.revoke(leaseId);
     },
-    // resumeRun: re-anchor the root with BoundedAutonomy so the re-minted lease is
-    // bounded (budget/kill reach). The checkpoint carries caps/tree/budget, not a
-    // full re-spawnable task spec, so a run resumes-as-anchored (a richer re-spawn
-    // from the checkpoint is a future enhancement).
+    // resumeRun rehydrates authority and dispatches to graph, orchestrate, or
+    // protected plain-sub-agent re-entry.
     resumeRun: async (record: DurableRunRecord, lease: IssuedLease): Promise<Result<void, Error>> => {
       boundedAutonomy?.rehydrateBudget(record.rootRunId, record.rootBudget);
       // DAG-vs-flat-vs-orchestrate dispatch — all explicit discriminators, never a
@@ -551,14 +556,14 @@ export function buildDurableResume(deps: {
         ) {
           return err(new Error("Plain sub-agent checkpoint lacks protected restart authority"));
         }
-        const policy = resolveWorkspacePolicy(record.workspacePolicyHash);
+        const policy = await resolveWorkspacePolicy(record.agentId, record.workspacePolicyHash);
         if (!policy.ok) return policy;
         try {
           boundedAutonomy?.registerRoot(record.rootRunId, lease.leaseId);
         } catch (cause) {
           return err(cause instanceof Error ? cause : new Error(String(cause)));
         }
-        const resumed = await resumePlain(record, lease);
+        const resumed = await resumePlain(record, lease, policy.value);
         if (!resumed.ok) {
           boundedAutonomy?.evictRootIfIdle(record.rootRunId);
         }
@@ -581,6 +586,7 @@ export function buildDurableResume(deps: {
         traceId: randomUUID(),
         startedAt: clock.now(),
         trustLevel: record.trustLevel,
+        workspacePolicyHash: record.workspacePolicyHash,
         channelType: internalIdentity.value.turnScope.endpoint.channelType,
         deliveryOrigin: createDeliveryOrigin({
           tenantId: record.tenantId,

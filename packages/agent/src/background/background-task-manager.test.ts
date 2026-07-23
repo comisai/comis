@@ -612,7 +612,7 @@ describe("BackgroundTaskManager", () => {
   // boundary so recovered tasks reflect their pre-restart dispatch state.
   // ---------------------------------------------------------------------------
   describe("recoverOnStartup preserves dispatchState", () => {
-    it("propagates dispatchState='notified' from disk into the recovered task", () => {
+    it("preserves a parked delivery outcome without replaying it", () => {
       const testDir = safePath(tmpdir(), `comis-bg-mgr-disp-${randomUUID()}`);
       mkdirSync(testDir, { recursive: true });
 
@@ -625,7 +625,7 @@ describe("BackgroundTaskManager", () => {
           startedAt: Date.now() - 5000,
           completedAt: Date.now() - 4000,
           origin,
-          dispatchState: "fallback_delivered",
+          dispatchState: "parked_uncertain",
           continuationExecutionId: "disp-task-1",
           dispatchAttempts: 1,
         };
@@ -652,7 +652,7 @@ describe("BackgroundTaskManager", () => {
             })
           | undefined;
         expect(recovered).toBeDefined();
-        expect(recovered?.dispatchState).toBe("fallback_delivered");
+        expect(recovered?.dispatchState).toBe("parked_uncertain");
       } finally {
         rmSync(testDir, { recursive: true, force: true });
       }

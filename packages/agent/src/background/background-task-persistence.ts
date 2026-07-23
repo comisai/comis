@@ -16,7 +16,11 @@
 import { readFileSync, readdirSync, statSync, unlinkSync, existsSync } from "node:fs";
 import { BackgroundTaskOriginSchema, safePath, systemNowMs } from "@comis/core";
 import { ensureContainedDir, writeRegularFile } from "@comis/observability";
-import type { BackgroundTask, PersistedTaskState } from "./background-task-types.js";
+import {
+  BackgroundContinuationOutboxSchema,
+  type BackgroundTask,
+  type PersistedTaskState,
+} from "./background-task-types.js";
 
 /** Directory name under data dir for background task state files. */
 export const TASK_DIR_NAME = "background-tasks";
@@ -41,6 +45,7 @@ function toPersistedState(task: BackgroundTask | PersistedTaskState): PersistedT
     origin: task.origin,
     continuationExecutionId: task.continuationExecutionId,
     dispatchAttempts: task.dispatchAttempts,
+    ...(task.continuationOutbox !== undefined && { continuationOutbox: task.continuationOutbox }),
     ...(task.notificationPolicy !== undefined && { notificationPolicy: task.notificationPolicy }),
     ...(task.dispatchState !== undefined && { dispatchState: task.dispatchState }),
   };
@@ -138,6 +143,10 @@ export function recoverTasks(dataDir: string): PersistedTaskState[] {
           || !parsed.continuationExecutionId
           || !Number.isInteger(parsed.dispatchAttempts)
           || !BackgroundTaskOriginSchema.safeParse(parsed.origin).success
+          || (
+            parsed.continuationOutbox !== undefined
+            && !BackgroundContinuationOutboxSchema.safeParse(parsed.continuationOutbox).success
+          )
         ) {
           continue;
         }

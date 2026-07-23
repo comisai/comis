@@ -353,7 +353,13 @@ export interface OrchestrationEvents {
    * rehydrated it from its checkpoint). Counts/ids only (§2.7) — the numeric
    * checkpointId identifies the resumed execution attempt, never a body.
    */
-  "durable:resumed": { rootRunId: string; checkpointId: string; timestamp: number };
+  "durable:resumed": {
+    rootRunId: string;
+    sourceCheckpointId: string;
+    checkpointId: string;
+    sourceTerminalReason: "superseded";
+    timestamp: number;
+  };
 
   /**
    * A capability lease (or a whole spawn tree) was cooperatively

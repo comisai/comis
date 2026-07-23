@@ -69,6 +69,8 @@ export function durableResumedEventToRow(payload: EventMap["durable:resumed"]): 
     message: "durable:resumed",
     details: JSON.stringify({
       signal: "durable_resumed",
+      sourceCheckpointId: payload.sourceCheckpointId,
+      sourceTerminalReason: payload.sourceTerminalReason,
       checkpointId: payload.checkpointId,
       rootRunId: payload.rootRunId,
     }),

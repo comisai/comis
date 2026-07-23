@@ -24,20 +24,15 @@ import type { NotifyFn } from "./background-task-manager.js";
 // Runtime constants exported for downstream consumers (test surface + ops).
 // ---------------------------------------------------------------------------
 
-/**
- * The 3-state typed enum as a runtime array. Order matches transition order:
- *   pending → (notified | dispatched).
- *
- * Exported as a `readonly string[]` so tests can assert
- * `STATES === ["pending", "notified", "dispatched"]`.
- */
+/** Closed durable completion lifecycle exposed for diagnostics and tests. */
 export const STATES: readonly BackgroundSessionState[] = [
   "pending",
   "executing",
+  "ready_to_deliver",
   "delivering",
   "delivered",
-  "fallback_pending",
-  "fallback_delivered",
+  "parked_permanent",
+  "parked_uncertain",
   "consumed_live",
 ] as const;
 

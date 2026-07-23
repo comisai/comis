@@ -9,6 +9,7 @@ export type {
   BackgroundTask,
   BackgroundTaskStatus,
   BackgroundSessionState,
+  BackgroundContinuationOutbox,
   PersistedTaskState,
 } from "./background-task-types.js";
 // `BackgroundTaskNotificationPolicy` is re-exported below as a runtime
@@ -47,6 +48,7 @@ export { createBackgroundCompletionRunner } from "./completion-runner.js";
 export type {
   BackgroundCompletionRunner,
   BackgroundCompletionRunnerDeps,
+  BackgroundCompletionDeliveryOutcome,
   RunnerSessionStore,
 } from "./completion-runner.js";
 export {

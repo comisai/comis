@@ -32,6 +32,8 @@ import {
   type ToolCapabilityPort,
   type PerAgentConfig,
   type WrapExternalContentOptions,
+  verifyWorkspacePolicySnapshot,
+  type WorkspacePolicySnapshot,
 } from "@comis/core";
 // Runtime adapter factories are constructed at this composition root.
 import { createSystemClock, createSystemEnv, createSystemTimers } from "@comis/infra";
@@ -2097,6 +2099,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const plainResumeHolder: { ref?: (
     record: import("@comis/core").DurableRunRecord,
     lease: import("./autonomy/durable-resume-engine.js").IssuedLease,
+    workspacePolicySnapshot: WorkspacePolicySnapshot,
   ) => Promise<import("@comis/shared").Result<void, Error>> } = {};
   const { durableResume, startAndResumeDurable, durableRunFacts } = buildDurableResume({
     db, durabilityCfg, durableRunStore: durableRunStoreEarly, outwardLedger: outwardLedgerEarly,
@@ -2104,12 +2107,23 @@ async function bootChannels(boot: BootContext): Promise<void> {
     eventBus: container.eventBus, logger: daemonLogger, clock: handle.clock, timers: handle.timers,
     // Route a DAG record (spawn_tree objects w/ status) to coordinator.resumeGraph via the late-bound holder.
     resumeGraph: (record, lease) => graphResumeHolder.ref ? graphResumeHolder.ref(record, lease) : Promise.resolve(err(new Error("resumeGraph holder unpopulated (coordinator not built)"))),
-    resumePlain: (record, lease) => plainResumeHolder.ref ? plainResumeHolder.ref(record, lease) : Promise.resolve(err(new Error("plain sub-agent resume holder is unavailable"))),
-    resolveWorkspacePolicy: (policyHash) => {
-      const resolved = container.workspacePolicyPort?.get(policyHash);
-      return resolved?.ok
-        ? ok(undefined)
-        : err(new Error("The immutable workspace policy snapshot is unavailable"));
+    resumePlain: (record, lease, workspacePolicySnapshot) => plainResumeHolder.ref
+      ? plainResumeHolder.ref(record, lease, workspacePolicySnapshot)
+      : Promise.resolve(err(new Error("plain sub-agent resume holder is unavailable"))),
+    resolveWorkspacePolicy: async (agentId, policyHash) => {
+      const loaded = await container.workspacePolicyPort?.load(agentId);
+      if (loaded === undefined || !loaded.ok) {
+        return err(new Error("The immutable workspace policy snapshot is unavailable"));
+      }
+      const verified = verifyWorkspacePolicySnapshot(loaded.value);
+      if (
+        !verified.ok
+        || loaded.value.agentId !== agentId
+        || loaded.value.combinedHash !== policyHash
+      ) {
+        return err(new Error("The immutable workspace policy snapshot does not match the durable checkpoint"));
+      }
+      return ok(loaded.value);
     },
     // The orchestrate-kind resume + orphan-reclaim seams (workspace resolver + real existsSync + result-ref-store.cleanupRun + a safePath-guarded rmSync). Populated ONLY when durability is enabled (a default install builds no unused store) so a resumable orchestrate row's pinned script + checkpoint are VERIFIED on boot and a dead run's artifacts are RECLAIMED on orphan; absent ⇒ a scriptRef row degrades to the plain flat re-anchor (deny-by-absence — the runner only writes scriptRef rows under orchestrateResume).
     ...(durabilityCfg.enabled ? { orchestrateResume: buildOrchestrateResumeWiring({ workspaceDirs, logger: daemonLogger }) } : {}),
@@ -2398,8 +2412,12 @@ async function bootChannels(boot: BootContext): Promise<void> {
   subAgentRunner.setGraphCoordinator(graphCoordinator);
   // Populate the late-bound holder so resumeRun (fires at resumeAndStart, after channels) routes a DAG record to coordinator.resumeGraph (incomplete-node re-entry).
   graphResumeHolder.ref = (record, lease) => graphCoordinator.resumeGraph(record, lease);
-  plainResumeHolder.ref = async (record, lease) => {
-    const resumed = await subAgentRunner.resumeDurable(record, lease.leaseId);
+  plainResumeHolder.ref = async (record, lease, workspacePolicySnapshot) => {
+    const resumed = await subAgentRunner.resumeDurable(
+      record,
+      lease.leaseId,
+      workspacePolicySnapshot,
+    );
     return resumed.ok ? ok(undefined) : resumed;
   };
   const namedGraphStore = createNamedGraphStore(db);

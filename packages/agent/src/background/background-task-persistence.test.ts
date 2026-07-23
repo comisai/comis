@@ -295,7 +295,7 @@ describe("background-task-persistence", () => {
   });
 
   describe("persistTaskSync persists dispatchState", () => {
-    it("round-trips dispatchState='dispatched' through the BackgroundTask path (with _promise)", () => {
+    it("round-trips a ready protected outbox through the BackgroundTask path", () => {
       // Use the BackgroundTask path (object has _promise) to exercise
       // toPersistedState — the helper that strips unknown fields. Because
       // dispatchState is part of PersistedTaskState + toPersistedState, the
@@ -307,7 +307,16 @@ describe("background-task-persistence", () => {
         startedAt: 1,
         completedAt: 2,
         origin: buildOrigin({ agentId: "agent-disp" }),
-        dispatchState: "dispatched",
+        dispatchState: "ready_to_deliver",
+        continuationExecutionId: "task-disp-1",
+        dispatchAttempts: 1,
+        continuationOutbox: {
+          kind: "continuation",
+          response: "exact response",
+          executionId: "execution-a",
+          idempotencyKey: "continuation-a",
+          deliveryProtection: "ledger",
+        },
         _promise: Promise.resolve(),
       };
       // Cast through unknown so the test file stays buildable.
@@ -319,7 +328,8 @@ describe("background-task-persistence", () => {
       const filePath = safePath(safePath(dataDir, "agent-disp"), "task-disp-1.json");
       const onDisk = JSON.parse(readFileSync(filePath, "utf-8")) as Record<string, unknown>;
       // PersistedTaskState carries dispatchState, so the round-trip preserves it.
-      expect(onDisk.dispatchState).toBe("dispatched");
+      expect(onDisk.dispatchState).toBe("ready_to_deliver");
+      expect(onDisk.continuationOutbox).toEqual(taskRecord.continuationOutbox);
     });
   });
 });

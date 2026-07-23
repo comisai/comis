@@ -1525,7 +1525,9 @@ describe("durableResumedEventToRow", () => {
   it("maps a durable:resumed payload to an info health_signal row with checkpoint identity", () => {
     const row = durableResumedEventToRow({
       rootRunId: "root-resumed",
+      sourceCheckpointId: "checkpoint-source",
       checkpointId: "checkpoint-4",
+      sourceTerminalReason: "superseded",
       timestamp: 6000,
     });
 
@@ -1537,9 +1539,17 @@ describe("durableResumedEventToRow", () => {
 
     const details = JSON.parse(row.details ?? "{}") as Record<string, unknown>;
     expect(details.signal).toBe("durable_resumed");
+    expect(details.sourceCheckpointId).toBe("checkpoint-source");
+    expect(details.sourceTerminalReason).toBe("superseded");
     expect(details.checkpointId).toBe("checkpoint-4");
     expect(details.rootRunId).toBe("root-resumed");
-    expect(Object.keys(details).sort()).toEqual(["checkpointId", "rootRunId", "signal"]);
+    expect(Object.keys(details).sort()).toEqual([
+      "checkpointId",
+      "rootRunId",
+      "signal",
+      "sourceCheckpointId",
+      "sourceTerminalReason",
+    ]);
   });
 });
 
@@ -1872,7 +1882,13 @@ describe("setupObsPersistence", () => {
     });
     // j-m. The four autonomy/durable lifecycle signals.
     eventBus.emit("durable:orphaned", { rootRunId: "root-1", reason: "not_resumable", timestamp: 1009 });
-    eventBus.emit("durable:resumed", { rootRunId: "root-2", checkpointId: "checkpoint-3", timestamp: 1010 });
+    eventBus.emit("durable:resumed", {
+      rootRunId: "root-2",
+      sourceCheckpointId: "checkpoint-2",
+      checkpointId: "checkpoint-3",
+      sourceTerminalReason: "superseded",
+      timestamp: 1010,
+    });
     eventBus.emit("autonomy:revoked", { rootRunId: "root-3", revoked: 2, timestamp: 1011 });
     eventBus.emit("autonomy:killed", { rootRunId: "root-4", killed: 1, timestamp: 1012 });
     eventBus.emit("autonomy:denial_breaker_tripped", { rootRunId: "root-5", timestamp: 1013 });

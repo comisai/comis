@@ -6,6 +6,7 @@
  */
 
 import type { BackgroundTaskOrigin, TimerHandle } from "@comis/core";
+import { z } from "zod";
 export type { BackgroundTaskOrigin };
 
 export type BackgroundTaskStatus = "running" | "completed" | "failed" | "cancelled";
@@ -30,26 +31,26 @@ export type BackgroundTaskStatus = "running" | "completed" | "failed" | "cancell
  */
 export type BackgroundTaskNotificationPolicy = "deferred" | "immediate" | "silent";
 
-/**
- * Three-state session lifecycle for a background task's notification routing.
- * State-machine transitions are the single source of truth for at-most-once
- * fallback.
- *
- * - "pending"    — Promotion happened; no completion event yet (or completion
- *                   event arrived but dispatcher has not classified it).
- * - "notified"   — Fallback notification fired (user-visible literal text);
- *                   recovery-after-restart MUST NOT re-emit.
- * - "dispatched" — Re-entry triggered against the originating session;
- *                   no fallback notification needed.
- */
+/** Durable execution, outbox delivery, and reconciliation lifecycle. */
 export type BackgroundSessionState =
   | "pending"
   | "executing"
+  | "ready_to_deliver"
   | "delivering"
   | "delivered"
-  | "fallback_pending"
-  | "fallback_delivered"
+  | "parked_permanent"
+  | "parked_uncertain"
   | "consumed_live";
+
+export const BackgroundContinuationOutboxSchema = z.strictObject({
+  kind: z.enum(["continuation", "fallback"]),
+  response: z.string().max(102_400),
+  executionId: z.string().min(1).max(256),
+  idempotencyKey: z.string().min(1).max(512),
+  deliveryProtection: z.enum(["ledger", "none"]),
+});
+
+export type BackgroundContinuationOutbox = z.infer<typeof BackgroundContinuationOutboxSchema>;
 
 export interface BackgroundTask {
   id: string;
@@ -66,12 +67,11 @@ export interface BackgroundTask {
   /** Live notification policy. Optional; recovery defaults to "deferred" when
    *  absent. */
   notificationPolicy?: BackgroundTaskNotificationPolicy;
-  /** Live three-state session lifecycle. Optional; recovery defaults to
-   *  "pending" when absent. The dispatcher inspects this before firing
-   *  fallbackNotifyFn. */
+  /** Durable completion lifecycle. */
   dispatchState?: BackgroundSessionState;
   continuationExecutionId: string;
   dispatchAttempts: number;
+  continuationOutbox?: BackgroundContinuationOutbox;
   // In-memory only (not serialized):
   _promise?: Promise<unknown>;
   _abortController?: AbortController;
@@ -97,10 +97,10 @@ export interface PersistedTaskState {
    */
   notificationPolicy?: BackgroundTaskNotificationPolicy;
   /**
-   * Three-state session lifecycle. Optional; recovery defaults to "pending"
-   * when absent. The dispatcher inspects this before firing fallbackNotifyFn.
+   * Durable completion lifecycle.
    */
   dispatchState?: BackgroundSessionState;
   continuationExecutionId: string;
   dispatchAttempts: number;
+  continuationOutbox?: BackgroundContinuationOutbox;
 }

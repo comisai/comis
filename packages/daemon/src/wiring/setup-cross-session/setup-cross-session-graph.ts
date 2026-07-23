@@ -6,7 +6,7 @@
  *
  * @module
  */
-import type { AgentCapability, NormalizedMessage, SessionKey, SpawnPacket, AppContainer, AgentConfig, FileLockPort, ConversationLocator, SessionStorePort } from "@comis/core";
+import type { AgentCapability, NormalizedMessage, SessionKey, SpawnPacket, AppContainer, AgentConfig, FileLockPort, ConversationLocator, SessionStorePort, WorkspacePolicySnapshot } from "@comis/core";
 import { ConversationRefSchema, ConversationScopeSchema, tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import {
@@ -68,7 +68,13 @@ export type ExecuteSubAgentFn = (
   task: string,
   maxSteps?: number,
   callerAgentId?: string,
-  graphOverrides?: { graphId?: string; nodeId?: string; reuseConversation?: ConversationLocator; graphNodeDepth?: number },
+  graphOverrides?: {
+    graphId?: string;
+    nodeId?: string;
+    reuseConversation?: ConversationLocator;
+    graphNodeDepth?: number;
+    workspacePolicySnapshot?: WorkspacePolicySnapshot;
+  },
   /** Per-spawn token budget — rides executionOverrides into the child's
    *  BudgetGuard per-execution cap. Absent ⇒ no per-execution cap. */
   tokenBudget?: number,
@@ -531,6 +537,9 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       // cap (pi-executor feeds it to budgetGuard.resetExecution). Omitted when
       // absent so the no-budget path stays byte-identical to today.
       ...(tokenBudget !== undefined && { tokenBudget }),
+      ...(graphOverrides?.workspacePolicySnapshot !== undefined && {
+        workspacePolicySnapshot: graphOverrides.workspacePolicySnapshot,
+      }),
       // When a worktree was created, the child's file-tool jail cwd IS the
       // worktree (the SDK session cwd + resource-loader / context-engine root), so
       // exec/read/write/edit resolve inside it. Omitted when no worktree ⇒ the

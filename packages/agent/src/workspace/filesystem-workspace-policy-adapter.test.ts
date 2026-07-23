@@ -94,6 +94,22 @@ describe("createFilesystemWorkspacePolicyAdapter", () => {
     }
   });
 
+  it("reloads the exact policy hash through a fresh adapter after process restart", async () => {
+    const dir = await makeWorkspace();
+    await writeFile(join(dir, "ROLE.md"), "# Role\n\nKeep recovery within policy.\n", "utf-8");
+    const firstAdapter = createFilesystemWorkspacePolicyAdapter({ resolveWorkspaceDir: () => dir });
+    const captured = await firstAdapter.load("agent_a");
+    expect(captured.ok).toBe(true);
+    if (!captured.ok) return;
+
+    const restartedAdapter = createFilesystemWorkspacePolicyAdapter({ resolveWorkspaceDir: () => dir });
+    expect(restartedAdapter.get(captured.value.combinedHash).ok).toBe(false);
+    const reloaded = await restartedAdapter.load("agent_a");
+
+    expect(reloaded).toEqual(captured);
+    expect(reloaded.ok && reloaded.value.combinedHash).toBe(captured.value.combinedHash);
+  });
+
   it("returns a typed error for a policy hash that was not loaded this process", () => {
     const adapter = createFilesystemWorkspacePolicyAdapter({ resolveWorkspaceDir: () => undefined });
     expect(adapter.get("a".repeat(64))).toEqual({

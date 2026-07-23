@@ -56,6 +56,7 @@ export const DurableRunTerminalReasonSchema = z.enum([
   "killed",
   "watchdog_timeout",
   "ghost_sweep",
+  "superseded",
 ]);
 export type DurableRunTerminalReason = z.infer<typeof DurableRunTerminalReasonSchema>;
 

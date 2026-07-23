@@ -90,7 +90,12 @@ describe("createBackgroundCompletionRunner", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
   let sessionStore: { loadByRef: ReturnType<typeof vi.fn> };
-  let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn>; scheduleDispatchRetry: ReturnType<typeof vi.fn> };
+  let taskManager: {
+    getTask: ReturnType<typeof vi.fn>;
+    transitionDispatchState: ReturnType<typeof vi.fn>;
+    persistContinuationOutbox: ReturnType<typeof vi.fn>;
+    scheduleDispatchRetry: ReturnType<typeof vi.fn>;
+  };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
   let transitionDispatchState: ReturnType<typeof vi.fn>;
 
@@ -98,10 +103,26 @@ describe("createBackgroundCompletionRunner", () => {
     eventBus = createFakeEventBus();
     executor = { execute: vi.fn().mockResolvedValue({ ok: true }) };
     sessionStore = { loadByRef: vi.fn().mockReturnValue(ok({ messages: [] })) };
-    transitionDispatchState = vi.fn().mockReturnValue(true);
+    transitionDispatchState = vi.fn((_taskId, next, expected) => {
+      const task = taskManager.getTask();
+      const current = task?.dispatchState ?? "pending";
+      if (!task || (expected && !expected.includes(current))) return false;
+      task.dispatchState = next;
+      return true;
+    });
     taskManager = {
       getTask: vi.fn(),
       transitionDispatchState,
+      persistContinuationOutbox: vi.fn((_taskId, outbox, expected) => {
+        const task = taskManager.getTask();
+        const current = task?.dispatchState ?? "pending";
+        if (!task || (expected && !expected.includes(current))) {
+          return { ok: false, error: new Error("outbox transition rejected") };
+        }
+        task.continuationOutbox = outbox;
+        task.dispatchState = "ready_to_deliver";
+        return ok(undefined);
+      }),
       scheduleDispatchRetry: vi.fn(),
     };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
@@ -111,7 +132,7 @@ describe("createBackgroundCompletionRunner", () => {
     maxBackgroundHops = 3,
     isTurnInFlight?: (key: string) => boolean,
     assembleToolsForAgent?: BackgroundCompletionRunnerDeps["assembleToolsForAgent"],
-    deliverCompletion: BackgroundCompletionRunnerDeps["deliverCompletion"] = vi.fn().mockResolvedValue(ok(undefined)),
+    deliverCompletion: BackgroundCompletionRunnerDeps["deliverCompletion"] = vi.fn().mockResolvedValue({ kind: "accepted" }),
   ) {
     return createBackgroundCompletionRunner({
       eventBus,
@@ -125,8 +146,9 @@ describe("createBackgroundCompletionRunner", () => {
           priority: "normal",
           origin: "background_task",
         });
-        return ok(undefined);
+        return { kind: "accepted" };
       },
+      deliveryProtection: "ledger",
       maxBackgroundHops,
       ...(isTurnInFlight ? { isTurnInFlight } : {}),
       ...(assembleToolsForAgent ? { assembleToolsForAgent } : {}),
@@ -207,7 +229,7 @@ describe("createBackgroundCompletionRunner", () => {
       executionId: "execution-1",
       finishReason: "stop",
     });
-    const deliverCompletion = vi.fn().mockResolvedValue(ok(undefined));
+    const deliverCompletion = vi.fn().mockResolvedValue({ kind: "accepted" });
     const runner = build(3, undefined, undefined, deliverCompletion);
 
     eventBus.emit("background_task:completed", {
@@ -238,6 +260,7 @@ describe("createBackgroundCompletionRunner", () => {
       origin: task.origin,
       response: "תוצאת הרקע הושלמה",
       executionId: "execution-1",
+      idempotencyKey: "background-continuation:task-1",
     });
   });
 
@@ -369,7 +392,7 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
 
     expect(executor.execute).not.toHaveBeenCalled();
-    expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "notified");
+    expect(task.dispatchState).toBe("delivered");
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
   });
 
@@ -556,17 +579,7 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
-  // -------------------------------------------------------------------------
-  // Two-phase commit on fallbackForTask.
-  //
-  // fallbackForTask persists dispatchState="notified" via
-  // taskManager.transitionDispatchState BEFORE invoking fallbackNotifyFn.
-  // The persist runs synchronously (persistTaskSync) so any SIGKILL after
-  // the persist returns leaves the on-disk state at "notified" -> recovery
-  // sees the at-most-once gate fire -> no duplicate. Without this ordering,
-  // the gate would miss and the user would see a duplicate notification.
-  // -------------------------------------------------------------------------
-  it("fallbackForTask persists dispatchState='notified' BEFORE firing fallbackNotifyFn (two-phase commit)", async () => {
+  it("fallbackForTask persists the exact outbox before firing fallback delivery", async () => {
     // Hop cap path is the simplest reach to fallbackForTask. With
     // maxBackgroundHops=3 and origin.backgroundHopCount=99, nextHopCount
     // exceeds the cap -> fallback fires.
@@ -584,44 +597,23 @@ describe("createBackgroundCompletionRunner", () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    // Both must have been called once.
-    expect(transitionDispatchState).toHaveBeenCalledTimes(1);
-    expect(transitionDispatchState).toHaveBeenCalledWith(task.id, "notified");
+    expect(taskManager.persistContinuationOutbox).toHaveBeenCalledOnce();
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
 
-    // Critical ordering assertion: invocationCallOrder is a global counter
-    // across all vitest mocks; smaller = earlier. transitionDispatchState's
-    // call MUST precede fallbackNotifyFn's.
-    const persistOrder = transitionDispatchState.mock.invocationCallOrder[0]!;
+    const persistOrder = taskManager.persistContinuationOutbox.mock.invocationCallOrder[0]!;
     const fireOrder = fallbackNotifyFn.mock.invocationCallOrder[0]!;
     expect(persistOrder).toBeLessThan(fireOrder);
 
     await runner.shutdown();
   });
 
-  it("SIGKILL between persist and fire — recovery's at-most-once gate fires (no duplicate)", async () => {
-    // Simulate the crash: transitionDispatchState succeeds (state lands on
-    // disk via persistTaskSync), then fallbackNotifyFn rejects (modeling
-    // \"daemon dies during the network call\"). The runner WARNs but does
-    // not retry. A FRESH runner instance receiving the same task with
-    // dispatchState=\"notified\" (the persisted state) MUST skip via the
-    // at-most-once gate at completion-runner.ts handleEvent's early-return
-    // when task.dispatchState === \"notified\".
+  it("parks a rejected fallback delivery as uncertain and does not replay it", async () => {
     fallbackNotifyFn.mockRejectedValueOnce(new Error("simulated SIGKILL during fire"));
     const task = buildTask({
       result: "ok",
       origin: buildOrigin({ backgroundHopCount: 99 }),
     });
     taskManager.getTask.mockReturnValue(task);
-    // Mirror what the real BackgroundTaskManager.transitionDispatchState
-    // does: mutate the in-memory task object BEFORE persistTaskSync. This
-    // mirrors the on-disk state for the subsequent recovery-instance
-    // assertion below.
-    transitionDispatchState.mockImplementation((tid: string, next: string) => {
-      if (tid === task.id) (task as unknown as { dispatchState: string }).dispatchState = next;
-      return true;
-    });
-
     const runner = build(3);
     eventBus.emit("background_task:completed", {
       agentId: task.origin.turnScope.conversation.agentId, taskId: task.id, toolName: task.toolName,
@@ -630,17 +622,10 @@ describe("createBackgroundCompletionRunner", () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    // Persist step ran.
-    expect(transitionDispatchState).toHaveBeenCalledTimes(1);
-    // Fire step was attempted and rejected.
     expect(fallbackNotifyFn).toHaveBeenCalledTimes(1);
-    // task.dispatchState is now "notified" on the in-memory task object,
-    // mirroring the on-disk state that recovery would load.
-    expect((task as unknown as { dispatchState: string }).dispatchState).toBe("notified");
+    expect(task.dispatchState).toBe("parked_uncertain");
     await runner.shutdown();
 
-    // Now simulate "daemon recovers" — fresh runner instance, same task
-    // object (dispatchState="notified" already set above).
     taskManager.getTask.mockReset();
     taskManager.getTask.mockReturnValue(task);
     transitionDispatchState.mockReset();
@@ -654,8 +639,6 @@ describe("createBackgroundCompletionRunner", () => {
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    // At-most-once gate (handleEvent: if task.dispatchState === "notified") returns
-    // immediately -> nothing fires.
     expect(fallbackNotifyFn).not.toHaveBeenCalled();
     expect(transitionDispatchState).not.toHaveBeenCalled();
     expect(executor.execute).not.toHaveBeenCalled();
@@ -667,7 +650,12 @@ describe("trace continuity sub-tests", () => {
   let eventBus: ReturnType<typeof createFakeEventBus>;
   let executor: { execute: ReturnType<typeof vi.fn> };
   let sessionStore: { loadByRef: ReturnType<typeof vi.fn> };
-  let taskManager: { getTask: ReturnType<typeof vi.fn>; transitionDispatchState: ReturnType<typeof vi.fn>; scheduleDispatchRetry: ReturnType<typeof vi.fn> };
+  let taskManager: {
+    getTask: ReturnType<typeof vi.fn>;
+    transitionDispatchState: ReturnType<typeof vi.fn>;
+    persistContinuationOutbox: ReturnType<typeof vi.fn>;
+    scheduleDispatchRetry: ReturnType<typeof vi.fn>;
+  };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
   let logger: ReturnType<typeof makeLogger>;
 
@@ -678,6 +666,7 @@ describe("trace continuity sub-tests", () => {
     taskManager = {
       getTask: vi.fn(),
       transitionDispatchState: vi.fn().mockReturnValue(true),
+      persistContinuationOutbox: vi.fn().mockReturnValue(ok(undefined)),
       scheduleDispatchRetry: vi.fn(),
     };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
@@ -690,7 +679,7 @@ describe("trace continuity sub-tests", () => {
       getExecutor: (_agentId: string) => executor as unknown as import("../executor/types.js").AgentExecutor,
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
-      deliverCompletion: async () => ok(undefined),
+      deliverCompletion: async () => ({ kind: "accepted" }),
       deliverFallback: async ({ origin, response }) => {
         await fallbackNotifyFn({
           agentId: origin.turnScope.conversation.agentId,
@@ -698,8 +687,9 @@ describe("trace continuity sub-tests", () => {
           priority: "normal",
           origin: "background_task",
         });
-        return ok(undefined);
+        return { kind: "accepted" };
       },
+      deliveryProtection: "ledger",
       maxBackgroundHops,
       logger,
     });

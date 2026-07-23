@@ -836,6 +836,8 @@ describe("createSqliteDurableRunStore (DurableRunPort)", () => {
       });
 
       expect(claimed.ok && claimed.value.kind).toBe("claimed");
+      const sourceAfterClaim = await store.getByCheckpoint(source.checkpointId);
+      expect(sourceAfterClaim.ok && sourceAfterClaim.value?.terminalReason).toBe("superseded");
     });
 
     it("does not replace a source when the requested replacement already exists", async () => {
