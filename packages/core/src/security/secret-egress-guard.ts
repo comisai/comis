@@ -45,6 +45,20 @@ const LABELED_SECRET_ASSIGNMENT_RE = new RegExp(
   "gim",
 );
 
+const SECRET_STORAGE_ACTION_FRAGMENT =
+  "(?:confirm(?:ed|ation)?|stor(?:e|ing)|sav(?:e|ing)|set(?:ting)?)";
+const SECRET_STORAGE_ACTION_RE = new RegExp(
+  `\\b${SECRET_STORAGE_ACTION_FRAGMENT}\\b`,
+  "i",
+);
+const LABELED_SECRET_CONFIRMATION_RE = new RegExp(
+    `((?:^|[\\s,{])${SECRET_STORAGE_ACTION_FRAGMENT}\\b[^\\r\\n]{0,96}?` +
+    `["']?[A-Za-z0-9_.-]*${SECRET_FIELD_FRAGMENT}["']?[^\\r\\n]{0,160}?` +
+    `(?:(?:confirmed\\s+)?value\\s+is|with\\s+the\\s+value)\\s*)` +
+    `(?:"([^"\\r\\n]*)"|'([^'\\r\\n]*)'|([^\\s\\r\\n]+?)(?=[,;]|\\.(?=\\s|$)|\\s|$))`,
+  "gim",
+);
+
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -59,9 +73,10 @@ export function mightContainSecret(text: string): boolean {
     if (text.includes(prefix)) return true;
   }
   if (text.includes("Bearer ") || text.includes("Token ")) return true;
-  if (!text.includes(":") && !text.includes("=")) return false;
   const lower = text.toLowerCase();
-  return SECRET_FIELD_HINTS.some((field) => lower.includes(field));
+  if (!SECRET_FIELD_HINTS.some((field) => lower.includes(field))) return false;
+  if (text.includes(":") || text.includes("=")) return true;
+  return lower.includes("value") && SECRET_STORAGE_ACTION_RE.test(text);
 }
 
 function isSafeSecretPlaceholder(value: string): boolean {
@@ -85,6 +100,22 @@ function scrubLabeledAssignments(text: string): ScrubResult {
   return { text: scrubbed, redactions };
 }
 
+function scrubLabeledConfirmations(text: string): ScrubResult {
+  let redactions = 0;
+  const scrubbed = text.replace(
+    LABELED_SECRET_CONFIRMATION_RE,
+    (_match, prefix: string, doubleQuoted: string | undefined, singleQuoted: string | undefined, bare: string | undefined) => {
+      const value = doubleQuoted ?? singleQuoted ?? bare ?? "";
+      if (value.length === 0 || isSafeSecretPlaceholder(value)) return _match;
+      redactions++;
+      if (doubleQuoted !== undefined) return `${prefix}"${REDACTED}"`;
+      if (singleQuoted !== undefined) return `${prefix}'${REDACTED}'`;
+      return `${prefix}${REDACTED}`;
+    },
+  );
+  return { text: scrubbed, redactions };
+}
+
 /**
  * Scrub unstructured text of secret-shaped values.
  * Self-contained intra-core loop — does NOT call redactSecretsInText from observability.
@@ -96,8 +127,9 @@ function scrubLabeledAssignments(text: string): ScrubResult {
 export function scrubSecretsFromText(text: string): ScrubResult {
   if (!mightContainSecret(text)) return { text, redactions: 0 };
   const labeled = scrubLabeledAssignments(text);
-  let result = labeled.text;
-  let redactions = labeled.redactions;
+  const confirmed = scrubLabeledConfirmations(labeled.text);
+  let result = confirmed.text;
+  let redactions = labeled.redactions + confirmed.redactions;
 
   for (const prefix of PLAINTEXT_SECRET_PREFIXES) {
     const minBody = PREFIX_MIN_BODY_LENGTHS.get(prefix) ?? 0;

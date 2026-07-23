@@ -93,6 +93,7 @@ describe("scrubSecretsFromText", () => {
 
     expect(result.text).not.toContain(username);
     expect(result.text).toContain("[REDACTED]");
+    expect(result.text).toContain("The confirmed value is [REDACTED]. Store it now");
     expect(result.redactions).toBe(1);
   });
 
@@ -104,7 +105,21 @@ describe("scrubSecretsFromText", () => {
 
     expect(result.text).not.toContain(password);
     expect(result.text).toContain("[REDACTED]");
+    expect(result.text).toContain("with the value [REDACTED], then continue");
     expect(result.redactions).toBe(1);
+  });
+
+  it("preserves environment references in natural-language storage confirmations", () => {
+    const input =
+      "Confirm storing SERVICE_PASSWORD in the encrypted secret store. The confirmed value is ${SERVICE_PASSWORD}.";
+
+    expect(scrubSecretsFromText(input)).toEqual({ text: input, redactions: 0 });
+  });
+
+  it("preserves descriptive credential prose that does not supply a value", () => {
+    const input = "The password value is required before the service can start.";
+
+    expect(scrubSecretsFromText(input)).toEqual({ text: input, redactions: 0 });
   });
 
   it("preserves environment references and existing redaction sentinels", () => {

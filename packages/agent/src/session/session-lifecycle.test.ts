@@ -517,7 +517,7 @@ describe("ComisSessionManager — abnormal-termination cleanup contract via with
         timestamp: 1_789_000_000_001,
       } as never);
       sm.appendMessage({
-        role: "user",
+        role: "assistant",
         content: `Final confirmation: store SERVICE_PASSWORD in the encrypted secret store with the value ${password}, then continue.`,
         timestamp: 1_789_000_000_002,
       } as never);
