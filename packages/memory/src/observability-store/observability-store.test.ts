@@ -296,6 +296,43 @@ describe("ObservabilityStore — aggregateSessionsInWindow (A1)", () => {
     expect(r.costUsd).toBeCloseTo(0.3);
   });
 
+  it("resolves a pending background execution when its continuation later succeeds", () => {
+    store.insertDiagnostic({
+      timestamp: 1_000,
+      category: "session_summary",
+      severity: "warning",
+      sessionKey: "s-background",
+      message: "session:summary",
+      details: summaryDetails({
+        degraded: true,
+        costUsd: 0.2,
+        turnCount: 2,
+        endReason: "background_pending",
+      }),
+    });
+    store.insertDiagnostic({
+      timestamp: 2_000,
+      category: "session_summary",
+      severity: "info",
+      sessionKey: "s-background",
+      message: "session:summary",
+      details: summaryDetails({
+        degraded: false,
+        costUsd: 0.1,
+        turnCount: 1,
+        endReason: "success",
+      }),
+    });
+
+    const rollups = store.aggregateSessionsInWindow(0);
+    expect(rollups).toHaveLength(1);
+    const r = rollups[0]!;
+    expect(r.degraded).toBe(false);
+    expect(r.endReason).toBe("success");
+    expect(r.costUsd).toBeCloseTo(0.3);
+    expect(r.turnCount).toBe(3);
+  });
+
   it("excludes rows whose timestamp < sinceMs (window predicate)", () => {
     store.insertDiagnostic({
       timestamp: 1_000,
