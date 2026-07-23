@@ -704,6 +704,34 @@ describe("web-search-tool: fallback chain", () => {
 // ---------------------------------------------------------------------------
 
 describe("web-search-tool: runtime provider override", () => {
+  it("uses the runtime provider first without bypassing credentialed fallbacks", async () => {
+    mockImpitFetch.mockRejectedValue(new Error("DuckDuckGo CAPTCHA"));
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        web: {
+          results: [{
+            title: "Brave fallback",
+            url: "https://example.com/brave",
+            description: "Brave remained operational",
+          }],
+        },
+      }),
+    });
+
+    const tool = createWebSearchTool({ apiKey: "brave-key" });
+    const result = await tool.execute("call-override-chain", {
+      query: "test",
+      provider: "duckduckgo",
+    });
+
+    const parsed = parseResult(result);
+    expect(parsed.provider).toBe("brave");
+    expect(mockImpitFetch).toHaveBeenCalledTimes(1);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("runtime provider parameter overrides config provider", async () => {
     const ddgHtml = `<div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Foverride.com">DDG Override</a><a class="result__snippet">Override result</a></div>`;
     mockImpitFetch.mockResolvedValue({
@@ -724,8 +752,15 @@ describe("web-search-tool: runtime provider override", () => {
     expect(mockImpitFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("runtime override skips fallback chain", async () => {
+  it("runtime provider keeps the explicit fallback chain", async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error("tavily down"));
+    mockImpitFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      text: async () =>
+        `<div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Ffallback.example.com">Fallback</a><a class="result__snippet">DuckDuckGo fallback</a></div>`,
+    });
 
     const tool = createWebSearchTool({
       provider: "brave",
@@ -738,12 +773,10 @@ describe("web-search-tool: runtime provider override", () => {
       provider: "tavily",
     });
 
-    // Should NOT fall back to brave or duckduckgo
     const parsed = parseResult(result);
-    expect(parsed.error).toBe("all_providers_failed");
-    const failures = parsed.failures as string[];
-    expect(failures).toHaveLength(1);
-    expect(failures[0]).toContain("tavily");
+    expect(parsed.provider).toBe("duckduckgo");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(mockImpitFetch).toHaveBeenCalledTimes(1);
   });
 
   it("invalid runtime provider returns error", async () => {
