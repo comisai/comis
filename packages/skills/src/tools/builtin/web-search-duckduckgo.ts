@@ -15,6 +15,7 @@
 import { Impit } from "impit";
 import { wrapWebContent, type WrapExternalContentOptions } from "@comis/core";
 import { registerSearchProvider, type SearchProvider, type SearchProviderParams } from "./search-provider.js";
+import { detectErrorPagePattern } from "./web-fetch-utils.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -155,6 +156,16 @@ export function parseDdgHtml(
   return results;
 }
 
+/**
+ * DuckDuckGo represents a genuine empty result set with a dedicated result
+ * row. A plain page with no parsed links is not sufficient evidence: it may be
+ * a challenge page, upstream outage, or parser drift.
+ */
+function isDdgEmptyResultsPage(html: string): boolean {
+  return /\bresult--no-result\b/i.test(html)
+    && /class=["'][^"']*\bno-results\b[^"']*["'][^>]*>\s*No\s+results\.\s*</i.test(html);
+}
+
 // ---------------------------------------------------------------------------
 // Provider implementation
 // ---------------------------------------------------------------------------
@@ -193,6 +204,16 @@ export async function runDuckDuckGoSearch(params: {
 
   const html = await res.text();
   const rawResults = parseDdgHtml(html);
+  if (rawResults.length === 0) {
+    const errorPage = detectErrorPagePattern(html);
+    if (errorPage !== null) {
+      const providerReason = `${errorPage.charAt(0).toLowerCase()}${errorPage.slice(1)}`;
+      throw new Error(`DuckDuckGo search ${providerReason}`);
+    }
+    if (!isDdgEmptyResultsPage(html)) {
+      throw new Error("DuckDuckGo search returned an unrecognized empty response");
+    }
+  }
   const limit = Math.max(1, params.count);
   const limited = rawResults.slice(0, limit);
 

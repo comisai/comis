@@ -743,12 +743,17 @@ describe("web-search-tool: duckduckgo provider", () => {
     expect(results[0].description).toContain("programming language");
   });
 
-  it("handles empty DDG response", async () => {
+  it("returns zero for DuckDuckGo's explicit no-results page", async () => {
     mockImpitFetch.mockResolvedValue({
       ok: true,
       status: 200,
       statusText: "OK",
-      text: async () => `<html><body><div id="links"></div></body></html>`,
+      text: async () => `
+        <html><body>
+          <div class="result result--no-result">
+            <div class="no-results">No results.</div>
+          </div>
+        </body></html>`,
     });
 
     const tool = createWebSearchTool({ provider: "duckduckgo" });
@@ -763,7 +768,12 @@ describe("web-search-tool: duckduckgo provider", () => {
       ok: true,
       status: 200,
       statusText: "OK",
-      text: async () => `<html><body></body></html>`,
+      text: async () => `
+        <html><body>
+          <div class="result result--no-result">
+            <div class="no-results">No results.</div>
+          </div>
+        </body></html>`,
     });
 
     const tool = createWebSearchTool({ provider: "duckduckgo" });
