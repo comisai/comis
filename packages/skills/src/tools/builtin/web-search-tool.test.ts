@@ -546,6 +546,68 @@ describe("web-search-tool: metadata", () => {
 // ---------------------------------------------------------------------------
 
 describe("web-search-tool: fallback chain", () => {
+  it("tries credentialed providers after DuckDuckGo before reporting exhaustion", async () => {
+    mockImpitFetch.mockRejectedValue(new Error("DuckDuckGo CAPTCHA"));
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        statusText: "Unavailable",
+        text: async () => "Brave unavailable",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          results: [{
+            title: "Tavily Answer",
+            url: "https://example.com/tavily",
+            content: "Tavily answer description",
+          }],
+        }),
+      });
+    globalThis.fetch = mockFetch;
+
+    const tool = createWebSearchTool({
+      apiKey: "brave-key",
+      tavily: { apiKey: "tavily-key" },
+    });
+    const result = await tool.execute("call-auto-fb-1", { query: "test" });
+
+    const parsed = parseResult(result);
+    expect(parsed.provider).toBe("tavily");
+    expect(mockImpitFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(String(mockFetch.mock.calls[0]![0])).toContain("api.search.brave.com");
+    expect(String(mockFetch.mock.calls[1]![0])).toContain("api.tavily.com");
+  });
+
+  it("reports exhaustion only after every credentialed provider fails", async () => {
+    mockImpitFetch.mockRejectedValue(new Error("DuckDuckGo CAPTCHA"));
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      statusText: "Unavailable",
+      text: async () => "provider unavailable",
+    });
+    globalThis.fetch = mockFetch;
+
+    const tool = createWebSearchTool({
+      apiKey: "brave-key",
+      tavily: { apiKey: "tavily-key" },
+    });
+    const result = await tool.execute("call-auto-fb-2", { query: "test" });
+
+    const parsed = parseResult(result);
+    expect(parsed.error).toBe("all_providers_failed");
+    expect(parsed.failures).toEqual([
+      expect.stringContaining("duckduckgo"),
+      expect.stringContaining("brave"),
+      expect.stringContaining("tavily"),
+    ]);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("falls back to second provider when first fails with HTTP error", async () => {
     const ddgHtml = `<div class="result"><a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com">DDG Answer</a><a class="result__snippet">DDG answer description</a></div>`;
     // Brave uses globalThis.fetch — fails with 500
