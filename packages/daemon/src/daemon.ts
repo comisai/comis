@@ -1512,12 +1512,8 @@ async function bootFoundation(
   const channelPluginsRef: { ref?: Map<string, import("@comis/core").ChannelPluginPort> } = {};
 
   // 6.5.1. Background task system (created before setupAgents)
-  const backgroundTasksConfig = BackgroundTasksConfigSchema.parse(
-    container.config.agents[container.config.routing.defaultAgentId]?.backgroundTasks ?? {},
-  );
   const { backgroundTaskManager } = setupBackgroundTasks({
-    dataDir,
-    config: backgroundTasksConfig,
+    dataDir, config: BackgroundTasksConfigSchema.parse(container.config.agents[container.config.routing.defaultAgentId]?.backgroundTasks ?? {}),
     eventBus: container.eventBus,
     logger: logLevelManager.getLogger("background-tasks"),
     clock,
