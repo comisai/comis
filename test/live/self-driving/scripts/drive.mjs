@@ -10,13 +10,34 @@
 //      answer-aware wire quiescence when the trajectory can't be resolved (graceful, byte-identical to v1).
 //
 // Usage:  node drive.mjs <chatId> "<text>" [quiesceMs=8000] [maxMs=240000] [DATA=/home/comis/.comis]
+//         printf '<one-line text>\n' | node drive.mjs <chatId> -
+//         node drive.mjs <chatId> @/path/to/message.txt
 //   - DATA: data dir (for the trajectory turn-end watch). env DATA also honored. Empty → wire-only mode.
+//   - Use `-` or `@file` for credential-bearing prompts so values never enter argv/process listings.
 //   - NOTE the DAG caveat: a `pipeline`/`graph.execute` turn ENDS at the agent's "running it now" answer,
 //     then the GRAPH runs separately — poll `graph.status`/the daemon log for the final node, not this.
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { createInterface } from 'node:readline';
 import { rig } from './_rig.mjs';
-const [, , chatIdArg, text, quiesceMsArg, maxMsArg, dataArg] = process.argv;
+const [, , chatIdArg, textArg, quiesceMsArg, maxMsArg, dataArg] = process.argv;
+
+const readStdinLine = async () => {
+  const lines = createInterface({ input: process.stdin, terminal: false });
+  const next = await lines[Symbol.asyncIterator]().next();
+  lines.close();
+  return next.done ? '' : next.value;
+};
+
+const text = textArg === '-'
+  ? await readStdinLine()
+  : textArg?.startsWith('@')
+    ? readFileSync(textArg.slice(1), 'utf8')
+    : textArg;
+if (!text) {
+  console.error('drive.mjs: message text is required; pass text, `-` for one stdin line, or `@file`');
+  process.exit(2);
+}
 const chatId = chatIdArg || rig.chatId;
 const quiesceMs = Number(quiesceMsArg || 8000);
 const maxMs = Number(maxMsArg || 240000);
