@@ -484,6 +484,12 @@ export function registerAllToolMetadata(): void {
   });
 
   registerToolMetadata("web_search", {
+    failureFallbacks: [{
+      onErrorCode: "all_providers_failed",
+      toolName: "browser",
+      guidance:
+        "Use browser next to run a Google Search for the same query. Do not call web_search again for this request.",
+    }],
     outputSchema: {
       type: "object",
       description:

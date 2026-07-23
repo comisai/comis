@@ -63,6 +63,7 @@ import {
   safePath,
   sanitizeLogString,
   toSafeErrorLogString,
+  getToolMetadata,
   tryGetContext,
   verifyWorkspacePolicySnapshot,
   ResponseLocalePolicySchema,
@@ -72,7 +73,12 @@ import {
 } from "@comis/core";
 import type { ErrorKind } from "@comis/core";
 import { ok, suppressError, type Result } from "@comis/shared";
-import type { AgentTool, AgentMessage } from "@earendil-works/pi-agent-core";
+import type {
+  AfterToolCallResult,
+  AgentMessage,
+  AgentTool,
+  AgentToolResult,
+} from "@earendil-works/pi-agent-core";
 import type { CommandDirectives } from "../command-directive-types.js";
 import type { StepCounter } from "../step-counter.js";
 import { createToolRetryBreaker } from "../../safety/tool-retry-breaker.js";
@@ -161,6 +167,57 @@ const EVICTION_COOLDOWN_TURNS = 2;
 
 interface ExternalAbortState {
   emitted: boolean;
+}
+
+interface ToolFailureAlternativeResolution {
+  readonly alternativeToolName: string;
+  readonly errorCode: string;
+  readonly guidance: string;
+  readonly override: AfterToolCallResult;
+}
+
+const MAX_TOOL_ALTERNATIVE_GUIDANCE_CHARS = 500;
+
+function resolveToolFailureAlternative(
+  toolName: string,
+  result: AgentToolResult<unknown>,
+  activeToolNames: ReadonlySet<string>,
+): ToolFailureAlternativeResolution | undefined {
+  if (
+    typeof result.details !== "object"
+    || result.details === null
+    || Array.isArray(result.details)
+  ) {
+    return undefined;
+  }
+  const errorCode = (result.details as { error?: unknown }).error;
+  if (typeof errorCode !== "string") return undefined;
+
+  const alternative = getToolMetadata(toolName)?.failureFallbacks?.find(
+    (candidate) =>
+      candidate.onErrorCode === errorCode
+      && activeToolNames.has(candidate.toolName),
+  );
+  if (!alternative) return undefined;
+  const guidance = alternative.guidance.slice(
+    0,
+    MAX_TOOL_ALTERNATIVE_GUIDANCE_CHARS,
+  );
+
+  return {
+    alternativeToolName: alternative.toolName,
+    errorCode,
+    guidance,
+    override: {
+      content: [
+        ...result.content,
+        {
+          type: "text",
+          text: `[Runtime-declared tool alternative]\n${guidance}`,
+        },
+      ],
+    },
+  };
 }
 
 function settleExternalExecutionAbort(
@@ -1500,6 +1557,7 @@ async function runSessionLocked(
         suggestAlternatives: toolRetryBreakerConfig?.suggestAlternatives ?? true,
       })
     : undefined;
+  const failedToolRedirects = new Map<string, string>();
 
   // Per-execution message send limiter
   // maxSendsPerExecution lives in global MessagesConfigSchema (AppConfig.messages),
@@ -1519,7 +1577,15 @@ async function runSessionLocked(
   // not load pi-mono extensions, so this override is safe.
   // v0.65.0: setBeforeToolCall() removed; beforeToolCall is now a direct property.
   session.agent.beforeToolCall =
-    createBeforeToolCallGuard(activeStepCounter, budgetWindow, deps.circuitBreaker, toolRetryBreaker, messageSendLimiter, turnLoopDetector);
+    createBeforeToolCallGuard(
+      activeStepCounter,
+      budgetWindow,
+      deps.circuitBreaker,
+      toolRetryBreaker,
+      messageSendLimiter,
+      turnLoopDetector,
+      failedToolRedirects,
+    );
 
   // Mid-turn tool injection -- when discover_tools returns sideEffects.discoveredTools,
   // inject the full ToolDefinitions into the live agentic loop tools array so the LLM can
@@ -1529,12 +1595,36 @@ async function runSessionLocked(
     // discovery early-return) so normal reads fill it; mutations clear it.
     turnLoopDetector.recordCall(callCtx.toolCall.name, callCtx.args, callCtx.result);
 
+    const contextTools = callCtx.context.tools;
+    const alternative = resolveToolFailureAlternative(
+      callCtx.toolCall.name,
+      callCtx.result,
+      new Set(contextTools?.map((tool) => tool.name) ?? []),
+    );
+    if (alternative) {
+      failedToolRedirects.set(
+        callCtx.toolCall.name,
+        (
+          `Tool "${callCtx.toolCall.name}" is exhausted for this request. `
+          + `Do not call it again. ${alternative.guidance}`
+        ).slice(0, MAX_TOOL_ALTERNATIVE_GUIDANCE_CHARS),
+      );
+      deps.logger.debug(
+        {
+          step: "tool-failure-alternative",
+          toolName: callCtx.toolCall.name,
+          alternativeToolName: alternative.alternativeToolName,
+          errorCode: alternative.errorCode,
+        },
+        "Added active alternative guidance to failed tool result",
+      );
+    }
+
     const sideEffects = (callCtx.result as unknown as Record<string, unknown>)?.sideEffects as
       { discoveredTools?: string[] } | undefined;
-    if (!sideEffects?.discoveredTools?.length) return undefined;
+    if (!sideEffects?.discoveredTools?.length) return alternative?.override;
 
-    const contextTools = callCtx.context.tools;
-    if (!contextTools) return undefined;
+    if (!contextTools) return alternative?.override;
 
     // Skip mid-turn injection for providers without explicit cache control.
     // Discovery state is already persisted via markDiscovered() in the tool execution
@@ -1544,7 +1634,7 @@ async function runSessionLocked(
         { discoveredCount: sideEffects.discoveredTools.length, provider: resolvedModel?.provider },
         "Skipped mid-turn injection (provider uses automatic prefix caching)",
       );
-      return undefined;
+      return alternative?.override;
     }
 
     let injectedCount = 0;
@@ -1595,7 +1685,7 @@ async function runSessionLocked(
       );
     }
 
-    return undefined; // No result modification needed
+    return alternative?.override;
   };
 
   // Stream wrapper chain composition (extracted to executor-stream-setup.ts)

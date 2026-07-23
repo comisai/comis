@@ -373,6 +373,11 @@ Two retry mechanisms work alongside the breakers:
 - **Per-model fallback chain** — if the primary model fails after retries,
   Comis tries the next model in `modelFailover.fallbackModels`. Configured
   on [Models](/agents/models#fallback-models).
+- **Capability-aware tool alternatives** — a tool can declare recovery
+  guidance for a structured failure code. The guidance reaches the model only
+  when the named alternative is present in the live tool set. For web search,
+  exhausting all configured providers routes the next attempt through the
+  enabled browser tool using Google Search.
 
 Vision requests use a separate fallback chain
 (`packages/agent/src/model/image-router.ts`) — primary → secondary →

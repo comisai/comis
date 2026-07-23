@@ -104,6 +104,34 @@ describe("createBeforeToolCallGuard", () => {
     expect(result).toBeUndefined();
   });
 
+  it("blocks a tool immediately after a structured failure declared an active alternative", async () => {
+    const stepCounter = { shouldHalt: () => false, increment: () => 1, reset: () => {}, getCount: () => 0 };
+    const budgetGuard = { checkBudget: () => ok(undefined), estimateCost: () => 0, recordUsage: () => {}, resetExecution: () => {}, getSnapshot: () => ({ perExecution: 0, perHour: 0, perDay: 0 }) } as any;
+    const circuitBreaker = { isOpen: () => false, recordSuccess: () => {}, recordFailure: () => {}, getState: () => "closed" as const, reset: () => {} };
+    const redirects = new Map([
+      ["web_search", "Use browser next to run a Google Search."],
+    ]);
+
+    const guard = createBeforeToolCallGuard(
+      stepCounter,
+      budgetGuard,
+      circuitBreaker,
+      undefined,
+      undefined,
+      undefined,
+      redirects,
+    );
+    const result = await guard({
+      toolCall: { name: "web_search" },
+      args: { query: "different query" },
+    });
+
+    expect(result).toEqual({
+      block: true,
+      reason: "Use browser next to run a Google Search.",
+    });
+  });
+
   // -------------------------------------------------------------------------
   // The turn-loop detector short-circuits a repeat idempotent read.
   // The SDK's beforeToolCall can only block-with-reason (BeforeToolCallResult

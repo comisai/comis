@@ -17,6 +17,9 @@ This file records user-visible changes to Comis. Detailed release history is ava
 
 ### Fixed
 
+- When every configured web-search provider fails, an enabled browser now
+  becomes the immediate recovery path through Google Search instead of allowing
+  repeated calls to the exhausted provider family.
 - MCP schema and JSON-RPC invalid-parameter rejections are now reported as caller-correctable validation failures with a healthy transport, and their external-content envelope no longer causes the retry breaker to mark the server unavailable.
 - New and recreated workspaces now enter first-run onboarding, and the active bootstrap state reaches prompt assembly instead of being omitted as an unchanged operator placeholder.
 - Background tasks listed for an agent can now be retrieved and cancelled using their production authority shape; lookup and terminal task failures are reported as tool errors, and a promoted call is consumed by one blocking `read_output` call without repeating the original operation or entering a polling loop.

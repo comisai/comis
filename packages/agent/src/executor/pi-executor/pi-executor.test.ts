@@ -6015,14 +6015,14 @@ describe("PiExecutor", () => {
   // -------------------------------------------------------------------------
 
   describe("afterToolCall result handling", () => {
-    it("appends an active declared alternative after its matching structured failure", async () => {
+    it("appends an active declared alternative and blocks another call to the exhausted tool", async () => {
       registerToolMetadata("search_primary_fallback_test", {
         failureFallbacks: [{
           onErrorCode: "all_providers_failed",
           toolName: "browser_fallback_test",
           guidance: "Use browser_fallback_test next for the same query.",
         }],
-      } as unknown as Parameters<typeof registerToolMetadata>[1]);
+      });
 
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
@@ -6067,6 +6067,17 @@ describe("PiExecutor", () => {
         }),
         "Added active alternative guidance to failed tool result",
       );
+
+      const retryVerdict = await mockSession.agent.beforeToolCall({
+        toolCall: { name: "search_primary_fallback_test" },
+        args: { query: "different query" },
+      });
+      expect(retryVerdict).toEqual({
+        block: true,
+        reason: expect.stringContaining(
+          "Use browser_fallback_test next for the same query.",
+        ),
+      });
     });
 
     it("does not append a declared alternative that is absent from the live tool set", async () => {
@@ -6076,7 +6087,7 @@ describe("PiExecutor", () => {
           toolName: "browser_disabled_fallback_test",
           guidance: "Use browser_disabled_fallback_test next for the same query.",
         }],
-      } as unknown as Parameters<typeof registerToolMetadata>[1]);
+      });
 
       const deps = createMockDeps();
       const executor = createPiExecutor(testConfig, deps);
