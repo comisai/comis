@@ -217,14 +217,14 @@ export const OPERATION_TIER_MAP: Record<ModelOperationType, "primary" | "mid" | 
  */
 export const OPERATION_TIMEOUT_DEFAULTS: Partial<Record<ModelOperationType, number>> = {
   heartbeat: 60_000,
-  cron: 150_000,
+  cron: 600_000,
   subagent: 120_000,
   compaction: 60_000,
   taskExtraction: 30_000,
   condensation: 30_000,
   verification: 120_000,  // same ceiling as the critic LLM_TIMEOUT_MS
   outcomeJudge: 30_000,   // mirrors condensation — a fast classification op
-  skillSynthesis: 150_000, // mirrors cron — an offline batch op
+  skillSynthesis: 150_000, // offline batch synthesis ceiling
 };
 
 /**
