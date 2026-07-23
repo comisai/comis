@@ -220,6 +220,90 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
+  it("delivers a visible result finalized before provider dispatch", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    executor.execute.mockImplementation(async (...args: unknown[]) => {
+      const overrides = args[7] as {
+        onFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+      } | undefined;
+      const result = {
+        response: "pre-provider response",
+        executionId: "execution-pre-provider",
+        finishReason: "error",
+      };
+      await overrides?.onFinalizedResult?.(result);
+      return result;
+    });
+    const deliverCompletion = vi.fn().mockResolvedValue({ kind: "accepted" });
+    const runner = build(3, undefined, undefined, deliverCompletion);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(commitDispatchState).not.toHaveBeenCalledWith(
+      task.id,
+      "executing",
+      expect.anything(),
+    );
+    expect(taskManager.persistContinuationOutbox).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({ response: "pre-provider response" }),
+      ["execution_claimed", "executing"],
+    );
+    expect(deliverCompletion).toHaveBeenCalledOnce();
+    expect(task.dispatchState).toBe("delivered");
+    await runner.shutdown();
+  });
+
+  it("terminalizes a silent result finalized before provider dispatch", async () => {
+    const task = buildTask({ result: "ok" });
+    taskManager.getTask.mockReturnValue(task);
+    executor.execute.mockImplementation(async (...args: unknown[]) => {
+      const overrides = args[7] as {
+        onFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+      } | undefined;
+      const result = {
+        response: "NO_REPLY",
+        executionId: "execution-silent-pre-provider",
+        finishReason: "stop",
+      };
+      await overrides?.onFinalizedResult?.(result);
+      return result;
+    });
+    const deliverCompletion = vi.fn();
+    const runner = build(3, undefined, undefined, deliverCompletion);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(commitDispatchState).toHaveBeenCalledWith(
+      task.id,
+      "delivered",
+      ["execution_claimed", "executing"],
+    );
+    expect(taskManager.persistContinuationOutbox).not.toHaveBeenCalled();
+    expect(deliverCompletion).not.toHaveBeenCalled();
+    expect(task.dispatchState).toBe("delivered");
+    await runner.shutdown();
+  });
+
   it("completed event triggers executor.execute with synthetic message AND emits background_task:reentered", async () => {
     const reenteredEvents: unknown[] = [];
     eventBus.on("background_task:reentered", (data) => reenteredEvents.push(data));
@@ -569,7 +653,14 @@ describe("createBackgroundCompletionRunner", () => {
     const task = buildTask({ result: "ok" });
     taskManager.getTask.mockReturnValue(task);
     executor.execute
-      .mockRejectedValueOnce(new Error("transient"))
+      .mockImplementationOnce(async (...args: unknown[]) => {
+        const overrides = args[7] as {
+          onProviderStart?: () => Result<void, Error>;
+        } | undefined;
+        const started = overrides?.onProviderStart?.();
+        if (started !== undefined && !started.ok) return Promise.reject(started.error);
+        return Promise.reject(new Error("transient"));
+      })
       .mockImplementationOnce(executeFinalized({
         response: "continued",
         executionId: "execution-retry",

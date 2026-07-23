@@ -187,4 +187,7 @@ export interface Acc {
   subagentKilledRuntimeMs?: number;
   subagentKilledIdleMs?: number;
   subagentKilledThresholdMs?: number;
+  backgroundRecoveryRetryCount: number;
+  backgroundRecoveryLastTaskId?: string;
+  backgroundRecoveryLastToolName?: string;
 }

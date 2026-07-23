@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { err } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 
 import { hostileMcpTool } from "../../provider/tool-schema/gbnf-hostile-fixtures.js";
 import { setSessionStateClock } from "../executor-session-state.js";
@@ -204,6 +204,31 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     );
     expect(runWithModelRetry).toHaveBeenCalledOnce();
     expect(params.session.prompt).not.toHaveBeenCalled();
+  });
+
+  it("acknowledges provider start once across legitimate model re-entry", async () => {
+    const providerStart = vi.fn(() => ok(undefined));
+    const tools = makeHostileTools();
+    const { params } = makeDispatchParams(
+      tools,
+      LLAMA_SERVER_GRAMMAR_400,
+      "provider-start-once",
+    );
+    params.executionOverrides = {
+      operationType: "interactive",
+      onProviderStart: providerStart,
+    };
+    vi.mocked(runWithModelRetry).mockImplementation(async (retryParams) => {
+      const started = retryParams.onProviderStart?.();
+      if (started !== undefined && !started.ok) throw started.error;
+      return { succeeded: true };
+    });
+
+    const outcome = await runRetryLoop(params, "hello", undefined, false);
+
+    expect(outcome.promptSucceeded).toBe(true);
+    expect(runWithModelRetry).toHaveBeenCalledTimes(2);
+    expect(providerStart).toHaveBeenCalledOnce();
   });
 
   it("grammar-400 on the SILENT path dispatches to the strip-retry handler: the single retry fires with STRIPPED tools and emits execution:tool_schema_unsupported", async () => {

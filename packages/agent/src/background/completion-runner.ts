@@ -214,6 +214,72 @@ export function createBackgroundCompletionRunner(
     return committed;
   }
 
+  async function recoverExecutingTask(
+    taskId: string,
+    origin: BackgroundTaskOrigin,
+    toolName: string,
+  ): Promise<void> {
+    const task = deps.taskManager.getTask(taskId);
+    if (task?.dispatchState !== "executing") return;
+    const projected = conversationScopeToSessionKey(origin.turnScope.conversation);
+    if (!projected.ok) {
+      const parked = commitState(taskId, "parked_uncertain", ["executing"]);
+      if (parked.ok && parked.value) {
+        emitRoutingOutcome(taskId, origin, toolName, false, "uncertain_parked");
+      } else if (!parked.ok) {
+        deps.taskManager.scheduleDispatchRetry(taskId);
+        emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+      }
+      return;
+    }
+    const recovered = await deps.recoverFinalizedResult({
+      agentId: origin.turnScope.conversation.agentId,
+      sessionKey: projected.value,
+      journalKey: task.continuationExecutionId,
+    });
+    if (!recovered.ok) {
+      deps.taskManager.scheduleDispatchRetry(taskId);
+      emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+      return;
+    }
+    if (recovered.value === undefined) {
+      const parked = commitState(taskId, "parked_uncertain", ["executing"]);
+      if (parked.ok && parked.value) {
+        emitRoutingOutcome(taskId, origin, toolName, false, "uncertain_parked");
+      } else if (!parked.ok) {
+        deps.taskManager.scheduleDispatchRetry(taskId);
+        emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+      }
+      return;
+    }
+    if (isSilentResponse(recovered.value.response)) {
+      const delivered = commitState(taskId, "delivered", ["executing"]);
+      if (!delivered.ok) {
+        deps.taskManager.scheduleDispatchRetry(taskId);
+        emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+      }
+      return;
+    }
+    const recoveredOutbox: BackgroundContinuationOutbox = {
+      kind: "continuation",
+      response: recovered.value.response,
+      executionId: recovered.value.executionId,
+      idempotencyKey: `background-continuation:${task.continuationExecutionId}`,
+      deliveryProtection: deps.deliveryProtection,
+    };
+    const persisted = deps.taskManager.persistContinuationOutbox(
+      taskId,
+      recoveredOutbox,
+      ["executing"],
+    );
+    if (!persisted.ok) {
+      deps.taskManager.scheduleDispatchRetry(taskId);
+      emitRoutingOutcome(taskId, origin, toolName, false, "retry_scheduled");
+      return;
+    }
+    await deliverPersistedOutbox(taskId, origin, recoveredOutbox);
+  }
+
   const onCompleted = (data: { agentId: string; taskId: string; toolName: string; durationMs: number; origin: BackgroundTaskOrigin; timestamp: number }) => {
     if (stopped) return;
     const promise = handleEvent(data.taskId, "completed");
@@ -266,63 +332,7 @@ export function createBackgroundCompletionRunner(
       return;
     }
     if (task.dispatchState === "executing") {
-      const projected = conversationScopeToSessionKey(task.origin.turnScope.conversation);
-      if (!projected.ok) {
-        const parked = commitState(taskId, "parked_uncertain", ["executing"]);
-        if (parked.ok && parked.value) {
-          emitRoutingOutcome(taskId, task.origin, task.toolName, false, "uncertain_parked");
-        } else if (!parked.ok) {
-          deps.taskManager.scheduleDispatchRetry(taskId);
-          emitRoutingOutcome(taskId, task.origin, task.toolName, false, "retry_scheduled");
-        }
-        return;
-      }
-      const recovered = await deps.recoverFinalizedResult({
-        agentId: task.origin.turnScope.conversation.agentId,
-        sessionKey: projected.value,
-        journalKey: task.continuationExecutionId,
-      });
-      if (!recovered.ok) {
-        deps.taskManager.scheduleDispatchRetry(taskId);
-        emitRoutingOutcome(taskId, task.origin, task.toolName, false, "retry_scheduled");
-        return;
-      }
-      if (recovered.value === undefined) {
-        const parked = commitState(taskId, "parked_uncertain", ["executing"]);
-        if (parked.ok && parked.value) {
-          emitRoutingOutcome(taskId, task.origin, task.toolName, false, "uncertain_parked");
-        } else if (!parked.ok) {
-          deps.taskManager.scheduleDispatchRetry(taskId);
-          emitRoutingOutcome(taskId, task.origin, task.toolName, false, "retry_scheduled");
-        }
-        return;
-      }
-      if (isSilentResponse(recovered.value.response)) {
-        const delivered = commitState(taskId, "delivered", ["executing"]);
-        if (!delivered.ok) {
-          deps.taskManager.scheduleDispatchRetry(taskId);
-          emitRoutingOutcome(taskId, task.origin, task.toolName, false, "retry_scheduled");
-        }
-        return;
-      }
-      const recoveredOutbox: BackgroundContinuationOutbox = {
-        kind: "continuation",
-        response: recovered.value.response,
-        executionId: recovered.value.executionId,
-        idempotencyKey: `background-continuation:${task.continuationExecutionId}`,
-        deliveryProtection: deps.deliveryProtection,
-      };
-      const persisted = deps.taskManager.persistContinuationOutbox(
-        taskId,
-        recoveredOutbox,
-        ["executing"],
-      );
-      if (!persisted.ok) {
-        deps.taskManager.scheduleDispatchRetry(taskId);
-        emitRoutingOutcome(taskId, task.origin, task.toolName, false, "retry_scheduled");
-        return;
-      }
-      await deliverPersistedOutbox(taskId, task.origin, recoveredOutbox);
+      await recoverExecutingTask(taskId, task.origin, task.toolName);
       return;
     }
     const claim = commitState(taskId, "execution_claimed", ["pending"]);
@@ -514,7 +524,11 @@ export function createBackgroundCompletionRunner(
             },
             onFinalizedResult: async (finalized) => {
               if (isSilentResponse(finalized.response)) {
-                const delivered = commitState(taskId, "delivered", ["executing"]);
+                const delivered = commitState(
+                  taskId,
+                  "delivered",
+                  ["execution_claimed", "executing"],
+                );
                 if (!delivered.ok) return Promise.reject(delivered.error);
                 if (!delivered.value) {
                   return Promise.reject(new Error("Background continuation terminal state was not claimable"));
@@ -531,7 +545,7 @@ export function createBackgroundCompletionRunner(
               const persisted = deps.taskManager.persistContinuationOutbox(
                 taskId,
                 outbox,
-                ["executing"],
+                ["execution_claimed", "executing"],
               );
               if (!persisted.ok) return Promise.reject(persisted.error);
               finalizedOutbox = outbox;
@@ -561,20 +575,19 @@ export function createBackgroundCompletionRunner(
         "Background completion: executor.execute() rejected",
       );
       const current = deps.taskManager.getTask(taskId);
-      if (current?.dispatchState === "execution_claimed") {
+      if (
+        current?.dispatchState === "ready_to_deliver"
+        && current.continuationOutbox !== undefined
+      ) {
+        await deliverPersistedOutbox(taskId, origin, current.continuationOutbox);
+      } else if (current?.dispatchState === "execution_claimed") {
         const pending = commitState(taskId, "pending", ["execution_claimed"]);
         if (pending.ok && pending.value) {
           deps.taskManager.scheduleDispatchRetry(taskId);
           emitRoutingOutcome(taskId, origin, task.toolName, false, "retry_scheduled");
         }
-      } else {
-        const parked = commitState(taskId, "parked_uncertain", ["executing"]);
-        if (parked.ok && parked.value) {
-          emitRoutingOutcome(taskId, origin, task.toolName, false, "uncertain_parked");
-        } else if (!parked.ok) {
-          deps.taskManager.scheduleDispatchRetry(taskId);
-          emitRoutingOutcome(taskId, origin, task.toolName, false, "retry_scheduled");
-        }
+      } else if (current?.dispatchState === "executing") {
+        await recoverExecutingTask(taskId, origin, task.toolName);
       }
       return;
     }

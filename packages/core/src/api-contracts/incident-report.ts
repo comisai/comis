@@ -546,6 +546,15 @@ export const IncidentReportSchema = z.object({
       byReason: z.record(z.string(), z.number()),
     })
     .optional(),
+  /** Protected background-continuation recovery failures associated with this
+   *  session. Content-free counts and stable identifiers only. */
+  backgroundRecovery: z
+    .object({
+      retryRequiredCount: z.number(),
+      lastTaskId: z.string().optional(),
+      lastToolName: z.string().optional(),
+    })
+    .optional(),
   /** Reply blocks an aborted execution left UNSENT — the pacer's hard stop
    *  never reaches the delivery service, so no `delivery.dispatched` fires
    *  and the user silently receives nothing. Σ over the session's

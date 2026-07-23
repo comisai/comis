@@ -236,11 +236,12 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
   let promptSucceeded = false;
   let effectiveModel: { provider: string; model: string } | undefined;
 
+  const providerStart = params.onProviderStart?.();
+  if (providerStart !== undefined && !providerStart.ok) {
+    return Promise.reject(providerStart.error);
+  }
+
   try {
-    const providerStart = params.onProviderStart?.();
-    if (providerStart !== undefined && !providerStart.ok) {
-      return Promise.reject(providerStart.error);
-    }
     // Primary prompt uses resettable timeout so tool completions and stream
     // deltas can reset the deadline. Retry/fallback paths use
     // the original withPromptTimeout (fresh whole-turn timeout).

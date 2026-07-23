@@ -180,6 +180,13 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       }
       return;
     }
+    case "background_task.notified": {
+      if (asString(data.reason) !== "recovery_retry_required") return;
+      acc.backgroundRecoveryRetryCount += 1;
+      acc.backgroundRecoveryLastTaskId = asString(data.taskId);
+      acc.backgroundRecoveryLastToolName = asString(data.toolName);
+      return;
+    }
     case "tool.result": {
       if (!tool) return;
       // Dedupe by toolCallId — the live ctx_search counted twice when its
@@ -598,6 +605,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     videoOutcomeSeq: -1,
     voiceOutcomeSeq: -1,
     terminalDrivePromotedCount: 0,
+    backgroundRecoveryRetryCount: 0,
   };
 
   for (const rec of records) {
@@ -819,6 +827,19 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
             ...(acc.subagentKilledRuntimeMs !== undefined ? { runtimeMs: acc.subagentKilledRuntimeMs } : {}),
             ...(acc.subagentKilledIdleMs !== undefined ? { idleMs: acc.subagentKilledIdleMs } : {}),
             ...(acc.subagentKilledThresholdMs !== undefined ? { thresholdMs: acc.subagentKilledThresholdMs } : {}),
+          },
+        }
+      : {}),
+    ...(acc.backgroundRecoveryRetryCount > 0
+      ? {
+          backgroundRecovery: {
+            retryRequiredCount: acc.backgroundRecoveryRetryCount,
+            ...(acc.backgroundRecoveryLastTaskId !== undefined
+              ? { lastTaskId: acc.backgroundRecoveryLastTaskId }
+              : {}),
+            ...(acc.backgroundRecoveryLastToolName !== undefined
+              ? { lastToolName: acc.backgroundRecoveryLastToolName }
+              : {}),
           },
         }
       : {}),

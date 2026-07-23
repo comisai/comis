@@ -6,6 +6,7 @@ import { parseModelString, runWithModelRetry, isAuthError, type ModelRetryParams
 import { PromptTimeoutError } from "./prompt-timeout.js";
 import { createLastKnownModelTracker } from "../model/last-known-model.js";
 import { runWithContext } from "@comis/core";
+import { err } from "@comis/shared";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -173,6 +174,42 @@ describe("runWithModelRetry", () => {
 
       expect(authRotation.hasProfiles).toHaveBeenCalledWith("anthropic");
       expect(authRotation.recordSuccess).toHaveBeenCalledWith("anthropic");
+    });
+
+    it("never enters any provider path when provider admission is denied", async () => {
+      const denied = new Error("provider dispatch denied");
+      const session = makeSession();
+      const authRotation = makeAuthRotation();
+      const params = makeParams({
+        session,
+        onProviderStart: () => err(denied),
+        deps: {
+          eventBus: makeEventBus(),
+          logger: createMockLogger(),
+          modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
+          authRotation: authRotation as never,
+          fallbackModels: ["openai:gpt-4"],
+          lastKnownModel: {
+            getLastKnown: vi.fn(() => ({ provider: "google", model: "gemini-pro" })),
+            getAnyKnown: vi.fn(() => ({ provider: "google", model: "gemini-pro" })),
+          } as never,
+        },
+      });
+
+      await expect(runWithModelRetry(params)).rejects.toBe(denied);
+      expect(session.prompt).not.toHaveBeenCalled();
+      expect(session.setModel).not.toHaveBeenCalled();
+      expect(authRotation.rotateKey).not.toHaveBeenCalled();
+
+      params.onProviderStart = () => {
+        throw denied;
+      };
+      await expect(runWithModelRetry(params)).rejects.toBe(denied);
+      expect(session.prompt).not.toHaveBeenCalled();
+      expect(session.setModel).not.toHaveBeenCalled();
+      expect(authRotation.rotateKey).not.toHaveBeenCalled();
     });
   });
 

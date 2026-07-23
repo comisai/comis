@@ -5971,6 +5971,115 @@ describe("PiExecutor", () => {
       expect(deps.sessionAdapter.destroySession).toHaveBeenCalledWith(testSessionKey);
     });
 
+    it("hands off a journaled reset result before destroying its session", async () => {
+      mockGetLastAssistantText.mockReturnValue("synthetic response from repair");
+      mockGetResult.mockReturnValue({
+        tokensUsed: { input: 0, output: 0, total: 0 },
+        cost: { total: 0 },
+        stepsExecuted: 0,
+        llmCalls: 0,
+        finishReason: "stop",
+        textEmitted: false,
+      });
+      const entries: Array<Record<string, unknown>> = [];
+      const deps = createMockDeps();
+      vi.mocked(deps.sessionAdapter.withSession).mockImplementation(
+        async (_key, callback) => {
+          const value = await withTestTurnScope("agent-1", () => callback({
+            buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
+            getBranch: vi.fn().mockReturnValue([]),
+            appendMessage: vi.fn(),
+            getEntries: vi.fn(() => entries),
+            appendCustomEntry: vi.fn((customType, data) => {
+              entries.push({ type: "custom", customType, data });
+              return "journal-entry";
+            }),
+            getSessionDir: vi.fn().mockReturnValue("/tmp/test-session"),
+          } as never));
+          return ok(value);
+        },
+      );
+      const onFinalizedResult = vi.fn(async () => {
+        expect(entries).toContainEqual(expect.objectContaining({
+          type: "custom",
+          customType: "execution_result_journal",
+        }));
+        expect(deps.sessionAdapter.destroySession).not.toHaveBeenCalled();
+      });
+      const executor = createPiExecutor(testConfig, deps);
+
+      const result = await executor.execute(
+        testMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          operationType: "interactive",
+          finalizedResultJournalKey: "continuation-reset",
+          onFinalizedResult,
+        },
+      );
+
+      expect(result.finishReason).toBe("session_reset");
+      expect(onFinalizedResult).toHaveBeenCalledOnce();
+      expect(deps.sessionAdapter.destroySession).toHaveBeenCalledWith(testSessionKey);
+    });
+
+    it("preserves a reset session when protected handoff fails", async () => {
+      mockGetLastAssistantText.mockReturnValue("synthetic response from repair");
+      mockGetResult.mockReturnValue({
+        tokensUsed: { input: 0, output: 0, total: 0 },
+        cost: { total: 0 },
+        stepsExecuted: 0,
+        llmCalls: 0,
+        finishReason: "stop",
+        textEmitted: false,
+      });
+      const entries: Array<Record<string, unknown>> = [];
+      const deps = createMockDeps();
+      vi.mocked(deps.sessionAdapter.withSession).mockImplementation(
+        async (_key, callback) => {
+          const value = await withTestTurnScope("agent-1", () => callback({
+            buildSessionContext: vi.fn().mockReturnValue({ messages: [] }),
+            getBranch: vi.fn().mockReturnValue([]),
+            appendMessage: vi.fn(),
+            getEntries: vi.fn(() => entries),
+            appendCustomEntry: vi.fn((customType, data) => {
+              entries.push({ type: "custom", customType, data });
+              return "journal-entry";
+            }),
+            getSessionDir: vi.fn().mockReturnValue("/tmp/test-session"),
+          } as never));
+          return ok(value);
+        },
+      );
+      const executor = createPiExecutor(testConfig, deps);
+
+      await expect(executor.execute(
+        testMessage,
+        testSessionKey,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          operationType: "interactive",
+          finalizedResultJournalKey: "continuation-reset-failed",
+          onFinalizedResult: async () => Promise.reject(new Error("protected handoff unavailable")),
+        },
+      )).rejects.toThrow("protected handoff unavailable");
+
+      expect(entries).toContainEqual(expect.objectContaining({
+        type: "custom",
+        customType: "execution_result_journal",
+      }));
+      expect(deps.sessionAdapter.destroySession).not.toHaveBeenCalled();
+    });
+
     it("does NOT trigger stuck session detection when LLM calls were made", async () => {
       // Normal execution: LLM was called, produced a response.
       setMockAssistantText("Here is your answer.");

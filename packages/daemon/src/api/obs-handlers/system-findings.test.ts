@@ -925,6 +925,30 @@ describe("buildFindings — node_budget_exceeded finding", () => {
 // severity-independent and must keep firing.
 // ---------------------------------------------------------------------------
 describe("buildFindings — health_signal rollup counts only degraded (warning) rows", () => {
+  it("keeps protected background recovery incidents aligned with system health", () => {
+    const rows: DiagnosticRow[] = [{
+      timestamp: 1_000,
+      category: "health_signal",
+      severity: "warning",
+      agentId: "agent-a",
+      sessionKey: "default:agent-a:telegram:chat-a:user_a",
+      message: "background_task_recovery_failed",
+      details: JSON.stringify({
+        signal: "background_task_recovery_failed",
+        reason: "recovery_retry_required",
+        taskId: "task-recovery-a",
+        toolName: "report",
+      }),
+    }];
+
+    const finding = buildFindings(rows, [], []).find(
+      (candidate) => candidate.code === "health_signal:background_task_recovery_failed",
+    );
+
+    expect(finding?.count).toBe(1);
+    expect(finding?.detail).toContain("recovery_retry_required=1");
+  });
+
   it("does NOT surface a severity-info session_rebase row as an lcd_divergence finding (benign continuation, not degradation)", () => {
     // The ingest layer deliberately stamps benign context:dag_degraded reasons
     // (session_rebase / serialized_wait) severity "info" so they do not inflate

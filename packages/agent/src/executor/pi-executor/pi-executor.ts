@@ -635,6 +635,13 @@ export function createPiExecutor(
         }),
       );
 
+      if (resultJournalFailure.error !== undefined) {
+        return Promise.reject(resultJournalFailure.error);
+      }
+      if (lockResult.ok) {
+        await overrides?.onFinalizedResult?.(lockResult.value);
+      }
+
       // 6. Post-lock outcome: destroy session if session_reset; map lock failure
       //    (closure-extracted)
       const finalized = await finalizeLockResult(
@@ -642,10 +649,7 @@ export function createPiExecutor(
         deps,
         { lockResult, sessionAdapter, sessionKey },
       );
-      if (resultJournalFailure.error !== undefined) {
-        return Promise.reject(resultJournalFailure.error);
-      }
-      return finalizeResult(finalized);
+      return lockResult.ok ? finalized : finalizeResult(finalized);
     },
   };
 }
