@@ -28,7 +28,7 @@ export const backgroundRecoveryVerdict = (
   signals: IncidentSignals,
 ): BackgroundPendingVerdict | null => {
   const recovery = signals.backgroundRecovery;
-  if (recovery === undefined) return null;
+  if (recovery === undefined || recovery.unresolvedCount === 0) return null;
   const task = recovery.lastTaskId ?? "unknown";
   const tool = recovery.lastToolName ?? "unknown";
   return {

@@ -78,15 +78,9 @@ export async function runRetryLoop(
 
   // Bind the model-retry invocation so the silent-failure branches share
   // the deps wiring without re-threading every dependency.
-  let providerStarted = false;
   const acknowledgeProviderStart = params.executionOverrides?.onProviderStart === undefined
     ? undefined
-    : () => {
-        if (providerStarted) return ok(undefined);
-        const started = params.executionOverrides?.onProviderStart?.() ?? ok(undefined);
-        if (started.ok) providerStarted = true;
-        return started;
-      };
+    : () => params.executionOverrides?.onProviderStart?.() ?? ok(undefined);
   const invokeRetry: InvokeRetry = (msgText, images) =>
     invokeModelRetry(params, msgText, images, acknowledgeProviderStart);
 

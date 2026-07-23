@@ -11,6 +11,7 @@ export const ExecutionResultJournalRecordSchema = z.strictObject({
   journalKey: z.string().min(1).max(256),
   executionId: z.string().min(1).max(256),
   response: z.string().max(102_400),
+  cleanupRequired: z.boolean(),
 });
 
 export type ExecutionResultJournalRecord = z.infer<typeof ExecutionResultJournalRecordSchema>;
@@ -45,6 +46,7 @@ export function appendExecutionResultJournal(
   if (existing.value !== undefined) {
     return existing.value.executionId === parsed.data.executionId
       && existing.value.response === parsed.data.response
+      && existing.value.cleanupRequired === parsed.data.cleanupRequired
       ? ok(undefined)
       : err(new Error("Execution result journal identity conflict"));
   }

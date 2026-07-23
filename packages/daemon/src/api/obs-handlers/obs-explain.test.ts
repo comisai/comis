@@ -737,6 +737,7 @@ describe("assembleIncidentReportFromSources", () => {
 
     expect(report.backgroundRecovery).toEqual({
       retryRequiredCount: 1,
+      unresolvedCount: 1,
       lastTaskId: "task-recovery-a",
       lastToolName: "report",
     });
@@ -745,6 +746,53 @@ describe("assembleIncidentReportFromSources", () => {
     expect(report.likelyRootCause?.suggestedNextSteps.join(" ")).toContain(
       "protected background-task store",
     );
+  });
+
+  it("keeps resolved recovery evidence without dominating later explain", async () => {
+    const sessionKey = "default:agent-a:telegram:chat-a:user_a";
+    const records = [
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "background_task.notified",
+        seq: 1,
+        agentId: "agent-a",
+        data: {
+          taskId: "task-recovery-a",
+          toolName: "report",
+          notified: false,
+          reason: "recovery_retry_required",
+        },
+      },
+      {
+        traceSchema: "comis-trajectory",
+        schemaVersion: 1,
+        type: "background_task.notified",
+        seq: 2,
+        agentId: "agent-a",
+        data: {
+          taskId: "task-recovery-a",
+          toolName: "report",
+          notified: true,
+          reason: "continuation_accepted",
+        },
+      },
+    ];
+    const reader: IncidentSourceReader = {
+      readSessionRecords: async () => records,
+      readCacheTraceRecords: async () => [],
+      readSessionMetadata: async () => ({ agentId: "agent-a" }),
+      readDiagnosticsRollup: async () => null,
+      readAuditEvents: async () => [],
+    };
+
+    const report = await assembleIncidentReportFromSources(reader, ".", { sessionKey });
+
+    expect(report.backgroundRecovery).toEqual({
+      retryRequiredCount: 1,
+      unresolvedCount: 0,
+    });
+    expect(report.likelyRootCause?.code).not.toBe("background_recovery_retry_required");
   });
 
   it("678 fixture: produces content_heuristic_misclassification + degraded + breaker timeline WITHOUT any admin/_trustLevel param", async () => {

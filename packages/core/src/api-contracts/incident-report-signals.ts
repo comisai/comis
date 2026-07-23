@@ -108,6 +108,7 @@ export interface IncidentSignals {
    *  `recovery_retry_required`. Counts and stable identifiers only. */
   backgroundRecovery?: {
     retryRequiredCount: number;
+    unresolvedCount: number;
     lastTaskId?: string;
     lastToolName?: string;
   };

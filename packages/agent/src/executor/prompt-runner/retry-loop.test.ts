@@ -206,7 +206,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
     expect(params.session.prompt).not.toHaveBeenCalled();
   });
 
-  it("acknowledges provider start once across legitimate model re-entry", async () => {
+  it("revalidates provider admission across legitimate model re-entry", async () => {
     const providerStart = vi.fn(() => ok(undefined));
     const tools = makeHostileTools();
     const { params } = makeDispatchParams(
@@ -228,7 +228,7 @@ describe("detectSilentFailure dispatch — tool_schema_unsupported", () => {
 
     expect(outcome.promptSucceeded).toBe(true);
     expect(runWithModelRetry).toHaveBeenCalledTimes(2);
-    expect(providerStart).toHaveBeenCalledOnce();
+    expect(providerStart).toHaveBeenCalledTimes(2);
   });
 
   it("grammar-400 on the SILENT path dispatches to the strip-retry handler: the single retry fires with STRIPPED tools and emits execution:tool_schema_unsupported", async () => {

@@ -278,7 +278,7 @@ export function createPiExecutor(
     ): Promise<ExecutionResult> {
       const executionId = randomUUID();
       const finalizeResult = async (candidate: ExecutionResult): Promise<ExecutionResult> => {
-        await overrides?.onFinalizedResult?.(candidate);
+        await overrides?.onFinalizedResult?.(candidate, "ready");
         return candidate;
       };
       // Resolved request identity is write-once. An executor selected for a
@@ -638,8 +638,8 @@ export function createPiExecutor(
       if (resultJournalFailure.error !== undefined) {
         return Promise.reject(resultJournalFailure.error);
       }
-      if (lockResult.ok) {
-        await overrides?.onFinalizedResult?.(lockResult.value);
+      if (lockResult.ok && lockResult.value.finishReason === "session_reset") {
+        await overrides?.onFinalizedResult?.(lockResult.value, "cleanup_pending");
       }
 
       // 6. Post-lock outcome: destroy session if session_reset; map lock failure
@@ -649,7 +649,7 @@ export function createPiExecutor(
         deps,
         { lockResult, sessionAdapter, sessionKey },
       );
-      return lockResult.ok ? finalized : finalizeResult(finalized);
+      return finalizeResult(finalized);
     },
   };
 }
@@ -2444,6 +2444,7 @@ async function runSessionLocked(
         journalKey: executionOverrides.finalizedResultJournalKey,
         executionId: result.executionId,
         response: result.response,
+        cleanupRequired: result.finishReason === "session_reset",
       });
       if (!journaled.ok) resultJournalFailure.error = journaled.error;
     }

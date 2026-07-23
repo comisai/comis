@@ -6,7 +6,7 @@ import { parseModelString, runWithModelRetry, isAuthError, type ModelRetryParams
 import { PromptTimeoutError } from "./prompt-timeout.js";
 import { createLastKnownModelTracker } from "../model/last-known-model.js";
 import { runWithContext } from "@comis/core";
-import { err } from "@comis/shared";
+import { err, ok } from "@comis/shared";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -210,6 +210,38 @@ describe("runWithModelRetry", () => {
       expect(session.prompt).not.toHaveBeenCalled();
       expect(session.setModel).not.toHaveBeenCalled();
       expect(authRotation.rotateKey).not.toHaveBeenCalled();
+    });
+
+    it("rechecks terminal admission before every provider retry path", async () => {
+      const denied = new Error("run terminalized after primary dispatch");
+      const session = makeSession();
+      session.prompt.mockRejectedValueOnce(Object.assign(new Error("unauthorized"), { status: 401 }));
+      const authRotation = makeAuthRotation();
+      const onProviderStart = vi.fn()
+        .mockReturnValueOnce(ok(undefined))
+        .mockReturnValue(err(denied));
+      const params = makeParams({
+        session,
+        onProviderStart,
+        deps: {
+          eventBus: makeEventBus(),
+          logger: createMockLogger(),
+          modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
+          authRotation: authRotation as never,
+          fallbackModels: ["openai:gpt-4"],
+          lastKnownModel: {
+            getLastKnown: vi.fn(() => ({ provider: "google", model: "gemini-pro" })),
+            getAnyKnown: vi.fn(() => ({ provider: "google", model: "gemini-pro" })),
+          } as never,
+        },
+      });
+
+      await expect(runWithModelRetry(params)).rejects.toBe(denied);
+      expect(onProviderStart).toHaveBeenCalledTimes(2);
+      expect(session.prompt).toHaveBeenCalledOnce();
+      expect(session.setModel).not.toHaveBeenCalled();
     });
   });
 

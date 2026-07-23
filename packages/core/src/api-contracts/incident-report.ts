@@ -551,6 +551,7 @@ export const IncidentReportSchema = z.object({
   backgroundRecovery: z
     .object({
       retryRequiredCount: z.number(),
+      unresolvedCount: z.number(),
       lastTaskId: z.string().optional(),
       lastToolName: z.string().optional(),
     })

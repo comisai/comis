@@ -59,6 +59,7 @@ describe("execution result journal restart recovery", () => {
         journalKey: "continuation-a",
         executionId: "execution-a",
         response: "exact finalized response",
+        cleanupRequired: true,
       });
     });
     expect(appended).toEqual({ ok: true, value: { ok: true, value: undefined } });
@@ -79,6 +80,7 @@ describe("execution result journal restart recovery", () => {
         journalKey: "continuation-a",
         executionId: "execution-a",
         response: "exact finalized response",
+        cleanupRequired: true,
       },
     });
   });

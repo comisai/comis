@@ -36,6 +36,7 @@ export type BackgroundSessionState =
   | "pending"
   | "execution_claimed"
   | "executing"
+  | "cleanup_pending"
   | "ready_to_deliver"
   | "delivering"
   | "delivered"

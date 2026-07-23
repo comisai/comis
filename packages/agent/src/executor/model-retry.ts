@@ -236,9 +236,9 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
   let promptSucceeded = false;
   let effectiveModel: { provider: string; model: string } | undefined;
 
-  const providerStart = params.onProviderStart?.();
-  if (providerStart !== undefined && !providerStart.ok) {
-    return Promise.reject(providerStart.error);
+  const primaryDispatch = params.onProviderStart?.();
+  if (primaryDispatch !== undefined && !primaryDispatch.ok) {
+    return Promise.reject(primaryDispatch.error);
   }
 
   try {
@@ -373,6 +373,10 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           );
           await new Promise<void>(r => { const h = timers.setTimeout(() => r(), retryAfterMs); void h; });
           try {
+            const shortRetryDispatch = params.onProviderStart?.();
+            if (shortRetryDispatch !== undefined && !shortRetryDispatch.ok) {
+              return Promise.reject(shortRetryDispatch.error);
+            }
             // Scope decision: retry/fallback prompts KEEP whole-turn
             // retryPromptTimeoutMs semantics (non-resettable) — pinned
             // by test; extend only if local retries die spuriously in
@@ -416,6 +420,10 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
         );
         // Retry with the same model but rotated key
         try {
+          const rotatedDispatch = params.onProviderStart?.();
+          if (rotatedDispatch !== undefined && !rotatedDispatch.ok) {
+            return Promise.reject(rotatedDispatch.error);
+          }
           await withPromptTimeout(
             session.prompt(messageText, { expandPromptTemplates: false, images: promptImages }),
             timeoutConfig.retryPromptTimeoutMs,
@@ -524,6 +532,10 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           }
         }
 
+        const fallbackDispatch = params.onProviderStart?.();
+        if (fallbackDispatch !== undefined && !fallbackDispatch.ok) {
+          return Promise.reject(fallbackDispatch.error);
+        }
         await withPromptTimeout(
           session.prompt(messageText, {
             expandPromptTemplates: false,
@@ -642,6 +654,10 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
             await session.setModel(lkwModelObj);
           }
 
+          const lkwDispatch = params.onProviderStart?.();
+          if (lkwDispatch !== undefined && !lkwDispatch.ok) {
+            return Promise.reject(lkwDispatch.error);
+          }
           await withPromptTimeout(
             session.prompt(messageText, {
               expandPromptTemplates: false,

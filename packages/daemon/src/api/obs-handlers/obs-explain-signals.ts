@@ -181,10 +181,37 @@ function handleEventRecord(acc: Acc, rec: Record<string, unknown>): void {
       return;
     }
     case "background_task.notified": {
-      if (asString(data.reason) !== "recovery_retry_required") return;
-      acc.backgroundRecoveryRetryCount += 1;
-      acc.backgroundRecoveryLastTaskId = asString(data.taskId);
-      acc.backgroundRecoveryLastToolName = asString(data.toolName);
+      const reason = asString(data.reason);
+      const taskId = asString(data.taskId);
+      if (taskId === undefined) return;
+      if (reason === "recovery_retry_required") {
+        const toolName = asString(data.toolName);
+        acc.backgroundRecoveryRetryCount += 1;
+        acc.backgroundRecoveryByTask.set(taskId, {
+          unresolved: true,
+          ...(toolName === undefined ? {} : { toolName }),
+        });
+        acc.backgroundRecoveryLastTaskId = taskId;
+        acc.backgroundRecoveryLastToolName = toolName;
+        return;
+      }
+      if (
+        reason === "live_turn_consumed"
+        || reason === "continuation_accepted"
+        || reason === "fallback_accepted"
+        || reason === "permanent_parked"
+        || reason === "uncertain_parked"
+      ) {
+        const existing = acc.backgroundRecoveryByTask.get(taskId);
+        if (existing !== undefined) {
+          acc.backgroundRecoveryByTask.set(taskId, { ...existing, unresolved: false });
+          const unresolved = [...acc.backgroundRecoveryByTask.entries()]
+            .filter(([, entry]) => entry.unresolved);
+          const last = unresolved[unresolved.length - 1];
+          acc.backgroundRecoveryLastTaskId = last?.[0];
+          acc.backgroundRecoveryLastToolName = last?.[1].toolName;
+        }
+      }
       return;
     }
     case "tool.result": {
@@ -606,6 +633,7 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
     voiceOutcomeSeq: -1,
     terminalDrivePromotedCount: 0,
     backgroundRecoveryRetryCount: 0,
+    backgroundRecoveryByTask: new Map(),
   };
 
   for (const rec of records) {
@@ -834,6 +862,8 @@ export function toIncidentSignals(records: Array<Record<string, unknown>>): Inci
       ? {
           backgroundRecovery: {
             retryRequiredCount: acc.backgroundRecoveryRetryCount,
+            unresolvedCount: [...acc.backgroundRecoveryByTask.values()]
+              .filter((entry) => entry.unresolved).length,
             ...(acc.backgroundRecoveryLastTaskId !== undefined
               ? { lastTaskId: acc.backgroundRecoveryLastTaskId }
               : {}),

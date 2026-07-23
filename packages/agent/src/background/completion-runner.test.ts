@@ -90,11 +90,14 @@ function executeFinalized(result: Record<string, unknown>) {
   return async (...args: unknown[]) => {
     const overrides = args[7] as {
       onProviderStart?: () => Result<void, Error>;
-      onFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+      onFinalizedResult?: (
+        value: Record<string, unknown>,
+        phase: "cleanup_pending" | "ready",
+      ) => Promise<void>;
     } | undefined;
     const started = overrides?.onProviderStart?.();
     if (started !== undefined && !started.ok) return Promise.reject(started.error);
-    await overrides?.onFinalizedResult?.(result);
+    await overrides?.onFinalizedResult?.(result, "ready");
     return result;
   };
 }
@@ -107,6 +110,7 @@ describe("createBackgroundCompletionRunner", () => {
     getTask: ReturnType<typeof vi.fn>;
     commitDispatchState: ReturnType<typeof vi.fn>;
     persistContinuationOutbox: ReturnType<typeof vi.fn>;
+    persistCleanupPendingOutbox: ReturnType<typeof vi.fn>;
     scheduleDispatchRetry: ReturnType<typeof vi.fn>;
   };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
@@ -142,6 +146,7 @@ describe("createBackgroundCompletionRunner", () => {
         task.dispatchState = "ready_to_deliver";
         return ok(undefined);
       }),
+      persistCleanupPendingOutbox: vi.fn(),
       scheduleDispatchRetry: vi.fn(),
     };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
@@ -159,6 +164,8 @@ describe("createBackgroundCompletionRunner", () => {
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
       recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
+      cleanupFinalizedSession: vi.fn().mockResolvedValue(ok(undefined)),
+      reconcileDelivery: vi.fn().mockResolvedValue(ok({ kind: "accepted" })),
       deliverFallback: async ({ origin, response }) => {
         await fallbackNotifyFn({
           agentId: origin.turnScope.conversation.agentId,
@@ -225,14 +232,17 @@ describe("createBackgroundCompletionRunner", () => {
     taskManager.getTask.mockReturnValue(task);
     executor.execute.mockImplementation(async (...args: unknown[]) => {
       const overrides = args[7] as {
-        onFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+        onFinalizedResult?: (
+          value: Record<string, unknown>,
+          phase: "cleanup_pending" | "ready",
+        ) => Promise<void>;
       } | undefined;
       const result = {
         response: "pre-provider response",
         executionId: "execution-pre-provider",
         finishReason: "error",
       };
-      await overrides?.onFinalizedResult?.(result);
+      await overrides?.onFinalizedResult?.(result, "ready");
       return result;
     });
     const deliverCompletion = vi.fn().mockResolvedValue({ kind: "accepted" });
@@ -269,14 +279,17 @@ describe("createBackgroundCompletionRunner", () => {
     taskManager.getTask.mockReturnValue(task);
     executor.execute.mockImplementation(async (...args: unknown[]) => {
       const overrides = args[7] as {
-        onFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+        onFinalizedResult?: (
+          value: Record<string, unknown>,
+          phase: "cleanup_pending" | "ready",
+        ) => Promise<void>;
       } | undefined;
       const result = {
         response: "NO_REPLY",
         executionId: "execution-silent-pre-provider",
         finishReason: "stop",
       };
-      await overrides?.onFinalizedResult?.(result);
+      await overrides?.onFinalizedResult?.(result, "ready");
       return result;
     });
     const deliverCompletion = vi.fn();
@@ -759,6 +772,37 @@ describe("createBackgroundCompletionRunner", () => {
     await runner.shutdown();
   });
 
+  it("retries fallback outbox persistence before any outward send", async () => {
+    const task = buildTask({
+      result: "ok",
+      origin: buildOrigin({ backgroundHopCount: 99 }),
+    });
+    taskManager.getTask.mockReturnValue(task);
+    taskManager.persistContinuationOutbox.mockReturnValueOnce(
+      err(new Error("protected storage unavailable")),
+    );
+    const outcomes: Array<{ reason: string }> = [];
+    eventBus.on("background_task:notified", (event) => outcomes.push(event));
+    const runner = build(3);
+
+    eventBus.emit("background_task:completed", {
+      agentId: task.origin.turnScope.conversation.agentId,
+      taskId: task.id,
+      toolName: task.toolName,
+      durationMs: 1,
+      origin: task.origin,
+      timestamp: 3,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(task.dispatchState).toBe("pending");
+    expect(taskManager.scheduleDispatchRetry).toHaveBeenCalledWith(task.id);
+    expect(outcomes).toContainEqual(expect.objectContaining({ reason: "retry_scheduled" }));
+    expect(fallbackNotifyFn).not.toHaveBeenCalled();
+    await runner.shutdown();
+  });
+
   it("parks a rejected fallback delivery as uncertain and does not replay it", async () => {
     fallbackNotifyFn.mockRejectedValueOnce(new Error("simulated SIGKILL during fire"));
     const task = buildTask({
@@ -806,6 +850,7 @@ describe("trace continuity sub-tests", () => {
     getTask: ReturnType<typeof vi.fn>;
     commitDispatchState: ReturnType<typeof vi.fn>;
     persistContinuationOutbox: ReturnType<typeof vi.fn>;
+    persistCleanupPendingOutbox: ReturnType<typeof vi.fn>;
     scheduleDispatchRetry: ReturnType<typeof vi.fn>;
   };
   let fallbackNotifyFn: ReturnType<typeof vi.fn>;
@@ -825,6 +870,7 @@ describe("trace continuity sub-tests", () => {
       getTask: vi.fn(),
       commitDispatchState: vi.fn().mockReturnValue(ok(true)),
       persistContinuationOutbox: vi.fn().mockReturnValue(ok(undefined)),
+      persistCleanupPendingOutbox: vi.fn().mockReturnValue(ok(undefined)),
       scheduleDispatchRetry: vi.fn(),
     };
     fallbackNotifyFn = vi.fn().mockResolvedValue(undefined);
@@ -838,6 +884,8 @@ describe("trace continuity sub-tests", () => {
       sessionStore,
       taskManager: taskManager as unknown as import("./background-task-manager.js").BackgroundTaskManager,
       recoverFinalizedResult: vi.fn().mockResolvedValue(ok(undefined)),
+      cleanupFinalizedSession: vi.fn().mockResolvedValue(ok(undefined)),
+      reconcileDelivery: vi.fn().mockResolvedValue(ok({ kind: "accepted" })),
       deliverCompletion: async () => ({ kind: "accepted" }),
       deliverFallback: async ({ origin, response }) => {
         await fallbackNotifyFn({

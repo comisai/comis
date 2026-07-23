@@ -59,7 +59,9 @@ describe("completion dispatcher observation boundary", () => {
   it("exports the closed durable dispatch lifecycle", () => {
     expect(STATES).toEqual([
       "pending",
+      "execution_claimed",
       "executing",
+      "cleanup_pending",
       "ready_to_deliver",
       "delivering",
       "delivered",

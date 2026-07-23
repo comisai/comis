@@ -19,11 +19,14 @@ function executeFinalized(result: Record<string, unknown>) {
   return async (...args: unknown[]) => {
     const overrides = args[7] as {
       onProviderStart?: () => import("@comis/shared").Result<void, Error>;
-      onFinalizedResult?: (value: Record<string, unknown>) => Promise<void>;
+      onFinalizedResult?: (
+        value: Record<string, unknown>,
+        phase: "cleanup_pending" | "ready",
+      ) => Promise<void>;
     } | undefined;
     const started = overrides?.onProviderStart?.();
     if (started !== undefined && !started.ok) return Promise.reject(started.error);
-    await overrides?.onFinalizedResult?.(result);
+    await overrides?.onFinalizedResult?.(result, "ready");
     return result;
   };
 }
@@ -263,6 +266,7 @@ describe("setupBackgroundCompletionRunner", () => {
         task.dispatchState = "ready_to_deliver";
         return ok(undefined);
       }),
+      persistCleanupPendingOutbox: vi.fn(),
       scheduleDispatchRetry: vi.fn(),
     };
     const ctx = setupBackgroundCompletionRunner({
@@ -347,6 +351,7 @@ describe("setupBackgroundCompletionRunner", () => {
         task.dispatchState = "ready_to_deliver";
         return ok(undefined);
       },
+      persistCleanupPendingOutbox: vi.fn(),
       scheduleDispatchRetry: vi.fn(),
     };
     const execute = vi.fn(executeFinalized({
@@ -447,6 +452,7 @@ describe("setupBackgroundCompletionRunner", () => {
         task.dispatchState = "ready_to_deliver";
         return ok(undefined);
       },
+      persistCleanupPendingOutbox: vi.fn(),
       scheduleDispatchRetry: vi.fn(),
     };
     const ctx = setupBackgroundCompletionRunner({
@@ -572,6 +578,7 @@ describe("setupBackgroundCompletionRunner", () => {
           getTask: getTaskMock,
           commitDispatchState,
           persistContinuationOutbox: vi.fn(),
+          persistCleanupPendingOutbox: vi.fn(),
           scheduleDispatchRetry: vi.fn(),
         } as unknown as import("@comis/agent").BackgroundTaskManager,
         fallbackNotifyFn: vi.fn().mockResolvedValue(undefined),

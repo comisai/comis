@@ -5999,12 +5999,21 @@ describe("PiExecutor", () => {
           return ok(value);
         },
       );
-      const onFinalizedResult = vi.fn(async () => {
+      const phases: string[] = [];
+      const onFinalizedResult = vi.fn(async (
+        _result: ExecutionResult,
+        phase: "cleanup_pending" | "ready",
+      ) => {
+        phases.push(phase);
         expect(entries).toContainEqual(expect.objectContaining({
           type: "custom",
           customType: "execution_result_journal",
         }));
-        expect(deps.sessionAdapter.destroySession).not.toHaveBeenCalled();
+        if (phase === "cleanup_pending") {
+          expect(deps.sessionAdapter.destroySession).not.toHaveBeenCalled();
+        } else {
+          expect(deps.sessionAdapter.destroySession).toHaveBeenCalledWith(testSessionKey);
+        }
       });
       const executor = createPiExecutor(testConfig, deps);
 
@@ -6024,7 +6033,7 @@ describe("PiExecutor", () => {
       );
 
       expect(result.finishReason).toBe("session_reset");
-      expect(onFinalizedResult).toHaveBeenCalledOnce();
+      expect(phases).toEqual(["cleanup_pending", "ready"]);
       expect(deps.sessionAdapter.destroySession).toHaveBeenCalledWith(testSessionKey);
     });
 

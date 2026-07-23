@@ -138,7 +138,9 @@ describe("durable dispatch lifecycle and recovery", () => {
     if (!mod) return;
     expect(mod.STATES).toEqual([
       "pending",
+      "execution_claimed",
       "executing",
+      "cleanup_pending",
       "ready_to_deliver",
       "delivering",
       "delivered",
@@ -264,12 +266,9 @@ describe("durable dispatch lifecycle and recovery", () => {
     expect(recovered?.dispatchState).toBe("parked_uncertain");
   });
 
-  it.each([
-    ["none", "parked_uncertain"],
-    ["ledger", "ready_to_deliver"],
-  ] as const)(
-    "recovers an interrupted %s-protected delivery as %s",
-    (deliveryProtection, expectedState) => {
+  it.each(["none", "ledger"] as const)(
+    "preserves an interrupted %s-protected delivery for reconciliation",
+    (deliveryProtection) => {
       const task: PersistedTaskState = {
         id: `task-${deliveryProtection}`,
         toolName: "exec",
@@ -299,7 +298,7 @@ describe("durable dispatch lifecycle and recovery", () => {
 
       manager.recoverOnStartup(() => ok(undefined));
 
-      expect(manager.getTask(task.id)?.dispatchState).toBe(expectedState);
+      expect(manager.getTask(task.id)?.dispatchState).toBe("delivering");
     },
   );
 });

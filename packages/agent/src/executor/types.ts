@@ -205,10 +205,13 @@ export interface ExecutionOverrides {
   /** Immutable locale decision captured with delayed or background work. */
   responseLocalePolicy?: ResponseLocalePolicy;
   /** Awaited after the exact terminal result is finalized and before execute resolves. */
-  onFinalizedResult?: (result: ExecutionResult) => Promise<void>;
+  onFinalizedResult?: (
+    result: ExecutionResult,
+    phase: "cleanup_pending" | "ready",
+  ) => Promise<void>;
   /** Stable protected-session journal identity for crash-recoverable execution results. */
   finalizedResultJournalKey?: string;
-  /** Authoritative callback invoked immediately before the first provider dispatch. */
+  /** Authoritative callback invoked immediately before every provider dispatch. */
   onProviderStart?: () => Result<void, Error>;
   /** Graph ID for cache write signal emission. Set only for graph subagents. */
   graphId?: string;

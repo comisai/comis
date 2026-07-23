@@ -33,7 +33,7 @@ import {
   type OutwardSendLedgerPort,
   type TypedEventBus,
 } from "@comis/core";
-import { err, fromPromise, ok } from "@comis/shared";
+import { err, fromPromise, ok, type Result } from "@comis/shared";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor } from "@comis/agent";
 import type { RunnerSessionStore } from "@comis/agent";
@@ -61,7 +61,11 @@ export interface SetupBackgroundCompletionRunnerDeps {
    */
   taskManager: Pick<
     BackgroundTaskManager,
-    "getTask" | "commitDispatchState" | "persistContinuationOutbox" | "scheduleDispatchRetry"
+    "getTask"
+    | "commitDispatchState"
+    | "persistContinuationOutbox"
+    | "persistCleanupPendingOutbox"
+    | "scheduleDispatchRetry"
   >;
   /** bgNotifyFn closure used when the originating session is gone. */
   fallbackNotifyFn: NotifyFn;
@@ -193,6 +197,71 @@ export function setupBackgroundCompletionRunner(
       }
     }
   }
+
+  async function reconcileDelivery(
+    input: Parameters<BackgroundCompletionRunnerDeps["reconcileDelivery"]>[0],
+  ): Promise<Result<BackgroundCompletionDeliveryOutcome, Error>> {
+    const endpoint = input.origin.turnScope.endpoint;
+    const adapter = deps.adaptersByType.get(endpoint.channelType);
+    if (adapter === undefined || adapter.channelId !== endpoint.channelInstanceId) {
+      return ok({
+        kind: "retryable_pre_send" as const,
+        errorKind: "precondition" as const,
+        message: "The originating channel adapter instance is not active",
+      });
+    }
+    if (deps.outwardLedger === undefined) {
+      return ok({
+        kind: "uncertain" as const,
+        errorKind: "dependency" as const,
+        message: "Delivery reconciliation requires an outward-send ledger",
+      });
+    }
+    const rootRunId = `background-task:${input.taskId}`;
+    const allocated = await deps.outwardLedger.allocateStep(rootRunId, input.idempotencyKey);
+    if (!allocated.ok) return allocated;
+    const retained = await deps.outwardLedger.lookup(rootRunId, allocated.value);
+    if (!retained.ok) return retained;
+    if (retained.value === undefined) {
+      return ok({
+        kind: "retryable_pre_send" as const,
+        errorKind: "dependency" as const,
+        message: "No outward send was attempted",
+      });
+    }
+    switch (retained.value.state) {
+      case "committed":
+        return ok({ kind: "accepted" as const });
+      case "failed":
+        return ok({
+          kind: "permanent" as const,
+          errorKind: "platform" as const,
+          message: "The outward send failed permanently",
+        });
+      case "send_attempt_started": {
+        const reclaimed = await deps.outwardLedger.reclaimPreSend(rootRunId, allocated.value);
+        if (!reclaimed.ok) return reclaimed;
+        return reclaimed.value
+          ? ok({
+              kind: "retryable_pre_send" as const,
+              errorKind: "dependency" as const,
+              message: "The outward send did not enter the platform adapter",
+            })
+          : err(new Error("The pre-send ledger claim changed during reconciliation"));
+      }
+      case "unknown_after_send":
+      case "unresolved":
+        return ok({
+          kind: "uncertain" as const,
+          errorKind: "dependency" as const,
+          message: "The outward send may have entered the platform adapter",
+        });
+      default: {
+        const _exhaustive: never = retained.value.state;
+        return _exhaustive;
+      }
+    }
+  }
   // LIVE-TURN oracle shared by dispatcher + runner: a tool auto-backgrounded
   // mid-turn is consumed by its own still-running turn (the background_tasks
   // stub protocol), so a completion landing while the origin turn is in
@@ -225,6 +294,14 @@ export function setupBackgroundCompletionRunner(
       }
       return readExecutionResultJournal(sessionManager, sessionKey, journalKey);
     },
+    cleanupFinalizedSession: async ({ agentId, sessionKey }) => {
+      const sessionManager = deps.resolveSessionManager(agentId);
+      if (sessionManager === undefined) {
+        return err(new Error(`No session manager is registered for ${agentId}`));
+      }
+      return fromPromise(sessionManager.destroySession(sessionKey));
+    },
+    reconcileDelivery,
     deliverCompletion: deliver,
     deliverFallback: deliver,
     deliveryProtection: deps.outwardLedger ? "ledger" : "none",

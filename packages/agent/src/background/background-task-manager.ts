@@ -17,8 +17,6 @@ import {
   type TimerHandle,
   type TimerPort,
   type SessionKey,
-  conversationScopeToSessionKey,
-  formatSessionKey,
 } from "@comis/core";
 import {
   persistTaskAtomically,
@@ -106,6 +104,11 @@ export interface BackgroundTaskManager {
     expected?: readonly BackgroundSessionState[],
   ): Result<boolean, Error>;
   persistContinuationOutbox(
+    taskId: string,
+    outbox: BackgroundContinuationOutbox,
+    expected?: readonly BackgroundSessionState[],
+  ): Result<void, Error>;
+  persistCleanupPendingOutbox(
     taskId: string,
     outbox: BackgroundContinuationOutbox,
     expected?: readonly BackgroundSessionState[],
@@ -390,7 +393,7 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       return [...tasks.values()];
     },
 
-    recoverOnStartup(recordIncident) {
+    recoverOnStartup(_recordIncident) {
       const recovered = recoverTasks(dataDir);
       let count = 0;
       let dispatchPreserved = 0;
@@ -412,65 +415,6 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           || persisted.status === "cancelled"
         ) {
           dispatchPreserved++;
-          continue;
-        }
-        let recoveredLifecycle = true;
-        if (task.dispatchState === "execution_claimed") {
-          const candidate = { ...task, dispatchState: "pending" as const };
-          const persistedReset = persistTaskAtomically(dataDir, candidate);
-          if (persistedReset.ok) {
-            task.dispatchState = "pending";
-            reportPersistenceOutcome(task, persistedReset.value);
-          } else {
-            recoveredLifecycle = false;
-          }
-        } else if (task.dispatchState === "delivering") {
-          const recoveredState: BackgroundSessionState = task.continuationOutbox?.deliveryProtection === "ledger"
-            ? "ready_to_deliver"
-            : "parked_uncertain";
-          const candidate = { ...task, dispatchState: recoveredState };
-          const persistedReset = persistTaskAtomically(dataDir, candidate);
-          if (persistedReset.ok) {
-            task.dispatchState = recoveredState;
-            reportPersistenceOutcome(task, persistedReset.value);
-          } else {
-            recoveredLifecycle = false;
-          }
-        }
-        if (!recoveredLifecycle) {
-          logger.warn(
-            {
-              taskId: task.id,
-              toolName: task.toolName,
-              dispatchState: task.dispatchState,
-              hint: "Repair protected background-task storage, then restart to retry lifecycle recovery",
-              errorKind: "resource" as const,
-            },
-            "Background task lifecycle recovery could not be persisted",
-          );
-          const projected = conversationScopeToSessionKey(task.origin.turnScope.conversation);
-          const incident = projected.ok
-            ? recordIncident({
-                agentId: task.origin.turnScope.conversation.agentId,
-                taskId: task.id,
-                toolName: task.toolName,
-                sessionKey: formatSessionKey(projected.value),
-                projectedSessionKey: projected.value,
-                traceId: task.origin.traceId,
-                timestamp: clock.now(),
-              })
-            : err(new Error("Background recovery incident session scope is invalid"));
-          if (!incident.ok) {
-            logger.warn(
-              {
-                taskId: task.id,
-                toolName: task.toolName,
-                hint: "Repair the session trajectory artifact before retrying background lifecycle recovery",
-                errorKind: "resource" as const,
-              },
-              "Background task recovery incident could not be persisted",
-            );
-          }
           continue;
         }
         if (persisted.status === "completed") {
@@ -546,14 +490,39 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
       return ok(undefined);
     },
 
+    persistCleanupPendingOutbox(taskId, outbox, expected) {
+      const parsed = BackgroundContinuationOutboxSchema.safeParse(outbox);
+      if (!parsed.success) return err(new Error("Background continuation outbox validation failed"));
+      const task = tasks.get(taskId);
+      if (!task) return err(new Error(`Background task not found: ${taskId}`));
+      const current = task.dispatchState ?? "pending";
+      if (expected && !expected.includes(current)) {
+        return err(new Error(`Background task ${taskId} cannot persist cleanup authority from ${current}`));
+      }
+      const candidate = {
+        ...task,
+        continuationOutbox: parsed.data,
+        dispatchState: "cleanup_pending" as const,
+      };
+      const persisted = persistTaskAtomically(dataDir, candidate);
+      if (!persisted.ok) return persisted;
+      task.continuationOutbox = parsed.data;
+      task.dispatchState = "cleanup_pending";
+      reportPersistenceOutcome(task, persisted.value);
+      return ok(undefined);
+    },
+
     scheduleDispatchRetry(taskId) {
       const task = tasks.get(taskId);
       if (
         !task
         || (
           task.dispatchState !== "pending"
+          && task.dispatchState !== "execution_claimed"
+          && task.dispatchState !== "cleanup_pending"
           && task.dispatchState !== "ready_to_deliver"
           && task.dispatchState !== "executing"
+          && task.dispatchState !== "delivering"
         )
         || dispatchRetryTimers.has(taskId)
       ) return;
@@ -565,8 +534,11 @@ export function createBackgroundTaskManager(opts: BackgroundTaskManagerOpts): Ba
           !current
           || (
             current.dispatchState !== "pending"
+            && current.dispatchState !== "execution_claimed"
+            && current.dispatchState !== "cleanup_pending"
             && current.dispatchState !== "ready_to_deliver"
             && current.dispatchState !== "executing"
+            && current.dispatchState !== "delivering"
           )
         ) return;
         const event = current.status === "completed"

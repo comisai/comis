@@ -612,7 +612,9 @@ describe("BackgroundTaskManager", () => {
   // boundary so recovered tasks reflect their pre-restart dispatch state.
   // ---------------------------------------------------------------------------
   describe("recoverOnStartup preserves dispatchState", () => {
-    it("preserves provider-started execution for journal recovery", () => {
+    it.each(["execution_claimed", "executing"] as const)(
+      "preserves %s execution for journal recovery",
+      (dispatchState) => {
       const testDir = safePath(tmpdir(), `comis-bg-mgr-exec-${randomUUID()}`);
       mkdirSync(testDir, { recursive: true });
       try {
@@ -624,7 +626,7 @@ describe("BackgroundTaskManager", () => {
           startedAt: 1,
           completedAt: 2,
           origin,
-          dispatchState: "executing",
+          dispatchState,
           continuationExecutionId: "continuation-1",
           dispatchAttempts: 1,
         });
@@ -636,12 +638,13 @@ describe("BackgroundTaskManager", () => {
           timers: testTimers,
         });
         recovered.recoverOnStartup(() => ok(undefined));
-        expect(recovered.getTask("exec-task-1")?.dispatchState).toBe("executing");
-        expect(loadTask(testDir, "exec-agent", "exec-task-1")?.dispatchState).toBe("executing");
+        expect(recovered.getTask("exec-task-1")?.dispatchState).toBe(dispatchState);
+        expect(loadTask(testDir, "exec-agent", "exec-task-1")?.dispatchState).toBe(dispatchState);
       } finally {
         rmSync(testDir, { recursive: true, force: true });
       }
-    });
+      },
+    );
 
     it("preserves a parked delivery outcome without replaying it", () => {
       const testDir = safePath(tmpdir(), `comis-bg-mgr-disp-${randomUUID()}`);
