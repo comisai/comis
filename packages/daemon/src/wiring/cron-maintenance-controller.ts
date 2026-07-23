@@ -68,6 +68,7 @@ export type CronMaintenanceResetResult = CronAuthorityResetResult & {
 export interface CronMaintenanceController {
   initialize(): Promise<Result<void, CronMaintenanceControllerError>>;
   activate(): Result<void, CronMaintenanceControllerError>;
+  deactivate(): void;
   status(): Promise<Result<CronMaintenanceStatus, CronMaintenanceControllerError>>;
   reset(
     request: CronMaintenanceResetRequest,
@@ -207,6 +208,13 @@ export function createCronMaintenanceController(
     }
     state = "active";
     return ok(undefined);
+  }
+
+  function deactivate(): void {
+    activationRequested = false;
+    if (state !== "active" || deps.scheduler === undefined) return;
+    deps.scheduler.closeAdmission();
+    state = "ready";
   }
 
   async function status(): Promise<Result<CronMaintenanceStatus, CronMaintenanceControllerError>> {
@@ -403,7 +411,7 @@ export function createCronMaintenanceController(
     });
   }
 
-  return { initialize, activate, status, reset };
+  return { initialize, activate, deactivate, status, reset };
 }
 
 function authorityRequestOf(request: CronMaintenanceResetRequest): CronAuthorityResetRequest {

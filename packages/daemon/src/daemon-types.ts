@@ -539,6 +539,7 @@ export interface BootContext {
   getAgentSchedulerSeed?: Awaited<ReturnType<typeof setupSchedulers>>["getAgentSchedulerSeed"];
   cronRuntimeBinding?: Awaited<ReturnType<typeof setupSchedulers>>["cronRuntimeBinding"];
   activateCronSchedulers?: Awaited<ReturnType<typeof setupSchedulers>>["activateCronSchedulers"];
+  deactivateCronSchedulers?: Awaited<ReturnType<typeof setupSchedulers>>["deactivateCronSchedulers"];
   schedulerCorePortBindings?: import("./wiring/scheduler-core-port-bindings.js").SchedulerCorePortBindings;
   getAgentBrowserService?: Awaited<ReturnType<typeof setupSchedulers>>["getAgentBrowserService"];
   sessionTrackerRegistry?: SessionTrackerRegistry<ReturnType<typeof createFileStateTracker>>;

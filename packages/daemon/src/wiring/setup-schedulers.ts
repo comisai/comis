@@ -36,7 +36,6 @@ import {
   resolveQuietHoursEndMs,
   type BuiltInCronJob,
   type CronScheduler,
-  type CronSchedulerLifecycleError,
   type ExecutionTracker,
   type FollowupTaskStore,
 } from "@comis/scheduler";
@@ -46,6 +45,7 @@ import { createLateBoundCronRuntime, type CronRuntimeBinding } from "./cron-runt
 import {
   createCronMaintenanceController,
   type CronMaintenanceController,
+  type CronMaintenanceControllerError,
 } from "./cron-maintenance-controller.js";
 import {
   createTaskMaintenanceController,
@@ -85,7 +85,8 @@ export interface SchedulersResult {
   }>;
   getAgentBrowserService: (agentId: string) => BrowserService;
   cronRuntimeBinding: CronRuntimeBinding;
-  activateCronSchedulers: () => Result<void, CronSchedulerLifecycleError>;
+  activateCronSchedulers: () => Result<void, CronMaintenanceControllerError>;
+  deactivateCronSchedulers: () => void;
 }
 
 export interface TaskRuntimeGate {
@@ -547,32 +548,39 @@ export async function setupSchedulers(deps: {
       : ok(seed);
   }
 
-  function activateCronSchedulers(): Result<void, CronSchedulerLifecycleError> {
+  function activateCronSchedulers(): Result<void, CronMaintenanceControllerError> {
     if (cronSchedulers.size > 0 && !cronRuntimeBinding.isBound()) {
       return err({
-        code: "not_active",
+        code: "dependency_not_ready",
         errorKind: "precondition",
         message: "Cron runtime dependencies must be bound before scheduler activation",
       });
     }
     const startedAtMs = clock.now();
+    const activatedControllers: CronMaintenanceController[] = [];
     for (const [agentId, controller] of cronMaintenanceControllers) {
       const result = controller.activate();
       if (!result.ok) {
+        for (const activated of activatedControllers.reverse()) activated.deactivate();
         schedulerLogger.error({
           agentId,
           err: result.error.message,
           hint: "Keep scheduler admission closed and repair runtime binding before activation",
           errorKind: result.error.errorKind,
         }, "Cron scheduler activation failed");
-        continue;
+        return result;
       }
+      activatedControllers.push(controller);
     }
     schedulerLogger.info({
       schedulerCount: cronSchedulers.size,
       durationMs: clock.now() - startedAtMs,
     }, "Cron schedulers activated");
     return ok(undefined);
+  }
+
+  function deactivateCronSchedulers(): void {
+    for (const controller of cronMaintenanceControllers.values()) controller.deactivate();
   }
 
   const browserServices = new Map<string, BrowserService>();
@@ -637,6 +645,7 @@ export async function setupSchedulers(deps: {
     getAgentBrowserService,
     cronRuntimeBinding,
     activateCronSchedulers,
+    deactivateCronSchedulers,
   };
 }
 

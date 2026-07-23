@@ -557,7 +557,7 @@ describe("scheduler composition lifecycle", () => {
 
     expect(result.activateCronSchedulers()).toMatchObject({
       ok: false,
-      error: { code: "not_active", errorKind: "precondition" },
+      error: { code: "dependency_not_ready", errorKind: "precondition" },
     });
     expect(schedulers[0]!.activate).not.toHaveBeenCalled();
   });

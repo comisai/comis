@@ -8,7 +8,6 @@ import type {
 } from "@comis/core";
 import {
   resolveEffectiveHeartbeatConfig,
-  type CronSchedulerLifecycleError,
   type HeartbeatPeriodicConfig,
   type HeartbeatPeriodicConfigureOutcome,
   type HeartbeatPeriodicScheduleError,
@@ -33,7 +32,10 @@ export interface ProactiveSchedulerActivationDeps {
   globalHeartbeatConfig: HeartbeatConfig;
   getAgentSchedulerSeed(agentId: string): Result<string, SeedError>;
   coordinator: CoordinatorLifecycle;
-  activateCronSchedulers(): Result<void, CronSchedulerLifecycleError>;
+  activateCronSchedulers(): Result<void, SeedError>;
+  deactivateCronSchedulers(): void;
+  activateTaskSchedules?(): Promise<Result<void, SeedError>>;
+  rollbackTaskSchedules?(): void;
   logger: Pick<ComisLogger, "info" | "error">;
 }
 
@@ -41,14 +43,15 @@ export interface ProactiveSchedulerActivationError {
   readonly code:
     | "heartbeat_configuration_failed"
     | "heartbeat_activation_failed"
-    | "cron_activation_failed";
+    | "cron_activation_failed"
+    | "task_activation_failed";
   readonly errorKind: ErrorKind;
   readonly message: string;
 }
 
-export function activateProactiveSchedulers(
+export async function activateProactiveSchedulers(
   deps: ProactiveSchedulerActivationDeps,
-): Result<void, ProactiveSchedulerActivationError> {
+): Promise<Result<void, ProactiveSchedulerActivationError>> {
   for (const [agentId, agentConfig] of Object.entries(deps.agents)) {
     const effective = resolveEffectiveHeartbeatConfig(
       deps.globalHeartbeatConfig,
@@ -90,6 +93,7 @@ export function activateProactiveSchedulers(
 
   const cronActivated = deps.activateCronSchedulers();
   if (!cronActivated.ok) {
+    deps.deactivateCronSchedulers();
     deps.coordinator.shutdown();
     deps.logger.error({
       step: "cron_activation",
@@ -100,6 +104,23 @@ export function activateProactiveSchedulers(
       code: "cron_activation_failed",
       errorKind: cronActivated.error.errorKind,
       message: cronActivated.error.message,
+    });
+  }
+
+  const tasksActivated = await (deps.activateTaskSchedules?.() ?? Promise.resolve(ok(undefined)));
+  if (!tasksActivated.ok) {
+    deps.rollbackTaskSchedules?.();
+    deps.deactivateCronSchedulers();
+    deps.coordinator.shutdown();
+    deps.logger.error({
+      step: "task_activation",
+      errorKind: tasksActivated.error.errorKind,
+      hint: "All proactive timers were rolled back; restore the strict task authority before restart",
+    }, "Follow-up task schedule activation failed");
+    return err({
+      code: "task_activation_failed",
+      errorKind: tasksActivated.error.errorKind,
+      message: tasksActivated.error.message,
     });
   }
 

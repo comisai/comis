@@ -60,7 +60,8 @@ type ProactiveBootSlice = Pick<BootContext,
   | "entityStore" | "causalStore" | "memoryLifecycleStore" | "outcomeStore"
   | "learnedSkillStore" | "sharedLeaseManager" | "boundedAutonomyBudgetHolder"
   | "capEndpointHandle"
-  | "cronRuntimeBinding" | "activateCronSchedulers" | "getAgentSchedulerSeed"
+  | "cronRuntimeBinding" | "activateCronSchedulers" | "deactivateCronSchedulers"
+  | "getAgentSchedulerSeed"
   | "followupTaskStores" | "taskBootId" | "taskRuntimeGate"
   | "wakeGateRunnerRef" | "costTrackers" | "stepCounters" | "oauthManagers" | "authStorages"
 >;
@@ -407,18 +408,34 @@ export async function setupProactiveSchedulers(
     coordinator.shutdown();
     heartbeatRunner?.shutdown();
     historyState.accepting = false;
+    required.value.cronRuntimeBinding.close();
     return err({
       code: "port_binding_failed",
       errorKind: portsBound.error.errorKind,
       message: "Scheduler core ports could not be bound",
     });
   }
-  const activated = activateProactiveSchedulers({
+  const activated = await activateProactiveSchedulers({
     agents: runtime.container.config.agents,
     globalHeartbeatConfig: runtime.container.config.scheduler.heartbeat,
     getAgentSchedulerSeed: required.value.getAgentSchedulerSeed,
     coordinator,
     activateCronSchedulers: required.value.activateCronSchedulers,
+    deactivateCronSchedulers: required.value.deactivateCronSchedulers,
+    ...(taskRuntime === undefined
+      ? {}
+      : {
+        activateTaskSchedules: async () => {
+          const result = await taskRuntime.activate();
+          return result.ok
+            ? result
+            : err({
+              errorKind: result.error.errorKind,
+              message: "Follow-up task schedules could not be activated",
+            });
+        },
+        rollbackTaskSchedules: () => taskRuntime.shutdown(),
+      }),
     logger: runtime.schedulerLogger,
   });
   if (!activated.ok) {
@@ -427,28 +444,13 @@ export async function setupProactiveSchedulers(
     coordinator.shutdown();
     heartbeatRunner?.shutdown();
     deps.schedulerCorePortBindings.close();
+    required.value.cronRuntimeBinding.close();
     return err({
       code: "activation_failed",
       errorKind: activated.error.errorKind,
       message: activated.error.message,
     });
   }
-  if (taskRuntime !== undefined) {
-    const taskActivated = await taskRuntime.activate();
-    if (!taskActivated.ok) {
-      taskRuntime.shutdown();
-      historyState.accepting = false;
-      coordinator.shutdown();
-      heartbeatRunner?.shutdown();
-      deps.schedulerCorePortBindings.close();
-      return err({
-        code: "activation_failed",
-        errorKind: taskActivated.error.errorKind,
-        message: "Follow-up task schedules could not be activated",
-      });
-    }
-  }
-
   let finalized = false;
   const closeAdmission = (): { activeCount: number; cancelledCount: number } => {
     const coordinatorStatus = coordinator.closeAdmission();
@@ -559,11 +561,15 @@ function requiresAgentProactiveRuntime(runtime: ProactiveBootSlice): boolean {
   return false;
 }
 
-function setupQuiescentProactiveSchedulers(
+async function setupQuiescentProactiveSchedulers(
   deps: SetupProactiveSchedulersDeps,
-): Result<ProactiveSchedulersHandle, SetupProactiveSchedulersError> {
+): Promise<Result<ProactiveSchedulersHandle, SetupProactiveSchedulersError>> {
   const runtime = deps.runtime;
-  if (runtime.getAgentSchedulerSeed === undefined || runtime.activateCronSchedulers === undefined) {
+  if (
+    runtime.getAgentSchedulerSeed === undefined
+    || runtime.activateCronSchedulers === undefined
+    || runtime.deactivateCronSchedulers === undefined
+  ) {
     return err({
       code: "dependency_unavailable",
       errorKind: "precondition",
@@ -619,12 +625,13 @@ function setupQuiescentProactiveSchedulers(
       message: "Scheduler core ports could not be bound",
     });
   }
-  const activated = activateProactiveSchedulers({
+  const activated = await activateProactiveSchedulers({
     agents: runtime.container.config.agents,
     globalHeartbeatConfig: runtime.container.config.scheduler.heartbeat,
     getAgentSchedulerSeed: runtime.getAgentSchedulerSeed,
     coordinator,
     activateCronSchedulers: runtime.activateCronSchedulers,
+    deactivateCronSchedulers: runtime.deactivateCronSchedulers,
     logger: runtime.schedulerLogger,
   });
   if (!activated.ok) {
@@ -693,6 +700,7 @@ function resolveRequiredRuntime(runtime: ProactiveBootSlice): Result<{
   capEndpointHandle: NonNullable<ProactiveBootSlice["capEndpointHandle"]>;
   cronRuntimeBinding: NonNullable<ProactiveBootSlice["cronRuntimeBinding"]>;
   activateCronSchedulers: NonNullable<ProactiveBootSlice["activateCronSchedulers"]>;
+  deactivateCronSchedulers: NonNullable<ProactiveBootSlice["deactivateCronSchedulers"]>;
   getAgentSchedulerSeed: NonNullable<ProactiveBootSlice["getAgentSchedulerSeed"]>;
 }, SetupProactiveSchedulersError> {
   const {
@@ -705,6 +713,7 @@ function resolveRequiredRuntime(runtime: ProactiveBootSlice): Result<{
     capEndpointHandle,
     cronRuntimeBinding,
     activateCronSchedulers,
+    deactivateCronSchedulers,
     getAgentSchedulerSeed,
   } = runtime;
   if (
@@ -717,6 +726,7 @@ function resolveRequiredRuntime(runtime: ProactiveBootSlice): Result<{
     || capEndpointHandle === undefined
     || cronRuntimeBinding === undefined
     || activateCronSchedulers === undefined
+    || deactivateCronSchedulers === undefined
     || getAgentSchedulerSeed === undefined
   ) {
     return err({
@@ -735,6 +745,7 @@ function resolveRequiredRuntime(runtime: ProactiveBootSlice): Result<{
     capEndpointHandle,
     cronRuntimeBinding,
     activateCronSchedulers,
+    deactivateCronSchedulers,
     getAgentSchedulerSeed,
   });
 }

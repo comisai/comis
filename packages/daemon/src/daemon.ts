@@ -1848,7 +1848,7 @@ async function bootAgents(
     cronSchedulers, ownedCronSchedulers, executionTrackers, cronMaintenanceControllers, browserServices, resetSchedulers,
     followupTaskStores, taskBootId, taskRuntimeGate, taskMaintenanceControllers, bindTaskMaintenanceRuntime,
     getAgentCronScheduler, getAgentCronAuthoringConfig, getAgentBrowserService,
-    getAgentSchedulerSeed, cronRuntimeBinding, activateCronSchedulers,
+    getAgentSchedulerSeed, cronRuntimeBinding, activateCronSchedulers, deactivateCronSchedulers,
   } = await setupSchedulers({
     container, workspaceDirs, sessionStore, sessionManager,
     schedulerLogger, agentLogger, skillsLogger,
@@ -1955,7 +1955,7 @@ async function bootAgents(
     followupTaskStores, taskBootId, taskRuntimeGate, taskMaintenanceControllers, bindTaskMaintenanceRuntime,
     getAgentCronScheduler, getAgentCronAuthoringConfig, getAgentBrowserService,
     getAgentSchedulerSeed, cronRuntimeBinding,
-    activateCronSchedulers,
+    activateCronSchedulers, deactivateCronSchedulers,
     sessionTrackerRegistry, auditAggregator, onSuspiciousContent,
     ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner, mediaTempManager, mediaSemaphore, audioConverter,
     transcriber, ssrfFetcher, fileExtractor, voiceSelection,
@@ -2012,7 +2012,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     | "linkRunner" | "ssrfFetcher" | "transcriber" | "ttsAdapter"
     | "audioConverter" | "mediaTempManager" | "mediaSemaphore" | "fileExtractor"
     | "rpcCall" | "wireDispatch" | "continuationTracker" | "subprocessEnv" | "execToolEnv"
-    | "cronSchedulers" | "executionTrackers" | "followupTaskStores" | "taskBootId" | "taskRuntimeGate" | "taskMaintenanceControllers" | "bindTaskMaintenanceRuntime" | "browserServices" | "getAgentCronScheduler" | "getAgentCronAuthoringConfig" | "getAgentSchedulerSeed" | "cronRuntimeBinding" | "activateCronSchedulers"
+    | "cronSchedulers" | "executionTrackers" | "followupTaskStores" | "taskBootId" | "taskRuntimeGate" | "taskMaintenanceControllers" | "bindTaskMaintenanceRuntime" | "browserServices" | "getAgentCronScheduler" | "getAgentCronAuthoringConfig" | "getAgentSchedulerSeed" | "cronRuntimeBinding" | "activateCronSchedulers" | "deactivateCronSchedulers"
     | "sessionTrackerRegistry" | "auditAggregator" | "onSuspiciousContent"
     | "mcpClientManager" | "singleAgentDeps" | "providerHealth"
     | "channelAdaptersRef" | "deliveryQueue" | "drainAndStartDeliveryPrune"
@@ -2947,9 +2947,19 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
     // emits the startup banner ("Comis daemon started"), returns DaemonInstance.
     return await bootShutdown(boot, { overrides, startupStartMs, instanceId });
   } catch (e: unknown) {
+    closePartialBootSchedulerAdmission(boot);
     releaseDataDirLock(boot.dataDir);
     throw e;
   }
+}
+
+function closePartialBootSchedulerAdmission(boot: BootContext): void {
+  boot.proactiveSchedulers?.shutdown();
+  for (const scheduler of boot.ownedCronSchedulers?.values() ?? []) {
+    scheduler.closeAdmission();
+  }
+  boot.cronRuntimeBinding?.close();
+  boot.schedulerCorePortBindings?.close();
 }
 
 // Only run when invoked directly (not imported).
